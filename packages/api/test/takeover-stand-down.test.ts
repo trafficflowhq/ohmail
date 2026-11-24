@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { mailboxes, mailboxCredentials } from "@trafficflow/db";
@@ -47,7 +48,7 @@ const H = (r: Request, d: ApiDeps): Promise<Response> =>
 /** A stored login, because a claim with no password in the body requires one. */
 async function storeCredential(db: Db, id: string): Promise<void> {
   await db.insert(mailboxCredentials).values({
-    mailboxId: id, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+    mailboxId: id, accountId: accountOfMailbox(id), transport: "imap", secretEnc: "sealed", keyVersion: 1,
     meta: { host: "imap.example.test", port: 993, secure: true, user: "u" },
     updatedAt: new Date("2026-07-01T00:00:00.000Z"),
   });

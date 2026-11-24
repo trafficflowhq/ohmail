@@ -1,0 +1,14 @@
+/* The list of servers' own placement on the doors' stage: where its parts stand, never how they look. Own classes:
+   `srv-`. */
+
+/* The list is a reading column on a stage that centres what it holds: the column takes the whole stage, so its sheets
+   scroll under its head and its panel stands at the window's foot. */
+.srv-page {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  align-self: stretch;
+  justify-self: stretch;
+  min-width: 0;
+  min-height: 0;
+}

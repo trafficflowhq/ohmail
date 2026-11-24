@@ -93,7 +93,7 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
  * narrow for a pinned editor — DESIGN-FOLD-WIDTHS §0) AND with room for it, the reply dock STICKS to the bottom
  * of the scrollport: the conversation scrolls behind it and the whole panel stays in view.
  * Below that height, and in the reader overlay (which this rule deliberately does not touch —
- * it is `.read-col` only), the editor scrolls itself into view on open instead (`InlineReply`,
+ * it is `.read-col` only), the editor scrolls itself into view on open instead (the reader's inline reply,
  * `block:"end"`).
  *
  * THE DOCK ITSELF NO LONGER SCROLLS AND NO LONGER PAINTS A GROUND — deliberately, on both
@@ -120,7 +120,7 @@ body.reading .shell{opacity:.05;transform:scale(.994);pointer-events:none}
 
 /* ── THE SUBJECT AS A CONTROL, WITHOUT LOOKING LIKE ONE ──────────────────────────────────────
  *
- * A press on the message title opens the subject-rule sheet (`MessagePane`; the sheet itself is a
+ * A press on the message title opens the subject-rule sheet (`packages/app/src/reader`; the sheet itself is a
  * later slice). It must be a real, keyboard-reachable button, but still read as the heading it
  * sits inside — so it inherits the `h2`'s type and colour and carries no button chrome, only a
  * quiet hover that says it can be pressed. */

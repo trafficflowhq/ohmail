@@ -94,7 +94,7 @@ function snapshot(root: string): Record<string, string> {
   return out;
 }
 
-const ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: W, LC_ALL: "C", TZ: "UTC" };
+const ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: W, TMPDIR: tmpdir(), LC_ALL: "C", TZ: "UTC" };
 function cli(root: string | null, ...args: string[]) {
   const argv = root === null ? [SCRIPT, ...args] : [SCRIPT, "--root", root, ...args];
   const r = spawnSync(process.execPath, argv, { encoding: "utf8", env: ENV });

@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runMigrations } from "@trafficflow/db/admin";
 import { MAIL_JOURNAL } from "@trafficflow/db/journal";
 import { REQUIRE_PG_ENV, journalDrift, realPgAvailable, serviceAddressOf, serviceUp } from "@trafficflow/db/testing";
-import { DB_URL, refuseDriftedSharedDb } from "./_workerdb.js";
+import { DB_URL, refuseDriftedSharedDb } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * A DATABASE WHOSE MIGRATION JOURNAL IS NOT THIS TREE'S IS REFUSED, NOT MEASURED.
@@ -349,16 +349,18 @@ describe.skipIf(!UP)("a database whose migration journal is not this tree's", ()
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 const TEST_DIR = fileURLToPath(new URL(".", import.meta.url));
+/** The organizer's package's tests, and the two fixtures, moved out of this folder (ruling:organizer-cut). */
+const ORG_TEST_DIR = fileURLToPath(new URL("../../../packages/organizer/test/", import.meta.url));
 
 /** Files whose IMPORT LIST from `./_workerenv.js` or `./_workerdb.js` includes `DB_URL` — the test database. */
 function filesReachingTheSharedDb(): string[] {
   const out: string[] = [];
-  for (const name of readdirSync(TEST_DIR)) {
+  for (const dir of [TEST_DIR, ORG_TEST_DIR]) for (const name of readdirSync(dir)) {
     if (!name.endsWith(".ts")) continue;
-    const src = readFileSync(join(TEST_DIR, name), "utf8");
+    const src = readFileSync(join(dir, name), "utf8");
     // The IMPORT, not any mention: `worker-multimailbox.e2e.test.ts` declares a local `DB_URL`
     // holding an ISOLATED database, and a bare name grep reads that as a shared-database file.
-    if (/import[^;]*\bDB_URL\b[^;]*from "\.\/_worker(?:env|db)\.js"/.test(src)) out.push(name);
+    if (/import[^;]*\bDB_URL\b[^;]*from "(?:\.\/|\.\.\/\.\.\/\.\.\/packages\/organizer\/test\/)_worker(?:env|db)\.js"/.test(src)) out.push(relative(TEST_DIR, join(dir, name)));
   }
   return out.sort();
 }
@@ -384,7 +386,7 @@ describe("every worker test that reaches the shared database goes through a chec
   });
 
   it("the harness consults the door BEFORE its first statement", () => {
-    const src = readFileSync(join(TEST_DIR, "_workerenv.ts"), "utf8");
+    const src = readFileSync(join(ORG_TEST_DIR, "_workerenv.ts"), "utf8");
     const start = src.indexOf("export async function makeHarness");
     expect(start).toBeGreaterThan(-1);
     const body = src.slice(start, src.indexOf("\n}\n", start));

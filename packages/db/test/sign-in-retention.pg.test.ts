@@ -1,3 +1,4 @@
+import { accountOfUser } from "../src/parent-account.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -166,7 +167,7 @@ describe.skipIf(!PG_UP)("the sign-in retention pass under row locks (real Postgr
     const { userId } = await plantUser();
     const ids: string[] = [];
     for (let i = 0; i < 3; i++) {
-      const [t] = await db.insert(loginTokens).values({ userId, tokenHash: randomUUID(), expiresAt: ago(40 + i) }).returning();
+      const [t] = await db.insert(loginTokens).values({ userId, accountId: accountOfUser(userId), tokenHash: randomUUID(), expiresAt: ago(40 + i) }).returning();
       ids.push(t!.id);
     }
     const held = ids[1]!;

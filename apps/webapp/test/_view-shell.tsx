@@ -1,14 +1,15 @@
 /** The whole shell over a memory mirror and a fake sync, as reply-survives-its-parent mounts it. */
+import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore, OhmailEngine, mutationEffects,
-  type EngineMessage, type EngineMutation, type MirrorStore, type SyncChange,
+  type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -132,7 +133,7 @@ export async function waitFor(predicate: () => boolean, what: string, timeout = 
 }
 
 export async function shell(s: MirrorStore, engine: OhmailEngine, hash = "#/ohbox"): Promise<HTMLElement> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   S.store = s; S.engine = engine;
   window.location.hash = hash;

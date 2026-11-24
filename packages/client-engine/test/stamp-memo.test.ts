@@ -1,7 +1,7 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it, vi } from "vitest";
 import { messageDisplayTime } from "../src/selectors.js";
 import { messageStamp } from "../src/stamp.js";
-import type { EngineMessage } from "../src/types.js";
 
 /**
  * A ROW IS STAMPED ONCE PER READER DAY. `messageDisplayTime` memoises per entity object, keyed on

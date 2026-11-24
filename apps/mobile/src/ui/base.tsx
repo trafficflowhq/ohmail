@@ -35,6 +35,7 @@ import { cardSides, topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
 import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
 import { Icon, type IconName } from "./Icon";
+import { mailColors, mailSize } from "../theme/mail";
 
 /* ------------------------------------------------------------------- text */
 
@@ -89,7 +90,7 @@ export function useCardSides(gap: number): { marginLeft: number; marginRight: nu
  * either padding is what `test/list-insets-shared.test.ts` refuses. `measure` (the mail lists):
  * a one-pane list past compact width keeps the reading measure; a phone held sideways keeps its rows.
  */
-export function useListInsets(measure = false): ListInsets {
+export function useListInsets(measure = false, flush = false): ListInsets {
   const t = useTheme();
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
@@ -100,7 +101,7 @@ export function useListInsets(measure = false): ListInsets {
   const foot = useListFoot();
   const room = measure && !inPane && plan.panes === 1 && posture.heightClass !== "compact"
     ? win - safe.left - safe.right - nav.left - nav.right : 0;
-  return listInsets(t.space, foot > 0 ? foot : safe.bottom, nav, useBottomChromeExtent(), room);
+  return listInsets(t.space, foot > 0 ? foot : safe.bottom, nav, useBottomChromeExtent(), room, flush && !inPane && win <= 560);
 }
 
 /* ---------------------------------------------------------------- surfaces */
@@ -284,8 +285,11 @@ export function ViewHead({
   title,
   meta,
   metaBeside = false,
+  attention = false,
   inline,
   right,
+  badge,
+  leading,
   style,
   children,
 }: {
@@ -293,24 +297,33 @@ export function ViewHead({
   meta?: string;
   /** The meta rides the title's row on every window (News), not only at compact height. */
   metaBeside?: boolean;
+  attention?: boolean;
   /** Told whether it rides the title's line. */
   inline?: (oneLine: boolean) => ReactNode;
   right?: ReactNode;
+  badge?: ReactNode;
+  leading?: ReactNode;
   style?: StyleProp<ViewStyle>;
   children?: ReactNode;
 }) {
+  const t = useTheme();
   const oneLine = usePosture().heightClass === "compact";
-  const beside = oneLine || metaBeside;
+  const beside = oneLine || metaBeside || t.mail === true;
   const metaLine = meta === undefined ? null : (
     <Txt variant="meta" tone="ink3" tabular style={beside ? undefined : { marginTop: 4 }}>
       {meta}
     </Txt>
   );
   return (
-    <View style={[{ paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12 }, style]}>
+    <View style={[
+      { paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12 },
+      style,
+      t.mail ? { paddingHorizontal: mailSize.edge, minHeight: mailSize.bar } : null,
+    ]}>
       <View style={{ flexDirection: "row", alignItems: oneLine ? "baseline" : "center", flexWrap: oneLine ? "nowrap" : "wrap", columnGap: 10 }}>
+        {leading}
         <Txt variant="h1" style={{ flexShrink: 1 }}>
-          {title}
+          {title}{t.mail ? <Txt variant="h1" style={{ color: attention ? t.c.accent : t.c.ink }}>.</Txt> : null}
         </Txt>
         {oneLine ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", flexGrow: 1, flexShrink: 1 }}>
@@ -318,6 +331,7 @@ export function ViewHead({
             {inline?.(true)}
           </View>
         ) : beside ? metaLine : null}
+        {badge}
         {right}
       </View>
       {beside ? null : metaLine}
@@ -332,7 +346,7 @@ export function Section({ children, style }: { children: ReactNode; style?: Styl
   const t = useTheme();
   return (
     <View style={[{ paddingHorizontal: t.space.paneXCompact, paddingTop: 16, paddingBottom: 6 }, style]}>
-      <Txt variant="sectionLabel" tone="ink3">
+      <Txt variant="sectionLabel" tone={t.mail ? "ink" : "ink3"}>
         {children}
       </Txt>
     </View>
@@ -473,6 +487,7 @@ export function Button({
   style,
   accessibilityLabel,
   disabled,
+  appearance,
 }: {
   label: string;
   icon?: IconName;
@@ -480,6 +495,7 @@ export function Button({
   onPress?: () => void;
   style?: StyleProp<ViewStyle>;
   accessibilityLabel?: string;
+  appearance?: { color: string; surface: ViewStyle; text: TextStyle };
   /**
    * A verb that cannot be taken right now keeps its FACE and dims, and says so to a screen
    * reader. Before this, callers swapped VARIANTS to disarm a button (solid→plain, quiet→plain),
@@ -490,7 +506,8 @@ export function Button({
 }) {
   const t = useTheme();
   const solid = variant === "solid";
-  const fg = solid ? t.c.onAccent : variant === "quiet" ? t.c.ink2 : t.c.ink;
+  const paper = t.mail ? mailColors(t) : null;
+  const fg = appearance?.color ?? (solid ? paper?.["on-solid"] ?? t.c.onAccent : variant === "quiet" ? t.c.ink2 : t.c.ink);
   return (
     <Tap
       onPress={disabled === true ? undefined : onPress}
@@ -507,16 +524,17 @@ export function Button({
           paddingHorizontal: 15,
           paddingVertical: 8,
           borderRadius: t.radius.pill,
-          backgroundColor: solid ? t.c.accent : variant === "quiet" ? "transparent" : t.c.panel,
+          backgroundColor: solid ? paper?.solid ?? t.c.accent : variant === "quiet" ? "transparent" : t.c.panel,
           // Disabled, Tap lays DISABLED_FACE over this: one dim rule for every control.
           opacity: pressed ? 0.86 : 1,
         },
-        variant === "plain" ? t.lift("l0") : null,
+        !appearance && variant === "plain" ? t.lift("l0") : null,
+        appearance?.surface,
         style,
       ]}
     >
       {icon ? <Icon name={icon} size={13} color={fg} /> : null}
-      <Text maxFontSizeMultiplier={t.textCap} minimumFontScale={t.textKey} style={[t.type.button, { color: fg }]}>{label}</Text>
+      <Text maxFontSizeMultiplier={t.textCap} minimumFontScale={t.textKey} style={[appearance?.text ?? t.type.button, { color: fg }]}>{label}</Text>
     </Tap>
   );
 }
@@ -656,18 +674,20 @@ export function Rule({ inset = 0 }: { inset?: number }) {
  */
 export function Empty({ title, hint, action }: {
   title: string;
-  hint: string;
+  hint?: string;
   /** The one press an empty state may carry — the way out of the condition its sentence names. */
   action?: { label: string; onPress: () => void };
 }) {
+  const t = useTheme();
+  const quiet = t.mail === true && hint === undefined && action === undefined;
   return (
-    <View style={{ alignItems: "center", paddingHorizontal: 32, paddingVertical: 56, gap: 8 }}>
-      <Txt variant="cardTitle" style={{ textAlign: "center" }}>
-        {title}
+    <View style={{ alignItems: "center", paddingHorizontal: 32, paddingVertical: quiet ? 32 : 56, gap: 8 }}>
+      <Txt variant={quiet ? "h2" : "cardTitle"} tone={quiet ? "ink2" : "ink"} style={{ textAlign: "center" }}>
+        {title}{quiet ? <Txt variant="h2" tone="ink">.</Txt> : null}
       </Txt>
-      <Txt variant="note" tone="ink3" style={{ textAlign: "center", maxWidth: 300 }}>
-        {hint}
-      </Txt>
+      {hint !== undefined ? (
+        <Txt variant="note" tone="ink3" style={{ textAlign: "center", maxWidth: 300 }}>{hint}</Txt>
+      ) : null}
       {action ? <Button label={action.label} variant="quiet" onPress={action.onPress} /> : null}
     </View>
   );

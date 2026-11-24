@@ -6,19 +6,21 @@
  * uncovered one after a bounded wait. Each case drives a verb whose answer carries no echo against
  * a door that has not pulled it: the row keeps the confirmed state until the copy agrees.
  */
+import type {
+  EngineMessage,
+  EngineMutation,
+  FolderEntity,
+  RuleEntity as RuleDTO,
+  TagEntity as TagDTO,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   OhmailEngine,
   decodeSeqCursor,
   encodeSeqCursor,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type FolderEntity,
-  type RuleDTO,
   type SyncChange,
   type SyncResponse,
-  type TagDTO,
 } from "@ohmail/client-engine";
 import { SHADOW_DRAIN_BOUND, SHADOWED_ROWS } from "../src/shadow.js";
 

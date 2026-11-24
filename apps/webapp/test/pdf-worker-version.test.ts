@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 
 type Browser = Awaited<ReturnType<typeof import("@playwright/test").chromium.launch>>;
@@ -18,13 +19,46 @@ type Browser = Awaited<ReturnType<typeof import("@playwright/test").chromium.lau
  * host while every unit test stayed green. This is that guard: bump the dep, this goes red until
  * the worker is recopied.
  */
+/** The one vendored worker in public/, found by its shape rather than by a name this test repeats. */
+const PUBLIC = fileURLToPath(new URL("../public/", import.meta.url));
+const WORKER_NAME = /^pdf\.worker(?:\.[^.]+)?\.min\.mjs$/;
+const workers = () => readdirSync(PUBLIC).filter((f) => WORKER_NAME.test(f));
+const workerPath = () => join(PUBLIC, workers()[0]!);
+
+/**
+ * THE WORKER'S NAME IS ITS CONTENT, SO IT MAY BE KEPT FOR A YEAR. A recopied worker gets a new name, so a
+ * browser holding the old bytes under a long life never runs them against a new pdf.js.
+ */
+describe("the vendored pdf.js worker's name", () => {
+  it("is the one worker in public/, named by the first 16 hex of its SHA-256", () => {
+    expect(workers()).toHaveLength(1);
+    const hash = createHash("sha256").update(readFileSync(workerPath())).digest("hex").slice(0, 16);
+    expect(workers()[0]).toBe(`pdf.worker.${hash}.min.mjs`);
+  });
+
+  it("is the name the preview asks for", async () => {
+    const { PDF_WORKER_SRC } = await import("../app/components/AttachmentPreview");
+    expect(PDF_WORKER_SRC).toBe(`/${workers()[0]}`);
+  });
+
+  it("is the one path every form of the header rules keeps for a year, and it gets nothing else from that rule", async () => {
+    const { headerRules } = await import("../next.config.mjs");
+    type Rule = { source: string; headers: Array<{ key: string; value: string }> };
+    const forms = [headerRules(null), headerRules("G-9SPZX4FS1X"), headerRules(null, "ohmail.example")] as Rule[][];
+    for (const rules of forms) {
+      const long = rules.filter((r) => r.headers.some((h) => /immutable/.test(h.value)));
+      expect(long.map((r) => r.source)).toEqual([`/${workers()[0]}`]);
+      expect(long[0]!.headers).toEqual([{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }]);
+    }
+  });
+});
+
 describe("the vendored pdf.js worker", () => {
   it("is the exact version of the installed pdfjs-dist", () => {
     const require = createRequire(import.meta.url);
     const installed = require("pdfjs-dist/package.json").version as string;
 
-    const workerPath = fileURLToPath(new URL("../public/pdf.worker.min.mjs", import.meta.url));
-    const worker = readFileSync(workerPath, "utf8");
+    const worker = readFileSync(workerPath(), "utf8");
     const stamped = /pdfjsVersion = ([0-9][0-9.]*)/.exec(worker)?.[1];
 
     expect(stamped, "public/pdf.worker.min.mjs carries no version stamp").toBeTruthy();
@@ -40,7 +74,7 @@ describe("the vendored pdf.js worker", () => {
     const require = createRequire(import.meta.url);
     const pkg = dirname(require.resolve("pdfjs-dist/package.json"));
     const upstream = readFileSync(join(pkg, "build", "pdf.worker.min.mjs"));
-    const ours = readFileSync(fileURLToPath(new URL("../public/pdf.worker.min.mjs", import.meta.url)));
+    const ours = readFileSync(workerPath());
     expect(ours.equals(upstream), "recopy build/pdf.worker.min.mjs from pdfjs-dist into public/").toBe(true);
   });
 });
@@ -112,7 +146,7 @@ describe("pdf.js standard font data, copied by the build", () => {
       rig = readFileSync(join(dir, "rig.js"), "utf8");
       const files: Record<string, string> = {
         "/pdf.min.mjs": join(pkg, "build", "pdf.min.mjs"),
-        "/pdf.worker.min.mjs": fileURLToPath(new URL("../public/pdf.worker.min.mjs", import.meta.url)),
+        "/pdf.worker.min.mjs": workerPath(),
       };
       server = createServer((req, res) => {
         const path = new URL(req.url ?? "/", "http://x").pathname;

@@ -7,12 +7,13 @@
  * Cases 3 and 4 are the third road, Try again on the strip: the abandoned record keeps the plan and
  * the retry's rebuilt entry carries it (either spread removed → red).
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
   IndexedDbMirrorStore, MutationRejectedError, OhmailEngine,
   OUTBOX_BACKOFF_CAP_MS, OUTBOX_MAX_SERVER_FAILURES,
-  type EngineMutation, type MutationResult, type SendAndDonePlan,
+  type MutationResult, type SendAndDonePlan,
 } from "@ohmail/client-engine";
 
 const NOW = new Date("2026-09-27T09:00:00.000Z");

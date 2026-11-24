@@ -71,7 +71,7 @@ function EventCard({ event }: { event: Event }) {
       testID="event-card"
       style={[
         { flexDirection: "row", gap: 13, padding: 13, borderRadius: t.radius.rowDense, backgroundColor: t.c.panel },
-        t.lift("l0"),
+        t.mail ? { borderStyle: "dashed", borderWidth: 1, borderColor: t.c.hair } : t.lift("l0"),
       ]}
     >
       <View style={{ width: 44, borderRadius: t.radius.item, overflow: "hidden", backgroundColor: t.c.tint, alignSelf: "flex-start" }}>

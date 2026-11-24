@@ -27,7 +27,8 @@ interface Resolved { value: StorageCap; planLimit: number | null }
 
 export function makeStorageCapResolver(
   entitlements: EntitlementsComposition,
-  db: Tx,
+  /** The handle of the account a cap is asked for: its held limit is read and written there, through its fence. */
+  dbOf: (accountId: string) => Tx,
   log: Pick<Logger, "warn">,
   opts: { ttlMs?: number; now?: () => Date } = {},
 ): StorageCapResolver {
@@ -40,7 +41,7 @@ export function makeStorageCapResolver(
     if (hit && at - hit.at < ttlMs) return hit;
     try {
       const verdict = await accessOf(entitlements, accountId);
-      const limit = await heldStorageLimitOf(db, accountId, verdict, new Date(at));
+      const limit = await heldStorageLimitOf(dbOf(accountId), accountId, verdict, new Date(at));
       const entry: Resolved & { at: number } = {
         at, value: limit === null ? UNMETERED_STORAGE_CAP : limit.capBytes, planLimit: limit?.planBytes ?? null,
       };

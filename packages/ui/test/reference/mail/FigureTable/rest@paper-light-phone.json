@@ -1,0 +1,458 @@
+{
+  "component": "FigureTable",
+  "state": "rest",
+  "look": "paper-light-phone",
+  "place": "block",
+  "target": [28, 259.5781, 334, 260.9063],
+  "clip": [28, 259, 334, 262],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "oklch(0.62 0.13 25)", "borderRadius": "999px" },
+    {
+      "before.content": "\"Messages\"",
+      "before.color": "rgb(90, 83, 75)",
+      "before.font": "normal 400 13px / 18.2px \"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "before.fontVariantNumeric": "tabular-nums",
+      "before.webkitLocale": "\"en\"",
+      "before.textRendering": "optimizelegibility"
+    },
+    {
+      "before.content": "\"Kept now\"",
+      "before.color": "rgb(90, 83, 75)",
+      "before.font": "normal 400 13px / 18.2px \"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "before.fontVariantNumeric": "tabular-nums",
+      "before.webkitLocale": "\"en\"",
+      "before.textRendering": "optimizelegibility"
+    },
+    {
+      "before.content": "\"Expected\"",
+      "before.color": "rgb(90, 83, 75)",
+      "before.font": "normal 400 13px / 18.2px \"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "before.fontVariantNumeric": "tabular-nums",
+      "before.webkitLocale": "\"en\"",
+      "before.textRendering": "optimizelegibility"
+    },
+    { "backgroundColor": "oklch(0.62 0.13 150)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "table",
+      "name": "",
+      "box": [0, 0, 334, 260.9],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "0px",
+        "paddingBottom": "8px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
+      "role": "row",
+      "name": "",
+      "box": [0, 4, 334, 83],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "8px",
+        "paddingRight": "0px",
+        "paddingBottom": "8px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
+      "role": "cell",
+      "name": "mila@lichtgrat.example",
+      "box": [0, 12, 334, 22.4],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "mila@lichtgrat.example", "type": 0 }],
+      "surfaces": [{ "box": [0, 18.2, 10, 10], "paint": 0 }]
+    },
+    {
+      "role": "cell",
+      "name": "7,912",
+      "box": [0, 38.4, 103.3, 40.6],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "7,912", "type": 1 }],
+      "surfaces": [{ "box": [0, 38.4, 103.3, 40.6], "paint": 1 }]
+    },
+    {
+      "role": "cell",
+      "name": "198 MB",
+      "box": [115.3, 38.4, 103.3, 40.6],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "198 MB", "type": 1 }],
+      "surfaces": [{ "box": [115.3, 38.4, 103.3, 40.6], "paint": 2 }]
+    },
+    {
+      "role": "cell",
+      "name": "198 MB",
+      "box": [230.7, 38.4, 103.3, 40.6],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "198 MB", "type": 1 }],
+      "surfaces": [{ "box": [230.7, 38.4, 103.3, 40.6], "paint": 3 }]
+    },
+    {
+      "role": "row",
+      "name": "",
+      "box": [0, 86.9, 334, 83],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "8px",
+        "paddingRight": "0px",
+        "paddingBottom": "8px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
+      "role": "cell",
+      "name": "hello@milabrunner.example",
+      "box": [0, 94.9, 334, 22.4],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "hello@milabrunner.example", "type": 0 }],
+      "surfaces": [{ "box": [0, 101.1, 10, 10], "paint": 4 }]
+    },
+    {
+      "role": "cell",
+      "name": "1,494",
+      "box": [0, 121.3, 103.3, 40.6],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "1,494", "type": 1 }],
+      "surfaces": [{ "box": [0, 121.3, 103.3, 40.6], "paint": 1 }]
+    },
+    {
+      "role": "cell",
+      "name": "37 MB",
+      "box": [115.3, 121.3, 103.3, 40.6],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "37 MB", "type": 1 }],
+      "surfaces": [{ "box": [115.3, 121.3, 103.3, 40.6], "paint": 2 }]
+    },
+    {
+      "role": "cell",
+      "name": "37 MB",
+      "box": [230.7, 121.3, 103.3, 40.6],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "37 MB", "type": 1 }],
+      "surfaces": [{ "box": [230.7, 121.3, 103.3, 40.6], "paint": 3 }]
+    },
+    {
+      "role": "row",
+      "name": "",
+      "box": [0, 169.9, 334, 83],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "8px",
+        "paddingRight": "0px",
+        "paddingBottom": "8px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
+      "role": "cell",
+      "name": "Total",
+      "box": [0, 177.9, 334, 22.4],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Total", "type": 2 }]
+    },
+    {
+      "role": "cell",
+      "name": "9,406",
+      "box": [0, 204.3, 103.3, 40.6],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "9,406", "type": 3 }],
+      "surfaces": [{ "box": [0, 204.3, 103.3, 40.6], "paint": 1 }]
+    },
+    {
+      "role": "cell",
+      "name": "235 MB",
+      "box": [115.3, 204.3, 103.3, 40.6],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "235 MB", "type": 3 }],
+      "surfaces": [{ "box": [115.3, 204.3, 103.3, 40.6], "paint": 2 }]
+    },
+    {
+      "role": "cell",
+      "name": "235 MB",
+      "box": [230.7, 204.3, 103.3, 40.6],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "235 MB", "type": 3 }],
+      "surfaces": [{ "box": [230.7, 204.3, 103.3, 40.6], "paint": 3 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

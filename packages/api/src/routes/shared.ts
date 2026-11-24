@@ -74,12 +74,8 @@ export function refundObligationsOf(deps: ApiDeps): RefundObligationPort | undef
 }
 
 /**
- * THE ACCESS HALF FOR A REFUSAL CROSS-CHECK, or nobody — the same object {@link spendOf}
- * answers with, narrowed to the one method.
- *
- * `undefined` on an unmetered or unfinished host for {@link spendOf}'s reason: neither can
- * produce the refusal this is consulted about. The services read it only AFTER the gate has
- * refused, never on the way in, so this adds no call to any successful request.
+ * The access half for dispatch checks and refusal messages, from the same object as {@link spendOf}.
+ * Unmetered hosts have no managed AI access verdict.
  */
 export function accessPortOf(deps: ApiDeps): AccessPort | undefined {
   const e = entitlementsOf(deps);

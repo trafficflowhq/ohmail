@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import messages from "../messages/en.json";
 import type { MailboxDTO } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * "CONNECTED" IS A CLAIM, AND THE ROW WAS MAKING IT BEFORE ANYTHING HAD CONNECTED.
@@ -93,7 +93,7 @@ vi.mock("../app/api-client", () => ({
   },
 }));
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: QUIET, refresh: () => {} }),
 }));
 
@@ -175,7 +175,8 @@ describe("the derivation is a display rule, not a schema change", () => {
   });
 
   it("the row's rule is exactly `connected` + never synced", () => {
-    const src = read("apps/webapp/app/(product)/mailbox/MailboxSection.tsx");
+    // The rule moved beside the pane's other rules; the probe follows it there.
+    const src = read("packages/app-logic/src/mailboxes/pane/rows.ts");
     expect(src).toMatch(/lastSyncAt === null \? "status_connecting"/);
   });
 

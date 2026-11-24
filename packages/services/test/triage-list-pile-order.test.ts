@@ -1,7 +1,8 @@
+import type { MessageDTO } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { messages, messageStates } from "@trafficflow/db";
-import { TriageService, ServiceError, encodeListCursor, type MessageDTO } from "../src/index.js";
+import { TriageService, ServiceError, encodeListCursor } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
 /**

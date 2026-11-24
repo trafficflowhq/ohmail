@@ -1,0 +1,60 @@
+{
+  "component": "Switch",
+  "state": "off",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 24, 44, 26],
+  "clip": [24, 24, 44, 26],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    { "boxShadow": "rgb(138, 129, 118) 0px 0px 0px 1.5px inset", "borderRadius": "999px" },
+    {
+      "backgroundColor": "rgb(255, 255, 255)",
+      "boxShadow": "rgb(138, 129, 118) 0px 0px 0px 1.5px",
+      "borderRadius": "999px"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "switch",
+      "name": "Off",
+      "box": [0, 0, 44, 26],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(221, 213, 201)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "surfaces": [
+        { "box": [0, 0, 44, 26], "paint": 0 },
+        { "box": [4, 4, 18, 18], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

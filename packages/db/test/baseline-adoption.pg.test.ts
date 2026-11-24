@@ -14,6 +14,9 @@ import {
   type JournalSpec,
 } from "../src/baseline.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
+import { CLOUD_JOURNAL, MAIL_JOURNAL } from "../src/journal-specs.js";
+import { journalThrough } from "../src/testing-journal.js";
+import { OLD_HEADS } from "../src/journal-heads.js";
 import { catalogFingerprint } from "./_catalog.js";
 import { replacedConstraints } from "./_replaced-constraints.js";
 
@@ -48,12 +51,15 @@ const FOLDER_WHENS: ReadonlySet<number> = new Set(
   (JSON.parse(readFileSync(join(LEGACY_DIR, "meta", "_journal.json"), "utf8")) as
     { entries?: Array<{ when: number }> }).entries?.map((e) => e.when) ?? [],
 );
-const MAIL: JournalSpec = {
-  name: "mail", dir: join(HERE, "..", "..", "db-mail", "drizzle"), migrationsSchema: "drizzle_mail",
-};
-const CLOUD: JournalSpec = {
-  name: "cloud", dir: join(HERE, "..", "drizzle-cloud"), migrationsSchema: "drizzle_cloud",
-};
+/*
+ * THE 1.0 ROAD, as it stood at the old heads (`journalThrough`): adoption is a property of that
+ * road, whose entries after the cutoff only ever added to what was adopted. 2.0's entries retire
+ * objects on purpose and are held by the transition's own tests.
+ */
+const MAIL_CUT = journalThrough(MAIL_JOURNAL, OLD_HEADS.mail.when);
+const CLOUD_CUT = journalThrough(CLOUD_JOURNAL, OLD_HEADS.cloud.when);
+const MAIL: JournalSpec = MAIL_CUT.spec;
+const CLOUD: JournalSpec = CLOUD_CUT.spec;
 
 const ADMIN_URL = PG_TEST_URL;
 
@@ -83,6 +89,8 @@ describe.skipIf(!PG_UP)("baseline adoption", () => {
    * generous about rather than sharp.
    */
   afterAll(async () => {
+    MAIL_CUT.dispose();
+    CLOUD_CUT.dispose();
     for (const c of open) await c.end({ timeout: 5 }).catch(() => {});
     for (const db of created) {
       await admin?.unsafe(`drop database if exists "${db}" with (force)`).catch(() => {});
@@ -101,6 +109,39 @@ describe.skipIf(!PG_UP)("baseline adoption", () => {
     open.push(client);
     return brandDialect(drizzle(client), "pg") as Db;
   }
+
+  it("makes stored CalDAV host backoffs due on upgrade", async () => {
+    const repair = readJournalOf(MAIL_JOURNAL).find(({ tag }) => tag.endsWith("_caldav_host_retry"));
+    if (repair === undefined) throw new Error("Missing CalDAV host retry migration");
+    const beforeRepair = journalThrough(MAIL_JOURNAL, repair.when - 1);
+    const db = await blank();
+    const config = { migrationsSchema: MAIL_JOURNAL.migrationsSchema };
+    try {
+      await migrate(db, { ...config, migrationsFolder: beforeRepair.spec.dir });
+    } finally {
+      beforeRepair.dispose();
+    }
+
+    const accountId = randomUUID();
+    await db.execute(sql`insert into accounts (id, name) values (${accountId}, 'Calendar')`);
+    await db.execute(sql`
+      insert into cal_connections (account_id, label, provider, status, error_code, next_poll_at) values
+        (${accountId}, 'affected', 'caldav', 'failing', 'host_changed', now() + interval '1 day'),
+        (${accountId}, 'other fault', 'caldav', 'failing', 'throttled', now() + interval '1 day'),
+        (${accountId}, 'other provider', 'microsoft', 'failing', 'host_changed', now() + interval '1 day'),
+        (${accountId}, 'stopped', 'caldav', 'reconnect', 'host_changed', now() + interval '1 day')`);
+
+    await migrate(db, { ...config, migrationsFolder: MAIL_JOURNAL.dir });
+    const rows = await db.execute(sql`
+      select label, status, error_code, next_poll_at is null as due
+      from cal_connections where account_id = ${accountId} order by label`);
+    expect([...rows]).toEqual([
+      { label: "affected", status: "failing", error_code: "host_changed", due: true },
+      { label: "other fault", status: "failing", error_code: "throttled", due: false },
+      { label: "other provider", status: "failing", error_code: "host_changed", due: false },
+      { label: "stopped", status: "reconnect", error_code: "host_changed", due: false },
+    ]);
+  }, 60_000);
 
   /**
    * A database in exactly the state production is in: the pre-split journal, applied.

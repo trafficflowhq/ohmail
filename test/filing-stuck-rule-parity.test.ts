@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FILING_STUCK_ATTEMPTS as SERVER_ATTEMPTS, FILING_STUCK_MS as SERVER_MS } from "@trafficflow/db";
 import {
   FILING_ROTATION_ESTIMATE_MS, FILING_STUCK_ATTEMPTS, FILING_STUCK_MS,
-} from "../apps/webapp/app/shell/mail-state.js";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * ONE STUCK RULE IN TWO WORKSPACES. The server counts the stuck filings (`filingStuck`) and the

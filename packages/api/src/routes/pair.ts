@@ -7,8 +7,11 @@
  * alone. */
 import {
   mintPairingToken, listPairingTokens, revokePairingToken, pairingLinkState,
-  redeemDevicePair, type PairingGrant, type PairedDeviceKind, type PairedDeviceSessionMinter,
+  redeemDevicePair, redeemAppHandoff, mintAppHandoff,
+  type AppHandoffTarget, type PairingGrant, type PairedDeviceKind, type PairedDeviceSessionMinter,
 } from "@trafficflow/services/auth";
+import { withSessionAcquireCeiling } from "../middleware.js";
+import { rotateNativeRefresh, sessionLifecycle } from "./session-lifecycle.js";
 import { ServiceError } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
 import { serviceContext } from "../context.js";
@@ -142,7 +145,7 @@ export const pairRedeemRoutes: Route[] = [
     handler: async (req, deps) => {
       try {
         const b = await readObjectBody<{
-          grant?: unknown; token?: unknown; email?: unknown; kind?: unknown; previousSession?: unknown;
+          grant?: unknown; token?: unknown; email?: unknown; kind?: unknown; previousSession?: unknown; verifier?: unknown;
         }>(req);
         const token = typeof b.token === "string" ? b.token : "";
         const ctx = serviceContext(deps, req);
@@ -166,6 +169,16 @@ export const pairRedeemRoutes: Route[] = [
           // This handler forwards `token` and `email` and nothing else, so no wire field can
           // reach that decision.
           return json({ grant: "invite", invite }, 200);
+        }
+        if (b.grant === "app-handoff") {
+          // A phone app's handoff to its sibling: the code and the verifier of the challenge it was minted for, and
+          // the phone's kind; the same envelope, no cookie, and the same cross-account refusal as a scanned code's.
+          const { tokens } = await redeemAppHandoff(ctx, sessionMinter(deps), {
+            token,
+            verifier: typeof b.verifier === "string" ? b.verifier : "",
+            kind: b.kind as PairedDeviceKind,
+          });
+          return json({ grant: "app-handoff", tokens }, 200);
         }
         if (b.grant === "device-pair") {
           // `kind` is the redeemer's own declaration — "web" when absent, whitelist-gated in
@@ -230,4 +243,49 @@ export const pairStateRoutes: Route[] = [
  * two arrays above, spread, so the self-host mounts, the hosted mounts and the desktop-host
  * redeem are the same objects and cannot drift.
  */
-export const pairRoutes: Route[] = [...pairCeremonyRoutes, ...pairRedeemRoutes, ...pairStateRoutes];
+/** An SHA-256 challenge: the receiving app's, base64url SHA-256 of a verifier only it holds. */
+const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * ONE PHONE APP HANDS ITS SIGN-IN TO ITS SIBLING ON THE SAME PHONE: the native rotation (`/auth/refresh`'s body
+ * branch, with its refusals, its erased answer and its cross-account refusal exactly as there), and then a handoff
+ * code minted on the pair it answered, bound to the receiving app's challenge (`mintAppHandoff`). No step-up: the
+ * rotation's cost is the caller's refresh token. A refusal or a fault of the mint never loses the rotated pair: the
+ * answer carries the pair and `handoff: null` with the refusal's word. Under `/pair/`, which every packaged proxy
+ * routes to the API and where no browser sends a refresh cookie; it reads none. Not relayed and not on the page's door.
+ */
+export const pairHandoffRoutes: Route[] = [
+  {
+    method: "POST",
+    pattern: "/pair/handoff",
+    relay: false,  /* resolves a credential from the request body */
+    cost: "ceremony",
+    options: { public: true, credentialSubject: true, credentialLookup: true, replaySafe: true, middleware: [withSessionAcquireCeiling] },
+    handler: async (req, deps) => {
+      const b = await readObjectBody<{ refreshToken?: unknown; attemptId?: unknown; challenge?: unknown; target?: unknown }>(req);
+      if (typeof b.refreshToken !== "string" || (b.attemptId !== undefined && typeof b.attemptId !== "string")
+        || typeof b.challenge !== "string" || !CHALLENGE.test(b.challenge) || (b.target !== "ohmail" && b.target !== "ohcal")) {
+        throw new ServiceError("validation_failed", 400, "refreshToken, a SHA-256 challenge and the target app are required");
+      }
+      const rotated = await rotateNativeRefresh(req, deps, {}, { refreshToken: b.refreshToken, attemptId: b.attemptId as string | undefined });
+      if (rotated instanceof Response) return rotated;
+      let handoff: { token: string; expiresIn: number } | null = null;
+      let handoffRefused: string | undefined;
+      try {
+        handoff = await mintAppHandoff(serviceContext(deps, req), sessionLifecycle(deps), {
+          renewed: rotated.tokens.refreshToken, challenge: b.challenge, target: b.target as AppHandoffTarget,
+        });
+      } catch (e) {
+        handoffRefused = e instanceof ServiceError ? e.code : "internal";
+        if (!(e instanceof ServiceError) || e.httpStatus >= 500) {
+          (deps.logger ?? silentLogger).error("request_failed", { method: req.method, route: "/pair/handoff", status: 500, err: e });
+        }
+      }
+      const answer = json({ tokens: rotated.tokens, handoff, ...(handoffRefused ? { handoffRefused } : {}) }, 200);
+      answer.headers.set("Cache-Control", "no-store");
+      return answer;
+    },
+  },
+];
+
+export const pairRoutes: Route[] = [...pairCeremonyRoutes, ...pairRedeemRoutes, ...pairStateRoutes, ...pairHandoffRoutes];

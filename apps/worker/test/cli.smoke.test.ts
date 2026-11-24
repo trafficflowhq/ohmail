@@ -5,8 +5,8 @@ import { randomUUID } from "node:crypto";
 import { mailboxes, mailboxCredentials, contacts } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { isCliEntry } from "../src/entry.js";
-import { imapCfg } from "./_workerenv.js";
+import { isCliEntry } from "@ohmail/organizer/entry";
+import { imapCfg } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll } from "./_isolateddb.js";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
 import { DbDoor } from "./_dbdoor.js";
@@ -109,7 +109,7 @@ describe("the DEPLOYABLE CLI entry point", () => {
       .values({ accountId: randomUUID(), provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
     const enc = await KEK.encrypt(randomUUID());           // the fake adapter never dials with it
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
 
@@ -203,7 +203,7 @@ describe("the DEPLOYABLE CLI entry point", () => {
     await db.insert(contacts).values({ accountId, address: "anna@x.example" });
     const enc = await KEK.encrypt(cfg.auth.pass);
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: cfg.host, port: cfg.port, secure: false, user: cfg.auth.user },
     });
 

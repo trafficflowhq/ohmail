@@ -1,5 +1,6 @@
-import { LoginScreen } from "./LoginScreen";
+import { SignInRoute } from "./SignInRoute";
 import { continuationOf } from "./continuation";
+import { SETTINGS_HANDOFF, settingsReference } from "../../settings-handoff";
 import { publicSignupEnabled } from "../../signup-mode";
 
 /**
@@ -13,5 +14,7 @@ export default async function LoginPage(
   props: { searchParams?: Promise<Record<string, string | string[] | undefined>> },
 ) {
   const searchParams = await props.searchParams;
-  return <LoginScreen publicSignup={publicSignupEnabled()} next={continuationOf(searchParams?.next)} />;
+  const handoff = searchParams && Object.hasOwn(searchParams, SETTINGS_HANDOFF)
+    ? settingsReference(searchParams[SETTINGS_HANDOFF]) ?? "" : null;
+  return <SignInRoute publicSignup={publicSignupEnabled()} next={continuationOf(searchParams?.next)} handoff={handoff} />;
 }

@@ -1,43 +1,14 @@
 "use client";
 
+import { Fragment } from "react";
 import { useTranslations } from "next-intl";
 import { SettingsNote } from "@ohmail/ui";
 
-/** Fingerprints per leg (Node's `fingerprint256` form): offered by a refusal or a test, or ticked. */
-export type TrustOffer = { imap?: string; smtp?: string };
+import {
+  certificateOfferOf, oneLine, trustClaims, type TrustOffer,
+} from "@ohmail/app-logic/mailboxes/moved";
 
-/**
- * The certificate a refusal offers to trust, and for which leg: `details.tls.certificate` on a
- * mail server on this computer (the desktop's local door alone sends one), or `null`.
- */
-export function certificateOfferOf(err: unknown): { transport: "imap" | "smtp"; sha256: string } | null {
-  const e = err as { code?: unknown; details?: unknown } | null | undefined;
-  if (typeof e !== "object" || e === null || e.code !== "mailbox_probe_failed") return null;
-  const d = e.details as { transport?: unknown; tls?: { kind?: unknown; certificate?: { sha256?: unknown } } } | null | undefined;
-  const sha256 = d?.tls?.kind === "self_signed" ? d.tls.certificate?.sha256 : undefined;
-  return typeof sha256 === "string" && sha256 !== "" ? { transport: d!.transport === "smtp" ? "smtp" : "imap", sha256 } : null;
-}
-
-/** One line covers both legs: one host, and no second certificate that differs. */
-function oneLine(offer: TrustOffer, sameHost: boolean): string | null {
-  const one = offer.imap ?? offer.smtp;
-  if (!sameHost || one === undefined) return null;
-  return offer.imap !== undefined && offer.smtp !== undefined && offer.imap !== offer.smtp ? null : one;
-}
-
-/**
- * The fingerprints a press claims (`trustCertificate`): each line ticked FOR THE FINGERPRINT IT NOW
- * SHOWS — a certificate that changed un-ticks its line — and with one line for one host, both blocks.
- * Each is a claim its own probe re-reads against the certificate it is shown.
- */
-export function trustClaims(offer: TrustOffer, ticked: TrustOffer, sameHost: boolean): TrustOffer {
-  const one = oneLine(offer, sameHost);
-  const offered = one !== null ? { imap: one, smtp: one } : offer;
-  return {
-    ...(offered.imap !== undefined && ticked.imap === offered.imap ? { imap: offered.imap } : {}),
-    ...(offered.smtp !== undefined && ticked.smtp === offered.smtp ? { smtp: offered.smtp } : {}),
-  };
-}
+export { certificateOfferOf, trustClaims, type TrustOffer };
 
 /**
  * THE TRUST LINE: a mail server on this computer (a gateway such as Proton Mail Bridge) serves its
@@ -64,21 +35,27 @@ export function CertificateTrust(props: {
   return (
     <>
       {lines.map(([k, sha256]) => (
-        <label key={k} className="join-label" htmlFor={`${props.id}-${k}`}>
-          <input
-            id={`${props.id}-${k}`} type="checkbox"
-            checked={k === "both" ? props.ticked.imap === sha256 && props.ticked.smtp === sha256 : props.ticked[k] === sha256}
-            onChange={(e) => {
-              const now = e.target.checked ? sha256 : undefined;
-              if (k !== "both") { props.onChange(k, now); return; }
-              props.onChange("imap", now);
-              props.onChange("smtp", now);
-            }}
-          />{" "}
-          {t(label[k], { fingerprint: sha256 })}
-        </label>
+        <Fragment key={k}>
+          <label className="join-label" htmlFor={`${props.id}-${k}`}>
+            <input
+              id={`${props.id}-${k}`} type="checkbox"
+              aria-describedby={`${props.id}-${k}-print`}
+              checked={k === "both" ? props.ticked.imap === sha256 && props.ticked.smtp === sha256 : props.ticked[k] === sha256}
+              onChange={(e) => {
+                const now = e.target.checked ? sha256 : undefined;
+                if (k !== "both") { props.onChange(k, now); return; }
+                props.onChange("imap", now);
+                props.onChange("smtp", now);
+              }}
+            />{" "}
+            {t(label[k])}
+          </label>
+          {/* The fingerprint, on its own line under the line that asks for it: text a reader can
+            read whole, not an image; tied to the tick, so the consent says which certificate. */}
+          <p id={`${props.id}-${k}-print`} className="join-fingerprint">{sha256}</p>
+        </Fragment>
       ))}
-      <SettingsNote icon="shield">{t("trustCertificateNote")}</SettingsNote>
+      <SettingsNote icon="info">{t("trustCertificateNote")}</SettingsNote>
     </>
   );
 }

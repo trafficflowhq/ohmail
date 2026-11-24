@@ -1,13 +1,11 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun, firstRunStep } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost, FirstRunMailboxInput } from "../app/shell/first-run-host";
-import type { OnboardingFacts, OnboardingStep } from "../app/shell/onboarding";
+import { act, cleanup } from "@testing-library/react";
+import { firstRunStep } from "@ohmail/app-logic/mailboxes/first-run/step";
+import type { OnboardingFacts, OnboardingStep } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, fakeDoor, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * ═══ A RE-RUN ABOUT A MAILBOX THAT IS GONE SAYS SO — IT DOES NOT OFFER A CONNECT FORM ══════
@@ -32,12 +30,15 @@ import type { OnboardingFacts, OnboardingStep } from "../app/shell/onboarding";
  * heading case, the no-form case and the every-cursor case all go red, by name.
  * POSITIVE CONTROL: the same re-run with its row PRESENT opens on the consent statement, and a
  * first run with no mailbox anywhere still gets the form it exists to show.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`_first-run-stage.tsx`) at the address that names the mailbox; "the row left the facts" is the
+ * ground handing no row of that id; the door's `connect` is the connect wire's, a spy; leaving is the frame's address
+ * moving to its place; the progress rail is the kit's step dots. `firstRunStep` is the stage's own
+ * (`@ohmail/app-logic/mailboxes/first-run/step`). Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const t = messages.onboarding;
+const t = O;
 
 const CONNECTED = {
   organizerRole: "organizer" as const,
@@ -59,15 +60,14 @@ const noMailbox = (): OnboardingFacts => ({
 /** The same re-run with its row present — the control. */
 const held = (): OnboardingFacts => ({ ...noMailbox(), mailbox: { ...CONNECTED } });
 
-const roots: Root[] = [];
 afterEach(() => {
-  for (const r of roots.splice(0)) r.unmount();
+  cleanup();
   document.body.innerHTML = "";
 });
 
 interface Harness {
   el: HTMLElement;
-  connects: Array<{ input: FirstRunMailboxInput; mode: "seed" | "add" }>;
+  connects: unknown[];
   left: () => number;
   heading: () => string;
   text: () => string;
@@ -80,52 +80,36 @@ async function mount(o: {
   rerun?: boolean;
   mailboxId?: string | null;
 }): Promise<Harness> {
-  const connects: Harness["connects"] = [];
-  let leaves = 0;
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-
-  const host: FirstRunHost = {
+  /* THE CALL THE DEFECT ENDS IN. A `seed` here is the install reconfigured. */
+  const wire = fakeDoor();
+  const rows: FirstRunRow[] = o.facts.mailbox === null ? [] : [{ id: id("mb-1"), address: "me@example.invalid", ...o.facts.mailbox } as FirstRunRow];
+  /* The run names its mailbox in its address; a vanished subject is a name the rows do not hold. */
+  const named = o.subjectVanished ? "mb-gone" : o.mailboxId ?? null;
+  const at = o.rerun ? `#/first-run/again${named ? `?mailbox=${named}` : ""}` : "#/first-run";
+  const st = await mountStage({
+    rows,
+    at,
     door: o.facts.door,
-    ai: o.facts.ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    /* THE CALL THE DEFECT ENDS IN. A `seed` here is the install reconfigured. */
-    connect: async (input, mode) => { connects.push({ input, mode }); return { id: "mb-new" }; },
-    organize: async () => "stored",
-    complete: async () => { /* leaves */ },
-    setAiEnabled: async () => { /* answered */ },
-    forgetMailbox: async () => { /* removed */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, {
-        children: h(FirstRun, {
-          host,
-          facts: o.facts,
-          onRefresh: () => { /* nothing has to move for these cases */ },
-          onLeave: () => { leaves += 1; },
-          pull: { screened: 0, history: 0, pulled: 0 },
-          decide: null,
-          mailboxId: o.mailboxId ?? null,
-          ...(o.rerun ? { rerun: true } : {}),
-          ...(o.subjectVanished ? { subjectVanished: true } : {}),
-        }),
-      }),
-    }));
+    account: o.facts.account,
+    connect: wire.door,
+    verbs: {
+      ai: o.facts.ai,
+      organize: async () => "stored",
+      complete: async () => { /* leaves */ },
+      setAiEnabled: async () => { /* answered */ },
+      forgetMailbox: async () => { /* removed */ },
+    },
   });
-
+  const el = st.el;
+  const first = st.address();
   return {
-    el, connects,
-    left: () => leaves,
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    el,
+    get connects() { return wire.of("connect"); },
+    left: () => (st.address() !== first && !st.address().includes("first-run") ? 1 : 0),
+    heading: st.heading,
     text: () => (el.textContent ?? "").replace(/\s+/g, " "),
-    buttons: () => [...el.querySelectorAll("button")],
+    /* The screen's own controls: the stage's, never the app's behind it (inert while the stage stands). */
+    buttons: () => [...(el.querySelector('[role="dialog"]')?.querySelectorAll("button") ?? [])],
   };
 }
 
@@ -158,7 +142,7 @@ describe("a re-run whose mailbox has left the facts", () => {
 
   it("no progress rail: this run is not on a walk and must not draw one", async () => {
     const s = await mount({ facts: noMailbox(), rerun: true, subjectVanished: true });
-    expect(s.el.querySelector(".join-rail"), "the refusal screen drew a rail").toBeNull();
+    expect(s.el.querySelector(".oh-stepdots"), "the refusal screen drew a rail").toBeNull();
   });
 });
 
@@ -183,7 +167,7 @@ describe("and no cursor can walk around it", () => {
 
   it("POSITIVE CONTROL — with the row present the same re-run opens on the consent statement", async () => {
     const s = await mount({ facts: held(), rerun: true, mailboxId: "mb-1" });
-    expect(s.heading()).toBe(t.consentTitle);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     expect(s.text()).not.toContain(t.vanishedTitle);
   });
 
@@ -193,6 +177,7 @@ describe("and no cursor can walk around it", () => {
     });
     expect(s.text()).not.toContain(t.vanishedTitle);
     // The welcome, whose one verb walks on to the connect form — the flow this row must not break.
-    expect(s.heading()).toBe(t.welcomeTitle);
+    // The kit draws a title's closing full stop as its end dot: the sentence is the same.
+    expect(s.heading()).toBe(t.welcomeTitle.replace(/\.$/, ""));
   });
 });

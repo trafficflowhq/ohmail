@@ -1,0 +1,82 @@
+{
+  "component": "GroupHeading",
+  "state": "hot",
+  "look": "paper-dark-desktop",
+  "place": "window",
+  "target": [256, 72, 420, 44],
+  "clip": [256, 72, 420, 44],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "-0.352px",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "backgroundColor": "rgb(255, 106, 61)", "borderRadius": "999px" }],
+  "nodes": [
+    {
+      "role": "heading",
+      "name": "Resurfaced 1",
+      "box": [256, 72, 420, 44],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "800",
+        "lineHeight": "16px",
+        "letterSpacing": "-0.352px",
+        "borderRadius": "0px",
+        "paddingTop": "14px",
+        "paddingRight": "24px",
+        "paddingBottom": "0px",
+        "paddingLeft": "20px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "level": 2,
+      "text": [
+        { "said": "Resurfaced", "type": 0 },
+        { "said": "1", "type": 1 }
+      ],
+      "surfaces": [{ "box": [364.5, 92.6, 5.4, 5.4], "paint": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

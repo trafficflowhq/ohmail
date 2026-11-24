@@ -10,17 +10,20 @@
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { createPortal } from "react-dom";
+import { ThemeProvider } from "@ohmail/ui";
+import { FrameReports } from "@ohmail/app/frame";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { localStorageDoor } from "@ohmail/client-engine/durable";
 
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
-import { enableDesktopDroppedFiles, installFileDropGuard } from "../../webapp/app/shell/dropped-files";
-import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
-import { setRenderedLinksBatchSink } from "../../webapp/app/shell/rendered-links";
-import { stampColumns } from "../../webapp/app/shell/column-store";
-import { installTextSizeApplier } from "../../webapp/app/shell/text-size";
+import { enableDesktopDroppedFiles, installFileDropGuard } from "@ohmail/app-logic/write/dropped-files";
+import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
+import { setRenderedLinksBatchSink } from "@ohmail/letter-body/links";
+import { stampColumns } from "@ohmail/app-logic/lists/column-store";
+import { installTextSizeApplier } from "@ohmail/app-logic/text/text-size";
 import { applyDesktopTextSize } from "./text-zoom.js";
-import { setUiVitalsInterval, setUiVitalsSink } from "../../webapp/app/shell/ui-vitals";
+import { setUiVitalsInterval, setUiVitalsSink } from "@ohmail/app-logic/session/ui-vitals";
 import { DesktopLocale } from "./DesktopLocale.js";
 import { RendererReloaded, takeReloadedMark } from "./renderer-reloaded.js";
 import { UpdateClosing } from "./update-closing.js";
@@ -234,21 +237,23 @@ const paint = (bootFailure: unknown): void =>
           storage={THEME_DOOR}
           systemScheme={omarchySchemeSource}
         >
-          <ToastHost>
-            <RendererReloaded reloaded={RENDERER_RELOADED} />
-            <UpdateClosing />
-            {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
-                own render, and the throw this exists for comes from `DesktopGate` building the
-                client engine. `GateBoundary.tsx` has the released build that went white for want
-                of it. */}
-            <GateBoundary>
-              {bootFailure !== null ? (
-                <BootFailure error={bootFailure} />
-              ) : (
-                <DesktopGate />
-              )}
-            </GateBoundary>
-          </ToastHost>
+          <portalRenderer.Provider value={createPortal}>
+            <FrameReports>
+              <RendererReloaded reloaded={RENDERER_RELOADED} />
+              <UpdateClosing />
+              {/* THE BOUNDARY IS OUTSIDE THE GATE, and it has to be: a component cannot catch its
+                  own render, and the throw this exists for comes from `DesktopGate` building the
+                  client engine. `GateBoundary.tsx` has the released build that went white for want
+                  of it. */}
+              <GateBoundary>
+                {bootFailure !== null ? (
+                  <BootFailure error={bootFailure} />
+                ) : (
+                  <DesktopGate />
+                )}
+              </GateBoundary>
+            </FrameReports>
+          </portalRenderer.Provider>
         </ThemeProvider>
       </DesktopLocale>
     </StrictMode>,

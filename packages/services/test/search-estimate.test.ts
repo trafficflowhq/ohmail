@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { messageBodies } from "@trafficflow/db";
 import { SearchService, isSearchParts } from "../src/index.js";
-import { makeCtx, seedMessage } from "./helpers.js";
+import { makeCtx, seedMessage, seedSearchDocuments } from "./helpers.js";
 
 /**
  * THE SUMMARY'S FIRST ANSWER — `parts=estimate` counts the tier's fused candidates: when no arm was
@@ -24,9 +24,10 @@ async function corpus() {
       unread: i % 2 === 0,
       date: new Date(Date.parse("2026-07-01T09:00:00Z") + i * 3_600_000),
     });
-    await db.insert(messageBodies).values({ messageId: id, text: `a ${TERM} at the weir, number ${i}` });
+    await db.insert(messageBodies).values({ messageId: id, accountId, text: `a ${TERM} at the weir, number ${i}` });
   }
   await seedMessage(db, accountId, mailboxId, { subject: "minutes of the board", from: "clerk@board.example" });
+  await seedSearchDocuments(db, accountId);
   return ctx;
 }
 
@@ -75,8 +76,9 @@ describe("parts=estimate — the count and facets over the fused candidates", ()
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     for (let i = 0; i < 20; i++) {
       const id = await seedMessage(db, accountId, mailboxId, { subject: `note ${i}`, from: "clerk@board.example" });
-      await db.insert(messageBodies).values({ messageId: id, text: `the ${TERM} came back, entry ${i}` });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: `the ${TERM} came back, entry ${i}` });
     }
+    await seedSearchDocuments(db, accountId);
     const page = await new SearchService().search(ctx, { q: TERM, parts: "page", limit: 3 });
     expect(page.totalExact).toBe(false);
     expect(page.total).toBe(4 * 3);

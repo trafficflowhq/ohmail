@@ -40,8 +40,8 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../../../packages/letter-body/src/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/MessageBody.js");
 
 /** Mount once; `open` then re-renders the SAME root, which is what a reading session does. */
 async function mount(): Promise<void> {
@@ -52,9 +52,9 @@ async function mount(): Promise<void> {
   root = createRoot(host);
 }
 
-async function open(props: Parameters<Mod["MessageBody"]>[0]): Promise<HTMLIFrameElement | null> {
+async function open(props: Omit<Parameters<Mod["MessageBody"]>[0], "owner">): Promise<HTMLIFrameElement | null> {
   const { MessageBody } = await mod();
-  await act(async () => { root!.render(h(MessageBody, props)); });
+  await act(async () => { root!.render(h(MessageBody, { ...props, owner: null })); });
   return host!.querySelector("iframe");
 }
 

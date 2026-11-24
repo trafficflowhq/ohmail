@@ -34,11 +34,16 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import type { OwnerResolver } from "../../app/shell/engine";
 import messages from "../../messages/en.json";
 import messagesDe from "../../messages/de.json";
-import type { MailboxFacts } from "../../app/shell/mail-state";
-import type { ConsentTransport } from "../../app/shell/consent-state";
-import type { FirstRunHost } from "../../app/shell/first-run-host";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { JunkWire } from "@ohmail/app-logic/screener/junk-window";
+import type { NotificationHost } from "../../app/shell/notification-settings";
+import type { MailShellProps } from "../_mail-shell";
+import type { SuggestWire } from "@ohmail/app-logic/screener/screener-suggest";
 import { settleFirstPaint } from "../_first-paint.js";
-import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
+import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
+import { forgetOwner, readOwner, rememberOwner } from "@ohmail/app-logic/storage/owner-cookie";
 
 (globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
@@ -50,6 +55,22 @@ export const act = (React as unknown as {
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 export const ISO = "2026-08-04T09:00:00.000Z";
+export const LIVE_ACCOUNT = "acct_live_1";
+
+/** The fixture server names the account that owns its mail and settings replies. */
+export function liveAccountResponse(response: Response): Response {
+  if (response.ok && !response.headers.has("X-Ohmail-Account")) {
+    response.headers.set("X-Ohmail-Account", LIVE_ACCOUNT);
+  }
+  return response;
+}
+
+/** Keep the same account identity when a walk supplies its own endpoint replies. */
+export function liveAccountFetch(
+  serve: (input: RequestInfo | URL, init?: RequestInit) => Response | Promise<Response>,
+): typeof fetch {
+  return async (input, init) => liveAccountResponse(await serve(input, init));
+}
 
 /** A mailbox row as the probe answers it. Defaults to "connected, never synced". */
 export const mailbox = (over: Partial<MailboxFacts> = {}): MailboxFacts =>
@@ -210,7 +231,7 @@ export function installShellEnv(): void {
   seq = 0;
   answer = emptyPage;
   consentOver = {};
-  globalThis.fetch = vi.fn(async (input: unknown) => {
+  const respond = async (input: unknown): Promise<Response> => {
     /**
      * THE BOOTSTRAP'S RULES-FIRST PASS (`?types=rule`), answered empty and NEVER with
      * `answer()`. The snapshot ask below lands on `answer()` (a `/sync` body with no `asOfSeq`,
@@ -245,7 +266,8 @@ export function installShellEnv(): void {
       );
     }
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: unknown) => liveAccountResponse(await respond(input))) as typeof globalThis.fetch;
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -264,6 +286,9 @@ export function installShellEnv(): void {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* jsdom draws no animation: the kit's report and rows at the seated Ohbox ask `animate` (the lead's stub,
+     `frame/seated-ohbox.test.tsx`). */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -279,8 +304,11 @@ export function installShellEnv(): void {
 export async function teardownShellEnv(): Promise<void> {
   for (const root of roots) await act(() => root.unmount());
   roots = [];
+  /* Let every animation frame still owed run on the fake clock before it is uninstalled. */
+  if (vi.isFakeTimers()) await act(async () => { await vi.runOnlyPendingTimersAsync(); });
   document.body.innerHTML = "";
   globalThis.fetch = originalFetch;
+  if (readOwner() === LIVE_ACCOUNT) forgetOwner();
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
   resetResumeLaneForTests();
@@ -337,17 +365,35 @@ export async function mountShell(
      * built here.
      */
     locale?: "en" | "de";
-    /** A HOST'S CONSENT WIRE — the desktop's hosted and paired doors pass one. Absent is the Cloud client. */
-    consentTransport?: ConsentTransport;
+    /**
+     * A HOST'S CONSENT WIRE — the desktop's hosted and paired doors pass one; `"none"` is a host that has none.
+     * Absent is the harness's own rule: the Cloud client, on this configured page.
+     */
+    consentTransport?: ConsentTransport | "none";
+    /** A HOST'S JUNK WIRE; `"none"` is a host that has none. Absent is the harness's own rule. */
+    junkWire?: JunkWire | "none";
+    /** A HOST'S SUGGESTION WIRE; `"none"` is a host that buys none. Absent is the harness's own rule. */
+    suggestWire?: SuggestWire | "none";
     /** The host's providers between the toast host and `AppShell` — the Cloud's locale seam. Absent: none. */
     wrap?: (shell: React.ReactElement) => React.ReactElement;
     /** The first-run door, as `CloudShell` hands it over. Absent: the desktop window's shape. */
     firstRun?: FirstRunHost;
     /** A host's card for the stage's slot, as the desktop hands its default-mail ask over. Absent: none. */
     stageCard?: React.ReactNode;
+    /** The registered host's stage notice and profile wire. Each is opted into by its test. */
+    stageNotice?: MailShellProps["stageNotice"];
+    profileImportTransport?: MailShellProps["profileImportTransport"];
+    /** The host's notification doors, as an entry hands them (`device.notifications`). Absent: the host hands none. */
+    notificationHost?: NotificationHost;
+    /** The doors of Settings' Account section, as the web's entry hands its own. Absent: no section, and no Settings. */
+    accountDoors?: MailShellProps["accountDoors"];
+    mailboxesNotices?: MailShellProps["mailboxesNotices"];
+    general?: MailShellProps["general"];
+    webContactScreening?: boolean;
+    contactScreening?: MailShellProps["contactScreening"];
   } = {},
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../../app/shell/AppShell.js");
+  const AppShell = (await import("../_mail-shell.js")).MailShell;
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { THEME_DOOR } = await import("../../app/shell/face-mirror.js");
 
@@ -358,13 +404,25 @@ export async function mountShell(
 
   const props = {
     demo: false,
-    resolveOwner: opts.resolveOwner
-      ?? (async () => ({ kind: "owner", accountId: "acct_live_1" }) as const),
+    resolveOwner: opts.resolveOwner ?? (async () => {
+      rememberOwner(LIVE_ACCOUNT);
+      return { kind: "owner", accountId: LIVE_ACCOUNT } as const;
+    }),
     mailboxFacts: opts.probe ?? (async (): Promise<MailboxFacts[]> => facts),
     ...(opts.engine ? { engine: opts.engine } : {}),
     ...(opts.consentTransport ? { consentTransport: opts.consentTransport } : {}),
+    ...(opts.junkWire ? { junkWire: opts.junkWire } : {}),
+    ...(opts.suggestWire ? { suggestWire: opts.suggestWire } : {}),
     ...(opts.firstRun ? { firstRun: opts.firstRun } : {}),
     ...(opts.stageCard ? { stageCard: opts.stageCard } : {}),
+    ...(opts.stageNotice ? { stageNotice: opts.stageNotice } : {}),
+    ...(opts.profileImportTransport ? { profileImportTransport: opts.profileImportTransport } : {}),
+    ...(opts.notificationHost ? { notificationHost: opts.notificationHost } : {}),
+    ...(opts.accountDoors ? { accountDoors: opts.accountDoors } : {}),
+    ...(opts.mailboxesNotices ? { mailboxesNotices: opts.mailboxesNotices } : {}),
+    ...(opts.general ? { general: opts.general } : {}),
+    ...(opts.webContactScreening ? { webContactScreening: true, scope: "acct_live_1" } : {}),
+    ...(opts.contactScreening ? { contactScreening: opts.contactScreening } : {}),
   };
 
   await act(async () => {

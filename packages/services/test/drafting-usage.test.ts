@@ -4,8 +4,8 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { drafts, mailboxes, messages, clientIdempotencyKey } from "@trafficflow/db";
 import type { RefundObligation, RefundObligationPort, SpendPort } from "@trafficflow/db";
 import type { AnthropicCallReport, DraftCallOptions, DraftPort } from "@trafficflow/core";
-import { DraftingService, DRAFT_ADMISSION, DRAFT_USAGE_RELEASE } from "../src/index.js";
-import type { DraftsService, ServiceContext } from "../src/index.js";
+import { DraftingService, DraftsService, DRAFT_ADMISSION, DRAFT_USAGE_RELEASE, dbFor } from "../src/index.js";
+import type { ServiceContext } from "../src/index.js";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 
 /*
@@ -60,7 +60,7 @@ async function setup() {
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `use:${randomUUID()}`,
     subject: "Seed subject", fromAddress: "sender@example.com", snippet: "seed", date: NOW,
   }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   const credits = fakeSpendPort();
   const order: string[] = [];
   /** The same port, noting how many drafts were stored when each release arrived. */
@@ -124,7 +124,7 @@ describe("the draft's usage rides its release", () => {
     await new DraftingService().draftFromMessage(w.ctx, w.messageId, {
       drafter, credits: w.watched, obligations: w.obligations, attemptKey,
     });
-    expect(drafter.calls).toEqual([[expect.anything()]]);
+    expect(drafter.calls).toEqual([[expect.anything(), { beforeDispatch: expect.any(Function) }]]);
     expect(w.credits.releases).toEqual([]);
   });
 
@@ -179,7 +179,8 @@ describe("the draft's usage rides its release", () => {
 
   it("a store that faults after a delivered call: the store's error stands, and one release carries the line", async () => {
     const w = await setup();
-    const drafts = { create: async () => { throw new Error("store 08006"); } } as unknown as DraftsService;
+    // The real service, its store failing: the mailbox is still asked as it is before any charge.
+    const drafts = Object.assign(new DraftsService(), { create: async () => { throw new Error("store 08006"); } });
     const drafter = reportingDrafter();
     const svc = new DraftingService(drafts, undefined, { usageHost: "api" });
     let thrown = "none";

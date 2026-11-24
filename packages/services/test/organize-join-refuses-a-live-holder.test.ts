@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { accounts, mailboxCredentials, mailboxes } from "@trafficflow/db";
@@ -25,7 +26,7 @@ async function readerUnder(holder: { state: "held" | "stopped" | null; installId
     organizedSince: holder.kind === null ? null : new Date("2026-09-20T08:00:00.000Z"),
   }).where(eq(mailboxes.id, w.mailboxId));
   await w.db.insert(mailboxCredentials).values({
-    mailboxId: w.mailboxId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+    mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), transport: "imap", secretEnc: "sealed", keyVersion: 1,
     meta: { host: "imap.example.test", port: 993, secure: true, user: "u" }, updatedAt: new Date(),
   });
   const organize = (intent: "takeover" | "join") => makeMailboxService({ allowance: async () => {}, installId: SELF })

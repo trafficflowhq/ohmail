@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
 import {
-  ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  ISO, act, answerConsentWith, answerSyncWith, installShellEnv, liveAccountResponse, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 
 /**
@@ -61,7 +62,7 @@ beforeEach(() => {
   bytesAt = {};
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const inner = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) => {
+  const respond = async (input: unknown, init?: unknown): Promise<Response> => {
     const url = String(input);
     if (/\/messages\/[^/?]+\/attachments(?:$|\?)/.test(url)) {
       return json({ items: [parts === "picture" ? PICTURE_ITEM : INVITE_ITEM] });
@@ -83,7 +84,9 @@ beforeEach(() => {
         : new Response(PNG, { status: 200, headers: { "content-type": "image/png" } });
     }
     return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) =>
+    liveAccountResponse(await respond(input, init))) as unknown as typeof globalThis.fetch;
   (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:harness/1";
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
 });
@@ -115,10 +118,9 @@ async function openTheCard(): Promise<HTMLElement> {
   await mountWithTheLetter();
   await goHash("#/reads");
   await tick(1_000);
-  const card = document.querySelector<HTMLElement>(`.view-reads .scast[data-sid="${LETTER}"]`);
-  expect(card, "News does not show the letter").not.toBeNull();
-  await act(async () => { card!.querySelector<HTMLButtonElement>(".sc-x")!.click(); });
-  return card!;
+  const news = screen.getByRole("region", { name: "News stream" });
+  await act(async () => { within(news).getByRole("button", { name: /^Expand/ }).click(); });
+  return within(news).getByRole("article");
 }
 
 /** Virtual milliseconds from the part's bytes to the first frame that shows `drawn`, stepping 10 ms. */

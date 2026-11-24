@@ -7,7 +7,7 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap";
 import { startWorker } from "../src/index.js";
 import { makeDialHostGuard } from "../src/dial-host-guard.js";
-import { imapCfg } from "./_workerenv.js";
+import { imapCfg } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**
@@ -33,7 +33,7 @@ async function seedMailbox(db: Db, accountId: string, port?: number): Promise<{ 
     .values({ accountId, provider: "imap", address: cfg.auth.user }).returning();
   const enc = await KP.encrypt(cfg.auth.pass);
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     // The stored host is the rig's own listener — a loopback address, which is what makes this
     // mailbox the subject: the managed policy will not dial it, the self-host policy will.
     meta: { host: cfg.host, port: port ?? cfg.port, secure: false, user: cfg.auth.user },

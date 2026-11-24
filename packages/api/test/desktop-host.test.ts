@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/services/auth";
 import { sessionLifecycleRoutes } from "../src/routes/session-lifecycle.js";
 import { deviceRoutes } from "../src/routes/devices.js";
-import { pairRedeemRoutes, pairRoutes, pairStateRoutes } from "../src/routes/pair.js";
+import { pairHandoffRoutes, pairRedeemRoutes, pairRoutes, pairStateRoutes } from "../src/routes/pair.js";
 import { coreRoutes } from "../src/routes/core.js";
 import { makeDeps, req, seedSession, FIXED_NOW } from "./helpers.js";
 
@@ -78,6 +78,7 @@ describe("the composition census — exactly the ruled table, and nothing else",
     // between a re-listed copy on this door and the real one on the hosted table.
     const expected = [
       ...localRoutes, ...sessionLifecycleRoutes, ...deviceRoutes, ...pairRedeemRoutes, ...pairStateRoutes,
+      ...pairHandoffRoutes,
     ];
     expect(desktopHostRoutes).toHaveLength(expected.length);
     desktopHostRoutes.forEach((r, i) => expect(r).toBe(expected[i]));
@@ -104,13 +105,16 @@ describe("the composition census — exactly the ruled table, and nothing else",
     for (const k of allowed) expect(keys).toContain(k);
   });
 
-  it("serves the redeem and its state read and NOTHING ELSE of the pairing ceremony — the mint stays on the stdio door", () => {
+  it("serves the redeem, its state read and a phone app's handoff, and NOTHING ELSE of the pairing ceremony — the mint stays on the stdio door", () => {
     // The state read joined the redeem so a pairing desktop asks, by the token's hash, before it
-    // configures anything; it spends nothing and names nothing a caller could mint with.
+    // configures anything; it spends nothing and names nothing a caller could mint with. The handoff mints only a
+    // code bound to a sibling app's challenge, paid with a paired phone's refresh token: no QR code is minted here.
     expect(desktopHostRoutes.filter((r) => r.pattern.startsWith("/pair")).map(key)).toEqual([
       "POST /pair/redeem",
       "POST /pair/state",
+      "POST /pair/handoff",
     ]);
+    expect(desktopHostRoutes).toContain(pairHandoffRoutes[0]);
     expect(desktopHostRoutes).toContain(pairStateRoutes[0]);
     // The SAME route object the self-host table mounts — one redeem implementation, two doors.
     expect(pairRedeemRoutes).toHaveLength(1);

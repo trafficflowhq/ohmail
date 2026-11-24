@@ -13,7 +13,8 @@ import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 /* OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — the doors a person presses. The set is
    named once in core (`unscreened-set.ts`): the Screener's offer counts and moves it here, and the
    organize decision counts the one mailbox and window here before the press, which the organizer
-   then moves after it. Asked of a pile (News, Receipts) with no window, it is that pile's note.
+   then moves after it. Asked of News or Receipts inside the account's screening window,
+   it is that pile's note.
    The number shown and the number moved come from the same walk.
 
    ONE REQUEST DOES BOUNDED WORK, AND THE READS NEVER TAKE THE POOL. Every door here hands the walk
@@ -108,17 +109,17 @@ export interface UnscreenedResult {
 const knowledgeOf = (t: Tx): UnscreenedKnowledge =>
   makeDrizzleRepo(t as unknown as Parameters<typeof makeDrizzleRepo>[0]);
 
-/** The offer's scope inside the account's window, or a pile's with none; `from` is where it goes on. */
+/** The offer or pile scope inside the account's window; `from` is where the walk goes on. */
 async function scopeFor(
   db: Tx, accountId: string, now: Date, pile: UnscreenedPile | undefined, from: UnscreenedCursor | null = null,
 ): Promise<UnscreenedScope> {
-  if (pile !== undefined) return { kind: "pile", pile, from };
-  return { kind: "offer", cutoff: await agreeWindowCutoff(db, accountId, now), from };
+  const cutoff = await agreeWindowCutoff(db, accountId, now);
+  return pile === undefined ? { kind: "offer", cutoff, from } : { kind: "pile", pile, cutoff, from };
 }
 
 /**
  * The whole offer in one read, inside the account's window — or, given a pile, the letters in News
- * or Receipts from senders nobody let in, at any age. `total` is the SHOWN groups' messages and
+ * or Receipts from senders nobody let in inside the same window. `total` is the SHOWN groups' messages and
  * nothing else — every message has one sender, so a list cut at the bound must not report mail
  * behind the cut.
  */

@@ -1,14 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq, inArray, max } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import {
   accounts, applyMessageMove, changeLog, folderState, idempotencyKeys, mailboxes, messages, pressIsAged,
   validateMovePayload, type Tx,
 } from "@trafficflow/db";
-import { schema, closePooledDbs } from "@trafficflow/db/cloud";
+import { closePooledDbs, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -26,12 +25,13 @@ const t0 = new Date("2026-10-01T08:00:00.000Z");
 const svc = new MessageService();
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 const made: string[] = [];
 
 /** The API's reading of a press age: the floor, and whether it is old enough to be compared. */
 const ctx = (accountId: string, now: Date, pressFloor?: Date): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => now,
+  db: dbFor(db, accountId), accountId, userId: null, now: () => now,
   requestId: `stale-${randomUUID().slice(0, 8)}`,
   ...(pressFloor ? { pressFloor, pressAged: pressIsAged(pressFloor, now) } : {}),
 });
@@ -49,7 +49,7 @@ async function world(): Promise<{ accountId: string; mailboxId: string; id: stri
     fromAddress: "billing@example.test", nativeLocator: { folder: "INBOX", ref: "1:1" },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled",
   });
   return { accountId, mailboxId: mb!.id, id: m!.id, dedupKey };
 }
@@ -70,7 +70,8 @@ describe.skipIf(!PG_UP)("a stale press writes nothing, and decisions meet in pre
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 120_000);
   afterEach(async () => {
     for (const accountId of made.splice(0)) {
@@ -81,7 +82,7 @@ describe.skipIf(!PG_UP)("a stale press writes nothing, and decisions meet in pre
       await db.delete(messages).where(eq(messages.accountId, accountId));
     }
   });
-  afterAll(async () => { await closePooledDbs(); await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await closePooledDbs(); await owned?.close(); await client?.end({ timeout: 5 }); });
 
   it("a move refused stale_press leaves folder_state, the change log, the key and the doorbell byte-equal", async () => {
     const w = await world();

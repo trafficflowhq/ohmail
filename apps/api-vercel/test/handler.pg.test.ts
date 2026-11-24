@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql as raw } from "drizzle-orm";
 import {
   API_MAX_DURATION_MS, closePooledDbs, makePooledDb, POOLED_ACQUIRE_TIMEOUT_MS, POOLED_IDLE_TIMEOUT_S,
-  POOLED_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS,
+  POOLED_MAX_CONNECTIONS, POOLED_WRITE_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS,
 } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { accounts, drafts, mailboxes, refreshTokens, scheduledSendFiles, sessions, users } from "@trafficflow/db";
@@ -107,15 +107,14 @@ const at = (path: string, init: RequestInit = {}): Request =>
   new Request(`https://api.ohmail.app${path}`, init);
 
 /**
- * EVERY connection of the pool `buildDeps` hands out, busy for `seconds`. The pool is
- * module-cached per URL, so these are the request's own connections; each holder needs one of
- * its own, so all are dialled first — one holder on a four-connection pool starves nothing.
+ * Fill the request pool for the given kind of route. Dial its connections first so each
+ * holder takes one, including when a session door uses a shorter wait on the same pool.
  */
-async function occupyEveryConnection(seconds: number): Promise<Promise<unknown>[]> {
-  const pooled = makePooledDb(PG_TEST_URL);
-  await Promise.all(Array.from({ length: POOLED_MAX_CONNECTIONS },
-    () => pooled.execute(raw`select pg_sleep(0.05)`)));
-  const holders = Array.from({ length: POOLED_MAX_CONNECTIONS }, () => {
+async function occupyEveryConnection(seconds: number, purpose?: "write"): Promise<Promise<unknown>[]> {
+  const pooled = makePooledDb(PG_TEST_URL, { purpose });
+  const length = purpose === "write" ? POOLED_WRITE_MAX_CONNECTIONS : POOLED_MAX_CONNECTIONS;
+  await Promise.all(Array.from({ length }, () => pooled.execute(raw`select pg_sleep(0.05)`)));
+  const holders = Array.from({ length }, () => {
     const h = Promise.resolve(pooled.execute(raw`select pg_sleep(${raw.raw(String(seconds))})`));
     h.catch(() => { /* awaited by the caller; this only prevents an unhandled rejection */ });
     return h;
@@ -198,7 +197,10 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
     // statement — the pool refuses first, which is exactly the answer being timed. Each answer
     // also waits out the fault record's own budget, whose write meets the same saturated pool:
     // measured 6.0 s at the session doors, so the bound is the ceiling plus that budget.
-    const holders = await occupyEveryConnection(19);
+    const holders = (await Promise.all([
+      occupyEveryConnection(19),
+      occupyEveryConnection(19, "write"),
+    ])).flat();
     const bearer = { authorization: "Bearer 00000000000000000000000000000000000000000000" };
     const [session, refresh, write] = await Promise.all([
       timed(at("/auth/session", { headers: bearer })),
@@ -378,7 +380,7 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
       expect(refused.status).toBe(401);
       expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("refresh_revoked");
       expect(refused.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]).sort())
-        .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+        .toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
       expect(refused.headers.get("clear-site-data"), "the refusal is held for a cache walk").toBeNull();
 
       const purge = await handleApiRequest(at("/auth/refresh", {
@@ -393,17 +395,19 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
      * THE SIGN-OUT DOOR AND THE ERASE, the same: a held 204 outlived the press's deadline and a
      * confirmed sign-out was recorded as unconfirmed; a held erase receipt kept the cookie lock.
      */
-    it("on the web's rewrite, the sign-out door's 401 and 204 and the erase's 200 clear the jar with no cache clear", async () => {
+    it("on the web's rewrite, only explicit sign-out cleanup and account erase clear the browser jar without a cache walk", async () => {
       install(envFor({ TF_COOKIE_HOSTS: "api.ohmail.app,ohmail.app" }));
       const browser = { origin: "https://ohmail.app", "x-forwarded-host": "ohmail.app" };
       const ended = async (res: Response, status: number, what: string): Promise<void> => {
         expect(res.status, `${what}: ${await res.clone().text()}`).toBe(status);
         expect(res.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]).sort(), what)
-          .toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+          .toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
         expect(res.headers.get("clear-site-data"), `${what}: held for a cache walk`).toBeNull();
       };
-      await ended(await handleApiRequest(at("/auth/refresh/logout", { method: "POST", headers: browser })), 401,
-        "an empty jar at the door");
+      const empty = await handleApiRequest(at("/auth/refresh/logout", { method: "POST", headers: browser }));
+      expect(empty.status).toBe(401);
+      expect(empty.headers.getSetCookie()).toEqual([]);
+      expect(empty.headers.get("clear-site-data")).toBeNull();
 
       // One account, two sessions: the first signs out at the door, the second (step-up fresh) erases.
       const db = makePooledDb(PG_TEST_URL);
@@ -412,7 +416,7 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
       const [user] = await db.insert(users).values({
         accountId: acct!.id, email: `so-${randomUUID()}@so.example`, displayName: "SO", emailVerifiedAt: now,
       }).returning();
-      const jarFor = async (): Promise<{ cookie: string; csrf: string }> => {
+      const jarFor = async (): Promise<{ cookie: string; csrf: string; familyId: string }> => {
         const access = generateToken();
         const refresh = generateToken();
         const familyId = randomUUID();
@@ -425,13 +429,23 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
           accountId: acct!.id, userId: user!.id, sessionId: s!.id, familyId, tokenHash: hashToken(refresh),
           expiresAt: new Date(now.getTime() + 7_200_000),
         });
-        return { cookie: `tf_session=${access}; tf_refresh=${refresh}; tf_csrf=${csrfTokenFor(access)}`, csrf: csrfTokenFor(access) };
+        return { cookie: `tf_session=${access}; tf_refresh=${refresh}; tf_csrf=${csrfTokenFor(access)}`, csrf: csrfTokenFor(access), familyId };
       };
       const first = await jarFor();
       const second = await jarFor();
+      const pending = {
+        ...browser,
+        cookie: `${first.cookie}; tf_owner=signed_out_pending; tf_family=${first.familyId}`,
+        "x-csrf-token": first.csrf,
+        "x-ohmail-expected-family": first.familyId,
+      };
+      const revoked = await handleApiRequest(at("/auth/refresh/logout", { method: "POST", headers: pending }));
+      expect(revoked.status).toBe(204);
+      expect(revoked.headers.getSetCookie()).toEqual([]);
+      expect(revoked.headers.get("clear-site-data")).toBeNull();
       await ended(await handleApiRequest(at("/auth/refresh/logout", {
-        method: "POST", headers: { ...browser, cookie: first.cookie, "x-csrf-token": first.csrf },
-      })), 204, "a live family at the door");
+        method: "POST", headers: { ...pending, "x-ohmail-clear-logout": "1" },
+      })), 204, "explicit cleanup of the ended family");
       await ended(await handleApiRequest(at("/account", {
         method: "DELETE", headers: { ...browser, cookie: second.cookie, "x-csrf-token": second.csrf },
       })), 200, "the erase");

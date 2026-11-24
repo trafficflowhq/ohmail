@@ -1,14 +1,15 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, beforeEach } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, desc, isNull, like, sql } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
+import { accountSettings, bindDb, changeLog, devices, pairingTokens, refreshTokens, sessions } from "@trafficflow/db";
 import {
-  authEvents, authThrottle, credentials, loginTokens, oauthAuthCodes, pushSubscriptions, recoveryCodes, totpSecrets,
+  authEvents, authThrottle, credentials, familyOf, loginTokens, oauthAuthCodes, pushSubscriptions, recoveryCodes, totpSecrets,
 } from "@trafficflow/db/cloud";
 import {
-  AuthService, makeTestAuthDeps, ServiceError, resolveSession, generateToken, hashToken,
+  AuthService, dbFor, makeTestAuthDeps, ServiceError, resolveSession, generateToken, hashToken,
   classifyRefreshFailure, throttleKeysFor, mintPairingToken, redeemDevicePair, OAuthCodeReplayed,
   makeSessionLifecycle, DESKTOP_LINK_PURPOSE, MailService, SpyMailer, pushService,
   type AuthDeps, type SessionUser, type SessionEstablished, type ServiceContext, type SessionLifecycle,
@@ -41,8 +42,10 @@ async function harness(depsOver?: AuthDeps): Promise<Harness> {
   const clock = new Clock();
   const deps = depsOver ?? makeTestAuthDeps();
   const svc = new AuthService(deps);
+  // A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
   const ctxFor = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-    db, accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...over,
+    db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+    accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...over,
   });
   return { db, svc, deps, clock, ctxFor };
 }
@@ -128,6 +131,18 @@ async function enrollWebauthn(h: Harness, user: SessionUser): Promise<SoftwareAu
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("AuthService — registration & first factor", () => {
+  it.each([true, false])("sets the account's automatic suggestion watermark at signup when enabled (%s)", async (enabled) => {
+    const deps = makeTestAuthDeps();
+    Object.assign(deps.config, { autoSuggestAtSignup: enabled });
+    const h = await harness(deps);
+    const user = await register(h);
+    const [settings] = await h.db.select().from(accountSettings).where(eq(accountSettings.accountId, user.accountId));
+    expect(settings?.autoSuggestAt ?? null).toEqual(enabled ? h.clock.now() : null);
+    const changes = await h.db.select({ entityId: changeLog.entityId, op: changeLog.op }).from(changeLog)
+      .where(and(eq(changeLog.accountId, user.accountId), eq(changeLog.entityType, "settings")));
+    expect(changes).toEqual(enabled ? [{ entityId: user.accountId, op: "update" }] : []);
+  });
+
   it("registers an invite-gated user, gated on 2FA enrollment", async () => {
     const h = await harness();
     const user = await register(h);
@@ -234,7 +249,7 @@ describe("AuthService — the enrollment-scoped session", () => {
 
   /** Bind a ServiceContext to the session an enrollment token resolves to. */
   async function ctxOf(h: Harness, user: SessionUser, token: string): Promise<ServiceContext & { sessionId: string }> {
-    const resolved = await resolveSession(h.db, token, h.clock.now());
+    const resolved = await resolveSession(bindDb(h.db, { account: null }), token, h.clock.now());
     expect(resolved).not.toBeNull();
     return { ...sessionCtx(h, user, resolved!.sessionId), sessionId: resolved!.sessionId };
   }
@@ -260,14 +275,14 @@ describe("AuthService — the enrollment-scoped session", () => {
     expect(await h.db.select().from(refreshTokens).where(eq(refreshTokens.userId, reg.user.userId))).toHaveLength(0);
 
     // resolveSession surfaces the scope, which is what the API gate reads.
-    const resolved = await resolveSession(h.db, reg.enrollmentToken, h.clock.now());
+    const resolved = await resolveSession(bindDb(h.db, { account: null }), reg.enrollmentToken, h.clock.now());
     expect(resolved?.scope).toBe("enrollment");
     expect(resolved?.sessionId).toBe(row.id);
     expect(resolved?.lastTwofaAt).toBeNull();
 
     // …and it dies on its own after the TTL.
     h.clock.advance(h.deps.config.loginTokenTtlMs + 1);
-    expect(await resolveSession(h.db, reg.enrollmentToken, h.clock.now())).toBeNull();
+    expect(await resolveSession(bindDb(h.db, { account: null }), reg.enrollmentToken, h.clock.now())).toBeNull();
   });
 
   it("never satisfies step-up, so no factor removal and no recovery codes", async () => {
@@ -297,10 +312,10 @@ describe("AuthService — the enrollment-scoped session", () => {
     const after = (await h.db.select().from(sessions).where(eq(sessions.id, ctx.sessionId)))[0]!;
     expect(after.revokedAt).not.toBeNull();
     expect(after.scope).toBe("enrollment");                   // never rewritten in place
-    expect(await resolveSession(h.db, reg.enrollmentToken, h.clock.now())).toBeNull();
+    expect(await resolveSession(bindDb(h.db, { account: null }), reg.enrollmentToken, h.clock.now())).toBeNull();
 
     // The replacement is a genuinely new session in a new refresh family.
-    const fresh = await resolveSession(h.db, activated.session!.tokens!.accessToken, h.clock.now());
+    const fresh = await resolveSession(bindDb(h.db, { account: null }), activated.session!.tokens!.accessToken, h.clock.now());
     expect(fresh!.scope).toBe("full");
     expect(fresh!.sessionId).not.toBe(ctx.sessionId);
     expect(fresh!.lastTwofaAt).not.toBeNull();
@@ -327,7 +342,7 @@ describe("AuthService — the enrollment-scoped session", () => {
     const activated = await h.svc.totpActivate(ctx, {
       code: generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) }),
     });
-    const fullCtx = sessionCtx(h, reg.user, (await resolveSession(h.db, activated.session!.tokens!.accessToken, h.clock.now()))!.sessionId);
+    const fullCtx = sessionCtx(h, reg.user, (await resolveSession(bindDb(h.db, { account: null }), activated.session!.tokens!.accessToken, h.clock.now()))!.sessionId);
 
     const authenticator = new SoftwareAuthenticator();
     const { options } = await h.svc.webauthnRegisterOptions(fullCtx);
@@ -335,7 +350,7 @@ describe("AuthService — the enrollment-scoped session", () => {
     const out = await h.svc.webauthnRegisterVerify(fullCtx, { credential, label: "MacBook" });
     expect(out.twofaEnrolled.webauthn).toBe(true);
     expect(out.session).toBeUndefined();                      // the caller keeps its session
-    expect(await resolveSession(h.db, activated.session!.tokens!.accessToken, h.clock.now())).not.toBeNull();
+    expect(await resolveSession(bindDb(h.db, { account: null }), activated.session!.tokens!.accessToken, h.clock.now())).not.toBeNull();
   });
 
   it("login re-entry mints a FRESH enrollment session and audits it as password-only", async () => {
@@ -352,8 +367,8 @@ describe("AuthService — the enrollment-scoped session", () => {
     // revoked the family it was handed (each enrollment session gets a fresh one),
     // finishing onboarding on either left the other a fully usable password-only
     // credential — see "sibling enrollment sessions" below.
-    expect((await resolveSession(h.db, resume.enrollmentToken, h.clock.now()))?.scope).toBe("enrollment");
-    expect(await resolveSession(h.db, reg.enrollmentToken, h.clock.now())).toBeNull();
+    expect((await resolveSession(bindDb(h.db, { account: null }), resume.enrollmentToken, h.clock.now()))?.scope).toBe("enrollment");
+    expect(await resolveSession(bindDb(h.db, { account: null }), reg.enrollmentToken, h.clock.now())).toBeNull();
     const liveEnrollment = await h.db.select().from(sessions).where(and(
       eq(sessions.userId, reg.user.userId), eq(sessions.scope, "enrollment"), isNull(sessions.revokedAt),
     ));
@@ -378,7 +393,7 @@ describe("AuthService — the enrollment-scoped session", () => {
     const activated = await h.svc.totpActivate(ctx, {
       code: generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) }),
     });
-    const fresh = await resolveSession(h.db, activated.session!.tokens!.accessToken, h.clock.now());
+    const fresh = await resolveSession(bindDb(h.db, { account: null }), activated.session!.tokens!.accessToken, h.clock.now());
     expect((await h.svc.getSession(sessionCtx(h, reg.user, fresh!.sessionId))).scope).toBe("full");
   });
 
@@ -387,7 +402,7 @@ describe("AuthService — the enrollment-scoped session", () => {
     const reg = await h.svc.register(h.ctxFor(), REG);
     const ctx = await ctxOf(h, reg.user, reg.enrollmentToken);
     await h.svc.logout(ctx, {});
-    expect(await resolveSession(h.db, reg.enrollmentToken, h.clock.now())).toBeNull();
+    expect(await resolveSession(bindDb(h.db, { account: null }), reg.enrollmentToken, h.clock.now())).toBeNull();
   });
 
   /**
@@ -403,15 +418,15 @@ describe("AuthService — the enrollment-scoped session", () => {
     const reg = await h.svc.register(h.ctxFor(), REG);
     const ctx = await ctxOf(h, reg.user, reg.enrollmentToken);
     const sibling = await seedEnrollmentSession(h, reg.user);
-    expect((await resolveSession(h.db, sibling, h.clock.now()))?.scope).toBe("enrollment");
+    expect((await resolveSession(bindDb(h.db, { account: null }), sibling, h.clock.now()))?.scope).toBe("enrollment");
 
     const { secret } = await h.svc.totpEnroll(ctx);
     await h.svc.totpActivate(ctx, {
       code: generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) }),
     });
 
-    expect(await resolveSession(h.db, sibling, h.clock.now())).toBeNull();
-    expect(await resolveSession(h.db, reg.enrollmentToken, h.clock.now())).toBeNull();
+    expect(await resolveSession(bindDb(h.db, { account: null }), sibling, h.clock.now())).toBeNull();
+    expect(await resolveSession(bindDb(h.db, { account: null }), reg.enrollmentToken, h.clock.now())).toBeNull();
     const live = await h.db.select().from(sessions).where(and(
       eq(sessions.userId, reg.user.userId), eq(sessions.scope, "enrollment"), isNull(sessions.revokedAt),
     ));
@@ -436,7 +451,7 @@ describe("AuthService — the enrollment-scoped session", () => {
     // the full session came through — hence a live enrollment session and a live full
     // session can never coexist for one user (which is what makes an enrollment
     // session's absence from `GET /devices` harmless).
-    expect(await resolveSession(h.db, stray, h.clock.now())).toBeNull();
+    expect(await resolveSession(bindDb(h.db, { account: null }), stray, h.clock.now())).toBeNull();
   });
 
   it("a FULL session needs recent 2FA to enroll another factor (adding ≙ removing)", async () => {
@@ -630,6 +645,39 @@ describe("AuthService — lockout integrity", () => {
     const k = keys.client(ip);
     expect(slots).toEqual([`desktop_approval:ip:${k}`, `desktop_claim:ip:${k}`, `register:ip:invite:${k}`, `verify:ip:${k}`]);
     expect(slots.join(" "), "a plain digest of an address is reversed by a guess").not.toContain(hashToken(ip));
+  });
+
+  it("every counter key the sign-in doors write is of a registered family, in that family's shape", async () => {
+    // Cloud 0101 split the counters by what a key names, and a key nobody classed has no home:
+    // the families are `counter-keys.ts`. Driven through the doors, so a new counter is met here.
+    const base = makeTestAuthDeps();
+    const mail = new MailService({
+      mailer: new SpyMailer(), throttleKeys: throttleKeysFor(base.keyProvider),
+      config: { appUrl: ORIGIN, siteUrl: ORIGIN, supportEmail: "support@ohmail.app" },
+    });
+    const h = await harness({ ...base, mail });
+    const user = await register(h);
+    await h.svc.resendVerification(sessionCtx(h, user));
+    await expect(h.svc.claimDesktopLink(h.ctxFor(), { code: generateToken() })).rejects.toBeInstanceOf(ServiceError);
+    await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(generateToken()) });
+    await expect(h.svc.login(h.ctxFor(), { email: user.email, password: "not-the-account-password" }))
+      .rejects.toBeInstanceOf(ServiceError);
+    const secret = await enrollTotp(h, user);
+    h.clock.advance(30_000);
+    const ch = await h.svc.login(h.ctxFor(), { email: user.email, password: "account-signin-password" });
+    const good = generateSync({ secret, epoch: Math.floor(h.clock.now().getTime() / 1000) });
+    const wrong = good === "000000" ? "111111" : "000000";
+    await expect(h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code: wrong })).rejects.toBeInstanceOf(ServiceError);
+    await h.svc.totpVerify(h.ctxFor(), { loginToken: ch.loginToken, code: good });
+
+    const keys = (await h.db.select({ key: authThrottle.key }).from(authThrottle)).map((r) => r.key);
+    const families = new Set(keys.map((key) => familyOf(key)?.prefix ?? "nobody classed it"));
+    expect([...families].sort()).toEqual(expect.arrayContaining([
+      "desktop_approval:ip:", "desktop_claim:ip:", "factor-day:", "known:", "pw:", "register:ip:invite:", "user:", "verify:ip:",
+    ]));
+    expect(families.has("nobody classed it")).toBe(false);
+    // The family is named, never the key: it may carry what a person typed.
+    expect(keys.filter((key) => !familyOf(key)!.shape.test(key)).map((key) => familyOf(key)!.prefix)).toEqual([]);
   });
 
   it("the unknown-email decoy hash is computed once per hasher, not once per service", async () => {
@@ -843,7 +891,7 @@ describe("AuthService — replace authenticator", () => {
     const oldSecret = await enrollTotp(h, user);
     h.clock.advance(30_000);
     const est = await signInWith(h, oldSecret);
-    const resolved = await resolveSession(h.db, est.tokens!.accessToken, h.clock.now());
+    const resolved = await resolveSession(bindDb(h.db, { account: null }), est.tokens!.accessToken, h.clock.now());
     const ctx = sessionCtx(h, user, resolved!.sessionId);
     const live = (await totpRow(h, user.userId))!;
     expect(live.activated).toBe(true);
@@ -983,7 +1031,7 @@ describe("AuthService — replace authenticator", () => {
     const { secret: next } = await h.svc.totpEnroll(ctx);
     const before = (await totpRow(h, user.userId))!;
     const token = await seedEnrollmentSession(h, user);
-    const resolved = await resolveSession(h.db, token, h.clock.now());
+    const resolved = await resolveSession(bindDb(h.db, { account: null }), token, h.clock.now());
     expect(resolved!.scope).toBe("enrollment");
     h.clock.advance(30_000);
 
@@ -1139,7 +1187,8 @@ describe("AuthService — sessions & refresh reuse", () => {
     const h: Harness = {
       db, svc, deps: makeTestAuthDeps(), clock,
       ctxFor: (over: Partial<ServiceContext> = {}): ServiceContext => ({
-        db, accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...over,
+        db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+        accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...over,
       }),
     } as Harness;
     const r1 = await establishRefresh(h);
@@ -1484,7 +1533,8 @@ describe("AuthService — sessions & refresh reuse", () => {
     const h: Harness = {
       db, svc: new RecoveryFaults(makeTestAuthDeps()), deps: makeTestAuthDeps(), clock,
       ctxFor: (over: Partial<ServiceContext> = {}): ServiceContext => ({
-        db, accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...over,
+        db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+        accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...over,
       }),
     } as Harness;
 
@@ -1535,7 +1585,8 @@ describe("AuthService — sessions & refresh reuse", () => {
     const h: Harness = {
       db, svc: new RecoveryRefuses(makeTestAuthDeps()), deps: makeTestAuthDeps(), clock,
       ctxFor: (over: Partial<ServiceContext> = {}): ServiceContext => ({
-        db, accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...over,
+        db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+        accountId: "", userId: null, now: clock.now, requestId: "r", ip: "1.2.3.4", ...over,
       }),
     } as Harness;
     const r1 = await establishRefresh(h);
@@ -1585,7 +1636,7 @@ describe("AuthService — sessions & refresh reuse", () => {
     expect(classifyRefreshFailure(new ServiceError("unauthorized", 401, "invalid refresh token")))
       .toBe("session_refused");
     // The three names the door answers with now: keyed on the STATUS, so each still clears the jar.
-    for (const code of ["refresh_missing", "refresh_expired", "refresh_revoked"]) {
+    for (const code of ["refresh_missing", "refresh_expired", "refresh_revoked"] as const) {
       expect(classifyRefreshFailure(new ServiceError(code, 401, "refused")), code).toBe("session_refused");
     }
     expect(classifyRefreshFailure(new ServiceError("session_conflict", 409, "a credential for another account")))
@@ -2652,7 +2703,7 @@ describe("AuthService — a sign-in completing while a revoke runs is signed out
       held.release();
       const [tokens] = await Promise.all([inFlight, revoke]);
 
-      expect(await resolveSession(h.db, tokens.accessToken, h.clock.now()), `the session ${redeem} wrote outlived the door`).toBeNull();
+      expect(await resolveSession(bindDb(h.db, { account: null }), tokens.accessToken, h.clock.now()), `the session ${redeem} wrote outlived the door`).toBeNull();
       await expect(renew(h, tokens)).rejects.toMatchObject({ httpStatus: 401 });
       expect((await liveSessions(h, p.user.userId)).sort()).toEqual(d.keeps(p).sort());
     });
@@ -2664,7 +2715,7 @@ describe("AuthService — a sign-in completing while a revoke runs is signed out
     const tokens = await (await REDEEMS["a desktop link claim"]!(h, p))();
     await h.svc.logout(p.caller, { allDevices: true });
 
-    expect(await resolveSession(h.db, tokens.accessToken, h.clock.now())).toBeNull();
+    expect(await resolveSession(bindDb(h.db, { account: null }), tokens.accessToken, h.clock.now())).toBeNull();
     await expect(renew(h, tokens)).rejects.toMatchObject({ httpStatus: 401 });
   });
 
@@ -2685,14 +2736,14 @@ describe("AuthService — a sign-in completing while a revoke runs is signed out
     const [claimed] = await Promise.all([inFlight, revoke]);
 
     if (!("tokens" in claimed)) throw new Error("the approval is still pending");
-    expect(await resolveSession(h.db, claimed.tokens.accessToken, h.clock.now())).toBeNull();
+    expect(await resolveSession(bindDb(h.db, { account: null }), claimed.tokens.accessToken, h.clock.now())).toBeNull();
     expect(await liveSessions(h, p.user.userId)).toEqual([]);
   });
 });
 
 /** The session row a claimed desktop's access token resolves to. */
 const claimedRow = async (h: Harness, accessToken: string) => {
-  const s = await resolveSession(h.db, accessToken, h.clock.now());
+  const s = await resolveSession(bindDb(h.db, { account: null }), accessToken, h.clock.now());
   return (await h.db.select().from(sessions).where(eq(sessions.id, s!.sessionId)))[0]!;
 };
 
@@ -2738,7 +2789,7 @@ describe("AuthService — a desktop link inherits the factor time", () => {
     const user = await register(h);
     const code = generateToken();
     await h.db.insert(loginTokens).values({
-      userId: user.userId, tokenHash: hashToken(code), methods: [], purpose: DESKTOP_LINK_PURPOSE,
+      userId: user.userId, accountId: accountOfUser(user.userId), tokenHash: hashToken(code), methods: [], purpose: DESKTOP_LINK_PURPOSE,
       expiresAt: new Date(h.clock.now().getTime() + 120_000),
     });
 
@@ -2818,7 +2869,7 @@ describe("AuthService — a desktop approval inherits the factor time", () => {
     const kind = "desktop-linux" as const;
     const { approvalId } = await h.svc.issueDesktopApproval(h.ctxFor(), { challenge: hashToken(verifier), kind });
     // Confirmed by hand, the way a row confirmed before the factor time was carried looks.
-    await h.db.update(loginTokens).set({ userId: user.userId, approvedAt: h.clock.now() })
+    await h.db.update(loginTokens).set({ userId: user.userId, accountId: user.accountId, approvedAt: h.clock.now() })
       .where(eq(loginTokens.id, approvalId));
 
     const claimed = await h.svc.claimDesktopApproval(h.ctxFor(), { approvalId, verifier, kind });
@@ -2900,7 +2951,7 @@ describe("AuthService — recovery codes", () => {
     // `batch_id`, unused, owned by this user — i.e. accepted by the old user+hash+unused match.
     const surplus = "1111-2222-3333";
     await h.db.insert(recoveryCodes).values({
-      userId: user.userId, codeHash: hashToken(surplus), batchId: randomUUID(),
+      userId: user.userId, accountId: accountOfUser(user.userId), codeHash: hashToken(surplus), batchId: randomUUID(),
       createdAt: new Date(h.clock.now().getTime() - 60_000),
     });
 
@@ -3027,7 +3078,7 @@ describe("AuthService — OAuth2 Authorization-Code + PKCE", () => {
     // A request on file that names no session, planted.
     const request = generateToken();
     await h.db.insert(loginTokens).values({
-      userId: user.userId, tokenHash: hashToken(request), methods: [], purpose: "oauth_authorize",
+      userId: user.userId, accountId: accountOfUser(user.userId), tokenHash: hashToken(request), methods: [], purpose: "oauth_authorize",
       oauthMeta: {
         clientId: "tf-macos", redirectUri: "trafficflow://auth", codeChallenge: s256(verifier),
         scope: "full", state: "s", sessionId: null, twofaAt: null,

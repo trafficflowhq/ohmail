@@ -14,9 +14,25 @@
     "pdfjs-dist": "6.2.108",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "@ohmail/app": "*",
+    "@ohmail/app-logic": "*",
     "@ohmail/client-engine": "*",
+    "@ohmail/letter-body": "*",
+    "@ohmail/testing": "*",
     "@ohmail/tokens": "*",
     "@ohmail/ui": "*",
+    "@ohmail/wire": "*",
     "@trafficflow/core": "*"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "10.4.1",
+    "@tiptap/core": "3.31.3",
+    "@trafficflow/api": "*",
+    "@trafficflow/db": "*",
+    "@trafficflow/services": "*",
+    "dom-accessibility-api": "0.6.3",
+    "drizzle-orm": "0.36.4",
+    "@formatjs/icu-messageformat-parser": "2.11.4",
+    "nodemailer": "8.0.11"
   }
 }

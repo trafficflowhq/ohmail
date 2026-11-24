@@ -1,23 +1,15 @@
+import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
+import { requireDraftQuoteEcho } from "./draft-quote-echo.js";
+import type { DraftBodyRead } from "./adapter.js";
 import {
   CursorExpiredError,
   FOLDER_OF_VIEW,
   isWithheldMarker,
   MutationRejectedError,
+  SyncAbortedError,
   UnsupportedMutationError,
-  type EngineMessage,
-  type EngineMutation,
-  type FolderEntity,
-  type MessageBodyBatchWire,
-  type MessageBodyWire,
-  type OhmailView,
-  type RuleDTO,
-  type WaitingRequestWire,
   type SyncChange,
   type SyncResponse,
-  type SyncSnapshotPage,
-  type TagDTO,
-  type UnsubscribeRefusal,
-  type UnsubscribeResult,
 } from "../types.js";
 import type {
   ListOlderWire,
@@ -28,12 +20,10 @@ import type {
   ServerSearchFacets,
   ServerSearchOpts,
   ServerSearchWire,
-  TrashRowWire,
 } from "../engine.js";
 import type {
-  AttachmentWire, AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
-  UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
-  MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams, WithdrawSendAnswer, ScheduleFilesAnswer,
+  CreatedDraftRow, EngineAdapter,
+  ReadIntent, SyncParams, WithdrawSendAnswer, ScheduleFilesAnswer,
   FetchingStanding, PullRing,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
@@ -45,8 +35,62 @@ import { sessionEndedResponse } from "../session-gate.js";
 import { sendFingerprint } from "../send-fingerprint.js";
 import { responseBlob } from "../bytes-blob.js";
 import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
-import { ORGANIZER_REQUESTS_PATH, waitingRequestsOf } from "../organizer-requests-wire.js";
+import { waitingRequestsOf } from "../organizer-requests-wire.js";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
+import type {
+  AddressSearchResult,
+  AnswerOf,
+  AttachmentWire,
+  AutoFiledItemWire,
+  AutoFiledUndoWire,
+  AutoFiledWire,
+  CalendarConnectBody,
+  CalendarConnectionRecord,
+  CalendarEventAct,
+  CalendarProposalAct,
+  CalendarPatchBody,
+  CalendarRecord,
+  CalendarSettingsWire,
+  CalendarSignInBody,
+  CalendarWay,
+  CalendarWriteAnswer,
+  EngineMessage,
+  EngineMutation,
+  HeldReleaseGroupWire,
+  HeldReleaseResultWire,
+  HeldReleaseSenderWire,
+  HeldReleaseWire,
+  MessageBodyBatchWire,
+  MessageBodyWire,
+  MessageDTO,
+  MutationAnswer,
+  MutationOutcome,
+  MutationQueued,
+  OhmailView,
+  PlaceSuggestAnswer,
+  PlaceSuggestBody,
+  RequestOf,
+  RouteName,
+  RuleEntity as RuleDTO,
+  ScreenerWaitingItemWire,
+  ScreenerWaitingWire,
+  SearchPlaceCount,
+  SearchResult,
+  StayedWire,
+  SyncSnapshotPage,
+  UnscreenedGroupWire,
+  UnscreenedPileWire,
+  UnscreenedResultWire,
+  UnscreenedWire,
+  UnsubscribeRefusal,
+  UnsubscribeResult,
+  Untrusted,
+  WaitingRequestWire,
+} from "@ohmail/wire";
+import { routePath, type CallOf, type WireCall } from "./route-path.js";
+import { calendarWaysOf, type CalendarSetupTransport } from "../calendar-connect.js";
+import { calendarWindowOf } from "../calendar-window.js";
+import type { SnapshotParams } from "../engine/server-wire.js";
 
 /**
  * The pull answer's `fetching`, as the wire gave it: `null` stays null (this server does not say),
@@ -98,6 +142,8 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export interface HttpAdapterOptions {
   /** e.g. "" (same origin), "/api/v1", or "http://localhost" in tests. */
   baseUrl?: string;
+  /** Only the web host offers writes to account-wide calendar settings. */
+  saveCalendarSettings?: CalendarSetupTransport["saveCalendarSettings"];
   /** Injectable fetch — tests bridge it straight into `app.handle`; the future
    *  localhost engine points it at 127.0.0.1. Defaults to global fetch. */
   fetch?: FetchLike;
@@ -370,25 +416,19 @@ const SEND_WIRE_STATUSES = new Set(["sent", "unverified", "queued", "in_flight",
 export const EDIT_OWN_REFUSALS = new Set(["400 validation_failed", "413 draft_too_large", "413 payload_too_large"]);
 
 /**
- * One of `body`/`html` on the wire, never both. `html: null` (kept by `Engine.enrich` only for a row
+ * Edited quotes include both fields so servers that cannot keep the edit reject the write.
+ * Otherwise one of `body`/`html` goes on the wire. `html: null` (kept by `Engine.enrich` only for a row
  * the mirror holds as formatted) rides beside `body` and makes that row plain.
  */
-function bodyOnWire(m: { body: string; html?: string | null }): { html: string } | { body: string; html?: null } {
-  if (typeof m.html === "string" && m.html !== "") return { html: m.html };
+function bodyOnWire(m: { body: string; html?: string | null }): { html: string; body?: string } | { body: string; html?: null } {
+  if (typeof m.html === "string" && m.html !== "") {
+    return hasEditedQuotedHistory(m.html) ? { html: m.html, body: m.body } : { html: m.html };
+  }
   return m.html === null ? { body: m.body, html: null } : { body: m.body };
 }
 
-/** `POST /drafts/:id/send` answers this shape at 200 AND at 409 — never the error envelope. */
-interface SendWire {
-  status?: "sent" | "unverified" | "failed" | "in_flight" | "queued";
-  providerMessageId?: string | null;
-  message?: string;
-  /** See {@link MutationOutcome.firstSend} — shape-checked here, never trusted by its presence. */
-  firstSend?: { status?: unknown; at?: unknown };
-  sentCopy?: unknown;
-  sentCopyReason?: unknown;
-  sentCopyUntil?: unknown;
-}
+/** `POST /drafts/:id/send` answers this shape at 200 AND at 409 — never the error envelope. A server may state fewer fields. */
+type SendWire = Partial<AnswerOf<"POST /drafts/:id/send">>;
 
 const SENT_COPY_STATES: ReadonlySet<string> = new Set(["filed", "pending", "missing"]);
 /** The reasons a server names for a copy not filed; any other value is dropped. */
@@ -553,7 +593,10 @@ export class HttpAdapter implements EngineAdapter {
    */
   private readonly createAttempted = new Set<string>();
 
+  private readonly saveCalendarSettings: CalendarSetupTransport["saveCalendarSettings"];
+
   constructor(opts: HttpAdapterOptions = {}) {
+    this.saveCalendarSettings = opts.saveCalendarSettings;
     this.baseUrl = (opts.baseUrl ?? "").replace(/\/$/, "");
     const injected = opts.fetch;
     const global = globalThis.fetch as FetchLike | undefined;
@@ -604,11 +647,9 @@ export class HttpAdapter implements EngineAdapter {
   private async askScheduleFiles(): Promise<ScheduleFilesAnswer | null> {
     try {
       return await this.withDeadline(FORWARD_PARTS_HELLO_MS, async (signal) => {
-        const res = await this.request("GET", "/hello", signal ? { signal } : {});
+        const res = await this.call("GET /hello", signal ? { signal } : {});
         if (!res.ok) return null;
-        const body = await res.json().catch(() => null) as {
-          product?: unknown; features?: { scheduleFiles?: unknown; scheduleFilesDays?: unknown };
-        } | null;
+        const body = await this.readUntrusted<"GET /hello">(res).catch(() => null);
         if (body?.product !== "ohmail") return null;
         const days = body.features?.scheduleFilesDays;
         const horizon = typeof days === "number" && Number.isInteger(days) && days > 0 ? days : null;
@@ -632,9 +673,9 @@ export class HttpAdapter implements EngineAdapter {
   private async askForwardParts(): Promise<boolean | null> {
     try {
       return await this.withDeadline(FORWARD_PARTS_HELLO_MS, async (signal) => {
-        const res = await this.request("GET", "/hello", signal ? { signal } : {});
+        const res = await this.call("GET /hello", signal ? { signal } : {});
         if (!res.ok) return null;
-        const body = await res.json().catch(() => null) as { product?: unknown; features?: { forwardParts?: unknown } } | null;
+        const body = await this.readUntrusted<"GET /hello">(res).catch(() => null);
         return body?.product === "ohmail" ? body.features?.forwardParts === true : null;
       });
     } catch {
@@ -707,12 +748,37 @@ export class HttpAdapter implements EngineAdapter {
         ...(init.urgent === true ? { priority: "high" as const } : {}),
       });
     } catch (err) {
+      if (err instanceof SyncAbortedError) throw err;
       // Network failure — safe to retry with the SAME Idempotency-Key (§1.6). An abort raised by
       // `withDeadline` (or by the engine's ceiling on a write) also lands here, as an `AbortError`;
       // it becomes the LOSING branch of that race and is swallowed there, so this classification
       // never reaches a surface.
       throw new MutationRejectedError(`network failure: ${String(err)}`, { code: "network", retryable: true });
     }
+  }
+
+  /**
+   * ONE CALL, BY THE WIRE'S NAME FOR IT. Every request this client makes goes through here: the
+   * name picks the route's entry in `@ohmail/wire`, which says what the path needs, what the body
+   * may carry and what comes back, so a field the server renamed does not compile here, and one
+   * renamed here does not compile there, in a spread member either ({@link WireCall}). `query`
+   * rides after a `?` exactly as given, an empty one included; everything else is
+   * {@link HttpAdapter.request}'s own, unchanged.
+   */
+  private readonly call: WireCall = <R extends RouteName>(name: R, o: CallOf<R>): Promise<Response> => {
+    const { params, query, ...init } = o as CallOf<R> & { params?: Readonly<Record<string, unknown>>; query?: URLSearchParams | string };
+    const { method, path } = routePath(name, params ?? {});
+    return this.request(method, query === undefined ? path : `${path}?${String(query)}`, init);
+  };
+
+  /** The 2xx body as the wire says this route answers it. Where the code trusts the server's shape. */
+  private async readAnswer<R extends RouteName>(res: Response): Promise<AnswerOf<R>> {
+    return (await res.json()) as AnswerOf<R>;
+  }
+
+  /** The same body with the same field names, each still to be checked. Where the code narrows every field. */
+  private async readUntrusted<R extends RouteName>(res: Response): Promise<Untrusted<AnswerOf<R>>> {
+    return (await res.json()) as Untrusted<AnswerOf<R>>;
   }
 
   /**
@@ -806,11 +872,11 @@ export class HttpAdapter implements EngineAdapter {
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.types && params.types.length > 0) q.set("types", params.types.join(","));
     return this.underSyncDeadlines(async (signal, answered) => {
-      const res = await this.request("GET", `/sync?${q.toString()}`, signal ? { signal } : {});
+      const res = await this.call("GET /sync", { query: q, ...(signal ? { signal } : {}) });
       answered();
       if (res.status === 410) throw new CursorExpiredError();
       if (!res.ok) throw await this.rejectionOf(res);
-      return (await res.json()) as SyncResponse;
+      return await this.readAnswer<"GET /sync">(res);
     });
   }
 
@@ -853,6 +919,50 @@ export class HttpAdapter implements EngineAdapter {
     }
   }
 
+  calendarSetupTransport(): CalendarSetupTransport {
+    return {
+      calendarWays: this.calendarWays.bind(this),
+      calendarConnections: this.calendarConnections.bind(this),
+      icloudMailboxes: async () => {
+        const answer = await this.call("GET /calendar/connect", {});
+        if (!answer.ok) return [];
+        const rows = (await this.readUntrusted<"GET /calendar/connect">(answer)).icloudMailboxes;
+        return Array.isArray(rows) ? rows.filter((row) => typeof row?.id === "string" && typeof row?.address === "string") : [];
+      },
+      linkedMailboxIds: async () => {
+        const answer = await this.call("GET /calendar/connect", {});
+        if (!answer.ok) throw await this.rejectionOf(answer, "read");
+        const ids = (await this.readUntrusted<"GET /calendar/connect">(answer)).linkedMailboxIds;
+        return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+      },
+      connectCalendar: this.connectCalendar.bind(this),
+      removeCalendarConnection: this.removeCalendarConnection.bind(this),
+      checkCalendarConnection: this.checkCalendarConnection.bind(this),
+      signInCalendarAgain: this.signInCalendarAgain.bind(this),
+      setCalendar: this.setCalendar.bind(this),
+      ...(this.saveCalendarSettings ? { saveCalendarSettings: this.saveCalendarSettings } : {}),
+    };
+  }
+
+  async setSuggestionDismissed(id: string, dismissed: boolean): Promise<void> {
+    const res = await this.call("PATCH /calendar/suggestions/:id", { params: { id }, body: { dismissed } });
+    if (!res.ok) throw await this.rejectionOf(res);
+    this.noteSeq(res);
+  }
+
+  async calendarSettings(): Promise<CalendarSettingsWire> {
+    const res = await this.call("GET /calendar/settings", {});
+    if (!res.ok) throw await this.rejectionOf(res);
+    return this.readAnswer<"GET /calendar/settings">(res);
+  }
+
+  async patchCalendarSettings(body: RequestOf<"PATCH /calendar/settings">): Promise<CalendarSettingsWire> {
+    const res = await this.call("PATCH /calendar/settings", { body });
+    if (!res.ok) throw await this.rejectionOf(res);
+    this.noteSeq(res);
+    return this.readAnswer<"PATCH /calendar/settings">(res);
+  }
+
   /**
    * `POST /sync/pull` — the worker doorbell. See {@link EngineAdapter.requestPull}. UNDER A DEADLINE, like the body
    * and attachment reads and for a sharper reason: the ring is the FIRST await of every pull gesture, so a stalled
@@ -863,16 +973,120 @@ export class HttpAdapter implements EngineAdapter {
    * instant at the database's clock, which is the client's honest-settle baseline. `requestedAt` is the newest of
    * them, kept for logging; a missing field degrades to "nothing to wait for".
    */
+  /**
+   * THE CALENDAR'S THREE WRITE ROUTES, for the calendar's own queue on a device (`calendar-writes.ts`,
+   * its `CalendarWriteTransport`). Each sends the press's key on every attempt; our server makes one
+   * row of one key. A refusal throws as every write's does.
+   */
+  async writeCalendar(act: CalendarEventAct, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    // The call's check of a body's names reads one member of a union at a time; the act is the wire's own type whole.
+    const body = act as Extract<CalendarEventAct, { kind: "calendar_event_create" }>;
+    const res = await this.call("POST /calendar/writes", { body, idempotencyKey: key, ...(signal ? { signal } : {}) });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { answer: await this.readAnswer<"POST /calendar/writes">(res), seq: this.noteSeq(res) };
+  }
+
+  async mailProposal(act: CalendarProposalAct, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    const body = act as Extract<CalendarProposalAct, { kind: "calendar_event_propose" }>;
+    const res = await this.call("POST /calendar/proposals", { body, idempotencyKey: key, ...(signal ? { signal } : {}) });
+    if (!res.ok) throw await this.rejectionOf(res);
+    const { status } = await this.readAnswer<"POST /calendar/proposals">(res);
+    if (status === "in_flight") throw new MutationRejectedError("The proposal is being sent.", { retryable: true });
+    if (status !== "sent" && status !== "queued") throw new MutationRejectedError("The proposal could not be confirmed.");
+    return { answer: { write: null, events: [] }, seq: this.noteSeq(res) };
+  }
+
+  async retryCalendarWrite(writeId: string, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    const res = await this.call("POST /calendar/writes/:id/retry", { params: { id: writeId }, idempotencyKey: key, ...(signal ? { signal } : {}) });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { answer: await this.readAnswer<"POST /calendar/writes/:id/retry">(res), seq: this.noteSeq(res) };
+  }
+
+  async dismissCalendarWrite(writeId: string, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    const res = await this.call("DELETE /calendar/writes/:id", { params: { id: writeId }, idempotencyKey: key, ...(signal ? { signal } : {}) });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { answer: await this.readAnswer<"DELETE /calendar/writes/:id">(res), seq: this.noteSeq(res) };
+  }
+
+  /**
+   * PLACE SUGGESTIONS for the place field (`place-suggest.ts`, its `PlaceSuggestTransport`): what the
+   * person typed travels in the body, never in the address. Asked once, under the caller's signal; a
+   * refusal throws as every call's does.
+   */
+  async suggestPlaces(question: PlaceSuggestBody, signal: AbortSignal | undefined): Promise<PlaceSuggestAnswer> {
+    const res = await this.call("POST /calendar/places/suggest", { body: question, ...(signal ? { signal } : {}) });
+    if (!res.ok) throw await this.rejectionOf(res, "read");
+    return this.readAnswer<"POST /calendar/places/suggest">(res);
+  }
+
+  /**
+   * THE CALENDAR'S CONNECT DOOR (`calendar-connect.ts`, its `CalendarConnectTransport`). Sent as it
+   * is asked, once: none of these is queued or kept, because what a person types to connect a
+   * calendar is never a stored record. Asked of our server's own door, directly or through a relay
+   * that forwards each as it was sent; a server that keeps no calendar answers 404, and
+   * `calendarWays` then names no way.
+   */
+  async calendarWays(): Promise<CalendarWay[]> {
+    try {
+      const res = await this.call("GET /calendar/connect", {});
+      if (!res.ok) return [];
+      return calendarWaysOf((await this.readUntrusted<"GET /calendar/connect">(res)).ways);
+    } catch {
+      // No answer is no way: the setup then draws none, and holds no list of its own.
+      return [];
+    }
+  }
+
+  async calendarConnections(): Promise<CalendarConnectionRecord[]> {
+    const res = await this.call("GET /calendar/connect", {});
+    if (!res.ok) throw await this.rejectionOf(res, "read");
+    const held = (await this.readUntrusted<"GET /calendar/connect">(res)).connections;
+    // An answer that names no list is no word about what the account holds (a server whose door is older than this read
+    // answers its ways alone): a read that failed, never "nothing is connected".
+    if (!Array.isArray(held)) throw await this.rejectionOf(res, "read");
+    return held as CalendarConnectionRecord[];
+  }
+
+  async connectCalendar(ask: CalendarConnectBody, key: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    // The call's check of a body's names reads one member of a union at a time; the ask is the wire's own type whole.
+    const body = ask as Extract<CalendarConnectBody, { way: "caldav" }>;
+    const res = await this.call("POST /calendar/connections", { body, idempotencyKey: key });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { connection: await this.readAnswer<"POST /calendar/connections">(res), seq: this.noteSeq(res) };
+  }
+
+  async removeCalendarConnection(connectionId: string): Promise<{ removed: boolean; seq: number | null }> {
+    const res = await this.call("DELETE /calendar/connections/:id", { params: { id: connectionId } });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { removed: (await this.readAnswer<"DELETE /calendar/connections/:id">(res)).removed === true, seq: this.noteSeq(res) };
+  }
+
+  async checkCalendarConnection(connectionId: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    const res = await this.call("POST /calendar/connections/:id/check", { params: { id: connectionId } });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { connection: await this.readAnswer<"POST /calendar/connections/:id/check">(res), seq: this.noteSeq(res) };
+  }
+
+  async signInCalendarAgain(connectionId: string, signIn: CalendarSignInBody): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    // One member of the union at a time, as above.
+    const body = signIn as Extract<CalendarSignInBody, { user: string }>;
+    const res = await this.call("POST /calendar/connections/:id/sign-in", { params: { id: connectionId }, body });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { connection: await this.readAnswer<"POST /calendar/connections/:id/sign-in">(res), seq: this.noteSeq(res) };
+  }
+
+  async setCalendar(calendarId: string, patch: CalendarPatchBody): Promise<{ calendar: CalendarRecord; seq: number | null }> {
+    const res = await this.call("PATCH /calendar/calendars/:id", { params: { id: calendarId }, body: patch });
+    if (!res.ok) throw await this.rejectionOf(res);
+    return { calendar: await this.readAnswer<"PATCH /calendar/calendars/:id">(res), seq: this.noteSeq(res) };
+  }
+
   async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<PullRing> {
-    const body = opts?.mailboxIds && opts.mailboxIds.length > 0 ? { mailboxIds: [...opts.mailboxIds] } : {};
+    const body: RequestOf<"POST /sync/pull"> = opts?.mailboxIds && opts.mailboxIds.length > 0 ? { mailboxIds: [...opts.mailboxIds] } : {};
     return this.withDeadline(PULL_RING_TIMEOUT_MS, async (signal) => {
-      const res = await this.request("POST", "/sync/pull", { body, ...(signal ? { signal } : {}) });
+      const res = await this.call("POST /sync/pull", { body, ...(signal ? { signal } : {}) });
       if (!res.ok) throw await this.rejectionOf(res);
-      const wire = (await res.json()) as Partial<{
-        requested: number; requestedAt: string;
-        mailboxes: Array<{ id?: string; requestedAt?: string }>;
-        fetching: unknown;
-      }>;
+      const wire: Partial<AnswerOf<"POST /sync/pull">> = await this.readAnswer<"POST /sync/pull">(res);
       const mailboxes = (Array.isArray(wire.mailboxes) ? wire.mailboxes : [])
         .filter((m): m is { id: string; requestedAt: string } =>
           typeof m?.id === "string" && typeof m?.requestedAt === "string");
@@ -900,19 +1114,23 @@ export class HttpAdapter implements EngineAdapter {
   /**
    * No 410 branch: a snapshot has no client-supplied cursor to expire.
    */
-  async snapshot(params: { cursor?: string; limit?: number; phase?: "tail" } = {}): Promise<SyncSnapshotPage> {
+  async snapshot(params: SnapshotParams = {}): Promise<SyncSnapshotPage> {
     const q = new URLSearchParams();
     if (params.cursor) q.set("cursor", params.cursor);
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     // `phase=tail` asks for the labeled tail alone. A server too old to read it answers the
     // ordinary walk, which carries the same rows a few pages later and still converges.
     if (params.phase) q.set("phase", params.phase);
+    // The kinds named, which the calendar's phase is served to; and the span it loads, if any.
+    if (params.types && params.types.length > 0) q.set("types", params.types.join(","));
+    if (params.from !== undefined) q.set("from", params.from);
+    if (params.to !== undefined) q.set("to", params.to);
     const qs = q.toString();
     const wire = await this.underSyncDeadlines(async (signal, answered) => {
-      const res = await this.request("GET", qs ? `/sync/snapshot?${qs}` : "/sync/snapshot", signal ? { signal } : {});
+      const res = await this.call("GET /sync/snapshot", { ...(qs ? { query: qs } : {}), ...(signal ? { signal } : {}) });
       answered();
       if (!res.ok) throw await this.rejectionOf(res);
-      return (await res.json()) as Partial<SyncSnapshotPage>;
+      return await this.readAnswer<"GET /sync/snapshot">(res);
     });
     const asOfSeq = Number(wire.asOfSeq);
     if (!Number.isFinite(asOfSeq) || asOfSeq < 0) {
@@ -936,6 +1154,8 @@ export class HttpAdapter implements EngineAdapter {
       // cursor it commits, and a local store past its first run refuses a cursor naming none —
       // dropping it here was a 410 on every drain for any install whose store ever ended uncleanly.
       ...(typeof wire.storeGeneration === "number" ? { storeGeneration: wire.storeGeneration } : {}),
+      // The calendar's span, only where the server serves this account its calendar; whole or absent.
+      ...(calendarWindowOf(wire.calendarWindow) ?? {}),
     };
   }
 
@@ -959,17 +1179,17 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   private async readBody(messageId: string, signal: AbortSignal | undefined, urgent: boolean): Promise<MessageBodyWire> {
-    const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/body`, { signal, urgent });
+    const res = await this.call("GET /messages/:id/body", { params: { id: messageId }, signal, urgent });
     if (!res.ok) throw await this.rejectionOf(res, "read");
-    return narrowBody((await res.json()) as Partial<MessageBodyWire>);
+    return narrowBody(await this.readAnswer<"GET /messages/:id/body">(res));
   }
 
   /** `GET /drafts/:id`'s `status`, or `null` when the server did not answer it readably. */
   private async draftStatusOf(draftId: string): Promise<string | null> {
     try {
-      const res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}`);
+      const res = await this.call("GET /drafts/:id", { params: { id: draftId } });
       if (!res.ok) return null;
-      const wire = (await res.json()) as { status?: unknown };
+      const wire = await this.readUntrusted<"GET /drafts/:id">(res);
       return typeof wire.status === "string" ? wire.status : null;
     } catch { return null; }
   }
@@ -982,12 +1202,12 @@ export class HttpAdapter implements EngineAdapter {
    * throws through `rejectionOf` so "the server said no" cannot be mistaken for "the draft is
    * empty". A body the server omits is `null` — the one answer that means "no text of record".
    */
-  async fetchDraftBody(draftId: string): Promise<string | null> {
+  async fetchDraftBody(draftId: string): Promise<DraftBodyRead | null> {
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
-      const res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}`, { signal });
+      const res = await this.call("GET /drafts/:id", { params: { id: draftId }, signal });
       if (!res.ok) throw await this.rejectionOf(res, "read");
-      const wire = (await res.json()) as { body?: unknown };
-      return typeof wire.body === "string" ? wire.body : null;
+      const wire = await this.readUntrusted<"GET /drafts/:id">(res);
+      return typeof wire.body === "string" ? { body: wire.body, html: typeof wire.html === "string" ? wire.html : null } : null;
     });
   }
 
@@ -1011,9 +1231,9 @@ export class HttpAdapter implements EngineAdapter {
   async fetchBodies(messageIds: string[], opts: ReadIntent = {}): Promise<MessageBodyBatchWire[]> {
     const ids = messageIds.map((id) => encodeURIComponent(id)).join(",");
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
-      const res = await this.request("GET", `/messages/bodies?ids=${ids}`, { signal, urgent: opts.urgent === true });
+      const res = await this.call("GET /messages/bodies", { query: `ids=${ids}`, signal, urgent: opts.urgent === true });
       if (!res.ok) throw await this.rejectionOf(res, "read");
-      const page = (await res.json()) as { items?: unknown };
+      const page = await this.readUntrusted<"GET /messages/bodies">(res);
       if (!Array.isArray(page.items)) return [];
       const out: MessageBodyBatchWire[] = [];
       for (const raw of page.items) {
@@ -1037,9 +1257,9 @@ export class HttpAdapter implements EngineAdapter {
    * own sentence ("this sender only offers unsubscribe by email…") rather than as `HTTP 409`.
    */
   async unsubscribe(messageId: string): Promise<UnsubscribeResult> {
-    const res = await this.request("POST", `/messages/${encodeURIComponent(messageId)}/unsubscribe`, { body: {} });
+    const res = await this.call("POST /messages/:id/unsubscribe", { params: { id: messageId }, body: {} });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as Partial<UnsubscribeResult>;
+    const wire = await this.readAnswer<"POST /messages/:id/unsubscribe">(res);
     const REFUSALS: readonly UnsubscribeRefusal[] = [
       "not_actionable", "author_failed_authentication", "no_header", "mailto_only",
       "not_one_click", "already_recorded", "previous_attempt_unsettled",
@@ -1085,13 +1305,19 @@ export class HttpAdapter implements EngineAdapter {
     if (opts.filters?.folder) q.set("folder", opts.filters.folder);
     if (opts.filters?.sender) q.set("sender", opts.filters.sender);
     if (opts.filters?.hasAttachments !== undefined) q.set("hasAttachments", String(opts.filters.hasAttachments));
-    const res = await this.request("GET", `/search?${q.toString()}`,
-      opts.lane ? { urgent: true, searchLane: `${opts.lane.id}.${opts.lane.generation}` } : { urgent: true });
+    /* The newer five, each only when set: with none, an older server is asked what it always was. */
+    if (opts.filters?.to) q.set("to", opts.filters.to);
+    if (opts.filters?.party) q.set("party", opts.filters.party);
+    if (opts.filters?.unread !== undefined) q.set("unread", String(opts.filters.unread));
+    if (opts.filters?.dateFrom) q.set("dateFrom", opts.filters.dateFrom);
+    if (opts.filters?.dateTo) q.set("dateTo", opts.filters.dateTo);
+    const res = await this.call("GET /search",
+      { query: q, ...(opts.lane ? { urgent: true, searchLane: `${opts.lane.id}.${opts.lane.generation}` } : { urgent: true }) });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as {
-      items?: EngineMessage[]; total?: number; tier?: string; totalExact?: unknown; totalEstimate?: unknown; ms?: unknown;
-      nextCursor?: unknown; bounded?: unknown; indexed?: unknown; importing?: unknown; facets?: unknown; answeredFrom?: unknown;
-    };
+    // The text arm of the route's two answers. `totalEstimate` is in no server's answer in this
+    // tree; the read stays as it was.
+    const wire = (await this.readAnswer<"GET /search">(res)) as
+      Partial<SearchResult> & { answeredFrom?: unknown; totalEstimate?: unknown };
     // `facets` is read as the store keys it (folder paths, sender addresses); the view labels it.
     return {
       items: Array.isArray(wire.items) ? wire.items : [],
@@ -1113,6 +1339,16 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
+  async searchPlaces(): Promise<readonly SearchPlaceCount[] | null> {
+    const res = await this.call("GET /search", { query: new URLSearchParams({ places: "1" }), urgent: true });
+    if (!res.ok) return null;
+    const wire = await this.readAnswer<"GET /search">(res);
+    if (wire.answeredFrom === "mirror" || !("places" in wire) || !Array.isArray(wire.places)) return null;
+    return wire.places.every((row) =>
+      row && typeof row.folder === "string" && row.folder !== "" && Number.isSafeInteger(row.count) && row.count >= 0,
+    ) ? wire.places : null;
+  }
+
   /**
    * `GET /search?address=<addr>&direction=<dir>` — every message in the archive from, to, or from-or-to one address.
    * **THE DIRECTION IS ALWAYS SENT, EXPLICITLY (`from` when the caller names none)**, the opposite of the `sort`
@@ -1127,9 +1363,9 @@ export class HttpAdapter implements EngineAdapter {
   ): Promise<ServerAddressWire> {
     const q = new URLSearchParams({ address, direction: opts.direction ?? "from" });
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
-    const res = await this.request("GET", `/search?${q.toString()}`, { urgent: true });
+    const res = await this.call("GET /search", { query: q, urgent: true });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { items?: EngineMessage[]; total?: number; totalExact?: unknown; direction?: string; importing?: unknown };
+    const wire = (await this.readAnswer<"GET /search">(res)) as Partial<AddressSearchResult>;
     return {
       items: Array.isArray(wire.items) ? wire.items : [],
       total: typeof wire.total === "number" ? wire.total : (wire.items?.length ?? 0),
@@ -1176,9 +1412,9 @@ export class HttpAdapter implements EngineAdapter {
         qf.set("beforeId", opts.startBelow.id);
       }
       if (opts.limit !== undefined) qf.set("limit", String(opts.limit));
-      const resf = await this.request("GET", `/messages?${qf.toString()}`);
+      const resf = await this.call("GET /messages", { query: qf });
       if (!resf.ok) throw await this.rejectionOf(resf);
-      const wiref = (await resf.json()) as { items?: EngineMessage[]; nextCursor?: string | null };
+      const wiref = await this.readAnswer<"GET /messages">(resf);
       return {
         items: Array.isArray(wiref.items) ? wiref.items : [],
         nextCursor: typeof wiref.nextCursor === "string" && wiref.nextCursor !== "" ? wiref.nextCursor : null,
@@ -1193,9 +1429,9 @@ export class HttpAdapter implements EngineAdapter {
         qa.set("beforeId", opts.startBelow.id);
       }
       if (opts.limit !== undefined) qa.set("limit", String(opts.limit));
-      const resa = await this.request("GET", `/messages?${qa.toString()}`);
+      const resa = await this.call("GET /messages", { query: qa });
       if (!resa.ok) throw await this.rejectionOf(resa);
-      const wirea = (await resa.json()) as { items?: EngineMessage[]; nextCursor?: string | null };
+      const wirea = await this.readAnswer<"GET /messages">(resa);
       return {
         items: Array.isArray(wirea.items) ? wirea.items : [],
         nextCursor: typeof wirea.nextCursor === "string" && wirea.nextCursor !== "" ? wirea.nextCursor : null,
@@ -1211,13 +1447,24 @@ export class HttpAdapter implements EngineAdapter {
       q.set("beforeId", opts.startBelow.id);
     }
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
-    const res = await this.request("GET", `/messages?${q.toString()}`);
+    const res = await this.call("GET /messages", { query: q });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { items?: EngineMessage[]; nextCursor?: string | null };
+    const wire = await this.readAnswer<"GET /messages">(res);
     return {
       items: Array.isArray(wire.items) ? wire.items : [],
       nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
     };
+  }
+
+  private warnedMissingMessageId = false;
+
+  private hasMessageId(id: unknown): boolean {
+    if (typeof id === "string" && id !== "" && id !== "null" && id !== "undefined") return true;
+    if (!this.warnedMissingMessageId) {
+      this.warnedMissingMessageId = true;
+      console.warn("ohmail: missing_message_id");
+    }
+    return false;
   }
 
   /**
@@ -1225,10 +1472,11 @@ export class HttpAdapter implements EngineAdapter {
    * for an id that is not this account's; any other non-2xx throws through `rejectionOf`.
    */
   async getMessage(messageId: string): Promise<EngineMessage | null> {
-    const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}`);
+    if (!this.hasMessageId(messageId)) return null;
+    const res = await this.call("GET /messages/:id", { params: { id: messageId } });
     if (res.status === 404) return null;
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as Partial<EngineMessage> | null;
+    const wire = await this.readAnswer<"GET /messages/:id">(res);
     return wire && typeof wire.id === "string" ? (wire as EngineMessage) : null;
   }
 
@@ -1238,9 +1486,9 @@ export class HttpAdapter implements EngineAdapter {
    */
   async timeline(): Promise<StoreTimeline | null> {
     const zone = this.readerZone();
-    const res = await this.request("GET", zone ? `/messages/timeline?zone=${encodeURIComponent(zone)}` : "/messages/timeline");
+    const res = await this.call("GET /messages/timeline", zone ? { query: `zone=${encodeURIComponent(zone)}` } : {});
     if (!res.ok) throw await this.rejectionOf(res);
-    return readTimelineWire(await res.json());
+    return readTimelineWire(await this.readAnswer<"GET /messages/timeline">(res));
   }
 
   // ── Trash ────────────────────────────────────────────────────────────────
@@ -1264,9 +1512,9 @@ export class HttpAdapter implements EngineAdapter {
     const q = new URLSearchParams({ view: "trash" });
     if (opts.cursor) q.set("cursor", opts.cursor);
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
-    const res = await this.request("GET", `/messages?${q.toString()}`);
+    const res = await this.call("GET /messages", { query: q });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { items?: TrashRowWire[]; nextCursor?: string | null };
+    const wire = await this.readAnswer<"GET /messages">(res);
     return {
       items: Array.isArray(wire.items) ? wire.items : [],
       nextCursor: typeof wire.nextCursor === "string" && wire.nextCursor !== "" ? wire.nextCursor : null,
@@ -1286,15 +1534,16 @@ export class HttpAdapter implements EngineAdapter {
   async restoreFromTrash(
     messageId: string, opts: { idempotencyKey?: string; pressAgeMs?: number } = {},
   ): Promise<RestoreFromTrashWire | null> {
-    const res = await this.request(
-      "POST", `/messages/${encodeURIComponent(messageId)}/restore`,
+    const res = await this.call(
+      "POST /messages/:id/restore",
       {
+        params: { id: messageId },
         ...(opts.idempotencyKey === undefined ? {} : { idempotencyKey: opts.idempotencyKey }),
         ...(opts.pressAgeMs === undefined ? {} : { pressAgeMs: opts.pressAgeMs }),
       },
     );
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { restoreTo?: string; pending?: boolean };
+    const wire = await this.readAnswer<"POST /messages/:id/restore">(res);
     return {
       restoreTo: typeof wire.restoreTo === "string" && wire.restoreTo !== "" ? wire.restoreTo : "INBOX",
       pending: wire.pending !== false,
@@ -1348,9 +1597,9 @@ export class HttpAdapter implements EngineAdapter {
 
   async whyStayed(ids: readonly string[]): Promise<StayedWire[]> {
     if (ids.length === 0) return [];
-    const res = await this.request("GET", `/screener/stayed?ids=${ids.map(encodeURIComponent).join(",")}`);
+    const res = await this.call("GET /screener/stayed", { query: `ids=${ids.map(encodeURIComponent).join(",")}` });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json().catch(() => null)) as { stayed?: unknown } | null;
+    const wire = await this.readUntrusted<"GET /screener/stayed">(res).catch(() => null);
     const known = new Set<string>(["failed-checks", "set-aside", "replied", "filed-elsewhere"]);
     // A row this client cannot read is dropped: no reason is better than a wrong one.
     return Array.isArray(wire?.stayed)
@@ -1360,9 +1609,9 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   async autoFiled(): Promise<AutoFiledWire> {
-    const res = await this.request("GET", "/screener/auto-filed");
+    const res = await this.call("GET /screener/auto-filed", {});
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json().catch(() => null)) as { items?: unknown; more?: unknown } | null;
+    const wire = await this.readUntrusted<"GET /screener/auto-filed">(res).catch(() => null);
     const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
     // A row this client cannot read is dropped: Put back names ids, and a guess names the wrong one.
     const items = Array.isArray(wire?.items)
@@ -1382,19 +1631,17 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   async undoAutoFiled(ids: readonly string[]): Promise<AutoFiledUndoWire> {
-    const res = await this.request("POST", "/screener/auto-filed/undo", { body: { messageIds: [...ids] } });
+    const res = await this.call("POST /screener/auto-filed/undo", { body: { messageIds: [...ids] } });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json().catch(() => null)) as { putBack?: unknown; requested?: unknown } | null;
+    const wire = await this.readUntrusted<"POST /screener/auto-filed/undo">(res).catch(() => null);
     const idsOf = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
     return { putBack: idsOf(wire?.putBack), requested: idsOf(wire?.requested) };
   }
 
   async heldReleases(): Promise<HeldReleaseWire> {
-    const res = await this.request("GET", "/screener/held-releases");
+    const res = await this.call("GET /screener/held-releases", {});
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as {
-      groups?: unknown; senders?: unknown; total?: unknown; max?: unknown; fingerprint?: unknown; dismissed?: unknown;
-    };
+    const wire = await this.readUntrusted<"GET /screener/held-releases">(res);
     const groups = Array.isArray(wire.groups)
       ? wire.groups.map((g) => HttpAdapter.heldGroupOf(g)).filter((g): g is HeldReleaseGroupWire => g !== null)
       : [];
@@ -1432,11 +1679,9 @@ export class HttpAdapter implements EngineAdapter {
     if (pile !== undefined) q.set("pile", pile);
     if (after !== undefined) q.set("after", after);
     const query = q.toString();
-    const res = await this.request("GET", query === "" ? "/screener/unscreened" : `/screener/unscreened?${query}`);
+    const res = await this.call("GET /screener/unscreened", query === "" ? {} : { query });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as {
-      groups?: unknown; total?: unknown; complete?: unknown; max?: unknown; pile?: unknown; next?: unknown;
-    };
+    const wire = await this.readUntrusted<"GET /screener/unscreened">(res);
     const groups = Array.isArray(wire.groups)
       ? wire.groups.map((g) => HttpAdapter.unscreenedGroupOf(g)).filter((g): g is UnscreenedGroupWire => g !== null)
       : [];
@@ -1481,11 +1726,9 @@ export class HttpAdapter implements EngineAdapter {
     if (page.cursor) q.set("cursor", page.cursor);
     // This engine presents a removed mailbox's mail itself (`consentPartition`), so the page may leave it out.
     q.set("live", "1");
-    const res = await this.request("GET", `/screener?${q.toString()}`);
+    const res = await this.call("GET /screener", { query: q });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as {
-      items?: unknown; nextCursor?: unknown; total?: unknown; pendingDecisions?: unknown; copyBehind?: unknown; gone?: unknown;
-    } | null;
+    const wire: Untrusted<AnswerOf<"GET /screener">> | null = await this.readUntrusted<"GET /screener">(res);
     // A body that is not a queue page is no answer. Read as an empty page it would say nobody is
     // waiting, and the partition would present held mail in the Ohbox on the strength of it.
     if (wire === null || typeof wire !== "object" || !Array.isArray(wire.items)) {
@@ -1515,12 +1758,12 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   async screenUnscreened(addresses?: readonly string[], pile?: UnscreenedPileWire): Promise<UnscreenedResultWire> {
-    const res = await this.request("POST", "/screener/unscreened", {
+    const res = await this.call("POST /screener/unscreened", {
       // Omitted rather than `null`, for `releaseHeld`'s reason: absent means EVERY group shown.
       body: { ...(addresses === undefined ? {} : { addresses: [...addresses] }), ...(pile === undefined ? {} : { pile }) },
     });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { screened?: unknown; total?: unknown };
+    const wire = await this.readUntrusted<"POST /screener/unscreened">(res);
     const screened = Array.isArray(wire.screened)
       ? wire.screened.map((g) => HttpAdapter.unscreenedGroupOf(g)).filter((g): g is UnscreenedGroupWire => g !== null)
       : [];
@@ -1531,14 +1774,14 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   async dismissHeldRelease(fingerprint: string): Promise<void> {
-    const res = await this.request("POST", "/screener/held-releases/dismiss", {
+    const res = await this.call("POST /screener/held-releases/dismiss", {
       body: { fingerprint },
     });
     if (!res.ok) throw await this.rejectionOf(res);
   }
 
   async releaseHeld(ruleIds?: readonly string[], senders?: readonly string[]): Promise<HeldReleaseResultWire> {
-    const res = await this.request("POST", "/screener/held-releases", {
+    const res = await this.call("POST /screener/held-releases", {
       // Omitted rather than `null`: absent `ruleIds` means EVERY group, absent `senders` NONE, and
       // a `null` on the wire would be a third state the server has to invent a meaning for.
       body: {
@@ -1547,7 +1790,7 @@ export class HttpAdapter implements EngineAdapter {
       },
     });
     if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as { released?: unknown; releasedSenders?: unknown; total?: unknown };
+    const wire = await this.readUntrusted<"POST /screener/held-releases">(res);
     const released = Array.isArray(wire.released)
       ? wire.released.map((g) => HttpAdapter.heldGroupOf(g)).filter((g): g is HeldReleaseGroupWire => g !== null)
       : [];
@@ -1560,9 +1803,9 @@ export class HttpAdapter implements EngineAdapter {
 
   async listAttachments(messageId: string): Promise<AttachmentWire[]> {
     return this.withDeadline(ATTACHMENT_LIST_TIMEOUT_MS, async (signal) => {
-      const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/attachments`, { signal, urgent: true });
+      const res = await this.call("GET /messages/:id/attachments", { params: { id: messageId }, signal, urgent: true });
       if (!res.ok) throw await this.rejectionOf(res, "read");
-      const wire = (await res.json()) as { items?: unknown };
+      const wire = await this.readUntrusted<"GET /messages/:id/attachments">(res);
       if (!Array.isArray(wire.items)) return [];
       return wire.items.map((raw): AttachmentWire => {
         const r = raw as Partial<AttachmentWire>;
@@ -1589,7 +1832,7 @@ export class HttpAdapter implements EngineAdapter {
    * apart from a mail server that is simply down (`upstream_unavailable` → `failed`, a retry is reasonable).
    */
   async fetchAttachment(attachmentId: string): Promise<Blob> {
-    const res = await this.request("GET", `/attachments/${encodeURIComponent(attachmentId)}`, { urgent: true });
+    const res = await this.call("GET /attachments/:id", { params: { id: attachmentId }, urgent: true });
     if (!res.ok) throw await this.rejectionOf(res, "read");
     return await responseBlob(res);
   }
@@ -1604,7 +1847,7 @@ export class HttpAdapter implements EngineAdapter {
    * `res.ok` is checked first for the same reason.
    */
   async fetchAllAttachments(messageId: string): Promise<Blob> {
-    const res = await this.request("POST", `/messages/${encodeURIComponent(messageId)}/attachments/download-all`);
+    const res = await this.call("POST /messages/:id/attachments/download-all", { params: { id: messageId } });
     if (!res.ok) throw await this.rejectionOf(res);
     return await responseBlob(res);
   }
@@ -1700,7 +1943,8 @@ export class HttpAdapter implements EngineAdapter {
     const sig = opts.signal === undefined ? {} : { signal: opts.signal };
     switch (m.kind) {
       case "move": {
-        const res = await this.request("POST", `/messages/${m.messageId}/move`, {
+        const res = await this.call("POST /messages/:id/move", {
+          params: { id: m.messageId },
           body: {
             folder: m.folder, ...(m.from !== undefined ? { from: m.from } : {}),
             ...(m.pressRule === true ? { pressRule: true } : {}),
@@ -1709,7 +1953,7 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const body = await res.json().catch(() => null);
+        const body = await this.readAnswer<"POST /messages/:id/move">(res).catch(() => null);
         // 200 IS A MOVE MADE; 202 IS A MOVE ASKED FOR (`routes/messages.ts`). The 202's body is
         // the message UNMOVED beside the request — reading it as the echo of a move would paint
         // the row where nothing has put it.
@@ -1717,18 +1961,19 @@ export class HttpAdapter implements EngineAdapter {
         if (queued) return queued;
         const dto = body as EngineMessage;
         return {
-          changes: seq !== null ? [this.messageEcho(dto, seq, "move", { from: null, to: m.folder })] : [],
+          changes: seq !== null ? [this.messageEcho(dto, seq, "move", { from: null, to: m.folder as EngineMessage["folder"] })] : [],
           seq,
         };
       }
 
       case "message_delete": {
-        const res = await this.request("DELETE", `/messages/${m.messageId}`, {
+        const res = await this.call("DELETE /messages/:id", {
+          params: { id: m.messageId },
           idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const body = await res.json().catch(() => null);
+        const body = await this.readAnswer<"DELETE /messages/:id">(res).catch(() => null);
         // 202 = the delete became a request for the organizer; nothing is in the bin yet.
         const queued = this.queuedAnswer(res, body);
         if (queued) return queued;
@@ -1744,7 +1989,8 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "triage_set": {
-        const res = await this.request("POST", `/messages/${m.messageId}/triage`, {
+        const res = await this.call("POST /messages/:id/triage", {
+          params: { id: m.messageId },
           body: {
             state: m.state, ...(m.bubbleUpAt ? { bubbleUpAt: m.bubbleUpAt } : {}),
             ...(m.restoreOpenReadAt ? { restoreOpenReadAt: m.restoreOpenReadAt } : {}),
@@ -1758,7 +2004,8 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "screener_decide": {
-        const res = await this.request("POST", `/screener/${m.senderId}`, {
+        const res = await this.call("POST /screener/:id", {
+          params: { id: m.senderId },
           body: {
             decision: m.decision,
             // THE DESTINATION, TRANSLATED TO THE SERVER'S VOCABULARY: `dest` is a VIEW on this side (`reads`) and a
@@ -1768,7 +2015,13 @@ export class HttpAdapter implements EngineAdapter {
             // it. OMITTED when absent rather than sent as `null`: the server reads an absent `dest` as the two-folder
             // default it has always had, which is what keeps a client that predates this field working unchanged.
             ...(m.dest ? { dest: FOLDER_OF_VIEW[m.dest] } : {}),
-            ...(m.scope ? { scope: m.scope } : {}),
+            ...(m.confirmedIds !== undefined
+              ? {
+                  scope: m.scope === "domain" ? "confirmed_domain" : "confirmed_sender",
+                  confirmedIds: m.confirmedIds,
+                } as const
+              : m.scope ? { scope: m.scope } : {}),
+            ...(m.unsubscribeIds === undefined ? {} : { unsubscribeIds: m.unsubscribeIds }),
             // The past-mail answer, omitted when unstated on the line above's reasoning: an older
             // client that cannot ask keeps the server's default rather than silently declining.
             ...(m.applyRetro === undefined ? {} : { applyRetro: m.applyRetro }),
@@ -1786,7 +2039,7 @@ export class HttpAdapter implements EngineAdapter {
         // with a decision result, a 200 from an older server, and this.
 
         // Guessing `pending` from anything less than the flag itself would withhold a filing that did happen.
-        const decided = await res.json().catch(() => null);
+        const decided = await this.readAnswer<"POST /screener/:id">(res).catch(() => null);
         const seq = this.noteSeq(res);
         // Through the same door as Move and Delete now: this case read the 202 correctly before
         // they did, and reading it in one place is what stops the next case forgetting.
@@ -1839,7 +2092,8 @@ export class HttpAdapter implements EngineAdapter {
         let stale: MutationRejectedError | null = null;
         let applied = 0;
         for (const id of m.messageIds ?? []) {
-          const res = await this.request("PATCH", `/messages/${id}`, { body: { unread: false, via: "glance" }, ...age, ...sig });
+          if (!this.hasMessageId(id)) continue;
+          const res = await this.call("PATCH /messages/:id", { params: { id }, body: { unread: false, via: "glance" }, ...age, ...sig });
           if (!res.ok) {
             const rejection = await this.rejectionOf(res);
             if (rejection.code === "stale_press") { stale = rejection; continue; }
@@ -1847,7 +2101,8 @@ export class HttpAdapter implements EngineAdapter {
           }
           applied += 1;
           const s = this.noteSeq(res);
-          const dto = (await res.json()) as EngineMessage;
+          // A read-state patch names no folder, so it is never the queued arm.
+          const dto = (await this.readAnswer<"PATCH /messages/:id">(res)) as MessageDTO;
           if (s !== null) {
             changes.push(this.messageEcho(dto, s, "update"));
             seq = s;
@@ -1870,7 +2125,7 @@ export class HttpAdapter implements EngineAdapter {
         // `via` travels when the surface set it: a glance-labelled read must reach the server AS a glance, so it
         // marks read without spending a resurface pin (`MessageService.markSeen`). Deliberate reads (no `via`) keep
         // answering pins exactly as before.
-        const res = await this.request("PATCH", "/messages", {
+        const res = await this.call("PATCH /messages", {
           body: {
             ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}), ...(m.openRead ? { openRead: true } : {}),
             // An Undo's restore travels whenever present, `{}` included: it also says "spend no pin".
@@ -1903,7 +2158,8 @@ export class HttpAdapter implements EngineAdapter {
        * []` and pulls the authoritative drain, and the overlay holds the user's view steady until it lands.
        */
       case "tag_assign": {
-        const res = await this.request("POST", `/messages/${encodeURIComponent(m.messageId)}/tags`, {
+        const res = await this.call("POST /messages/:id/tags", {
+          params: { id: m.messageId },
           body: m.createName === undefined
             ? { tagId: m.tagId, assigned: m.assigned }
             // TAG-OR-CREATE: the name the user typed, plus the id to mint it under, so the
@@ -1931,13 +2187,13 @@ export class HttpAdapter implements EngineAdapter {
        * believe the row was created under it.
        */
       case "tag_create": {
-        const res = await this.request("POST", "/tags", {
+        const res = await this.call("POST /tags", {
           body: m.hue === undefined ? { name: m.name } : { name: m.name, hue: m.hue },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as TagDTO;
+        const dto = await this.readAnswer<"POST /tags">(res);
         return {
           changes: seq === null ? [] : [{ type: "tag", op: "create", id: dto.id, seq, updatedAt: dto.updatedAt ?? dto.createdAt ?? "", entity: dto }],
           seq,
@@ -1945,13 +2201,14 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "tag_rename": {
-        const res = await this.request("PATCH", `/tags/${encodeURIComponent(m.tagId)}`, {
+        const res = await this.call("PATCH /tags/:id", {
+          params: { id: m.tagId },
           body: { name: m.name },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as TagDTO;
+        const dto = await this.readAnswer<"PATCH /tags/:id">(res);
         return {
           changes: seq === null ? [] : [{ type: "tag", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? dto.createdAt ?? "", entity: dto }],
           seq,
@@ -1964,13 +2221,14 @@ export class HttpAdapter implements EngineAdapter {
        * changed; `TagsService.update` merges whatever is sent over what it holds.
        */
       case "tag_recolor": {
-        const res = await this.request("PATCH", `/tags/${encodeURIComponent(m.tagId)}`, {
+        const res = await this.call("PATCH /tags/:id", {
+          params: { id: m.tagId },
           body: { hue: m.hue },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as TagDTO;
+        const dto = await this.readAnswer<"PATCH /tags/:id">(res);
         return {
           changes: seq === null ? [] : [{ type: "tag", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? dto.createdAt ?? "", entity: dto }],
           seq,
@@ -1987,7 +2245,8 @@ export class HttpAdapter implements EngineAdapter {
        * on the next drain, and the optimistic effect has already cleared the chips.
        */
       case "tag_delete": {
-        const res = await this.request("DELETE", `/tags/${encodeURIComponent(m.tagId)}`, {
+        const res = await this.call("DELETE /tags/:id", {
+          params: { id: m.tagId },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (res.status === 404) return { changes: [], seq: null };
@@ -2005,13 +2264,13 @@ export class HttpAdapter implements EngineAdapter {
        * server's, exactly `tag_create`'s two-ids-never-coexist rule).
        */
       case "folder_create": {
-        const res = await this.request("POST", "/folders", {
+        const res = await this.call("POST /folders", {
           body: { mailboxId: m.mailboxId, name: m.name },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as FolderEntity;
+        const dto = await this.readAnswer<"POST /folders">(res);
         return {
           changes: seq === null ? [] : [{ type: "folder", op: "create", id: dto.id, seq, updatedAt: dto.updatedAt ?? "", entity: dto }],
           seq,
@@ -2019,13 +2278,14 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "folder_rename": {
-        const res = await this.request("PATCH", `/folders/${encodeURIComponent(m.folderId)}`, {
+        const res = await this.call("PATCH /folders/:id", {
+          params: { id: m.folderId },
           body: { name: m.name },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as FolderEntity;
+        const dto = await this.readAnswer<"PATCH /folders/:id">(res);
         return {
           changes: seq === null ? [] : [{ type: "folder", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "", entity: dto }],
           seq,
@@ -2038,13 +2298,14 @@ export class HttpAdapter implements EngineAdapter {
        * `tag_delete` reading: the folder is gone, which is what the caller asked for.
        */
       case "folder_delete": {
-        const res = await this.request("DELETE", `/folders/${encodeURIComponent(m.folderId)}`, {
+        const res = await this.call("DELETE /folders/:id", {
+          params: { id: m.folderId },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as FolderEntity;
+        const dto = await this.readAnswer<"DELETE /folders/:id">(res);
         return {
           changes: seq === null ? [] : [{ type: "folder", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "", entity: dto }],
           seq,
@@ -2057,13 +2318,14 @@ export class HttpAdapter implements EngineAdapter {
        * the authoritative `folder` delete arrives on the drain the empty `changes` triggers.
        */
       case "folder_op_dismiss": {
-        const res = await this.request("DELETE", `/folders/${encodeURIComponent(m.folderId)}/op`, {
+        const res = await this.call("DELETE /folders/:id/op", {
+          params: { id: m.folderId },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const body = (await res.json()) as FolderEntity | { dismissed: true };
+        const body = await this.readAnswer<"DELETE /folders/:id/op">(res);
         if (!("id" in body)) return { changes: [], seq };
         return {
           changes: seq === null ? [] : [{ type: "folder", op: "update", id: body.id, seq, updatedAt: body.updatedAt ?? "", entity: body }],
@@ -2095,11 +2357,14 @@ export class HttpAdapter implements EngineAdapter {
        * not, the last because the rule may well still be there.
        */
       case "rule_delete": {
-        const res = await this.request("DELETE", `/rules/${encodeURIComponent(ruleAddress(m))}`, {
-          ...(m.key === undefined ? {} : { body: { key: m.key } }),
+        const res = await this.call("DELETE /rules/:id", {
+          params: { id: ruleAddress(m) },
+          ...(m.key === undefined && m.release === undefined ? {} : {
+            body: { ...(m.key === undefined ? {} : { key: m.key }), ...(m.release ? { release: m.release } : {}) },
+          }),
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
-        if (res.status === 404) return { changes: [], seq: null };
+        if (res.status === 404 && m.release === undefined) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
         // 204 IS A RULE GONE; 202 IS A DELETE ASKED FOR — the route's own words, and on an
         // account whose every live mailbox another install organizes the row is deliberately
@@ -2111,10 +2376,13 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "rule_update": {
-        const res = await this.request("PATCH", `/rules/${encodeURIComponent(ruleAddress(m))}`, {
+        const res = await this.call("PATCH /rules/:id", {
+          params: { id: ruleAddress(m) },
           body: {
             ...(m.key === undefined ? {} : { key: m.key }),
             destination: m.destination,
+            ...(m.release ? { release: m.release } : {}),
+            ...(m.enabled === undefined ? {} : { enabled: m.enabled }),
             // Omitted unless an address rule is lifted over its domain's (`address-rank.ts`).
             ...(m.priority === undefined ? {} : { priority: m.priority }),
             // OMITTED when the caller said nothing, and that is the whole contract: the server
@@ -2132,14 +2400,17 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const body = await res.json().catch(() => null);
+        const body = await this.readAnswer<"PATCH /rules/:id">(res).catch(() => null);
         // 202 = the edit wrote nothing here; the body carries the UNCHANGED rule.
         const queued = this.queuedAnswer(res, body);
         if (queued) return queued;
         const dto = body as RuleDTO;
+        const waiting = m.release && body && "travel" in body ? body.travel.pending[0] : undefined;
         return {
           changes: seq === null ? [] : [{ type: "rule", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt, entity: dto }],
           seq,
+          ...(m.release?.messageIds.length ? { partialEcho: true } : {}),
+          ...(waiting ? { pendingWith: { name: waiting.holder.name } } : {}),
         };
       }
 
@@ -2162,9 +2433,10 @@ export class HttpAdapter implements EngineAdapter {
        * concurrent case to one answer.
        */
       case "rule_create": {
-        const res = await this.request("POST", "/rules", {
+        const res = await this.call("POST /rules", {
           body: {
             kind: m.ruleKind, match: m.match, destination: m.destination,
+            ...(m.release ? { release: m.release } : {}),
             // Omitted unless an address rule is lifted over its domain's (`address-rank.ts`).
             ...(m.priority === undefined ? {} : { priority: m.priority }),
             // The second term, and OMITTED rather than sent as `null` when there is none — unlike
@@ -2189,14 +2461,17 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const body = await res.json().catch(() => null);
+        const body = await this.readAnswer<"POST /rules">(res).catch(() => null);
         // 201 IS A RULE THAT EXISTS; 202 IS A RULE ASKED FOR — no `rules` row was written here.
         const queued = this.queuedAnswer(res, body);
         if (queued) return queued;
         const dto = body as RuleDTO;
+        const waiting = m.release && body && "travel" in body ? body.travel.pending[0] : undefined;
         return {
           changes: seq === null ? [] : [{ type: "rule", op: "create", id: dto.id, seq, updatedAt: dto.updatedAt, entity: dto }],
           seq,
+          ...(m.release?.messageIds.length ? { partialEcho: true } : {}),
+          ...(waiting ? { pendingWith: { name: waiting.holder.name } } : {}),
           // The server's row id: a surface waiting on this rule's backlog pass names it by this.
           ...(typeof dto?.id === "string" ? { entityId: dto.id } : {}),
         };
@@ -2207,7 +2482,7 @@ export class HttpAdapter implements EngineAdapter {
        * landed, one with a single caller and one with none. The create returns its id, and that is the point:
        * `entityId` lets the surface adopt it, so the next autosave PUTs the same row and the send sends it — without
        * it, every two seconds of typing is a new `drafts` row. The echo also goes into `changes`, so the mirror holds
-       * the real row under the real id while the client-local overlay drops. One of `body`/`html`, never both —
+       * the real row under the real id while the client-local overlay drops. For ordinary drafts one of `body`/`html` —
        * identical to the send path: `DraftsService` derives the plain half from the sanitized markup and refuses a
        * request asserting what plaintext readers see.
        */
@@ -2237,9 +2512,10 @@ export class HttpAdapter implements EngineAdapter {
           );
         }
         if (m.draftId === null) {
-          const res = await this.request("POST", "/drafts", {
+          const res = await this.call("POST /drafts", {
             body: {
-              mailboxId: m.mailboxId,
+              // The act may name no mailbox; the wire's create needs one, and the server refuses a create without.
+              mailboxId: m.mailboxId as string,
               threadId: m.threadId ?? null,
               inReplyToMessageId: m.inReplyToMessageId ?? null,
               ...(m.forwardOfMessageId ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
@@ -2250,9 +2526,7 @@ export class HttpAdapter implements EngineAdapter {
           });
           if (!res.ok) throw await this.rejectionOf(res);
           const seq = this.noteSeq(res);
-          const dto = await readJsonOrAmbiguous<{
-            id?: string; updatedAt?: string; createdAt?: string; contentRevision?: unknown;
-          }>(res, "draft save");
+          const dto = await readJsonOrAmbiguous<Partial<AnswerOf<"POST /drafts">>>(res, "draft save");
           if (!dto.id) {
             /**
              * Parsed, but without the id it promised: the row may exist and this client cannot
@@ -2274,6 +2548,7 @@ export class HttpAdapter implements EngineAdapter {
           }
           // THE VERSION THIS CLIENT WAS TOLD, kept — see `revisionForDraft`. The row was just
           // written from this screen, so it is a version this client vouched for by writing it.
+          requireDraftQuoteEcho(m.html, dto.html, dto.id);
           this.noteDraftRevision(dto.id, dto.contentRevision);
           return {
             changes: seq === null ? [] : [{
@@ -2288,7 +2563,8 @@ export class HttpAdapter implements EngineAdapter {
         }
         // The version the editor's words are based on, past this client's own later saves.
         const stated = this.ownVersion(m.draftId, m.ifContentRevision);
-        const res = await this.request("PUT", `/drafts/${encodeURIComponent(m.draftId)}`, {
+        const res = await this.call("PUT /drafts/:id", {
+          params: { id: m.draftId },
           // `mailboxId` rides the update too: the sending identity follows the From pick for
           // as long as the row is a draft (the server refuses the move past `draft`), so a
           // draft closed here and reopened on another device carries the pick with it.
@@ -2303,9 +2579,10 @@ export class HttpAdapter implements EngineAdapter {
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as { id?: string; updatedAt?: string; contentRevision?: unknown };
+        const dto: Partial<AnswerOf<"PUT /drafts/:id">> = await this.readAnswer<"PUT /drafts/:id">(res);
         // THE AUTOSAVE'S OWN OBSERVATION. This answer names the version the row is now at, and a
         // send whose own PUT fails carries it rather than nothing — the whole of the fallback.
+        requireDraftQuoteEcho(m.html, dto.html, m.draftId);
         this.noteDraftRevision(m.draftId, dto.contentRevision);
         this.noteOwnStep(m.draftId, stated, dto.contentRevision);
         return {
@@ -2320,17 +2597,24 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       /**
-       * DISCARD — `DELETE /drafts/:id`.
-       *
-       * A 404 is SWALLOWED, on `rule_delete`'s reasoning one entity over: the user asked for this
-       * draft to be gone and it is gone. Reporting a failure would leave a rolled-back tombstone
-       * and the draft back on screen, which is the one outcome nobody wants from a Discard.
-       * Nothing else is swallowed — a 403 or a 500 means the row may well still be there.
+       * A delayed Discard must use the conditional route on every attempt. Older servers can
+       * ignore a query on the original DELETE and remove a newer draft. The conditional route
+       * answers 204 if the draft is already gone, so a missing route is a terminal refusal.
        */
       case "draft_discard": {
-        const res = await this.request("DELETE", `/drafts/${encodeURIComponent(m.draftId)}`, {
-          idempotencyKey: opts.idempotencyKey, ...sig,
-        });
+        const query = new URLSearchParams();
+        if (m.ifContentRevision !== undefined) query.set("ifContentRevision", m.ifContentRevision);
+        if (m.ifUpdatedAt !== undefined) query.set("ifUpdatedAt", m.ifUpdatedAt);
+        const conditional = query.size > 0;
+        const request = { params: { id: m.draftId }, idempotencyKey: opts.idempotencyKey, ...sig };
+        const res = conditional
+          ? await this.call("DELETE /drafts/:id/conditional", { ...request, query })
+          : await this.call("DELETE /drafts/:id", request);
+        if (conditional && (res.status === 404 || res.status === 405 || res.status === 501)) {
+          throw new MutationRejectedError("This server cannot safely discard this draft yet", {
+            status: res.status, code: "discard_unsupported", retryable: false,
+          });
+        }
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -2376,13 +2660,14 @@ export class HttpAdapter implements EngineAdapter {
        * it stands. So a double-tap converges without a stored response, exactly as the schedule verbs do.
        */
       case "draft_resolve": {
-        const res = await this.request("POST", `/drafts/${encodeURIComponent(m.draftId)}/resolve`, {
-          body: { outcome: m.outcome },
+        const res = await this.call("POST /drafts/:id/resolve", {
+          params: { id: m.draftId },
+          body: { outcome: m.outcome, ...(m.ifUpdatedAt === undefined ? {} : { ifUpdatedAt: m.ifUpdatedAt }) },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as { id?: string; updatedAt?: string };
+        const dto = await this.readAnswer<"POST /drafts/:id/resolve">(res);
         return {
           changes: seq === null || !dto.id ? [] : [{
             type: "draft", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "",
@@ -2393,12 +2678,13 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "draft_schedule_cancel": {
-        const res = await this.request("DELETE", `/drafts/${encodeURIComponent(m.draftId)}/schedule`, {
+        const res = await this.call("DELETE /drafts/:id/schedule", {
+          params: { id: m.draftId },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
-        const dto = (await res.json()) as { id?: string; updatedAt?: string };
+        const dto = await this.readAnswer<"DELETE /drafts/:id/schedule">(res);
         return {
           changes: seq === null || !dto.id ? [] : [{
             type: "draft", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "",
@@ -2538,6 +2824,14 @@ export class HttpAdapter implements EngineAdapter {
       this.forgetSendKey(idempotencyKey);
       throw new MutationRejectedError("This message can't be sent again from here.", { code: "send_again_invalid", retryable: false });
     }
+    const confirmQuote = (html: unknown, row: string): void => {
+      try {
+        requireDraftQuoteEcho(m.html, html, row);
+      } catch (error) {
+        this.forgetSendKey(idempotencyKey);
+        throw error;
+      }
+    };
     const pressed = sendFingerprint(m);
     const resumed = this.draftForKey.has(idempotencyKey);
     const rewrite = resumed && this.fingerprintForKey.get(idempotencyKey) !== pressed;
@@ -2548,7 +2842,7 @@ export class HttpAdapter implements EngineAdapter {
       const wantsBcc = (m.bcc?.length ?? 0) > 0;
       // `draftId` is a `let` and a closure does not keep its narrowing; the row is fixed here.
       const row = draftId;
-      type PutEcho = { bcc?: unknown; mailboxId?: unknown; contentRevision?: unknown; status?: unknown };
+      type PutEcho = Pick<Untrusted<AnswerOf<"PUT /drafts/:id">>, "bcc" | "mailboxId" | "contentRevision" | "status" | "html">;
       /**
        * How the last save ended: `answered` with an echo, `frozen` (a send holds the row), `own` (the
        * edit itself was refused — {@link EDIT_OWN_REFUSALS}), or `unanswered`: no reply, an
@@ -2566,7 +2860,8 @@ export class HttpAdapter implements EngineAdapter {
         refusal = null;
         stated = this.ownVersion(row, m.ifContentRevision);
         try {
-          const put = await this.request("PUT", `/drafts/${encodeURIComponent(row)}`, {
+          const put = await this.call("PUT /drafts/:id", {
+            params: { id: row },
             body: {
               subject: m.subject ?? "",
               ...bodyOnWire(m),
@@ -2587,7 +2882,7 @@ export class HttpAdapter implements EngineAdapter {
             echoLater: this.sendEchoLater,
           });
           if (put.ok) {
-            const echo = await put.json().catch(() => null) as PutEcho | null;
+            const echo: PutEcho | null = await this.readUntrusted<"PUT /drafts/:id">(put).catch(() => null);
             if (echo !== null && typeof echo === "object") {
               ended = "answered";
               this.noteOwnStep(row, stated, echo.contentRevision);
@@ -2699,6 +2994,7 @@ export class HttpAdapter implements EngineAdapter {
         : recordedRevision !== null && typeof echoed?.contentRevision === "string" && echoed.contentRevision !== recordedRevision;
       if (frozen || (pastDraft && rewritten)) earlierWordsKept = true;
       if (!frozen) {
+        confirmQuote(echoed?.html, row);
 
         // ── THE VERSION-SKEW GUARD, ON THIS PATH TOO ────────────────────────────────────────
         //
@@ -2790,16 +3086,17 @@ export class HttpAdapter implements EngineAdapter {
       );
     }
     if (!draftId) {
-      const created = await this.request("POST", "/drafts", {
+      const created = await this.call("POST /drafts", {
         body: {
-          mailboxId: m.mailboxId,
+          // As in `draft_save`: an act without a mailbox is the server's to refuse.
+          mailboxId: m.mailboxId as string,
           threadId: m.threadId ?? null,
           inReplyToMessageId: m.inReplyTo,
           // The row a forward makes names its original, so a reopened copy still forwards it.
           ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
           ...(m.forwardOf && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
           subject: m.subject ?? "",
-          // ONE of the two, never both. `DraftsService` derives the text/plain alternative
+          // The body fields follow `bodyOnWire`. `DraftsService` derives the text/plain alternative
           // from the sanitized html itself and refuses a request that carries a `body`
           // beside it — a client that sent both would be asserting what plaintext readers
           // see, which is precisely the assertion the server takes back so the two parts of
@@ -2820,7 +3117,7 @@ export class HttpAdapter implements EngineAdapter {
       });
       if (!created.ok) throw await this.rejectionOf(created);
       this.noteSeq(created);
-      const draft = await readJsonOrAmbiguous<{ id?: string; bcc?: unknown; contentRevision?: unknown }>(created, "draft create");
+      const draft = await readJsonOrAmbiguous<Partial<AnswerOf<"POST /drafts">>>(created, "draft create");
       if (!draft.id) {
         /**
          * AN UNREADABLE CREATE IS AMBIGUOUS, AND THE CREATE IS NOT IDEMPOTENT: The old sentence here said ohmail
@@ -2867,6 +3164,7 @@ export class HttpAdapter implements EngineAdapter {
         );
       }
       draftId = draft.id;
+      confirmQuote(draft.html, draftId);
       this.draftForKey.set(idempotencyKey, draftId);
       // The row this press made a moment ago — vouched for on the send exactly as an existing
       // row's is, so the field is on every send this client makes rather than on most of them.
@@ -2925,11 +3223,13 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       const res = withFiles
-        ? await this.request("POST", `/drafts/${encodeURIComponent(draftId)}/schedule-with-files`, {
+        ? await this.call("POST /drafts/:id/schedule-with-files", {
+          params: { id: draftId },
           body: { sendAt: m.sendAt, ...files },
           idempotencyKey,
         })
-        : await this.request("POST", `/drafts/${encodeURIComponent(draftId)}/schedule`, {
+        : await this.call("POST /drafts/:id/schedule", {
+          params: { id: draftId },
           body: { sendAt: m.sendAt },
           idempotencyKey,
         });
@@ -2969,7 +3269,7 @@ export class HttpAdapter implements EngineAdapter {
       // overlay (its gate reads exactly that field).
       let dto: { id?: string; updatedAt?: string } = {};
       try {
-        dto = (await res.json()) as { id?: string; updatedAt?: string };
+        dto = await this.readAnswer<"POST /drafts/:id/schedule">(res);
       } catch { /* an empty body degrades to the drain, exactly the pre-echo behaviour */ }
       return {
         changes: seq === null || !dto.id ? [] : [{
@@ -3029,7 +3329,8 @@ export class HttpAdapter implements EngineAdapter {
       sendBody.forwardZone = m.forwardClock.zone;
       sendBody.forwardLocale = m.forwardClock.locale;
     }
-    const res = await this.request("POST", `/drafts/${draftId}/send`, {
+    const res = await this.call("POST /drafts/:id/send", {
+      params: { id: draftId },
       idempotencyKey,
       ...(Object.keys(sendBody).length ? { body: sendBody } : {}),
       echoLater: this.sendEchoLater,
@@ -3048,7 +3349,7 @@ export class HttpAdapter implements EngineAdapter {
 
     let wire: SendWire = {};
     try {
-      wire = (await res.json()) as SendWire;
+      wire = await this.readAnswer<"POST /drafts/:id/send">(res);
     } catch {
       /* non-JSON body — fall through to the status-code branches below */
     }
@@ -3080,6 +3381,8 @@ export class HttpAdapter implements EngineAdapter {
         ? Date.parse(wire.sentCopyUntil) : NaN;
       return {
         changes: [], seq, providerMessageId: wire.providerMessageId ?? null,
+        ...(typeof wire.sentDraftId === "string" && wire.sentDraftId.length > 0 ? { sentDraftId: wire.sentDraftId } : {}),
+        ...(typeof wire.sentDraftThrough === "number" ? { sentDraftThrough: wire.sentDraftThrough } : {}),
         ...(firstSend ? { firstSend } : {}),
         ...(sentCopy ? { sentCopy } : {}),
         ...(sentCopyReason ? { sentCopyReason } : {}),
@@ -3303,7 +3606,7 @@ export class HttpAdapter implements EngineAdapter {
   private async askWithdraw(key: string, draftId: string | null, signal: AbortSignal | undefined): Promise<WithdrawSendAnswer> {
     let res: Response;
     try {
-      res = await this.request("POST", "/sends/withdraw", { idempotencyKey: key, body: { draftId }, ...(signal ? { signal } : {}) });
+      res = await this.call("POST /sends/withdraw", { idempotencyKey: key, body: { draftId }, ...(signal ? { signal } : {}) });
     } catch {
       return { outcome: "unreachable" };
     }
@@ -3317,9 +3620,9 @@ export class HttpAdapter implements EngineAdapter {
       const after = retryAfterMsOf(res);
       return after !== null ? { ...refused, retryAfterMs: after } : refused;
     }
-    let wire: { outcome?: unknown; firstSend?: { status?: unknown; at?: unknown } } | null;
+    let wire: Untrusted<AnswerOf<"POST /sends/withdraw">> | null;
     try {
-      wire = (await res.json()) as typeof wire;
+      wire = await this.readUntrusted<"POST /sends/withdraw">(res);
     } catch {
       return refused;
     }
@@ -3339,9 +3642,9 @@ export class HttpAdapter implements EngineAdapter {
    */
   private async scheduledAsPressed(draftId: string, m: Extract<EngineMutation, { kind: "mail_send" }>): Promise<boolean> {
     try {
-      const res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}`);
+      const res = await this.call("GET /drafts/:id", { params: { id: draftId } });
       if (!res.ok) return false;
-      const row = (await res.json()) as { status?: unknown; sendAt?: unknown; sendFiles?: unknown };
+      const row = await this.readUntrusted<"GET /drafts/:id">(res);
       return row.status === "scheduled" && typeof row.sendAt === "string" && Date.parse(row.sendAt) === Date.parse(m.sendAt!)
         && row.sendFiles === (m.attachments?.length ?? 0);
     } catch { return false; }
@@ -3350,13 +3653,14 @@ export class HttpAdapter implements EngineAdapter {
   private async keyWasPresented(draftId: string, sendKey: string): Promise<boolean> {
     let res: Response;
     try {
-      res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}/send-attempt`, {
+      res = await this.call("GET /drafts/:id/send-attempt", {
+        params: { id: draftId },
         idempotencyKey: sendKey,
       });
     } catch { return false; }
     if (!res.ok) return false;
     try {
-      return ((await res.json()) as { found?: unknown }).found === true;
+      return (await this.readUntrusted<"GET /drafts/:id/send-attempt">(res)).found === true;
     } catch { return false; }
   }
 
@@ -3380,7 +3684,7 @@ export class HttpAdapter implements EngineAdapter {
     for (const [index, file] of files.entries()) {
       const bytes = base64ToBytes(file.contentBase64);
       const declared = await sha256Hex(bytes);
-      const minted = await this.request("POST", "/attachments/staging", {
+      const minted = await this.call("POST /attachments/staging", {
         // THE UPLOAD TICKET'S KEY, DERIVED AND NOT MINTED: A mint writes a durable row and a grant to put bytes in
         // the server's storage, so a retry after a lost response would otherwise mint a second ticket and upload a
         // second copy — a duplicate the client cannot see, on every attempt, for as long as the send keeps failing.
@@ -3409,10 +3713,7 @@ export class HttpAdapter implements EngineAdapter {
         },
       });
       if (!minted.ok) throw await this.rejectionOf(minted);
-      const grant = await readJsonOrAmbiguous<{
-        id?: string; uploadUrl?: string; uploadMethod?: string;
-        uploadHeaders?: Record<string, string>;
-      }>(minted, "attachment upload ticket");
+      const grant = await readJsonOrAmbiguous<Partial<AnswerOf<"POST /attachments/staging">>>(minted, "attachment upload ticket");
       if (!grant.id || !grant.uploadUrl) {
         throw new MutationRejectedError(
           "This message was not sent: the upload could not be prepared. Try again.",
@@ -3483,9 +3784,9 @@ export class HttpAdapter implements EngineAdapter {
 
   /** `GET /organizer-requests` — see {@link EngineAdapter.organizerRequests}. */
   async organizerRequests(): Promise<WaitingRequestWire[]> {
-    const res = await this.request("GET", ORGANIZER_REQUESTS_PATH);
+    const res = await this.call("GET /organizer-requests", {});
     if (!res.ok) throw await this.rejectionOf(res);
-    return waitingRequestsOf(await res.json().catch(() => null));
+    return waitingRequestsOf(await this.readAnswer<"GET /organizer-requests">(res).catch(() => null));
   }
 }
 

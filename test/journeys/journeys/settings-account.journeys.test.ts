@@ -11,8 +11,11 @@ export const GUARDS: Guard[] = [
 journeysOf("settings-account", () => {
   paneJourneys("settings-account", PANE, "sign-out");
   journey(GUARDS[PANE.length]!, async (b) => {
-    const { person } = await openPane(b, "settings-account", "sign-out");
+    const { person, account } = await openPane(b, "settings-account", "sign-out");
     await person.see("change-password");
+    await person.act("press", "erase-open");
+    await person.here("erase");
+    await person.see("erase-confirm", { args: { email: account!.email } });
     expect((await person.spoken("erase-begin")).disabled).toBe(true);
   });
 });

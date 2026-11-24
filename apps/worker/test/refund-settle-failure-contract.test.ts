@@ -9,7 +9,7 @@ import {
 } from "@trafficflow/db/cloud";
 import { createLogger, makeHaikuClassifier, type AnthropicLike } from "@trafficflow/core";
 import { makeClassifierCircuit } from "../src/ai-circuit.js";
-import { makeDeclineMemory, screenerAutoSuggestPass } from "../src/screener-auto-suggest.js";
+import { makeDeclineMemory, screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { refundObligationDrainPass } from "../src/refund-obligation-drain.js";
 
 /**
@@ -85,7 +85,7 @@ async function heldWorld(): Promise<{ db: Tx; accountId: string }> {
     date: at, createdAt: at, nativeLocator: { folder: SCREENER, ref: "1:1" },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   // Its copy in the Screener, as the ingest records one.

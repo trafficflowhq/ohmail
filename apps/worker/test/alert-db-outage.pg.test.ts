@@ -7,7 +7,7 @@ import { isDriverWriteRace } from "../src/driver-write-race.js";
 import { acquireLeaderLock, leaderLockKeyFor, type LeaderLock } from "../src/leader-lock.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * THE WORKER DRIVER WHEN THE DATABASE IS GONE, on real Postgres. The worker's pool sits behind a

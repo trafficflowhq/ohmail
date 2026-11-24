@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -5,10 +6,10 @@ import { and, eq } from "drizzle-orm";
 import { mailboxFolders, messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { mailboxService } from "@trafficflow/services";
-import { runSyncCycle } from "../src/sync.js";
-import { makeHarness, rawClient, emlOf, imapCfg, dbUrlFor } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { dbFor, mailboxService } from "@trafficflow/services";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { makeHarness, rawClient, emlOf, imapCfg, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 
@@ -82,7 +83,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
     // one. Non-zero watermarks, because that is what a mailbox that had been syncing looks like.
     const epoch = await serverEpoch(cfg);
     await h.db.insert(mailboxFolders).values({
-      mailboxId: h.mailboxId, folder: "INBOX",
+      mailboxId: h.mailboxId, accountId: accountOfMailbox(h.mailboxId), folder: "INBOX",
       uidvalidity: epoch - 1n, uidnext: 1n, highestmodseq: 1n,
     });
 
@@ -125,7 +126,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
 
     // The state a truncated cold drain leaves: the SENTINEL epoch on the folder row…
     await h.db.insert(mailboxFolders).values({
-      mailboxId: h.mailboxId, folder: "INBOX",
+      mailboxId: h.mailboxId, accountId: accountOfMailbox(h.mailboxId), folder: "INBOX",
       uidvalidity: 0n, uidnext: 0n, highestmodseq: 0n,
     });
     // …beside a committed locator from the PREVIOUS epoch whose UID number the new epoch reused.
@@ -171,7 +172,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
 
     // The reset is already learned: the row names the CURRENT epoch…
     await h.db.insert(mailboxFolders).values({
-      mailboxId: h.mailboxId, folder: "INBOX",
+      mailboxId: h.mailboxId, accountId: accountOfMailbox(h.mailboxId), folder: "INBOX",
       uidvalidity: epoch, uidnext: 1n, highestmodseq: 0n,
     });
     // …while one locator from the previous epoch survives at UID 2, which holds the second message today.
@@ -332,7 +333,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
     // No locators exist yet, so `soleEpochOf` cannot name an epoch either and the cursor handed to
     // the adapter really is `uidValidity: "0"`.
     await h.db.insert(mailboxFolders).values({
-      mailboxId: h.mailboxId, folder: "INBOX",
+      mailboxId: h.mailboxId, accountId: accountOfMailbox(h.mailboxId), folder: "INBOX",
       uidvalidity: 0n, uidnext: 0n, highestmodseq: 5n,
     });
 
@@ -382,7 +383,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
     expect(Number(before!.uidnext), "a drained pass publishes the server's UIDNEXT").toBeGreaterThan(2);
 
     await mailboxService.requestResync(
-      { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "w-cursor" },
+      { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "w-cursor" },
       h.mailboxId,
     );
 

@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * Every write that makes a mailbox the worker does not serve yet rings the doorbell
@@ -33,7 +33,7 @@ type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 async function seed(db: Db): Promise<ServiceContext> {
   const [a] = await db.insert(accounts).values({ name: "doorbell" }).returning();
-  return { db, accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
+  return { db: dbFor(db, a!.id), accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
 }
 
 const stampOf = async (db: Db, id: string): Promise<Date | null> =>

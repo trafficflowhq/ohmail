@@ -51,7 +51,7 @@ async function world(published: Array<"own" | object | "no-key">) {
       nativeLocator: { folder: GATE, ref: `1:${n}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };
   const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `swp-${accountId.slice(0, 8)}` };

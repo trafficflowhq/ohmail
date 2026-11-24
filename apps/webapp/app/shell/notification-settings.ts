@@ -9,58 +9,36 @@
  * storage renders the DEFAULTS ({@link readChannels}).
  */
 import {
-  DEFAULT_CHANNELS,
+  type NoticeChoices,
   type NoticePermission,
   type NotificationChannels,
 } from "@ohmail/client-engine";
-import { apiConfigured, push as pushApi } from "../api-client";
-import { durableRemove, durableSet } from "./durable";
-import { readOwner } from "./owner-cookie";
+import { NONE, type None, type Signal } from "@ohmail/app/host";
+import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
+import { apiConfigured, boundApiFamily, push as pushApi } from "../api-client";
+import { readSessionFamily } from "../signed-out-signal";
+import { sessionMayAsk } from "@ohmail/app-logic/session/session-truth";
+import { browserNoticePage } from "./notice-emitter";
+import { durableRemove, durableSet, localStorageDoor } from "@ohmail/app-logic/storage/durable";
+import { readOwner, readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 
-/** One key, one JSON object — so a partial write cannot leave two switches disagreeing. */
-export const NOTIFICATION_CHANNELS_KEY = "ohmail.notifications.channels";
+import {
+  noticeChoicesVersion, readChannels, storedNoticeChoices, subscriptionWanted,
+} from "@ohmail/app-logic/notices/browser-channels";
+export {
+  CALENDAR_NOTICES_KEY, NOTIFICATION_CHANNELS_KEY, noticeChoicesVersion, readCalendarNotices,
+  readChannels, storedNoticeChoices, subscriptionWanted, useNoticesVersion, writeChannels,
+} from "@ohmail/app-logic/notices/browser-channels";
 
-/**
- * Read this install's switches, falling back to {@link DEFAULT_CHANNELS}.
- * A failed read reads as the DEFAULTS — not off, not on: the defaults are
- * what a fresh install believes, so a browser with storage blocked behaves
- * like a fresh install rather than like an account that turned everything
- * off (which silently disables a feature the user enabled, with nothing on
- * screen to explain it). Unknown keys are dropped and missing ones
- * defaulted field by field: a newer build's catalogue must not make an
- * older one throw, and a boolean that is not a boolean is not a preference.
- */
-export function readChannels(): NotificationChannels {
-  let raw: string | null = null;
-  try {
-    raw = globalThis.localStorage?.getItem(NOTIFICATION_CHANNELS_KEY) ?? null;
-  } catch {
-    return { ...DEFAULT_CHANNELS };
-  }
-  if (raw === null) return { ...DEFAULT_CHANNELS };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ...DEFAULT_CHANNELS };
-  }
-  if (typeof parsed !== "object" || parsed === null) return { ...DEFAULT_CHANNELS };
-  const src = parsed as Record<string, unknown>;
-  const out = { ...DEFAULT_CHANNELS };
-  for (const k of Object.keys(DEFAULT_CHANNELS) as (keyof NotificationChannels)[]) {
-    if (typeof src[k] === "boolean") out[k] = src[k] as boolean;
-  }
-  return out;
-}
+type PushRequestScope = { expectedOwner?: string; expectedFamily?: string };
 
-/**
- * Write them. Best-effort by construction: a blocked store is not a reason to refuse the press,
- * because the switch still governs this session and the pane still reads back what it holds.
- */
-export function writeChannels(next: NotificationChannels): void {
-  // The in-memory value still drives this session; the refusal is no longer silent.
-  durableSet(NOTIFICATION_CHANNELS_KEY, JSON.stringify(next), "notifications.channels");
-}
+type PushSyncOptions = PushRequestScope & {
+  forceAnnounce?: boolean;
+  signingOutOf?: string;
+  mayPublish?: () => boolean;
+  mayRegister?: () => boolean;
+  mayWithdraw?: () => boolean;
+};
 
 /**
  * What the platform says, normalized to the gate's four states. A host that
@@ -91,6 +69,7 @@ export function browserPermission(): NoticePermission {
  * its current state unchanged.
  */
 export interface NotificationHost {
+  liveNoticeScope?: () => string | null;
   permission: () => NoticePermission;
   request: () => Promise<NoticePermission>;
   /**
@@ -117,7 +96,7 @@ export interface NotificationHost {
    * see {@link revokeWakeRegistration}.
    */
   syncSubscription?: (
-    wanted: boolean, opts?: { forceAnnounce?: boolean; signingOutOf?: string },
+    wanted: boolean, opts?: PushSyncOptions,
   ) => Promise<PushSyncOutcome | null>;
   /**
    * This surface cannot read the operating system's answer — its shell asks
@@ -130,6 +109,26 @@ export interface NotificationHost {
    * that could not be turned on and said nothing (`apps/desktop/src/notify-host.ts`).
    */
   osHoldsPermission?: boolean;
+  /**
+   * What draws this surface's notices while the app runs, or `none`. The page's own emitter is made
+   * where the page's words are (`web-supplies.tsx`); a host that hands this object in as it stands
+   * draws none.
+   */
+  readonly emitter: HostNoticeEmitter | None;
+  /**
+   * The registration's two ends that are no press, for the part that boots once per sign-in (the mail ground's
+   * `MailBoot`, through `host.device.notifications`): {@link reconcileWakeRegistration} and
+   * {@link updateNotifyWords}. Both or neither: a host with no registration (the desktop) hands neither.
+   */
+  reconcile?: (body: string, scope: string | null) => Promise<PushSyncOutcome | null>;
+  relabel?: (title: string, body: string, scope: string | null) => Promise<void>;
+  /**
+   * The person's choices on this device as the notices' gate reads them, for the one caller of this surface's
+   * emitter (the mail ground's, through `host.device.notifications`): {@link storedNoticeChoices} wherever the
+   * switches are this module's. Absent: the surface stores none, and nothing is handed to its emitter.
+   */
+  choices?: (scope: string | null) => NoticeChoices;
+  choicesVersion?: Signal<number>;
 }
 
 /**
@@ -138,19 +137,23 @@ export interface NotificationHost {
  * block, and one that is refused can never be asked for again.
  */
 export const browserNotificationHost: NotificationHost = {
+  emitter: NONE,
+  choices: storedNoticeChoices,
+  choicesVersion: noticeChoicesVersion,
   /**
    * Registration is attempted only where there is a server to register WITH. `apiConfigured()`
    * is false in every desktop build — its Cloud adapter is aliased out of the bundle — so this
-   * is a no-op there even though the module is compiled in, the same guard `consent-state.ts`
-   * uses for the same reason.
+   * is a no-op there even though the module is compiled in.
    */
-  syncSubscription: async (wanted: boolean, opts?: { forceAnnounce?: boolean; signingOutOf?: string }) => {
+  syncSubscription: async (wanted: boolean, opts?: PushSyncOptions) => {
     /* `null` means "there was nothing to reconcile here", which is not the same as a failure and
        must not be rendered as one. `apiConfigured()` is false in every desktop build — its Cloud
        adapter is aliased out of the bundle — so this is a no-op there even though the module is
-       compiled in, the same guard `consent-state.ts` uses for the same reason. */
+       compiled in. */
     if (!apiConfigured()) return null;
     try {
+      // Live-window notices have their own emitter. Only closed-window delivery needs this lock.
+      if (wanted && !notifyStateLocks()) return "unsupported";
       return await syncWebPush(wanted, pushApi, opts);
     } catch {
       /* `syncWebPush` maps every failure to an outcome, so this is the contract being wrong
@@ -174,32 +177,95 @@ export const browserNotificationHost: NotificationHost = {
       return "default";
     }
   },
+  /* The boot's door and the relabel are this module's own two functions (below), named when they are called:
+     both go through the one queue every write of the worker's state goes through. */
+  reconcile: (body, scope) => reconcileWakeRegistration(body, scope),
+  relabel: (title, body, scope) => updateNotifyWords(title, body, scope),
 };
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
  *  BEING WOKEN WHILE THE BROWSER IS CLOSED — the subscription, and when it should exist
  * ══════════════════════════════════════════════════════════════════════════════════════════ */
 
-/**
- * Should this browser have a push subscription at all? Pure, and separated from every call it
- * drives, because it is the whole policy. A subscription exists only to wake a browser that is
- * CLOSED: while a window is open the app syncs on its own and applies every per-event switch with
- * the mirror in front of it. So the question is "is there something worth starting this browser
- * up for", and the only such event is new mail — turning NEW MAIL off drops the subscription
- * while the other switches keep working for an open window (stated in the pane). Happy
- * consequence: "fully off" needs no cooperation from the push service — no subscription, nothing
- * to dial, nothing delivered-then-discarded.
- */
-export function subscriptionWanted(
-  channels: NotificationChannels,
-  permission: NoticePermission,
-): boolean {
-  return permission === "granted" && channels.master && channels.ohbox;
-}
-
 /** Where the page leaves the service worker its words. Must match `public/sw.js`. */
 export const NOTIFY_CACHE = "ohmail-notify-v1";
 export const NOTIFY_STATE_URL = "/__ohmail_notify_state";
+const NOTIFY_STATE_LOCK = "ohmail-notify-state";
+const SUBSCRIPTION_LOCK = "ohmail-wake-subscription";
+let cacheEdits = Promise.resolve();
+
+function notifyStateLocks(): LockManager | undefined {
+  return typeof navigator === "undefined" ? undefined : navigator.locks;
+}
+
+async function withWakeSubscription<T>(operation: () => Promise<T>): Promise<T> {
+  const locks = notifyStateLocks();
+  return await (locks ? locks.request(SUBSCRIPTION_LOCK, operation) : operation());
+}
+
+function editNotifyCache(edit: (cache: Cache) => Promise<void>, strict = false): Promise<void> {
+  const pending = cacheEdits.then(async () => {
+    try {
+      if (typeof caches === "undefined") return;
+      const write = async () => edit(await caches.open(NOTIFY_CACHE));
+      const locks = notifyStateLocks();
+      if (locks) await locks.request(NOTIFY_STATE_LOCK, write);
+      else await write();
+    } catch (err) {
+      if (strict) throw err;
+    }
+  });
+  cacheEdits = pending.catch(() => undefined);
+  return pending;
+}
+
+interface NotifyState {
+  enabled: boolean;
+  title: string;
+  body: string;
+  revision?: string;
+  registration?: { owner: string; family: string; proof: string };
+}
+
+async function readNotifyState(cache: Cache): Promise<NotifyState | null> {
+  const held = await cache.match(NOTIFY_STATE_URL);
+  if (!held) return null;
+  try { return await held.json(); } catch { return null; }
+}
+
+function putNotifyState(cache: Cache, state: NotifyState): Promise<void> {
+  return cache.put(NOTIFY_STATE_URL, new Response(JSON.stringify(state), {
+    headers: { "content-type": "application/json" },
+  }));
+}
+
+function disarmedState(title: string, body: string, revision: string = crypto.randomUUID()): NotifyState & { revision: string } {
+  return { enabled: false, title, body, revision };
+}
+
+async function putCurrentNotifyState(cache: Cache, state: NotifyState, isCurrent: () => boolean): Promise<void> {
+  if (!isCurrent()) return;
+  await putNotifyState(cache, state);
+  // A put may finish after its session ends. Disarm before letting the worker read the result.
+  if (state.enabled && !isCurrent()) {
+    try { await putNotifyState(cache, disarmedState("", "")); }
+    catch { await cache.delete(NOTIFY_STATE_URL); }
+  }
+}
+
+/** The fallback page may open only for the registration and live session confirmed by the server. */
+export async function wakeProofHolds(proof: string, owner: string, family: string | undefined): Promise<boolean> {
+  if (!family || readOwner() !== owner || readSessionFamily() !== family) return false;
+  let matches = false;
+  await editNotifyCache(async (cache) => {
+    const state = await readNotifyState(cache);
+    const registration = state?.registration;
+    matches = wakeStorage.get(pendingOffKey) === null && state?.enabled === true &&
+      registration?.proof === proof && registration.owner === owner && registration.family === family &&
+      readOwner() === owner && readSessionFamily() === family;
+  });
+  return matches;
+}
 
 /**
  * Hand the service worker the sentence it may draw, in the user's own language.
@@ -212,13 +278,7 @@ export const NOTIFY_STATE_URL = "/__ohmail_notify_state";
 export function writeNotifyStateUnchecked(
   enabled: boolean, title: string, body: string,
 ): Promise<void> {
-  /* THROUGH THE SAME QUEUE AS THE SUBSCRIPTION, and that is the point rather than tidiness.
-     These were two independent fire-and-forget writes, so a fast OFF/ON pair could land in
-     either order: a stale `enabled: false` arriving after a later `enabled: true` leaves the
-     worker refusing to draw for a browser that is subscribed and expecting notices, with nothing
-     on screen to explain it. One queue makes call order the order they are applied in — and puts
-     them in order relative to the subscription changes they accompany. */
-  return serialize(() => writeNotifyStateNow(enabled, title, body));
+  return editNotifyCache((cache) => putNotifyState(cache, enabled ? { enabled, title, body } : disarmedState(title, body)));
 }
 
 /**
@@ -233,28 +293,6 @@ export function writeNotifyStateUnchecked(
  */
 export function disarmNotifyState(title: string, body: string): Promise<void> {
   return writeNotifyStateUnchecked(false, title, body);
-}
-
-async function writeNotifyStateNow(
-  enabled: boolean, title: string, body: string,
-): Promise<void> {
-  try {
-    if (typeof caches === "undefined") return;
-    const cache = await caches.open(NOTIFY_CACHE);
-    await cache.put(
-      NOTIFY_STATE_URL,
-      new Response(JSON.stringify({ enabled, title, body }), {
-        headers: { "content-type": "application/json" },
-      }),
-    );
-  } catch {
-    /* No Cache API, or storage refused. With no entry at all the worker draws nothing, which is
-       the safe direction. The case this CANNOT make safe is a failed write over an OLDER entry
-       that says `enabled: true` — the stale value survives and the worker would still draw. What
-       stops that mattering is the subscription: an intent that turned to false drops it, so the
-       server has no endpoint to dial and the worker is never entered. The two have to fail
-       together for a notice to arrive after an OFF. */
-  }
 }
 
 /** The three values a `PushSubscription` yields, base64url, as the server wants them. */
@@ -290,8 +328,8 @@ function decodeVapidKey(base64url: string): ArrayBuffer {
 /** What a host needs to reach the server. Injected so this module names no route itself. */
 export interface PushApi {
   vapidKey: () => Promise<{ publicKey: string | null }>;
-  subscribe: (endpoint: string, p256dh: string, auth: string) => Promise<{ id: string }>;
-  unsubscribe: (id: string, opts?: { signingOutOf?: string }) => Promise<void>;
+  subscribe: (endpoint: string, p256dh: string, auth: string, opts?: PushRequestScope) => Promise<{ id: string }>;
+  unsubscribe: (id: string, opts?: PushRequestScope & { signingOutOf?: string }) => Promise<void>;
 }
 
 /**
@@ -305,6 +343,22 @@ export interface PushApi {
  * half-updated when a key joins, as the account did.
  */
 export const NOTIFICATION_SUBSCRIPTION_PREFIX = "ohmail.notifications.subscription";
+
+// A refused Cache write must still invalidate acknowledgments waiting in another tab.
+const pendingOffKey = `${NOTIFICATION_SUBSCRIPTION_PREFIX}OffRevision`;
+const wakeStorage = localStorageDoor("notifications.subscription");
+
+async function writeOff(cache: Cache, state: NotifyState & { revision: string }): Promise<boolean> {
+  try {
+    await putNotifyState(cache, state);
+  } catch {
+    wakeStorage.set(pendingOffKey, state.revision);
+    try { await cache.delete(NOTIFY_STATE_URL); } catch { /* The pending revision still fences acknowledgments. */ }
+    return false;
+  }
+  wakeStorage.remove(pendingOffKey);
+  return true;
+}
 
 /** Where the row id is remembered, so `unsubscribe` can name it after a reload. */
 const SUBSCRIPTION_ID_KEY = "ohmail.notifications.subscriptionId";
@@ -330,11 +384,14 @@ export type PushSyncOutcome =
   | "subscribed" | "unsubscribed" | "unchanged"
   | "no_server_key"        // this deployment has no VAPID keypair — supported, not an error
   | "unsupported"          // no service worker, or a subscription with no keys
-  | "row_remains"          // the browser is unsubscribed; the server row could not be deleted
+  | "row_remains"          // removal of the server row or browser subscription could not be confirmed
   | "not_registered";      // this browser holds a subscription the server never recorded
 
 const readId = (): string | null => {
   try { return globalThis.localStorage?.getItem(SUBSCRIPTION_ID_KEY) ?? null; } catch { return null; }
+};
+const readSubscriptionOwner = (): string | null => {
+  try { return globalThis.localStorage?.getItem(SUBSCRIPTION_OWNER_KEY) ?? null; } catch { return null; }
 };
 const readEndpoint = (): string | null => {
   try { return globalThis.localStorage?.getItem(SUBSCRIPTION_ENDPOINT_KEY) ?? null; } catch { return null; }
@@ -386,7 +443,7 @@ function serialize<T>(op: () => Promise<T>): Promise<T> {
  * cannot be recovered from — the three orderings below.
  */
 export function syncWebPush(
-  wanted: boolean, api: PushApi, opts?: { forceAnnounce?: boolean; signingOutOf?: string },
+  wanted: boolean, api: PushApi, opts?: PushSyncOptions,
 ): Promise<PushSyncOutcome> {
   return serialize(() => syncWebPushNow(wanted, api, opts));
 }
@@ -403,39 +460,51 @@ export function syncWebPush(
 const namedRow = (id: unknown): id is string => typeof id === "string" && id.length > 0;
 
 async function syncWebPushNow(
-  wanted: boolean, api: PushApi, opts?: { forceAnnounce?: boolean; signingOutOf?: string },
+  wanted: boolean, api: PushApi, opts?: PushSyncOptions,
 ): Promise<PushSyncOutcome> {
-  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return "unsupported";
-  let reg: ServiceWorkerRegistration;
-  let existing: PushSubscription | null;
+  if (wanted && opts?.mayRegister?.() === false) return "not_registered";
+  const idAtStart = readId();
+  const endpointAtStart = readEndpoint();
+  const ownerAtStart = readSubscriptionOwner();
+  const familyAtStart = readSessionFamily();
+  const requestScope = opts?.expectedFamily === undefined ? undefined : {
+    expectedFamily: opts.expectedFamily,
+    ...(opts.expectedOwner === undefined ? {} : { expectedOwner: opts.expectedOwner }),
+  };
+  let reg: ServiceWorkerRegistration | undefined;
+  let existing: PushSubscription | null = null;
+  let localChecked = false;
   try {
-    reg = await navigator.serviceWorker.register("/sw.js");
-    existing = await reg.pushManager.getSubscription();
+    const worker = typeof navigator === "undefined" ? undefined : navigator.serviceWorker;
+    // Turning notices off only has to inspect a worker that is already installed.
+    if (worker !== undefined) {
+      reg = wanted ? await worker.register("/sw.js") : await worker.getRegistration();
+      existing = await reg?.pushManager.getSubscription() ?? null;
+      localChecked = true;
+    }
   } catch {
-    return "unsupported";
+    // A browser lookup failure must still let the saved server row be deleted.
   }
+  if (!localChecked && (wanted || idAtStart === null)) return "unsupported";
 
   if (!wanted) {
-    const id = readId();
-    // The sign-out press's pass for its own row (`revokeWakeRegistration`), on these two DELETEs only.
-    const pass = opts?.signingOutOf === undefined ? undefined : { signingOutOf: opts.signingOutOf };
-    if (existing === null) {
-      /* NO LOCAL SUBSCRIPTION, BUT PERHAPS A ROW. A browser that cleared its site data, or a
-         previous attempt that unsubscribed and then failed to delete, leaves an id with nothing
-         under it. The row is what causes wakes, so it is still worth removing. */
-      if (id === null) return "unchanged";
-      try { await api.unsubscribe(id, pass); writeId(null); return "unsubscribed"; }
-      catch { return "row_remains"; }
+    const mayWithdraw = () => opts?.mayWithdraw?.() !== false && readSessionFamily() === familyAtStart &&
+      readId() === idAtStart && readEndpoint() === endpointAtStart && readSubscriptionOwner() === ownerAtStart;
+    const sameOwner = ownerAtStart === null || ownerAtStart === (opts?.expectedOwner ?? opts?.signingOutOf ?? readOwner());
+    if (!sameOwner || !mayWithdraw()) return "row_remains";
+    const pass = opts?.signingOutOf === undefined ? requestScope : { signingOutOf: opts.signingOutOf, ...requestScope };
+    if (existing === null && idAtStart === null) return "unchanged";
+    // A recorded endpoint belongs to the operation that captured it. A browser rotation can leave
+    // a different local endpoint behind, which must survive this withdrawal.
+    let localGone = localChecked && existing === null;
+    if (existing !== null && (endpointAtStart === null || existing.endpoint === endpointAtStart)) {
+      try { localGone = await existing.unsubscribe(); } catch { /* still try the captured server row */ }
     }
-    /* LOCAL FIRST — unsubscribing here is what actually stops this browser being woken — but the
-       server delete is attempted EVEN IF that throws. Returning early on a local failure used to
-       leave both halves live: the browser still had its endpoint and the row still pointed at it. */
-    let localGone = true;
-    try { await existing.unsubscribe(); } catch { localGone = false; }
-    if (id === null) return localGone ? "unsubscribed" : "row_remains";
+    if (idAtStart === null) return localGone ? "unsubscribed" : "row_remains";
+    if (!mayWithdraw()) return "row_remains";
     try {
-      await api.unsubscribe(id, pass);
-      writeId(null);
+      await api.unsubscribe(idAtStart, pass);
+      if (mayWithdraw()) writeId(null);
       return localGone ? "unsubscribed" : "row_remains";
     } catch {
       /* THE ID SURVIVES A FAILED DELETE, and that is the whole point. Erasing it here made the
@@ -446,6 +515,7 @@ async function syncWebPushNow(
     }
   }
 
+  if (!reg || opts?.mayRegister?.() === false) return "not_registered";
   if (existing !== null) {
     /* A LOCAL SUBSCRIPTION THE SERVER NEVER RECORDED. `subscribe()` can succeed and the POST
        after it fail; before this the result was permanent, because every later call saw a
@@ -473,8 +543,8 @@ async function syncWebPushNow(
     try {
       // The row is the account's whose session the POST carries: the jar's name now, not at its answer.
       const owner = readOwner();
-      const { id } = await api.subscribe(existing.endpoint, keys.p256dh, keys.auth);
-      if (!namedRow(id)) return "not_registered";
+      const { id } = await api.subscribe(existing.endpoint, keys.p256dh, keys.auth, requestScope);
+      if (!namedRow(id) || opts?.mayPublish?.() === false) return "not_registered";
       /* The superseded row is dropped AFTER the new one exists, so a failure here never leaves
          this browser with no registration at all. A row for a dead endpoint is pruned by the
          sender anyway; a browser with none is simply never woken. */
@@ -482,9 +552,11 @@ async function syncWebPushNow(
          `knownId === id` and this arm does not fire. It is reached when the SERVER names a
          different row — an endpoint rotation — which is the case it was written for and not
          something `forceAnnounce` manufactures. */
-      if (knownId !== null && knownId !== id) {
-        try { await api.unsubscribe(knownId); } catch { /* pruned when its endpoint stops answering */ }
+      if (knownId !== null && knownId !== id && opts?.mayRegister?.() !== false &&
+          (ownerAtStart === null || ownerAtStart === owner)) {
+        try { await api.unsubscribe(knownId, requestScope); } catch { /* pruned when its endpoint stops answering */ }
       }
+      if (opts?.mayPublish?.() === false) return "not_registered";
       writeId(id, existing.endpoint, owner);
       return "subscribed";
     } catch {
@@ -494,6 +566,7 @@ async function syncWebPushNow(
 
   let publicKey: string | null;
   try { ({ publicKey } = await api.vapidKey()); } catch { return "not_registered"; }
+  if (opts?.mayRegister?.() === false) return "not_registered";
   if (publicKey === null || publicKey.trim() === "") return "no_server_key";
 
   let sub: PushSubscription;
@@ -508,6 +581,7 @@ async function syncWebPushNow(
   } catch {
     return "not_registered";
   }
+  if (opts?.mayRegister?.() === false) return "not_registered";
   const keys = subscriptionKeys(sub);
   if (keys === null) {
     // A subscription with no keys cannot be sealed to, and the sender refuses to send in the
@@ -517,7 +591,8 @@ async function syncWebPushNow(
   }
   try {
     const owner = readOwner();
-    const { id } = await api.subscribe(sub.endpoint, keys.p256dh, keys.auth);
+    const { id } = await api.subscribe(sub.endpoint, keys.p256dh, keys.auth, requestScope);
+    if (opts?.mayPublish?.() === false) return "not_registered";
     if (!namedRow(id)) {
       /* Same rollback as the throw below, for the same reason: a local subscription with no row
          is the stuck state where every later call sees one and never retries the POST. */
@@ -530,7 +605,9 @@ async function syncWebPushNow(
     /* ROLL THE LOCAL HALF BACK. Leaving it subscribed with no row is the stuck state above —
        every later call would see a subscription and never retry the POST. Undoing it means the
        next attempt starts clean. */
-    try { await sub.unsubscribe(); } catch { /* nothing better to do */ }
+    if (opts?.mayPublish?.() !== false) {
+      try { await sub.unsubscribe(); } catch { /* nothing better to do */ }
+    }
     return "not_registered";
   }
 }
@@ -553,10 +630,11 @@ async function syncWebPushNow(
  * `signingOutOf` is the sign-out press's: the account its jar named. The press marks the jar pending before it revokes, so
  * the account boundary lets the row's DELETE through on that account alone (`api-client.ts`, `RequestOptions`).
  */
-export async function revokeWakeRegistration(opts?: { signingOutOf?: string }): Promise<PushSyncOutcome | null> {
+export async function revokeWakeRegistration(opts?: { signingOutOf?: string; expectedFamily?: string }): Promise<PushSyncOutcome | null> {
+  latestWakeIntent += 1;
   /*
    * Bounded, and the bound is load-bearing (review — it inverted "the wipe runs REGARDLESS"). Every
-   * call joins the module-global {@link serialize} queue, whose ops are `fetch`es with no timeout;
+   * physical withdrawal joins the local subscription queue, whose operations can wait on the network;
    * the settings pane fires two on mount and the sign-out control lives inside it — on a captive
    * portal whose vapid-key GET stalls, `signOut` blocked for ever: no server logout, no local wipe,
    * the mailbox left in IndexedDB on a machine somebody was done with. The revoke gets a budget;
@@ -580,19 +658,46 @@ export async function revokeWakeRegistration(opts?: { signingOutOf?: string }): 
  * enough not to read as a hang. A bound on a BEST-EFFORT step, not a
  * request deadline: what it protects is the acts around it — the sign-out's
  * logout and wipe ({@link revokeWakeRegistration}), the shell's boot
- * ({@link reconcileWakeRegistration}). One constant because it is one
- * hazard: every call on both paths goes through the same module-global
- * {@link serialize} chain, so a single stalled `fetch` is the shared risk.
+ * ({@link reconcileWakeRegistration}). A stalled platform or network request can delay physical
+ * subscription changes. Writing the cache does not wait for the subscription queue.
  */
 const WAKE_BUDGET_MS = 4_000;
+// The cache revision invalidates an ON in any tab once OFF commits.
+let latestWakeIntent = 0;
+
+function confirmedWakeFamily(scope: string | null): string | null {
+  if (scope === null || readOwner() !== scope || !sessionMayAsk()) return null;
+  const family = boundApiFamily(scope);
+  return family !== null && readSessionFamily() === family ? family : null;
+}
+
+/** Clear the browser's cached wake display and close its existing notices. */
+export async function clearBrowserWakeNotices(): Promise<boolean> {
+  try {
+    const marker = readOwnerMarker();
+    const family = readSessionFamily();
+    const holds = () => readOwnerMarker().kind === marker.kind && readSessionFamily() === family &&
+      (marker.kind !== "account" || readOwner() === marker.id);
+    await editNotifyCache((cache) => putCurrentNotifyState(cache, disarmedState("", ""), holds), true);
+    if (!holds()) return false;
+    await browserNoticePage.closeAll(true);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** The revoke itself. Never throws; see {@link revokeWakeRegistration} for the bound around it. */
-async function revokeWakeRegistrationNow(opts?: { signingOutOf?: string }): Promise<PushSyncOutcome | null> {
-  // The words go first and unconditionally: it is the one half that needs neither the network nor
-  // a live subscription, so a browser that fails everything below still refuses to draw.
-  try { await disarmNotifyState("", ""); } catch { /* no Cache API, or storage refused */ }
+async function revokeWakeRegistrationNow(opts?: { signingOutOf?: string; expectedFamily?: string }): Promise<PushSyncOutcome | null> {
+  const family = opts?.expectedFamily ?? readSessionFamily();
+  const owner = readOwner();
+  const holds = () => readSessionFamily() === family && readOwner() === owner;
+  if (!holds()) return null;
+  await clearBrowserWakeNotices();
+  if (!holds()) return null;
   try {
-    return (await browserNotificationHost.syncSubscription?.(false, opts)) ?? null;
+    return await withWakeSubscription(async () =>
+      (await browserNotificationHost.syncSubscription?.(false, { ...opts, mayWithdraw: holds })) ?? null);
   } catch {
     /* The host's own guard threw before its try block could catch — a mocked `../api-client` with
        no `apiConfigured`, or a platform without one. Reported as the state that is true either
@@ -601,35 +706,28 @@ async function revokeWakeRegistrationNow(opts?: { signingOutOf?: string }): Prom
   }
 }
 
-/**
- * Set the `enabled` byte and keep the words that are there. The reconcile may not write the words
- * itself: everything goes through one queue, and the boot commit enqueues out of effect order — the
- * push round trip first, the locale relabel second, and the reconcile's final write only when the
- * round trip RESOLVES, third, carrying a `body` captured at boot in the DEVICE's language. Whenever
- * `GET /consent` adopted the account locale mid-flight (the ordinary case), the relabel wrote German
- * at position 2 and the reconcile overwrote it with English at position 3 — the defect the relabel
- * fixed, undone by its neighbour. So the last writer carries no words; `body` survives only where
- * there is no entry to preserve.
- */
-export function setNotifyEnabled(enabled: boolean, fallbackBody: string): Promise<void> {
-  return serialize(async () => {
-    try {
-      if (typeof caches === "undefined") return;
-      const cache = await caches.open(NOTIFY_CACHE);
-      const held = await cache.match(NOTIFY_STATE_URL);
-      const prior = held ? ((await held.json()) as { title?: unknown; body?: unknown }) : null;
-      const title = typeof prior?.title === "string" ? prior.title : "ohmail";
-      const body = typeof prior?.body === "string" ? prior.body : fallbackBody;
-      await cache.put(
-        NOTIFY_STATE_URL,
-        new Response(JSON.stringify({ enabled, title, body }), {
-          headers: { "content-type": "application/json" },
-        }),
-      );
-    } catch {
-      /* No Cache API, or storage refused. With no entry the worker draws nothing, which is the
-         safe direction — the same argument `writeNotifyStateNow` makes. */
-    }
+/** Validate the acknowledgment under the same lock the worker uses to read its state. */
+function finishWakeIntent(
+  session: { owner: string; family: string } | undefined, fallbackBody: string, revision: string | undefined,
+  isCurrent: () => boolean,
+): Promise<void> {
+  return editNotifyCache(async (cache) => {
+    const prior = await readNotifyState(cache);
+    if (wakeStorage.get(pendingOffKey) !== null || prior?.revision !== revision) return;
+    const previous = prior?.registration;
+    const registration = session && {
+      ...session,
+      proof: previous?.owner === session.owner && previous.family === session.family
+        ? previous.proof
+        : crypto.randomUUID(),
+    };
+    await putCurrentNotifyState(cache, {
+      enabled: registration !== undefined,
+      ...(registration === undefined ? {} : { registration }),
+      title: typeof prior?.title === "string" ? prior.title : "ohmail",
+      body: typeof prior?.body === "string" ? prior.body : fallbackBody,
+      ...(revision === undefined ? {} : { revision }),
+    }, isCurrent);
   });
 }
 
@@ -640,31 +738,19 @@ export function setNotifyEnabled(enabled: boolean, fallbackBody: string): Promis
  * an English device got "New mail." on the lock screen. It re-writes the WORDS and preserves
  * `enabled` exactly as stored: recomputing it here from `subscriptionWanted()` — an intent — is
  * how the previous user's surviving registration gets re-armed; a relabel is not a reconcile.
- * Absent entry ⇒ nothing relabelled, nothing created: a worker with no entry draws nothing.
+ * When no state is stored, record the words with the worker disarmed until registration.
  */
-export function updateNotifyWords(title: string, body: string): Promise<void> {
-  return serialize(async () => {
-    try {
-      if (typeof caches === "undefined") return;
-      const cache = await caches.open(NOTIFY_CACHE);
-      /* AN ABSENT ENTRY IS CREATED, DISARMED. It has to be: on the boot commit this runs BEFORE
-         the reconcile's own write lands (see the ordering note there), so returning early would
-         leave the words for the reconcile to supply — which is the clobber this exists to end.
-         `enabled: false` is the only safe value to invent: a worker with no permission draws
-         nothing, and the reconcile sets the byte immediately after. */
-      const held = await cache.match(NOTIFY_STATE_URL);
-      const prior = held ? ((await held.json()) as { enabled?: unknown }) : null;
-      const enabled = typeof prior?.enabled === "boolean" ? prior.enabled : false;
-      await cache.put(
-        NOTIFY_STATE_URL,
-        new Response(JSON.stringify({ enabled, title, body }), {
-          headers: { "content-type": "application/json" },
-        }),
-      );
-    } catch {
-      /* No Cache API, storage refused, or an entry that is not ours to parse. The words stay as
-         they were, which is a stale language and never a wrong `enabled`. */
-    }
+export function updateNotifyWords(title: string, body: string, owner = readOwner()): Promise<void> {
+  const family = confirmedWakeFamily(owner);
+  const isCurrent = () => family !== null && confirmedWakeFamily(owner) === family;
+  return editNotifyCache(async (cache) => {
+    if (!isCurrent()) return;
+    const prior = await readNotifyState(cache);
+    const registration = prior?.registration;
+    const enabled = prior?.enabled === true && registration?.owner === owner && registration.family === family;
+    await putCurrentNotifyState(cache, {
+      title, body, enabled, revision: prior?.revision, registration: enabled ? registration : undefined,
+    }, isCurrent);
   });
 }
 
@@ -689,51 +775,77 @@ export function updateNotifyWords(title: string, body: string): Promise<void> {
  * once. Bounded by {@link WAKE_BUDGET_MS}. Never throws.
  */
 export async function applyWakeIntent(
-  host: NotificationHost, wanted: boolean, body: string,
+  host: NotificationHost, wanted: boolean, body: string, scope = readOwner(),
 ): Promise<PushSyncOutcome | null> {
+  const family = confirmedWakeFamily(scope);
+  if (scope === null || family === null) return null;
+  const intent = ++latestWakeIntent;
+  const holdsOwner = () => confirmedWakeFamily(scope) === family;
+  const isCurrent = () => intent === latestWakeIntent && holdsOwner();
+  // A late receipt can still identify the row that the pending sign-out needs to delete.
+  const mayPublish = () => holdsOwner() ||
+    (readOwnerMarker().kind === "signed-out" && readSessionFamily() === family);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<PushSyncOutcome>((resolve) => {
     timer = setTimeout(() => resolve("not_registered"), WAKE_BUDGET_MS);
   });
   try {
-    return await Promise.race([applyWakeIntentNow(host, wanted, body), budget]);
+    const off = wanted ? null : disarmedState("ohmail", body);
+    let revision: string | undefined;
+    let preparedForWake = false;
+    let disarmed = false;
+    const prepared = editNotifyCache(async (cache) => {
+      if (!holdsOwner()) return;
+      if (off) {
+        disarmed = await writeOff(cache, off);
+        return;
+      }
+      const pending = wakeStorage.get(pendingOffKey);
+      if (pending !== null && !await writeOff(cache, disarmedState("ohmail", body, pending))) return;
+      revision = (await readNotifyState(cache))?.revision;
+      preparedForWake = true;
+    });
+    const requestScope = { expectedOwner: scope, expectedFamily: family };
+    const operation = async () => {
+      await prepared;
+      if (!holdsOwner()) return null;
+      if (off === null) {
+        if (typeof caches === "undefined") return "unsupported";
+        if (!preparedForWake) return "not_registered";
+        return registerWake(host, body, revision, isCurrent, mayPublish, requestScope);
+      }
+      const outcome = await host.syncSubscription?.(false, { ...requestScope, mayWithdraw: holdsOwner });
+      if (!disarmed && holdsOwner()) {
+        await editNotifyCache(async (cache) => {
+          if (holdsOwner() && wakeStorage.get(pendingOffKey) === off.revision) {
+            disarmed = await writeOff(cache, off);
+          }
+        });
+      }
+      return holdsOwner() ? disarmed ? outcome ?? null : "row_remains" : null;
+    };
+    return await Promise.race([withWakeSubscription(operation), budget]);
+  } catch {
+    return wanted ? "not_registered" : "row_remains";
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
 }
 
 /** The BOOT door: the same act, over the stored intent and the browser's own host. */
-export async function reconcileWakeRegistration(body: string): Promise<PushSyncOutcome | null> {
+export async function reconcileWakeRegistration(body: string, scope = readOwner()): Promise<PushSyncOutcome | null> {
+  if (confirmedWakeFamily(scope) === null) return null;
   return applyWakeIntent(
-    browserNotificationHost, subscriptionWanted(readChannels(), browserPermission()), body,
+    browserNotificationHost, subscriptionWanted(readChannels(scope), browserPermission()), body, scope,
   );
 }
 
-/**
- * The act itself. Never throws; see {@link applyWakeIntent} for the bound.
- *
- * THE TWO DIRECTIONS ARE ORDERED DIFFERENTLY, and that asymmetry is the whole of the privacy
- * argument. OFF is written first and unconditionally — it needs neither the network nor a
- * subscription, and a worker told not to draw cannot leak. ON is written LAST, and only once this
- * browser holds a row the server acknowledged, because the residue a failed sign-out delete
- * leaves behind belongs to the PREVIOUS user and is still being dialled. See the body.
- */
-async function applyWakeIntentNow(
-  host: NotificationHost, wanted: boolean, body: string,
+/** Arm the worker only after the server acknowledges this browser's current session. */
+async function registerWake(
+  host: NotificationHost, body: string, revision: string | undefined,
+  isCurrent: () => boolean, mayPublish: () => boolean,
+  requestScope: { expectedOwner: string; expectedFamily: string },
 ): Promise<PushSyncOutcome | null> {
-
-  /* OFF IS WRITTEN FIRST AND UNCONDITIONALLY. It needs neither the network nor a subscription,
-     and it is the safe direction: a worker told not to draw cannot leak whatever the sender still
-     has. This half is unchanged. */
-  if (!wanted) {
-    try { await disarmNotifyState("ohmail", body); } catch { /* no Cache API, or refused */ }
-    try {
-      return (await host.syncSubscription?.(false)) ?? null;
-    } catch {
-      return "row_remains";
-    }
-  }
-
   /*
    * ON is written last, and only for a row this boot established. Writing `enabled: true` first
    * ("inert without a subscription") is false on a shared browser: A signs out, the delete fails
@@ -753,9 +865,10 @@ async function applyWakeIntentNow(
    * "this browser owns the row", on the one machine where the row may be
    * somebody else's. A missed notice is recoverable; a stranger's mail on your lock screen is not.
    */
+  if (!isCurrent()) return null;
   let outcome: PushSyncOutcome | null;
   try {
-    outcome = (await host.syncSubscription?.(true, { forceAnnounce: true })) ?? null;
+    outcome = (await host.syncSubscription?.(true, { ...requestScope, forceAnnounce: true, mayRegister: isCurrent, mayPublish })) ?? null;
   } catch {
     /* The host's own guard threw before its try block could catch — a mocked `../api-client`
        with no `apiConfigured`, or a platform without one. Reported as the state that is true
@@ -766,9 +879,12 @@ async function applyWakeIntentNow(
      stored id rather than to ownership — see the shortcut in `syncWebPushNow`. The announce above
      is forced precisely so that the only way to reach `true` here is a row the server named for
      THIS session. */
-  const ours = outcome === "subscribed";
+  /* A sign-out or a changed account may have withdrawn this intent while the request was pending. */
+  const session = outcome === "subscribed" ? {
+    owner: requestScope.expectedOwner, family: requestScope.expectedFamily,
+  } : undefined;
   try {
-    await setNotifyEnabled(ours, body);
+    await finishWakeIntent(session, body, revision, isCurrent);
   } catch { /* no Cache API, or refused */ }
-  return outcome;
+  return isCurrent() ? outcome : null;
 }

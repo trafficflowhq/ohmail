@@ -1,9 +1,11 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
+import { act } from "react";
+import { within } from "@testing-library/react";
 import messages from "../messages/en.json";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 // The first mount pays the shell's cold import.
 vi.setConfig({ testTimeout: 30_000 });
@@ -32,13 +34,14 @@ const webDoor: FirstRunHost = {
 };
 
 async function ohbox(facts: MailboxFacts[], firstRun?: FirstRunHost): Promise<HTMLElement> {
-  const c = await mountShell(facts, firstRun ? { firstRun } : {});
+  const c = await mountShell(facts, firstRun ? { firstRun } : { mailboxesNotices: true });
   await tick(100);
   return c.querySelector<HTMLElement>(".view-ohbox") ?? c;
 }
 
+/** The empty place's card, today's or the kit's. */
 const card = (pane: HTMLElement) =>
-  [...pane.querySelectorAll<HTMLElement>(".empty")].find((e) => (e.textContent ?? "").includes(t.connectTitle)) ?? null;
+  [...pane.querySelectorAll<HTMLElement>(":is(.empty, .oh-empty)")].find((e) => (e.textContent ?? "").includes(t.connectTitle)) ?? null;
 
 beforeEach(() => {
   installShellEnv();
@@ -55,17 +58,23 @@ describe("an Ohbox with no mailbox", () => {
     const go = c!.querySelector<HTMLAnchorElement>("a");
     expect(go?.getAttribute("href")).toBe("/join");
     expect(go?.textContent).toBe(t.connectAction);
-    expect(pane.textContent).not.toContain(t.emptyPlain);
+    expect(pane.textContent).not.toContain(t.empty.nothing);
   });
 
   it("in the desktop window, the same verb opens Settings → Mailboxes", async () => {
     const pane = await ohbox([]);
-    expect(card(pane)?.querySelector("a")?.getAttribute("href")).toBe("#/settings/mailboxes");
+    /* The card's one verb, pressed: where it went is where the window's address now stands. */
+    const connect = card(pane);
+    expect(connect).not.toBeNull();
+    const go = within(connect!).getByRole("button", { name: t.connectAction });
+    await act(async () => { go.click(); });
+    expect(window.location.hash).toBe("#/settings/mailboxes");
+    expect(within(pane).getByRole("region", { name: messages.settings.mailboxes })).toBeTruthy();
   });
 
   it("an account with a mailbox keeps the plain empty sentence", async () => {
     const pane = await ohbox([mailbox()], webDoor);
     expect(card(pane)).toBeNull();
-    expect(pane.textContent).toContain(t.emptyPlain);
+    expect(pane.textContent).toContain(t.empty.nothing);
   });
 });

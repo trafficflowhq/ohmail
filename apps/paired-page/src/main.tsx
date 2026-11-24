@@ -1,0 +1,117 @@
+/**
+ * ohmail HOST CLIENT — the entry point of the SERVED browser bundle (the third desktop
+ * artifact): what the host door serves to the phone that scanned the pairing QR — the same
+ * `AppShell`, built by the same vite config under `OHMAIL_HOST_CLIENT=1`, delivered by the
+ * engine's static handler over the user's own tailnet. NO offline guard, the artifact's
+ * defining line: the window's bundle replaces `fetch` because its transport is a pipe and its
+ * promise zero egress — which is why the WINDOW dist can never be the thing the door serves;
+ * this bundle's transport IS `fetch`, contained by the door's CSP (`connect-src 'self'`) and
+ * the tailnet boundary. No Tauri bridge, no commands, no updater page — no shell behind a
+ */
+
+/*
+ * phone browser. The theme stamp and locale provider are the window's own (`DesktopLocale`).
+ */
+
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { createPortal } from "react-dom";
+import { ThemeProvider } from "@ohmail/ui";
+import { portalRenderer } from "@ohmail/ui/portal-renderer";
+import { localStorageDoor } from "@ohmail/client-engine/durable";
+
+import "../../webapp/app/app.css";
+// After app.css, the standalone entry's reason: this window stamps data-layout pre-paint
+// too, so the Zero ladder must reach the hosted door's shell as well.
+import "../../webapp/app/zero-layout.css";
+import { DesktopLocale, useAppLocale } from "../../desktop/src/DesktopLocale.js";
+import { stampColumns } from "@ohmail/app-logic/lists/column-store";
+import { stampFrameAttributes } from "@ohmail/app/frame/boot";
+import { applyTextSize, readTextSize } from "@ohmail/app-logic/text/text-size";
+import { BearerManager } from "./bearer.js";
+import { HostGate } from "./HostGate.js";
+
+/* The pre-paint theme stamp — the window entry's exact contract: an explicit preference is
+   stamped on <html> before the first render, absent means follow the system. */
+try {
+  const stored = localStorage.getItem("ohmail.theme");
+  if (stored === "light" || stored === "dark") document.documentElement.dataset.theme = stored;
+} catch {
+  /* storage blocked — tokens.css falls back to prefers-color-scheme */
+}
+/* …and the FACE/LAYOUT halves of the same contract (review-caught: the axis went opt-in and
+   the desktop is a host that DID wire the controls — the shared Settings Look row — and
+   carries the Omarchy live feed, whose CSS is scoped to [data-face="ohmarchy"]). The
+   provider re-resolves after mount; this stamp only kills the pre-paint flash. Each storage
+   read sits in its own try so a blocked jar still reaches the Linux detection. */
+{
+  let face: string | null = null;
+  try {
+    face = localStorage.getItem("ohmail.face");
+  } catch {
+    /* blocked — fall through */
+  }
+  if (face !== "paper" && face !== "ohmarchy") {
+    try {
+      face = localStorage.getItem("ohmail.face.account");
+    } catch {
+      /* fall through */
+    }
+  }
+  if (face !== "paper" && face !== "ohmarchy") {
+    face =
+      /Linux/.test(navigator.platform ?? "") && !/Android|CrOS/.test(navigator.userAgent ?? "")
+        ? "ohmarchy"
+        : "paper";
+  }
+  if (face === "ohmarchy") document.documentElement.dataset.face = "ohmarchy";
+  let layout: string | null = null;
+  try {
+    layout = localStorage.getItem("ohmail.layout");
+  } catch {
+    /* blocked */
+  }
+  if (layout === "zero") document.documentElement.dataset.layout = "zero";
+}
+/* …and the THREE COLUMNS' widths — the window entry's contract, third axis. This page runs on
+   a phone or a tablet, where the two separators are off screen below 901px and this is a stamp
+   with nothing to stamp; a tablet held wide gets the same shell the window does, and the store
+   is that browser's own, which is the right scope for a fact about a screen. */
+stampColumns();
+/* …and Settings → Text size, this browser's own, as the web door stamps it (`text-size.ts`). */
+applyTextSize(readTextSize(), document.documentElement);
+
+/**
+ * THE THEME'S WRITE DOOR — one per window, at module scope so it is not rebuilt per frame.
+ *
+ * `packages/ui` declares the shape and implements none of it, so the provider that stamps
+ * `<html data-theme>` reports a refused write through the SAME window event the shared shell's
+ * notice already listens for.
+ */
+const THEME_DOOR = localStorageDoor("theme");
+
+/* …and the frame's scheme, device and pointer, before the first paint: `host.html` carries no inline script. */
+stampFrameAttributes(document, window);
+
+const root = document.getElementById("root");
+if (!root) throw new Error("ohmail host client: #root is missing from index.html");
+
+/** ONE manager per page — the credential's single owner; the gate and the engine both read it. */
+const bearer = new BearerManager();
+
+/** The page's gate, handed the language's controls the window's own provider stands. */
+function Gate() {
+  return <HostGate bearer={bearer} language={useAppLocale()} />;
+}
+
+createRoot(root).render(
+  <StrictMode>
+    <DesktopLocale>
+      <ThemeProvider storageKey="ohmail.theme" faces storage={THEME_DOOR}>
+        <portalRenderer.Provider value={createPortal}>
+          <Gate />
+        </portalRenderer.Provider>
+      </ThemeProvider>
+    </DesktopLocale>
+  </StrictMode>,
+);

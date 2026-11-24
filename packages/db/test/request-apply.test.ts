@@ -8,6 +8,7 @@ import {
   MOVE_DESTINATIONS, MOVE_DEDUP_KEY_MAX, validateMovePayload, applyMessageMove,
   AWAY_PILES, validateProfileUpdatePayload, TRAVELLING_SIGNATURE_HTML_MAX_BYTES,
   TRAVELLING_OHBOX_BAR_MAX_BYTES, exportPendingMovesOnStandDown,
+  FOLDER_MOVE_NAME_MAX, folderMoveNameError, validateFolderMovePayload, type InventoryFolder,
 } from "../src/request-apply.js";
 import { effectForDestination } from "@trafficflow/core/mail";
 import { AWAY_ANSWERABLE_PILES } from "@trafficflow/core/away-scope";
@@ -100,7 +101,7 @@ describe("applyMessageMove writes desired state and nothing else", () => {
     const w = await world(db);
     // A row the worker already owns, saying where the message physically is.
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "worker", reconcileStatus: "clean", conflict: false,
     });
 
@@ -237,7 +238,7 @@ describe("a forwarded delete records where the message came from", () => {
     const w = await world(db);
     // The row a previous delete left behind: this message has been in Trash once already.
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "worker", reconcileStatus: "clean", conflict: false, trashedFrom: "Archive/2026",
     });
     const r = await apply(db, w.mailboxId, { dedupKey: w.dedupKey, destination: "reads" });
@@ -255,7 +256,7 @@ describe("a forwarded delete records where the message came from", () => {
     const w = await world(db);
     await db.update(mailboxes).set({ trashFolder: "INBOX.Trash" }).where(eq(mailboxes.id, w.mailboxId));
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "INBOX.Trash", observedFolder: "INBOX.Trash",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "INBOX.Trash", observedFolder: "INBOX.Trash",
       lastSetBy: "worker", reconcileStatus: "clean", conflict: false,
     });
     await apply(db, w.mailboxId, { dedupKey: w.dedupKey, destination: "trash" });
@@ -378,7 +379,7 @@ describe("a host that has lost the lease hands its pending moves over", () => {
     desired: string, lastSetBy = "us",
   ): Promise<void> => {
     await db.insert(folderState).values({
-      messageId, desiredFolder: desired, observedFolder: "ohmail/Screener",
+      messageId, accountId: ACCT, desiredFolder: desired, observedFolder: "ohmail/Screener",
       lastSetBy, reconcileStatus: "pending", conflict: false,
     });
   };
@@ -730,10 +731,12 @@ describe("the screening preference, validated at the boundary", () => {
   const screening = (v: unknown) => validateProfileUpdatePayload({ screeningPreference: v });
 
   it("the object is admitted key by key, and a partial names only what it carries", () => {
+    // `screenerAutoApply` is the retired auto-apply switch: an install one release older still sends
+    // it. It is admitted beside a setting and carried nowhere; alone it names nothing to apply.
     expect(screening({ ohboxPolicy: "people_only", ohboxBar: "people", screenerAutoApply: true })!
-      .screeningPreference).toEqual({ ohboxPolicy: "people_only", ohboxBar: "people", screenerAutoApply: true });
+      .screeningPreference).toEqual({ ohboxPolicy: "people_only", ohboxBar: "people" });
     expect(screening({ ohboxBar: null })!.screeningPreference).toEqual({ ohboxBar: null });
-    expect(screening({ screenerAutoApply: false })!.screeningPreference).toEqual({ screenerAutoApply: false });
+    expect(screening({ screenerAutoApply: false }), "a record naming only the retired switch").toBeNull();
     expect(screening({ impersonationFiling: false })!.screeningPreference).toEqual({ impersonationFiling: false });
     expect(screening({ impersonationFiling: true, ohboxBar: null })!.screeningPreference)
       .toEqual({ impersonationFiling: true, ohboxBar: null });
@@ -809,7 +812,7 @@ describe("the reader's press instant, bounded by the organizer's clock", () => {
     const db = await makeTestDb();
     const w = await world(db);
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false, decidedAt: T,
     });
     const r = await at(db, w.mailboxId, w.dedupKey, new Date(T.getTime() + 60_000), new Date(T.getTime() + 30_000 - 90_000));
@@ -821,7 +824,7 @@ describe("the reader's press instant, bounded by the organizer's clock", () => {
     const db = await makeTestDb();
     const w = await world(db);
     await db.insert(folderState).values({
-      messageId: w.messageId, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false, decidedAt: new Date(T.getTime() - 20 * 60 * MIN),
     });
     expect(await at(db, w.mailboxId, w.dedupKey, T, new Date(T.getTime() - 25 * 60 * MIN))).toEqual({ applied: false, refusal: "stale_press" });
@@ -829,5 +832,95 @@ describe("the reader's press instant, bounded by the organizer's clock", () => {
     expect((await at(db, w.mailboxId, w.dedupKey, T, new Date(T.getTime() - 25 * 60 * MIN))).applied).toBe(true);
     expect(validateMovePayload({ dedupKey: w.dedupKey, destination: "receipts", pressedAt: "not a time" })).toBeNull();
     expect(validateMovePayload({ dedupKey: w.dedupKey, destination: "receipts" })).toEqual({ dedupKey: w.dedupKey, destination: "receipts" });
+  });
+});
+
+/**
+ * `message.file` — A MOVE INTO ONE OF THE PERSON'S OWN FOLDERS. The payload names a folder by its
+ * exact path; its shape is checked here and nothing else is done to it. Whether it is a destination
+ * is the organizer's own list's answer (`resolveFolderDestination`, `../src/folder-destination.ts`), which
+ * hands the applier an `InventoryFolder`; a cast stands in for it below.
+ */
+describe("a message.file payload names a folder by its exact path, and only that", () => {
+  const key = "a".repeat(32);
+
+  it("admits a path with or without the press instant, as given", () => {
+    expect(validateFolderMovePayload({ dedupKey: key, folder: "Projects/2026" }))
+      .toEqual({ dedupKey: key, folder: "Projects/2026" });
+    expect(validateFolderMovePayload({ dedupKey: key, folder: " Café ", pressedAt: "2026-09-07T10:00:00.000Z" }))
+      .toEqual({ dedupKey: key, folder: " Café ", pressedAt: new Date("2026-09-07T10:00:00.000Z") });
+    expect(validateFolderMovePayload({ dedupKey: key, folder: "x".repeat(FOLDER_MOVE_NAME_MAX) })).not.toBeNull();
+    expect(validateFolderMovePayload({ dedupKey: key, folder: "Reisen 🧳" })).not.toBeNull();
+  });
+
+  it("refuses every other shape: a word beside it, no name, a bound passed, a control character, a broken pair", () => {
+    const refused: unknown[] = [
+      null, [], "Projects",
+      { dedupKey: key, folder: "Projects", destination: "inbox" },
+      { dedupKey: key, destination: "inbox" },
+      { dedupKey: key },
+      { dedupKey: key, folder: "" },
+      { dedupKey: key, folder: 7 },
+      { dedupKey: key, folder: "x".repeat(FOLDER_MOVE_NAME_MAX + 1) },
+      { dedupKey: "", folder: "Projects" },
+      { dedupKey: "k".repeat(MOVE_DEDUP_KEY_MAX + 1), folder: "Projects" },
+      { dedupKey: key, folder: "Projects", pressedAt: "not a time" },
+      ...["\u0000", "\r", "\n", "\t", "\u007f", "\u001b"].map((c) => ({ dedupKey: key, folder: `Pro${c}jects` })),
+      ...["\ud83e", "\udddd", "\udddd\ud83e", "a\ud83eb"].map((s) => ({ dedupKey: key, folder: `Trip ${s}` })),
+    ];
+    for (const p of refused) expect(validateFolderMovePayload(p), JSON.stringify(p)).toBeNull();
+  });
+
+  it("names why, in a closed word", () => {
+    expect([7, "", "x".repeat(FOLDER_MOVE_NAME_MAX + 1), "a\nb", "\ud83e", "ok/name"].map(folderMoveNameError))
+      .toEqual(["not_text", "empty", "too_long", "control", "broken_surrogate", null]);
+  });
+});
+
+describe("applyMessageMove into a person's own folder writes desired state and nothing else", () => {
+  const into = (db: Awaited<ReturnType<typeof makeTestDb>>, mailboxId: string, dedupKey: string, folder: string, pressedAt?: Date, now = new Date("2026-09-07T10:00:00.000Z")) =>
+    db.transaction((tx) => applyMessageMove(tx as unknown as Tx, {
+      accountId: ACCT, mailboxId, now,
+      payload: { dedupKey, folder, ...(pressedAt ? { pressedAt } : {}) }, folder: folder as InventoryFolder,
+    }));
+
+  it("writes the folder as desired, keeps observed, clears a delete's origin, and records one move", async () => {
+    const db = await makeTestDb();
+    const w = await world(db);
+    await db.insert(folderState).values({
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "Trash", observedFolder: "ohmail/Screener",
+      lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom: "ohmail/Screener",
+    });
+    const r = await into(db, w.mailboxId, w.dedupKey, "Projects/2026");
+    expect(r).toMatchObject({ applied: true, messageId: w.messageId, from: "ohmail/Screener", to: "Projects/2026" });
+    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, w.messageId));
+    expect([fs!.desiredFolder, fs!.observedFolder, fs!.reconcileStatus, fs!.lastSetBy, fs!.trashedFrom])
+      .toEqual(["Projects/2026", "ohmail/Screener", "pending", "us", null]);
+    const rows = await db.select().from(changeLog).where(and(eq(changeLog.accountId, ACCT), eq(changeLog.entityId, w.messageId)));
+    expect(rows.map((c) => [c.op, c.meta])).toEqual([["move", { from: "ohmail/Screener", to: "Projects/2026" }]]);
+  });
+
+  it("an unknown or tombstoned letter is no_such_message, and nothing is written", async () => {
+    const db = await makeTestDb();
+    const w = await world(db);
+    expect(await into(db, w.mailboxId, "neverseenhere", "Projects")).toEqual({ applied: false, refusal: "no_such_message" });
+    await db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, w.messageId));
+    expect(await into(db, w.mailboxId, w.dedupKey, "Projects")).toEqual({ applied: false, refusal: "no_such_message" });
+    expect(await db.select().from(folderState).where(eq(folderState.messageId, w.messageId))).toHaveLength(0);
+  });
+
+  it("an aged press behind a newer placement is stale_press, over an older one it lands", async () => {
+    const T = new Date("2026-09-07T10:00:00.000Z");
+    const HOUR = 3_600_000;
+    const db = await makeTestDb();
+    const w = await world(db);
+    await db.insert(folderState).values({
+      messageId: w.messageId, accountId: ACCT, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
+      lastSetBy: "us", reconcileStatus: "pending", conflict: false, decidedAt: new Date(T.getTime() - 20 * HOUR),
+    });
+    expect(await into(db, w.mailboxId, w.dedupKey, "Projects", new Date(T.getTime() - 25 * HOUR), T))
+      .toEqual({ applied: false, refusal: "stale_press" });
+    await db.update(folderState).set({ decidedAt: new Date(T.getTime() - 30 * HOUR) }).where(eq(folderState.messageId, w.messageId));
+    expect((await into(db, w.mailboxId, w.dedupKey, "Projects", new Date(T.getTime() - 25 * HOUR), T)).applied).toBe(true);
   });
 });

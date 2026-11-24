@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import base from "../vitest.config";
-import sqlite from "../vitest.sqlite.config";
+import sqlite from "./vitest.sqlite.config";
 import { TEST_SERVICES } from "../packages/db/src/test-services.js";
 import { publicPath } from "./support/public-root.mjs";
 
@@ -68,7 +68,7 @@ describe("the jobs that run the suite", () => {
 
 describe("the vitest configs", () => {
   it("probe the services first and run the gate, the SQLite run included", () => {
-    for (const [name, c] of [["vitest.config.ts", base], ["vitest.sqlite.config.ts", sqlite]] as const) {
+    for (const [name, c] of [["vitest.config.ts", base], ["test/vitest.sqlite.config.ts", sqlite]] as const) {
       const t = c.test!;
       expect((t.globalSetup as string[])[0], name).toBe("./test/setup/services.global.ts");
       expect(t.runner, name).toBe("./test/setup/service-gate.runner.ts");

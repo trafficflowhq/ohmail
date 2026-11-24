@@ -1,5 +1,6 @@
 import { SELF_HOST_BUILD } from "../../self-host-marketing";
-import { ApproveNotOffered, ApproveScreen } from "./ApproveScreen";
+import { ApproveClosed } from "./ApproveClosed";
+import { ApproveRoute } from "./ApproveRoute";
 import { isApprovalId } from "./approval-return";
 import type { SearchParamsLike } from "../../demo-mode";
 
@@ -11,10 +12,10 @@ import type { SearchParamsLike } from "../../demo-mode";
  */
 export default async function ApprovePage(props: { searchParams?: Promise<SearchParamsLike> }) {
   // A self-hosted server holds no approval to confirm; refuse before anything is read or kept.
-  if (SELF_HOST_BUILD) return <ApproveNotOffered />;
+  if (SELF_HOST_BUILD) return <ApproveClosed />;
   const searchParams = await props.searchParams;
   const raw = searchParams?.request;
   const first = Array.isArray(raw) ? raw[0] : raw;
   const id = typeof first === "string" ? first.trim() : "";
-  return <ApproveScreen request={isApprovalId(id) ? id.toLowerCase() : ""} />;
+  return <ApproveRoute request={isApprovalId(id) ? id.toLowerCase() : ""} />;
 }

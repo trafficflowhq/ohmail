@@ -3,7 +3,9 @@ import {
   BILLING_LINK_CAP, BillingLinkAuditError, claimBillingLink, handBackBillingLink, resyncMailbox,
 } from "@trafficflow/db/cloud";
 import { actorOf, resolveStaffSession, staffTokenOf, type StaffIdentity } from "./admin-staff.js";
-import { recordStaffEvents, adoptRequestId, rolesAdmit, staffEventRow, StaffAuditWriteError } from "../staff-audit.js";
+import {
+  recordStaffEvents, adoptRequestId, rolesAdmit, staffActOn, staffDb, staffEventRow, StaffAuditWriteError,
+} from "../staff-audit.js";
 import { isUuid, STAFF_REASON_CODES, type StaffReasonCode, type StaffRole } from "@trafficflow/services";
 import { billingLinkAnswer, mailboxResyncAnswer } from "../admin-write-wire.js";
 import { withStaffStepUp } from "../staff-step-up.js";
@@ -21,7 +23,9 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
  * `POST /admin/mailboxes/resync` — releases a quarantined mailbox (mail 0039). Two credentials in
  * series: the shared `TF_ADMIN_SECRET` proves the call came through the console's server-side
  * proxy, and a live staff session from the body's token names a person an audit row can blame.
- * Unarmed ⇒ 404, secret or session missing ⇒ 401, an eight-character note, `no-store`, `deps.db`.
+ * Unarmed ⇒ 404, secret or session missing ⇒ 401, an eight-character note, `no-store`. The staff
+ * session and the staff events go through the staff door (`staffDb`); the release itself runs for
+ * the account the named mailbox's row carries (`staffActOn`).
  * It clears `mailboxes.retry_after` so the leader re-dials on its next roster pass; it does not
  * force a folder pass, re-read UIDVALIDITY, touch `status` or `retry_count`, or claim a sync it
  * has not observed (see `resyncMailbox` in packages/db).
@@ -53,7 +57,7 @@ function staffMailboxWriteRoute(name: string, run: MailboxWriteRun): Handler {
       return json(400, { error: { code: "bad_request" } });
     }
 
-    const staff = await resolveStaffSession(deps.db, staffTokenOf(body), deps.now());
+    const staff = await resolveStaffSession(staffDb(deps), staffTokenOf(body), deps.now());
     if (!staff) {
       log.warn("admin_write_no_staff_session", {});
       return json(401, { error: { code: "staff_session_required" } });
@@ -62,7 +66,7 @@ function staffMailboxWriteRoute(name: string, run: MailboxWriteRun): Handler {
     const requestId = adoptRequestId(req, deps);
     if (!rolesAdmit(staff.roles, MAILBOX_WRITE_ROLES)) {
       try {
-        await recordStaffEvents(deps.db, [{
+        await recordStaffEvents(staffDb(deps), [{
           requestId, at: deps.now(), actor: actorOf(staff), action: "write.mailbox.resync",
           outcome: "refused", refusalCode: "role_required", targetMailboxId: str(body.mailboxId).trim(),
         }]);
@@ -98,7 +102,10 @@ async function resync(
   deps: ApiDeps,
 ): Promise<{ status: number; body: unknown }> {
   const now = deps.now();
-  const outcome = await resyncMailbox(deps.db, {
+  // The mailbox the operator named selects its row; the release runs for the account that row
+  // carries, in a transaction that names it.
+  const act = await staffActOn(deps, { mailboxId: input.mailboxId });
+  const outcome = act === null ? null : await resyncMailbox(act.db, {
     mailboxId: input.mailboxId,
     staffId: staff.staffId,
     note: input.note,
@@ -112,8 +119,8 @@ async function resync(
   });
   // A mailbox id that matches no row is the operator's mistake, not a no-op, and it must not
   // read as one: 404 rather than a 200 that says `changed: false` beside a wrong id.
-  if (outcome.accountId === null) {
-    await recordStaffEvents(deps.db, [{
+  if (outcome === null || outcome.accountId === null) {
+    await recordStaffEvents(staffDb(deps), [{
       requestId: input.requestId, at: now, actor: actorOf(staff), action: "write.mailbox.resync",
       outcome: "refused", refusalCode: "mailbox_not_found", targetMailboxId: input.mailboxId,
     }]);
@@ -175,7 +182,7 @@ const billingLink: Handler = async (req, deps, params) => {
     return json(400, { error: { code: "bad_request" } });
   }
   if (body === null || typeof body !== "object") return json(400, { error: { code: "bad_request" } });
-  const staff = await resolveStaffSession(deps.db, staffTokenOf(body), deps.now());
+  const staff = await resolveStaffSession(staffDb(deps), staffTokenOf(body), deps.now());
   if (!staff) {
     log.warn("admin_write_no_staff_session", {});
     return json(401, { error: { code: "staff_session_required" } });
@@ -186,7 +193,7 @@ const billingLink: Handler = async (req, deps, params) => {
   let why: { reasonCode?: StaffReasonCode; ticketRef?: string | null } = {};
   const refuse = async (status: number, code: string, outcome: "refused" | "failed" = "refused", extra: object = {}) => {
     try {
-      await recordStaffEvents(deps.db, [{ ...event, ...why, at: deps.now(), outcome, refusalCode: code }]);
+      await recordStaffEvents(staffDb(deps), [{ ...event, ...why, at: deps.now(), outcome, refusalCode: code }]);
     } catch (err) {
       log.error("admin_audit_failed", { err });
       return json(503, { error: { code: "audit_failed" } });
@@ -207,10 +214,21 @@ const billingLink: Handler = async (req, deps, params) => {
   if (!mail?.sendBillingLink) return refuse(503, "mailer_unconfigured", "failed");
   if (!entitlementsPort(deps)) return refuse(404, "no_billing_page");
 
+  // The account the operator named selects its row; the claim, the mail and a hand-back run for
+  // the account that row carries.
+  let act: Awaited<ReturnType<typeof staffActOn>>;
+  try {
+    act = await staffActOn(deps, { accountId });
+  } catch (err) {
+    log.error("admin_write_failed", { err });
+    return json(503, { error: { code: "admin_write_failed" } });
+  }
+  if (act === null) return refuse(404, "account_not_found");
+
   let claim: Awaited<ReturnType<typeof claimBillingLink>>;
   try {
-    claim = await claimBillingLink(deps.db, {
-      accountId, now: deps.now(),
+    claim = await claimBillingLink(act.db, {
+      accountId: act.accountId, now: deps.now(),
       staffEvent: (o) => staffEventRow({
         ...event, ...why, at: deps.now(), outcome: "ok", targetUserId: o.userId, detail: { sendsToday: o.sendsToday },
       }),
@@ -227,7 +245,7 @@ const billingLink: Handler = async (req, deps, params) => {
 
   let sent: { status: string; reason?: string };
   try {
-    sent = await mail.sendBillingLink({ db: deps.db, now: deps.now }, { to: claim.to, locale: claim.locale, anchor: claim.anchor });
+    sent = await mail.sendBillingLink({ db: act.db, now: deps.now }, { to: claim.to, locale: claim.locale, anchor: claim.anchor });
   } catch (err) {
     // A mailer that throws instead of answering is read as a transport failure: the claim stays.
     log.error("billing_link_mailer_threw", { err });
@@ -242,8 +260,9 @@ const billingLink: Handler = async (req, deps, params) => {
   const miss = notSent(sent);
   const failure = { ...event, ...why, at: deps.now(), outcome: "failed" as const, refusalCode: miss.code, targetUserId: claim.userId };
   try {
-    if (miss.handBack) await handBackBillingLink(deps.db, { accountId, anchor: claim.anchor, staffEvent: staffEventRow(failure) });
-    else await recordStaffEvents(deps.db, [failure]);
+    if (miss.handBack) {
+      await handBackBillingLink(act.db, { accountId: act.accountId, anchor: claim.anchor, staffEvent: staffEventRow(failure) });
+    } else await recordStaffEvents(staffDb(deps), [failure]);
   } catch (err) {
     log.error("admin_audit_failed", { err });
     return json(503, { error: { code: "audit_failed" } });

@@ -140,8 +140,12 @@ describe("the auth family's transactions open on the erasure fence", () => {
     // burn and the session it writes.
     // 31 -> 32 with `acknowledgeReuseSweeps`: the acknowledgement's audit rows, fenced.
     // 32 -> 33 with `stepUpRecoveryCode`: the code's burn and the step-up stamp, fenced.
+    // 33 -> 35 with `mintAppHandoff` and `redeemAppHandoff`: a phone app's handoff code minted after the rotation,
+    // and its burn with the session it writes, each fenced.
+    // 35 -> 36 with `ring` (`device-doorbell.ts`): the settings change row after a path that made a named device
+    // has committed, and a take-back's stamp with it, fenced; an erased account's ring writes nothing.
     expect({ fenced, byCreation, named: Object.keys(UNFENCED).length, raw: tree.raw.length })
-      .toEqual({ fenced: 33, byCreation: 1, named: 3, raw: 1 });
+      .toEqual({ fenced: 36, byCreation: 1, named: 3, raw: 1 });
   });
 
   it("RED: a planted unfenced opener is named", () => {

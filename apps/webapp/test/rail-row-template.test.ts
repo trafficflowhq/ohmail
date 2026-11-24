@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
  * always-present ⋯ column. In the phone drawer (76vw: 273px at 360, 624px at an unfolded 821)
  * the rail content kept its desktop width inside a wider drawer. The rule is one row template
  * at every width (`rail.css`), the ⋯ taking no column where hover exists, the indent stopping at
- * depth 2 (`FoldersRailGroup`), and a drawer of `min(320px, 100vw − 48px)` (`app.css`).
+ * the studio's fifth level (`FolderFold`), and a drawer of `min(320px, 100vw − 48px)` (`app.css`).
  *
  * Mutation: put `inset: 0 24% 0 0` back on the drawer, or `r.depth * 14` on the row — red.
  */
@@ -53,11 +53,20 @@ describe("app.css — the drawer's width", () => {
   });
 });
 
-describe("FoldersRailGroup — the indent stops at depth 2", () => {
-  const src = read("apps/webapp/app/shell/FoldersRailGroup.tsx");
-  it("both row sites clamp the depth before multiplying", () => {
-    const sites = src.match(/paddingLeft: Math\.min\((?:r|opts)\.depth, 2\) \* 14/g) ?? [];
-    expect(sites, "a row site indents by the raw depth").toHaveLength(2);
-    expect(src).not.toMatch(/paddingLeft: (?:r|opts)\.depth \* 14/);
+describe("the folder rail stops indenting after the studio's fifth level", () => {
+  const fold = read("packages/ui/src/mail/Lists/FolderFold.tsx");
+  const css = read("packages/ui/src/mail/Lists/folder-fold.css");
+  const rail = read("packages/app/src/folder/FolderRail.tsx");
+
+  it("the full and narrow rails share the capped tree and use their own spacing tokens", () => {
+    const seat = read("packages/app/src/folder/RailSeat.tsx");
+    expect(seat).toMatch(/<FolderRail\s+[^>]*narrow=\{plan\.rail === "dock"\}/);
+    expect(rail).toMatch(/<FolderFold\s+[^>]*narrow=\{props\.narrow\}/);
+    expect(rail).toContain("depth: row.depth");
+    expect(fold).toMatch(/"--oh-folderfold-depth": Math\.min\(folder\.depth, 5\)/);
+    expect(css).toMatch(/\.oh-folderfold\s*\{[^}]*--oh-folderfold-step: var\(--s3\)/);
+    expect(css).toMatch(/\.oh-folderfold\[data-narrow\]\s*\{[^}]*--oh-folderfold-step: var\(--s4\)/);
+    expect(css).toMatch(/--oh-folderfold-in: calc\(var\(--oh-folderfold-depth, 0\) \* var\(--oh-folderfold-step\)\)/);
+    expect(css).toContain("padding-left: var(--oh-folderfold-in)");
   });
 });

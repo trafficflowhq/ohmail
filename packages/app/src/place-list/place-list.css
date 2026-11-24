@@ -1,0 +1,51 @@
+/* A list place's column: where its parts stand. Placement only; every look is the kit's. */
+.pl-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.pl-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.pl-scroll[data-manual-anchor] {
+  overflow-anchor: none;
+}
+/* On a phone the rows lie on one sheet, and the sheet reaches the column's foot however few rows lie on it. */
+.pl-page {
+  display: grid;
+  grid-template-rows: 1fr;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 100%;
+}
+/* A column of its own under the head (a stream on a phone) takes the height the head leaves. */
+.pl-fill {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pl-list[data-scroll-edges],
+.pl-list[data-scroll-edges] > :has(+ .pl-scroll) {
+  position: relative;
+}
+.pl-list[data-scrolled] > :has(+ .pl-scroll)::after,
+.pl-list[data-more-below]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  border-top: 1px solid var(--hair-soft);
+  pointer-events: none;
+}
+
+.pl-selection-foot {
+  display: flex;
+  flex: none;
+  justify-content: center;
+  padding: 0 var(--s2) var(--s3);
+}

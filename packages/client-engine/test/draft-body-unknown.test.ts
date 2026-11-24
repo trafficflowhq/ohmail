@@ -1,10 +1,10 @@
+import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   draftBodyKnown,
   type EngineAdapter,
-  type EngineDraft,
   type SyncChange,
 } from "../src/index.js";
 

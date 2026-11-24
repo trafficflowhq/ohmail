@@ -7,8 +7,9 @@
  * Mutations, each named at its case: the compare, the transport arm, the PUT-path row report, the
  * overlay gate, superseded-on-confirm.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { EDIT_OWN_REFUSALS, HttpAdapter, type EngineMutation, type EntityReader } from "@ohmail/client-engine";
+import { EDIT_OWN_REFUSALS, HttpAdapter, type EntityReader } from "@ohmail/client-engine";
 import { bootEngine, LOCAL_ENGINE_ORIGIN, type LocalEngineDoor, type MobileEngineDeps } from "../src/engine/boot";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
 import { earlierVersionWent, flushQueued, liveActions, type ToastOpts } from "../src/state/live";

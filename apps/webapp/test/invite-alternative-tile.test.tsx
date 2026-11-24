@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 import { createHash } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
 import {
-  ISO, act, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  ISO, act, answerConsentWith, answerSyncWith, installShellEnv, liveAccountResponse, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
 import { normalizeMime } from "../../../packages/core/src/mime.js";
 import {
@@ -67,7 +68,7 @@ beforeEach(() => {
   refused = new Set();
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const inner = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) => {
+  const respond = async (input: unknown, init?: unknown): Promise<Response> => {
     const url = String(input);
     const list = /\/messages\/([^/?]+)\/attachments(?:$|\?)/.exec(url);
     if (list) {
@@ -94,13 +95,15 @@ beforeEach(() => {
       return new Response(part?.bytes ?? "", { status: 200, headers: { "content-type": "application/octet-stream" } });
     }
     return (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init);
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: unknown, init?: unknown) =>
+    liveAccountResponse(await respond(input, init))) as unknown as typeof globalThis.fetch;
   (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => "blob:harness/1";
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => {};
 });
 afterEach(async () => { await teardownShellEnv(); });
 
-async function openInReader(shape: InviteShape): Promise<HTMLElement> {
+async function openInReader(shape: InviteShape, place: "ohbox" | "history" = "ohbox"): Promise<HTMLElement> {
   shapes = [shape];
   let seq = 1;
   const creates = [
@@ -113,17 +116,20 @@ async function openInReader(shape: InviteShape): Promise<HTMLElement> {
   await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })]);
   await tick(30_000);
   await act(async () => {
-    window.location.hash = `#/ohbox/m/${idOf(shape)}`;
+    window.location.hash = `#/${place}/m/${idOf(shape)}`;
     window.dispatchEvent(new Event("hashchange"));
     await Promise.resolve();
   });
   for (let i = 0; i < 40; i++) await tick(50);
-  expect(document.querySelector(".msg-body"), "the reader shows no body").not.toBeNull();
-  return document.body;
+  const reader = screen.getByRole("region", { name: "Open message" });
+  expect(reader.querySelector("[data-read-body]"), "the reader shows no body").not.toBeNull();
+  return reader;
 }
 
 const tileNames = (page: HTMLElement): string[] =>
-  [...page.querySelectorAll(".att-strip .att-tile .att-name")].map((n) => n.textContent ?? "");
+  [...page.querySelectorAll(".oh-files .oh-file-title")].map((n) => n.textContent ?? "");
+
+const failedTile = (page: HTMLElement): Element | null => page.querySelector('.oh-files .oh-file[data-state="failed"]');
 
 const sharedId = (shape: InviteShape, filename: string | null): string =>
   parsed.get(shape.name)!.find((p) => p.filename === filename)!.id;
@@ -134,13 +140,13 @@ describe("the strip lists an invitation's calendar alternative as no tile", () =
     expect(page.querySelectorAll(".ics-card"), "the card").toHaveLength(1);
     expect(tileNames(page), "invite.ics listed twice").toEqual(["invite.ics"]);
     // One file: no "2 attachments" head and no Download all.
-    expect(page.querySelector(".att-strip .att-head"), "a group head over one file").toBeNull();
+    expect(page.querySelector(".oh-files-head"), "a group head over one file").toBeNull();
     const file = parsed.get(GOOGLE.name)!.find((p) => p.filename === "invite.ics")!;
-    const tile = page.querySelector<HTMLButtonElement>(".att-strip button.att-tile");
+    const tile = within(page).getByText("invite.ics").closest("button");
     expect(tile, "the file's tile is no button").not.toBeNull();
     // The tile is the file's own: its bytes are the ones asked for, and they are in hand.
     expect(requested, "the file was never fetched").toContain(file.id);
-    expect(tile!.dataset.state, "the tile is not ready").toBe("ready");
+    expect(tile!.getAttribute("aria-busy"), "the tile is still loading").toBeNull();
     // application/ics has no viewer, so the press saves: one anchor, the file's name and bytes.
     const saved: string[] = [];
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
@@ -153,7 +159,7 @@ describe("the strip lists an invitation's calendar alternative as no tile", () =
       click.mockRestore();
     }
     expect(saved, "the press saved nothing, or something else").toEqual(["invite.ics|blob:harness/1"]);
-    expect(page.querySelector(".att-strip .att-tile[data-state='failed']"), "the tile failed").toBeNull();
+    expect(failedTile(page), "the tile failed").toBeNull();
   }, 60_000);
 
   it("Google, the alternative's bytes refused (the 0.29.0 probe): the card, and the file alone", async () => {
@@ -161,7 +167,7 @@ describe("the strip lists an invitation's calendar alternative as no tile", () =
     const page = await openInReader(GOOGLE);
     expect(page.querySelectorAll(".ics-card"), "the card").toHaveLength(1);
     expect(tileNames(page), "the refused alternative is a second invite.ics").toEqual(["invite.ics"]);
-    expect(page.querySelector(".att-strip .att-tile[data-state='failed']"), "a tile that cannot be fetched").toBeNull();
+    expect(failedTile(page), "a tile that cannot be fetched").toBeNull();
   }, 60_000);
 
   it("Outlook / Exchange (the alternative only): the card and its one tile", async () => {
@@ -175,11 +181,11 @@ describe("the strip lists an invitation's calendar alternative as no tile", () =
     const page = await openInReader(EXCHANGE_ICAL);
     expect(page.querySelectorAll(".ics-card"), "a card from refused bytes").toHaveLength(0);
     expect(tileNames(page), "the invitation shows nothing at all").toEqual(["invite.ics"]);
-    expect(page.querySelector(".att-strip .att-tile[data-state='failed']"), "the tile is not the failed one").not.toBeNull();
+    expect(failedTile(page), "the tile is not the failed one").not.toBeNull();
   }, 60_000);
 
   it("a plain .ics attachment, no invitation: one tile (control)", async () => {
-    const page = await openInReader(PLAIN_ICS_FILE);
+    const page = await openInReader(PLAIN_ICS_FILE, "history");
     expect(tileNames(page)).toEqual(["holidays.ics"]);
   }, 60_000);
 });

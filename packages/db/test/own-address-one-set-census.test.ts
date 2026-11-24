@@ -14,7 +14,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * stale entry in either table is refused.
  */
 const ROOT = resolve(import.meta.dirname ?? ".", "../../..");
-const ROOTS = ["apps/sidecar/src", "apps/worker/src", "packages/api/src", "packages/core/src", "packages/db/src", "packages/services/src"];
+const ROOTS = ["apps/sidecar/src", "apps/worker/src", "packages/organizer/src", "packages/api/src", "packages/core/src", "packages/db/src", "packages/services/src"];
 const ONE_SET_HOME = "packages/db/src/own-mail.ts";
 
 const WE_ANSWERED = "the we-answered shield: a reply the person sent from a mailbox they later removed is still their reply";
@@ -22,8 +22,8 @@ const CONTACT_ONLY = "the contact-only held shield: a reply in the thread from a
 
 /** Builders of a wider own set, by `file#function`, each with why it is wider on purpose. */
 const WIDER: Readonly<Record<string, string>> = {
-  "apps/worker/src/rule-retro.ts#ruleRetroPass": WE_ANSWERED,
-  "apps/worker/src/gap-catchup.ts#gapCatchupPass": WE_ANSWERED,
+  "packages/organizer/src/rule-retro.ts#ruleRetroPass": WE_ANSWERED,
+  "packages/organizer/src/gap-catchup.ts#gapCatchupPass": WE_ANSWERED,
   "apps/worker/src/ohbox-tidy.ts#ohboxTidyPass": WE_ANSWERED,
   "packages/services/src/sensitive-rescreen.ts#runSensitiveRescreen": WE_ANSWERED,
   "packages/core/src/unscreened-set.ts#unscreenedWalk":
@@ -32,7 +32,7 @@ const WIDER: Readonly<Record<string, string>> = {
   "packages/services/src/held-release-service.ts#heldReleaseSenders": CONTACT_ONLY,
   "packages/services/src/why-stayed-service.ts#whyStayed":
     "the why-stayed sheet names the we-answered shield's facts, so it reads the shield's set",
-  "apps/worker/src/thread-join-heal.ts#threadJoinHealPass":
+  "packages/organizer/src/thread-join-heal.ts#threadJoinHealPass":
     "threading: every address the account ever synced under is self, so an old address witnesses nothing",
   "packages/services/src/away-responder-pass.ts#answerForAccount":
     "the away responder never answers a former address of its owner: that is the same loop as its current one",
@@ -44,7 +44,7 @@ const WIDER: Readonly<Record<string, string>> = {
 
 /** A parameter property fed from another file, by `file#function:expression`, and the feeder that reads it. */
 const FED_ACROSS: Readonly<Record<string, { file: string; fn: string }>> = {
-  "packages/core/src/pipeline.ts#planFromRaw:deps.ownAddresses": { file: "apps/worker/src/sync.ts", fn: "ownAddressesFor" },
+  "packages/core/src/pipeline.ts#planFromRaw:deps.ownAddresses": { file: "packages/organizer/src/sync.ts", fn: "ownAddressesFor" },
 };
 
 type Verdict = { kind: "fed" | "built" | "unknown"; why: string; across?: string };

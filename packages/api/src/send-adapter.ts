@@ -77,7 +77,7 @@ export async function makeSendAdapter(
     const imapSecret = await deps.keyProvider.decrypt(imapRow.secretEnc, imapRow.keyVersion);
     // The IMAP auth goes through the SHARED builder — an oauth2 row becomes the token callback here,
     // never a password. `imapSecret` is a REFRESH TOKEN for oauth, a password otherwise.
-    const imapAuth = buildImapAuth(imapMeta, imapSecret, deps.oauth?.forMailbox(mailboxId));
+    const imapAuth = buildImapAuth(imapMeta, imapSecret, deps.oauth?.forMailbox(mailboxId, deps.db));
 
     // Resolve the SMTP transport. For OAUTH there is no smtp row and no static SMTP auth: one refresh
     // token covers both transports, so the host/port/secure come from `meta.smtp` and `ImapAdapter.send`

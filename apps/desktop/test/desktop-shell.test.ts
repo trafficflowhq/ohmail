@@ -413,7 +413,7 @@ describe("tauri.conf.json", () => {
     expect(d["script-src"]).toEqual(["'self'"]);
     expect(d["connect-src"]).toEqual(["'none'"]);
     expect(d["object-src"]).toEqual(["'none'"]);
-    expect(d["frame-src"]).toEqual(["'none'"]);
+    expect(d["frame-src"]).toEqual(["'self'"]);
     // One worker, pdf.js's, a file of the bundle (`src/window-pdfjs.ts`), so a PDF previews in
     // the window as on the web. `'self'` alone: no blob:, no data:, no scheme. The worker reaches
     // nothing because the shell answers its script with `default-src 'none'` (`navigation.rs`).
@@ -446,7 +446,7 @@ describe("tauri.conf.json", () => {
   it("admits blob: for images and for NOTHING else — the preview's widening stays minimal", () => {
     // The regression this pins is directional: the fix for the blank image preview must never
     // creep into a directive where blob: means a document, a script or a worker — those are
-    // the execution shapes `AttachmentPreview`'s header forbids, and `frame-src 'none'` /
+    // the execution shapes `AttachmentPreview`'s header forbids, and the frame and worker origin limits /
     // `object-src 'none'` / `worker-src 'self'` above are load-bearing for it.
     const d = directives(conf.app.security.csp);
     for (const [directive, sources] of Object.entries(d)) {
@@ -652,9 +652,18 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these fifty-eight files and no others", () => {
+  it("is these sixty-six files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
+      // THE CALENDAR'S ALERTS, SET AHEAD: one account's alerts as the window hands them over, read
+      // closed (numbers, ids, a label of three forms; a member too many refuses the set), kept in a
+      // book that is asked again at each alert's minute whether the mailbox served is still the one
+      // the set was made under, and worded by the shell. ALWAYS compiled and Tauri-free: it opens,
+      // spawns, reads and sends nothing; the command that fills the book and the thread that shows
+      // an alert are `engine.rs`'s, under `local-engine`. Its tests read the window's two tables of
+      // cases and its catalogue.
+      "alerts.rs",
+      "alerts_tests.rs",
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
       // thread its own 64 MiB arena and the webview's process runs dozens of threads; five of
       // them held a quarter of the renderer on the measured guest. The cap is an environment
@@ -765,6 +774,14 @@ describe("the Rust side", () => {
       // `default-src 'none'`, which binds pdf.js's worker.
       "navigation.rs",
       "navigation_tests.rs",
+      // THE NOTICE THE WINDOW HANDS THE SHELL, READ CLOSED, AND THE WORDS THE SHELL SHOWS FOR IT.
+      // ALWAYS compiled (unused in the preview, which has no command that reads it) and Tauri-free:
+      // a kind with its count or closed word, refused whole on anything else, and the title and the
+      // body written from `words.rs`'s table. It opens, spawns and reads nothing at run time; its one
+      // reader is the engine build's `notify` in `engine.rs`. Its tests read the window's table of
+      // dropped characters and the window's catalogue.
+      "notice.rs",
+      "notice_tests.rs",
       // The Omarchy theme feed (§3c): `omarchy_core.rs` is the Tauri-free machinery — detection,
       // the raw read, the quiet-debounced watch — kept std+serde_json only so a standalone
       // harness can compile and run it against a real Omarchy install (this repo's machine has
@@ -803,6 +820,11 @@ describe("the Rust side", () => {
       // own address again, and asks through the dialog plugin the updater already carries.
       "renderer_recovery.rs",
       "renderer_recovery_tests.rs",
+      // WHICH LANGUAGE THE SHELL SPEAKS. ALWAYS compiled: the window's choice, kept for the next
+      // launch in one file under the app's own data directory and read once, right after the
+      // runtime is built. Only the engine build has `set_shell_language`; the preview speaks English.
+      "shell_language.rs",
+      "shell_language_tests.rs",
       // THE APP OWNS ITS SCALE. ALWAYS compiled: on Linux it holds `gtk_text_dpi`'s pin from a
       // `notify::gtk-xft-dpi` handler, so a live change of the desktop's text scale never reaches
       // the canvas either, and every build applies the kept Text size as the main window's zoom.
@@ -818,6 +840,12 @@ describe("the Rust side", () => {
       "unclean_exit_tests.rs",
       "updater.rs",
       "updater_tests.rs",
+      // THE RELEASED APP OR A NIGHTLY PREVIEW OF THE NEXT VERSION. ALWAYS compiled, and it touches
+      // nothing: two identifiers, whether the `preview` feature is on, and the one pure check
+      // `main` asks before it builds anything, that the bundler's identifier and that feature name
+      // the same variant.
+      "variant.rs",
+      "variant_tests.rs",
       // WHAT THE RENDERER COSTS. `engine_vitals` measures the sidecar, which is the process that
       // behaved correctly; the webview was never measured, and that is where a 4.1 GB session
       // went while ohmail's own telemetry stayed flat. Reports every webview process's RSS every
@@ -839,6 +867,11 @@ describe("the Rust side", () => {
       // THE WINDOW'S CSP PER PLATFORM, as Tauri's own config merge reads it: test-only, declared
       // from `main.rs`, it reads the config files and compiles nothing into the binary.
       "window_csp_tests.rs",
+      // THE SHELL'S OWN WORDS: the menu, tray, update item and dialogs and the relaunch question,
+      // in English and German, as one table and its pure selectors. ALWAYS compiled and Tauri-free:
+      // it opens, spawns and reads nothing at run time; its tests read the window's catalogue.
+      "words.rs",
+      "words_tests.rs",
     ]);
   });
 
@@ -861,6 +894,9 @@ describe("the Rust side", () => {
     const engine = read("src-tauri/src/engine.rs");
     const call = engine.indexOf("allocator_arenas::apply_to_engine(&mut command)");
     expect(call, "engine.rs must put the cap on the command it spawns").toBeGreaterThan(-1);
+    expect(call, "the Node options must come before the engine script").toBeLessThan(
+      engine.indexOf(".args(&launch.args)"),
+    );
     expect(call, "the cap must be on the command BEFORE it is spawned").toBeLessThan(
       engine.indexOf("let mut child = match command.spawn()"),
     );
@@ -984,6 +1020,11 @@ describe("the Rust side", () => {
     expect(enabled, "the local-engine feature list has stopped matching this reader").toEqual([
       "dep:getrandom",
       "dep:keyring",
+      // macOS registers the calendar notification callbacks through its native backend.
+      "dep:mac-notification-sys",
+      // The calendar submits synchronously through the plugin's existing backend while the
+      // engine still owns the active mailbox and schedule.
+      "dep:notify-rust",
       // Start-at-login, driven only from host mode's arming ceremony and the shell's own
       // autostart commands. Optional for the reason the keystore is: the preview must carry no
       // way to register itself to start with anybody's computer.
@@ -1002,6 +1043,19 @@ describe("the Rust side", () => {
       // rather than a dependency, listed here so the preview neither draws a tray nor carries
       // the capability to.
       "tauri/tray-icon",
+    ]);
+    // A direct backend must remain optional and activated only here. Inspect other features too,
+    // so a second activation in the preview cannot pass the engine's positive inventory.
+    expect(cargo.match(/^notify-rust\s*=.*$/gm)).toEqual(['notify-rust = { version = "4.18", optional = true }']);
+    const allFeatures = /^\[features\]([\s\S]*?)(?=^\[)/m.exec(cargo)?.[1] ?? "";
+    expect(allFeatures.match(/"(?:dep:)?notify-rust(?:\??\/[^"]+)?"/g)).toEqual(['"dep:notify-rust"']);
+    expect(cargo.match(/^mac-notification-sys\s*=.*$/gm)).toEqual([
+      'mac-notification-sys = { version = "0.6.15", optional = true }',
+    ]);
+    const macDependencies = /^\[target\.'cfg\(target_os = "macos"\)'\.dependencies\]\n([\s\S]*?)(?=^\[|$(?![\s\S]))/m.exec(cargo)?.[1];
+    expect(macDependencies).toContain('mac-notification-sys = { version = "0.6.15", optional = true }');
+    expect(allFeatures.match(/"(?:dep:)?mac-notification-sys(?:\??\/[^"]+)?"/g)).toEqual([
+      '"dep:mac-notification-sys"',
     ]);
     expect(cargo).toMatch(/^serde_json = "1"$/m);
     // The keystore dependencies stay optional: the preview has no business being
@@ -1043,7 +1097,7 @@ describe("the Rust side", () => {
     // The window's eviction bound sits under the shell's backstop, so the shell never evicts a
     // URL the window still shows.
     const kept = Number(/const PREVIEWS_KEPT: usize = (\d+);/.exec(code)?.[1]);
-    const windowKept = Number(/export const STAGED_PREVIEWS_KEPT = (\d+);/.exec(fs.readFileSync(path.resolve(APP, "../../packages/client-engine/src/engine.ts"), "utf8"))?.[1]);
+    const windowKept = Number(/export const STAGED_PREVIEWS_KEPT = (\d+);/.exec(fs.readFileSync(path.resolve(APP, "../../packages/client-engine/src/engine/attachment-items.ts"), "utf8"))?.[1]);
     expect(windowKept).toBeGreaterThan(0);
     expect(kept).toBeGreaterThan(windowKept);
     expect(code).toMatch(/const PREVIEW_BYTES_KEPT: u64 = 512 \* 1024 \* 1024;/);
@@ -1106,6 +1160,8 @@ describe("the Rust side", () => {
     const launchModule = read("src-tauri/src/launch_window.rs");
     // …and Settings → Text size beside the GTK pin it completes.
     const textScaleModule = read("src-tauri/src/text_scale.rs");
+    // …and the shell's language beside the file it keeps.
+    const shellLanguageModule = read("src-tauri/src/shell_language.rs");
     // …and the preview's two beside the scheme they feed.
     const previewModule = read("src-tauri/src/attachment_preview.rs");
     // …and the links on screen beside the predicate that reads them.
@@ -1141,6 +1197,12 @@ describe("the Rust side", () => {
       // The two the WINDOW drives rather than the shell — a notice in the operating system's
       // notification centre, and the count on the dock icon.
       "notify",
+      // The calendar's alerts set ahead: one account's alerts as a set the shell reads closed
+      // (numbers, ids, a label of three forms), replaced whole; an empty set clears and the answer
+      // lists the ids held. Taken only under the mailbox the shell serves, asked again at each
+      // alert's minute, worded by the shell (`alerts.rs`). It names no text to show, no path, no
+      // address and no sound, and brings no plugin permission with it.
+      "alerts_set",
       "set_badge",
       // The window's own performance numbers into the engine's log — startup marks, the open,
       // switch and search percentiles, long frames, and what the client engine's derivation
@@ -1254,6 +1316,9 @@ describe("the Rust side", () => {
       // Settings → Text size: one of five percentages, made the main window's zoom and kept for
       // the next launch. `text_scale.rs` refuses any other number.
       "set_text_size",
+      // The shell's own words' language: "en" or "de" exactly, kept for the next launch in one
+      // file the shell names. `shell_language.rs` refuses any other text and answers one bool.
+      "set_shell_language",
     ];
 
     expect(build).toMatch(/CARGO_FEATURE_LOCAL_ENGINE/);
@@ -1290,7 +1355,7 @@ describe("the Rust side", () => {
       // has to name the runtime it belongs to, or the handler cannot be built for one.
       expect(
         engine + hostModule + defaultMailModule + omarchyModule + updaterModule + launchModule + textScaleModule + previewModule +
-          renderedLinksModule + droppedFilesModule,
+          renderedLinksModule + droppedFilesModule + shellLanguageModule,
         `${command} is not defined`,
       ).toMatch(new RegExp(`fn ${command}[<(]`));
       expect(engine, `${command} is not registered`).toMatch(
@@ -1301,25 +1366,14 @@ describe("the Rust side", () => {
       );
     }
 
-    /* AND `open_link` TAKES A KEY. The parameter's type is the whole of the safety argument —
-       a `url: String` here would be a way out of the webview into the user's browser with an
-       address the page chose. The table it resolves against lives in Rust, which is also what
-       keeps the bundle free of any host name at all.
-
-       THE SECOND PARAMETER IS NAMED HERE RATHER THAN THE ASSERTION BEING LOOSENED. `challenge`
-       is 43 characters of base64url the sign-in page needs and the shell validates
-       (`link_url_for`, `is_challenge`) before it appends a parameter it spells itself. It is the
-       ONLY value the window may contribute to an address, it reaches ONE key, and a malformed one
-       is a refusal rather than a page opened without it — all four properties are asserted in
-       `engine_tests.rs`. A THIRD parameter, or a rename that let something else through, still
-       fails here. */
-    // The third is `request`: the approval page's exact-shape id, admitted for `approve` alone
-    // (`open_target` refuses it elsewhere and a challenge there — `engine_tests.rs`). The `shell`
-    // state before them is Tauri's injection, never the window's: `server-mailboxes` reads the
-    // door this shell configured through it, so the self-hosted page is composed here too.
+    // The window names a key, a sign-in challenge or an approval request. The two
+    // Settings handoff arguments identify the configured server and confirmed account.
+    // The native shell validates both before opening the server's page.
     expect(engine).toMatch(
-      /fn open_link\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*key: String,\s*challenge: Option<String>,\s*request: Option<String>,\s*\)/,
+      /fn open_link\(\s*shell: tauri::State<'_, Arc<Shell>>,\s*key: String,\s*challenge: Option<String>,\s*request: Option<String>,\s*expected_server: Option<String>,\s*expected_account: Option<String>,\s*\) -> Result<\(\), String> \{/,
     );
+    expect(engine).toContain("let origin = server_settings_origin(shell.paths.config().as_ref(), server, pane).ok_or_else(moved)?;");
+    expect(engine).toContain("let target = server_settings_target(&origin, account, response)?;");
     expect(engine).toMatch(/fn is_request_id\(value: &str\) -> bool/);
     expect(engine).toMatch(/fn open_target\(key: &str, challenge: Option<&str>, request: Option<&str>\)/);
     expect(engine).not.toMatch(/fn open_link\([^)]*url/);
@@ -1771,7 +1825,15 @@ describe("the Rust side", () => {
     expect(engine).toMatch(/match options\.open\(&path\) \{\s*Ok\(mut file\) => \{\s*let written = fill\(&mut file\)[\s\S]{0,900}?drop\(file\);\s*let _ = fs::remove_file\(&path\);/);
     /* THE WINDOW CANNOT NAME A FILE FOR THE ENGINE TO WRITE: the save's target header is dropped
        from every window request at the one command that forwards them. */
-    expect(engine).toMatch(/fn engine_request\([\s\S]*?\{\s*let body = window_request_body\(body, body_text, body64\)\?;\s*let headers = window_headers\(headers\);[\s\S]{0,600}?shell\.engine\(\)\.request\(EngineRequest \{ method, url, headers, body \}\)/);
+    const request = /^fn engine_request\([\s\S]+?^\}/m.exec(engine)?.[0] ?? "";
+    const command = request.replace(/^\s*\/\/.*$/gm, "");
+    expect(command).toMatch(
+      /expected_calendar_session: Option<u64>,\s*\) -> Result<tauri::ipc::Response, String> \{\s*let body = window_request_body\(body, body_text, body64\)\?;\s*let headers = window_headers\(headers\);\s*let engine = match expected_calendar_session \{\s*Some\(session\) => shell\.calendar_engine\(session\)\.ok_or\("the calendar session changed"\)\?,\s*None => shell\.engine\(\),\s*\};\s*let answer = engine\.request\(EngineRequest \{ method, url, headers, body \}\)\?;/,
+    );
+    expect(command.match(/\.request\(/g)).toHaveLength(1);
+    expect(engine).toMatch(
+      /fn window_headers\(headers: Vec<\(String, String\)>\) -> Vec<\(String, String\)> \{\s*headers\s*\.into_iter\(\)\s*\.filter\(\|\(name, _\)\| !name\.trim\(\)\.eq_ignore_ascii_case\(ATTACHMENT_FILE_TARGET_HEADER\)\)\s*\.collect\(\)\s*\}/,
+    );
     expect(engine).toMatch(/let root = attachment_root\(shell\.paths\.app_data\.as_deref\(\)\)\.map_err\(serde_json::Value::String\)\?;\s*sweep_attachments\(&root, ATTACHMENT_KEEP\);\s*let staged = staging_path\(&root\)/);
     expect(engine).toMatch(/pub\(super\) fn start_ticks_of\(pid: u32\) -> Option<u64> \{[\s\S]{0,140}?File::open\(format!\("\/proc\/\{pid\}\/stat"\)\)/);
     expect(engine).toMatch(/fn tail_lines\(path: &Path, max_bytes: u64\) -> Vec<String> \{[\s\S]{0,120}?File::open\(path\)/);
@@ -2136,14 +2198,17 @@ describe("the auto-updater", () => {
     // others are not — an id nothing builds a menu item for is a command with no trigger at all.
     const menu = read("src-tauri/src/menu.rs");
     expect(menu).toMatch(/updater::CHECK_FOR_UPDATES_ID/);
-    expect(menu).toMatch(/updater::MENU_LABEL_IDLE/);
+    expect(menu).toMatch(/updater::idle_label\(w\)/);
     expect(menu).toMatch(/updater::adopt_menu_item\(app, check_item/);
-    expect(updater).toMatch(/MENU_LABEL_IDLE: &str = "Check for Updates…"/);
+    // The sentences are `words.rs`'s, in the language the run speaks; the flow picks which.
+    const words = read("src-tauri/src/words.rs");
+    expect(updater).toMatch(/pub fn idle_label\(w: &Words\) -> &'static str \{\s*w\.update_check\s*\}/);
+    expect(words).toMatch(/update_check: "Check for Updates…"/);
     // The item says what is happening rather than one fixed word, which is the only quiet surface
     // this design leaves for "an update is waiting".
-    expect(updater).toMatch(/"Checking for Updates…"/);
-    expect(updater).toMatch(/format!\("Downloading ohmail \{version\}…"\)/);
-    expect(updater).toMatch(/format!\("Restart to Install \{version\}"\)/);
+    expect(words).toMatch(/update_checking: "Checking for Updates…"/);
+    expect(words).toMatch(/update_downloading: "Downloading ohmail \{version\}…"/);
+    expect(words).toMatch(/update_restart: "Restart to Install \{version\}"/);
 
     /* THE SECOND TRIGGER, and it is not the webview either: one check shortly after launch, from
        `main.rs`. An updater whose only trigger is a menu item is an updater nobody runs. It is the
@@ -2327,7 +2392,7 @@ describe("the auto-updater", () => {
     /* Rust line-continuations are unwrapped before matching: the dialog's sentence is split
        across source lines with a trailing backslash, and asserting on the wrapped form would make
        this test a hostage to where somebody re-flowed a comment. */
-    const spoken = updater.replace(/\\\s*\n\s*/g, "");
+    const spoken = read("src-tauri/src/words.rs").replace(/\\\s*\n\s*/g, "");
     expect(spoken, "the dialog no longer says nothing was installed")
       .toContain("so nothing was installed");
     expect(spoken, "the dialog no longer says the installed version is untouched")
@@ -2346,10 +2411,12 @@ describe("the auto-updater", () => {
    * sentence, offers "Try again", and only appears at all when the user asked for the check.
    */
   it("answers a failure with a plain sentence and a retry, not an alert", () => {
-    expect(updater).toMatch(/"Try again"\.into\(\)/);
+    const words = read("src-tauri/src/words.rs");
+    expect(words).toMatch(/failed_retry: "Try again"/);
+    expect(updater).toMatch(/\.update_failed\(failure\)/);
     expect(updater).toMatch(/check\(retry, true\)/);
     // The sentences are the module's own, and no formatted error is interpolated into any of them.
-    expect(updater).toMatch(/ohmail could not fetch the update\./);
+    expect(words).toMatch(/ohmail could not fetch the update\./);
     expect(updater).not.toMatch(/\{e\}/);
     // A check nobody asked for fails silently — an unrequested error box over somebody's mail is
     // the interruption this flow exists to remove.
@@ -2405,7 +2472,7 @@ describe("the auto-updater", () => {
        package manager" beside a bar offering to check, or a bar offering Restart while a send waits. */
     const relabel = /fn relabel<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
     expect(relabel, "the relabel helper was not found").toContain("set_text");
-    expect(relabel).toContain("menu_text(kind, &flow, standing.held)");
+    expect(relabel).toContain("menu_text_in(kind, &flow, standing.held, crate::shell_language::words())");
     expect(relabel).toMatch(/told\(&flow, last, kind, standing\)/);
     expect(updater).toMatch(/fn told\(flow: &Flow, last: Option<Check>, kind: InstallKind, standing: Standing\) -> serde_json::Value \{\s*let mut told = report_with\(flow, last, env!\("CARGO_PKG_VERSION"\), kind, standing\);/);
   });
@@ -2427,6 +2494,7 @@ describe("the auto-updater", () => {
       "windowsSetup",
       "macBundle",
       "macAppStore",
+      "preview",
       "unpackaged",
     ];
     for (const kind of kinds) {
@@ -2714,7 +2782,10 @@ describe("the auto-updater", () => {
       /return if refusal_is_unverifiable\(&update\.version, &update\.signature, EXPECTED_ASSET\) \{\s*unverifiable_offer\(&app, user_initiated\)\s*\} else \{\s*nothing_to_offer\(&app, user_initiated\)\s*\};/,
     );
     expect(updater).toMatch(/pub fn refusal_is_unverifiable\(/);
-    expect(updater).toMatch(/could not confirm which version the available update is/);
+    // The refusal's sentence is `words.rs`'s, in the run's language, and only it is said there.
+    expect(updater).toMatch(/fn unverifiable_offer<R: Runtime>[^}]*\.update_unverified\(\)/);
+    expect(read("src-tauri/src/words.rs").replace(/\\\s*\n\s*/g, ""))
+      .toMatch(/could not confirm which version the available update is/);
 
     /* AND THE PAYLOAD IS THE ONE FOR THIS BUILD. Which platform key a feed maps to which url is
        unsigned exactly as the version was, so `linux-x86_64` can be pointed at the genuine,
@@ -2895,7 +2966,7 @@ describe("the menu bar", () => {
        Rust binary and a TypeScript bundle can share one list from, so the two are written down
        twice and compared here — the only place that can see both. Drift is otherwise silent:
        the item emits a name the window does not recognise and simply does nothing. */
-    const inRust = [...menu.matchAll(/\("([a-z]+)", "[^"]*", "CmdOrCtrl\+\d"\)/g)].map((m) => m[1]);
+    const inRust = [...menu.matchAll(/\("([a-z]+)", crate::words::EN\.view_[a-z]+, "CmdOrCtrl\+\d"\)/g)].map((m) => m[1]);
     const inTs = /MENU_VIEWS = \[([^\]]*)\]/.exec(native)?.[1] ?? "";
     const listed = [...inTs.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
     expect(inRust.length, "no view rows found in menu.rs — the harness matched nothing").toBe(5);
@@ -2916,10 +2987,10 @@ describe("the menu bar", () => {
     const views = menu.indexOf("pub const VIEWS");
     expect(views).toBeGreaterThan(0);
     expect(menu.slice(0, views)).toMatch(/#\[cfg\(feature = "local-engine"\)\]\s*$/m);
-    // The platform's editing items are built unconditionally.
-    const edit = /SubmenuBuilder::new\(app, "Edit"\)([\s\S]*?)\.build\(\)\?/.exec(menu)?.[1] ?? "";
-    for (const item of ["undo", "redo", "cut", "copy", "paste", "select_all"]) {
-      expect(edit, `the Edit menu has no ${item}`).toContain(`.${item}()`);
+    // The platform's editing items are built unconditionally, each as the platform's own item.
+    const edit = /SubmenuBuilder::new\(app, w\.menu_edit\)([\s\S]*?)\.build\(\)\?/.exec(menu)?.[1] ?? "";
+    for (const item of ["Undo", "Redo", "Cut", "Copy", "Paste", "SelectAll"]) {
+      expect(edit, `the Edit menu has no ${item}`).toContain(`os_item(app, OsItem::${item}, w.os_item(OsItem::${item}))?`);
     }
     expect(edit).not.toMatch(/cfg\(feature/);
   });
@@ -3096,11 +3167,67 @@ describe("the UI bundle's build config", () => {
   });
 
   /**
+   * The stylesheets the tokens package exports (the design's tokens, its motion and its typefaces, which the kit's base
+   * door imports, and today's) are found by the alias table alone on that install: each subpath, by the first alias
+   * that takes it, reaches the file the package's exports name, never a longer subpath's prefix.
+   */
+  it("takes every stylesheet the tokens package exports, by the alias table, to the file its exports name", () => {
+    const tokens = path.resolve(APP, "../../packages/tokens");
+    const exported = JSON.parse(fs.readFileSync(path.join(tokens, "package.json"), "utf8")).exports as Record<string, unknown>;
+    const sheets = Object.entries(exported).filter(([key, to]) => key.endsWith(".css") && typeof to === "string") as [string, string][];
+    expect(sheets.map(([key]) => key)).toContain("./design/fonts.css");
+    const aliases = viteConfig.resolve!.alias as Array<{ find: string | RegExp; replacement: string }>;
+    const aliased = (spec: string) => {
+      const hit = aliases.find(({ find }) =>
+        typeof find === "string" ? spec === find || spec.startsWith(`${find}/`) : find.test(spec));
+      return hit && path.resolve(spec.replace(hit.find, hit.replacement));
+    };
+    expect(Object.fromEntries(sheets.map(([key]) => [key, aliased(`@ohmail/tokens/${key.slice(2)}`)])))
+      .toEqual(Object.fromEntries(sheets.map(([key, to]) => [key, path.join(tokens, to)])));
+  });
+
+  /**
    * CI typechecks and bundles the window on this directory's install alone, where no workspace
    * link resolves `@trafficflow/*` or `@ohmail/*`: `paths` and the alias table are then the only
    * resolvers. So the window's program is walked here with those links hidden.
    */
   it("resolves every workspace module the window imports through paths and the alias table, to one file", () => {
+    for (const file of ["src/DesktopFrame.tsx", "src/DesktopAiAccount.tsx", "../paired-page/src/host.ts"]) {
+      expect(read(file), file).not.toMatch(/from ["'][^"']*webapp\/app\/\(product\)\//);
+    }
+    expect(read("src/DesktopAiAccount.tsx")).not.toMatch(/from ["'][^"']*webapp\//);
+    for (const file of ["src/DesktopFrame.tsx", "../paired-page/src/host.ts", "../paired-page/src/HostGate.tsx"]) {
+      expect(read(file), file).not.toMatch(/from ["'][^"']*webapp\/app\/shell\/browser-settings/);
+    }
+    const pairedGate = "../paired-page/src/HostGate.tsx";
+    expect(read(pairedGate), pairedGate).not.toMatch(/from ["'][^"']*\bDesktopLocale(?:\.[^"']+)?["']/);
+    const settings = path.resolve(APP, "../../packages/app/src/settings");
+    const engine = /(?:^|\/)client-engine(?:\/|$)/;
+    for (const file of fs.readdirSync(settings, { recursive: true, encoding: "utf8" })) {
+      if (!/\.tsx?$/.test(file)) continue;
+      const source = ts.createSourceFile(file, fs.readFileSync(path.join(settings, file), "utf8"), ts.ScriptTarget.Latest, true);
+      const visit = (node: ts.Node) => {
+        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && engine.test(node.moduleSpecifier.text)) {
+          const clause = node.importClause;
+          const named = clause?.namedBindings;
+          expect(clause?.isTypeOnly || (!clause?.name && named && ts.isNamedImports(named) &&
+            named.elements.length > 0 && named.elements.every((entry) => entry.isTypeOnly)), file).toBe(true);
+        }
+        if (ts.isExportDeclaration(node) && node.moduleSpecifier &&
+          ts.isStringLiteral(node.moduleSpecifier) && engine.test(node.moduleSpecifier.text)) {
+          const named = node.exportClause;
+          expect(node.isTypeOnly || (named && ts.isNamedExports(named) &&
+            named.elements.length > 0 && named.elements.every((entry) => entry.isTypeOnly)), file).toBe(true);
+        }
+        if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          (ts.isIdentifier(node.expression) && node.expression.text === "require"))) {
+          const imported = node.arguments[0];
+          if (imported && ts.isStringLiteral(imported)) expect(imported.text, file).not.toMatch(engine);
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
     const linked = (p: string) => /[\\/]node_modules[\\/]@(?:trafficflow|ohmail)(?:[\\/]|$)/.test(p);
     const workspace = (spec: string) => /^@(?:trafficflow|ohmail)\//.test(spec);
     const parsed = ts.getParsedCommandLineOfConfigFile(path.join(APP, "tsconfig.json"), {}, {
@@ -3133,7 +3260,7 @@ describe("the UI bundle's build config", () => {
         typeof find === "string" ? spec === find || spec.startsWith(`${find}/`) : find.test(spec));
       return hit && path.resolve(spec.replace(hit.find, hit.replacement));
     };
-    const reached = new Set(["src/main.tsx", "src/host-client/main.tsx"].map((f) => path.join(APP, f)));
+    const reached = new Set(["src/main.tsx", "../paired-page/src/main.tsx"].map((f) => path.join(APP, f)));
     for (const from of reached) for (const [spec, file] of imports.get(from) ?? []) {
       const target = aliased(spec);
       if (workspace(spec)) {
@@ -3208,8 +3335,9 @@ describe("the UI bundle's build config", () => {
      * A STUB THAT STANDS AT A MODULE'S PATH MUST EXPORT THAT MODULE'S NAMES — the lesson two
      * retired sync-client stub tests carried, kept alive on the stub that remains.
      *
-     * The client-engine barrel re-exports named symbols from `./adapters/fixtures-adapter.js`,
-     * and in both desktop artifacts that path resolves to `src/no-fixtures-adapter.ts`. A name
+     * The sample adapter's entry (`@ohmail/testing/adapter`) re-exports named symbols from
+     * `./adapters/fixtures-adapter.js`, and in both desktop artifacts that path resolves to
+     * `src/no-fixtures-adapter.ts`. A name
      * the barrel takes and the stub lacks is a `vite build` failure in this directory alone —
      * `tsc` reads no Vite aliases and resolves the real file, so the typecheck stays green while
      * the bundle cannot be built. That exact shape shipped a red public CI once, on the retired
@@ -3222,7 +3350,7 @@ describe("the UI bundle's build config", () => {
      * here: this file is PUBLISHED and that module is not.
      */
     const barrel = fs.readFileSync(
-      path.resolve(APP, "../../packages/client-engine/src/index.ts"),
+      path.resolve(APP, "../../packages/testing/src/adapter.ts"),
       "utf8",
     );
     const block = /export\s*\{([^}]*)\}\s*from\s*"\.\/adapters\/fixtures-adapter\.js";/.exec(barrel);
@@ -3280,277 +3408,58 @@ describe("the UI bundle's build config", () => {
     expect(defineBlock).not.toMatch(/LOCAL_ENGINE\s*\?/);
   });
 
-  it("renders the same shell the web client does — no desktop fork, and no demo mount", () => {
-    const main = read("src/main.tsx");
-    // ONE mount: the gate, which asks the shell what the engine is doing and shows the chooser,
-    // a notice, or the mail client. There used to be a second — `<AppShell demo />`, the retired
-    // preview's — and its absence is the no-demo rule at the entry point: the app opens EMPTY
-    // and one connects; the only demo lives on ohmail.app's landing page.
-    expect(main).toMatch(/<DesktopGate \/>/);
-    expect(main).not.toMatch(/<AppShell/);
-    expect(main).not.toMatch(/demo=/);
-    /* …AND THE WHOLE MOUNT IS INSIDE THE BOUNDARY. Not decoration: `DesktopGate` builds the
-       client engine during a render, and a released build shipped with a constructor that threw
-       there — which unmounted the tree and drew an empty window, on machines that had signed in
-       successfully. A boundary cannot catch its own render, so this has to be OUTSIDE the gate,
-       which means here. See `GateBoundary.tsx`. */
-    expect(main).toMatch(/<GateBoundary>/);
-    // The gate mounts the SHARED shell rather than a screen of its own — that is the no-fork
-    // claim — and hands it `demo={false}` structurally: the line is only reached with a real
-    // engine behind the window.
-    const gate = read("src/DesktopGate.tsx");
-    expect(gate).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/AppShell"/);
-    expect(gate).toMatch(/demo=\{false\}/);
-    expect(gate).not.toMatch(/demo=\{engine === null\}/);
-  });
-
-  /**
-   * THE DESKTOP'S SETTINGS PANE IS A NODE THE SHELL HANDS IN, NOT A FLAG THE SHELL READS.
-   *
-   * `SettingsView` is compiled into a browser tab as well as into this app, and every control in
-   * that pane is a call to a native shell the browser tab does not have. So the shared view takes
-   * a node and this app supplies one — the same seam the hosted client uses for its Account and
-   * Security panes. The consequence worth asserting is the structural one: on the web there is no
-   * pane because there is nothing to render, not because a boolean is false.
-   */
+  /** The Desktop section comes from the native entry; the shared Settings code knows only its registration. */
   it("hands the desktop pane in as a node, and names none of it in the shared view", () => {
-    const settings = fs.readFileSync(
-      path.resolve(APP, "../webapp/app/views/SettingsView.tsx"),
-      "utf8",
-    );
-    // The nav entry and the pane are both conditional on the node being supplied. The tab list
-    // lives in `settings-panes.ts` (one source for the nav and the palette); the view answers
-    // from node presence and hands the host's own label through, and the shared list carries it.
-    expect(settings).toMatch(/desktop: desktopSection \? desktopSection\.label : null,/);
-    const panes = fs.readFileSync(
-      path.resolve(APP, "../webapp/app/views/settings-panes.ts"),
-      "utf8",
-    );
-    expect(panes).toMatch(/w\.desktop !== null \? \[\["desktop", w\.desktop\]/);
-    expect(settings).toMatch(/shown === "desktop" \? desktopSection\?\.node : null/);
-    // And the shared file knows nothing about how any of it works.
-    expect(settings).not.toMatch(/engine_logout|engineLogout|invoke\(|__TAURI/);
+    const frame = read("src/DesktopFrame.tsx");
+    const panes = read("../../packages/app/src/mail/panes.ts");
+    const menu = read("../../packages/app/src/settings/menu.ts");
+    const column = read("../../packages/app/src/settings/PaneColumn.tsx");
+    const web = read("../webapp/app/(product)/mailbox/pane-parts.tsx");
 
-    // The node itself lives here, where the shell is.
-    const pane = read("src/DesktopSettings.tsx");
-    expect(pane).toMatch(/engineLogout/);
+    expect(frame).toMatch(/desktop: DesktopInstallPane/);
+    expect(frame).toMatch(/return <DesktopSettings \{\.\.\.install\} \/>/);
+    expect(frame).toMatch(/browserMailParts\(NATIVE_PANE_PARTS\)/);
+    expect(panes).toMatch(/desktop: NONE/);
+    expect(panes).toMatch(
+      /desktop:\s*parts\.desktop === NONE\s*\? NONE\s*:\s*paneOf\("desktop", \{ Body: parts\.desktop, useSummary: parts\.useDesktopSummary \}\)/,
+    );
+    expect(web).toMatch(/export const WEB_PANE_PARTS[^=]*= \{\s*\.\.\.NO_PANE_PARTS/);
+    expect(web).not.toMatch(/\bdesktop:/);
+    expect(menu).toMatch(/if \(pane !== NONE && pane\.listed\(host\)\) listed\.push\(pane\)/);
+    expect(column).toMatch(/const \{ Body \} = pane/);
+    expect(column).toMatch(/<Body plan=\{plan\}/);
+
+    for (const shared of [panes, menu, column]) {
+      expect(shared).not.toMatch(/engine_logout|engineLogout|invoke\(|__TAURI/);
+    }
+    expect(read("src/DesktopSettings.tsx")).toMatch(/engineLogout/);
   });
 
-  /**
-   * THE OHBOX BAR IS EDITED BY THE SHARED CONTROL, WITH THIS TIER'S TRANSPORT HANDED IN.
-   *
-   * The sentence somebody writes about what deserves their Ohbox has always been READ on this tier: it
-   * travels in the user turn of the screening question a model on this machine is asked, which the
-   * engine's own end-to-end checks assert on the wire. It could not be WRITTEN, because
-   * `GET/PATCH /account/screening` was mounted in the hosted route table alone. It is in the local
-   * engine's table now, and this pane is what addresses it.
-   *
-   * Two claims, and both are structural rather than visual:
-   *
-   *  · ONE EDITOR OVER ONE COLUMN. The control is `OhboxWords` from the shared shell, the same file
-   *    the hosted client renders. A second copy here would be free to drift on the rule that
-   *    actually matters — an emptied box saves `null`, which REVERTS to the product default, where
-   *    a copy that drifted to saving `""` would store an empty bar that silently overrides it.
-   *  · IT GOES DOWN THE BRIDGE, not through the sync client. The engine's route-coverage check
-   *    derives the client's call list from that client's source and holds it against BOTH surfaces
-   *    the engine serves; a settings call routed through it would join the list and land in the
-   *    hosted-mirror half, where this route has no local handler. A preference is not sync traffic.
-   *
-   * The scan marker is asserted from both ends for the reason `ai-gate.ts` taught this repository:
-   * a guard that points at a string nothing contains passes for ever while checking nothing.
-   */
-  /**
-   * THE SETTINGS SCREEN IS THE SHARED ONE, WITH THE PANES A DESKTOP INSTALL CAN ANSWER FOR.
-   *
-   * Four panes were absent or blank here and each for the same shape of reason: the shared shell
-   * builds them out of a hosted API client that is not part of this build, so they were either
-   * withheld or rendered nothing. Mailboxes was the worst of them — present in the nav, and empty
-   * on every real install, because its fallback list draws entities the change feed never carries.
-   *
-   * Source-level, like the suggest control below and for the same reason: the WIRING between two
-   * files in two applications has no single place to render, and deleting it left every suite in
-   * both of them green.
-   */
-  it("hands the shared settings screen the panes only this shell can fill", () => {
-    const gate = read("src/DesktopGate.tsx");
-    expect(gate).toMatch(/mailboxSection: \([\s\S]{0,600}?<DesktopMailboxes\b/);
-    expect(gate).toMatch(/door=\{status\?\.mode \?\? null\}/);
-    /* ── `servedMailboxId` IS GONE, AND THIS GUARD ASSERTS ITS ABSENCE ────────────────────────
-     *
-     * It used to require the spread `{...(status?.mailboxId ? { servedMailboxId: … } : {})}`,
-     * because the pane gated Remove on the one mailbox the engine said it was opening: the local
-     * removal route released the claim and wiped this machine's copy of the mail only for that
-     * row, so offering the control anywhere else would have stated a consequence the request does
-     * not perform.
-     *
-     * The route keys on the ROSTER now — every live row has a runtime and the DELETE wipes
-     * whichever row it names — while `status.mailboxId` has NARROWED to meaning "the seed".
-     * Passing it would hide the removal on every mailbox but one, chosen by which address the
-     * install happened to be configured with. */
-    expect(gate, "the pane is still gated on the one mailbox the engine calls its seed")
-      .not.toMatch(/servedMailboxId/);
-    /* WHAT IT NEEDS INSTEAD. Removing the LAST mailbox leaves the install configured for a
-       mailbox it no longer has, so the pane runs the shell's own sign-out afterwards — and the
-       gate has to re-read its routing from the engine state that comes back, or the window keeps
-       rendering the app over an install with no door until the next launch. */
-    expect(gate, "the last removal cannot tell the gate the install has no door left")
-      .toMatch(/onStatus=\{onStatus\}/);
-    expect(gate).toMatch(/aboutSection: <DesktopAbout status=/);
-    expect(gate).toMatch(/mailboxFacts: readMailboxFacts/);
-
-    // The mailbox list is read from the ENGINE, over the pipe — never from the mirror, which has
-    // no such entity and is what made the shared fallback empty. The read is a factory over the
-    // transport now (`readMailboxFactsVia`), because the served host-client asks the identical
-    // question over its bearer socket; the WINDOW's instance rides the bridge through the
-    // RETRYING read, so one refused frame is not the whole answer.
-    // The narrowing and the bridge binding are two files now, because the served host client
-    // imports the first and must not reach the second: anything that imports `bridge-fetch.ts`
-    // puts the shell command's name into the bundle a phone is handed.
-    const factsWire = read("src/mailbox-facts-wire.ts");
-    expect(read("src/local-mailbox-facts.ts")).toMatch(/readMailboxFactsVia\(retryingBridgeFetch, opts\)/);
-    expect(read("src/DesktopMailboxes.tsx"), "the pane's reach poll rides the same retrying transport")
-      .toMatch(/readMailboxReachVia\(retryingBridgeFetch\)/);
-    // The read goes over the INJECTED transport and asks one of two spellings: the bare list,
-    // and `?counts=1` while a first import is still open (the count is the import's numerator,
-    // which the renderer's windowed mirror cannot supply). Both are asserted, so neither the
-    // door-free rule nor the counted read can go quiet.
-    expect(factsWire).toMatch(/fetchImpl\(\s*opts\.counts === true\s*\?\s*"\/mailboxes\?counts=1"\s*:\s*"\/mailboxes"\s*\)/);
-    // A FAILED read is not an empty account. The ladder renders "No mailbox connected" for the
-    // second, so collapsing the first into it would say that to somebody whose mailbox works.
-    expect(factsWire).toMatch(/throw new Error/);
-
-    // The pane names a THING, like every other entry beside it in that list. The word is a
-    // catalogue read now (the nav label is translated with the rest of the window), so the
-    // assertion is on the key the pane resolves and on what that key says.
-    expect(read("src/DesktopSettings.tsx")).toMatch(/return DOOR_COPY\.paneLabel;/);
-    expect(catalogue("desktopDoor").paneLabel).toBe("Desktop");
-    // …and the copy that sends somebody to it says the same word. A pointer at a pane that no
-    // longer has that name is a wrong instruction, not a stale comment.
-    expect(read("src/local-suggest.tsx")).toMatch(/Settings, Desktop/);
-  });
-
-  it("edits the Ohbox bar with the SHARED control, over the bridge and not through the sync client", () => {
-    /* IT MOVED, from the install pane to Settings → Screener, where the rest of the screening
-       controls now live. The assertion follows it rather than being relaxed: what is being pinned
-       is that the editor is REACHABLE from a pane the shell renders, and naming which pane is what
-       makes that a check instead of a search. */
-    const pane = read("src/DesktopScreening.tsx");
-    expect(pane).toMatch(/<DesktopScreeningWords door=/);
-    expect(read("src/DesktopGate.tsx")).toMatch(/screeningSection: <DesktopScreening door=/);
-
-    /* AND THE SHARED SHELL HAS TO PREFER IT. Handing a node in is half a wiring; the other half
-       is the shell choosing it over its own, and that half fails silently — the pane still
-       renders, from a section that reaches an API client this build does not have, and draws
-       nothing. Both ends, for the reason this file states about the suggest control below. */
-    const shell = fs.readFileSync(path.resolve(APP, "../webapp/app/shell/AppShell.tsx"), "utf8");
-    expect(shell).toMatch(/screeningSection=\{demo \? undefined : \(screeningSection \?\? <ScreeningSection \/>\)\}/);
-
-    const words = read("src/DesktopScreeningWords.tsx");
-    expect(words).toMatch(/from "\.\.\/\.\.\/webapp\/app\/shell\/OhboxWords"/);
-    // No control of its own: a textarea here is the second editor this asserts does not exist.
-    expect(words).not.toMatch(/<textarea/);
-
-    const wire = read("src/local-screening.ts");
-    expect(wire).toMatch(/bridgeFetch/);
-    expect(wire).toMatch(/"\/account\/screening"/);
-    expect(wire).toMatch(/method: "PATCH"/);
-    // Asserted over what it IMPORTS, not over its prose — the header names both of these modules
-    // to say it is not one of them, and a bare substring check would fail on the explanation.
-    expect(wire).not.toMatch(/from "[^"]*(http-adapter|api-client)[^"]*"/);
-
-    // The shared control names no transport at all, which is what lets a browser tab compile it
-    // and this window compile it too.
-    const shared = fs.readFileSync(
-      path.resolve(APP, "../webapp/app/shell/OhboxWords.tsx"),
-      "utf8",
-    );
-    // Comments say what the code should do; only the code decides what it does, for the same
-    // reason: this file's header names the route and both clients precisely in order to say that
-    // it is none of them. Stripped here rather than through the shared scanner, which this
-    // PUBLISHED file cannot import.
-    const sharedCode = shared
-      .replace(/\/\*[\s\S]*?\*\//g, " ")
-      .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-    expect(sharedCode).not.toMatch(/bridgeFetch|__TAURI|api-client|account\/screening/);
-    // Not vacuous: the stripper leaves real code alone.
-    expect(sharedCode).toMatch(/useTranslations\("settings"\)/);
-
-    /* ── THE ARTIFACT SCAN'S MARKER FOR THIS SURFACE, AND WHERE IT LIVES NOW ───────────────
-     *
-     * It used to be a JSX literal in this component, and this assertion read it out of the
-     * source. The sentence moved into `messages/*.json` when the pane's copy was translated —
-     * it was one of the strings a German install read in English — so the source no longer
-     * contains it and this had to follow.
-     *
-     * IT STILL DISCRIMINATES, and the second assertion is what says so rather than assumes it.
-     * `scan-artifact.mjs` uses this string to prove a bundle carries a GATE-REACHABLE surface,
-     * which only works while the string is absent from the served host client. In the source
-     * that was structural (the file is reachable only from the gate); in the catalogue it holds
-     * only because `desktopScreener` is in `WINDOW_ONLY_NAMESPACES`. Put that namespace in the
-     * base list and the marker would be in every artifact and prove nothing — silently, which
-     * is exactly the shape of failure this whole file exists to catch. So the namespace's list
-     * membership is now part of the marker's contract.
-     *
-     * Whitespace is collapsed on the catalogue side for the same reason it was on the source
-     * side: the message is one long line here and JSX-wrapped prose there, and the marker has to
-     * match the form that reaches the bundle. */
-    const marker = "judges them against your sentence";
-    expect(read("scripts/scan-artifact.mjs")).toContain(marker);
-    const catalogue = JSON.parse(read("../webapp/messages/en.json")) as
-      { desktopScreener: Record<string, string> };
-    expect(
-      catalogue.desktopScreener.wordsWhy.replace(/\s+/g, " "),
-      "the scan's marker names a sentence the catalogue no longer carries",
-    ).toContain(marker);
-    expect(
-      WINDOW_ONLY_NAMESPACES as readonly string[],
-      "the marker's namespace reaches the served client, so it proves nothing",
-    ).toContain("desktopScreener");
-    /* AND THE SOURCE MUST NOT CARRY IT TWICE. A literal left behind beside the key would keep
-       this green while a German reader still saw English — the defect the move closed. */
-    expect(words.replace(/\s+/g, " "), "the sentence is still a literal in the source")
-      .not.toContain(marker);
-  });
-
-  /**
-   * THE SCREENER'S SUGGEST CONTROL IS HANDED IN TOO, AND THE OLD ONE IS GATED ON A SERVER.
-   *
-   * The shared control prices a set of senders on a server before it offers a button, because a
-   * hosted account spends an allowance. This build has no server at all, and for the whole life of
-   * the local-engine artifact that control rendered anyway: it drew a button, and every press came
-   * back "that did not work". A control with nothing behind it, on somebody's real mail.
-   *
-   * Two halves, and both are asserted because either alone is satisfiable while the app is broken.
-   * The shared shell must WITHHOLD its own control where there is no server, and it must render a
-   * host's node when one is handed in — and it must still know nothing about how that node works,
-   * exactly as it knows nothing about the Settings pane's commands.
-   *
-   * Source-level on purpose. The behaviour is driven where it can be driven — the control's own
-   * suite here, and the shared client's own suite over the view that chooses between the two — but
-   * the WIRING between two files in two applications has no single place to render, and deleting it
-   * left every suite in both of them green.
-   */
+  /** The shared suggestion control is fed by a host wire and uses the same sender queue and suggestion overlay. */
   it("hands the Screener's suggest control in, and withholds the hosted one where there is no server", () => {
-    const shell = fs.readFileSync(path.resolve(APP, "../webapp/app/shell/AppShell.tsx"), "utf8");
-    // The hosted control is withheld on the demo, on a host with no API, and on a host that
-    // brought its own. `autoOptIn.supported` is `apiConfigured()`, which is false in this build.
-    expect(shell).toMatch(/demo \|\| !autoOptIn\.supported \|\| screenerSuggest/);
-    // …and the host's node is bound to the same queue and the same overlay.
-    expect(shell).toMatch(/suggestNode=\{/);
-    expect(shell).toMatch(/absorb: suggestions\.absorb/);
+    const frame = read("src/DesktopFrame.tsx");
+    const host = read("src/host-contract.ts");
+    const mount = read("../../packages/app/src/mail/ground/ScreenerMount.tsx");
+    const live = read("../../packages/app-logic/src/screener/live.ts");
+    const tools = read("../../packages/app/src/screener/list/Tools.tsx");
 
-    const view = fs.readFileSync(path.resolve(APP, "../webapp/app/views/ScreenerView.tsx"), "utf8");
-    expect(view).toMatch(/suggestNode \?\? \(suggest \? <SuggestControl control=\{suggest\} subscriptionPane=\{subscriptionPane\} \/> : null\)/);
+    expect(frame).toMatch(/suggest: cloudSuggestWire/);
+    expect(host).toMatch(/suggest: account \? has\.wires\.suggest : NONE/);
+    expect(mount).toMatch(/const suggestWire = host\.wires\.suggest/);
+    expect(live).toMatch(/!demo && suggestControl && suggestWire !== "none" && suggestWire\.configured\(\)/);
+    expect(live).toMatch(/run\.forSenders\(\s*model\.unsuggestedSenders,\s*model\.suggestedSenders,/);
+    expect(live).toMatch(/suggestions: suggestWire === "none" && !ownSuggest \? null : run\.suggestions/);
+    expect(tools).toMatch(/const \{ suggest, ownSuggest, facts \} = useScreenerBeside\(\)/);
+    expect(tools).toMatch(/<Suggest\s+suggest=\{suggest\}/);
 
-    // The shared files name none of it. No bridge, no provider, no local route — the same rule the
-    // Settings pane follows, and the reason a browser tab can compile these files at all.
-    for (const shared of [shell, view]) {
+    for (const shared of [mount, live, tools]) {
       expect(shared).not.toMatch(/local\/ai|bridgeFetch|__TAURI|anthropic|ollama/i);
     }
-
-    // The control itself lives here, where the engine is.
     expect(read("src/local-suggest.tsx")).toMatch(/runSuggest/);
     expect(read("src/local-suggest-run.ts")).toMatch(/\/screener\/suggest/);
+    expect(mount).toMatch(/ownSuggest\?\.\(\{ senders: model\.unsuggestedSenders, absorb \}\)/);
+    expect(tools).toMatch(/ownSuggest \?\?\s*\(suggest !== NONE/);
+    expect(frame, "the window never hands its own suggestion control to the Screener").toMatch(/\bLocalSuggest\b/);
   });
 
   it("keeps the document CSP in step with the webview CSP", () => {

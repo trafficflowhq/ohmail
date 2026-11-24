@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
 import {
   createApp, apiRoutes, UNVERIFIED_MAY_REACH, unverifiedMayReach,
   type ApiDeps, type CostClass, type Route,
@@ -55,6 +54,7 @@ const H = (r: Request, d: ApiDeps): Promise<Response> =>
   app.handle(r, { ...d, session: null, idempotency: null });
 
 const key = (r: Route): string => `${r.method} ${r.pattern}`;
+const CONDITIONAL_DISCARD = "DELETE /drafts/:id/conditional";
 const of = (cost: CostClass): string[] =>
   apiRoutes.filter((r) => r.cost === cost).map(key).sort();
 
@@ -381,6 +381,12 @@ const CEREMONY = [
   // knows must not wait on a verified address. One scrypt per attempt, bounded by the sign-in
   // lockout, and step-up gated besides.
   "POST /auth/password",
+  // Password recovery starts without a session. Reset mail is bounded by the per-IP
+  // verification limiter and the recipient's unsolicited mail quota.
+  "POST /auth/password/reset",
+  // Completion proves control of the mailbox with a live, single-use link before changing
+  // the credential. A session would prevent recovery after losing the password.
+  "POST /auth/password/reset/complete",
   "POST /auth/refresh",
   // The web's sign-out door, `POST /auth/logout`'s class and reasoning: leaving, one lookup and two
   // updates and an audit row, no work. Sorted after `refresh` (`refresh` < `refresh/logout`).
@@ -423,6 +429,10 @@ const CEREMONY = [
   // A pairing link's state by its token's HASH — `DELETE /pair/:id`'s class: the credential
   // lifecycle, one read, no write, nothing a caller can spend. Public: the asker holds a link, not
   // a session. Sorted after `POST /pair` (`/pair` < `/pair/state`).
+  // A phone app's handoff of its sign-in to its sibling app: the native rotation, then a single-use code bound to the
+  // sibling's challenge, at most six an hour per person. The credential lifecycle, as the refresh door; public, its
+  // credential the refresh token in the body. Sorted before the state read (`/pair/handoff` < `/pair/state`).
+  "POST /pair/handoff",
   "POST /pair/state",
 ];
 
@@ -977,7 +987,17 @@ describe("the route table declares what every handler causes", () => {
     // 261 -> 265 with the storage program (cloud 0057): `GET /internal/storage-mails/run`
     // (`unauthenticated`, on the exempt list above) and three gated ones — Load it now (`connection`:
     // it dials the person's mail server), the storage choices (`work`) and the change door (`paid`).
-    expect(apiRoutes).toHaveLength(265);
+    // 265 -> 266 with a draft from the person's own words, `paid` like Draft reply: gated.
+    // 266 -> 267: `POST /messages/:id/invitation/answer` (mail 0204), a `connection` like the send
+    // it makes, so it joins the gated remainder and no exempt list moves.
+    // 267 -> 268: `POST /pair/handoff` (mail 0209), a phone app's handoff of its sign-in to its sibling. `ceremony`,
+    // so it joins `CEREMONY` and this total together and the gated remainder is unchanged.
+    // 268 -> 270: the two password recovery routes are both ceremonies.
+    const conditionalDiscard = apiRoutes.filter((r) => key(r) === CONDITIONAL_DISCARD);
+    expect(conditionalDiscard.map((r) => ({
+      cost: r.cost, public: r.options?.public === true, anonymous: r.options?.anonymous === true,
+    }))).toEqual([{ cost: "work", public: false, anonymous: false }]);
+    expect(apiRoutes.filter((r) => key(r) !== CONDITIONAL_DISCARD)).toHaveLength(270);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1217,7 +1237,15 @@ describe("the route table declares what every handler causes", () => {
     // 261 -> 260 with the 5xx poll's route gone, `unauthenticated`: the remainder does not move.
     // 261 -> 265 with the storage program: the storage mails' clock joins `UNAUTHENTICATED`, and Load
     // it now, the storage choices and the change door grow the remainder by three.
-    expect(gated.length).toBe(265 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 265 -> 266 with a draft from the person's own words, `paid`: the remainder grows by one.
+    // 266 -> 267 with an invitation's answer by mail, a `connection`: the remainder grows by one.
+    // 267 -> 268 with a phone app's handoff, a `ceremony`: the total and `CEREMONY` grow by one each, the remainder
+    // does not move.
+    // 268 -> 270: both recovery routes join `CEREMONY`, leaving the gated remainder unchanged.
+    expect(gated.filter((r) => key(r) === CONDITIONAL_DISCARD).map(key)).toEqual([CONDITIONAL_DISCARD]);
+    expect(gated.filter((r) => key(r) !== CONDITIONAL_DISCARD)).toHaveLength(
+      270 - UNAUTHENTICATED.length - CEREMONY.length - READ.length,
+    );
 
     expect(gated.length).toBeGreaterThan(50);
   });
@@ -1238,25 +1266,38 @@ describe("the route table declares what every handler causes", () => {
     }
   });
 
-  it("THE OLD OPT-IN FLAG CANNOT COME BACK", () => {
-    // A deleted interface field does not stop anyone re-adding one, and `verifiedEmail: true` on
-    // a route would now read as a gate while doing nothing at all — the worst of both. Asserted
-    // over the SOURCE TEXT for the reason the guard is: TypeScript is perfectly happy for a
-    // second, parallel mechanism to exist beside the first.
-    const dir = new URL("../src/", import.meta.url);
-    const hits: string[] = [];
-    const walk = (rel: string): void => {
-      for (const e of readdirSync(new URL(rel, dir), { withFileTypes: true })) {
-        if (e.isDirectory()) { walk(`${rel}${e.name}/`); continue; }
-        if (!e.name.endsWith(".ts")) continue;
-        const text = readFileSync(new URL(`${rel}${e.name}`, dir), "utf8");
-        text.split("\n").forEach((line, i) => {
-          if (/verifiedEmail/.test(line)) hits.push(`src/${rel}${e.name}:${i + 1}`);
-        });
+  it("THE OLD OPT-IN FLAG CANNOT COME BACK", async () => {
+    // A deleted interface field does not stop anyone re-adding one, and `verifiedEmail` on a
+    // route would read as a gate beside `cost`. Asked of the pipeline, through the real
+    // `createApp`: the flag, in either spelling, decides nothing. A route that says it needs no
+    // proven address is refused like any other that spends, and a read that says it needs one is
+    // served.
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, {
+      now: FIXED_NOW, lastTwofaAt: FIXED_NOW, emailVerified: false,
+    });
+    const flagged = (cost: CostClass | undefined, verifiedEmail: boolean): Route[] => [{
+      method: "POST",
+      pattern: "/flagged",
+      ...(cost ? { cost, relay: false } : ({} as { cost: CostClass; relay: boolean })),
+      options: { verifiedEmail } as Route["options"],
+      handler: async () => new Response(JSON.stringify({ ran: true }), {
+        status: 200, headers: { "content-type": "application/json" },
+      }),
+    }];
+    const ask = (routes: Route[]): Promise<Response> => createApp(routes).handle(
+      req("POST", "/flagged", { bearer: s.token, body: "{}" }),
+      { ...deps, session: null, idempotency: null },
+    );
+    for (const verifiedEmail of [false, true]) {
+      for (const cost of ["work", "connection", "paid", undefined] as const) {
+        const res = await ask(flagged(cost, verifiedEmail));
+        expect(res.status, `${cost} with verifiedEmail: ${verifiedEmail}`).toBe(403);
+        expect((await res.json() as { error: { code: string } }).error.code).toBe("email_unverified");
       }
-    };
-    walk("");
-    expect(hits, "a second verification mechanism reappeared beside `cost`").toEqual([]);
+      const read = await ask(flagged("read", verifiedEmail));
+      expect(read.status, `read with verifiedEmail: ${verifiedEmail}`).toBe(200);
+    }
   });
 });
 
@@ -1340,7 +1381,7 @@ describe("the gate, over HTTP, on every route it governs", () => {
       expect(res.status, `${method} ${path}`).not.toBe(403);
     }
     const resend = await H(req("POST", "/auth/verify-email/resend", {
-      bearer: s.token, headers: { "x-vercel-forwarded-for": "198.51.100.7" }, body: "{}",
+      bearer: s.token, headers: { "x-forwarded-for": "198.51.100.7" }, body: "{}",
     }), deps);
     expect(resend.status).toBe(200);
 

@@ -1,0 +1,23 @@
+{
+  "id": "9f",
+  "base": "cbb104abef1d34fe922ae57218e9311d6a69023e",
+  "recorded": "2026-11-15",
+  "command": "npx vitest run packages/services/test/row-security-isolation.pg.test.ts packages/db/test/row-security.pg.test.ts packages/db/test/row-security-list.test.ts",
+  "tests": [
+    "packages/services/test/row-security-isolation.pg.test.ts",
+    "packages/db/test/row-security.pg.test.ts",
+    "packages/db/test/row-security-list.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "packages/db/src/row-security/check.ts",
+      "line": "    if (c.bypass || c.super) why.push(`${c.name} may bypass row security`);",
+      "to": "    if (false) why.push(`${c.name} may bypass row security`);",
+      "failed": 5
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 91
+  }
+}

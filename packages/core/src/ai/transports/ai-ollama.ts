@@ -1,8 +1,9 @@
+import type { AiCallOptions } from "../../ai-call-report.js";
 import {
-  CLASSIFY_RESULT_SCHEMA, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA,
+  CLASSIFY_RESULT_SCHEMA, DRAFT_RESULT_SCHEMA,
   SCREENING_PREFIX, SCREENING_RESULT_SCHEMA, TAXONOMY_PREFIX,
   classifyUserPayload, coerceClassifierResult, coerceDraftResult, coerceScreeningResult,
-  draftUserPayload,
+  draftSystemPrompt, draftUserPayload,
 } from "../../mail.js";
 import type {
   ClassifierInput, ClassifierResult, DraftInput, DraftResult,
@@ -66,9 +67,11 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
     schema: unknown,
     what: string,
     maxTokens: number,
+    options?: AiCallOptions,
   ): Promise<unknown> => {
     const meter = usageMeter(opts.onUsage, model);
     try {
+      if (options?.beforeDispatch) await options.beforeDispatch();
       meter.attempt();
       const res = await fetchWithDeadline(opts.fetchImpl, `${opts.baseUrl}/api/chat`, {
         method: "POST",
@@ -147,12 +150,12 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
   };
 
   return {
-    async classify(input: ClassifierInput): Promise<ClassifierResult> {
+    async classify(input: ClassifierInput, options?: AiCallOptions): Promise<ClassifierResult> {
       // Screens for authentication material and THROWS before a payload exists. Shared with
       // every other provider — one sink, so there is one thing to get right.
       const userPayload = classifyUserPayload(input);
       return coerceClassifierResult(
-        await chat(opts.classifyModel, TAXONOMY_PREFIX, userPayload, CLASSIFY_RESULT_SCHEMA, "classifier", OLLAMA_MAX_TOKENS.classify),
+        await chat(opts.classifyModel, TAXONOMY_PREFIX, userPayload, CLASSIFY_RESULT_SCHEMA, "classifier", OLLAMA_MAX_TOKENS.classify, options),
       );
     },
 
@@ -164,18 +167,18 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
      * here than on the hosted path (smaller local models drift further producing JSON alone), and
      * `coerceScreeningResult` is the floor beneath it — an unrecognised label lands at the gate.
      */
-    async screen(input: ClassifierInput): Promise<ClassifierResult> {
+    async screen(input: ClassifierInput, options?: AiCallOptions): Promise<ClassifierResult> {
       const userPayload = classifyUserPayload(input);
       return coerceScreeningResult(
-        await chat(opts.classifyModel, SCREENING_PREFIX, userPayload, SCREENING_RESULT_SCHEMA, "screener", OLLAMA_MAX_TOKENS.classify),
+        await chat(opts.classifyModel, SCREENING_PREFIX, userPayload, SCREENING_RESULT_SCHEMA, "screener", OLLAMA_MAX_TOKENS.classify, options),
       );
     },
 
-    async draft(input: DraftInput): Promise<DraftResult> {
+    async draft(input: DraftInput, options?: AiCallOptions): Promise<DraftResult> {
       // Asserts the redaction allow-list and THROWS before a payload exists. Also shared.
       const userPayload = draftUserPayload(input);
       return coerceDraftResult(
-        await chat(opts.draftModel, DRAFT_PREFIX, userPayload, DRAFT_RESULT_SCHEMA, "drafter", OLLAMA_MAX_TOKENS.draft),
+        await chat(opts.draftModel, draftSystemPrompt(input), userPayload, DRAFT_RESULT_SCHEMA, "drafter", OLLAMA_MAX_TOKENS.draft, options),
       );
     },
 

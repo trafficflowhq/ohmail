@@ -1,0 +1,805 @@
+"use client";
+
+/**
+ * The keyboard registry. `AppShell` owned one `document` keydown listener and every view added its own — six by
+ * the end — so nothing could say what `c` does without reading six files, and precedence was mount order; the
+ * only key map on screen was a hand-typed sentence that had already drifted. One listener, here; everything
+ * else DECLARES (`useKeyBindings([...])`), live while the view is mounted. Precedence is a rule: view layers
+ * before global ones, innermost first, first match runs — the Screener owns `c` while the rest of the product
+ * reads it as Compose. The overlay is GENERATED from this registry (`ShortcutSheet`) by the same precedence
+ * walk, so it cannot list a dead key or omit a live one. A binding declares its own label, so adding one adds
+ * its documentation; deleting the generation step is the mutation `test/keymap.test.ts` watches fail.
+ */
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from "react";
+import { modalIsOpen, pageModal } from "../session/modal-gate.js";
+import { modGlyph, useModGlyph } from "./mod-glyph.js";
+import type { BindingGroup, DisabledReason, KeyBinding } from "./binding.js";
+
+/* What a binding IS (`KeyBinding`, its group and why it rests) is declared in app-logic's `keys/binding.ts`. */
+export type { BindingGroup, DisabledReason, KeyBinding };
+
+/**
+ * Overlay sections, in the order they render. A binding names one; an unknown group would
+ * be dropped from the sheet, so the union is closed on purpose.
+ */
+export const BINDING_GROUPS: BindingGroup[] = ["navigate", "message", "screener", "app"];
+
+/**
+ * Put a cursor on the first row, and say so — the host's half of the rule
+ * above. `label` is the label of the binding that was PRESSED, so the
+ * host's sentence names the verb the second press will run ("press again:
+ * Move it to Trash"). The return says whether a cursor was actually placed:
+ * `false` means there was nothing to place one on (an empty list, or a
+ * surface this host holds no cursor for), and the keypress stays exactly as
+ * inert as today. A boolean, not a message id: the dispatcher has no
+ * business knowing which row — every host owns that choice.
+ */
+export type CursorPlacer = (label: string) => boolean;
+
+/**
+ * How long a placer's sentence stands. Shorter than a report's own time: it carries nothing to press, and the
+ * second press is meant to follow it at once.
+ */
+export const CURSOR_HINT_MS = 2400;
+
+/** The hint every list gives after the first press places its cursor. */
+export function cursorPlacementText(cursor: (key: string, values: { label: string }) => string, label: string): string {
+  return cursor("placed", { label });
+}
+
+/**
+ * WHICH LAYER A PLACER SPEAKS FOR — the placer's half of {@link BindingScope}, and for the same
+ * reason: `view` beats `global`, whatever the component tree says. A view that holds its own list
+ * cursor mounts BELOW the shell, so React runs its effect FIRST and the shell's claim is always
+ * the more recent one — "most recently" would hand every split view's placement to a host that
+ * answers `false` for that route. Within one scope the most recent claim still wins.
+ */
+export type PlacerScope = "view" | "global";
+
+/** How long the first key of a sequence stays armed. */
+const SEQUENCE_MS = 1200;
+
+/**
+ * Registration scope, in precedence order: `overlay` beats `view` beats `global`. Two scopes said "the
+ * innermost VIEW wins" — right for `c`, wrong for Escape, whose owner is whatever is OPEN ON TOP of a
+ * view (the `?` sheet, the palette, the reader), all registered from an ANCESTOR of the view: the shell's
+ * cascade could only be `global`, and a view binding beat it — with rows selected, Escape cleared the
+ * selection instead of closing the sheet. It had been patched once per-case (the Ohbox standing down for
+ * the reply editor); three surfaces stayed broken. `overlay` states the missing rank: an open layer is
+ * inner to any view, whatever the component tree says. A scope, not a flag on a binding: precedence is a
+ * property of the LAYER, the thing that comes and goes.
+ */
+export type BindingScope = "overlay" | "view" | "global";
+
+interface Layer {
+  id: number;
+  scope: BindingScope;
+  /** A getter, so a re-render's fresh closures are dispatched, not the mount's stale ones. */
+  get: () => KeyBinding[];
+}
+
+/**
+ * A binding as the registry publishes it: its shape, without `run` and `when`. A caller that read
+ * one during render and closed over it in its next declaration chained every render's whole scope
+ * to the one before (the shell's `resurfaceKey`: every open and close kept the whole shell scope).
+ */
+export type BoundKey = Omit<KeyBinding, "run" | "when">;
+
+function published(binding: KeyBinding): BoundKey {
+  const { run: _run, when: _when, ...shape } = binding;
+  return shape;
+}
+
+interface Registry {
+  register: (layer: Omit<Layer, "id">) => () => void;
+  /** Everything currently bound, in DISPATCH order. Bumps whenever a layer's shape changes. */
+  bindings: BoundKey[];
+  /** The modifier's cap on this keyboard — ⌘ or Ctrl. See {@link useModGlyph}. */
+  mod: string;
+  /**
+   * Run a chord's binding as if typed, and say whether anything did. Not `bindings.find(…).run()`:
+   * `bindings` is memoised on `version`, which bumps only when a layer's SHAPE changes — right for
+   * the overlay and hints, wrong for `run`, a CLOSURE that changes every render without changing
+   * shape, so the memoised array holds handlers from the last shape change. Found in a browser: the
+   * action bar's read switch called `find("u").run()` and two presses marked the message read
+   * TWICE, while two presses of the KEY toggled correctly — `u`'s shape is constant across a read
+   * flip. The dispatcher walks `ordered()` at KEYPRESS time (`Layer.get` is a getter for this
+   * reason); `press` is that same walk, exposed — a button and a keystroke are one code path.
+   */
+  press: (chord: string) => boolean;
+  /**
+   * A writing surface is on screen — the compose form's claim. While at least one claim is held,
+   * the dispatcher refuses every chord a person could TYPE OR EDIT WITH (see
+   * {@link KeyBinding.inWriting}) unless focus is somewhere letters already mean letters. Returns the release; held for exactly
+   * as long as the surface is mounted ({@link useWritingSurface}). A claim on the DISPATCHER, not a
+   * layer of bindings: the `?` sheet keeps listing what the keys would do elsewhere (suspension is
+   * not documentation), and `press` is untouched — a button click resolving through the registry is
+   * a deliberate act, not a keystroke that missed its field.
+   */
+  claimWriting: () => () => void;
+  /**
+   * Offer to place the cursor for as long as the caller is mounted — see {@link CursorPlacer};
+   * returns the release. A claim rather than a prop: the host that owns the cursor (`AppShell`) is
+   * a CHILD of this provider. Exactly one placer answers — the one claimed most recently — and
+   * nothing falls through, not even on decline, or a second host would draw a selection ring on a
+   * list the pressed verb does not act on. "Most recently" is not "innermost" (React runs a
+   * child's effects first), which is why the claim carries a {@link PlacerScope}: a view's claim
+   * beats the shell's, and only then does recency decide. `global` is the default.
+   */
+  claimCursorPlacer: (place: CursorPlacer, scope?: PlacerScope) => () => void;
+}
+
+/**
+ * What the context carries: everything but `bindings`, which is a store read by the hooks that
+ * need it. The value is stable across shape changes, so a view that only declares keys is not
+ * re-rendered when another layer reshapes (a focus move between zones reshapes the zone layer).
+ */
+interface Store extends Omit<Registry, "bindings"> {
+  subscribe: (notify: () => void) => () => void;
+  snapshot: () => BoundKey[];
+  /** A layer's shape changed without re-registering (its `get` reads live state). */
+  reshaped: () => void;
+}
+
+export const KeymapContext = createContext<Store | null>(null);
+export type { Store as KeymapStore };
+
+/**
+ * A writing surface declared on its markup, for a key pressed INSIDE it: the same rule as
+ * {@link Registry.claimWriting}, scoped to the surface (the inline reply, whose `r` from
+ * outside still toggles it).
+ */
+export const KEY_WRITING = "data-key-writing";
+
+/* ── chord matching ─────────────────────────────────────────────────────────────────── */
+
+/** Focus is somewhere that letters mean letters. */
+export function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return true;
+  return el.isContentEditable === true;
+}
+
+const ACTIVATES_ON_ENTER = "a[href],area[href],button,summary";
+
+/**
+ * A bare ↵ on something the browser activates itself (a link, a button, a summary): the browser's,
+ * never a binding's or the parked walk's. A view's ↵ on such a target cancelled the activation.
+ */
+export function enterActivatesTarget(e: KeyboardEvent): boolean {
+  if (e.key !== "Enter" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
+  const el = e.target as Element | null;
+  return typeof el?.matches === "function" && el.matches(ACTIVATES_ON_ENTER);
+}
+
+/** The first key of a two-key sequence, or null for a single chord. */
+export function chordPrefix(chord: string): string | null {
+  const i = chord.indexOf(" ");
+  return i < 0 ? null : chord.slice(0, i);
+}
+
+/**
+ * Could a person WRITING PROSE press this chord by accident? The test is whether the chord's
+ * first gesture produces a character: a bare key of length 1 (`r`, `?`, `/`), a shifted one
+ * (`shift+o` — Shift is how capitals are typed), or the opening key of a sequence (`g o`
+ * begins with a typed `g`). `mod` chords are excluded — ⌘/Ctrl is never a typing gesture.
+ * NAMED keys have length > 1, so they pass here; two of them are answered next.
+ */
+function chordSpellsCharacter(chord: string): boolean {
+  const first = chord.split(" ")[0]!;
+  const parts = first.split("+");
+  return !parts.includes("mod") && parts[parts.length - 1]!.length === 1;
+}
+
+/** The named keys that EDIT PROSE: ⌫ and ⌦ take a character back. */
+const EDITING_KEYS = new Set(["Backspace", "Delete"]);
+
+/**
+ * Would a mounted writing surface claim this chord? Two kinds, and the second was missing:
+ * chords a person could TYPE, and the EDITING keys. ⌫ and ⌦ are NAMED, so `chordSpellsCharacter`
+ * passed them — and they are exactly what the mailbox binds to "file this message to Trash", so
+ * one press at a blurred reply filed the message behind it. They belong to whoever is writing.
+ * Escape, Tab, Enter, the arrows and `mod` chords are not prose and still pass (see
+ * {@link Registry.claimWriting}).
+ */
+function chordBelongsToWriting(chord: string): boolean {
+  const parts = chord.split(" ")[0]!.split("+");
+  return chordSpellsCharacter(chord)
+    || (!parts.includes("mod") && EDITING_KEYS.has(parts[parts.length - 1]!));
+}
+
+/**
+ * Does `chord` describe this event?
+ *
+ * The subtle rule is the last one: a plain letter binding must NOT swallow its shifted
+ * twin. `⇧O` files-and-marks-read in the Screener and `o` just files; if `o` matched both,
+ * the shifted binding registered next to it would be unreachable and the overlay would
+ * document a key that never runs.
+ */
+export function chordMatches(chord: string, e: KeyboardEvent): boolean {
+  const parts = chord.split("+");
+  const key = parts[parts.length - 1]!;
+  const wantMod = parts.includes("mod");
+  const wantShift = parts.includes("shift");
+  /**
+   * AltGr PRODUCES CHARACTERS, Alt CHORDS ARE CEDED — two different facts about the same
+   * modifier bit. On many layouts the app's bare punctuation only exists under AltGr
+   * (`[`/`]` are AltGr+8/9 on German keyboards), and Windows spells AltGr as ctrl+alt —
+   * so a flat `altKey ⇒ no` made those bindings unreachable for exactly the keyboards
+   * the keys were added for (review finding, round 1). A keypress composed WITH AltGr is
+   * therefore judged by the character it produced, and its alt/ctrl bits are ignored;
+   * a plain Alt chord stays refused, which is the collision policy (no Alt bindings).
+   */
+  /* CHARACTER keys only: the exemption exists because AltGr is how some layouts TYPE the
+     character, so it applies exactly where a character was typed (`key.length === 1`).
+     AltGr+Enter or AltGr+arrows produce no character — those stay refused as the Alt
+     chords they are (review finding, round 2). */
+  const altGr =
+    key.length === 1
+    && typeof e.getModifierState === "function"
+    && e.getModifierState("AltGraph");
+  if (e.altKey && !altGr) return false;
+  if (wantMod !== (e.metaKey || (e.ctrlKey && !altGr))) return false;
+  if (wantShift && !e.shiftKey) return false;
+  /**
+   * A shifted press is a different gesture — for LETTERS and for NAMED keys. The old letters-only
+   * rule let a bare `Backspace` binding match ⇧⌫ (measured: over a selection, ⇧⌫ ran the ordinary
+   * delete and spent the pick — and ⇧⌫ means "delete permanently" on Windows). The test splits on
+   * what Shift can DO to the key: `key.length > 1` — a named key (Backspace, Enter, arrows); Shift
+   * cannot change its identity, so a shifted press is a distinct chord a bare binding must not
+   * claim (a binding that wants it declares `shift+…`); `/^[a-z]$/` — a letter, unchanged; anything
+   * else of length 1 — punctuation, where Shift is the typing gesture (what keeps `?` reachable on
+   * every layout).
+   */
+  if (!wantShift && e.shiftKey && (key.length > 1 || /^[a-z]$/.test(key))) return false;
+  return key.length === 1 ? e.key.toLowerCase() === key.toLowerCase() : e.key === key;
+}
+
+/**
+ * THE MODIFIER'S OWN NAME ON THIS KEYBOARD — re-exported, not defined here.
+ *
+ * `mod-glyph.ts` holds it, for one reason: the landing page prints a modifier cap too, the
+ * marketing tree imports only leaf modules out of `shell/`, and importing this file for a glyph
+ * would put the whole registry and `touch-keys.css` into a page with no keyboard behind it. The
+ * re-export keeps every caller in the app — and every test — pointing at `./keymap`, which is
+ * where the rest of the keyboard vocabulary lives.
+ */
+export { modGlyph, useModGlyph };
+
+/**
+ * The chord as keycaps, for `<Kbd>`: `"mod+k"` → `["Ctrl", "K"]` on a PC, `["⌘", "K"]` on a Mac.
+ *
+ * `mod` IS REQUIRED, and that is the fix rather than a style preference. It used to default to
+ * "⌘" — "which is what a caller with no keyboard in front of it (a test, the server) gets" — and
+ * the trouble with that sentence is that it is also what a caller who simply FORGOT gets, on
+ * every platform, silently: the shipped bug this whole seam exists to close was hand-typed Mac
+ * caps on Linux, and a default that reproduces it is a loaded gun in the signature. Every render
+ * has an answer to hand ({@link useModGlyph}); a test that does not care still has to say so.
+ */
+export function chordKeys(chord: string, mod: string): string[] {
+  const caps: Record<string, string> = {
+    mod,
+    shift: "⇧",
+    Enter: "↵",
+    Escape: "esc",
+    /* The two keys that file a message to Trash, in the glyphs printed on the keys themselves.
+       Without a cap here the sheet would render the bare `e.key` string — "Backspace" — which
+       is a word in a row of keycaps rather than a key. */
+    Backspace: "⌫",
+    Delete: "⌦",
+    ArrowUp: "↑",
+    ArrowDown: "↓",
+    ArrowLeft: "←",
+    ArrowRight: "→",
+  };
+  return chord.split(" ").flatMap((step) => step.split("+").map((part) => caps[part] ?? part));
+}
+
+/**
+ * The chord in `aria-keyshortcuts` syntax — `"shift+f"` → `"Shift+F"`, `"mod+k"` → `"Control+K"`
+ * (`"Meta+K"` under ⌘). A sequence (`"g o"`) has no spelling there and answers undefined.
+ */
+export function ariaShortcut(chord: string, mod: string): string | undefined {
+  if (chord.includes(" ")) return undefined;
+  const parts = chord.split("+");
+  const shifted = parts.includes("shift");
+  const names: Record<string, string> = { mod: mod === "⌘" ? "Meta" : "Control", shift: "Shift", alt: "Alt" };
+  return parts.map((p) => names[p] ?? (shifted && p.length === 1 ? p.toUpperCase() : p)).join("+");
+}
+
+/* ── the provider ───────────────────────────────────────────────────────────────────── */
+
+export function useKeymapStore(): Store {
+  const layers = useRef<Layer[]>([]);
+  const nextId = useRef(1);
+  const version = useRef(0);
+  const notifiers = useRef(new Set<() => void>());
+
+  const reshaped = useCallback(() => {
+    version.current += 1;
+    for (const notify of notifiers.current) notify();
+  }, []);
+
+  const register = useCallback((layer: Omit<Layer, "id">) => {
+    const entry: Layer = { ...layer, id: nextId.current++ };
+    layers.current = [...layers.current, entry];
+    reshaped();
+    return () => {
+      layers.current = layers.current.filter((l) => l.id !== entry.id);
+      reshaped();
+    };
+  }, [reshaped]);
+
+  const subscribe = useCallback((notify: () => void) => {
+    notifiers.current.add(notify);
+    return () => {
+      notifiers.current.delete(notify);
+    };
+  }, []);
+
+  /**
+   * Dispatch order — overlay layers, then view layers, then global ones,
+   * each innermost-first; the FIRST match runs. It cannot be plain
+   * registration order: React runs a child's effects before its parent's,
+   * so the view registers before `AppShell` and a naive "last wins" would
+   * hand every contested key to the shell. Worse for the overlays, which
+   * the shell owns: by mount order they are the outermost thing in the app,
+   * by intent the innermost. The scope split states that intent instead of
+   * depending on a tree shape that says the opposite ({@link BindingScope}).
+   */
+  const ordered = useCallback((): KeyBinding[] => {
+    const of = (scope: BindingScope) =>
+      layers.current.filter((l) => l.scope === scope).reverse().flatMap((l) => l.get());
+    return [...of("overlay"), ...of("view"), ...of("global")];
+  }, []);
+
+  /** The half-typed sequence (`g`, waiting for `o`), and its expiry. */
+  const pending = useRef<{ key: string; at: number } | null>(null);
+
+  /**
+   * How many writing surfaces are mounted right now. A COUNT, not a boolean, for the same
+   * reason the modal gate keeps one: two surfaces (however unlikely) must not release each
+   * other's claim. A ref rather than state because the dispatcher reads it at KEYPRESS time
+   * — nothing renders from it, so a claim must not re-render the whole provider tree.
+   */
+  const writingSurfaces = useRef(0);
+  const claimWriting = useCallback(() => {
+    writingSurfaces.current += 1;
+    return () => {
+      writingSurfaces.current -= 1;
+    };
+  }, []);
+
+  /**
+   * THE CURSOR PLACERS, most recent last — see {@link Registry.claimCursorPlacer}.
+   *
+   * A ref for the reason `writingSurfaces` is one: the dispatcher reads it at KEYPRESS time and
+   * nothing renders from it, so a claim must not re-render the provider's whole subtree. A LIST
+   * rather than one slot so that a claim released out of order cannot clear somebody else's —
+   * the argument `writingSurfaces` makes for being a count.
+   */
+  const placers = useRef<Array<{ place: CursorPlacer; scope: PlacerScope }>>([]);
+  const claimCursorPlacer = useCallback((place: CursorPlacer, scope: PlacerScope = "global") => {
+    /* The ENTRY is the identity, not the closure: two views claiming one shared placer function
+       would otherwise release each other's claim — `useKeyBindings`' layer ids make the same
+       argument about the same hazard. */
+    const entry = { place, scope };
+    placers.current = [...placers.current, entry];
+    return () => {
+      placers.current = placers.current.filter((p) => p !== entry);
+    };
+  }, []);
+  /** The claim that answers: the most recent VIEW one, else the most recent global one. */
+  const placerNow = useCallback((): CursorPlacer | null => {
+    for (const scope of ["view", "global"] as const) {
+      for (let i = placers.current.length - 1; i >= 0; i--) {
+        const held = placers.current[i]!;
+        if (held.scope === scope) return held.place;
+      }
+    }
+    return null;
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      /*
+       * A blocking dialog suspends every binding — asked as a fact about the app, not read off the
+       * DOM. The session dialogs mark the mailbox `inert`, which stops focus and hit-testing inside
+       * `.app-root` and does nothing about this listener: it is bound to `document`, and the
+       * dialog's buttons are siblings of the mailbox. So with the dialog up, `e` still parked the
+       * focused message and `d` `d` still ran the delete ceremony — which ends by clicking its own
+       * danger button programmatically, something `inert` does not block either. See
+       * `modal-gate.ts`.
+       */
+      if (modalIsOpen()) {
+        /*
+         * AND THE HALF-TYPED CHORD GOES WITH IT.
+         *
+         * Returning early suspends the DISPATCH and used to leave `pending` alone, so a sequence
+         * could straddle the dialog: press `d`, a dialog opens, keys during it are correctly
+         * ignored — and if it closes inside the sequence window a single `d` afterwards completes
+         * the `d d` typed before it and deletes. The prefix outlived the state it was typed in,
+         * which is the same shape as the gate opening a frame late.
+         */
+        pending.current = null;
+        return;
+      }
+      /* A KEY A FIELD HAS HANDLED IS THE FIELD'S. Under the App Router React listens on
+         `document` beside this listener, so a field's `stopPropagation` cannot stop it: both
+         of its answers are read here instead. Prevented or stopped, no binding runs and a chord
+         in flight ends. One rule for every key: Escape closes the innermost open thing (the
+         address suggestions, a popover) and only the next Escape reaches the view. */
+      if (e.defaultPrevented || e.cancelBubble) {
+        pending.current = null;
+        return;
+      }
+      if (enterActivatesTarget(e)) {
+        pending.current = null;
+        return;
+      }
+      const typing = isTypingTarget(e.target);
+      /*
+       * A mounted composer suspends every chord a writer could press — measured on the deployed
+       * desktop: the compose form opened with nothing focused, and typing ran the mailbox's
+       * one-key verbs on the message selected behind the form, letter by letter. Focus-on-mount
+       * closes the common case; this closes the rest — focus is one blur away from nowhere, and a
+       * blurred composer must still read as "I am writing". Suspended at DISPATCH, as
+       * `modalIsOpen()` is: the registry and `?` sheet still know the keys. Typeable chords and
+       * the editing keys are refused (`chordBelongsToWriting`); Escape, Enter, Tab and `mod`
+       * chords keep working, and a writing surface opts back in with `inWriting`.
+       */
+      const writing = writingSurfaces.current > 0
+        || (e.target instanceof Element && e.target.closest(`[${KEY_WRITING}]`) !== null);
+      /* A PAGE MODAL KEEPS THE KEYS. Asked of the app, never of focus: a step that took its own
+         button away left focus on the page root, and ↵ there opened the letter behind setup. */
+      const modal = typeof document === "undefined" ? null : pageModal(document);
+      const front = modal === null ? null
+        : new Set(layers.current.filter((l) => l.scope === "overlay").flatMap((l) => l.get()));
+      const all = front === null ? ordered() : ordered().filter((b) => b.inModal === true || front.has(b));
+      /* The two focus rules, factored out because the parked walk at the bottom of this handler
+         has to apply exactly the same ones: a message verb pressed inside a text field is a
+         character, and one pressed behind a mounted composer is prose. Neither may place a
+         cursor either, so the filter is shared rather than restated. */
+      const reachable = (b: KeyBinding) =>
+        !b.helpOnly && (b.inInput || !typing)
+        && !(writing && !typing && !b.inWriting && chordBelongsToWriting(b.chord));
+      const live = all.filter((b) => !b.disabled && reachable(b));
+      /**
+       * THE MESSAGE VERBS RESTING FOR WANT OF A CURSOR — see {@link DisabledReason}.
+       *
+       * Not merged into `live`: these must not RUN, and the walk that uses them is the last
+       * thing this handler tries, after every existing walk has failed. So nothing that does
+       * something today changes behaviour — the only presses this can reach are the ones that
+       * were silently doing nothing at all.
+       */
+      const parked = all.filter((b) =>
+        b.disabled === true
+        && b.disabledReason === "no_cursor"
+        && b.group === "message"
+        && reachable(b));
+      const eligible = (b: KeyBinding) => !b.when || b.when(e);
+
+      // A sequence in flight wins outright: after `g`, the `o` belongs to "go to Ohbox"
+      // and not to whatever `o` means on its own.
+      const armed = pending.current;
+      pending.current = null;
+      if (armed && Date.now() - armed.at < SEQUENCE_MS) {
+        for (const b of live) {
+          if (chordPrefix(b.chord) !== armed.key) continue;
+          if (!chordMatches(b.chord.slice(armed.key.length + 1), e) || !eligible(b)) continue;
+          e.preventDefault();
+          b.run(e);
+          return;
+        }
+        // An unknown continuation cancels the sequence and is NOT re-interpreted as a
+        // fresh keypress: `g` then `q` must do nothing, not run whatever `q` is.
+        return;
+      }
+
+      for (const b of live) {
+        if (chordPrefix(b.chord)) continue;
+        if (!chordMatches(b.chord, e) || !eligible(b)) continue;
+        e.preventDefault();
+        b.run(e);
+        return;
+      }
+
+      // Nothing single-key matched — is this the START of a sequence?
+      for (const b of live) {
+        const prefix = chordPrefix(b.chord);
+        if (prefix && chordMatches(prefix, e)) {
+          e.preventDefault();
+          pending.current = { key: prefix, at: Date.now() };
+          return;
+        }
+      }
+
+      /**
+       * Nothing live owns this key — but a message verb may be resting for want of a cursor. The
+       * first press PLACES the cursor and says so; it performs nothing. The second press is an
+       * ordinary press of a live binding — no second code path, no state kept here. Why not place a
+       * cursor when the list opens: the Ohbox deliberately stopped (`AppShell.selectedOhbox`
+       * records why), and a ⌫ that files the first message because a list happened to be under the
+       * cursor is that hazard with a delete on the end. A press is a deliberate act; an arrival is
+       * not. Last, after both walks, so this only reaches a keypress that was already inert; single
+       * chords only.
+       */
+      for (const b of parked) {
+        if (chordPrefix(b.chord)) continue;
+        if (!chordMatches(b.chord, e) || !eligible(b)) continue;
+        /* ONE CLAIM ANSWERS, AND ONLY IT — the innermost scope's most recent, see
+           {@link Registry.claimCursorPlacer} for why a declining placer is not followed by a
+           second one. */
+        const place = placerNow();
+        /* NOTHING PLACED ⇒ NOTHING CONSUMED. An empty list, or a surface whose cursor no
+           claimant holds: the press stays exactly as inert as it is today, `preventDefault`
+           included, rather than being swallowed by a rule that could not act on it. */
+        if (!place || !place(b.label)) return;
+        e.preventDefault();
+        return;
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [ordered, placerNow]);
+
+  /**
+   * The dispatcher's own walk, reachable from a click. See {@link Registry.press}.
+   *
+   * `ordered()` is called HERE rather than closed over, so the handler is the one the
+   * current render published — the same guarantee `onKey` gets and for the same reason.
+   * A disabled binding is skipped exactly as the dispatcher skips it, so a button driven by
+   * this can never do what the key refuses to do.
+   */
+  const press = useCallback((chord: string): boolean => {
+    for (const b of ordered()) {
+      if (b.chord !== chord || b.disabled || b.helpOnly) continue;
+      b.run(new KeyboardEvent("keydown", { key: chord }));
+      return true;
+    }
+    return false;
+  }, [ordered]);
+
+  /* The published list, rebuilt once per shape version. An unchanged binding keeps its object, so a
+     hook selecting one chord re-renders only when that chord's shape moves. `press` is NOT subject
+     to it — it resolves its handler when it is called. */
+  const snap = useRef<{ v: number; list: BoundKey[]; byShape: Map<string, BoundKey> }>({
+    v: -1, list: [], byShape: new Map(),
+  });
+  const snapshot = useCallback((): BoundKey[] => {
+    const prev = snap.current;
+    if (prev.v === version.current) return prev.list;
+    const byShape = new Map<string, BoundKey>();
+    const list = ordered().map((b) => {
+      const shape = published(b);
+      const k = JSON.stringify(shape);
+      const kept = byShape.get(k) ?? prev.byShape.get(k) ?? shape;
+      byShape.set(k, kept);
+      return kept;
+    });
+    const same = list.length === prev.list.length && list.every((b, i) => b === prev.list[i]);
+    snap.current = { v: version.current, list: same ? prev.list : list, byShape };
+    return snap.current.list;
+  }, [ordered]);
+
+  const mod = useModGlyph();
+  const value = useMemo<Store>(
+    () => ({ register, press, mod, claimWriting, claimCursorPlacer, subscribe, snapshot, reshaped }),
+    [register, press, mod, claimWriting, claimCursorPlacer, subscribe, snapshot, reshaped],
+  );
+
+  return value;
+}
+
+function useStore(): Store {
+  const ctx = useContext(KeymapContext);
+  if (!ctx) throw new Error("useKeyBindings/useKeymap outside a <KeymapProvider>");
+  return ctx;
+}
+
+const NO_SUBSCRIBE = (): (() => void) => () => {};
+
+/** The registry with its published list; re-renders the caller whenever any layer reshapes. */
+export function useKeymap(): Registry {
+  const ctx = useStore();
+  const bindings = useSyncExternalStore(ctx.subscribe, ctx.snapshot, ctx.snapshot);
+  const { register, mod, press, claimWriting, claimCursorPlacer } = ctx;
+  return useMemo(
+    () => ({ register, bindings, mod, press, claimWriting, claimCursorPlacer }),
+    [register, bindings, mod, press, claimWriting, claimCursorPlacer],
+  );
+}
+
+/** One chord's published binding, re-rendering the caller only when that answer changes. */
+function useSelectedBinding(pick: (b: BoundKey) => boolean): BoundKey | null {
+  const ctx = useContext(KeymapContext);
+  const read = (): BoundKey | null => (ctx ? (ctx.snapshot().find(pick) ?? null) : null);
+  return useSyncExternalStore(ctx ? ctx.subscribe : NO_SUBSCRIBE, read, read);
+}
+
+/**
+ * DECLARE A WRITING SURFACE for as long as the caller is mounted — the compose form's hook.
+ * While it is held, the dispatcher refuses every chord a person could type unless focus is
+ * in a field already (see {@link Registry.claimWriting} for the whole rule). The throwing
+ * `useKeymap` is deliberate: the caller is a view that declares bindings of its own, so a
+ * missing provider is already a bug there, silently — the same argument `useKeyBindings`
+ * makes.
+ */
+export function useWritingSurface(): void {
+  const { claimWriting } = useStore();
+  useEffect(() => claimWriting(), [claimWriting]);
+}
+
+/**
+ * OFFER TO PLACE THE CURSOR for as long as the caller is mounted — the shell's half of
+ * {@link DisabledReason}. See {@link Registry.claimCursorPlacer} for the precedence rule.
+ *
+ * `place` is read through a ref, never closed over, so the dispatcher calls the closure the
+ * CURRENT render published rather than the one that was live when the effect ran. That is the
+ * same defect `Registry.press` exists to avoid, and it bites harder here: the placer's whole job
+ * is to read the list and the cursor as they are at the keypress, and a stale one would place a
+ * cursor from a list the user has since left.
+ */
+export function useCursorPlacer(place: CursorPlacer, scope: PlacerScope = "global"): void {
+  const { claimCursorPlacer } = useStore();
+  const latest = useRef(place);
+  latest.current = place;
+  useEffect(
+    () => claimCursorPlacer((label) => latest.current(label), scope),
+    [claimCursorPlacer, scope],
+  );
+}
+
+/**
+ * Declare bindings for as long as the caller is mounted.
+ *
+ * `bindings` is read through a ref on every keypress, so handlers are never stale and the
+ * caller does not have to memoise. Re-registration happens only when the SHAPE changes
+ * (chords, labels, enabled-ness) — that is what the overlay renders, and re-registering on
+ * every render would churn the layer order for nothing.
+ */
+export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "view"): void {
+  const { register } = useStore();
+  const latest = useRef(bindings);
+  latest.current = bindings;
+  /* `JSON.stringify` rather than a separator character, and that is not a style choice.
+     Concatenating these fields with nothing between them makes chord "ab" + group "c"
+     indistinguishable from chord "a" + group "bc", so two different binding sets produce one
+     key and the second never re-registers. Any single separator only postpones that until a
+     label contains it, and a CONTROL character additionally risks the trap that put raw bytes
+     in this file to begin with: one NUL makes the whole file read as binary, after which every
+     grep-family tool skips it in silence. JSON escapes its own delimiters, so the encoding is
+     unambiguous for every string, and every byte of it is printable. */
+  const shape = JSON.stringify(
+    /* `disabledReason` is part of the SHAPE: the `?` sheet reads it (a row resting for want of a
+       cursor carries the sentence that says so), and it can move while `disabled` stays true —
+       `⇧R` on a 1:1 message is disabled before AND after the cursor arrives, for two different
+       reasons. Without it here the layer never re-registers and the sheet keeps the old title. */
+    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? "", b.helpOnly === true]),
+  );
+
+  useEffect(
+    () => register({ scope, get: () => latest.current }),
+    [register, scope, shape],
+  );
+}
+
+/**
+ * Declare bindings where a registry may legitimately be absent.
+ * `useKeyBindings`'s throw is a real guard and stays: a VIEW that declares
+ * its keys into no registry is a bug, silently. This variant exists for one
+ * caller — the zone model (`zone-nav.tsx`), which every view mounts as part
+ * of itself; those views are also mounted bare in tests and by surfaces
+ * with no registry, where a spatial model with no dispatcher is simply
+ * absent (`useBinding`'s argument: no provider means NO keys, never guessed
+ * ones). Registration is otherwise identical to `useKeyBindings`.
+ */
+export function useOptionalKeyBindings(
+  bindings: KeyBinding[] | (() => KeyBinding[]),
+  scope: BindingScope = "view",
+  /**
+   * With a getter: the outside state it reads. Each change republishes the layer's shape with no
+   * render of the caller (the zone model: a focus move must not re-render the mounted view).
+   */
+  watch?: (onChange: () => void) => () => void,
+): void {
+  const ctx = useContext(KeymapContext);
+  const latest = useRef(bindings);
+  latest.current = bindings;
+  const now = typeof bindings === "function" ? bindings() : bindings;
+  // The same JSON shape key as `useKeyBindings`, `disabledReason` included, for the same
+  // collision argument and the same staleness one.
+  const shape = JSON.stringify(
+    now.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? "", b.helpOnly === true]),
+  );
+  const register = ctx ? ctx.register : null;
+  const reshaped = ctx ? ctx.reshaped : null;
+  useEffect(() => {
+    if (!register) return undefined;
+    const get = (): KeyBinding[] => {
+      const b = latest.current;
+      return typeof b === "function" ? b() : b;
+    };
+    const off = register({ scope, get });
+    const unwatch = watch && reshaped ? watch(reshaped) : undefined;
+    return () => {
+      unwatch?.();
+      off();
+    };
+  }, [register, reshaped, scope, shape, watch]);
+}
+
+/**
+ * The binding that owns `chord` right now — so a BUTTON can show its key. Reported from the reading view:
+ * seven of the action bar's eight verbs had a live shortcut and showed none; the eighth carried a
+ * hand-typed `kbdHint="s"` that read as a stray character. A second hand-maintained hint list is what
+ * this registry deleted from the (i) panel — so the bar reads the same registry the `?` sheet does, and a
+ * hint cannot be wrong: change the chord and the button follows. Returns the binding that would WIN this
+ * keypress (`bindings` is in dispatch order), answering "what will this key do HERE". It does not throw,
+ * unlike `useKeymap`: reading is not declaring — the shared Reader renders in provider-less mounts, and a
+ * message must stay readable. No provider means no hint, never a guessed one.
+ */
+export function useBinding(chord: string): BoundKey | null {
+  return useSelectedBinding((b) => b.chord === chord);
+}
+
+/**
+ * The binding that would actually RUN — {@link useBinding}'s sibling for
+ * the hint foot. `useBinding` answers "is this chord spoken for HERE",
+ * which is what a button's keycap asks (a disabled owner still owns the
+ * key, and the cap must not vanish while the verb rests). A TEACHING line
+ * asks the stricter question — "what will this key DO right now" — and a
+ * disabled first declaration is what the dispatcher skips. So this walks
+ * past disabled entries to the first LIVE one, exactly as `onKey` filters
+ * and `groupedBindings` dedups. Null-safe for `useBinding`'s reason.
+ */
+export function useEnabledBinding(chord: string): BoundKey | null {
+  return useSelectedBinding((b) => b.chord === chord && !b.disabled);
+}
+
+/**
+ * PRESS a chord from a click — the companion to {@link useBinding}, and the
+ * only safe way to invoke one. `useBinding` answers questions about SHAPE,
+ * which the memoised array reports correctly because a shape change bumps
+ * it; its `run` is the one field NOT safe to call from that array — see
+ * {@link Registry.press} for the browser-observed failure. Returns `false`
+ * when nothing enabled is bound to `chord`, so a caller can fall back
+ * rather than silently do nothing. Safe with no provider, for the reason
+ * `useBinding` is.
+ */
+export function useKeyPress(): (chord: string) => boolean {
+  const ctx = useContext(KeymapContext);
+  return ctx ? ctx.press : NO_PRESS;
+}
+
+const NO_PRESS = (): boolean => false;
+
+/**
+ * The overlay's rows, grouped — the ONE derivation of the sheet from the registry.
+ *
+ * Deduplicated by chord in dispatch order, so the sheet answers the question the user is
+ * actually asking ("what will this key do HERE?") rather than listing every declaration
+ * that exists somewhere in the app. Disabled bindings survive the dedup as themselves but
+ * never shadow an enabled one below them.
+ */
+export function groupedBindings<B extends BoundKey>(bindings: B[]): Array<{ group: BindingGroup; items: B[] }> {
+  const winner = new Map<string, B>();
+  for (const b of bindings) {
+    const key = b.helpOnly ? JSON.stringify([b.chord, b.label]) : b.chord;
+    const prev = winner.get(key);
+    if (!prev || (prev.disabled && !b.disabled)) winner.set(key, b);
+  }
+  return BINDING_GROUPS.map((group) => ({
+    group,
+    items: [...winner.values()].filter((b) => b.group === group),
+  })).filter((g) => g.items.length > 0);
+}

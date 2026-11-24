@@ -1,4 +1,19 @@
+import type {
+  EmailAddress,
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  FolderEntity,
+  MessageStateDTO,
+  RuleEntity as RuleDTO,
+  ScreenerSenderDTO,
+  ScreenerWaitingDTO,
+  TagEntity as TagDTO,
+  WaterlineMeta,
+} from "@ohmail/wire";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
+import { isOrganizedFolder } from "@trafficflow/core/destinations";
 import { replySubject } from "@trafficflow/core/reply-subject";
 import { heldMovesOnPress } from "@trafficflow/core/sender-headers";
 import { outrankCoveringDomains } from "./address-rank.js";
@@ -11,18 +26,6 @@ import type { EntityReader } from "./store.js";
 import { storeInstantOf } from "./store-pages.js";
 import {
   FOLDER_OF_VIEW,
-  type EmailAddress,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type FolderEntity,
-  type MessageStateDTO,
-  type RuleDTO,
-  type ScreenerSenderDTO,
-  type ScreenerWaitingDTO,
-  type TagDTO,
-  type WaterlineMeta,
   SCREENER_WAITING_TYPE,
   waterlineIdOf,
 } from "./types.js";
@@ -259,6 +262,31 @@ function spentResurface(msg: EngineMessage, iso: string): MessageStateDTO | null
   };
 }
 
+/**
+ * MAY A MOVE PUT A LETTER OF `mailboxId` INTO `folder`, as far as this mirror can tell: one of the six
+ * places (News in either spelling), or one of the person's own folders of THAT mailbox, named exactly as
+ * this mirror lists it and with no folder command standing on it. The server refuses anything else (422
+ * `no_such_folder`, 409 `conflict`); the Imbox, ohmail's own tree and Sent are never listed. Trash and
+ * Junk are refused by the server alone: this mirror holds no letter in either, and no menu offers them.
+ */
+export function movableInto(reader: EntityReader, mailboxId: string, folder: string): boolean {
+  if (isOrganizedFolder(folder)) return true;
+  return reader.list<FolderEntity>("folder").some((f) => f.mailboxId === mailboxId && f.name === folder && f.op == null);
+}
+
+/**
+ * WHERE A MOVE OF `msg` INTO `folder` PUTS IT, or `null` when it puts it nowhere: the letter is there
+ * already, or the folder is not one {@link movableInto} takes. The one answer the paint, the Ohbox's
+ * filing (`filedOutOfOhbox`) and the Undo read, so a press the engine refuses spends no pin and offers
+ * no Undo.
+ */
+export function moveLanding(reader: EntityReader, msg: EngineMessage, folder: string): Folder | null {
+  if (msg.folder === folder || !movableInto(reader, msg.mailboxId, folder)) return null;
+  // A person's folder rides in the row's `Folder` field as every synced row's path does: the server's
+  // own projection casts the stored path the same way (`materialize.ts`, the message's folder).
+  return folder as Folder;
+}
+
 function promotedRule(
   from: EmailAddress,
   scope: "sender" | "domain",
@@ -325,8 +353,9 @@ function derivedScreenerEffects(
     scope === "domain" ? domainOfAddress(senderKey(address)) === domainOfAddress(key) : senderKey(address) === key;
   // A removed mailbox's letters stay where they are: the server writes none of them (`heldElsewhere`).
   const gone = new Set(screenerWaitingOf(reader)?.page.gone ?? []);
+  const confirmed = m.confirmedIds === undefined ? null : new Set(m.confirmedIds);
   const gate = reader.list<EngineMessage>("message")
-    .filter((x) => x.folder === FOLDER_OF_VIEW.screener && inScope(x.from.address) && !gone.has(x.mailboxId));
+    .filter((x) => x.folder === FOLDER_OF_VIEW.screener && inScope(x.from.address) && !gone.has(x.mailboxId) && (confirmed === null || confirmed.has(x.id)));
   const moves = (x: EngineMessage): boolean => heldMovesOnPress({
     check: heldCheckOf(x.senderCheck), from: x.from.address, auth: x.authVerdict,
   }, key);
@@ -444,12 +473,23 @@ function openReadFloor(reader: EntityReader, now: Date): string {
 }
 
 export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: EffectContext): MutationEffect[] {
+  const effects = effectsOf(reader, m, ctx);
+  if (effects.length === 0 || !("release" in m) || !m.release) return effects;
+  const { from, to, messageIds } = m.release;
+  return [...effects, ...messageIds.flatMap((messageId) => effectsOf(reader, {
+    kind: "move", messageId, from, folder: to, pressRule: true,
+  }, ctx))];
+}
+
+function effectsOf(reader: EntityReader, m: EngineMutation, ctx: EffectContext): MutationEffect[] {
   const iso = ctx.now().toISOString();
 
   switch (m.kind) {
     case "move": {
       const msg = reader.get<EngineMessage>("message", m.messageId);
-      if (!msg || msg.folder === m.folder) return [];
+      // Nothing to paint: the letter is gone or already there, or the server would refuse the folder.
+      const to = msg ? moveLanding(reader, msg, m.folder) : null;
+      if (!msg || to === null) return [];
       // Re-filing spends the resurface — the server's `move` clears the pin in the same
       // transaction, so the overlay unpins with the same gesture (see `spentResurface`).
       const spent = spentResurface(msg, iso);
@@ -457,9 +497,9 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         type: "message",
         id: msg.id,
         entity: {
-          ...msg, folder: m.folder, ...(spent ? { triage: spent } : {}), updatedAt: iso,
+          ...msg, folder: to, ...(spent ? { triage: spent } : {}), updatedAt: iso,
         } satisfies EngineMessage,
-        move: { from: msg.folder, to: m.folder },
+        move: { from: msg.folder, to },
       }];
       // At the settled record's id (`stateRecordIdOf`) — a pin the mirror holds under the
       // server's row uuid would otherwise stand unspent beside this `none` for the round trip.
@@ -550,11 +590,13 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       const effects: MutationEffect[] = [];
 
       if (m.decision === "yes") {
+        const heldIds = m.confirmedIds === undefined ? null : new Set(m.confirmedIds);
+        const heldMail = heldIds === null ? sender.held : sender.held.filter((held) => heldIds.has(held.id));
         // Yes → the sender's held mail is filed into the destination; "&read"
         // seen-semantics: the held mail lands already-seen (previously_seen,
         // not new_for_you). The waiting entry disappears; a promoted rule
         // remembers the decision.
-        sender.held.forEach((held, i) => {
+        heldMail.forEach((held, i) => {
           const msg: EngineMessage = {
             id: ctx.uuid(),
             accountId: "demo",
@@ -1080,6 +1122,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         id: rule.id,
         entity: {
           ...rule, destination: m.destination, updatedAt: iso,
+          ...(m.enabled === undefined ? {} : { enabled: m.enabled }),
           // The server's answer, not a guess: a press naming the place makes the rule the person's,
           // an undo keeps what it was — so the Rules page's origin does not flip under the echo.
           provenance: m.keepProvenance !== true ? "manual"

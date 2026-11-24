@@ -1,17 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq, desc, isNull } from "drizzle-orm";
 import { generateSync } from "otplib";
 // `sessions` lives on the MAIL half (the root barrel); `refresh_tokens` is Cloud.
-import { refreshTokens, sessions } from "@trafficflow/db";
-import { authEvents, schema } from "@trafficflow/db/cloud";
+import { bindDb, refreshTokens, sessions } from "@trafficflow/db";
+import { authEvents, closePooledDbs, makePooledDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, makeTestAuthDeps, hashToken,
+  AuthService, dbFor, makeTestAuthDeps, hashToken,
   type AuthDeps, type ServiceContext,
 } from "@trafficflow/services";
 
@@ -40,16 +37,18 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let db: ReturnType<typeof makePooledDb>;
 
 // A per-run source address: the shared pg database keeps the per-IP registration throttle
 // across runs, so a FIXED address here rate-limits the suite's own registrations after enough
 // consecutive invocations (measured while iterating on this file) — a 429 that looks like a
 // product regression and is only the counter.
 const RUN_IP = `10.9.${1 + Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(),
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+  accountId: "", userId: null, now: () => new Date(),
   requestId: "refresh-race-pg", ip: RUN_IP, ...over,
 });
 
@@ -109,10 +108,9 @@ describe.skipIf(!PG_UP)("refresh rotation race on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     // Enough connections that the presentations genuinely overlap rather than queueing behind one.
-    client = postgres(PG_TEST_URL, { max: 20 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    db = makePooledDb(PG_TEST_URL, { max: 20 });
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await closePooledDbs(); });
 
   /**
    * FIVE SIMULTANEOUS PRESENTATIONS OF ONE TOKEN LEAVE THE FAMILY ALIVE.

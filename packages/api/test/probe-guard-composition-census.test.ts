@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readdirSync, statSync, existsSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * EVERY FINISHED COMPOSITION WIRES THE SSRF GUARD (review 020, BACKEND L2). `probeHostGuardFor`
@@ -39,8 +40,8 @@ function sources(dir: string, into: { file: string; code: string }[] = []): { fi
     if (statSync(p).isDirectory()) {
       if (name === "node_modules" || name === "dist" || name === "build" || name === "test") continue;
       sources(p, into);
-    } else if (extname(name) === ".ts" && !name.endsWith(".test.ts")) {
-      into.push({ file: relative(REPO, p), code: withoutComments(readFileSync(p, "utf8")) as string });
+    } else if (extname(name) === ".ts" && !name.endsWith(".test.ts") && !isEnginePart(p)) {
+      into.push({ file: relative(REPO, p), code: withoutComments(readAsUnit(p)) as string });
     }
   }
   return into;
@@ -85,7 +86,7 @@ describe("probe-host guard composition census", () => {
   it("every entitlements-declaring composition wires the guard", () => {
     // Vacuity guard: the three known compositions exist, by name.
     const names = bags.map((b) => b.file).sort();
-    for (const expected of ["apps/api-vercel/src/deps.ts", "apps/server/src/deps.ts", LOCAL_DOOR]) {
+    for (const expected of ["apps/server/src/deps.ts", LOCAL_DOOR]) {
       expect(names, `the ${expected} composition is swept`).toContain(expected);
     }
     const offenses = bags.flatMap((b) => compositionOffenses(b.file, b.code));
@@ -93,11 +94,8 @@ describe("probe-host guard composition census", () => {
   });
 
   it("the hosted deployment's guard is unconditional and the self-host opt-out keeps both arms", () => {
-    const vercel = bags.find((b) => b.file === "apps/api-vercel/src/deps.ts")!;
-    expect(/\bmakeProbeHostGuard\s*\(/.test(vercel.code)).toBe(true);
-    // The managed bag never spells allow-any at all: there is no operator to opt out.
-    expect(/\bALLOW_ANY_PROBE_HOST\b/.test(vercel.code)).toBe(false);
-
+    // One wiring serves both. That the managed service never opens the guard, whatever its
+    // environment holds, is held on the built program: apps/server/test/differences.test.ts.
     const server = bags.find((b) => b.file === "apps/server/src/deps.ts")!;
     expect(/\bmakeProbeHostGuard\s*\(/.test(server.code)).toBe(true);
     expect(/\bALLOW_ANY_PROBE_HOST\b/.test(server.code)).toBe(true);

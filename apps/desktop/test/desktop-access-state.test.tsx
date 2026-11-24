@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
@@ -10,9 +10,11 @@ import de from "../../webapp/messages/de.json";
 import { DesktopGate } from "../src/DesktopGate.js";
 import { cloudSuggestWire } from "../src/cloud-suggest.js";
 import { ACCOUNT_ACCESS_PATH } from "../src/DesktopSubscription.js";
-import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
+/* One declaration from the session's door: the links' two functions, and the access window's reading of a lift. */
+import { liftedAt } from "@ohmail/app-logic/session/access-window";
+import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
 import type { EngineStatus } from "../src/bridge-fetch.js";
-import type { SuggestBatchControl } from "../../webapp/app/shell/screener-suggest";
+import { useScreenerSuggestions, type SuggestBatchControl } from "@ohmail/app-logic/screener/screener-suggest";
 
 /**
  * ═══ A REFUSED ACCOUNT MEETS ONE SCREEN, AND A REFUSAL THAT LIFTS COMES DOWN ═══════════════
@@ -189,10 +191,10 @@ async function open(status: EngineStatus, locale: "en" | "de" = "en"): Promise<v
 }
 
 const text = (): string => mountPoint?.textContent ?? "";
-const lockCard = (): HTMLElement | null => mountPoint?.querySelector(".gate .gate-card") ?? null;
+const lockCard = (): HTMLElement | null => mountPoint?.querySelector("main.oh-page") ?? null;
 /** The way back: a BUTTON that mints the page's address when pressed (the 402's is never used). */
 const manageDoor = (): HTMLButtonElement | null =>
-  (mountPoint?.querySelector(".gate-actions button.primary") as HTMLButtonElement | null) ?? null;
+  byText("button", LOCK.manage) as HTMLButtonElement | null;
 
 function byText(selector: string, wanted: string): HTMLElement | null {
   return [...(mountPoint?.querySelectorAll<HTMLElement>(selector) ?? [])]
@@ -227,6 +229,8 @@ describe("the window's refused-account screen", () => {
     // running and hand the refusal to whichever pane happened to make the next write.
     expect(mountPoint!.querySelector(".set-nav"), "the settings nav survived the lock").toBeNull();
     expect(mountPoint!.querySelector(".rail"), "the mail rail survived the lock").toBeNull();
+    expect(mountPoint!.querySelector(".fr-frame"), "the mail frame survived the lock").toBeNull();
+    expect(lockCard()?.closest(".app-root"), "the lock is not the window's whole surface").not.toBeNull();
   });
 
   it("says what the API said — the suspended arm is the service's word, not a second taxonomy", async () => {
@@ -260,7 +264,7 @@ describe("the window's refused-account screen", () => {
        assertion that only refuses the working form is one a mutation walks straight through —
        which this one did, green, until it was read this way. */
     expect(
-      byText(".gate-actions a", LOCK.manage),
+      byText("a", LOCK.manage),
       "a dead control stands where the service supplied nowhere to go",
     ).toBeNull();
     expect(text(), "the way-back label is on screen with no way back").not.toContain(LOCK.manage);
@@ -302,6 +306,7 @@ describe("the window's refused-account screen", () => {
     await open(CLOUD_SERVING);
 
     expect(lockCard(), "the window locked the account over a refused request").toBeNull();
+    expect(mountPoint!.querySelector(".fr-frame"), "the mail frame did not mount in the unlocked window").not.toBeNull();
   });
 
   it("a standalone install never locks — it has no hosted account to be refused", async () => {
@@ -358,10 +363,10 @@ describe("the window's Screener refusal clears when access returns", () => {
   }
 
   async function mountProbe(): Promise<() => SuggestBatchControl> {
-    const { useScreenerSuggestions } = await import("../../webapp/app/shell/screener-suggest.js");
     let control: SuggestBatchControl | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({
+        text: { screener: useTranslations("screener") as never, aiRefusal: useTranslations("aiRefusal") as never },
         active: true, toast: (() => {}) as never, wire: cloudSuggestWire,
       });
       control = s.forSenders([SENDER]);
@@ -456,5 +461,32 @@ describe("the window's Screener refusal clears when access returns", () => {
     expect(await cloudSuggestWire.aiAvailable!()).toBeNull();
     access = { status: 503, body: JSON.stringify({ error: { code: "db_busy" } }) };
     expect(await cloudSuggestWire.aiAvailable!()).toBeNull();
+  });
+});
+
+/**
+ * THE LIFT IS THE MOUNTED MAILBOX'S. The gate hands its lock the mailbox it mounts, and the lock records the
+ * reopening for that mailbox: the mail state reads it there (a days-old copy says it is catching up, without the date
+ * the closure made old). Last in this file: an open answer leaves this document's access window set for a minute.
+ */
+describe("the window's lift is recorded for the mailbox the gate mounts", () => {
+  it("the account opens: the lock comes down, and the lift is the mounted mailbox's and no other's", async () => {
+    mailboxAnswer = { status: 402, body: refusal("payment_required", MANAGE_URL) };
+    await open(CLOUD_SERVING);
+    expect(lockCard(), "a refused account got no lock screen: the case shows nothing").not.toBeNull();
+    expect(liftedAt("mbx-1"), "a lift was recorded before the account opened").toBeNull();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      // The account is open again; the person comes back to the window, and the lock asks the account.
+      access = { status: 200, body: JSON.stringify({ metered: true, access: "open", canAddMailbox: true, mailboxes: 1 }) };
+      mailboxAnswer = { status: 200, body: MAILBOXES };
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      await settle();
+      expect(lockCard(), "the lock stayed after the account opened").toBeNull();
+      expect(liftedAt("mbx-1"), "the lift was not recorded for the mailbox the gate mounts").toBe(Date.now());
+      expect(liftedAt(null), "the lift was recorded for a window that mounts no mailbox").toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { awayReplies, messageBodies, messages } from "@trafficflow/db";
@@ -178,7 +179,7 @@ describe("MessageDTO.awayRepliedAt", () => {
     // The reply wears the header marker, so `autoReplyByUs` is true for it — the flag and the
     // stamp are then observably on different rows rather than merely absent from one.
     await c.db.insert(messageBodies).values({
-      messageId: reply, text: "", headers: { "auto-submitted": ["auto-replied"] },
+      messageId: reply, accountId: accountOfMessage(reply), text: "", headers: { "auto-submitted": ["auto-replied"] },
     });
     await ledger(c, original, "sent", SENT_AT);
 

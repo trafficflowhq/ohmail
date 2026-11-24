@@ -4,12 +4,12 @@
  * The window itself is the shared shell's (`shell/junk-window.ts`); the paths, the status
  * contract and the rescue verbs are here, once, for every door that carries them: the desktop
  * window over its bridge (`local-junk.ts`) and the served host client over its bearer socket
- * (`host-client/transports.ts`). This module imports no transport because the served host
+ * (`apps/paired-page/src/transports.ts`). This module imports no transport because the served host
  * client has no bridge — a file shared with the bridge binding would put the shell command's
  * name into the bundle a phone is handed, which `scan:host` refuses.
  */
 
-import type { JunkWire } from "../../webapp/app/shell/junk-window";
+import type { JunkWire } from "../../webapp/app/shell/browser-mail";
 
 /**
  * Thrown for every non-2xx answer down the pipe; carries the status so the body read can tell a
@@ -67,7 +67,9 @@ export function junkVia(fetchImpl: (path: string, init?: RequestInit) => Promise
       jsonOf(await fetchImpl(`/screener/junk/rescue/${encodeURIComponent(id)}`, { method: "DELETE" })),
     search: async (q) => jsonOf(await fetchImpl(`/screener/junk/search?q=${encodeURIComponent(q)}`)),
     sweepPreview: async () => jsonOf(await fetchImpl("/screener/junk/sweep")),
-    sweepRequest: async () => jsonOf(await post("/screener/junk/sweep")),
+    sweepRequest: async (confirmation) => jsonOf(await fetchImpl("/screener/junk/sweep", {
+      method: "POST", headers: { "If-Match": `"${confirmation}"` },
+    })),
     isGone: (err) => err instanceof JunkBridgeError && err.status === 410,
     codeOf: (err) => (err instanceof JunkBridgeError ? err.code : null),
   };

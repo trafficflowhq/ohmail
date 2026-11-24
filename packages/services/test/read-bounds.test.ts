@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -7,7 +8,7 @@ import { MailboxService } from "../src/mailbox-service.js";
 import { IMAP_LIST_MAX_FOLDERS } from "@trafficflow/core/adapters/imap";
 import {
   FolderOpsService, ReadBoundExceeded, FOLDER_INVENTORY_MAX, ACCOUNT_MAILBOXES_MAX_READ,
-  setFoldersEnabled, type ServiceContext,
+  dbFor, setFoldersEnabled, type ServiceContext,
 } from "../src/index.js";
 
 /**
@@ -32,7 +33,7 @@ async function setup() {
     .values({ accountId, provider: "imap", address: "own@example.com", trashFolder: "Trash" })
     .returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-09-13T00:00:00.000Z"), requestId: "r",
   };
   await setFoldersEnabled(ctx, true);
@@ -44,10 +45,10 @@ async function inventory(
   db: Awaited<ReturnType<typeof makeTestDb>>, mailboxId: string, n: number,
 ): Promise<string> {
   const [subject] = await db.insert(mailboxFolders)
-    .values({ mailboxId, folder: "Projects", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
+    .values({ mailboxId, accountId: accountOfMailbox(mailboxId), folder: "Projects", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
     .returning();
   const rows = Array.from({ length: n }, (_, i) => ({
-    mailboxId, folder: `Projects/p${i}`, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n,
+    mailboxId, accountId: accountOfMailbox(mailboxId), folder: `Projects/p${i}`, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n,
   }));
   for (let i = 0; i < rows.length; i += 2_000) {
     await db.insert(mailboxFolders).values(rows.slice(i, i + 2_000));
@@ -147,7 +148,7 @@ describe("the account-wide mailbox read is bounded at the read", () => {
     const accountId = randomUUID();
     await connected(db, accountId, 3);
     const ctx: ServiceContext = {
-      db, accountId, userId: null,
+      db: dbFor(db, accountId), accountId, userId: null,
       now: () => new Date("2026-09-13T00:00:00.000Z"), requestId: "r",
     };
 
@@ -163,7 +164,7 @@ describe("the account-wide mailbox read is bounded at the read", () => {
     const over = 5;
     await connected(db, accountId, ACCOUNT_MAILBOXES_MAX_READ + over);
     const ctx: ServiceContext = {
-      db, accountId, userId: null,
+      db: dbFor(db, accountId), accountId, userId: null,
       now: () => new Date("2026-09-13T00:00:00.000Z"), requestId: "r",
     };
 

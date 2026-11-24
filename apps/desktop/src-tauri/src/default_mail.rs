@@ -391,6 +391,16 @@ fn run_xdg(args: &[String]) -> Option<String> {
 
 /* ── the two commands ─────────────────────────────────────────────────────────────────────────── */
 
+/// What a preview answers instead of asking the platform, or `None` on the released app.
+///
+/// The three names above are the released app's, and a preview registers no mail-link handler of
+/// its own. Asked, the platform would answer about the released install beside it, and a request
+/// would hand that install the mail links in this build's name. So a preview does not know, and
+/// does not ask.
+pub fn preview_refusal(preview: bool) -> Option<&'static str> {
+    preview.then_some("A preview build does not take over mail links. The installed ohmail keeps them.")
+}
+
 /// The platform's answer, per platform. Split from the commands so both can share it.
 fn probe() -> MailDefault {
     #[cfg(target_os = "macos")]
@@ -419,6 +429,9 @@ fn probe() -> MailDefault {
 /// | "unknown" }` — a read, nothing more, safe to call as often as the row is on screen.
 #[tauri::command(async)]
 pub fn default_mail_status() -> serde_json::Value {
+    if preview_refusal(crate::variant::PREVIEW).is_some() {
+        return serde_json::json!({ "state": MailDefault::Unknown.as_str() });
+    }
     serde_json::json!({ "state": probe().as_str() })
 }
 
@@ -429,6 +442,9 @@ pub fn default_mail_status() -> serde_json::Value {
 /// expected to still say `not-default`, and the window re-reads later.
 #[tauri::command(async)]
 pub fn default_mail_request() -> Result<serde_json::Value, String> {
+    if let Some(why) = preview_refusal(crate::variant::PREVIEW) {
+        return Err(why.into());
+    }
     #[cfg(target_os = "macos")]
     {
         let status = launch_services::request_mailto_handler(MACOS_BUNDLE_ID);

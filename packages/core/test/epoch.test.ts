@@ -119,7 +119,7 @@ describe("the comparison — unknown neither matches nor contradicts", () => {
  * Scanned by ROOT, so a touched-package selection never decides whether it runs. Three roots:
  * the model and adapter layer, the API's doors, the worker's drain.
  */
-const ROOTS = ["packages/core/src", "packages/api/src", "apps/worker/src"];
+const ROOTS = ["packages/core/src", "packages/api/src", "packages/organizer/src"];
 const REPO = resolve(__dirname, "../../..");
 
 /** The four kinds a comparison mentioning an epoch can be. Only one of them may compare text. */
@@ -135,13 +135,13 @@ type Kind =
  * files wide and every one of them looked locally reasonable.
  */
 const CENSUS: ReadonlyArray<readonly [string, string, Kind]> = [
-  ["apps/worker/src/dead-letter.ts", "this.items.get(keyOf(folder, uidValidity, uid))?.terminal === true", "not-an-epoch"],
+  ["packages/organizer/src/dead-letter.ts", "this.items.get(keyOf(folder, uidValidity, uid))?.terminal === true", "not-an-epoch"],
   /* THE KNOWN-SET MEMO'S TWO. The first compares two composite KEYS (folder, epoch and uid joined),
      not two epochs — the same shape as the dead-letter line above. The second asks whether a
      locator carries an epoch at all, on a value read off an `unknown` argument. The memo's one
      real epoch comparison goes through `sameEpoch`, which is why it is not here. */
-  ["apps/worker/src/known-set.ts", "`${e.folder}\\u0000${e.uidValidity}:${e.uid}` === key", "not-an-epoch"],
-  ["apps/worker/src/known-set.ts", 'typeof o.uidValidity === "string"', "presence"],
+  ["packages/organizer/src/known-set.ts", "`${e.folder}\\u0000${e.uidValidity}:${e.uid}` === key", "not-an-epoch"],
+  ["packages/organizer/src/known-set.ts", 'typeof o.uidValidity === "string"', "presence"],
   ["packages/api/src/routes/screener.ts", 'typeof body.uidValidity === "string"', "presence"],
   /* THE MAILBOX SELF-CHECK. A recorded epoch the server now contradicts is its own class, through
      the door; an unnamed one compares by count, which is all a cold cursor holds. The presence
@@ -207,8 +207,8 @@ const CENSUS: ReadonlyArray<readonly [string, string, Kind]> = [
      the name the `ohmail/_meta` memo uses for it, so the same rule applies and the same door
      answers. The request drain's comparison went with its cursor (FIX-026, one door); the rest are
      presence tests on a raw value before it becomes an epoch. */
-  ["apps/worker/src/profile.ts", "generation === null", "presence"],
-  ["apps/worker/src/profile.ts", 'typeof generation === "bigint"', "presence"],
+  ["packages/organizer/src/profile.ts", "generation === null", "presence"],
+  ["packages/organizer/src/profile.ts", 'typeof generation === "bigint"', "presence"],
   ["packages/core/src/adapters/organizer-lease.ts", "generation !== null", "presence"],
   ["packages/core/src/adapters/organizer-profile.ts", "generation !== null", "presence"],
   ["packages/core/src/adapters/organizer-profile.ts", 'typeof m.generation === "bigint"', "presence"],

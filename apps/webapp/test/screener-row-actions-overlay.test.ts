@@ -1,99 +1,131 @@
-import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Row, type RowProps } from "@ohmail/ui/mail";
+import { entryCss, fontsCss } from "../../../packages/ui/test/compare/harness.js";
+import { launch } from "../../../test/compare/render.mjs";
 
-/**
- * A ROW'S QUICK-ADJUST CONTROLS STAND IN A COLUMN OF THEIR OWN — BESIDE THE ROW, NEVER ON IT.
- *
- * The file is named for the mechanism it is about, which it no longer admits: the overlay.
- *
- * Two defects, one rule. First the controls were an in-flow flex SIBLING that reserved a chip's
- * width on every row whether it had controls or not, so every waiting row's preview was cut.
- * The answer then was to float them (`position:absolute`, zero layout width) — and that drew the
- * control ON the subject's tail and the trailing glyphs the moment a row was hovered, reported
- * from use against the Ohbox's "Done" (owner, 2026-09-22).
- *
- * The rule that closes both: the slot is the row's own trailing COLUMN — as wide as the controls
- * it holds, reserved at rest so revealing them shifts nothing, and ZERO where it holds nothing
- * (`.row-actions-in:empty`), which is the first defect's guard. The row button is the other
- * track at `minmax(0,1fr)`, so the subject, the badge strip and the preview clip BEFORE the slot.
- * jsdom lays nothing out, so the geometry itself is measured in a real engine by
- * `row-action-slot-geometry.test.tsx`; these are the source rules that produce it.
- *
- * MUTATION WATCH (2026-09-22): giving `.row-actions` a `position` turns the first case red (and
- * nineteen of the browser test's twenty-three); dropping the `auto` track or the `minmax(0,1fr)`
- * one turns the second red; dropping `.row-actions-in:empty` turns the third. The reachability
- * half fails on the `pointer-events` gating, the focus reveal or the touch arm. A `min-width:0`
- * belt on the row button was measured REDUNDANT here and removed: the track's zero minimum is
- * the button's automatic one, so the heaviest row the language draws still clips at `LIST.min`.
- */
+const require_ = createRequire(resolve(process.cwd(), "package.json"));
+const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");
+let browser: Awaited<ReturnType<typeof launch>>;
 
-const bare = (p: string): string =>
-  readFileSync(resolve(process.cwd(), p), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+beforeAll(async () => { browser = await launch(chromium); }, 120_000);
+afterAll(async () => { await browser?.close(); });
 
-const rowCss = bare("packages/ui/src/composites/row.css");
-const appCss = bare("apps/webapp/app/app.css");
-
-/** Body of the first top-level rule whose selector list starts with `sel` (no nested braces). */
-const ruleBody = (css: string, sel: string): string | null => {
-  const re = new RegExp(`(?:^|[};])\\s*${sel}\\s*\\{([^{}]*)\\}`, "m");
-  const m = re.exec(css);
-  return m ? m[1] : null;
+const choose = "Choose a place";
+const subject = "An especially long subject that needs room before the row's actions";
+const common: RowProps = {
+  who: "Sender",
+  people: [{ name: "Sender", address: "sender@example.invalid" }],
+  subject,
+  preview: "More of the letter follows the subject",
+  when: "09:20",
+  onOpen: () => {},
+};
+const place: RowProps["place"] = {
+  word: "News",
+  accept: { label: "News", onPress: () => {} },
+  choose: { label: choose, onPress: () => {} },
 };
 
-describe("the controls take a column of their own and the row clips before it", () => {
-  it("`.row-actions` is IN FLOW — a position here floats it back over the row's own text", () => {
-    const body = ruleBody(rowCss, "\\.row-actions");
-    expect(body, "no bare `.row-actions` rule in row.css").not.toBeNull();
-    expect(body!, "`.row-actions` is out of flow again — the control lands on the subject")
-      .not.toMatch(/position:\s*(absolute|fixed)/);
-    expect(body!, "the controls no longer centre on the row").toMatch(/align-items:\s*center/);
+async function onPage(touch: boolean, run: (page: import("@playwright/test").Page) => Promise<void>) {
+  const page = await browser.newPage({
+    viewport: { width: 500, height: 470 }, hasTouch: touch,
+  });
+  page.setDefaultTimeout(3000);
+  try {
+    const output = renderToStaticMarkup(createElement("div", { className: "oh-root" },
+      createElement("div", { style: { width: touch ? 390 : 330 }, role: "listbox", "aria-label": "Screener" },
+        createElement(Row, { ...common, place, listing: { name: "Sender with actions", selected: false } }),
+        createElement(Row, { ...common, listing: { name: "Sender without actions", selected: false } }),
+        createElement(Row, {
+          ...common, quick: { label: "Done", icon: "check", onPress: () => {} },
+          listing: { name: "Resurfaced sender", selected: false },
+        }),
+      ),
+    ));
+    await page.setContent(`<!doctype html><html lang="en" data-face="paper" data-scheme="light"
+      data-device="${touch ? "phone" : "desktop"}" data-touch="${touch ? "1" : "0"}" data-rm="1"><head>
+      <style>${await fontsCss()}</style><style>${await entryCss("mail")}</style></head><body>${output}</body></html>`);
+    await page.evaluate(() => document.fonts.ready);
+    await run(page);
+  } finally {
+    await page.close();
+  }
+}
+
+describe("space for the Screener row's actions", () => {
+  it("keeps clipped sender text outside the destination controls", async () => {
+    await onPage(false, async (page) => {
+      const row = page.getByRole("option", { name: "Sender with actions" });
+      const headline = row.getByText(subject, { exact: true });
+      const text = await headline.evaluate((el) => ({
+        right: el.getBoundingClientRect().right,
+        centre: (el.getBoundingClientRect().top + el.getBoundingClientRect().bottom) / 2,
+        clipped: el.scrollWidth > el.clientWidth,
+      }));
+      const accept = (await page.getByRole("button", { name: "News" }).boundingBox())!;
+      const more = (await page.getByRole("button", { name: choose }).boundingBox())!;
+      expect(text.clipped).toBe(true);
+      expect(text.right).toBeLessThanOrEqual(accept.x + 0.5);
+      expect(accept.x + accept.width).toBeLessThanOrEqual(more.x + 0.5);
+      expect(text.centre).toBeGreaterThanOrEqual(accept.y);
+      expect(text.centre).toBeLessThanOrEqual(accept.y + accept.height);
+    });
   });
 
-  it("`.row-slot` is a two-track grid: the row at `minmax(0,1fr)`, the slot at `auto`", () => {
-    const body = ruleBody(rowCss, "\\.row-slot");
-    expect(body, "no bare `.row-slot` rule in row.css").not.toBeNull();
-    expect(body!, "the slot is not a track of its own any more").toMatch(/display:\s*grid/);
-    expect(body!, "the row's track cannot shrink below its content — the slot would be pushed off")
-      .toMatch(/grid-template-columns:\s*minmax\(\s*0\s*,\s*1fr\s*\)\s+auto/);
-    // The overlay anchored the destination popover here, and it still does.
-    expect(body!, "`.row-slot` is not positioned — the row menu has nothing to anchor to")
-      .toMatch(/position:\s*relative/);
-  });
-
-  it("a row holding no control pays nothing: the empty slot collapses", () => {
-    expect(rowCss, "an empty slot still reserves a column — every actionless row loses that width")
-      .toMatch(/\.row-actions-in:empty\s*\{[^}]*display:\s*none/);
-  });
-
-  it("nothing is painted behind the controls, because nothing of the row is behind them", () => {
-    expect(rowCss, "a backdrop is painted in the slot — it can only cover the row beside it")
-      .not.toMatch(/linear-gradient/);
+  it("gives the whole subject line to a row without actions", async () => {
+    await onPage(false, async (page) => {
+      const lineWidth = async (name: string) =>
+        (await page.getByRole("option", { name }).getByText(subject, { exact: true }).boundingBox())!.width;
+      expect(await lineWidth("Sender without actions")).toBeGreaterThan(await lineWidth("Sender with actions"));
+    });
   });
 });
 
-describe("the controls stay reachable without a pointer, and the empty gutter takes no click", () => {
-  it("a hidden control is inert and only opts back in when revealed", () => {
-    const base = ruleBody(appCss, "\\.scn-act");
-    expect(base, "no bare `.scn-act` rule in app.css").not.toBeNull();
-    expect(base!, "a hidden control in the reserved gutter still catches clicks")
-      .toMatch(/pointer-events:\s*none/);
-    expect(appCss, "revealed controls are never made clickable").toMatch(/pointer-events:\s*auto/);
+describe("row actions by keyboard and touch", () => {
+  it("keeps row actions reachable by keyboard focus", async () => {
+    await onPage(false, async (page) => {
+      const accept = page.getByRole("button", { name: "News" });
+      const more = page.getByRole("button", { name: choose });
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      expect(await accept.evaluate((el) => document.activeElement === el)).toBe(true);
+      await page.keyboard.press("Tab");
+      expect(await more.evaluate((el) => document.activeElement === el)).toBe(true);
+      const resurfaced = page.getByRole("option", { name: "Resurfaced sender" });
+      const done = page.getByRole("button", { name: "Done" });
+      await resurfaced.focus();
+      await done.click({ trial: true });
+    });
   });
 
-  it("keyboard focus on the row reveals the controls (not hover-only)", () => {
-    expect(appCss, "focus no longer reveals the quick-adjust controls")
-      .toMatch(/\.row-slot:focus-within\s+\.scn-act/);
-    expect(appCss, "focus no longer reveals the resurfaced row's release")
-      .toMatch(/\.row-slot:focus-within\s+\.rsf-done/);
+  it("leaves the hidden quick control inert until it is revealed", async () => {
+    await onPage(false, async (page) => {
+      const done = page.getByRole("button", { name: "Done" });
+      const under = () => done.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        return el.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+      });
+      expect(await under()).toBe(false);
+      await page.getByRole("option", { name: "Resurfaced sender" }).focus();
+      expect(await under()).toBe(true);
+    });
   });
 
-  it("a coarse pointer (touch) gets the controls AND can tap them", () => {
-    const media = /@media\s*\(\s*hover:\s*none\s*\)\s*\{([\s\S]*?\.scn-act[\s\S]*?)\}\s*\}/.exec(appCss);
-    expect(media, "no `@media (hover: none)` block reveals `.scn-act`").not.toBeNull();
-    expect(media![1], "touch shows the controls but leaves them unrevealed visually")
-      .toMatch(/opacity:\s*1/);
-    expect(media![1], "touch shows the controls but they are not tappable")
-      .toMatch(/pointer-events:\s*auto/);
+  it("lets a finger reach the suggestion without a mouse hover", async () => {
+    await onPage(true, async (page) => {
+      const accept = page.getByRole("button", { name: "News" });
+      expect(await page.getByRole("button", { name: choose }).count()).toBe(0);
+      const row = page.getByRole("option", { name: "Sender with actions" });
+      const preview = (await row.getByText(common.preview!, { exact: true }).boundingBox())!;
+      const target = (await accept.boundingBox())!;
+      expect(preview.x + preview.width).toBeLessThanOrEqual(target.x + 0.5);
+      await accept.evaluate((el) => el.addEventListener("click", () => { el.setAttribute("data-pressed", "yes"); }));
+      await accept.tap();
+      expect(await accept.getAttribute("data-pressed")).toBe("yes");
+    });
   });
 });

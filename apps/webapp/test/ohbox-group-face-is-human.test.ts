@@ -1,5 +1,6 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { foldOhboxRows, type EngineMessage, type OhboxRow } from "@ohmail/client-engine";
+import { foldOhboxRows, type OhboxRow } from "@ohmail/client-engine";
 
 /** One section's rows through the ENGINE's fold — the one the web and the phone both draw. */
 const groupSection = (members: EngineMessage[]): OhboxRow[] =>

@@ -31,6 +31,11 @@
 !packages/core
 !packages/db
 !packages/db-mail
+# The organizer's cycle and passes (`packages/organizer`), which the worker imports by name.
+!packages/organizer
+!packages/cal-core
+!packages/cal-providers
+!packages/wire
 
 # …minus anything inside them that must never be copied in: no test trees, no stale local
 # compile output, no previous bundle run.

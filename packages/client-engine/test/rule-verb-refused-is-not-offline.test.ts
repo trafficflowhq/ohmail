@@ -1,8 +1,10 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter, MemoryMirrorStore, MutationRejectedError, OhmailEngine, pressVerdict, rulesAsRun, rulesList,
-  type EngineAdapter, type RuleDTO, type SyncChange,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine, pressVerdict, rulesAsRun, rulesList,
+  type EngineAdapter, type SyncChange,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * A RULE VERB THE SERVER REFUSED IS NOT OFFLINE. The server answered a revoke 500

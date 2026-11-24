@@ -1,0 +1,60 @@
+/* A few choices on one track. One face fills the taken one with ink, the other boxes it on the wash. */
+@layer oh {
+  .oh-seg {
+    --oh-seg-gap: 2px;
+    --oh-seg-pad: 3px;
+    display: inline-flex;
+    gap: var(--oh-seg-gap);
+    padding: var(--oh-seg-pad);
+    border-radius: var(--r-pill);
+    background: var(--oh-seg-ground, var(--seg-track));
+    box-shadow: var(--oh-ring-ctl);
+  }
+  .oh-seg-item {
+    --oh-seg-item-pad: 0 var(--s3);
+    --oh-seg-item-ring: none;
+    height: calc(var(--h-s) - 2 * var(--oh-hair));
+    padding: var(--oh-seg-item-pad);
+    border-radius: var(--r-pill);
+    box-shadow: var(--oh-seg-item-ring);
+    color: var(--ink2);
+    font-weight: var(--w-mid);
+    white-space: nowrap;
+  }
+  .oh-seg-item:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-seg-item[aria-pressed="true"] {
+    --oh-seg-item-ring: var(--oh-ring-pick);
+    background: var(--pick);
+    color: var(--on-pick);
+    font-weight: var(--w-bold);
+  }
+  .oh-seg .oh-count {
+    margin-left: var(--s1);
+    color: inherit;
+    font-size: inherit;
+    font-weight: var(--w-text);
+  }
+
+  :root[data-touch="1"] .oh-seg {
+    --oh-seg-pad: 2px;
+  }
+  :root[data-touch="1"] .oh-seg-item {
+    height: var(--h-s);
+  }
+  /* On touch a row wider than its line stands closer. */
+  :root[data-touch="1"] .oh-seg[data-fit="tight"] .oh-seg-item {
+    --oh-seg-item-pad: 0 var(--s2);
+  }
+  :root[data-touch="1"] .oh-seg[data-fit="tighter"] .oh-seg-item {
+    --oh-seg-item-pad: 0 var(--s1);
+  }
+
+  :root[data-face="ohmarchy"] .oh-seg-item {
+    font-weight: var(--w-text);
+  }
+  :root[data-face="ohmarchy"] .oh-seg-item[aria-pressed="true"] {
+    font-weight: var(--w-bold);
+  }
+}

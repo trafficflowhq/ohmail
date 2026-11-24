@@ -10,7 +10,7 @@ import {
   COMPOSE_ATTACH_MAX_TOTAL_BYTES,
   COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
   COMPOSE_ATTACH_UNMEASURED_MESSAGE_BYTES,
-} from "../apps/webapp/app/components/ComposeAttach";
+} from "@ohmail/client-engine";
 import { PHONE_SEND_MAX_TOTAL_BYTES } from "../apps/mobile/src/compose/attach";
 import { HOST_SEND_MAX_TOTAL_BYTES } from "../apps/sidecar/src/host-listener";
 import { SELF_HOST_SEND_MAX_TOTAL_BYTES } from "../apps/server/src/config";

@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
-/* @reads: apps/webapp/app/ apps/mobile/src/
-   Walked by path, so a landing selects this file when either root moves. */
+/* @reads: apps/webapp/app/ packages/app-logic/src/ packages/app/src/ apps/mobile/src/
+   Walked by path, so a landing selects this file when any of these roots moves. */
 
 /**
  * THE ORGANIZER'S PUBLISHED COPY IS NOT A RULES LIST (ARCH-RULES-PAGE-INVARIANT §0, amended): a
@@ -19,7 +19,9 @@ import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * a planted view proves the refusal.
  */
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "apps/mobile/src"];
+/* RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (3)): the new shell's places, panes and the Rules pane are
+   `packages/app/src`, read beside today's views and refused as they are (a surface that draws, never a consent reader). */
+const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "packages/app/src", "packages/letter-body/src", "apps/mobile/src"];
 const SKIP = new Set(["node_modules", "dist", ".next"]);
 
 /** Every file that reads the published copy, and the consent question it reads it for. */
@@ -27,14 +29,14 @@ const ADMITTED: Record<string, string> = {
   "packages/client-engine/src/consent-cutline.ts": "the definition, and the consent index judging a held mailbox's mail",
   "packages/client-engine/src/press-forecast.ts": "a press's forecast through the consent index",
   "packages/client-engine/src/rules-shown.ts": "a reader-only Rules page's list and the presses planned over it: the copy, local ids or, reader-only, a published rule by its key, applied presses laid over it",
-  "apps/webapp/app/shell/press-verdict.ts": "what a press did, read through `pressOutcome`'s consent reading",
-  "apps/webapp/app/shell/sender-screening.ts": "the sender sheet's consent index (where the sender's mail is judged)",
+  "packages/app-logic/src/press/press-verdict.ts": "what a press did, read through `pressOutcome`'s consent reading",
+  "packages/app-logic/src/press/sender-screening.ts": "the sender sheet's consent index (where the sender's mail is judged)",
   "apps/mobile/src/state/live.ts": "`pressOutcome`'s `profiles:`, the consent reading of a press",
   "apps/mobile/src/state/sender-stayed.ts": "why a sender stayed: the decided destination through the consent index",
-  "apps/webapp/app/shell/AppShell.tsx": "the GET /consent doorbell: each row's id and seq, never its content (RULING-026)",
+  "packages/app-logic/src/consent/consent-row.ts": "the GET /consent doorbell: each row's id and seq, never its content (RULING-026)",
 };
 /** Where a published-copy read is refused whatever its reason: the surfaces that list rules. */
-const REFUSED_ZONES = [/^apps\/webapp\/app\/views\//, /^apps\/webapp\/app\/shell\/rules-/, /^apps\/mobile\/src\/ui\//];
+const REFUSED_ZONES = [/^apps\/webapp\/app\/views\//, /^apps\/webapp\/app\/shell\/rules-/, /^packages\/app\/src\//, /^apps\/mobile\/src\/ui\//];
 
 const READ = /\bmailboxProfiles\s*\(|\.(?:list|get|entries)\s*(?:<[^>()]*>)?\s*\(\s*(?:MAILBOX_PROFILE_TYPE\b|["']mailbox_profile["'])/g;
 
@@ -61,7 +63,7 @@ const judge = (files: Array<{ rel: string; src: string }>): string[] => files.fl
   const at = profileReads(src);
   if (at.length === 0) return [];
   if (REFUSED_ZONES.some((z) => z.test(rel))) return at.map((l) => `${rel}:${l} (a rules surface)`);
-  if (rel === "packages/client-engine/src/engine.ts") return at.map((l) => `${rel}:${l} (the engine)`);
+  if (rel === "packages/client-engine/src/engine.ts" || rel.startsWith("packages/client-engine/src/engine/")) return at.map((l) => `${rel}:${l} (the engine)`);
   return rel in ADMITTED ? [] : at.map((l) => `${rel}:${l} (not named)`);
 });
 
@@ -70,7 +72,7 @@ describe("the organizer's published copy is not a rules list", () => {
     const planted = "const rules = mailboxProfiles(reader).flatMap((p) => p.rules);";
     expect(judge([{ rel: "apps/webapp/app/views/Fixture.tsx", src: planted }])).toEqual(["apps/webapp/app/views/Fixture.tsx:1 (a rules surface)"]);
     expect(judge([{ rel: "apps/webapp/app/views/Fixture.tsx", src: 'reader.list<X>("mailbox_profile")' }])).toHaveLength(1);
-    expect(judge([{ rel: "apps/webapp/app/shell/sender-screening.ts", src: planted }])).toEqual([]);
+    expect(judge([{ rel: "packages/app-logic/src/press/sender-screening.ts", src: planted }])).toEqual([]);
     expect(judge([{ rel: "apps/webapp/app/views/Fixture.tsx", src: "// mailboxProfiles(reader) is not read here" }])).toEqual([]);
   });
 

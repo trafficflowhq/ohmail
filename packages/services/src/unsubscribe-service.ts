@@ -1,17 +1,17 @@
-import { and, asc, eq, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import type { AuthVerdict, UnsubscribeHeaderState } from "@ohmail/wire";
+import { and, eq, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, senderScreenedOutByPersonSql,
   accountSettings, mailboxes, messages, messageBodies, folderState, unsubscribeRecords,
-  unsubscribeExamined, readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS,
-  type DrainCursor, type Tx,
+  unsubscribeExamined, type Tx,
 } from "@trafficflow/db";
 import {
   authVerdictFromHeaders, createLogger, httpsUnsubscribeUri, oneClickUnsubscribeUri, unsubscribeHeaderState,
   UNSUB_DRAIN_CLOSE_RESERVE_MS, UNSUB_DRAIN_RUN_BUDGET_MS,
-  type AuthVerdict, type Destination, type Logger, type UnsubscribeHeaderState,
+  type Destination, type Logger,
 } from "@trafficflow/core/mail";
-import { bridgeTx, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, type ServiceContext, type UnboundDb } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
@@ -219,6 +219,10 @@ export interface UnsubscribeSweep {
  * keeping up, and "something may be owed" cannot say that. `elapsedMs` is the other half — a run
  * that returns 0 in 24 s and a run that returns 0 in 300 ms are different deployments.
  */
+function emptySweep(): UnsubscribeSweep {
+  return { considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0 };
+}
+
 export interface DrainRun {
   /** Accounts this run actually entered. */
   accounts: number;
@@ -243,8 +247,7 @@ export interface DrainRun {
  * fifty targets is up to 400 s inside a request that has 60. The decision's transaction and the
  * IMAP moves come first, so the fan-out's share is that invocation minus a stated 20-second
  * margin: 40 s, five posts at the measured worst case. BOTH AXES, because a clock alone lets a
- * mailbox whose targets all refuse instantly walk a thousand messages. The remainder is not
- * dropped — `drainScreenedOut` makes stopping honest, and neither number rises without it.
+ * mailbox whose targets all refuse instantly walk a thousand messages. The press ends when either ceiling is reached.
  */
 export const UNSUB_SYNC_MAX = 5;
 export const UNSUB_SYNC_BUDGET_MS = 40_000;
@@ -355,15 +358,6 @@ export interface DrainBudget {
   postingLeftMs(): number;
   elapsedMs(): number;
 }
-
-/**
- * Where a walk stopped, as the pair the chunk is ordered by — and it IS the stored position, one
- * type, so the walk's cursor and the durable one cannot drift apart.
- */
-type ScanCursor = DrainCursor;
-
-/** One row a chunk read, with the verdict the chunk computed rather than filtered on. */
-interface ScannedRow { messageId: string; accountId: string; at: Date; eligible: boolean }
 
 /**
  * BOUND A WAIT BY WHAT IS LEFT, and say which wait it was. One elapsed-time budget that nothing
@@ -804,9 +798,7 @@ export class UnsubscribeService {
     ctx: ServiceContext, messageIds: readonly string[],
     ceiling: { count: number; budget: DrainBudget },
   ): Promise<UnsubscribeSweep> {
-    const sweep: UnsubscribeSweep = {
-      considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0,
-    };
+    const sweep = emptySweep();
 
     // THE ACCOUNT SWITCH, READ HERE AND NOWHERE ELSE (mail 0054). `block_auto_unsubscribe_at`
     // NOT NULL means this account asked that a screen-out stop leaving lists on their behalf.
@@ -822,7 +814,7 @@ export class UnsubscribeService {
       // BOTH AXES, CHECKED BEFORE THE ITEM AND NEVER AFTER IT. A count-only ceiling leaves five
       // eight-second posts inside a request that has twenty seconds left; a clock-only one lets a
       // mailbox whose targets all refuse instantly walk the whole list. Whatever is left when
-      // either fires is `remaining`, which is a promise the drain keeps. An item is STARTED only
+      // either fires is `remaining`, which is mail this press did not attempt. An item is STARTED only
       // where the budget can pay for it: a post begun with nothing left is aborted on the wire
       // and lands as `failed`, which spends the at-most-once claim on an outcome nobody chose.
       if (sweep.considered >= ceiling.count || ceiling.budget.postingLeftMs() < UNSUB_ITEM_MIN_MS) {
@@ -858,375 +850,29 @@ export class UnsubscribeService {
     return sweep;
   }
 
-  /**
-   * THE DRAIN, AND WHY IT REFUSES TO RUN WITHOUT A CUTOFF. The PLACEMENT is the queue (a reject
-   * folder, nothing enqueued) and the RULE is the licence: a sender a person screened out.
-   * `since` IS REQUIRED, NO DEFAULT: a mature mailbox holds thousands of old screen-outs, and a
-   * drain defaulting to "all of it" would announce this address to the very spam screened out
-   * because nobody wanted it confirmed live. `limit` is required for the same reason.
-   */
+  /** Compatibility entry for callers that still poll for background requests. */
   async sweepScreenedOut(
-    ctx: ServiceContext,
+    _ctx: ServiceContext,
     opts: { since: Date; limit: number; budgetMs?: number; budget?: DrainBudget },
   ): Promise<UnsubscribeSweep> {
     if (!(opts.since instanceof Date) || Number.isNaN(opts.since.getTime())) {
-      throw new ServiceError("unsubscribe_no_cutoff", 400,
-        "a sweep needs an explicit cutoff — there is no default, by design");
+      throw new ServiceError("unsubscribe_no_cutoff", 400, "a sweep needs an explicit cutoff");
     }
     if (!Number.isInteger(opts.limit) || opts.limit < 1) {
       throw new ServiceError("unsubscribe_no_limit", 400, "a sweep needs an explicit positive limit");
     }
-
-    // LEFT JOIN … IS NULL, not NOT IN (…): the list key is knowable only from the headers, so the
-    // query filters on the MESSAGE not yet having supplied a record and the claim de-duplicates
-    // against the key that matters. This join is an optimisation; the unique index is correctness.
-    //
-    // THE TWO HEADER KEYS ARE WHAT MAKES THE DRAIN MORE THAN DECORATIVE: `run()` refuses a message
-    // with no `List-Unsubscribe`, or no `-Post`, BEFORE the claim, so no record row is written and
-    // it stays a candidate for ever — and most screened-out mail publishes no route at all. KEY
-    // EXISTENCE only, never a second copy of the grammar; the malformed shape (a `-Post` over
-    // `mailto:` alone) survives a pass, and the window is what bounds that.
-    const budget = opts.budget ?? startDrainBudget(opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS, 0);
-    const walk = await this.walkWindow(asTx(ctx), opts.since, ctx.accountId, {
-      want: opts.limit, budget,
-    });
-
-    return this.postEach(ctx, walk.eligible.map((c) => c.messageId), { count: opts.limit, budget });
+    return emptySweep();
   }
 
-  /**
-   * ONE CHUNK OF THE WINDOW, JUDGED BUT NOT FILTERED. The fence is the subquery's own LIMIT, which a
-   * planner does not reorder into the join; the eligibility facts hang off it as LEFT joins and are
-   * returned as a FLAG rather than a filter, so the caller sees every row the chunk read and can
-   * advance its cursor past the ones it may not act on. Filtering here is what starved the pass.
-   * The two mailbox facts are asked TOGETHER — the account's automatic switch and the mailbox's own
-   * connected state — because a disconnected mailbox is acted for by nothing, and a caller that
-   * asked only one would send in the name of a mailbox its owner stopped.
-   */
-  private async scanChunk(
-    tx: Tx, since: Date, accountId: string | null, after: ScanCursor | null, deadlineMs: number,
-  ): Promise<{ rows: ScannedRow[]; read: number }> {
-    const page = tx.select({
-      messageId: folderState.messageId,
-      at: folderState.updatedAt,
-      accountId: messages.accountId,
-      mailboxId: messages.mailboxId,
-      fromAddress: messages.fromAddress,
-      authVerdict: messages.authVerdict,
-    })
-      .from(folderState)
-      .innerJoin(messages, eq(messages.id, folderState.messageId))
-      .where(and(
-        inArray(folderState.desiredFolder, REJECT_DESTINATIONS as string[]),
-        gte(folderState.updatedAt, since),
-        accountId === null ? undefined : eq(messages.accountId, accountId),
-        // THE CURSOR. `updated_at` alone is not unique; `message_id` is unique in `folder_state`,
-        // so the pair is a stable key, and this is that pair's comparison written out. NOT a raw
-        // row-value fragment: bare literals there serialize differently under PGlite and
-        // postgres@3, and casting them to fix that puts a Postgres timestamptz and uuid cast into
-        // a file the PHONE bundle loads, where the store is SQLite and neither exists. Built here,
-        // each side binds through its own column type on every dialect.
-        after === null ? undefined : or(
-          gt(folderState.updatedAt, after.at),
-          and(eq(folderState.updatedAt, after.at), gt(folderState.messageId, after.messageId)),
-        ),
-      ))
-      // OLDEST FIRST. An unordered LIMIT is a sample, and a sample can hand back the same rows
-      // for ever while the oldest never move — here that would mean the rows closest to falling
-      // out of the drain's window are the ones it never reaches.
-      .orderBy(asc(folderState.updatedAt), asc(folderState.messageId))
-      .limit(UNSUB_DRAIN_SCAN_PAGE)
-      .as("scan_page");
-
-    // THE HEADER PROBE IS THE SEAM'S, NOT THE SERVER'S. `jsonb_exists` is a Postgres function, and
-    // this statement is the FIRST the drain runs — so on the device store the whole pass threw
-    // `no such function: jsonb_exists` and the phone ran no unsubscribe pass at all while saying it
-    // did. `jsonHasAny` asks each store the same question in its own terms; one key per call,
-    // because the two are an AND and that member is an OR.
-    const d = dialect(tx);
-    const hasUnsubscribe = await d.jsonHasAny(messageBodies.headers, ["list-unsubscribe"]);
-    const hasOneClickPost = await d.jsonHasAny(messageBodies.headers, ["list-unsubscribe-post"]);
-
-    const rows = await withDeadline(
-      tx.select({
-        messageId: page.messageId,
-        at: page.at,
-        accountId: page.accountId,
-        // A VERDICT WORD, not a driver boolean. The server answers `true` here and the device
-        // store answers the integer 1, so `=== true` below read every candidate and acted on
-        // none — a pass that runs to its end and does nothing, which looks exactly like a
-        // mailbox with nothing owed. `case when` collapses both, and NULL (an absent join) is
-        // `no` on both, as it was.
-        // THE STORED VERDICT: `run()` refuses any but `pass` before the claim and saves the one it
-        // computed, so a refused letter leaves here after one look instead of holding the
-        // account's slots for the whole window. NULL is nobody asked yet.
-        eligible: sql<string>`(case when (
-          ${senderScreenedOutByPersonSql(d, sql`${page.accountId}`, sql`lower(${page.fromAddress})`, REJECT_DESTINATIONS)}
-          and ${unsubscribeRecords.id} is null
-          and ${unsubscribeExamined.messageId} is null
-          and ${accountSettings.blockAutoUnsubscribeAt} is null
-          and ${mailboxes.status} <> 'disabled'
-          and ${messageBodies.messageId} is not null
-          and (${page.authVerdict} is null or ${page.authVerdict} = 'pass')
-          and ${hasUnsubscribe}
-          and ${hasOneClickPost}
-        ) then 'yes' else 'no' end)`,
-      })
-        .from(page)
-        // EVERY join is LEFT, including the body one that used to be INNER: the caller needs the
-        // chunk's own row count to know whether the window is exhausted and where its cursor goes,
-        // and an inner join would silently shorten the chunk to the rows that happened to qualify.
-        .leftJoin(messageBodies, eq(messageBodies.messageId, page.messageId))
-        .leftJoin(unsubscribeRecords, eq(unsubscribeRecords.messageId, page.messageId))
-        // THE PER-MESSAGE MARKER. The record row is keyed `(mailbox, list)`, so the second message
-        // of a list already left matches nothing above it and was a candidate at every tick. This
-        // join is what makes the candidate set shrink for a list, not just for a message.
-        .leftJoin(unsubscribeExamined, eq(unsubscribeExamined.messageId, page.messageId))
-        .leftJoin(accountSettings, eq(accountSettings.accountId, page.accountId))
-        .leftJoin(mailboxes, eq(mailboxes.id, page.mailboxId))
-        .orderBy(asc(page.at), asc(page.messageId)),
-      deadlineMs, "the candidate read",
-    );
-
-    return {
-      rows: rows.map((r) => ({
-        messageId: r.messageId, accountId: r.accountId, at: r.at, eligible: r.eligible === "yes",
-      })),
-      read: rows.length,
-    };
-  }
-
-  /**
-   * WALK THE WINDOW IN CHUNKS UNTIL THERE IS ENOUGH TO DO, OR THERE IS NO MORE WINDOW.
-   *
-   * `exhausted` is the whole point of the return: it is true only where the walk reached the end
-   * of the window, and it is the only state in which a count taken from this walk is a fact. A
-   * walk stopped by the chunk ceiling, by the budget, or because it had enough work knows nothing
-   * about what lies behind it, and must not answer zero on its behalf.
-   */
-  private async walkWindow(
-    tx: Tx, since: Date, accountId: string | null,
-    opts: {
-      want: number; budget: DrainBudget; count?: boolean; from?: ScanCursor | null;
-      /**
-       * WHAT THIS WALK MAY SPEND, and why it is not always the whole budget. The WORK walk stops
-       * at the POSTING boundary: reading candidates it cannot pay to post for buys nothing, and
-       * spending the closing reserve on them left the pass unable to pay for its own closing
-       * write — so a run cut mid-window could not say where it stopped, which is the one case the
-       * cursor exists for. The counting walk keeps the whole budget; it IS closing work.
-       */
-      leftMs?: () => number;
-    },
-  ): Promise<{
-    eligible: ScannedRow[]; eligibleSeen: number; exhausted: boolean; chunks: number;
-    stoppedAt: ScanCursor | null;
-  }> {
-    const eligible: ScannedRow[] = [];
-    let eligibleSeen = 0;
-    let exhausted = false;
-    let chunks = 0;
-    // WHERE A PREVIOUS RUN STOPPED, or the head of the window. `lastRead` starts there so a walk
-    // that reads nothing past the cursor leaves it where it was rather than winding it back.
-    let after: ScanCursor | null = opts.from ?? null;
-    let lastRead: ScanCursor | null = opts.from ?? null;
-
-    const leftMs = opts.leftMs ?? (() => opts.budget.leftMs());
-    while (chunks < UNSUB_DRAIN_SCAN_CHUNKS) {
-      const left = leftMs();
-      if (left <= 0) break;
-      let chunk;
-      try {
-        chunk = await this.scanChunk(tx, since, accountId, after, left);
-      } catch (err) {
-        // A read that ran out of budget STOPS the walk; it does not fail the run and it does not
-        // make `exhausted` true. Anything else is a real fault and belongs to the caller.
-        if (err instanceof ServiceError && err.code === "unsubscribe_budget_spent") break;
-        throw err;
-      }
-      chunks += 1;
-      for (const row of chunk.rows) {
-        if (!row.eligible) continue;
-        eligibleSeen += 1;
-        if (eligible.length < opts.want) eligible.push(row);
-      }
-      // THE CURSOR ADVANCES PAST WHAT THE CHUNK REJECTED — this is the monotonic progress the
-      // single cut did not have. The last row READ, never the last row taken.
-      const last = chunk.rows[chunk.rows.length - 1];
-      if (last !== undefined) {
-        after = { at: last.at, messageId: last.messageId };
-        lastRead = after;
-      }
-      if (chunk.read < UNSUB_DRAIN_SCAN_PAGE) { exhausted = true; break; }
-      if (!opts.count && eligible.length >= opts.want) break;
-    }
-
-    /**
-     * WHERE THIS WALK STOPPED — the position a later run resumes AFTER, and the three states it
-     * can be in. It is read off the RESULT and never off which `break` fired: with a window
-     * smaller than one page the walk exhausts and takes its fill in the same chunk, and a rule
-     * keyed on the break would call that a lap.
-     *
-     * Took its fill ⇒ the last row TAKEN: everything after it was read but not looked at.
-     * Stopped short (budget, chunk ceiling) ⇒ the last row READ.
-     * Reached the end of the window without filling ⇒ `null`: the lap is over, start at the head.
-     */
-    const took = eligible[eligible.length - 1];
-    const stoppedAt = took !== undefined && eligible.length >= opts.want
-      ? { at: took.at, messageId: took.messageId }
-      : (exhausted ? null : lastRead);
-
-    return { eligible, eligibleSeen, exhausted, chunks, stoppedAt };
-  }
-
-  /**
-   * THE DRAIN'S PRODUCTION ENTRY — one bounded run over every account that has something owed.
-   *
-   * `sweepScreenedOut` is account-scoped and needs a cutoff somebody typed. A scheduled pass has
-   * nobody to type one, so the cutoff is {@link UNSUB_DRAIN_WINDOW_MS} back from now: it reaches
-   * what a recent request deferred and never the historical backlog the manual sweep's refusal
-   * exists to protect. Three bounds, because there are three ways this could be unbounded — the
-   * number of ACCOUNTS it looks at, the number of TARGETS within one, and the CLOCK, which is
-   * what actually stops a run.
-   */
+  /** Existing schedulers can poll this endpoint without granting any permission to send. */
   async drainScreenedOut(
-    db: Db,
+    _db: UnboundDb,
     opts: {
       now: () => Date; requestId: string;
       accounts?: number; perAccount?: number; budgetMs?: number; budget?: DrainBudget;
     },
   ): Promise<DrainRun> {
-    const accounts = opts.accounts ?? UNSUB_DRAIN_ACCOUNTS_PER_RUN;
-    const perAccount = opts.perAccount ?? UNSUB_DRAIN_TARGETS_PER_ACCOUNT;
-    // ONE BUDGET, ENTERED HERE — before the first read, which is exactly where the old clock was
-    // not: it started AFTER the account census, so everything that census cost was charged to
-    // nothing and the run met the platform's kill with its own ceiling still unspent.
-    const budget = opts.budget ?? startDrainBudget(opts.budgetMs ?? UNSUB_DRAIN_BUDGET_MS);
-    const since = new Date(opts.now().getTime() - UNSUB_DRAIN_WINDOW_MS);
-    const tx = bridgeTx(db);
-
-    // ONE WALK ACROSS THE WINDOW, oldest first, cursored so a stretch of rows this pass may not
-    // act on cannot hide the work behind it. It replaces the grouped account census AND the
-    // per-account candidate read: both asked the same window through the same fence, and a fence
-    // cut once at the head of the window is what let a large screen-out of ineligible rows stop
-    // the pass while its progress number said nothing was owed.
-    //
-    // The account ceiling and the per-account ceiling are applied to what the walk YIELDS, so an
-    // account with a long run of candidates cannot spend the whole batch, and the walk asks for
-    // exactly as much as those two ceilings admit.
-
-    // AND IT RESUMES WHERE THE LAST RUN STOPPED. The walk restarted at the head at every tick, so
-    // a candidate this pass can look at and never act on — a `-Post` over a `mailto:` route is the
-    // shape — held the head and the rows behind it were reached by nobody.
-    const from = await this.cursorOf(tx, budget);
-    const walk = await this.walkWindow(tx, since, null, {
-      want: accounts * perAccount, budget, from,
-      leftMs: () => budget.postingLeftMs(),
-    });
-
-    const byAccount = new Map<string, string[]>();
-    for (const row of walk.eligible) {
-      const held = byAccount.get(row.accountId);
-      if (held === undefined) {
-        if (byAccount.size >= accounts) continue;
-        byAccount.set(row.accountId, [row.messageId]);
-      } else if (held.length < perAccount) {
-        held.push(row.messageId);
-      }
-    }
-
-    const sweep: UnsubscribeSweep = {
-      considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0,
-    };
-    let visited = 0;
-    for (const [accountId, ids] of byAccount) {
-      // The SAME budget every segment reads, not a slice handed down: an account entered with
-      // less than one item's worth left is the next tick's, not this one's half-run.
-      if (budget.postingLeftMs() < UNSUB_ITEM_MIN_MS) break;
-      visited += 1;
-      // `postEach` reads the account's automatic switch at the SEAM. The walk's own predicate
-      // excludes a blocked account too, and that one is an optimisation: it can only remove an
-      // account, never admit one, and removing the seam's read would move a decision into a query.
-      const one = await this.postEach(
-        { db, accountId, userId: null, now: opts.now, requestId: opts.requestId },
-        ids, { count: perAccount, budget },
-      );
-      sweep.considered += one.considered;
-      sweep.posted += one.posted;
-      sweep.skipped += one.skipped;
-      sweep.failed += one.failed;
-      sweep.remaining += one.remaining;
-    }
-
-    // THE PASS HAS LOOKED, AND THIS IS WHERE IT SAYS HOW FAR — once, after the posting loop, never
-    // per page. A run that dies above resumes from the last END; a run that dies BELOW keeps what
-    // it looked at, because the count that follows is a report and a report that failed does not
-    // unlook a window. Before the count deliberately: when a budget is truly spent something has
-    // to give, and a missing cursor makes the next run repeat this one's head — the defect — while
-    // a missing count already has an honest answer, `null`.
-    await this.recordStop(tx, walk.stoppedAt, budget, opts.now());
-
-    // WHAT IS STILL OWED, COUNTED RATHER THAN INFERRED — the reserve this budget holds back exists
-    // for this one read. It is `null`, never 0, when the counting walk did not reach the end of
-    // the window: a zero that is really "I stopped looking" is the sentence that told an operator
-    // this pass was keeping up while it had not looked at the backlog at all.
-    const remaining = await this.owedCount(tx, since, budget);
-
-    return { accounts: visited, sweep, remaining, elapsedMs: budget.elapsedMs() };
-  }
-
-  /**
-   * THE CURSOR IS ADVISORY, AND BOTH OF ITS STATEMENTS ARE BOUNDED BY WHAT IS LEFT — the rule
-   * UD-R4-01 states, applied to the two reads and writes this pass gained. A run that cannot pay
-   * for the read starts at the head, which is what every run did before this cursor existed; a run
-   * that cannot pay for the write leaves the cursor where it was, which is what a run killed
-   * anywhere above does. Neither costs correctness: the marks and the claim decide what is acted
-   * on, and the cursor only decides WHERE a bounded run looks first. Anything that is not the
-   * budget refusing belongs to the caller.
-   */
-  private async cursorOf(tx: Tx, budget: DrainBudget): Promise<ScanCursor | null> {
-    try {
-      return await withDeadline(
-        readDrainCursor(tx, UNSUB_DRAIN_PASS), budget.leftMs(), "the drain cursor read");
-    } catch (err) {
-      if (err instanceof ServiceError && err.code === "unsubscribe_budget_spent") return null;
-      throw err;
-    }
-  }
-
-  /**
-   * Where the pass stopped, written once, bounded by what is left — which is a real allowance and
-   * not zero, because the WORK walk stops at the posting boundary and leaves the closing reserve
-   * behind it. Bounded by a FLOOR instead, the route spent its whole budget and then the reserve
-   * on top against a database that never answers, and its own ceiling case refused by 2 seconds.
-   */
-  private async recordStop(
-    tx: Tx, stoppedAt: ScanCursor | null, budget: DrainBudget, now: Date,
-  ): Promise<void> {
-    // NOTHING TO PAY WITH MEANS NOTHING IS ISSUED. `withDeadline` does not cancel — it stops
-    // WAITING — so a write started with no budget goes to the database while the invocation is
-    // already returning, and a platform kill decides whether it lands. A cursor the pass cannot
-    // vouch for is worse than the one it already has. Measured: the row appeared anyway, which is
-    // a race a test can read either way.
-    const left = budget.leftMs();
-    if (left <= 0) return;
-    try {
-      await withDeadline(
-        writeDrainCursor(tx, UNSUB_DRAIN_PASS, stoppedAt, now), left, "the drain cursor write");
-    } catch (err) {
-      if (err instanceof ServiceError && err.code === "unsubscribe_budget_spent") return;
-      throw err;
-    }
-  }
-
-  /**
-   * How many candidates the window still holds for anyone, or `null` where the walk could not
-   * reach the end of it. The two are different facts and the caller may not collapse them.
-   */
-  private async owedCount(tx: Tx, since: Date, budget: DrainBudget): Promise<number | null> {
-    const walk = await this.walkWindow(tx, since, null, {
-      want: 0, count: true, budget,
-    });
-    return walk.exhausted ? walk.eligibleSeen : null;
+    return { accounts: 0, sweep: emptySweep(), remaining: 0, elapsedMs: opts.budget?.elapsedMs() ?? 0 };
   }
 
   /**

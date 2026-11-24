@@ -1,18 +1,17 @@
 /** @vitest-environment jsdom */
+import type { MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { fireEvent, within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, searchField, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type MutationOutcome,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
 
 /**
  * ENTER ASKS THE STORE AT ONCE (SEARCH-DEBOUNCE). Typing waits the 100 ms debounce so a request goes
@@ -23,13 +22,13 @@ import { KeymapProvider } from "../app/shell/keymap";
  * prefix's summary); an Enter'd one asks them with its page.
  */
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
-const h = React.createElement;
 const NOW = new Date("2026-09-26T12:00:00.000Z");
 const WORD = "kestrelwing";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 let asked: Array<{ at: number; parts: string; q: string }> = [];
 
 async function engine(): Promise<OhmailEngine> {
@@ -47,24 +46,19 @@ async function engine(): Promise<OhmailEngine> {
   return new OhmailEngine({ adapter, store, now: () => NOW });
 }
 
-function Live({ e, door }: { e: OhmailEngine; door: { type?: (q: string) => void } }) {
-  const [query, setQuery] = React.useState("");
-  door.type = setQuery;
-  return h(SearchView, { engine: e, version: 1, indexRev: 0, now: NOW, query, onQuery: setQuery, onOpen: () => {} });
-}
-
 async function mounted() {
-  const door: { type?: (q: string) => void } = {};
-  root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(KeymapProvider, { children: h(Live, { e: await engine(), door }) }) }));
-  for (let i = 0; i < 100 && (door.type === undefined || host.querySelector(".search-box input") === null); i++) await sleep(10);
-  return door;
+  const e = await engine();
+  root.render(<RegisteredSearch engine={e} now={NOW} />);
+  await within(host).findByRole("textbox", { name: messages.search.aria });
+  return { type: (query: string) => typeSearch(host, query) };
 }
 const pages = () => asked.filter((a) => a.parts === "page");
 const counts = () => asked.filter((a) => a.parts === "estimate");
-const enter = () => host.querySelector(".search-box input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+const enter = () => fireEvent.keyDown(searchField(host), { key: "Enter" });
 
 beforeEach(() => {
   asked = [];
+  leaveSearch = enterSearchRoute();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -72,12 +66,13 @@ beforeEach(() => {
 afterEach(() => {
   root.unmount();
   host.remove();
+  leaveSearch();
 });
 
 describe("the store is asked once per settled question", () => {
   it("typed and then Enter: the page is asked at the key, not a debounce after it", async () => {
     const door = await mounted();
-    door.type!(WORD);
+    door.type(WORD);
     await sleep(40);
     const t0 = performance.now();
     enter();
@@ -91,7 +86,7 @@ describe("the store is asked once per settled question", () => {
   it("the control: typing alone still waits the debounce before it asks", async () => {
     const door = await mounted();
     const t0 = performance.now();
-    door.type!(WORD);
+    door.type(WORD);
     for (let i = 0; i < 120 && pages().length === 0; i++) await sleep(5);
     expect(pages()).toHaveLength(1);
     expect(pages()[0]!.at - t0, "typed to the request").toBeGreaterThanOrEqual(90);
@@ -103,7 +98,7 @@ describe("a typed question's count and facets wait until it has stood", () => {
   it("typed: the page at the debounce, the count not before 600 ms", async () => {
     const door = await mounted();
     const t0 = performance.now();
-    door.type!(WORD);
+    door.type(WORD);
     for (let i = 0; i < 120 && pages().length === 0; i++) await sleep(5);
     expect(pages()).toHaveLength(1);
     await sleep(150);
@@ -115,10 +110,10 @@ describe("a typed question's count and facets wait until it has stood", () => {
 
   it("a question changed inside the hold never has its count asked", async () => {
     const door = await mounted();
-    door.type!(WORD);
+    door.type(WORD);
     for (let i = 0; i < 120 && pages().length === 0; i++) await sleep(5);
     await sleep(100);
-    door.type!(WORD + "s");
+    door.type(WORD + "s");
     await sleep(1_000);
     expect(pages().map((p) => p.q), "both questions had their page").toEqual([WORD, WORD + "s"]);
     expect(counts().map((c) => c.q), "the abandoned question's count was asked").toEqual([WORD + "s"]);
@@ -126,7 +121,7 @@ describe("a typed question's count and facets wait until it has stood", () => {
 
   it("Enter: the count follows the page at once", async () => {
     const door = await mounted();
-    door.type!(WORD);
+    door.type(WORD);
     await sleep(40);
     const t0 = performance.now();
     enter();

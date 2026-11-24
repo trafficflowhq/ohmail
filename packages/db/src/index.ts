@@ -14,9 +14,11 @@ export const DB_VERSION = "0.0.0";
  * put every Cloud table into every consumer of this package — including the desktop engine's
  * shipped bundle. Hosted tables live on `@trafficflow/db/cloud`. */
 export * from "./schema-mail.js";
+export { modelConsentGate, ModelConsentWithdrawn, readManagedModelConsent } from "./model-consent.js";
+export { readAccountSettings, readSuggestionGrant, suggestionConsentGate } from "./suggestion-consent.js";
 // The one-time Quarantine→Junk sweep's candidate predicate — one clause the API's preview and
 // the worker's pass both count by. A pure predicate over the mail schema, nothing more.
-export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE } from "./junk-sweep.js";
+export { junkSweepCandidateWhere, JUNK_SWEEP_SOURCE_PILE, queueJunkSweep, readJunkSweepCommand, clearJunkSweepCommand, retireLegacyJunkSweep, clearLegacyJunkSweepNotice } from "./junk-sweep.js";
 // Where a search document's body words came from (mail 0125) — the CHECK's one definition.
 export { SEARCH_SOURCES, isSearchSource, type SearchSource } from "./search-sources.js";
 export { SCREENER_ACT_REFUSALS, isScreenerActRefusal, type ScreenerActRefusal } from "./screener-act-refusal.js";
@@ -41,7 +43,7 @@ export {
 export { goneEverywhereWhere } from "./gone-everywhere.js";
 // A rule's `match` as SQL keys it, and whether it names a sender: ONE spelling for every reader.
 export {
-  ruleMatchKeySql, ruleNamesSenderSql, sharedProviderAllowRefusal, SHARED_PROVIDER_DOMAINS, SharedProviderDomainError,
+  ruleMatchKeySql, ruleNamesSenderSql, ruleSetNamesSenderSql, ruleCanNameDomainSql, sharedProviderAllowRefusal, SHARED_PROVIDER_DOMAINS, SharedProviderDomainError,
 } from "./rule-match-sql.js";
 export {
   readDrainCursor, writeDrainCursor, UNSUB_DRAIN_PASS, type DrainCursor,
@@ -71,6 +73,21 @@ export { upsertDesiredSeen, upsertDesiredSeenMany } from "./flag-intent.js";
 // The reconcile polls' account bound (mail 0181): each queue read at its own account. Reaches
 // `schema-mail.js` alone.
 export { folderQueueOf, flagQueueOf } from "./reconcile-queue.js";
+export { accountOfMessage, accountOfMailbox, accountOfUser } from "./parent-account.js";
+export {
+  PASS_NAMES, isPassName, UnknownPassName, NO_MARKS, accountPass, mailboxPass, onPass, passMark, passDone, proposed,
+  cursorBehind, readPassProgress, writePassProgress, updatePassProgress, markPassDone, requestPass,
+  type PassName, type PassKey, type PassMarks, type PassWrite,
+} from "./pass-progress.js";
+// The one door to `message_invitations` (mail 0204): an invitation's identity and the answer on it.
+export {
+  INVITATION_UID_MAX_BYTES, INVITATION_RECURRENCE_ID_MAX_BYTES, INVITATION_ADDRESS_MAX_CHARS, sameAddress,
+  writeInvitation, recordInvitationAnswer, invitationStanding, putInvitationCopy, invitationFieldOf, invitationCalendarId,
+  type InvitationWrite, type InvitationAnswerRecord, type InvitationStandingAsk, type InvitationCopyOf,
+} from "./message-invitations.js";
+export {
+  invitationBackfillPage, settleInvitationBackfill, type InvitationCandidate, type InvitationBackfillPage,
+} from "./invitation-backfill.js";
 export {
   PRESS_AGED_MS, PRESS_AGE_MAX_MS, clampPressInstant, decisionInstant, placementDecidedAfter, pressIsAged,
   readDecidedAfter, tagAssignedAfter, triageDecidedAfter,
@@ -104,6 +121,19 @@ export {
 } from "./erasure-fence.js";
 // The pooled handle's one-flight read transaction, asked by the search's session (`read-flight.ts`).
 export { readFlightOf } from "./read-flight.js";
+// The account's binding on a handle: the two types and the one function that mints them (`bound.ts`).
+export {
+  bindDb, doorKeyDb, isCredentialKey, rebindTx, carryBinding, bindingOf, poolKeyOf, assertBinding, refuseBound, onServerPool,
+  BindingRefusedError, BindingFailedError, BINDING_KEY_MAX,
+  type AccountBound, type NothingBound, type NoBinding, type Unbranded, type BindTo, type Binding,
+} from "./bound.js";
+// A device store's deleted bytes handed back; a server pool is sent nothing (`reclaim-space.ts`).
+export { reclaimSpace, type ReclaimedTable } from "./reclaim-space.js";
+// The relations an account's index-driven reads name, as a shape, and the tables' answer: all a store
+// without the row lock reads (`account-rows.ts`). The views' answer and the catalog read that picks
+// between the two are the hosted database's, on `@trafficflow/db/cloud`: never exported here, where
+// a device's engine would load a statement only Postgres accepts.
+export { ACCOUNT_TABLES, type AccountRelations } from "./account-rows.js";
 
 // THE SCREENER DECISION'S APPLY — the reason for all three exports above it, and the biggest
 // single move: `ScreenerService.applyDecision`'s whole transactional core, reachable by the
@@ -114,7 +144,7 @@ export { readFlightOf } from "./read-flight.js";
 export {
   SCREENER_FOLDER, DECIDABLE_FOLDERS, DECISION_BATCH_MAX, admitsDestination, domainOf,
   heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag, rerouteUnconfirmedHeld, rerouteAdvisedLetter, heldRowMovesOnPress,
-  applyScreenerDecision, validateRequestPayload, PassMayNotAdmitError, readListClaimsFiledAlone,
+  applyScreenerDecision, validateRequestPayload, parseDecisionScope, confirmedScreenerRows, PassMayNotAdmitError, readListClaimsFiledAlone,
   fileImpersonationLetters, impersonationReturnedSenders, IMPERSONATION_FILING_FOLDER, IMPERSONATION_FILING_IDS_MAX,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
   type HeldElsewhereMailbox, type ImpersonationFilingResult, type UnconfirmedRerouteResult, type ValidatedRequestPayload,
@@ -193,7 +223,7 @@ export {
   // request at all. Mail 0094 adds the three capabilities beside `requests`: an organizer names
   // each family of request it has an applier for, so a reader is refused at its own door rather
   // than queueing a record the holder will never take.
-  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE,
+  CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_RULES, CAPABILITY_PROFILE, CAPABILITY_FOLDER_MOVES,
   capabilitiesColumn, hasCapability, readRequestEligibility, decisionCanBeApplied,
   fanOutPlace, writesHere, accountWritesHere, mailboxTakesPressSql, readMailboxesTakingAPress,
   type OrganizerRole, type OrganizerKind, type OrganizerState, type OrganizerIntent,
@@ -206,6 +236,12 @@ export { parkedResumeWhere, parkedResumeSet } from "./organizer-park.js";
 /* The junk rescue's two states (`junk_rescues`) — one constant, narrowed at the write door and
    spelled out by the CHECK on both stores. Reaches nothing. */
 export { JUNK_RESCUE_STATUSES, isJunkRescueStatus, type JunkRescueStatus } from "./junk-rescue-status.js";
+
+/* Where a move into a person's own folder may go: the move's door and the organizer's drain ask the
+   same check, each against its own store. The exclusion rule is core's, handed in. */
+export {
+  resolveFolderDestination, type FolderDestination, type FolderDestinationRefusal, type FolderExclusionRule,
+} from "./folder-destination.js";
 
 /* Mail 0094 — the appliers for the request kinds that are not a Screener decision. Same shape and
    same reason as `screener-apply.js` beside it: ONE transactional core, reached from the
@@ -228,6 +264,8 @@ export {
   reconcileRuleCreate, pressSettled, settlePressesLeavingMailbox, createPressKeysSince, createPressesSince, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
   type LeavingSettle,
   type ValidatedMovePayload, type MoveRefusal,
+  FOLDER_MOVE_NAME_MAX, type ValidatedFolderMovePayload, type InventoryFolder,
+  folderMoveNameError, validateFolderMovePayload, type FolderMoveNameError,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
   type ValidatedProfileUpdate, type ProfileAwayUpdate, type ProfileScreeningUpdate,
   type ApplyProfileUpdateInput, type ApplyProfileUpdateResult,
@@ -241,6 +279,11 @@ export {
   RULE_REMOVAL_KEY_MAX_BYTES, RULE_REMOVAL_MAX_AGE_MS, ruleRemovalKey, recordRuleRemovals, readRuleRemovals, clearRuleRemovals,
   type RuleRemoval, type RuleRemovalKeyParts,
 } from "./rule-removals.js";
+// What a person stated for every install of a mailbox (mail 0210): the row's pairs, a press, and a found copy
+// taken in. Reaches `schema-mail.js` and the change log alone.
+export {
+  readPreferences, statePreference, adoptPreferences, type HeldPreferences, type StoredPreferences,
+} from "./preferences.js";
 export {
   convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, deleteRulesById, keptProvenance, endOwedWalk,
   isRefileRun, owesWholeWalk, pendingRefileFrom, refileOwed, isParkedFence, PARKED_FENCE_PREFIX,
@@ -255,7 +298,10 @@ export {
   // beside `LedgerTx` because that is the type it enforces at runtime; it used to reach callers
   // through the hosted barrel, which put a mail-side guard behind a hosted import.
   NotInTransactionError, assertLedgerTx,
-  type Tx, type LedgerTx, type EntityType, type ChangeOp, type ChangeInput, type SeqBounds,
+  // The calendar's kinds and its one delta door: words and a door, no table of the calendar's.
+  CALENDAR_RECORD_KINDS, isCalendarRecordKind, calendarDelta, recordCalendarChanges,
+  CALENDAR_CHANGES_PER_TRANSACTION, CalendarChangeRefused, type CalendarChange,
+  type Tx, type LedgerTx, type EntityType, type ChangeInput, type SeqBounds,
   type MailboxMustBeLive,
 } from "./change-log.js";
 
@@ -343,7 +389,7 @@ export {
   // attempt key; whoever answers composes `<namespace>:<key>` through `sourceFor` and nowhere
   // else. `assertAttemptKey` is what refuses a key that is already a source.
   SPEND_ACTIONS, DRAFT_RETRY_WINDOW_MS, ATTEMPT_KEY_MAX, sourceFor, assertAttemptKey, isSpendAction,
-  classifyAttemptKey, screenerAttemptKey, draftAttemptKey, workflowAttemptKey,
+  classifyAttemptKey, screenerAttemptKey, draftAttemptKey, draftFromTextAttemptKey, workflowAttemptKey,
   // The exclusive claim's TTL. The claim is the entitlements program's; this is the CEILING the
   // organizer's classifier timeout has to fit under, and that timeout is open code.
   AI_CLAIM_TTL_MS,
@@ -447,8 +493,8 @@ export {
  * it is store-neutral — the phone runs the same engine on the device store.
  */
 export {
-  resolveCutline, cutlineArms, perMailboxSql, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
-  senderHasHeldClaimSql, heldClaimInsideSql, heldForIdentitySql, notHeldForIdentitySql, heldUnconfirmedOnlySql, heldArrivedInsideSql, senderHasHeldArrivalSql, heldClaimWaitsSql, personSkipSql, senderHasPersonConsentSql,
+  resolveCutline, cutlineArms, perMailboxSql, senderIsActiveSql, activeSenderKeysSql, activeSenderMessageSql, senderIsDecidedSql, senderIsOwnSql, senderScreenedOutByPersonSql, activeSenderExpr, anyOf,
+  senderHasHeldClaimSql, heldClaimKeysSql, heldClaimInsideSql, heldForIdentitySql, notHeldForIdentitySql, heldUnconfirmedOnlySql, heldArrivedInsideSql, senderHasHeldArrivalSql, heldClaimWaitsSql, personSkipSql, senderHasPersonConsentSql,
   CUTLINE_PERSON_WRITTEN_PROVENANCE,
   mailboxCountsAsOwn, mailboxCountsAsOwnSql, notGoneSql,
   heldSortKey,

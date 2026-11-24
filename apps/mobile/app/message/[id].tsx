@@ -7,6 +7,7 @@
  * param the list-detail screens read) — the id survives the move and `pane-memory` restores
  * the scroll, which is the continuity rule: a posture change never loses the open message.
  */
+import { MailAppearance } from "../../src/theme/mail";
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 import { router, useLocalSearchParams, useNavigation } from "expo-router";
@@ -34,15 +35,17 @@ export default function MessageScreen() {
   useLocale();
   return (
     <SurfaceBoundary surface="reader">
-      <Gated>
-        <MessageRoute />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <MessageRoute />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }
 
 function MessageRoute() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, member } = useLocalSearchParams<{ id: string; member?: string }>();
   const w = useWorld();
   // The reader draws the body, so it subscribes to it: a body landing redraws this screen alone.
   useBodyStamp();
@@ -54,7 +57,7 @@ function MessageRoute() {
   // TWO PANES: this full-screen route yields to the list-detail surface that owns the pair.
   // A pop back to the pane's route (`dismissTo`), not a push — the reader is the same reading,
   // moved, and Back must still leave it.
-  const target = plan.panes === 2 && m ? paneRouteFor(m) : null;
+  const target = plan.panes === 2 && m && member !== "1" ? paneRouteFor(m) : null;
   /* An open sheet or composer holds the move; it fires when the last one closes. */
   const held = useSyncExternalStore(subscribeReaderHeld, readerHeldNow);
   /* The move waits for an open sheet or composer, and from the move on this route draws nothing. */
@@ -64,7 +67,7 @@ function MessageRoute() {
     <>
       {/* Only while in front: `router.back` pops the screen in front, so a delete committing behind an
           open Trash letter closed that letter. Behind, the reader shows its gone state on return. */}
-      <MessageReader id={id ?? ""} onClose={() => { if (navigation.isFocused()) router.back(); }} />
+      <MessageReader id={id ?? ""} selectMember={member === "1"} onClose={() => { if (navigation.isFocused()) router.back(); }} />
       {/* Gate-held and folder mail keep the full-screen reader on the unfolded-landscape Duo
           (`paneRouteFor` answers null there) — the rail's claim still needs a renderer. */}
       <ReaderRailHost />

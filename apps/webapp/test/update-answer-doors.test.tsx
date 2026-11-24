@@ -48,7 +48,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const line = async () => (await import("../app/shell/app-update.js")).currentUpdateOffer();
+const line = async () => (await import("@ohmail/app-logic/doors/app-update")).currentUpdateOffer();
 
 describe("the API client", () => {
   it("426 client_too_old: the line says so with Reload, and the error carries the same sentence", async () => {

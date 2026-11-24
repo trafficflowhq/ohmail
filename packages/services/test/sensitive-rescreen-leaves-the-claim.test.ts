@@ -28,9 +28,9 @@ async function world() {
       senderCheck, senderCheckBrand: senderCheck ? "PostFinance" : null,
       nativeLocator: { folder: OHBOX, ref: `1:${Math.floor(Math.random() * 100000)}` },
     }).returning();
-    await t.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await t.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await t.insert(folderState).values({
-      messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
   };

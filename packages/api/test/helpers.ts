@@ -1,5 +1,8 @@
+import { accountOfMailbox, accountOfMessage, bindDb, bindingOf } from "@trafficflow/db";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
+import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import {
   accounts,
   users,
@@ -104,11 +107,59 @@ export function stubImapDial(): void {
   vi.spyOn(ImapAdapter.prototype, "close").mockResolvedValue(undefined);
 }
 
+/**
+ * A REQUEST'S CONTAINER AS A HOST HANDS IT, AND AGAIN FOR EVERY REQUEST: `container` with its handle
+ * minted over the store it names.
+ *
+ * A host builds a container for each request and mints its handle bound to nothing; the session's
+ * door binds that handle once, and refuses a handle no host minted or one a request before it
+ * bound. A test hands ONE container to request after request, so this one makes itself a new
+ * request's where a request begins: every pipeline's first act is to write the request's id
+ * (`withRequestId`), and with that write the handle is the minted one again, for that request alone
+ * (two requests at once each keep their own, as two containers would). What one request bound
+ * never reaches the next request; until the next request id is written, the test's own reads of
+ * `deps.db` (and a service called by hand on it) ride the last request's handle, because the mint
+ * happens in the caller's continuation.
+ *
+ * A test that puts a handle of its own on the container (a double, a counting wrapper) is the host
+ * from then on: the next request's handle is minted over it. A handle that names an account is a
+ * request's own state and is never minted over. A copy of the container (`{ ...deps }`) is a plain
+ * object holding the handle as it stood: one request's.
+ */
+export function perRequest(container: Omit<ApiDeps, "db"> & { db: Db | ApiDeps["db"] }): ApiDeps {
+  const perRequestHandle = new AsyncLocalStorage<{ handle: ApiDeps["db"] }>();
+  let hosts: Db | ApiDeps["db"] = container.db;
+  const mint = (): ApiDeps["db"] => {
+    const held = hosts;
+    return bindingOf(held) === undefined ? bindDb(held as Db, { account: null }) : held as ApiDeps["db"];
+  };
+  const outside: { handle: ApiDeps["db"] } = { handle: mint() };
+  let requestId = container.requestId;
+  const made = { ...container } as unknown as ApiDeps;
+  Object.defineProperty(made, "db", {
+    enumerable: true, configurable: true,
+    get: () => (perRequestHandle.getStore() ?? outside).handle,
+    set: (next: ApiDeps["db"]) => {
+      (perRequestHandle.getStore() ?? outside).handle = next;
+      if ((bindingOf(next)?.account ?? null) === null) hosts = next;
+    },
+  });
+  Object.defineProperty(made, "requestId", {
+    enumerable: true, configurable: true,
+    get: () => requestId,
+    set: (next: string) => {
+      requestId = next;
+      perRequestHandle.enterWith({ handle: mint() });
+    },
+  });
+  return made;
+}
+
 export async function makeDeps(
   start: Date = FIXED_NOW,
   authOver: Partial<AuthConfig> = {},
   over: {
-    remote?: RemoteFetch; resolver?: HostResolver; drafter?: DraftPort; sendAdapter?: OpenSendAdapter;
+    db?: Db; remote?: RemoteFetch; resolver?: HostResolver; drafter?: DraftPort; sendAdapter?: OpenSendAdapter;
     oneClickPost?: OneClickPost; trustedAuthservIds?: ReadonlySet<string>;
     smtpVerify?: (smtp: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } }) => Promise<void>;
   } = {},
@@ -116,7 +167,7 @@ export async function makeDeps(
   db: Db; deps: ApiDeps; clock: TestClock; mailer: SpyMailer; mail: MailService;
   access: AccessHandle;
 }> {
-  const db = await makeTestDb();
+  const db = over.db ?? await makeTestDb();
   stubImapDial();
   // THE ACCESS VERDICT EVERY ROUTE READ ANSWERS FROM, and the one place a test steers it.
   // UNMETERED is the default because it is the only verdict a host with no entitlements program
@@ -168,7 +219,7 @@ export async function makeDeps(
     },
     throttleKeys: throttleKeysFor(authDeps.keyProvider),
   });
-  const deps: ApiDeps = {
+  const deps: ApiDeps = perRequest({
     db,
     // THE STAFF HANDLE, AND AN HONEST STATEMENT OF WHAT IT PROVES HERE.
     //
@@ -269,7 +320,7 @@ export async function makeDeps(
       waitlist: makeWaitlistService({ mail, throttleKeys: throttleKeysFor(authDeps.keyProvider) }),
       ...(over.sendAdapter ? { sendAdapter: over.sendAdapter } : {}),
     },
-  };
+  });
   const clock: TestClock = { now: () => t, advance: (ms) => { t = new Date(t.getTime() + ms); } };
   return { db, deps, clock, mailer, mail, access };
 }
@@ -443,7 +494,7 @@ export async function seedMailbox(
   }).returning();
   for (const f of o.folders ?? []) {
     await db.insert(mailboxFolders).values({
-      mailboxId: mb!.id, folder: f.folder, highestmodseq: f.highestmodseq ?? null,
+      mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), folder: f.folder, highestmodseq: f.highestmodseq ?? null,
     });
   }
   return mb!.id;
@@ -501,7 +552,7 @@ export async function seedMessage(
   db: Db,
   o: {
     accountId: string; mailboxId?: string; threadId?: string;
-    subject?: string; fromAddress?: string; date?: Date; unread?: boolean; snippet?: string;
+    subject?: string; fromAddress?: string; date?: Date; arrivedAt?: Date; unread?: boolean; snippet?: string;
     folder?: string; observedFolder?: string; reconcileStatus?: string; lastSetBy?: string;
     dedupKey?: string; nativeLocator?: { folder: string; ref: string };
     // Sensitivity flags: seed a no_ai/no_kb/sensitive message.
@@ -517,6 +568,7 @@ export async function seedMessage(
     subject: o.subject ?? "Seed subject",
     fromAddress: o.fromAddress ?? "sender@example.com",
     date: o.date ?? null,
+    arrivedAt: o.arrivedAt ?? null,
     unread: o.unread ?? true,
     snippet: o.snippet ?? "seed snippet",
     threadId: o.threadId ?? null,
@@ -527,7 +579,7 @@ export async function seedMessage(
   }).returning();
   if (o.folder) {
     await db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: accountOfMessage(m!.id),
       desiredFolder: o.folder,
       observedFolder: o.observedFolder ?? o.folder,
       lastSetBy: o.lastSetBy ?? "us",
@@ -538,12 +590,21 @@ export async function seedMessage(
 }
 
 /** Seed a message body row (1:1 with a message). */
+/**
+ * The search documents of an account's seeded letters, and the mark that they are all built: what
+ * ingest leaves behind, which writes a letter's document with the letter. A store finds a letter by
+ * its document alone, so a test that searches what it seeded calls this after its last seed.
+ */
+export async function seedSearchDocuments(db: Db, accountId: string): Promise<void> {
+  await searchIndexBackfillPass({ db: db as never, accountId });
+}
+
 export async function seedBody(
   db: Db,
   o: { messageId: string; text?: string; html?: string | null; headers?: Record<string, unknown>; loadedRemoteContent?: boolean },
 ): Promise<void> {
   await db.insert(messageBodies).values({
-    messageId: o.messageId,
+    messageId: o.messageId, accountId: accountOfMessage(o.messageId),
     text: o.text ?? "seed body text",
     html: o.html ?? null,
     ...(o.headers ? { headers: o.headers } : {}),

@@ -11,11 +11,12 @@
  * case 2 red; the timeout latching the snapshot route like any page-1 failure → case 2 red;
  * every page-1 failure rethrown → case 3 red; the freshen walk unbelted → case 4 red.
  */
+import type { SyncSnapshotPage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DRAIN_REQUEST_CEILING_MS, LAST_DRAIN_AT_META, MemoryMirrorStore, MutationRejectedError, OhmailEngine,
   STORE_POLICY_GENERATION, STORE_POLICY_GENERATION_META, SYNC_ANSWER_TIMEOUT_MS, SYNC_BODY_TIMEOUT_MS,
-  encodeSeqCursor, type SyncResponse, type SyncSnapshotPage,
+  encodeSeqCursor, type SyncResponse,
 } from "@ohmail/client-engine";
 
 const NOW = "2026-10-23T09:00:00.000Z";

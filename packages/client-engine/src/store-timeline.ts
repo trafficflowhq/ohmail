@@ -5,12 +5,12 @@
  * from any known position is reached by UNCACHED walk steps, so a walk never evicts what is on
  * screen, and a page evicted off screen is asked again from its own position on the way back.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { errorClassOf, type OhmailEngine, type ServerSearchFacets, type ServerSearchOutcome } from "./engine.js";
 import {
   HISTORY_PAGE_ROWS, segmentAt, storeInstantOf, storeKeyOf, storeSearchList, timelineSegments,
   type StoreKeyset, type StoreSearchKey, type StoreTimeline, type TimelineSegment,
 } from "./store-pages.js";
-import type { EngineMessage } from "./types.js";
 import type { SearchPhaseVerdict, WindowSearchPhases } from "./search-phases.js";
 
 /** How long a list waits for the store before it says so — Search's ceiling. */
@@ -18,6 +18,13 @@ export const STORE_ANSWER_TIMEOUT_MS = 15_000;
 
 /** A page that failed is asked again no sooner than this, on the window's next move. */
 export const STORE_PAGE_RETRY_MS = 5_000;
+
+/**
+ * How many EMPTY PAGES WITH A CURSOR a walk follows in a row by itself. A store may rightly answer
+ * one (a filter without words reads a bounded number of letters a page); past this many the walk
+ * waits for a person's "look further" ({@link PagedWalk.further}).
+ */
+export const EMPTY_PAGES_FOLLOWED = 5;
 
 export type StoreTimelineState = "unavailable" | "loading" | "ready" | "unanswered";
 
@@ -68,6 +75,14 @@ export class PagedWalk<A> {
   end: number | null = null;
   /** The furthest slot any page has reached. */
   reached = 0;
+  /** Empty pages with a cursor followed in a row at the furthest slot. */
+  private emptyRun = 0;
+  /** The walk followed {@link EMPTY_PAGES_FOLLOWED} empty pages in a row and asks no more until {@link further}. */
+  atBound = false;
+  /** Slots whose position a follow taught: the page above them landing again keeps it. */
+  private followed = new Set<number>();
+  /** What each page of a cursor's walk placed and handed on (its rows' count, its next), by its slot — {@link dropBelow}. */
+  private ends = new Map<number, string>();
 
   constructor(
     private readonly engine: OhmailEngine,
@@ -82,6 +97,8 @@ export class PagedWalk<A> {
       extra?: (p: number) => { start: number; anchor: A | null } | null;
       landed?: (start: number, transient: boolean, answer: Extract<PageAnswer<A>, { state: "ready" }>) => void;
       failed?: (start: number, errorClass: string | null) => void;
+      /** The walk met {@link EMPTY_PAGES_FOLLOWED} empty pages in a row and waits for {@link further}. */
+      bound?: () => void;
     },
   ) {}
 
@@ -97,6 +114,10 @@ export class PagedWalk<A> {
     this.failedAt.clear();
     this.end = null;
     this.reached = 0;
+    this.emptyRun = 0;
+    this.atBound = false;
+    this.followed.clear();
+    this.ends.clear();
     this.heldKey = "";
     this.stand = [];
   }
@@ -175,7 +196,19 @@ export class PagedWalk<A> {
       this.inFlight[dir] = false;
       // Rows arrived above while this was in the air: it lands lower by as many. (Page one's own
       // null anchor is asked by `start` alone, before a visit can move.)
-      this.land(start + this.moved - moved, anchor, transient, out);
+      const at = start + this.moved - moved;
+      const furthest = at === this.reached;
+      const placed = this.land(at, anchor, transient, out);
+      // AN EMPTY PAGE WITH A CURSOR IS NOT AN ANSWER: at the furthest slot the walk asks the page
+      // after it at once, from the same slot, up to EMPTY_PAGES_FOLLOWED in a row. The slot is read
+      // after the landing: a page that lands empty where it had rows is the list's end now (`dropBelow`).
+      if (!transient && out.state === "ready") {
+        if (placed === 0 && out.next !== null && at === this.reached) {
+          this.follow(at, out.next);
+          return;
+        }
+        if (dir === "down" && furthest && placed !== null && placed > 0) this.emptyRun = 0;
+      }
       // The lane is free: the newest slot wanted in it is asked now (a walk's next step, or a
       // move made while this was in the air), unless a page holds it or this answer taught nothing.
       const owed = this.owed[dir];
@@ -183,15 +216,41 @@ export class PagedWalk<A> {
     });
   }
 
-  /** A page's answer, at slot `start`: its run, the anchor after it, and how far the walk reached. */
-  private land(start: number, anchor: A | null, transient: boolean, out: PageAnswer<A>): void {
+  /** The followed page's cursor is the slot's position now; its page is asked unless the bound is met. */
+  private follow(start: number, next: A): void {
+    this.anchors.set(start, next);
+    this.followed.add(start);
+    this.skips.delete(start);
+    this.emptyRun += 1;
+    if (this.emptyRun < EMPTY_PAGES_FOLLOWED) {
+      this.fetch(start, next, "down");
+      return;
+    }
+    this.atBound = true;
+    this.hooks.bound?.();
+    this.hooks.changed();
+  }
+
+  /** LOOK FURTHER: past the bound, the next {@link EMPTY_PAGES_FOLLOWED} pages from where the walk stopped. */
+  further(): void {
+    if (!this.atBound || this.inFlight.down) return;
+    this.atBound = false;
+    this.emptyRun = 0;
+    this.fetch(this.reached, this.anchors.get(this.reached) ?? null, "down");
+  }
+
+  /**
+   * A page's answer, at slot `start`: its run, the anchor after it, and how far the walk reached.
+   * Returns how many new rows it placed, `null` for a failure.
+   */
+  private land(start: number, anchor: A | null, transient: boolean, out: PageAnswer<A>): number | null {
     const key = JSON.stringify([start, anchor]);
     if (out.state !== "ready") {
       this.failing = out.state === "failed";
       this.failedAt.set(key, this.hooks.clock());
       this.hooks.failed?.(start, out.state === "failed" ? out.errorClass ?? null : null);
       this.hooks.changed();
-      return;
+      return null;
     }
     this.failedAt.delete(key);
     this.failing = false;
@@ -199,7 +258,15 @@ export class PagedWalk<A> {
     const len = Math.max(0, out.items.length - skip);
     const next = out.next ?? (this.source.anchorOf && out.items.length > 0
       ? this.source.anchorOf(out.items[out.items.length - 1]!) : null);
-    if (len > 0 && next !== null) this.anchors.set(start + len, next);
+    // A cursor's page that lands again and no longer leads to what the walk holds below it (another
+    // number of rows, or another next: none where it had one, one where it had none) takes all of it back.
+    if (!transient && !this.source.anchorOf) {
+      const end = JSON.stringify([len, out.next]);
+      if ((this.ends.get(start) ?? end) !== end) this.dropBelow(start);
+      if (len > 0) this.ends.set(start, end);
+    }
+    // A slot a follow placed keeps that position: this page's own next is the first empty page's again.
+    if (len > 0 && next !== null && !this.followed.has(start + len)) this.anchors.set(start + len, next);
     this.reached = Math.max(this.reached, start + len);
     if (out.next === null && !this.source.anchorOf) this.end = start + len;
     if (!transient) {
@@ -217,6 +284,29 @@ export class PagedWalk<A> {
     }
     this.hooks.landed?.(start, transient, out);
     this.hooks.changed();
+    return len;
+  }
+
+  /**
+   * A CURSOR'S PAGE LANDED AGAIN WITH ANOTHER END (its rows' count or its next): every position below
+   * it was counted from its old end and reached by its old next, and no row of a cursor's page says
+   * where it is. They all go, with the answers still in the air; the list ends at this page until its
+   * own next is asked, as on the first way down.
+   */
+  private dropBelow(start: number): void {
+    const above = <V>(m: Map<number, V>): Map<number, V> => new Map([...m].filter(([s]) => s <= start));
+    this.epoch += 1;
+    this.inFlight = { down: false, up: false };
+    this.owed = { down: null, up: null };
+    this.runs = this.runs.filter((r) => r.start < start);
+    this.anchors = above(this.anchors);
+    this.skips = above(this.skips);
+    this.ends = new Map([...this.ends].filter(([s]) => s < start));
+    this.followed = new Set([...this.followed].filter((s) => s <= start));
+    this.end = null;
+    this.reached = start;
+    this.emptyRun = 0;
+    this.atBound = false;
   }
 
   /**
@@ -230,6 +320,8 @@ export class PagedWalk<A> {
     this.runs = this.runs.filter((r) => r.start > 0).map((r) => ({ start: r.start + k, anchor: r.anchor }));
     this.anchors = new Map<number, A | null>([[0, null], ...down(this.anchors)]);
     this.skips = new Map(down(this.skips));
+    this.followed = new Set([...this.followed].filter((s) => s > 0).map((s) => s + k));
+    this.ends = new Map(down(this.ends));
     this.owed = { down: this.owed.down === null ? null : this.owed.down + k, up: this.owed.up === null ? null : this.owed.up + k };
     this.failedAt.clear();
     if (this.end !== null) this.end += k;
@@ -259,7 +351,8 @@ export class PagedWalk<A> {
       }
     }
     if (this.hooks.inside && !this.hooks.inside(p)) return null;
-    let best: { start: number; anchor: A | null } = { start: 0, anchor: null };
+    // Slot 0's own position: page one's cursor once the walk followed an empty page one (null otherwise).
+    let best: { start: number; anchor: A | null } = { start: 0, anchor: this.anchors.get(0) ?? null };
     const extra = this.hooks.extra?.(p);
     if (extra && extra.start >= best.start) best = extra;
     for (const [start, anchor] of this.anchors) {
@@ -303,7 +396,7 @@ export class PagedWalk<A> {
 
   /** The page after the furthest one, unless the store said that was the last. */
   more(): void {
-    if (this.end !== null || this.inFlight.down || !this.anchors.has(this.reached)) return;
+    if (this.end !== null || this.atBound || this.inFlight.down || !this.anchors.has(this.reached)) return;
     const at = this.failedAt.get(JSON.stringify([this.reached, this.anchors.get(this.reached)]));
     if (at !== undefined && this.hooks.clock() - at < STORE_PAGE_RETRY_MS) return;
     this.fetch(this.reached, this.anchors.get(this.reached)!, "down");
@@ -590,7 +683,12 @@ export class StoreTimelineWalker {
   }
 }
 
-export type StoreSearchState = "idle" | "searching" | "ready" | "unanswered" | "unavailable";
+/**
+ * `unfinished`: the walk followed {@link EMPTY_PAGES_FOLLOWED} empty pages and found nothing in the
+ * newest mail, while the store has not said it reached the end — never "nothing found". Its act is
+ * {@link StoreSearchWalker.further}.
+ */
+export type StoreSearchState = "idle" | "searching" | "ready" | "unfinished" | "unanswered" | "unavailable";
 
 /** What the store said about the whole match set: the page's reading, the estimate's, the summary's. */
 export interface StoreSearchMeta {
@@ -670,6 +768,8 @@ export class StoreSearchWalker {
   /** Has this question stood its hold (always true for a settled one)? */
   private followUpFree = true;
   private timers: ReturnType<typeof setTimeout>[] = [];
+  /** The one "unanswered" ceiling of the wait under way: a question's, or a look further's. */
+  private ceiling: ReturnType<typeof setTimeout> | null = null;
   private readonly signal = new Signal();
   private readonly walk: PagedWalk<string>;
   /** This question's clock marks (`performance.now()`, the two instants `Date.now()`); see {@link painted}. */
@@ -684,13 +784,16 @@ export class StoreSearchWalker {
       const key = this.key;
       const epoch = this.epoch;
       if (key === null) return Promise.resolve({ state: "unavailable" });
-      const first = a === null && !o.transient;
-      const m = first && this.marks?.epoch === epoch && this.marks.sent === null ? this.marks : null;
-      if (m) { m.sent = performance.now(); m.sentAt = Date.now(); }
+      // PAGE ONE'S WALK: the first page and every empty one the walk follows, until one settles the question.
+      const first = !o.transient && this.meta === null;
+      const m = first && this.marks?.epoch === epoch ? this.marks : null;
+      if (m && m.sent === null) { m.sent = performance.now(); m.sentAt = Date.now(); }
       return engine.pageSearch(key, { cursor: a, at: o.at, transient: o.transient, lane: { id: this.laneId, generation: epoch } })
         .then((out: ServerSearchOutcome): PageAnswer<string> => {
           const mine = first && epoch === this.epoch;
-          if (m) {
+          // An empty page with a cursor settles nothing: the walk asks the page after it.
+          const settles = out.state !== "ready" || out.items.length > 0 || out.nextCursor === null;
+          if (m && settles) {
             m.answered = performance.now(); m.answeredAt = Date.now();
             m.verdict = out.state !== "ready" ? "failed" : out.fromMirror ? "mirror"
               : out.total === 0 && out.totalExact ? "nothing" : "matched";
@@ -701,7 +804,11 @@ export class StoreSearchWalker {
             if (mine && out.state === "failed") this.cause = out.errorClass;
             return { state: out.state };
           }
-          if (mine && this.meta === null) this.firstPage(out);
+          if (mine && settles && this.meta === null) this.firstPage(out);
+          // PAGE ONE READ AGAIN WITH OTHER ROWS: the order kept from the device's paint was the first
+          // reading's. The store's own order stands from here.
+          else if (epoch === this.epoch && !o.transient && o.at === 0 && this.order !== null && out.items.length > 0
+            && (out.items.length !== this.order.length || out.items.some((x) => !this.order!.includes(x.id)))) this.order = null;
           return { state: "ready", items: out.items, next: out.nextCursor };
         }, (err: unknown): PageAnswer<string> => {
           if (first && epoch === this.epoch) this.cause = errorClassOf(err);
@@ -718,6 +825,12 @@ export class StoreSearchWalker {
       changed: () => this.signal.bump(),
       failed: (start) => {
         if (start === 0 && this.status === "searching" && this.meta === null) this.status = "unanswered";
+      },
+      // Nothing found in the newest pages, and the end not reached: its own state, never "nothing found".
+      bound: () => {
+        if (this.meta !== null || this.status === "unavailable") return;
+        this.status = "unfinished";
+        this.cause = null;
       },
     });
   }
@@ -768,12 +881,19 @@ export class StoreSearchWalker {
       if (this.marks?.epoch === epoch) this.marks.fired = performance.now();
       this.walk.fetch(0, null, "down");
     }, debounceMs));
-    this.timers.push(setTimeout(() => {
+    this.armCeiling(epoch);
+  }
+
+  /** "Unanswered" after {@link STORE_ANSWER_TIMEOUT_MS} of searching: armed by a question and by a look further. */
+  private armCeiling(epoch: number): void {
+    if (this.ceiling !== null) clearTimeout(this.ceiling);
+    this.ceiling = setTimeout(() => {
+      this.ceiling = null;
       if (epoch !== this.epoch || this.status !== "searching") return;
       this.status = "unanswered";
       this.cause = "timeout";
       this.signal.bump();
-    }, STORE_ANSWER_TIMEOUT_MS));
+    }, STORE_ANSWER_TIMEOUT_MS);
   }
 
   /** No question: nothing asked, nothing held. */
@@ -793,6 +913,8 @@ export class StoreSearchWalker {
     this.epoch += 1;
     this.walk.stop();
     for (const t of this.timers.splice(0)) clearTimeout(t);
+    if (this.ceiling !== null) clearTimeout(this.ceiling);
+    this.ceiling = null;
   }
 
   private firstPage(out: Extract<ServerSearchOutcome, { state: "ready" }>): void {
@@ -908,6 +1030,31 @@ export class StoreSearchWalker {
   /** Has the store said the last page came back? */
   atEnd(): boolean {
     return this.walk.end !== null;
+  }
+
+  /**
+   * Did the walk follow {@link EMPTY_PAGES_FOLLOWED} empty pages in a row and stop short of the end?
+   * With no row found yet the state is `unfinished`; with rows on screen it stays `ready`. Its act is {@link further}.
+   */
+  atBound(): boolean {
+    return (this.status === "ready" || this.status === "unfinished") && this.walk.atBound;
+  }
+
+  /** LOOK FURTHER: the next {@link EMPTY_PAGES_FOLLOWED} pages from where the walk stopped. */
+  further(): void {
+    if (!this.atBound()) return;
+    if (this.status === "unfinished") {
+      // The press is a wait of its own: the time said and the ceiling count from it.
+      this.status = "searching";
+      const now = performance.now();
+      this.marks = {
+        epoch: this.epoch, start: now, fired: now, sent: null, sentAt: null, answered: null, answeredAt: null,
+        verdict: null, serverMs: null, told: false,
+      };
+      this.armCeiling(this.epoch);
+    }
+    this.walk.further();
+    this.signal.bump();
   }
 
   /** The row in slot `i`: a message, `"gone"` where it was deleted, `null` not fetched. */

@@ -1,12 +1,14 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { FixturesAdapter, type EngineMutation } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { UNDO_MS } from "../app/shell/screener-state";
+import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
+import { ohboxRows, pickedRows as seatedPicked } from "./ohbox/_finders.js";
 
 /**
  * ═══ "MOVE TO <PLACE>" OVER A SELECTION WRITES ROUTING, NOT FOLDER MOVES ════════════════════
@@ -59,7 +61,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -68,11 +70,11 @@ async function mountShell(): Promise<void> {
       locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
       children: h(ThemeProvider, {
         storageKey: null,
-        children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+        children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
       }),
     }));
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
   await key("j");
 }
 
@@ -112,10 +114,8 @@ const buttonStarting = (label: string): HTMLButtonElement | undefined =>
 const toastText = (): string =>
   [...document.querySelectorAll('[role="status"]')].map((n) => n.textContent ?? "").join(" ");
 
-/** The rows the selection holds, read off the rendered list. */
-const pickedRows = (): HTMLElement[] =>
-  [...host!.querySelectorAll<HTMLElement>(".view-ohbox .row")]
-    .filter((r) => r.classList.contains("picked") || r.getAttribute("aria-selected") === "true");
+/** The rows the selection holds, read off the rendered list: a picked option says so (`data-picked`, the kit's row). */
+const pickedRows = (): HTMLElement[] => seatedPicked(host!);
 
 /** The ids the selection holds, read off the rendered rows. */
 function pickedIds(): string[] {
@@ -128,8 +128,17 @@ function pickedIds(): string[] {
  * one plan for the whole set the mutations and the sentence agree with each other and disagree
  * only with the list on screen, which is why the anchor is the list.
  */
+/* A row's sender is its name in the option's name ("Sender: Subject"): the address is not drawn on every row (a row
+   with squares or a tag leaves it out, as the design draws it). */
 const pickedSenders = (): Set<string> =>
-  new Set(pickedRows().map((r) => (r.querySelector(".addr")?.textContent ?? "").trim().toLowerCase()));
+  new Set(pickedRows().map((r) => (r.getAttribute("aria-label") ?? "").split(": ")[0]!.trim().toLowerCase()));
+
+/** A place the Move question offers, by its name: the design lists the places by name (studio `core.js` `moveMenu`),
+ *  where the old bar wrote "→ News". */
+const placeOffered = (place: string): HTMLElement | undefined =>
+  [...document.querySelectorAll<HTMLElement>(
+    `:is([role=menu], [role=dialog])[aria-label="${messages.ohbox.moveLabel}"] [role=menuitem]`,
+  )].find((b) => (b.textContent ?? "").trim() === place);
 
 beforeEach(() => {
   window.location.hash = "#/ohbox";
@@ -144,6 +153,8 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* jsdom draws no animation: the kit's report and rows ask `animate` (the lead's stub, `frame/seated-ohbox.test.tsx`). */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -180,7 +191,7 @@ async function moveSelectionTo(place: string, picks: number): Promise<{ ids: str
   expect(ids.length, "the selection gesture picked nothing").toBeGreaterThan(1);
   sent = [];
   await click(buttonStarting("Move"));
-  await click(buttonStarting(`→ ${place}`));
+  await click(placeOffered(place));
   await settle();
   return { ids, senders };
 }
@@ -214,9 +225,7 @@ describe("the selection's Move", () => {
     expect([...new Set(intoReads.map((m) => m.folder))], "a move went somewhere else")
       .toEqual(["ohmail/News"]);
 
-    // …and the sentence names both numbers.
-    expect(saidAtPress, "the sentence did not count senders and messages")
-      .toMatch(/Mail from [1-9]\d* senders? now goes to News/);
+    expect(saidAtPress).toContain(`${intoReads.length} · News`);
   }, 20000);
 
   it("moves only the messages that were picked", async () => {
@@ -239,11 +248,11 @@ describe("the selection's Move", () => {
    * output, because a press that guessed once agrees with itself perfectly.
    *
    * Watched: `bySender` seeded with a constant key, and the routing count falls to one against a
-   * three-sender list, here and in the sentence.
+   * three-sender list.
    */
   it("writes one routing per DISTINCT sender, and counts the senders the list holds", async () => {
     await mountShell();
-    const { senders } = await moveSelectionTo("News", 2);
+    const { ids, senders } = await moveSelectionTo("News", 2);
     const saidAtPress = toastText();
     expect(senders.size, "the selection spans one sender, so grouping cannot be read").toBeGreaterThan(1);
 
@@ -259,9 +268,6 @@ describe("the selection's Move", () => {
     expect(subjects.size, "the press wrote one routing for the whole set").toBe(senders.size);
     expect(routing.length, "a sender got two routing writes from one press").toBe(senders.size);
 
-    // …and the sentence says the same number the list does.
-    const said = /Mail from (\d+) senders? now goes to News/.exec(saidAtPress);
-    expect(said, "the sentence did not count senders").not.toBeNull();
-    expect(Number(said![1])).toBe(senders.size);
+    expect(saidAtPress).toContain(`${ids.length} · News`);
   }, 20000);
 });

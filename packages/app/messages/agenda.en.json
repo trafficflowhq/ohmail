@@ -1,0 +1,20 @@
+{
+  "agenda": {
+    "landmark": "Agenda",
+    "close": "Close Agenda",
+    "title": "Agenda",
+    "today": "Today",
+    "tomorrow": "Tomorrow",
+    "nothingToday": "Nothing today",
+    "nothing": "Nothing",
+    "unplaced": "{count, plural, one {# event} other {# events}} in a time zone this device does not know",
+    "allDay": "all day",
+    "until": "until {time}",
+    "untilDay": "until {day}",
+    "span": "{from}–{to}",
+    "count": "{count, number}",
+    "top": "Back to top",
+    "answerLater": "Answer Later",
+    "month": "Month"
+  }
+}

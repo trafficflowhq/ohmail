@@ -16,14 +16,14 @@ import {
 import { creditRefundObligations, pendingRefundObligations, refundObligationsOn, schema } from "@trafficflow/db/cloud";
 import { screenerAttemptKey } from "@trafficflow/db";
 import type { RefundObligationPort, SpendPort } from "@trafficflow/db";
-import { fakeSpendPort, type FakeSpendPort } from "./_spendport.js";
+import { fakeSpendPort, type FakeSpendPort } from "../../../packages/organizer/test/_spendport.js";
 import ts from "typescript";
 import { createLogger, makeHaikuClassifier, SensitivePayloadRefusal, type AnthropicLike } from "@trafficflow/core";
 import type { ClassifierInput, ClassifierPort, ClassifierResult, LogFields, Logger }
   from "@trafficflow/core";
 import {
   screenerAutoSuggestPass, AUTO_SUGGEST_BATCH, DECLINE_COOLDOWN_MS, makeDeclineMemory,
-} from "../src/screener-auto-suggest.js";
+} from "@ohmail/organizer/screener-auto-suggest";
 
 /**
  * SCR-AUTOSUGGEST — the worker pass that buys the model's advice about INCOMING held senders,
@@ -151,7 +151,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
       nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await copyOnRecord(w, m!.id, uid);
@@ -1410,7 +1410,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
       nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await copyOnRecord(w, m!.id, uid);
@@ -1533,30 +1533,6 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
 });
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════
-   THE CROSS-BOUNDARY CLAIM — read as TEXT, because neither side can import the other
-   ══════════════════════════════════════════════════════════════════════════════════════════
-
-   `AUTO_SUGGEST_BATCH` here and `AUTO_BATCH_SIZE` in `apps/webapp/app/shell/screener-suggest.ts`
-   are the same policy: how many senders one AUTOMATIC batch buys. They are two literals because
-   there is no package both files may reach — this app may import core and db and nothing else
-   from the workspace, and `apps/webapp` declares no `@trafficflow/*` dependency at all — so the
-   equality is pinned here instead, with the technique `apps/webapp/test/mail-state.test.ts` uses
-   for its own cross-boundary claims.
-
-   The extractor asserts it FOUND the literal before comparing it. A probe that silently finds
-   nothing is a claim about the probe, and this one would then agree with anything. */
-describe("the automatic batch size is ONE number on both sides of the boundary", () => {
-  it("matches `AUTO_BATCH_SIZE` in the webapp's Screener spender", () => {
-    const src = readFileSync(
-      fileURLToPath(new URL("../../webapp/app/shell/screener-suggest.ts", import.meta.url)), "utf8",
-    );
-    const m = /export const AUTO_BATCH_SIZE = (\d+);/.exec(src);
-    expect(m, "AUTO_BATCH_SIZE was not found — the probe is stale, not the claim").not.toBeNull();
-    expect(Number(m![1])).toBe(AUTO_SUGGEST_BATCH);
-  });
-});
-
-/* ══════════════════════════════════════════════════════════════════════════════════════════
    ONE DOOR — THE PER-CANDIDATE CLAIM GOES BACK IN A `finally`
    ══════════════════════════════════════════════════════════════════════════════════════════
 
@@ -1646,7 +1622,7 @@ function readTheDoor(src: string, fnName: string): DoorReading {
 describe("one door: the auto-suggest claim is handed back in a `finally`", () => {
   it("the release is in the `finally` and nowhere else, so every exit passes it", () => {
     const subject = readFileSync(
-      fileURLToPath(new URL("../src/screener-auto-suggest.ts", import.meta.url)), "utf8",
+      fileURLToPath(new URL("../../../packages/organizer/src/screener-auto-suggest.ts", import.meta.url)), "utf8",
     );
 
     const door = readTheDoor(subject, "screenerAutoSuggestPass");

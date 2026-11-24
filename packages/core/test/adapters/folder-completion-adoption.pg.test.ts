@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
-import { accounts, auditLog, folderState, mailboxes, messages } from "@trafficflow/db";
+import { accountOfMessage, accounts, auditLog, folderState, mailboxes, messages } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "../../src/adapters/drizzle-repo.js";
@@ -54,7 +54,7 @@ describe.skipIf(!AVAILABLE)("the apply path writes no pre-I/O desire over a newe
       subject: "s", fromAddress: "anna@example.com", nativeLocator: loc(observed),
     }).returning({ id: messages.id });
     await owned.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: desired, observedFolder: observed,
+      messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: desired, observedFolder: observed,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false, attempts: 0,
     });
     return { accountId, messageId: m!.id, repo: makeDrizzleRepo(owned.db) };

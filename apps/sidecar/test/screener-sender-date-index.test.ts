@@ -6,6 +6,7 @@ import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { resetFirstPageGate } from "../src/first-page-gate.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS * 4, hookTimeout: PGLITE_STANDUP_BUDGET_MS * 4 });
 
@@ -30,7 +31,7 @@ let dir = "";
 let o: OpenLocalDb;
 let accountId = "";
 const rows = (r: unknown): any[] => (Array.isArray(r) ? r : ((r as { rows?: any[] }).rows ?? []));
-const client = () => (o.db as unknown as { $client: { query: (t: string, p?: unknown[]) => Promise<unknown> } }).$client;
+const client = () => pgliteOf(o.db) as unknown as { query: (t: string, p?: unknown[]) => Promise<unknown> };
 const iso = (ms: number) => new Date(ms).toISOString();
 
 beforeAll(async () => {
@@ -55,8 +56,8 @@ beforeAll(async () => {
   await client().query(`insert into messages (${cols}) select $1, $2, 'h', 'ob:' || g, 'subject', 'snippet', 'ohbox' || (g % 200) || '@y.test',
     $3::timestamptz - (g % 300) * interval '1 day', $3::timestamptz - (g % 300) * interval '1 day', false, ${tail}
     from generate_series(1, ${OHBOX}) g`, [accountId, mailboxId, iso(NOW)]);
-  await client().query(`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-    select id, f, f, 'us' from (select id, case when dedup_key like 'qh:%' or dedup_key like 'ah:%' then 'ohmail/Screener' else 'INBOX' end as f
+  await client().query(`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+    select id, account_id, f, f, 'us' from (select id, account_id, case when dedup_key like 'qh:%' or dedup_key like 'ah:%' then 'ohmail/Screener' else 'INBOX' end as f
       from messages where account_id = $1) q`, [accountId]);
   await client().query(`insert into account_settings (account_id, screening_baseline_at) values ($1, $2::timestamptz)`, [accountId, iso(NOW - 10 * DAY)]);
   await o.analyzeSearchIfStale();

@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
+import { headCount } from "./ohbox/_finders.js";
 
 /**
  * THE WHOLE SHELL KEEPS THE ROW BEING READ IN "NEW" — the view reports its armed read, the shell
@@ -35,20 +36,21 @@ function setViewport(): void {
 }
 
 const ids = (label: string): string[] =>
-  [...host!.querySelectorAll(`[role="listbox"][aria-label="${label}"] .row[data-id]`)]
+  [...host!.querySelectorAll(`[role="listbox"][aria-label="${label}"] [role="option"][data-id]`)]
     .map((e) => (e as HTMLElement).dataset.id!);
-const unreadCount = (): string | null => /(\d+) unread/.exec(host!.textContent ?? "")?.[1] ?? null;
+/** The unread count the list's head states. */
+const unreadCount = (): string | null => headCount(host!);
 /** The rail's Ohbox count — the same number the dock badge is told (`onUnread`). */
 const railCount = (): string | null => {
-  const item = [...host!.querySelectorAll<HTMLElement>("button.ritem")].find((b) => b.textContent?.startsWith("Ohbox"));
-  return item?.querySelector(".cnt")?.textContent ?? null;
+  const item = [...host!.querySelectorAll<HTMLElement>("nav button, nav a")].find((b) => b.textContent?.startsWith("Ohbox"));
+  return item?.querySelector(".oh-railentry-count")?.textContent ?? null;
 };
 
 async function tick(ms: number): Promise<void> {
   await act(async () => { vi.advanceTimersByTime(ms); await Promise.resolve(); });
 }
 async function click(id: string): Promise<void> {
-  const el = host!.querySelector<HTMLElement>(`.row[data-id="${id}"]`)!;
+  const el = host!.querySelector<HTMLElement>(`[role="option"][data-id="${id}"]`)!;
   await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
 }
 
@@ -57,7 +59,7 @@ beforeEach(async () => {
   vi.useFakeTimers();
   layout = stubThreadLayout();
   setViewport();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   window.location.hash = "#/ohbox";
   host = document.createElement("div");
   document.body.appendChild(host);

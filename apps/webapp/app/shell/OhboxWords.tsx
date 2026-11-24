@@ -29,7 +29,8 @@
 
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Button, TextField } from "@ohmail/ui";
+import { Button, Field } from "@ohmail/ui/base";
+import { SettingNote } from "@ohmail/ui/mail";
 
 import { DEFAULT_LOCALE } from "./locale";
 
@@ -146,22 +147,20 @@ export function OhboxWords({
 
   return (
     <div className="set-screening-bar">
-      <label className="set-note-inline" htmlFor="ohbox-bar">{t("screening.barLabel")}</label>
-      <TextField
-        multiline
-        id="ohbox-bar"
-        className="set-screening-textarea"
-        rows={4}
+      <Field
+        label={t("screening.barLabel")}
+        name="ohbox-bar"
+        lines={4}
         value={draft}
         placeholder={shownDefault}
         disabled={disabled}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={setDraft}
       />
       <div className="gate-actions">
         <Button
-          variant="primary"
+          kind="ink"
           disabled={disabled || !changed}
-          onClick={() => save(toStore(draft))}
+          onPress={() => save(toStore(draft))}
         >
           {t("screening.save")}
         </Button>
@@ -169,12 +168,12 @@ export function OhboxWords({
             has nothing this button would change, and a control that does nothing is worse than
             no control. */}
         {stored !== null ? (
-          <Button disabled={disabled} onClick={() => save(null)}>
+          <Button kind="two" disabled={disabled} onPress={() => save(null)}>
             {t("screening.reset")}
           </Button>
         ) : null}
       </div>
-      <p className="set-note-inline">{t("screening.microcopy")}</p>
+      <SettingNote>{t("screening.microcopy")}</SettingNote>
       {note === "saved" ? <span className="scn-sg-note">{t("screening.saved")}</span> : null}
       {note === "failed" ? <span className="scn-sg-note">{t("screening.failed")}</span> : null}
     </div>

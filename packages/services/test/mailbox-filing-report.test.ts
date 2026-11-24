@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -6,7 +7,7 @@ import {
   accounts, applyScreenerDecision, auditLog, changeLog, mailboxes, messages, folderState, type Tx,
 } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { MessageService, makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { MessageService, dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * ═══ `MailboxDTO.pendingMoves` IS ONE NUMBER FOR FOUR SITUATIONS ════════════════════════════
@@ -50,7 +51,7 @@ const svc = makeMailboxService({ keyProvider: KP });
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 async function seed(
   db: Db, over: { organizer?: boolean; reader?: boolean; address?: string } = {},
@@ -91,7 +92,7 @@ async function seedFiling(
     bodyHash: `fr-hash-${n}`,
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id,
+    messageId: m!.id, accountId: accountOfMessage(m!.id),
     desiredFolder: row.desired ?? "ohmail/News",
     observedFolder: row.observed ?? "INBOX",
     reconcileStatus: row.status ?? "pending",
@@ -470,7 +471,7 @@ describe("Leave them where they are", () => {
       accountId: ids.accountId, mailboxId: ids.mailboxId, dedupKey: `mid:<bulk-${i}@example.test>`, bodyHash: `bulk-${i}`,
     }))).returning({ id: messages.id });
     await db.insert(folderState).values(made.map((m) => ({
-      messageId: m.id, desiredFolder: "ohmail/Receipts", observedFolder: "INBOX", lastSetBy: "us", updatedAt: minutesAgo(60),
+      messageId: m.id, accountId: accountOfMessage(m.id), desiredFolder: "ohmail/Receipts", observedFolder: "INBOX", lastSetBy: "us", updatedAt: minutesAgo(60),
     })));
     const r = await svc.leaveFilings(ctxFor(db, ids.accountId), ids.mailboxId, { folder: "ohmail/Receipts", through: NOW.toISOString() });
     expect(r).toMatchObject({ settled: 500, remaining: 1 });

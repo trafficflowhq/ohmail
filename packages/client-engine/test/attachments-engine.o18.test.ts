@@ -1,8 +1,9 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { HttpAdapter } from "../src/adapters/http-adapter.js";
 import { OhmailEngine } from "../src/engine.js";
 import { MutationRejectedError } from "../src/types.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * Gap the engine's attachment state machine.

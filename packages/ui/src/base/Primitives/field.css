@@ -1,0 +1,105 @@
+/* A labelled field with its hint or its refusal. What it stands on may say its ground (`--oh-field-ground`). */
+@layer oh {
+  .oh-field {
+    --oh-field-gap: 6px;
+    display: grid;
+    gap: var(--oh-field-gap);
+    min-width: 0;
+  }
+  .oh-field-label {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+  .oh-field-input {
+    --oh-field-pad: 0 var(--s4);
+    --oh-field-ring: var(--oh-ring-ctl);
+    width: 100%;
+    height: var(--oh-field-height, var(--h-l));
+    padding: var(--oh-field-pad);
+    border-radius: var(--r-row);
+    background: var(--oh-field-ground, var(--soft-sheet));
+    box-shadow: var(--oh-field-ring);
+    color: var(--ink);
+    cursor: text;
+  }
+  .oh-field-input[data-lines] {
+    --oh-field-pad: var(--s3) var(--s4);
+    display: block;
+    height: auto;
+    min-height: calc(var(--h-l) + var(--s6));
+    line-height: 1.5;
+    resize: none;
+    field-sizing: content;
+  }
+  .oh-field-input:focus-visible {
+    --oh-field-ring: var(--oh-ring-focus);
+    border-radius: var(--r-row);
+    outline: none;
+  }
+  /* Off: its words in the off line's ink. The sheet draws no such field; this leans on a line that is off. */
+  .oh-field-input:disabled {
+    color: var(--on-off);
+  }
+  .oh-field-input::placeholder {
+    color: var(--ink2);
+    opacity: 1;
+  }
+  .oh-field-hint {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+  .oh-field-refusal {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--oh-field-gap);
+    color: var(--ink);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+  .oh-field[data-refused] .oh-field-input {
+    --oh-field-ring: var(--oh-ring-ink);
+  }
+
+  /* A sign inside the box, before the words: it stands in the box's own padding, the words a step after it. */
+  .oh-field[data-sign] {
+    --oh-field-sign: 18px;
+    position: relative;
+  }
+  .oh-field[data-sign] > .oh-icon {
+    --oh-field-sign-rise: calc(var(--oh-field-sign) / -2);
+    position: absolute;
+    top: 50%;
+    left: var(--s4);
+    margin-top: var(--oh-field-sign-rise);
+    color: var(--ink2);
+    pointer-events: none;
+  }
+  .oh-field[data-sign] > .oh-field-input {
+    --oh-field-pad: 0 var(--s4) 0 calc(var(--s4) + var(--oh-field-sign) + var(--s2));
+  }
+
+  /* In a menu: one line, the label beside the field. */
+  .oh-field[data-row] {
+    --oh-field-row-pad: var(--s1) var(--s3) var(--s2);
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--oh-field-row-pad);
+  }
+  .oh-field[data-row] .oh-field-input {
+    --oh-field-pad: 0 var(--s3);
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    height: var(--h-s);
+    font-variant-numeric: tabular-nums;
+  }
+
+  :root[data-face="ohmarchy"] .oh-field-input:focus-visible {
+    --oh-field-ring: var(--oh-ring-ctl);
+  }
+  :root[data-face="ohmarchy"] .oh-field[data-refused] .oh-field-input {
+    --oh-field-ring: var(--oh-ring-ctl);
+  }
+}

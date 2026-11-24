@@ -511,6 +511,7 @@ export const SELF_HOST_GUIDE =
  * path to a plan, so a store build may offer it (App Review 5.1.1(v), Play's deletion rule).
  */
 export const PRIVACY_URL = "https://ohmail.app/privacy";
+export const SUBPROCESSORS_URL = "https://ohmail.app/subprocessors";
 
 /**
  * THE HOSTED SERVICE'S WEB APP, where a person with a Cloud account reads their mail in a browser. The
@@ -535,4 +536,13 @@ export const DELETE_ACCOUNT_URL = "https://ohmail.app/delete-account";
 export function exportFilename(now: Date): string {
   const p = (n: number): string => String(n).padStart(2, "0");
   return `ohmail-settings-${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}.json`;
+}
+
+/**
+ * THE OTHER APP'S OWN DOWNLOAD PAGE, on its domain: where the switch's store verb goes on a phone without the Play
+ * Store, and on an iPhone until the calendar's App Store page exists. A static page (no form, no script that reads
+ * anything of the visit); the system browser opens it on the person's press.
+ */
+export function downloadPageOf(host: string): string {
+  return `https://${host}/download`;
 }

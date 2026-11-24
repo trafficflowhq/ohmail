@@ -150,3 +150,13 @@ fn the_three_platform_identities_are_the_registered_ones() {
     // The one address the request may open on Windows — a Settings page, never a registry write.
     assert_eq!(WINDOWS_SETTINGS_URL, "ms-settings:defaultapps");
 }
+
+/* ── a preview build never asks about, or for, the mail links ───────────────────────────────── */
+
+#[test]
+fn a_preview_neither_reads_nor_takes_the_mail_links_and_the_released_app_does_both() {
+    // The names this module asks the platform about are the released app's, so a preview asking
+    // would be answered about the install beside it.
+    assert!(preview_refusal(true).is_some_and(|why| why.contains("preview")));
+    assert_eq!(preview_refusal(false), None);
+}

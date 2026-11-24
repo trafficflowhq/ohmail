@@ -41,7 +41,7 @@ import {
  * The claims PGlite genuinely cannot host are the CONCURRENT ones — the guarded UPDATE losing to a
  * writer that lands between the page read and the write — and they are not this door's: there is
  * one writer here. They are proved against real Postgres over THIS EXACT FUNCTION in
- * `apps/worker/test/sender-name-backfill.pg.test.ts`, which is the reason this door calls the
+ * `packages/organizer/test/sender-name-backfill.pg.test.ts`, which is the reason this door calls the
  * worker's pass rather than a copy of it.
  *
  * ── THE MUTATIONS, EACH RUN AND WATCHED FAIL, THEN RESTORED ───────────────────────────────
@@ -282,7 +282,7 @@ describe("the historical-name repair at the standalone drain's tail", () => {
     }).returning();
     await seedInstance(s, m!.id);
     await s.db.insert(messageBodies).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       text: norm.textBody,
       html: norm.htmlBody,
       // The spread is load-bearing: `normalizeMime` returns a NULL-PROTOTYPE header map and
@@ -311,7 +311,7 @@ describe("the historical-name repair at the standalone drain's tail", () => {
     }).returning();
     await seedInstance(s, m!.id);
     await s.db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null,
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null,
       headers: { from: [`Crowd Member ${i} <crowd-${i}@example.test>`] },
     });
     return m!.id;
@@ -340,7 +340,7 @@ describe("the historical-name repair at the standalone drain's tail", () => {
     });
     await seedInstance(s, id);
     await s.db.insert(messageBodies).values({
-      messageId: id, text: "", html: null,
+      messageId: id, accountId: s.world.accountId, text: "", html: null,
       headers: {
         from: [nameless ? `fixed-${i}@example.test` : `Fixed Name ${i} <fixed-${i}@example.test>`],
       },
@@ -607,7 +607,7 @@ describe("the historical-name repair at the standalone drain's tail", () => {
     }).returning();
     await seedInstance(s, m!.id);
     await s.db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: {},
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {},
     });
 
     await s.start();

@@ -1,0 +1,86 @@
+{
+  "component": "LetterQuote",
+  "state": "nested",
+  "look": "ohmarchy-light-desktop",
+  "place": "block",
+  "target": [728, 411.9375, 574.1875, 266.2188],
+  "clip": [728, 411, 575, 268],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14.5px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.475px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "whiteSpaceCollapse": "preserve-breaks",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14.5px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.475px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "boxShadow": "rgb(134, 132, 125) 3px 0px 0px 0px inset" }],
+  "nodes": [],
+  "loose": {
+    "text": [
+      { "said": "On Fri 6 Nov 2026 at 18:31, Mila Brunner wrote:", "type": 0 },
+      {
+        "said": "Hi Flurina For January I can offer Saturday the 16th or the 30th, both from ten. Could we take fourteen people this time? The waiting list is long. Mila",
+        "type": 1
+      },
+      { "said": "On Thu 5 Nov 2026 at 09:10, Flurina Caduff wrote:", "type": 0 },
+      {
+        "said": "Three people asked for the waiting list again. Do you have dates for January yet?",
+        "type": 2
+      }
+    ],
+    "surfaces": [
+      { "box": [0, 26, 574.2, 240.2], "paint": 0 },
+      { "box": [16, 221.3, 558.2, 44.9], "paint": 0 }
+    ]
+  }
+}

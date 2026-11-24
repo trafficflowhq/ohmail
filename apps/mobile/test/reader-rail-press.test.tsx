@@ -17,8 +17,8 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const nav = vi.hoisted(() => ({ focused: true, pushed: [] as string[] }));
-vi.mock("expo-router", () => ({ useIsFocused: () => nav.focused, router: { push: (to: string) => { nav.pushed.push(to); } } }));
+const nav = vi.hoisted(() => ({ focused: true, pushed: [] as unknown[] }));
+vi.mock("expo-router", () => ({ useIsFocused: () => nav.focused, router: { push: (to: unknown) => { nav.pushed.push(to); } } }));
 
 const native = vi.hoisted(() => ({
   offset: 0,
@@ -54,6 +54,7 @@ vi.mock("react-native", async () => {
   };
 });
 
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, left: 0, right: 0, bottom: 0 }) }));
 vi.mock("../src/ui/base", async () => {
   const React = await import("react");
   const keep = (props: any) => (el: any) => { if (el) el.__props = props; };
@@ -99,6 +100,7 @@ vi.mock("../src/ui/base", async () => {
 
 vi.mock("../src/theme", () => ({
   useTheme: () => ({
+    mail: world.paper,
     c: new Proxy({}, { get: () => "#000" }),
     type: { readerBody: { lineHeight: 29 }, streamBody: { lineHeight: 25 } },
     radius: new Proxy({}, { get: () => 10 }),
@@ -108,16 +110,24 @@ vi.mock("../src/theme", () => ({
   }),
 }));
 
-const world = vi.hoisted(() => ({ mail: null as any, glanced: [] as string[][], files: [] as string[] }));
+const world = vi.hoisted(() => ({
+  paper: false,
+  mail: null as any,
+  otherMail: new Map<string, { id: string }>(),
+  glanced: [] as string[][],
+  files: [] as string[],
+}));
 vi.mock("../src/state/world", () => ({
+  useLiveSession: () => null,
   useBodyStamp: () => 0,
   useFilesStamp: () => 0,
   useWorldToast: () => ({ say: () => undefined }),
   useWorld: () => ({
     worldKey: 1,
-    message: (id: string) => (world.mail && world.mail.id === id ? world.mail : undefined),
+    message: (id: string) => (world.mail?.id === id ? world.mail : world.otherMail.get(id)),
     actions: {
       openMessage: () => undefined,
+      keptReply: () => ({ kind: "none" }),
       releaseAttachments: () => undefined,
       leaveMessage: () => undefined,
       hydrateMessage: () => undefined,
@@ -149,14 +159,23 @@ vi.mock("../src/ui/EventCard", () => ({ EventCards: () => null }));
 vi.mock("../src/ui/MailBodyFrame", () => ({ MailBodyFrame: () => null }));
 vi.mock("../src/ui/AttachmentPreview", () => ({ AttachmentPreview: () => null }));
 vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
-const verbs = vi.hoisted(() => ({ mode: "compact" as "compact" | "bar" | "rail" }));
-vi.mock("../src/ui/MessageActions", () => ({ MessageActions: () => null, useReaderVerbMode: () => verbs.mode }));
+const verbs = vi.hoisted(() => ({
+  mode: "compact" as "compact" | "bar" | "rail",
+  targets: null as { forward: string; reply: string | null } | null,
+}));
+vi.mock("../src/ui/MessageActions", () => ({
+  MessageActions: ({ m, replyTo }: { m: { id: string }; replyTo?: { id: string } | null }) => {
+    verbs.targets = { forward: m.id, reply: replyTo === undefined ? m.id : replyTo?.id ?? null };
+    return null;
+  },
+  ComposeSheet: ({ inlineHeading }: { inlineHeading?: ReactNode }) => h("div", { "data-compose": "" }, inlineHeading),
+  useReaderVerbMode: () => verbs.mode,
+}));
 vi.mock("../src/ui/posture", () => ({ usePosture: () => ({}) }));
 vi.mock("../src/ui/reader-verbs", () => ({ readerVerbMode: () => "compact" }));
 vi.mock("../src/ui/scaffold/plan", () => ({ scaffoldPlan: () => ({}) }));
 vi.mock("../src/ui/Sheet", () => ({ Sheet: () => null, SheetRow: () => null }));
 vi.mock("../src/ui/bottom-chrome", () => ({ useBottomChromeExtent: () => 0 }));
-vi.mock("../src/ui/thread-heading", () => ({ threadHeading: () => "" }));
 
 const require_ = createRequire(join(__dirname, "../../webapp/package.json"));
 const client = require_("react-dom/client") as { createRoot(el: Element): { render(n: ReactNode): void; unmount(): void } };
@@ -212,7 +231,7 @@ function views(root: Element) {
 
 const memberOf = (id: string, sender: string) =>
   ({ id, subject: "Q3 plan", time: "09:00", body: `body of ${id}`, seen: false, ready: true as const, sender });
-const mailOf = (id: string, earlier: (ReturnType<typeof memberOf> & { later?: boolean })[]) => ({
+const mailOf = (id: string, earlier: (ReturnType<typeof memberOf> & { later?: boolean; mine?: true })[]) => ({
   id, unread: true, ownMail: false, from: { name: "Ben", address: "ben@fake.test" }, subject: "Q3 plan", time: "10:00",
   body: `body of ${id}`, bodyState: "full", html: null, place: "ohbox", earlier,
 });
@@ -224,6 +243,9 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "Date"] });
   native.offset = 0; native.content = 0; native.view = 640; native.events = []; native.asked = []; native.stuck = false;
   verbs.mode = "compact";
+  world.paper = false;
+  verbs.targets = null;
+  world.otherMail.clear();
   world.glanced = [];
   world.files = [];
   nav.focused = true;
@@ -237,13 +259,56 @@ afterEach(() => {
   root = null;
   vi.useRealTimers();
 });
-const mountReader = (id: string) => {
+const mountReader = (id: string, selectMember = false, runReply?: React.ComponentProps<typeof MessageReader>["runReply"]) => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = client.createRoot(host);
-  act(() => root!.render(h(MessageReader, { id })));
+  act(() => root!.render(h(MessageReader, { id, selectMember, runReply })));
   return host;
 };
+
+describe("the reader's reply and forward targets", () => {
+  beforeEach(() => {
+    world.mail = mailOf("opened", [
+      { ...memberOf("incoming", "Lee"), later: true },
+      { ...memberOf("sent", "Me"), later: true, mine: true },
+    ]);
+    world.otherMail.set("incoming", { id: "incoming" });
+    world.otherMail.set("sent", { id: "sent" });
+  });
+
+  it("an explicitly selected letter is offered to both actions", () => {
+    mountReader("opened", true);
+    expect(verbs.targets).toEqual({ forward: "opened", reply: "opened" });
+  });
+
+  it("opening the conversation replies to the latest incoming letter and keeps the viewed forward target", () => {
+    mountReader("opened");
+    expect(verbs.targets).toEqual({ forward: "opened", reply: "incoming" });
+  });
+
+  it("uses the open letter when the newer target is unavailable", () => {
+    world.otherMail.delete("incoming");
+    mountReader("opened");
+    expect(verbs.targets).toEqual({ forward: "opened", reply: "opened" });
+  });
+
+  it("opening your own letter still offers Reply to that letter", () => {
+    world.mail = { ...mailOf("opened", []), ownMail: true };
+    mountReader("opened");
+    expect(verbs.targets).toEqual({ forward: "opened", reply: "opened" });
+  });
+});
+
+it("names the reply audience and subject at the inline reply in the reader", () => {
+  world.paper = true;
+  world.mail = mailOf("opened", []);
+  const el = mountReader("opened", false, { at: "opened", step: 1, total: 1, skip: () => undefined, exit: () => undefined });
+  const editor = el.querySelector("[data-compose]");
+  expect(editor).not.toBeNull();
+  expect(editor!.textContent).toContain(Copy.replyTo("Ben"));
+  expect(editor!.textContent).toContain("Q3 plan");
+});
 
 type Slop = { top: number; bottom: number; left: number; right: number };
 /** The rail's "+N" at one edge: the squares it hides there (0 where it shows none). */
@@ -268,6 +333,38 @@ const layOut = (el: HTMLElement, n: number, room: number): void => {
   lay(v.scroll, { y: 0, height: native.view });
   act(() => { native.props!.onContentSizeChange?.(360, native.content); });
 };
+
+it.each(["ohbox", "reads"])("an older link lands on the last letter and square from %s", (place) => {
+  world.mail = {
+    ...mailOf("start", [
+      { ...memberOf("middle", "Ada"), later: true },
+      { ...memberOf("last", "Ben"), later: true },
+    ]),
+    place,
+  };
+  forgetPaneScroll("msg:start");
+  native.view = 300;
+  native.content = 700;
+  const el = mountReader("start");
+  const v = views(el);
+  lay(v.padded, { y: 0, height: 700 });
+  lay(v.opened, { y: 18, height: 200 });
+  lay(v.below, { y: 252, height: 400 });
+  lay(v.member("middle").panel, { y: 0, height: 200 });
+  lay(v.member("last").panel, { y: 210, height: 200 });
+  lay(v.scroll, { y: 0, height: native.view });
+  act(() => { native.props!.onContentSizeChange?.(360, native.content); });
+  flushNative();
+  act(() => vi.advanceTimersByTime(100));
+
+  const bodies = [...v.padded!.querySelectorAll('[data-text^="body of "]')];
+  expect(bodies.map((body) => body.getAttribute("data-text"))).toEqual([
+    "body of start", "body of middle", "body of last",
+  ]);
+  expect(native.offset).toBe(400);
+  const ringed = all(el).filter((x) => x.__props?.accessibilityState?.selected === true);
+  expect(ringed.map((x) => x.getAttribute("data-test"))).toEqual(["rail-last"]);
+});
 
 describe("a press on a rail square reaches that square", () => {
   for (const [n, room] of [[2, 580], [30, 580], [40, 600], [30, 700]] as const) {
@@ -514,10 +611,11 @@ describe("a member the phone cannot draw as words", () => {
     expect(world.glanced.flat(), "on screen as a card, never read").not.toContain("p1");
     expect(nav.pushed, "nothing opened yet").toEqual([]);
     act(() => { panel.__props!.onPress(); });
-    expect(nav.pushed, "a press on its card opens it alone").toEqual(["/message/p1"]);
+    const member = { pathname: "/message/[id]", params: { id: "p1", member: "1" } };
+    expect(nav.pushed, "a press on its card opens it alone").toEqual([member]);
     const square = el.querySelector<El>('[data-test="rail-p1"]')!;
     act(() => { square.__props!.onPress(); });
-    expect(nav.pushed, "its square opens it too").toEqual(["/message/p1", "/message/p1"]);
+    expect(nav.pushed, "its square opens it too").toEqual([member, member]);
     act(() => { (el.querySelector<El>('[data-test="rail-p2"]')!).__props!.onPress(); });
     expect(nav.pushed, "CONTROL: a drawn member's square only jumps").toHaveLength(2);
     pass(3000);

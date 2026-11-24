@@ -12,7 +12,7 @@
 import { rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { eq } from "drizzle-orm";
-import { GAP_CLOCK_ALLOWANCE_MS } from "@trafficflow/worker/gap-catchup";
+import { GAP_CLOCK_ALLOWANCE_MS } from "@ohmail/organizer/gap-catchup";
 import { afterEach, describe, expect, it } from "vitest";
 import { mailboxes, rules } from "@trafficflow/db";
 import type {

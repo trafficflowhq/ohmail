@@ -23,4 +23,28 @@ export const passwordRoutes: Route[] = [
       return json(await auth(deps).changePassword(serviceContext(deps, req), body ?? {}), 200);
     },
   },
+  {
+    method: "POST",
+    pattern: "/auth/password/reset",
+    relay: false, /* resolves a credential from the request body */
+    cost: "ceremony",
+    options: { public: true, credentialSubject: true, credentialLookup: true },
+    handler: async (req, deps) => {
+      const body = await readBody<{ email?: unknown; locale?: unknown } | null>(req);
+      await auth(deps).requestPasswordReset(serviceContext(deps, req), body ?? {});
+      return json({ status: "ok" }, 202);
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/auth/password/reset/complete",
+    relay: false, /* resolves a credential from the request body */
+    cost: "ceremony",
+    options: { public: true, credentialSubject: true, credentialLookup: true },
+    handler: async (req, deps) => {
+      const body = await readBody<{ token?: unknown; password?: unknown } | null>(req);
+      await auth(deps).completePasswordReset(serviceContext(deps, req), body ?? {});
+      return json({ status: "ok" }, 200);
+    },
+  },
 ];

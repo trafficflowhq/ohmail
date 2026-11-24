@@ -5,6 +5,7 @@ import { build as viteBuild, defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { UPDATER_HTML, UPDATER_JS } from "./src/updater-window";
 import { withWindowCsp } from "./src/window-csp";
+import { buildPdfFrame, PDF_FRAME_PATH } from "../../packages/app/pdf-preview/build.mjs";
 import { PDFJS_FILES } from "./src/window-pdfjs";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -77,7 +78,7 @@ if (HOST_CLIENT && process.env.OHMAIL_LOCAL_ENGINE === "1") {
  * Two provenances, because the shell reads translations two ways:
  *  · `useTranslations("<ns>")` — thirteen call sites across shell/ and views/;
  *  · `useTranslations()` in `AppShell.tsx`, unscoped, which then addresses
- *    `about.*`, `dock.*`, `palette.*`, `rail.*` and `ribbon.*` by dotted key.
+ *    `about.*`, `dock.*`, `palette.*` and `rail.*` by dotted key.
  * Miss the second kind and the app renders raw key names at runtime, so the list
  * is DERIVED FROM THE SOURCE by `test/desktop-messages.test.ts` and compared with
  * this array — adding a `useTranslations` to a view without adding its namespace
@@ -90,11 +91,19 @@ const BASE_MESSAGE_NAMESPACES = [
   // surface ever sees `loading`/`failed`), and it is listed for the reason `sync` is: the
   // guard compares this array against what the sources READ, not against what they display.
   // Omitting it would put `body.loading` in the binary where a sentence belongs.
-  "about", "body", "compose", "dock", "ohbox", "palette", "rail", "reads", "receipts",
-  // `ohmarchy` is the Option B offer's line (shell/OhmarchyOffer.tsx) — shared-shell code the
-  // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
-  // it renders, and the census lists what the sources READ, not what they display.
-  "ohmarchy",
+  "about", "body", "compose", "ohbox", "palette", "rail", "receipts",
+  // `frame` is the frame's own sentences (`@ohmail/app/frame`, read through `@ohmail/app/text`): the rail's and the
+  // dock's names, the notice slot's "N more", the connection's sentences. The window draws the frame.
+  "frame",
+  // The calendar's views and its event (`packages/app/src/calendar` and the six views beside it, read through
+  // `@ohmail/app/text`). No shell hands the calendar in yet; listed for the reason `body` is: the guard compares what
+  // the sources READ.
+  "calendar", "event", "week", "day", "month", "year", "agenda", "calsearch",
+  // The calendar's invitations, From mail, setup, settings panes and its parts beside mail (the folders of the same
+  // names under `packages/app/src`), for the same reason.
+  "invitations", "frommail", "calsetup", "calsettings", "calmail",
+  // The new places' own words (`@ohmail/app/news`, `piles`, `tags`, `address`), read through `@ohmail/app/text`.
+  "news", "later", "parked", "resurface", "tags", "address",
   // `attachments` and `mailBody` belong to the two components the reading pane is composed from —
   // the paperclip strip and the sanitized HTML body. They were listed here for two migrations
   // before either component read a catalogue: each rendered from a local `COPY` constant whose
@@ -108,19 +117,6 @@ const BASE_MESSAGE_NAMESPACES = [
   // with a file and every real HTML body in an engine-bearing build. A German reader of the shipped
   // binary is exactly the person who would have found them still in English.
   "attachments", "mailBody",
-  // `columns` is the two drag handles between the sidebar, the message list and the reading pane
-  // (`shell/ColumnHandles.tsx`, rendered by `AppShell`) — the accessible label each separator
-  // carries, which is the whole of what a person operating them by keyboard is told they are
-  // holding. Shared-shell code compiled into BOTH bundles, so it belongs here and not in the
-  // window-only list.
-  //
-  // It was MISSED when the resizable columns landed, and the cost is worth recording because it is
-  // the exact failure this array exists to prevent and it still reached a release build: the
-  // namespace filter dropped `columns` out of the catalogue while the code kept reading it, so
-  // `useTranslations("columns")` threw `MISSING_MESSAGE` on the first render and the window smoke
-  // failed on all four platforms. `desktop-messages.test.ts` was RED at that commit and named the
-  // missing entry exactly — nothing ran it before the push.
-  "columns",
   // `folder` is the folder VIEW's namespace (the folders foundation, FOLDERS-SPEC.md) — three
   // sentences: a count and the empty state naming where the folder list comes from. It is NOT
   // the marketing "folders" namespace, which stays excluded below with the other site copy.
@@ -180,6 +176,7 @@ const BASE_MESSAGE_NAMESPACES = [
   // warns about. The overlay renders on every message opened under 900px, so without this the
   // binary shows `reader.back` on the one control that leaves it.
   "reader",
+  "readerInvitation",
   // `profileImport` is the "we found your ohmail settings on this mailbox" card
   // (`app/shell/ProfileImportCard.tsx`), read through an ordinary `useTranslations`. GENUINELY
   // REACHABLE in the engine-bearing binary since the desktop door wired its transport
@@ -212,7 +209,9 @@ const BASE_MESSAGE_NAMESPACES = [
   // this namespace is for, so a build without it puts `aiRefusal.insufficientCredits` where
   // that sentence belongs.
   "aiRefusal",
-  "reply", "ribbon", "screener", "screening", "search", "session", "settings",
+  "reply", "screener", "screening", "search", "session", "settings",
+  "settingsAbout", "settingsAi", "settingsAway", "settingsGeneral", "settingsMenu", "settingsNotifications",
+  "settingsRules", "settingsScreener", "settingsSignatures", "settingsTags",
   // `sync` is the shell's failing-sync strip. The desktop compiles it and
   // can never render it (a fixtures engine is permanently settled), but the guard compares
   // this list against what the sources READ, not against what they display.
@@ -250,7 +249,7 @@ const BASE_MESSAGE_NAMESPACES = [
   // is the second kind of read the header note warns about and is caught the same way.
   "markAll", "message", "viewError",
   // `stream` is the ONE sentence the two reading streams put over their count — "12 new since
-  // you were here" (`ReadsView`, `ReceiptsView`, both header slots), the words the rail's
+  // you were here" (the streams in `packages/app/src/stream`, both header slots), the words the rail's
   // tooltip says too. It is its own namespace rather than a key in `reads` because Receipts
   // reads it as well, and a second copy of one sentence is how the two piles came to disagree
   // before. Genuinely reachable in the binary: the fixtures engine partitions a pile and the
@@ -262,9 +261,11 @@ const BASE_MESSAGE_NAMESPACES = [
   // `sentCopy` is why a sent letter's Sent copy is missing or still owed, said under that line and in
   // the send toast; `mail-send.ts` computes the key and the unscoped `t` reads it.
   "sentCopy",
+  // `write` is the new composer's own namespace (`packages/app/src/write`), read wherever a shell registers it.
+  "write",
   // `trash` is the Trash view's own namespace — the list's empty and scope sentences, the
   // Restore verb, its four toasts and the "ohmail never erases mail" line the disabled delete
-  // keys carry. Shared shell code reads it (`views/TrashView.tsx` and `MessagePane`'s bar), so
+  // keys carry. The shared mail and reading surfaces read it, so
   // BOTH bundles need it. Whether the desktop can REACH the view is a different question and
   // deliberately not the one this array answers: the guard compares this list against what the
   // sources READ, and omitting it would put `trash.empty` in the binary where a sentence
@@ -399,6 +400,7 @@ export const SHELL_MESSAGE_NAMESPACES = [
  * first thing standalone onboarding shows. Without it the screen reads `join.mailboxConnected`.
  */
 export const SHELL_MESSAGE_KEYS: Record<string, readonly string[]> = {
+  appError: ["reload"],
   join: ["mailboxConnected"],
 };
 
@@ -593,7 +595,7 @@ function updaterProgressPage(): Plugin {
 }
 
 /**
- * pdf.js's library and worker at the root of the WINDOW dist, byte for byte from this package's
+ * pdf.js's library and worker at each desktop artifact's root, byte for byte from this package's
  * own `pdfjs-dist` build. `src/window-pdfjs.ts` imports the library from there on the first PDF
  * and starts the worker from there, so neither is in the boot chunk. Emitted from the install for
  * the updater page's reason: no `public/` folder reaches the publish payload.
@@ -605,6 +607,11 @@ function windowPdfjs(): Plugin {
       for (const file of PDFJS_FILES) {
         this.emitFile({ type: "asset", fileName: file, source: fs.readFileSync(r(`./node_modules/pdfjs-dist/build/${file}`)) });
       }
+      this.emitFile({
+        type: "asset",
+        fileName: PDF_FRAME_PATH.slice(1),
+        source: buildPdfFrame(r("./node_modules/pdfjs-dist")),
+      });
     },
   };
 }
@@ -703,13 +710,14 @@ export default defineConfig({
   base: HOST_CLIENT ? "/" : "./",
   plugins: [
     shellMessagesOnly(),
-    ...(HOST_CLIENT ? [hostIndexName()] : [updaterProgressPage(), windowPdfjs(), bootStamp()]),
+    windowPdfjs(),
+    ...(HOST_CLIENT ? [hostIndexName()] : [updaterProgressPage(), bootStamp()]),
     react(),
     {
       /* The webview loads the bundle as an ES module, where `import.meta` is valid; the smoke test
          loads it as a CLASSIC script in jsdom (which cannot run module scripts), where `import.meta`
          is a syntax error that aborts boot and renders nothing. With AttachmentPreview's
-         `import("pdfjs-dist")` inlined (the window's `window-pdfjs.ts`, the host client's stub), the
+         `import("pdfjs-dist")` inlined (the window's `window-pdfjs.ts`, the served page's module), the
          only `import.meta.url` left is vite's dynamic-import preload-helper argument — and with no
          dependencies to resolve it is never read, in either load context. Neutralise it to an empty
          string so the classic-script load parses. */
@@ -792,6 +800,9 @@ export default defineConfig({
       // Inline code, extended in `rich-editor-marks.ts` (`keepOnSplit`/`exitable`), pinned for
       // the same reason as the link extension beside it.
       { find: "@tiptap/extension-code", replacement: r("./node_modules/@tiptap/extension-code") },
+      // The composer's heading and divider formats; declared in this manifest like the two above.
+      { find: "@tiptap/extension-heading", replacement: r("./node_modules/@tiptap/extension-heading") },
+      { find: "@tiptap/extension-horizontal-rule", replacement: r("./node_modules/@tiptap/extension-horizontal-rule") },
       /* The ProseMirror surface under the editor — RichEditor.tsx's line-scoped block
          commands import NodeSelection/TextSelection and the node/position types from
          these two subpaths, from apps/webapp/app/** like the entries above. This pair
@@ -806,13 +817,13 @@ export default defineConfig({
       // `rich-editor-marks.ts` reads `ReplaceStep` off the transform subpath; same proxy-dir rule.
       { find: "@tiptap/pm/transform", replacement: r("./node_modules/@tiptap/pm/transform") },
       { find: "@tiptap/pm/view", replacement: r("./node_modules/@tiptap/pm/view") },
+      // The quoted history's Restore closes the undo group through the history subpath; same proxy-dir rule.
+      { find: "@tiptap/pm/history", replacement: r("./node_modules/@tiptap/pm/history") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
       { find: "parse5", replacement: r("./node_modules/parse5") },
-      /* pdf.js stays OUT of the boot chunk. The window gets `src/window-pdfjs.ts`, which loads the
-         library and its worker from the two files `windowPdfjs()` emits, on the first PDF; the host
-         client keeps the refusing stub (its policy says `worker-src 'none'`). tsconfig.json still
-         points the TYPE at the real package, so AttachmentPreview.tsx typechecks against pdf.js. */
-      { find: "pdfjs-dist", replacement: HOST_CLIENT ? r("./src/no-pdfjs.ts") : r("./src/window-pdfjs.ts") },
+      /* Each host loads the emitted pdf.js library and worker on the first PDF. tsconfig still
+         resolves the real library's types. */
+      { find: "pdfjs-dist", replacement: HOST_CLIENT ? r("./src/paired-pdfjs.ts") : r("./src/window-pdfjs.ts") },
 
       /* Anchored at both ends: a RegExp `find` replaces only the matched span,
          so a pattern that leaves the leading "./" behind yields a broken path.
@@ -853,20 +864,118 @@ export default defineConfig({
       { find: "@ohmail/tokens/tokens.css", replacement: r("../../packages/tokens/src/tokens.css") },
       { find: "@ohmail/tokens/faces.css", replacement: r("../../packages/tokens/src/faces.css") },
       { find: "@ohmail/tokens/ohmarchy.css", replacement: r("../../packages/tokens/src/ohmarchy.css") },
+      // The design's sheets and values (the kit's), ABOVE the bare name: `find` matches as a path prefix.
+      { find: "@ohmail/tokens/design.css", replacement: r("../../packages/tokens/src/design/tokens.css") },
+      { find: "@ohmail/tokens/design/motion.css", replacement: r("../../packages/tokens/src/design/motion.css") },
+      { find: "@ohmail/tokens/design/fonts.css", replacement: r("../../packages/tokens/src/design/fonts.css") },
+      { find: "@ohmail/tokens/design", replacement: r("../../packages/tokens/src/design/tokens.ts") },
       { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },
-      /* `@ohmail/fixtures` needs no entry: its one importer was the real fixtures adapter, which
+      /* The sample adapter's entry, which the shared shell's demo arm imports. It resolves to
+         the real entry file, and that file's one statement re-exports from
+         `./adapters/fixtures-adapter.js`: the stub alias above. */
+      { find: "@ohmail/testing/adapter", replacement: r("../../packages/testing/src/adapter.ts") },
+      /* `@ohmail/testing` needs no entry: its one importer was the real fixtures adapter, which
          the stub alias above takes out of the graph — so the corpus is unresolvable here by
          construction, not merely unimported. */
       /* The durable-write door, BEFORE the bare package name: `find` matches as a path prefix,
          so the barrel entry below would swallow this subpath if it came first. It is a real
-         edge in this program — `apps/webapp/app/shell/durable.ts` re-exports it and the desktop
+         edge in this program — `packages/app-logic/src/storage/durable.ts` re-exports it and the desktop
          compiles that file — and the leaf keeps the engine barrel out of the marketing bundle
          over in the web app. `tsconfig.json`'s `paths` carries the same pair. */
       { find: "@ohmail/client-engine/durable", replacement: r("../../packages/client-engine/src/durable.ts") },
       { find: "@ohmail/client-engine/send-fingerprint", replacement: r("../../packages/client-engine/src/send-fingerprint.ts") },
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("../../packages/client-engine/src/html-tree-budget.ts") },
+      { find: "@ohmail/client-engine/calendar-acts", replacement: r("../../packages/client-engine/src/calendar-acts.ts") },
+      { find: "@ohmail/client-engine/calendar-writes", replacement: r("../../packages/client-engine/src/calendar-writes.ts") },
+      { find: "@ohmail/client-engine/providers", replacement: r("../../packages/client-engine/src/providers.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
+      // The kit's doors and its squares window, ABOVE the old kit's bare name.
+      { find: "@ohmail/ui/body-parts", replacement: r("../../packages/ui/src/body-parts.ts") },
+      { find: "@ohmail/ui/file-size", replacement: r("../../packages/ui/src/format/file-size.ts") },
+      { find: "@ohmail/ui/sender-sheet", replacement: r("../../packages/ui/src/sender-sheet.ts") },
+      { find: "@ohmail/ui/viewport", replacement: r("../../packages/ui/src/ui-zoom.ts") },
+      { find: "@ohmail/ui/text-field", replacement: r("../../packages/ui/src/primitives/TextField.tsx") },
+      { find: "@ohmail/ui/date-picker-view", replacement: r("../../packages/ui/src/primitives/DatePicker.tsx") },
+      { find: "@ohmail/ui/toast", replacement: r("../../packages/ui/src/primitives/toast-context.ts") },
+      { find: "@ohmail/ui/base", replacement: r("../../packages/ui/src/base/index.ts") },
+      { find: "@ohmail/ui/mail", replacement: r("../../packages/ui/src/mail/index.ts") },
+      { find: "@ohmail/ui/squares-window", replacement: r("../../packages/ui/src/squares-window.ts") },
+      { find: "@ohmail/ui/stream-estimate", replacement: r("../../packages/ui/src/composites/stream-estimate.ts") },
+      { find: "@ohmail/ui/portal-renderer", replacement: r("../../packages/ui/src/base/Overlays/portal-renderer.ts") },
+      // The kit's calendar parts: the reader's return menu picks its day with them.
+      { find: "@ohmail/ui/calendar", replacement: r("../../packages/ui/src/calendar/index.ts") },
+      { find: "@ohmail/ui/theme", replacement: r("../../packages/ui/src/theme/ThemeProvider.tsx") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
+      /* Behaviour without a screen: a folder's door, then a file by its own name. `tsconfig.json`'s
+         `paths` carries the same pair, and the host contract's line under it. */
+      // Calendar directories two levels down need explicit entries before the file pattern.
+      { find: "@ohmail/app-logic/calendar/alerts", replacement: r("../../packages/app-logic/src/calendar/alerts/index.ts") },
+      { find: "@ohmail/app-logic/calendar/beside", replacement: r("../../packages/app-logic/src/calendar/beside/index.ts") },
+      { find: "@ohmail/app-logic/calendar/setup", replacement: r("../../packages/app-logic/src/calendar/setup/index.ts") },
+      { find: "@ohmail/app-logic/calendar/found", replacement: r("../../packages/app-logic/src/calendar/found/index.ts") },
+      { find: "@ohmail/app-logic/calendar/invitations", replacement: r("../../packages/app-logic/src/calendar/invitations/index.ts") },
+      { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1/index.ts` },
+      { find: /^@ohmail\/app-logic\/([a-z-]+(?:\/[a-z-]+)*\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
+      // The letter's body: its three leaves ABOVE its door, each by its own file. `tsconfig.json`'s `paths` carries the same four.
+      { find: "@ohmail/letter-body/links", replacement: r("../../packages/letter-body/src/rendered-links.ts") },
+      { find: "@ohmail/letter-body/cache", replacement: r("../../packages/letter-body/src/mail-doc-cache.ts") },
+      { find: "@ohmail/letter-body/words", replacement: r("../../packages/letter-body/src/words.ts") },
+      { find: /^@ohmail\/letter-body$/, replacement: r("../../packages/letter-body/src/index.ts") },
+      { find: "@ohmail/app/calendar", replacement: r("../../packages/app/src/calendar/index.ts") },
+      { find: "@ohmail/app/account/way-out", replacement: r("../../packages/app/src/account/way-out/index.ts") },
+      { find: "@ohmail/app/doors/signed-out", replacement: r("../../packages/app/src/doors/signed-out/index.ts") },
+      { find: "@ohmail/app/doors/stage", replacement: r("../../packages/app/src/doors/stage/index.ts") },
+      { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
+      { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },
+      { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
+      { find: "@ohmail/app/settings/browser", replacement: r("../../packages/app/src/settings/browser/index.ts") },
+      { find: "@ohmail/app/mail", replacement: r("../../packages/app/src/mail/index.ts") },
+      { find: "@ohmail/app/mailboxes/connect", replacement: r("../../packages/app/src/mailboxes/connect/index.ts") },
+      { find: /^@ohmail\/app\/mailboxes$/, replacement: r("../../packages/app/src/mailboxes/index.ts") },
+      { find: /^@ohmail\/app\/mailboxes\/connect$/, replacement: r("../../packages/app/src/mailboxes/connect/index.ts") },
+      { find: /^@ohmail\/app\/doors\/signed-out$/, replacement: r("../../packages/app/src/doors/signed-out/index.ts") },
+      { find: /^@ohmail\/app\/doors\/stage$/, replacement: r("../../packages/app/src/doors/stage/index.ts") },
+      { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
+      { find: "@ohmail/app/profile-import", replacement: r("../../packages/app/src/profile-import/index.ts") },
+      // The reader the seated Ohbox mounts, its letter's body above its door: the web shell's reader parts read both.
+      { find: "@ohmail/app/reader/body", replacement: r("../../packages/app/src/reader/body/index.ts") },
+      { find: "@ohmail/app/reader", replacement: r("../../packages/app/src/reader/index.ts") },
+      // The letter editor's schema, marks and commands, each by its own file: the web shell's editor reads them.
+      { find: "@ohmail/app/write/editor/schema", replacement: r("../../packages/app/src/write/editor/schema.ts") },
+      { find: "@ohmail/app/write/editor/commands", replacement: r("../../packages/app/src/write/editor/commands.ts") },
+      { find: "@ohmail/app/write/editor/marks", replacement: r("../../packages/app/src/write/editor/marks.ts") },
+      { find: "@ohmail/app/write", replacement: r("../../packages/app/src/write/index.ts") },
+      { find: "@ohmail/app/settings/ai/budget", replacement: r("../../packages/app/src/settings/ai/budget.ts") },
+      { find: "@ohmail/app/settings/ai", replacement: r("../../packages/app/src/settings/ai/index.ts") },
+      { find: "@ohmail/app/settings/browser", replacement: r("../../packages/app/src/settings/browser/index.ts") },
+      { find: "@ohmail/app/settings/away", replacement: r("../../packages/app/src/settings/away/index.ts") },
+      { find: "@ohmail/app/settings/folders", replacement: r("../../packages/app/src/settings/folders/index.ts") },
+      { find: "@ohmail/app/settings/general", replacement: r("../../packages/app/src/settings/general/index.ts") },
+      { find: "@ohmail/app/settings/help", replacement: r("../../packages/app/src/settings/help/index.ts") },
+      { find: "@ohmail/app/settings/notifications", replacement: r("../../packages/app/src/settings/notifications/index.ts") },
+      { find: "@ohmail/app/settings/rules", replacement: r("../../packages/app/src/settings/rules/index.ts") },
+      { find: "@ohmail/app/settings/screener", replacement: r("../../packages/app/src/settings/screener/index.ts") },
+      { find: "@ohmail/app/settings/signatures", replacement: r("../../packages/app/src/settings/signatures/index.ts") },
+      { find: "@ohmail/app/settings/tags", replacement: r("../../packages/app/src/settings/tags/index.ts") },
+      { find: "@ohmail/app/screener", replacement: r("../../packages/app/src/screener/index.ts") },
+      { find: "@ohmail/app/settings/travelled-change", replacement: r("../../packages/app/src/settings/browser/TravelledChangeLine.tsx") },
+      { find: "@ohmail/app/settings", replacement: r("../../packages/app/src/settings/index.ts") },
+      { find: "@ohmail/app/search", replacement: r("../../packages/app/src/search/index.ts") },
+      { find: "@ohmail/app/palette", replacement: r("../../packages/app/src/palette/index.ts") },
+      /* The text reader, and the translator it builds on, from this install: no root install stands beside the package
+         when the platform jobs build this window. */
+      { find: "@ohmail/app/text/fill", replacement: r("../../packages/app/src/text/fill.ts") },
+      { find: "@ohmail/app/frame/boot", replacement: r("../../packages/app/src/frame/boot-stamp.ts") },
+      { find: "@ohmail/app/frame/scope", replacement: r("../../packages/app/src/frame/scope.tsx") },
+      { find: "@ohmail/app/frame", replacement: r("../../packages/app/src/frame/index.ts") },
+      { find: "@ohmail/app/text", replacement: r("../../packages/app/src/text/index.ts") },
+      { find: /^use-intl\/core$/, replacement: r("./node_modules/use-intl/dist/esm/core.js") },
+      // The calendar's core: the zone rules and the series' expansion the shell's calendar alerts are made with.
+      { find: "@ohmail/cal-core", replacement: r("../../packages/cal-core/src/index.ts") },
+      /* Types only, so no import of it survives to be bundled; listed because `tsconfig.json`'s
+         `paths` carries it and the two maps are held to each other. */
+      { find: "@ohmail/wire", replacement: r("../../packages/wire/src/index.ts") },
 
       /* The calendar reader — with `folder-name` and `drain-policy` below, one of the THREE
          `@trafficflow/*` specifiers that reach this bundle.
@@ -939,7 +1048,9 @@ export default defineConfig({
       { find: "@trafficflow/core/conversation-fold", replacement: r("../../packages/core/src/conversation-fold.ts") },
       { find: "@trafficflow/core/reader-refusal", replacement: r("../../packages/core/src/reader-refusal.ts") },
       { find: "@trafficflow/core/outbound-text", replacement: r("../../packages/core/src/outbound-text.ts") },
+      { find: "@trafficflow/core/suggestion-consent", replacement: r("../../packages/core/src/suggestion-consent.ts") },
       { find: "@trafficflow/core/model-name", replacement: r("../../packages/core/src/model-name.ts") },
+      { find: "@trafficflow/core/suggestion-consent", replacement: r("../../packages/core/src/suggestion-consent.ts") },
       /* The diagnostic file's one builder (Settings → About), shared with the phone. Its files
          import each other and core's logger allowlist, and nothing outside core. */
       { find: "@trafficflow/core/diagnostics", replacement: r("../../packages/core/src/diagnostics/index.ts") },
@@ -978,7 +1089,7 @@ export default defineConfig({
     ...(HOST_CLIENT ? {} : { cssCodeSplit: false }),
     /* Emit ONE chunk, no dynamic-import split. The shared shell's only dynamic import is
        AttachmentPreview.tsx's `import("pdfjs-dist")`, which resolves to a small module here
-       (`window-pdfjs.ts`, or the host client's stub). Vite otherwise code-splits it and wraps the call in a preload helper
+       (`window-pdfjs.ts`, or the served page's module). Vite otherwise code-splits it and wraps the call in a preload helper
        that references `import.meta.url`; the smoke loads the bundle as a CLASSIC script (jsdom cannot
        run module scripts), where `import.meta` is a syntax error that aborts the whole boot and
        renders nothing. Inlining removes the split and the `import.meta`, so the bundle boots as one

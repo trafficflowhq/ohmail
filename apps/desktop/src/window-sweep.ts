@@ -8,32 +8,37 @@
  * erasure takes the send lanes, and the mailbox's preferences and tab notes, as well.
  */
 
-import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
-import { clearBootCaches, dropLocalStorageKeysWhere, type LocalSweep } from "../../webapp/app/shell/boot-cache";
+import { forgetNewNoticeChoices } from "@ohmail/app-logic/notices/browser-channels";
+import { ROUTING_INTENTS_PREFIX, TOLD_DEVICES_PREFIX } from "@ohmail/client-engine";
+import { clearBootCaches, dropLocalStorageKeysWhere, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY,
-} from "../../webapp/app/shell/compose";
-import { DELETE_INTENTS_PREFIX } from "../../webapp/app/shell/delete-intents";
+} from "@ohmail/app-logic/writing/compose";
+import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, sentCopyNotesKey,
-} from "../../webapp/app/shell/mail-send";
-import { isOwnerShaped } from "../../webapp/app/shell/owner-cookie";
-import { RETIRED_ID_SETS } from "../../webapp/app/shell/persisted-ui";
-import { READING_ALONG_PREFIX } from "../../webapp/app/shell/reading-along";
-import { SCREENER_INTENTS_PREFIX } from "../../webapp/app/shell/screener-intents";
-import { SEND_LOCKS_PREFIX } from "../../webapp/app/shell/send-lock";
-import { namesOwner } from "../../webapp/app/shell/storage-owner";
-import { ACCESS_VERDICT_PREFIX } from "../../webapp/app/shell/wall-lift";
+} from "@ohmail/app-logic/writing/mail-send";
+import { isOwnerShaped } from "@ohmail/app-logic/storage/owner-cookie";
+import { RETIRED_ID_SETS } from "@ohmail/app-logic/storage/persisted-ui";
+import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
+import { unsubscribeSeenKey } from "@ohmail/app-logic/screener";
+import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
+import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
+import { namesOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
 import { windowSentFoldersKey } from "./window-outbox-store.js";
 
 /**
  * The keys built as `<prefix><mailbox>`, the compose three also as `<prefix><mailbox>.<composer>`. Not the
  * send lanes: Sign out and a revoke keep them, as the engine keeps the queued sends for the account's next
  * sign-in, where the record still guards against a second send ({@link forgetErasedWindowScopes} takes them).
+ * The last is the two numbers of the account's devices this window has told (`told-devices.ts`): kept past a
+ * sign-out, the next sign-in here would be told of the device that sign-in itself made.
  */
 export const WINDOW_SCOPED_PREFIXES: readonly string[] = [
   SCREENER_INTENTS_PREFIX, DELETE_INTENTS_PREFIX, ROUTING_INTENTS_PREFIX,
   COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, READING_ALONG_PREFIX, ACCESS_VERDICT_PREFIX,
+  TOLD_DEVICES_PREFIX,
 ];
 
 /**
@@ -42,15 +47,35 @@ export const WINDOW_SCOPED_PREFIXES: readonly string[] = [
  */
 export const CLOUD_SCOPE_KEY = "ohmail.desktop.cloudScope";
 
-export function rememberCloudScope(scope: string): void {
+const CLOUD_DISCLOSURE_OWNER_KEY = "ohmail.desktop.cloudDisclosureOwner";
+
+export function rememberCloudScope(scope: string, owner?: string | null): void {
   try {
     window.localStorage.setItem(CLOUD_SCOPE_KEY, scope);
+    if (owner && isOwnerShaped(owner)) {
+      window.localStorage.setItem(CLOUD_DISCLOSURE_OWNER_KEY, JSON.stringify({ scope, owner }));
+    } else {
+      window.localStorage.removeItem(CLOUD_DISCLOSURE_OWNER_KEY);
+    }
   } catch { /* a refused jar holds no keys to sweep either */ }
 }
 
 export function rememberedCloudScope(): string | null {
   try {
     return window.localStorage.getItem(CLOUD_SCOPE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** The remembered account is attached to the last mailbox this window actually served. */
+export function rememberedCloudDisclosureOwner(): string | null {
+  try {
+    const raw = window.localStorage.getItem(CLOUD_DISCLOSURE_OWNER_KEY);
+    if (raw === null) return null;
+    const marker = JSON.parse(raw) as { scope?: unknown; owner?: unknown } | null;
+    return typeof marker?.scope === "string" && marker.scope === rememberedCloudScope() &&
+      typeof marker.owner === "string" && isOwnerShaped(marker.owner) ? marker.owner : null;
   } catch {
     return null;
   }
@@ -87,21 +112,26 @@ export function forgetWindowScopes(scopes: readonly (string | null | undefined)[
  * nothing else would ever prune them. The send-record door census admits this function, and no other, to name
  * the jar's prefix.
  */
-export function forgetErasedWindowScopes(scopes: readonly (string | null | undefined)[]): LocalSweep | null {
+export function forgetErasedWindowScopes(
+  scopes: readonly (string | null | undefined)[], disclosureOwner?: string | null,
+): LocalSweep | null {
   return sweepScopes(scopes, (key, scope) =>
     key === `${SEND_LOCKS_PREFIX}${scope}` || key === sentCopyNotesKey(scope) || namesOwner(key, scope)
-    || RETIRED_ID_SETS.includes(key), true);
+    || RETIRED_ID_SETS.includes(key), true,
+    disclosureOwner && isOwnerShaped(disclosureOwner) && disclosureOwner !== "local" && disclosureOwner !== "anon"
+      ? unsubscribeSeenKey(disclosureOwner) : undefined);
 }
 
 function sweepScopes(
   scopes: readonly (string | null | undefined)[], alsoGone: (key: string, scope: string) => boolean, notes = false,
+  exactKey?: string,
 ): LocalSweep | null {
   const owed = [...new Set(scopes.filter((s): s is string => typeof s === "string" && isOwnerShaped(s)))];
-  if (owed.length === 0) return null;
+  if (owed.length === 0 && !exactKey) return null;
   const keys = dropLocalStorageKeysWhere((k) =>
-    k === LEGACY_COMPOSE_DRAFT_KEY || k.startsWith(REPLY_DRAFT_PREFIX) || k.startsWith(REPLY_META_PREFIX)
+    k === exactKey || (owed.length > 0 && (k === LEGACY_COMPOSE_DRAFT_KEY || k.startsWith(REPLY_DRAFT_PREFIX) || k.startsWith(REPLY_META_PREFIX)))
     || owed.some((s) => scopedTo(k, s) || k === windowSentFoldersKey(s) || alsoGone(k, s)));
-  const sweeps = [keys, ...owed.map((s) => clearBootCaches(s))];
+  const sweeps = [keys, ...owed.flatMap((s) => [clearBootCaches(s), forgetNewNoticeChoices(s)])];
   // The tab's notes naming the mailbox, an erasure's alone; one left over keeps the marker below for a retry.
   if (notes) sweeps.push(dropLocalStorageKeysWhere((k) => owed.some((s) => namesOwner(k, s, true)), "sessionStorage"));
   const swept: LocalSweep = {
@@ -112,6 +142,7 @@ function sweepScopes(
     const marker = rememberedCloudScope();
     if (marker !== null && owed.includes(marker)) {
       try {
+        window.localStorage.removeItem(CLOUD_DISCLOSURE_OWNER_KEY);
         window.localStorage.removeItem(CLOUD_SCOPE_KEY);
       } catch { /* kept: the next end sweeps again */ }
     }

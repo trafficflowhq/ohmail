@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EngineAdapter } from "@ohmail/client-engine";
 import { createEngine } from "../app/shell/engine-config.js";
-import { createSyncGate } from "../app/shell/sync-scheduler.js";
+import { createSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * ═══ THE PULL DOORBELL RINGS ON THE PATH THE PRODUCT BUILDS ═════════════════════════════════

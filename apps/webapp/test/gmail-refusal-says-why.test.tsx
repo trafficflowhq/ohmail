@@ -1,14 +1,11 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { act, cleanup, fireEvent, within } from "@testing-library/react";
 import en from "../messages/en.json";
-import { ApiError, messageOf, type MailboxDTO, type SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import { ApiError, type MailboxDTO } from "../app/api-client";
 import { launchRefused } from "@trafficflow/services/mail";
+import { drawPane } from "../../../packages/app/test/mailboxes/pane/support.js";
+import { mountStage, type MountedStage } from "./_first-run-stage.js";
 
 /**
  * GMAIL'S REFUSED SIGN-IN SAYS WHY, AND THE NOTE IS THERE BEFORE THE PRESS — on every web form.
@@ -21,13 +18,29 @@ import { launchRefused } from "@trafficflow/services/mail";
  * has its own file (`gmail-refusal-join.test.tsx`): it runs on the real client over a fetch double.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+/*
+ * RE-POINTED (the switch's older tests, sorted once; share first-run-and-account-1). Every form here is the one connect
+ * form of the new shell (`packages/app/src/mailboxes/connect`) over the web's own wires, `webConnectWire` and
+ * `webMailboxesWire`, over the same `api-client` mock: the refusal is still `launchRefused`'s, thrown by the API as the
+ * client receives it.
+ *  - The first run's form is the stage's mailbox step (the new frame's `firstRun` stage, an add run on the hosted door,
+ *    as today's case mounted it with `add`).
+ *  - Settings → Mailboxes' connect IS the stage's add run (ruled: the pane's Connect opens the first run's add run and
+ *    calls nothing, held by `packages/app/test/mailboxes/pane/pane.test.tsx` "Connect a mailbox is a button named by
+ *    mailboxes.connect that opens the add run and calls nothing"); its connect and Test cases are walked there. The
+ *    rows and the edit are the Mailboxes pane itself (`MailboxesPane`, drawn by its own test door `drawPane`).
+ *  - NO TILE IS PRESELECTED (the ruled design: `r2-mailboxes/REVIEW-two.md`, "no preselected tile"; `ProviderTiles`:
+ *    nothing is pre-chosen but what the typed address chose): the first run's case types a Gmail address, which
+ *    chooses Gmail's tile, before it reads what was pre-selected. The pane's walk presses Gmail's tile as it did.
+ *  - The refusal and the Test's refused verdict are one line at the press (`RefusalLine`, an alert), Google's two links
+ *    standing under it beside the form, no longer inside a verdict box: "the links under the verdict" are read as the
+ *    page's links beyond the note's own pair (each of Google's two pages linked once more, or not at all).
+ * Every expectation is as it stood.
+ */
 
 const M = en.mailboxes as unknown as Record<string, string>;
 const P = en.providerPicker as unknown as Record<string, string>;
+const O = en.onboarding as unknown as Record<string, string>;
 const HINTS = ["app_password_required", "invalid", "web_login", "imap_disabled"] as const;
 const LINKS = { prereq: "https://myaccount.google.com/signinoptions/twosv", help: "https://myaccount.google.com/apppasswords" };
 
@@ -37,17 +50,11 @@ const refusalFor = (hint?: string): ApiError => {
   return new ApiError(r.httpStatus, r.code, r.message, r.details);
 };
 const hrefs = (el: Element): string[] => [...el.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? "");
-
-const QUIET: MailState = {
-  key: "quiet", clock: false, count: 0, total: null, reason: null, errorCode: null, asOf: null,
-  address: null, minutes: null, slow: false, screenerCandidate: false, pending: 0, filing: null,
-  continuesAtFolder: null, settled: true, owed: false,
-};
-const healthy = {
-  subscription: { plan: "solo", status: "active", mailboxLimit: 5, monthlyCredits: 500, currentPeriodEnd: null, cancelAtPeriodEnd: false, graceUntil: null },
-  balance: 0, plans: {},
-  entitlements: { mailboxLimit: 5, canAddMailbox: true, aiEnabled: false, syncEnabled: true, reason: "active" },
-} as unknown as SubscriptionStatus;
+/** How many times the page links a page of Google's. */
+const linked = (el: Element, url: string): number => hrefs(el).filter((u) => u === url).length;
+/** The refusals said at the press, line by line: a refusal is an alert. */
+const alerts = (el: Element): string[] =>
+  [...el.querySelectorAll('[role="alert"]')].map((n) => (n.textContent ?? "").trim()).filter(Boolean);
 
 let mockThrows: unknown = null;
 let mockListed: MailboxDTO[] = [];
@@ -59,8 +66,8 @@ vi.mock("../app/api-client", async () => {
     assertPasskey: async () => ({}),
     webauthnAvailable: () => false,
     auth: { session: async () => ({ user: { email: "person@example.test", emailVerified: true }, scope: "full" }) },
-    billing: { subscription: async () => healthy },
     mailboxes: {
+      ...actual.mailboxes,
       list: async () => ({ items: mockListed }),
       resync: async () => undefined,
       probe: async () => { if (mockThrows) throw mockThrows; return { host: "imap.gmail.com", user: "u", folders: 3 }; },
@@ -69,55 +76,55 @@ vi.mock("../app/api-client", async () => {
     },
   };
 });
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
+vi.mock("../app/hello", () => ({ SELF_HOST_BUILD: false, serverHello: async () => null }));
 
-const roots: Root[] = [];
 beforeEach(() => { mockThrows = null; mockListed = []; });
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
 const settle = async (): Promise<void> => { await act(async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); }); };
-async function render(node: React.ReactNode): Promise<HTMLDivElement> {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, { locale: "en", messages: en, timeZone: "UTC", children: node }));
+async function typeInto(el: HTMLElement, label: string, value: string): Promise<void> {
+  const input = within(el).getByLabelText(label) as HTMLInputElement;
+  await act(async () => { fireEvent.change(input, { target: { value } }); });
+  await settle();
+}
+/** A tile of the provider picker by its name, and whether it stands chosen. */
+const tile = (el: HTMLElement, name: string): HTMLElement | undefined =>
+  [...within(el).getByRole("group", { name: P.label! }).querySelectorAll<HTMLElement>("button")]
+    .find((b) => (b.textContent ?? "").trim().startsWith(name));
+
+/** The connect form of the hosted door's add run, over the web's own connect wire. */
+async function addRun(): Promise<MountedStage> {
+  const { webConnectWire } = await import("../app/(product)/mailbox/connect-wire");
+  return mountStage({
+    rows: [], at: "#/first-run/add", door: "cloud", verbs: { ai: "on" },
+    account: { onboardingCompletedAt: "2026-03-01T11:30:00.000Z" },
+    connect: webConnectWire({ owner: () => null, returned: "page" }),
   });
-  await settle();
-  return el;
 }
-async function click(el: Element | null | undefined): Promise<void> {
-  expect(el, "a control this walk needs is not on screen").toBeTruthy();
-  await act(async () => { el!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-  await settle();
-}
-async function typeInto(el: Element | null, value: string): Promise<void> {
-  expect(el, "a field this walk needs is not on screen").toBeTruthy();
-  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
-  await act(async () => { el!.dispatchEvent(new Event("input", { bubbles: true })); });
-  await settle();
-}
-const startingWith = (el: HTMLElement, text: string, sel = "button, a, [role=radio]"): HTMLElement | undefined =>
-  [...el.querySelectorAll<HTMLElement>(sel)].find((n) => (n.textContent ?? "").trim().startsWith(text));
 
 /* ── Settings → Mailboxes ─────────────────────────────────────────────────────────────── */
 
-async function pane(...items: MailboxDTO[]): Promise<HTMLDivElement> {
+async function pane(...items: MailboxDTO[]): Promise<HTMLElement> {
   mockListed = items;
-  const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
-  return render(h(MailboxSection));
+  const { webMailboxesWire } = await import("../app/(product)/mailbox/mailboxes-wire");
+  const { webConnectWire } = await import("../app/(product)/mailbox/connect-wire");
+  const view = drawPane(webMailboxesWire(), {
+    connect: webConnectWire({ owner: () => null, returned: "page" }),
+    opened: items[0]?.id ?? null,
+  });
+  await settle();
+  return view.container;
 }
-async function gmailForm(): Promise<HTMLDivElement> {
-  const el = await pane();
-  await click(startingWith(el, M.connect!));
-  await click(startingWith(el, "Gmail", "[role=radio]"));
-  await typeInto(el.querySelector("#mb-address"), "someone@gmail.test");
-  await typeInto(el.querySelector("#mb-pass"), "the-google-password");
-  return el;
+/** Settings → Mailboxes' connect: the add run it opens, Gmail's tile pressed and the fields typed. */
+async function gmailForm(): Promise<MountedStage> {
+  const st = await addRun();
+  await st.press("Gmail");
+  await typeInto(st.el, O.address!, "someone@gmail.test");
+  await typeInto(st.el, O.password!, "the-google-password");
+  return st;
 }
 const dto = (over: Partial<MailboxDTO> = {}): MailboxDTO => ({
   id: "mb1", provider: "gmail", address: "someone@example.test", displayName: null, status: "connected",
@@ -126,7 +133,7 @@ const dto = (over: Partial<MailboxDTO> = {}): MailboxDTO => ({
 
 describe("Settings → Mailboxes", () => {
   it("the Gmail note says App Password, its two links, before any press", async () => {
-    const el = await gmailForm();
+    const { el } = await gmailForm();
     expect(el.textContent).toContain(P.note_gmail);
     expect(hrefs(el)).toEqual(expect.arrayContaining([LINKS.prereq, LINKS.help]));
   });
@@ -134,31 +141,30 @@ describe("Settings → Mailboxes", () => {
   for (const hint of HINTS) {
     it(`connect and Test, ${hint}: Google's sentence`, async () => {
       mockThrows = refusalFor(hint);
-      const el = await gmailForm();
-      await act(async () => { el.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
-      await settle();
-      const alert = el.querySelector('[role="alert"]');
-      expect(alert?.textContent).toBe(M[`probe_auth_gmail_${hint}`]);
-      const linked = hint === "app_password_required" || hint === "invalid";
+      const st = await gmailForm();
+      await st.press(O.connect!);
+      const said = alerts(st.el);
+      expect(said, hint).toEqual([M[`probe_auth_gmail_${hint}`]]);
+      const linkedHint = hint === "app_password_required" || hint === "invalid";
       // The links under the refusal, besides the note's own pair.
-      expect(hrefs(el).filter((u) => u === LINKS.help).length, hint).toBe(linked ? 2 : 1);
+      expect(linked(st.el, LINKS.help), hint).toBe(linkedHint ? 2 : 1);
 
-      await click(startingWith(el, en.onboarding.test!));
-      const verdict = el.querySelector(".set-verdict.bad");
-      expect(verdict?.textContent).toContain(M[`probe_auth_gmail_${hint}`]);
-      expect(hrefs(verdict!).length, hint).toBe(linked ? 2 : 0);
+      await st.press(O.test!);
+      expect(alerts(st.el).join(" "), hint).toContain(M[`probe_auth_gmail_${hint}`]);
+      // Google's two pages linked under the refused verdict, besides the note's own pair: both, or none.
+      expect(linked(st.el, LINKS.prereq) + linked(st.el, LINKS.help) - 2, hint).toBe(linkedHint ? 2 : 0);
     });
   }
 
   it("control: no hint and an unknown hint are the generic sentence, with no links", async () => {
     for (const thrown of [refusalFor(), new ApiError(400, "mailbox_probe_failed", "x", { reason: "auth", transport: "imap", authHint: "toString" })]) {
       mockThrows = thrown;
-      const el = await gmailForm();
-      await click(startingWith(el, en.onboarding.test!));
-      const verdict = el.querySelector(".set-verdict.bad");
-      expect(verdict?.textContent).toContain(M.probe_auth);
-      expect(hrefs(verdict!)).toEqual([]);
-      await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+      const st = await gmailForm();
+      await st.press(O.test!);
+      expect(alerts(st.el).join(" ")).toContain(M.probe_auth);
+      // No link under the verdict: the note's own pair alone.
+      expect([linked(st.el, LINKS.prereq), linked(st.el, LINKS.help)]).toEqual([1, 1]);
+      cleanup();
       document.body.innerHTML = "";
     }
   });
@@ -166,10 +172,11 @@ describe("Settings → Mailboxes", () => {
   it("edit: a Gmail row asks for a new App Password, and a refused one says Google's sentence", async () => {
     mockThrows = refusalFor("invalid");
     const el = await pane(dto());
-    await click(startingWith(el, M.edit!));
+    fireEvent.click(within(el).getByRole("button", { name: M.edit }));
+    await settle();
     expect(el.textContent).toContain(M.editIntro_gmail);
-    await typeInto(el.querySelector("#mb-edit-pass"), "old-app-password");
-    await act(async () => { el.querySelector("form.acct-confirm")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await typeInto(el, M.passwordLabel!, "old-app-password");
+    fireEvent.click(within(el).getByRole("button", { name: M.continue }));
     await settle();
     expect(el.textContent).toContain(M.probe_auth_gmail_invalid);
   });
@@ -183,7 +190,8 @@ describe("Settings → Mailboxes", () => {
     const el = await pane(dto({ provider: "icloud", address: "someone@example.test", status: "error", errorCode: "auth" } as Partial<MailboxDTO>));
     expect(el.textContent).toContain(M.err_auth);
     expect(el.textContent).not.toContain(M.err_auth_gmail);
-    await click(startingWith(el, M.edit!));
+    fireEvent.click(within(el).getByRole("button", { name: M.edit }));
+    await settle();
     expect(el.textContent).toContain(M.editIntro);
     expect(el.textContent).not.toContain(M.editIntro_gmail);
   });
@@ -192,56 +200,53 @@ describe("Settings → Mailboxes", () => {
 /* ── The first-run form ───────────────────────────────────────────────────────────────── */
 
 describe("the first-run mailbox form", () => {
-  const facts: OnboardingFacts = {
-    door: "cloud", mailbox: null, account: { onboardingCompletedAt: "2026-03-01T11:30:00.000Z" }, ai: "on", queuedSenders: 0,
-  };
-  async function firstRun(probe: FirstRunHost["probe"]): Promise<HTMLDivElement> {
-    const { FirstRun } = await import("../app/shell/FirstRun");
-    const { KeymapProvider } = await import("../app/shell/keymap");
-    const { probeReasonOf } = await import("../app/shell/probe-refusal");
-    const host = {
-      door: "cloud", ai: "on", probe,
-      connect: async () => ({ id: "mb-2" }), organize: async () => "stored",
-      complete: async () => {}, setAiEnabled: async () => {},
-      probeReason: probeReasonOf, probeMessage: (err: unknown) => messageOf(err), plaintextOffer: () => null,
-    } as unknown as FirstRunHost;
-    return render(h(KeymapProvider, {
-      children: h(FirstRun, {
-        host, facts, onRefresh: () => {}, onLeave: () => {}, add: true,
-        pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: null,
-      }),
-    }));
+  /** The stage's mailbox step on the hosted door, its probe the web's own over the API's answer. */
+  async function firstRun(): Promise<MountedStage> {
+    const stage = await addRun();
+    expect(tile(stage.el, "Gmail")?.getAttribute("aria-pressed")).not.toBe("true");
+    await stage.press("Gmail");
+    return stage;
   }
+  /** The chosen Gmail form asks for the address and app password. */
+  const GMAIL = "do-not-reply@gmail.com";
   const fill = async (el: HTMLElement): Promise<void> => {
-    await typeInto(el.querySelector("input[id$='-address']"), "someone@gmail.test");
-    await typeInto(el.querySelector("input[id$='-pass']"), "the-google-password");
+    await typeInto(el, O.address!, GMAIL);
+    await typeInto(el, O.password!, "the-google-password");
   };
 
   it("Gmail is pre-selected, and its note and links are on screen before the press", async () => {
-    const el = await firstRun(async () => ({ host: "imap.gmail.com", user: "u", folders: 1 }));
-    expect(el.querySelector<HTMLInputElement>('input[type="radio"][value="gmail"]')?.checked).toBe(true);
+    const stage = await addRun();
+    const { el } = stage;
+    expect(tile(el, "Gmail")?.getAttribute("aria-pressed")).toBe("false");
+    await typeInto(el, O.address!, GMAIL);
+    expect(tile(el, "Gmail")?.getAttribute("aria-pressed")).toBe("true");
+    await stage.press("Gmail");
+    expect(within(el).getByLabelText(O.password!)).toBeTruthy();
     expect(el.textContent).toContain(P.note_gmail);
     expect(hrefs(el)).toEqual(expect.arrayContaining([LINKS.prereq, LINKS.help]));
   });
 
   for (const hint of HINTS) {
     it(`Test, ${hint}: Google's sentence`, async () => {
-      const el = await firstRun(async () => { throw refusalFor(hint); });
+      mockThrows = refusalFor(hint);
+      const st = await firstRun();
+      const { el } = st;
       await fill(el);
-      await click(startingWith(el, "Test connection"));
-      const verdict = el.querySelector(".set-verdict.bad");
-      expect(verdict?.textContent).toContain(M[`probe_auth_gmail_${hint}`]);
-      expect(hrefs(verdict!).length, hint).toBe(hint === "app_password_required" || hint === "invalid" ? 2 : 0);
+      await st.press("Test connection");
+      expect(alerts(el).join(" ")).toContain(M[`probe_auth_gmail_${hint}`]);
+      expect(linked(el, LINKS.prereq) + linked(el, LINKS.help) - 2, hint).toBe(hint === "app_password_required" || hint === "invalid" ? 2 : 0);
     });
   }
 
   it("control: no hint and an unknown hint are the generic sentence", async () => {
     for (const thrown of [refusalFor(), new ApiError(400, "mailbox_probe_failed", "x", { reason: "auth", transport: "imap", authHint: "constructor" })]) {
-      const el = await firstRun(async () => { throw thrown; });
+      mockThrows = thrown;
+      const st = await firstRun();
+      const { el } = st;
       await fill(el);
-      await click(startingWith(el, "Test connection"));
-      expect(el.querySelector(".set-verdict.bad")?.textContent).toContain(M.probe_auth);
-      await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+      await st.press("Test connection");
+      expect(alerts(el).join(" ")).toContain(M.probe_auth);
+      cleanup();
       document.body.innerHTML = "";
     }
   });

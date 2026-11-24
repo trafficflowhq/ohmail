@@ -1,0 +1,115 @@
+"use client";
+
+import { useContext, type ReactNode } from "react";
+import { useFrame } from "../../frame/index.js";
+import { NONE } from "../../host/index.js";
+import { MailRichEditor } from "../../write/rich-entry.js";
+import {
+  storedCalendarChoices,
+  useNoticesVersion,
+  writeCalendarNotice,
+} from "@ohmail/app-logic/notices/browser-channels";
+import { isDemoOwned } from "@ohmail/app-logic/storage/storage-owner";
+import { useConsent } from "@ohmail/app-logic/consent";
+import { useMailState } from "@ohmail/app-logic/mail-state";
+import { liveMailboxes } from "@ohmail/app-logic/mail-state/mail-state";
+import { FoldersPane, foldersMailboxes, pullAfter } from "../folders/index.js";
+import { NotificationsPane } from "../notifications/index.js";
+import { NotificationsContext } from "../notifications/summary.js";
+import {
+  SignatureEditor,
+  SignaturesPane,
+  useSignaturesModel,
+  type SignatureEditorProps,
+} from "../signatures/index.js";
+import { standingNote } from "@ohmail/app-logic/consent/travelled-change";
+import { TravelledChangeLine } from "./TravelledChangeLine.js";
+import { useText } from "../../text/index.js";
+import { useNotificationSettings, type NotificationPreferences } from "./use-notification-settings.js";
+
+export function BrowserFoldersPane() {
+  const { host } = useFrame();
+  const consent = useConsent();
+  const { mailboxes } = useMailState();
+  const pull = () => host.engine.syncOnce();
+  const model = {
+    on: consent.foldersEnabled,
+    set: pullAfter(consent.setFoldersEnabled, pull),
+    mailboxes: foldersMailboxes({
+      on: consent.foldersEnabled,
+      known: consent.folderMailboxesKnown,
+      settable: host.wires.consent !== NONE,
+      mailboxes: liveMailboxes(mailboxes),
+      off: consent.folderMailboxesOff,
+    }),
+    setMailbox: pullAfter(consent.setMailboxFoldersEnabled, pull),
+  };
+  return <FoldersPane model={model} />;
+}
+
+/** Reconcile the stored wake preference once on entry to Settings, including visits to General. */
+export function BrowserSettingsAbove({
+  children,
+  preferences,
+}: {
+  readonly children: ReactNode;
+  preferences: NotificationPreferences;
+}) {
+  const { host, route } = useFrame();
+  const door = host.device.notifications;
+  const scope = host.session.scope;
+  const activeScope =
+    door !== NONE && (!door.liveNoticeScope || door.liveNoticeScope() === scope) ? scope : null;
+  const model = useNotificationSettings(door, activeScope, route.sub === "notifications", preferences);
+  const calendarChoices =
+    host.wires.calendar === NONE || door === NONE
+      ? undefined
+      : door.choices?.(door.liveNoticeScope?.() === scope ? scope : null);
+  return (
+    <NotificationsContext.Provider value={{ ...model, calendarChoices }}>
+      {children}
+    </NotificationsContext.Provider>
+  );
+}
+
+export function BrowserNotificationsPane() {
+  const model = useContext(NotificationsContext);
+  const { host } = useFrame();
+  const door = host.device.notifications;
+  const scope = host.session.scope;
+  useNoticesVersion(0);
+  const choices =
+    host.wires.calendar === NONE || door === NONE
+      ? undefined
+      : storedCalendarChoices(door.liveNoticeScope?.() === scope ? scope : null);
+  return (
+    model && (
+      <NotificationsPane
+        model={model}
+        calendar={
+          choices && {
+            choices,
+            set(key, value) {
+              if (scope === null || isDemoOwned(scope) || door === NONE || door.liveNoticeScope?.() !== scope)
+                return;
+              writeCalendarNotice(key, value, scope);
+            },
+          }
+        }
+      />
+    )
+  );
+}
+
+function signatureEditor(props: SignatureEditorProps) {
+  return <SignatureEditor {...props} editor={MailRichEditor} />;
+}
+
+export function BrowserSignaturesPane() {
+  const t = useText("settings");
+  const model = useSignaturesModel({
+    editor: signatureEditor,
+    changeNote: (change) => <TravelledChangeLine note={standingNote(change)} t={t} />,
+  });
+  return model ? <SignaturesPane model={model} /> : null;
+}

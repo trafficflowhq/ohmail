@@ -11,11 +11,11 @@ import { pgTestUrl, realPgAvailable } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { StaticKeyProvider, UNMETERED_STORAGE_CAP, createLogger } from "@trafficflow/core/mail";
 import { ImapAdapter, ImapBoundExceeded, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { runSyncCycle } from "../src/sync.js";
-import { DeadLetterLedger, HOLD_EXEMPT_CODES } from "../src/dead-letter.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { DeadLetterLedger, HOLD_EXEMPT_CODES } from "@ohmail/organizer/dead-letter";
 import { startWorker } from "../src/index.js";
-import { FIXTURE_LEASE } from "./_door.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 /**
@@ -203,7 +203,7 @@ describe.skipIf(!AVAILABLE)("row 2: the hosted worker's wait after an overrun se
     }).returning();
     const enc = await KP.encrypt("pw");
     await wdb.insert(mailboxCredentials).values({
-      mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     const inbox: Array<[number, Msg]> = [[1, ordinary("old-1")]];
@@ -258,7 +258,7 @@ describe.skipIf(!AVAILABLE)("row 2: the hosted worker's wait after an overrun se
     }).returning();
     const enc = await KP.encrypt("pw");
     await wdb.insert(mailboxCredentials).values({
-      mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     const s = server([[1, ordinary("old-1")], [2, liar("liar-2")], [3, ordinary("behind-the-liar")]]);
@@ -309,7 +309,7 @@ describe.skipIf(!AVAILABLE)("row 2: the hosted worker's wait after an overrun se
       }).returning();
       const enc = await KP.encrypt("pw");
       await wdb.insert(mailboxCredentials).values({
-        mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+        mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
         meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
       });
       const fleet = new FakeAdapterFleet();

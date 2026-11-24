@@ -1,12 +1,12 @@
+import type { MailboxDTO, SyncChange, SyncResponse } from "@ohmail/wire";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { MailboxDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror } from "../src/cloud-mirror.js";
 import type { CloudAuth } from "../src/cloud-auth.js";
-import { deriveMailState, seedGrowth, type MailStateInputs, type MailboxFacts } from "../../webapp/app/shell/mail-state.js";
+import { deriveMailState, seedGrowth, type MailStateInputs, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
 import { idleSession } from "./fixtures/cloud-auth-double.js";
@@ -123,7 +123,7 @@ describe("the Cloud door's mailbox list carries Cloud's filings, and the presses
       sync: { bootstrapping: false, failures: 0, terminal: false, refused: false }, failureStreak: 3,
       mailboxes: [row as unknown as MailboxFacts], mirrored: 10, growth: seedGrowth(10),
       freshness: { state: "current", asOf: new Date(now).toISOString() },
-      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false,
+      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false, scope: null,
     } as MailStateInputs);
     expect(state.key, "no strip on the Cloud door").toBe("filing");
     expect(state.filing).toMatchObject({ arm: "stuck", count: 6 });

@@ -10,6 +10,54 @@
       "node": "./dist/index.js",
       "default": "./src/index.ts"
     },
+    "./portal-renderer": {
+      "types": "./src/base/Overlays/portal-renderer.ts",
+      "ohmail-source": "./src/base/Overlays/portal-renderer.ts",
+      "node": "./dist/base/Overlays/portal-renderer.js",
+      "default": "./src/base/Overlays/portal-renderer.ts"
+    },
+    "./body-parts": {
+      "types": "./src/body-parts.ts",
+      "ohmail-source": "./src/body-parts.ts",
+      "node": "./dist/body-parts.js",
+      "default": "./src/body-parts.ts"
+    },
+    "./file-size": {
+      "types": "./src/format/file-size.ts",
+      "ohmail-source": "./src/format/file-size.ts",
+      "node": "./dist/format/file-size.js",
+      "default": "./src/format/file-size.ts"
+    },
+    "./toast": {
+      "types": "./src/primitives/toast-context.ts",
+      "ohmail-source": "./src/primitives/toast-context.ts",
+      "node": "./dist/primitives/toast-context.js",
+      "default": "./src/primitives/toast-context.ts"
+    },
+    "./date-picker-view": {
+      "types": "./src/primitives/DatePicker.tsx",
+      "ohmail-source": "./src/primitives/DatePicker.tsx",
+      "node": "./dist/primitives/DatePicker.js",
+      "default": "./src/primitives/DatePicker.tsx"
+    },
+    "./sender-sheet": {
+      "types": "./src/sender-sheet.ts",
+      "ohmail-source": "./src/sender-sheet.ts",
+      "node": "./dist/sender-sheet.js",
+      "default": "./src/sender-sheet.ts"
+    },
+    "./viewport": {
+      "types": "./src/ui-zoom.ts",
+      "ohmail-source": "./src/ui-zoom.ts",
+      "node": "./dist/ui-zoom.js",
+      "default": "./src/ui-zoom.ts"
+    },
+    "./text-field": {
+      "types": "./src/primitives/TextField.tsx",
+      "ohmail-source": "./src/primitives/TextField.tsx",
+      "node": "./dist/primitives/TextField.js",
+      "default": "./src/primitives/TextField.tsx"
+    },
     "./long-text": {
       "types": "./src/format/long-text.ts",
       "ohmail-source": "./src/format/long-text.ts",
@@ -21,6 +69,36 @@
       "ohmail-source": "./src/squares-window.ts",
       "node": "./dist/squares-window.js",
       "default": "./src/squares-window.ts"
+    },
+    "./stream-estimate": {
+      "types": "./src/composites/stream-estimate.ts",
+      "ohmail-source": "./src/composites/stream-estimate.ts",
+      "node": "./dist/composites/stream-estimate.js",
+      "default": "./src/composites/stream-estimate.ts"
+    },
+    "./theme": {
+      "types": "./src/theme/ThemeProvider.tsx",
+      "ohmail-source": "./src/theme/ThemeProvider.tsx",
+      "node": "./dist/theme/ThemeProvider.js",
+      "default": "./src/theme/ThemeProvider.tsx"
+    },
+    "./base": {
+      "types": "./src/base/index.ts",
+      "ohmail-source": "./src/base/index.ts",
+      "node": "./dist/base/index.js",
+      "default": "./src/base/index.ts"
+    },
+    "./mail": {
+      "types": "./src/mail/index.ts",
+      "ohmail-source": "./src/mail/index.ts",
+      "node": "./dist/mail/index.js",
+      "default": "./src/mail/index.ts"
+    },
+    "./calendar": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
     }
   },
   "dependencies": {

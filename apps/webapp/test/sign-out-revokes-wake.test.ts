@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { markSignedOutPending } from "@ohmail/app-logic/storage/owner-cookie";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -33,14 +34,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const cachePuts: { url: string; body: string }[] = [];
+const cacheDeletes: string[] = [];
 
-function installFakeCaches(): void {
+function installFakeCaches({ beforeRead, beforeWrite }: {
+  beforeRead?: () => Promise<void>;
+  beforeWrite?: (enabled: boolean) => Promise<void>;
+} = {}): void {
+  let body: string | undefined;
   Object.defineProperty(globalThis, "caches", {
     configurable: true,
     value: {
       open: () => Promise.resolve({
+        match: async () => {
+          const held = body;
+          await beforeRead?.();
+          return held === undefined ? undefined : new Response(held);
+        },
         put: async (url: string, res: Response) => {
-          cachePuts.push({ url, body: await res.text() });
+          const next = await res.text();
+          await beforeWrite?.(JSON.parse(next).enabled);
+          body = next;
+          cachePuts.push({ url, body });
+        },
+        delete: async (url: string) => {
+          const found = body !== undefined;
+          body = undefined;
+          cacheDeletes.push(url);
+          return found;
         },
       }),
     },
@@ -48,46 +68,76 @@ function installFakeCaches(): void {
 }
 
 /** A browser holding a live subscription the server has a row for. */
-function installSubscribedBrowser(unsubscribed: { value: boolean }): void {
+function installSubscribedBrowser(unsubscribed: { value: boolean }, beforeRead?: () => Promise<void>): void {
   const sub = {
     endpoint: "https://push.example/ep/abc",
     getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(7).buffer,
     unsubscribe: () => { unsubscribed.value = true; return Promise.resolve(true); },
   };
+  const registration = {
+    pushManager: { getSubscription: async () => { await beforeRead?.(); return sub; } },
+  };
   Object.defineProperty(navigator, "serviceWorker", {
     configurable: true,
     value: {
-      register: () => Promise.resolve({
-        pushManager: { getSubscription: () => Promise.resolve(sub) },
-      }),
+      register: () => Promise.resolve(registration),
+      getRegistration: () => Promise.resolve(registration),
     },
   });
 }
 
+function installSharedLocks() {
+  const queues = new Map<string, Promise<unknown>>();
+  const request = vi.fn((name: string, operation: () => Promise<unknown>) => {
+    const pending = (queues.get(name) ?? Promise.resolve()).then(operation, operation);
+    queues.set(name, pending);
+    return pending;
+  });
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request } });
+  return request;
+}
+
+const SUBSCRIPTION_ID_KEY = "ohmail.notifications.subscriptionId";
 const deleted: string[] = [];
 /** What each DELETE was handed beside the id: the sign-out press's pass, or nothing. */
 const passes: unknown[] = [];
+const subscribe = vi.fn(async () => ({ id: "unused" }));
 
-/* The Cloud client, configured — the shape a browser build has. `subscribe`/`vapidKey` are here
-   because the module's `PushApi` names them; only `unsubscribe` is exercised by an OFF. */
+/* The Cloud client, configured as a browser build. Synthetic responses let the suite order
+   a registration acknowledgment against the corresponding session change. */
 vi.mock("../app/api-client", () => ({
   apiConfigured: () => true,
+  boundApiFamily: (owner: string) => owner === "account_B" && document.cookie.includes("tf_family=family-current")
+    ? "family-current" : "family-old",
   push: {
     vapidKey: () => Promise.resolve({ publicKey: null }),
-    subscribe: () => Promise.resolve({ id: "unused" }),
+    subscribe: () => subscribe(),
     unsubscribe: (id: string, opts?: unknown) => { deleted.push(id); passes.push(opts); return Promise.resolve(); },
   },
 }));
 
 describe("revokeWakeRegistration", () => {
   beforeEach(() => {
+    document.cookie = "tf_family=family-old; Path=/";
     cachePuts.length = 0;
+    cacheDeletes.length = 0;
     deleted.length = 0;
     passes.length = 0;
+    subscribe.mockReset();
+    subscribe.mockResolvedValue({ id: "unused" });
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
     window.localStorage.clear();
     installFakeCaches();
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: { request: async (_name: string, write: () => Promise<void>) => write() },
+    });
   });
-  afterEach(() => { vi.resetModules(); });
+  afterEach(() => {
+    document.cookie = "tf_family=; Path=/; Max-Age=0";
+    Reflect.deleteProperty(navigator, "locks");
+    vi.resetModules();
+  });
 
   it("deletes THIS browser's row by the id it kept, and drops the local subscription", async () => {
     const { revokeWakeRegistration } = await import("../app/shell/notification-settings");
@@ -116,7 +166,7 @@ describe("revokeWakeRegistration", () => {
     await revokeWakeRegistration({ signingOutOf: "acct_A" });
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
-      value: { register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(null) } }) },
+      value: { getRegistration: () => Promise.resolve(undefined) },
     });
     window.localStorage.setItem("ohmail.notifications.subscriptionId", "row-left");
     await revokeWakeRegistration({ signingOutOf: "acct_A" });
@@ -125,6 +175,27 @@ describe("revokeWakeRegistration", () => {
     expect(deleted).toEqual(["row-live", "row-left", "row-bare"]);
     expect(passes, "the press's account did not reach the DELETE, or a bare revoke carried one")
       .toEqual([{ signingOutOf: "acct_A" }, { signingOutOf: "acct_A" }, undefined]);
+  });
+
+  it("closes every notice of the origin still listed before it answers", async () => {
+    // A sign-out that unloads the page runs no cleanup of the shell: this close is the one take-back.
+    const { revokeWakeRegistration } = await import("../app/shell/notification-settings");
+    const n1 = { close: vi.fn() };
+    const n2 = { close: vi.fn() };
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        getRegistration: () => Promise.resolve({
+          getNotifications: () => Promise.resolve([n1, n2]),
+          pushManager: { getSubscription: () => Promise.resolve(null) },
+        }),
+      },
+    });
+
+    await revokeWakeRegistration();
+
+    expect(n1.close, "a notice of the account left stays listed").toHaveBeenCalledTimes(1);
+    expect(n2.close).toHaveBeenCalledTimes(1);
   });
 
   it("writes the notify state OFF — the last half, for a row that somehow survives", async () => {
@@ -144,6 +215,365 @@ describe("revokeWakeRegistration", () => {
     const state = cachePuts.find((p) => p.url === NOTIFY_STATE_URL);
     expect(state, "the worker was left holding its old permission to draw").toBeTruthy();
     expect(JSON.parse(state!.body).enabled).toBe(false);
+  });
+
+  it("keeps the worker disarmed when a registration started before sign-out answers late", async () => {
+    const { applyWakeIntent, browserNotificationHost, revokeWakeRegistration } =
+      await import("../app/shell/notification-settings");
+    installSubscribedBrowser({ value: false });
+    document.cookie = "tf_owner=account_A; Path=/";
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: (value: { id: string }) => void;
+    subscribe.mockImplementationOnce(() => {
+      entered();
+      return new Promise((resolve) => { finish = resolve; });
+    });
+
+    const waking = applyWakeIntent(browserNotificationHost, true, "Mail from the old session");
+    await started;
+    markSignedOutPending();
+    const signingOut = revokeWakeRegistration({ signingOutOf: "account_A" });
+    finish({ id: "row-old" });
+    await Promise.all([waking, signingOut]);
+
+    expect(deleted).toEqual(["row-old"]);
+    expect(cachePuts.map(({ body }) => JSON.parse(body).enabled)).toEqual([false]);
+  });
+
+  it("keeps a late registration from another account from enabling the worker", async () => {
+    const { applyWakeIntent, browserNotificationHost } = await import("../app/shell/notification-settings");
+    installSubscribedBrowser({ value: false });
+    document.cookie = "tf_owner=account_A; Path=/";
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: (value: { id: string }) => void;
+    subscribe.mockImplementationOnce(() => {
+      entered();
+      return new Promise((resolve) => { finish = resolve; });
+    });
+
+    const waking = applyWakeIntent(browserNotificationHost, true, "Mail from the old session");
+    await started;
+    document.cookie = "tf_owner=account_B; Path=/";
+    finish({ id: "row-old" });
+    await waking;
+    expect(cachePuts).toEqual([]);
+
+    document.cookie = "tf_family=family-current; Path=/";
+    const proof = vi.spyOn(crypto, "randomUUID").mockReturnValueOnce("2cfcc3f0-be28-4ba9-9e03-6210584a9881");
+    subscribe.mockResolvedValueOnce({ id: "row-current" });
+    await expect(applyWakeIntent(browserNotificationHost, true, "Mail from this session")).resolves.toBe("subscribed");
+    expect(cachePuts.map(({ body }) => JSON.parse(body))).toEqual([
+      {
+        enabled: true, title: "ohmail", body: "Mail from this session",
+        registration: { owner: "account_B", family: "family-current", proof: "2cfcc3f0-be28-4ba9-9e03-6210584a9881" },
+      },
+    ]);
+    proof.mockRestore();
+  });
+
+  it("keeps the worker disarmed when the signed-in account changes during the cache read", async () => {
+    const { applyWakeIntent, browserNotificationHost } = await import("../app/shell/notification-settings");
+    installSubscribedBrowser({ value: false });
+    document.cookie = "tf_owner=account_A; Path=/";
+    let entered!: () => void;
+    const reading = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: () => void;
+    const release = new Promise<void>((resolve) => { finish = resolve; });
+    installFakeCaches({ beforeRead: () => { entered(); return release; } });
+
+    const waking = applyWakeIntent(browserNotificationHost, true, "Mail from the old session");
+    await reading;
+    document.cookie = "tf_owner=account_B; Path=/";
+    finish();
+    await expect(waking).resolves.toBeNull();
+    expect(cachePuts).toEqual([]);
+  });
+
+  it("keeps the worker disarmed when another tab signs out during a language change", async () => {
+    const openTab = await import("../app/shell/notification-settings");
+    installSubscribedBrowser({ value: false });
+    document.cookie = "tf_owner=account_A; Path=/";
+    let holdRead = false;
+    let entered!: () => void;
+    const reading = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: () => void;
+    const release = new Promise<void>((resolve) => { finish = resolve; });
+    installFakeCaches({ beforeRead: async () => {
+      if (!holdRead) return;
+      entered();
+      await release;
+    } });
+    await expect(openTab.applyWakeIntent(openTab.browserNotificationHost, true, "Mail")).resolves.toBe("subscribed");
+    holdRead = true;
+    const relabelling = openTab.updateNotifyWords("Mail", "Neue Mail.");
+    await reading;
+
+    // Each tab has its own module queue, with one owner cookie and worker cache between them.
+    vi.resetModules();
+    const otherTab = await import("../app/shell/notification-settings");
+    markSignedOutPending();
+    await otherTab.revokeWakeRegistration({ signingOutOf: "account_A" });
+    finish();
+    await relabelling;
+
+    expect(cachePuts.map(({ body }) => JSON.parse(body).enabled)).toEqual([true, false]);
+  });
+
+  it("does not start a wake registration after the account changes during browser setup", async () => {
+    const { applyWakeIntent, browserNotificationHost } = await import("../app/shell/notification-settings");
+    document.cookie = "tf_owner=account_A; Path=/";
+    let entered!: () => void;
+    const reading = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: () => void;
+    const release = new Promise<void>((resolve) => { finish = resolve; });
+    installSubscribedBrowser({ value: false }, () => { entered(); return release; });
+
+    const waking = applyWakeIntent(browserNotificationHost, true, "Mail from the old session");
+    await reading;
+    document.cookie = "tf_owner=account_B; Path=/";
+    finish();
+
+    await expect(waking).resolves.toBeNull();
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(cachePuts).toEqual([]);
+  });
+
+  it("leaves the next account's wake subscription alone when an earlier turn-off is still looking it up", async () => {
+    const { applyWakeIntent, browserNotificationHost } =
+      await import("../app/shell/notification-settings");
+    document.cookie = "tf_owner=account_A; Path=/";
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const unsubscribed = { value: false };
+    installSubscribedBrowser(unsubscribed, () => { reading.resolve(); return release.promise; });
+
+    const turningOff = applyWakeIntent(browserNotificationHost, false, "Mail");
+    await reading.promise;
+    document.cookie = "tf_owner=account_B; Path=/";
+    window.localStorage.setItem(SUBSCRIPTION_ID_KEY, "row-current");
+    release.resolve();
+
+    await expect(turningOff).resolves.toBeNull();
+    expect(unsubscribed.value).toBe(false);
+    expect(deleted).toEqual([]);
+    expect(window.localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBe("row-current");
+  });
+
+  it.each(["account", "family"])("leaves a replacement %s's subscription alone when an earlier turn-off is still looking it up", async (change) => {
+    const { applyWakeIntent, browserNotificationHost } =
+      await import("../app/shell/notification-settings");
+    document.cookie = "tf_owner=account_A; Path=/";
+    document.cookie = "tf_family=family-old; Path=/";
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const unsubscribed = { value: false };
+    installSubscribedBrowser(unsubscribed, () => { reading.resolve(); return release.promise; });
+
+    const turningOff = applyWakeIntent(browserNotificationHost, false, "Mail");
+    await reading.promise;
+    document.cookie = change === "family" ? "tf_family=family-replacement; Path=/" : "tf_owner=account_B; Path=/";
+    window.localStorage.setItem(SUBSCRIPTION_ID_KEY, "row-current");
+    release.resolve();
+
+    await expect(turningOff).resolves.toBeNull();
+    expect(unsubscribed.value).toBe(false);
+    expect(deleted).toEqual([]);
+    expect(window.localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBe("row-current");
+  });
+
+  it("orders another tab's registration after an earlier turn-off waiting on the browser", async () => {
+    const offTab = await import("../app/shell/notification-settings");
+    vi.resetModules();
+    const onTab = await import("../app/shell/notification-settings");
+    const requests = installSharedLocks();
+    document.cookie = "tf_owner=account_A; Path=/";
+    const reading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const removed: string[] = [];
+    const subscription = (label: string) => ({
+      endpoint: `https://push.example/${label}`,
+      getKey: (name: string) => new Uint8Array(name === "auth" ? 16 : 65).fill(7).buffer,
+      unsubscribe: async () => { removed.push(label); return true; },
+    });
+    let lookups = 0;
+    const registration = { pushManager: { getSubscription: async () => {
+      if (++lookups !== 1) return subscription("replacement");
+      reading.resolve();
+      await release.promise;
+      return subscription("old");
+    } } };
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        register: async () => registration,
+        getRegistration: async () => registration,
+      },
+    });
+    localStorage.setItem(SUBSCRIPTION_ID_KEY, "old-row");
+
+    const turningOff = offTab.applyWakeIntent(offTab.browserNotificationHost, false, "Mail");
+    await reading.promise;
+    const turningOn = onTab.applyWakeIntent(onTab.browserNotificationHost, true, "Mail");
+    // Either a shared order was reserved, or the second tab already tried the browser.
+    await vi.waitFor(() => {
+      expect(lookups > 1 || requests.mock.calls.filter(([name]) => name !== "ohmail-notify-state").length === 2)
+        .toBe(true);
+    });
+    const beforeRelease = { lookups, sent: subscribe.mock.calls.length };
+    release.resolve();
+
+    await expect(turningOff).resolves.toBe("unsubscribed");
+    await expect(turningOn).resolves.toBe("subscribed");
+    expect(beforeRelease).toEqual({ lookups: 1, sent: 0 });
+    expect(removed).toEqual(["old"]);
+    expect(deleted).toEqual(["old-row"]);
+    expect(localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBe("unused");
+    expect(JSON.parse(cachePuts.at(-1)!.body).enabled).toBe(true);
+  });
+
+  it("disarms immediately and stays off when another tab's earlier registration finishes late", async () => {
+    const onTab = await import("../app/shell/notification-settings");
+    vi.resetModules();
+    const offTab = await import("../app/shell/notification-settings");
+    installSharedLocks();
+    document.cookie = "tf_owner=account_A; Path=/";
+    installSubscribedBrowser({ value: false });
+    const sent = Promise.withResolvers<void>();
+    const receipt = Promise.withResolvers<{ id: string }>();
+    subscribe.mockImplementationOnce(() => { sent.resolve(); return receipt.promise; });
+    await onTab.writeNotifyStateUnchecked(true, "ohmail", "Mail");
+
+    const turningOn = onTab.applyWakeIntent(onTab.browserNotificationHost, true, "Mail");
+    await sent.promise;
+    const turningOff = offTab.applyWakeIntent(offTab.browserNotificationHost, false, "Mail");
+    await vi.waitFor(() => expect(JSON.parse(cachePuts.at(-1)!.body).enabled).toBe(false));
+    const disarmed = cachePuts.length;
+    receipt.resolve({ id: "new-row" });
+
+    await Promise.all([turningOn, turningOff]);
+    expect(cachePuts.slice(disarmed).some(({ body }) => JSON.parse(body).enabled)).toBe(false);
+    expect(deleted).toEqual(["new-row"]);
+    expect(localStorage.getItem(SUBSCRIPTION_ID_KEY)).toBeNull();
+    expect(JSON.parse(cachePuts.at(-1)!.body).enabled).toBe(false);
+  });
+
+  it.each([1, 2])("keeps a late ON disarmed when %s OFF cache writes fail", async (failures) => {
+    const onTab = await import("../app/shell/notification-settings");
+    vi.resetModules();
+    const offTab = await import("../app/shell/notification-settings");
+    installSharedLocks();
+    document.cookie = "tf_owner=account_A; Path=/";
+    installSubscribedBrowser({ value: false });
+    const attemptedOff = Promise.withResolvers<void>();
+    let remainingFailures = failures;
+    installFakeCaches({ beforeWrite: async (enabled) => {
+      if (enabled || remainingFailures === 0) return;
+      remainingFailures -= 1;
+      attemptedOff.resolve();
+      throw new Error("Cache write refused");
+    } });
+    const sent = Promise.withResolvers<void>();
+    const receipt = Promise.withResolvers<{ id: string }>();
+    subscribe.mockImplementationOnce(() => { sent.resolve(); return receipt.promise; });
+
+    const oldOn = onTab.applyWakeIntent(onTab.browserNotificationHost, true, "Mail");
+    await sent.promise;
+    const off = offTab.applyWakeIntent(offTab.browserNotificationHost, false, "Mail");
+    await attemptedOff.promise;
+    receipt.resolve({ id: "old-row" });
+    await Promise.all([oldOn, off]);
+    expect(cachePuts.some(({ body }) => JSON.parse(body).enabled)).toBe(false);
+    expect(deleted).toEqual(["old-row"]);
+
+    await expect(onTab.applyWakeIntent(onTab.browserNotificationHost, true, "Mail")).resolves.toBe("subscribed");
+    const state = JSON.parse(cachePuts.at(-1)!.body);
+    expect(state.enabled).toBe(true);
+    expect(state.revision).toEqual(expect.any(String));
+  });
+
+  it("reports a browser without a shared lock as unavailable for closed-window wakes", async () => {
+    const { applyWakeIntent, browserNotificationHost } = await import("../app/shell/notification-settings");
+    installSubscribedBrowser({ value: false });
+    Reflect.deleteProperty(navigator, "locks");
+    document.cookie = "tf_owner=account_A; Path=/";
+
+    await expect(applyWakeIntent(browserNotificationHost, true, "Mail")).resolves.toBe("unsupported");
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(cachePuts.map(({ body }) => JSON.parse(body).enabled)).toEqual([false]);
+  });
+
+  it("clears an enable already writing to the cache when the signed-in account changes", async () => {
+    const { applyWakeIntent, browserNotificationHost } = await import("../app/shell/notification-settings");
+    installSubscribedBrowser({ value: false });
+    document.cookie = "tf_owner=account_A; Path=/";
+    let entered!: () => void;
+    const writing = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: () => void;
+    const release = new Promise<void>((resolve) => { finish = resolve; });
+    installFakeCaches({ beforeWrite: async (enabled) => { if (enabled) { entered(); await release; } } });
+
+    const waking = applyWakeIntent(browserNotificationHost, true, "Mail from the old session");
+    await writing;
+    document.cookie = "tf_owner=account_B; Path=/";
+    finish();
+
+    await expect(waking).resolves.toBeNull();
+    const last = JSON.parse(cachePuts.at(-1)!.body);
+    expect(last.enabled).toBe(false);
+  });
+
+  it("removes a stale enable if the cache refuses to replace it with a disarmed state", async () => {
+    const { applyWakeIntent, browserNotificationHost, NOTIFY_CACHE, NOTIFY_STATE_URL } =
+      await import("../app/shell/notification-settings");
+    installSubscribedBrowser({ value: false });
+    document.cookie = "tf_owner=account_A; Path=/";
+    let entered!: () => void;
+    const writing = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: () => void;
+    const release = new Promise<void>((resolve) => { finish = resolve; });
+    installFakeCaches({ beforeWrite: async (enabled) => {
+      if (!enabled) throw new DOMException("storage full", "QuotaExceededError");
+      entered();
+      await release;
+    } });
+
+    const waking = applyWakeIntent(browserNotificationHost, true, "Mail from the old session");
+    await writing;
+    document.cookie = "tf_owner=account_B; Path=/";
+    finish();
+
+    await expect(waking).resolves.toBeNull();
+    expect(cacheDeletes).toEqual([NOTIFY_STATE_URL]);
+    const cache = await caches.open(NOTIFY_CACHE);
+    await expect(cache.match(NOTIFY_STATE_URL)).resolves.toBeUndefined();
+  });
+
+  it("orders a different tab's sign-out behind the pending cache write", async () => {
+    const openTab = await import("../app/shell/notification-settings");
+    installSubscribedBrowser({ value: false });
+    document.cookie = "tf_owner=account_A; Path=/";
+    const request = installSharedLocks();
+    let entered!: () => void;
+    const writing = new Promise<void>((resolve) => { entered = resolve; });
+    let finish!: () => void;
+    const release = new Promise<void>((resolve) => { finish = resolve; });
+    installFakeCaches({ beforeWrite: async (enabled) => { if (enabled) { entered(); await release; } } });
+    const waking = openTab.applyWakeIntent(openTab.browserNotificationHost, true, "Mail");
+    await writing;
+
+    vi.resetModules();
+    const otherTab = await import("../app/shell/notification-settings");
+    markSignedOutPending();
+    const signingOut = otherTab.revokeWakeRegistration({ signingOutOf: "account_A" });
+    await vi.waitFor(() => expect(request.mock.calls.filter(([name]) => name === "ohmail-notify-state")).toHaveLength(3));
+    expect(cachePuts).toEqual([]);
+    finish();
+    await Promise.all([waking, signingOut]);
+
+    expect(cachePuts.map(({ body }) => JSON.parse(body).enabled)).toEqual([true, false, false]);
+    expect(deleted).toEqual(["unused"]);
   });
 
   it("a STALLED push queue cannot hold the sign-out open — the revoke has a budget", async () => {

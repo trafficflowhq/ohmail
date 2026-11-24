@@ -6,14 +6,14 @@
  * an identical second reply then goes out under a new key and the SERVER decides. Only an
  * unverified record keeps resuming: it is the one evidence a message may already be out.
  */
-/* @reads: apps/webapp/app/shell/mail-send.ts */
+/* @reads: packages/app-logic/src/writing/mail-send.ts */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   releaseSendLock, resumeSendLock, sendIdentity, sendLocksKey, SEND_LOCK_FORMAT, type SendLock,
-} from "../app/shell/send-lock";
-import { sendLockOwed } from "../app/shell/mail-send";
+} from "@ohmail/app-logic/writing/send-lock";
+import { sendLockOwed } from "@ohmail/app-logic/writing/mail-send";
 
 const NOW = Date.now();
 const REPLY = { kind: "mail_send", inReplyTo: "m-1", body: "Thanks, Ada.", subject: "Re: Invoice", to: [{ name: "Ada", address: "ada@fake.test" }], mailboxId: "mb-1" };
@@ -78,7 +78,7 @@ describe("a send record is owed per key, and a settled key is spent", () => {
 describe("Cancel's sentence is the server's", () => {
   const read = (rel: string): string => readFileSync(join(__dirname, "..", rel), "utf8");
   it("both docks say the unreachable Cancel in the one new sentence, in both catalogues", () => {
-    const shell = read("app/shell/shell-compose.ts");
+    const shell = read("../../packages/app-logic/src/writing/shell-compose.ts");
     const en = JSON.parse(read("messages/en.json")) as { compose: Record<string, string> };
     const de = JSON.parse(read("messages/de.json")) as { compose: Record<string, string> };
     expect({

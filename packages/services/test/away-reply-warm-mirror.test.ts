@@ -1,12 +1,13 @@
-import { describe, expect, it } from "vitest";
+import type { EngineMessage } from "@ohmail/wire";
+import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { awayReplies, messages } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import {
   consentPartition, ohboxView, presentationReader,
-  type EngineMessage, type MemoryMirrorStore, type SyncChange,
+  type MemoryMirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
-import { verbWorld, type VerbWorld } from "../../client-engine/test/verb-parity/world.js";
+import { verbWorld, type VerbWorld } from "../../testing/test/verb-parity/world.js";
 import {
   AWAY_REPLY_REDELIVER_BATCH, awayReplyFlagRedeliverPass,
 } from "../../../apps/worker/src/away-reply-flag-redeliver.js";
@@ -266,9 +267,11 @@ describe("the away-reply flag reaches a mirror that predates it", () => {
     const w = await verbWorld();
     for (let i = 0; i < 5; i++) await seedThread(w, "machine");
     await w.engine.syncOnce();
+    const read = vi.spyOn(w.db, "execute");
     const r = await awayReplyFlagRedeliverPass(w.db as never, {
       accountId: w.accountId, batch: 2, maxPages: 10,
     });
+    expect(read).toHaveBeenCalledTimes(1);
     expect(r.redelivered).toBe(5);
     expect(r.exhausted).toBe(true);
     expect(r.cursor).toBe(null);
@@ -295,7 +298,7 @@ describe("the away-reply flag reaches a mirror that predates it", () => {
 
     const before = await changeRowsFor(w, ids);
     const sweep = makeAwayReplySweep();
-    const r = await sweep.runOnce(w.db as never, [w.accountId]);
+    const r = await sweep.runOnce(() => w.db as never, [w.accountId]);
 
     expect(r.redelivered, "the sweep stopped short of the candidate set").toBe(total);
     expect(r.done, "the gate closed on an unfinished sweep").toBe(true);
@@ -335,7 +338,7 @@ describe("the away-reply flag reaches a mirror that predates it", () => {
     const ids = await seedManyMachineReplies(w, 5);
     const sweep = makeAwayReplySweep();
 
-    const first = await sweep.runOnce(w.db as never, [w.accountId], { batch: 2, maxPages: 1 });
+    const first = await sweep.runOnce(() => w.db as never, [w.accountId], { batch: 2, maxPages: 1 });
     expect(first.redelivered).toBe(2);
     expect(first.done, "the gate closed although the walk was cut short").toBe(false);
     expect(sweep.done).toBe(false);
@@ -343,7 +346,7 @@ describe("the away-reply flag reaches a mirror that predates it", () => {
     // Resumes: the next attempts continue rather than repeating the first page.
     let seen = first.redelivered;
     for (let i = 0; i < 4 && !sweep.done; i++) {
-      seen += (await sweep.runOnce(w.db as never, [w.accountId], { batch: 2, maxPages: 1 })).redelivered;
+      seen += (await sweep.runOnce(() => w.db as never, [w.accountId], { batch: 2, maxPages: 1 })).redelivered;
     }
     expect(sweep.done, "the sweep never finished").toBe(true);
     expect(seen).toBe(5);
@@ -370,13 +373,13 @@ describe("the away-reply flag reaches a mirror that predates it", () => {
     const ids = await seedManyMachineReplies(w, 3);
 
     const sweep = makeAwayReplySweep();
-    const first = await sweep.runOnce(w.db as never, [w.accountId]);
+    const first = await sweep.runOnce(() => w.db as never, [w.accountId]);
     expect(first.redelivered).toBe(3);
     expect(sweep.done).toBe(true);
 
     // ONCE PER PROCESS: the same instance does nothing more, however often it is asked.
     for (let i = 0; i < 3; i++) {
-      const again = await sweep.runOnce(w.db as never, [w.accountId]);
+      const again = await sweep.runOnce(() => w.db as never, [w.accountId]);
       expect(again.redelivered, `attempt ${i + 2} swept again inside one process`).toBe(0);
       expect(again.accounts).toBe(0);
     }
@@ -385,7 +388,7 @@ describe("the away-reply flag reaches a mirror that predates it", () => {
     // A RESTART: a new instance is a new process, and it re-sweeps. This is what makes a sweep
     // spent against a flag-less API self-correcting rather than lost.
     const restarted = makeAwayReplySweep();
-    const second = await restarted.runOnce(w.db as never, [w.accountId]);
+    const second = await restarted.runOnce(() => w.db as never, [w.accountId]);
     expect(second.redelivered, "a restarted worker did not re-sweep").toBe(3);
     expect(await changeRowsFor(w, ids)).toBe(6);
   });
@@ -404,7 +407,7 @@ describe("the away-reply flag reaches a mirror that predates it", () => {
     const errs: string[] = [];
     // A syntactically valid uuid that owns nothing is not a failure; a malformed one throws in the
     // driver, which is the fault path under test.
-    const r = await sweep.runOnce(w.db as never, ["not-a-uuid", w.accountId], {
+    const r = await sweep.runOnce(() => w.db as never, ["not-a-uuid", w.accountId], {
       onError: (accountId) => { errs.push(accountId); },
     });
     expect(errs).toEqual(["not-a-uuid"]);

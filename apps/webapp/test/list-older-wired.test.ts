@@ -1,9 +1,11 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { FixturesAdapter, OhmailEngine, SERVER_VIEW_OF, type EngineMessage } from "@ohmail/client-engine";
+import { OhmailEngine, SERVER_VIEW_OF } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { createEngine } from "../app/shell/engine-config.js";
-import { createSyncGate } from "../app/shell/sync-scheduler.js";
+import { createSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * ═══ THE WAY BACK PAST THE WINDOW EXISTS ON THE PATH THE PRODUCT BUILDS ════════════════════

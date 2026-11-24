@@ -125,7 +125,7 @@ describe("nothing decides on it", () => {
   it("the header's name appears in no server source but the parser's", () => {
     const here = fileURLToPath(new URL(".", import.meta.url));
     const repo = join(here, "..", "..", "..");
-    const roots = ["packages/api/src", "packages/services/src", "apps/api-vercel/src", "apps/server/src", "apps/worker/src"];
+    const roots = ["packages/api/src", "packages/services/src", "apps/api-vercel/src", "apps/server/src", "apps/worker/src", "packages/organizer/src"];
     const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
       e.isDirectory() ? walk(join(dir, e.name)) : /\.(ts|mjs)$/.test(e.name) ? [join(dir, e.name)] : []);
     const spelling = new RegExp(CLIENT_HEADER, "i");

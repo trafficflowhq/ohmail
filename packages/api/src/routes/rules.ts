@@ -1,14 +1,15 @@
 import {
-  IdempotencyRaceLost, ServiceError, sha256,
-  type CreateRuleBody, type PatchRuleBody, type RuleRemoval, type RuleRequestResult,
+  IdempotencyRaceLost, ServiceError, sha256, withScreenerRuleRelease,
+  type RuleRemoval, type RuleRequestResult,
 } from "@trafficflow/services/mail";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { serviceContext } from "../context.js";
 import { lookupIdempotent, replayOf } from "../idempotency.js";
 import { canonicalQuery } from "../middleware.js";
-import { jsonResponse } from "../responses.js";
+import { answer, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
-import { rules, readBody } from "./shared.js";
+import { message, rules, readBody } from "./shared.js";
+import type { CreateRuleBody, PatchRuleBody, RequestOf, UntrustedBody } from "@ohmail/wire";
 
 /**
  * Rules CRUD. Mutations emit a `rule` change (X-Sync-Seq echoed); all account-scoped (404
@@ -34,6 +35,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/rules",
+    wire: true,
     relay: true,
     cost: "work",
     // One rule per four-field key: a create over an existing key answers that rule (200), so a
@@ -41,17 +43,24 @@ export const rulesRoutes: Route[] = [
     // press's answer back, 201 included.
     options: { idempotent: true },
     handler: async (req, deps) => {
-      const body = await readBody<CreateRuleBody>(req);
-      const result = await rules(deps).create(
-        serviceContext(deps, req), body, { idempotency: deps.idempotency ?? null },
+      const body = await readBody<RequestOf<"POST /rules">>(req);
+      const ctx = serviceContext(deps, req);
+      const idempotency = deps.idempotency ?? null;
+      const create = (inside: typeof ctx) => rules(deps).create(inside, body, { idempotency });
+      if (body.release !== undefined && (body.kind !== "sender" || typeof body.match !== "string"
+        || body.subjectContains != null || body.bodyContains != null || body.enabled === false)) {
+        throw new ServiceError("validation_failed", 400, "a Screener release requires a sender rule");
+      }
+      const result = body.release === undefined ? await create(ctx) : await withScreenerRuleRelease(
+        ctx, body.release, { sender: body.match, destination: body.destination }, message(deps), idempotency, create,
       );
       // 201 IS A RULE THAT EXISTS; 202 IS A RULE ASKED FOR — the Screener route's rule, and the
       // same reason (mail 0094). On an account whose every live mailbox another install
       // organizes, no `rules` row was written and there is nothing to hand back at 201. The
       // service stores exactly this status for the idempotent replay, so a first press and its
       // replay agree. `travel` says which install each request is waiting on.
-      if ("pending" in result) return jsonResponse(result, { status: 202 });
-      return jsonResponse(
+      if ("pending" in result) return answer<"POST /rules">()(result, { status: 202 });
+      return answer<"POST /rules">()(
         // `travel` rides BESIDE the rule on a mixed account, never instead of it: the row exists
         // here AND the same edit is in flight to the installs holding the other mailboxes.
         result.travel === undefined ? result.rule : { ...result.rule, travel: result.travel },
@@ -73,6 +82,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/rules/:id",
+    wire: true,
     relay: true,
     cost: "work",
     // A retried edit used to emit a SECOND `rule` change at a DIFFERENT seq, waking
@@ -81,14 +91,23 @@ export const rulesRoutes: Route[] = [
     // its update transaction and materializes the stored DTO there too.
     options: { idempotent: true },
     handler: async (req, deps, params) => {
-      const patch = await readBody<PatchRuleBody>(req);
-      const result = await rules(deps).update(
-        serviceContext(deps, req), params.id!, patch, { idempotency: deps.idempotency ?? null },
+      const patch = await readBody<RequestOf<"PATCH /rules/:id">>(req);
+      const ctx = serviceContext(deps, req);
+      const idempotency = deps.idempotency ?? null;
+      const id = params.id!;
+      const update = (inside: typeof ctx) => rules(deps).update(inside, id, patch, { idempotency });
+      if (patch.release !== undefined && (typeof patch.destination !== "string" || patch.key !== undefined
+        || patch.kind !== undefined || patch.match !== undefined || patch.enabled === true
+        || patch.subjectContains !== undefined || patch.bodyContains !== undefined)) {
+        throw new ServiceError("validation_failed", 400, "a Screener release can only retarget a sender rule");
+      }
+      const result = patch.release === undefined ? await update(ctx) : await withScreenerRuleRelease(
+        ctx, patch.release, { ruleId: id, destination: patch.destination!, enabled: patch.enabled }, message(deps), idempotency, update,
       );
       // 202 when the edit wrote nothing here — see the create route above. The body carries the
       // UNCHANGED rule, because that is what this install still holds.
-      if ("pending" in result) return jsonResponse(result, { status: 202 });
-      return jsonResponse(
+      if ("pending" in result) return answer<"PATCH /rules/:id">()(result, { status: 202 });
+      return answer<"PATCH /rules/:id">()(
         result.travel === undefined ? result.rule : { ...result.rule, travel: result.travel },
         { status: 200, seq: result.seq },
       );
@@ -97,6 +116,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/rules/:id",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "handler",
@@ -114,8 +134,8 @@ export const rulesRoutes: Route[] = [
       const accountId = deps.session?.accountId;
 
       /** The revoke's answer: 204, no body, the seq of the delete that actually happened. */
-      const revoked = (seq: number | null): Response =>
-        jsonResponse(null, { status: 204, seq: seq ?? undefined });
+      const revoked = (seq: number | null) =>
+        answer<"DELETE /rules/:id">()(null, { status: 204, seq: seq ?? undefined });
 
       /**
        * ONE VALUE IS BOTH THE ANSWER AND THE STORED RESPONSE — the shape `POST /rules` and
@@ -126,19 +146,26 @@ export const rulesRoutes: Route[] = [
        * request in flight shows on the rules surface instead. What is new is that nothing
        * re-derives which of the two states it holds.
        */
-      const answer = (r: RuleRemoval | RuleRequestResult): Response =>
-        "pending" in r ? jsonResponse(r, { status: 202 }) : revoked(r.seq);
+      const answered = (r: RuleRemoval | RuleRequestResult) =>
+        "pending" in r ? answer<"DELETE /rules/:id">()(r, { status: 202 }) : revoked(r.seq);
 
       // No key ⇒ nothing distinguishes a retry from a probe, so the service's plain 404 for
       // an id that is not there stands. `accountId` is belt-and-braces: `withSession` has
       // already 401'd an unauthenticated caller on this protected route.
       /* The published rule's key, read only at its address; `null` there for a body without one (a 400). */
-      const ruleKey = params.id === PUBLISHED_RULE_ID
-        ? ((await req.clone().json().catch(() => null)) as { key?: unknown } | null)?.key ?? null
-        : undefined;
+      const id = params.id!;
+      const body = (await req.clone().json().catch(() => null)) as UntrustedBody<RequestOf<"DELETE /rules/:id">> | null;
+      const ruleKey = id === PUBLISHED_RULE_ID ? body?.key ?? null : undefined;
+      const ctx = serviceContext(deps, req);
+      const remove = (idempotency?: { key: string; requestHash: string }) => {
+        const write = (inside: typeof ctx) => rules(deps).remove(inside, id, { idempotency, key: ruleKey });
+        return body?.release === undefined ? write(ctx) : withScreenerRuleRelease(
+          ctx, body.release, { ruleId: id }, message(deps), idempotency, write,
+        );
+      };
 
       if (!key || !accountId) {
-        return answer(await rules(deps).remove(serviceContext(deps, req), params.id!, { key: ruleKey }));
+        return answered(await remove());
       }
 
       const url = new URL(req.url);
@@ -155,9 +182,7 @@ export const rulesRoutes: Route[] = [
       if (found) return replayOf(found, requestHash);
 
       try {
-        return answer(await rules(deps).remove(serviceContext(deps, req), params.id!, {
-          idempotency: { key, requestHash }, key: ruleKey,
-        }));
+        return answered(await remove({ key, requestHash }));
       } catch (err) {
         // A concurrent same-key delete ends in two different ways, and `IdempotencyRaceLost` is
         // not the common one. Two requests deleting the same rule contend on the rules row first:

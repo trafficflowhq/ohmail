@@ -4,11 +4,20 @@
  * adopted): the dock says the send's own failure sentence, en and de, and offers Send again, rather
  * than closing silently over a message the person believes went.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider, type AbstractIntlMessages } from "next-intl";
-import { MutationRejectedError, OhmailEngine, MemoryMirrorStore, type EngineMutation } from "@ohmail/client-engine";
+import { useTranslations, NextIntlClientProvider, type AbstractIntlMessages } from "next-intl";
+import { MutationRejectedError, OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
+import { scheduleLabel } from "@ohmail/app-logic/text/format";
+import type { Translator } from "@ohmail/app-logic/text/translator";
+import { useSendText } from "@ohmail/app-logic/writing/mail-send-text";
+import { writeBesideOf } from "@ohmail/app-logic/writing/writing-of";
+import type { SendState } from "@ohmail/app-logic/writing/mail-send";
+import { TextProvider } from "@ohmail/app/text";
+import { WriteAbove, type Writing } from "@ohmail/app/write";
+import { Status } from "../../../packages/app/src/write/status/Status.js";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 
@@ -17,6 +26,7 @@ import de from "../messages/de.json";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 const NOW = new Date("2026-10-06T03:00:00.000Z");
+const scheduleAt = (when: string) => scheduleLabel(when, new Date());
 let root: Root | null = null;
 
 type Held = "pending" | "sent" | "failed" | "withdrawn";
@@ -59,24 +69,29 @@ const PARENT = {
 const REPLY = { kind: "mail_send", inReplyTo: "m-1", body: "Thanks, Ada.", subject: "Re: Invoice", to: [{ name: null, address: "ada@fake.test" }], mailboxId: "mb" };
 
 async function mount(engine: OhmailEngine, messages: AbstractIntlMessages, locale: string) {
-  const { useMailSend, canSend } = await import("../app/shell/mail-send.js");
-  const { SendStatus } = await import("../app/shell/SendStatus.js");
+  const { useMailSend, canSend } = await import("@ohmail/app-logic/writing/mail-send");
+  const beside = writeBesideOf(engine, "acct-1", "strict", false, String, () => true);
   let api!: { send: (m: unknown, o: unknown) => void; withdraw: (lane: string) => Promise<string>; state: () => { phase: string; code?: string }; canSend: () => boolean };
   const Probe = (): React.ReactElement => {
-    const mail = useMailSend(engine as never, (() => {}) as never, (() => {}) as never, (() => false) as never);
+    const t = useTranslations() as unknown as Translator;
+    const mail = useMailSend(engine as never, null, (() => {}) as never, useSendText(t, scheduleAt), (() => {}) as never, (() => false) as never);
     api = {
       send: (m, o) => (mail.send as unknown as (m: unknown, o: unknown) => void)(m, o),
       withdraw: (lane) => (mail.withdraw as unknown as (l: string) => Promise<string>)(lane),
       state: () => mail.stateOf("m-1") as { phase: string; code?: string },
       canSend: () => canSend(mail.stateOf("m-1") as never, REPLY as never),
     };
-    return h("div", { id: "status" }, h(SendStatus, { send: mail.stateOf("m-1") as never, scope: "reply", lane: null, showing: null }));
+    return h(WriteAbove, {
+      beside,
+      writing: {} as Writing,
+      children: h(Status, { at: "one", send: mail.stateOf("m-1") as SendState, held: null, locked: null, onResolve: () => {} }),
+    });
   };
   const host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(NextIntlClientProvider, { locale, messages, timeZone: "UTC", now: NOW, children: h(Probe) })); });
-  return { api: () => api, text: () => host.querySelector("#status")?.textContent ?? "" };
+  await act(async () => { root!.render(h(NextIntlClientProvider, { locale, messages, timeZone: "UTC", now: NOW, children: h(TextProvider, { locale: locale === "de" ? "de" : "en", messages, timeZone: "UTC", children: h(Probe) }) })); });
+  return { api: () => api, text: () => host.querySelector("[role=status]")?.textContent ?? "" };
 }
 const drain = async (): Promise<void> => { for (let i = 0; i < 24; i++) await act(async () => { await vi.advanceTimersByTimeAsync(1); }); };
 
@@ -108,7 +123,7 @@ describe("a Cancel said on its way, then the send fails, on the web dock", () =>
         await drain();
       }
       const out = { queuedPhase, queuedText, said, afterCancel, phase: s.api().state().phase, code: s.api().state().code ?? null, text: s.text(), canSend: s.api().canSend(), withdraws: w.withdraws.length };
-      const expected = (messages as { reply: { statusFailed: string } }).reply.statusFailed;
+      const expected = messages.write.status.failed;
       expect(out).toMatchObject({ said: "already_sent", phase: "failed", code: "send_failed", text: expected, canSend: true });
     });
   }

@@ -5,7 +5,15 @@
  * Reached by the paint-blocking boot stamp, so it imports no package.
  */
 import { setNativeTextSize } from "./native.js";
-import { DEFAULT_TEXT_SIZE, stampTextSize, type TextSize } from "../../webapp/app/shell/text-size.js";
+import { DEFAULT_TEXT_SIZE, TEXT_SIZE_KEY, stampTextSize, textSizeOf, type TextSize } from "../../../packages/app-logic/src/text/text-size-values.js";
+
+export function readTextSize(): TextSize {
+  try {
+    return textSizeOf(globalThis.localStorage?.getItem(TEXT_SIZE_KEY));
+  } catch {
+    return DEFAULT_TEXT_SIZE;
+  }
+}
 
 export function applyDesktopTextSize(size: TextSize): Promise<void> {
   return setNativeTextSize(size).then((took) => {

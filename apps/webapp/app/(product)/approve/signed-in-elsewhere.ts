@@ -9,8 +9,8 @@
  */
 
 import { SESSION_MINTED_KEY } from "../../session-refresh";
-import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
-import { readOwnerMarker } from "../../shell/owner-cookie";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { resolveOwnerOutcome } from "../session-outcome";
 
 /** What the jar names, as a value one reading can be compared with the next. */

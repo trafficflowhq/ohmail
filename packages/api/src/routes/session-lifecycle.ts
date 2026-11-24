@@ -1,10 +1,10 @@
 import { classifyRefreshFailure, type SessionLifecycle } from "@trafficflow/services/auth";
 import { ServiceError } from "@trafficflow/services/mail";
-import { serviceContext } from "../context.js";
-import { clearResumeCookie, clearSessionCookies, jarCookie, sessionCookies } from "../cookies.js";
+import { browserLogoutProofs, serviceContext } from "../context.js";
+import { clearResumeCookie, clearSessionCookies, jarAwaitsBrowserLogout, jarCookie, sessionCookies } from "../cookies.js";
 import { csrfTokenFor } from "../csrf.js";
 import type { ApiDeps } from "../deps.js";
-import { accountErasedResponse, erasedAccountBearer, withSessionAcquireCeiling } from "../middleware.js";
+import { accountErasedResponse, erasedAccountBearer, EXPECTED_ACCOUNT_HEADER, EXPECTED_FAMILY_HEADER, withSessionAcquireCeiling } from "../middleware.js";
 import type { Route } from "../router.js";
 import { sessionEnded, sessionRefused, withCachePurge } from "../session-end.js";
 import { cookieSurface, json, noContent, parseCookies, readBody } from "./shared.js";
@@ -47,6 +47,40 @@ function presentedRefreshCookie(jar: Readonly<Record<string, string>>, deps: Api
   return value === "" ? undefined : value;
 }
 
+/**
+ * THE NATIVE ROTATION: a bearer client presenting its own refresh token in the body, rotated with no grace (it
+ * rotates serially, and a re-presentation is theft) on the long rolling window. One helper for both bearer doors
+ * that rotate: `/auth/refresh`'s body branch and `/pair/handoff`, which mints a phone app's handoff on the pair this
+ * answers. A refusal is answered here exactly as `/auth/refresh` answers it (a resume marker cleared where nothing
+ * was presented on a cookie surface, an erased account's refusal by name); anything else travels as it was thrown.
+ */
+export async function rotateNativeRefresh(
+  req: Request, deps: ApiDeps, jar: Readonly<Record<string, string>>, body: { refreshToken?: string; attemptId?: string },
+): Promise<{ tokens: NonNullable<Awaited<ReturnType<SessionLifecycle["refresh"]>>["tokens"]> } | Response> {
+  try {
+    const { tokens } = await sessionLifecycle(deps).refresh(
+      serviceContext(deps, req),
+      { refreshToken: body.refreshToken, attemptId: body.attemptId },
+      { surface: "native" },
+    );
+    return { tokens: tokens! };
+  } catch (err) {
+    // A jar holding the resume marker and no refresh token sends every visit through the splash
+    // until the marker goes, so the answer that finds nothing to rotate takes it with it.
+    if (err instanceof ServiceError && err.code === "refresh_missing" && cookieSurface(deps)
+      && jarCookie(jar, "tf_resume") !== undefined) {
+      return json({ error: { code: err.code, message: err.message } }, err.httpStatus, clearResumeCookie());
+    }
+    // A refused token of an ERASED account is told so — the session door's rule, for the
+    // client that declared it (`erasedAccountBearer`). Anything else travels as it was.
+    if (classifyRefreshFailure(err) === "session_refused" && typeof body.refreshToken === "string"
+      && await erasedAccountBearer(req, deps, body.refreshToken)) {
+      return accountErasedResponse();
+    }
+    throw err;
+  }
+}
+
 export const sessionLifecycleRoutes: Route[] = [
   {
     // enrollmentOk: abandoning a half-finished enrollment must always be possible. The body's ONE
@@ -68,18 +102,38 @@ export const sessionLifecycleRoutes: Route[] = [
     // names the live family — `/auth/logout` sees only the replaced access token and 401s before
     // its handler. Revokes that family and the resolved session's (`enrollmentOk`, so a sign-out
     // during enrollment ends that session too); `{ refreshToken }` in the body is the same arm for a
-    // bearer client. The jar is cleared on the 204 and on the door's own 401, never on a fault: the
-    // retry needs the cookie the fault left in place. A token tells its holder one thing here —
-    // whether it was ever minted (204 in any state, 401 never) — and presenting it ends its family.
+    // bearer client. Revocation leaves the cookie jar alone. A browser holding the cookie lock can
+    // separately clear a pending, verified family after it is revoked.
     // A busy pool answers it fast, as the refresh door's: held past the client's deadline, the
     // sign-out went unconfirmed and the browser was left marked pending (`withSessionAcquireCeiling`).
     method: "POST",
     pattern: "/auth/refresh/logout",
     relay: false,  /* resolves a credential from the request */
     cost: "ceremony",
-    options: { public: true, enrollmentOk: true, middleware: [withSessionAcquireCeiling] },
+    options: { public: true, enrollmentOk: true, credentialLookup: true, middleware: [withSessionAcquireCeiling] },
     handler: async (req, deps) => {
-      let presented = presentedRefreshCookie(parseCookies(req.headers.get("cookie")), deps);
+      const jar = parseCookies(req.headers.get("cookie"));
+      const expectedFamily = req.headers.get(EXPECTED_FAMILY_HEADER) ?? undefined;
+      const browser = cookieSurface(deps);
+      const markedFamily = browser ? jarCookie(jar, "tf_family") : undefined;
+      if (markedFamily !== undefined && markedFamily !== expectedFamily) {
+        throw new ServiceError("session_mismatch", 409, "the browser session changed");
+      }
+      const cookieRefresh = presentedRefreshCookie(jar, deps);
+      const ctx = serviceContext(deps, req);
+      if (req.headers.get("X-Ohmail-Clear-Logout") === "1") {
+        if (!browser || expectedFamily === undefined || !jarAwaitsBrowserLogout(jar)) {
+          throw new ServiceError("session_mismatch", 409, "the browser session changed");
+        }
+        const access = jarCookie(jar, "tf_session");
+        if (!cookieRefresh && !access && markedFamily === expectedFamily) {
+          // This pending family has already lost both credentials. Retire its remaining markers.
+          return sessionEnded(noContent(clearSessionCookies()));
+        }
+        await sessionLifecycle(deps).assertBrowserLogout(expectedFamily, browserLogoutProofs(deps, cookieRefresh, access));
+        return sessionEnded(noContent(clearSessionCookies()));
+      }
+      let presented = cookieRefresh;
       if (presented === undefined) {
         const body = await readBody<{ refreshToken?: unknown }>(req);
         if (body.refreshToken !== undefined && typeof body.refreshToken !== "string") {
@@ -88,16 +142,18 @@ export const sessionLifecycleRoutes: Route[] = [
         presented = body.refreshToken === "" ? undefined : body.refreshToken;
       }
       try {
-        await sessionLifecycle(deps).logout(serviceContext(deps, req), { refreshToken: presented });
+        await sessionLifecycle(deps).logout(ctx, {
+          refreshToken: presented, expectedFamily, browser: cookieRefresh !== undefined,
+          expectedAccount: req.headers.get(EXPECTED_ACCOUNT_HEADER) ?? undefined,
+        });
       } catch (err) {
         if (classifyRefreshFailure(err) !== "session_refused") throw err;
         const refusal = err as ServiceError;
         return sessionEnded(json(
           { error: { code: refusal.code, message: refusal.message } }, refusal.httpStatus,
-          cookieSurface(deps) ? clearSessionCookies() : [],
         ));
       }
-      return sessionEnded(noContent(cookieSurface(deps) ? clearSessionCookies() : []));
+      return sessionEnded(noContent());
     },
   },
   {
@@ -115,7 +171,7 @@ export const sessionLifecycleRoutes: Route[] = [
     // safe: the rotation re-answers a repeated attempt id and converges a cookie retry in its grace.
     // `withCachePurge` first: the cache clear a refusal no longer carries is answered before the jar is read.
     options: {
-      public: true, credentialSubject: true, replaySafe: true, middleware: [withCachePurge, withSessionAcquireCeiling],
+      public: true, credentialSubject: true, credentialLookup: true, replaySafe: true, middleware: [withCachePurge, withSessionAcquireCeiling],
     },
     handler: async (req, deps) => {
       const jar = parseCookies(req.headers.get("cookie"));
@@ -144,10 +200,14 @@ export const sessionLifecycleRoutes: Route[] = [
           // reads as a decision.
           const { tokens } = await sessionLifecycle(deps).refresh(
             serviceContext(deps, req), { refreshToken: cookieRefresh, attemptId },
-            { concurrentGrace: true, surface: "cookie" },
+            {
+              concurrentGrace: true, surface: "cookie",
+              expectedAccount: req.headers.get(EXPECTED_ACCOUNT_HEADER) ?? undefined,
+              expectedFamily: req.headers.get(EXPECTED_FAMILY_HEADER) ?? undefined,
+            },
           );
           // No `tf_owner`: an echo of the request's jar named the account over a Sign out pressed meanwhile.
-          return noContent(sessionCookies(tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, null));
+          return noContent(sessionCookies(tokens!, csrfTokenFor(tokens!.accessToken), deps.authConfig, null, deps.credentialFamily));
         } catch (err) {
           /*
            * DECIDED BY THE THROWN VALUE'S CLASS. This answered every failure with one coded 401
@@ -194,28 +254,8 @@ export const sessionLifecycleRoutes: Route[] = [
       // older build still take, and that arm is the theft detector. The service bounds it and
       // refuses a malformed one before consuming anything (`readAttemptId`); nothing about it is
       // logged here or there.
-      try {
-        const { tokens } = await sessionLifecycle(deps).refresh(
-          serviceContext(deps, req),
-          { refreshToken: body.refreshToken, attemptId: body.attemptId },
-          { surface: "native" },
-        );
-        return json({ tokens }, 200);
-      } catch (err) {
-        // A jar holding the resume marker and no refresh token sends every visit through the splash
-        // until the marker goes, so the answer that finds nothing to rotate takes it with it.
-        if (err instanceof ServiceError && err.code === "refresh_missing" && cookieSurface(deps)
-          && jarCookie(jar, "tf_resume") !== undefined) {
-          return json({ error: { code: err.code, message: err.message } }, err.httpStatus, clearResumeCookie());
-        }
-        // A refused token of an ERASED account is told so — the session door's rule, for the
-        // client that declared it (`erasedAccountBearer`). Anything else travels as it was.
-        if (classifyRefreshFailure(err) === "session_refused" && typeof body.refreshToken === "string"
-          && await erasedAccountBearer(req, deps, body.refreshToken)) {
-          return accountErasedResponse();
-        }
-        throw err;
-      }
+      const rotated = await rotateNativeRefresh(req, deps, jar, body);
+      return rotated instanceof Response ? rotated : json({ tokens: rotated.tokens }, 200);
     },
   },
 ];

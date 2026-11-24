@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { KbService } from "../src/index.js";
+import { KbService, dbFor } from "../src/index.js";
 import { ServiceError } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
@@ -11,8 +11,8 @@ async function setup() {
   const db = await makeTestDb();
   const A = randomUUID();
   const B = randomUUID();
-  const ctxA: ServiceContext = { db, accountId: A, userId: null, now: () => new Date("2026-07-28T12:00:00Z"), requestId: "r" };
-  const ctxB: ServiceContext = { db, accountId: B, userId: null, now: () => new Date("2026-07-28T12:00:00Z"), requestId: "r" };
+  const ctxA: ServiceContext = { db: dbFor(db, A), accountId: A, userId: null, now: () => new Date("2026-07-28T12:00:00Z"), requestId: "r" };
+  const ctxB: ServiceContext = { db: dbFor(db, B), accountId: B, userId: null, now: () => new Date("2026-07-28T12:00:00Z"), requestId: "r" };
   return { db, A, B, ctxA, ctxB };
 }
 

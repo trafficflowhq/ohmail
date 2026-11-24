@@ -1,0 +1,142 @@
+{
+  "component": "Dialog",
+  "state": "store",
+  "look": "paper-dark-phone",
+  "place": "window",
+  "target": [16, 327.125, 358, 189.75],
+  "clip": [16, 327, 358, 190],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "24px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "26.88px",
+      "letterSpacing": "-0.528px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    {
+      "boxShadow": "rgba(0, 0, 0, 0.7) 0px 18px 48px -12px, rgba(246, 241, 233, 0.08) 0px 0px 0px 1px",
+      "borderRadius": "20px"
+    },
+    { "backgroundColor": "rgb(127, 160, 255)", "borderRadius": "999px" },
+    { "outline": "2px solid rgb(246, 241, 233) 2px", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "dialog",
+      "name": "",
+      "box": [16, 327.1, 358, 189.8],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgb(35, 32, 28)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "20px",
+        "paddingTop": "32px",
+        "paddingRight": "32px",
+        "paddingBottom": "32px",
+        "paddingLeft": "32px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "ohcal is the calendar beside ohmail", "type": 0 }],
+      "surfaces": [
+        { "box": [16, 327.1, 358, 189.8], "paint": 0 },
+        { "box": [201.7, 397.8, 8.2, 8.2], "paint": 1 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Open Google Play",
+      "box": [48, 436.9, 177.2, 48],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(246, 241, 233)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "24px",
+        "paddingBottom": "0px",
+        "paddingLeft": "24px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Open Google Play", "type": 1 }],
+      "surfaces": [{ "box": [48, 436.9, 177.2, 48], "paint": 2 }]
+    },
+    {
+      "role": "button",
+      "name": "Cancel",
+      "box": [233.2, 436.9, 74.3, 48],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "Cancel", "type": 2 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

@@ -1,16 +1,17 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, folderState, organizerRequests } from "@trafficflow/db";
-import { ScreenerService } from "@trafficflow/services/mail";
+import { dbFor, ScreenerService } from "@trafficflow/services/mail";
 import {
   META_RECORDS_MAX_PER_FETCH, deriveRequestKey, makeRequestOrganizerIo, makeRequestReaderIo,
   type LeaseImapClient,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { memoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
-import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
+import { applyMetaRequests, driveOutstandingRequests } from "@ohmail/organizer/request-drain";
 
 /**
  * A REQUEST PAST THE 500-RECORD WINDOW (REQUEST-DRAIN-REFUSES-PAST-META-WINDOW).
@@ -44,7 +45,7 @@ async function world(strays: number) {
     subject: "s", fromAddress: "person@example.com", unread: true,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: msg!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   const requestKey = deriveRequestKey({ auth: { user: "shared@x.example", pass: "basic-account-password" }, address: "shared@x.example" })!;
@@ -58,7 +59,7 @@ describe("a request past the 500-record window of ohmail/_meta", () => {
       const lines: { event: string; detail: Record<string, unknown> }[] = [];
       const log = (event: string, detail: Record<string, unknown>): void => { lines.push({ event, detail }); };
       const svc = new ScreenerService({});
-      await svc.decide({ db: w.db, accountId: w.accountId, userId: null, now: () => t0, requestId: "r" }, w.msgId, { decision: "yes" });
+      await svc.decide({ db: dbFor(w.db, w.accountId), accountId: w.accountId, userId: null, now: () => t0, requestId: "r" }, w.msgId, { decision: "yes" });
 
       const sent = await driveOutstandingRequests(
         w.db, { mailboxId: w.mailboxId, accountId: w.accountId, installId: READER_SELF.installId, adapter: { requestReaderIo: () => w.reader } as unknown as MailboxAdapter, requestKey: w.requestKey },
@@ -91,7 +92,7 @@ describe("a request the folder grew past after it was appended", () => {
     const lines: { event: string; detail: Record<string, unknown> }[] = [];
     const log = (event: string, detail: Record<string, unknown>): void => { lines.push({ event, detail }); };
     const svc = new ScreenerService({});
-    await svc.decide({ db: w.db, accountId: w.accountId, userId: null, now: () => t0, requestId: "r" }, w.msgId, { decision: "yes" });
+    await svc.decide({ db: dbFor(w.db, w.accountId), accountId: w.accountId, userId: null, now: () => t0, requestId: "r" }, w.msgId, { decision: "yes" });
     const reader = { requestReaderIo: () => w.reader } as unknown as MailboxAdapter;
     expect((await driveOutstandingRequests(w.db, { mailboxId: w.mailboxId, accountId: w.accountId, installId: READER_SELF.installId, adapter: reader, requestKey: w.requestKey }, READER_SELF, at(1), log)).sent).toBe(1);
     for (let i = 0; i < META_RECORDS_MAX_PER_FETCH + 20; i++) w.server.seed(META, `Subject: stray ${i}\r\nX-Other-Client: 1\r\n\r\nbody`, t0);

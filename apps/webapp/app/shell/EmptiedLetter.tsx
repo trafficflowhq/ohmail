@@ -2,10 +2,12 @@
 
 import { useTranslations } from "next-intl";
 import { Button, Spinner } from "@ohmail/ui";
-import type { LiveBodyRefusal, LiveBodyState } from "./live-body";
+import type { LiveBodyRefusal, LiveBodyState } from "@ohmail/app-logic/reading/live-body";
 
 /** Where Settings → Storage lives in the shell's routes, on every door. */
-export const STORAGE_PANE_HREF = "#/settings/storage";
+import { STORAGE_PANE_HREF } from "./storage-state";
+
+export { STORAGE_PANE_HREF } from "./storage-state";
 
 const REFUSAL_KEY: Record<LiveBodyRefusal, string> = {
   gone: "liveGone", too_large: "liveTooLarge", busy: "liveBusy", unreachable: "liveUnreachable", failed: "liveFailed",
@@ -13,7 +15,7 @@ const REFUSAL_KEY: Record<LiveBodyRefusal, string> = {
 
 /**
  * A LETTER WHOSE TEXT WAS EMPTIED FOR SPACE, where the mail server can still be asked: the sentence,
- * Load it now and Storage settings. Loaded, the text is the reader's (`MessagePane` draws it through
+ * Load it now and Storage settings. Loaded, the text is the reader's (`packages/app/src/reader` draws it through
  * the same body renderer) and this says where it came from. Nothing here writes anything.
  */
 export function EmptiedLetter({ sentence, live, onLoad }: {

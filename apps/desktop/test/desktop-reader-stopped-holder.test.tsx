@@ -2,12 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { waitFor, within } from "@testing-library/react";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { DesktopGate } from "../src/DesktopGate.js";
+import { IntlProvider } from "use-intl";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../../webapp/app/shell/locale";
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 
 /**
@@ -19,9 +22,9 @@ import type { EngineStatus } from "../src/bridge-fetch.js";
  */
 
 let FACTS: MailboxFacts[] | null = null;
-vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
-    "../../webapp/app/shell/MailStateProvider",
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
+  const real = await vi.importActual<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>(
+    "@ohmail/app-logic/mail-state/mail-state-binding",
   );
   return { ...real, useMailboxFacts: () => FACTS };
 });
@@ -58,7 +61,6 @@ const PREFERENCE = JSON.stringify({
   ohboxPolicy: "people_only",
   ohboxBar: "Only people who write to me by hand.",
   defaultBar: "Keep my Ohbox for real people writing to me.",
-  screenerAutoApply: false,
 });
 
 /** Encode an answer exactly as the shell's `engine_request` does — length, metadata, bytes. */
@@ -85,6 +87,7 @@ async function mount(
 ): Promise<string> {
   FACTS = facts;
   if (pane === "settings") delete shellHost.__TAURI_INTERNALS__;
+  if (pane === "screening") window.location.hash = "#/settings/screener";
   // `DOOR_COPY` reads the injected catalogue, not the provider — see `locale.ts`.
   setActiveCatalog(locale, locale === "de" ? fillFrom(en as never, de as never) as never : en as never);
   const node = pane === "about"
@@ -96,23 +99,36 @@ async function mount(
         status: { ...status, mode: "cloud" }, session: "live", sealFailed: false,
         onStatus: () => undefined, onSwitchDoor: () => undefined, onSignIn: () => undefined,
       } as never)
-      : h((await import("../src/DesktopScreening.js")).DesktopScreening, { door: "local" });
+      : h(ThemeProvider, { children: h(ToastHost, { children: h(DesktopGate) }) });
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
+    root!.render(h(IntlProvider, {
       locale, messages: (locale === "de" ? de : en) as never, timeZone: "UTC", children: node,
     }));
   });
   // The Screener pane reads its stored preference in an effect; the text belongs after it.
   await act(async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); });
+  if (pane === "screening") {
+    const words = locale === "de" ? de : en;
+    const region = await within(hostEl).findByRole("region", { name: words.settings.screener });
+    await waitFor(() => expect(region.textContent).toContain(words.desktopScreener.postureLabel));
+    return region.textContent ?? "";
+  }
   return hostEl.textContent ?? "";
 }
 
 beforeEach(() => {
   shellHost.__TAURI_INTERNALS__ = {
-    invoke: async (command) => (command === "engine_request" ? encode(200, PREFERENCE) : null),
+    invoke: async (command, payload) => {
+      if (command === "engine_status") return { ...status, mailboxId: LIVE.id };
+      if (command !== "engine_request") return null;
+      const url = String(payload?.url ?? "");
+      if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: FACTS }));
+      if (url === "/account/screening") return encode(200, PREFERENCE);
+      return encode(404, "{}");
+    },
   };
 });
 
@@ -122,6 +138,7 @@ afterEach(async () => {
   hostEl?.remove();
   hostEl = null;
   setActiveCatalog(DEFAULT_LOCALE, null);
+  window.location.hash = "";
   delete shellHost.__TAURI_INTERNALS__;
 });
 

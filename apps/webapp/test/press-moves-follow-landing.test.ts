@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, landingOfMoves, pressForecast,
-  type EngineMessage, type Folder, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
-import { movesAtLanding, planScreeningChange, senderScreening } from "../app/shell/sender-screening";
+import { movesAtLanding, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * A PRESS MOVES ONLY WHAT THE LIST WILL SHOW AT THE PLACE (SCREENING-VISIBLE-MOVES-IGNORE-TERM-RULES).

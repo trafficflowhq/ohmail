@@ -7,14 +7,14 @@
  * shape it refuses is planted into a copy of the real file and refused by name; the real tree is
  * admitted.
  */
-/* @reads: apps/webapp/app/shell/send-lock.ts apps/desktop/src/window-sweep.ts */
+/* @reads: packages/app-logic/src/writing/send-lock.ts apps/desktop/src/window-sweep.ts */
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import ts from "typescript";
 
 const ROOT = process.cwd();
-const SEND_LOCK = resolve(ROOT, "apps/webapp/app/shell/send-lock.ts");
+const SEND_LOCK = resolve(ROOT, "packages/app-logic/src/writing/send-lock.ts");
 const JAR_PREFIX = "ohmail.send.locks";
 
 /**
@@ -145,7 +145,7 @@ function isOwedReading(arg: ts.Expression, at: ts.Node): boolean {
 function censusOfCallers(files: Array<{ path: string; src: string }>): string[] {
   const refusals: string[] = [];
   for (const { path, src } of files) {
-    if (path.endsWith("shell/send-lock.ts")) continue;
+    if (path.endsWith("app-logic/src/writing/send-lock.ts")) continue;
     const sf = parse(src, path);
     walk(sf, (n) => {
       if (ts.isImportDeclaration(n) && ts.isStringLiteral(n.moduleSpecifier) && /send-lock(\.js)?$/.test(n.moduleSpecifier.text)) {
@@ -196,7 +196,10 @@ function productFiles(): Array<{ path: string; src: string }> {
     }
   };
   go(resolve(ROOT, "apps/webapp/app"));
+  go(resolve(ROOT, "packages/app-logic/src"));
+  go(resolve(ROOT, "packages/letter-body/src"));
   go(resolve(ROOT, "apps/desktop/src"));
+  go(resolve(ROOT, "apps/paired-page/src"));
   return out;
 }
 
@@ -237,7 +240,7 @@ describe("a send record leaves the jar by one door", () => {
   }
 
   it("a filter planted in claimSendLock is refused by name", () => {
-    const anchor = "export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: string | null = storageOwner()): void {";
+    const anchor = "export function claimSendLock(lock: SendLock, owed: SendLockOwed, owner: StorageScope): void {";
     expect(real.includes(anchor), "the anchor moved").toBe(true);
     const planted = real.replace(anchor, `${anchor}\n  void loadOrEmpty(owner).filter((r) => r.lane !== lock.lane);`);
     expect(censusOfSendLock(planted)).toEqual([".filter() in the writer claimSendLock"]);
@@ -247,11 +250,11 @@ describe("a send record leaves the jar by one door", () => {
     const files = productFiles();
     expect(files.length, "the walk read nothing").toBeGreaterThan(100);
     const reached = files
-      .filter((f) => !f.path.endsWith("shell/send-lock.ts"))
+      .filter((f) => !f.path.endsWith("app-logic/src/writing/send-lock.ts"))
       .filter((f) => { let hit = false; walk(parse(f.src, f.path), (n) => { if (ts.isCallExpression(n) && OWED_AT.has(calleeName(n))) hit = true; }); return hit; })
       .map((f) => f.path).sort();
     expect(reached, "the callers this census reads").toEqual([
-      "apps/webapp/app/shell/compose-autosave.ts", "apps/webapp/app/shell/mail-send.ts", "apps/webapp/app/shell/shell-compose.ts",
+      "packages/app-logic/src/writing/compose-autosave.ts", "packages/app-logic/src/writing/mail-send.ts", "packages/app-logic/src/writing/shell-compose.ts",
     ]);
     expect(censusOfCallers(files)).toEqual([]);
   });

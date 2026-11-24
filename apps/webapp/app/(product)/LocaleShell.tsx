@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { IntlErrorCode, NextIntlClientProvider, type IntlError } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
 import { LocaleContext, type LocaleControls } from "../shell/LocaleContext";
 import {
   LOCALES, normalizeLocale, rememberLocale, setActiveCatalog, type AppLocale,
@@ -118,18 +119,19 @@ export function LocaleShell({
     document.documentElement.lang = state.locale;
   }
 
-  const apply = useCallback(async (next: AppLocale): Promise<void> => {
+  const apply = useCallback(async (next: AppLocale, holds?: () => boolean): Promise<void> => {
     const messages = await loadCatalog(next);
+    if (holds && !holds()) return;
     rememberLocale(next);
     setState({ locale: next, messages, complete: true });
   }, []);
 
   const adoptLocale = useCallback(
-    async (next: AppLocale): Promise<void> => {
-      if (next === state.locale) return;
+    async (next: AppLocale, holds?: () => boolean): Promise<void> => {
+      if (next === state.locale || (holds && !holds())) return;
       setBusy(true);
       try {
-        await apply(next);
+        await apply(next, holds);
       } finally {
         setBusy(false);
       }
@@ -161,11 +163,8 @@ export function LocaleShell({
       setLocale: adoptLocale,
       adoptLocale,
       busy,
-      /* The browser client's language is the ACCOUNT's: `AccountLocale` wraps this provider inside
-         the mail client and writes `PATCH /consent/settings` before the catalogue swaps. On
-         `/login` and `/join` there is no account yet and this setter is the whole persistence, but
-         the row that states the reach is only ever drawn inside Settings, behind that wrapper. */
-      scope: "account" as const,
+      /* The signed-in mail frame adds the account write. This provider only changes this browser. */
+      scope: "install" as const,
     }),
     [state.locale, adoptLocale, busy],
   );
@@ -178,7 +177,10 @@ export function LocaleShell({
         timeZone={zone}
         {...(state.complete ? {} : PENDING)}
       >
-        {children}
+        {/* The frame's reader, over the same catalogue, language and zone as the intl provider (`@ohmail/app/text`). */}
+        <TextProvider locale={state.locale} messages={state.messages} timeZone={zone} pending={!state.complete}>
+          {children}
+        </TextProvider>
       </NextIntlClientProvider>
     </LocaleContext.Provider>
   );

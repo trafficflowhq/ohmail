@@ -1,16 +1,14 @@
 /** @vitest-environment jsdom */
+import type { AutoFiledItemWire, EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
 import {
-  OhmailEngine, MemoryMirrorStore, type AutoFiledItemWire, type EngineMessage, type SyncChange,
+  OhmailEngine, MemoryMirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
-import messages from "../messages/en.json";
 import { createEngine } from "../app/shell/engine-config.js";
-import { impersonationSeenKey } from "../app/shell/impersonation-filed.js";
-import { settleFirstPaint } from "./_first-paint.js";
+import { impersonationSeenKey } from "@ohmail/app-logic/screener/impersonation-filed";
+import { setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { act, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 
 /**
  * "N LETTERS THAT CLAIMED TO BE A COMPANY WENT TO SPAM" — the Screener's one quiet line (owner,
@@ -19,27 +17,12 @@ import { settleFirstPaint } from "./_first-paint.js";
  * filing for any other reason is not this line's, and a door that cannot say draws nothing.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
-
 const NOW = new Date("2026-11-09T12:00:00.000Z");
 let seq = 0;
 
 function held(id: string, from: string, folder: EngineMessage["folder"] = "ohmail/Screener"): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    id, accountId: "acct_live_1", mailboxId: "mb_1", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
     date: "2026-11-09T09:00:00.000Z", folder, snippet: `snippet ${id}`, unread: true,
     hasAttachments: false, attachmentCount: 0,
@@ -99,22 +82,23 @@ async function engineWith(door: boolean): Promise<OhmailEngine> {
   });
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+const ACCOUNT = "acct_live_1";
+let host: HTMLElement;
 
 beforeEach(() => {
+  installShellEnv();
+  window.localStorage.clear();
+  seq = 0;
   filed = [PHISH, ACT];
   undone = [];
   incoming = [];
   reads = 0;
   gate = null;
-  try { localStorage.removeItem(impersonationSeenKey()); } catch { /* none to clear */ }
 });
+
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
+  await teardownShellEnv();
+  setStorageOwner(null);
 });
 
 const created = (m: EngineMessage): SyncChange =>
@@ -129,41 +113,31 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
 }
 
-async function mount(engine: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
-    return h(ScreenerView, {
-      owed: false, state, segment: "waiting", settled: true,
-      selection: { waiting: null, screened: null, spam: null } as never, onSelect: () => {},
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never);
-  }
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, { storageKey: null, children: h(KeymapProvider, { children: h(Probe) }) }),
-      }),
-    );
+async function mount(engine: OhmailEngine, scope = ACCOUNT): Promise<void> {
+  setStorageOwner(scope);
+  window.location.hash = "#/screener";
+  host = await mountShell([mailbox({
+    id: "mb_1", lastSyncAt: NOW.toISOString(), organizerRole: "organizer", organizeConsentedAt: NOW.toISOString(),
+  })], {
+    engine, resolveOwner: async () => ({ kind: "owner", accountId: scope }),
+    suggestWire: "none", junkWire: "none",
   });
-  await flush();
-  await settleFirstPaint();
+  await tick(50);
 }
 
-const line = (): HTMLElement | null => host!.querySelector(".scn-impersonated");
-const button = (text: string): HTMLElement => {
-  const hits = [...(line()?.querySelectorAll<HTMLElement>("button") ?? [])].filter((b) => (b.textContent ?? "").trim() === text);
-  if (hits.length !== 1) throw new Error(`${hits.length} buttons read "${text}"`);
-  return hits[0]!;
-};
+async function remount(engine: OhmailEngine, scope = ACCOUNT) {
+  await teardownShellEnv();
+  installShellEnv();
+  await mount(engine, scope);
+}
+
+const TITLE = "1 letter that claimed to be a company went to Spam";
+const lead = () => within(host).queryAllByRole("status")
+  .find((status) => /letters? that claimed to be a company went to Spam/.test(status.textContent ?? ""))
+  ?.querySelector("b") ?? null;
+const button = (name: string) => within(host).getByRole("button", { name });
+const review = () => within(document.body).getByRole("dialog", { name: TITLE });
+
 const press = async (el: HTMLElement): Promise<void> => {
   await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   await flush();
@@ -171,49 +145,58 @@ const press = async (el: HTMLElement): Promise<void> => {
 
 describe("the Screener's line for letters filed to Spam for claiming a company", () => {
   it("counts only the impersonation filings, and Review gives each its reason and Put back", async () => {
-    await mount(await engineWith(true));
-    expect(line()?.querySelector(".scn-held-lead")?.textContent).toBe("1 letter that claimed to be a company went to Spam");
-    expect(line()?.textContent ?? "").not.toContain("deals@shop.example");
+    await remount(await engineWith(true));
+    expect(lead()?.textContent).toBe("1 letter that claimed to be a company went to Spam");
+    expect(lead()?.parentElement?.textContent ?? "").not.toContain("deals@shop.example");
     await press(button("Review"));
-    const text = line()?.textContent ?? "";
+    const text = review().textContent ?? "";
     expect(text).toContain("billing@hosting-renewals.example · Erinnerung: Zahlungsinformationen");
     expect(text).toContain("This message claims to be from Metanet, but hosting-renewals.example isn't one of Metanet's addresses.");
-    await press(button("Put back"));
+    await press(within(review()).getByRole("button", { name: "Put back" }));
     expect(undone).toEqual([["p1"]]);
-    expect(line(), "the line stays after its letter went back").toBeNull();
+    expect(lead(), "the line stays after its letter went back").toBeNull();
   });
 
   it("OK lets the line go on this device until a newer filing", async () => {
-    await mount(await engineWith(true));
+    const engine = await engineWith(true);
+    await mount(engine);
     await press(button("OK"));
-    expect(line()).toBeNull();
-    expect(localStorage.getItem(impersonationSeenKey())).toBe(PHISH.filedAt);
-    await act(async () => { root!.unmount(); });
-    root = null;
-    host?.remove();
-    await mount(await engineWith(true));
-    expect(line(), "an acknowledged filing came back").toBeNull();
-    await act(async () => { root!.unmount(); });
-    root = null;
-    host?.remove();
+    expect(lead()).toBeNull();
+    expect(localStorage.getItem(impersonationSeenKey(ACCOUNT))).toBe(PHISH.filedAt);
+    const manual = held("manual", "manual@elsewhere.invalid", "ohmail/Quarantine");
+    filed = [...filed, { ...ACT, messageId: manual.id, from: manual.from.address }];
+    incoming = [
+      created(held(PHISH.messageId, PHISH.from!, "ohmail/Quarantine")),
+      created(held(ACT.messageId, ACT.from!, "ohmail/Quarantine")),
+      created({ ...manual, placeDecided: true }),
+    ];
+    await pull(engine);
+    const segments = within(host).getByRole("group", { name: "Screener sections" });
+    await press(within(segments).getByRole("button", { name: /^Spam/ }));
+    const spam = within(within(host).getByRole("listbox", { name: "Screener" }));
+    expect(spam.getByRole("option", { name: /Subject p1/ }).textContent).toContain("Auto-detected");
+    expect(spam.getByRole("option", { name: /Subject a1/ }).textContent).toContain("Auto-detected");
+    expect(spam.getByRole("option", { name: /Subject manual/ }).textContent).not.toContain("Auto-detected");
+    await remount(await engineWith(true));
+    expect(lead(), "an acknowledged filing came back").toBeNull();
     filed = [...filed, { ...PHISH, messageId: "p2", filedAt: "2026-11-09T11:45:00.000Z" }];
-    await mount(await engineWith(true));
-    expect(line()?.querySelector(".scn-held-lead")?.textContent).toBe("1 letter that claimed to be a company went to Spam");
+    await remount(await engineWith(true));
+    expect(lead()?.textContent).toBe("1 letter that claimed to be a company went to Spam");
   });
 
   it("a letter the organizer files while the Screener is open shows in the line and Review at once", async () => {
     filed = [ACT];
     const engine = await engineWith(true);
     await mount(engine);
-    expect(line()).toBeNull();
+    expect(lead()).toBeNull();
     filed = [PHISH, ACT];
     incoming = [created(held("p1", PHISH.from!, "ohmail/Quarantine"))];
     await pull(engine);
-    expect(line()?.querySelector(".scn-held-lead")?.textContent).toBe("1 letter that claimed to be a company went to Spam");
+    expect(lead()?.textContent).toBe("1 letter that claimed to be a company went to Spam");
     await press(button("Review"));
-    expect(line()?.textContent ?? "").toContain("billing@hosting-renewals.example · Erinnerung: Zahlungsinformationen");
+    expect(review().textContent ?? "").toContain("billing@hosting-renewals.example · Erinnerung: Zahlungsinformationen");
     expect(undone).toEqual([]);
-    await press(button("Put back"));
+    await press(within(review()).getByRole("button", { name: "Put back" }));
     expect(undone).toEqual([["p1"]]);
   });
 
@@ -237,12 +220,12 @@ describe("the Screener's line for letters filed to Spam for claiming a company",
     await act(async () => { open(); });
     await flush();
     expect(reads, "the filings during the read were not asked about after it").toBe(first + 2);
-    expect(line()?.querySelector(".scn-held-lead")?.textContent).toBe("1 letter that claimed to be a company went to Spam");
+    expect(lead()?.textContent).toBe("1 letter that claimed to be a company went to Spam");
   });
 
   it("a door that cannot say draws nothing", async () => {
     await mount(await engineWith(false));
-    expect(line()).toBeNull();
+    expect(lead()).toBeNull();
   });
 
   it("the engine the product builds carries both calls through its gate", () => {
@@ -250,5 +233,23 @@ describe("the Screener's line for letters filed to Spam for claiming a company",
     const adapter = (engine as unknown as { adapter: Record<string, unknown> }).adapter;
     expect(typeof adapter.autoFiled).toBe("function");
     expect(typeof adapter.undoAutoFiled).toBe("function");
+  });
+
+  it("OK is kept for the scope it was pressed in, whatever the storage owner says meanwhile", async () => {
+    const A = "mailbox-aaaa1111";
+    const B = "mailbox-bbbb2222";
+    try {
+      await mount(await engineWith(true), A);
+      setStorageOwner(B);
+      await press(button("OK"));
+      expect(localStorage.getItem(impersonationSeenKey(A)), "the mark was not kept for its own mount").toBe(PHISH.filedAt);
+      expect(localStorage.getItem(impersonationSeenKey(B)), "another mailbox's mark was written").toBeNull();
+      await remount(await engineWith(true), B);
+      expect(lead()?.textContent, "another mailbox's line was acknowledged")
+        .toBe("1 letter that claimed to be a company went to Spam");
+    } finally {
+      setStorageOwner(null);
+      localStorage.removeItem(impersonationSeenKey(A));
+    }
   });
 });

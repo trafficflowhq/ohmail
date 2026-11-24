@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { fireEvent, within } from "@testing-library/react";
+import type { EngineDraft } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,14 +9,14 @@ import { eq } from "drizzle-orm";
 import { drafts } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineDraft, type FetchLike } from "@ohmail/client-engine";
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type FetchLike } from "@ohmail/client-engine";
 import {
   FIXED_NOW, makeDeps, seedBody, seedMailbox, seedMessage, seedSession, seedThread,
 } from "../../../packages/api/test/helpers.js";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
-import { escapeAsParagraphs } from "../app/shell/rich-text";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
+import { escapeAsParagraphs } from "@ohmail/app-logic/writing/rich-text";
 import { editorOf } from "./fixtures/rich-editor-driver";
 import { withNodeBlobs } from "./fixtures/node-blobs";
 
@@ -101,7 +103,7 @@ async function world(seedRich?: string, reply = false) {
     organizeConsentedAt: "2026-09-01T00:00:00.000Z",
   } as MailboxFacts];
   const rows = async () => db.select().from(drafts);
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -111,17 +113,18 @@ async function world(seedRich?: string, reply = false) {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC",
       children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, {
-        children: h(AppShell as never, { demo: false, engine, consentTransport, mailboxFacts: async () => roster } as never),
+        children: h(MailShell as never, { demo: false, engine, consentTransport, mailboxFacts: async () => roster } as never),
       }) }),
     }));
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
   if (seededId !== null) {
     await act(async () => { window.location.hash = "#/drafts"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
-    await waitFor(() => q(`.draft-row[data-id="${seededId}"] .draft-open`) !== null, "the draft in Drafts", 8000);
-    const open = q<HTMLElement>(`.draft-row[data-id="${seededId}"] .draft-open`)!;
+    await waitFor(() => draftRow("Kept") !== null, "the draft in Drafts", 8000);
+    const open = draftRow("Kept")!;
+    expect(open.dataset.id).toBe(seededId);
     await act(async () => { open.click(); });
-    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Kept", "the editor on the draft", 8000);
+    await waitFor(() => subject()?.value === "Kept", "the editor on the draft", 8000);
   } else if (letter !== null) {
     await act(async () => {
       window.location.hash = `#/address/${encodeURIComponent("lena@atelier.example")}/m/${letter}`;
@@ -130,7 +133,7 @@ async function world(seedRich?: string, reply = false) {
   } else {
     await act(async () => { window.location.hash = "#/compose"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
   }
-  if (letter === null) await waitFor(() => q(".view-compose .rte-surface") !== null, "the compose editor", 8000);
+  if (letter === null) await waitFor(() => composeBody() !== null, "the compose editor", 8000);
   /** Another device's write, straight to the server: this mirror has not heard of it. */
   const putElsewhere = async (id: string, body: Record<string, unknown>) => fetchImpl(`http://localhost/drafts/${id}`, {
     method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -138,14 +141,31 @@ async function world(seedRich?: string, reply = false) {
   return { delivered, rows, engine, seededId, putElsewhere, letter, net };
 }
 
-const q = <T extends Element = Element>(sel: string): T | null => container.querySelector<T>(sel);
-async function typeInto(sel: string, value: string): Promise<void> {
-  const input = q<HTMLInputElement>(sel)!;
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => { setter.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
+const composer = () => within(container).queryByRole("region", { name: messages.write.letter });
+const reader = () => within(container).queryByRole("region", { name: "Open message" });
+const composeBody = () => {
+  const place = composer();
+  return place && within(place).queryByRole("textbox", { name: messages.write.text });
+};
+const replyBody = () => {
+  const place = reader();
+  return place && within(place).queryByRole("textbox", { name: "Reply body" });
+};
+const subject = () => {
+  const place = composer();
+  return place && within(place).queryByRole<HTMLTextAreaElement>("textbox", { name: "Subject" });
+};
+const draftRow = (subject: string) => {
+  const drafts = within(container).queryByRole("listbox", { name: messages.drafts.title });
+  return drafts && within(drafts).queryByRole("option", { name: `${TO[0]!.address}: ${subject}` });
+};
+async function typeInto(name: "To" | "Subject", value: string): Promise<void> {
+  const input = within(composer()!).getByRole(name === "To" ? "combobox" : "textbox", { name });
+  const text = name === "To" ? `${value}, ` : value;
+  await act(async () => { fireEvent.change(input, { target: { value: text } }); });
 }
 async function body(html: string): Promise<void> {
-  const surface = q<HTMLElement>(".view-compose .rte-surface")!;
+  const surface = composeBody()!;
   await act(async () => { editorOf(surface).commands.setContent(html); });
 }
 async function waitFor(p: () => boolean | Promise<boolean>, what: string, timeout = 6000): Promise<void> {
@@ -157,18 +177,20 @@ async function waitFor(p: () => boolean | Promise<boolean>, what: string, timeou
   throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
 }
 const pause = async (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
-const sendButton = (): HTMLButtonElement | null =>
-  Array.from(container.querySelectorAll<HTMLButtonElement>(".view-compose button"))
-    .find((b) => (b.textContent ?? "").trim().startsWith("Send") && !/later/i.test(b.textContent ?? "")) ?? null;
-const status = (): string => q(".view-compose .send-status")?.textContent ?? "";
-const notes = (): string => Array.from(container.querySelectorAll(".view-compose .send-note")).map((n) => n.textContent ?? "").join(" | ");
+const sendButton = () => {
+  const place = composer();
+  return place && within(place).queryByRole<HTMLButtonElement>("button", { name: "Send" });
+};
+const statusText = (place: HTMLElement | null): string =>
+  place === null ? "" : within(place).queryAllByRole("status").map((node) => node.textContent ?? "").join(" | ");
+const status = () => statusText(composer());
 async function pressSend(w: { delivered: OutboundMessage[] }): Promise<void> {
   await act(async () => { sendButton()!.click(); });
   await waitFor(() => w.delivered.length > 0 || status().includes(compose.statusFailed!), "an outcome", 8000);
 }
 async function startBold(w: Awaited<ReturnType<typeof world>>): Promise<void> {
-  await typeInto("#compose-to", "lena@atelier.example");
-  await typeInto("#compose-subject", "Hi");
+  await typeInto("To", "lena@atelier.example");
+  await typeInto("Subject", "Hi");
   await body("<p><strong>bold words</strong></p>");
   await waitFor(async () => (await w.rows()).some((r) => (r.html ?? "").includes("<strong>")), "the bold autosave", AUTOSAVE_DELAY_MS + 6000);
 }
@@ -185,15 +207,17 @@ async function clearedOffline(w: Awaited<ReturnType<typeof world>>): Promise<str
 /** Escape closes Compose; back online, the queue replays and the draft is opened again from Drafts. */
 async function closeReconnectReopen(w: Awaited<ReturnType<typeof world>>, id: string): Promise<void> {
   await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
-  await waitFor(() => q(".view-compose") === null, "the composer closed", 8000);
+  await waitFor(() => composer() === null, "the composer closed", 8000);
   await pause(300);
   w.net.offline = false;
   await act(async () => { await w.engine.flushPending(); });
   await act(async () => { await w.engine.syncOnce(); });
   await act(async () => { window.location.hash = "#/drafts"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
-  await waitFor(() => q(`.draft-row[data-id="${id}"] .draft-open`) !== null, "the draft in Drafts", 8000);
-  await act(async () => { q<HTMLElement>(`.draft-row[data-id="${id}"] .draft-open`)!.click(); });
-  await waitFor(() => q(".view-compose .rte-surface") !== null, "the reopened editor", 8000);
+  await waitFor(() => draftRow("Hi") !== null, "the draft in Drafts", 8000);
+  const open = draftRow("Hi")!;
+  expect(open.dataset.id).toBe(id);
+  await act(async () => { open.click(); });
+  await waitFor(() => composeBody() !== null, "the reopened editor", 8000);
 }
 
 beforeEach(() => {
@@ -225,18 +249,17 @@ afterEach(async () => {
 describe("a message whose formatting was removed, through the shell over the real API", () => {
   it("an inline reply, bold, autosaved, cleared and sent: the plain text goes", async () => {
     const w = await world(undefined, true);
-    await waitFor(() => (q(".view-address")?.textContent ?? "").includes("Plans"), "the letter on screen", 8000);
+    await waitFor(() => (reader()?.textContent ?? "").includes("Plans"), "the letter on screen", 8000);
     await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true })); });
-    await waitFor(() => q(".reply-editor .rte-surface") !== null, "the inline reply", 8000);
-    const surface = q<HTMLElement>(".reply-editor .rte-surface")!;
+    await waitFor(() => replyBody() !== null, "the inline reply", 8000);
+    const surface = replyBody()!;
     await act(async () => { editorOf(surface).commands.setContent("<p><strong>bold reply</strong></p>"); });
     await waitFor(async () => (await w.rows()).some((r) => (r.html ?? "").includes("<strong>")), "the bold reply autosave", AUTOSAVE_DELAY_MS + 6000);
     await act(async () => { editorOf(surface).commands.setContent(escapeAsParagraphs("plain reply")); });
-    const send = Array.from(container.querySelectorAll<HTMLButtonElement>(".reply-actions button"))
-      .find((b) => (b.textContent ?? "").trim().startsWith("Send") && !b.classList.contains("reply-send-done"))!;
+    const send = within(reader()!).getByRole("button", { name: "Send" });
     await act(async () => { send.click(); });
     const replyFailed = messages.reply.statusFailed as string;
-    await waitFor(() => w.delivered.length > 0 || (q(".send-status")?.textContent ?? "").includes(replyFailed), "an outcome", 8000);
+    await waitFor(() => w.delivered.length > 0 || statusText(reader()).includes(replyFailed), "an outcome", 8000);
     expect(w.delivered.map((m) => [m.text.split("\n\n")[0], m.html ?? null])).toEqual([["plain reply", null]]);
     expect((await w.rows()).filter((r) => r.status === "draft")).toEqual([]);
   }, 40_000);
@@ -268,7 +291,7 @@ describe("a message whose formatting was removed, through the shell over the rea
     await closeReconnectReopen(w, id);
     const r = (await w.rows()).find((x) => x.id === id)!;
     expect([r.body, r.html]).toEqual(["typed offline", null]);
-    expect(q(".view-compose .rte-surface")!.textContent).toContain("typed offline");
+    expect(composeBody()!.textContent).toContain("typed offline");
   }, 60_000);
 
   it("cleared offline and closed at once: back online the draft holds the words typed offline", async () => {
@@ -277,12 +300,12 @@ describe("a message whose formatting was removed, through the shell over the rea
     await closeReconnectReopen(w, id);
     const r = (await w.rows()).find((x) => x.id === id)!;
     expect([r.body, r.html]).toEqual(["typed offline", null]);
-    expect(q(".view-compose .rte-surface")!.textContent).toContain("typed offline");
+    expect(composeBody()!.textContent).toContain("typed offline");
   }, 60_000);
 
   it("a formatted draft reopened from Drafts shows its formatting and sends with it", async () => {
     const w = await world("<p><strong>kept bold</strong></p>");
-    expect(q(".view-compose .rte-surface")!.innerHTML).toContain("<strong>kept bold</strong>");
+    expect(composeBody()!.innerHTML).toContain("<strong>kept bold</strong>");
     await pressSend(w);
     expect(w.delivered.length).toBe(1);
     expect(w.delivered[0]!.html ?? "").toContain("<strong>kept bold</strong>");
@@ -299,11 +322,11 @@ describe("a message whose formatting was removed, through the shell over the rea
 
   it("a save over a version formatted elsewhere keeps both: theirs stands, the words here are a new draft, and it says so", async () => {
     const w = await world();
-    await typeInto("#compose-to", "lena@atelier.example");
-    await typeInto("#compose-subject", "Hi");
+    await typeInto("To", "lena@atelier.example");
+    await typeInto("Subject", "Hi");
     await body(escapeAsParagraphs("mine"));
     await waitFor(async () => (await w.rows()).length === 1, "the first autosave", AUTOSAVE_DELAY_MS + 6000);
-    expect(notes()).toContain(compose.draftNote);
+    expect(status()).toContain(compose.draftNote);
     const id = (await w.rows())[0]!.id;
     expect((await w.putElsewhere(id, { subject: "Hi", html: "<p><strong>theirs</strong></p>", to: TO, cc: [], bcc: [] })).status).toBe(200);
     await body(escapeAsParagraphs("mine, more"));
@@ -326,8 +349,8 @@ describe("a message whose formatting was removed, through the shell over the rea
     roots = [];
     document.body.innerHTML = "";
     const p = await world();
-    await typeInto("#compose-to", "lena@atelier.example");
-    await typeInto("#compose-subject", "Hi");
+    await typeInto("To", "lena@atelier.example");
+    await typeInto("Subject", "Hi");
     await body(escapeAsParagraphs("plain all along"));
     await waitFor(async () => (await p.rows()).length === 1, "the plain autosave", AUTOSAVE_DELAY_MS + 6000);
     await pressSend(p);

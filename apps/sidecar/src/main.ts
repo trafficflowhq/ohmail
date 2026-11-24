@@ -559,7 +559,7 @@ export async function runSidecar(): Promise<void> {
   //
   // ONE construction, TWO faces, and the second one is the fix: `log` is the two-argument seam
   // this package and `readMailboxLease` write through, `logger` is the same object in the shape
-  // `@trafficflow/worker/sync` speaks. The engine used to be handed only the first, so it built
+  // `@ohmail/organizer/sync` speaks. The engine used to be handed only the first, so it built
   // its `syncDeps` with no `log` at all and the reconcile passes' diagnostics — every line that
   // reports a write the mail server did not accept — were discarded on the standalone door.
   const logger = createSidecarLogger();
@@ -746,6 +746,9 @@ export async function runCloudSidecar(): Promise<void> {
       ...(BAKED_ENGINE_VERSION ? { engineRelease: BAKED_ENGINE_VERSION } : {}),
       onStoreFatal: exitOnStoreFatal,
       // The mirror starts after `ready`, so the host exists by the time a mailbox can be named.
+      onSignedIn: (signedIn) => {
+        void host?.hostedSession(signedIn).catch(() => { void shutdown("transport_fatal", 1); });
+      },
       onServedMailbox: (mailboxId) => host?.mailbox(mailboxId) ?? Promise.resolve(),
     });
   } catch (err) {
@@ -786,6 +789,7 @@ export async function runCloudSidecar(): Promise<void> {
     // The launch snapshot of reachability; `/health.online` is the live value thereafter.
     online: cloud.online(),
   });
+  await host.hostedSession(cloud.signedIn());
   log("cloud_serving", {
     mailboxId: cloud.servedMailboxId(),
     state: cloud.signedIn() ? "signed_in" : "signed_out",
@@ -810,7 +814,7 @@ export async function runCloudSidecar(): Promise<void> {
 }
 
 /**
- * Is this process running the bundle, rather than importing it? `@trafficflow/worker/entry`'s
+ * Is this process running the bundle, rather than importing it? `@ohmail/organizer/entry`'s
  * `isCliEntry` compares `import.meta.url` to `process.argv[1]` as literal strings — right for the
  * worker, WRONG for the desktop engine, and the failure is silent: the shell spawns this bundle by
  * path, the kernel's shebang hands node an `argv[1]` with `/private` STRIPPED (a `/var` temp

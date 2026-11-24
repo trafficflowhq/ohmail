@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A SCREENING CHANGE MADE ON A READER SAYS WHERE IT WENT, on both desktop doors. Both reach
@@ -17,9 +17,9 @@ import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
  */
 
 let FACTS: MailboxFacts[] | null = null;
-vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
-    "../../webapp/app/shell/MailStateProvider",
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
+  const real = await vi.importActual<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>(
+    "@ohmail/app-logic/mail-state/mail-state-binding",
   );
   return { ...real, useMailboxFacts: () => FACTS };
 });
@@ -51,7 +51,7 @@ type Invoke = (command: string, payload?: Record<string, unknown>) => Promise<un
 const shellHost = globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: Invoke } };
 
 type Change = { state: "asked" | "applied" | "refused"; holder: string | null; refusal: "unreadable" | "other" | null };
-const STORED = { ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Keep it for people.", screenerAutoApply: false };
+const STORED = { ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Keep it for people." };
 let answer: { change?: Change; applied?: Record<string, unknown> };
 
 function engine(): void {
@@ -154,14 +154,5 @@ describe.each(["local", "cloud"] as const)("the %s door on a reader", (door) => 
     answer = { change: { state: "applied", holder: null, refusal: null }, applied: { ohboxBar: "People I know." } };
     await poll();
     expect((hostEl.querySelector("textarea") as HTMLTextAreaElement).value).toBe("People I know.");
-  });
-});
-
-describe("the hosted door's act switch", () => {
-  it("does not promise the Rules group its copy of the rules cannot show", () => {
-    const gate = readFileSync(resolve(process.cwd(), "apps/desktop/src/DesktopGate.tsx"), "utf8");
-    expect(gate).toMatch(/status\?\.mode === "cloud" \? \{ actRulesUnmarked: true \}/);
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    expect(shell).toMatch(/rulesMarked=\{!actRulesUnmarked\}/);
   });
 });

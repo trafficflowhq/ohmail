@@ -26,7 +26,7 @@ import type { NormalizedMessage } from "../../src/types.js";
  *    optional and every hand-built `Rule` silently becomes an `allow`, which is precisely how
  *    a review finding (a broad allow beating the user's sender-specific "no") comes back.
  *
- * CLAUDE.md: **no test file anywhere is typechecked**, so a `@ts-expect-error` written in
+ * AGENTS.md: **no test file anywhere is typechecked**, so a `@ts-expect-error` written in
  * `rules.test.ts` would be inert. That is what this project is for.
  */
 

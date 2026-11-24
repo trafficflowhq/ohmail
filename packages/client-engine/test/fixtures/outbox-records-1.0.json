@@ -1,0 +1,172 @@
+{
+  "writtenBy": "v1.0.12",
+  "replayedAt": 1785330000000,
+  "records": [
+    {
+      "v": 1,
+      "id": "r9-v1-move",
+      "key": "r9-key-v1-move",
+      "n": 0,
+      "at": 1785326340000,
+      "mutation": {
+        "kind": "move",
+        "messageId": "0b6c1a52-5d0e-4c1c-9a59-6f0f0c7d9a01",
+        "folder": "ohmail/News"
+      }
+    },
+    {
+      "v": 1,
+      "id": "r9-v1-delete",
+      "key": "r9-key-v1-delete",
+      "n": 1,
+      "at": 1785326340000,
+      "mutation": {
+        "kind": "message_delete",
+        "messageId": "0b6c1a52-5d0e-4c1c-9a59-6f0f0c7d9a02"
+      }
+    },
+    {
+      "v": 2,
+      "id": "r9-v2-move",
+      "key": "r9-key-v2-move",
+      "n": 2,
+      "at": 1785326340000,
+      "attempts": 2,
+      "nextAt": 1785326344000,
+      "lastError": {
+        "message": "network failure",
+        "code": "network",
+        "status": null
+      },
+      "mutation": {
+        "kind": "move",
+        "messageId": "0b6c1a52-5d0e-4c1c-9a59-6f0f0c7d9a03",
+        "folder": "ohmail/Receipts"
+      }
+    },
+    {
+      "v": 3,
+      "id": "97f92df4-9eb5-48fb-bc97-8209a5e5260f",
+      "key": "15f870a3-878c-4160-932d-2f7bf1b0838d",
+      "n": 0,
+      "at": 1785326400000,
+      "mutation": {
+        "kind": "move",
+        "messageId": "giulia",
+        "folder": "ohmail/News"
+      },
+      "attempts": 0,
+      "lastError": {
+        "message": "network failure: connection reset",
+        "code": "network",
+        "status": null
+      }
+    },
+    {
+      "v": 3,
+      "id": "0b310062-a1d0-4af3-9fc4-9ff78033e246",
+      "key": "cc561c7d-7604-4a1b-acb2-1abecab2b4e0",
+      "n": 1,
+      "at": 1785326400000,
+      "mutation": {
+        "kind": "move",
+        "messageId": "petra",
+        "folder": "ohmail/Screened",
+        "from": "INBOX"
+      },
+      "attempts": 0,
+      "lastError": {
+        "message": "network failure: connection reset",
+        "code": "network",
+        "status": null
+      }
+    },
+    {
+      "v": 3,
+      "id": "913c10be-1890-492a-a836-5e3e38768fa4",
+      "key": "7340c353-d40c-4dc2-aa96-f91b69286450",
+      "n": 2,
+      "at": 1785326400000,
+      "mutation": {
+        "kind": "move",
+        "messageId": "techcheck",
+        "folder": "ohmail/Receipts",
+        "pressRule": true
+      },
+      "attempts": 0,
+      "lastError": {
+        "message": "network failure: connection reset",
+        "code": "network",
+        "status": null
+      }
+    },
+    {
+      "v": 3,
+      "id": "62bd12b3-e521-47a3-a094-93662f309dad",
+      "key": "160d3d9a-e784-40d3-a1f8-4b70e3db6120",
+      "n": 3,
+      "at": 1785326400000,
+      "mutation": {
+        "kind": "message_delete",
+        "messageId": "glazecall"
+      },
+      "attempts": 0,
+      "lastError": {
+        "message": "network failure: connection reset",
+        "code": "network",
+        "status": null
+      }
+    }
+  ],
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/messages/0b6c1a52-5d0e-4c1c-9a59-6f0f0c7d9a01/move",
+      "body": "{\"folder\":\"ohmail/News\"}",
+      "key": "r9-key-v1-move",
+      "age": "3660000"
+    },
+    {
+      "method": "DELETE",
+      "path": "/messages/0b6c1a52-5d0e-4c1c-9a59-6f0f0c7d9a02",
+      "body": null,
+      "key": "r9-key-v1-delete",
+      "age": "3660000"
+    },
+    {
+      "method": "POST",
+      "path": "/messages/0b6c1a52-5d0e-4c1c-9a59-6f0f0c7d9a03/move",
+      "body": "{\"folder\":\"ohmail/Receipts\"}",
+      "key": "r9-key-v2-move",
+      "age": "3660000"
+    },
+    {
+      "method": "POST",
+      "path": "/messages/giulia/move",
+      "body": "{\"folder\":\"ohmail/News\"}",
+      "key": "15f870a3-878c-4160-932d-2f7bf1b0838d",
+      "age": "3600000"
+    },
+    {
+      "method": "POST",
+      "path": "/messages/petra/move",
+      "body": "{\"folder\":\"ohmail/Screened\",\"from\":\"INBOX\"}",
+      "key": "cc561c7d-7604-4a1b-acb2-1abecab2b4e0",
+      "age": "3600000"
+    },
+    {
+      "method": "POST",
+      "path": "/messages/techcheck/move",
+      "body": "{\"folder\":\"ohmail/Receipts\",\"pressRule\":true}",
+      "key": "7340c353-d40c-4dc2-aa96-f91b69286450",
+      "age": "3600000"
+    },
+    {
+      "method": "DELETE",
+      "path": "/messages/glazecall",
+      "body": null,
+      "key": "160d3d9a-e784-40d3-a1f8-4b70e3db6120",
+      "age": "3600000"
+    }
+  ]
+}

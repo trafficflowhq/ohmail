@@ -21,6 +21,7 @@ vi.mock("../src/ui/base", () => {
     Txt: (p: { children?: ReactNode }) => createElement("span", null, p.children),
   };
 });
+vi.mock("../src/theme", () => ({ useTheme: () => ({}) }));
 vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null }));
 vi.mock("../src/ui/Gated", () => ({ Gated: (p: { children?: ReactNode }) => p.children }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: (p: { children?: ReactNode }) => p.children }));

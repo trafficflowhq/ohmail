@@ -4,11 +4,20 @@ import { matchSpec, type RouteParams } from "./match-path.js";
    value import back would be a runtime cycle. `import type` is erased, so the graph is unchanged
    and nothing new enters any bundle. */
 import type { Middleware } from "./middleware.js";
+import type { RouteName } from "@ohmail/wire";
+import type { Answered, Refused, Replayed } from "./responses.js";
 
 /* Re-exported so every existing consumer of this module keeps its import. */
 export { matchSpec, type RouteParams };
 
 export type Handler = (req: Request, deps: ApiDeps, params: RouteParams) => Promise<Response>;
+
+/**
+ * A handler of a route bound to the wire. It answers through the wire's type for `R`, refuses in
+ * the error envelope, or replays a stored answer; a plain `Response` does not compile here.
+ */
+export type WireHandler<R extends RouteName> =
+  (req: Request, deps: ApiDeps, params: RouteParams) => Promise<Answered<R> | Refused | Replayed>;
 
 /**
  * What does this handler cause? Every route declares it, and the declaration is what
@@ -235,14 +244,14 @@ export interface RouteOptions {
   /**
    * This route answers for the credential it resolved, not the session that carried the request —
    * the sign-in, token and pairing routes, whose handler mints a session from a credential in the
-   * body. The set is not listed here: a list of route names in a comment is a fact about who last
-   * counted; `account-header-census.test.ts` derives the set from the handlers and asserts the
-   * flags match. All are `public`, so the handler resolves a second credential out of the body —
-   * which must belong to the same account or be refused (`refuseCrossAccountCredential`). The
-   * flag changes only where {@link ACCOUNT_HEADER} takes its value; it grants nothing, so
-   * carrying it wrongly can only stop naming an account.
+   * body. Password reset also uses this flag to keep its response free of session attribution:
+   * requesting a link reveals no account, and completing a reset revokes sessions. The
+   * `account-header-census.test.ts` derives the set from the handlers and checks the flags.
+   * The flag changes only where {@link ACCOUNT_HEADER} takes its value. It grants no access.
    */
   credentialSubject?: boolean;
+  /** A public ceremony may resolve a credential separate from the ambient session. */
+  credentialLookup?: boolean;
   /**
    * NO session resolution at all — not even the opportunistic "populate it if a token
    * happens to be present" that `public` still does. `/health` only: a liveness probe must
@@ -250,11 +259,44 @@ export interface RouteOptions {
    * handler's own error handling, when the database is the thing that is broken.
    */
   anonymous?: boolean;
+  /**
+   * A CALENDAR'S PROVIDER CALLS THIS ROUTE, and nobody else is meant to. Its pipeline is the
+   * request id and nothing more: no media-type or origin guard (a provider posts no JSON and
+   * names no origin of ours), no session, no envelope. The handler answers every call alike and
+   * reads no cookie and no `Authorization`. `provider-routes-census.test.ts` holds that exactly
+   * the notice routes carry it, in every route table.
+   */
+  provider?: boolean;
+  /**
+   * The most this route's body may weigh, where that is LESS than the ceiling every JSON route
+   * has: how a route that anyone may call says how little it reads. It only ever lowers
+   * (`bodyCeilingFor` takes the smaller of the two), and 0 reads nothing at all. A body past it is
+   * refused by the host before the route is reached, from its size alone.
+   */
+  bodyMaxBytes?: number;
 }
 
-export interface Route {
+/**
+ * A route. One that a client is bound to through `@ohmail/wire` says so with `wire: true` and is
+ * then a {@link WireRoute}: its method and pattern must spell a name the wire has, and its handler
+ * must answer through that name's type. Every other route is a {@link PlainRoute}.
+ */
+export type Route = PlainRoute | WireRoute;
+
+/**
+ * A route bound to the wire as `R`. Distributed over every name, so a route literal marked `wire`
+ * is checked against the one entry its method and pattern spell. The mark is a flag and not the
+ * name: the name is already there, and the phone's engine carries every byte of this table.
+ */
+export type WireRoute<R extends RouteName = RouteName> = R extends `${infer M} ${infer P}`
+  ? Omit<PlainRoute, "method" | "pattern" | "wire" | "handler"> & { method: M; pattern: P; wire: true; handler: WireHandler<R> }
+  : never;
+
+export interface PlainRoute {
   method: string;
   pattern: string;             // e.g. "/threads/merge", "/threads/:id", "/messages/:id/move"
+  /** Never set here: a route marked as bound to the wire is a {@link WireRoute}. */
+  wire?: undefined;
   /**
    * REQUIRED. What this handler causes; see {@link CostClass}. There is no default:
    * a new route that declares nothing does not compile, and if one reaches the runtime

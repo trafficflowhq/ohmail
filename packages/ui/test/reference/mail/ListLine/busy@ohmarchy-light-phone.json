@@ -1,0 +1,64 @@
+{
+  "component": "ListLine",
+  "state": "busy",
+  "look": "ohmarchy-light-phone",
+  "place": "block",
+  "target": [8, 672, 374, 67.5938],
+  "clip": [8, 672, 374, 68],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [],
+  "nodes": [
+    {
+      "role": "status",
+      "name": "",
+      "box": [0, 0, 374, 67.6],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "16px",
+        "paddingRight": "24px",
+        "paddingBottom": "32px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "text": [{ "said": "Looking further back…", "type": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

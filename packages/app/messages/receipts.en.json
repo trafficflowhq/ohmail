@@ -1,0 +1,37 @@
+{
+  "receipts": {
+    "title": "Receipts",
+    "streamAria": "Reading stream",
+    "waterline": {
+      "label": "Seen up to here"
+    },
+    "markAll": {
+      "label": "Mark all read",
+      "done": "{count, number} read",
+      "undo": "Undo"
+    },
+    "list": {
+      "label": "Receipts",
+      "menu": "List"
+    },
+    "stream": {
+      "label": "Receipts stream",
+      "empty": "Nothing here"
+    },
+    "item": {
+      "keyboardOpen": "Press Enter on its row to open this message",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "full": "Read in full",
+      "markUnread": "Mark unread",
+      "loading": "Loading",
+      "file": "Has an attachment"
+    },
+    "search": {
+      "older": "Older in Search"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    }
+  }
+}

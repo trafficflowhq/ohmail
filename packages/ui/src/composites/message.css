@@ -21,7 +21,7 @@
  * PANELS' LIGHT.
  *
  * A single message is ONE panel filling the column, so the column IS the panel and paints it.
- * A thread is N panels (`.conv` — the wrapper `MessagePane` renders instead of an article;
+ * A thread is N panels (`.conv` — the wrapper the conversation column renders instead of an article;
  * an article cannot wrap N panels), and a stack of lift-1 panels inside a lift-1 panel is two
  * competing surfaces — so the column keeps only its job as the scroller and hands the paper to
  * the panels.
@@ -57,9 +57,9 @@
  * spacing SCROLL-INTERNAL: at rest nothing moves — the lede's top edge rests on the columns'
  * shared top line, and the column's CONTENT bottoms out on the same baseline the rail and list
  * panels end on (the sub-pixel remainder is absorbed inside the last panel — see the anchor
- * effect in `MessagePane`) — and mid-scroll a panel runs to the viewport edge before it is
+ * effect in the conversation column) — and mid-scroll a panel runs to the viewport edge before it is
  * cut. The last panel's downward falloff still needs no extra room at rest: the action pill is
- * the wrapper's last flow child (`MessagePane`), and its ~40px flow box on the baseline is the
+ * the wrapper's last flow child (the conversation column), and its ~40px flow box on the baseline is the
  * room that falloff renders into. The sticky pill and the reply dock pin against the scrollport
  * as before — the scrollport's bottom is simply the viewport's now.
  *

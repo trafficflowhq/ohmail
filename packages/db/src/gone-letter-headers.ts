@@ -1,5 +1,5 @@
 import { and, eq, exists, isNotNull } from "drizzle-orm";
-import { folderState, messageBodies, messages } from "./schema-mail.js";
+import { messageBodies, messages } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -71,12 +71,7 @@ export async function reduceGoneHeaders(tx: Tx, accountId: string, messageId: st
   return true;
 }
 
-/**
- * Write a returned letter's whole block from its own bytes, and withdraw its Screener floor mark in
- * the same transaction: the mark was read off the cut block, or never, so the next walk judges the
- * whole one. That column only — no `updated_at`, no change row (`floorMarkSql`'s rule). Returns
- * whether it wrote.
- */
+/** Write a returned letter's whole block from its own bytes. Returns whether it wrote. */
 export async function restoreLetterHeaders(
   tx: Tx, accountId: string, messageId: string, headers: Readonly<Record<string, unknown>>,
 ): Promise<boolean> {
@@ -85,8 +80,5 @@ export async function restoreLetterHeaders(
     eq(messageBodies.messageId, messageId),
     exists(tx.select({ id: messages.id }).from(messages).where(own)),
   )).returning({ id: messageBodies.id });
-  if (written.length === 0) return false;
-  await tx.update(folderState).set({ screenerFloorVersion: null })
-    .where(and(eq(folderState.messageId, messageId), isNotNull(folderState.screenerFloorVersion)));
-  return true;
+  return written.length > 0;
 }

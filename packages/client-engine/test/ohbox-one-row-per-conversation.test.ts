@@ -1,3 +1,4 @@
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   conversationKeyOf,
@@ -5,9 +6,7 @@ import {
   ohboxRows,
   ohboxView,
   resurfacedThreads,
-  type EngineMessage,
   type EntityReader,
-  type MessageStateDTO,
   type OhboxRowSection,
 } from "@ohmail/client-engine";
 

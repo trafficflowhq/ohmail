@@ -1,0 +1,20 @@
+{
+  "accountSecurity": {
+    "setupQr": "Authenticator setup QR code",
+    "notRead": "Not read",
+    "notDone": "Not done",
+    "cancelled": "Cancelled",
+    "codesUnused": "Some unused",
+    "codesNoneUnused": "None unused",
+    "on": "On",
+    "notSetUp": "Not set up",
+    "generate": "Generate",
+    "replace": "Replace",
+    "setUp": "Set up",
+    "remove": "Remove",
+    "byHandLabel": "Or type the key in by hand",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyFailed": "Could not copy"
+  }
+}

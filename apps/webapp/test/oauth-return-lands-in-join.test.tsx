@@ -128,10 +128,10 @@ describe("the return of a sign-in the wizard started", () => {
         locale: "en", messages: en, timeZone: "UTC", children: React.createElement(CloudShell, { demo: false }),
       }));
     });
-    const gate = host.querySelector('main.gate[aria-busy="true"]');
+    const gate = host.querySelector('main.oh-opening[data-kind="web"]');
     expect(gate, "no loading gate").toBeTruthy();
-    expect(gate!.textContent).toBe("ohmail");
-    expect(host.querySelector(".app-root"), "the mail client mounted under a sign-in in flight").toBeNull();
+    expect(gate!.querySelector('[role="status"]')).not.toBeNull();
+    expect(host.querySelector(".today"), "the mail client mounted under a sign-in in flight").toBeNull();
     expect(replaced, "left before the answer").toBeNull();
 
     await act(async () => { release!(); await settle(); });

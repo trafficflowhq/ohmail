@@ -1,3 +1,10 @@
+import type {
+  EngineMessage,
+  Folder,
+  MailboxProfileEntity,
+  MessageBodyRecord,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import {
   authScreens, counterpartyEvidence, type CounterpartyEvidence, type CounterpartyMessage,
 } from "@trafficflow/core/sender-headers";
@@ -8,17 +15,19 @@ import {
 } from "@trafficflow/core/rule-order";
 import type { EntityReader } from "./store.js";
 import { ownAddressKeys } from "./own-address.js";
+import { domainOfAddress } from "./providers.js";
 import { storeInstantOf } from "./store-pages.js";
 import {
   isOwnSent, isResurfaced, messagesByDateDesc, newestHeldBySender, queueCoverage, rulesList, screenerWaitingOf, senderKey,
 } from "./selectors.js";
 import {
-  MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, SENT_IN_HISTORY_TYPE, type EngineMessage,
-  type Folder, type MailboxProfileEntity, type MessageBodyRecord, type RuleDTO,
+  MAILBOX_PROFILE_TYPE, RETIRED_DECIDED_TYPE, SENT_IN_HISTORY_TYPE,
 } from "./types.js";
 
 /** The router's key for a rule's `match`, for the press modules, which import no rule order. */
 export { ruleMatchKey };
+/** The domain half of an address, defined in the provider table, which imports nothing; the rule modules take it here. */
+export { domainOfAddress };
 
 /* Consent, the cutline, and History. Two rules decide where a message is
    PRESENTED: (1) consent comes from the user's own actions — sitting in the
@@ -189,13 +198,6 @@ export interface ConsentOptions {
    * Absent (an older server): the account fields, as before.
    */
   byMailbox?: Readonly<Record<string, MailboxScreening>>;
-}
-
-/** The domain half of an address, lower-cased, or `null` when there is not one. */
-export function domainOfAddress(address: string): string | null {
-  const at = address.lastIndexOf("@");
-  if (at < 0 || at === address.length - 1) return null;
-  return address.slice(at + 1).trim().toLowerCase();
 }
 
 /** A mirror rule as the shared order reads it: the effect is its destination's side of the gate. */

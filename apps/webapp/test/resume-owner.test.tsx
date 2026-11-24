@@ -88,14 +88,14 @@ afterEach(async () => {
 });
 
 async function mountResume(initialOwner: string | null): Promise<void> {
-  const { ResumeScreen } = await import("../app/(product)/resume/ResumeScreen.js");
+  const { ResumeRoute } = await import("../app/(product)/resume/ResumeRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC",
-      children: h(ResumeScreen, { initialOwner }),
+      children: h(ResumeRoute, { initialOwner }),
     }));
   });
   for (let i = 0; i < 12; i += 1) await act(async () => { await Promise.resolve(); });

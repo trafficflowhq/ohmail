@@ -1,10 +1,9 @@
 "use client";
 
 /**
- * The account half of the language preference — the `AccountSection` seam, one context deeper. `LocaleShell` owns the
+ * The account half of the language preference — the account pane’s seam, one context deeper. `LocaleShell` owns the
  * local half (`localStorage`, the cookie, the catalogue swap) and sits above `/login` and `/join`, so it cannot write
- * an account; this component sits INSIDE the shell, where a session is validated, and is the only place in the tree
- * that may import `app/api-client`.
+ * an account; this component sits inside the Cloud shell, which supplies the account and its live guard.
  */
 
 /**
@@ -22,37 +21,45 @@ import { LocaleContext, useAppLocale, type LocaleControls } from "../../shell/Lo
 import { normalizeLocale, type AppLocale } from "../../shell/locale";
 import { consent as consentApi } from "../../api-client";
 
-export function AccountLocale({ children }: { children: ReactNode }) {
+type AccountLocaleProps = { children: ReactNode } & (
+  | { owner?: undefined; ownerHolds?: never }
+  | { owner: string | null; ownerHolds: (owner: string) => boolean }
+);
+
+export function AccountLocale({ children, owner, ownerHolds }: AccountLocaleProps) {
   const outer = useAppLocale();
   /* What this tab last wrote to the account, as its echo applied it. The shell adopts from its own
      consent read, which still holds the account's PREVIOUS answer until the next re-ask (and a boot
      read can land after the write): re-adopting that answer put German back on the first press of
      English, with the account already on English. So an adoption that disagrees with this tab's
      own write is older than the write and moves nothing; until a write, adoption is untouched. */
-  const written = useRef<AppLocale | null>(null);
+  const written = useRef<{ owner: string | undefined; value: AppLocale } | null>(null);
 
   const controls = useMemo<LocaleControls | null>(() => {
     if (outer === null) return null;
+    const holds = () => owner === undefined || (owner !== null && ownerHolds(owner));
     return {
       ...outer,
+      scope: "account",
       setLocale: async (next: AppLocale): Promise<void> => {
         /* The ECHO decides, not the argument. The route answers with the stored value, so a server
            that clamped or refused the write cannot leave this tab rendering a language the account
            does not hold. A `null` echo is the account asking for the default, which is English. */
-        const stored = await consentApi.setLocale(next);
+        if (!holds()) throw new Error("The account has changed");
+        const stored = await consentApi.setLocale(next, owner ?? undefined);
         /* NORMALISED, not trusted. The echo is a wire `string | null`: `null` is the account asking
            for the default (English), and anything the closed set does not recognise cannot come from
            a current server but must not be handed to a loader either. */
         const applied = normalizeLocale(stored) ?? "en";
-        written.current = applied;
-        await outer.adoptLocale(applied);
+        written.current = { owner: owner ?? undefined, value: applied };
+        await outer.adoptLocale(applied, holds);
       },
       adoptLocale: async (next: AppLocale): Promise<void> => {
-        if (written.current !== null && next !== written.current) return;
-        await outer.adoptLocale(next);
+        if (written.current && written.current.owner === owner && next !== written.current.value) return;
+        await outer.adoptLocale(next, holds);
       },
     };
-  }, [outer]);
+  }, [outer, owner, ownerHolds]);
 
   /* No outer provider means no locale machinery at all — the demo's bare mount in a unit test.
      Rendering children unwrapped is the same honest degradation `useAppLocale` returning null is:

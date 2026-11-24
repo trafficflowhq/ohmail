@@ -7,6 +7,7 @@ import {
 } from "../src/db.js";
 import { inStoreLane } from "../src/store-lanes.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 /**
  * THE CLOSE DOOR (`db.ts`'s `installCloseDoor`). PGlite 0.2's `close()` takes none of its own locks,
@@ -17,7 +18,7 @@ import { freshDataDir } from "./_datadir.js";
 type Proto = (m: Uint8Array, o?: unknown) => Promise<unknown>;
 
 function wire(o: OpenLocalDb): { sent: string[]; afterTerminate: () => string[]; terminated: () => boolean } {
-  const client = (o.db as unknown as { $client: { execProtocol: Proto } }).$client;
+  const client = pgliteOf(o.db) as unknown as { execProtocol: Proto };
   const sent: string[] = [];
   const orig = client.execProtocol.bind(client);
   client.execProtocol = ((m: Uint8Array, opts?: unknown) => {

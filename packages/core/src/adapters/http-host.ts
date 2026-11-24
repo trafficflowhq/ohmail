@@ -1,6 +1,7 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createTlsServer } from "node:https";
-import type { Socket } from "node:net";
+import { isIP, type Socket } from "node:net";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { canonicalIp, type TrustedProxies } from "./trusted-proxies.js";
@@ -26,6 +27,8 @@ export interface AdapterOptions {
   bodyMaxBytes: number;
   headersTimeoutMs: number;
   requestTimeoutMs: number;
+  /** The process's planned stop. Active event streams finish through their request signal. */
+  eventStreamShutdown?: AbortSignal;
   /**
    * How often node sweeps connections for the two timeouts above. Node's default is 30 s, which
    * is also the FLOOR on how late a timeout can fire — production leaves it unset; the adapter
@@ -64,6 +67,10 @@ export interface AdapterOptions {
    * peer is appended, in its canonical spelling.
    */
   trustedProxies?: TrustedProxies;
+  /** Authenticate the managed web edge's client address on requests through a trusted peer. */
+  clientIpSecret?: string;
+  /** A client address supplied by a trusted proxy. An authenticated web address takes precedence. */
+  clientIpHeader?: "x-real-ip";
   /**
    * The header a trusted proxy writes its own socket peer into (the self-host external door's
    * `x-ohmail-proxy-peer`). Present, the header never reaches a handler: from an untrusted peer it
@@ -191,10 +198,28 @@ function forwardFor(headers: Headers, peer: string, trust: ForwardingTrust): str
   return client;
 }
 
-/** Build the fetch Request for one inbound message. Exported for the adapter's own tests. */
+/** Verify a fresh proof before canonicalizing its address for throttling. */
+function verifiedWebIp(proof: string | null | undefined, secret: string | undefined): string {
+  if (!proof || !secret) return "";
+  const match = /^(([0-9a-fA-F:.]{1,45});([0-9]{1,12}));([0-9a-f]{64})$/.exec(proof);
+  if (!match) return "";
+  const age = Math.floor(Date.now() / 1000) - Number(match[3]);
+  if (age < -5 || age > 60) return "";
+  const expected = createHmac("sha256", secret).update(match[1]!).digest();
+  return timingSafeEqual(expected, Buffer.from(match[4]!, "hex")) ? canonicalIp(match[2]!) : "";
+}
+
+const WEB_CLIENT_IP = "x-ohmail-client-ip";
+
+/**
+ * Build the fetch Request for one inbound message. Exported for the adapter's own tests. `signal`:
+ * the client's leave ({@link serve} aborts it when the socket closes before the answer is written).
+ */
 export function toWebRequest(
   req: IncomingMessage,
-  opts: { bodyMaxBytes: number; onTooLarge: () => void; trust?: ForwardingTrust; proxyPeerHeader?: string },
+  opts: Pick<AdapterOptions, "bodyMaxBytes" | "proxyPeerHeader" | "clientIpSecret" | "clientIpHeader"> & {
+    onTooLarge: () => void; trust?: ForwardingTrust; signal?: AbortSignal;
+  },
 ): Request {
   // The scheme is nominal — this process sits behind the operator's proxy and nothing downstream
   // reads it; the HOST half is real and feeds the cookie-auth decision (every asserted host must
@@ -204,21 +229,28 @@ export function toWebRequest(
   // rawHeaders, not .headers: node's parsed object has already folded duplicates (joining some
   // with ", " and cookies with "; "), and Headers.append is the semantically correct fold.
   const headers = new Headers();
+  // Undefined means absent. Null means the proof arrived in an unexpected form.
+  let webProof: string | null | undefined;
+  let directAddress: string | undefined;
   for (let i = 0; i < req.rawHeaders.length; i += 2) {
     const name = req.rawHeaders[i]!;
     // undici refuses to construct a Request carrying forbidden/invalid header names rather than
     // ignoring them; connection-level headers are the socket's business, not the route table's.
     if (/^(connection|keep-alive|transfer-encoding|upgrade|proxy-connection)$/i.test(name)) continue;
-    // PLATFORM-RESERVED IP HEADERS ARE DROPPED, because the reservation does not hold here.
-    // `clientIp()` (packages/api/src/context.ts) trusts `x-vercel-forwarded-for` FIRST, on the
-    // documented ground that Vercel's edge overwrites every inbound `x-vercel-*` header — so
-    // its value cannot be caller-chosen THERE. This host sits behind the operator's own proxy
-    // or none, nothing overwrites anything, and an inbound `x-vercel-*` is by definition typed
-    // by the caller: keeping it would hand every anonymous client a fresh-rate-limit-bucket
-    // switch (`curl -H 'x-vercel-forwarded-for: …'`) on the registration throttle and a forged
-    // line in the auth audit. Dropped wholesale — no legitimate traffic to this host carries
-    // the platform's namespace.
+    // Vercel's platform reservation ends at its ingress. Only the authenticated web header
+    // below can carry its client address across the managed API hop.
     if (/^x-vercel-/i.test(name)) continue;
+    if (name.toLowerCase() === WEB_CLIENT_IP) {
+      webProof = webProof === undefined ? req.rawHeaders[i + 1]! : null;
+      continue;
+    }
+    if (opts.clientIpHeader !== undefined && name.toLowerCase() === opts.clientIpHeader) {
+      if (opts.trust?.peerTrusted) {
+        // A repeated field cannot name a single client, even if both values are identical.
+        directAddress = directAddress === undefined ? req.rawHeaders[i + 1]!.trim() : "";
+      }
+      continue;
+    }
     try {
       headers.append(name, req.rawHeaders[i + 1]!);
     } catch {
@@ -236,7 +268,13 @@ export function toWebRequest(
     if (opts.trust?.peerTrusted) proxyPeer = canonicalIp(headers.get(opts.proxyPeerHeader) ?? "");
     headers.delete(opts.proxyPeerHeader);
   }
-  if (opts.trust) {
+  const webIp = opts.trust?.peerTrusted ? verifiedWebIp(webProof, opts.clientIpSecret) : "";
+  const clientIp = webIp || (directAddress && !directAddress.includes("%") && isIP(directAddress)
+    ? canonicalIp(directAddress)
+    : "");
+  if (clientIp !== "") {
+    headers.set("x-forwarded-for", clientIp);
+  } else if (opts.trust) {
     const client = forwardFor(headers, canonicalIp(req.socket?.remoteAddress ?? ""), opts.trust);
     if (proxyPeer !== "" && client === proxyPeer) opts.trust.onNote?.({ kind: "proxy_peer_is_client", peer: client });
   } else {
@@ -249,7 +287,7 @@ export function toWebRequest(
   // `serve()` has already answered 400 + destroyed the connection for the body-carrying form,
   // so this branch only decides the Request shape for a caller that bypassed serve (a test).
   if (method === "GET" || method === "HEAD" || !hasBody(req)) {
-    return new Request(url, { method, headers });
+    return new Request(url, { method, headers, ...(opts.signal ? { signal: opts.signal } : {}) });
   }
 
   // Point 4's second half: the counting transform behind the declared-length check. It errors
@@ -271,7 +309,7 @@ export function toWebRequest(
 
   // Point 1: the socket's own stream, as a web stream, with the half-duplex marker.
   const body = Readable.toWeb(req.pipe(cap)) as unknown as ReadableStream;
-  return new Request(url, { method, headers, body, duplex: "half" } as RequestInit);
+  return new Request(url, { method, headers, body, duplex: "half", ...(opts.signal ? { signal: opts.signal } : {}) } as RequestInit);
 }
 
 /** Write one fetch Response onto the node response. Exported for the adapter's own tests. */
@@ -411,6 +449,12 @@ async function serve(
     return;
   }
 
+  // THE CLIENT'S LEAVE: a socket that closes before the answer is written aborts the request's
+  // signal, so a route still working for nobody stops (a question to a geocoder, a held stream).
+  // Armed before the one wait below, so a leave during the peer's lookup is not missed either.
+  const left = new AbortController();
+  res.once("close", () => { if (!res.writableFinished) left.abort(); });
+
   // The peer's verdict is the one async step (a configured name may need resolving), taken here
   // so `toWebRequest` stays synchronous for its tests.
   let trust: ForwardingTrust | undefined;
@@ -425,6 +469,9 @@ async function serve(
   const webReq = toWebRequest(req, {
     ...(trust ? { trust } : {}),
     ...(opts.proxyPeerHeader !== undefined ? { proxyPeerHeader: opts.proxyPeerHeader } : {}),
+    ...(opts.clientIpSecret !== undefined ? { clientIpSecret: opts.clientIpSecret } : {}),
+    ...(opts.clientIpHeader !== undefined ? { clientIpHeader: opts.clientIpHeader } : {}),
+    signal: left.signal,
     bodyMaxBytes: opts.bodyMaxBytes,
     onTooLarge: () => {
       tooLarge = true;
@@ -442,5 +489,20 @@ async function serve(
     await response.body?.cancel().catch(() => { /* released */ });
     return;
   }
-  await writeWebResponse(res, response);
+  const shutdown = opts.eventStreamShutdown;
+  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (!shutdown || mediaType !== "text/event-stream") {
+    return writeWebResponse(res, response);
+  }
+
+  // The route already closes its stream on request abort. The writer can then finish
+  // the HTTP response normally, including the final chunk.
+  const finish = () => left.abort();
+  if (shutdown.aborted) finish();
+  else shutdown.addEventListener("abort", finish, { once: true });
+  try {
+    await writeWebResponse(res, response);
+  } finally {
+    shutdown.removeEventListener("abort", finish);
+  }
 }

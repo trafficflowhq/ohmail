@@ -1,14 +1,16 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO, StayedWhy } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
+import { ContactCard } from "@ohmail/ui/mail";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { MemoryMirrorStore, type EngineMessage, type Folder, type RuleDTO, type StayedWhy, type SyncChange } from "@ohmail/client-engine";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
 import en from "../messages/en.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
-import { screeningReadBack } from "../app/shell/press-verdict";
+import { SenderMenu } from "../app/components/sender-menu/SenderMenu";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
+import { screeningReadBack } from "@ohmail/app-logic/press/press-verdict";
 
 /**
  * A MESSAGE ANOTHER MAIL APP FILED IS NOT AT THE RULE'S PLACE. With "also move"
@@ -66,17 +68,18 @@ async function render(o: { fixture: boolean; placeOf?: Map<string, Folder | null
       locale: "en", messages: en,
       children: React.createElement(SenderMenu, {
         state: { messageId: "in-0", x: 0, y: 0 } as never, sender,
+        renderCard: (card) => React.createElement(ContactCard, card),
         onChoose: () => undefined, onOpenDetail: () => undefined, onClose: () => undefined, stayedFor, onMoveToo: vi.fn(),
       }),
     }));
   });
   await act(async () => { await Promise.resolve(); });
-  const lines = [...host.querySelectorAll(".sm-stayed-line")].map((l) => l.querySelector("span")!.textContent!);
+  const lines = [...document.querySelectorAll(".sm-stayed-line")].map((l) => l.querySelector("span")!.textContent!);
   const back = screeningReadBack(store, "in-0", undefined, "ohbox", "sender", {
     consent: { known: true, standalone: false, dormancyDays: 60, screeningBaselineAt: null, screeningScope: "window", foldersEnabled: false },
     now: new Date(NOW), ownAddresses: ["me@home.example"], retro: true,
   });
-  return { now: host.querySelector(".sm-now")!.textContent!, lines, stayedFor, back };
+  return { now: document.querySelector(".oh-contactcard-line")!.getAttribute("aria-description")!, lines, stayedFor, back };
 }
 
 describe("the sheet's split is the wire's when another mail app filed one", () => {
@@ -117,10 +120,6 @@ describe("the sheet's split is the wire's when another mail app filed one", () =
     expect(r.stayedFor).not.toHaveBeenCalled();
     expect(r.back?.verdict).toEqual({ key: "none" });
   });
-
-  it("the press's after-sentence says the one that stayed, never 'all 5' over six", async () => {
-    // `screening.verdictAll` ("All 5 from … are in Ohbox.") is said only on `none`.
-    const r = await render({ fixture: true });
-    expect(r.back?.verdict).toMatchObject({ key: "still", count: 5, still: 1, stillPlace: "Fixture", ids: ["fix-1"] });
-  });
+  /* "the press's after-sentence says the one that stayed, never 'all 5' over six" MOVED word for word (share ohbox-2)
+     to `screening-read-back-says-who-stayed.test.ts`: it reads the press's read-back alone and draws no sheet of today's. */
 });

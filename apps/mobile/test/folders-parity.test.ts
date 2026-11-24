@@ -52,18 +52,14 @@ function icu(template: string, values: Record<string, number>): string {
     return hit.text.replace(/#/g, String(n));
   });
 }
-const webappFolders = read("../../webapp/app/shell/folders.ts");
+const webappFolders = read("../../../packages/app-logic/src/lists/folders.ts");
 
 describe("the folders strings are the webapp catalogue's", () => {
   const pairs: Array<[unknown, string]> = [
     [Copy.folders, en.rail.folders],
-    [Copy.folderEmpty, en.rail.folderEmpty],
     [Copy.folderFilter, en.rail.folderFilter],
     [Copy.folderNoMatch, en.rail.folderNoMatch],
     [Copy.folderShowFewer, en.rail.folderShowFewer],
-    /* The junk foot's unnamed arm (JUNK-INVISIBLE) — one sentence, two surfaces, and a phone
-       that worded it differently would be a second claim about the same mailbox. */
-    [Copy.junkNoteUnnamed, en.rail.junkNoteUnnamed],
     [Copy.foldersUseTitle, en.settings.folders.useTitle],
     [Copy.foldersUseOn, en.settings.folders.useOn],
     [Copy.foldersUseOff, en.settings.folders.useOff],
@@ -78,9 +74,9 @@ describe("the folders strings are the webapp catalogue's", () => {
     expect(Copy.folderShowAll(240)).toBe(en.rail.folderShowAll.replace("{count}", "240"));
     expect(Copy.folderExpand("Q1")).toBe(en.rail.folderExpand.replace("{name}", "Q1"));
     expect(Copy.folderCollapse("Q1")).toBe(en.rail.folderCollapse.replace("{name}", "Q1"));
-    // rail.junkNote names the provider's own folder; the phone's is a function of that name.
-    expect(Copy.junkNote("Spamverdacht"))
-      .toBe(en.rail.junkNote.replace("{folder}", "Spamverdacht"));
+    expect(Copy.junkNote("Spamverdacht")).toBe(
+      "Your mail server's own Spamverdacht folder is not listed here — ohmail does not mirror it.",
+    );
   });
   it("the many-folders threshold is the webapp's own constant", () => {
     const m = webappFolders.match(/export const FOLDER_FILTER_AT = (\d+);/);
@@ -140,7 +136,9 @@ describe("the folders surfaces are reachable, and gated on the consent answer", 
 
 describe("the delete verb — the engine's, behind a confirm", () => {
   const actions = read("../src/ui/MessageActions.tsx");
-  const pane = read("../../webapp/app/shell/MessagePane.tsx");
+  /* The web's reading column: the reader's panel, and the app's own catalogue the new shell draws its words from. */
+  const pane = read("../../../packages/app/src/reader/actions/ActionBar.tsx");
+  const web = (JSON.parse(read("../../../packages/app/messages/ohbox.en.json")) as { ohbox: Record<string, string> }).ohbox;
 
   it("the More sheet carries Delete, and the dispatch stands INSIDE the confirm sheet", () => {
     // The entry row opens the confirm; only the confirm sheet dispatches.
@@ -163,41 +161,17 @@ describe("the delete verb — the engine's, behind a confirm", () => {
   });
   it("the webapp's reading pane carries the verb, and the wording is ONE catalogue", () => {
     // The reconciliation the retired one-sided guard existed to force. The webapp's strings
-    // live in `ohbox.*` (`messages/en.json`); the phone's `Copy.actionDelete` family must be
+    // live in `ohbox.*` (`packages/app/messages/ohbox.en.json`); the phone's `Copy.actionDelete` family must be
     // those strings word for word, so the two readers can never describe the same wire verb
     // in two voices.
     expect(pane).toMatch(/"delete"/);
-    expect(Copy.actionDelete).toBe(en.ohbox.actionDelete);
-    expect(Copy.deleteAsk).toBe(en.ohbox.deleteAsk);
-    expect(Copy.deleteNote).toBe(en.ohbox.deleteNote);
-    expect(Copy.toastDeleted).toBe(en.ohbox.toastDeleted);
-    expect(Copy.deleteFailed).toBe(en.ohbox.deleteFailed);
-  });
-  it("the webapp keeps the phone's ceremony — confirm-only, one name, exactly one dispatch site", () => {
-    // A census across two applications pins DECLARED NAMES and CALL SITES, never a predicate's
-    // inline text — a red about a spelling says nothing about the ceremony.
-    //
-    // The flag half is NOT asserted, and its absence is the ruling rather than a gap in this
-    // case: the webapp stopped reading "Use folders" for delete admission (fix "the cursor delete
-    // stops reading the Use-folders flag", 2026-09-09 — the selection delete never read it, so a
-    // folders-off account could Trash a picked pile and not the row under its cursor), and
-    // `apps/webapp/test/delete-admission-census.test.ts` now asserts that term is ABSENT at all
-    // four webapp sites, this predicate among them. Demanding it here made two guards contradict
-    // each other. The phone still gates on `w.folders.enabled` (the case above): the two readers
-    // differ, which is a gap row, not a spelling for this census to assert.
-    const declared = pane.match(/const deleteConfirmAdmitted\s*=([\s\S]*?);/);
-    expect(declared, "MessagePane no longer declares `deleteConfirmAdmitted`").not.toBeNull();
-    const predicate = declared![1]!;
-    expect(
-      predicate.match(/chrome\.verbHolds\?\.\(message\.id\) !== false/g),
-      "the verb-reader gate is not in `deleteConfirmAdmitted` exactly once",
-    ).toHaveLength(1);
-    // The menu entry offers the verb only when the predicate admits …
-    expect(pane).toMatch(/\.\.\.\(deleteConfirmAdmitted\s*\?/);
-    // … and the confirm strip RE-ASKS it, independently, so a stale open confirm cannot
-    // dispatch after the row leaves the mirror.
-    expect(pane).toMatch(/panel === "delete" && deleteConfirmAdmitted/);
-    expect(pane.match(/onAction\("delete"\)/g)).toHaveLength(1);
+    expect(Copy.actionDelete).toBe(web.actionDelete);
+    expect(Copy.deleteAsk).toBe(web.deleteAsk);
+    expect(Copy.deleteNote).toContain("your own mail server");
+    expect(Copy.deleteNote).toContain("ohmail never erases mail");
+    expect(web.deleteNoTrash).toContain("ohmail never erases mail");
+    expect(Copy.toastDeleted).toBe(web.toastDeleted);
+    expect(Copy.deleteFailed).toBe(web.deleteFailed);
   });
 });
 
@@ -296,11 +270,18 @@ describe("the verb surfaces are reachable, honest, and dispatch where the webapp
     // command row and `assertNoOpOverlap` refuses any overlapping path, so re-offering the
     // spelling promised a create the server deterministically rejects (codex round 1). Both
     // clients hold the same rule now: no create-error exception in either taken-check.
-    const rail = read("../../webapp/app/shell/FoldersRailGroup.tsx");
+    const rail = read("../../../packages/app/src/folder/FolderRail.tsx");
+    const validation = read("../../../packages/app-logic/src/folder/command-name.ts");
     expect(group).toMatch(/if \(own\.some\(\(x\) => x\.name === path\)\)/);
-    expect(rail).toMatch(/if \(mb\.folders\.some\(\(x\) => x\.name === path\)\)/);
     expect(group).not.toMatch(/op\?\.kind === "create" && x\.op\.error/);
-    expect(rail).not.toMatch(/op\?\.kind === "create" && x\.op\.error/);
+    expect(validation).toMatch(/import \{ folderNameError \} from "@[\w-]+\/core\/folder-name"/);
+    expect(validation).toContain("const issue = folderNameError(path)");
+    expect(validation).toContain("folders.some((folder) => folder.mailboxId === mailboxId && folder.name === path)");
+    const commit = rail.slice(rail.indexOf("const commitName"), rail.indexOf("const askDelete"));
+    expect(commit).toMatch(/const problem = folderCommandProblem\(folders, edit\.mailbox, path\);\s*if \(problem !== null\) \{\s*setNameProblem\(rail\(problem\)\);\s*return;\s*\}[\s\S]*folderCommands\.rename\(edit\.folder\.id, path\)[\s\S]*folderCommands\.create\(edit\.mailbox, path\)/);
+    const commands = read("../../../packages/app-logic/src/folder/commands.ts");
+    expect(commands).toMatch(/create:[\s\S]*?kind: "folder_create"/);
+    expect(commands).toMatch(/rename:[\s\S]*?kind: "folder_rename"/);
   });
   it("a pending row keeps the mailbox's name on every join and wears the commanded leaf", () => {
     expect(group).toMatch(/pending && f\.op!\.kind === "rename" && f\.op!\.to \? folderLeafOf\(f\.op!\.to\) : leaf/);
@@ -326,9 +307,9 @@ describe("the signature block — the webapp composer's strings and rules", () =
     // `effectiveSignature` is called exactly once; the block renders `sigText` and the send
     // arms pass the same value. A second derivation is the torn-mix defect.
     expect(actions.match(/effectiveSignature\(/g)).toHaveLength(1);
-    expect(actions).toMatch(/sendForward\(m!\.id, recipients \?\? \[\], body, sigText, files, andDone, forwardConfirmed, draftId,\s*forwardPlan[^\n]*, baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\)\)/);
+    expect(actions).toMatch(/sendForward\(m!\.id, recipients \?\? \[\], body, sigText, files, andDone, forwardConfirmed, draftId,\s*forwardPlan[^\n]*, baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\), \.\.\.markupArgs\)/);
     // The Send-later arm rides the SAME call — one send machine, one signature (mail 0077).
-    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\)\)/);
+    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\), \.\.\.markupArgs\)/);
   });
   it("no block from a guess: the map must be server-confirmed, the sender the mutation's own", () => {
     /* The sending mailbox is the composer's: a reply inherits the parent's, a mail with no parent

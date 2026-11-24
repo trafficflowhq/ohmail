@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { FixturesAdapter, OhmailEngine } from "@ohmail/client-engine";
+import { OhmailEngine } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import {
   accountOrganizer, firstRunCounts, firstRunSubject,
-} from "../app/shell/first-run-subject";
+} from "@ohmail/app-logic/doors/first-run-subject";
 
 /**
  * ═══ WHICH MAILBOX A FIRST RUN IS ABOUT, AND WHOSE MAIL IT COUNTS ══════════════════════════

@@ -1,14 +1,22 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { screen, within } from "@testing-library/react";
+import { UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
-import { OUTBOX_TYPE, type EngineDraft, type EngineMutation } from "@ohmail/client-engine";
+import { OUTBOX_TYPE } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
-import { readComposeRow, resetComposerForTest } from "../app/shell/compose";
+import { readComposeRow, resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import {
-  act, message, mountShell, NOW, press, replyDraft, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
+  act, message, mountShell, NOW, press, replyDraft, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { readReplyDraft, replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
+
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-sent-offline";
 
 /**
  * A MESSAGE SENT WHILE OFFLINE LEAVES DRAFTS AS AN ONLINE ONE DOES (a tester report).
@@ -42,11 +50,20 @@ import {
  * → case 38 red.
  */
 
+// Load the shell before the first case starts its reconnect clock.
+beforeAll(async () => {
+  await import("./_mail-shell.js");
+  await import("@ohmail/ui");
+}, 120_000);
+
 beforeEach(() => {
   try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
+  setStorageOwner(OWNER);
   stubDom();
+  // jsdom draws no animation: the frame's report leaves through `animate`.
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
 });
-afterEach(unmountAll);
+afterEach(async () => { await unmountAll(); resetStorageOwnerForTest(); });
 
 type Entry = { mutation: EngineMutation; withdrawn?: boolean };
 const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind === "mail_send");
@@ -57,16 +74,42 @@ const waitingSaves = (s: DraftShell): number =>
 /** The creates a later boot would replay: on disk and not marked withdrawn. */
 const replayableCreates = (s: DraftShell): Entry[] => s.store.list<Entry>(OUTBOX_TYPE)
   .filter((e) => e.mutation.kind === "draft_save" && e.mutation.draftId === null && e.withdrawn !== true);
-const replySend = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-    .find((b) => (b.textContent ?? "").startsWith("Send"));
-const replyCancel = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-    .find((b) => (b.textContent ?? "").trim() === "Cancel");
-const composeSend = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
-    .find((b) => (b.textContent ?? "").trim().startsWith("Send") && !/later/i.test(b.textContent ?? ""));
-const toasts = (): string => [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+/*
+ * THE NEW SHELL's PARTS, by role and name (re-pointed from today's classes by the older tests' sorting, share
+ * write-1). The letters are opened at the Ohbox: History is not mounted yet, and what these cases state is the
+ * reply's and the send's. The open letter is the region "Open message": the reply's words the textbox "Reply body"
+ * (a forward's "Forward body"), its verbs the toolbar "Actions", the line that says what happened to its send the
+ * status inside it. A new letter is Write's: the combobox "To", the field "Subject", the textbox "Message", its
+ * verbs the toolbar "Send or discard". A toast is the frame's report.
+ */
+const openRegion = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]');
+const replySurface = (_el?: HTMLElement): HTMLElement | null =>
+  openRegion()?.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"], [role="textbox"][aria-label="Forward body"]') ?? null;
+const inToolbar = (bar: string, name: string): HTMLButtonElement | undefined =>
+  [...document.querySelectorAll<HTMLElement>(`[role="toolbar"][aria-label="${bar}"]`)]
+    .flatMap((t) => [...t.querySelectorAll<HTMLButtonElement>("button")]).find((b) => b.getAttribute("aria-label") === name);
+const replySend = (_el?: HTMLElement): HTMLButtonElement | undefined => inToolbar("Actions", "Send");
+/** What the open reply's line says of its send. */
+const sendLine = (): string => openRegion()?.querySelector('[role="status"]')?.textContent ?? "";
+/**
+ * THE CANCEL OF A WAITING SEND: Write's reply offers no Cancel press while its send waits (Send and Discard are held);
+ * its leave key is the same act today's Cancel was (`closeReply`: the waiting send withdrawn, the words kept), pressed
+ * where the keys are, in the reply's text.
+ */
+async function cancelReply(): Promise<void> {
+  await act(async () => {
+    replySurface()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settleEditor();
+}
+const letterText = (_el?: HTMLElement): HTMLElement | null =>
+  document.querySelector<HTMLElement>('[role="textbox"][aria-label="Message"]');
+const letterTo = (_el?: HTMLElement): HTMLInputElement | null =>
+  document.querySelector<HTMLInputElement>('[role="combobox"][aria-label="To"]');
+const letterSubject = (_el?: HTMLElement): HTMLTextAreaElement | null =>
+  document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Subject"]');
+const composeSend = (_el?: HTMLElement): HTMLButtonElement | undefined => inToolbar("Send or discard", "Send");
+const toasts = (): string => [...document.querySelectorAll('.fr-report [role="status"]')].map((n) => n.textContent ?? "").join(" | ");
 const online = async (): Promise<void> => { await act(async () => { window.dispatchEvent(new Event("online")); }); };
 const rounds = async (n: number): Promise<void> => {
   for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
@@ -74,27 +117,30 @@ const rounds = async (n: number): Promise<void> => {
 /** Past the two-second pause, in real time: this harness runs real timers. */
 const PAUSE_ROUNDS = 200;
 
+/** A key, where the keys are: the field or row that has the focus (the reply's text while it is written). */
 async function key(k: string): Promise<void> {
   await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
   });
   await settleEditor();
 }
-async function setInput(input: HTMLInputElement, value: string): Promise<void> {
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+async function setInput(input: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+  const proto = input instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value")!.set!;
   await act(async () => { setter.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
 }
 
 async function replyOn(s: DraftShell, id: string, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox .row[data-id='${id}']`) != null, "the row");
-  await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), "the row");
+  const row = (): HTMLElement | null => s.el.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id='${id}']`);
+  await waitFor(() => row() != null, "the row");
+  await press(row(), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
   await act(async () => { typeInto(replySurface(s.el)!, words); });
 }
 
 /** Offline: the reply as it stands after each of `pauses`, each left to its pause, then Send. */
-async function offlineReplySent(s: DraftShell, pauses: string[]): Promise<void> {
+async function offlineReplySent(s: DraftShell, pauses: string[], status = en.reply.statusQueued): Promise<void> {
   s.offline.on = true;
   await replyOn(s, "m1", pauses[0]!);
   await waitFor(() => waitingSaves(s) === 1, "the pause's row waiting on the outbox", PAUSE_ROUNDS);
@@ -103,10 +149,66 @@ async function offlineReplySent(s: DraftShell, pauses: string[]): Promise<void> 
     await waitFor(() => waitingSaves(s) === i + 2, `pause ${i + 2} waiting on the outbox`, PAUSE_ROUNDS);
   }
   await act(async () => { replySend(s.el)!.click(); });
-  await waitFor(() => (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "Not sent yet");
+  await waitFor(() => sendLine().includes(status), "the reply is waiting to send");
 }
 
 describe("a reply sent while offline", () => {
+  async function sendsReplyAndDeletionOnReconnect(s: DraftShell, subject: string): Promise<void> {
+    const row = () => screen.queryByRole("option", { name: new RegExp(subject) });
+    await press(row(), "the separate letter");
+    const reader = await screen.findByRole("region", { name: "Open message" });
+    await press(within(reader).getByRole("button", { name: "More" }), "More");
+    await press(screen.getByRole("menuitem", { name: "Delete" }), "Delete");
+    await waitFor(() => row() === null, "the deleted letter leaves the list");
+
+    const deletes = () => s.sent.filter((m) => m.kind === "message_delete");
+    const deleteWaits = () => s.engine.pendingMutations().some(
+      ({ mutation }) => mutation.kind === "message_delete" && mutation.messageId === "m2",
+    );
+    await waitFor(deleteWaits, "the delete waits on the outbox", Math.ceil(UNDO_MS / 25) + 120);
+    expect(deletes()).toEqual([]);
+    expect(sends(s)).toEqual([]);
+    const durable = s.store.list<Entry>(OUTBOX_TYPE).filter((entry) => entry.withdrawn !== true);
+    expect(durable.map(({ mutation }) => mutation)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "mail_send", body: "Reply held while offline" }),
+      { kind: "message_delete", messageId: "m2" },
+    ]));
+
+    s.offline.on = false;
+    await online();
+    await waitFor(() => deletes().length === 1 && sends(s).length === 1, "the reply and delete are sent");
+    await online();
+    await act(async () => { await s.engine.flushPending(); });
+    expect(sends(s)).toEqual([expect.objectContaining({ body: "Reply held while offline" })]);
+    expect(deletes()).toEqual([{ kind: "message_delete", messageId: "m2" }]);
+    expect(deleteWaits()).toBe(false);
+  }
+
+  it("keeps a waiting reply and sends a separate deletion once on reconnect", async () => {
+    const subject = "A separate letter to delete";
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2", { subject })]);
+    s.spendSentRow.on = true;
+    await offlineReplySent(s, ["Reply held while offline"]);
+    await sendsReplyAndDeletionOnReconnect(s, subject);
+  }, 30_000);
+
+  it("sends a waiting reply and separate deletion once when the browser reports it is back online", async () => {
+    const subject = "A separate letter to delete";
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2", { subject })]);
+    s.spendSentRow.on = true;
+    const network = vi.spyOn(navigator, "onLine", "get").mockImplementation(() => !s.offline.on);
+    try {
+      await act(() => {
+        s.offline.on = true;
+        window.dispatchEvent(new Event("offline"));
+      });
+      await offlineReplySent(s, ["Reply held while offline"], en.write.status.offline);
+      await sendsReplyAndDeletionOnReconnect(s, subject);
+    } finally {
+      network.mockRestore();
+    }
+  }, 30_000);
+
   it("1 — goes once on reconnect, and Drafts is back to its count", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
     s.spendSentRow.on = true;
@@ -148,8 +250,8 @@ describe("a reply sent while offline", () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
     await offlineReplySent(s, ["Kept, not sent"]);
     // Offline, the server cannot be asked: the Cancel is owed, and the dock holds until it is answered.
-    await act(async () => { replyCancel(s.el)!.click(); });
-    await waitFor(() => toasts().includes(en.compose.cancelUnreachable), "the owed Cancel said");
+    await cancelReply();
+    await waitFor(() => toasts().includes(en.compose.cancelUnreachable.replace(/\.$/u, "")), "the owed Cancel said");
 
     s.withdrawAnswer.outcome = "withdrawn";
     s.offline.on = false;
@@ -179,14 +281,14 @@ describe("a reply sent while offline", () => {
     s.spendSentRow.on = true;
     const before = unsent(s).length;
     s.offline.on = true;
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
-    const panel = s.el.querySelector<HTMLElement>(".read-col .conv-focus") ?? s.el.querySelector<HTMLElement>(".read-col .msg")!;
-    await act(async () => { panel.querySelector<HTMLElement>(".msg-more")!.click(); });
-    await press([...panel.querySelectorAll<HTMLElement>(".mmenu button")].find((b) => b.textContent?.trim() === "Forward") ?? null, "Forward");
-    await waitFor(() => s.el.querySelector(".read-col .reply[data-reply-for] .rcp-input") != null, "the forward dock");
-    await setInput(s.el.querySelector<HTMLInputElement>(".read-col .reply[data-reply-for] .rcp-input")!, "colleague@example.net, ");
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".read-col .reply[data-reply-for] .rte-surface")!, "Sent while offline"); });
+    const row = (): HTMLElement | null => s.el.querySelector<HTMLElement>("section[aria-label=\"Messages\"] [role=option][data-id='m1']");
+    await waitFor(() => row() != null, "the row");
+    await press(row(), "the row");
+    await press([...(openRegion()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.getAttribute("aria-label") === "Forward") ?? null, "Forward");
+    const forwardTo = (): HTMLInputElement | null => openRegion()?.querySelector<HTMLInputElement>('[role="combobox"][aria-label="To"]') ?? null;
+    await waitFor(() => forwardTo() != null, "the forward dock");
+    await setInput(forwardTo()!, "colleague@example.net, ");
+    await act(async () => { typeInto(openRegion()!.querySelector<HTMLElement>('[role="textbox"][aria-label="Forward body"]')!, "Sent while offline"); });
     await waitFor(() => waitingSaves(s) === 1, "the pause's row waiting on the outbox", PAUSE_ROUNDS);
     await act(async () => { replySend(s.el)!.click(); });
     await rounds(8);
@@ -206,10 +308,10 @@ describe("a letter sent while offline", () => {
     const before = unsent(s).length;
     s.offline.on = true;
     await key("c");
-    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
-    await setInput(s.el.querySelector<HTMLInputElement>("#compose-to")!, "lena@example.invalid, ");
-    await setInput(s.el.querySelector<HTMLInputElement>("#compose-subject")!, "Written offline");
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "A letter written offline"); });
+    await waitFor(() => letterText() != null, "the composer");
+    await setInput(letterTo()!, "lena@example.invalid, ");
+    await setInput(letterSubject()!, "Written offline");
+    await act(async () => { typeInto(letterText()! as never, "A letter written offline"); });
     await settleEditor();
     await waitFor(() => waitingSaves(s) === 1, "the pause's row waiting on the outbox", PAUSE_ROUNDS);
     await act(async () => { composeSend(s.el)!.click(); });
@@ -241,7 +343,7 @@ describe("a create that waited offline lands on the reconnect", () => {
     await replyOn(s, "m1", "First reply");
     await waitFor(() => createsOf(s, "m1").length === 1, "the first reply's create waiting", PAUSE_ROUNDS);
     await act(async () => { replySend(s.el)!.click(); });
-    await waitFor(() => (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "Not sent yet");
+    await waitFor(() => sendLine().includes(en.reply.statusQueued), "Not sent yet");
     await replyOn(s, "m2", "Second reply");
     await waitFor(() => createsOf(s, "m2").length === 1, "the second reply's create waiting", PAUSE_ROUNDS);
     s.offline.on = false;
@@ -262,23 +364,23 @@ describe("a create that waited offline lands on the reconnect", () => {
     s.spendSentRow.on = true;
     s.offline.on = true;
     await key("c");
-    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
-    await setInput(s.el.querySelector<HTMLInputElement>("#compose-to")!, "lena@example.invalid, ");
-    await setInput(s.el.querySelector<HTMLInputElement>("#compose-subject")!, "Written offline");
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "A letter written offline"); });
+    await waitFor(() => letterText() != null, "the composer");
+    await setInput(letterTo()!, "lena@example.invalid, ");
+    await setInput(letterSubject()!, "Written offline");
+    await act(async () => { typeInto(letterText()! as never, "A letter written offline"); });
     await settleEditor();
     await waitFor(() => createsOf(s, null).length >= 1, "the letter's create waiting", PAUSE_ROUNDS);
     await act(async () => { window.location.hash = "#/ohbox"; });
     await replyOn(s, "m1", "A reply sent offline");
     await waitFor(() => createsOf(s, "m1").length === 1, "the reply's create waiting", PAUSE_ROUNDS);
     await act(async () => { replySend(s.el)!.click(); });
-    await waitFor(() => (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "Not sent yet");
+    await waitFor(() => sendLine().includes(en.reply.statusQueued), "Not sent yet");
     s.offline.on = false;
     await online();
     await waitFor(() => toasts().includes(en.reply.toastSent), "Reply sent.");
     await rounds(40);
     const letters = unsent(s).filter((d) => d.subject === "Written offline");
-    expect({ letters: letters.length, held: readComposeRow() === (letters[0]?.id ?? "none") },
+    expect({ letters: letters.length, held: readComposeRow(storageOwner()) === (letters[0]?.id ?? "none") },
       "the letter's row was left beside the composer, or written twice").toEqual({ letters: 1, held: true });
   }, 60_000);
 
@@ -343,14 +445,14 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 90_000);
 
   it("11 — a reply typed offline, then another device's draft of it opened from Drafts: both rows stay", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     s.offline.on = true;
     await replyOn(s, "m1", "Laptop words, written offline");
     await waitFor(() => createsOf(s, "m1").length === 1, "the laptop reply's create waiting", PAUSE_ROUNDS);
     await act(async () => { window.location.hash = "#/drafts"; });
-    await waitFor(() => s.el.querySelector(".draft-row[data-id='d-phone'] .draft-open") != null, "the phone's draft row");
-    await press(s.el.querySelector(".draft-row[data-id='d-phone'] .draft-open"), "the phone draft's open button");
+    await waitFor(() => s.el.querySelector("[role=option][data-id='d-phone']") != null, "the phone's draft row");
+    await press(s.el.querySelector("[role=option][data-id='d-phone']"), "the phone draft's open button");
     await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("phone"), "the phone's draft in the editor");
     await reconnect(s);
     expect(rowsOf(s, "m1").sort(), "the reply typed offline was deleted")
@@ -380,14 +482,14 @@ describe("a create that waited offline lands on the reconnect", () => {
 
   const openPhoneDraft = async (s: DraftShell): Promise<void> => {
     await act(async () => { window.location.hash = "#/drafts"; });
-    await waitFor(() => s.el.querySelector(".draft-row[data-id='d-phone'] .draft-open") != null, "the phone's draft row");
-    await press(s.el.querySelector(".draft-row[data-id='d-phone'] .draft-open"), "the phone draft's open button");
+    await waitFor(() => s.el.querySelector("[role=option][data-id='d-phone']") != null, "the phone's draft row");
+    await press(s.el.querySelector("[role=option][data-id='d-phone']"), "the phone draft's open button");
     await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("phone"), "the phone's draft in the editor");
     await rounds(10);
   };
 
   it("13 — a reply typed offline, then another device's draft of it sent offline: the typed words stay a draft", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     s.spendSentRow.on = true;
     s.offline.on = true;
@@ -395,7 +497,7 @@ describe("a create that waited offline lands on the reconnect", () => {
     await waitFor(() => createsOf(s, "m1").length === 1, "the laptop reply's create waiting", PAUSE_ROUNDS);
     await openPhoneDraft(s);
     await act(async () => { replySend(s.el)!.click(); });
-    await waitFor(() => (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "Not sent yet");
+    await waitFor(() => sendLine().includes(en.reply.statusQueued), "Not sent yet");
     await reconnect(s);
     await waitFor(() => toasts().includes(en.reply.toastSent), "Reply sent.");
     await rounds(40);
@@ -404,7 +506,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 90_000);
 
   it("14 — the same with the typed reply's create on the wire at the press: it stays a draft", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     s.spendSentRow.on = true;
     s.offline.on = true;
@@ -441,16 +543,16 @@ describe("a create that waited offline lands on the reconnect", () => {
     await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes(words), "the reply in the editor again");
     await rounds(20);
     await act(async () => { replySend(s.el)!.click(); });
-    await waitFor(() => (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "Not sent yet");
+    await waitFor(() => sendLine().includes(en.reply.statusQueued), "Not sent yet");
     await reconnect(s);
     await waitFor(() => toasts().includes(en.reply.toastSent), "Reply sent.");
     await rounds(40);
   };
   const openListed = async (s: DraftShell, words: string): Promise<void> => {
     await act(async () => { window.location.hash = "#/drafts"; });
-    const row = (): Element | undefined => [...s.el.querySelectorAll(".draft-row")].find((r) => (r.textContent ?? "").includes(words));
-    await waitFor(() => row()?.querySelector(".draft-open") != null, "the waiting reply listed in Drafts");
-    await press(row()!.querySelector(".draft-open"), "its open button");
+    const row = (): Element | undefined => [...s.el.querySelectorAll(".dr-row")].find((r) => (r.textContent ?? "").includes(words));
+    await waitFor(() => row()?.querySelector('[role="option"]') != null, "the waiting reply listed in Drafts");
+    await press(row()!.querySelector('[role="option"]'), "its open button");
   };
   const sentFrom = (s: DraftShell): (string | null)[] => sends(s).map((m) => (m as { draftId?: string | null }).draftId ?? null);
 
@@ -467,7 +569,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 90_000);
 
   it("17 — another device's draft opened, then the reply's own waiting create from Drafts and sent: the phone's draft stays", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     await reopenedAndSent(s, "Laptop words, written offline", async () => {
       await openPhoneDraft(s);
@@ -503,7 +605,7 @@ describe("a create that waited offline lands on the reconnect", () => {
     mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("zz-phone", "m1", "Words from the phone")]);
 
   it("19 — the phone's draft edited, then the reply's own waiting create, then Reply and typed on: the phone's words stay its own", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await phoneEdited();
     await staleReopen(s);
     await act(async () => { typeInto(replySurface(s.el)!, "Laptop words, written offline, and one more line"); });
@@ -514,7 +616,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 120_000);
 
   it("20 — the same, then Send: the phone's draft is not spent, and no copy of the sent words stays", async () => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Laptop words");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
     const s = await phoneEdited();
     s.spendSentRow.on = true;
     await staleReopen(s);
@@ -574,20 +676,22 @@ describe("a first save named by its key while it waits — at the gate, behind a
   };
   const openListed = async (s: DraftShell, words: string, surface: () => boolean = () => replySurface(s.el) != null): Promise<void> => {
     await act(async () => { window.location.hash = "#/drafts"; });
-    const row = (): Element | undefined => [...s.el.querySelectorAll(".draft-row")].find((r) => (r.textContent ?? "").includes(words));
-    await waitFor(() => row()?.querySelector(".draft-open") != null, `"${words}" listed in Drafts`);
-    await press(row()!.querySelector(".draft-open"), "its open button");
+    // Write shares the Drafts list. Wait for navigation to finish before pressing a row in the new place.
+    await waitFor(() => s.el.querySelector('[data-rail-id="drafts"] [aria-current="page"]') !== null, "the Drafts place");
+    const row = (): Element | undefined => [...s.el.querySelectorAll(".dr-row")].find((r) => (r.textContent ?? "").includes(words));
+    await waitFor(() => row()?.querySelector('[role="option"]') != null, `"${words}" listed in Drafts`);
+    await press(row()!.querySelector('[role="option"]'), "its open button");
     await waitFor(surface, "the editor open again");
     await rounds(10);
   };
   const discardListed = async (s: DraftShell, words: string): Promise<void> => {
     await act(async () => { window.location.hash = "#/drafts"; });
-    const row = (): Element | undefined => [...s.el.querySelectorAll(".draft-row")].find((r) => (r.textContent ?? "").includes(words));
-    await waitFor(() => row()?.querySelector(".draft-discard") != null, `"${words}" listed in Drafts`);
-    await press(row()!.querySelector(".draft-discard"), "Delete");
-    const confirm = [...s.el.querySelectorAll<HTMLButtonElement>(".draft-confirm button")]
-      .find((b) => (b.textContent ?? "").trim() === en.drafts.discardConfirm) ?? null;
-    await press(confirm, "confirm the delete");
+    const discard = () => [...s.el.querySelectorAll(".dr-row")]
+      .find((row) => row.textContent?.includes(words))?.querySelector("button[data-own]");
+    await waitFor(() => discard() != null, `"${words}" listed in Drafts`);
+    await press(discard()!, "Discard");
+    // Leaving Drafts commits its Undo window, including a first save still on the wire.
+    await act(async () => { window.location.hash = "#/ohbox"; });
     await rounds(10);
   };
   const reload = async (s: DraftShell, hash: string): Promise<DraftShell> => {
@@ -625,8 +729,11 @@ describe("a first save named by its key while it waits — at the gate, behind a
     await rounds(10);
     return { release, local };
   }
-  const opened = (deadline: boolean): Promise<DraftShell> =>
-    mountShell("#/ohbox", [message("m1"), message("m2")], [], deadline ? { outboxReplayDeadlineMs: 50 } : {});
+  const opened = (deadline: boolean, options: { versions?: boolean } = {}): Promise<DraftShell> =>
+    mountShell("#/ohbox", [message("m1"), message("m2")], [], {
+      ...options,
+      ...(deadline ? { outboxReplayDeadlineMs: 50 } : {}),
+    });
 
   async function typedOnAfterTheGate(deadline: boolean, twice: boolean): Promise<DraftShell> {
     const s = await opened(deadline);
@@ -757,15 +864,15 @@ describe("a first save named by its key while it waits — at the gate, behind a
   async function letterReopened(s: DraftShell): Promise<string> {
     s.offline.on = true;
     await key("c");
-    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
-    await setInput(s.el.querySelector<HTMLInputElement>("#compose-to")!, "lena@example.invalid, ");
-    await setInput(s.el.querySelector<HTMLInputElement>("#compose-subject")!, "Written offline");
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "A letter"); });
+    await waitFor(() => letterText() != null, "the composer");
+    await setInput(letterTo()!, "lena@example.invalid, ");
+    await setInput(letterSubject()!, "Written offline");
+    await act(async () => { typeInto(letterText()! as never, "A letter"); });
     await settleEditor();
     await waitFor(() => createsOf(s, null).length >= 1, "the letter's create waiting", PAUSE_ROUNDS);
     const local = shown(s).find((d) => d.subject === "Written offline")!.id;
-    await openListed(s, "Written offline", () => s.el.querySelector(".view-compose .rte-surface") != null);
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "A letter, now longer"); });
+    await openListed(s, "Written offline", () => letterText() != null);
+    await act(async () => { typeInto(letterText()! as never, "A letter, now longer"); });
     await settleEditor();
     await rounds(PAUSE_ROUNDS);
     return local;
@@ -801,10 +908,10 @@ describe("a first save named by its key while it waits — at the gate, behind a
     await key("Escape");
     await waitFor(() => replySurface(s.el) == null, "closed");
     await act(async () => { window.location.hash = "#/drafts"; });
-    const older = (): Element | undefined => [...s.el.querySelectorAll(".draft-row")]
+    const older = (): Element | undefined => [...s.el.querySelectorAll(".dr-row")]
       .find((r) => (r.textContent ?? "").includes("Dear Ann, yes") && !(r.textContent ?? "").includes("Thursday"));
-    await waitFor(() => older()?.querySelector(".draft-open") != null, "the older row listed");
-    await press(older()!.querySelector(".draft-open"), "its open button");
+    await waitFor(() => older()?.querySelector('[role="option"]') != null, "the older row listed");
+    await press(older()!.querySelector('[role="option"]'), "its open button");
     await waitFor(() => replySurface(s.el) != null, "the reply editor again");
     await rounds(10);
     expect(replySurface(s.el)?.textContent ?? "", "the open wrote the older words over the newer").toContain("Thursday");
@@ -813,7 +920,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("32 — Discard in Drafts of a reply whose first save waits, then of one on the wire: nothing of either is left", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [], { versions: true });
     s.offline.on = true;
     await replyOn(s, "m1", "Never mind this one");
     await waitFor(() => createsOf(s, "m1").length === 1, "the create waiting", PAUSE_ROUNDS);
@@ -823,6 +930,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
     expect({ rows: rowsOf(s, "m1"), creates: saves(s).filter((m) => m.inReplyToMessageId === "m1").length })
       .toEqual({ rows: [], creates: 0 });
     expect(replayableCreates(s), "a later boot would write the discarded reply").toHaveLength(0);
+    expect(readReplyDraft("m1", OWNER).text, "reopening the reply brings discarded words back").toBe("");
 
     let release: () => void = () => {};
     s.saveGate.wait = new Promise<void>((r) => { release = r; });
@@ -837,6 +945,9 @@ describe("a first save named by its key while it waits — at the gate, behind a
     await act(async () => { await s.engine.flushPending(); });
     await rounds(40);
     expect(rowsOf(s, "m2"), "the create on the wire stayed as a draft after its Discard").toEqual([]);
+    expect(readReplyDraft("m2", OWNER).text, "reopening the reply brings discarded words back").toBe("");
+    expect(s.sent.filter((m) => m.kind === "draft_discard"), "the server row was deleted once").toHaveLength(1);
+    expect(sends(s)).toHaveLength(0);
   }, 120_000);
 
   it("33 — a reply paused twice offline, the page reloaded online: one row, the newest words", async () => {
@@ -859,17 +970,17 @@ describe("a first save named by its key while it waits — at the gate, behind a
     const first = await mountShell("#/ohbox", [message("m1")]);
     first.offline.on = true;
     await key("c");
-    await waitFor(() => first.el.querySelector(".view-compose .rte-surface") != null, "the composer");
-    await setInput(first.el.querySelector<HTMLInputElement>("#compose-to")!, "lena@example.invalid, ");
-    await setInput(first.el.querySelector<HTMLInputElement>("#compose-subject")!, "Written offline");
-    await act(async () => { typeInto(first.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "A letter"); });
+    await waitFor(() => letterText() != null, "the composer");
+    await setInput(letterTo()!, "lena@example.invalid, ");
+    await setInput(letterSubject()!, "Written offline");
+    await act(async () => { typeInto(letterText()! as never, "A letter"); });
     await settleEditor();
     await waitFor(() => createsOf(first, null).length === 1, "pause 1 waiting", PAUSE_ROUNDS);
-    await act(async () => { typeInto(first.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "A letter, longer"); });
+    await act(async () => { typeInto(letterText()! as never, "A letter, longer"); });
     await settleEditor();
     await waitFor(() => createsOf(first, null).length === 2, "pause 2 waiting", PAUSE_ROUNDS);
     const s = await reload(first, "#/compose");
-    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer again");
+    await waitFor(() => letterText() != null, "the composer again");
     await rounds(PAUSE_ROUNDS);
     await act(async () => { await s.engine.flushPending(); });
     await rounds(40);
@@ -899,7 +1010,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }
   const hungReply = async (s: DraftShell): Promise<() => Promise<void>> => hungThenCancelled(s,
     () => replyOn(s, "m1", "Hung words"), () => replySend(s.el), en.reply.statusQueued, async () => {
-      await act(async () => { replyCancel(s.el)!.click(); });
+      await cancelReply();
       await waitFor(() => replySurface(s.el) == null, "the dock closed");
     });
 
@@ -917,7 +1028,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("36 — the same, then Discard in Drafts before it lands: nothing of the reply is left", async () => {
-    const s = await opened(true);
+    const s = await opened(true, { versions: true });
     const landed = await hungReply(s);
     await discardListed(s, "Hung words");
     await landed();
@@ -928,16 +1039,15 @@ describe("a first save named by its key while it waits — at the gate, behind a
     const s = await opened(true);
     const landed = await hungThenCancelled(s, async () => {
       await key("c");
-      await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
-      await setInput(s.el.querySelector<HTMLInputElement>("#compose-to")!, "lena@example.invalid, ");
-      await setInput(s.el.querySelector<HTMLInputElement>("#compose-subject")!, "Written offline");
-      await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "A letter"); });
+      await waitFor(() => letterText() != null, "the composer");
+      await setInput(letterTo()!, "lena@example.invalid, ");
+      await setInput(letterSubject()!, "Written offline");
+      await act(async () => { typeInto(letterText()! as never, "A letter"); });
       await settleEditor();
     }, () => composeSend(s.el), en.compose.statusQueued, async () => {
-      await press(s.el.querySelector(".compose-cancel"), "Cancel");
-      await waitFor(() => s.el.querySelector(".compose-confirm") != null, "the discard question");
-      await press([...s.el.querySelectorAll<HTMLButtonElement>(".compose-confirm button")]
-        .find((b) => (b.textContent ?? "").trim() === en.compose.cancelConfirm) ?? null, "Discard message");
+      /* Today's Cancel and its question's "Discard message" are Write's one verb that throws the letter away:
+         Discard, in the letter's "Send or discard" bar (it asks nothing first and offers Undo). */
+      await press(inToolbar("Send or discard", "Discard") ?? null, "Discard");
     });
     await landed();
     expect({ sends: sendsOf(s).length, letters: letters(s) }).toEqual({ sends: 0, letters: [] });
@@ -1037,9 +1147,9 @@ describe("a reply's creates replayed by a reload are judged from the boot, befor
   }
   async function openFromDrafts(s: DraftShell, id: string): Promise<void> {
     await act(async () => { window.location.hash = "#/drafts"; });
-    const row = (): Element | null => s.el.querySelector(`.draft-row[data-id="${id}"]`);
-    await waitFor(() => row()?.querySelector(".draft-open") != null, `${id} listed in Drafts`);
-    await press(row()!.querySelector(".draft-open"), "its open button");
+    const row = (): Element | null => s.el.querySelector(`.dr-row[data-id="${id}"]`);
+    await waitFor(() => row()?.querySelector('[role="option"]') != null, `${id} listed in Drafts`);
+    await press(row()!.querySelector('[role="option"]'), "its open button");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
     await rounds(10);
   }

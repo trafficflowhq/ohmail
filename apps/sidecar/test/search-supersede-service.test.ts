@@ -8,6 +8,7 @@ import { searchFor } from "../src/composition-passes.js";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { sqlTextOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
 
@@ -24,7 +25,7 @@ const rows = (r: unknown): any[] => (Array.isArray(r) ? r : ((r as { rows?: any[
 let dir = "";
 let o: OpenLocalDb;
 let accountId = "";
-const textOf = (st: SQL): string => (o.db as unknown as { dialect: { sqlToQuery(s: SQL): { sql: string } } }).dialect.sqlToQuery(st).sql;
+const textOf = (st: SQL): string => sqlTextOf(o.db, st);
 
 /** Every statement the service sends, `BEGIN` marking where its transaction opened. */
 function recording(target: any, seen: string[]): any {
@@ -86,9 +87,9 @@ describe("a superseded search stops at its next check point", () => {
         timestamptz '2026-09-01T00:00:00Z' - make_interval(mins => g), jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g),
         '[]'::jsonb, '[]'::jsonb
       from generate_series(1, ${N}) g`);
-    await o.db.execute(sql`insert into message_bodies (message_id, text) select m.id, 'harbour letter' from messages m where m.account_id = ${accountId}::uuid`);
-    await o.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-      select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
+    await o.db.execute(sql`insert into message_bodies (message_id, account_id, text) select m.id, m.account_id, 'harbour letter' from messages m where m.account_id = ${accountId}::uuid`);
+    await o.db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+      select m.id, m.account_id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
     const built = await searchIndexBackfillPass({ db: o.db as unknown as Tx, accountId, rounds: 100, batch: 1_000 });
     expect(built.marked).toBe(true);
   }, 120_000);

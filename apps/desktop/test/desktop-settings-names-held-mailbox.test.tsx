@@ -1,31 +1,15 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-
-import en from "../../webapp/messages/en.json";
-import { DEFAULT_LOCALE, setActiveCatalog } from "../../webapp/app/shell/locale";
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import { waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { EngineStatus } from "../src/bridge-fetch.js";
+import { cleanInstallPane, mountInstallPane } from "./_install-pane.js";
 
 /**
  * SETTINGS → DESKTOP NAMES THE MAILBOX THIS INSTALL HOLDS. It rendered `EngineStatus.address`, the
  * seed from the install's settings file, which stays put when the seed is removed while another
  * mailbox remains: the pane named a mailbox the install no longer held. It reads the roster now.
  */
-
-let FACTS: MailboxFacts[] | null = null;
-vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
-    "../../webapp/app/shell/MailStateProvider",
-  );
-  return { ...real, useMailboxFacts: () => FACTS };
-});
-
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const h = React.createElement;
 
 const row = (id: string, address: string, over: Partial<MailboxFacts> = {}): MailboxFacts => ({
   id,
@@ -43,57 +27,49 @@ const row = (id: string, address: string, over: Partial<MailboxFacts> = {}): Mai
 
 const SEED = "removed@example.test";
 const SURVIVOR = "survivor@example.test";
-const status = { state: "serving", mode: "local", credentialState: "ready", address: SEED } as EngineStatus;
+const status: EngineStatus = {
+  state: "serving", mode: "local", credentialState: "ready", mailboxId: "mbx-1", address: SEED,
+} as EngineStatus;
 
-let hostEl: HTMLDivElement | null = null;
-let root: Root | null = null;
-
-async function mount(facts: MailboxFacts[] | null): Promise<string> {
-  FACTS = facts;
-  setActiveCatalog(DEFAULT_LOCALE, en as never);
-  const { DesktopSettings } = await import("../src/DesktopSettings.js");
-  hostEl = document.createElement("div");
-  document.body.append(hostEl);
-  root = createRoot(hostEl);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en as never, timeZone: "UTC",
-      children: h(DesktopSettings, {
-        status, session: "live", sealFailed: false,
-        onStatus: () => undefined, onSwitchDoor: () => undefined, onSignIn: () => undefined,
-      } as never),
-    }));
+function mount(facts: MailboxFacts[] | Promise<MailboxFacts[]>): Promise<HTMLElement> {
+  return mountInstallPane({
+    status,
+    answer: async ({ path }) => path === "/mailboxes" ? { body: { items: await facts } } : undefined,
   });
-  return hostEl.textContent ?? "";
 }
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  root = null;
-  hostEl?.remove();
-  hostEl = null;
-  FACTS = null;
-});
+afterEach(cleanInstallPane);
 
 describe("Settings → Desktop names the mailbox this install holds", () => {
+  it("shows the running engine and an unreachable mail server from the local roster", async () => {
+    const pane = within(await mount([row("mbx-1", SEED, { unreachableSince: "2026-09-02T09:00:00.000Z" })]));
+    expect(pane.getByRole("group", { name: "Mail engine" }).textContent).toContain("Running");
+    await waitFor(() => expect(pane.getByRole("group", { name: "Connection" }).textContent).toContain("Unreachable"));
+  });
+
   it("the seed was removed while another mailbox remains: the survivor, never the seed", async () => {
-    const said = await mount([
+    const pane = await mount([
       row("mbx-seed", SEED, { status: "disabled", disabledReason: null }),
       row("mbx-2", SURVIVOR),
     ]);
-    expect(said).toContain(SURVIVOR);
-    expect(said, "the pane named a mailbox this install no longer holds").not.toContain(SEED);
-    expect(hostEl?.querySelector(".set-val-left"), "single mailbox should keep default alignment").toBeNull();
+    await waitFor(() => expect(pane.textContent).toContain(SURVIVOR));
+    expect(pane.textContent, "the pane named a mailbox this install no longer holds").not.toContain(SEED);
+    expect(pane.querySelector(".set-val-left"), "single mailbox should keep default alignment").toBeNull();
   });
 
   it("two mailboxes held: both are named and the summary aligns left", async () => {
-    const said = await mount([row("mbx-1", SEED), row("mbx-2", SURVIVOR)]);
-    expect(said).toContain(SEED);
-    expect(said).toContain(SURVIVOR);
-    expect(hostEl?.querySelector(".set-val-left"), "multiple mailbox summary should align left").not.toBeNull();
+    const pane = await mount([row("mbx-1", SEED), row("mbx-2", SURVIVOR)]);
+    await waitFor(() => expect(pane.textContent).toContain(SURVIVOR));
+    expect(pane.textContent).toContain(SEED);
+    expect(pane.querySelector(".set-val-left"), "multiple mailbox summary should align left").not.toBeNull();
   });
 
   it("CONTROL: before the roster has answered, the pane says what it always said", async () => {
-    expect(await mount(null)).toContain(SEED);
+    let reply!: (facts: MailboxFacts[]) => void;
+    const roster = new Promise<MailboxFacts[]>((resolve) => { reply = resolve; });
+    const pane = await mount(roster);
+    expect(pane.textContent).toContain(SEED);
+    reply([row("mbx-2", SURVIVOR)]);
+    await waitFor(() => expect(pane.textContent).toContain(SURVIVOR));
   });
 });

@@ -2,11 +2,11 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps, type ChangeWakeHub, type SseConfig } from "@trafficflow/api";
-import { refreshTokens, sessions } from "@trafficflow/db";
+import { bindingOf, refreshTokens, sessions, UNMETERED_ACCESS, users, type EntitlementsPort } from "@trafficflow/db";
 import { generateToken, hashToken, type Db } from "@trafficflow/services";
 import { createLogger, type Logger } from "@trafficflow/core/mail";
 import { resetSseCounters } from "../src/routes/events.js";
-import { makeDeps, seedDevice, seedSession, seedSessionFor, req, FIXED_NOW, type SeededSession } from "./helpers.js";
+import { makeDeps, seedDevice, seedSession, seedSessionFor, req, FIXED_NOW, type SeededSession, perRequest } from "./helpers.js";
 
 /**
  * AN OPEN `/events` STREAM ENDS WITH ITS SESSION (SEC3-AUTH-4). Every read the stream makes is ONE
@@ -58,15 +58,17 @@ afterEach(async () => {
 async function watch(deps: ApiDeps, token: string): Promise<Watched> {
   let reads = 0;
   const db = new Proxy(deps.db, {
-    get(target, prop) {
-      const v: unknown = Reflect.get(target, prop, target);
+    get(target, prop, receiver) {
+      const v: unknown = Reflect.get(target, prop, receiver);
       if (typeof v !== "function") return v;
       const fn = v as (...a: unknown[]) => unknown;
-      if (prop === "select") return (...a: unknown[]) => { reads += 1; return fn.apply(target, a); };
-      return fn.bind(target);
+      return function (this: unknown, ...a: unknown[]) {
+        if (prop === "select") reads += 1;
+        return fn.apply(this === undefined || this === receiver ? target : this, a);
+      };
     },
   }) as Db;
-  const res = await H(req("GET", "/events", { bearer: token }), { ...deps, db }, SSE);
+  const res = await H(req("GET", "/events", { bearer: token }), perRequest({ ...deps, db }), SSE);
   expect(res.status).toBe(200);
   const reader = res.body!.getReader();
   const dec = new TextDecoder();
@@ -87,7 +89,7 @@ async function watch(deps: ApiDeps, token: string): Promise<Watched> {
     stop: async () => { await reader.cancel().catch(() => undefined); await ended; },
   };
   watching.push(w);
-  await until(() => reads >= 3 || closedAt !== null, 20 * POLL_MS);
+  await until(() => text.includes("event: ready\n") || closedAt !== null, 20 * POLL_MS);
   expect(closedAt, "the stream ended before its first poll").toBeNull();
   return w;
 }
@@ -117,6 +119,62 @@ async function expectStillLive(w: Watched): Promise<void> {
   expect(w.closedAt(), "a stream whose session is live was closed").toBeNull();
   expect(w.reads()).toBeGreaterThanOrEqual(r + 2);
 }
+
+describe("which sessions may open an event stream", () => {
+  it("refuses a bearer when the request expects another account", async () => {
+    const { db, deps } = await makeDeps();
+    const a = await seedSession(db, { now: FIXED_NOW });
+    const b = await seedSession(db, { now: FIXED_NOW });
+    const crossed = await H(req("GET", "/events", {
+      bearer: a.token, headers: { "X-Ohmail-Expected-Account": b.accountId },
+    }), deps, SSE);
+    if (crossed.ok) await crossed.body?.cancel();
+    expect(crossed.status).toBe(409);
+    expect(await crossed.json()).toMatchObject({ error: { code: "session_mismatch" } });
+    await expectStillLive(await watch(deps, a.token));
+  });
+
+  it("refuses a suspended account's live bearer at the events door", async () => {
+    const { db, deps } = await makeDeps();
+    const suspended = await seedSession(db, { now: FIXED_NOW });
+    const active = await seedSession(db, { now: FIXED_NOW });
+    const access = async (id: string) => id === suspended.accountId
+      ? { ok: false, reason: "suspended" } as const : UNMETERED_ACCESS;
+    const managed = { ...deps, services: { ...deps.services!, entitlementsPort: { access } as EntitlementsPort } };
+    const refused = await H(req("GET", "/events", { bearer: suspended.token }), managed, SSE);
+    if (refused.ok) await refused.body?.cancel();
+    expect(refused.status).toBe(402);
+    expect(await refused.json()).toMatchObject({
+      error: { code: "subscription_required", details: { reason: "suspended" } },
+    });
+    await expectStillLive(await watch(managed, active.token));
+  });
+
+  it("reads email verification under the session's account and refuses an unverified bearer", async () => {
+    const { db, deps } = await makeDeps();
+    const unverified = await seedSession(db, { now: FIXED_NOW, emailVerified: false });
+    const verified = await seedSession(db, { now: FIXED_NOW });
+    const bindings: ReturnType<typeof bindingOf>[] = [];
+    const select = db.select;
+    const spy = vi.spyOn(db, "select").mockImplementation(function (this: Db, ...args: unknown[]) {
+      const selection = args[0];
+      if (selection && typeof selection === "object" && "emailVerifiedAt" in selection) {
+        bindings.push(bindingOf(this));
+      }
+      return Reflect.apply(select, this, args);
+    } as typeof select);
+    try {
+      const refused = await H(req("GET", "/events", { bearer: unverified.token }), deps, SSE);
+      if (refused.ok) await refused.body?.cancel();
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({ error: { code: "email_unverified" } });
+      expect(bindings).toEqual([{ account: unverified.accountId, keyed: false }]);
+    } finally {
+      spy.mockRestore();
+    }
+    await expectStillLive(await watch(deps, verified.token));
+  });
+});
 
 /** A refresh row in the session's OWN family, as a sign-in leaves one. */
 async function refreshFor(db: Db, s: SeededSession): Promise<string> {
@@ -285,15 +343,21 @@ describe("pushed wakes ride the same recheck; the poll is the floor", () => {
   }, 20_000);
 });
 
-/** A stub `Db` answering the route's one statement; the session is preset, so nothing else reads. */
+/** A stub `Db` that admits the preset user and scripts each stream read. */
 function pollDb(onRead: () => Promise<Array<{ max: string | null; live?: unknown }>>): Db {
-  return { select: () => ({ from: () => ({ where: () => onRead() }) }) } as unknown as Db;
+  return {
+    select: () => ({
+      from: (table: unknown) => ({
+        where: () => table === users ? { limit: async () => [{ emailVerifiedAt: FIXED_NOW }] } : onRead(),
+      }),
+    }),
+  } as unknown as Db;
 }
 const PRESET: ApiDeps["session"] = {
   accountId: "11111111-1111-1111-1111-111111111111",
   userId: "22222222-2222-2222-2222-222222222222",
   sessionId: "33333333-3333-3333-3333-333333333333",
-  lastTwofaAt: null, scope: "full", via: "bearer", emailVerifiedAt: FIXED_NOW,
+  lastTwofaAt: null, scope: "full", via: "bearer",
 };
 const HS = (d: ApiDeps, sse: SseConfig): Promise<Response> =>
   app.handle(req("GET", "/events"), { ...d, session: PRESET, idempotency: null, sse });
@@ -319,7 +383,7 @@ describe("a failed read closes with a 30 s reconnect hint; every other close kee
       if (calls > 1) throw new Error("connection terminated unexpectedly");
       return [{ max: null, live: true }];
     });
-    const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+    const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     expect(retries(text)).toEqual(["3000", "30000"]);
     expect(text).toContain("event: sync_failed");
   }, 20_000);
@@ -327,17 +391,17 @@ describe("a failed read closes with a 30 s reconnect hint; every other close kee
   it("the first read's failure arm writes retry: 30000 before it closes", async () => {
     const { deps } = await makeDeps();
     const db = pollDb(async () => { throw new Error("no connection"); });
-    const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+    const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     expect(retries(text)).toEqual(["3000", "30000"]);
     expect(text).toContain("event: sync_failed");
   }, 20_000);
 
   it("controls: the lifetime's close and the session's close keep the 3 s hint, and send no sync_failed", async () => {
     const { deps } = await makeDeps();
-    const lifetime = await drain(await HS({ ...deps, db: pollDb(async () => [{ max: null, live: true }]) },
+    const lifetime = await drain(await HS(perRequest({ ...deps, db: pollDb(async () => [{ max: null, live: true }]) }),
       { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 100 }));
     let calls = 0;
-    const revoked = await drain(await HS({ ...deps, db: pollDb(async () => { calls += 1; return [{ max: null, live: calls < 3 }]; }) },
+    const revoked = await drain(await HS(perRequest({ ...deps, db: pollDb(async () => { calls += 1; return [{ max: null, live: calls < 3 }]; }) }),
       { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     for (const text of [lifetime, revoked]) {
       expect(retries(text)).toEqual(["3000"]);
@@ -350,7 +414,7 @@ describe("a failed read closes with a 30 s reconnect hint; every other close kee
     const { deps } = await makeDeps();
     let calls = 0;
     const db = pollDb(async () => { calls += 1; return [{ max: "7", live: false }]; });
-    const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+    const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     expect(calls).toBe(1);
     expect(text).toBe("retry: 3000\n\n");
   }, 20_000);
@@ -360,7 +424,7 @@ describe("a failed read closes with a 30 s reconnect hint; every other close kee
     for (const live of ["f", "t", "true", "1", 0, 2, 1n, null, undefined] as unknown[]) {
       let calls = 0;
       const db = pollDb(async () => { calls += 1; return [{ max: null, live: live as boolean }]; });
-      const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 2_000 }));
+      const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 2_000 }));
       expect(calls, `live: ${String(live)}`).toBe(1);
       expect(text).toBe("retry: 3000\n\n");
     }
@@ -374,7 +438,7 @@ describe("the read stays ONE statement per poll, as at the base", () => {
     const db = pollDb(async () => { statements += 1; return [{ max: null, live: true }]; });
     vi.useFakeTimers();
     try {
-      const res = await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 1_000, lifetimeMs: 3_600_000 });
+      const res = await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 1_000, lifetimeMs: 3_600_000 });
       await vi.advanceTimersByTimeAsync(0);
       expect(statements).toBe(1);
       for (let i = 1; i <= 5; i++) {
@@ -393,7 +457,7 @@ describe("the SQLite shape: the dialect answers exists as the integer 1", () => 
     const { deps } = await makeDeps();
     let calls = 0;
     const db = pollDb(async () => { calls += 1; return [{ max: calls > 2 ? "9" : "5", live: 1 }]; });
-    const text = await drain(await HS({ ...deps, db }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 300 }));
+    const text = await drain(await HS(perRequest({ ...deps, db }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 300 }));
     expect(calls, "the first read closed a live session's stream").toBeGreaterThan(3);
     expect(text).toContain('event: sync\ndata: {"seq":9}');
   }, 20_000);
@@ -428,7 +492,7 @@ function sqlSent(db: Db): string[] {
 }
 
 const presetOf = (accountId: string, sessionId: string, userId: string): ApiDeps["session"] => ({
-  accountId, userId, sessionId, lastTwofaAt: null, scope: "full", via: "bearer", emailVerifiedAt: FIXED_NOW,
+  accountId, userId, sessionId, lastTwofaAt: null, scope: "full", via: "bearer",
 });
 
 describe("the subquery is qualified, and its account predicate holds", () => {
@@ -438,11 +502,13 @@ describe("the subquery is qualified, and its account predicate holds", () => {
     const seen = sqlSent(db);
     const res = await app.handle(req("GET", "/events"),
       { ...deps, session: presetOf(s.accountId, s.sessionId, s.userId), idempotency: null, sse: SSE });
-    await until(() => seen.length >= 3, 20 * POLL_MS);
+    await until(() => seen.length >= 4, 20 * POLL_MS);
     await res.body!.cancel();
-    expect(seen.length).toBeGreaterThanOrEqual(3);
-    expect(new Set(seen).size, "a read ran more than one statement text").toBe(1);
-    const stmt = seen[0]!;
+    const [verification, ...polls] = seen;
+    expect(verification).toContain('from "users"');
+    expect(polls.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(polls).size, "a read ran more than one statement text").toBe(1);
+    const stmt = polls[0]!;
     expect(stmt).toContain('"sessions"."id" = $');
     expect(stmt).toContain('"sessions"."account_id" = $');
     expect(stmt).toContain('"sessions"."revoked_at" is null');
@@ -475,7 +541,7 @@ describe("a pushed frame rides the last read that found the session live", () =>
       if (reads === 1) { firstReadAt = Date.now(); return [{ max: "5", live: true }]; }
       return new Promise((r) => { hold.release = r; });
     });
-    const res = await HS({ ...deps, db, changeWake: h.hub }, { heartbeatMs: 3_600_000, pollMs: P, lifetimeMs: 10_000 });
+    const res = await HS(perRequest({ ...deps, db, changeWake: h.hub }), { heartbeatMs: 3_600_000, pollMs: P, lifetimeMs: 10_000 });
     const out = readFor(res, 30 * P);
     const pushedAt = new Map<bigint, number>();
     let seq = 10n;
@@ -520,7 +586,7 @@ describe("a failed read logs one sse_read_failed line: its error class and nothi
         if (arm === "first read" || calls > 1) throw new Error(SECRET_TEXT);
         return [{ max: null, live: true }];
       });
-      await drain(await HS({ ...deps, db, logger }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+      await drain(await HS(perRequest({ ...deps, db, logger }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
       const mine = lines().filter((l) => l.event === "sse_read_failed");
       expect(mine).toHaveLength(1);
       expect(mine[0]).toMatchObject({ level: "warn", errorClass: "Error" });
@@ -533,7 +599,7 @@ describe("a failed read logs one sse_read_failed line: its error class and nothi
     const { deps } = await makeDeps();
     const { logger, raw, lines } = realLogger();
     const db = pollDb(async () => { throw SECRET_TEXT; });
-    await drain(await HS({ ...deps, db, logger }, { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
+    await drain(await HS(perRequest({ ...deps, db, logger }), { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     const mine = lines().filter((l) => l.event === "sse_read_failed");
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ errorClass: "String" });
@@ -544,9 +610,9 @@ describe("a failed read logs one sse_read_failed line: its error class and nothi
   it("controls: a stream that ends by its lifetime or its session logs no sse_read_failed", async () => {
     const { deps } = await makeDeps();
     const { logger, lines } = realLogger();
-    await drain(await HS({ ...deps, db: pollDb(async () => [{ max: null, live: true }]), logger },
+    await drain(await HS(perRequest({ ...deps, db: pollDb(async () => [{ max: null, live: true }]), logger }),
       { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 100 }));
-    await drain(await HS({ ...deps, db: pollDb(async () => [{ max: null, live: false }]), logger },
+    await drain(await HS(perRequest({ ...deps, db: pollDb(async () => [{ max: null, live: false }]), logger }),
       { heartbeatMs: 3_600_000, pollMs: 10, lifetimeMs: 10_000 }));
     expect(lines().filter((l) => l.event === "sse_read_failed")).toEqual([]);
   }, 20_000);

@@ -10,7 +10,7 @@ import {
   mailboxes, messageStates, messages, reconcileRuleCreate, rules, threads, SCREENER_ACT_TRIGGER_PREFIX, type Tx,
 } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 import { clearOrganizerStandDown, clearOwedRetroFences } from "../src/mailboxes.js";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
@@ -40,7 +40,7 @@ import {
  *
  * The transactional claims are NOT here. `FOR UPDATE`, two concurrent drivers and the gap-free
  * seq are green-by-construction under PGlite, which is single-connection; they live in
- * `rule-retro.pg.test.ts` against real Postgres on :5433, per CLAUDE.md.
+ * `rule-retro.pg.test.ts` against real Postgres on :5433, per AGENTS.md.
  */
 
 const OHBOX = "INBOX";
@@ -92,7 +92,7 @@ async function seedMessage(
     nativeLocator: { folder, ref: "1:1" },
   }).returning();
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
     lastSetBy: opts.lastSetBy ?? "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;

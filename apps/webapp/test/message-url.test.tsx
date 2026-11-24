@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -6,6 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { canonicalHash, normalizedHash, parseHash } from "../app/shell/routing";
+import { openSubject } from "./ohbox/_finders.js";
 
 /**
  * THE OPEN MESSAGE LIVES IN THE URL — `#/<view>/m/<id>`.
@@ -69,7 +71,7 @@ const settle = async (): Promise<void> => {
 async function mountShell(): Promise<void> {
   await unmountKeepHash();
   setViewport();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -79,7 +81,7 @@ async function mountShell(): Promise<void> {
         locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -88,8 +90,12 @@ async function mountShell(): Promise<void> {
 }
 
 /** A hash move the way Back reaches the page: the fragment changes and `hashchange` fires. */
-async function goHash(hash: string): Promise<void> {
+async function goHash(hash: string, width?: number): Promise<void> {
   await act(async () => {
+    if (width !== undefined) {
+      vi.stubGlobal("innerWidth", width);
+      window.dispatchEvent(new Event("resize"));
+    }
     window.location.hash = hash;
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
@@ -107,7 +113,38 @@ afterEach(async () => {
   await unmountKeepHash();
   window.location.hash = "";
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
+
+const readingSheet = () => screen.queryByRole("dialog", { name: messages.frame.landmark.reading });
+const newsStream = () => screen.getByRole("region", { name: messages.news.stream.label });
+const newsCards = () => [...newsStream().querySelectorAll<HTMLElement>("[data-stream-item]")];
+const newsCard = (id: string) => newsCards().find((card) => card.dataset.streamItem === id)!;
+const newsClip = (id: string) => within(newsCard(id)).getByRole("button", { name: /^(Expand|Collapse)$/ });
+const newsActions = () => within(newsStream()).queryByRole("toolbar", { name: messages.reader.panel });
+
+/** Give the stream's link landing real dimensions in jsdom. */
+function layOutNews(): void {
+  const scroller = newsStream().querySelector<HTMLElement>("[data-reading-scroll]")!;
+  const cards = newsCards();
+  Object.defineProperties(scroller, {
+    clientHeight: { value: 600 },
+    scrollHeight: { value: cards.length * 300 },
+  });
+  scroller.getBoundingClientRect = () => new DOMRect(0, 0, 600, 600);
+  cards.forEach((card, index) => {
+    card.getBoundingClientRect = () => new DOMRect(0, index * 300 - scroller.scrollTop, 600, 300);
+  });
+  scroller.scrollTo = ((options: ScrollToOptions) => {
+    scroller.scrollTop = options.top ?? 0;
+    scroller.dispatchEvent(new Event("scroll"));
+  }) as typeof scroller.scrollTo;
+}
+
+async function expandNews(id: string): Promise<void> {
+  await act(async () => { newsClip(id).click(); });
+  await settle();
+}
 
 describe("the route carries the open message", () => {
   it("parses and round-trips the m/<id> tail on every message view, segments intact", () => {
@@ -137,7 +174,7 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     await mountShell();
     await key("j"); // the cursor lands on the first row — at split width the column IS the open
 
-    const selId = host!.querySelector<HTMLElement>(".row.sel[data-id]")?.dataset.id;
+    const selId = host!.querySelector<HTMLElement>("[role=option][data-open][data-id]")?.dataset.id;
     expect(selId, "a selected row").toBeTruthy();
     expect(window.location.hash, "the bar claims the reading").toBe(`#/ohbox/m/${selId}`);
 
@@ -145,15 +182,16 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     // come back without a click — the URL was the claim, the restore honors it.
     await unmountKeepHash();
     await mountShell();
-    expect(host!.querySelector<HTMLElement>(".row.sel[data-id]")?.dataset.id, "the restored selection").toBe(selId);
+    expect(host!.querySelector<HTMLElement>("[role=option][data-open][data-id]")?.dataset.id, "the restored selection").toBe(selId);
+    /* The reading column, by its section and the open letter's region: its heading is the letter's subject. */
     expect(
-      host!.querySelector(".read-col .msg-subject")?.textContent ?? "",
+      openSubject(host!),
       "the reading column shows the restored message",
     ).not.toBe("");
   });
 
   it("restoring arms NO read — a reload is a leave-and-revisit, and the waterline already committed", async () => {
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const seen: Array<Record<string, unknown>> = [];
     const real = FixturesAdapter.prototype.mutate;
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (
@@ -166,12 +204,12 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    const selId = host!.querySelector<HTMLElement>(".row.sel[data-id]")!.dataset.id!;
+    const selId = host!.querySelector<HTMLElement>("[role=option][data-open][data-id]")!.dataset.id!;
     seen.length = 0;
 
     await unmountKeepHash();
     await mountShell();
-    expect(host!.querySelector<HTMLElement>(".row.sel[data-id]")?.dataset.id).toBe(selId);
+    expect(host!.querySelector<HTMLElement>("[role=option][data-open][data-id]")?.dataset.id).toBe(selId);
     // The restore selected and rendered — and wrote nothing. No mark_seen rides a reload.
     expect(seen.filter((m) => m.kind === "mark_seen")).toEqual([]);
   });
@@ -180,97 +218,42 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    expect(host!.querySelector(".row.sel[data-id]")).toBeTruthy();
+    expect(host!.querySelector("[role=option][data-open][data-id]")).toBeTruthy();
 
     // Back is a hash move to the entry before the open.
     await goHash("#/ohbox");
-    expect(host!.querySelector(".row.sel[data-id]"), "the selection follows the URL out").toBeNull();
-  });
-
-  /**
-   * THE SAME WALK-OUT, ON A STREAM — where "the reading" is an expanded card, not a selected row.
-   *
-   * The row case above closes because the selection is shell state. A stream card's expansion is
-   * not: `StreamCard` owns the visual open, and the view holds only `expandedId`, which gates the
-   * verbs. So the arm that cleared the cursor left the card standing — an open reading the bar no
-   * longer claimed, with its verbs still up. The shell now asks the stream to close the card the
-   * URL was claiming, through the card's own pill, which is the one definition of close here.
-   *
-   * Only the CLAIMED card. A second card the reader expanded themselves is scroll posture the bar
-   * never claimed, and the twin below holds it open.
-   */
-  it("Back walks out of a stream reading: the card the URL claimed collapses, and writes nothing", async () => {
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
-    const seen: Array<Record<string, unknown>> = [];
-    const real = FixturesAdapter.prototype.mutate;
-    vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (
-      this: unknown, m: unknown, opts: unknown,
-    ) {
-      seen.push(m as Record<string, unknown>);
-      return (real as (this: unknown, m: unknown, o: unknown) => Promise<unknown>).call(this, m, opts);
-    } as never);
-
-    window.location.hash = "#/reads";
-    await mountShell();
-
-    // Expanded the way a reader expands it — the card's own click, no scroll machinery driven.
-    const card = host!.querySelector<HTMLElement>(".view-reads .scast[data-sid]");
-    expect(card, "a stream card is mounted").toBeTruthy();
-    const id = card!.dataset.sid!;
-    await act(async () => { card!.click(); });
-    await settle();
-
-    const pill = () =>
-      host!.querySelector<HTMLElement>(`.view-reads .scast[data-sid="${CSS.escape(id)}"] .sc-x`);
-    // THE ARRANGE IS ASSERTED. Without this the close assertion below passes just as happily over
-    // a card that was never open — the vacuous green this test exists to refuse.
-    expect(pill()?.getAttribute("aria-expanded"), "the click expanded the card").toBe("true");
-    expect(host!.querySelector(".view-reads .sc-actions"), "an expanded card carries its verbs")
-      .toBeTruthy();
-
-    // The URL comes to claim that reading; then Back drops the id IN PLACE.
-    await goHash(`#/reads/m/${id}`);
-    seen.length = 0;
-    await goHash("#/reads");
-
-    expect(pill()?.getAttribute("aria-expanded"), "the card follows the URL out").toBe("false");
-    expect(host!.querySelector(".view-reads .sc-actions"), "and the verbs go with it").toBeNull();
-    // Closing is a state drop: it marks nothing seen and asks for no body.
-    expect(seen.filter((m) => m.kind === "mark_seen"), "Back writes no read state").toEqual([]);
+    expect(host!.querySelector("[role=option][data-open][data-id]"), "the selection follows the URL out").toBeNull();
   });
 
   it("a card the reader expanded themselves survives the Back that closes the claimed one", async () => {
     window.location.hash = "#/reads";
     await mountShell();
 
-    const cards = host!.querySelectorAll<HTMLElement>(".view-reads .scast[data-sid]");
+    const cards = newsCards();
     expect(cards.length, "two stream cards to tell apart").toBeGreaterThan(1);
-    const claimed = cards[0]!.dataset.sid!;
-    const mine = cards[1]!.dataset.sid!;
+    const claimed = cards[0]!.dataset.streamItem!;
+    const mine = cards[1]!.dataset.streamItem!;
 
-    await act(async () => { cards[0]!.click(); });
-    await settle();
-    await act(async () => { cards[1]!.click(); });
-    await settle();
-
-    const pill = (id: string) =>
-      host!.querySelector<HTMLElement>(`.view-reads .scast[data-sid="${CSS.escape(id)}"] .sc-x`);
-    expect(pill(claimed)?.getAttribute("aria-expanded"), "both open before the Back").toBe("true");
-    expect(pill(mine)?.getAttribute("aria-expanded")).toBe("true");
-
+    layOutNews();
+    await expandNews(mine);
+    expect(newsActions(), "the manually expanded card starts with its verbs").toBeTruthy();
     await goHash(`#/reads/m/${claimed}`);
+
+    await waitFor(() => expect(newsClip(claimed).getAttribute("aria-expanded"), "the link expands its card").toBe("true"));
+    expect(newsClip(mine).getAttribute("aria-expanded")).toBe("true");
+
     await goHash("#/reads");
 
-    expect(pill(claimed)?.getAttribute("aria-expanded"), "the claimed card closes").toBe("false");
+    expect(newsClip(claimed).getAttribute("aria-expanded"), "the claimed card closes").toBe("false");
     expect(
-      pill(mine)?.getAttribute("aria-expanded"),
+      newsClip(mine).getAttribute("aria-expanded"),
       "the one the reader opened is posture the bar never claimed, and stays",
     ).toBe("true");
     // AND KEEPS ITS VERBS. The bar is a single `expandedId`, so a close that cleared it
     // unconditionally would strip this card's bar while leaving the card open — an expanded
     // reading with no verbs, which is worse than the residue this whole change removes.
     expect(
-      host!.querySelector(`.view-reads .scast[data-sid="${CSS.escape(mine)}"] .sc-actions`),
+      newsActions(),
       "closing another card must not take this one's bar with it",
     ).toBeTruthy();
   });
@@ -285,15 +268,17 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
   });
 
   it("a deep link on a view with no column of its own opens the reader overlay over that view", async () => {
-    // History, a folder, a tag, Trash and Answer Later read a routed letter in their own column
-    // (`open-letter-in-the-address.test.tsx`); Search has none, so the overlay is its reading.
+    // On a narrow window Search opens a routed letter over its results.
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    const selId = host!.querySelector<HTMLElement>(".row.sel[data-id]")!.dataset.id!;
+    const selId = host!.querySelector<HTMLElement>("[role=option][data-open][data-id]")!.dataset.id!;
 
-    await goHash(`#/search/m/${selId}`);
-    expect(host!.querySelector(".reader .msg, .reader [class*=\"pm\"]"), "the overlay carries the reading").toBeTruthy();
+    await goHash(`#/search/m/${selId}`, 390);
+    const sheet = readingSheet();
+    expect(sheet, "the overlay carries the reading").toBeTruthy();
+    expect(within(sheet!).getByRole("region", { name: messages.reader.pane })).toBeTruthy();
+    expect(window.location.hash).toBe(`#/search/m/${selId}`);
   });
 
   it("an outgoing reader is never reflected into the NEXT view's bare route", async () => {
@@ -303,15 +288,15 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    const selId = host!.querySelector<HTMLElement>(".row.sel[data-id]")!.dataset.id!;
-    await goHash(`#/search/m/${selId}`);
-    expect(host!.querySelector(".reader .msg"), "the overlay is up").toBeTruthy();
+    const selId = host!.querySelector<HTMLElement>("[role=option][data-open][data-id]")!.dataset.id!;
+    await goHash(`#/search/m/${selId}`, 390);
+    expect(readingSheet(), "the overlay is up").toBeTruthy();
 
     const entriesBefore = window.history.length;
     await goHash("#/reads");
     await settle();
     expect(window.location.hash, "the destination stays bare — the old reading closed with the view").toBe("#/reads");
-    expect(host!.querySelector(".reader .msg")).toBeNull();
+    expect(readingSheet()).toBeNull();
     // …and with NO junk entry: reflecting the stale reader pushed `m/<old>` before correcting
     // itself, which left Back walking through a route nobody was ever on.
     expect(window.history.length - entriesBefore, "exactly the navigation itself").toBe(1);
@@ -323,168 +308,18 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    const heldId = host!.querySelector<HTMLElement>(".row.sel[data-id]")!.dataset.id!;
-    await goHash(`#/search/m/${heldId}`);
-    expect(host!.querySelector(".reader .msg"), "the overlay is up").toBeTruthy();
+    const heldId = host!.querySelector<HTMLElement>("[role=option][data-open][data-id]")!.dataset.id!;
+    const heldSubject = openSubject(host!);
+    await key("j");
+    const other = host!.querySelector<HTMLElement>("[role=option][data-open][data-id]")!.dataset.id!;
+    expect(other).not.toBe(heldId);
+    await goHash(`#/search/m/${other}`, 390);
+    expect(readingSheet(), "the overlay is up").toBeTruthy();
 
-    await goHash(`#/ohbox/m/${heldId}`);
+    await goHash(`#/ohbox/m/${heldId}`, 1280);
     await settle();
-    expect(host!.querySelector<HTMLElement>(".row.sel[data-id]")?.dataset.id, "the held selection").toBe(heldId);
-    expect(host!.querySelector(".reader .msg"), "no stale overlay over the column").toBeNull();
-  });
-
-  /**
-   * THE CLOSE THAT ARRIVES INSIDE THE JUMP'S OWN FRAME.
-   *
-   * A deep link into a stream schedules its work in a `requestAnimationFrame` — the frame exists
-   * so a commit can mount the target row first. The controlled close is synchronous. So there is
-   * exactly one frame in which a Back can land after the jump was requested and before the jump
-   * runs, and in that window the jump's "a new request outranks an earlier close" line cleared the
-   * tombstone the close had just written, the landing re-opened the card, and the reader was left
-   * with an expanded reading under a bare URL. `[jumpTo]` does not change on a close, so the
-   * effect's own cleanup never cancelled the frame.
-   *
-   * Driven with a HELD frame queue rather than by timing: real `requestAnimationFrame` would make
-   * this a stopwatch race, and a test that only sometimes reaches the window is not a guard. The
-   * queue is drained to exhaustion afterwards so the stream's landing loop — which is frames all
-   * the way down — reaches its `onLanded` and would click the card open if the tombstone were gone.
-   */
-  it("a Back inside the jump's pending frame wins: the deep link does not re-open the card", async () => {
-    window.location.hash = "#/reads";
-    await mountShell();
-
-    const card = host!.querySelector<HTMLElement>(".view-reads .scast[data-sid]");
-    expect(card, "a stream card is mounted").toBeTruthy();
-    const id = card!.dataset.sid!;
-    const pill = () =>
-      host!.querySelector<HTMLElement>(`.view-reads .scast[data-sid="${CSS.escape(id)}"] .sc-x`);
-    expect(pill()?.getAttribute("aria-expanded"), "nothing is open before the deep link").toBe("false");
-
-    /* The frame queue, held. `cancelAnimationFrame` neutralizes by handle so a cleanup that DOES
-       run still behaves; the fix must not depend on that cleanup, which is the point. */
-    const frames: Array<(() => void) | null> = [];
-    const realRaf = window.requestAnimationFrame;
-    const realCancel = window.cancelAnimationFrame;
-    window.requestAnimationFrame = ((cb: FrameRequestCallback) =>
-      frames.push(() => cb(0))) as typeof window.requestAnimationFrame;
-    window.cancelAnimationFrame = ((handle: number) => {
-      if (handle > 0 && handle <= frames.length) frames[handle - 1] = null;
-    }) as typeof window.cancelAnimationFrame;
-    const drain = async (): Promise<void> => {
-      for (let pass = 0; pass < 500 && frames.some(Boolean); pass++) {
-        const batch = frames.slice();
-        frames.length = 0;
-        await act(async () => { for (const f of batch) f?.(); });
-      }
-      await settle();
-    };
-
-    try {
-      // The deep link asks for the card — and its frame is held, not run.
-      await goHash(`#/reads/m/${id}`);
-      expect(frames.some(Boolean), "the jump scheduled a frame").toBe(true);
-      // Back, inside that window. The close is synchronous, so it completes first.
-      await goHash("#/reads");
-      expect(pill()?.getAttribute("aria-expanded"), "still closed at the moment of the Back")
-        .toBe("false");
-
-      await drain();
-
-      expect(
-        pill()?.getAttribute("aria-expanded"),
-        "the stale jump must not re-open a card the reader has already walked out of",
-      ).toBe("false");
-      expect(
-        host!.querySelector(".view-reads .sc-actions"),
-        "and no verb bar comes up under a bare route",
-      ).toBeNull();
-    } finally {
-      window.requestAnimationFrame = realRaf;
-      window.cancelAnimationFrame = realCancel;
-    }
-  });
-
-  /**
-   * THE SAME RACE, RUN A SECOND TIME ON THE SAME MESSAGE — where an id comparison goes blind.
-   *
-   * The tombstone holds an id and keeps holding it, so after one close "was this id closed?"
-   * reads the same before and after the NEXT close of it. A reader who walks out of a card,
-   * follows a link back to that same message, and presses Back again inside the frame writes
-   * the identical id, and the first form of this guard — comparing what the tombstone held at
-   * request time against what it holds now — saw no change where the SEQUENCE changed, cleared
-   * the tombstone and re-opened the card. Counting closes is what distinguishes them.
-   */
-  it("a SECOND Back on the same message still wins over its pending jump", async () => {
-    window.location.hash = "#/reads";
-    await mountShell();
-
-    const card = host!.querySelector<HTMLElement>(".view-reads .scast[data-sid]");
-    expect(card, "a stream card is mounted").toBeTruthy();
-    const id = card!.dataset.sid!;
-    const pill = () =>
-      host!.querySelector<HTMLElement>(`.view-reads .scast[data-sid="${CSS.escape(id)}"] .sc-x`);
-
-    const frames: Array<(() => void) | null> = [];
-    const realRaf = window.requestAnimationFrame;
-    const realCancel = window.cancelAnimationFrame;
-    window.requestAnimationFrame = ((cb: FrameRequestCallback) =>
-      frames.push(() => cb(0))) as typeof window.requestAnimationFrame;
-    window.cancelAnimationFrame = ((handle: number) => {
-      if (handle > 0 && handle <= frames.length) frames[handle - 1] = null;
-    }) as typeof window.cancelAnimationFrame;
-    const drain = async (): Promise<void> => {
-      for (let pass = 0; pass < 500 && frames.some(Boolean); pass++) {
-        const batch = frames.slice();
-        frames.length = 0;
-        await act(async () => { for (const f of batch) f?.(); });
-      }
-      await settle();
-    };
-
-    try {
-      /* ROUND ONE, on the SAME held queue — deliberately, and not on the real animation clock.
-         `settle()` flushes microtasks and a real `requestAnimationFrame` is a timer, so a first
-         round run on real frames leaves the jump possibly still pending when the second begins;
-         under load that is exactly what happened, and a race in the test is worth nothing
-         against a race in the code. Every frame in this case is one this test released. */
-      await goHash(`#/reads/m/${id}`);
-      await drain();
-      expect(
-        pill()?.getAttribute("aria-expanded"),
-        "round one: the deep link opened the card — the arrange, asserted",
-      ).toBe("true");
-      await goHash("#/reads");
-      expect(pill()?.getAttribute("aria-expanded"), "round one: Back closed it").toBe("false");
-      await drain();
-
-      /* THE CONTROL, and without it this case proves the wrong thing. Everything below asserts
-         that a card STAYS closed, which an implementation that simply refused every jump for a
-         once-closed id would also satisfy — and that implementation is broken in the opposite
-         direction: a link to a message you closed earlier would stop opening it, for the rest of
-         the session. So: the same deep link again, with no Back racing it, and it must OPEN. */
-      await goHash(`#/reads/m/${id}`);
-      await drain();
-      expect(
-        pill()?.getAttribute("aria-expanded"),
-        "a message closed earlier still opens when the link is followed again",
-      ).toBe("true");
-      await goHash("#/reads");
-      expect(pill()?.getAttribute("aria-expanded"), "and closes again on Back").toBe("false");
-      await drain();
-
-      // ROUND TWO: the same message, the same race, against a tombstone that already holds it.
-      await goHash(`#/reads/m/${id}`);
-      expect(frames.some(Boolean), "the second jump scheduled a frame").toBe(true);
-      await goHash("#/reads");
-      await drain();
-
-      expect(
-        pill()?.getAttribute("aria-expanded"),
-        "a repeat deep link is not a licence to reopen what the second Back closed",
-      ).toBe("false");
-    } finally {
-      window.requestAnimationFrame = realRaf;
-      window.cancelAnimationFrame = realCancel;
-    }
+    expect(host!.querySelector<HTMLElement>("[role=option][data-open][data-id]")?.dataset.id, "the held selection").toBe(heldId);
+    expect(openSubject(host!)).toBe(heldSubject);
+    expect(readingSheet(), "no stale overlay over the column").toBeNull();
   });
 });

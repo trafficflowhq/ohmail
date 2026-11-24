@@ -19,6 +19,7 @@ import { mirrorOwnerKey, type MobileEngineDeps } from "../src/engine/boot";
 import { BearerManagerRN, type SessionDeath } from "../src/net/bearer";
 import { forgetProfile, type ConnectedSession, type PairingEnv } from "../src/net/pairing";
 import { deathRefusal, noteSessionDeath } from "../src/net/session-death";
+import { pileNoteNotNowKey } from "../src/state/account-rows";
 import { bindSeedOfferKV, relaunchSeedOfferForTests, seedLater, seedNotNowKey } from "../src/state/seed-offer";
 import { ServerProfileStore, type SecureKV } from "../src/state/servers";
 import { listen, pairServer, pairThroughConfirm, sqlWorld } from "./helpers/pair-server";
@@ -80,6 +81,11 @@ describe("the paired phone of an erased account", () => {
     try {
       expect(holds(world, x.origin, "acct-x") && holds(world, y.origin, "acct-y")).toBe(true);
       const notNow = await notNowOf(kv, [x.session.ownerKey, y.session.ownerKey]);
+      const pileKeys = [x, y].flatMap(({ session }) => [
+        pileNoteNotNowKey(session.ownerKey, "news"),
+        pileNoteNotNowKey(session.ownerKey, "receipts"),
+      ]);
+      await Promise.all(pileKeys.map((key) => kv.set(key, "40")));
       const deaths: SessionDeath[] = [];
       x.session.bearer!.onSessionDead((why) => deaths.push(why));
       const before = x.fake.seen.length;
@@ -102,6 +108,7 @@ describe("the paired phone of an erased account", () => {
       expect(holds(world, x.origin, "acct-x"), "the erased account's mirror is still on the phone").toBe(false);
       expect(holds(world, y.origin, "acct-y"), "account Y's mirror was taken").toBe(true);
       expect(await notNow(), "the erased account's keystore row stayed, or account Y's went").toEqual([false, true]);
+      expect(await Promise.all(pileKeys.map((key) => kv.get(key)))).toEqual([null, null, "40", "40"]);
     } finally {
       x.fake.server.close();
       y.fake.server.close();

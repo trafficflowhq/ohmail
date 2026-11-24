@@ -1,47 +1,50 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import en from "../messages/en.json";
-import de from "../messages/de.json";
-import { GapLettersNotice } from "../app/shell/GapLettersNotice";
-import type { GapOffer } from "../app/shell/mail-state";
+import { act, cleanup } from "@testing-library/react";
+import type { GapOffer, MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { mountNoticeSlot } from "./_mailbox-notice-slot.js";
 
 /**
  * THE GAP OFFER NAMES BOTH NUMBERS (mail 0158). Letters the person's rules file, letters from
  * senders they have not decided about, or both: three sentences, and the press carries the pair
  * the person was shown, so the server can refuse a pair that moved. Strangers are never filed "by
  * your rules"; their sentence says the Screener.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): today's `GapLettersNotice` is drawn by no host. The offer is
+ * the Mailboxes entry's (`useGapNotices`, `packages/app-logic/src/mailboxes/pane/notices.ts`), said in the frame's
+ * one notice slot as every host hands it (`mailboxesNotices`), over the facts that carry the offer (a mailbox this
+ * install organizes, with its gap's two counts) and the gap's wire; in German over the same slot
+ * (`_mailbox-notice-slot.tsx`: the new shell's door speaks English only). The block is found by its role
+ * (a status in the slot), its sentence is the block's words, a press is a button in it. Every expectation is as it
+ * stood.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const roots: Root[] = [];
-afterEach(async () => {
-  for (const r of roots.splice(0)) await act(() => r.unmount());
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
+/** The facts that carry `offer`: a mailbox this install organizes, its gap's two counts. */
+const factsOf = (offer: GapOffer): MailboxFacts => ({
+  id: offer.id,
+  address: offer.address,
+  status: "connected",
+  organizerRole: "organizer",
+  gapLetters: offer.count,
+  gapStrangers: offer.strangers,
+} as MailboxFacts);
+
 async function show(offer: GapOffer, locale: "en" | "de" = "en") {
   const sent: Array<{ id: string; answer: { file: boolean; count: number; strangers: number } }> = [];
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  await act(() => root.render(h(NextIntlClientProvider, {
-    locale, messages: locale === "en" ? en : de, timeZone: "UTC",
-    children: h(GapLettersNotice, {
-      offers: [offer],
-      onAnswer: async (id, answer) => { sent.push({ id, answer }); },
-    }),
-  })));
-  const text = el.querySelector(".rn-text")?.textContent ?? "";
-  const buttons = [...el.querySelectorAll<HTMLButtonElement>(".rn-verbs button")];
-  return { el, text, buttons, sent };
+  const slot = await mountNoticeSlot({
+    facts: [factsOf(offer)],
+    gapLetters: async (id, answer) => { sent.push({ id, answer }); },
+    locale,
+  });
+  const block = slot.blocks()[0];
+  const text = block?.querySelector("p")?.textContent ?? "";
+  const buttons = [...(block?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+  return { el: slot.el, text, buttons, sent };
 }
 
 describe("the gap offer's three sentences", () => {
@@ -49,7 +52,7 @@ describe("the gap offer's three sentences", () => {
     const v = await show({ id: "mb", address: "me@x.test", count: 2, strangers: 0 });
     expect(v.text).toBe("2 letters arrived in me@x.test, and no device organized them. File them by your rules?");
     expect(v.buttons.map((b) => b.textContent)).toEqual(["File them", "Leave them"]);
-    await act(async () => { v.buttons[0]!.click(); });
+    await act(async () => { v.buttons[0]!.click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
     expect(v.sent).toEqual([{ id: "mb", answer: { file: true, count: 2, strangers: 0 } }]);
   });
 
@@ -59,7 +62,7 @@ describe("the gap offer's three sentences", () => {
     expect(v.text).toContain("Screener");
     expect(v.text).not.toMatch(/rules/);
     expect(v.buttons.map((b) => b.textContent)).toEqual(["Screen them", "Leave them"]);
-    await act(async () => { v.buttons[0]!.click(); });
+    await act(async () => { v.buttons[0]!.click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
     expect(v.sent).toEqual([{ id: "mb", answer: { file: true, count: 0, strangers: 3 } }]);
   });
 
@@ -67,7 +70,7 @@ describe("the gap offer's three sentences", () => {
     const v = await show({ id: "mb", address: "me@x.test", count: 1, strangers: 2 });
     expect(v.text).toMatch(/^1 letter for your rules and 2 from senders you have not decided about arrived in me@x\.test/);
     expect(v.text).toContain("Screener");
-    await act(async () => { v.buttons[1]!.click(); });
+    await act(async () => { v.buttons[1]!.click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
     expect(v.sent).toEqual([{ id: "mb", answer: { file: false, count: 1, strangers: 2 } }]);
   });
 

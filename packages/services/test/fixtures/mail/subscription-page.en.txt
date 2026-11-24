@@ -1,0 +1,20 @@
+Subject: Your ohmail subscription page
+
+ohmail.
+
+ohmail support sent you this link.
+
+It opens the subscription page of your ohmail account, once you are signed in to ohmail. The link alone signs nobody in.
+
+You can also open the page yourself, in ohmail under Settings › Subscription.
+
+If you did not expect this mail, you can ignore it. Nothing changes by itself.
+
+We never ask you for a code, a password or a recovery code by mail.
+
+Open the subscription page:
+https://ohmail.app/account/manage
+
+--
+Write to support@ohmail.app and a person answers.
+TrafficFlow GmbH, Zürich, Switzerland

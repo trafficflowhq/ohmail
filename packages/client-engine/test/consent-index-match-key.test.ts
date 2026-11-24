@@ -1,5 +1,6 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { consentIndex, decidedDestination, type RuleDTO } from "@ohmail/client-engine";
+import { consentIndex, decidedDestination } from "@ohmail/client-engine";
 
 /**
  * THE CLIENT KEYS A RULE THE WAY THE ROUTER AND THE QUEUE SQL DO — `ruleMatchKey`, the SQL's

@@ -1,0 +1,147 @@
+/* A button. What it stands on says the colour of a second button (`--oh-soft`) and of the pointer's wash (`--oh-hover`). */
+@layer oh {
+  .oh-button {
+    --oh-button-pad: 0 var(--s5);
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    height: var(--h-l);
+    padding: var(--oh-button-pad);
+    border-radius: var(--r-pill);
+    background: var(--solid);
+    color: var(--on-solid);
+    font-size: var(--t-ui);
+    font-weight: var(--w-bold);
+    line-height: var(--oh-lh-tight);
+    /* The browser's own for a button: said here too, so that a link drawn as one sets its word alike. */
+    text-rendering: auto;
+    white-space: nowrap;
+    transition:
+      transform var(--d-press) var(--e-press),
+      background-color var(--d-fade) var(--e-std),
+      opacity var(--d-fade) var(--e-std);
+  }
+  .oh-button:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-button:active {
+    transform: var(--x-press);
+  }
+  .oh-button[data-size="l"] {
+    --oh-button-pad: 0 var(--s6);
+    height: var(--h-xl);
+  }
+  .oh-button[data-size="s"] {
+    --oh-button-pad: 0 var(--s3);
+    height: var(--h-s);
+  }
+  .oh-button[data-kind="two"] {
+    background: var(--oh-soft, var(--soft));
+    box-shadow: var(--oh-ring-btn);
+    color: var(--ink);
+  }
+  .oh-button[data-kind="two"][data-surface="sheet"] {
+    --oh-soft: var(--sheet);
+  }
+  .oh-button[data-kind="quiet"] {
+    --oh-button-pad: 0 var(--cap-q);
+    background: transparent;
+    color: inherit;
+    font-weight: var(--w-mid);
+  }
+  .oh-button[data-kind="two"]:hover:where(:not([aria-pressed="true"])),
+  .oh-button[data-kind="quiet"]:hover:where(:not([aria-pressed="true"])) {
+    background: var(--oh-hover, var(--hover));
+  }
+  .oh-button[data-bare] {
+    --oh-button-pad: 0;
+    width: var(--h-m);
+    height: var(--h-m);
+  }
+  .oh-button[data-bare][data-size="s"] {
+    width: var(--h-s);
+    height: var(--h-s);
+  }
+  .oh-button[aria-pressed="true"] {
+    background: var(--pick);
+    box-shadow: var(--oh-ring-pick);
+    color: var(--on-pick);
+  }
+
+  /* A mark after the word (a menu's arrow, the way off): closer to the word than an icon before it, and quieter. */
+  .oh-button[data-mark] {
+    gap: var(--s1);
+  }
+
+  .oh-button-mark {
+    --oh-button-mark-pull: -3px;
+    --oh-button-mark-off: 0.65;
+    --oh-button-mark-on: 0.8;
+
+    flex: none;
+    margin-right: var(--oh-button-mark-pull);
+    opacity: var(--oh-button-mark-off);
+  }
+
+  .oh-button[aria-pressed="true"] > .oh-button-mark {
+    opacity: var(--oh-button-mark-on);
+  }
+  /* Off: by the browser, or under way after its own press, which is said off and keeps the keys. */
+  .oh-button:disabled,
+  .oh-button:disabled:hover,
+  .oh-button[aria-disabled="true"],
+  .oh-button[aria-disabled="true"]:hover {
+    background: var(--off);
+    color: var(--on-off);
+    transform: none;
+  }
+  /* On the ink capsule the key stands on the ink. */
+  .oh-button[data-kind="ink"] .oh-key {
+    background: var(--oh-key-on-ink);
+    color: var(--on-solid);
+  }
+
+  :root[data-face="ohmarchy"] .oh-button {
+    --oh-button-pad: 0 var(--s4);
+    --oh-button-pad-s: 0 10px;
+    font-weight: var(--w-mid);
+  }
+  :root[data-face="ohmarchy"] .oh-button[data-size="l"] {
+    --oh-button-pad: 0 var(--s4);
+  }
+  :root[data-face="ohmarchy"] .oh-button[data-size="s"] {
+    --oh-button-pad: var(--oh-button-pad-s);
+  }
+  :root[data-face="ohmarchy"] .oh-button[data-kind="quiet"] {
+    font-weight: var(--w-text);
+  }
+  :root[data-face="ohmarchy"] .oh-button[data-kind="quiet"][data-size="s"] {
+    --oh-button-pad: 0 var(--cap-q);
+  }
+  :root[data-face="ohmarchy"] .oh-button[data-bare],
+  :root[data-face="ohmarchy"] .oh-button[data-bare][data-kind="quiet"][data-size="s"] {
+    --oh-button-pad: 0;
+  }
+  :root[data-face="ohmarchy"] .oh-button[data-kind="ink"] .oh-key {
+    --oh-key-ring: inset 0 0 0 var(--oh-hair) color-mix(in srgb, currentColor 50%, transparent);
+    background: transparent;
+    color: inherit;
+  }
+}
+
+:root[data-touch="1"] [data-filter-row] > .oh-button[data-size="s"] {
+  position: relative;
+  height: calc(var(--h-s) - var(--s2));
+}
+
+:root[data-touch="1"] [data-filter-row] > .oh-button[data-size="s"]::after {
+  position: absolute;
+  inset: calc(-1 * var(--s1)) 0;
+  content: "";
+}
+
+:root[data-touch="1"] [data-filter-list][data-people] [data-filter-row] > .oh-button {
+  flex: none;
+}

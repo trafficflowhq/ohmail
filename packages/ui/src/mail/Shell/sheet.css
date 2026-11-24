@@ -1,0 +1,435 @@
+@layer oh {
+  :root {
+    --oh-sheet-run-start: 0px;
+    --oh-sheet-foot-offset: 0px;
+  }
+
+  .oh-sheet {
+    /* Measures of this part that no token carries yet. */
+    --oh-sheet-foot-room: calc(104px + var(--oh-sheet-foot-own) - var(--s4));
+    /* At a glass's edge the foot keeps the larger of its own margin and the inset the system reports there
+       (`--oh-inset-foot`, the kit's root), never the two added. */
+    --oh-sheet-foot-own: calc(max(var(--s4), var(--oh-inset-foot)) + var(--oh-sheet-foot-offset, 0px));
+    --oh-sheet-jump-own: calc(max(var(--s3), var(--oh-inset-foot)) + var(--oh-sheet-foot-offset, 0px));
+    --oh-sheet-top-h: 56px;
+    --oh-sheet-foot-inset: 0px;
+    --oh-sheet-layer-foot: 5;
+    --oh-sheet-layer-cover: -1;
+    --oh-sheet-layer-ring: 4;
+    --oh-sheet-side: 0px;
+    --oh-sheet-out: calc(var(--ringw) * -1);
+    --oh-sheet-scroll-top: var(--ringw);
+    --oh-sheet-scroll-pad: var(--ringw) var(--ringw) var(--oh-sheet-foot-room);
+    --oh-sheet-lead: var(--sq-gutter);
+
+    box-sizing: border-box;
+    min-width: 0;
+    background: var(--sheet);
+    border-radius: var(--r-sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--ring);
+  }
+
+  .oh-sheet[data-phone-list-padding] {
+    padding-top: var(--s1);
+  }
+
+  .oh-sheet[data-phone-list-padding="dock"] {
+    --oh-sheet-list-dock-room: calc(var(--h-xl) + var(--s6) + var(--oh-sheet-foot-own));
+    padding-bottom: var(--oh-sheet-list-dock-room);
+  }
+
+  .oh-sheet[data-flush-bottom] {
+    flex: 1;
+    border-end-start-radius: 0;
+    border-end-end-radius: 0;
+  }
+
+  .oh-sheet[data-scroll] {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    padding-block-end: var(--oh-sheet-foot-room);
+  }
+
+  .oh-sheet[data-kind="list"],
+  .oh-sheet[data-kind="wide"] {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-zone="rail"]) .oh-sheet[data-kind="list"][data-focused],
+  :root[data-face="ohmarchy"]:not([data-zone="rail"]) .oh-sheet[data-kind="wide"][data-focused] {
+    box-shadow: 0 0 0 var(--ringw) var(--focus);
+  }
+
+  /* The reading column: no paper of its own, the sheets stand on the ground. It fills a column that lays its
+     children out one under the other, so its foot is that column's foot however short what is read. */
+  .oh-sheet[data-kind="reading"] {
+    position: relative;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* In a wide window the column keeps its width and what is read stands centred at a reading width. */
+  :root[data-device="desktop"] .oh-sheet[data-kind="reading"] {
+    --oh-sheet-side: max(0px, calc((100% - var(--readw)) / 2 - var(--ringw)));
+  }
+
+  .oh-sheet-top {
+    display: none;
+  }
+
+  .oh-sheet-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 0 minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    margin-inline: var(--oh-sheet-side);
+  }
+
+  .oh-sheet[data-gutter] > .oh-sheet-body {
+    grid-template-columns: var(--sq-gutter) minmax(0, 1fr);
+  }
+
+  .oh-sheet-fixed-head {
+    flex: none;
+    margin-inline: var(--oh-sheet-side);
+    padding-inline: var(--ringw);
+  }
+
+  :root[data-device="phone"] .oh-sheet-fixed-head {
+    --oh-sheet-phone-heading-pad: calc(var(--s2) + var(--ringw));
+    padding-inline: var(--oh-sheet-phone-heading-pad);
+  }
+
+  .oh-sheet-gutter {
+    /* The rail starts at the frame inset, even when the scrollport extends above it. */
+    display: flex;
+    align-self: start;
+    justify-self: start;
+    margin: var(--oh-sheet-scroll-top) 0 0 var(--ringw);
+  }
+
+  .oh-sheet-scroll {
+    box-sizing: border-box;
+    min-height: 0;
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    padding: var(--oh-sheet-scroll-pad);
+    outline: none;
+  }
+
+  :root[data-face="paper"][data-device="desktop"] .oh-sheet[data-extend-top] {
+    --oh-sheet-extension: calc(-1 * var(--edge));
+    --oh-sheet-scroll-top: calc(var(--ringw) + var(--edge));
+
+    margin-block-start: var(--oh-sheet-extension);
+  }
+
+  :root[data-face="paper"][data-device="desktop"] .oh-sheet[data-extend-top] .oh-sheet-scroll {
+    padding-block-start: var(--oh-sheet-scroll-top);
+  }
+
+  .oh-sheet-scroll[data-manual-anchor] {
+    overflow-anchor: none;
+    padding-block-end: var(--oh-sheet-foot-room);
+  }
+
+  .oh-sheet-run {
+    padding-block-start: var(--oh-sheet-run-start);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+    margin-top: var(--ringw);
+  }
+
+  .oh-sheet-foot {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: var(--oh-sheet-foot-own);
+    z-index: var(--oh-sheet-layer-foot);
+    display: flex;
+    justify-content: center;
+    margin-inline: var(--oh-sheet-side);
+    pointer-events: none;
+  }
+  .oh-sheet-foot[data-cover]::before {
+    content: "";
+    position: absolute;
+    inset-inline: calc(-1 * var(--oh-sheet-foot-inset));
+    inset-block: 0 calc(-1 * var(--oh-sheet-foot-own));
+    z-index: var(--oh-sheet-layer-cover);
+    background: var(--ground);
+  }
+
+  /* The way back stands at the right corner of what is read: a step over the foot, or at the column's foot. */
+  .oh-sheet > .oh-button.oh-jumpback {
+    bottom: var(--oh-sheet-jump-own);
+    margin-inline: var(--oh-sheet-side);
+  }
+
+  .oh-sheet-foot > .oh-button.oh-jumpback {
+    bottom: calc(100% + var(--s3));
+  }
+
+  .oh-sheet[data-gutter] > .oh-sheet-foot {
+    left: var(--oh-sheet-lead);
+  }
+
+  /* The column's foot while a sheet runs under it: it ends in the sheets' corners and the last pixels dim. */
+  :root:not([data-device="phone"]) .oh-sheet-scroll {
+    border-radius: 0 0 var(--r-sheet) var(--r-sheet);
+  }
+
+  /* A mask reads only how solid a colour is: the ink stands for "all there". With motion reduced the edge stays round. */
+  @media (prefers-reduced-motion: no-preference) {
+    :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-scroll {
+      --oh-sheet-dim: color-mix(in srgb, var(--ink) 86%, transparent);
+      --oh-sheet-dimmer: color-mix(in srgb, var(--ink) 42%, transparent);
+
+      mask-image: linear-gradient(
+        to bottom,
+        var(--ink) calc(100% - 22px),
+        var(--oh-sheet-dim) calc(100% - 12px),
+        var(--oh-sheet-dimmer)
+      );
+    }
+
+    /* A sheet that arrives at the foot is tilted away and a little narrower until it is up. */
+    @supports (animation-timeline: view()) {
+      :root:not([data-device="phone"], [data-rm="1"])
+        .oh-sheet-run
+        > :not([role="feed"], [data-stream-window]),
+      :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > [data-stream-window] .oh-message,
+      :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > [role="feed"] > [aria-posinset] {
+        transform-origin: 50% 0;
+        animation: oh-sheet-pull linear both;
+        animation-timeline: view(block);
+        animation-range: entry 0% entry 190px;
+      }
+    }
+  }
+
+  @keyframes oh-sheet-pull {
+    from {
+      transform: perspective(900px) rotateX(-18deg) scale(0.95);
+      opacity: 0.6;
+    }
+
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+
+  /* The phone: the bar with the way back over the column, and the sheets to the screen's edge. */
+  :root[data-device="phone"] .oh-sheet-top {
+    box-sizing: border-box;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    height: var(--oh-sheet-top-h);
+    padding: 0 var(--s2) 0 var(--s3);
+  }
+
+  :root[data-device="phone"] .oh-sheet-top > .oh-readsquares[data-axis="head"] {
+    margin-inline-start: auto;
+    margin-inline-end: var(--s2);
+  }
+
+  /* The way back: the place it returns to, a capsule of the sheet's own tone, first in the bar. It is whole up to
+     six tenths of the bar, then its word is cut; a finger reaches it a little outside its edge. */
+  :root[data-device="phone"] .oh-sheet-back {
+    display: flex;
+    flex: none;
+    min-width: 0;
+    max-width: var(--sheet-back-max-width);
+  }
+
+  :root[data-device="phone"]
+    :is(
+      .oh-sheet-back > .oh-button:not([data-bare]),
+      .oh-sheet-top > .oh-button[data-kind="two"]:first-child
+    ) {
+    --oh-button-pad: 0 var(--s4) 0 var(--s2);
+    position: relative;
+    flex: 0 1 auto;
+    gap: var(--sheet-back-gap);
+    min-width: 0;
+    height: var(--sheet-back-height);
+    background: var(--sheet);
+    box-shadow: var(--oh-ring-ctl);
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  :root[data-device="phone"] .oh-sheet-top > .oh-button[data-kind="two"]:first-child {
+    flex: none;
+    max-width: var(--sheet-back-max-width);
+  }
+
+  :root[data-device="phone"]
+    :is(
+      .oh-sheet-back > .oh-button:not([data-bare]),
+      .oh-sheet-top > .oh-button[data-kind="two"]:first-child
+    )::after {
+    content: "";
+    position: absolute;
+    inset: calc(-1 * var(--s2)) calc(-1 * var(--s1));
+  }
+
+  :root[data-device="phone"]
+    :is(.oh-sheet-back > .oh-button, .oh-sheet-top > .oh-button[data-kind="two"]:first-child)
+    > .oh-icon {
+    width: var(--sheet-back-icon);
+    height: var(--sheet-back-icon);
+  }
+
+  :root[data-device="phone"]
+    :is(.oh-sheet-back > .oh-button, .oh-sheet-top > .oh-button[data-kind="two"]:first-child)
+    > :not(.oh-icon) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  :root[data-device="phone"] .oh-sheet-body {
+    padding: 0 var(--s2) 0 var(--s2);
+  }
+
+  :root[data-device="phone"] .oh-sheet[data-gutter] > .oh-sheet-body {
+    padding-left: 0;
+  }
+
+  :root[data-device="phone"] .oh-sheet-gutter {
+    margin-left: var(--s1);
+  }
+
+  :root[data-device="phone"] .oh-sheet > .oh-sheet-foot {
+    --oh-sheet-foot-inset: var(--s4);
+
+    inset-inline: var(--oh-sheet-foot-inset);
+  }
+
+  /* The letter being written has no squares beside it. Its panel starts from the reading column's edge. */
+  :root[data-device="phone"] .oh-sheet:has(.oh-composer[data-fill]) > .oh-sheet-foot,
+  :root[data-face="paper"][data-device="phone"] .oh-sheet[data-flush-foot] > .oh-sheet-foot {
+    inset-inline-start: 0;
+  }
+
+  /* The foot keeps its room at the screen's edge; the way back keeps the column's corner. */
+  :root[data-device="phone"] .oh-sheet-foot > .oh-button.oh-jumpback {
+    right: calc(var(--s3) - var(--s4));
+  }
+
+  /* Ohmarchy: a tile's ring stands outside it, so the column reaches one ring further on three sides. */
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet[data-kind="reading"] {
+    --oh-sheet-lead: calc(var(--sq-gutter) + var(--ringw));
+
+    margin: var(--oh-sheet-out) var(--oh-sheet-out) 0;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet-run:has(> .oh-composer[data-fill]) {
+    min-height: 100%;
+    margin-top: 0;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet > .oh-sheet-foot {
+    --oh-sheet-foot-inset: var(--ringw);
+
+    inset-inline: var(--oh-sheet-foot-inset);
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet[data-gutter] > .oh-sheet-foot {
+    left: var(--oh-sheet-lead);
+  }
+
+  /* The foot stands a ring in; the way back keeps the column's corner. */
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet-foot > .oh-button.oh-jumpback {
+    right: calc(var(--s3) - var(--ringw));
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"], [data-zone="rail"])
+    .oh-sheet[data-kind="reading"][data-focused]::after {
+    content: "";
+    position: absolute;
+    z-index: var(--oh-sheet-layer-ring);
+    inset: var(--ringw) var(--ringw) 0 var(--ringw);
+    margin-inline: var(--oh-sheet-side);
+    box-shadow: var(--oh-sheet-focus);
+    pointer-events: none;
+
+    --oh-sheet-focus: inset 0 0 0 var(--ringw) var(--focus);
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"])
+    .oh-sheet[data-kind="reading"][data-gutter][data-focused]::after {
+    left: var(--oh-sheet-lead);
+  }
+}
+
+[data-stream-phone-list] .oh-sheet-scroll {
+  padding-block-start: var(--s1);
+}
+
+/* A folded card offscreen reserves its estimated size until layout can measure it. An open overlay
+   needs to paint over the reading column. */
+[data-stream-window-item][data-folded] > [data-stream-item]:not(:has(.oh-over)) {
+  contain-intrinsic-block-size: inherit;
+  content-visibility: auto;
+  overflow-clip-margin: var(--ringw);
+}
+
+.oh-sheet[data-writing-keyboard] {
+  --write-room: none;
+  --write-top: 0px;
+  --oh-sheet-scroll-pad: var(--ringw);
+  max-block-size: var(--write-room);
+  translate: 0 var(--write-top);
+}
+
+.oh-sheet[data-writing-keyboard] > .oh-sheet-foot {
+  position: relative;
+  inset: auto;
+  flex: none;
+  padding-block: var(--s1);
+}
+
+.oh-sheet[data-writing-compact] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.oh-sheet[data-writing-compact] > .oh-sheet-body {
+  grid-area: 1 / 1 / 2 / -1;
+}
+
+:root[data-device="phone"] .oh-sheet[data-writing-compact] > .oh-sheet-top {
+  grid-area: 2 / 1;
+  align-self: center;
+  height: auto;
+}
+
+.oh-sheet[data-writing-compact] > .oh-sheet-foot {
+  grid-area: 2 / 2;
+  align-items: center;
+  padding-block: 0;
+}
+
+.oh-sheet[data-writing-compact]:not(:has(> .oh-sheet-top)) > .oh-sheet-foot {
+  grid-column: 1 / -1;
+}

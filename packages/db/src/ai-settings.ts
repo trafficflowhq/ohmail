@@ -1,3 +1,4 @@
+import { readAiSwitch } from "./model-consent.js";
 import { eq } from "drizzle-orm";
 import { accounts, auditLog } from "./schema.js";
 import { auditAction } from "./staff-channels.js";
@@ -23,12 +24,7 @@ import type { Tx } from "./change-log.js";
  * `debitCredits` still have to agree.
  */
 export async function aiEnabledFor(tx: Tx, accountId: string): Promise<boolean> {
-  const [row] = await tx
-    .select({ aiEnabled: accounts.aiEnabled })
-    .from(accounts)
-    .where(eq(accounts.id, accountId))
-    .limit(1);
-  return row ? row.aiEnabled : true;
+  return (await readAiSwitch(tx, accountId)) ?? true;
 }
 
 /**

@@ -1,15 +1,15 @@
+import type { RuleDTO, SyncChange } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { accounts, graduations, rules, applyRuleRequest, type LedgerTx, type Tx } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { syncService } from "@trafficflow/services";
-import type { ServiceContext, RuleDTO, SyncChange } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 import type { MigrationObservation } from "@trafficflow/core";
 import { learningService } from "../src/learning-service.js";
 import { HeyMigrationService } from "../src/hey-migration.js";
@@ -35,7 +35,8 @@ import { HeyMigrationService } from "../src/hey-migration.js";
 const PG_UP = await realPgAvailable();
 
 const client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+const owned = makeOwnedDb(PG_TEST_URL);
+const db = owned.db;
 
 const NOW = new Date("2026-09-12T10:00:00.000Z");
 const SENDER = "digest@rulestate.example";
@@ -43,7 +44,7 @@ const READS = "ohmail/News";
 const RECEIPTS = "ohmail/Receipts";
 
 const ctx = (accountId: string): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"], accountId, userId: null,
+  db: dbFor(db, accountId), accountId, userId: null,
   now: () => NOW, requestId: "rule-state-deltas",
 });
 
@@ -80,7 +81,7 @@ async function graduation(
 
 describe.skipIf(!PG_UP)("every rule-state writer reaches the client's delta", () => {
   beforeAll(async () => { await runMigrations(PG_TEST_URL); }, 120_000);
-  afterAll(async () => { await client.end({ timeout: 5 }); });
+  afterAll(async () => { await owned.close(); await client.end({ timeout: 5 }); });
 
   it("PROMOTION — a graduated route mints a rule, and the client is handed it", async () => {
     const accountId = await freshAccount();

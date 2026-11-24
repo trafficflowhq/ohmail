@@ -5,9 +5,9 @@ import { mailboxes, mailboxCredentials, messages, folderState, accounts, rules, 
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger, type ClassifierPort, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
 import type { WorkerConfig } from "../src/config.js";
 
 /**
@@ -76,7 +76,7 @@ async function seedAccount(db: Db): Promise<{ accountId: string; mailboxId: stri
     .values({ accountId, provider: "imap", address: `o-${randomUUID().slice(0, 8)}@tf.test`, ...ORGANIZER_CONSENT }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "127.0.0.1", port: 3143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: mb!.id };

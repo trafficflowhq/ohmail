@@ -23,7 +23,7 @@ async function world() {
     accountId, mailboxId: main!.id, bodyHash: "h", dedupKey: randomUUID(), subject: "hello",
     fromAddress: "friend@elsewhere.invalid", threadId: th!.id,
   }).returning();
-  await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+  await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false });
   const reply = () => db.insert(messages).values({
     accountId, mailboxId: old!.id, bodyHash: "h", dedupKey: randomUUID(), subject: "Re: hello",

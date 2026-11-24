@@ -1,0 +1,234 @@
+/* The place at the end of a row's last line: where a waiting sender's mail would go. Its measures follow the
+   text it stands in, as a pressable word's do. */
+@layer oh {
+  /* The place a waiting sender's mail would go: one chip at the end of the row's last line. On two lines the
+     first words give way to it, then the subject. */
+  .oh-row-second[data-place] {
+    display: flex;
+    align-items: center;
+    column-gap: var(--s1);
+    overflow: visible;
+  }
+
+  .oh-row-second[data-place] > .oh-row-subject {
+    display: block;
+    flex: 0 1 auto;
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+  }
+
+  .oh-row-second[data-place] > .oh-row-preview {
+    flex: 1 1 0;
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+  }
+
+  .oh-row-place {
+    --oh-row-place-lh: 1.3;
+    --oh-row-place-r: 0.4em;
+    --oh-row-place-pad: 0.02em 0.34em 0.08em;
+    --oh-row-place-ground: var(--slot-soft);
+    --oh-row-place-ink: var(--ink);
+    --oh-row-place-dot: var(--hot);
+    --oh-row-place-ring: none;
+
+    display: inline-flex;
+    flex: none;
+    align-items: stretch;
+    gap: var(--oh-hair);
+    margin-left: auto;
+    padding-left: var(--s1);
+    line-height: var(--oh-row-place-lh);
+    white-space: nowrap;
+  }
+
+  /* The room the row keeps: the place's own box, unseen; the controls stand over it, beside the row. */
+  .oh-row-place[data-room] {
+    visibility: hidden;
+  }
+
+  .oh-row-place-word,
+  .oh-row-place-more {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    padding: var(--oh-row-place-pad);
+    border-radius: var(--oh-row-place-r);
+    background: var(--oh-row-place-ground);
+    box-shadow: var(--oh-row-place-ring);
+    color: var(--oh-row-place-ink);
+    font-weight: var(--w-mid);
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    transition:
+      background-color var(--d-hover) var(--e-std),
+      color var(--d-hover) var(--e-std);
+  }
+
+  .oh-row-place-word:focus-visible,
+  .oh-row-place-more:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  /* A suggestion: the word in the ink on the quiet chip, its dot hot. */
+  .oh-row-place-word[data-kind="fill"]::before {
+    --oh-row-place-dot-size: 7px;
+    --oh-row-place-dot-gap: 6px;
+
+    content: "";
+    flex: none;
+    width: var(--oh-row-place-dot-size);
+    height: var(--oh-row-place-dot-size);
+    margin-right: var(--oh-row-place-dot-gap);
+    border-radius: var(--dot-r);
+    background: var(--oh-row-place-dot);
+  }
+
+  /* Nobody has a suggestion: the word that chooses, in the second ink. */
+  .oh-row-place-word[data-kind="none"] {
+    --oh-row-place-pad: 0.02em 0.3em 0.08em 0.36em;
+    --oh-row-place-ink: var(--ink2);
+  }
+
+  /* One chip with two answers: the hair between the halves is the row showing through. */
+  .oh-row-place[data-two] > .oh-row-place-word {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .oh-row-place-more {
+    --oh-row-place-pad: 0 0.46em;
+    --oh-row-place-ink: var(--ink2);
+
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+
+  .oh-row-place-arrow {
+    --oh-row-place-arrow-gap: 0 0.14em 0 0.34em;
+    --oh-row-place-arrow-size: 0.4em;
+    --oh-row-place-arrow-line: 0 0.1em 0.1em 0;
+    --oh-row-place-arrow-rise: -0.2em;
+
+    display: inline-block;
+    width: var(--oh-row-place-arrow-size);
+    height: var(--oh-row-place-arrow-size);
+    margin: var(--oh-row-place-arrow-gap);
+    border: solid currentColor;
+    border-width: var(--oh-row-place-arrow-line);
+    opacity: 0.6;
+    transform: translateY(var(--oh-row-place-arrow-rise)) rotate(45deg);
+  }
+
+  .oh-row-place-more > .oh-row-place-arrow {
+    --oh-row-place-arrow-gap: 0;
+
+    opacity: 1;
+  }
+
+  /* Under the pointer the word turns to ink, as a thing does when it is done; the arrow, a step darker. */
+  :root[data-touch="0"] .oh-row-place-word[data-kind="fill"]:hover {
+    --oh-row-place-ground: var(--solid);
+    --oh-row-place-ink: var(--on-solid);
+  }
+
+  :root[data-touch="0"] .oh-row-place-more:hover,
+  :root[data-touch="0"] .oh-row-place-word[data-kind="none"]:hover {
+    --oh-row-place-ground: var(--slot-soft-on);
+    --oh-row-place-ink: var(--ink);
+  }
+
+  /* On the open row the chip takes the open row's own pair, and its dot the chip's ink. */
+  .oh-row[data-open] ~ .oh-row-beside .oh-row-place,
+  .oh-row[data-open] .oh-row-place {
+    --oh-row-place-ground: var(--open-slot);
+    --oh-row-place-ink: var(--on-open-slot);
+    --oh-row-place-dot: currentColor;
+  }
+
+  .oh-row[data-open] ~ .oh-row-beside :is(.oh-row-place-word, .oh-row-place-more) {
+    --oh-row-place-ground: var(--open-slot);
+    --oh-row-place-ink: var(--on-open-slot);
+  }
+
+  :root[data-touch="0"] .oh-row[data-open] ~ .oh-row-beside .oh-row-place-word[data-kind="fill"]:hover {
+    --oh-row-place-ground: var(--solid);
+    --oh-row-place-ink: var(--on-solid);
+  }
+
+  /* Beside the row: its two lines once more, unseen, in the row's own box, so the place lies over its room. */
+  .oh-row-beside {
+    position: absolute;
+    inset: 0;
+    z-index: var(--oh-row-layer);
+    display: grid;
+    grid-template-columns: var(--gutter) minmax(0, 1fr);
+    align-content: center;
+    row-gap: var(--oh-row-between);
+    padding: var(--oh-row-in);
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .oh-row-beside .oh-row-place {
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  /* Ohmarchy sets a pressable word a little wider and higher in its line. */
+  :root[data-face="ohmarchy"] .oh-row-place-word[data-kind="fill"] {
+    --oh-row-place-pad: 0.08em 0.4em;
+  }
+
+  /* Under a finger the chip is the one press, as high as the smallest control; the other places are in the
+     open sender's panel. */
+  :root[data-touch="1"] .oh-row-place-more {
+    display: none;
+  }
+
+  :root[data-touch="1"] .oh-row-place[data-two] > .oh-row-place-word {
+    border-radius: var(--oh-row-place-r);
+  }
+
+  /* Under a finger the chip's reach ends at its own row: a press inside the next row is that row's. */
+  :root[data-touch="1"] .oh-row-beside {
+    overflow: clip;
+  }
+
+  :root[data-touch="1"] :is(.oh-row-place-word, .oh-row-place-more)::after {
+    /* Further up than down: the cut at the row's foot takes some of the reach under it, and over it is the row's own room. */
+    --oh-row-place-reach: -16px -8px -12px;
+
+    content: "";
+    position: absolute;
+    inset: var(--oh-row-place-reach);
+  }
+
+  /* Three lines: the subject keeps the whole width, and the place ends the line of the first words. */
+  :root[data-touch="1"] .oh-row-second[data-place],
+  :root[data-face="ohmarchy"] .oh-row-second[data-place] {
+    --oh-row-place-out: -2px 0;
+
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: var(--s2);
+    align-items: initial;
+  }
+
+  :root[data-touch="1"] .oh-row-second[data-place] > .oh-row-subject,
+  :root[data-face="ohmarchy"] .oh-row-second[data-place] > .oh-row-subject {
+    grid-column: 1 / -1;
+  }
+
+  :root[data-touch="1"] .oh-row-second[data-place] > .oh-row-place,
+  :root[data-face="ohmarchy"] .oh-row-second[data-place] > .oh-row-place {
+    grid-row: 2;
+    grid-column: 2;
+    align-self: center;
+    margin: var(--oh-row-place-out);
+    padding-left: 0;
+  }
+}

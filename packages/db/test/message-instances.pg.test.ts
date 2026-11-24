@@ -15,7 +15,7 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
  * ── WHY THIS FILE CANNOT BE A PGlite TEST ────────────────────────────────────────────────────
  *
  * The table's identity is `UNIQUE (message_id) WHERE is_primary` — a PARTIAL unique index, which is
- * exactly the class of object PGlite has misled this repository about before (CLAUDE.md: three
+ * exactly the class of object PGlite has misled this repository about before (AGENTS.md: three
  * production bugs were invisible to it and only appeared against real Postgres). The whole model
  * rests on that predicate: without it a non-partial unique on `message_id` refuses the SECOND
  * instance the table exists to hold, and without the index at all two rows can both claim to be one

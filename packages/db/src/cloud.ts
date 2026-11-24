@@ -13,6 +13,11 @@
  * `export * from "./schema.js"`; they belong here, beside the code that reads them. */
 export * from "./schema-cloud.js";
 
+/* A notice channel's id and word, as its opener and the door that takes a notice agree on them. */
+export {
+  NOTICE_CHANNEL_ID_CHARS, NOTICE_WORD_BYTES, NOTICE_WORD_CHARS, isNoticeChannelId, isNoticeWord, noticeWordDigest,
+} from "./notice-channels.js";
+
 /* The catch-up after a reopening: the worker plants it before its roster pass spends the anchor,
  * and `GET /account/access` tells it once. CLOUD-ONLY: the table is a cloud table. */
 export {
@@ -30,6 +35,7 @@ export {
  * top of `index.ts`.
  */
 export { schema } from "./schema.js";
+export { POOLED_WRITE_MAX_CONNECTIONS } from "./handle-table.js";
 export {
   makeDb, closeDb, makeOwnedDb, makePooledDb, closePooledDbs, acquireCeilingHandle,
   WORKER_TIMEOUTS, WORKER_POOL_MAX,
@@ -37,9 +43,51 @@ export {
   POOLED_ACQUIRE_TIMEOUT_MS, SESSION_ACQUIRE_TIMEOUT_MS, POOLED_MAX_CONNECTIONS, POOLED_IDLE_TIMEOUT_S,
   DbAcquireTimeoutError, isDbAcquireTimeout, DbConnectionCapError, isDbConnectionCap, DbParameterTypeError,
   freshConnectProbe, type FreshConnectReading,
-  BindLimitError, MAX_BIND_PARAMETERS, withBindLimit,
+  BindLimitError, MAX_BIND_PARAMETERS, withBindLimit, FlightClosedError,
   type OwnedDb,
 } from "./client.js";
+
+/**
+ * THE LOCK'S CONTRACT: the settings and readers a binding names its account and key through, every
+ * table's class, each locked table's policies by role and verb, the deadlines by role name, and the
+ * horizons the worker's prunes and policies share. Data only; the setup's step that makes them is
+ * on `/admin`.
+ */
+export {
+  API_ROLE, WORKER_ROLE, RUNTIME_LOGINS, PLANE_ROLE, OPTIONAL_POLICY_ROLES, POLICY_ROLES,
+  ACCOUNT_SETTING, KEY_SETTING, READER_SCHEMA, ACCOUNT_READER, KEY_READER, STAFF_DOOR_KEY,
+  POLICY_COMMENT_TAG, LOCK_MARKER, LOCK_READERS, readerStatement,
+  type RuntimeLogin, type OptionalPolicyRole, type PolicyRole, type LockReader,
+} from "./row-security/names.js";
+export {
+  OPERATIONS_TABLES, STAFF_TABLES, KEYED_TABLES, KEYED_WRITES, UNOWNED_TABLES, WORKER_WIDE_READ,
+  PLANE_READS, PLANE_APPENDS, NOTICE_FAMILY, ACCOUNT_BY_ID, PASS_ROSTERS,
+  tableClass, accountColumnOf, serverTables, lockedTables, adminReadTables, policiesOfTable, policyList,
+  policiesFor, policiesNaming,
+  type TableClass, type PolicyVerb, type PolicyRow, type PassRosterTable,
+} from "./row-security/policies.js";
+export { ROLE_DEADLINES, deadlineText } from "./row-security/deadlines.js";
+/**
+ * The account's three views of the lock: their list, their names and the statement the setup makes each with; and
+ * how each index the lock could take from a read is read: through a view, small, or kept (the search ruling).
+ */
+export {
+  ACCOUNT_VIEWS, VIEW_CHECK_OPTION, readerCondition, viewName, viewStatement, type AccountView, INDEX_READS, type IndexRead,
+} from "./row-security/views.js";
+/**
+ * Which relations a pool's index-driven reads name: the one catalog read, asked once per pool handle, the line a
+ * pool says and the road the health line reads; and the views' answer. The shape and the tables' answer are the root's.
+ */
+export {
+  accountRows, accountRowsAnswered, accountRowsLine, ACCOUNT_ROWS_SQL, ACCOUNT_VIEW_RELATIONS,
+  type AccountRowsExecutor, type AccountRowsOptions,
+} from "./row-security/account-road.js";
+/** The lock's check: its reading of the catalog, the verdict a handle is built on, and the health line. */
+export {
+  lockVerdict, readLock, lockHealthLine, type LockVerdictWord, type LockReading, type LockHealthLine,
+} from "./row-security/check.js";
+export type { LockMarker, LockFacts } from "./row-security/census.js";
+export { HORIZONS, horizonOf, horizonVerbs, intervalOf, type Horizon, type HorizonConstant } from "./horizons.js";
 
 /**
  * The `/events` per-instance LISTEN fan-out — one session-mode connection, many streams.
@@ -93,7 +141,7 @@ export {
    * `consumeOAuthCeremony` is of the redirect table's. The separation is the security property —
    * see the module's own header for why one table with a flag would not be.
    */
-  createDeviceCeremony, readDeviceCeremony, leaseDeviceCeremonyPoll,
+  deviceCeremonyKey, createDeviceCeremony, readDeviceCeremony, leaseDeviceCeremonyPoll,
   noteDeviceCeremonySlowDown, claimDeviceCeremony, pruneDeviceCeremonies,
   DEVICE_CEREMONY_RETENTION_MS,
   type DeviceCeremonyRow, type CreateDeviceCeremonyInput, type ReadDeviceCeremonyOutcome,
@@ -293,6 +341,15 @@ export {
   CONTENT_BLIND_PROBE, CONTENT_BITE_TESTS, DENIED_SQLSTATE,
   type AdminDb, type ContentBlind,
 } from "./admin-db.js";
+/**
+ * The roster handle: the worker's role in the API process, for passes that read across accounts, minted only by its
+ * factory, attested at first use, no fallback.
+ */
+export {
+  rosterDbFor, assertRoster, NotRosterError, ROSTER_ROLE,
+  type RosterDb, type Roster, type RosterExpectation, type RosterVerdict,
+  passRosterFor, type PassRoster, type PassRosterRow,
+} from "./roster-db.js";
 
 /**
  * The ONE allowlist, and the census that measures a role against it. Imported by the
@@ -431,10 +488,18 @@ export {
  * The tokens of an erased account, kept by hash (cloud 0043): written by `deleteAccount`, read by
  * the hosted session door, pruned by the worker. See `erased-bearers.ts`.
  */
-export { recordErasedBearers, erasedBearerAccount, pruneErasedBearers } from "./erased-bearers.js";
+export { recordErasedBearers, erasedBearerAccount, pruneErasedBearers, ERASED_REFRESH_KEEP_DAYS } from "./erased-bearers.js";
 /** The notice rows an erased account still has (cloud 0052), pruned by the worker ten years on. */
 export { pruneErasedNotices, ERASED_NOTICE_KEEP_YEARS } from "./erased-notices.js";
 export { pruneAuthThrottle, AUTH_THROTTLE_RETENTION_MS, KNOWN_CLIENT_RETENTION_MS } from "./auth-throttle-prune.js";
+/** Which of the two counter tables a key lives in (cloud 0101), and the families that decide it. */
+export {
+  COUNTER_KEY_FAMILIES, COUNTER_PREFIXES_THAT_LEFT, familyOf, parentIdOf, carriesAnAddress,
+  type CounterKeyFamily, type CounterKeyClass, type CounterKeyParent,
+} from "./counter-keys.js";
+export {
+  counterHome, counterAccount, namesARow, CounterKeyRefused, type CounterHome, type CounterTable,
+} from "./account-counters.js";
 // The server-side transport: `node:tls` and a raw `pg_stat_ssl` read, so never on the root entry
 // the desktop engine and the phone bundle load (`dialect-census.test.ts`).
 export {

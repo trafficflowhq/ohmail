@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import { accountSettings, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
+import { accountSettings, folderState, mailboxes, messageBodies, messages, accountPass, writePassProgress } from "@trafficflow/db";
 import { closePooledDbs, makePooledDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, recordPgWire } from "@trafficflow/db/testing";
@@ -65,7 +65,8 @@ async function oneFlight(r: Awaited<ReturnType<typeof onWire>>, ms = 500): Promi
   return r.flushes[at]!;
 }
 
-async function seed(accountId: string, n: number, documents: boolean): Promise<void> {
+/** `stamped: false` is an account whose letters carry their documents and whose index the pass has not stamped built yet. */
+async function seed(accountId: string, n: number, stamped: boolean): Promise<void> {
   const db = makePooledDb(PG_URL);
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${accountId.slice(0, 8)}@ph.example` }).returning();
   for (let i = 0; i < n; i++) {
@@ -75,12 +76,12 @@ async function seed(accountId: string, n: number, documents: boolean): Promise<v
       date: new Date(NOW.getTime() - i * 3_600_000), unread: i % 2 === 0, hasAttachments: false,
       nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: `a heron by the lake, note ${i}` });
-    await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
-    if (documents) await document(accountId, m!.id, i);
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `a heron by the lake, note ${i}` });
+    await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+    await document(accountId, m!.id, i);
     own[accountId]!.add(m!.id);
   }
-  if (documents) await built(accountId);
+  if (stamped) await built(accountId);
 }
 
 async function document(accountId: string, id: string, i: number): Promise<void> {
@@ -91,8 +92,7 @@ async function document(accountId: string, id: string, i: number): Promise<void>
 }
 
 async function built(accountId: string): Promise<void> {
-  await makePooledDb(PG_URL).insert(accountSettings).values({ accountId, searchIndexBuiltAt: NOW })
-    .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+  await writePassProgress(makePooledDb(PG_URL), accountPass("search_index_backfill", accountId), { doneAt: NOW });
 }
 
 describe("a search on the hosted handle factory (real Postgres, on the wire)", () => {
@@ -128,6 +128,18 @@ describe("a search on the hosted handle factory (real Postgres, on the wire)", (
     expect(flight.params[0]!).toBeGreaterThan(0);
   });
 
+  it("reads the account's folder counts under a transaction-local statement deadline", async () => {
+    wire.start();
+    expect(await svc.places(ctx(BUILT))).toEqual({ places: [{ folder: "INBOX", count: 9 }] });
+    const statements = wire.read().lines.find((line) =>
+      line.some(({ text }) => text.includes("sum(n) as total")),
+    )?.map(({ text }) => text) ?? [];
+    const aggregate = statements.findIndex((text) => text.includes("sum(n) as total"));
+    const deadline = statements.findIndex((text) => /set_config\('statement_timeout', '\d+', true\)/.test(text));
+    expect(deadline).toBeGreaterThanOrEqual(0);
+    expect(aggregate).toBeGreaterThan(deadline);
+  });
+
   it("the estimate and the summary are one wait too", async () => {
     for (const parts of ["estimate", "summary"] as const) {
       const r = await onWire(() => svc.search(ctx(BUILT), { q: "heron", parts, limit: 4 }));
@@ -144,7 +156,7 @@ describe("a search on the hosted handle factory (real Postgres, on the wire)", (
     await oneFlight(r);
   });
 
-  it("two accounts in parallel on one handle read only their own rows, the unbuilt one by its old columns", async () => {
+  it("two accounts in parallel on one handle read only their own rows, the unstamped one by its documents too", async () => {
     expect(makePooledDb(PG_URL)).toBe(makePooledDb(PG_URL));
     for (let round = 0; round < 5; round++) {
       const answers = await Promise.all([BUILT, UNBUILT, BUILT, UNBUILT].map(async (a) =>

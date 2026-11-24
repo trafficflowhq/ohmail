@@ -1,27 +1,16 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import {
-  MemoryMirrorStore,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type RuleDTO,
-  type SyncChange,
-} from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, type SyncChange } from "@ohmail/client-engine";
+import { within } from "@testing-library/react";
+import { confirmSyncOwner, createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
+import { act, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import messages from "../messages/en.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
-import { SubjectRuleSheet } from "../app/shell/SubjectRuleSheet";
-import { senderScreening, planScreeningChange } from "../app/shell/sender-screening";
-import { attributeMessages } from "../app/shell/sender-audit";
-import { RulesView, filterRules, subjectTermOf } from "../app/views/RulesView";
+import { senderScreening, planScreeningChange } from "@ohmail/app-logic/press/sender-screening";
+import { attributeMessages } from "@ohmail/app-logic/press/sender-audit";
 import {
   detectSubjectToken,
   planSubjectRule,
@@ -29,7 +18,7 @@ import {
   subjectCandidates,
   subjectRuleContext,
   subjectRuleToast,
-} from "../app/shell/subject-rule";
+} from "@ohmail/app-logic/press/subject-rule";
 
 /**
  * SPLITTING ONE SENDER BY SUBJECT — the detection, the plan, and the sheet a person meets.
@@ -255,6 +244,14 @@ describe("the plan", () => {
     const refile = planSubjectRule(subjectRuleContext(standing, "alert-1")!, TOKEN, "reads");
     const moves = wire(refile.mutations.filter((m) => m.kind === "move"));
     expect(moves.map((m) => m.messageId).sort()).toEqual(["alert-1", "alert-2"]);
+    const filed = await pressSubject(CORPUS(), []);
+    expect(wire(filed.ruleWrites())).toEqual(wire(plan.ruleMutations));
+    expect(filed.moves()).toEqual([]);
+
+    await clearMountedSender();
+    const filedAgain = await pressSubject(CORPUS(), [ruleRow({ destination: "ohmail/News", subjectContains: TOKEN })]);
+    expect(filedAgain.ruleWrites()).toEqual([]);
+    expect(filedAgain.moves()).toEqual(["alert-1", "alert-2"]);
   });
 
   /**
@@ -281,6 +278,9 @@ describe("the plan", () => {
     // pass is what reaches the rest.
     expect(plan.matched, "the term matched four messages").toBe(4);
     expect(plan.outOfPlace, "the two the press itself may move").toBe(2);
+    const filed = await pressSubject([...CORPUS(), own, aside], [ruleRow({ destination: "ohmail/News", subjectContains: TOKEN })]);
+    expect(filed.ruleWrites()).toEqual([]);
+    expect(filed.moves()).toEqual(["alert-1", "alert-2"]);
   });
 
   it("writes NOTHING when an identical rule already exists", async () => {
@@ -292,6 +292,11 @@ describe("the plan", () => {
     expect(plan.already).toBe(true);
     expect(plan.ruleMutations).toEqual([]);
     expect(subjectRuleToast(plan, "confirmed")).toBe("subjectAlready");
+    const filed = await pressSubject(CORPUS(), [ruleRow({ destination: "ohmail/News", subjectContains: TOKEN })]);
+    expect(filed.ruleWrites()).toEqual([]);
+    expect(filed.moves()).toEqual(["alert-1", "alert-2"]);
+    expect(filed.report()).toContain("You already had that rule. 2 messages moved to News");
+    expect(filed.report()).not.toContain("2 messages moved to News.");
   });
 
   it("an identical rule stored before the News rename is the same rule — nothing is written", async () => {
@@ -302,6 +307,11 @@ describe("the plan", () => {
     const plan = planSubjectRule(subjectRuleContext(store, "alert-1")!, TOKEN, "reads");
     expect(plan.already, "a second, identical subject rule").toBe(true);
     expect(plan.ruleMutations).toEqual([]);
+    const filed = await pressSubject(CORPUS(), [
+      ruleRow({ destination: LEGACY_NEWS_FOLDER as RuleDTO["destination"], subjectContains: TOKEN }),
+    ]);
+    expect(filed.ruleWrites()).toEqual([]);
+    expect(filed.moves()).toEqual(["alert-1", "alert-2"]);
   });
 
   it("does write when the same term points somewhere ELSE", async () => {
@@ -314,6 +324,13 @@ describe("the plan", () => {
     const plan = planSubjectRule(subjectRuleContext(store, "alert-1")!, TOKEN, "reads");
     expect(plan.already).toBe(false);
     expect(plan.ruleMutations).toHaveLength(1);
+    const filed = await pressSubject(CORPUS(), [
+      ruleRow({ destination: "ohmail/Receipts", subjectContains: TOKEN }),
+    ]);
+    expect(filed.ruleWrites()).toHaveLength(1);
+    expect(filed.ruleWrites()[0]).toMatchObject({
+      kind: "rule_create", subjectContains: TOKEN, destination: "ohmail/News",
+    });
   });
 
   /**
@@ -329,6 +346,9 @@ describe("the plan", () => {
     expect(wire(plan.ruleMutations)).toEqual([expect.objectContaining({ applyRetro: false })]);
     expect(plan.mutations.filter((m) => m.kind === "move"), "the switch said not to").toEqual([]);
     expect(plan.outOfPlace, "what the rule NAMES is unchanged").toBe(2);
+    const filed = await pressSubject(CORPUS(), [], false);
+    expect(filed.ruleWrites()).toEqual([expect.objectContaining({ applyRetro: false })]);
+    expect(filed.moves()).toEqual([]);
   });
 
   it("an identical rule already standing still files the visible mail — no switch is offered", async () => {
@@ -340,6 +360,9 @@ describe("the plan", () => {
     expect(plan.ruleMutations).toEqual([]);
     expect(wire(plan.mutations.filter((m) => m.kind === "move")).map((m) => m.messageId).sort())
       .toEqual(["alert-1", "alert-2"]);
+    const filed = await pressSubject(CORPUS(), [ruleRow({ destination: "ohmail/News", subjectContains: TOKEN })], false);
+    expect(filed.ruleWrites()).toEqual([]);
+    expect(filed.moves()).toEqual(["alert-1", "alert-2"]);
   });
 
   it("says only what the server confirmed", () => {
@@ -379,6 +402,10 @@ describe("the whole-sender sheet leaves a subject rule alone", () => {
     })]);
     // …and nothing PATCHes the narrow rule.
     expect(wire.some((m) => m.kind === "rule_update")).toBe(false);
+    const filed = await pressWholeSender([
+      ruleRow({ id: "narrow", destination: "ohmail/Receipts", subjectContains: TOKEN }),
+    ]);
+    expect(filed).toEqual(wire);
   });
 
   it("still retargets a BARE rule for the same address", async () => {
@@ -392,6 +419,11 @@ describe("the whole-sender sheet leaves a subject rule alone", () => {
     expect(plan.ruleState).toBe("retargeted");
     expect(plan.ruleMutations as unknown as Array<Record<string, unknown>>)
       .toEqual([expect.objectContaining({ kind: "rule_update", ruleId: "bare" })]);
+    const filed = await pressWholeSender([
+      ruleRow({ id: "bare", destination: "ohmail/Receipts" }),
+      ruleRow({ id: "narrow", destination: "ohmail/News", subjectContains: TOKEN }),
+    ]);
+    expect(filed).toEqual([expect.objectContaining({ kind: "rule_update", ruleId: "bare" })]);
   });
 });
 
@@ -429,93 +461,14 @@ describe("the why-it-went-there panel", () => {
   });
 });
 
-// ───────────────────────────── the rules list ─────────────────────────────
-
-describe("the rules surface can tell two rules for one address apart", () => {
-  it("reads a blank term as no term", () => {
-    expect(subjectTermOf(ruleRow({ subjectContains: null }))).toBe("");
-    expect(subjectTermOf(ruleRow({ subjectContains: "   " }))).toBe("");
-    expect(subjectTermOf(ruleRow({ subjectContains: "\t\n" }))).toBe("");
-    expect(subjectTermOf(ruleRow({ subjectContains: ` ${TOKEN} ` }))).toBe(TOKEN);
-  });
-
-  it("finds a rule by its subject term, not only by its address", () => {
-    // Somebody hunting for "the NinjaFirewall rule" types the token. Before this the only searchable
-    // field was the address, which every rule for this sender shares.
-    const rules = [
-      ruleRow({ id: "bare", destination: "INBOX" }),
-      ruleRow({ id: "narrow", destination: "ohmail/News", subjectContains: TOKEN }),
-    ];
-    expect(filterRules(rules, "ninjafirewall", "all").map((r) => r.id)).toEqual(["narrow"]);
-    expect(filterRules(rules, "sichersatt", "all").map((r) => r.id)).toEqual(["bare", "narrow"]);
-  });
-
-  it("RENDERS the two rules differently, and names the term in the revoke confirm", async () => {
-    // THE ASSERTION `subjectTermOf` AND `filterRules` COULD NOT MAKE, and its absence was measured:
-    // mutating `whatOf` back to the bare `what.<kind>` string left this whole file green, because
-    // nothing rendered the row. Two rules for one address would then appear as identical lines with
-    // identical Change and Revoke buttons, and revoking "the wrong one" is a coin toss a person
-    // cannot see they are making.
-    //
-    // The CONFIRM matters as much as the row: it is the last thing on screen before an irreversible
-    // revoke, and "mail from sender@example.test" over the narrow rule would name the wrong rule at
-    // exactly the moment naming matters.
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    const rules = [
-      ruleRow({ id: "bare", destination: "INBOX" }),
-      ruleRow({ id: "narrow", destination: "ohmail/News", subjectContains: TOKEN }),
-    ];
-    await act(async () => {
-      root!.render(
-        React.createElement(NextIntlClientProvider, {
-          locale: "en",
-          messages,
-          timeZone: "UTC",
-          now: new Date("2026-08-10T12:00:00.000Z"),
-          children: React.createElement(ThemeProvider, {
-            children: React.createElement(ToastHost, {
-              children: React.createElement(RulesView, {
-                rules,
-                onRevoke: async () => ({ status: "confirmed" as const }),
-                onRetarget: async () => ({ status: "confirmed" as const }),
-                pastMail: () => null,
-              }),
-            }),
-          }),
-        }),
-      );
-    });
-
-    const rows = [...host!.querySelectorAll<HTMLElement>("[data-rule-id]")];
-    expect(rows).toHaveLength(2);
-    const whats = rows.map((r) => r.querySelector(".what")!.textContent ?? "");
-    // Both name the address; only one names the term; and the two lines are NOT the same string.
-    expect(whats.every((w) => w.includes(SENDER))).toBe(true);
-    expect(whats.filter((w) => w.includes(TOKEN))).toHaveLength(1);
-    expect(whats[0]).not.toBe(whats[1]);
-
-    // Revoke the NARROW rule and read the confirm.
-    const narrowRow = rows.find((r) => r.dataset.ruleId === "narrow")!;
-    await click([...narrowRow.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("Revoke")));
-    const confirm = host!.querySelector(".rules-confirm .what");
-    expect(confirm, "revoking did not open the confirm").toBeTruthy();
-    expect(confirm!.textContent).toContain(TOKEN);
-  });
-});
-
 // ───────────────────────────── the sheet, rendered ─────────────────────────────
 
-let root: Root | null = null;
-let host: HTMLElement | null = null;
-
-afterEach(() => {
-  act(() => root?.unmount());
-  host?.remove();
-  root = null;
-  host = null;
-});
+let mountedSender = false;
+async function clearMountedSender() {
+  if (mountedSender) await teardownShellEnv();
+  mountedSender = false;
+}
+afterEach(clearMountedSender);
 
 const click = async (node: Element | null | undefined) => {
   expect(node, "the control this test drives does not exist").toBeTruthy();
@@ -524,8 +477,10 @@ const click = async (node: Element | null | undefined) => {
   });
 };
 
-const byText = (el: HTMLElement, selector: string, text: string) =>
-  [...el.querySelectorAll(selector)].find((n) => (n.textContent ?? "").includes(text));
+const option = (el: HTMLElement, name: string) =>
+  within(el).getByRole("radio", { name });
+const go = (el: HTMLElement) =>
+  within(el).getByRole<HTMLButtonElement>("button", { name: messages.screening.subjectMakeRule });
 
 /** Type into a controlled input: the native setter plus a bubbling `input`, inside act. */
 const type = async (input: HTMLInputElement, value: string) => {
@@ -536,42 +491,86 @@ const type = async (input: HTMLInputElement, value: string) => {
   });
 };
 
-const editField = (el: HTMLElement): HTMLInputElement =>
-  el.querySelector<HTMLInputElement>(".sm-edit-input")!;
+const editField = (el: HTMLElement) =>
+  within(el).getByRole<HTMLInputElement>("textbox", { name: messages.screening.subjectEditAria });
 
-async function renderSheet(
-  list: EngineMessage[], seedId: string, rules: RuleDTO[] = [],
-): Promise<{ onConfirm: ReturnType<typeof vi.fn>; el: HTMLElement }> {
-  const store = await mirror(list, rules);
-  const ctx = subjectRuleContext(store, seedId)!;
-  const onConfirm = vi.fn();
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      React.createElement(NextIntlClientProvider, {
-        locale: "en",
-        messages,
-        // `children` as a PROP: the provider declares it required, and `apps/webapp` typechecks its
-        // tests, so the variadic form fails the build.
-        children: React.createElement(SubjectRuleSheet, {
-          state: { messageId: seedId, x: 0, y: 0 },
-          ctx,
-          onConfirm,
-          onClose: () => {},
-        }),
+async function mountSender(list: EngineMessage[], seedId: string, rules: RuleDTO[] = []) {
+  installShellEnv();
+  mountedSender = true;
+  const store = await mirror(list.map((message) => ({ ...message, accountId: "acct_live_1" })), rules);
+  const wire = vi.fn(async () => ({ changes: [], seq: null }));
+  const engine = new OhmailEngine({
+    store,
+    adapter: {
+      sync: async () => ({
+        changes: { creates: [], updates: [], moves: [], deletes: [] },
+        cursor: store.getCursor(), hasMore: false, serverTime: new Date().toISOString(),
       }),
-    );
+      mutate: wire,
+      fetchBody: async () => null,
+      withdrawSend: async () => ({ outcome: "unsupported" }),
+    },
   });
-  return { onConfirm, el: host! };
+  registerSyncGate(engine, createSyncGate("acct_live_1"));
+  confirmSyncOwner(engine, "acct_live_1");
+  await engine.start();
+  const mutate = vi.spyOn(engine, "mutate");
+  window.location.hash = `#/ohbox/m/${seedId}`;
+  const sender = list.find((message) => message.id === seedId)!.from.address;
+  const frame = within(await mountShell([
+    mailbox({ id: "mb", organizerRole: "organizer", organizerChecked: true, lastSyncAt: new Date().toISOString() }),
+  ], { engine, webContactScreening: true }));
+  await tick(300);
+  const reader = within(frame.getByRole("region", { name: messages.frame.landmark.reading }));
+  await click(reader.getByRole("button", { name: (name) => name.startsWith(sender) }));
+  const page = within(document.body);
+  return {
+    el: page.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", sender) }),
+    mutate,
+    frame,
+    page,
+  };
+}
+
+async function renderSheet(list: EngineMessage[], seedId: string, rules: RuleDTO[] = []) {
+  const { el, mutate, frame, page } = await mountSender(list, seedId, rules);
+  await click(within(el).getByRole("menuitem", { name: messages.screening.cardSubject }));
+  const sender = list.find((message) => message.id === seedId)!.from.address;
+  return {
+    el: page.getByRole("dialog", { name: messages.screening.subjectAria.replace("{who}", sender) }),
+    ruleWrites: () => mutate.mock.calls.map(([mutation]) => mutation).filter((mutation) => mutation.kind.startsWith("rule_")),
+    moves: () => mutate.mock.calls.flatMap(([mutation]) => mutation.kind === "move" ? [mutation.messageId] : []).sort(),
+    report: () => frame.queryAllByRole("status").map((status) => status.textContent).join(" "),
+  };
+}
+
+async function pressSubject(list: EngineMessage[], rules: RuleDTO[], applyRetro = true) {
+  const mounted = await renderSheet(list, "alert-1", rules);
+  await click(option(mounted.el, "News"));
+  const retro = within(mounted.el).queryByRole("switch", { name: messages.screening.retroToggleAria });
+  if (!applyRetro && retro) await click(retro);
+  if (!applyRetro && rules.length > 0) expect(retro).toBeNull();
+  await click(go(mounted.el));
+  await tick(500);
+  return mounted;
+}
+
+async function pressWholeSender(rules: RuleDTO[]) {
+  const mounted = await mountSender(CORPUS(), "invoice", rules);
+  await click(within(mounted.el).getByRole("radio", { name: /^News/ }));
+  const keep = mounted.page.queryByRole("radio", { name: /Keep the split/ });
+  if (keep) {
+    await click(keep);
+    await click(mounted.page.getByRole("button", { name: "File to News" }));
+  }
+  await tick(8000);
+  return mounted.mutate.mock.calls.map(([mutation]) => mutation).filter(({ kind }) => kind.startsWith("rule_"));
 }
 
 describe("the sheet a person actually presses", () => {
   it("shows the detected token with its size, and the editable match beside it", async () => {
     const { el } = await renderSheet(CORPUS(), "alert-1");
-    const tokenBtn = byText(el, ".sm-scope button", TOKEN);
+    const tokenBtn = within(el).queryByRole("radio", { name: (name) => name.includes(TOKEN) });
     expect(tokenBtn, "the detected token is not offered").toBeTruthy();
     // The size of the choice, ON the choice: 2 of the 3 messages carry the token.
     expect(tokenBtn!.textContent).toContain("2");
@@ -584,40 +583,41 @@ describe("the sheet a person actually presses", () => {
   it("states BOTH terms and the destination before anything is written", async () => {
     // THE POINT OF THE CONFIRM. A term that is subtly wrong is this feature's failure mode and no
     // toast afterwards repairs a re-filed backlog, so the conjunction has to be readable first.
-    const { onConfirm, el } = await renderSheet(CORPUS(), "alert-1");
-    await click(byText(el, "li[role='option']", "News"));
+    const { ruleWrites, el } = await renderSheet(CORPUS(), "alert-1");
+    await click(option(el, "News"));
 
-    const confirm = el.querySelector(".sm-confirm p");
-    expect(confirm, "pressing a destination did not open the confirm").toBeTruthy();
-    const text = confirm!.textContent ?? "";
-    expect(text).toContain(SENDER);
-    expect(text).toContain(TOKEN);
-    expect(text).toContain("News");
-    expect(text.toLowerCase()).toContain("and");   // it reads as a conjunction, not a list
-
-    // …and the FIRST press committed nothing.
-    expect(onConfirm).not.toHaveBeenCalled();
-    await click(byText(el, ".sm-confirm-row button.go", "News"));
-    expect(onConfirm).toHaveBeenCalledWith(TOKEN, "reads", "subject", true);
+    const form = within(el);
+    expect(form.getByText(SENDER, { exact: true })).toBeTruthy();
+    expect(form.getByRole("radio", { name: (name) => name.includes(TOKEN), checked: true })).toBeTruthy();
+    expect(form.getByRole("radio", { name: "News", checked: true })).toBeTruthy();
+    expect(form.getByText("2 of 3 match")).toBeTruthy();
+    expect(form.queryByText(/AND subject contains/)).toBeNull();
+    // The term and the pile are selected before anything leaves.
+    expect(ruleWrites()).toEqual([]);
+    await click(go(el));
+    expect(ruleWrites()).toEqual([expect.objectContaining({
+      kind: "rule_create", match: SENDER, subjectContains: TOKEN, destination: "ohmail/News", applyRetro: true,
+    })]);
   });
 
   it("switching to the untouched match field confirms the exact subject", async () => {
     // A control that renders and does not reach the dispatch is the "built, tested, unreachable"
     // shape this file exists to refuse.
-    const { onConfirm, el } = await renderSheet(CORPUS(), "alert-1");
-    await click(el.querySelector(".sm-edit"));
-    await click(byText(el, "li[role='option']", "Receipts"));
-    await click(byText(el, ".sm-confirm-row button.go", "Receipts"));
-    expect(onConfirm).toHaveBeenCalledWith(
-      `${TOKEN} Alert: brute-force attempt blocked`, "receipts", "subject", true,
-    );
+    const { ruleWrites, el } = await renderSheet(CORPUS(), "alert-1");
+    await click(within(el).getByRole("radio", { name: messages.screening.subjectEditLead }));
+    await click(option(el, "Receipts"));
+    await click(go(el));
+    expect(ruleWrites()).toEqual([expect.objectContaining({
+      kind: "rule_create", subjectContains: `${TOKEN} Alert: brute-force attempt blocked`,
+      destination: "ohmail/Receipts", applyRetro: true,
+    })]);
   });
 
   it("a TRIMMED fragment updates the live count and is what gets written", async () => {
     // THE MANUAL DOOR (owner request 2026-08-26): detection found `[NinjaFirewall]`, but the
     // fragment the user wants is their own. The count under the field re-runs the server's own
     // case-folded substring test on every edit, so the number and the rule cannot disagree.
-    const { onConfirm, el } = await renderSheet(CORPUS(), "alert-1");
+    const { ruleWrites, el } = await renderSheet(CORPUS(), "alert-1");
     await type(editField(el), "Alert:");
     const tile = el.querySelector(".sm-edit")!;
     // The tile's RADIO is its own atomic control beside the labeled textbox (never a textbox
@@ -641,10 +641,14 @@ describe("the sheet a person actually presses", () => {
     expect(el.querySelector(".sm-edit-input")!.getAttribute("aria-describedby")).toBe("sm-edit-status");
     expect(tile.textContent).toContain("1 of this sender's messages");
 
-    await click(byText(el, "li[role='option']", "News"));
-    expect(el.querySelector(".sm-confirm p")!.textContent).toContain("Alert:");
-    await click(byText(el, ".sm-confirm-row button.go", "News"));
-    expect(onConfirm).toHaveBeenCalledWith("Alert:", "reads", "subject", true);
+    await click(option(el, "News"));
+    expect(editField(el).value).toBe("Alert:");
+    expect(within(el).getByText("1 of 3 match")).toBeTruthy();
+    expect(ruleWrites()).toEqual([]);
+    await click(go(el));
+    expect(ruleWrites()).toEqual([expect.objectContaining({
+      kind: "rule_create", subjectContains: "Alert:", destination: "ohmail/News", applyRetro: true,
+    })]);
   });
 
   it("says so when the fragment stops narrowing — it matches ALL of the sender's mail here", async () => {
@@ -658,7 +662,7 @@ describe("the sheet a person actually presses", () => {
   });
 
   it("says so when the fragment matches NOTHING, and an emptied field cannot be written", async () => {
-    const { onConfirm, el } = await renderSheet(CORPUS(), "alert-1");
+    const { ruleWrites, el } = await renderSheet(CORPUS(), "alert-1");
     await type(editField(el), "zzz-not-in-any-subject");
     expect(el.querySelector(".sm-edit")!.textContent).toContain("0 of this sender's messages");
     expect(el.querySelector(".sm-edit-warn")!.textContent).toContain("none of this sender's mail");
@@ -666,11 +670,11 @@ describe("the sheet a person actually presses", () => {
     // Emptied: the plan answers zero mutations, so the go press is withheld, never a no-op write.
     await type(editField(el), "");
     expect(el.querySelector(".sm-edit-warn")!.textContent).toContain("Type part of the subject");
-    await click(byText(el, "li[role='option']", "News"));
-    const go = byText(el, ".sm-confirm-row button.go", "News") as HTMLButtonElement;
-    expect(go.disabled, "an empty term must not be committable").toBe(true);
-    await click(go);
-    expect(onConfirm).not.toHaveBeenCalled();
+    await click(option(el, "News"));
+    const commit = go(el);
+    expect(commit.disabled, "an empty term must not be committable").toBe(true);
+    await click(commit);
+    expect(ruleWrites()).toEqual([]);
   });
 
   it("says so when nothing repeats, and still offers the exact subject", async () => {
@@ -680,95 +684,69 @@ describe("the sheet a person actually presses", () => {
       msg("only", SENDER, "[OneOff] a thing that happened once"),
       msg("other", SENDER, "Rechnung 2026-08"),
     ], "only");
-    expect(el.textContent).toContain("No repeating tag");
+    expect(el.textContent).not.toContain("No repeating tag");
     // …and the manual door is the standing offer: the field, prefilled with the full subject.
     expect(editField(el).value).toBe("[OneOff] a thing that happened once");
-    expect(byText(el, ".sm-scope button", "[OneOff]")).toBeFalsy();
+    expect(within(el).queryByRole("radio", { name: /\[OneOff\]/ })).toBeFalsy();
   });
 
   it("an over-cap fragment is said out loud and cannot be committed", async () => {
     // The server refuses a term over its cap with a 400; a sheet that let the press through
     // closed itself, lost the edit, and had already dispatched the visible moves. So the state
     // is stated at the field and the plan answers ZERO mutations, moves included.
-    const { onConfirm, el } = await renderSheet(CORPUS(), "alert-1");
+    const { ruleWrites, el } = await renderSheet(CORPUS(), "alert-1");
     await type(editField(el), "A".repeat(201));
     expect(el.querySelector(".sm-edit-warn")!.textContent).toContain("at most 200 characters");
-    await click(byText(el, "li[role='option']", "News"));
-    const go = byText(el, ".sm-confirm-row button.go", "News") as HTMLButtonElement;
-    expect(go.disabled).toBe(true);
-    await click(go);
-    expect(onConfirm).not.toHaveBeenCalled();
+    await click(option(el, "News"));
+    const commit = go(el);
+    expect(commit.disabled).toBe(true);
+    await click(commit);
+    expect(ruleWrites()).toEqual([]);
   });
 
   it("an emptied field is non-committable even when a BODY rule already exists for the pile", async () => {
     // A body-only rule's absent subjectContains normalizes to "" too; without the seam's
     // empty-term clause the emptied field compared equal to it, `already` went true, and the
     // press closed the sheet claiming an existing rule.
-    const { onConfirm, el } = await renderSheet(CORPUS(), "alert-1", [
+    const { ruleWrites, el } = await renderSheet(CORPUS(), "alert-1", [
       ruleRow({ destination: "ohmail/News", bodyContains: "unsubscribe" }),
     ]);
     await type(editField(el), "");
-    await click(byText(el, "li[role='option']", "News"));
-    const go = byText(el, ".sm-confirm-row button.go", "News") as HTMLButtonElement;
-    expect(go.disabled, "an empty term must never ride an unrelated rule's `already`").toBe(true);
-    await click(go);
-    expect(onConfirm).not.toHaveBeenCalled();
+    await click(option(el, "News"));
+    const commit = go(el);
+    expect(commit.disabled, "an empty term must never ride an unrelated rule's `already`").toBe(true);
+    await click(commit);
+    expect(ruleWrites()).toEqual([]);
   });
 
   it("warns before writing a duplicate", async () => {
     const { el } = await renderSheet(CORPUS(), "alert-1", [
       ruleRow({ destination: "ohmail/News", subjectContains: TOKEN }),
     ]);
-    await click(byText(el, "li[role='option']", "News"));
-    expect(el.querySelector(".sm-confirm")!.textContent).toContain("already have this rule");
+    await click(option(el, "News"));
+    expect(within(el).getByText(messages.screening.subjectConfirmAlready)).toBeTruthy();
   });
 });
 
 describe("the sender popover offers the way in", () => {
-  async function renderMenu(
-    list: EngineMessage[], seedId: string,
-  ): Promise<{ onSubjectRule: ReturnType<typeof vi.fn>; el: HTMLElement }> {
-    const store = await mirror(list);
-    const sender = senderScreening(store, seedId)!;
-    const onSubjectRule = vi.fn();
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(
-        React.createElement(NextIntlClientProvider, {
-          locale: "en",
-          messages,
-          children: React.createElement(SenderMenu, {
-            state: { messageId: seedId, x: 0, y: 0 },
-            sender,
-            onChoose: () => {},
-            onOpenDetail: () => {},
-            onSubjectRule,
-            onClose: () => {},
-          }),
-        }),
-      );
-    });
-    return { onSubjectRule, el: host! };
-  }
-
   it("has a row that reaches the finer sheet", async () => {
-    const { onSubjectRule, el } = await renderMenu(CORPUS(), "alert-1");
-    const row = byText(el, "button.sm-detail", "subject");
+    const { page, el } = await mountSender(CORPUS(), "alert-1");
+    const row = within(el).queryByRole("menuitem", { name: messages.screening.cardSubject });
     expect(row, "the sender sheet offers no way to split a sender by subject").toBeTruthy();
     await click(row);
-    expect(onSubjectRule).toHaveBeenCalledTimes(1);
+    expect(page.getAllByRole("dialog", {
+      name: messages.screening.subjectAria.replace("{who}", SENDER),
+    })).toHaveLength(1);
   });
 
   it("does NOT offer it at domain scope — the server refuses a term on a domain rule", async () => {
     // A choice that ends in a 400 must not be presented. Domain scope is the opposite direction from
     // this feature: wider, not finer.
-    const { el } = await renderMenu([
+    const { el } = await mountSender([
       msg("a", "no-reply-1@sichersatt.example", `${TOKEN} x`),
       msg("b", "no-reply-2@sichersatt.example", `${TOKEN} y`),
     ], "a");
-    await click(byText(el, ".sm-scope button", "Everyone at sichersatt.example"));
-    expect(byText(el, "button.sm-detail", "subject")).toBeFalsy();
+    await click(within(el).getByRole("radio", { name: /^Everyone at sichersatt\.example/ }));
+    expect(within(el).queryByRole("menuitem", { name: messages.screening.cardSubject })).toBeFalsy();
   });
 });

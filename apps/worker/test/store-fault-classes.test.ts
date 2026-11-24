@@ -5,11 +5,11 @@ import { mailboxes, messageFailures, messages, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { runSyncCycle } from "../src/sync.js";
-import { classifyIngestFault, DatabaseFaultError, DeadLetterLedger } from "../src/dead-letter.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { classifyIngestFault, DatabaseFaultError, DeadLetterLedger } from "@ohmail/organizer/dead-letter";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { markDatabaseFaults } from "../src/db-fault.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A DEVICE STORE'S REFUSAL IS CLASSIFIED BY ITS SQLITE CLASS. expo-sqlite throws every one as

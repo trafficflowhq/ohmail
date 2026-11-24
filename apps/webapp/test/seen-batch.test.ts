@@ -4,7 +4,7 @@ import {
   SEEN_MAX_IDS,
   SEEN_MAX_LATENCY_MS,
   SEEN_QUIET_MS,
-} from "../app/shell/seen-batch";
+} from "@ohmail/app-logic/reading/seen-batch";
 
 /**
  * THE SEEN-SWEEP BATCHER'S CONTRACT (the Reads freeze).

@@ -1,0 +1,37 @@
+/* The reading column with nothing open: one label in its middle. */
+@layer oh {
+  .oh-blankcolumn {
+    --oh-blankcolumn-lh: 1.2;
+
+    flex: 1;
+    display: grid;
+    place-items: center;
+    min-height: 0;
+  }
+
+  .oh-blankcolumn:has(> :nth-child(2)) {
+    align-content: center;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .oh-blankcolumn-content {
+    display: grid;
+    justify-items: center;
+    max-width: 100%;
+    padding: var(--s6);
+    text-align: center;
+  }
+
+  .oh-blankcolumn-label {
+    color: var(--ink2);
+    font-size: var(--t-title);
+    line-height: var(--oh-blankcolumn-lh);
+  }
+
+  /* ohmarchy draws the empty column as a tile of its own. */
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-blankcolumn {
+    margin: var(--ringw) var(--ringw) 0;
+    background: var(--sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--ring);
+  }
+}

@@ -4,6 +4,7 @@
  * most, the page never waiting for either. "About N" is the estimate's, the exact count replaces
  * it, and the exact facets take the estimate's places. Against the fake store's contract.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HISTORY_PAGE_ROWS,
@@ -11,7 +12,6 @@ import {
   MemoryMirrorStore,
   OhmailEngine,
   StoreSearchWalker,
-  type EngineMessage,
   type ServerSearchFacets,
 } from "../src/index.js";
 import { facetsInPlace } from "../src/store-timeline.js";

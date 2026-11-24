@@ -5,10 +5,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { IntlProvider } from "use-intl";
+import { within } from "@testing-library/react";
+import { OhmailEngine } from "@ohmail/client-engine";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import type { SyncChange } from "@ohmail/wire";
 
-import messages from "../../webapp/messages/en.json";
-import { ProfileImportCard, SavedProfileSection, useProfileImport } from "../../webapp/app/shell/ProfileImportCard";
+import { en as messages } from "../../../test/support/web-catalogues.js";
+import { SavedProfileSection } from "../../webapp/app/shell/ProfileImportCard";
+import { ROSTER, storeWith } from "../../webapp/test/_draft-shell";
+import { DesktopFrame, type DesktopFrameProps } from "../src/DesktopFrame";
+import { DesktopLocale } from "../src/DesktopLocale";
+import { linkSlot } from "../src/link-in";
 import { profileImportDoorFor } from "../src/doors.js";
 import { profileImportOverBridge, profileImportPath } from "../src/local-profile-import.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
@@ -77,6 +85,9 @@ function encode(status: number, body: string): Uint8Array {
 
 const MB = { id: "6e0a4c1e-0000-4000-8000-000000000001", address: "sam@example.com" };
 const FINGERPRINT = "b".repeat(64);
+const NOW = "2026-08-18T12:00:00.000Z";
+const noop = () => undefined;
+const originalFetch = globalThis.fetch;
 
 interface Asked { method: string; url: string; body: Record<string, unknown> | null }
 let asked: Asked[];
@@ -100,6 +111,10 @@ function engineAnswering(): void {
       const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
       const method = (p.method ?? "GET").toUpperCase();
       const url = p.url ?? "";
+      if (/^\/mailboxes(?:\?|$)/.test(url)) {
+        return encode(200, JSON.stringify({ items: [{ ...ROSTER[0], ...MB }] }));
+      }
+      if (!url.startsWith(profileImportPath(MB.id))) return encode(404, "{}");
       asked.push({ method, url, body });
       fingerprintHeaders.push((p.headers ?? []).find(([n]) => n.toLowerCase() === "x-ohmail-profile-fingerprint")?.[1] ?? null);
       if (url === profileImportPath(MB.id) && method === "GET") {
@@ -140,41 +155,67 @@ function engineAnswering(): void {
 let hostEl: HTMLDivElement;
 let root: Root;
 
-/** The REAL hook + the REAL card, over the REAL bridge transport — `AppShell`'s exact wiring. */
-async function mountCard(): Promise<void> {
-  function Probe(): React.ReactElement | null {
-    const state = useProfileImport(true, [MB], profileImportOverBridge);
-    if (!state.offer) return h("div", { className: "no-card" });
-    return h(ProfileImportCard as never, {
-      offer: state.offer,
-      phase: state.phase,
-      onImport: state.importNow,
-      onNotNow: state.notNow,
-      onAcknowledge: state.acknowledge,
-    } as never);
-  }
+/** Mount the desktop window and answer its bridge and mirror at their transport boundaries. */
+async function mountCard(): Promise<(seq: number) => Promise<void>> {
+  const marker = (seq: number): SyncChange => ({
+    type: "settings", op: "update", id: "settings", seq, updatedAt: NOW, entity: {},
+  });
+  const store = await storeWith([], []);
+  await store.applyChanges([marker(3)]);
+  let changes: SyncChange[] = [];
+  let cursor = 0;
+  const engine = new OhmailEngine({
+    store,
+    adapter: {
+      sync: async () => ({
+        changes: { creates: [], updates: changes, moves: [], deletes: [] },
+        cursor: String(++cursor), hasMore: false, serverTime: NOW,
+      }),
+      fetchBody: async () => ({
+        text: "", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
+      }),
+      mutate: async () => ({ changes: [], seq: null }),
+      withdrawSend: async () => ({ outcome: "unreachable" }),
+    },
+  });
+  const props: DesktopFrameProps = {
+    engine, status: { state: "serving", mode: "local" }, session: "live", sessionRefused: false,
+    sealFailed: false, paired: false, hostLabel: null, freshness: null, account: "owner", storage: null,
+    mayLinkOut: false, manageOffered: false, withdrawManage: noop, rereadAccess: noop,
+    reuseSweeps: [], recheckSweeps: async () => undefined, ai: null, setAi: noop, onStatus: noop,
+    openOverlay: noop, takeOver: noop, firstRunOpen: false, firstRun: undefined, takesMailLinks: true,
+    scope: "owner", onUnread: noop, liveBody: async () => ({ kind: "refused", reason: "gone" }),
+    links: linkSlot(), connection: { read: () => null, subscribe: () => noop },
+  };
+  window.history.replaceState(null, "", "/#/ohbox");
   hostEl = document.createElement("div");
   document.body.append(hostEl);
   root = createRoot(hostEl);
+  await (await import("@ohmail/app/mail")).prepareWriting();
   await act(async () => {
     root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-18T12:00:00.000Z"),
-        children: h(Probe),
-      }),
+      <DesktopLocale><ThemeProvider><ToastHost><DesktopFrame {...props} /></ToastHost></ThemeProvider></DesktopLocale>,
     );
   });
-  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  for (let turn = 0; turn < 20 && !hostEl.querySelector("section[aria-label]"); turn += 1) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  }
+  return async (seq) => {
+    changes = [marker(seq)];
+    await act(async () => { await engine.syncOnce(); });
+    changes = [];
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  };
 }
 
-const card = (): HTMLElement | null => hostEl.querySelector(".pfi-card");
-
-const button = (label: string): HTMLButtonElement => {
-  const el = Array.from(hostEl.querySelectorAll("button"))
-    .find((b) => (b.textContent ?? "").trim() === label);
-  if (!el) throw new Error(`no button labelled "${label}"`);
-  return el;
+const card = (): HTMLElement | null => {
+  const ui = within(hostEl);
+  return ui.queryByRole("region", { name: messages.profileImport.title })
+    ?? ui.queryByRole("region", { name: messages.profileImport.doneTitle });
 };
+
+const button = (label: string): HTMLButtonElement =>
+  within(hostEl).getByRole<HTMLButtonElement>("button", { name: label });
 
 const click = async (el: Element): Promise<void> => {
   await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
@@ -206,6 +247,8 @@ afterEach(async () => {
   if (root) await act(async () => { root.unmount(); });
   hostEl?.remove();
   delete host.__TAURI_INTERNALS__;
+  globalThis.fetch = originalFetch;
+  window.history.replaceState(null, "", "/");
 });
 
 describe("the restore card over the bridge", () => {
@@ -310,32 +353,12 @@ describe("the find is asked for on the drain that carries it, over the bridge", 
    * Measured on 0.25.1: this window showed the card 8 min 25 s after the engine found the
    * document. The engine's marker now rings the settings doorbell (`profile.ts#writeMarker`), the
    * shell hands its seq to the shared hook (`settingsDoorbell`), and a move re-asks the engine at
-   * once. The beat here is an hour, so only the ring can bring the card.
+   * once. The unchanged marker is the control. The new marker arrives well before the next timed check.
    */
   it("a rung doorbell asks the engine again at once and the card appears", async () => {
     candidate = { state: "none" };
-    function BellProbe({ bell }: { bell: number | null }): React.ReactElement | null {
-      const state = useProfileImport(true, [MB], profileImportOverBridge, 60 * 60 * 1000, bell);
-      if (!state.offer) return h("div", { className: "no-card" });
-      return h(ProfileImportCard as never, {
-        offer: state.offer, phase: state.phase,
-        onImport: state.importNow, onNotNow: state.notNow, onAcknowledge: state.acknowledge,
-      } as never);
-    }
-    hostEl = document.createElement("div");
-    document.body.append(hostEl);
-    root = createRoot(hostEl);
-    const render = async (bell: number | null): Promise<void> => {
-      await act(async () => {
-        root.render(h(NextIntlClientProvider, {
-          locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-18T12:00:00.000Z"),
-          children: h(BellProbe, { bell }),
-        }));
-      });
-      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    };
+    const deliverMarker = await mountCard();
     const gets = () => asked.filter((a) => a.method === "GET" && a.url === profileImportPath(MB.id)).length;
-    await render(3);
     expect(gets()).toBe(1);
     expect(card()).toBeNull();
     candidate = {
@@ -343,9 +366,9 @@ describe("the find is asked for on the drain that carries it, over the bridge", 
       producer: { kind: "cloud", version: "1" },
       counts: { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false },
     };
-    await render(3);
+    await deliverMarker(3);
     expect(gets(), "an unmoved doorbell asked the engine again").toBe(1);
-    await render(4);
+    await deliverMarker(4);
     expect(gets(), "the ring did not reach the engine").toBe(2);
     expect(card(), "the ring's answer did not reach the card").not.toBeNull();
   });
@@ -359,7 +382,7 @@ describe("the Settings row for a declined document, over the bridge", () => {
     root = createRoot(hostEl);
     await act(async () => {
       root.render(
-        h(NextIntlClientProvider, {
+        h(IntlProvider, {
           locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-18T12:00:00.000Z"),
           children: h(SavedProfileSection, { mailboxes: [MB], transport: profileImportOverBridge }),
         }),
@@ -454,20 +477,12 @@ describe("the door that may ask about found settings", () => {
  */
 describe("the wiring, pinned by source", () => {
   const gate = read("src/DesktopGate.tsx");
-  const shell = fs.readFileSync(
-    path.resolve(APP, "../webapp/app/shell/AppShell.tsx"),
-    "utf8",
-  );
-
-  it("the window hands its transport in by the door rule", () => {
-    expect(gate).toMatch(
-      /\{\.\.\.\(profileImportDoorFor\(status, hostedSession\) !== null \? \{ profileImportTransport: profileImportOverBridge \} : \{\}\)\}/,
-    );
-  });
-
-  it("the shared shell threads the host wire into the one import state", () => {
-    expect(shell).toMatch(/const profileImportOffer = useProfileImport\(!demo, facts, profileImportTransport, undefined, profileDoorbell\);/);
-  });
+  /* The shared shell, re-pointed by path (RULING-NEW-SHELL-FIRST D (3)): today's `AppShell.tsx` leaves with the
+     switch, and every host now mounts the new shell, `packages/app/src` whole. Its case that read today's call of
+     `useProfileImport` moved word for word to `desktop-profile-import-todays-shell.test.tsx`. */
+  const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [path.join(dir, e.name)] : []);
+  const shell = walk(path.resolve(APP, "../../packages/app/src")).map((f) => fs.readFileSync(f, "utf8")).join("\n");
 
   it("the shared files name none of the transport — no bridge, no Tauri, no engine", () => {
     const cardSource = fs.readFileSync(

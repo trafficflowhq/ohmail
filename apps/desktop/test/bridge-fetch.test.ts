@@ -367,6 +367,32 @@ describe("the bridge", () => {
     expect(String(request.payload!.url).startsWith("/")).toBe(true);
   });
 
+  it("keeps newer draft text when a self-hosted server has only the original Discard route", async () => {
+    let body: string | null = "Newer words";
+    const asked = shellAnswering(({ payload }) => {
+      const path = String(payload?.url).split("?")[0];
+      if (payload?.method === "DELETE" && path === "/drafts/letter") {
+        body = null;
+        return encode(204);
+      }
+      return encode(404, JSON.stringify({ error: { code: "not_found", message: "not found" } }));
+    });
+    const adapter = createEngineAdapter();
+    const revision = "a".repeat(64);
+    const result = await adapter.mutate(
+      { kind: "draft_discard", draftId: "letter", ifContentRevision: revision },
+      { idempotencyKey: "discard" },
+    ).catch((error: unknown) => error);
+
+    expect(body).toBe("Newer words");
+    expect(result).toMatchObject({ code: "discard_unsupported", retryable: false });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.payload).toMatchObject({
+      method: "DELETE",
+      url: `/drafts/letter/conditional?ifContentRevision=${revision}`,
+    });
+  });
+
   it("marks a send's own writes, and only those, for an answer before the copy's echo", async () => {
     const draft = JSON.stringify({ id: "d-1", mailboxId: "mbx-1", bcc: [], contentRevision: "r1", updatedAt: new Date().toISOString() });
     const asked = shellAnswering(({ payload }) => {
@@ -644,7 +670,7 @@ describe("the access notice after an open verdict", () => {
     });
     try {
       const { onAccessRefused, ACCOUNT_ACCESS_PATH } = await import("../src/bridge-fetch.js");
-      const { setStorageOwner } = await import("../../webapp/app/shell/storage-owner.js");
+      const { setStorageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
       setStorageOwner("mbx_stale");
       const seen: unknown[] = [];
       const stop = onAccessRefused((f) => seen.push(f));
@@ -655,19 +681,19 @@ describe("the access notice after an open verdict", () => {
       await bridgeFetch(ACCOUNT_ACCESS_PATH);
       expect(localStorage.getItem("ohmail.access.mbx_stale")).toBe("open");
       // The window the drain loop reads is this one: the bridge's open answer feeds it.
-      const { liftedAt, refusalIsStale } = await import("../../webapp/app/shell/access-window.js");
-      expect(refusalIsStale()).toBe(true);
-      expect(liftedAt(), "an open answer with no refusal before it is not a reopening").toBeNull();
+      const { liftedAt, refusalIsStale } = await import("@ohmail/app-logic/session/access-window");
+      expect(refusalIsStale("mbx_stale")).toBe(true);
+      expect(liftedAt("mbx_stale"), "an open answer with no refusal before it is not a reopening").toBeNull();
       await bridgeFetch("/mailboxes");
       expect(seen, "a stale 402 raised the lock inside the window").toEqual([]);
       vi.setSystemTime(new Date("2026-09-26T08:01:01.000Z"));
-      expect(refusalIsStale()).toBe(false);
+      expect(refusalIsStale("mbx_stale")).toBe(false);
       await bridgeFetch("/mailboxes");
       expect(seen).toHaveLength(1);
       expect(localStorage.getItem("ohmail.access.mbx_stale")).toBe("closed");
       // Paid: the next open answer lands over the stored refusal, and that instant is the reopening.
       await bridgeFetch(ACCOUNT_ACCESS_PATH);
-      expect(liftedAt()).toBe(Date.parse("2026-09-26T08:01:01.000Z"));
+      expect(liftedAt("mbx_stale")).toBe(Date.parse("2026-09-26T08:01:01.000Z"));
       stop();
       setStorageOwner(null);
     } finally {

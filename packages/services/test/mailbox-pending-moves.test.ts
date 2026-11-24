@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, messages, folderState } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * HOW MANY OF OUR OWN FILINGS THIS MAILBOX HAS NOT APPLIED YET.
@@ -31,7 +31,7 @@ import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
  *
  * PGlite deliberately: this is about which rows one aggregate counts, not about concurrency.
  * The convergence half — an adapter that throws mid-reconcile, re-run, no duplicate copies —
- * needs real Postgres and lives in `apps/worker/test/reconcile-resume.pg.test.ts`.
+ * needs real Postgres and lives in `packages/organizer/test/reconcile-resume.pg.test.ts`.
  */
 
 const NOW = new Date("2026-08-06T12:00:00.000Z");
@@ -41,7 +41,7 @@ const svc = makeMailboxService({ keyProvider: KP });
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 async function seed(db: Db): Promise<{ accountId: string; mailboxId: string }> {
   const [a] = await db.insert(accounts).values({ name: "pending moves" }).returning();
@@ -69,7 +69,7 @@ async function seedFiling(
     bodyHash: `bc7-hash-${n}`,
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id,
+    messageId: m!.id, accountId: m!.accountId,
     desiredFolder: fs.desired,
     observedFolder: fs.observed,
     reconcileStatus: fs.status,

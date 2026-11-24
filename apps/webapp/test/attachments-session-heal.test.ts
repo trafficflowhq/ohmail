@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MutationRejectedError, OhmailEngine, type EngineAdapter, threadOf } from "@ohmail/client-engine";
-import { AttachmentStrip } from "../app/components/AttachmentStrip.js";
-import { useMessageAttachments } from "../app/shell/attachments.js";
+import { ReaderFilesFixture } from "./fixtures/reader-files";
+import { useMessageAttachments } from "@ohmail/app-logic/reader/attachments";
 import {
   markSessionAlive,
   registerSessionProbe,
   resetSessionTruthForTests,
-} from "../app/shell/session-truth.js";
+} from "@ohmail/app-logic/session/session-truth";
 
 /**
  * ═══ VWR-3 — AN AUTH FAILURE ON THE ATTACHMENT LIST MUST NOT OUTLIVE THE SESSION ═══════════
@@ -79,21 +79,16 @@ function adapterWith(over: Partial<EngineAdapter> = {}): EngineAdapter {
   };
 }
 
-/** `MessagePane`'s own wiring, exactly as `attachment-list-state.at6.test.ts` mirrors it. */
+/** The shared Reader's own wiring, exactly as `attachment-list-state.at6.test.ts` mirrors it. */
 function Harness({ engine, messageId }: { engine: OhmailEngine; messageId: string }) {
-  const attachments = useMessageAttachments(engine, messageId, { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const attachments = useMessageAttachments(engine, null, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return attachments
-    ? h(AttachmentStrip, {
-        items: attachments.itemsOf(messageId),
-        onOpen: (attachmentId: string) => attachments.open(messageId, attachmentId),
-        onDownloadAll: () => attachments.downloadAll(messageId),
-        downloadingAll: attachments.downloadingAll(messageId),
-      })
+    ? h(ReaderFilesFixture, { files: attachments, messageId: messageId })
     : null;
 }
 
-const row = (): HTMLElement | null => host!.querySelector<HTMLElement>(".att-list");
-const retry = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".att-list-retry");
+const row = (): HTMLElement | null => host!.querySelector<HTMLElement>(".oh-warnrow-warn");
+const retry = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".oh-warnrow button");
 
 describe("VWR-3 — the auth-refused list names the session, keeps a retry, and heals on revival", () => {
   it("names the SESSION, not the files — and offers Try again despite `retryable: false`", async () => {
@@ -142,7 +137,7 @@ describe("VWR-3 — the auth-refused list names the session, keeps a retry, and 
     expect(listAttachments, "the revival never re-asked — the failure would stand all session")
       .toHaveBeenCalledTimes(2);
     expect(row(), "the session healed and the sentence stayed").toBeNull();
-    expect(host!.querySelector(".att-name")!.textContent).toBe("invoice.pdf");
+    expect(host!.querySelector(".oh-file-title")!.textContent).toBe("invoice.pdf");
   });
 
   it("a NON-auth failure is left alone by a revival — the heal is precise, not a sweep", async () => {

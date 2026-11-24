@@ -16,9 +16,10 @@ import { ImapBoundExceeded } from "@trafficflow/core/adapters/imap";
 import { runWorkerSupervised } from "../src/supervisor.js";
 import { DEFAULT_SYNC_BLOCK_GRACE_MS, type WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet, type FakeControl } from "./_fakeadapter.js";
+import { FakeAdapterFleet, type FakeControl } from "../../../packages/organizer/test/_fakeadapter.js";
 // The door the first client read after a reopening goes through, driven against the rows this
 // worker left: the catch-up is the two halves meeting, so it is measured where they meet.
+import { bindDb } from "@trafficflow/db";
 import { reopenedCatchUp } from "../../../packages/api/src/account-reopen.js";
 
 /**
@@ -121,7 +122,7 @@ async function seedAccount(
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   await db.insert(pushSubscriptions).values({
@@ -205,7 +206,7 @@ async function storedLetter(db: Db, at: { accountId: string; mailboxId: string }
     snippet: ALL.snippet, deletedAt: gone ? new Date() : null, nativeLocator: { folder: "INBOX", ref: "1:7" },
   }).returning();
   const messageId = m!.id;
-  await db.insert(messageBodies).values({ messageId, text: gone ? "" : ALL.snippet, html: null, headers: WHOLE, withheldReason: gone ? "expunged" : null });
+  await db.insert(messageBodies).values({ messageId, accountId, text: gone ? "" : ALL.snippet, html: null, headers: WHOLE, withheldReason: gone ? "expunged" : null });
   if (!gone) await db.insert(messageInstances).values({ accountId, messageId, mailboxId, folder: "INBOX", uid: 7, uidvalidity: 1n, isPrimary: true });
   await reindexMessageSearch(db as unknown as Tx, accountId, messageId);
   await db.insert(routingDecisions).values({
@@ -751,7 +752,7 @@ describe("the catch-up a reopening pass records before it spends it", () => {
     }).returning();
     const enc = await KP.encrypt("pw");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     fleet.seedClaim(mb!.id, formatClaim({
@@ -762,7 +763,9 @@ describe("the catch-up a reopening pass records before it spends it", () => {
   }
   const firstClientRead = (db: Db, accountId: string) => {
     const now = (): Date => new Date();
-    return reopenedCatchUp({ db, now } as never, { accountId, db, now } as never);
+    // The door's request, signed in: its container's handle and its context's, bound to the account.
+    const bound = bindDb(db, { account: accountId });
+    return reopenedCatchUp({ db: bound, now } as never, { accountId, db: bound, now } as never);
   };
 
   it("an organizer and a reader-only account each keep their own untold row, told once by the door", async () => {

@@ -3,11 +3,12 @@
  * engine through a server double that answers as production does (one stored response per key
  * for its retention window, one reservation per send key for ever, a tag name UNIQUE per account).
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
   IndexedDbMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE,
-  type EngineMutation, type SendAndDonePlan,
+  type SendAndDonePlan,
 } from "@ohmail/client-engine";
 
 const t0 = Date.parse("2026-10-04T08:00:00.000Z");
@@ -116,7 +117,7 @@ describe("the LOW rows, read at the engine", () => {
     const s1 = await openStore(factory, "acct-1h");
     const e1 = await engineOn(s1, srv, clock);
     srv.net.syncFails = true;
-    expect((await e1.mutate({ kind: "move", messageId: "m-1", folder: "Archive" } as unknown as EngineMutation)).status).toBe("confirmed");
+    expect((await e1.mutate({ kind: "move", messageId: "m-1", folder: "ohmail/News" } as EngineMutation)).status).toBe("confirmed");
     s1.close();
     clock.t = t0 + HOUR;
     srv.net.syncFails = false;

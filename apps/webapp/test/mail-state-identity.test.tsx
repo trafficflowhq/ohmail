@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -81,8 +81,8 @@ const NOW = new Date("2026-08-02T12:00:00.000Z");
 const {
   MemoryMirrorStore, OhmailEngine,
 } = await import("@ohmail/client-engine");
-const { FACTS_POLL_MS } = await import("../app/shell/MailStateProvider.js");
-type EngineMessage = import("@ohmail/client-engine").EngineMessage;
+const { FACTS_POLL_MS } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
+type EngineMessage = import("@ohmail/wire").EngineMessage;
 type SyncChange = import("@ohmail/client-engine").SyncChange;
 
 let seq = 0;
@@ -154,7 +154,7 @@ async function mountShell(probe: () => Promise<Row[]>): Promise<{ root: Root; dr
     } as never,
   });
 
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -173,6 +173,7 @@ async function mountShell(probe: () => Promise<Row[]>): Promise<{ root: Root; dr
     for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
   };
   await settle();
+  await vi.waitFor(() => expect(partitions.length).toBeGreaterThan(0));
   /* ONE WHOLE POLL INTERVAL, on fake timers. `MailStateProvider` re-reads `GET /mailboxes` on a
      `setInterval` at FACTS_POLL_MS, and a driver that only flushed microtasks never fired it — the
      first cut of this test did exactly that, so it counted zero extra polls and stayed green under
@@ -184,6 +185,11 @@ async function mountShell(probe: () => Promise<Row[]>): Promise<{ root: Root; dr
   };
   return { root, drain: poll };
 }
+
+beforeAll(async () => {
+  const { prepareWriting } = await import("@ohmail/app/mail");
+  await prepareWriting();
+});
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -206,7 +212,8 @@ describe("the mailbox poll", () => {
     const seenFresh: unknown[] = [];
 
     const { EngineProvider } = await import("../app/shell/engine.js");
-    const { MailStateProvider, useMailState } = await import("../app/shell/MailStateProvider.js");
+    const { MailStateProvider } = await import("@ohmail/app/mail-state");
+    const { useMailState } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
     const engine = await bareEngine();
 
     function Watch(): React.ReactElement {
@@ -224,7 +231,7 @@ describe("the mailbox poll", () => {
         locale: "en", messages: messages as never, timeZone: "UTC", now: NOW,
         children: h(EngineProvider as never, {
           demo: false, engine,
-          children: h(MailStateProvider as never, { probe, freshnessProbe: freshness, mirrored: 0, children: h(Watch) } as never),
+          children: h(MailStateProvider as never, { scope: null, probe, freshnessProbe: freshness, mirrored: 0, children: h(Watch) } as never),
         } as never),
       } as never));
     });
@@ -279,7 +286,8 @@ describe("the mailbox poll", () => {
     const seenFresh: unknown[] = [];
 
     const { EngineProvider } = await import("../app/shell/engine.js");
-    const { MailStateProvider, useMailState } = await import("../app/shell/MailStateProvider.js");
+    const { MailStateProvider } = await import("@ohmail/app/mail-state");
+    const { useMailState } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
     const engine = await bareEngine();
 
     function Watch(): React.ReactElement {
@@ -298,7 +306,7 @@ describe("the mailbox poll", () => {
         children: h(EngineProvider as never, {
           demo: false, engine,
           children: h(MailStateProvider as never,
-            { probe, freshnessProbe: freshness, mirrored: 0, children: h(Watch) } as never),
+            { scope: null, probe, freshnessProbe: freshness, mirrored: 0, children: h(Watch) } as never),
         } as never),
       } as never));
     });
@@ -418,7 +426,8 @@ describe("the mailbox poll", () => {
     const probe = async (): Promise<Row[]> => structuredClone([row(moves--)]);
 
     const { EngineProvider } = await import("../app/shell/engine.js");
-    const { MailStateProvider, useMailState } = await import("../app/shell/MailStateProvider.js");
+    const { MailStateProvider } = await import("@ohmail/app/mail-state");
+    const { useMailState } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
     const engine = await bareEngine();
 
     function Watch(): React.ReactElement {
@@ -434,7 +443,7 @@ describe("the mailbox poll", () => {
         locale: "en", messages: messages as never, timeZone: "UTC", now: NOW,
         children: h(EngineProvider as never, {
           demo: false, engine,
-          children: h(MailStateProvider as never, { probe, mirrored: 0, children: h(Watch) } as never),
+          children: h(MailStateProvider as never, { scope: null, probe, mirrored: 0, children: h(Watch) } as never),
         } as never),
       } as never));
     });

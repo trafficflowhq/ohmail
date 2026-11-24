@@ -1,7 +1,12 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { readSource as readStartFunction } from "./_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
+
+/** The worker's start function and the desktop's engine each read as one text. */
+const readSource = readingTheUnit(readStartFunction);
 
 /**
  * ═══ EVERY DESTRUCTIVE IMAP WRITE ASKS ONE FUNCTION ════════════════════════════════════════
@@ -61,25 +66,25 @@ type Disposition = "needs_permit" | "reader_writes_seen";
 
 const CENSUS: Readonly<Record<string, Disposition>> = {
   // The reconcile pass's two filing paths — the batch and the per-message fallback.
-  "apps/worker/src/sync.ts:fileChunk:moveMany": "needs_permit",
-  "apps/worker/src/sync.ts:fileOne:move": "needs_permit",
+  "packages/organizer/src/sync.ts:fileChunk:moveMany": "needs_permit",
+  "packages/organizer/src/sync.ts:fileOne:move": "needs_permit",
   // `\Seen`, which a reader pushes too.
-  "apps/worker/src/sync.ts:reconcileFlags:setFlags": "reader_writes_seen",
+  "packages/organizer/src/sync.ts:reconcileFlags:setFlags": "reader_writes_seen",
   // The one-time Quarantine→\Junk sweep, both paths.
   "apps/worker/src/junk-sweep.ts:junkSweepPass:moveMany": "needs_permit",
   "apps/worker/src/junk-sweep.ts:junkSweepPass:move": "needs_permit",
   // The queued "not junk", one move per press — a user-commanded organizing act the organizer
   // executes, so the permit is asked before every one of them and never once per pass.
-  "apps/worker/src/junk-rescue.ts:junkRescuePass:move": "needs_permit",
+  "packages/organizer/src/junk-rescue.ts:junkRescuePass:move": "needs_permit",
   // The blank repair's one server write: a letter the blank's own move filed away goes back to INBOX.
-  "apps/worker/src/blank-repair.ts:blankRepairPass:move": "needs_permit",
+  "packages/organizer/src/blank-repair.ts:blankRepairPass:move": "needs_permit",
   // The user-commanded folder verbs.
-  "apps/worker/src/folder-ops.ts:runCreate:createFolder": "needs_permit",
-  "apps/worker/src/folder-ops.ts:runRename:renameFolder": "needs_permit",
-  "apps/worker/src/folder-ops.ts:runDelete:moveAll": "needs_permit",
-  "apps/worker/src/folder-ops.ts:runDelete:deleteFolder": "needs_permit",
+  "packages/organizer/src/folder-ops.ts:runCreate:createFolder": "needs_permit",
+  "packages/organizer/src/folder-ops.ts:runRename:renameFolder": "needs_permit",
+  "packages/organizer/src/folder-ops.ts:runDelete:moveAll": "needs_permit",
+  "packages/organizer/src/folder-ops.ts:runDelete:deleteFolder": "needs_permit",
   // A legacy ohmail/Reads beside News, swept into News and deleted once empty.
-  "apps/worker/src/news-fold.ts:newsFoldPass:foldLegacyNews": "needs_permit",
+  "packages/organizer/src/news-fold.ts:newsFoldPass:foldLegacyNews": "needs_permit",
 };
 
 /** The ONE predicate. A second spelling is the thing census 2 refuses. */
@@ -101,7 +106,7 @@ function tsFilesUnder(dir: string): string[] {
     for (const e of readdirSync(d)) {
       const p = join(d, e);
       if (statSync(p).isDirectory()) { walk(p); continue; }
-      if (p.endsWith(".ts") && !p.endsWith(".d.ts")) out.push(p);
+      if (p.endsWith(".ts") && !p.endsWith(".d.ts") && !isEnginePart(p)) out.push(p);
     }
   };
   walk(dir);
@@ -123,10 +128,10 @@ function enclosingFunctionOf(n: ts.Node): { name: string; node: ts.Node } {
 
 function collectSites(): Site[] {
   const sites: Site[] = [];
-  for (const root of ["apps/worker/src", "apps/sidecar/src"]) {
+  for (const root of ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src"]) {
     for (const file of tsFilesUnder(join(REPO, root))) {
       const rel = file.slice(REPO.length + 1);
-      const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+      const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
       const walk = (n: ts.Node): void => {
         if (ts.isCallExpression(n)) {
           // `a.move(…)`, `a.move!(…)` and `a?.move(…)` all reach the same server verb.
@@ -197,10 +202,10 @@ interface CycleCall {
 
 function collectCycleCalls(): CycleCall[] {
   const calls: CycleCall[] = [];
-  for (const root of ["apps/worker/src", "apps/sidecar/src"]) {
+  for (const root of ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src"]) {
     for (const file of tsFilesUnder(join(REPO, root))) {
       const rel = file.slice(REPO.length + 1);
-      const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+      const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
       const walk = (n: ts.Node): void => {
         if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)
           && n.expression.getText() === "runSyncCycle") {
@@ -255,15 +260,15 @@ describe("every destructive IMAP write asks one function", () => {
 
   it("the predicate has exactly ONE definition in the tree", () => {
     const defs: string[] = [];
-    for (const root of ["apps/worker/src", "apps/sidecar/src", "packages/core/src", "packages/services/src"]) {
+    for (const root of ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src", "packages/core/src", "packages/services/src"]) {
       for (const file of tsFilesUnder(join(REPO, root))) {
-        const text = readFileSync(file, "utf8");
+        const text = readSource(file);
         if (new RegExp(`(export )?(async )?function ${PREDICATE}\\b`).test(text)) {
           defs.push(file.slice(REPO.length + 1));
         }
       }
     }
-    expect(defs).toEqual(["apps/worker/src/lease.ts"]);
+    expect(defs).toEqual(["packages/organizer/src/lease.ts"]);
   });
 
   it("every production `runSyncCycle(` call names the permit in its OWN argument list", () => {
@@ -287,8 +292,8 @@ describe("every destructive IMAP write asks one function", () => {
   });
 
   it("the cycle's `writeAuthority` is REQUIRED — the compiler is the first refusal", () => {
-    const file = join(REPO, "apps/worker/src/sync.ts");
-    const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+    const file = join(REPO, "packages/organizer/src/sync.ts");
+    const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
     let seen: { optional: boolean } | null = null;
     const walk = (n: ts.Node): void => {
       if (ts.isInterfaceDeclaration(n) && n.name.getText() === "SyncDeps") {
@@ -347,15 +352,15 @@ const CHANNEL_CENSUS: readonly string[] = [
   "apps/sidecar/src/engine.ts:drainPass:settleOwnOutstandingRequests",
   "apps/sidecar/src/engine.ts:drainPass:onOrganize",
   // The last settings write before a stop or a hand-back lets the mailbox go.
-  "apps/worker/src/profile.ts:flushBeforeLeaving:onOrganize",
+  "packages/organizer/src/profile.ts:flushBeforeLeaving:onOrganize",
 ].sort();
 
 function collectChannelSites(): Site[] {
   const sites: Site[] = [];
-  for (const root of ["apps/worker/src", "apps/sidecar/src"]) {
+  for (const root of ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src"]) {
     for (const file of tsFilesUnder(join(REPO, root))) {
       const rel = file.slice(REPO.length + 1);
-      const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+      const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
       const walk = (n: ts.Node): void => {
         if (ts.isCallExpression(n)) {
           let callee: ts.Node = n.expression;
@@ -412,15 +417,15 @@ describe("every post-pass organizer write asks whether the permit stood down", (
 
   it("the fact has exactly ONE definition in the tree", () => {
     const defs: string[] = [];
-    for (const root of ["apps/worker/src", "apps/sidecar/src", "packages/core/src", "packages/services/src"]) {
+    for (const root of ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src", "packages/core/src", "packages/services/src"]) {
       for (const file of tsFilesUnder(join(REPO, root))) {
-        const text = readFileSync(file, "utf8");
+        const text = readSource(file);
         if (new RegExp(`(export )?(async )?function ${STOOD_DOWN}\\b`).test(text)) {
           defs.push(file.slice(REPO.length + 1));
         }
       }
     }
-    expect(defs).toEqual(["apps/worker/src/lease.ts"]);
+    expect(defs).toEqual(["packages/organizer/src/lease.ts"]);
   });
 });
 
@@ -439,10 +444,10 @@ const DOOR_VERBS = [...DESTRUCTIVE_VERBS, "ensureFolders"] as const;
 
 function collectDoorCalls(): Array<{ key: string; line: number; ok: boolean }> {
   const out: Array<{ key: string; line: number; ok: boolean }> = [];
-  for (const root of ["apps/worker/src", "apps/sidecar/src"]) {
+  for (const root of ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src"]) {
     for (const file of tsFilesUnder(join(REPO, root))) {
       const rel = file.slice(REPO.length + 1);
-      const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+      const sf = ts.createSourceFile(file, readSource(file), ts.ScriptTarget.Latest, true);
       const walk = (n: ts.Node): void => {
         if (ts.isCallExpression(n)) {
           let callee: ts.Node = n.expression;
@@ -488,13 +493,13 @@ describe("every organizer write hands the adapter the one door", () => {
 
   it("the door function has exactly ONE definition in the tree", () => {
     const defs: string[] = [];
-    for (const root of ["apps/worker/src", "apps/sidecar/src", "packages/core/src", "packages/services/src"]) {
+    for (const root of ["apps/worker/src", "packages/organizer/src", "apps/sidecar/src", "packages/core/src", "packages/services/src"]) {
       for (const file of tsFilesUnder(join(REPO, root))) {
-        if (new RegExp(`(export )?function ${DOOR_FN}\\b`).test(readFileSync(file, "utf8"))) {
+        if (new RegExp(`(export )?function ${DOOR_FN}\\b`).test(readSource(file))) {
           defs.push(file.slice(REPO.length + 1));
         }
       }
     }
-    expect(defs).toEqual(["apps/worker/src/lease.ts"]);
+    expect(defs).toEqual(["packages/organizer/src/lease.ts"]);
   });
 });

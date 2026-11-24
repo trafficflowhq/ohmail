@@ -1,3 +1,4 @@
+import type { ApprovalDTO, Page } from "@ohmail/wire";
 import { and, asc, eq, gt } from "drizzle-orm";
 import {
   approvals, routingDecisions, messages, folderState, claimIdempotencyKey, lockAccountRuleKeys, recordChange,
@@ -15,7 +16,6 @@ import { LearningService } from "./learning-service.js";
 import { patternKeyFor } from "./learning-service.js";
 import { materializeApproval } from "./dto/materialize.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
-import type { ApprovalDTO, Page } from "./dto/types.js";
 
 export interface ApprovalDeps {
   /**
@@ -196,7 +196,7 @@ export class ApprovalService {
         } else {
           // scoped-by: msg is the account-scoped read above and routeMailboxWrite just proved the organizer
           await tx.insert(folderState).values({
-            messageId: msg.id, desiredFolder: target, observedFolder: msg.observedFolder,
+            messageId: msg.id, accountId: ctx.accountId, desiredFolder: target, observedFolder: msg.observedFolder,
             lastSetBy: "us", reconcileStatus: "pending", conflict: false,
           }).onConflictDoUpdate({
             target: folderState.messageId,

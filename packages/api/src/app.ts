@@ -1,6 +1,7 @@
 import { isUuid } from "@trafficflow/services/mail";
 import { ownerCookieValue } from "./cookies.js";
 import type { ApiDeps } from "./deps.js";
+import { draftStream } from "./draft-stream.js";
 import { errorResponse } from "./responses.js";
 import { firstMisshapenQuery } from "./query-bounds.js";
 import { matchRoute, type Handler, type Route, type RouteParams } from "./router.js";
@@ -35,9 +36,9 @@ const FULL_PIPELINE: Middleware[] = [
 // `withStepUp`: `raw` is a response-shape decision, not an authorization one, and the costliest
 // routes in the product are raw — a `stepUp` or gate flag on a route whose chain omits the
 // middleware that reads it is worse than no flag, because it reads as a control.
-// `raw-pipeline-parity.test.ts` asserts the membership rather than trusting this comment. Safe
-// without `withErrorEnvelope`: both middlewares RETURN an `errorResponse` and never throw, so
-// there is nothing for the absent envelope to catch.
+// `raw-pipeline-parity.test.ts` asserts this membership. A database fault or account binding
+// mismatch can make `withSpendGate` throw. In either case the request fails closed before the
+// route handler runs.
 const RAW_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withSession, withStepUp, withSpendGate];
 
 // `anonymous` routes: no session resolution at all (`/health`). `withSession` resolves any
@@ -51,6 +52,13 @@ const RAW_PIPELINE: Middleware[] = [withRequestId, withRequestGuard, withSession
 // `cost: "unauthenticated"`, and every `unauthenticated` route is `public`.
 const ANONYMOUS_PIPELINE: Middleware[] = [withRequestId, withRequestGuard];
 
+// `provider` routes: a calendar's provider is the caller (`routes/calendar-notices.ts`). The
+// request guard would refuse it: Microsoft's validation call carries no JSON, and a refusal in the
+// error envelope is an answer that differs by what was sent. So the request id alone, and the
+// handler's own rule that every call is answered alike. No session is resolved and no carried
+// middleware is spliced in: a route that needs either is no provider's route.
+const PROVIDER_PIPELINE: Middleware[] = [withRequestId];
+
 /**
  * The chain a route runs through: its pipeline, plus the middleware the ROUTE carries
  * (`RouteOptions.middleware`), spliced in after `withRequestGuard` — before any session, so a
@@ -62,6 +70,7 @@ const ANONYMOUS_PIPELINE: Middleware[] = [withRequestId, withRequestGuard];
  * bytes, refused by the census). Carried, it is mounted only where its own routes are.
  */
 export function pipelineFor(route: Route): readonly Middleware[] {
+  if (route.options?.provider) return PROVIDER_PIPELINE;
   const chain = route.options?.anonymous
     ? ANONYMOUS_PIPELINE
     : route.options?.raw ? RAW_PIPELINE : FULL_PIPELINE;
@@ -239,8 +248,9 @@ async function dispatch(
   // The query string's twin of the line above, and here for the same reason: a caller-chosen
   // count reached a clamp that raised `?limit=` to one row and answered a page of one. Before
   // `withSession`, so it can never reach the database, and on every pipeline — a middleware
-  // would miss the `raw` and `anonymous` routes and the sidecar's own `createApp`.
-  const badQuery = firstMisshapenQuery(url);
+  // would miss the `raw` and `anonymous` routes and the sidecar's own `createApp`. A provider's
+  // route reads no paging number, and a refusal here would be an answer that differs by the query.
+  const badQuery = m.route.options?.provider ? null : firstMisshapenQuery(url);
   if (badQuery) {
     return {
       res: errorResponse("validation_failed", 400, badQuery.message, undefined, false),
@@ -249,5 +259,8 @@ async function dispatch(
   }
   const composed = pipelineFor(m.route)
     .reduceRight<Handler>((next, mw) => mw(next, m.route), m.route.handler);
-  return { res: await composed(req, deps, m.params), route: m.route };
+  const run = () => composed(req, deps, m.params);
+  const streamDraft = (m.route.pattern === "/messages/:id/draft" || m.route.pattern === "/drafts/from-text") &&
+    req.headers.get("accept") === "application/x-ndjson";
+  return { res: await (streamDraft ? draftStream(deps, run) : run()), route: m.route };
 }

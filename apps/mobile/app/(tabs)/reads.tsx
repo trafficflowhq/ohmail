@@ -28,9 +28,15 @@ import { MailList, type ListPlace, type RowFrame } from "../../src/ui/MailList";
 import { AttachmentTiles, MessageReader } from "../../src/ui/MessageReader";
 import { EventCards } from "../../src/ui/EventCard";
 import { FadeOut } from "../../src/ui/FadeOut";
+import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
+import { MailListMenu } from "../../src/ui/MailListMenu";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
+import { Icon } from "../../src/ui/Icon";
+import { StreamContentChips, StreamRecipient } from "../../src/ui/StreamMailFacts";
+import { StreamMailMenu } from "../../src/ui/StreamMailMenu";
 import { StreamCardVerbs } from "../../src/ui/StreamCardVerbs";
+import { MailAvatar } from "../../src/ui/MailAvatar";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 import { PileNote } from "../../src/ui/PileNote";
@@ -48,6 +54,7 @@ function ReadsBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const w = useWorld();
+  const t = useTheme();
   const pull = usePullToSync();
   /* Two panes: an issue OPENS BESIDE the stream instead of unclamping in place — list-detail
      with the selection in the route's `open` param; the compact stream is untouched. */
@@ -102,6 +109,8 @@ function ReadsBody() {
     }, [actions, run]),
   );
 
+  const markStream = () => actions.markAllSeen(unreadIds, items[0] ? { place: "reads", upToId: items[0].id } : undefined);
+
   const list = (
     <Screen>
       <TopBar />
@@ -120,6 +129,7 @@ function ReadsBody() {
               // full" while showing the preview would be presenting a truncation as the
               // mail. Beside a reading pane the ask is the pane's own open instead.
               onExpand={() => actions.hydrateMessage(m.id)}
+              onRead={() => openRow(m.id)}
               onOpenBeside={twoPane ? () => openRow(m.id) : undefined}
             />
           </>
@@ -136,28 +146,23 @@ function ReadsBody() {
           <ViewHead
             style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}
             title={Copy.reads}
+            attention={newCount > 0}
             meta={metaWhen(surface, meta) ?? " "}
             metaBeside
-            /* The web's ReadsView press, both halves: flip the stream's unread AND commit the
+            /* The web app's stream press, both halves: flip the stream's unread AND commit the
                waterline above the newest issue — a fresh-only stream ("2 new", nothing
                unread) still gets its clearing control. */
-            right={
-              <MarkAllRead
-                unreadCount={unreadIds.length}
-                freshCount={newCount}
-                onPress={() =>
-                  actions.markAllSeen(
-                    unreadIds,
-                    items[0] ? { place: "reads", upToId: items[0].id } : undefined,
-                  )
-                }
-              />
-            }
+            leading={t.mail ? <MailCalendarSwitch /> : null}
+            right={t.mail ? (
+              <MailListMenu unread={unreadIds.length} fresh={newCount} onMarkAll={markStream} />
+            ) : (
+              <MarkAllRead unreadCount={unreadIds.length} freshCount={newCount} onPress={markStream} />
+            )}
           >
             {/* Its own sentence under the meta, never a run-on of it. */}
-            <Txt variant="hint" tone="ink3" style={{ marginTop: 4 }}>
-              {Copy.streamSeenHint}
-            </Txt>
+            {!t.mail ? (
+              <Txt variant="hint" tone="ink3" style={{ marginTop: 4 }}>{Copy.streamSeenHint}</Txt>
+            ) : null}
             {/* Letters here from senders nobody let in, and the press — the web's note. */}
             <View style={{ marginTop: 12 }}>
               <PileNote pile="news" />
@@ -168,10 +173,10 @@ function ReadsBody() {
           surface === "skeleton" ? (
             <SkeletonList kind="card" stalled={w.boot.syncFailure} />
           ) : surface === "empty" ? (
-            <Empty title={Copy.readsEmptyTitle} hint={Copy.readsEmptyHint} />
+            <Empty title={t.mail ? Copy.mailEmptyTitle : Copy.readsEmptyTitle} hint={t.mail ? undefined : Copy.readsEmptyHint} />
           ) : null
         }
-        tail={surface === "content" ? <Tail>{Copy.readsTail(items.length)}</Tail> : null}
+        tail={!t.mail && surface === "content" ? <Tail>{Copy.readsTail(items.length)}</Tail> : null}
       />
     </Screen>
   );
@@ -191,10 +196,12 @@ function ReadsBody() {
 function StreamCard({
   m: row,
   onExpand,
+  onRead,
   onOpenBeside,
 }: {
   m: WorldMail;
   onExpand: () => void;
+  onRead: () => void;
   /** Two panes: the tap opens the issue in the reading pane instead of unclamping the card. */
   onOpenBeside?: () => void;
 }) {
@@ -243,25 +250,23 @@ function StreamCard({
         accessibilityLabel={Copy.readsCardAria(m.subject, open)}
         style={{ borderRadius: t.radius.card }}
       >
-        <View style={{ padding: 18, paddingBottom: 14 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            {m.unread ? (
-              <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: t.c.accent }} />
-            ) : null}
-            <Txt variant="rowSender" tone={m.unread ? "ink" : "ink2"} numberOfLines={1} style={{ flexShrink: 1 }}>
-              {m.from.name}
-            </Txt>
-            <View style={{ flex: 1 }} />
-            <Txt variant="caption" tone="ink3" tabular>
-              {m.time}
-            </Txt>
+        <View style={{ padding: 20, paddingTop: 24 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <MailAvatar person={m.from} unread={m.unread} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Txt variant="rowSender" numberOfLines={1}>{m.from.name}</Txt>
+              <Txt variant="caption" tone="ink2" numberOfLines={1}>{m.from.address}</Txt>
+              {t.mail ? <StreamRecipient toYou={m.toYou} /> : null}
+            </View>
+            <Txt variant="caption" tone="ink2" tabular style={t.mail ? { marginRight: 23 } : undefined}>{m.time}</Txt>
           </View>
 
-          <Txt variant="cardTitle" tone={m.unread ? "ink" : "ink2"} style={{ marginTop: 8 }}>
+          <Txt variant="cardTitle" tone={m.unread ? "ink" : "ink2"} style={{ marginTop: 16 }}>
             {m.subject}
           </Txt>
 
-          <View style={{ marginTop: 10 }}>
+          <View style={{ marginTop: 10, gap: 8 }}>
+            {t.mail ? <StreamContentChips images={m.imagesBlocked} tracker={m.trackerNote} /> : null}
             {bodyNote ? (
               <Txt variant="caption" tone="ink3" style={{ marginBottom: 8 }}>
                 {bodyNote}
@@ -272,20 +277,24 @@ function StreamCard({
             {clamped ? <FadeOut color={t.c.panel} /> : null}
           </View>
 
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 14 }}>
-            <Badge icon={open ? "chev" : "open"}>{open ? Copy.readsCollapse : Copy.readsReadInFull}</Badge>
+          <View style={{ alignItems: "center", gap: 6, marginTop: 14 }}>
+            <View style={{ backgroundColor: t.c.tint2, borderRadius: t.radius.pill, paddingHorizontal: 16, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 7 }}>
+              <Txt variant="button">{open ? Copy.readsCollapse : Copy.readsReadInFull}</Txt>
+              {t.mail && !open ? <Icon name="diagonal" size={13} color={t.c.ink} /> : null}
+            </View>
             {/* Which of your addresses this arrived at — set only above one mailbox, so a
                 single-mailbox account's cards are exactly the cards they were. */}
             {m.mailboxLabel ? <Badge tone="place">{Copy.deliveredTo(m.mailboxLabel)}</Badge> : null}
           </View>
         </View>
       </TapRow>
+      {t.mail ? <StreamMailMenu onRead={onRead} /> : null}
       {open ? (
         <View style={{ paddingHorizontal: 18, paddingBottom: 14, marginTop: -14 }}>
           <AttachmentTiles m={{ id: m.id, attachments: w.filesOf(m.id) }} />
-          <StreamCardVerbs id={m.id} />
         </View>
       ) : null}
+      {open ? <View style={{ paddingHorizontal: 18, paddingBottom: 14 }}><StreamCardVerbs id={m.id} /></View> : null}
     </Panel>
   );
 }

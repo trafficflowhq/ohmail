@@ -2,7 +2,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+  liveAccountResponse,
 } from "./fixtures/live-walk-shell";
+import {
+  decideScreenerRow,
+  releaseScreenerRow,
+  screenerRow,
+  screenerReport as toastText,
+  screenerRowIds as rowIds,
+  selectScreenerRow as selectRow,
+} from "./fixtures/live-screener";
 
 /**
  * UNDOING A SCREENING DECISION REPORTS FAILURE — it does not pretend.
@@ -177,7 +186,7 @@ class World {
 let w: World;
 
 function installWorld(): void {
-  globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+  const respond = async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.includes("/sync")) {
@@ -198,6 +207,21 @@ function installWorld(): void {
       if (w.holdMove) return new Promise<Response>(() => {});
       return w.moveOne(mv[1]!, folder);
     }
+    if ((method === "POST" && url.endsWith("/rules")) ||
+        (method === "PATCH" && /\/rules\/[^/?]+$/.test(url))) {
+      const { release } = JSON.parse(String(init?.body ?? "{}")) as {
+        release?: { messageIds: string[]; from: string; to: string };
+      };
+      if (release) {
+        expect(release.from).toBe(QUARANTINE);
+        for (const id of release.messageIds) w.posts.push(`move ${id} → ${release.to}`);
+        if (w.refuseMove) {
+          return new Response(JSON.stringify({ error: { code: "not_found", message: "message not found" } }),
+            { status: 404, headers: { "content-type": "application/json" } });
+        }
+        throw new Error("the test world did not expect a successful atomic release");
+      }
+    }
     const scn = /\/screener\/([^/?]+)$/.exec(url);
     if (scn && method === "POST") {
       const dest = (JSON.parse(String(init?.body ?? "{}")) as { dest?: string }).dest ?? "INBOX";
@@ -205,44 +229,12 @@ function installWorld(): void {
       return w.decide(scn[1]!, dest);
     }
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  };
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+    liveAccountResponse(await respond(input, init)));
 }
 
-const rowIds = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
-
-const noteOf = (c: HTMLElement, id: string): string =>
-  c.querySelector(`.row[data-id="${id}"]`)?.textContent ?? "";
-
-const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
-
-/**
- * Press a button in the preview's decision strip BY ITS LABEL, the way a reader does.
- *
- * Matched on the label's START and not on equality, because a control's rendered text is not only
- * its label: the waiting preview appends a `Kbd` hint ("Spamx", "Screen outn") and the two reversal
- * controls carry the ellipsis their labels are written with ("Allow…", "Not spam…"). The options are
- * listed on a miss so a strip that has changed shape says so instead of failing as an absent row.
- */
-function pressDecide(c: HTMLElement, label: string): void {
-  const btns = [...c.querySelectorAll<HTMLButtonElement>(".decide .d-btns button")];
-  const hit = btns.filter((b) => (b.textContent ?? "").trim().startsWith(label));
-  if (hit.length !== 1) {
-    throw new Error(
-      `expected exactly one "${label}" control, found ${hit.length}; the strip offered `
-      + (btns.map((b) => `"${(b.textContent ?? "").trim()}"`).join(", ") || "(none)"),
-    );
-  }
-  hit[0]!.click();
-}
-
-/** Select a row so the preview beside it is the one under test. */
-async function selectRow(c: HTMLElement, id: string): Promise<void> {
-  const row = c.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
-  if (!row) throw new Error(`no row ${id}; the list held ${rowIds(c).join(", ") || "(none)"}`);
-  row.click();
-  await tick(0);
-}
+const noteOf = (c: HTMLElement, id: string): string => screenerRow(c, id)?.textContent ?? "";
 
 const SPAMMER = "spam1";
 const SCREENED_ONE = "scrn1";
@@ -275,9 +267,7 @@ describe("a reversal the wire TAKES behaves exactly as before", () => {
     expect(rowIds(c), "the spam segment did not derive its row").toContain(SPAMMER);
 
     await selectRow(c, SPAMMER);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
 
     expect(w.posts).toEqual([`move ${SPAMMER} → INBOX`]);
@@ -291,9 +281,7 @@ describe("a reversal the wire TAKES behaves exactly as before", () => {
     expect(rowIds(c), "the screened-out segment did not derive its row").toContain(SCREENED_ONE);
 
     await selectRow(c, SCREENED_ONE);
-    pressDecide(c, "Allow");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
 
     expect(w.posts).toEqual([`move ${SCREENED_ONE} → INBOX`]);
@@ -321,9 +309,7 @@ describe("a reversal the wire RECORDS for the organizer is a wait, never a relea
   it("'Not spam → Ohbox' leaves the sender in Spam and says what it is waiting for", async () => {
     const c = await openSegment("spam");
     await selectRow(c, SPAMMER);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
 
     expect(w.posts, "the move was never attempted").toEqual([`move ${SPAMMER} → INBOX`]);
@@ -357,9 +343,7 @@ describe("a reversal the wire REFUSES is reported, never swallowed", () => {
   it("'Not spam → Ohbox' leaves the sender in Spam, marks the row and names the pile", async () => {
     const c = await openSegment("spam");
     await selectRow(c, SPAMMER);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
 
     expect(w.posts, "the move was never attempted").toEqual([`move ${SPAMMER} → INBOX`]);
@@ -378,9 +362,7 @@ describe("a reversal the wire REFUSES is reported, never swallowed", () => {
   it("'Not spam → Screener' leaves the sender in Spam and reports it the same way", async () => {
     const c = await openSegment("spam");
     await selectRow(c, SPAMMER);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Screener");
+    releaseScreenerRow(c, "waiting");
     await tick(200);
 
     expect(w.posts).toEqual([`move ${SPAMMER} → ohmail/Screener`]);
@@ -392,9 +374,7 @@ describe("a reversal the wire REFUSES is reported, never swallowed", () => {
   it("'Allow' on a screened-out sender leaves them screened out and marks the row", async () => {
     const c = await openSegment("screened");
     await selectRow(c, SCREENED_ONE);
-    pressDecide(c, "Allow");
-    await tick(0);
-    pressDecide(c, "→ News");
+    releaseScreenerRow(c, "reads");
     await tick(200);
 
     expect(w.posts).toEqual([`move ${SCREENED_ONE} → ohmail/News`]);
@@ -415,9 +395,7 @@ describe("a reversal the wire REFUSES is reported, never swallowed", () => {
   it("the note is still on the row after leaving the Screener and coming back", async () => {
     const c = await openSegment("spam");
     await selectRow(c, SPAMMER);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
     expect(noteOf(c, SPAMMER)).toContain("Not saved");
 
@@ -441,17 +419,13 @@ describe("a reversal the wire REFUSES is reported, never swallowed", () => {
   it("a fresh press drops the note before the wire answers", async () => {
     const c = await openSegment("spam");
     await selectRow(c, SPAMMER);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
     expect(noteOf(c, SPAMMER)).toContain("Not saved");
 
     w.refuseMove = false;
     w.holdMove = true;
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(0);
     expect(noteOf(c, SPAMMER), "the note survived the retry press").not.toContain("Not saved");
     // Still nothing answered, and still nothing claimed.
@@ -463,16 +437,12 @@ describe("a reversal the wire REFUSES is reported, never swallowed", () => {
   it("a retry that lands releases the sender and clears the mark", async () => {
     const c = await openSegment("spam");
     await selectRow(c, SPAMMER);
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
     expect(noteOf(c, SPAMMER)).toContain("Not saved");
 
     w.refuseMove = false;
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(300);
 
     expect(rowIds(c), "the retry did not release the sender").not.toContain(SPAMMER);
@@ -524,7 +494,7 @@ describe("a PINNED spam row — the one piece of state the engine cannot roll ba
     expect(rowIds(c), "the stranger is not waiting at the gate").toContain("gate1");
 
     await selectRow(c, "gate1");
-    pressDecide(c, "Spam");
+    await decideScreenerRow(c, "gate1", "spam");
     // Past the undo window, so the decision commits and the sender is pinned into Spam.
     await tick(9000);
     expect(w.posts, "the spam decision never reached the wire")
@@ -541,9 +511,7 @@ describe("a PINNED spam row — the one piece of state the engine cannot roll ba
     w.refuseMove = true;
     w.posts = [];
     await selectRow(c, "gate1");
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(200);
 
     expect(w.posts.some((p) => p.startsWith("move gate1 → INBOX")), "no move was attempted").toBe(true);
@@ -578,9 +546,7 @@ describe("a PARTIAL release — the case a mark on the pressed id would miss", (
     expect(rowIds(c), "the derived row is not on the newest quarantined message").toEqual(["new1"]);
 
     await selectRow(c, "new1");
-    pressDecide(c, "Not spam…");
-    await tick(0);
-    pressDecide(c, "→ Ohbox");
+    releaseScreenerRow(c, "ohbox");
     await tick(300);
 
     // One landed, one did not — so the sender is still in Spam, on the message that stayed.

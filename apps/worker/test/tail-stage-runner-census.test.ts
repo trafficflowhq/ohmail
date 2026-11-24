@@ -1,10 +1,10 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { WORKER_PASSES } from "../src/pass-registry.js";
 import { TAIL_SECTION_PLAN } from "../src/cycle-tail-plan.js";
 import { lineOf, span, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * EVERY CYCLE-TAIL CATCH GOES THROUGH THE RUNNER. In the worker entry's tail (from `tailSnapshot` to
@@ -16,6 +16,12 @@ import { lineOf, span, withoutCommentsAndLiterals } from "../../../scripts/lib/s
 
 const REPO = fileURLToPath(new URL("../../../", import.meta.url));
 const ENTRY = "apps/worker/src/index.ts";
+/**
+ * Where the registry's cycle-tail modules stand: the worker's program in its two folders, and the one module of the
+ * shared library a tail row names. Named here so a change of any of them selects this census.
+ */
+const PROGRAM_ROOTS = ["apps/worker/src/", "packages/organizer/src/"] as const;
+const LIBRARY_MODULES = ["packages/core/src/message-search.ts"] as const;
 const RUNNER_CALL = /\b(?:runTailStage|tailFaultNote)\s*\(/;
 const HOOK_CALL = /\b(?:noteFault|onError)\s*(?:\?\.)?\s*\(/;
 
@@ -33,19 +39,19 @@ const MODULE_ALLOWED: readonly Allowed[] = [
     reason: "runWorkflowCron, the dead-worker backstop: not on the tail's path" },
   { file: "apps/worker/src/workflow-cron.ts", anchor: "pool_close_failed",
     reason: "runWorkflowCron closing its own pool: not on the tail's path" },
-  { file: "apps/worker/src/list-address-backfill.ts", anchor: "return [v as string]",
+  { file: "packages/organizer/src/list-address-backfill.ts", anchor: "return [v as string]",
     reason: "a stored header parsed as JSON: no I/O" },
-  { file: "apps/worker/src/screener-correspondent-retro.ts", anchor: "return v as string",
+  { file: "packages/organizer/src/screener-correspondent-retro.ts", anchor: "return v as string",
     reason: "a stored header parsed as JSON: no I/O" },
   { file: "packages/core/src/message-search.ts", anchor: "A body nobody can render",
     reason: "an html body converted to text: no I/O" },
   { file: "packages/core/src/message-search.ts", anchor: "return false",
     reason: "searchIndexBuilt reads a failed read as unbuilt; the backfill's next statement meets the same database and throws to the runner" },
-  { file: "apps/worker/src/thread-join-heal.ts", anchor: "thread_join_heal_group_retrying",
+  { file: "packages/organizer/src/thread-join-heal.ts", anchor: "thread_join_heal_group_retrying",
     reason: "the first of two attempts; the second's catch hands the error to noteFault" },
-  { file: "apps/worker/src/screener-auto-suggest.ts", anchor: "screener_auto_suggest_model_failed",
+  { file: "packages/organizer/src/screener-auto-suggest.ts", anchor: "screener_auto_suggest_model_failed",
     reason: "the model's refusal: a remote, never our database" },
-  { file: "apps/worker/src/screener-auto-suggest.ts", anchor: "screener_auto_suggest_release_failed",
+  { file: "packages/organizer/src/screener-auto-suggest.ts", anchor: "screener_auto_suggest_release_failed",
     reason: "the entitlements program's claim release: a remote, never our database" },
   { file: "apps/worker/src/retention-prune.ts", anchor: "retention_prune_account_failed",
     reason: "never throws by contract (global_maintenance awaits it bare); a LOW gap row owns announcing it" },
@@ -125,7 +131,7 @@ function sectionsOffRunner(region: string, names: readonly string[]): string[] {
   return off;
 }
 
-const read = (p: string): string => readFileSync(join(REPO, p), "utf8");
+const read = (p: string): string => readSource(join(REPO, p));
 const tailModules = [
   ...new Set(WORKER_PASSES.filter((p) => p.triggers.includes("cycle-tail")).map((p) => p.module)),
   "apps/worker/src/away-reply-sweep.ts", "apps/worker/src/retention-prune.ts", "apps/worker/src/refund-obligation-drain.ts",
@@ -183,6 +189,9 @@ describe("every cycle-tail catch goes through the runner", () => {
 
   it("finds no swallowing catch in a tail pass module outside the hook and the allow list", () => {
     expect(tailModules.length, "no tail modules were read").toBeGreaterThan(15);
+    for (const m of tailModules) {
+      expect([...PROGRAM_ROOTS, ...LIBRARY_MODULES].some((at) => m.startsWith(at)), `${m} stands nowhere this census names`).toBe(true);
+    }
     const strays = tailModules.flatMap((m) => strayCatches(read(m), MODULE_ALLOWED, m));
     expect(strays, "a tail pass swallows a failure the runner never hears").toEqual([]);
     const hooked = tailModules.flatMap((m) => catchesIn(read(m)).filter((c) => HOOK_CALL.test(c.code)));

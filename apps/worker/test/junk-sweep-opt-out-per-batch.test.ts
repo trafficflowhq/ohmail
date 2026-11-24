@@ -6,8 +6,8 @@ import { accounts, folderState, mailboxes, messageBodies, messageInstances, mess
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, FILING_BATCH_MAX, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { junkSweepPass } from "../src/junk-sweep.js";
-import { acquireLeasePermit } from "../src/lease.js";
-import { FakeMetaFolder } from "./_fakeadapter.js";
+import { acquireLeasePermit } from "@ohmail/organizer/lease";
+import { FakeMetaFolder } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * ═══ "USE FOLDERS" OFF STOPS THE NEXT BATCH, NOT THE NEXT CYCLE ═════════════════════════════
@@ -39,10 +39,10 @@ async function seed(db: Awaited<ReturnType<typeof makeTestDb>>, n: number) {
       uid, uidvalidity: 1n, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Quarantine", observedFolder: "ohmail/Quarantine",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Quarantine", observedFolder: "ohmail/Quarantine",
       lastSetBy: "us", reconcileStatus: "reconciled",
     });
-    await db.insert(messageBodies).values({ messageId: m!.id, text: `buy things ${i}` });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `buy things ${i}` });
   }
   return { accountId, mailboxId: mb!.id };
 }

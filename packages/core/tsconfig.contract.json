@@ -12,7 +12,7 @@
     "under a test name. Modelled on `packages/api/tsconfig.contract.json`.",
     "Deliberately NOT the whole `test/` tree: this project must fail for one reason only."
   ],
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tools/tsconfig.base.json",
   "compilerOptions": { "outDir": "test/contract/dist", "rootDir": "test/contract" },
   "include": ["test/contract/**/*.ts"],
   "exclude": ["test/contract/dist"],

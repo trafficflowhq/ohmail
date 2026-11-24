@@ -99,9 +99,10 @@ function useFrameCount(plan: FramePlan | null, id: string, html: string, setDraw
   return plan === null ? null : frameReadingOf(plan, counted);
 }
 
-export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, onHistory }: {
+export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, onHistory, highlight }: {
   m: WorldMail;
   onShowAsText: () => void;
+  highlight?: string;
   /** The drawn height is the document's now (or the text fallback's), or not any more. */
   onFinal?: (final: boolean) => void;
   /** The quoted history is open: the frame draws the whole document. */
@@ -144,7 +145,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   // every document below is the cut one, and the frame's height, its remembered height and its drawn
   // document are keyed on the fold state, so a folded state never draws the whole document. A folded
   // pass that throws draws the whole document, with no fold row.
-  const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject, frame }), [html, m.subject, frame]);
+  const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject, frame, highlight }), [html, m.subject, frame, highlight]);
   const history = folded.history ?? null;
   const folding = history !== null && !historyOpen;
   const frameId = folding ? `${m.id}#folded` : m.id;
@@ -169,7 +170,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   // class, `src/mail/frame-ceiling.ts`) is refused without being built, and the sanitize below never
   // writes it.
   const ceiling = useMemo(() => phoneFrameCeiling(), []);
-  const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, { frame })), [folding, folded, html, frame]);
+  const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, { frame, highlight })), [folding, folded, html, frame, highlight]);
   bands.current = { breaks: bare.breaks, at: mediaWidth };
   // THE LETTER'S SHEET IS LIGHT IN BOTH SCHEMES (the web's `.mb-sheet`): a dark scheme inverts a letter
   // whose own paper reads light, and the reader may flip it back to its own colours.
@@ -182,12 +183,12 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   const inverted = adaptable && originalFor !== m.id;
   const sheetBg = inverted ? letterInDark.canvas : paper;
   const theme = useMemo(
-    () => ({ bg: paper, ink, ink2: sheetInk.ink3, accent: sheetInk.accent, fontScale: 1, invert: inverted ? letterInDark : null }),
-    [paper, ink, sheetInk, inverted],
+    () => ({ bg: paper, ink, ink2: sheetInk.ink3, accent: sheetInk.accent, fontScale: 1, highlights: !!highlight, invert: inverted ? letterInDark : null }),
+    [paper, ink, sheetInk, inverted, highlight],
   );
   const pictures = useMemo(
-    () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding, subject: m.subject, frame }),
-    [m.inlineImages, resolvedRemote, folding, m.subject, frame],
+    () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding, subject: m.subject, frame, highlight }),
+    [m.inlineImages, resolvedRemote, folding, m.subject, frame, highlight],
   );
   // A letter wider than the frame is drawn zoomed to it; every document below is the fitted one.
   const fit = frameFit(sized);
@@ -303,7 +304,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
           {unreadable ? Copy.mailUnreadable : sized.text === null || sized.text === "ceiling" ? Copy.mailOversize : Copy.mailLayoutUndrawn}
         </Txt>
         <HistoryFold foldKey={m.id} html={unreadable ? null : html} subject={m.subject}>
-          <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
+          <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} highlight={highlight} />
         </HistoryFold>
       </View>
     );

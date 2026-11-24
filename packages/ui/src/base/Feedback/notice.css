@@ -1,0 +1,77 @@
+/* One thing that needs you: a title that ends in the dot, at most one line, up to two answers. */
+@layer oh {
+  .oh-notice {
+    --oh-notice-pad: var(--s3) var(--s4);
+    --oh-notice-ring: 0 0 0 var(--ringw) var(--ring);
+    --oh-soft: var(--soft-sheet);
+    padding: var(--oh-notice-pad);
+    border-radius: var(--r-row);
+    background: var(--sheet);
+    box-shadow: var(--oh-notice-ring);
+    line-height: 1.35;
+  }
+  /* Over a list it stands on the list's own sheet, a shade off it; on the phone the list is the ground. */
+  .oh-notice[data-place="bar"] {
+    background: var(--soft-sheet);
+  }
+  :root[data-device="phone"] .oh-notice[data-place="bar"] {
+    background: var(--sheet);
+  }
+  .oh-notice-say {
+    margin: 0;
+  }
+  .oh-notice-title {
+    font-weight: var(--w-bold);
+  }
+  .oh-notice[data-progress] {
+    position: relative;
+    --oh-notice-pad: var(--s3);
+  }
+  .oh-notice[data-progress] .oh-notice-title {
+    display: block;
+    color: var(--ink);
+    font-weight: var(--w-mid);
+  }
+  .oh-notice-count {
+    display: block;
+    color: var(--ink2);
+    font-variant-numeric: tabular-nums;
+  }
+  .oh-notice > .oh-activity-line {
+    position: absolute;
+    inset: auto var(--r-row) 0;
+  }
+  .oh-notice-acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+  }
+  .oh-notice:not([data-progress]) .oh-notice-say + .oh-notice-acts {
+    margin-top: var(--s2);
+  }
+  .oh-notice[data-collapsed] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2);
+  }
+  .oh-notice[data-collapsed] .oh-notice-say {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-notice[data-collapsed] .oh-notice-say + .oh-notice-acts {
+    flex-shrink: 0;
+    margin-top: 0;
+  }
+  .oh-notice-related {
+    margin-top: var(--s1);
+  }
+  :root[data-face="ohmarchy"] .oh-notice[data-place="rail"] {
+    --oh-notice-ring: var(--oh-ring-btn);
+  }
+  :root[data-face="ohmarchy"] .oh-notice[data-place="rail"]:not([data-progress]) {
+    --oh-notice-pad: 10px var(--s3);
+  }
+}

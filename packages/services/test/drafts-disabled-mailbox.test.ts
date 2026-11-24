@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, drafts } from "@trafficflow/db";
-import { DraftsService } from "../src/index.js";
+import { DraftsService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -32,7 +32,7 @@ async function setup() {
     }).returning();
     return mb!.id;
   };
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { db, accountId, ctx, mk };
 }
 

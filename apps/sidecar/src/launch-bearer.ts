@@ -4,6 +4,7 @@ import { sessions } from "@trafficflow/db";
 import { hashToken, resolveSession, type ResolvedSessionCore } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import { mintLaunchSession, type LocalWorld } from "./identity.js";
+import { unboundOf } from "./store-binding.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -65,7 +66,8 @@ export async function mintLaunchBearer(
   const session = await mintLaunchSession(db, world, now, LAUNCH_SESSION_TTL_MS);
   // The held answer IS the store's answer, read once. A fresh mint that does not resolve is a store
   // that cannot admit its own window, and the launch says so rather than refusing every request.
-  const core = await resolveSession(db, session.token, now);
+  // Asked as every session's look-up is: on a handle that names no account (`store-binding.ts`).
+  const core = await resolveSession(unboundOf(db), session.token, now);
   if (core === null) throw new Error("the launch bearer this process minted does not resolve in its own store");
   const hash = Buffer.from(hashToken(session.token));
   let expiresAt = session.expiresAt.getTime();

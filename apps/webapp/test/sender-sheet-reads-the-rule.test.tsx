@@ -1,21 +1,26 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
+import { within } from "@testing-library/react";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  MemoryMirrorStore, consentPartition, heldRuleId, pressRules, rulesInPlay, type EngineMessage, type RuleDTO, type SyncChange,
+  MemoryMirrorStore, consentPartition, rulesInPlay, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
-import { planScreeningChange, ruleMatchOf, senderScreening, type ScreeningScope } from "../app/shell/sender-screening";
+import { SenderMenu } from "../app/components/sender-menu/SenderMenu";
+import { ruleMatchOf, senderScreening, type ScreeningScope } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * WHERE A SENDER'S MAIL GOES IS THEIR RULE, NOT WHERE THEIR LETTERS SIT. Tester round 24: two of
  * B's letters in News by B's rule and one left in Screened by an older, revoked rule. The sheet
  * marked no destination and named no rule, so nothing on it said B's mail files into News. The
  * mark and "Their rules" read the rule; the Now line keeps saying where the letters are.
+ *
+ * (The reader-only install's two planner cases moved to `sender-sheet-reads-the-rule-plan.test.ts`: they render no
+ * sheet.)
  */
 const NOW = new Date("2026-09-28T07:00:00.000Z");
 const ADDR = "bea@example.invalid";
@@ -68,11 +73,11 @@ async function render(messages: EngineMessage[], rules: RuleDTO[]): Promise<HTML
       }),
     }));
   });
-  return host;
+  return within(host).getByRole("dialog", { name: en.screening.aria.replace("{sender}", ADDR) });
 }
 
 const marked = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll('[role="option"][aria-selected="true"]')].map((n) => n.getAttribute("data-dest") ?? "");
+  within(el).queryAllByRole("option", { selected: true }).map((n) => n.getAttribute("data-dest") ?? "");
 const ruleLines = (el: HTMLElement): string[] =>
   [...el.querySelectorAll(".sm-rules .sm-rule-line")].map((n) => n.textContent ?? "");
 
@@ -85,7 +90,7 @@ describe("the sender sheet reads the sender's rule", () => {
     expect(el.querySelector(".sm-now")?.textContent, "the Now line stopped saying where the letters are")
       .toBe("3 messages — News 2 · Screened out 1");
     expect(marked(el), "the sheet does not mark where their rule files their mail").toEqual(["reads"]);
-    expect(el.querySelector('[data-dest="reads"] .ck'), "no ✓ on the rule's place").not.toBeNull();
+    expect(within(el).getByRole("option", { name: /^News/, selected: true }).querySelector(".ck"), "no ✓ on the rule's place").not.toBeNull();
     expect(ruleLines(el), "the sheet does not name the rule").toEqual(["All their mail → News2"]);
   });
 
@@ -118,41 +123,5 @@ describe("the sender sheet reads the sender's rule", () => {
     );
     expect(marked(el)).toEqual(["reads"]);
     expect(el.querySelector(".sm-rules"), "a single rule that places everything says nothing new").toBeNull();
-  });
-});
-
-describe("on a reader-only install the sheet plans over the organizer's copy", () => {
-  it("a stale row of this device says the Ohbox, the organizer files News: the Ohbox press rewrites the rule", async () => {
-    const store = new MemoryMirrorStore();
-    await store.load();
-    const copy = { mailboxId: "mb", rules: [rule("profile:mb:0", "ohmail/News")], asOf: NOW.toISOString(), from: { kind: "local", name: "Host", since: null }, updatedAt: NOW.toISOString(), applied: [] };
-    await store.applyChanges([
-      { type: "message", op: "create", id: "a", seq: ++seq, updatedAt: NOW.toISOString(), entity: msg("a", "ohmail/News") },
-      { type: "rule", op: "create", id: "local-1", seq: ++seq, updatedAt: NOW.toISOString(), entity: rule("local-1", "INBOX") },
-      { type: "mailbox_profile", op: "create", id: "mb", seq: ++seq, updatedAt: NOW.toISOString(), entity: copy },
-    ] as SyncChange[]);
-    const placeOf = consentPartition(store, { now: NOW }).placeOf;
-    const stale = planScreeningChange(senderScreening(store, "a", undefined, placeOf)!, "ohbox", "sender", true, false);
-    expect(stale.ruleState, "over the device's own row").toBe("already");
-    const over = pressRules(store, { travels: true, queued: [], applied: [], unsettled: [], now: NOW });
-    const plan = planScreeningChange(senderScreening(store, "a", undefined, placeOf, over)!, "ohbox", "sender", true, false);
-    expect(plan.ruleState).toBe("retargeted");
-    expect(plan.ruleMutations).toEqual([{ kind: "rule_update", ruleId: "local-1", destination: "INBOX", applyRetro: false }]);
-  });
-
-  it("a Move back to the copy's place while a press to the Ohbox waits on the organizer retargets after it", async () => {
-    const store = new MemoryMirrorStore();
-    await store.load();
-    const copy = { mailboxId: "mb", rules: [rule("profile:mb:0", "ohmail/News")], asOf: NOW.toISOString(), from: { kind: "local", name: "Host", since: null }, updatedAt: NOW.toISOString(), applied: [] };
-    await store.applyChanges([
-      { type: "message", op: "create", id: "a", seq: ++seq, updatedAt: NOW.toISOString(), entity: msg("a", "INBOX") },
-      { type: "mailbox_profile", op: "create", id: "mb", seq: ++seq, updatedAt: NOW.toISOString(), entity: copy },
-    ] as SyncChange[]);
-    const key = { kind: "sender", match: ADDR, subjectContains: null, bodyContains: null };
-    const move = (unsettled: Parameters<typeof pressRules>[1]["unsettled"]) => planScreeningChange(senderScreening(store, "a", undefined, undefined,
-      pressRules(store, { travels: true, queued: [], applied: [], unsettled, now: NOW }))!, "reads", "sender", true, false);
-    expect(move([]).ruleState, "the copy alone").toBe("already");
-    const plan = move([{ kind: "rule.update", key, destination: "INBOX" }]);
-    expect(plan.ruleMutations).toEqual([{ kind: "rule_update", ruleId: heldRuleId(key), destination: "ohmail/News", applyRetro: false }]);
   });
 });

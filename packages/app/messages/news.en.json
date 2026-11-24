@@ -1,0 +1,45 @@
+{
+  "reads": {
+    "title": "News",
+    "waterline": "Seen up to here",
+    "waterlineMeta": "last visit · {stamp}",
+    "streamAria": "News stream",
+    "keyNext": "Next in the stream",
+    "keyPrev": "Previous in the stream",
+    "keyExpand": "Expand or collapse"
+  },
+  "stream": {
+    "newSince": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here"
+  },
+  "news": {
+    "title": "News",
+    "waterline": {
+      "label": "Seen up to here"
+    },
+    "markAll": {
+      "label": "Mark all read",
+      "done": "{count, number} read",
+      "undo": "Undo"
+    },
+    "list": {
+      "label": "News",
+      "menu": "List"
+    },
+    "stream": {
+      "label": "News stream",
+      "empty": "Nothing here"
+    },
+    "item": {
+      "keyboardOpen": "Press Enter on its row to open this message",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "full": "Read in full",
+      "markUnread": "Mark unread",
+      "loading": "Loading",
+      "file": "Has an attachment"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    }
+  }
+}

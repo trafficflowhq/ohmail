@@ -1,6 +1,7 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { MemoryMirrorStore, type RuleDTO, type SyncChange } from "@ohmail/client-engine";
-import { retroOf, writtenRuleIds } from "../app/shell/press-verdict";
+import { MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
+import { retroOf, writtenRuleIds } from "@ohmail/app-logic/press/press-verdict";
 
 /**
  * "ALL" IS SAID ONLY OVER A PASS KNOWN TO BE FINISHED. The rules a commit wrote are named by the

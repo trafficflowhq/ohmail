@@ -9,6 +9,12 @@
  * The window is focused (jsdom answers `hasFocus()` false until something takes focus) unless a
  * test sets `focused` false.
  *
+ * THE SEATED READING COLUMN IS LAID OUT THE SAME WAY, by the reader's own names for the same parts
+ * (`@ohmail/app/reader`'s `read-dom.ts`): its scroller is the reading sheet's scrolling box under
+ * `[data-read-column]`, a panel's sender line `.oh-messagehead-sender`, its body block
+ * `[data-read-body]`, and the bar the action panel's wrapper `[data-read-stop]`, which stands
+ * beside the scroller and not in it.
+ *
  * THE DWELL BY HAND: a message turns read once its top has been on screen for 0.7 s. `passDwell()`
  * completes every dwell under way at once — a test settles the look that starts a dwell, then
  * passes it, instead of sleeping and hoping the look ran in time. On fake timers (the shell
@@ -18,11 +24,12 @@
 import * as React from "react";
 import { vi } from "vitest";
 import { THREAD_READ_HOLD_MS } from "@ohmail/client-engine";
-import { threadReadTime } from "../../app/shell/reader-seen";
+import { threadReadTime } from "@ohmail/app-logic/reading/reader-seen";
 
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
-const SCROLLERS = ".read-col, .reader";
+const SEATED_SCROLLER = "[data-read-column] .oh-sheet-scroll";
+const SCROLLERS = `.read-col, .reader, ${SEATED_SCROLLER}`;
 const GAP = 20;
 
 export interface ThreadLayout {
@@ -31,7 +38,7 @@ export interface ThreadLayout {
   viewport: number;
   /** The bar's top inside the viewport. */
   barTop: number;
-  /** The scroller in use (the column, else the sheet). */
+  /** The scroller in use (today's sheet where it holds a letter, else today's column, else the seated column). */
   scroller: () => HTMLElement;
   /** Where a panel's top sits in the scroller's content. */
   topOf: (id: string) => number;
@@ -50,11 +57,13 @@ export interface ThreadLayout {
 
 export function stubThreadLayout(opts: {
   viewport?: number; defaultHeight?: number; heights?: Record<string, number>;
+  scrollerSelector?: string;
   /** Where a panel's body starts, by id (default 80px down): a tall header pushes it down. */
   bodyAt?: Record<string, number>;
   /** Is the reading column `display:none` now (a phone width)? Then it lays out nothing. */
   columnHidden?: () => boolean;
 } = {}): ThreadLayout {
+  const scrollers = opts.scrollerSelector ?? SCROLLERS;
   const viewport = opts.viewport ?? 800;
   const defaultHeight = opts.defaultHeight ?? 400;
   const heights: Record<string, number> = { ...(opts.heights ?? {}) };
@@ -85,8 +94,8 @@ export function stubThreadLayout(opts: {
   };
 
   const hiddenCol = (el: Element): boolean => (opts.columnHidden?.() ?? false) && el.matches(".read-col");
-  const isScroller = (el: Element): boolean => el.matches(SCROLLERS) && !hiddenCol(el);
-  const scrollerOf = (el: Element): HTMLElement | null => el.closest<HTMLElement>(SCROLLERS);
+  const isScroller = (el: Element): boolean => el.matches(scrollers) && !hiddenCol(el);
+  const scrollerOf = (el: Element): HTMLElement | null => el.closest<HTMLElement>(scrollers);
   /**
    * A scroller's panels in order, kept until its subtree changes: one look measures every panel
    * several times, and a fresh query per measure made a long thread cost minutes in jsdom.
@@ -124,6 +133,7 @@ export function stubThreadLayout(opts: {
 
   Element.prototype.getBoundingClientRect = function (this: Element): DOMRect {
     if (isScroller(this)) return box(0, viewport);
+    if (this.hasAttribute("data-read-stop")) return box(barTop, barTop + 48);
     const sc = scrollerOf(this);
     if (!sc || hiddenCol(sc)) return box(0, 0);
     const scrolled = tops.get(sc) ?? 0;
@@ -133,9 +143,9 @@ export function stubThreadLayout(opts: {
     const top = contentTop(panel) - scrolled;
     const h = heightOf(panel);
     if (this === panel) return box(top, top + h);
-    if (this.classList.contains("msg-from")) return box(top + 20, top + 60);
+    if (this.classList.contains("msg-from") || this.classList.contains("oh-messagehead-sender")) return box(top + 20, top + 60);
     if (this.hasAttribute("data-own-end")) return box(top + h - 30, top + h - 30);
-    if (this.classList.contains("msg-body") || this.classList.contains("pm-body")) return box(top + (bodyAt[panel.dataset.convId!] ?? 80), top + h - 30);
+    if (this.classList.contains("msg-body") || this.classList.contains("pm-body") || this.hasAttribute("data-read-body")) return box(top + (bodyAt[panel.dataset.convId!] ?? 80), top + h - 30);
     return box(0, 0);
   };
   Object.defineProperty(Element.prototype, "clientHeight", {
@@ -168,7 +178,10 @@ export function stubThreadLayout(opts: {
   const scroller = (): HTMLElement => {
     const sheet = document.querySelector<HTMLElement>(".reader");
     const col = document.querySelector<HTMLElement>(".read-col");
-    return (sheet && panelsIn(sheet).length > 0 ? sheet : col ?? sheet)!;
+    const seated = document.querySelector<HTMLElement>(SEATED_SCROLLER);
+    if (sheet && panelsIn(sheet).length > 0) return sheet;
+    if (seated && panelsIn(seated).length > 0 && !(col && panelsIn(col).length > 0)) return seated;
+    return (col ?? seated ?? sheet)!;
   };
   void proto;
   return {

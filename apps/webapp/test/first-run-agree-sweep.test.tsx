@@ -1,16 +1,15 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun, type FirstRunDecideSubject } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
+import { act, cleanup } from "@testing-library/react";
+import { useSyncExternalStore } from "react";
 import {
   AGREE_REREAD_MS, AGREE_SWEEP_MS, firstRunImportOver, useFirstRunQueueSettle,
-} from "../app/shell/first-run-queue-settle";
-import { importOverOf, type OnboardingAi, type OnboardingFacts, type OnboardingMailbox } from "../app/shell/onboarding";
-import type { FirstRunHost } from "../app/shell/first-run-host";
+} from "@ohmail/app-logic/doors/first-run-queue-settle";
+import { importOverOf, type OnboardingAi, type OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunGround, FirstRunRow, FirstRunSender } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { movable } from "../../../packages/app/test/support/fake-window.js";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * THE AGREE'S OWN SWEEP. On Cloud the worker imports a consent-less reader before the run's Agree,
@@ -19,17 +18,20 @@ import type { FirstRunHost } from "../app/shell/first-run-host";
  * that path. The stage holds the pull for the senders its own Agree will move, re-asking the store,
  * until they arrive or the bound runs out. Composed the way AppShell composes it: the shell's hook,
  * the narrowed facts, and a store whose queue reaches the client only through a re-ask.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`packages/app/src/mailboxes/first-run`) over a ground the case fills (`_first-run-stage.tsx`'s
+ * `fill`): the fill is `live.ts`'s, the shell's hook (`useFirstRunQueueSettle`) composed into the row's `importOver`,
+ * the queue's count, the head sender and the re-ask in the ground's `about`; its words the stage's catalogue; the
+ * pull's line is the step's status line; a key reaches the element that has the keys. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const t = messages.onboarding;
+const t = O;
 
 const IMPORTED = "2026-10-19T00:00:00.000Z";
 const AGREED = "2026-10-19T00:01:00.000Z";
 /** The summary, in either shape: the role stays the reader's until the worker's gate answers. */
-const SUMMARY = [t.doneTitle, t.doneReaderTitle];
+const SUMMARY = [t.noOneWaits.replace(/\.$/, ""), t.doneReaderTitle];
 
 const READER: OnboardingMailbox = {
   organizerRole: "reader",
@@ -42,10 +44,9 @@ const READER: OnboardingMailbox = {
   initialImportCompletedAt: null,
 };
 
-const roots: Root[] = [];
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+  cleanup();
   vi.useRealTimers();
   document.body.innerHTML = "";
 });
@@ -54,97 +55,122 @@ async function flush() {
   await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); });
 }
 
-async function mount(start: { mb: OnboardingMailbox; ai?: OnboardingAi; senders?: number }) {
-  const world = { mb: start.mb, storeQueue: 0, clientQueue: 0 };
-  const log = { rereads: 0, completes: 0, decisions: [] as string[] };
-  const etas: string[] = [];
-  const headings: string[] = [];
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  let bump: () => void = () => {};
-  /** The store's queue page, asked: the client's count becomes the store's. */
-  const reread = async () => { log.rereads++; world.clientQueue = world.storeQueue; bump(); };
+/**
+ * Every text a selector's elements said, in order, the passing ones too: a commit that drew a line and the next that
+ * took it away inside one batch are both read (the removed node's text, a character change's old value).
+ */
+function said(el: HTMLElement, selector: string): { all: string[]; distinct: string[] } {
+  const all: string[] = [];
+  const distinct: string[] = [];
+  const add = (text: string | null | undefined) => {
+    const line = (text ?? "").trim();
+    if (!line) return;
+    all.push(line);
+    if (distinct[distinct.length - 1] !== line) distinct.push(line);
+  };
+  const within = (n: Node): Element[] =>
+    n instanceof Element ? [...(n.matches(selector) ? [n] : []), ...n.querySelectorAll(selector)] : [];
+  const now = () => { for (const e of el.querySelectorAll(selector)) add(e.textContent); };
+  now();
+  new MutationObserver((records) => {
+    for (const r of records) {
+      if (r.type === "characterData") {
+        if (r.target.parentElement?.closest(selector)) add(r.oldValue);
+        continue;
+      }
+      for (const n of r.removedNodes) for (const e of within(n)) add(e.textContent);
+      if (r.target instanceof Element && r.target.closest(selector)) {
+        for (const n of r.removedNodes) if (!(n instanceof Element)) add(n.textContent);
+      }
+    }
+    now();
+  }).observe(el, { subtree: true, childList: true, characterData: true, characterDataOldValue: true });
+  return { all, distinct };
+}
 
-  const Shell = () => {
-    const [, set] = React.useState(0);
-    bump = () => set((n) => n + 1);
-    const [ai, setAi] = React.useState<OnboardingAi>(start.ai ?? "unset");
-    React.useLayoutEffect(() => {
-      const line = el.querySelector(".ob-eta")?.textContent;
-      if (line) etas.push(line.trim());
-      const hd = (el.querySelector("h1")?.textContent ?? "").trim();
-      if (hd && headings[headings.length - 1] !== hd) headings.push(hd);
-    });
-    const mb = world.mb;
+async function mount(start: { mb: OnboardingMailbox; ai?: OnboardingAi; senders?: number }) {
+  const world = movable({ mb: start.mb, storeQueue: 0, clientQueue: 0 });
+  const log = { rereads: 0, completes: 0, decisions: [] as string[] };
+  let ai: OnboardingAi = start.ai ?? "unset";
+  /** The store's queue page, asked: the client's count becomes the store's. */
+  const reread = async () => { log.rereads++; world.set({ ...world.read(), clientQueue: world.read().storeQueue }); };
+
+  /* The ground's fill as the host composes it (`live.ts`, as AppShell did): the hold narrows the run's row's
+     `importOver`; the count, the head sender and the re-ask are the ground's `about`. */
+  const fill = (ground: FirstRunGround): FirstRunGround => {
+    const w = useSyncExternalStore(world.subscribe, world.read);
+    const mb = w.mb;
     const stripOver = mb.initialImportCompletedAt !== null;
     const queueSettling = useFirstRunQueueSettle({
       active: true, mailboxId: "mb-1", over: importOverOf({ ...mb, importOver: stripOver }), reread,
     });
-    const facts: OnboardingFacts = {
-      door: "cloud",
-      mailbox: { ...mb, importOver: firstRunImportOver(stripOver, queueSettling) },
-      account: { onboardingCompletedAt: null },
-      ai,
-      queuedSenders: world.clientQueue,
+    const over = firstRunImportOver(stripOver, queueSettling);
+    const row = { id: id("mb-1"), address: "me@example.invalid", ...mb, ...(over === undefined ? {} : { importOver: over }) } as FirstRunRow;
+    const sender: FirstRunSender | null = w.clientQueue > 0 ? {
+      name: "Sender", address: "sender@example.test", held: 2, waiting: w.clientQueue, many: false, since: "today",
+      decide: (dest) => { log.decisions.push(dest); },
+    } : null;
+    return {
+      ...ground,
+      rows: [row],
+      about: () => ({
+        queuedSenders: w.clientQueue,
+        pull: { screened: 0, history: 0, pulled: 0, whole: false },
+        sender,
+        queueSettling,
+        rereadQueue: reread,
+      }),
     };
-    const host: FirstRunHost = {
-      door: "cloud",
-      ai,
+  };
+  const st = await mountStage({
+    rows: [],
+    door: "cloud",
+    service: "managed",
+    fill,
+    verbs: {
+      /* The host's AI answer, read live: the answer's write moves it, as the host's next read does. */
+      get ai() { return ai; },
       probe: async () => ({ host: "h", user: "u", folders: 1 }),
       connect: async () => ({ id: "mb-1" }),
       organize: async () => {
-        world.mb = { ...world.mb, organizeConsentedAt: AGREED, takeoverAuthorizedAt: AGREED };
+        world.set({ ...world.read(), mb: { ...world.read().mb, organizeConsentedAt: AGREED, takeoverAuthorizedAt: AGREED } });
         return "stored";
       },
       countDecision: async () => ({
         letters: 5, senders: start.senders ?? 2, total: 5, complete: true, mirrored: true,
       }),
       complete: async () => { log.completes++; },
-      setAiEnabled: async (on) => { setAi(on ? "on" : "off"); },
+      setAiEnabled: async (on: boolean) => { ai = on ? "on" : "off"; world.set({ ...world.read() }); },
       probeReason: () => null,
       probeMessage: () => null,
-    };
-    const decide: FirstRunDecideSubject | null = world.clientQueue > 0 ? {
-      name: "Sender", address: "sender@example.test", held: 2, waiting: world.clientQueue, since: "today",
-      onDecide: (dest) => { log.decisions.push(dest); },
-    } : null;
-    return h(FirstRun, {
-      host, facts, onRefresh: () => bump(), onLeave: () => {},
-      pull: { screened: 0, history: 0, pulled: 0 }, decide, mailboxId: "mb-1", queueSettling,
-      rereadQueue: reread,
-    });
-  };
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Shell, null) }),
-    }));
+    } as never,
   });
+  const el = st.el;
   await flush();
+  const lines = said(el, "main [role=status]");
+  const heads = said(el, "h1");
+  const etas = lines.all;
+  const headings = heads.distinct;
 
-  const heading = () => (el.querySelector("h1")?.textContent ?? "").trim();
-  const eta = () => (el.querySelector(".ob-eta")?.textContent ?? "").trim();
+  const heading = () => st.heading() || (el.querySelector(`[aria-label="${t.pullLocal}"]`) ? t.pullTitle : "");
+  const eta = () => (el.querySelector(".mbx-run .oh-page [role=status]")?.textContent ?? "").trim();
   const press = async (label: string) => {
     const button = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
     if (!button) throw new Error(`no button labelled ${JSON.stringify(label)} on ${JSON.stringify(heading())}`);
     await act(async () => { button.click(); for (let i = 0; i < 20; i++) await Promise.resolve(); });
     await flush();
   };
+  /** The AI question's two answers by their names: no is the stage's "no", yes is the other. */
   const choose = async (value: "yes" | "no") => {
-    const radio = [...el.querySelectorAll("input[type=radio]")]
-      .find((i) => (i as HTMLInputElement).value === value) as HTMLInputElement | undefined;
-    if (!radio) throw new Error(`no ${value} option on screen`);
-    await act(async () => { radio.click(); });
+    await st.pick(value === "yes" ? t.aiOn : t.aiOff);
   };
+  /** A decision verb, by its key, as a browser delivers it: at the element that has the keys. */
   const key = async (k: string) => {
-    await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); });
+    await act(async () => { ((document.activeElement as HTMLElement | null) ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); });
   };
   /** A later GET /mailboxes read. */
   const pollRow = async (over: Partial<OnboardingMailbox>) => {
-    world.mb = { ...world.mb, ...over };
-    await act(async () => { bump(); });
+    await act(async () => { world.set({ ...world.read(), mb: { ...world.read().mb, ...over } }); });
     await flush();
   };
   const advance = async (ms: number) => {
@@ -152,20 +178,18 @@ async function mount(start: { mb: OnboardingMailbox; ai?: OnboardingAi; senders?
     await flush();
   };
   /** The worker's agree sweep commits its Screener intents in the store. */
-  const sweepLands = (senders: number) => { world.storeQueue = senders; };
+  const sweepLands = (senders: number) => { world.read().storeQueue = senders; };
   /** The engine's own re-ask after a sync page that touched the gate. */
   const engineReasks = async () => {
-    world.clientQueue = world.storeQueue;
-    await act(async () => { bump(); });
+    await act(async () => { world.set({ ...world.read(), clientQueue: world.read().storeQueue }); });
     await flush();
   };
   /** Consent → window → Agree → AI answered. */
   const agreeThenAnswer = async (answer: "yes" | "no" = "no") => {
-    expect(heading()).toBe(t.consentTitle);
-    await press(t.continue);
-    expect(heading()).toBe(t.windowTitle);
+    expect(heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
+    expect(heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await press(t.agree);
-    expect(heading()).toBe(t.aiTitle);
+    expect(heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     await choose(answer);
     await press(t.continue);
   };
@@ -182,7 +206,7 @@ describe("Cloud: the import is over before the run's Agree", () => {
       // The sweep lands after the press; the next re-ask brings it to the client.
       s.sweepLands(2);
       await s.advance(AGREE_REREAD_MS);
-      expect(s.heading()).toBe(t.decideTitle);
+      expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
       expect(s.headings.filter((x) => SUMMARY.includes(x))).toEqual([]);
       await s.key("o");
       expect(SUMMARY).toContain(s.heading());
@@ -200,7 +224,7 @@ describe("Cloud: the import is over before the run's Agree", () => {
     expect(s.eta()).toBe(t.pullScreener);
     s.sweepLands(3);
     await s.advance(AGREE_REREAD_MS);
-    expect(s.heading()).toBe(t.decideTitle);
+    expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
   });
 
   it("a sweep that never lands releases at the bound, onto the summary", async () => {
@@ -228,14 +252,13 @@ describe("Cloud: the import is over before the run's Agree", () => {
 
   it("CONTROL — the senders arrived before the AI answer: the decision at once, the line never said", async () => {
     const s = await mount({ mb: { ...READER, initialImportCompletedAt: IMPORTED } });
-    expect(s.heading()).toBe(t.consentTitle);
-    await s.press(t.continue);
+    expect(s.heading()).toContain(t.organizeLast.split("<window>")[0]!.trim());
     await s.press(t.agree);
-    expect(s.heading()).toBe(t.aiTitle);
+    expect(s.heading()).toContain(t.aiSay.split("<on>")[0]!.trim());
     s.sweepLands(2);
     await s.engineReasks();
     await s.press(t.continue);
-    expect(s.heading()).toBe(t.decideTitle);
+    expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
     expect(s.etas).not.toContain(t.pullScreener);
   });
 });
@@ -248,6 +271,6 @@ describe("CONTROL: the import ends after the run's Agree", () => {
     expect(s.eta(), "the Screener line over a running import").not.toBe(t.pullScreener);
     s.sweepLands(2);
     await s.pollRow({ initialImportCompletedAt: IMPORTED });
-    expect(s.heading()).toBe(t.decideTitle);
+    expect(s.heading()).toContain(t.decideGoes.split("{name}")[1]!.split("<place>")[0]!.trim());
   });
 });

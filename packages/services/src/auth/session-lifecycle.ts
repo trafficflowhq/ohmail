@@ -3,9 +3,11 @@ import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, max, ne, or, type SQL } from "drizzle-orm";
 import { devices, pairingTokens, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { bridgeTx, runInTransaction, type Db, type ServiceContext, type TransactionFence } from "../context.js";
+import { bridgeTx, credentialContext, keyedCredentialDb, runInTransaction, type ContextDb, type Db, type ServiceContext, type TransactionFence, type UnboundDb } from "../context.js";
+import { createLogger } from "@trafficflow/core/mail";
 import { ServiceError } from "../errors.js";
 import { generateToken, hashToken } from "./crypto.js";
+import { ringDeviceRevoked } from "./device-doorbell.js";
 import { surfaceTtls, type SurfaceTtls } from "./config.js";
 import type { SessionSurface } from "./config-types.js";
 import type { AuthConfig } from "./types.js";
@@ -22,7 +24,7 @@ import type {
  * is refused: a 409 about the REQUEST, not a 401 — both credentials are valid, and that is the
  * problem. A sessionless caller is unaffected: `ctx.accountId` is `""` when no session resolved.
  */
-export function refuseCrossAccountCredential(ctx: ServiceContext, credentialAccountId: string): void {
+export function refuseCrossAccountCredential(ctx: Pick<ServiceContext, "accountId">, credentialAccountId: string): void {
   if (ctx.accountId && ctx.accountId !== credentialAccountId) {
     throw new ServiceError(
       "session_conflict", 409,
@@ -115,6 +117,7 @@ const erasedAsRevoked = (err: unknown): never => { throw isAccountErased(err) ? 
  */
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
+const authLog = createLogger({ service: "auth" });
 
 /** What the rotation's transaction decided — the only three things that leave it. */
 type HotPathVerdict =
@@ -178,6 +181,15 @@ const AUTO_MINT_DEVICE_LABELS: Partial<Record<DeviceKind, string>> = {
  * none, and only a paired browser (the pairing redeem's row) has a family it can name.
  */
 type InstallClass = "desktop" | "phone" | "paired-web";
+
+/**
+ * Does a sign-in of `kind` that brings no device row of its own make one? The label map's own
+ * answer, for a caller that has to know after its sign-in committed whether a named device was made
+ * (`device-doorbell.ts`). A pairing and the desktop approval bring their row and are not asked.
+ */
+export function mintsNamedDevice(kind: DeviceKind): boolean {
+  return Object.hasOwn(AUTO_MINT_DEVICE_LABELS, kind);
+}
 
 function installClassOf(kind: string, named: boolean): InstallClass | null {
   if (Object.hasOwn(AUTO_MINT_DEVICE_LABELS, kind)) return "desktop";
@@ -259,11 +271,13 @@ export class SessionLifecycle {
    * rotation it never heard about has already replaced.
    */
   async logout(
-    ctx: ServiceContext, b: { allDevices?: boolean; refreshToken?: string } = {},
+    ctx: ServiceContext, b: {
+      allDevices?: boolean; refreshToken?: string; expectedFamily?: string; browser?: boolean; expectedAccount?: string;
+    } = {},
   ): Promise<{ familyIds: string[] }> {
     const db = asTx(ctx);
     const now = ctx.now();
-    if (!b.allDevices && b.refreshToken !== undefined) return this.logoutByRefresh(ctx, b.refreshToken, now);
+    if (!b.allDevices && b.refreshToken !== undefined) return this.logoutByRefresh(ctx, b.refreshToken, now, b);
     const userId = this.requireUser(ctx);
     let familyIds: string[] = [];
     if (b.allDevices) {
@@ -292,6 +306,10 @@ export class SessionLifecycle {
       });
     } else if (ctx.sessionId) {
       const s = (await db.select().from(sessions).where(eq(sessions.id, ctx.sessionId)).limit(1))[0];
+      if ((b.expectedFamily !== undefined && s?.familyId !== b.expectedFamily)
+        || (b.expectedAccount !== undefined && s?.accountId !== b.expectedAccount)) {
+        throw new ServiceError("session_mismatch", 409, "the browser session changed");
+      }
       if (s) {
         await this.revokeFamily(db, s.familyId, now);
         familyIds = [s.familyId];
@@ -313,17 +331,25 @@ export class SessionLifecycle {
    */
   private async logoutByRefresh(
     ctx: ServiceContext, presented: string, now: Date,
+    expected: { expectedFamily?: string; browser?: boolean; expectedAccount?: string },
   ): Promise<{ familyIds: string[] }> {
     const db = asTx(ctx);
-    const [row] = await db.select({
+    const digest = hashToken(presented);
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, digest)).select({
       familyId: refreshTokens.familyId, userId: refreshTokens.userId, sessionId: refreshTokens.sessionId,
       accountId: refreshTokens.accountId,
-    }).from(refreshTokens).where(eq(refreshTokens.tokenHash, hashToken(presented))).limit(1);
+    }).from(refreshTokens).where(eq(refreshTokens.tokenHash, digest)).limit(1);
     const sessionId = ctx.sessionId ?? null;
     const [own] = sessionId
       ? await db.select({ familyId: sessions.familyId, userId: sessions.userId, accountId: sessions.accountId })
         .from(sessions).where(eq(sessions.id, sessionId)).limit(1)
       : [];
+    const family = expected.expectedFamily ?? (expected.browser ? row?.familyId : undefined);
+    if ((expected.browser && !row && own)
+      || (family !== undefined && (row?.familyId !== family || (own && own.familyId !== family)))
+      || (expected.expectedAccount !== undefined && row?.accountId !== expected.expectedAccount)) {
+      throw new ServiceError("session_mismatch", 409, "the browser session changed");
+    }
     // family → whose sign-out it is, for the audit row: the token's session, else the resolved one.
     const named = new Map<string, { userId: string; sessionId: string; accountId: string }>();
     if (row) named.set(row.familyId, { userId: row.userId, sessionId: row.sessionId, accountId: row.accountId });
@@ -331,24 +357,56 @@ export class SessionLifecycle {
       named.set(own.familyId, { userId: own.userId, sessionId, accountId: own.accountId });
     }
     if (named.size === 0) throw new ServiceError("unauthorized", 401, "nothing to sign out");
-    const familyIds = [...named.keys()];
-    try {
-      // ONE TRANSACTION PER FAMILY: a fence names one account, and one jar can hold two. An erased
-      // account's family is already gone, so its turn does nothing and writes no row.
-      for (const [familyId, who] of named) {
-        await this.inTransaction(ctx, async (txCtx) => {
+    // A jar can name two families. Each uses its own account fence and commits independently.
+    for (const [familyId, who] of named) {
+      const owner = credentialContext(ctx, who.accountId);
+      try {
+        await this.inTransaction(owner, async (txCtx) => {
           const tx = asTx(txCtx);
           await this.revokeFamily(tx, familyId, now);
           const [user] = await tx.select().from(users).where(eq(users.id, who.userId)).limit(1);
           await this.audit(tx, user ?? null, "logout", undefined, txCtx,
             `family=${familyId} session=${who.sessionId} by=refresh`);
         }, { fence: { accountId: who.accountId, onErased: () => undefined } });
+      } catch {
+        // A bookkeeping failure must leave the family revoked.
+        await this.revokeFamily(asTx(owner), familyId, now);
       }
-    } catch {
-      // The revoke alone, on the request's own handle: the family dies even when its record cannot.
-      for (const familyId of familyIds) await this.revokeFamily(db, familyId, now);
+      try {
+        await this.pruneWakeRegistrations(asTx(owner), [familyId]);
+      } catch (err) {
+        authLog.error("auth_logout_wake_prune_failed", {
+          requestId: ctx.requestId, count: 1, err,
+          reason: "the sign-out committed; the signed-out device's wake registration was left in place",
+        });
+      }
+      await this.pruneDeviceGrants(asTx(owner), [familyId]).catch(() => {
+        authLog.error("auth_logout_device_grant_prune_failed", { requestId: ctx.requestId });
+      });
     }
-    return { familyIds };
+    return { familyIds: [...named.keys()] };
+  }
+
+  /** Verify the departed cookie session before a serialized browser clear. */
+  async assertBrowserLogout(
+    expectedFamily: string,
+    { access, refresh }: {
+      access: { digest: string; db: ContextDb } | null;
+      refresh: { digest: string; db: ContextDb } | null;
+    },
+  ): Promise<void> {
+    const [accessSession] = access
+      ? await bridgeTx(access.db).select({ familyId: sessions.familyId, revokedAt: sessions.revokedAt })
+        .from(sessions).where(eq(sessions.accessTokenHash, access.digest)).limit(1)
+      : [];
+    const [row] = refresh
+      ? await bridgeTx(refresh.db).select({ familyId: refreshTokens.familyId, revokedAt: refreshTokens.revokedAt })
+        .from(refreshTokens).where(eq(refreshTokens.tokenHash, refresh.digest)).limit(1)
+      : [accessSession];
+    if (row?.familyId !== expectedFamily || row.revokedAt === null
+      || (accessSession && (accessSession.familyId !== expectedFamily || accessSession.revokedAt === null))) {
+      throw new ServiceError("session_mismatch", 409, "the browser session changed");
+    }
   }
 
   /**
@@ -364,7 +422,9 @@ export class SessionLifecycle {
   async refresh(
     ctx: ServiceContext,
     b: { refreshToken?: string; attemptId?: string },
-    opts: { concurrentGrace?: boolean; surface?: SessionSurface } = {},
+    opts: {
+      concurrentGrace?: boolean; surface?: SessionSurface; expectedAccount?: string; expectedFamily?: string;
+    } = {},
   ): Promise<{ tokens?: OAuthTokens }> {
     const token = b.refreshToken;
     if (!token) throw new ServiceError("refresh_missing", 401, "missing refresh token");
@@ -372,7 +432,7 @@ export class SessionLifecycle {
     // `surfaceTtls`, so there is no second place for the two to drift apart. `attemptId` is read
     // at this door, BEFORE the rotation, so a malformed one refuses without consuming anything.
     const tokens = await this.rotateRefresh(
-      ctx, token, opts.concurrentGrace === true, opts.surface, readAttemptId(b.attemptId),
+      ctx, token, opts.concurrentGrace === true, opts.surface, readAttemptId(b.attemptId), opts,
     );
     return { tokens };
   }
@@ -384,11 +444,13 @@ export class SessionLifecycle {
    * tail: the device row carries the TOKEN's mint-time label, which makes revocation aimable;
    * `kind` is the REDEEMER's declaration and names the DEVICE ROW only (closed set) — never the
    * TTL surface: the mint pins `surface: "native"`, the bearer reality; and `twofaAt: null` — a
-   * pairing token lives up to fifteen minutes, past what a step-up argument proves. NULL fails
-   * step-up closed, so pairing cannot beget pairing.
+   * pairing token lives up to five minutes, past what a step-up argument proves. NULL fails
+   * step-up closed, so pairing cannot beget pairing. The one bounded exception is a phone app's handoff to its
+   * sibling on the same phone (`mintAppHandoff`): it costs the minter its refresh token, and the device it makes
+   * records its parent (`handedOffFrom`), so a sweep or a take-back of the parent ends it too.
    */
   async establishPairedDevice(
-    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind },
+    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind; handedOffFrom?: string | null },
   ): Promise<{ tokens: OAuthTokens }> {
     // The runtime whitelist behind the type, for JavaScript callers and wire input — the same
     // division `mintPairingToken` establishes for its grant.
@@ -400,7 +462,7 @@ export class SessionLifecycle {
     const user = await this.loadUser(db, b.userId);
     const [dev] = await db.insert(devices).values({
       accountId: user.accountId, userId: user.id, kind: b.kind,
-      label: b.label, ip: ctx.ip ?? "",
+      label: b.label, ip: ctx.ip ?? "", handedOffFrom: b.handedOffFrom ?? null,
     }).returning();
     const established = await this.establish(ctx, user, {
       // The declared kind rides on the DEVICE ROW above; the lifetime surface is pinned to the
@@ -487,8 +549,14 @@ export class SessionLifecycle {
       or(eq(sessions.deviceId, deviceId), and(eq(sessions.id, deviceId), isNull(sessions.deviceId)))!,
     ];
     // The shared core: fenced, in id order, the pending grants voided around the claim.
-    const { revoked } = await this.revokeClaimedSessions(ctx, userId, preds, ctx.now());
-    if (revoked > 0) return;
+    // A take-back in Devices ends what this device handed its sign-in to, transitively.
+    const { revoked } = await this.revokeClaimedSessions(ctx, userId, preds, ctx.now(), { handedOffFrom: deviceId });
+    if (revoked > 0) {
+      // The take-back has committed: the device is stamped and the account's other clients are told
+      // (`device-doorbell.ts`). Only here: no other ending of a session is a take-back in Devices.
+      await ringDeviceRevoked(ctx, { accountId: ctx.accountId, userId, deviceId });
+      return;
+    }
     // The core audits a claim; a revoke that matched nothing is still written down, as it always was.
     const db = asTx(ctx);
     const u = await this.loadUser(db, userId);
@@ -556,7 +624,7 @@ export class SessionLifecycle {
    * is `revokeFamily`'s exact reach.
    */
   protected async revokeClaimedSessions(
-    ctx: ServiceContext, userId: string, preds: SQL[], now: Date,
+    ctx: ServiceContext, userId: string, preds: SQL[], now: Date, cascade?: { handedOffFrom: string },
   ): Promise<{ revoked: number; familyIds: string[] }> {
     return this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
@@ -577,6 +645,9 @@ export class SessionLifecycle {
             inArray(refreshTokens.familyId, families.slice(i, i + 500)),
             isNull(refreshTokens.revokedAt),
           ));
+      }
+      if (cascade && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cascade.handedOffFrom)) {
+        families.push(...await this.revokeHandedOff(tx, userId, [cascade.handedOffFrom], now));
       }
       await this.pruneWakeRegistrations(tx, families);
       await this.voidPendingGrants(tx, userId, now);
@@ -624,7 +695,8 @@ export class SessionLifecycle {
   protected async voidPendingGrants(db: Tx, userId: string, now: Date): Promise<void> {
     await db.update(pairingTokens).set({ revokedAt: now }).where(and(
       eq(pairingTokens.createdByUserId, userId),
-      eq(pairingTokens.grant, "device-pair"),
+      // Both grants that mint a session: a pairing's code and a phone app's handoff.
+      inArray(pairingTokens.grant, ["device-pair", "app-handoff"]),
       isNull(pairingTokens.consumedAt),
       isNull(pairingTokens.revokedAt),
       gt(pairingTokens.expiresAt, now),
@@ -853,7 +925,7 @@ export class SessionLifecycle {
     // ROLLBACK half is not this line's doing and was once wrongly claimed here: it belongs to
     // `inTransaction`, which buffers a report made inside a transaction and forwards it only on
     // commit. See ACCOUNT_HEADER in `packages/api/src/app.ts`.
-    ctx.noteCredentialAccount?.(user.accountId);
+    ctx.noteCredentialAccount?.(user.accountId, familyId);
     return {
       status: "authenticated",
       user: await this.sessionUser(db, user.id),
@@ -902,9 +974,8 @@ export class SessionLifecycle {
    */
   protected async rotateRefresh(
     ctx: ServiceContext, presented: string, grace: boolean, surface?: SessionSurface,
-    attemptId?: string,
+    attemptId?: string, expected: { expectedAccount?: string; expectedFamily?: string } = {},
   ): Promise<OAuthTokens> {
-    const db = asTx(ctx);
     const now = ctx.now();
     const tokenHash = hashToken(presented);
     // WHICH ATTEMPT is spending this token — hashed, for the token's own reason: a client-chosen
@@ -917,36 +988,19 @@ export class SessionLifecycle {
     // `surface` lands on the cookie window — see `surfaceTtls`, which owns that decision.
     const ttls = surfaceTtls(this.cfg, surface);
 
-    // A ROTATION IS NOT A MINT, so it does not pass through `establish` and needs the refusal of
-    // its own. Asked BEFORE the consuming UPDATE below, so a refused request rotates nothing:
-    // the token stays live for the client that legitimately holds it.
-    //
-    // The read costs a lookup on the unique `token_hash` index, and only when a session actually
-    // resolved. The ordinary web refresh presents an EXPIRED access token, so `ctx.accountId` is
-    // empty and this branch never runs — the sessionless cookie path is untouched, which is the
-    // condition this whole change was ruled under.
-    if (ctx.accountId) {
-      // The SAME predicates as the consuming update — this refuses only what would otherwise have
-      // been ROTATED. A CONSUMED token is not a conflict, it is EVIDENCE: presenting a spent
-      // refresh token is how theft announces itself, and the classification answers by revoking
-      // the family. A hash-only lookup answered 409 first and returned — so anyone holding a
-      // stolen, already-spent token of B's could SUPPRESS B's theft detection indefinitely by
-      // also holding any session of their own. Falling through grants nothing new: presenting B's
-      // spent token with NO session reaches the same sweep, and an arm that would answer it again
-      // refuses in `mintRotation`.
-      const [presentedRow] = await db.select({ accountId: refreshTokens.accountId })
-        .from(refreshTokens)
-        .where(and(
-          eq(refreshTokens.tokenHash, tokenHash),
-          isNull(refreshTokens.consumedAt),
-          isNull(refreshTokens.revokedAt),
-          gt(refreshTokens.expiresAt, now),
-        ))
-        .limit(1);
-      // An UNKNOWN token is not a conflict either — it falls through to the 401 below, which is the
-      // answer it deserves and the one that says nothing about whether it ever existed.
-      if (presentedRow) refuseCrossAccountCredential(ctx, presentedRow.accountId);
+    // The exact digest identifies a single refresh row before there is an account.
+    const [presentedRow] = await bridgeTx(keyedCredentialDb(ctx, tokenHash)).select({
+      accountId: refreshTokens.accountId, consumedAt: refreshTokens.consumedAt,
+      revokedAt: refreshTokens.revokedAt, expiresAt: refreshTokens.expiresAt,
+    }).from(refreshTokens).where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
+    if (!presentedRow) throw new ServiceError("refresh_revoked", 401, "invalid refresh token");
+    // A live foreign credential remains unspent. A spent one still reaches reuse
+    // classification and revocation, even alongside a session for another account.
+    if (!presentedRow.consumedAt && !presentedRow.revokedAt && presentedRow.expiresAt > now) {
+      refuseCrossAccountCredential(ctx, presentedRow.accountId);
     }
+    const owner = credentialContext(ctx, presentedRow.accountId);
+    const db = asTx(owner);
 
     // ONE COMMIT: the session row, the claim, the checks and the successor. The claim used to
     // autocommit alone, so a fault after it spent the token and minted nothing, and the client's
@@ -955,12 +1009,18 @@ export class SessionLifecycle {
     // hold a token row while waiting for the session, a cycle with each of them. A refusal RETURNS
     // its verdict so its revoke commits; an unclaimed token leaves for the classification below,
     // which runs on the autocommitting handle, because the sweep's fallback there depends on it.
-    const outcome = await this.inTransaction(ctx, async (txCtx): Promise<HotPathVerdict> => {
+    const outcome = await this.inTransaction(owner, async (txCtx): Promise<HotPathVerdict> => {
       const tx = asTx(txCtx);
       const [session] = await dialect(ctx.db).forUpdate(tx.select().from(sessions)
         .where(eq(sessions.id, tx.select({ id: refreshTokens.sessionId }).from(refreshTokens)
           .where(eq(refreshTokens.tokenHash, tokenHash))))
         .limit(1));
+      if (session && (
+        (expected.expectedAccount !== undefined && session.accountId !== expected.expectedAccount)
+        || (expected.expectedFamily !== undefined && session.familyId !== expected.expectedFamily)
+      )) {
+        throw new ServiceError("session_mismatch", 409, "the browser session changed");
+      }
       const [row] = await tx.update(refreshTokens)
         .set({ consumedAt: now, consumedByAttempt: attemptHash })
         .where(and(
@@ -989,7 +1049,7 @@ export class SessionLifecycle {
         await this.revokeFamily(tx, row.familyId, now);
         return { kind: "refused", message: "session has reached its maximum lifetime" };
       }
-      return { kind: "minted", tokens: await this.mintRotation(txCtx, tx, row, now, ttls) };
+      return { kind: "minted", tokens: await this.mintRotation(txCtx, tx, row, now, ttls, ctx.accountId) };
     });
     if (outcome.kind === "minted") return outcome.tokens;
     if (outcome.kind === "refused") throw new ServiceError("refresh_revoked", 401, outcome.message);
@@ -998,13 +1058,17 @@ export class SessionLifecycle {
     const [existing] = await db.select().from(refreshTokens)
       .where(eq(refreshTokens.tokenHash, tokenHash)).limit(1);
     if (!existing) throw new ServiceError("refresh_revoked", 401, "invalid refresh token");
+    if ((expected.expectedAccount !== undefined && existing.accountId !== expected.expectedAccount)
+      || (expected.expectedFamily !== undefined && existing.familyId !== expected.expectedFamily)) {
+      throw new ServiceError("session_mismatch", 409, "the browser session changed");
+    }
     if (existing.revokedAt) {
       // A session revoked only after its own window closed (the reaper's) ended by expiry. The two
       // stored stamps decide, never `now`: a sign-out stays revoked however long ago it was.
       const [s] = await db.select({ refreshExpiresAt: sessions.refreshExpiresAt, revokedAt: sessions.revokedAt })
         .from(sessions).where(eq(sessions.id, existing.sessionId)).limit(1);
       if (s?.revokedAt && s.refreshExpiresAt.getTime() <= s.revokedAt.getTime()) {
-        throw await this.expiredRefusal(ctx, existing, "lapsed");
+        throw await this.expiredRefusal(owner, existing, "lapsed");
       }
       throw new ServiceError("refresh_revoked", 401, "invalid refresh token");
     }
@@ -1064,7 +1128,7 @@ export class SessionLifecycle {
         if (existing.consumedByAttempt !== null && existing.consumedByAttempt !== presentedName) {
           throw await this.sweepFamily(ctx, existing, now, "refresh_attempt_revoked", "attempt_mismatch");
         }
-        throw await this.expiredRefusal(ctx, existing, "superseded");
+        throw await this.expiredRefusal(owner, existing, "superseded");
       }
       // The sweep leaves a ROW, and sweep + row are ONE TRANSACTION — with the sweep REDONE
       // ALONE if it cannot commit. It used to leave nothing: the client got 401s and the only
@@ -1078,7 +1142,7 @@ export class SessionLifecycle {
       // writes `auth_events`. The user read is DEFENSIVE.
       throw await this.sweepFamily(ctx, existing, now, "refresh_reuse_revoked");
     }
-    throw await this.expiredRefusal(ctx, existing, "lapsed");
+    throw await this.expiredRefusal(owner, existing, "lapsed");
   }
 
   /**
@@ -1092,15 +1156,22 @@ export class SessionLifecycle {
     ctx: ServiceContext, existing: typeof refreshTokens.$inferSelect, now: Date,
     event: "refresh_reuse_revoked" | "refresh_attempt_revoked", cause?: "attempt_mismatch",
   ): Promise<ServiceError> {
-    const db = asTx(ctx);
+    const owner = credentialContext(ctx, existing.accountId);
+    const db = asTx(owner);
+    // The families of the apps this family's device signed in, whichever arm below revoked them: pruned with it.
+    let handedOff: string[] = [];
     try {
-      await this.inTransaction(ctx, async (txCtx) => {
+      await this.inTransaction(owner, async (txCtx) => {
         const tx = asTx(txCtx);
         await this.revokeFamily(tx, existing.familyId, now);
+        // What this family's device handed its sign-in to goes with it: a stolen token's children end with the theft.
+        handedOff = await this.revokeHandedOff(tx, existing.userId, await this.deviceOfSession(tx, existing.sessionId), now);
         const [reuseUser] = await tx.select().from(users)
           .where(eq(users.id, existing.userId)).limit(1);
+        // ` handed_off=<n>` closes the line only where the sweep ended apps this family's device had signed in.
         const detail = `family=${existing.familyId} session=${existing.sessionId}`
-          + `${await this.sweepDepth(tx, existing, now)}${cause ? ` cause=${cause}` : ""}`;
+          + `${await this.sweepDepth(tx, existing, now)}${cause ? ` cause=${cause}` : ""}`
+          + `${handedOff.length > 0 ? ` handed_off=${handedOff.length}` : ""}`;
         await this.audit(tx, reuseUser ?? null, event, undefined, txCtx, detail);
       }, { fence: { accountId: existing.accountId } });
     } catch (err) {
@@ -1108,10 +1179,11 @@ export class SessionLifecycle {
       if (isAccountErased(err)) return erasedRefusal();
       // The audit write must not block the security action: reuse still revokes the family.
       await this.revokeFamily(db, existing.familyId, now);
+      handedOff = await this.revokeHandedOff(db, existing.userId, await this.deviceOfSession(db, existing.sessionId), now);
     }
     // After the revoke, and never in its way: the refusal and its record stand without the prune.
     try {
-      await this.pruneWakeRegistrations(db, [existing.familyId]);
+      await this.pruneWakeRegistrations(db, [existing.familyId, ...handedOff]);
     } catch {
       /* the row stays until its endpoint dies */
     }
@@ -1175,10 +1247,11 @@ export class SessionLifecycle {
     base: { accountId: string; userId: string; sessionId: string; familyId: string },
     now: Date,
     ttls: SurfaceTtls,
+    sessionAccountId: string,
   ): Promise<OAuthTokens> {
     // Every arm mints here, the ones answering a SPENT token included: the throw rolls back the
     // arm's claim, its kills and its row, so another account's line is left as it was.
-    refuseCrossAccountCredential(ctx, base.accountId);
+    refuseCrossAccountCredential({ accountId: sessionAccountId }, base.accountId);
     const newRefresh = generateToken();
     const newAccess = generateToken();
     await db.insert(refreshTokens).values({
@@ -1210,7 +1283,7 @@ export class SessionLifecycle {
     // `inTransaction`, which buffers this and forwards it only once the transaction commits. A
     // rolled-back mint therefore names nobody. That indirection is the whole reason the buffer
     // exists — see `inTransaction`.
-    ctx.noteCredentialAccount?.(base.accountId);
+    ctx.noteCredentialAccount?.(base.accountId, base.familyId);
     return {
       accessToken: newAccess, refreshToken: newRefresh, tokenType: "Bearer",
       expiresIn: Math.floor(this.cfg.accessTtlMs / 1000),
@@ -1233,7 +1306,7 @@ export class SessionLifecycle {
     now: Date,
     ttls: SurfaceTtls,
   ): Promise<OAuthTokens | null> {
-    return this.inTransaction(ctx, async (txCtx) => {
+    return this.inTransaction(credentialContext(ctx, existing.accountId), async (txCtx) => {
       const tx = asTx(txCtx);
       const [session] = await dialect(ctx.db).forUpdate(tx.select().from(sessions)
         .where(eq(sessions.id, existing.sessionId)).limit(1));
@@ -1260,7 +1333,7 @@ export class SessionLifecycle {
         .where(eq(users.id, existing.userId)).limit(1);
       await this.audit(tx, user ?? null, "refresh_replayed", undefined, txCtx,
         `family=${existing.familyId} session=${existing.sessionId} surface=cookie`);
-      return this.mintRotation(txCtx, tx, existing, now, ttls);
+      return this.mintRotation(txCtx, tx, existing, now, ttls, ctx.accountId);
     }, { fence: { accountId: existing.accountId } });
   }
 
@@ -1281,7 +1354,7 @@ export class SessionLifecycle {
     now: Date,
     ttls: SurfaceTtls,
   ): Promise<OAuthTokens | null> {
-    return this.inTransaction(ctx, async (txCtx) => {
+    return this.inTransaction(credentialContext(ctx, existing.accountId), async (txCtx) => {
       const tx = asTx(txCtx);
       // THE SERIALIZATION POINT, the recovery path's: two retries of one attempt arriving
       // together must not both mint. Inside the lock the tail read and its claim are one view.
@@ -1328,7 +1401,7 @@ export class SessionLifecycle {
         .where(eq(users.id, existing.userId)).limit(1);
       await this.audit(tx, user ?? null, "refresh_replayed", undefined, txCtx,
         `family=${existing.familyId} session=${existing.sessionId}`);
-      return this.mintRotation(txCtx, tx, tail, now, ttls);
+      return this.mintRotation(txCtx, tx, tail, now, ttls, ctx.accountId);
     }, { fence: { accountId: existing.accountId } });
   }
 
@@ -1353,7 +1426,7 @@ export class SessionLifecycle {
     // its mint, so this bounds recovery at one rolling refresh window after the loss.
     if (existing.expiresAt.getTime() <= now.getTime()) return null;
     try {
-      return await this.inTransaction(ctx, async (txCtx) => {
+      return await this.inTransaction(credentialContext(ctx, existing.accountId), async (txCtx) => {
         const tx = asTx(txCtx);
         // THE SERIALIZATION POINT: the session row, locked for the whole sequence. Without
         // it, the descendant check raced the claim — a legitimate rotation could consume the
@@ -1412,7 +1485,7 @@ export class SessionLifecycle {
           // recovery loser, or a stale presenter colliding with the one live rotation. It
           // converges exactly like a grace-loser — the shared jar takes whichever cookie
           // lands last.
-          return this.mintRotation(txCtx, tx, existing, now, ttls);
+          return this.mintRotation(txCtx, tx, existing, now, ttls, ctx.accountId);
         }
         if (verdict === "used") return null;   // a second holder in real use: the sweep's case
         // IDLE-BOUND: nothing was spent since — but that is only evidence of a lost response
@@ -1442,7 +1515,7 @@ export class SessionLifecycle {
           // handler would clear the jar that rotation had just refilled. A fresh spend converges;
           // anything else is genuinely the sweep's case (no live tip at all).
           return (await classify()) === "racer"
-            ? this.mintRotation(txCtx, tx, existing, now, ttls)
+            ? this.mintRotation(txCtx, tx, existing, now, ttls, ctx.accountId)
             : null;
         }
         // Audited IN the claim's transaction: no recovery without its row while the
@@ -1453,7 +1526,7 @@ export class SessionLifecycle {
           .where(eq(users.id, existing.userId)).limit(1);
         await this.audit(tx, user ?? null, "refresh_recovered", undefined, txCtx,
           `family=${existing.familyId} session=${existing.sessionId}`);
-        return this.mintRotation(txCtx, tx, existing, now, ttls);
+        return this.mintRotation(txCtx, tx, existing, now, ttls, ctx.accountId);
       }, { fence: { accountId: existing.accountId } });
     } catch (err) {
       /*
@@ -1470,6 +1543,54 @@ export class SessionLifecycle {
       if (classifyRefreshFailure(err) === "session_refused") return null;
       throw err;
     }
+  }
+
+  /** The device a session belongs to, as a frontier for {@link revokeHandedOff}: none for a device-less session. */
+  private async deviceOfSession(db: Tx, sessionId: string): Promise<string[]> {
+    const [row] = await db.select({ deviceId: sessions.deviceId }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+    return row?.deviceId ? [row.deviceId] : [];
+  }
+
+  /**
+   * EVERY LIVE SESSION HANDED OFF FROM THESE DEVICES, AND FROM THEIRS, revoked with their refresh rows: a phone app's
+   * sibling (`mintAppHandoff`) is ended by a reuse sweep or a take-back of the device that handed it its sign-in.
+   * Breadth first, in id order within each step, with a visited set and no depth cap; answers the families it
+   * revoked. Signing out inside an app, a re-pair and a take-back of the child leave the parent alone.
+   */
+  protected async revokeHandedOff(tx: Tx, userId: string, from: readonly string[], now: Date): Promise<string[]> {
+    const visited = new Set(from);
+    let frontier = [...from];
+    const families: string[] = [];
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      for (let i = 0; i < frontier.length; i += 500) {
+        const children = await tx.select({ id: devices.id }).from(devices)
+          .where(and(eq(devices.userId, userId), inArray(devices.handedOffFrom, frontier.slice(i, i + 500))))
+          .orderBy(asc(devices.id));
+        for (const { id } of children) if (!visited.has(id)) (visited.add(id), next.push(id));
+      }
+      frontier = next;
+      for (let i = 0; i < frontier.length; i += 500) {
+        const claimed = await tx.update(sessions).set({ revokedAt: now })
+          .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt), inArray(sessions.deviceId, frontier.slice(i, i + 500))))
+          .returning({ familyId: sessions.familyId });
+        families.push(...new Set(claimed.map((r) => r.familyId)));
+      }
+    }
+    for (let i = 0; i < families.length; i += 500) {
+      await tx.update(refreshTokens).set({ revokedAt: now })
+        .where(and(inArray(refreshTokens.familyId, families.slice(i, i + 500)), isNull(refreshTokens.revokedAt)));
+    }
+    return families;
+  }
+
+  /** {@link AppHandoffAuditor}: a handoff's mint, written to the trail with the minting device and the target's word. */
+  async noteAppHandoffIssued(
+    ctx: ServiceContext, o: { userId: string; deviceId: string; target: "ohmail" | "ohcal" },
+  ): Promise<void> {
+    const db = asTx(ctx);
+    const user = await this.loadUser(db, o.userId);
+    await this.audit(db, user, "app_handoff_issued", undefined, ctx, `device=${o.deviceId} target=${o.target}`);
   }
 
   /**
@@ -1585,13 +1706,18 @@ export class SessionLifecycle {
     /* no push table on the lifecycle half */
   }
 
+  /** The hosted sign-out also discards unfinished mailbox grants for the revoked family. */
+  protected async pruneDeviceGrants(_db: Tx, _familyIds: readonly string[]): Promise<void> {
+    /* no mailbox grant table on the lifecycle half */
+  }
+
   /**
    * The account this token belonged to, when that account's erasure committed; else `null`.
    * Asked by the session door only for a token that resolved to NOTHING, and only when the client
    * declared it understands the answer. The record is cloud-half (cloud 0043) and a local store
    * erases no accounts, so the base answers null; `AuthService` overrides it with the real read.
    */
-  async bearerOfErasedAccount(_db: Db, _token: string, _now: Date): Promise<string | null> {
+  async bearerOfErasedAccount(_db: UnboundDb, _token: string, _now: Date): Promise<string | null> {
     return null;
   }
 }

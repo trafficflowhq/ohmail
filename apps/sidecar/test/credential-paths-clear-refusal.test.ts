@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -30,7 +29,7 @@ import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs
  * from the seal route and by deleting `clearSignInRefusal` from the purge the sign-out calls.
  */
 
-const ENGINE = readFileSync(fileURLToPath(new URL("../src/engine.ts", import.meta.url)), "utf8");
+const ENGINE = readEngineAsOneText();
 
 /** The body of the block `opener` introduces, brace-matched forward over blanked source. */
 function regionAfter(code: string, opener: string): string {

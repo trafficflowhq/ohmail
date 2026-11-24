@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildToken } from "../shell/app-update";
+import { buildToken } from "@ohmail/app-logic/doors/app-update";
 
 /**
  * Which build is this origin serving right now — one fact, for one reader: a tab that loaded weeks ago and wants to

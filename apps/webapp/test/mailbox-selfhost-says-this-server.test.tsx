@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import { filerKey, type FilerSentence, type MailState, type WebFiler } from "../app/shell/mail-state";
+import { filerKey, type FilerSentence, type MailState, type WebFiler } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A SELF-HOSTED WEB BUILD NAMES ITSELF, NEVER OHMAIL CLOUD. Settings → Mailboxes said "Cloud is not
@@ -68,7 +68,7 @@ vi.mock("../app/api-client", async () => {
   };
 });
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: QUIET, refresh: () => {} }),
 }));
 

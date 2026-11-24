@@ -15,7 +15,7 @@ import {
   type MailState,
   type MailStateInputs,
   type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THREE STATEMENTS ABOUT ONE MAILBOX, ON ONE SCREEN, AND NO TWO OF THEM AGREED.
@@ -114,6 +114,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   engineFreshness: { state: "current" as const, asOf: new Date(NOW - 30_000).toISOString() },
   now: NOW,
   demo: false,
+  scope: null,
   ...over,
   /* `pulled` follows `mirrored` unless a case names it: that is the shape wherever no producer
      answered a count, which is every test here but the import numerator's own. */
@@ -331,8 +332,8 @@ vi.mock("../app/api-client", () => ({
   },
 }));
 
-vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: mockMailState, refresh: () => {} }),
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
+  useMailState: () => ({ state: mockMailState, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 const dto = (over: Partial<MailboxDTO>): MailboxDTO => ({
@@ -350,20 +351,45 @@ async function unmount(): Promise<void> {
   host = null;
 }
 
-/** Mount the real pane over the given list and return its host element. */
+/**
+ * Mount the real pane over the given list and return its host element: Settings › Mailboxes as the web draws it, the
+ * mail's own pane over the web's own wire (`webMailboxesWire`, which reads the list off the server client mocked
+ * above and narrows each row as the page does), under the page's catalogue, with the web's answers (`mailboxes:
+ * "here"`, the managed service). Every slot this file does not exercise is handed as a host that has none.
+ */
 async function mount(...items: MailboxDTO[]): Promise<HTMLDivElement> {
   await unmount();
   listed.splice(0, listed.length, ...items);
-  const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
+  const { MailboxesPane } = await import("@ohmail/app/mailboxes");
+  const { TextProvider } = await import("@ohmail/app/text");
+  const { NONE } = await import("@ohmail/app/host");
+  const { webMailboxesWire } = await import("../app/(product)/mailbox/mailboxes-wire.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
+  const pane = h(MailboxesPane, {
+    wire: webMailboxesWire(), connect: NONE, capability: "here", service: "managed", factor: NONE, calendar: NONE,
+    opened: null, stage: true, subscriptionPane: false, go: () => undefined,
+    ground: { importing: false, refresh: () => undefined, sync: () => undefined }, hidden: () => false,
+  });
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages, children: h(MailboxSection) }));
+    root!.render(h(TextProvider, { locale: "en", messages: messages as never, timeZone: "UTC", children: pane }));
   });
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
   return host;
 }
+
+/** The pane's rows: one button a mailbox, named by its address (the kit's account row). */
+const rowsOf = (el: HTMLElement): HTMLElement[] =>
+  [...el.querySelectorAll<HTMLElement>("button[aria-expanded]")];
+
+/** A person opens a row by pressing it: what the row says beyond its one line stands in it, opened. */
+async function open(row: HTMLElement): Promise<void> {
+  await act(async () => { row.click(); });
+}
+
+/** Work under way, said: a control at work (`aria-busy`) or the kit's waiting mark, which is decorative and unnamed. */
+const working = (el: HTMLElement): Element | null => el.querySelector('[aria-busy="true"], svg.spin');
 
 afterEach(async () => { mockMailState = QUIET; await unmount(); });
 
@@ -384,7 +410,7 @@ afterEach(async () => { mockMailState = QUIET; await unmount(); });
 async function strip(state: MailState): Promise<string> {
   await unmount();
   mockMailState = state;
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -403,9 +429,9 @@ describe("the strip renders the stand-down sentence it is handed", () => {
     const sync = messages.sync as unknown as Record<string, string>;
     expect(text, "the copy key did not resolve — the strip rendered the key path")
       .not.toContain("blocked_organized_elsewhere");
-    expect(text).toContain(sync.blocked_organized_elsewhere_local!);
+    expect(text).toContain(sync.blocked_organized_elsewhere_local!.replace(/\.$/, ""));
     expect(text).toContain("person@example.test");
-    expect(text, "and the false sentence must be nowhere near it").not.toContain(sync.noMailbox!);
+    expect(text, "and the false sentence must be nowhere near it").not.toContain(sync.noMailbox!.replace(/\.$/, ""));
   });
 
   it("no spinner: a claimed mailbox is a CONDITION, not work in progress", async () => {
@@ -413,7 +439,7 @@ describe("the strip renders the stand-down sentence it is handed", () => {
     // `blocked`, which is already on the right side of it — asserted here because reaching it
     // through a different route is exactly how a state ends up on the wrong side.
     await strip({ ...QUIET, key: "blocked", reason: "organized_elsewhere_local", address: "a@b.test" });
-    expect(host!.querySelector(".mbx-spin"), "a stand-down turned a spinner").toBeNull();
+    expect(working(host!), "a stand-down turned a spinner").toBeNull();
   });
 });
 
@@ -423,15 +449,17 @@ describe("the row says WHY, and never claims mail is on its way", () => {
     // "No mail yet — added {when}" beside a spinner, on a mailbox nothing will ever sync. It is
     // reached because `status === 'disabled'` matches none of the row's branches and falls
     // through to the `stamp === null` arm.
+    await open(rowsOf(el)[0]!);
     expect(
       el.textContent ?? "",
       "the row promised a first sync on a mailbox the worker has stopped serving",
     ).not.toContain("No mail yet");
-    expect(el.querySelector(".mbx-spin"), "…and turned a spinner over it").toBeNull();
+    expect(working(el), "…and turned a spinner over it").toBeNull();
   });
 
   it("…and it says which one, in a sentence", async () => {
     const el = await mount(dto({ status: "disabled", disabledReason: "organized_elsewhere:local" }));
+    await open(rowsOf(el)[0]!);
     const mb = messages.mailboxes as unknown as Record<string, string>;
     expect(el.textContent ?? "").toContain(mb.standDown_organized_elsewhere_local!);
     expect(el.textContent ?? "", "and what a person can actually do about it")
@@ -442,7 +470,7 @@ describe("the row says WHY, and never claims mail is on its way", () => {
     /**
      * The distinction the COLUMN cannot make, and the reason the wording is what it is.
      *
-     * `standDownReason` (`apps/worker/src/lease.ts:167`) maps BOTH verdicts onto the same three
+     * `standDownReason` (`packages/organizer/src/lease.ts:167`) maps BOTH verdicts onto the same three
      * values: `stand_down` (a FRESH foreign claim — somebody is organizing it right now) and
      * `available` (a STALE one — nobody is, and we refuse to self-promote). the observed case
      * was the second: a local worker three hours dead. So "another install IS ORGANIZING this
@@ -482,6 +510,7 @@ describe("the row says WHY, and never claims mail is on its way", () => {
 
   it("an ordinary disconnect is untouched — no reason, no explanation invented", async () => {
     const el = await mount(dto({ status: "disabled" }));
+    await open(rowsOf(el)[0]!);
     const mb = messages.mailboxes as unknown as Record<string, string>;
     expect(el.textContent ?? "").toContain(mb.status_disabled!);
     for (const token of STAND_DOWN_REASONS) {
@@ -495,7 +524,7 @@ describe("the row says WHY, and never claims mail is on its way", () => {
   it("the earlier fix SURVIVES: a never-synced live mailbox still reads `connecting`", async () => {
     const el = await mount(dto({ status: "connected", lastSyncAt: null }));
     const mb = messages.mailboxes as unknown as Record<string, string>;
-    expect(el.querySelector(".mbx-sub")?.textContent ?? "").toContain(mb.status_connecting!);
+    expect(rowsOf(el)[0]?.textContent ?? "").toContain(mb.status_connecting!);
     expect(el.textContent ?? "", "the status-honesty fix was undone").not.toMatch(/\bconnected\b/i);
   });
 });
@@ -511,9 +540,10 @@ describe("a dead row is never a peer of the live one at the same address", () =>
       }),
     );
     expect(
-      el.querySelectorAll(".mbx-row").length,
+      rowsOf(el).length,
       "the disabled row stayed listed beside the live one, same address, for ever",
     ).toBe(1);
+    await open(rowsOf(el)[0]!);
     const mb = messages.mailboxes as unknown as Record<string, string>;
     expect(el.textContent ?? "", "…and the fact that there had been an earlier one was simply lost")
       .toContain(mb.superseded!);
@@ -533,7 +563,7 @@ describe("a dead row is never a peer of the live one at the same address", () =>
       dto({ id: "mb-dead", address: "Person@Example.TEST", status: "disabled" }),
       dto({ id: "mb-live", address: "person@example.test", status: "connected" }),
     );
-    expect(folded.querySelectorAll(".mbx-row").length).toBe(1);
+    expect(rowsOf(folded).length).toBe(1);
 
     /**
      * And whitespace NOT, which is the part worth a test rather than a comment. `lower()` does
@@ -548,7 +578,7 @@ describe("a dead row is never a peer of the live one at the same address", () =>
       dto({ id: "mb-b", address: "person@example.test", status: "connected" }),
     );
     expect(
-      spaced.querySelectorAll(".mbx-row").length,
+      rowsOf(spaced).length,
       "the grouping folded whitespace the unique index does not, and hid a live mailbox",
     ).toBe(2);
   });
@@ -558,12 +588,12 @@ describe("a dead row is never a peer of the live one at the same address", () =>
       dto({ id: "mb-a", address: "a@example.test", status: "connected" }),
       dto({ id: "mb-b", address: "b@example.test", status: "connected" }),
     );
-    expect(el.querySelectorAll(".mbx-row").length, "the grouping swallowed a real mailbox").toBe(2);
+    expect(rowsOf(el).length, "the grouping swallowed a real mailbox").toBe(2);
   });
 
   it("a disabled row with NO live sibling still gets its own row", async () => {
     const el = await mount(dto({ id: "mb-dead", status: "disabled", disabledReason: "organized_elsewhere:local" }));
-    expect(el.querySelectorAll(".mbx-row").length, "the only mailbox on the account vanished").toBe(1);
+    expect(rowsOf(el).length, "the only mailbox on the account vanished").toBe(1);
   });
 });
 
@@ -603,7 +633,8 @@ describe("the copy may not promise a takeover Cloud cannot perform, and may not 
     const copy = JSON.stringify(messages.mailboxes ?? {});
     expect(copy, "the takeover control has no copy").toMatch(/organizerConfirm/);
 
-    const pane = read("apps/webapp/app/(product)/mailbox/MailboxSection.tsx");
+    // THE PANE's CALLS are its wire on the web (`webMailboxesWire`): the Settings pane calls nothing else.
+    const pane = read("apps/webapp/app/(product)/mailbox/mailboxes-wire.ts");
     expect(pane, "the pane never calls the check").toMatch(/mailboxApi\.organizer\(/);
     // RENAMED to `organize` when the ceremony grew its second half — the FIRST consent, where
     // there is nobody to take a mailbox over from. Same one call, same one stamp; the old name
@@ -719,7 +750,10 @@ describe("the copy may not promise a takeover Cloud cannot perform, and may not 
      * somebody has been shown that answer.
      */
     const el = await mount(dto({ status: "disabled", disabledReason: "organized_elsewhere:local" }));
-    const buttons = [...(el.querySelector(".mbx-row")?.querySelectorAll("button") ?? [])];
+    const row = rowsOf(el)[0]!;
+    await open(row);
+    /* The row's own controls: those it stands beside and those its opened lines hold, never the row's own press. */
+    const buttons = [...(row.closest("[data-open]")?.querySelectorAll("button") ?? [])].filter((b) => b !== row);
     expect(buttons.length, "the stand-down row grew a second control").toBe(1);
     const label = buttons[0]?.textContent ?? "";
     const mb = messages.mailboxes as unknown as Record<string, string>;

@@ -1,11 +1,10 @@
 /** @vitest-environment jsdom */
+import type { MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type MessageBodyWire,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
@@ -17,7 +16,7 @@ import {
   WAKE_STREAM_SILENCE_MS,
   startSyncScheduler,
   type WakeStreamLike,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * A REFUSED STREAM IS ASKED FOR AGAIN, ONCE A MINUTE. The per-account cap refuses a tab while dead

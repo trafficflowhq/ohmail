@@ -1,19 +1,17 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   BACKLOG_PUBLISH_PAGES,
-  DEMO_NOW,
-  FixturesAdapter,
   LAST_DRAIN_AT_META,
   MemoryMirrorStore,
   OhmailEngine,
   OUTBOX_TYPE,
   STALE_RESUME_MS,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * ONE POLL, ONE NOTIFY. A drain's page, what its settle retires and its freshness stamp reach a

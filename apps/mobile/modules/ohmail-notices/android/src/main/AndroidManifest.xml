@@ -1,0 +1,3 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- No permission and no component of its own: posting is the app's own permission, which the app asks for. -->
+</manifest>

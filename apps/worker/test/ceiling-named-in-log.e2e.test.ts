@@ -6,7 +6,7 @@ import { StaticKeyProvider, createLogger } from "@trafficflow/core/mail";
 import { ImapBoundExceeded } from "@trafficflow/core/adapters/imap";
 import { startWorker } from "../src/index.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * A cycle that ends on one of our ceilings says WHICH one, through the real logger.
@@ -27,7 +27,7 @@ async function linesAfterFailure(err: unknown): Promise<Array<Record<string, unk
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   const fleet = new FakeAdapterFleet();

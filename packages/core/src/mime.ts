@@ -1,3 +1,4 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { createHash } from "node:crypto";
 import type { AddressObject, Attachment, ParsedMail } from "mailparser";
 import { canonicalId } from "./identity.js";
@@ -5,9 +6,10 @@ import { htmlWords } from "./html-text.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
 import { mailDate } from "./mail-date.js";
 import { ParseDeadlineExceeded, parseBounded, startParseBudget } from "./mime-parse.js";
-import type { NormalizedMessage, EmailAddress, AttachmentMeta } from "./types.js";
+import type { NormalizedMessage, AttachmentMeta } from "./types.js";
 import type { Logger } from "./log.js";
-import { CALENDAR_MESSAGE_CONTENT_CLASS, icsMethodOfContentType, isCalendarMime } from "./ics.js";
+import { CALENDAR_MESSAGE_CONTENT_CLASS, calendarPartRank, icsMethodOfContentType, isCalendarMime } from "./ics.js";
+import { INVITATION_PART_MAX_BYTES, INVITATION_PARTS_MAX, readLetterInvitation, type LetterCalendar } from "./invitation-mail.js";
 
 /**
  * What a decoded U+0000 becomes: U+FFFD REPLACEMENT CHARACTER, the code point Unicode
@@ -181,6 +183,36 @@ function withCalendarMethod(baseType: string, a: Attachment): string {
   const method = ct?.params?.method;
   if (typeof method !== "string" || !/^[A-Z-]{1,16}$/i.test(method)) return baseType;
   return `${baseType}; method=${method.toUpperCase()}`;
+}
+
+/**
+ * WHAT THE LETTER'S CALENDAR PARTS SAY, read here because here their decoded bytes are in hand and
+ * nowhere later (the bytes are never stored). The parts the card reads, chosen BEFORE any is
+ * decoded: calendar parts by their stored type, none over the byte bound, the first few in rank
+ * order; each decoded as UTF-8 whatever charset it declares, as the card's `Blob.text()` decodes it.
+ * Never throws: whatever a part does to the reader, the letter is stored as it would be without it.
+ */
+function letterCalendarOf(raw: readonly Attachment[], metas: readonly AttachmentMeta[]): LetterCalendar | undefined {
+  try {
+    const chosen: Array<{ i: number; contentType: string; bytes: Buffer }> = [];
+    raw.forEach((a, i) => {
+      const contentType = metas[i]?.contentType;
+      if (contentType === undefined || !isCalendarMime(contentType) || !Buffer.isBuffer(a.content)) return;
+      if (a.content.length === 0 || a.content.length > INVITATION_PART_MAX_BYTES) return;
+      chosen.push({ i, contentType, bytes: a.content });
+    });
+    const parts = chosen
+      .sort((a, b) => calendarPartRank(a.contentType) - calendarPartRank(b.contentType))
+      .slice(0, INVITATION_PARTS_MAX)
+      .map((c) => {
+        const text = c.bytes.toString("utf8");
+        return { id: String(c.i), contentType: c.contentType, text: text.charCodeAt(0) === 0xfeff ? text.slice(1) : text };
+      });
+    const invitation = parts.length === 0 ? undefined : readLetterInvitation(parts);
+    return invitation === undefined ? undefined : { invitation };
+  } catch {
+    return undefined;
+  }
 }
 
 function addrList(field: AddressObject | AddressObject[] | undefined): EmailAddress[] {
@@ -364,6 +396,7 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
   }
   const fromObj = parsed.from?.value?.[0];
   const attachments = (parsed.attachments ?? []).map(toAttachmentMeta);
+  const calendar = letterCalendarOf(parsed.attachments ?? [], attachments);
 
   // A part the html paints is inline, wherever it sits in the MIME tree. mailparser's `related`
   // only marks a cid part under `multipart/related`; a signature logo nested under
@@ -404,6 +437,7 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
     // NOT `attachments.length > 0` — see {@link isRealFile} for what that over-reports.
     hasAttachments: attachments.some(isRealFile),
     attachments,
+    ...(calendar !== undefined ? { calendar } : {}),
   };
 }
 

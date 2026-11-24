@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
-import { accounts, mailboxes, contacts as contactsTbl, messages, messageInstances, folderState, changeLog, threads, auditLog } from "@trafficflow/db";
+import { accountOfMessage, accounts, mailboxes, contacts as contactsTbl, messages, messageInstances, folderState, changeLog, threads, auditLog } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { carryDialect } from "@trafficflow/db/dialect";
@@ -31,7 +31,7 @@ import type { Change } from "../../src/ports.js";
  * columns and not five — and a `timestamptz` round trip is not a thing PGlite can be trusted to
  * reproduce.
  *
- * **`UNIQUE (message_id) WHERE is_primary` is a PARTIAL index**, the class of object CLAUDE.md
+ * **`UNIQUE (message_id) WHERE is_primary` is a PARTIAL index**, the class of object AGENTS.md
  * records PGlite misleading this repository about. Every write path here touches it.
  *
  * So the rows below are seeded in the SHAPE a pre-slice ingest wrote them: `dedup_key` as
@@ -115,7 +115,7 @@ describe.skipIf(!AVAILABLE)("message identity against real Postgres", () => {
       isPrimary: true,
     });
     await owned.db.insert(folderState).values({
-      messageId: row!.id, desiredFolder: locator.folder, observedFolder: locator.folder,
+      messageId: row!.id, accountId: accountOfMessage(row!.id), desiredFolder: locator.folder, observedFolder: locator.folder,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return row!.id;

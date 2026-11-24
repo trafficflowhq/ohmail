@@ -13,7 +13,7 @@ import {
 } from "@trafficflow/core/diagnostics";
 import { localStorageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
 
-import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 import { invokeShell } from "./bridge-fetch.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { BRIDGE_SELF_CHECK_KEY } from "./local-self-check.js";

@@ -1,0 +1,370 @@
+/* A page before the app: a top line, then the sentence, what it needs, one line and the buttons. */
+@layer oh {
+  .oh-page {
+    --oh-page-pad: max(var(--s7), calc((100% - 1120px) / 2));
+    --oh-page-lead: 200px;
+    --oh-page-material: 520px;
+    --oh-page-top: var(--s8);
+    --oh-page-back-ring: inset 0 0 0 1px var(--ctl-ring);
+    --oh-soft: var(--soft);
+    --oh-field-ground: var(--soft);
+    position: relative;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--stage);
+  }
+  .oh-page-top {
+    --oh-page-top-pad: 0 var(--oh-page-pad);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s4);
+    height: var(--oh-page-top);
+    padding: var(--oh-page-top-pad);
+  }
+  /* The way back stands out by its sign: the sign in line with the page's edge. */
+  .oh-page-back > .oh-button[data-bare] {
+    --oh-page-back-out: calc((var(--h-m) - 20px) / -2);
+    margin-left: var(--oh-page-back-out);
+  }
+  /* On touch it is a white circle in the control ring, its sign larger, on the page's edge. */
+  :root[data-touch="1"] .oh-page-back > .oh-button[data-bare] {
+    --oh-page-back-out: 0;
+    background: var(--sheet);
+    box-shadow: var(--oh-page-back-ring);
+    color: var(--ink);
+  }
+  :root[data-touch="1"] .oh-page-back > .oh-button[data-bare] > .oh-icon {
+    width: 22px;
+    height: 22px;
+  }
+  .oh-page-aside {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+  .oh-page-body {
+    --oh-page-body-pad: 0 var(--oh-page-pad) var(--s7);
+    --oh-page-rows: minmax(var(--oh-page-lead), auto) auto auto auto auto;
+    --oh-page-areas: "trail" "say" "mat" "line" "acts";
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--oh-page-rows);
+    grid-template-areas: var(--oh-page-areas);
+    align-content: start;
+    min-height: 0;
+    padding: var(--oh-page-body-pad);
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  .oh-page-trail {
+    --oh-page-trail-gap: 2px;
+    --oh-page-trail-pad: 0 0 var(--s4);
+    display: flex;
+    flex-direction: column;
+    grid-area: trail;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: var(--oh-page-trail-gap);
+    padding: var(--oh-page-trail-pad);
+  }
+  .oh-page-say {
+    grid-area: say;
+    align-self: start;
+    min-width: 0;
+  }
+  .oh-page-say > .oh-sentence {
+    max-width: 20em;
+  }
+  .oh-page-say > .oh-sentence + .oh-sentence {
+    margin-top: var(--s3);
+  }
+  /* The first screen's mark stands over its sentence. */
+  .oh-page-say > .oh-mark {
+    margin-bottom: var(--s5);
+  }
+  .oh-page-refusal {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+    max-width: 38em;
+    margin-top: var(--s3);
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+  .oh-page-refusal + .oh-page-refusal {
+    margin-top: var(--s4);
+  }
+  .oh-page-refusal > .oh-icon {
+    --oh-page-icon-gap: 2px 0 0;
+    margin: var(--oh-page-icon-gap);
+  }
+  .oh-page-material {
+    grid-area: mat;
+    min-width: 0;
+    margin-top: var(--s5);
+  }
+  /*
+   * What stands bare in the material (a form's fields, the tiles of a choice) stands on the page's ground, as the
+   * page's own buttons do. A sheet in the material brings a sheet's ground for what stands on it.
+   */
+  .oh-page-material .oh-sheet {
+    --oh-soft: var(--soft-sheet);
+    --oh-field-ground: var(--soft-sheet);
+  }
+  /* ohmarchy's page is a window in the sheet's tone: a field on it is boxed in the soft sheet's, as on a sheet. */
+  :root[data-face="ohmarchy"] .oh-page {
+    --oh-field-ground: var(--soft-sheet);
+  }
+  .oh-page-line {
+    display: flex;
+    flex-wrap: wrap;
+    grid-area: line;
+    align-items: center;
+    align-self: start;
+    gap: var(--s2) var(--s3);
+    max-width: 38em;
+    margin-top: var(--s5);
+    font-weight: var(--w-bold);
+  }
+  .oh-page-heavy,
+  .oh-page-note {
+    flex: 1 1 100%;
+  }
+  .oh-page-break {
+    flex: 0 1 100%;
+    height: 0;
+  }
+  .oh-page-note {
+    color: var(--ink2);
+    font-weight: var(--w-text);
+  }
+  .oh-page-feedback {
+    flex: 1 1 100%;
+    font-weight: var(--w-text);
+  }
+  .oh-page-acts {
+    display: flex;
+    flex-wrap: wrap;
+    grid-area: acts;
+    align-items: center;
+    align-self: start;
+    gap: var(--s2);
+    margin-top: var(--s5);
+  }
+
+  /* The material beside the sentence, where the window is wide. */
+  :root[data-device="desktop"] .oh-page[data-columns="2"] > .oh-page-body,
+  :root[data-device="fold"] .oh-page[data-columns="2"] > .oh-page-body {
+    --oh-page-body-pad: 0 var(--oh-page-pad) var(--ringw);
+    --oh-page-rows: minmax(var(--oh-page-lead), auto) auto auto auto minmax(0, 1fr);
+    --oh-page-areas: "trail ." "say mat" "line mat" "acts mat" ". mat";
+    grid-template-columns: minmax(0, 1fr) minmax(0, var(--oh-page-material));
+    column-gap: var(--s8);
+    overflow: hidden;
+  }
+  :root[data-device="desktop"] .oh-page[data-columns="2"] .oh-page-material,
+  :root[data-device="fold"] .oh-page[data-columns="2"] .oh-page-material {
+    --oh-page-material-pad: var(--ringw) var(--ringw) var(--s7);
+    min-height: 0;
+    margin-top: 0;
+    padding: var(--oh-page-material-pad);
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  :root[data-device="fold"] .oh-page {
+    --oh-page-pad: 36px;
+    --oh-page-lead: 176px;
+  }
+  :root[data-device="fold"] .oh-page[data-columns="2"] > .oh-page-body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--oh-page-pad);
+  }
+
+  /*
+   * The unfolded phone held upright: a page that stacks takes the whole width, its material under the buttons, and
+   * scrolls as one. A page of two columns whose sentence column is taller than its window folds to the same column
+   * (the part says `data-folded`), at its own lead.
+   */
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-page[data-stack] {
+    --oh-page-lead: 96px;
+  }
+  :root[data-device="desktop"] .oh-page[data-columns="2"][data-folded] > .oh-page-body,
+  :root[data-device="fold"] .oh-page[data-columns="2"][data-folded] > .oh-page-body,
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-page[data-stack] > .oh-page-body {
+    --oh-page-body-pad: 0 var(--oh-page-pad) var(--s7);
+    --oh-page-rows: minmax(var(--oh-page-lead), auto) auto auto auto auto;
+    --oh-page-areas: "trail" "say" "line" "acts" "mat";
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden auto;
+  }
+  :root[data-device="desktop"] .oh-page[data-columns="2"][data-folded] .oh-page-material,
+  :root[data-device="fold"] .oh-page[data-columns="2"][data-folded] .oh-page-material,
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-page[data-stack] .oh-page-material {
+    --oh-page-material-pad: 0;
+    min-height: auto;
+    margin-top: var(--s5);
+    overflow: visible;
+  }
+
+  /* The phone: the buttons stay at the foot. */
+  :root[data-device="phone"] .oh-page {
+    --oh-page-pad: var(--s5);
+    --oh-page-lead: 0px;
+    --oh-page-top: 52px;
+  }
+  :root[data-device="phone"] .oh-page-body {
+    --oh-page-body-pad: 0 var(--oh-page-pad);
+    --oh-page-rows: auto auto auto auto minmax(var(--s5), 1fr) auto;
+    --oh-page-areas: "trail" "say" "mat" "line" "." "acts";
+  }
+  :root[data-device="phone"] .oh-page[data-center-lead] > .oh-page-body {
+    --oh-page-rows: 0 minmax(auto, 1fr) auto auto 0 auto;
+  }
+  :root[data-device="phone"] .oh-page[data-center-lead] .oh-page-say {
+    align-self: center;
+  }
+  .oh-page[data-center-lead] .oh-page-say > .oh-sentence {
+    max-width: 13em;
+  }
+  :root[data-device="phone"] .oh-page[data-line-first] > .oh-page-body {
+    --oh-page-areas: "trail" "say" "line" "mat" "." "acts";
+  }
+  :root[data-device="phone"] .oh-page[data-smaller] .oh-page-say > .oh-sentence[data-size="xl"] {
+    font-size: var(--t-head);
+  }
+  :root[data-device="phone"] .oh-page-trail {
+    --oh-page-trail-pad: var(--s2) 0 var(--s4);
+  }
+  :root[data-device="phone"] .oh-page-material,
+  :root[data-device="phone"] .oh-page-line {
+    margin-top: var(--s4);
+  }
+  :root[data-device="phone"] .oh-page-acts {
+    --oh-page-acts-out: 0 calc(var(--oh-page-pad) * -1);
+    --oh-page-acts-pad: var(--s3) var(--oh-page-pad) var(--s5);
+    position: sticky;
+    bottom: 0;
+    z-index: var(--oh-layer-jump);
+    margin: var(--oh-page-acts-out);
+    padding: var(--oh-page-acts-pad);
+    background: var(--stage);
+  }
+  :root[data-device="phone"] .oh-page-acts::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    left: 0;
+    height: var(--s5);
+    background: linear-gradient(to bottom, transparent, var(--stage));
+    pointer-events: none;
+  }
+  :root[data-device="phone"] .oh-page-acts > .oh-button:not([data-kind="quiet"]) {
+    --oh-page-act-pad: 0 var(--s4);
+    flex: 1 1 0;
+    min-width: 0;
+    padding: var(--oh-page-act-pad);
+  }
+  :root[data-device="phone"] .oh-page-acts > .oh-button[data-kind="quiet"] {
+    flex: 1 1 100%;
+  }
+
+  /* ohmarchy: a window of its own measure in the middle, ringed. */
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-page {
+    --oh-page-ring: 0 0 0 var(--ringw) var(--focus);
+    box-shadow: var(--oh-page-ring);
+  }
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-page {
+    --oh-page-pad: var(--s6);
+    --oh-page-lead: 0px;
+    width: min(100%, 720px);
+    height: auto;
+    min-height: 420px;
+    max-height: 100%;
+  }
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-page[data-columns="2"] {
+    width: min(100%, 1120px);
+  }
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-page-say > .oh-sentence {
+    max-width: none;
+    text-wrap: wrap;
+  }
+
+  /* A page with two sheets to read beside its sentence starts higher on a desktop, in either face. */
+  :root[data-device="desktop"] .oh-page[data-high] {
+    --oh-page-lead: 96px;
+  }
+
+  :root[data-device="fold"][data-face="ohmarchy"] .oh-page[data-fold-inset] {
+    width: calc(100% - var(--s3) * 2);
+    height: calc(100% - var(--s3) * 2);
+  }
+
+  /* A self-contained form uses the material slot and keeps its own submit action reachable. */
+  .oh-page:has([data-page-form-back]) .oh-page-back,
+  .oh-page:has([data-page-filling-form]) .oh-page-say > .oh-sentence,
+  .oh-page:has([data-page-filling-form]) :is(.oh-page-trail, .oh-page-acts):empty {
+    display: none;
+  }
+
+  .oh-page:has([data-page-form-progress]) .oh-page-aside {
+    visibility: hidden;
+  }
+
+  .oh-page [data-page-form-progress] {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-end: var(--oh-page-pad);
+    height: var(--oh-page-top);
+  }
+
+  [data-page-form-sentence] .oh-sentence {
+    text-wrap: wrap;
+  }
+
+  :root[data-device="phone"] [data-page-form-sentence] .oh-sentence {
+    line-height: 1.32;
+  }
+
+  :root[data-device="phone"] .oh-page:has([data-page-filling-form]) > .oh-page-body {
+    --oh-page-rows: auto minmax(0, 1fr);
+    --oh-page-areas: "say" "mat";
+    padding-block: var(--s2) var(--s5);
+  }
+
+  :root[data-device="phone"] .oh-page:has([data-page-filling-form]) .oh-page-material {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    margin-block-start: 0;
+  }
+
+  :root[data-device="phone"] .oh-page [data-page-form-submit] {
+    position: sticky;
+    inset-block-end: 0;
+    margin-block-start: auto;
+    padding-block-start: var(--s3);
+    background: var(--stage);
+  }
+
+  :root[data-device="phone"] .oh-page [data-page-form-submit] .oh-button {
+    flex: 1;
+  }
+
+  :root[data-device="phone"] .oh-page [data-page-form-back] {
+    position: absolute;
+    inset-inline-start: var(--oh-page-pad);
+    inset-block-start: var(--s1);
+  }
+
+  :root[data-device="phone"] .oh-page [data-page-form-back] .oh-button {
+    box-shadow: var(--oh-page-back-ring);
+  }
+}

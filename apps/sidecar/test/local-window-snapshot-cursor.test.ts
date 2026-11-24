@@ -1,3 +1,4 @@
+import type { EngineMessage, SyncSnapshotPage } from "@ohmail/wire";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +9,6 @@ import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organi
 import { folderState, messageInstances, messages } from "@trafficflow/db";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, SNAPSHOT_REFUSAL_HOLD_BASE_MS, SnapshotCursorRefusedError,
-  type EngineMessage, type SyncSnapshotPage,
 } from "@ohmail/client-engine";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { STORE_GENERATION_FILE } from "../src/db.js";
@@ -111,7 +111,7 @@ async function seed(sidecar: Sidecar): Promise<void> {
       folder: "INBOX", uidvalidity: 1n, uid, isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external", reconcileStatus: "reconciled",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external", reconcileStatus: "reconciled",
     });
     ids.push(m!.id);
   }

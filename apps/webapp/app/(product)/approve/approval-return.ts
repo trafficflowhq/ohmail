@@ -9,7 +9,7 @@
  * refuses them is told the way every other refused write is.
  */
 
-import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
+import { durableSessionRemove, durableSessionSet } from "@ohmail/app-logic/storage/durable";
 
 const KEY = "ohmail.approve.request";
 const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

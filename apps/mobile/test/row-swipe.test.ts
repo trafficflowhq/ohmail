@@ -25,6 +25,7 @@ import {
   SWIPE_CLAIM_DX, SWIPE_FIRE_DX, SWIPE_MAX_DX,
 } from "../src/ui/row-swipe";
 import { DECKS } from "../src/copy";
+import { mailRowSwipes } from "./_mail-row-swipes";
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
@@ -123,17 +124,29 @@ describe("a swipe is a shortcut, never the only door", () => {
 
   it("is OFF where the verbs do not apply, and on every mail list where they do", () => {
     // Trash: a deleted row has no Done and no Later, so it takes no gesture.
-    expect(read("../app/trash/index.tsx")).toContain("<MailRow m={r.mail} onPress={() => openRow(r.mail.id)} />");
+    const trashSource = read("../app/trash/index.tsx");
+    const trash = mailRowSwipes(trashSource);
+    expect(trashSource).toMatch(/<MailRow\s+m=\{r\.mail\}\s+onPress=\{\(\) => openRow\(r\.mail\.id\)\}/);
+    expect(trash.length).toBeGreaterThan(0);
+    expect(new Set(trash)).toEqual(new Set(["off"]));
     for (const screen of ["../app/(tabs)/index.tsx", "../app/(tabs)/receipts.tsx", "../app/history.tsx", "../app/folder/[id].tsx"]) {
-      expect(read(screen), `${screen} renders mail rows without the shortcut`).toContain("swipe />");
+      const rows = mailRowSwipes(read(screen));
+      expect(rows.length, `${screen} must render a MailRow`).toBeGreaterThan(0);
+      expect(new Set(rows), `${screen} renders mail rows without the shortcut`).toEqual(new Set(["on"]));
     }
   });
+});
+
+it("a spread cannot prove a row's swipe prop is enabled or absent", () => {
+  expect(mailRowSwipes("<><MailRow {...props} /><MailRow swipe {...props} /></>")).toEqual(["unknown", "unknown"]);
 });
 
 describe("no new dependency", () => {
   it("is built on React Native's own PanResponder, not a native gesture module", () => {
     const row = read("../src/ui/MailRow.tsx");
-    expect(row).toContain('import { Animated, PanResponder, View } from "react-native";');
+    const native = row.match(/import\s*\{([^}]+)\}\s*from "react-native";/)?.[1];
+    expect(native?.split(",").map((name) => name.trim())).toEqual(expect.arrayContaining(["Animated", "PanResponder", "View"]));
+    expect(row).toContain("PanResponder.create(");
     expect(row.includes("react-native-gesture-handler"),
       "a native module means a prebuild and a pod install on both platforms for one gesture")
       .toBe(false);

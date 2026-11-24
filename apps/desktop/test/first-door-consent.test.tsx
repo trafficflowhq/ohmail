@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { LocalWireError, localPlaintextOffer, useLocalFirstRun } from "../src/local-first-run.js";
 import { NO_CONSENT, enterLocalDoor, type LocalDoorFields } from "../src/doors.js";
-import type { FirstRunHost } from "../../webapp/app/shell/first-run-host";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 
 /**
  * THE FIRST DOOR'S CONSENT AND ITS REFUSAL, AT THE SEAM. The first-run "On this computer" door

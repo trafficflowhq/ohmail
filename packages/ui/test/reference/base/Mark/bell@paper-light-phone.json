@@ -1,0 +1,92 @@
+{
+  "component": "Mark",
+  "state": "bell",
+  "look": "paper-light-phone",
+  "place": "block",
+  "target": [24, 269.0469, 342, 110.0781],
+  "clip": [24, 269, 342, 111],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "128px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "110.08px",
+      "letterSpacing": "-6.4px",
+      "fontVariationSettings": "\"opsz\" 96",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    {
+      "before.boxShadow": "rgb(248, 67, 26) 0px 0px 0px 3px",
+      "before.opacity": "0",
+      "before.borderRadius": "999px",
+      "borderRadius": "999px"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "generic",
+      "name": "oh.",
+      "box": [0, 0, 342, 110.1],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "128px",
+        "fontWeight": "800",
+        "lineHeight": "110.08px",
+        "letterSpacing": "-6.4px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "oh", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Ring the doorbell",
+      "box": [137.5, 65, 32, 32],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(248, 67, 26)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "128px",
+        "fontWeight": "800",
+        "lineHeight": "110.08px",
+        "letterSpacing": "-6.4px",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "surfaces": [{ "box": [137.5, 65, 32, 32], "paint": 0, "parts": { "before": [0, 0, 32, 32] } }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

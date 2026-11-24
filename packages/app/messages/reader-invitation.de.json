@@ -1,0 +1,18 @@
+{
+  "readerInvitation": {
+    "invitation": "Einladung",
+    "changed": "Geändert",
+    "cancelled": "Abgesagt",
+    "from": "Von {organizer}",
+    "overlaps": "Überschneidung",
+    "show": "Im Kalender zeigen",
+    "notOn": "Nicht in deinem Kalender",
+    "goes": "{title} kommt in <calendar></calendar>",
+    "on": "{title} ist in {calendar}",
+    "answerPending": "Die Antwort wird noch gesendet",
+    "answerRefused": "Die Antwort konnte nicht gesendet werden",
+    "calendarRefused": "Der Termin konnte nicht zum Kalender hinzugefügt werden",
+    "add": "Zum Kalender hinzufügen",
+    "destination": "Kommt in"
+  }
+}

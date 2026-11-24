@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -31,7 +32,7 @@ import { brandDialect, dialect } from "../src/dialect/index.js";
  *
  * **That is a claim about two concurrent transactions, and PGlite cannot make it.** It is one
  * backend with one connection: the second transaction never runs while the first is open, so both
- * arms of this file pass there whether the lock is present or not — the exact class CLAUDE.md
+ * arms of this file pass there whether the lock is present or not — the exact class AGENTS.md
  * names ("PGlite green means nothing for transactional code"). Two real connections are the test.
  *
  * Mutation-checked, watched red and restored: `.for("update")` removed from the handover's mailbox
@@ -89,7 +90,7 @@ describe("the stand-down handover serializes against a forwarded move in flight"
     const move = db.transaction(async (mtx) => {
       await assertOrganizerRole(mtx as unknown as Tx, dialect(db), w.accountId, w.mailboxId);
       await mtx.insert(folderState).values({
-        messageId: w.messageId, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
+        messageId: w.messageId, accountId: accountOfMessage(w.messageId), desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "pending", conflict: false,
       });
       await moveHeld;
@@ -156,7 +157,7 @@ describe("the stand-down handover serializes against a forwarded move in flight"
     const refusal = await db.transaction(async (mtx) => {
       await assertOrganizerRole(mtx as unknown as Tx, dialect(db), w.accountId, w.mailboxId);
       await mtx.insert(folderState).values({
-        messageId: w.messageId, desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
+        messageId: w.messageId, accountId: accountOfMessage(w.messageId), desiredFolder: "ohmail/News", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "pending", conflict: false,
       });
       return "admitted";

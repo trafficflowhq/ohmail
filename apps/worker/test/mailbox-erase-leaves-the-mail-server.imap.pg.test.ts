@@ -12,7 +12,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { mailboxErasurePass } from "../src/mailbox-erasure-pass.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
 
 /**
  * ERASING OHMAIL'S COPY LEAVES THE MAIL SERVER AS IT WAS — the whole erase, as the product runs

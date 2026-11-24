@@ -20,6 +20,9 @@
  */
 
 import { MutationRejectedError, type StagedPreview } from "@ohmail/client-engine";
+import type { FileShell, SaveRefusal } from "./attachments";
+
+export type { SaveRefusal };
 
 /**
  * The shell command that saves one attachment into the PERSON'S Downloads folder.
@@ -65,13 +68,12 @@ interface TauriInternals {
   invoke(command: string, payload?: Record<string, unknown>): Promise<unknown>;
 }
 
-/**
- * Why the shell would not save, as the one fact the press can say. The shell's own words are a
- * diagnostic (they carry an OS error), so they go to the console and a closed set reaches the
- * screen: this computer names no Downloads folder (a Linux profile with no user-dirs entry), or
- * the file was not saved.
+/*
+ * Why the shell would not save, as the one fact the press can say, is the file door's own word (`SaveRefusal`).
+ * The shell's own words are a diagnostic (they carry an OS error), so they go to the console and a closed set
+ * reaches the screen: this computer names no Downloads folder (a Linux profile with no user-dirs entry), or the
+ * file was not saved.
  */
-export type SaveRefusal = "no-downloads-folder" | "not-saved";
 
 /** The shell's refusal, read by its one stable phrase (`engine.rs#downloads_root`). */
 export function saveRefusalOf(err: unknown): SaveRefusal {
@@ -149,4 +151,15 @@ export async function saveAttachmentToDownloads(attachmentId: string, filename: 
     console.error(`ohmail: the shell would not save ${filename}`, err);
     return saveRefusalOf(err);
   }
+}
+
+/** Both handoffs, as the file door takes a host's shell. */
+const DESKTOP_SHELL: FileShell = { save: saveAttachmentToDownloads, stage: stageAttachmentPreview };
+
+/**
+ * THIS WINDOW'S SHELL AS ITS HOST HANDS IT TO THE FILE DOOR: the two handoffs where the window is armed, `"none"`
+ * everywhere else (a browser tab, the preview build). The door reads no flag: whoever mounts it hands it this.
+ */
+export function desktopFileShell(): FileShell | "none" {
+  return armed ? DESKTOP_SHELL : "none";
 }

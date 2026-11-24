@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
+import { HttpAdapter } from "@ohmail/client-engine";
+import type { EngineDraft } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import type { EngineDraft } from "@ohmail/client-engine";
-import { openDraftDecision } from "../app/shell/AppShell";
+import { openDraftDecision } from "@ohmail/app-logic/writing/shell-compose";
 
 /**
  * A DRAFT IS NEVER OPENED WITH A BODY THIS CLIENT DOES NOT HAVE.
@@ -116,6 +117,21 @@ describe("openDraftDecision over a withheld row", () => {
       expect(r.reads, `${reason}: the reason may not change the decision`).toEqual(["d1"]);
       expect(r.opened).toEqual([{ id: "d1", body: "the words the person wrote" }]);
     }
+  });
+
+  it("reopens an omitted rich body with its edited quote on each visit", async () => {
+    const html = '<p>My note</p><blockquote data-quoted-history="edited"><p>Edited quote</p></blockquote>';
+    const adapter = new HttpAdapter({ baseUrl: "http://localhost", fetch: async () =>
+      Response.json({ body: "My note\nEdited quote", html }),
+    });
+    const withheld = draft({ body: null, html: null });
+    const opened: Array<string | null | undefined> = [];
+    const io = { readDraftBody: (id: string) => adapter.fetchDraftBody(id),
+      openWithBody: (row: EngineDraft) => { opened.push(row.html); }, unavailable: () => {} };
+    await openDraftDecision(withheld, io);
+    await openDraftDecision(draft({ id: "other", html: null }), io);
+    await openDraftDecision(withheld, io);
+    expect(opened).toEqual([html, null, html]);
   });
 
   it("opens nothing when a withheld row cannot be fetched either", async () => {

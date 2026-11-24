@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, folderState, messageBodies } from "@trafficflow/db";
-import { SEARCH_PARTS, SEARCH_SORTS, type ServiceContext } from "@trafficflow/services/mail";
+import { reindexMessageSearch } from "@trafficflow/core/mail";
+import { dbFor, SEARCH_PARTS, SEARCH_SORTS, type ServiceContext } from "@trafficflow/services/mail";
 import { matchReadRoute } from "../src/cloud-read.js";
 
 /**
@@ -55,9 +57,11 @@ describe("the Cloud-mode read surface honours ?sort=", () => {
         dedupKey: dedup, subject, fromAddress: from, date: new Date(date),
         nativeLocator: { folder: "INBOX", ref: `1:${Math.floor(Math.random() * 1e6)}` },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: "the heron stood in the shallows" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "the heron stood in the shallows" });
+      // As the mirror does: the letter's search document with the letter.
+      await reindexMessageSearch(db as never, ACCOUNT, m!.id);
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;
@@ -68,7 +72,7 @@ describe("the Cloud-mode read surface honours ?sort=", () => {
     const recent = await seed("heron three", "2026-07-20T09:00:00Z", "mike@mid.example");
 
     const ctx: ServiceContext = {
-      db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "r12-sidecar",
+      db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "r12-sidecar",
     };
     return { ctx, old, mid, recent };
   };
@@ -117,5 +121,15 @@ describe("the Cloud-mode read surface honours ?sort=", () => {
     const estimate = (await (await search(ctx, "q=heron&parts=estimate")).json()) as { total: number; totalExact: boolean };
     expect(estimate).toMatchObject({ total: 3, totalExact: true });
     expect((await search(ctx, "q=heron&parts=guess")).status).toBe(400);
+  });
+
+  it("the person filters narrow here as on the hosted route: To, and either side", async () => {
+    const { ctx, old, mid, recent } = await corpus();
+    const db = ctx.db as unknown as Awaited<ReturnType<typeof makeTestDb>>;
+    await db.update(messages).set({ toAddresses: [{ name: null, address: "Zoe@Late.example" }] }).where(eq(messages.id, mid));
+    expect(await idsOf(await search(ctx, "q=heron&to=zoe@late.example"))).toEqual([mid]);
+    expect((await idsOf(await search(ctx, "q=heron&party=zoe@late.example"))).sort()).toEqual([old, mid].sort());
+    expect(await idsOf(await search(ctx, "q=heron&sender=mike@mid.example&party=mike@mid.example"))).toEqual([recent]);
+    expect(await idsOf(await search(ctx, "q=heron&to=zoe@late"))).toEqual([]);
   });
 });

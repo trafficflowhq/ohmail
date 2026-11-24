@@ -1,6 +1,9 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { sourceClosure } from "../scripts/lib/engine-closure.mjs";
+// @ts-expect-error — plain .mjs helper, no declarations by design.
+import { moduleResolver, specifiersIn, workspacePackages } from "../scripts/lib/import-closure.mjs";
 
 // THE PATCHES THE IMAGE INSTALLS MUST BE IN THE IMAGE'S BUILD CONTEXT.
  //
@@ -198,5 +201,181 @@ describe("every Dockerfile's build context carries every file its build reads", 
       expect(admitted("package-lock.json", ignoreFor(d)), `${ignoreFor(d)} must admit the lockfile`).toBe(true);
     }
     expect(admitted("package-lock.json", IGNORE), "the root list is the retired worker recipe's pnpm context and admits no npm lockfile").toBe(false);
+  });
+});
+
+// EVERY DOCKERFILE'S CONTEXT CARRIES EVERY WORKSPACE MODULE ITS BUILD COMPILES. The case above reads
+// the recipe's own inputs; this one reads what the build then reaches for. The api image's bundle
+// once died on `Could not resolve "@ohmail/cal-core"`: services had begun to import the calendar's
+// core, and the server's allow-list had never heard of it. Nothing local can see that (a laptop has
+// the whole repository), so the walk is done here, from the recipe's own entry, with the
+// repository's one resolution rule (`scripts/lib/import-closure.mjs`: a workspace name through its
+// manifest's `exports`) and its one closure walk (`scripts/lib/engine-closure.mjs`). The packages
+// are never listed: what the walk reaches is what the list must admit.
+
+// A type-only statement, which a bundler erases before it resolves anything: `import type … from`
+// and `export type … from`. The clause is told by its SHAPE — one brace list, a star with an
+// optional `as` name, or one default name — and then `from`, so the match ends at the statement's
+// own closing brace or name and cannot run on into the next statement (a semicolon-less
+// `export type { X }` before a value import once swallowed that import). `import type from "…"`
+// is a default import named `type`, a value, and is kept. No quantifier repeats over its own
+// characters, so a hostile line costs linear time. An inline `{ type X }` is kept, which can only
+// ask for MORE than the bundle needs, never less.
+const TYPE_ONLY = /^[ \t]*(?:import|export)[ \t]+type[ \t]+(?:\{[\w$,\s]*\}|\*(?:\s+as\s+[\w$]+)?|[\w$]+)\s*from[ \t]*["'][^"'\n]+["']/gm;
+
+const SOURCE = /\.(?:ts|tsx|mts|mjs|js)$/;
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "out", "target", ".build"]);
+
+/** Every source file under `dir` that `list` lets into the context. */
+function contextSources(dir: string, list: string): string[] {
+  const out: string[] = [];
+  const walk = (rel: string): void => {
+    for (const e of readdirSync(`${ROOT}${rel}`, { withFileTypes: true })) {
+      const p = `${rel}/${e.name}`;
+      if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(p); }
+      else if (SOURCE.test(p) && admitted(p, list)) out.push(p);
+    }
+  };
+  walk(dir);
+  return out.sort();
+}
+
+/**
+ * Where the recipe's compile STARTS, read off the recipe, and whether it reads types.
+ *  · `node scripts/bundle-host.mjs <host>`: the host's entry in that script's table (a stub entry
+ *    is followed to what the stub imports). esbuild bundles it and erases type-only imports.
+ *  · `cd <dir> && … next build`: every source of that app the context carries, type-checked.
+ *  · `pnpm --filter "<name>" build`: every source of that package the context carries (tsc -b).
+ */
+function compileOf(dockerfile: string): { seed: string[]; types: boolean } | null {
+  const text = readFileSync(`${ROOT}${dockerfile}`, "utf8");
+  const list = ignoreFor(dockerfile);
+  const host = /^RUN\b.*\bnode scripts\/bundle-host\.mjs\s+(\w+)/m.exec(text)?.[1];
+  if (host) {
+    const bundler = readFileSync(`${ROOT}scripts/bundle-host.mjs`, "utf8");
+    const row = new RegExp(`^\\s*${host}: \\{ entry: "([^"]+)"(?:, stub: (\\w+))? \\}`, "m").exec(bundler);
+    if (!row) return null;
+    const [, entry, stub] = row;
+    if (!stub) return { seed: [entry], types: false };
+    const body = new RegExp(`^const ${stub} = \`([^\`]*)\``, "m").exec(bundler)?.[1] ?? "";
+    const resolve = moduleResolver(ROOT);
+    const seed = (specifiersIn(body) as string[]).map((s) => resolve(entry, s) as string | null)
+      .filter((f): f is string => f !== null);
+    return seed.length ? { seed, types: false } : null;
+  }
+  const app = /^RUN\s+cd\s+(\S+)\s+&&.*\bnext build\b/m.exec(text)?.[1];
+  if (app) return { seed: contextSources(app, list), types: true };
+  const pkg = /^RUN\b.*\bpnpm --filter "([^"]+)" build\b/m.exec(text)?.[1];
+  const dir = pkg ? (workspacePackages(ROOT) as Map<string, { dir: string }>).get(pkg)?.dir : undefined;
+  if (dir) return { seed: contextSources(dir, list), types: true };
+  return null;
+}
+
+/** Every workspace source file the recipe's compile reaches from its start. */
+function reached(dockerfile: string): string[] {
+  const how = compileOf(dockerfile);
+  if (!how) return [];
+  const scan = how.types
+    ? (src: string) => specifiersIn(src) as string[]
+    : (src: string) => specifiersIn(src.replace(TYPE_ONLY, "")) as string[];
+  const resolve = moduleResolver(ROOT);
+  return sourceClosure({
+    root: ROOT,
+    seed: how.seed,
+    isDenied: () => false,
+    specifiersIn: scan,
+    resolve: (rel: string, spec: string) => resolve(rel, spec) as string | null,
+  }).files;
+}
+
+/** `packages/x/src/a.ts` → `packages/x`. */
+const packageOf = (file: string): string => file.split("/").slice(0, 2).join("/");
+
+// What the bundle script COPIES beside the bundle, which no import names: every
+// `cpSync(join(ROOT, "a", "b", …), …)` source, read off the script. The worker's bundle imports
+// nothing of db-mail, yet the script copies db-mail's migrations into every host's image, and a
+// list without that package fails the step on ENOENT. Each quoted segment is bounded by its quotes
+// and each repetition starts with `, "`, so the match cannot backtrack over its own characters.
+const COPY_CALL = /\bcpSync\(/g;
+const COPY_FROM_ROOT = /\bcpSync\(join\(ROOT((?:, "[^"\n]+")+)\)/g;
+
+function copiedBy(scriptText: string): string[] {
+  return [...scriptText.matchAll(COPY_FROM_ROOT)]
+    .map((m) => [...m[1].matchAll(/"([^"\n]+)"/g)].map((s) => s[1]).join("/"))
+    .sort();
+}
+
+/** The bundle script the recipe runs (`node scripts/bundle-host.mjs <host>`), or null. */
+function bundleScriptOf(dockerfile: string): string | null {
+  return /^RUN\b.*\bnode (scripts\/bundle-host\.mjs)\s+\w+/m.exec(readFileSync(`${ROOT}${dockerfile}`, "utf8"))?.[1] ?? null;
+}
+
+/** Every file under `dir`, as repository paths (none when it does not exist). */
+function filesUnder(dir: string): string[] {
+  if (!existsSync(`${ROOT}${dir}`)) return [];
+  return readdirSync(`${ROOT}${dir}`, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile())
+    .map((e) => `${e.parentPath.slice(ROOT.length).replace(/\\/g, "/")}/${e.name}`);
+}
+
+const BUNDLED = DOCKERFILES.filter((d) => bundleScriptOf(d) !== null);
+
+describe("every Dockerfile's build context carries every workspace module its build compiles", () => {
+  it.each(DOCKERFILES)("%s: the recipe's compile is found", (dockerfile) => {
+    const how = compileOf(dockerfile);
+    expect(how, `${dockerfile}: no build step this reader knows — teach compileOf the new one`).not.toBeNull();
+    expect(how!.seed.length, `${dockerfile}: the compile starts nowhere`).toBeGreaterThan(0);
+  });
+
+  it.each(DOCKERFILES)("%s: its allow-list admits every module the build reaches", (dockerfile) => {
+    const list = ignoreFor(dockerfile);
+    const missing = reached(dockerfile).filter((f) => !admitted(f, list));
+    const byPackage = [...new Set(missing.map(packageOf))].sort();
+    expect(byPackage, `${dockerfile} compiles ${missing.slice(0, 5).join(", ")}${missing.length > 5 ? ", …" : ""}, `
+      + `and ${list} keeps them out of its build context`).toEqual([]);
+  });
+
+  it.each(BUNDLED)("%s: its allow-list admits every directory the bundle script copies", (dockerfile) => {
+    const list = ignoreFor(dockerfile);
+    const script = bundleScriptOf(dockerfile)!;
+    const text = readFileSync(`${ROOT}${script}`, "utf8");
+    const copied = copiedBy(text);
+    expect(copied.length, `${script}: a copy this reader does not understand — teach copiedBy its shape`)
+      .toBe(text.match(COPY_CALL)?.length ?? 0);
+    const refused = copied.filter((dir) => !filesUnder(dir).some((f) => admitted(f, list)));
+    expect(refused, `${dockerfile} runs ${script}, which copies ${refused.join(", ")}, `
+      + `and ${list} keeps every file of it out of its build context`).toEqual([]);
+  });
+
+  it("control: the copy reader reads the bundle script's copies, and the recipes that run it", () => {
+    expect(BUNDLED.length, "no recipe runs the bundle script — the reader stopped matching the recipes").toBeGreaterThan(0);
+    const planted = 'cpSync(join(ROOT, "a", "b"), join(out, "b"), { recursive: true });\ncpSync(join(ROOT, "c"), out);\n';
+    expect(copiedBy(planted)).toEqual(["a/b", "c"]);
+    for (const d of BUNDLED) {
+      expect(copiedBy(readFileSync(`${ROOT}${bundleScriptOf(d)!}`, "utf8")).length, `${d}: its script copies nothing this reader sees`).toBeGreaterThan(0);
+    }
+  });
+
+  it("control: the walk crosses packages, and a list without them would be refused", () => {
+    // The positive control for the case above: a walk that stopped at the entry's own package
+    // would pass every list for the wrong reason.
+    const server = reached("apps/server/Dockerfile");
+    const packages = new Set(server.map(packageOf));
+    for (const p of ["apps/server", "packages/api", "packages/services", "packages/db"]) {
+      expect(packages.has(p), `the server's walk does not reach ${p}`).toBe(true);
+    }
+    expect(server.filter((f) => f.startsWith("packages/services/")).some((f) => admitted(f, IGNORE)),
+      "the root list (the organizer's context) admits the services package").toBe(false);
+  });
+
+  it("control: a type-only statement is erased for a bundle, and a value import is not", () => {
+    const src = 'import type { A } from "@ohmail/wire";\nexport type {\n  B,\n} from "./b.js";\nimport { c } from "./c.js";\nexport type D = E;\nimport "./f.js";\n';
+    expect(specifiersIn(src.replace(TYPE_ONLY, ""))).toEqual(["./c.js", "./f.js"]);
+    // One statement, never into the next: a value import after a semicolon-less type export is
+    // kept, and so is a default import whose name is the word `type`. A default type import and a
+    // star type export (named or not) are erased.
+    const shapes = 'export type { Z7 }\nimport { LIMITS as z8 } from "@ohmail/cal-providers"\nimport type G from "./g.js"\n'
+      + 'export type * from "./h.js"\nexport type * as I from "./i.js"\nimport type from "./t.js"\n';
+    expect(specifiersIn(shapes.replace(TYPE_ONLY, ""))).toEqual(["@ohmail/cal-providers", "./t.js"]);
   });
 });

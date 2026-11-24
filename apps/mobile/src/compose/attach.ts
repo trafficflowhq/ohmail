@@ -7,9 +7,10 @@
  * filed as a gap row. The expo pickers live in `attach-native.ts`, the twin the suite never
  * imports; this module imports no react-native and no expo.
  */
+import type { ComposeAttachment } from "@ohmail/wire";
 import {
   COMPOSE_FORWARD_MAX_TOTAL_BYTES, IMAGE_QUALITY_RULES, composeAttachCap, encodableImageType, fitWithin, zonedFields,
-  type ComposeAttachment, type ImageQualityLevel, type ImageQualityRule,
+  type ImageQualityLevel, type ImageQualityRule,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { pictureTypeOf, previewKindOf, type PreviewKind } from "../mail/attachment-preview";

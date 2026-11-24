@@ -1,0 +1,21 @@
+.trial-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  padding-block: var(--s1) var(--s3);
+}
+
+.trial-progress-day {
+  width: var(--s3);
+  height: var(--s3);
+  border-radius: var(--r-pill);
+  background: var(--hair);
+}
+
+.trial-progress-day[data-elapsed] {
+  background: var(--ink);
+}
+
+.trial-progress[data-phone] .trial-progress-day:not([data-elapsed]) {
+  background: var(--ground);
+}

@@ -1,16 +1,21 @@
 /** @vitest-environment jsdom */
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { confirmSyncOwner, createSyncGate, registerSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
+import { WebContactScreening } from "../app/(product)/mailbox/WebContactScreening";
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
+import { screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, OhmailEngine, mutationEffects,
-  type EngineMessage, type EngineMutation, type Folder, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import { ISO, act, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
-import { COMMIT_MS, UNDO_MS } from "../app/shell/screener-state";
+import { COMMIT_MS, UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
 import en from "../messages/en.json";
+import { reportSays } from "./ohbox/_finders.js";
 
 /**
- * A LETTER FILED FROM THE SENDER SHEET NEVER RETURNS TO THE OHBOX (RULE-FILED-MESSAGE-SNAPS-BACK-
- * TO-OHBOX). A person opened a just-arrived sign-in notice, pressed Receipts on its sender's sheet
+ * A letter filed from the sender sheet never returns to the Ohbox. A person opened a just-arrived sign-in notice, pressed Receipts on its sender's sheet
  * with the rule on, and the letter jumped back into New when the routing window closed: the press
  * moved nothing itself, only the window's overlay showed it filed, and the rule write files no mail.
  * The press now files the letter it was made on as an ordinary `move` at the press, with its inverse
@@ -21,11 +26,12 @@ import en from "../messages/en.json";
 const ME = "walker@example.invalid";
 const SENDER = "notice@host.example";
 const RECEIPTS = "ohmail/Receipts" as Folder;
+const ACCOUNT = "acct_live_1";
 let seq = 0;
 
 function letter(id: string, date: string, unread: boolean, from = SENDER): EngineMessage {
   return {
-    id, accountId: "acct_local_1", mailboxId: "mb_1", threadId: null, messageIdHeader: null,
+    id, accountId: ACCOUNT, mailboxId: "mb_1", threadId: null, messageIdHeader: null,
     subject: `Login notice ${id}`, from: { name: "Host", address: from }, to: [{ name: null, address: ME }], cc: [],
     date, folder: "INBOX" as Folder, snippet: "a new sign-in", unread, hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: true, category: "security_alert", no_ai: true, no_forward: true, no_kb: true, priority: false },
@@ -81,50 +87,79 @@ async function rig(rules: RuleDTO[], extra: EngineMessage[] = [], seed: Partial<
       fetchBody: async () => null,
     },
   } as never);
+  registerSyncGate(engine, createSyncGate(ACCOUNT));
+  confirmSyncOwner(engine, ACCOUNT);
   return { engine, wire, pages };
 }
 
 /** The ids the Ohbox draws in New, and in the whole Ohbox. */
-const inNew = (): string[] =>
-  [...document.querySelectorAll<HTMLElement>(`[aria-label="${en.ohbox.newForYou}"] .row[data-id]`)].map((n) => n.dataset.id!);
-const inOhbox = (): string[] =>
-  [...document.querySelectorAll<HTMLElement>(".row[data-id]")].map((n) => n.dataset.id!);
+const idsOf = (options: HTMLElement[]): string[] => options.flatMap((option) => option.dataset.id ?? []);
+const inNew = (): string[] => {
+  const list = screen.queryByRole("listbox", { name: en.ohbox.newForYou });
+  return list ? idsOf(within(list).queryAllByRole("option")) : [];
+};
+const inOhbox = (): string[] => idsOf(screen.queryAllByRole("option"));
 const folderOf = (r: Rig, id = "seed"): string | undefined => r.engine.read().get<EngineMessage>("message", id)?.folder;
 const moves = (r: Rig) => r.wire.filter((m): m is Extract<EngineMutation, { kind: "move" }> => m.kind === "move");
 const ruleWrites = (r: Rig) => r.wire.filter((m) => m.kind.startsWith("rule_"));
 const UNDO = "Undo";
-const toasts = (): string[] =>
-  [...document.querySelectorAll("[class*=toast]")].map((n) => (n.textContent ?? "").trim()).filter(Boolean);
+const toasts = (): string[] => [reportSays()].filter(Boolean);
 
 /** Mount, open the just-arrived letter (the hold and the glance read), and press on its sender's sheet. */
-async function press(r: Rig, o: { dest?: string; retroOff?: boolean; domain?: boolean } = {}): Promise<void> {
-  await mountShell([mailbox({ id: "mb_1", address: ME, organizerRole: "organizer", lastSyncAt: ISO } as never)], { engine: r.engine });
+async function press(r: Rig, o: { retroOff?: boolean; domain?: boolean } = {}): Promise<void> {
+  await mountShell([{
+    ...mailbox({ id: "mb_1", address: ME, organizerRole: "organizer", lastSyncAt: ISO }),
+    organizerChecked: true,
+  }], { engine: r.engine, contactScreening: WebContactScreening });
   await tick(50);
   // Opened the way a person opens it: the click holds it in New and reads it.
-  const row = document.querySelector<HTMLElement>('.row[data-id="seed"]');
-  await act(async () => { row!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
+  const row = screen.getByRole("option", { name: /Login notice seed/ });
+  await act(async () => { row.click(); });
   await tick(3000);
   expect(r.engine.openRowHeld(), "premise: the opened letter is held").toBe("seed");
   expect(inNew(), "premise: the opened letter is in New").toContain("seed");
-  const av = document.querySelector<HTMLElement>('.row[data-id="seed"] .av');
-  await act(async () => { av!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
+  const opened = screen.getByRole("option", { name: /Login notice seed/ });
+  const face = within(opened).getByRole("button", { name: /^Screening for / });
+  await act(async () => { face.click(); });
   await tick(50);
+
+  const sheet = screen.queryByRole("dialog", { name: /^Screening for / });
+  expect(sheet, "pressing the Ohbox row's sender opens their screening sheet").toBeTruthy();
+  const choices = within(sheet!);
+  expect(choices.getByRole("button", { name: "Copy address" })).toBeTruthy();
+  expect(choices.getByRole("radiogroup", { name: "Goes to" })).toBeTruthy();
+  expect(choices.getByRole("button", { name: /^See all / })).toBeTruthy();
+  expect(choices.getByRole("menuitem", { name: "Write" })).toBeTruthy();
+  expect(choices.getByRole("menuitem", { name: "All mail" })).toBeTruthy();
+  const before = r.wire.length;
   if (o.domain) {
-    await act(async () => { document.querySelectorAll<HTMLElement>("#sender-sheet .sm-scope [role=radio]")[1]!.click(); });
+    await act(async () => { choices.getByRole("radio", { name: /^Everyone at host\.example/ }).click(); });
     await tick(10);
   }
   if (o.retroOff) {
-    await act(async () => { document.querySelector<HTMLElement>("#sender-sheet .sm-retro")!.click(); });
+    await act(async () => { choices.getByRole("switch", { name: en.screening.retroToggleAria }).click(); });
     await tick(10);
   }
-  const option = document.querySelector<HTMLElement>(`#sender-sheet [data-dest="${o.dest ?? "receipts"}"]`);
+  expect(r.wire.slice(before)).toEqual([]);
+  const option = within(choices.getByRole("radiogroup", { name: "Goes to" })).getByRole("radio", { name: "Receipts" });
   expect(option, "the sheet offers the place").toBeTruthy();
   await act(async () => { option!.click(); });
   await tick(20);
 }
 
-beforeEach(() => { installShellEnv(); process.env.NEXT_PUBLIC_API_BASE = ""; seq = 0; });
-afterEach(async () => { await teardownShellEnv(); process.env.NEXT_PUBLIC_API_BASE = "/api"; });
+beforeEach(() => {
+  installShellEnv();
+  setStorageOwner(ACCOUNT);
+  document.cookie = `tf_owner=${ACCOUNT}; Path=/`;
+  process.env.NEXT_PUBLIC_API_BASE = "";
+  seq = 0;
+});
+afterEach(async () => {
+  await teardownShellEnv();
+  resetStorageOwnerForTest();
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  process.env.NEXT_PUBLIC_API_BASE = "/api";
+});
 
 describe("the sender sheet's rule press files the letter it was made on", () => {
   it("A: a retarget press moves the letter at the press; it is never in the Ohbox again, and the hold ends", async () => {
@@ -150,7 +185,7 @@ describe("the sender sheet's rule press files the letter it was made on", () => 
   it("A: Undo inside the window puts the letter back in New and sends no rule", async () => {
     const r = await rig([ruleOf("r-allow", "INBOX", "promoted")]);
     await press(r);
-    const undo = [...document.querySelectorAll<HTMLElement>(".toast-act")].find((b) => b.textContent?.trim() === UNDO);
+    const undo = screen.queryByRole("button", { name: UNDO });
     expect(undo, "the press offered Undo").toBeTruthy();
     await act(async () => { undo!.click(); });
     await tick(UNDO_MS + 1000);
@@ -167,7 +202,7 @@ describe("the sender sheet's rule press files the letter it was made on", () => 
     expect(moves(r).map((m) => m.messageId)).toEqual(["seed"]);
     expect(inOhbox()).not.toContain("seed");
     expect(toasts().some((t) => t.includes("is already in")), toasts().join(" | ")).toBe(false);
-    expect([...document.querySelectorAll(".toast-act")].some((b) => b.textContent?.trim() === UNDO),
+    expect(screen.queryByRole("button", { name: UNDO }) !== null,
       "the press offered no Undo").toBe(true);
     await tick(UNDO_MS + 1000);
     expect(ruleWrites(r), "a standing rule with the switch off writes nothing").toEqual([]);
@@ -241,7 +276,7 @@ describe("the sender sheet's rule press files the letter it was made on", () => 
   it("the gate path: Undo inside the window sends neither the decision nor the move", async () => {
     const r = await atTheGate();
     await press(r);
-    const undo = [...document.querySelectorAll<HTMLElement>(".toast-act")].find((b) => b.textContent?.trim() === UNDO);
+    const undo = screen.queryByRole("button", { name: UNDO });
     expect(undo, "the decision offered Undo").toBeTruthy();
     await act(async () => { undo!.click(); });
     await tick(COMMIT_MS + 1000);

@@ -1,7 +1,8 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   HELD_RELEASE_TYPE, MemoryMirrorStore, outrankCoveringDomains, ruleFingerprint, ruleTwins, screenerSegments,
-  type EngineMessage, type Folder, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 
 /**

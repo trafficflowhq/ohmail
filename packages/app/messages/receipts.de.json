@@ -1,0 +1,37 @@
+{
+  "receipts": {
+    "title": "Belege",
+    "streamAria": "Lesestrom",
+    "waterline": {
+      "label": "Bis hierher gesehen"
+    },
+    "markAll": {
+      "label": "Alles als gelesen markieren",
+      "done": "{count, number} gelesen",
+      "undo": "Rückgängig"
+    },
+    "list": {
+      "label": "Belege",
+      "menu": "Liste"
+    },
+    "stream": {
+      "label": "Belege-Strom",
+      "empty": "Hier ist nichts"
+    },
+    "item": {
+      "keyboardOpen": "Drücke in der Nachrichtenzeile die Eingabetaste, um die Nachricht zu öffnen",
+      "expand": "Aufklappen",
+      "collapse": "Zuklappen",
+      "full": "Ganz lesen",
+      "markUnread": "Als ungelesen markieren",
+      "loading": "Wird geladen",
+      "file": "Hat einen Anhang"
+    },
+    "search": {
+      "older": "Ältere in der Suche"
+    },
+    "stamp": {
+      "yesterday": "gestern {time}"
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { flagState } from "./schema-mail.js";
 import { boolLiteral } from "./dialect/index.js";
+import { accountOfMessage } from "./parent-account.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -34,7 +35,7 @@ export async function upsertDesiredSeenMany(
 ): Promise<void> {
   if (rows.length === 0) return;
   await tx.insert(flagState).values(rows.map((r) => ({
-    messageId: r.id, desiredSeen, observedSeen: r.observedSeen,
+    messageId: r.id, accountId: accountOfMessage(r.id), desiredSeen, observedSeen: r.observedSeen,
     lastSetBy: "us", reconcileStatus: desiredSeen === r.observedSeen ? "reconciled" : "pending",
     conflict: false, decidedAt,
   }))).onConflictDoUpdate({

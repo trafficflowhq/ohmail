@@ -8,13 +8,14 @@
  * reads that value for truth (a caller reads a job with no `if:` as `true`).
  * Anything else in the expression refuses, and so does a context the caller did not give: a reader that guessed a
  * value it was not handed would answer for a run nobody described. A context may be given as `null` (a pull request
- * whose head repository was deleted reads `github.event.pull_request.head.repo.full_name` as null).
+ * whose head repository was deleted reads `github.event.pull_request.head.repo.full_name` as null), and as a boolean,
+ * as the event's own booleans are (`github.event.pull_request.draft`).
  *
  * String comparison is case-insensitive there and exact here, which no expression in this repository depends on.
  *
  * A job's `if:` read alone is not whether the job starts: `runJobs` reads a workflow's jobs as GitHub starts them.
  */
-export type IfContext = Record<string, string | null>;
+export type IfContext = Record<string, string | boolean | null>;
 
 const TOKEN = /\s*(?:('(?:[^']|'')*')|([A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*)|(==|!=|&&|\|\||!|\(|\)|,)|(\d+)(?![\w.]))/y;
 type Token = { s?: string; id?: string; op?: string; n?: number; at: number };
@@ -153,7 +154,7 @@ export type RunEvent = { event: string; action?: string; ref: string; cron?: "da
 
 /** The filters each trigger may carry here; any other (a path filter included) refuses. */
 const FILTERS: Record<string, string[]> = {
-  push: ["branches", "tags"], pull_request: ["types"], pull_request_target: ["types"], release: ["types"],
+  push: ["branches", "tags", "paths"], pull_request: ["types"], pull_request_target: ["types"], release: ["types"],
   merge_group: ["types"], workflow_dispatch: ["inputs"],
 };
 
@@ -175,7 +176,8 @@ const cadence = (cron: string) => {
 /**
  * Whether a workflow's `on:` starts a run for the event: a push by its branch and tag globs (a push filtered on
  * one kind of ref starts nothing for the other), a pull request or a release by its `types` (a pull request's
- * default three when none), a schedule by its cadence.
+ * default three when none), a schedule by its cadence. A push's `paths` filter narrows it by the files the push
+ * changes, which an event here does not carry: it is read as the widest case, a push that changes them.
  */
 export function startsOn(on: unknown, ev: RunEvent): boolean {
   const triggers = (typeof on === "string" ? { [on]: null } : Array.isArray(on) ? Object.fromEntries(on.map((k) => [String(k), null])) : on ?? {}) as Record<string, unknown>;

@@ -8,7 +8,7 @@ import type {
 import type { LeaseIo, LeasePeekIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { createLogger } from "@trafficflow/core/mail";
 import { mailboxes, messageFailures, messages } from "@trafficflow/db";
-import { StoreStatementFaultError } from "@trafficflow/worker/dead-letter";
+import { StoreStatementFaultError } from "@ohmail/organizer/dead-letter";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { markStoreStatements } from "../src/db.js";
 import { statementKind } from "../src/store-writes.js";

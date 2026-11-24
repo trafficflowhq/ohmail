@@ -16,17 +16,21 @@ import { ImapAdapter } from "../src/adapters/imap.js";
  * `fetchByUid` and this counts two.
  */
 function fakeClient(opts: { sent?: boolean; serve?: number[] } = {}) {
-  const state = { lists: 0 };
+  // `armed`: the LIST `connect()` issues answers no folder and is not counted, so the count is the
+  // targeted fetches' alone and the Sent folder is still to be resolved when they run.
+  const state = { lists: 0, armed: false };
   const client = {
     capabilities: new Set(["LIST-STATUS"]),
     mailbox: { uidValidity: 1n },
     list: async () => {
+      if (!state.armed) return [];
       state.lists += 1;
       return opts.sent === false
         ? []
         : [{ path: "Sent", specialUse: "\\Sent", flags: new Set<string>(), delimiter: "/" }];
     },
     getMailboxLock: async () => ({ release: () => {} }),
+    append: async () => ({ uid: 1, uidValidity: 1n }),
     // Two-pass shape: the size probe answers first, the source fetch second. `serve` empty ⇒
     // every asked UID is `absent`.
     fetch: (_range: unknown, query: Record<string, unknown>) => (async function* () {
@@ -39,14 +43,21 @@ function fakeClient(opts: { sent?: boolean; serve?: number[] } = {}) {
   return { client, state };
 }
 
+/** Connected over the fake, as a worker's adapter is: `connect()` learns the delimiter (`/`, none named). */
+async function connectedOver(fake: ReturnType<typeof fakeClient>): Promise<ImapAdapter> {
+  const adapter = new ImapAdapter({
+    host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
+  }, { client: fake.client });
+  await adapter.connect();
+  fake.state.armed = true;
+  return adapter;
+}
+
 describe("fetchByUid — the sent-path resolution is memoised, never a per-call LIST", () => {
   it("two targeted fetches cost one LIST, not one each", async () => {
-    const adapter = new ImapAdapter({
-      host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
-    });
-    const { client, state } = fakeClient();
-    (adapter as unknown as { delimiter: string }).delimiter = "/"; // what connect() learns on a flat server
-    (adapter as unknown as { client: unknown }).client = client;
+    const fake = fakeClient();
+    const { state } = fake;
+    const adapter = await connectedOver(fake);
 
     const first = await adapter.fetchByUid("INBOX", [7]);
     expect(first.absent).toEqual([7]);
@@ -61,12 +72,9 @@ describe("fetchByUid — the sent-path resolution is memoised, never a per-call 
     // must start being watched). A targeted fetch has no discovery duty per call, so without its
     // own negative memo a no-Sent account paid one full inventory LIST per four-message chunk —
     // review round 3, after round 2's fix covered only the positive path.
-    const adapter = new ImapAdapter({
-      host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
-    });
-    const { client, state } = fakeClient({ sent: false });
-    (adapter as unknown as { delimiter: string }).delimiter = "/"; // what connect() learns on a flat server
-    (adapter as unknown as { client: unknown }).client = client;
+    const fake = fakeClient({ sent: false });
+    const { state } = fake;
+    const adapter = await connectedOver(fake);
 
     const first = await adapter.fetchByUid("INBOX", [7]);
     expect(first.absent).toEqual([7]);
@@ -80,16 +88,14 @@ describe("fetchByUid — the sent-path resolution is memoised, never a per-call 
     // The scan or the send path can discover/create the Sent folder while the targeted memo
     // still holds a null. A retry fetched from that folder must carry `ownAuthored` — un-stamped,
     // planChange routes the user's own outbound mail as inbound (review round 4).
-    const adapter = new ImapAdapter({
-      host: "example.invalid", port: 993, secure: true, auth: { user: "u", pass: "p" },
-    });
-    const { client } = fakeClient({ sent: false, serve: [7] });
-    (adapter as unknown as { delimiter: string }).delimiter = "/"; // what connect() learns on a flat server
-    (adapter as unknown as { client: unknown }).client = client;
+    const server = { sent: false, serve: [7] };
+    const adapter = await connectedOver(fakeClient(server));
 
     await adapter.fetchByUid("INBOX", [7]);   // caches the negative
-    // The scan learns the Sent path mid-window (its own memo field, set without a LIST here).
-    (adapter as unknown as { scanSentFolder: string | null }).scanSentFolder = "Sent";
+    // The send path learns the Sent path mid-window: the server now lists it, and filing a sent
+    // copy resolves it.
+    server.sent = true;
+    await adapter.fileSentCopy(Buffer.from("From: a@b\r\n\r\nx"), "<m@x.invalid>");
 
     const out = await adapter.fetchByUid("Sent", [7]);
     expect(out.creates).toHaveLength(1);

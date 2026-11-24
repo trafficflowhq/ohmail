@@ -29,7 +29,7 @@ describe("mail 0165 on Postgres (PGlite)", () => {
       for (let i = 0; i < bodies; i++) {
         const m = randomUUID();
         await run(`insert into messages (id, account_id, mailbox_id, dedup_key, body_hash) values ('${m}', '${a}', '${kept}', 'k${i}', 'h${i}')`);
-        await run(`insert into message_bodies (message_id, text) values ('${m}', repeat('z', 1000))`);
+        await run(`insert into message_bodies (message_id, account_id, text) values ('${m}', '${a}', repeat('z', 1000))`);
       }
       if (counter !== null) await run(`insert into account_storage (account_id, bytes) values ('${a}', ${counter})`);
       return a;

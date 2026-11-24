@@ -9,9 +9,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, apiOwnerBinding, bindApiOwner } from "../../api-client";
-import { readOwnerMarker } from "../../shell/owner-cookie";
-import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
-import { markSessionAlive, sessionIsDead } from "../../shell/session-truth";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
+import { markSessionAlive, sessionIsDead } from "@ohmail/app-logic/session/session-truth";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { revokedWipeSettled } from "../../revoked-door";
 

@@ -1,8 +1,9 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import * as scan from "../scripts/lib/source-scan.mjs";
+import { readSource } from "../apps/worker/test/_start-function.js";
+import { readingTheUnit } from "./support/engine-unit.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -83,7 +84,7 @@ type Verb = (typeof VERBS)[number];
 /** Which roots are scanned for an UNREGISTERED seam — the four files the lease is spread over. */
 const SCANNED = [
   "packages/core/src/adapters/organizer-lease.ts",
-  "apps/worker/src/lease.ts",
+  "packages/organizer/src/lease.ts",
   "apps/worker/src/index.ts",
   "apps/sidecar/src/engine.ts",
 ] as const;
@@ -117,7 +118,7 @@ const REGISTRY: Record<string, Partial<Record<Verb, Seam>>> = {
         + "admitted, so a takeover landing around them cannot be inside the baseline",
     },
   },
-  "apps/worker/src/lease.ts": {
+  "packages/organizer/src/lease.ts": {
     runLeaseGate: {
       calls: 1,
       upholds: "permit-threaded",
@@ -250,7 +251,7 @@ function seamsIn(src: string): Partial<Record<Verb, number>> {
 }
 
 describe("the organizer lease's seams are all classified", () => {
-  const read = (rel: string): string => readFileSync(join(ROOT, rel), "utf8");
+  const read = (rel: string): string => readingTheUnit(readSource)(join(ROOT, rel));
 
   it("every seam in every scanned root is registered, and no registered seam has gone", () => {
     const missing: string[] = [];

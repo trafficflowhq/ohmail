@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { bodyCeilingFor, JSON_BODY_MAX_BYTES, readBodyWithin, BodyOverCeilingError } from "@trafficflow/api";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
 import { BODY_MAX_BYTES } from "../src/config.js";
-import { normalizeRequest, undrained } from "../src/handler.js";
+import { makeDispatch, normalizeRequest, undrained } from "../src/handler.js";
 
 /**
  * the HIGH instance: **the one an UNAUTHENTICATED client reaches.**
@@ -235,5 +235,47 @@ describe("undrained — which requests leave bytes the pipeline will not read", 
     expect(chunked.headers.get("content-length")).toBeNull();
     expect(chunked.headers.get("transfer-encoding")).toBeNull();
     expect(undrained(chunked, "/nope")).toBe(true);
+  });
+});
+
+describe("the one pipeline answers a busy connection as busy, on every door", () => {
+  /* A raw route carries no error envelope, so a session lookup that could not get a connection
+     reaches the pipeline's own catch. It was a 500 on the self-hosted server: a route fault
+     reported for connection contention, and nothing told the client to try again. */
+  const busy = Object.assign(new Error("the database connection did not begin this statement in time"), { name: "DbAcquireTimeoutError" });
+  const lines: { event: string; fields: Record<string, unknown> }[] = [];
+  const logger = {
+    warn: (event: string, fields: Record<string, unknown>) => { lines.push({ event, fields }); },
+    error: (event: string, fields: Record<string, unknown>) => { lines.push({ event, fields }); },
+  };
+  const dispatch = makeDispatch({
+    routes: selfHostRoutes, bodyMaxBytes: BODY_MAX_BYTES, closeUndrained: true, logger,
+    buildDeps: () => { throw busy; },
+  });
+
+  it("503 db_busy with no-store and a request id, and one warn line; never a 500", async () => {
+    const res = await dispatch(new Request("http://localhost/events"));
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("db_busy");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
+    expect(lines.map((l) => l.event)).toEqual(["request_db_busy"]);
+    expect(lines[0]!.fields).toMatchObject({ status: 503, code: "db_busy", path: "/events" });
+  });
+
+  it("HEAD gets the same status and no body", async () => {
+    const res = await dispatch(new Request("http://localhost/health", { method: "HEAD" }));
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe("");
+  });
+
+  it("any other fault outside a pipeline is still the sanitized 500", async () => {
+    const broken = makeDispatch({
+      routes: selfHostRoutes, bodyMaxBytes: BODY_MAX_BYTES, closeUndrained: true, logger,
+      buildDeps: () => { throw new Error("host=db.internal user=ohmail"); },
+    });
+    const res = await broken(new Request("http://localhost/hello"));
+    expect(res.status).toBe(500);
+    expect(await res.text()).not.toContain("db.internal");
   });
 });

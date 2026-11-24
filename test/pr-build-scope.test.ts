@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { publicPath } from "./support/public-root.mjs";
-import { evalIf, namesStatusCheck, runJobs, type IfContext, type JobResult } from "./support/workflow-if.js";
+import { evalIf, namesStatusCheck, runJobs, startsOn, type IfContext, type JobResult, type RunEvent } from "./support/workflow-if.js";
 
 /**
  * A PULL REQUEST BUILDS THE PLATFORMS ONLY WHEN IT CHANGES WHAT THEY BUILD, AND THE REQUIRED JOBS ALWAYS REPORT.
@@ -47,11 +47,14 @@ const needsOf = (j: Job) => (Array.isArray(j.needs) ? j.needs : j.needs === unde
 const NO_DOOR: IfContext = {
   "github.event.pull_request.head.repo.full_name": null, "github.head_ref": null, "github.event.pull_request.user.type": null,
   "github.event.pull_request.author_association": null, "github.actor": null, "github.triggering_actor": null,
+  "github.event.pull_request.draft": null, "github.base_ref": null, "github.event.action": null,
+  "inputs.play_version_code": "", "github.event.deleted": false,
 };
-/** A maintainer's own pull request from a branch of this repository. */
-const LANE = (head = "pr/lane-x"): IfContext => ({
+/** A maintainer's own pull request from a branch of this repository, ready unless `draft`. */
+const LANE = (head = "pr/lane-x", draft = false): IfContext => ({
   "github.event.pull_request.head.repo.full_name": "trafficflowhq/ohmail", "github.head_ref": head, "github.event.pull_request.user.type": "User",
   "github.event.pull_request.author_association": "OWNER", "github.actor": "a-maintainer", "github.triggering_actor": "a-maintainer",
+  "github.event.pull_request.draft": draft,
 });
 
 /** A run as the expressions see it. `scope` is the answer `changes` printed, `result` how `changes` ended. */
@@ -90,7 +93,7 @@ const graphRun = (event: string, ref: string, scope: string): IfContext => ({
 });
 const ran = (r: Record<string, JobResult>) => Object.keys(r).filter((id) => r[id] === "success").sort();
 /** The script runs with nothing of the caller's run: under CI it would otherwise write to the job's own output. */
-const ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir(), GIT_CONFIG_NOSYSTEM: "1", LC_ALL: "C" };
+const ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir(), TMPDIR: tmpdir(), GIT_CONFIG_NOSYSTEM: "1", LC_ALL: "C" };
 
 /** The script's answer for a list of paths, and a CHANGELOG.md diff when given. */
 function scope(paths: string[], changelog?: string): { desktop: string; android: string; selfhost: string; out: string } {
@@ -136,6 +139,9 @@ describe("the platform builds are gated on a pull request and nowhere else", () 
       expect(String(step?.run ?? "")).toBe("bash .github/scripts/pr-build-scope.sh --base HEAD^1 --head HEAD");
       expect(evalIf(ifOf(c), PR("", "")), "a fork's").toBe(true);
       for (const head of ["pr/batch-0307", "pr/release-0307-bump"]) expect(evalIf(ifOf(c), { ...PR("", ""), ...LANE(head) }), head).toBe(true);
+      expect(evalIf(ifOf(c), { ...PR("", ""), ...LANE("pr/batch-0307", true) }), "a batch that is a draft").toBe(false);
+      expect(evalIf(ifOf(c), { ...PR("", ""), ...LANE("pr/release-0307-bump", true) }), "the release bump as a draft").toBe(true);
+      expect(evalIf(ifOf(c), { ...PR("", ""), "github.event.pull_request.draft": true }), "a fork's draft").toBe(true);
       expect(evalIf(ifOf(c), { ...PR("", ""), ...LANE(), "github.event.pull_request.user.type": "Bot" }), "a bot's").toBe(true);
       for (const head of ["pr/lane-x", "pr/release-run-on-vms", "pr/batch", "pr/release-0307-bump-fix"]) {
         expect(evalIf(ifOf(c), { ...PR("", ""), ...LANE(head) }), `a maintainer's ${head}`).toBe(false);
@@ -242,6 +248,145 @@ describe("every job after a platform build follows it, read as GitHub reads the 
   });
 });
 
+/**
+ * PLATFORM BUILDS FOR DRAFT BATCHES AND READY MARKS.
+ *
+ * A batch's pull request can land its members on its own build run while it is a draft: the engine pair takes minutes,
+ * the platform builds most of an hour, and those follow on the branch once the members are in. So `changes` reads the
+ * draft flag on the batch's arm and nowhere else, and the three workflows start on `ready_for_review`, so that a batch
+ * marked ready into main still builds every platform, the APK and the self-host smoke. On next the ready mark
+ * of a maintainer's batch retains just the two required engine jobs. Read as GitHub starts each run
+ * (`startsOn`) and its jobs (`runJobs`), against each file as it was without the flag and the trigger:
+ *   · a draft batch's opening, push or reopening runs build.yml's engine pair alone, what every draft runs;
+ *   · marking any pull request ready into main runs the jobs its ready push runs; none of the three started on it before;
+ *   · every other event and kind of pull request runs exactly the jobs it ran before.
+ */
+describe("platform builds for draft batches and ready pull requests", () => {
+  const TERM = " && !(startsWith(github.head_ref, 'pr/batch-') && (github.repository != 'trafficflowhq/ohmail' || github.base_ref != 'next' || github.event.action != 'ready_for_review') && github.event.pull_request.draft != true)";
+  const OLD = " && !startsWith(github.head_ref, 'pr/batch-')";
+  const TYPES = "\n    types: [opened, synchronize, reopened, ready_for_review]\n";
+  const TEXTS: Record<string, string> = { "build.yml": BUILD, "android.yml": ANDROID, "selfhost-smoke.yml": SELFHOST };
+  /** Each file as it was: the batch's arm without the draft flag, the pull request's three default types. */
+  const asItWas = (t: string) => t.replace(TERM, OLD).replace(TYPES, "\n");
+  const BEFORE: Record<string, string> = Object.fromEntries(Object.entries(TEXTS).map(([f, t]) => [f, asItWas(t)]));
+  /** Every job of build.yml but the check of a shipped tag's app. */
+  const ALL_BUILD = Object.keys(load(BUILD).jobs ?? {}).filter((id) => id !== "macos-signed-check").sort();
+  const ENGINE_PAIR = ["engine", "engine-ui-smoke"];
+  /** A run's contexts: what the conditions read, every scope answer "true" (the change reaches every build). */
+  const at = (event: string, ref: string, extra: IfContext = {}): IfContext => ({
+    "github.event_name": event, "github.ref": ref, "github.repository": "trafficflowhq/ohmail", ...NO_DOOR,
+    "needs.changes.outputs.desktop": "true", "needs.changes.outputs.android": "true", "needs.changes.outputs.selfhost": "true", ...extra,
+  });
+  const BATCH = LANE("pr/batch-0307");
+  const KINDS: Array<[string, IfContext]> = [
+    ["a maintainer's pull request", LANE()],
+    ["a batch", BATCH],
+    ["the release bump", LANE("pr/release-0307-bump")],
+    ["a fork's pull request", { "github.event.pull_request.head.repo.full_name": "someone/ohmail", "github.head_ref": "fix-x", "github.event.pull_request.user.type": "User",
+      "github.event.pull_request.author_association": "CONTRIBUTOR", "github.actor": "someone", "github.triggering_actor": "someone" }],
+    ["a bot's pull request", { "github.event.pull_request.head.repo.full_name": "trafficflowhq/ohmail", "github.head_ref": "dependabot/npm_and_yarn/x",
+      "github.event.pull_request.user.type": "Bot", "github.event.pull_request.author_association": "NONE", "github.actor": "dependabot[bot]", "github.triggering_actor": "dependabot[bot]" }],
+  ];
+  const prEvent = (action: string, draft: boolean, kind: IfContext): RunEvent =>
+    ({ event: "pull_request", action, ref: "refs/pull/7/merge", ctx: at("pull_request", "refs/pull/7/merge", { "github.base_ref": "main", "github.event.action": action, ...kind, "github.event.pull_request.draft": draft }) });
+  /** Every row: its label, the event, and whether it is a draft batch's push. */
+  const ROWS: Array<[string, RunEvent, boolean]> = [
+    ...KINDS.flatMap(([kind, ctx]) => ["opened", "synchronize", "reopened"].flatMap((action) => [true, false].map((draft) =>
+      [`${kind}, ${action}, ${draft ? "a draft" : "ready"}`, prEvent(action, draft, ctx), ctx === BATCH && draft] as [string, RunEvent, boolean]))),
+    ...KINDS.map(([kind, ctx]) => [`${kind}, marked ready`, prEvent("ready_for_review", false, ctx), false] as [string, RunEvent, boolean]),
+    ...([["a push to main", "push", "refs/heads/main"], ["a push to next", "push", "refs/heads/next"], ["a v* tag", "push", "refs/tags/v1.2.3"],
+      ["an android-v* tag", "push", "refs/tags/android-v1.2.3"], ["a dispatch on main", "workflow_dispatch", "refs/heads/main"],
+      ["a dispatch on next", "workflow_dispatch", "refs/heads/next"], ["a merge group", "merge_group", "refs/heads/gh-readonly-queue/main/pr-7-abc"]] as const)
+      .map(([label, event, ref]) => [label, { event, ref, ctx: at(event, ref) }, false] as [string, RunEvent, boolean]),
+    ["the nightly", { event: "schedule", ref: "refs/heads/main", cron: "daily", ctx: at("schedule", "refs/heads/main") }, false],
+  ];
+  /** The jobs one event runs in a file, or "no run" when the file does not start for it. */
+  const jobsOn = (t: string, ev: RunEvent): string[] | "no run" => {
+    const wf = load(t);
+    return startsOn(wf.on, ev) ? ran(runJobs(wf.jobs ?? {}, ev.ctx)) : "no run";
+  };
+  /** The rows whose jobs differ from the files as they were, a draft batch's push and a ready mark left out. */
+  const changedRows = (texts: Record<string, string>) => Object.entries(texts).flatMap(([file, t]) => ROWS
+    .filter(([, ev, draftBatch]) => !draftBatch && ev.action !== "ready_for_review")
+    .filter(([, ev]) => JSON.stringify(jobsOn(t, ev)) !== JSON.stringify(jobsOn(BEFORE[file]!, ev)))
+    .map(([label]) => `${file}: ${label}`));
+
+  it("each file reads the draft flag on the batch's arm alone and starts on ready_for_review", () => {
+    for (const [file, t] of Object.entries(TEXTS)) {
+      expect(t.split(TERM).length - 1, `${file}: the batch's arm reads the draft flag`).toBe(1);
+      expect(t.split("github.event.pull_request.draft").length - 1, `${file}: the flag is read nowhere else`).toBe(1);
+      expect(t.split(TYPES).length - 1, `${file}: the pull request's types`).toBe(1);
+      expect((load(t).on?.pull_request as { types?: string[] } | null)?.types, file).toEqual(["opened", "synchronize", "reopened", "ready_for_review"]);
+    }
+  });
+
+  it("every other event and kind of pull request runs exactly the jobs it ran before", () => {
+    expect(ROWS.length, "the rows").toBe(KINDS.length * 7 + 8);
+    expect(changedRows(TEXTS)).toEqual([]);
+  });
+
+  it("a batch that is a draft, opened, pushed or reopened, runs build.yml's engine pair alone: no platform, no APK, no self-host smoke", () => {
+    for (const action of ["opened", "synchronize", "reopened"]) {
+      const draft = prEvent(action, true, BATCH), ready = prEvent(action, false, BATCH);
+      expect([jobsOn(BUILD, draft), jobsOn(ANDROID, draft), jobsOn(SELFHOST, draft)], action).toEqual([ENGINE_PAIR, [], []]);
+      expect([jobsOn(BUILD, ready), jobsOn(ANDROID, ready), jobsOn(SELFHOST, ready)], `${action}, ready`).toEqual([ALL_BUILD, ["apk", "changes"], ["boot-smoke", "changes"]]);
+      expect([jobsOn(BEFORE["build.yml"]!, draft), jobsOn(BEFORE["android.yml"]!, draft), jobsOn(BEFORE["selfhost-smoke.yml"]!, draft)], `${action}, a draft, as it was`)
+        .toEqual([ALL_BUILD, ["apk", "changes"], ["boot-smoke", "changes"]]);
+    }
+  });
+
+  it("marking a pull request into main ready runs the jobs its ready push runs; none of the three started on it before", () => {
+    for (const [kind, ctx] of KINDS) for (const [file, t] of Object.entries(TEXTS)) {
+      const ready = prEvent("ready_for_review", false, ctx);
+      expect(jobsOn(BEFORE[file]!, ready), `${file}: ${kind}, as it was`).toBe("no run");
+      expect(jobsOn(t, ready), `${file}: ${kind}`).toEqual(jobsOn(t, prEvent("synchronize", false, ctx)));
+    }
+    expect(jobsOn(BUILD, prEvent("ready_for_review", false, BATCH)), "the batch marked ready").toEqual(ALL_BUILD);
+    expect(jobsOn(BUILD, prEvent("ready_for_review", false, LANE())), "a maintainer's other pull request marked ready").toEqual(ENGINE_PAIR);
+  });
+
+  it("marking a maintainer batch ready on next starts only the two required engine jobs", () => {
+    const nextBatch = { ...BATCH, "github.base_ref": "next" };
+    const jobs = (action: string, context: IfContext) => {
+      const event = prEvent(action, false, context);
+      return [jobsOn(BUILD, event), jobsOn(ANDROID, event), jobsOn(SELFHOST, event)];
+    };
+    const full = [ALL_BUILD, ["apk", "changes"], ["boot-smoke", "changes"]];
+    for (const role of ["OWNER", "MEMBER", "COLLABORATOR"]) {
+      expect(jobs("ready_for_review", { ...nextBatch, "github.event.pull_request.author_association": role }), role).toEqual([ENGINE_PAIR, [], []]);
+    }
+    for (const action of ["opened", "synchronize", "reopened"]) expect(jobs(action, nextBatch), action).toEqual(full);
+    for (const context of [
+      { ...nextBatch, "github.base_ref": "main" },
+      { ...nextBatch, "github.head_ref": "pr/release-0307-bump" },
+      { ...nextBatch, "github.event.pull_request.head.repo.full_name": "someone/ohmail" },
+      { ...nextBatch, "github.event.pull_request.author_association": "CONTRIBUTOR" },
+      { ...nextBatch, "github.event.pull_request.user.type": "Bot" },
+      { ...nextBatch, "github.actor": "builder[bot]" },
+      { ...nextBatch, "github.triggering_actor": "builder[bot]" },
+    ]) expect(jobs("ready_for_review", context)).toEqual(full);
+  });
+
+  it("each reading is watched failing", () => {
+    const draft = prEvent("synchronize", true, BATCH);
+    const planted = (from: string, to: string) => {
+      const t = BUILD.replace(from, to);
+      expect(t, `the planting changed nothing: ${from}`).not.toBe(BUILD);
+      return t;
+    };
+    // The flag dropped from the batch's arm: a draft batch builds every platform again.
+    expect(jobsOn(planted(TERM, OLD), draft)).toEqual(ALL_BUILD);
+    // The string literal: GitHub reads `true != 'true'` as true, so a draft batch builds every platform.
+    expect(jobsOn(planted(TERM, TERM.replace("!= true", "!= 'true'")), draft)).toEqual(ALL_BUILD);
+    // ready_for_review dropped from the trigger: marking the batch ready starts nothing, and the way back is gone.
+    expect(jobsOn(planted(TYPES, "\n"), prEvent("ready_for_review", false, BATCH))).toBe("no run");
+    // The flag read on the release bump's arm too: a draft bump stops building, and the rows name each such push.
+    const bump = "!(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump'))";
+    expect(changedRows({ "build.yml": planted(bump, bump.replace("'-bump'))", "'-bump') && github.event.pull_request.draft != true)")) }))
+      .toEqual(["opened", "synchronize", "reopened"].map((a) => `build.yml: the release bump, ${a}, a draft`));
+  });
+});
+
 describe("pr-build-scope.sh answers the paths each build reads", () => {
   it.each([
     ["docs and root pages", ["README.md", "docs/x.md", "CONTRIBUTING.md"], "false", "false"],
@@ -263,8 +408,11 @@ describe("pr-build-scope.sh answers the paths each build reads", () => {
     ["a patch", ["patches/x.patch"], "true", "true"],
     ["a build script", ["scripts/engine-bundle.mjs"], "true", "true"],
     ["the lockfile", ["package-lock.json"], "true", "true"],
-    ["the root tsconfig", ["tsconfig.base.json"], "true", "true"],
+    ["the shared tsconfig", ["tools/tsconfig.base.json"], "true", "true"],
+    ["the root test program", ["test/tsconfig.test-dirs.json"], "true", "true"],
+    ["the engine's type program", ["tools/tsconfig.engine.json"], "true", "true"],
     ["this script", [".github/scripts/pr-build-scope.sh"], "true", "true"],
+    ["the Play upload script", [".github/scripts/play-upload.mjs"], "false", "true"],
     ["the CI retry wrapper", [".github/scripts/retry-infra.sh"], "true", "true"],
     ["nothing", [], "false", "false"],
     ["a changelog fragment", ["changelog.d/x.md"], "false", "false"],

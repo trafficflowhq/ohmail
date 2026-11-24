@@ -1,0 +1,18 @@
+Subject: Verbinde dein Postfach mit ohmail
+
+ohmail.
+
+Verbinde dein Postfach.
+
+Du hast eine ohmail-Testphase gestartet, und noch ist kein Postfach verbunden. ohmail hat also keine Mails, die es für dich organisieren kann.
+
+Für eine Outlook.com- oder Hotmail-Adresse antworte auf diese Mail, und ein Mensch hilft dir beim Verbinden. Liegen deine Mails in einem Microsoft-365-Postfach deiner Arbeit oder Schule, verbinde es unter Einstellungen › Postfächer mit „Outlook verbinden“: Du meldest dich bei Microsoft an und brauchst kein App-Passwort.
+
+Der Button unten öffnet den Postfach-Schritt, falls nötig über die Anmeldung. Das Verbinden dauert ein paar Minuten.
+
+Postfach verbinden:
+https://app.ohmail.app/login?next=join
+
+--
+Wir schicken diese Erinnerung nur einmal. Hast du Fragen oder hängst du fest, antworte auf diese Mail, und ein Mensch antwortet dir.
+TrafficFlow GmbH, Zürich, Schweiz

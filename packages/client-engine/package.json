@@ -16,6 +16,12 @@
       "node": "./dist/durable.js",
       "default": "./src/durable.ts"
     },
+    "./stored-keys": {
+      "types": "./src/stored-keys.ts",
+      "ohmail-source": "./src/stored-keys.ts",
+      "node": "./dist/stored-keys.js",
+      "default": "./src/stored-keys.ts"
+    },
     "./send-fingerprint": {
       "types": "./src/send-fingerprint.ts",
       "ohmail-source": "./src/send-fingerprint.ts",
@@ -27,11 +33,35 @@
       "ohmail-source": "./src/html-tree-budget.ts",
       "node": "./dist/html-tree-budget.js",
       "default": "./src/html-tree-budget.ts"
+    },
+    "./calendar-acts": {
+      "types": "./src/calendar-acts.ts",
+      "ohmail-source": "./src/calendar-acts.ts",
+      "node": "./dist/calendar-acts.js",
+      "default": "./src/calendar-acts.ts"
+    },
+    "./calendar-writes": {
+      "types": "./src/calendar-writes.ts",
+      "ohmail-source": "./src/calendar-writes.ts",
+      "node": "./dist/calendar-writes.js",
+      "default": "./src/calendar-writes.ts"
+    },
+    "./providers": {
+      "types": "./src/providers.ts",
+      "ohmail-source": "./src/providers.ts",
+      "node": "./dist/providers.js",
+      "default": "./src/providers.ts"
+    },
+    "./calendar-span": {
+      "types": "./src/engine/calendar-span.ts",
+      "ohmail-source": "./src/engine/calendar-span.ts",
+      "node": "./dist/engine/calendar-span.js",
+      "default": "./src/engine/calendar-span.ts"
     }
   },
   "dependencies": {
     "parse5": "7.3.0",
-    "@ohmail/fixtures": "*",
+    "@ohmail/wire": "*",
     "@trafficflow/core": "*"
   }
 }

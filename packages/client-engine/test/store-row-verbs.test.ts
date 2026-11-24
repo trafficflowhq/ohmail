@@ -4,13 +4,13 @@
  * from the page cache, the row leaves or moves at the press, one outbox entry carries it, and the
  * shadow holds the page's row until the store agrees. A row in neither cache is still sent.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   OUTBOX_ENTRY_VERSION,
   OUTBOX_TYPE,
   StoreTimelineWalker,
-  type EngineMessage,
   type OhmailEngine,
   type StoreKeyset,
 } from "../src/index.js";

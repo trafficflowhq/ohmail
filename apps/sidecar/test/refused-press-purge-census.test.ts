@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * A REFUSED PRESS PURGES THROUGH THE RUNTIME — rows, plaintext, login, timers — never a bare DELETE,
@@ -12,7 +11,7 @@ import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs
  * at the foot proves the counter and the region matcher discriminate.
  */
 
-const ENGINE = readFileSync(fileURLToPath(new URL("../src/engine.ts", import.meta.url)), "utf8");
+const ENGINE = readEngineAsOneText();
 const CODE = withoutCommentsAndLiterals(ENGINE);
 
 /** The block the brace at or after `opener`'s end opens, brace-matched over blanked source. */

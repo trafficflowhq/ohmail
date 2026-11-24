@@ -1,0 +1,72 @@
+.cal-invitation-sheet {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 0;
+  flex: 1;
+}
+
+.cal-invitation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: var(--s3) var(--s3) var(--s1);
+}
+
+.cal-invitation-nav,
+.cal-invitation-facts,
+.cal-invitation-calendar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.cal-invitation-picker > [aria-haspopup="menu"] {
+  font-size: var(--t-meta);
+}
+.cal-invitation-nav {
+  flex-shrink: 0;
+}
+
+.cal-invitation-nav :disabled {
+  background: transparent;
+}
+
+.cal-invitation-content {
+  display: grid;
+  gap: var(--s2);
+  padding-inline: var(--sheet-pad);
+}
+
+.cal-invitation-title {
+  margin: 0;
+  font-family: var(--f-display);
+  font-size: var(--t-title);
+  font-weight: var(--w-display);
+  letter-spacing: var(--track);
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}
+
+.cal-invitation-detail {
+  margin: 0;
+  font-size: var(--t-ui);
+}
+
+.cal-invitation-grab {
+  inline-size: var(--s6);
+  block-size: var(--s1);
+  margin: var(--s2) auto 0;
+  border-radius: var(--r-pill);
+  background: var(--line);
+}
+
+.cal-invitation-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.cal-invitation-facts {
+  margin-block-start: var(--s1);
+}

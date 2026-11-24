@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
@@ -19,10 +20,10 @@ import { withIngestRuns } from "./ingest-run.js";
 // The RULE the fence answers with, from the module that owns the refusal it becomes. This
 // direction only: `sync.ts` must never import this file, which reaches `@trafficflow/db/cloud`
 // and would carry the hosted half into the engine bundle `apps/sidecar` builds from `sync.ts`.
-import { mailboxIsGoneForWrites, type FenceVerdict, type SyncWriteFence } from "./sync.js";
+import { mailboxIsGoneForWrites, type FenceVerdict, type SyncWriteFence } from "@ohmail/organizer/sync";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
-import { gapKeyFrom, handBackStart, heldElsewhereUntilOnLeave, travellingGapColumns } from "./gap-window.js";
-export { markOrganizedThrough } from "./gap-window.js";
+import { gapKeyFrom, handBackStart, heldElsewhereUntilOnLeave, travellingGapColumns } from "@ohmail/organizer/gap-window";
+export { markOrganizedThrough } from "@ohmail/organizer/gap-window";
 
 // The always-on worker reads its per-mailbox credentials from `mailbox_credentials`
 // (envelope-encrypted at rest) instead of a single env mailbox. This module is
@@ -493,23 +494,31 @@ async function toTransport(
 }
 
 /**
- * Each mailbox's IMAP host, from the non-secret `meta` of its `imap` row: what the attach pool keys
- * "one attach per provider host" on. One query, run only when a roster pass has attaches to
- * schedule. A mailbox with no row is absent from the map. Nothing is decrypted, and the hosts are
- * never logged.
+ * What the attach pool uses to allow one concurrent attach per provider host.
+ * Read each account's IMAP metadata together. Nothing is decrypted or logged.
  */
-export async function loadAttachHosts(db: WorkerDb, mailboxIds: readonly string[]): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  if (mailboxIds.length === 0) return out;
-  const rows = await db
-    .select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
-    .from(mailboxCredentials)
-    .where(and(inArray(mailboxCredentials.mailboxId, [...mailboxIds]), eq(mailboxCredentials.transport, "imap")));
-  for (const r of rows) {
-    const host = (r.meta as { host?: unknown } | null)?.host;
-    if (typeof host === "string") out.set(r.mailboxId, host);
+export async function loadAttachHosts(
+  scheduled: readonly Pick<EnabledMailbox, "accountId" | "mailboxId">[],
+  forAccount: (accountId: string) => { db: WorkerDb },
+): Promise<Map<string, string>> {
+  const grouped = new Map<string, string[]>();
+  for (const { accountId, mailboxId } of scheduled) {
+    const ids = grouped.get(accountId);
+    if (ids) ids.push(mailboxId);
+    else grouped.set(accountId, [mailboxId]);
   }
-  return out;
+  const hosts = new Map<string, string>();
+  for (const [accountId, mailboxIds] of grouped) {
+    const rows = await forAccount(accountId).db
+      .select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
+      .from(mailboxCredentials)
+      .where(and(inArray(mailboxCredentials.mailboxId, mailboxIds), eq(mailboxCredentials.transport, "imap")));
+    for (const row of rows) {
+      const host = (row.meta as { host?: unknown } | null)?.host;
+      if (typeof host === "string") hosts.set(row.mailboxId, host);
+    }
+  }
+  return hosts;
 }
 
 /**
@@ -631,7 +640,7 @@ export async function bootstrapEnvCreds(
     const now = new Date();
     const imapEnc = await keyProvider.encrypt(input.imap.pass);
     await tx.insert(mailboxCredentials).values({
-      mailboxId: input.mailboxId, transport: "imap",
+      mailboxId: input.mailboxId, accountId: accountOfMailbox(input.mailboxId), transport: "imap",
       secretEnc: imapEnc.ciphertext, keyVersion: imapEnc.keyVersion,
       meta: { host: input.imap.host, port: input.imap.port, secure: input.imap.secure, user: input.imap.user },
       updatedAt: now,
@@ -642,7 +651,7 @@ export async function bootstrapEnvCreds(
       const smtpPass = input.smtp.pass ?? input.imap.pass;
       const smtpEnc = await keyProvider.encrypt(smtpPass);
       await tx.insert(mailboxCredentials).values({
-        mailboxId: input.mailboxId, transport: "smtp",
+        mailboxId: input.mailboxId, accountId: accountOfMailbox(input.mailboxId), transport: "smtp",
         secretEnc: smtpEnc.ciphertext, keyVersion: smtpEnc.keyVersion,
         meta: { host: input.smtp.host, port: input.smtp.port, secure: input.smtp.secure, user: input.smtp.user ?? input.imap.user },
         updatedAt: now,
@@ -1397,7 +1406,7 @@ export async function markMailboxSyncBlocked(
   // THE WRITE DOOR for a widenable set (mail 0029 opened it, mail 0102 widened it). The device
   // store carries no CHECK for it, so the membership test is the refusal on both dialects — and
   // the typed parameter is not one: this function is reachable from code the compiler never saw.
-  const member = closedSetValue("mailboxes_sync_blocked_reason_closed", reason);
+  const member = closedSetValue("mailboxes_sync_blocked_reason_shape", reason);
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     syncBlockedReason: member,
     syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${now.toISOString()}::timestamptz)`,

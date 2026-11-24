@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
@@ -40,7 +41,7 @@ let originalFetch: typeof globalThis.fetch;
 
 beforeEach(async () => {
   setJar("absent");
-  const { resetStorageOwnerForTest } = await import("../app/shell/storage-owner.js");
+  const { resetStorageOwnerForTest } = await import("@ohmail/app-logic/storage/storage-owner");
   resetStorageOwnerForTest();
   originalFetch = globalThis.fetch;
   // A server that answers everything. Any request reaching it is a request the gate LET THROUGH,
@@ -131,7 +132,7 @@ describe("the refusal names the state it is in", () => {
   });
 
   it("THE HEAL writes the pending word's line with the id, and only into a silent jar", async () => {
-    const { healOwner, markSignedOutPending, readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+    const { healOwner, markSignedOutPending, readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     let pending = "";
     markSignedOutPending((c) => { pending = c; });
     const lines: string[] = [];
@@ -148,7 +149,7 @@ describe("the refusal names the state it is in", () => {
   });
 
   it("A SIGN-IN'S NAME is written with the pending word's ninety days, and never over the server's cookie naming it", async () => {
-    const { markSignedOutPending, rememberOwner } = await import("../app/shell/owner-cookie.js");
+    const { markSignedOutPending, rememberOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
     let pending = "";
     markSignedOutPending((c) => { pending = c; });
     const lines: string[] = [];
@@ -162,7 +163,7 @@ describe("the refusal names the state it is in", () => {
   });
 
   it("THE WORD is written over a name or silence, and never again over itself: the edge's copy outlives Safari's cap", async () => {
-    const { markSignedOutPending } = await import("../app/shell/owner-cookie.js");
+    const { markSignedOutPending } = await import("@ohmail/app-logic/storage/owner-cookie");
     const writes = (shape: keyof typeof SHAPES): number => {
       setJar(shape);
       let n = 0;
@@ -218,10 +219,10 @@ describe("ONE resolver: the three doors read the same enum", () => {
   for (const row of TABLE) {
     it(`a ${row.shape} marker: gate ${row.verdict} · sync ${row.identity} · storage ${row.storage.source}`, async () => {
       const { apiOwnerVerdict, bindApiOwner } = await import("../app/api-client.js");
-      const { createSyncGate } = await import("../app/shell/sync-scheduler.js");
-      const { storageOwnerState, resetStorageOwnerForTest } = await import("../app/shell/storage-owner.js");
-      const { sendLocksKey } = await import("../app/shell/send-lock.js");
-      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
+      const { storageOwnerState, resetStorageOwnerForTest } = await import("@ohmail/app-logic/storage/storage-owner");
+      const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+      const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
 
       resetStorageOwnerForTest();
       bindApiOwner(A);
@@ -237,12 +238,12 @@ describe("ONE resolver: the three doors read the same enum", () => {
       // has no account", which is how a signed-in window's send records went missing.
       expect(state.marker).toBe(row.shape);
       // The KEY BYTES do not move — records already written under either suffix stay findable.
-      expect(sendLocksKey()).toBe(row.lockKey);
+      expect(sendLocksKey(storageOwner())).toBe(row.lockKey);
     });
   }
 
   it("`readOwner` is a projection of the marker, never a second parse of the cookie", async () => {
-    const { readOwner, readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+    const { readOwner, readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     // Including the two values a second parse gets wrong on its own: the reserved word, and a
     // value outside the id shape.
     for (const jar of [`tf_owner=${A}`, "tf_owner=signed_out_pending", "tf_owner=not a id", ""]) {
@@ -252,7 +253,7 @@ describe("ONE resolver: the three doors read the same enum", () => {
   });
 
   it("the unowned fallback is SAID, once per state, and not on every read", async () => {
-    const { storageOwnerState, resetStorageOwnerForTest } = await import("../app/shell/storage-owner.js");
+    const { storageOwnerState, resetStorageOwnerForTest } = await import("@ohmail/app-logic/storage/storage-owner");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     resetStorageOwnerForTest();
     setJar("absent");
@@ -273,7 +274,7 @@ describe("ONE resolver: the three doors read the same enum", () => {
 describe("a sentence rendered as the server's is the server's", () => {
   it("a CODED server refusal lends its words", async () => {
     const { ApiError } = await import("../app/api-client.js");
-    const { clientRefusalKey, disarmsAutoSuggest } = await import("../app/shell/screener-suggest.js");
+    const { clientRefusalKey, disarmsAutoSuggest } = await import("@ohmail/app-logic/screener/screener-suggest");
     const err = new ApiError(409, "ai_disabled", "managed AI is switched off", undefined, { coded: true });
     expect(clientRefusalKey(err)).toBeNull();
     expect(disarmsAutoSuggest(err)).toBe(true);
@@ -281,7 +282,7 @@ describe("a sentence rendered as the server's is the server's", () => {
 
   it("an UNCODED client refusal gets this client's own key, one per owner state", async () => {
     const { ApiError } = await import("../app/api-client.js");
-    const { clientRefusalKey } = await import("../app/shell/screener-suggest.js");
+    const { clientRefusalKey } = await import("@ohmail/app-logic/screener/screener-suggest");
     const pairs = [
       ["owner_absent", "suggest.refusedOwnerAbsent"],
       ["owner_signed_out", "suggest.refusedOwnerSignedOut"],
@@ -298,10 +299,22 @@ describe("a sentence rendered as the server's is the server's", () => {
 
   it("a client refusal does not disarm the automatic pass; a non-ApiError still does", async () => {
     const { ApiError } = await import("../app/api-client.js");
-    const { disarmsAutoSuggest } = await import("../app/shell/screener-suggest.js");
+    const { disarmsAutoSuggest } = await import("@ohmail/app-logic/screener/screener-suggest");
     expect(disarmsAutoSuggest(new ApiError(0, "owner_absent", "x", undefined, { coded: false }))).toBe(false);
     // The desktop bridge throws its own class off a real wire — unchanged.
     expect(disarmsAutoSuggest(new Error("bridge said no"))).toBe(true);
+  });
+
+  it("the mark is read off the refusal itself, whatever class carries it", async () => {
+    const { clientRefusalKey, disarmsAutoSuggest } = await import("@ohmail/app-logic/screener/screener-suggest");
+    // What the server client stamps on a refusal it made itself, carried by a class this file never sees.
+    const made = Object.assign(new Error("raw english"), { status: 0, code: "owner_absent", wire: { coded: false } });
+    expect(clientRefusalKey(made)).toBe("suggest.refusedOwnerAbsent");
+    expect(disarmsAutoSuggest(made)).toBe(false);
+    // And a server's own word stays a server's, whatever carries it.
+    const stated = Object.assign(new Error("m"), { status: 409, code: "ai_disabled", wire: { coded: true } });
+    expect(clientRefusalKey(stated)).toBeNull();
+    expect(disarmsAutoSuggest(stated)).toBe(true);
   });
 
   it("every key this client can choose exists in BOTH catalogues", () => {

@@ -34,9 +34,9 @@ async function world(claim: boolean, arrivedAt: Date | null = new Date("2026-10-
     date: new Date("2020-01-06T09:00:00.000Z"), arrivedAt, unread: false, createdAt: new Date("2026-10-07T11:00:00.000Z"),
     nativeLocator: { folder: GATE, ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `dc-${randomUUID().slice(0, 8)}` };
   return { ctx };

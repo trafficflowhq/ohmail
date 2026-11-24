@@ -13,11 +13,11 @@ import { schema } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { createLogger } from "@trafficflow/core";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
-import { MailboxRemovedError, runSyncCycle } from "../src/sync.js";
+import { MailboxRemovedError, runSyncCycle } from "@ohmail/organizer/sync";
 import { ingestRunRepository } from "../src/ingest-run.js";
 import { INGEST_RUN_BOUNDS } from "../src/config.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A REMOVAL LANDING BETWEEN PLAN AND COMMIT — the ingest refuses instead of leaving mail behind.

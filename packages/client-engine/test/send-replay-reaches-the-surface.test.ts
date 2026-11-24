@@ -1,5 +1,6 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { HttpAdapter, type EngineMutation, type FetchLike } from "../src/index.js";
+import { HttpAdapter, type FetchLike } from "../src/index.js";
 
 /**
  * ═══ THE SERIALIZER'S HALF OF `firstSend` ═══════════════════════════════════════════════════
@@ -12,7 +13,7 @@ import { HttpAdapter, type EngineMutation, type FetchLike } from "../src/index.j
  */
 interface Call { path: string }
 
-function harness(firstSend: unknown) {
+function harness(firstSend: unknown, sentDraftId?: string) {
   const calls: Call[] = [];
   const fetchImpl: FetchLike = async (url, init) => {
     const path = new URL(url, "http://localhost").pathname;
@@ -25,6 +26,7 @@ function harness(firstSend: unknown) {
       return new Response(JSON.stringify({
         status: "sent", providerMessageId: "<id@x>",
         ...(firstSend === undefined ? {} : { firstSend }),
+        ...(sentDraftId === undefined ? {} : { sentDraftId, sentDraftThrough: 7 }),
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
     return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
@@ -37,8 +39,8 @@ const press = (): EngineMutation => ({
   body: "the numbers are attached",
 } as unknown as EngineMutation);
 
-const outcomeFor = async (firstSend: unknown, key: string) => {
-  const { fetchImpl } = harness(firstSend);
+const outcomeFor = async (firstSend: unknown, key: string, sentDraftId?: string) => {
+  const { fetchImpl } = harness(firstSend, sentDraftId);
   const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl });
   const answer = await a.mutate(press(), { idempotencyKey: key });
   // A send the server answered is an OUTCOME, never the queued-for-somebody-else form. Narrowed
@@ -52,10 +54,19 @@ describe("a send answered from an earlier reservation reaches the surface", () =
   it("1 — the server's statement is carried on the outcome", async () => {
     const out = await outcomeFor({ status: "sent", at: "2026-09-16T07:00:00.000Z" }, "k-1");
     expect(out.firstSend).toEqual({ status: "sent", at: "2026-09-16T07:00:00.000Z" });
+    expect(out.sentDraftId).toBeUndefined();
   });
 
   it("2 — an ordinary send carries none, so nothing is said about it", async () => {
-    expect((await outcomeFor(undefined, "k-2")).firstSend ?? null).toBeNull();
+    const out = await outcomeFor(undefined, "k-2");
+    expect(out.firstSend ?? null).toBeNull();
+    expect(out.sentDraftId).toBeUndefined();
+  });
+
+  it("takes the delivered draft from the answer when a key settled another draft", async () => {
+    const out = await outcomeFor(undefined, "replayed", "delivered-draft");
+    expect(out.sentDraftId).toBe("delivered-draft");
+    expect(out.sentDraftThrough).toBe(7);
   });
 
   /**

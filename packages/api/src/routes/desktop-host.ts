@@ -13,7 +13,7 @@ import { sessionLifecycleRoutes } from "./session-lifecycle.js";
 import { deviceRoutes } from "./devices.js";
 // The anonymous redeem ALONE — never `pairRoutes`, whose mint/list/revoke belong to the
 // standalone server (and, on a desktop, to the window's own door). See `pair.ts`.
-import { pairRedeemRoutes, pairStateRoutes } from "./pair.js";
+import { pairHandoffRoutes, pairRedeemRoutes, pairStateRoutes } from "./pair.js";
 
 /**
  * The desktop-host route table — what a desktop install serves to its owner's other devices: a
@@ -22,7 +22,9 @@ import { pairRedeemRoutes, pairStateRoutes } from "./pair.js";
  * artifact. Absent: the sign-in ceremony, the pairing mint/list/revoke (a remote device must not
  * mint the credential that admits remote devices), everything server-only. Present: `localRoutes`
  * plus the redeem and its hash-keyed state read, refresh/logout (`allDevices` step-up-gated),
- * device list/revoke/audit. Obligations: `allowCookieAuth: false` (the zero-Set-Cookie census
+ * device list/revoke/audit, and the one bounded exception to that rule, a paired phone app's handoff to its sibling
+ * on the same phone (`pairHandoffRoutes`): bound to the sibling's challenge, paid with the phone's refresh token, and
+ * taken back with the phone. Obligations: `allowCookieAuth: false` (the zero-Set-Cookie census
  * sweeps the table), `services.auth` with no `inviteRedeem`, `hello.features.pairing: true`.
  */
 export const desktopHostRoutes: Route[] = [
@@ -32,4 +34,6 @@ export const desktopHostRoutes: Route[] = [
   ...pairRedeemRoutes,
   // The link's state by its hash, beside the redeem, so a desktop asks before it configures.
   ...pairStateRoutes,
+  // A phone paired to this computer hands its sign-in to its sibling app here, as on a server.
+  ...pairHandoffRoutes,
 ];

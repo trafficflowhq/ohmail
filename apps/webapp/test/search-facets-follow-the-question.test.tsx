@@ -1,20 +1,18 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { fireEvent, within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
 
 /**
  * THE STORE'S FACET CHIPS ARE THE QUESTION ON SCREEN'S (REVIEW-026 H1). The first render after a
@@ -24,11 +22,11 @@ import { KeymapProvider } from "../app/shell/keymap";
  * question: its page and its count are asked at once, never after the typing hold.
  */
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
-const h = React.createElement;
 const NOW = new Date("2026-09-26T12:00:00.000Z");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 let asked: Array<{ at: number; q: string; parts: string; sender: string | null }> = [];
 
 const facetsFor = (q: string) => ({
@@ -62,39 +60,43 @@ async function engine(opts: { failSecond?: boolean } = {}): Promise<OhmailEngine
   return new OhmailEngine({ adapter, store, now: () => NOW });
 }
 
-function Live({ e, door }: { e: OhmailEngine; door: { type?: (q: string) => void } }) {
-  const [query, setQuery] = React.useState("");
-  door.type = setQuery;
-  return h(SearchView, { engine: e, version: 1, now: NOW, query, onQuery: setQuery, onOpen: () => {} });
+async function mounted(e: OhmailEngine) {
+  root.render(<RegisteredSearch engine={e} now={NOW} />);
+  await within(host).findByRole("textbox", { name: messages.search.aria });
+  return { type: (query: string) => typeSearch(host, query) };
 }
 
-async function mounted(e: OhmailEngine) {
-  const door: { type?: (q: string) => void } = {};
-  root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(KeymapProvider, { children: h(Live, { e, door }) }) }));
-  for (let i = 0; i < 100 && door.type === undefined; i++) await sleep(10);
-  return door;
+function fromMenu() {
+  const from = within(host).queryByRole("button", { name: messages.search.facetFrom });
+  if (from?.getAttribute("aria-expanded") === "false") fireEvent.click(from);
+  return within(document.body).queryByRole("menu", { name: messages.search.facetFrom });
+}
+
+function facetOption(name: RegExp) {
+  const menu = fromMenu();
+  return menu && within(menu).queryByRole("menuitem", { name });
 }
 
 /** Type A, wait for its chips, type B; how long A's chip stood under B (ms, -1 never), and B's own. */
 async function staleAfterRetype(e: OhmailEngine): Promise<{ staleUntil: number; secondDrawn: number }> {
   const door = await mounted(e);
-  door.type!("alphaword");
-  for (let i = 0; i < 300 && !(host.textContent ?? "").includes("firstsender"); i++) await sleep(5);
-  expect(host.textContent, "the first question's facet never drew, so the reading below says nothing").toContain("firstsender");
+  door.type("alphaword");
+  for (let i = 0; i < 300 && !facetOption(/firstsender/); i++) await sleep(5);
+  expect(facetOption(/firstsender/), "the first question's facet never drew, so the reading below says nothing").toBeTruthy();
   const t0 = performance.now();
-  door.type!("betaword");
+  door.type("betaword");
   let staleUntil = -1, secondDrawn = -1;
   for (let i = 0; i < 300; i++) {
     await sleep(5);
-    const txt = host.textContent ?? "";
-    if (txt.includes("firstsender")) staleUntil = performance.now() - t0;
-    if (secondDrawn < 0 && txt.includes("secondsender")) secondDrawn = performance.now() - t0;
+    if (facetOption(/firstsender/)) staleUntil = performance.now() - t0;
+    if (secondDrawn < 0 && facetOption(/secondsender/)) secondDrawn = performance.now() - t0;
   }
   return { staleUntil, secondDrawn };
 }
 
 beforeEach(() => {
   asked = [];
+  leaveSearch = enterSearchRoute();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -102,6 +104,7 @@ beforeEach(() => {
 afterEach(() => {
   root.unmount();
   host.remove();
+  leaveSearch();
 });
 
 describe("the store's facet chips belong to the question on screen", () => {
@@ -118,12 +121,12 @@ describe("the store's facet chips belong to the question on screen", () => {
 
   it("a pressed facet asks its page and its count at once", async () => {
     const door = await mounted(await engine());
-    door.type!("alphaword");
-    for (let i = 0; i < 300 && !(host.textContent ?? "").includes("firstsender"); i++) await sleep(5);
-    const chip = [...host.querySelectorAll(".facets button")].find((b) => (b.textContent ?? "").includes("firstsender")) as HTMLElement;
+    door.type("alphaword");
+    for (let i = 0; i < 300 && !facetOption(/firstsender/); i++) await sleep(5);
+    const chip = facetOption(/firstsender/);
     expect(chip, "no chip to press").toBeTruthy();
     const t0 = performance.now();
-    chip.click();
+    fireEvent.click(chip!);
     for (let i = 0; i < 200 && !asked.some((a) => a.sender !== null && a.parts === "estimate"); i++) await sleep(5);
     const page = asked.find((a) => a.sender !== null && a.parts === "page");
     const count = asked.find((a) => a.sender !== null && a.parts === "estimate");
@@ -135,35 +138,31 @@ describe("the store's facet chips belong to the question on screen", () => {
 });
 
 describe("the facets are controls a keyboard reaches", () => {
-  const facet = () => [...host.querySelectorAll<HTMLElement>(".facets button")].find((b) => (b.textContent ?? "").includes("firstsender"));
-
   it("each facet is a tabbable toggle button; the pressed one says so and a second press clears it", async () => {
     const door = await mounted(await engine());
-    door.type!("alphaword");
-    for (let i = 0; i < 300 && !facet(); i++) await sleep(5);
-    const b = facet() as HTMLButtonElement;
-    expect(b, "the From facet is not a button").toBeTruthy();
-    expect(b.type).toBe("button");
-    expect(b.tabIndex).toBe(0);
-    expect(b.getAttribute("aria-pressed")).toBe("false");
-    b.click();
-    for (let i = 0; i < 200 && facet()?.getAttribute("aria-pressed") !== "true"; i++) await sleep(5);
-    expect(facet()!.getAttribute("aria-pressed"), "the active filter is not shown on its control").toBe("true");
+    door.type("alphaword");
+    for (let i = 0; i < 300 && !facetOption(/firstsender/); i++) await sleep(5);
+    const from = within(host).getByRole("button", { name: messages.search.facetFrom });
+    expect(from.tabIndex).toBe(0);
+    fireEvent.click(facetOption(/firstsender/)!);
+
+    const selected = await within(host).findByRole("button", { name: /firstsender/, pressed: true });
+    expect((selected as HTMLButtonElement).type).toBe("button");
+    expect(selected.tabIndex).toBe(0);
     expect(asked.some((a) => a.sender === "firstsender@x.test")).toBe(true);
-    facet()!.click();
-    for (let i = 0; i < 200 && facet()?.getAttribute("aria-pressed") !== "false"; i++) await sleep(5);
-    expect(facet()!.getAttribute("aria-pressed"), "a second press did not clear the filter").toBe("false");
+    fireEvent.click(selected);
+    expect(await within(host).findByRole("button", { name: messages.search.facetFrom, expanded: false })).toBeTruthy();
   });
 
-  it("a typed from: or in: says it is not a filter and points at the facets", async () => {
+  it("typed from: and in: are searched as words and the facets stay available", async () => {
     const door = await mounted(await engine());
-    door.type!("alphaword");
-    await sleep(30);
-    expect(host.querySelector("[data-testid=search-no-operators]")).toBeNull();
+    const ui = within(host);
     for (const q of ["from:firstsender alphaword", "alphaword in:inbox"]) {
-      door.type!(q);
-      for (let i = 0; i < 100 && !host.querySelector("[data-testid=search-no-operators]"); i++) await sleep(5);
-      expect(host.querySelector("[data-testid=search-no-operators]")?.textContent, q).toContain("not filters");
+      door.type(q);
+      await expect.poll(() => asked.some((request) => request.q === q && request.sender === null)).toBe(true);
+      expect(ui.getByRole("textbox", { name: messages.search.aria })).toHaveProperty("value", q);
+      expect(ui.getByRole("button", { name: messages.search.facetFrom, expanded: false })).toBeTruthy();
+      expect(ui.getByRole("button", { name: messages.search.facetPlace, expanded: false })).toBeTruthy();
     }
   });
 });

@@ -1,3 +1,9 @@
+import type {
+  EngineMessage,
+  MutationOutcome,
+  RuleEntity as RuleDTO,
+  ScreenerWaitingWire,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   consentPartition,
@@ -6,10 +12,6 @@ import {
   presentationReader,
   screenerSegments,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
-  type RuleDTO,
-  type ScreenerWaitingWire,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";
@@ -73,8 +75,7 @@ async function engineWith(answer: ScreenerWaitingWire | null): Promise<OhmailEng
   const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore(), now: () => NOW, storePolicy: { mode: "full" } });
   await engine.start();
   await engine.syncOnce();
-  const refresh = (engine as unknown as { refreshScreenerWaiting?: () => Promise<void> }).refreshScreenerWaiting;
-  await refresh?.call(engine);
+  await engine.refreshScreenerWaiting();
   return engine;
 }
 

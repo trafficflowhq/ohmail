@@ -1,0 +1,94 @@
+{
+  "component": "AllDayRow",
+  "state": "rest",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 76, 1392, 28],
+  "clip": [24, 76, 1392, 28],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxShadow": "oklch(0.6 0.14 153) 0px 0px 0px 1px inset", "borderRadius": "999px" },
+    { "backgroundColor": "oklch(0.6 0.14 153)", "borderRadius": "2px" },
+    { "after.backgroundColor": "oklch(0.6 0.14 153)", "after.opacity": "0", "after.borderRadius": "1px" }
+  ],
+  "nodes": [
+    {
+      "role": "group",
+      "name": "all day",
+      "box": [0, 0, 1392, 28],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "6px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
+      "role": "button",
+      "name": "Makersfest",
+      "box": [815.1, 0, 560.9, 22],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "oklch(0.945 0.042 153)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Makersfest", "type": 0 }],
+      "surfaces": [
+        { "box": [815.1, 0, 560.9, 22], "paint": 0 },
+        { "box": [823.1, 7, 8, 8], "paint": 1 },
+        { "box": [815.1, 0, 10, 22], "paint": 2, "parts": { "after": [4, 6, 2, 10] } },
+        { "box": [1366, 0, 10, 22], "paint": 2, "parts": { "after": [4, 6, 2, 10] } }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
+import { createApp, apiRoutes, csrfTokenFor, type ApiDeps } from "@trafficflow/api";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
-import { mailboxes, mailboxCredentials, type Db } from "@trafficflow/db";
-import { mailboxOauthDeviceCeremonies } from "@trafficflow/db/cloud";
+import { mailboxes, mailboxCredentials, refreshTokens, sessions, type Db } from "@trafficflow/db";
+import { deviceCeremonyKey, mailboxOauthDeviceCeremonies } from "@trafficflow/db/cloud";
 import { MS_AUTHORIZE_SCOPES, DEVICE_CODE_GRANT_TYPE, type FetchLike } from "@trafficflow/core";
+import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { generateToken, hashToken } from "@trafficflow/services";
 import { and, eq } from "drizzle-orm";
-import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedSessionFor, req, FIXED_NOW } from "./helpers.js";
 
 /**
  * THE DEVICE-CODE DOOR (cloud 0027) — the guards, each one written to fail first.
@@ -122,6 +124,8 @@ interface World {
   deps: ApiDeps;
   token: string;
   accountId: string;
+  userId: string;
+  sessionId: string;
   idp: ReturnType<typeof fakeIdp>;
   clock: { now: () => Date; advance: (ms: number) => void };
   H: (r: Request, over?: Partial<ApiDeps>) => Promise<Response>;
@@ -151,10 +155,13 @@ async function world(opts: {
       : {}),
   };
   return {
-    db, deps: base, token: s.token, accountId: s.accountId, idp, clock,
+    db, deps: base, token: s.token, accountId: s.accountId, userId: s.userId, sessionId: s.sessionId, idp, clock,
     H: (r, over) => app.handle(r, { ...base, ...over, session: null, idempotency: null }),
   };
 }
+
+const storedState = ({ accountId, sessionId }: World, state: string): string =>
+  deviceCeremonyKey({ accountId, sessionId, state });
 
 const startReq = (token: string): Request =>
   req("POST", "/mailboxes/oauth/microsoft/device/start", { bearer: token, body: "{}" });
@@ -206,19 +213,17 @@ describe("cloud 0027 — POST /mailboxes/oauth/microsoft/device/start", () => {
     expect(started.state).not.toBe(DEVICE_CODE);
 
     const [row] = await w.db.select().from(mailboxOauthDeviceCeremonies)
-      .where(eq(mailboxOauthDeviceCeremonies.state, started.state));
+      .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, started.state)));
     expect(row).toBeDefined();
-    // THE ACCOUNT COMES FROM THE SESSION, never from the body. This is the field the 403 below
-    // compares against, so a ceremony bound to anything else is the cross-account guard defeated at
-    // its source.
+    // The account comes from the session and is part of the stored lookup scope.
     expect(row!.accountId).toBe(w.accountId);
     expect(row!.consumedAt).toBeNull();
     expect(row!.lastPolledAt).toBeNull();
     // SEALED AT REST, exactly like a mailbox password: the ciphertext must not contain the value.
     expect(row!.deviceCodeEnc).not.toContain(DEVICE_CODE);
     expect(row!.deviceCodeKeyVersion).toBeGreaterThan(0);
-    expect(await w.deps.keyProvider.decrypt(row!.deviceCodeEnc, row!.deviceCodeKeyVersion))
-      .toBe(DEVICE_CODE);
+    const sealed = await w.deps.keyProvider.decrypt(row!.deviceCodeEnc, row!.deviceCodeKeyVersion);
+    expect(JSON.parse(sealed)).toEqual({ sessionId: w.sessionId, deviceCode: DEVICE_CODE });
     // Microsoft's own interval and expiry, clamped on the way in.
     expect(row!.pollIntervalMs).toBe(5_000);
     expect(row!.grantExpiresAt.getTime()).toBe(FIXED_NOW.getTime() + 900_000);
@@ -346,7 +351,7 @@ describe("cloud 0027 — the poll READS WITHOUT CONSUMING", () => {
       expect(body.verificationUri).toBe(VERIFICATION_URI);
 
       const [row] = await w.db.select().from(mailboxOauthDeviceCeremonies)
-        .where(eq(mailboxOauthDeviceCeremonies.state, state));
+        .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
       expect(row!.consumedAt, `poll ${i} must not consume`).toBeNull();
       // …and the poll WAS recorded. `last_polled_at` moving is what the cadence fence turns on, so
       // a read that wrote nothing at all would be non-consuming and also unfenced.
@@ -401,7 +406,7 @@ describe("cloud 0027 — the poll READS WITHOUT CONSUMING", () => {
       expect(body.status).toBe("pending");
       expect(body.retryAfterMs).toBe(want);
       const [row] = await w.db.select().from(mailboxOauthDeviceCeremonies)
-        .where(eq(mailboxOauthDeviceCeremonies.state, state));
+        .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
       expect(row!.pollIntervalMs, "the widened interval is STORED").toBe(want);
       expect(row!.consumedAt, "slow_down is not a terminal verdict").toBeNull();
       // The fence now uses the WIDENED interval, which is the point — advancing by the old one is
@@ -442,7 +447,7 @@ describe("cloud 0027 — the three TERMINAL verdicts each claim the ceremony exa
     expect(w.idp.token, "the deadline is a stored fact, not a question for Microsoft").toHaveLength(0);
 
     const [row] = await w.db.select().from(mailboxOauthDeviceCeremonies)
-      .where(eq(mailboxOauthDeviceCeremonies.state, state));
+      .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
     // Claimed: an aged-out state is dead FOR GOOD rather than dead until a clock is nudged.
     expect(row!.consumedAt).not.toBeNull();
 
@@ -458,7 +463,7 @@ describe("cloud 0027 — the three TERMINAL verdicts each claim the ceremony exa
     const { body } = await poll(w, state);
     expect(body.status).toBe("expired");
     const [row] = await w.db.select().from(mailboxOauthDeviceCeremonies)
-      .where(eq(mailboxOauthDeviceCeremonies.state, state));
+      .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
     expect(row!.consumedAt).not.toBeNull();
   });
 
@@ -474,7 +479,7 @@ describe("cloud 0027 — the three TERMINAL verdicts each claim the ceremony exa
       expect(res.status, error).toBe(200);
       expect(body.status, error).toBe("declined");
       const [row] = await w.db.select().from(mailboxOauthDeviceCeremonies)
-        .where(eq(mailboxOauthDeviceCeremonies.state, state));
+        .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
       expect(row!.consumedAt, error).not.toBeNull();
     }
   });
@@ -584,38 +589,212 @@ describe("cloud 0027 — GRANTED stores the mailbox, with its DOOR recorded", ()
   });
 });
 
-describe("cloud 0027 — a cross-account poll is refused AND the ceremony survives it", () => {
-  it("403, and the victim's ceremony is still live", async () => {
-    /*
-     * DELIBERATELY DIFFERENT FROM THE REDIRECT FLOW, which burns a stolen `state`. There, the
-     * consume has already happened by the time the accounts are compared, and burning is the right
-     * direction for a value that rode through a third party in a URL.
-     *
-     * Here the value never leaves this origin, and claiming on mismatch would hand ANY authenticated
-     * account a one-request way to kill somebody else's live ceremony by guessing. So the answer is
-     * a refusal and the legitimate owner keeps their grant.
-     *
-     * MUTATION: add a `claimDeviceCeremony` to the mismatch arm and the last assertion goes red.
-     */
-    const idp = fakeIdp({ token: () => granted() });
-    const w = await world({ idp });
-    const { state } = await start(w);
+describe("device sign-in expires even when completion is in flight", () => {
+  const expire = (w: World, expiresAt: string) => w.clock.advance(Date.parse(expiresAt) - w.clock.now().getTime());
 
+  it("refuses approval that returns at the deadline without probing the mailbox", async () => {
+    let reachDeadline: () => void;
+    const w = await world({ idp: fakeIdp({ token: () => {
+      reachDeadline();
+      return granted();
+    } }) });
+    const { state, expiresAt } = await start(w);
+    reachDeadline = () => expire(w, expiresAt);
+
+    const { res, body } = await poll(w, state);
+    expect(w.idp.token.length).toBe(1);
+    expect(body.status).toBe("expired");
+    expect(res.status).toBe(200);
+    expect(vi.mocked(ImapAdapter.prototype.connect).mock.calls.length).toBe(0);
+    expect((await poll(w, state)).res.status).toBe(400);
+  });
+
+  it.each([
+    { change: "create", window: "probe" },
+    { change: "reconnect", window: "probe" },
+    { change: "create", window: "write" },
+    { change: "reconnect", window: "write" },
+  ])("rolls back $change when the deadline passes during the mailbox $window", async ({ change, window }) => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const existingMailbox = change === "reconnect";
+    if (existingMailbox) {
+      const first = await start(w);
+      expect((await poll(w, first.state)).res.status).toBe(201);
+    }
+    const credentials = () => w.db.select({ sealed: mailboxCredentials.secretEnc })
+      .from(mailboxCredentials).where(eq(mailboxCredentials.accountId, w.accountId));
+    const before = await credentials();
+    const { state, expiresAt } = await start(w);
+    const probe = vi.mocked(ImapAdapter.prototype.connect);
+    probe.mockClear();
+    const encrypt = w.deps.keyProvider.encrypt.bind(w.deps.keyProvider);
+    const seal = vi.spyOn(w.deps.keyProvider, "encrypt");
+    if (window === "probe") {
+      probe.mockImplementation(async () => { expire(w, expiresAt); });
+    } else {
+      seal.mockImplementation(async (value) => {
+        const sealed = await encrypt(value);
+        expire(w, expiresAt);
+        return sealed;
+      });
+    }
+
+    const { res, body } = await poll(w, state);
+    expect(probe.mock.calls.length).toBe(1);
+    expect(w.clock.now().getTime()).toBe(Date.parse(expiresAt));
+    expect(body.status).toBe("expired");
+    expect(res.status).toBe(200);
+    expect(seal.mock.calls.length).toBe(window === "probe" ? 0 : 1);
+    const boxes = await w.db.select({ id: mailboxes.id }).from(mailboxes)
+      .where(eq(mailboxes.accountId, w.accountId));
+    expect(boxes).toHaveLength(existingMailbox ? 1 : 0);
+    const after = await credentials();
+    expect(after).toHaveLength(before.length);
+    expect(after[0]?.sealed === before[0]?.sealed).toBe(true);
+    expect((await poll(w, state)).res.status).toBe(400);
+  });
+});
+
+describe("device sign-in belongs to the session that started it", () => {
+  const signOut = (w: World, allDevices = false) =>
+    w.H(req("POST", "/auth/logout", { bearer: w.token, body: JSON.stringify({ allDevices }) }));
+
+  const grantRemains = async (w: World, state: string): Promise<boolean> => {
+    const rows = await w.db.select({ pending: mailboxOauthDeviceCeremonies.consumedAt })
+      .from(mailboxOauthDeviceCeremonies).where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
+    return rows.some((row) => row.pending === null);
+  };
+
+  it("refuses another session of the same account and leaves the original grant usable", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
+    const other = await seedSessionFor(w.db, { accountId: w.accountId, userId: w.userId, now: FIXED_NOW });
+
+    const refused = await w.H(pollReq(other.token, state));
+    expect(refused.status).toBe(400);
+    expect(w.idp.token.length).toBe(0);
+    expect((await poll(w, state)).res.status).toBe(201);
+  });
+
+  it("refuses a grant after the session that started it signs out", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
+    const other = await seedSessionFor(w.db, { accountId: w.accountId, userId: w.userId, now: FIXED_NOW });
+    const survivor = { ...w, ...other };
+    const { state: otherState } = await start(survivor);
+
+    expect((await signOut(w)).status).toBe(204);
+    expect(await grantRemains(w, state)).toBe(false);
+
+    expect((await w.H(pollReq(w.token, state))).status).toBe(401);
+    const refused = await w.H(pollReq(other.token, state));
+    expect(refused.status).toBe(400);
+    expect(w.idp.token.length).toBe(0);
+    expect((await poll(survivor, otherState)).res.status).toBe(201);
+  });
+
+  it("invalidates outstanding grants from every session signed out together", async () => {
+    const w = await world();
+    await w.db.update(sessions).set({ lastTwofaAt: FIXED_NOW }).where(eq(sessions.id, w.sessionId));
+    const other = await seedSessionFor(w.db, { accountId: w.accountId, userId: w.userId, now: FIXED_NOW });
+    const { state } = await start(w);
+    const otherWorld = { ...w, ...other };
+    const { state: otherState } = await start(otherWorld);
+
+    expect((await signOut(w, true)).status).toBe(204);
+    expect(await grantRemains(w, state)).toBe(false);
+    expect(await grantRemains(otherWorld, otherState)).toBe(false);
+  });
+
+  it.each(["browser", "bearer"])("invalidates outstanding grants at %s refresh sign-out", async (carrier) => {
+    const w = await world();
+    const { state } = await start(w);
+    const [session] = await w.db.select({ familyId: sessions.familyId }).from(sessions)
+      .where(eq(sessions.id, w.sessionId));
+    const family = session!.familyId;
+    const refresh = generateToken();
+    await w.db.insert(refreshTokens).values({
+      accountId: w.accountId, userId: w.userId, sessionId: w.sessionId, familyId: family,
+      tokenHash: hashToken(refresh), expiresAt: new Date(FIXED_NOW.getTime() + 60_000), createdAt: FIXED_NOW,
+    });
+    const csrf = csrfTokenFor(w.token);
+    const cookies = `tf_session=${w.token}; tf_refresh=${refresh}; tf_csrf=${csrf}; tf_family=${family}`;
+    const headers = { "X-CSRF-Token": csrf, "X-Ohmail-Expected-Family": family };
+    const path = "/auth/refresh/logout";
+    const request = carrier === "browser" ? { cookie: cookies, headers } : { body: JSON.stringify({ refreshToken: refresh }) };
+
+    expect((await w.H(req("POST", path, request))).status).toBe(204);
+    expect(await grantRemains(w, state)).toBe(false);
+    if (carrier === "browser") {
+      const cleared = await w.H(req("POST", path, {
+        cookie: `${cookies}; tf_owner=signed_out_pending`,
+        headers: { ...headers, "X-Ohmail-Clear-Logout": "1" },
+      }));
+      expect(cleared.status).toBe(204);
+    }
+  });
+
+  it("stores no mailbox when the starting session signs out during the mailbox probe", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
+    let signOutStatus: number | undefined;
+    vi.spyOn(ImapAdapter.prototype, "connect").mockImplementation(async () => {
+      signOutStatus = (await signOut(w)).status;
+    });
+
+    const { res } = await poll(w, state);
+    expect(signOutStatus).toBe(204);
+    expect(res.status).toBe(401);
+    const rows = await w.db.select({ id: mailboxes.id }).from(mailboxes)
+      .where(eq(mailboxes.accountId, w.accountId));
+    expect(rows).toHaveLength(0);
+  });
+
+  it("refuses an older grant stored without a session binding", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
+    const sealed = await w.deps.keyProvider.encrypt(DEVICE_CODE);
+    await w.db.update(mailboxOauthDeviceCeremonies)
+      .set({ deviceCodeEnc: sealed.ciphertext, deviceCodeKeyVersion: sealed.keyVersion })
+      .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
+
+    expect((await poll(w, state)).res.status).toBe(400);
+    expect(w.idp.token.length).toBe(0);
+  });
+
+  it("requires a fresh sign-in for grants stored before the lookup was scoped", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
+    await w.db.update(mailboxOauthDeviceCeremonies).set({ state })
+      .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
+
+    const refused = await poll(w, state);
+    expect(refused.res.status).toBe(400);
+    expect(w.idp.token.length).toBe(0);
+  });
+});
+
+describe("cloud 0027 — a cross-account poll is refused AND the ceremony survives it", () => {
+  it("returns the missing-grant response and leaves the first account's grant untouched", async () => {
+    const w = await world({ idp: fakeIdp({ token: () => granted() }) });
+    const { state } = await start(w);
     const other = await seedSession(w.db, { now: FIXED_NOW });
 
-    const res = await w.H(pollReq(other.token, state));
-    expect(res.status).toBe(403);
-    // Refused BEFORE any request to Microsoft: a stolen state must not be able to spend the
-    // ceremony's one redemption either.
-    expect(w.idp.token).toHaveLength(0);
+    const missing = await w.H(pollReq(other.token, "never-issued-state-".padEnd(43, "x")));
+    const refused = await w.H(pollReq(other.token, state));
+    expect(missing.status).toBe(400);
+    expect(refused.status).toBe(missing.status);
+    expect(await refused.text()).toBe(await missing.text());
+    expect(w.idp.token.length).toBe(0);
 
-    const [row] = await w.db.select().from(mailboxOauthDeviceCeremonies)
-      .where(eq(mailboxOauthDeviceCeremonies.state, state));
-    expect(row!.consumedAt, "the account holder's ceremony survives a stranger's poll").toBeNull();
-
-    // …and the account holder can still finish it.
-    const mine = await poll(w, state);
-    expect(mine.res.status).toBe(201);
+    const [row] = await w.db.select({
+      consumedAt: mailboxOauthDeviceCeremonies.consumedAt,
+      lastPolledAt: mailboxOauthDeviceCeremonies.lastPolledAt,
+      pollIntervalMs: mailboxOauthDeviceCeremonies.pollIntervalMs,
+    }).from(mailboxOauthDeviceCeremonies)
+      .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
+    expect(row).toEqual({ consumedAt: null, lastPolledAt: null, pollIntervalMs: 5_000 });
+    expect((await poll(w, state)).res.status).toBe(201);
   });
 
   it("an unknown state and a spent state are the SAME answer", async () => {
@@ -654,7 +833,7 @@ describe("cloud 0027 — a failed poll is not a failed ceremony", () => {
     const bad = await poll(w, state);
     expect(bad.res.status).toBe(503);
     const [row] = await w.db.select().from(mailboxOauthDeviceCeremonies)
-      .where(eq(mailboxOauthDeviceCeremonies.state, state));
+      .where(eq(mailboxOauthDeviceCeremonies.state, storedState(w, state)));
     expect(row!.consumedAt, "we could not ask is never a verdict about the ceremony").toBeNull();
 
     fail = false;
@@ -693,4 +872,26 @@ describe("cloud 0027 — where these routes are mounted, and at what cost", () =
     // there is no public client and no environment variable to arm one.
     expect(apiRoutes.filter((r) => r.pattern.includes("/device/"))).toHaveLength(0);
   });
+});
+
+
+it("a poll that finishes after sign-out cannot return pending display values", async () => {
+  const idp = fakeIdp();
+  let sessionEnded: (() => Promise<void>) | undefined;
+  const w = await world({ idp: {
+    ...idp,
+    fetch: async (url, init) => {
+      const reply = await idp.fetch(url, init);
+      if (url.endsWith("/token")) await sessionEnded?.();
+      return reply;
+    },
+  } });
+  const started = await start(w);
+  sessionEnded = async () => {
+    await w.db.update(sessions).set({ revokedAt: FIXED_NOW }).where(eq(sessions.id, w.sessionId));
+  };
+  const res = await w.H(pollReq(w.token, started.state));
+  expect(res.status).toBe(401);
+  const body = await payload<PollPayload>(res);
+  expect(body.userCode === undefined && body.verificationUri === undefined).toBe(true);
 });

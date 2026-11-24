@@ -8,6 +8,8 @@
  * one per profile for the process (`bearer-registry.ts`). Profiles cross as ids, re-read from
  * the keystore inside the gate; the dead signal lands on `ended`.
  */
+import { calendarProfileMayRecover } from "../calendar/live-port";
+import { calendarLifecycle } from "../calendar/calendar-native";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppState, Platform } from "react-native";
 import { classifyWindowSyncFailure, unsentDraftsOf, type PullRing } from "@ohmail/client-engine";
@@ -47,14 +49,17 @@ import { nativeNetworkReader } from "./network-native";
 import { organizeHere, readMailboxes, type OrganizeOutcome } from "./mailboxes";
 import {
   connectProfileById,
+  connectShellById,
   drainPendingSignOuts,
   drainPendingWakeDrops,
   drainPendingWipes,
   forgetProfile,
+  handoffMinter,
   listHeldStandalone,
   mobileDeviceKind,
   negotiate,
   pairingFetch,
+  pairForShell,
   pairWithServer,
   probePairing,
   type PairAdmission,
@@ -62,11 +67,25 @@ import {
   type ConnectedSession,
   type Negotiation,
   type PairingEnv,
+  type ShellOutcome,
+  type ShellSession,
 } from "./pairing";
 import { resolveApiBase, type BaseVerdict } from "./server-base.js";
 import { TransitionGate } from "./transitions";
 import { buildCommit } from "../build-info";
 import { appRelease } from "./app-release";
+import { mailSurfaceOf } from "../shell/mail-surface";
+import { pairingDigest } from "../switch/digest";
+import { notePairings, switchIntake, switchPlaces, takeUpArrival, type ReceiveDeps } from "../switch/receive";
+import { switchNative } from "../switch/switch-native";
+import { siblingOf } from "../variant";
+import { APP } from "../variant-native";
+import { settleLaunchVerdict } from "../shell/old-copy";
+import { nativeShellStores } from "../shell/shell-stores-native";
+import { keeperRemembers, purgingShellToo } from "../shell/take-back";
+
+/** The surface this app shows mail in, chosen once by the build and the app it is (`mail-surface.ts`). */
+export const MAIL_SURFACE = mailSurfaceOf(process.env.EXPO_PUBLIC_OHMAIL_MAIL_SURFACE, APP);
 
 export type ConnectionState =
   /** The launch instant, before the keystore has answered whether a pairing exists. */
@@ -76,6 +95,8 @@ export type ConnectionState =
   /** `migrating`: the engine store's upgrade on a relaunch, as the engine announces it. */
   | { k: "connecting"; origin: string; migrating?: BootMigrating }
   | { k: "live"; session: ConnectedSession }
+  /** The shell's web view shows the mail; this side holds the transport and boots no engine. */
+  | { k: "shell"; session: ShellSession }
   | { k: "refused"; reason: Refusal }
   /** A mid-use death: the server refused the session's token. One scan re-pairs. */
   | { k: "ended"; reason: Refusal };
@@ -218,7 +239,7 @@ async function reopenWithBackground(
      and a session raised over it afterwards would refuse the next connect its own. */
   const launch = standaloneLaunchGeneration();
   void import("../engine/organizer-session-native")
-    .then((m) => { m.startOrganizerSessionNative(door, door.address, launch); })
+    .then((m) => { m.startOrganizerSessionNative(door, launch); })
     .catch(() => { sayOrganizerRestricted(); });
   return opened;
 }
@@ -244,12 +265,16 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       onNetworkChange(logNetwork);
       return {
         profiles: nativeServerProfiles(),
+        calendar: APP.app === "ohcal" ? calendarLifecycle() : undefined,
         engineDeps: nativeEngineDeps(),
         deviceKind: mobileDeviceKind(Platform.OS),
         // Named to every server in `x-ohmail-client`: the release `app.json` states (`net/app-release.ts`).
         ...(appRelease() !== undefined ? { clientRelease: appRelease()! } : {}),
         /* The digest a re-pair names the family it replaces by (`previousSession`). */
         familyDigest: nativeFamilyDigest,
+        /* THE SHELL'S STORES (its keeper and the web view's copy), paid with every mirror's wipe. Only where the
+           shell shows the mail: a build on its own screens never wrote either. */
+        ...(MAIL_SURFACE === "shell" ? { shell: nativeShellStores() } : {}),
         /* THE CONNECTOR, so a forget takes down the wake registration of the pairing it is
            forgetting. Registrations became per-pairing in this slice, so an orphan is now a real
            thing to leave behind — `wake.tsx` sweeps only when the LAST pairing goes, because the
@@ -285,6 +310,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
                this is the only place a dial that comes up and then files nothing can be read. */
             logSink: engineLogSink(),
             onMigrating: (progress) => { migratingSink.current?.(progress); },
+            /* THE COPY BEFORE THE STORE CROSSES INTO 2.0 (`engine/store-copy.ts`), behind the same dynamic
+               import as the platform: a throw refuses the open with the store untouched. */
+            beforeMajorUpgrade: async (exec) => {
+              const native = (await import("../engine/local-engine-native")) as {
+                nativeTakeStoreCopy: (exec: unknown) => Promise<void>;
+              };
+              await native.nativeTakeStoreCopy(exec);
+            },
           }),
           /* AND THE TAKE-BACK'S ENGINE HALF. Behind the same dynamic import the platform is:
              `local-engine-native` reaches expo-sqlite and the keystore, neither loadable by the
@@ -302,6 +335,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   );
   const gateRef = useRef<TransitionGate | null>(null);
   const gate = (gateRef.current ??= new TransitionGate());
+  /** The switch's native module, or null in a build without it (the switch then neither sends nor receives). */
+  const switcher = useMemo(() => switchNative(), []);
 
   /* A SIGN-OUT A SERVER WAS NOT TOLD goes when the network comes back (and at launch, below). */
   useEffect(
@@ -357,7 +392,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const refreshProfiles = useCallback(async () => {
     setProfiles(await env.profiles.list());
     setActiveId((await env.profiles.active())?.id ?? null);
-  }, [env]);
+    /* EVERY CHANGE OF THE PAIRINGS PASSES HERE, so the switch's provider answers the sibling from today's: this
+       app's live pairings by their digests, never an address or an account. */
+    void notePairings(switcher, env, nativeFamilyDigest);
+  }, [env, switcher]);
 
   /**
    * Leave the live state, then close the mirror once the in-flight drain settles. The round
@@ -398,7 +436,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
    * anything; an `authorized` or `already` answer clears the previous attempt's sentence, so
    * a retry that succeeds leaves no stale refusal under a session that is now organizing.
    */
-  const consentHere = useCallback(async (session: ConnectedSession): Promise<void> => {
+  const consentHere = useCallback(async (session: ConnectedSession | ShellSession): Promise<void> => {
+    /** The session this press belongs to is still the one entered, under either surface. */
+    const still = (at: ConnectionState): boolean => (at.k === "live" || at.k === "shell") && at.session === session;
     /**
      * THE ID COMES OFF THE DOOR, NOT OVER A REQUEST — the keys of `runtimes().organizer` ARE
      * mailbox ids, and the engine is in this process. This first read the roster over the loopback
@@ -410,8 +450,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
      * and organizes nothing while every surface says it is fine is the whole defect.
      */
     const id = standaloneHere()?.id ?? (await readMailboxes(session))?.[0]?.id ?? "";
-    const atId = live.now();
-    if (atId.k !== "live" || atId.session !== session) return;
+    if (!still(live.now())) return;
     if (id === "") {
       sayOrganizeRefused(refuse("organizeHereUnreadable"));
       return;
@@ -427,8 +466,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     const outcome = said.outcome;
     /* Only for THIS session: a verdict that outlives its session (a switch, a forget) must not
        write a sentence under the next one — the rule every other late answer here follows. */
-    const atPress = live.now();
-    if (outcome === null || atPress.k !== "live" || atPress.session !== session) return;
+    if (outcome === null || !still(live.now())) return;
     /* NOT `syncError`, which the Servers screen renders inside "Sync failed" — measured on a
        device announcing a sync failure for a mailbox whose sync had not failed. See
        `organizer-session.ts#organizeRefused` for where it goes and why. */
@@ -537,6 +575,80 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     [drain, env, refreshProfiles, runner, teardown],
   );
 
+  /**
+   * Retire the binding before React removes the WebView, so a pending answer cannot reach the leaving page.
+   */
+  const leaveShell = useCallback(async () => {
+    const at = live.now();
+    if (at.k === "shell") at.session.leave();
+    offDead.current?.();
+    offDead.current = null;
+    return at.k !== "shell" || !env.calendar ||
+      await env.calendar.revoke(at.session.profile.id).catch(() => false);
+  }, [env, live]);
+
+  const adoptShell = useCallback(
+    async (session: ShellSession, stillCurrent: () => boolean) => {
+      runner.disown();
+      clearAccessLock();
+      clearUpdateAnswer();
+      offDead.current?.();
+      const reviewIdentity = async () => {
+        const verdict = await session.verifyIdentity();
+        if (verdict.kind === "mismatch") {
+          void gate.run(async () => {
+            const at = live.now();
+            if (at.k !== "shell" || at.session !== session) return;
+            await leaveShell();
+            enter({ k: "refused", reason: verdict.reason });
+          });
+        }
+        return verdict;
+      };
+      const offRenewed = session.bearer?.onRenewed(() => { void reviewIdentity(); });
+      const offSessionDead = session.bearer?.onSessionDead((why) => {
+        void gate.run(async () => {
+          const at = live.now();
+          if (at.k !== "shell" || at.session !== session) return;
+          await leaveShell();
+          enter({ k: "ended", reason: deathRefusal(why) });
+          if (session.bearer?.removesCopy === true) {
+            await forgetProfile(env, session.profile.id, { revoke: async () => true, erased: why === "erased" })
+              .catch(() => undefined);
+          }
+          await refreshProfiles();
+        });
+      });
+      const unsubscribe = () => { offRenewed?.(); offSessionDead?.(); };
+      offDead.current = unsubscribe;
+      const identity = reviewIdentity();
+      if (env.calendar?.open) {
+        const verdict = await identity;
+        const mayRecover = stillCurrent() && verdict.kind === "verified" &&
+          await calendarProfileMayRecover(env.profiles, session.profile.id);
+        if (stillCurrent()) {
+          if (mayRecover) {
+            await env.calendar.open(session.profile.id).catch(() => undefined);
+          } else {
+            await env.calendar.close?.().catch(() => false);
+          }
+        }
+        if (!stillCurrent()) {
+          session.leave();
+          unsubscribe();
+          if (offDead.current === unsubscribe) offDead.current = null;
+          await env.calendar.revoke(session.profile.id).catch(() => false);
+          return false;
+        }
+      }
+      enter({ k: "shell", session });
+      return true;
+    },
+    [env, gate, leaveShell, refreshProfiles, runner],
+  );
+
+  const leaveEntered = useCallback(async () => live.now().k !== "shell" || await leaveShell(), [leaveShell]);
+
   /* THE LIFT RESTARTS THE LOOP at once, from its stored cursors, behind the same clearance. */
   useEffect(() => onAccessLock((facts) => {
     const at = live.now();
@@ -562,7 +674,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       // flush, the folders re-read, an owed drain — racing the scheduled store close.
       const row = (await env.profiles.list()).find((p) => p.id === id);
       { const at = live.now(); if (at.k === "live") teardown(at.session); }
-      if (row === undefined) {
+      if (live.now().k === "shell") await leaveEntered();
+      // An app that organizes no mailbox (the calendar's) never opens the phone's own engine: such a row is not its.
+      if (row === undefined || (!APP.carries.organizes && row.origin === LOCAL_ENGINE_ORIGIN)) {
         if (stillCurrent()) enter({ k: "refused", reason: refuse("notPairedHere") });
         return { ok: false, reason: refuse("notPairedHere") };
       }
@@ -575,9 +689,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         if (next !== null) enter(next);
       };
       migratingSink.current = sink;
-      let outcome: Awaited<ReturnType<typeof connectProfileById>>;
+      let outcome: Awaited<ReturnType<typeof connectProfileById>> | ShellOutcome;
       try {
-        outcome = await connectProfileById(env, id);
+        /* THE SHELL'S OWN WAY IN, chosen once by the build: no engine is booted on this side. */
+        outcome = MAIL_SURFACE === "shell" ? await connectShellById(env, id) : await connectProfileById(env, id);
       } finally {
         if (migratingSink.current === sink) migratingSink.current = null;
       }
@@ -585,6 +700,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       if (!stillCurrent()) {
         if (outcome.kind === "connected") outcome.session.store.close();
         return { ok: false, reason: SUPERSEDED() };
+      }
+      if (outcome.kind === "refused" && env.calendar) {
+        await env.calendar.revoke(id).catch(() => false);
+        if (!stillCurrent()) return { ok: false, reason: SUPERSEDED() };
       }
       if (outcome.kind === "refused" && outcome.died !== undefined) {
         /* THE SLOT'S MANAGER DIED WITH NOBODY LISTENING (a launch's wake drain, a torn-down tree's
@@ -602,7 +721,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         enter({ k: "refused", reason: outcome.reason });
         return { ok: false, reason: outcome.reason };
       }
-      adopt(outcome.session);
+      if (outcome.kind === "shell") {
+        if (!await adoptShell(outcome.session, stillCurrent)) return { ok: false, reason: SUPERSEDED() };
+      } else adopt(outcome.session);
       /**
        * The consent a person gave in this run is made into the request that records it. A mailbox
        * nobody consented to organizing is READ and nothing else — no claim, no `ohmail/*` tree.
@@ -621,8 +742,61 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       if (organizesHere(outcome.session.profile) && asked) void consentHere(outcome.session);
       return { ok: true };
     },
-    [adopt, consentHere, env, refreshProfiles, teardown],
+    [adopt, adoptShell, consentHere, env, leaveEntered, refreshProfiles],
   );
+
+  /**
+   * THE SWITCH'S RECEIVING SIDE (`switch/receive.ts`), one intake for the provider's life, opened by the launch below
+   * once its order has finished. A handoff runs as one transition of this gate and goes live through the same
+   * adoption a confirmed pairing does; a place is held for the shell's page of the session it was judged in (the
+   * screens draw no place). The mint, when the sibling asks, is the session in front's, on a paired door only.
+   */
+  const intake = useRef<ReturnType<typeof switchIntake> | null>(null);
+  const takeArrival = useRef<() => Promise<unknown>>(async () => undefined);
+  takeArrival.current = () => {
+    if (switcher === null) return Promise.resolve();
+    const deps: ReceiveDeps = {
+      env,
+      native: switcher,
+      from: siblingOf(APP).app,
+      surface: MAIL_SURFACE,
+      sha256: nativeFamilyDigest,
+      transition: (op) => gate.run(op),
+      liveDigest: async () => {
+        const at = live.now();
+        if ((at.k !== "live" && at.k !== "shell") || at.session.standalone) return null;
+        return pairingDigest(nativeFamilyDigest, at.session.profile.origin, at.session.profile.accountId);
+      },
+      minter: () => {
+        const at = live.now();
+        return at.k === "live" || at.k === "shell" ? handoffMinter(at.session, siblingOf(APP).app) : undefined;
+      },
+      adopt: async (handed, stillCurrent) => {
+        { const at = live.now(); if (at.k === "live") teardown(at.session); }
+        if (live.now().k === "shell") await leaveEntered();
+        if (!stillCurrent()) {
+          if (handed.kind === "paired") handed.session.store.close();
+          return;
+        }
+        if (handed.kind === "shell") await adoptShell(handed.session, stillCurrent);
+        else adopt(handed.session);
+        void refreshProfiles();
+      },
+      place: (to) => {
+        const at = live.now();
+        if (at.k === "shell") switchPlaces.hold(at.session.profile.id, to);
+      },
+    };
+    return takeUpArrival(deps);
+  };
+  useEffect(() => {
+    const opened = switchIntake(switcher, () => takeArrival.current());
+    intake.current = opened;
+    return () => {
+      opened.stop();
+      intake.current = null;
+    };
+  }, [switcher]);
 
   // The app launch: whichever profile was active reconnects; none means the connect flow.
   // Through the gate like every other transition, so a fast first tap supersedes it cleanly.
@@ -645,12 +819,20 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    — including why a marker store that will not open leaves the pairings alone.
         const install = await settleInstallGeneration(
           env.engineDeps,
-          env.profiles,
+          // A fresh install's purge takes the shell's keepers and the web view's copies too, before the stamp.
+          purgingShellToo(env.profiles, env.shell),
           // THE UPGRADE SENTINEL. A reinstall's container holds no mirror; an update's holds one
           // for every server that has ever synced. Without this, the first launch of the build
-          // that introduced the marker would purge every existing pairing on the phone.
-          (profile) => mirrorExists(env.engineDeps, mirrorOwnerKey(profile.origin, profile.accountId)),
+          // that introduced the marker would purge every existing pairing on the phone. Under the
+          // shell the mirror is handed across and removed; the scope's keeper, in the same
+          // container, stands in for it.
+          async (profile) => {
+            const ownerKey = mirrorOwnerKey(profile.origin, profile.accountId);
+            return (await mirrorExists(env.engineDeps, ownerKey)) || (await keeperRemembers(env.shell, ownerKey));
+          },
         );
+        // The old copy's removal runs only under the verdict that stamped this install (`shell/old-copy.ts`).
+        settleLaunchVerdict(install.kind);
         //    A REFUSED PURGE STOPS THE LAUNCH HERE, and this is the arm the verdict exists for.
         //    The container is new, so every stored pairing belongs to an installation that no
         //    longer exists — and the keystore would not give one up. Reading `active()` after
@@ -699,15 +881,23 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         const active = marked ?? (await env.profiles.list()).find(organizesHere) ?? null;
         if (marked === null && active !== null) await env.profiles.setActive(active.id).catch(() => undefined);
         await refreshProfiles();
-        if (!stillCurrent()) return;
+        if (!stillCurrent()) return true;
         if (active === null) {
+          if (env.calendar?.close) {
+            await env.calendar.close().catch(() => false);
+            if (!stillCurrent()) return true;
+          }
           /* ONLY OUT OF `starting`, read from the DECIDED state rather than from React's
              updater: a tap that has already begun connecting must not be dropped back to idle. */
           if (live.now().k === "starting") enter({ k: "idle" });
-          return;
+          return true;
         }
         await runConnect(active.id, stillCurrent);
+        return true;
       })
+      /* THE SWITCH'S ARRIVAL IS TAKEN UP ONLY NOW, once the launch order has finished: never by a launch that stopped
+         on the install's verdict, nor by one whose keystore could not be read. */
+      .then((ordered) => { if (ordered === true) intake.current?.launched(); })
       .catch((err) => {
         /* `starting` only — see the arm above. */
         if (live.now().k === "starting") {
@@ -740,8 +930,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       pairConfirmed: (admission, token) =>
         gate.run(async (stillCurrent) => {
           { const at = live.now(); if (at.k === "live") teardown(at.session); }
+          if (live.now().k === "shell") await leaveEntered();
           if (stillCurrent()) enter({ k: "connecting", origin: admission.origin });
-          const outcome = await pairWithServer(env, { admission, token });
+          const outcome = MAIL_SURFACE === "shell"
+            ? await pairForShell(env, { admission, token })
+            : await pairWithServer(env, { admission, token });
           await refreshProfiles();
           if (!stillCurrent()) {
             if (outcome.kind === "paired") outcome.session.store.close();
@@ -751,12 +944,17 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             enter({ k: "refused", reason: outcome.reason });
             return { ok: false, reason: outcome.reason };
           }
-          adopt(outcome.session);
+          if (outcome.kind === "shell") {
+            if (!await adoptShell(outcome.session, stillCurrent)) return { ok: false, reason: SUPERSEDED() };
+          } else adopt(outcome.session);
           return { ok: true };
         }),
       openStandalone: (door) =>
         gate.run(async (stillCurrent) => {
+          // The calendar's app organizes no mailbox: its only ways in are a server and a paired computer.
+          if (!APP.carries.organizes) return { ok: false, reason: refuse("notPairedHere") };
           { const at = live.now(); if (at.k === "live") teardown(at.session); }
+          if (live.now().k === "shell") await leaveEntered();
           if (stillCurrent()) enter({ k: "connecting", origin: LOCAL_ENGINE_ORIGIN });
           /* HELD BEFORE THE ROW IS WRITTEN, so the connect below finds it. `holdStandaloneDoor` is
              first-start-wins: a second press on a phone that already has an engine keeps the one
@@ -796,6 +994,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       },
       switchTo: (profileId) =>
         gate.run(async (stillCurrent) => {
+          if (env.calendar && !await leaveEntered()) return { ok: false, reason: refuse("calendarCopyRemains") };
           try {
             await env.profiles.setActive(profileId);
           } catch (err) {
@@ -827,12 +1026,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           const ended = row?.origin === LOCAL_ENGINE_ORIGIN ? await endStandaloneForRemoval() : null;
           const claimWentBack = ended?.released ?? true;
           const atForget = live.now();
-          if (atForget.k === "live" && atForget.session.profile.id === profileId) {
+          if ((atForget.k === "live" || atForget.k === "shell") && atForget.session.profile.id === profileId) {
             const bearer = atForget.session.bearer;
             /* NO LOGOUT WITHOUT A MANAGER — the standalone door's session has none, and the seam
                answers `told` for it on its own (`pairing.ts#forgetProfile`). */
             revokeLive = bearer === null ? null : () => bearer.signOut();
-            closed = teardown(atForget.session);
+            if (atForget.k === "live") closed = teardown(atForget.session);
+            else await leaveShell();
             enter({ k: "idle" });
           } else if (atForget.k === "connecting") {
             // SETTLE a state no later transition will. Every other transition ends by setting
@@ -868,13 +1068,16 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         }),
       unsentDraftsHere: (profileId) => {
         const at = live.now();
+        /* UNDER THE SHELL the page's engine holds the drafts and this side cannot count them: null,
+           which the Servers screen reads as "may hold unsent words" and asks before removing. */
         if (at.k !== "live" || at.session.profile.id !== profileId) return null;
         return unsentDraftsOf(at.session.engine.read()).length;
       },
       disconnect: () =>
         gate.run(async () => {
           { const at = live.now(); if (at.k === "live") teardown(at.session); }
-          enter({ k: "idle" });
+          const cleared = live.now().k !== "shell" || await leaveEntered();
+          enter(cleared ? { k: "idle" } : { k: "refused", reason: refuse("calendarCopyRemains") });
           setSyncError(null);
         }),
       syncNow: (heard) => {
@@ -920,7 +1123,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         });
       },
     }),
-    [state, syncing, syncError, profiles, activeId, adopt, drain, env, gate, refreshProfiles, runConnect, runner, teardown],
+    [
+      state, syncing, syncError, profiles, activeId, adopt, adoptShell, drain, env, gate, leaveEntered, leaveShell,
+      refreshProfiles, runConnect, runner, teardown,
+    ],
   );
 
   return <ConnectionContext.Provider value={api}>{children}</ConnectionContext.Provider>;

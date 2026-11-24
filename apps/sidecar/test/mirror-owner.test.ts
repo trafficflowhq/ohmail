@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import fs, { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -520,5 +520,113 @@ describe("enforceMirrorOwner — the copy a revoked session owes", () => {
       enforceMirrorOwner(dir, "me@ohmail.test", HOSTED);
       expect(holdsCopy(dir), `${code}${sealed ? " beside a seal" : ""}`).toBe(true);
     }
+  });
+});
+
+/**
+ * THE COPIES OF AN EARLIER STORE GO WITH THE MIRROR THEY WERE KEPT FOR. A paired desktop may hold,
+ * beside its mirror, the mirror it had under 1.0 (moved aside whole) and folders an earlier store
+ * was set aside into: each is the previous world's mail. Whatever discards the mirror for another
+ * account, another server, a start-over or a revoked session removes every one of them too, before
+ * the record names the new owner; an ordinary relaunch removes none. Neuter the removal in
+ * `enforceMirrorOwner`'s foreign arm and the three discard cases go red.
+ */
+describe("enforceMirrorOwner — the copies of an earlier store", () => {
+  const COPIES = ["set-aside-refill-20261117T101323Z", "set-aside-20260926T101323Z", "store-before-2.0"];
+  function seedCopies(dir: string): void {
+    for (const name of COPIES) {
+      mkdirSync(join(dir, name, "pgdata"), { recursive: true });
+      writeFileSync(join(dir, name, "pgdata", "PG_VERSION"), "17\n");
+      writeFileSync(join(dir, name, "cloud-cursor.json"), "the previous world's cursor");
+    }
+  }
+  const standing = (dir: string): string[] => COPIES.filter((n) => existsSync(join(dir, n)));
+  /** The rename that commits a copy's removal fails, as a folder held open elsewhere fails it. */
+  function failRemovals(): () => void {
+    const real = fs.renameSync;
+    fs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+      if (COPIES.some((n) => String(from).endsWith(n))) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+      return real(from, to);
+    }) as typeof fs.renameSync;
+    return () => { fs.renameSync = real; };
+  }
+
+  it("an ordinary relaunch for the same account on the same server keeps every one", () => {
+    const dir = tempDir();
+    seedMirror(dir, "first@ohmail.test", HOSTED);
+    seedCopies(dir);
+    expect(enforceMirrorOwner(dir, "first@ohmail.test", HOSTED)).toBe(false);
+    expect(standing(dir)).toEqual(COPIES);
+  });
+
+  it("another account, and another server, take every one with the mirror", () => {
+    for (const [address, base] of [["second@ohmail.test", HOSTED], ["first@ohmail.test", OPERATOR]] as const) {
+      const dir = tempDir();
+      seedMirror(dir, "first@ohmail.test", HOSTED);
+      seedCopies(dir);
+      expect(enforceMirrorOwner(dir, address, base)).toBe(true);
+      expect(standing(dir), `${address} on ${base}`).toEqual([]);
+      expect(existsSync(join(dir, "store-copies.owed"))).toBe(false);
+    }
+  });
+
+  it("a start-over pairing takes every one and keeps the new world's seal", () => {
+    const dir = tempDir();
+    seedMirror(dir, "first@ohmail.test", HOSTED);
+    seedCopies(dir);
+    writeFileSync(join(dir, MIRROR_OWNER_FILE), encodeMirrorRecord("first@ohmail.test", HOSTED, "account-b", true));
+    expect(enforceMirrorOwner(dir, "first@ohmail.test", HOSTED)).toBe(true);
+    expect(standing(dir)).toEqual([]);
+    expect(existsSync(join(dir, "cloud-tokens.seal")), "the newly paired session went with the old mail").toBe(true);
+  });
+
+  it("a copy that cannot be removed fails the launch, with the record still naming the old world", () => {
+    const dir = tempDir();
+    seedMirror(dir, "first@ohmail.test", HOSTED);
+    seedCopies(dir);
+    const restore = failRemovals();
+    try {
+      expect(() => enforceMirrorOwner(dir, "second@ohmail.test", HOSTED)).toThrow(/could not be removed/);
+    } finally {
+      restore();
+    }
+    expect(readMirrorOwner(dir)).toBe("first@ohmail.test");
+    expect(standing(dir)).toEqual(COPIES);
+    // The launch after it comes back to the same discard and finishes it.
+    expect(enforceMirrorOwner(dir, "second@ohmail.test", HOSTED)).toBe(true);
+    expect(standing(dir)).toEqual([]);
+    expect(readMirrorOwner(dir)).toBe("second@ohmail.test");
+  });
+
+  it("a directory holding only such a folder and no record is judged by it, never adopted as empty", () => {
+    const dir = tempDir();
+    seedCopies(dir);
+    // No record: the build that could have written this state dialled the hosted service alone.
+    expect(enforceMirrorOwner(dir, "me@example.com", OPERATOR)).toBe(true);
+    expect(standing(dir)).toEqual([]);
+    // CONTROL — the same directory on the hosted service is that world's own, and keeps them.
+    const hosted = tempDir();
+    seedCopies(hosted);
+    expect(enforceMirrorOwner(hosted, "me@example.com", HOSTED)).toBe(false);
+    expect(standing(hosted)).toEqual(COPIES);
+  });
+
+  it("a revoked session's owed copy takes every one, and a copy left keeps the flag for the next launch", () => {
+    const dir = tempDir();
+    seedMirror(dir, "first@ohmail.test", HOSTED);
+    seedCopies(dir);
+    const revoked = (): unknown => decodeMirrorRecord(readFileSync(join(dir, MIRROR_OWNER_FILE), "utf8")).revoked;
+    writeFileSync(join(dir, MIRROR_OWNER_FILE), encodeMirrorRecord("first@ohmail.test", HOSTED, null, false, false, true));
+    const restore = failRemovals();
+    try {
+      expect(enforceMirrorOwner(dir, "first@ohmail.test", HOSTED)).toBe(false);
+    } finally {
+      restore();
+    }
+    expect(standing(dir)).toEqual(COPIES);
+    expect(revoked(), "the flag was dropped over a copy still on the disk").toBe(true);
+    expect(enforceMirrorOwner(dir, "first@ohmail.test", HOSTED)).toBe(false);
+    expect(standing(dir)).toEqual([]);
+    expect(revoked()).toBe(false);
   });
 });

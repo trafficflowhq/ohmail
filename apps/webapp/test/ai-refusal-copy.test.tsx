@@ -2,12 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider, useText } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
+import type { Translator } from "@ohmail/app-logic/text/translator";
 import de from "../messages/de.json";
 import en from "../messages/en.json";
 import { ApiError } from "../app/api-client";
-import { aiRefusalKey, clearedByAccess } from "../app/shell/ai-refusal-copy";
-import type { SuggestBatchControl, SuggestWire } from "../app/shell/screener-suggest";
+import { aiRefusalKey, clearedByAccess } from "@ohmail/app-logic/text/ai-refusal-copy";
+import type { SuggestBatchControl, SuggestWire } from "@ohmail/app-logic/screener/screener-suggest";
 
 /**
  * AN ENGLISH SENTENCE ON A GERMAN SCREEN, ABOUT A STATE THE ACCOUNT WAS NOT IN
@@ -28,7 +30,6 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const NOW = new Date("2026-09-14T08:45:00.000Z");
 const SENDER = "stranger@example.com";
 const flush = async (): Promise<void> => { await act(async () => { await Promise.resolve(); }); };
 
@@ -66,10 +67,12 @@ function wireRefusing(
 }
 
 async function mount(wire: SuggestWire, locale: "en" | "de"): Promise<() => SuggestBatchControl> {
-  const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
+  const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
   let control: SuggestBatchControl | null = null;
   function Probe(): null {
-    const s = useScreenerSuggestions({ active: true, toast: (() => {}) as never, wire });
+    const { screener } = useScreenerWords();
+    const aiRefusal = useText("aiRefusal") as unknown as Translator;
+    const s = useScreenerSuggestions({ text: { screener, aiRefusal }, active: true, toast: (() => {}) as never, wire });
     control = s.forSenders([SENDER]);
     return null;
   }
@@ -77,8 +80,8 @@ async function mount(wire: SuggestWire, locale: "en" | "de"): Promise<() => Sugg
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale, messages: locale === "de" ? de : en, timeZone: "UTC", now: NOW, children: h(Probe),
+    root!.render(h(TextProvider, {
+      locale, messages: locale === "de" ? de : en, timeZone: "UTC", children: h(Probe),
     }));
   });
   await flush();

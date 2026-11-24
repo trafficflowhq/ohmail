@@ -2,27 +2,43 @@ import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type SQ
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import {
   asAuthVerdict, canonicalDestination, capSuggestion, draftBodyOverCeiling, ownedSenderName, resolveOhboxPolicy, senderCheckAll,
-  senderDomainOf, type CheckedSuggestion, type EmailAddress,
+  senderDomainOf, type CheckedSuggestion,
 } from "@trafficflow/core/mail";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
-import { readProfileApplied } from "@trafficflow/core/adapters/organizer-profile";
+import { readProfileApplied, subjectHeadingOf } from "@trafficflow/core/adapters/organizer-profile";
 import { reasonDetail, suggestionAdvice } from "../screener-advice.js";
 import {
   accountSettings, autoReplyByUsWhere, awayReplies, mailboxes, mailboxProfileMirror, isOrganizerKind,
   invitationWithoutEventWhere, itipReplyHeaderWhere, listAddresses, heldForIdentitySql,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
-  tags, messageTags,
+  tags, messageTags, messageInvitations, invitationFieldOf,
   SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
-  type EntityType,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
-import { draftContentRevision } from "../draft-revision.js";
-import { bridgeTx, type Db } from "../context.js";
 import type {
-  FolderDTO, SettingsDTO, MailboxProfileDTO,
-  Folder, MessageDTO, MessageStateDTO, ThreadDTO, RoutingDecisionDTO, ApprovalDTO, RuleDTO,
-  DraftDTO, DraftStatus, ScreenerSuggestionDTO, SenderCheckDTO, SensitivityFlags, TriageState, TagDTO,
-} from "./types.js";
+  ApprovalDTO,
+  DraftDTO,
+  DraftStatus,
+  EmailAddress,
+  Folder,
+  FolderDTO,
+  MailboxProfileDTO,
+  MailRecordKind,
+  MessageDTO,
+  MessageStateDTO,
+  RoutingDecisionDTO,
+  RuleDTO,
+  ScreenerSuggestionDTO,
+  SenderCheckDTO,
+  SensitivityFlags,
+  SettingsDTO,
+  TagDTO,
+  ThreadDTO,
+  TriageState,
+} from "@ohmail/wire";
+import { draftContentRevision } from "../draft-revision.js";
+import { deviceNumbers } from "../device-numbers.js";
+import { bridgeTx, type Db } from "../context.js";
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
 
@@ -309,6 +325,12 @@ export function messageRowToDTO(
    * reason. Omitted ⇒ false: the fact carries no `list`.
    */
   listAddress?: boolean,
+  /**
+   * THE INVITATION THE LETTER CARRIES (mail 0204), from the `message_invitations` row the batch
+   * below joins. A TENTH PARAMETER for the fifth's reason. Undefined (no row, or a caller that did
+   * not ask) ⇒ the key is ABSENT, never null: `MessageDTO.invitation`.
+   */
+  invitation?: MessageDTO["invitation"],
 ): MessageDTO {
   const loc = (m.nativeLocator as { folder?: string } | null) ?? null;
   const folder = (fs?.desiredFolder ?? loc?.folder ?? "INBOX") as Folder;
@@ -399,6 +421,8 @@ export function messageRowToDTO(
     ...(itipReplyHeader === undefined ? {} : { itipReplyHeader }),
     // Mail 0164: the mail server holds no copy ohmail knows of; the mirror's is the only one.
     ...(m.serverMissingAt != null ? { missingOnServer: true as const } : {}),
+    // Mail 0204: spread-in, so a letter without an invitation carries no key at all.
+    ...(invitation === undefined ? {} : { invitation }),
   };
 }
 
@@ -471,14 +495,41 @@ async function materializeRows(
    * "include"`) carries them too, so `MessageService.delete`'s echo cannot disagree with the row
    * the client already holds. One store answers a boolean and the other 0/1, normalised below.
    */
+  // Order invitation metadata first. The outer limit stops probing letter rows as soon as
+  // it finds a live revision. Without the subquery boundary, every older letter is read.
+  type PreviousInvitation = { start: string | null; startsAt: string | number | null };
+  const previousInvitation = sql<PreviousInvitation | string | null>`
+    case when ${messageInvitations.hostedDetails} is null
+      and ${messageInvitations.method} = 'REQUEST' and ${messageInvitations.sequence} > 0 then (
+      select ${d.jsonObject({ start: sql`prior.start_raw`, startsAt: sql`prior.starts_at` })}
+      from (
+        select earlier.message_id, earlier.start_raw, earlier.starts_at, earlier.sequence, earlier.stamped_at
+        from ${messageInvitations} earlier
+        where earlier.account_id = ${d.castUuid(accountId)}
+          and earlier.mailbox_id = ${messageInvitations.mailboxId}
+          and earlier.uid = ${messageInvitations.uid} and earlier.recurrence_id = ${messageInvitations.recurrenceId}
+          and lower(earlier.organizer) = lower(${messageInvitations.organizer})
+          and earlier.method = 'REQUEST' and earlier.sequence < ${messageInvitations.sequence}
+        order by earlier.sequence desc, earlier.stamped_at desc, earlier.message_id
+        ${d.name === "pg" ? sql`offset 0` : sql`limit -1 offset 0`}
+      ) prior
+      where case when exists (
+        select 1 from ${messages} letter
+        where letter.account_id = ${d.castUuid(accountId)} and letter.id = prior.message_id and letter.deleted_at is null
+      ) then true else false end
+      order by prior.sequence desc, prior.stamped_at desc, prior.message_id
+      limit 1
+    ) end`;
   const fields = {
     m: messages,
     fs: prefixed(folderState, "fs"),
     st: prefixed(messageStates, "st"),
+    inv: prefixed(messageInvitations, "inv"),
+    previousInvitation: previousInvitation.as("inv_previous"),
     tagId: sql<string | null>`${messageTags.tagId}`.as("mt_tag_id"),
     awaySentAt: sql`${awayReplies.sentAt}`.mapWith(awayReplies.sentAt).as("ar_sent_at"),
     autoReply: sql<unknown>`case when ${autoReplyByUsWhere(d, {
-      accountId: sql`${messages.accountId}`,
+      accountId: d.castUuid(accountId),
       id: sql`${messages.id}`,
       fromAddress: sql`${messages.fromAddress}`,
       messageIdHeader: sql`${messages.messageIdHeader}`,
@@ -494,8 +545,9 @@ async function materializeRows(
   };
   type Row = {
     m: typeof messages.$inferSelect; fs: typeof folderState.$inferSelect;
-    st: typeof messageStates.$inferSelect; tagId: string | null; awaySentAt: Date | null;
-    autoReply: unknown; invitation: unknown; itipReply: unknown; listAddress: unknown;
+    st: typeof messageStates.$inferSelect; inv: typeof messageInvitations.$inferSelect; tagId: string | null;
+    previousInvitation: PreviousInvitation | string | null;
+    awaySentAt: Date | null; autoReply: unknown; invitation: unknown; itipReply: unknown; listAddress: unknown;
   } & Record<string, unknown>;
   // Dynamic: the page join is present only for a joined page. Every join is 1:1 but the tags.
   // scoped-by: the `.where` below carries `eq(messages.accountId, accountId)`; every join keys on this row
@@ -503,6 +555,8 @@ async function materializeRows(
   const q = (source ? base.innerJoin(sql`(${source.rows}) p`, sql`p.id = ${messages.id}`) : base)
     .leftJoin(folderState, eq(folderState.messageId, messages.id))
     .leftJoin(messageStates, eq(messageStates.messageId, messages.id))
+    // The invitation the letter carries (mail 0204): its key is `(account_id, message_id)`, one row at most.
+    .leftJoin(messageInvitations, and(eq(messageInvitations.messageId, messages.id), eq(messageInvitations.accountId, accountId)))
     .leftJoin(messageTags, and(eq(messageTags.messageId, messages.id), eq(messageTags.accountId, accountId)))
     /**
      * The away answer stamp, on the ORIGINAL: `outcome in ('sent','unverified')` — "the claim is
@@ -532,6 +586,16 @@ async function materializeRows(
   }
   const out: MaterializedRow[] = [];
   for (const { row: r, tags: labels } of byId.values()) {
+    const invitation = r.inv?.messageId == null ? undefined : invitationFieldOf(r.inv);
+    // SQLite returns the object as text and stores the instant in milliseconds.
+    const previous = typeof r.previousInvitation === "string"
+      ? JSON.parse(r.previousInvitation) as PreviousInvitation : r.previousInvitation;
+    if (invitation && previous !== null && (previous.start !== null || previous.startsAt !== null)) {
+      invitation.previous = {
+        start: previous.start,
+        startsAt: previous.startsAt === null ? null : new Date(previous.startsAt).toISOString(),
+      };
+    }
     out.push({
       dto: messageRowToDTO(
         // A side row the left join did not find comes back as columns that are all null.
@@ -542,6 +606,7 @@ async function materializeRows(
         isYes(r.invitation),
         isYes(r.itipReply),
         isYes(r.listAddress),
+        invitation,
       ),
       keys: (source?.keys ?? []).map((_, i) => r[`k${i}`]),
     });
@@ -946,8 +1011,7 @@ export async function materializeDraft(db: Db, accountId: string, id: string): P
 /**
  * Re-materialize the CURRENT DTO for a `change_log` row's entity. Returns
  * `null` when the live entity is gone → SyncService emits a `delete` tombstone.
- * Unknown/not-yet-implemented entity types return `null` (tombstone) rather than
- * throwing, so an unrecognized change never wedges the feed.
+ * A kind with no builder here does not compile (see {@link materialize}).
  */
 /**
  * One `tags` row → `TagDTO`. Its existence is the precondition for growing
@@ -1023,6 +1087,8 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
   for (const b of boxes) {
     if (b.at !== null) off[b.id] = b.at.toISOString();
   }
+  const subjectHeading = subjectHeadingOf(row?.subjectHeading, row?.subjectHeadingAt);
+  const named = await deviceNumbers(db, accountId);
   // THE PER-MAILBOX SIGNATURES (mail 0075) ARE DELIBERATELY NOT ON THIS ENTITY, and the
   // absence is a bound, not an omission. Every signature write appends its
   // own settings change row, and this materializer runs once PER ROW with no compaction — so
@@ -1042,6 +1108,15 @@ export async function materializeSettings(db: Db, accountId: string, id: string)
     foldersEnabledAt: iso(row?.foldersEnabledAt),
     folderMailboxesOff: off,
     locale: row?.locale ?? null,
+    draftReplies: row?.draftReplies ?? true,
+    // The subject's place, present only while stated: an account that stated nothing sends the record
+    // it sent before the key.
+    ...(subjectHeading === null ? {} : { subjectHeading }),
+    // The account's named devices, as three whole numbers (`device-numbers.ts`): the two that only
+    // rise are what a client decides a device notice from; the third is what a person is shown.
+    devices: named.live,
+    devicesMade: named.made,
+    devicesRevoked: named.revoked,
     // A missing row still needs a stamp the client can compare; the epoch is honest for "nothing
     // was ever written", and the first real write replaces it with the row's own.
     updatedAt: row?.updatedAt ? row.updatedAt.toISOString() : new Date(0).toISOString(),
@@ -1157,7 +1232,13 @@ async function materializeMailboxProfile(db: Db, accountId: string, id: string):
   return row ? mailboxProfileRowToDTO(row) : null;
 }
 
-export function materialize(db: Db, accountId: string, type: EntityType, id: string): Promise<unknown | null> {
+/**
+ * One mail record as it stands now, or `null` when it is gone. Mail kinds only: the calendar's
+ * are built behind a port this module never reaches (`calendar-port.ts`). No default arm, so a
+ * mail kind added to the wire without its case here does not compile — the silent alternative was
+ * every row of it draining to clients as a deletion.
+ */
+export function materialize(db: Db, accountId: string, type: MailRecordKind, id: string): Promise<unknown | null> {
   switch (type) {
     case "message": return materializeMessage(db, accountId, id);
     case "folder": return materializeFolder(db, accountId, id);
@@ -1171,6 +1252,13 @@ export function materialize(db: Db, accountId: string, type: EntityType, id: str
     case "draft": return materializeDraft(db, accountId, id);
     case "settings": return materializeSettings(db, accountId, id);
     case "mailbox_profile": return materializeMailboxProfile(db, accountId, id);
-    default: return Promise.resolve(null);
+    // A mailbox's receipt is only ever a delete, which the reader answers before it gets here.
+    case "mailbox": return Promise.resolve(null);
+    default: return unbuildable(type);
   }
+}
+
+/** Reached only by a kind the switch above does not name, which the compiler refuses first. */
+function unbuildable(kind: never): Promise<null> {
+  throw new Error(`materialize: no builder for the record kind ${String(kind)}`);
 }

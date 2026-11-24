@@ -8,6 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 import { launchRefused } from "@trafficflow/services/mail";
 
 const ADDRESS = "mila.brunner@lichtgrat.example";
@@ -105,7 +106,7 @@ async function wizard() {
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -120,10 +121,12 @@ async function wizard() {
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
-  const picked = () => host.querySelector('[role="radio"][aria-checked="true"]')?.textContent ?? null;
-  const alert = () => host.querySelector('[role="alert"]')?.textContent ?? null;
+  /* The step is the one connect form: the chosen tile by its name, the refusal by its role. */
+  const probes = mailboxProbes(host, en, act);
+  const heading = () => host.querySelector("h1")?.textContent;
+  const alert = () => probes.refusal();
   const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === label) ?? null;
-  return { host, picked, alert, button };
+  return { host, heading, alert, button };
 }
 
 const copy = en.join as unknown as Record<string, string>;
@@ -135,7 +138,8 @@ describe("the wizard words a failed Microsoft sign-in itself", () => {
       await signInReturns("oauth=pending&state=STATE-F&code=CODE-F");
       const ui = await wizard();
       expect(ui.alert()).toBe(copy[`mailboxOauth_${reason}`]);
-      expect(ui.picked()).toMatch(/^Microsoft 365/);
+      expect(ui.heading()).toBe(en.join.step_mailbox_title);
+      expect(ui.host.textContent).toContain(en.mailboxes.microsoftOauthNote);
       expect(ui.button(en.mailboxes.oauthContinue), "the way to try again").toBeTruthy();
       expect(ui.host.textContent).not.toContain("Start again from Settings");
       expect(ui.host.textContent).not.toContain(SERVER[reason]!.body.error.message);
@@ -178,7 +182,7 @@ describe("the wizard words a failed Microsoft sign-in itself", () => {
     await signInReturns("oauth=pending&state=STATE-F&code=CODE-F");
     listed = [MAILBOX];
     const ui = await wizard();
-    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_connected_title);
-    expect(ui.host.textContent).toContain(en.join.mailboxConnected.replace("{address}", ADDRESS));
+    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.myMailboxes.replace(/\.$/, ""));
+    expect([...ui.host.querySelectorAll(".oh-tag")].map((tag) => tag.textContent)).toEqual(expect.arrayContaining([ADDRESS, en.join.connected]));
   });
 });

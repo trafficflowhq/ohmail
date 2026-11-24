@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { launchRefused } from "@trafficflow/services/mail";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 
 const FULL = {
   user: {
@@ -54,7 +55,7 @@ async function atTheMailboxStep(flavor: "managed" | "selfhost") {
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -72,56 +73,76 @@ async function atTheMailboxStep(flavor: "managed" | "selfhost") {
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
-  expect(host.querySelector("h1")?.textContent).toBe(en.join.step_mailbox_title);
-  const link = (label: string) => [...host.querySelectorAll("a")].find((a) => a.textContent === label) ?? null;
-  const subject = (): string | null => {
-    const href = link(en.join.mailboxWriteUs)?.getAttribute("href") ?? null;
+  expect(host.querySelector("h1")?.textContent?.trim()).toBe(en.onboarding.providerFirst);
+  /* The step is the one connect form: its two ways out are presses, and where each leads is where the browser is sent. */
+  const probes = mailboxProbes(host, en, act);
+  /** Where a press of this exit sends the browser, or `null` where the exit is not offered. */
+  const leadsTo = async (label: string): Promise<string | null> => {
+    const exit = probes.button(label);
+    if (exit === null) return null;
+    const real = window.location;
+    let went: string | null = null;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { get href() { return document.URL; }, assign: (url: string) => { went = url; } },
+    });
+    try {
+      await act(async () => { exit.click(); });
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: real });
+    }
+    return went;
+  };
+  const subject = async (): Promise<string | null> => {
+    const href = await leadsTo(en.join.mailboxWriteUs);
     if (href === null) return null;
     expect(href.startsWith("mailto:support@ohmail.app?subject=")).toBe(true);
     return decodeURIComponent(href.slice("mailto:support@ohmail.app?subject=".length));
   };
-  const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
-  };
   const refusedGmail = async () => {
-    const tile = [...host.querySelectorAll<HTMLElement>('[role="radio"]')].find((b) => (b.textContent ?? "").startsWith("Gmail"));
-    await act(async () => { tile!.click(); });
-    await type("join-mb-address", "pat@gmail.test");
-    await type("join-mb-pass", "the-google-password");
-    const connect = [...host.querySelectorAll("button")].find((b) => b.textContent === en.join.connectMailbox);
-    await act(async () => { connect!.click(); });
+    await probes.choose("Gmail");
+    await probes.type("join-mb-address", "pat@gmail.test");
+    await probes.type("join-mb-pass", "the-google-password");
+    await act(async () => { probes.button(en.join.connectMailbox)!.click(); });
     await settle();
   };
-  return { host, link, subject, refusedGmail };
+  return { host, probes, leadsTo, subject, refusedGmail };
 }
 
 const subjectFor = (preset: string, reason: string) =>
   en.join.mailboxHelpSubject.replace("{preset}", preset).replace("{reason}", reason);
 
 describe("the mailbox step's exits", () => {
+  it("the form stands in the door's stage, the new design's own: no root of today's design stands around its tiles", async () => {
+    const ui = await atTheMailboxStep("managed");
+    const tile = ui.probes.tiles()[0] ?? null;
+    expect(tile, "no provider tile").not.toBeNull();
+    expect(tile!.closest(".oh-root"), "the form stands outside the door's stage").not.toBeNull();
+    expect(tile!.closest(".today"), "a root of today's design stands around the form").toBeNull();
+    expect(ui.host.querySelector(".today"), "a root of today's design on the page").toBeNull();
+  });
+
   it("Do this later opens the app with the setup marked as offered", async () => {
     const ui = await atTheMailboxStep("managed");
-    expect(ui.link(en.join.later)?.getAttribute("href")).toBe("/?setup=later");
+    expect(await ui.leadsTo(en.onboarding.providerLater)).toBe("/?setup=later");
   });
 
   it("on ohmail Cloud, a mail to support names the provider and the refusal's code, nothing typed", async () => {
     const ui = await atTheMailboxStep("managed");
-    expect(ui.subject()).toBe(subjectFor("none", "none"));
+    expect(await ui.subject()).toBe(subjectFor("none", "none"));
 
     await ui.refusedGmail();
-    expect(ui.host.querySelector(".join-error.at-press"), "the refusal is on screen").toBeTruthy();
-    expect(ui.subject()).toBe(subjectFor("gmail", "auth"));
-    const href = ui.link(en.join.mailboxWriteUs)!.getAttribute("href")!;
+    expect(ui.probes.alerts(), "the refusal is on screen").toHaveLength(1);
+    expect(await ui.subject()).toBe(subjectFor("gmail", "auth"));
+    const href = (await ui.leadsTo(en.join.mailboxWriteUs))!;
     expect(href).not.toContain("gmail.test");
     expect(href.split("@")).toHaveLength(2);
   });
 
   it("a self-hosted server has no ohmail support to write to, so that exit is not offered", async () => {
     const ui = await atTheMailboxStep("selfhost");
-    expect(ui.link(en.join.later)?.getAttribute("href")).toBe("/?setup=later");
-    expect(ui.link(en.join.mailboxWriteUs)).toBeNull();
+    expect(await ui.leadsTo(en.onboarding.providerLater)).toBe("/?setup=later");
+    expect(ui.probes.button(en.join.mailboxWriteUs)).toBeNull();
     expect(ui.host.querySelector('a[href^="mailto:"]')).toBeNull();
   });
 });

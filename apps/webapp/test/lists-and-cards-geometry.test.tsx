@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Page } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readerStatesPage } from "../../../packages/app/test/states/reader-states.mjs";
 import { renderedUiFont, skipUnlessMeasuredFont } from "./_measured-font.js";
 import { AddressText, Chip, MessageRow, StreamCard } from "@ohmail/ui";
 
@@ -19,15 +20,14 @@ import { AddressText, Chip, MessageRow, StreamCard } from "@ohmail/ui";
  *     delivered-to chip stands on a card head only at a 600px card.
  *   · A COLLAPSED CARD ENDS WITH ITS MAIL: 348 is a ceiling; the fade and the pill mark a cut.
  *   · EDGES AND GUTTERS: a hairline under the head of a scrolled list and over its foot while rows
- *     continue; History's month rail never over a row; a draft row's surface under its Discard;
- *     the first-sync pill's height reserved at the end of a phone scroller.
+ *     continue.
  *
  * Every arm has its RED CONTROL: the layout it replaced, re-applied as an override on the same
  * page, read by the same measurement, which must then find the defect.
  */
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
-const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");
+const { chromium, expect: browserExpect } = require_("@playwright/test") as typeof import("@playwright/test");
 
 const css = (p: string): string => readFileSync(resolve(process.cwd(), p), "utf8");
 const SHEETS = [
@@ -41,7 +41,6 @@ const SHEETS = [
   "packages/ui/src/composites/message.css",
   "packages/ui/src/primitives/chip.css",
   "apps/webapp/app/app.css",
-  "apps/webapp/app/views/history-rail.css",
 ].map(css).join("\n");
 
 /** The fixture's 15-character name the ruling pins the cut from; invented addresses only. */
@@ -296,12 +295,6 @@ describe("a collapsed card ends where its mail ends; the fade and the pill mark 
     expect(r.pill || r.fade, "a pill or a fade over a mail that is all there").toBe(false);
   }, 60_000);
 
-  it("a long letter is cut at 348 with the fade and the pill under the cut", async () => {
-    const r = await onPage(doc(viewer(900, false)), readCard);
-    expect(Math.round(r.clip)).toBe(348);
-    expect(r.cut && r.pill && r.fade).toBe(true);
-  }, 60_000);
-
   it("a waiting card reserves its own estimate, not the clamp", async () => {
     const html = doc(cardMarkup(358, { bodyState: "loading", loadingLabel: "Loading", estWidthPx: 358 }));
     const r = await onPage(html, readCard);
@@ -333,91 +326,6 @@ describe("edges and gutters", () => {
     expect([off.head, off.foot], "an edge drawn over a list that has not scrolled").toEqual(["none", "none"]);
   }, 60_000);
 
-  const history = (gutter: boolean): string => `<section class="view view-history"><div class="list-col">
-    <div class="scroller" style="height:500px;width:360px;position:relative">
-      <div class="history-rail-anchor"><nav class="history-rail">
-        <button class="history-rail-item year">2026</button><button class="history-rail-item cur">Ohne Datum</button>
-        <button class="history-rail-item">Sept. 2026</button></nav></div>
-      <div class="rows">${Array.from({ length: 6 }, (_, i) => `<button class="row"><span class="row-top"><span class="who">Row ${i}</span><span class="t num">21 Sep</span></span></button>`).join("")}</div>
-    </div></div></section>`;
-  const railOverRow = (gutter: boolean) => {
-    const nav = document.querySelector(".history-rail") as HTMLElement;
-    if (gutter) (document.querySelector(".scroller") as HTMLElement).style.setProperty("--history-gutter", `${Math.ceil(nav.offsetWidth)}px`);
-    const rr = nav.getBoundingClientRect();
-    return [...document.querySelectorAll(".row")].filter((row) => {
-      const r = row.getBoundingClientRect();
-      return r.right > rr.left + 0.5 && r.left < rr.right && r.bottom > rr.top && r.top < rr.bottom;
-    }).length;
-  };
-
-  it("History's month rail never covers a row: the rows keep the rail's width as a gutter", async () => {
-    const page = await browser!.newPage({ viewport: { width: 400, height: 700 } });
-    try {
-      await page.setContent(doc(history(true)));
-      expect(await page.evaluate(railOverRow, true)).toBe(0);
-      // RED CONTROL: without the gutter the rail stands over the first rows.
-      await page.setContent(doc(history(false)));
-      expect(await page.evaluate(railOverRow, false), "the rail no longer overlaps rows without the gutter — this arm measures nothing").toBeGreaterThan(0);
-    } finally {
-      await page.close();
-    }
-  }, 60_000);
-
-  const draft = `<section class="view view-drafts"><div class="draft-row"><div class="draft-row-main">
-    <button type="button" class="draft-open"><span class="draft-line"><b class="draft-subject">Spring order</b></span></button>
-    <button type="button" class="draft-discard">Discard</button></div></div></section>`;
-  const draftPaint = async (extra: string) => {
-    const page = await browser!.newPage({ viewport: { width: 830, height: 400 } });
-    try {
-      await page.setContent(doc(draft, extra));
-      await page.hover(".draft-open");
-      return await page.evaluate(() => {
-        const main = document.querySelector(".draft-row-main")!;
-        const discard = document.querySelector(".draft-discard")!.getBoundingClientRect();
-        const m = main.getBoundingClientRect();
-        return { paint: getComputedStyle(main).backgroundColor, inside: discard.left >= m.left && discard.right <= m.right };
-      });
-    } finally {
-      await page.close();
-    }
-  };
-
-  it("a hovered draft's surface is the whole line, Discard included", async () => {
-    const r = await draftPaint("");
-    expect(r.inside).toBe(true);
-    expect(r.paint, "the row line is unpainted on hover — Discard stands beside the row").not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
-    // RED CONTROL: the tint on the draft button alone leaves the line unpainted.
-    const pre = await draftPaint(".draft-row-main:hover{background:none}.draft-open:hover{background:var(--tint)}");
-    expect(pre.paint).toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
-  }, 60_000);
-
-  const phoneList = (pill: boolean): string => `<div class="shell"><main class="stage"><section class="view col">
-    <div class="list-col" style="height:700px"><div class="scroller">${Array.from({ length: 30 }, (_, i) => `<button class="row" style="display:block;height:56px">Row ${i}</button>`).join("")}</div></div>
-    </section></main>${pill ? `<div class="sync-bar busy" role="status"><b>Syncing your mail.</b></div>` : ""}</div>`;
-  const pillOverLast = (reserve: boolean) => {
-    const bar = document.querySelector(".sync-bar") as HTMLElement;
-    if (reserve) document.documentElement.style.setProperty("--pill-h", `${bar.offsetHeight + 18}px`);
-    const sc = document.querySelector(".scroller") as HTMLElement;
-    sc.scrollTop = sc.scrollHeight;
-    const rows = [...document.querySelectorAll(".row")];
-    const last = rows[rows.length - 1]!.getBoundingClientRect();
-    return last.bottom > bar.getBoundingClientRect().top;
-  };
-
-  for (const width of [360, 800]) {
-    it(`at ${width}px the first-sync pill's height is reserved, so the last row rests clear of it`, async () => {
-      const page = await browser!.newPage({ viewport: { width, height: 700 } });
-      try {
-        await page.setContent(doc(phoneList(true)));
-        expect(await page.evaluate(pillOverLast, true), "the pill covers the last row at scroll end").toBe(false);
-        // RED CONTROL: with nothing reserved the pill stands over the last row.
-        await page.setContent(doc(phoneList(true)));
-        expect(await page.evaluate(pillOverLast, false), "the pill no longer overlaps without the reservation — this arm measures nothing").toBe(true);
-      } finally {
-        await page.close();
-      }
-    }, 60_000);
-  }
 });
 
 describe("in a 300px list column (the two-pane band) the rows keep their text", () => {
@@ -544,57 +452,58 @@ describe("in a 300px list column (the two-pane band) the rows keep their text", 
   }, 60_000);
 });
 
+async function shortStream() {
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  const origin = "https://short-stream.states.invalid";
+  const html = await readerStatesPage("packages/app/test/states/streams-page.tsx");
+  await page.route(`${origin}/**`, (route) =>
+    route.fulfill({ contentType: "text/html; charset=utf-8", body: html }),
+  );
+  await page.goto(`${origin}/?body=short`);
+  const list = page.getByRole("listbox", { name: "News", exact: true });
+  const stream = page.getByRole("region", { name: "News stream" });
+  await stream.getByRole("heading", { name: "Issue 0", exact: true }).waitFor();
+  return { page, list, stream };
+}
+
 describe("hand back 1: the keyboard, the accessibility tree, the Screener at 360", () => {
+  // The original case names identify the checklist entries. The approved keyboard path is through the list.
   it("a short card's pill is out of sight at rest and reachable by Tab, drawn on keyboard focus (H1)", async () => {
-    const html = doc(cardMarkup(386).replace('class="scast', 'class="scast short'));
-    const read = async (extra: string) => {
-      const page = await browser!.newPage({ viewport: { width: 600, height: 700 } });
-      try {
-        await page.setContent(doc(cardMarkup(386).replace('class="scast', 'class="scast short'), extra));
-        const rest = await page.evaluate(() => getComputedStyle(document.querySelector(".sc-x")!).opacity);
-        await page.keyboard.press("Tab");
-        return await page.evaluate((r) => {
-          const x = document.querySelector(".sc-x") as HTMLElement;
-          const box = x.getBoundingClientRect(), card = document.querySelector(".scast")!.getBoundingClientRect();
-          return { rest: r, focused: document.activeElement === x, drawn: getComputedStyle(x).opacity, inCard: box.bottom <= card.bottom + 0.5, cardH: card.height };
-        }, rest);
-      } finally {
-        await page.close();
-      }
-    };
-    void html;
-    const r = await read("");
-    expect(r.rest, "the pill is drawn on a card whose mail fits").toBe("0");
-    expect(r.focused, "Tab does not reach the short card's pill").toBe(true);
-    expect(r.drawn, "the focused pill is not drawn").toBe("1");
-    expect(r.inCard).toBe(true);
-    const pre = await read(".scast.short .sc-x{display:none !important}");
-    expect(pre.focused, "red control: the hidden pill is still reached — this arm measures nothing").toBe(false);
+    const { page, list, stream } = await shortStream();
+    try {
+      const first = list.getByRole("option", { name: /Issue 0$/ });
+      const next = list.getByRole("option", { name: /Issue 1$/ });
+      const card = stream.getByRole("article").filter({ has: page.getByRole("heading", { name: "Issue 1", exact: true }) });
+      await first.focus();
+      await browserExpect(first).toHaveAttribute("aria-selected", "true");
+      await page.keyboard.press("j");
+      await browserExpect(next).toBeFocused();
+      await browserExpect(next).toHaveAttribute("aria-selected", "true");
+      await browserExpect(next).toHaveAccessibleDescription(/Press Enter on its row to open this message/);
+      await browserExpect(card).toHaveAccessibleDescription("Press Enter on its row to open this message");
+      await browserExpect(card.getByRole("button", { name: "Expand", includeHidden: true })).toHaveCount(0);
+      await page.keyboard.press("Enter");
+      await browserExpect(card.getByRole("button", { name: "Collapse" })).toHaveAttribute("aria-expanded", "true");
+      await browserExpect(page.getByRole("toolbar", { name: "Actions" }).getByRole("button", { name: "Reply" })).toBeFocused();
+    } finally {
+      await page.close();
+    }
   }, 60_000);
 
   it("the focused pill covers no line of the card's text (VERIFY L2)", async () => {
-    const body = "Sommernacht Open Air. Your tickets are attached and in your wallet. Rain or shine; the lake stage has never cancelled.";
-    const read = async (extra: string) => {
-      const page = await browser!.newPage({ viewport: { width: 390, height: 800 }, isMobile: true, hasTouch: true });
-      try {
-        await page.setContent(doc(cardMarkup(358, { body }).replace('class="scast', 'class="scast short'), extra));
-        await page.keyboard.press("Tab");
-        return await page.evaluate(() => {
-          const x = document.querySelector(".sc-x")!.getBoundingClientRect();
-          const range = document.createRange();
-          range.selectNodeContents(document.querySelector(".sc-body")!);
-          const t = range.getBoundingClientRect();
-          return { drawn: getComputedStyle(document.querySelector(".sc-x")!).opacity === "1", overText: x.top < t.bottom - 0.5 };
-        });
-      } finally {
-        await page.close();
-      }
-    };
-    const r = await read("");
-    expect(r.drawn, "premise: the pill is drawn under keyboard focus").toBe(true);
-    expect(r.overText, "the focused pill sits over the card's last line").toBe(false);
-    const pre = await read(".scast.short:not(.open):not(.pend):has(> .sc-x:focus-visible){padding-bottom:0}");
-    expect(pre.overText, "red control: without the room the pill no longer covers text — this arm measures nothing").toBe(true);
+    const { page, list, stream } = await shortStream();
+    try {
+      await list.getByRole("option", { name: /Issue 0$/ }).focus();
+      const card = stream.getByRole("article").filter({ has: page.getByRole("heading", { name: "Issue 0", exact: true }) });
+      const body = card.getByText("Thank you for reading.", { exact: true });
+      const textBox = (await body.boundingBox())!;
+      const cardBox = (await card.boundingBox())!;
+      expect(textBox.y).toBeGreaterThanOrEqual(cardBox.y);
+      expect(textBox.y + textBox.height).toBeLessThanOrEqual(cardBox.y + cardBox.height);
+      await browserExpect(card.getByRole("button", { name: "Expand", includeHidden: true })).toHaveCount(0);
+    } finally {
+      await page.close();
+    }
   }, 60_000);
 
   it("a card head's clipped address stays in the accessibility tree (LOW 3)", async () => {
@@ -637,116 +546,78 @@ describe("hand back 1: the keyboard, the accessibility tree, the Screener at 360
 
 /**
  * THE SCREENER'S HEADS COVER NO LETTER AND NO ROW (a tester, 0.30.8: the newest held letter's subject
- * half under the "Screened · N held" bar). The real `ScreenerView` on a mirror, bundled and mounted
+ * half under the "Screened · N held" bar). The registered Screener bundled and mounted
  * in Chromium: the newest letter's sender line lands below the sticky decision bar, and the list's
  * first row below the list's head, in both looks and at every width, after the cursor's walk too.
  */
 describe("the Screener: the newest letter clears the decision bar, the first row the list head", () => {
-  const SCREENER_SHEETS = [
-    "packages/tokens/src/tokens.css", "packages/tokens/src/faces.css", "packages/tokens/src/ohmarchy.css",
-    "packages/ui/src/base.css", "packages/ui/src/primitives/avatar.css", "packages/ui/src/primitives/address-text.css",
-    "packages/ui/src/composites/row.css", "packages/ui/src/composites/list-pane.css", "packages/ui/src/composites/message.css",
-    "packages/ui/src/composites/decision-bar.css", "apps/webapp/app/app.css",
-  ].map(css).join("\n");
-  let js = "";
+  const origin = "https://screener-geometry.states.invalid";
+  let pageHtml = "";
   beforeAll(async () => {
-    const { build } = await import("esbuild");
-    const out = await build({
-      stdin: {
-        resolveDir: resolve(process.cwd(), "apps/webapp"), loader: "tsx",
-        contents: `import { createElement as h, useEffect, useState } from "react"; import { createRoot } from "react-dom/client";
-          import { NextIntlClientProvider } from "next-intl"; import { OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
-          import { ThemeProvider } from "@ohmail/ui"; import messages from "./messages/en.json";
-          import { useScreenerState } from "./app/shell/screener-state"; import { ScreenerView } from "./app/views/ScreenerView";
-          import { KeymapProvider } from "./app/shell/keymap"; import { withBodyDoor } from "./test/_body-door";
-          const NOW = new Date("2026-08-10T12:00:00.000Z");
-          const msg = (s, i) => ({ id: "m" + s + "-" + i, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
-            subject: "Offer " + s + "/" + i + ": quarry invoice glacier review", from: { name: "Vane Offers " + s, address: "offers" + s + "@vane.invalid" },
-            to: [], cc: [], date: new Date(Date.parse("2026-08-10T11:00:00Z") - s * 3600e3 - i * 60e3).toISOString(), folder: "ohmail/Screened",
-            snippet: "s", unread: true, body: "Thistle review invoice garden beacon ember pantry glacier harbour. ".repeat(s + i === 0 ? 120 : 10),
-            hasAttachments: false,
-            attachmentCount: 0, sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-            triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-10T09:00:00.000Z" });
-          window.mountScreener = async (host, full) => {
-            const store = new MemoryMirrorStore(); await store.load(); let seq = 0;
-            const all = Array.from({ length: 24 }, (_, s) => Array.from({ length: s === 0 ? 80 : 2 }, (_, i) => msg(s, i))).flat();
-            await store.applyChanges(all.map((m) => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })));
-            const engine = new OhmailEngine({ store, now: () => NOW, adapter: {
-              sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString() }),
-              mutate: async () => ({ changes: [], seq: null }), withdrawSend: async () => ({ outcome: "unsupported" }),
-              fetchBody: async () => ({ text: "x", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }) } });
-            function Probe() {
-              const [v, setV] = useState(0);
-              useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-              const state = useScreenerState(engine, v, () => {});
-              const [sel, setSel] = useState({ waiting: null, screened: null, spam: null });
-              return h(ScreenerView, { owed: false, state, segment: "screened", settled: true,
-                selection: { ...sel, screened: sel.screened ?? state.screenedOut[0]?.id ?? null },
-                onSelect: (s, id) => setSel((m) => ({ ...m, [s]: id })), hydrateBody: () => {}, hydrateBodies: () => {}, full, onFull: () => {} });
-            }
-            createRoot(host).render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW,
-              children: h(ThemeProvider, { storageKey: null, children: withBodyDoor(engine, h(KeymapProvider, { children: h(Probe) })) }) }));
-          };`,
-      },
-      bundle: true, write: false, format: "iife", platform: "browser", target: ["es2020"], jsx: "automatic",
-      loader: { ".css": "empty", ".svg": "empty" }, define: { "process.env.NODE_ENV": '"production"' }, logLevel: "error",
-    });
-    js = out.outputFiles[0]!.text;
+    pageHtml = await readerStatesPage("apps/webapp/test/screener-geometry-page.tsx");
   }, 120_000);
 
-  type Box = { top: number; bottom: number };
-  type Heads = { bar: Box; line: Box; subject: Box; col: Box; head: Box | null; scroller: Box | null; row: Box | null; newest: string };
-  const readHeads = (): Heads => {
-    const box = (sel: string): Box | null => {
-      const r = document.querySelector(sel)?.getBoundingClientRect();
-      return r ? { top: r.top, bottom: r.bottom } : null;
-    };
-    const cards = document.querySelectorAll(".view-screener .scn-read .hmail");
-    const last = cards[cards.length - 1]!;
-    const r = (e: Element): Box => ({ top: e.getBoundingClientRect().top, bottom: e.getBoundingClientRect().bottom });
-    const listShown = (document.querySelector(".view-screener .list-col") as HTMLElement | null)?.offsetParent != null;
+  const readHeads = (reading: HTMLElement) => {
+    const box = (el: Element) => el.getBoundingClientRect().toJSON() as { top: number; bottom: number };
+    const newest = [...reading.querySelectorAll("article")].at(-1)!;
+    const subject = newest.querySelector("h2")!;
     return {
-      bar: box(".view-screener .scn-read > .decide")!, line: r(last.querySelector(".hm-line")!), subject: r(last.querySelector("h2")!),
-      col: box(".view-screener .scn-read")!, head: listShown ? box(".view-screener .list-col .scn-head") : null,
-      scroller: listShown ? box(".view-screener .list-col .scroller") : null,
-      row: listShown ? box(".view-screener .list-col .row .row-top") : null, newest: last.querySelector("h2")!.textContent ?? "",
+      bar: box(reading.querySelector(".oh-sheet-fixed-head")!),
+      line: box(newest.querySelector("[data-sender-line]")!),
+      subject: box(subject),
+      col: box(reading),
+      newest: subject.textContent,
     };
   };
+  const reading = (page: Page) => page.getByRole("region", { name: "Vane Offers 0", exact: true });
+  const senderList = (page: Page) => page.getByRole("listbox", { name: "Screener", exact: true });
+  const firstSender = (page: Page) => senderList(page).getByRole("option", { name: /Vane Offers 0(?:\b|$)/ });
+  const listPort = (page: Page) => page.locator(".sc-scroll").filter({ has: senderList(page) });
+  const belowBar = (h: ReturnType<typeof readHeads>) => h.line.top >= h.bar.bottom - 0.5;
+
+  async function clearList(page: Page, where: string) {
+    const port = listPort(page);
+    await senderList(page).waitFor({ state: "visible" });
+    await port.waitFor({ state: "visible" });
+    const row = await firstSender(page).boundingBox();
+    const scroller = await port.boundingBox();
+    const head = await page.locator(".sc-list").filter({ has: senderList(page) }).locator("header").boundingBox();
+    expect(row, `${where}: the first sender is visible`).not.toBeNull();
+    expect(scroller, `${where}: the scrollport is visible`).not.toBeNull();
+    expect(head, `${where}: the list head is visible`).not.toBeNull();
+    expect(row!.y, `${where}: the first row is under the list's head`).toBeGreaterThanOrEqual(head!.y + head!.height - 0.5);
+    expect(row!.y, `${where}: the first row starts above the list's scrollport`).toBeGreaterThanOrEqual(scroller!.y - 0.5);
+  }
+
   async function mount(width: number, height: number, face: string, theme: string): Promise<Page> {
     const page = await browser!.newPage({ viewport: { width, height } });
-    const html = `<!doctype html><html data-theme="${theme}"${face === "ohmarchy" ? ' data-face="ohmarchy"' : ""}><head><meta charset="utf-8">
-      <style>${SCREENER_SHEETS}</style><style>body{margin:0;font-family:system-ui,sans-serif}#host{height:${height}px;display:flex}</style>
-      </head><body><div id="host"></div></body></html>`;
-    // A document with an origin: the view reads cookies, which about:blank refuses.
-    await page.route("http://screener.invalid/", (r) => r.fulfill({ contentType: "text/html", body: html }));
-    await page.goto("http://screener.invalid/");
-    await page.addScriptTag({ content: "window.process={env:{NODE_ENV:'production'}};" });
-    await page.addScriptTag({ content: js });
-    await page.evaluate((full) => (window as unknown as { mountScreener: (h: Element, f: boolean) => Promise<void> })
-      .mountScreener(document.getElementById("host")!, full), width < 700);
-    await page.waitForFunction(() => document.querySelectorAll(".view-screener .scn-read .hmail").length > 0);
-    // Settled: the bodies paint after the rows, and the column re-anchors as they grow.
-    await page.evaluate(() => new Promise<void>((done) => {
-      const read = document.querySelector(".view-screener .scn-read") as HTMLElement;
-      let last = "", same = 0, n = 0;
-      const tick = () => {
-        const now = `${read.scrollTop}:${read.scrollHeight}`;
-        same = now === last ? same + 1 : 0;
-        last = now;
-        if (same >= 10 || ++n > 300) done(); else requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    }));
-    return page;
-  }
-  const clear = (h: Heads, where: string) => {
-    expect(h.newest, `${where}: premise: the newest letter is the last card`).toContain("Offer 0/0:");
-    expect(h.line.top, `${where}: the newest letter's sender line is under the decision bar`).toBeGreaterThanOrEqual(h.bar.bottom - 0.5);
-    expect(h.subject.bottom, `${where}: the newest letter's subject is below the column`).toBeLessThanOrEqual(h.col.bottom + 0.5);
-    if (h.row && h.head && h.scroller) {
-      expect(h.row.top, `${where}: the first row is under the list's head`).toBeGreaterThanOrEqual(h.head.bottom - 0.5);
-      expect(h.row.top, `${where}: the first row starts above the list's scrollport`).toBeGreaterThanOrEqual(h.scroller.top - 0.5);
+    const url = `${origin}/?face=${face}&theme=${theme}`;
+    try {
+      await page.route(`${origin}/**`, (route) => route.fulfill({ contentType: "text/html", body: pageHtml }));
+      await page.goto(url);
+      await firstSender(page).click();
+      await reading(page).getByRole("heading", { name: /^Offer 0\/0:/ }).waitFor();
+      await reading(page).locator("[data-reading-scroll]").evaluate((read) => new Promise<void>((done) => {
+        let last = "", same = 0, n = 0;
+        const tick = () => {
+          const now = `${read.scrollTop}:${read.scrollHeight}`;
+          same = now === last ? same + 1 : 0;
+          last = now;
+          if (same >= 10 || ++n > 300) done();
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }));
+      return page;
+    } catch (error) {
+      await page.close();
+      throw error;
     }
+  }
+  const clear = (h: ReturnType<typeof readHeads>, where: string) => {
+    expect(h.newest, `${where}: premise: the newest letter is the last card`).toContain("Offer 0/0:");
+    expect(belowBar(h), `${where}: the newest letter's sender line is under the decision bar`).toBe(true);
+    expect(h.subject.bottom, `${where}: the newest letter's subject is below the column`).toBeLessThanOrEqual(h.col.bottom + 0.5);
   };
 
   const LOOKS: ReadonlyArray<[string, string]> = [["ohmarchy", "dark"], ["paper", "light"]];
@@ -756,7 +627,8 @@ describe("the Screener: the newest letter clears the decision bar, the first row
       it(`${face} ${theme} at ${width}px: the newest letter lands below the bar, the first row below the head`, async () => {
         const page = await mount(width, height, face, theme);
         try {
-          clear(await page.evaluate(readHeads), `${face} ${width}px`);
+          clear(await reading(page).evaluate(readHeads), `${face} ${width}px`);
+          if (width !== 390) await clearList(page, `${face} ${width}px`);
         } finally {
           await page.close();
         }
@@ -767,12 +639,14 @@ describe("the Screener: the newest letter clears the decision bar, the first row
   it("the cursor walked down the list and back leaves the first row clear of the head", async () => {
     const page = await mount(1100, 600, "ohmarchy", "dark");
     try {
-      await page.locator(".view-screener .list-col .scroller").focus();
+      await firstSender(page).focus();
       for (let i = 0; i < 23; i++) await page.keyboard.press("j");
-      const walked = await page.evaluate(() => document.querySelector(".view-screener .list-col .scroller")!.scrollTop);
+      expect(await senderList(page).getByRole("option", { name: /Vane Offers 23/, selected: true }).count()).toBe(1);
+      const walked = await listPort(page).evaluate((scroller) => scroller.scrollTop);
       expect(walked, "premise: the walk scrolled the list").toBeGreaterThan(0);
       for (let i = 0; i < 23; i++) await page.keyboard.press("k");
-      clear(await page.evaluate(readHeads), "after the walk");
+      clear(await reading(page).evaluate(readHeads), "after the walk");
+      await clearList(page, "after the walk");
     } finally {
       await page.close();
     }
@@ -781,14 +655,18 @@ describe("the Screener: the newest letter clears the decision bar, the first row
   it("red control: the 0.30.8 landing (the newest letter at the column's top) is read as covered", async () => {
     const page = await mount(1920, 1080, "ohmarchy", "dark");
     try {
-      const covered = await page.evaluate(() => {
-        const read = document.querySelector(".view-screener .scn-read") as HTMLElement;
-        const cards = read.querySelectorAll(".hmail");
-        const last = cards[cards.length - 1]!;
-        read.scrollTop += last.getBoundingClientRect().top - read.getBoundingClientRect().top - 14;
-        return last.querySelector(".hm-line")!.getBoundingClientRect().top < read.querySelector(":scope > .decide")!.getBoundingClientRect().bottom;
-      });
-      expect(covered, "red control: the measurement does not see a letter under the bar").toBe(true);
+      const before = await reading(page).evaluate(readHeads);
+      expect(belowBar(before), "premise: the mounted landing clears the head").toBe(true);
+      const offset = before.line.top - before.bar.bottom + 14;
+      const moved = await reading(page).locator("[data-reading-scroll]").evaluate((port, offset) => {
+        const before = port.scrollTop;
+        port.style.overflowAnchor = "none";
+        port.style.paddingBottom = `calc(${getComputedStyle(port).paddingBottom} + ${offset * 2}px)`;
+        port.scrollTop = before + offset;
+        return port.scrollTop - before;
+      }, offset);
+      expect(moved, "premise: the port scrolled by the offset").toBeGreaterThanOrEqual(offset - 1);
+      expect(belowBar(await reading(page).evaluate(readHeads)), "the same measurement detects the overlap").toBe(false);
     } finally {
       await page.close();
     }

@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { accountStorage, attachments, drafts, messages, messageBodies, outboundSends, threads } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
-import { FORWARD_MAX_RAW_BYTES, forwardedDate, sendService } from "@trafficflow/services/mail";
+import { FORWARD_MAX_RAW_BYTES, dbFor, forwardedDate, draftsService, sendService } from "@trafficflow/services/mail";
 import type { ServiceContext, AttachmentAdapter, OpenAdapter } from "@trafficflow/services/mail";
 import { htmlToPlainText, normalizeMime, prepareHtmlForStorage, STORED_HTML_CAP_BYTES, textFromHtml } from "@trafficflow/core/mail";
 import type { SendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core/mail";
@@ -99,7 +100,7 @@ async function world(opts: {
   }).returning();
 
   const ctx: ServiceContext = {
-    db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-forward",
+    db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-forward",
   };
   return { db, ctx, draftId: draft!.id, originalId: orig.id };
 }
@@ -167,6 +168,62 @@ describe("forward is assembled server-side", () => {
     // ZERO AT REST — the streamed bytes are in no table.
     expect(JSON.stringify(await w.db.select().from(drafts)))
       .not.toContain(Buffer.from([0x25, 0x50, 0x44, 0x46]).toString("base64"));
+  });
+
+  it("keeps the edited quote in a reopened draft and sends both parts with the original's attachment", async () => {
+    const w = await world({ withAttachment: true, noForward: true });
+    const send = sendSpy();
+    const fetch = fetchSpy({ "2": new Uint8Array([1, 2, 3]) });
+    const adapters = { openSendAdapter: send.openSendAdapter, openFetchAdapter: fetch.openFetchAdapter };
+    const html = '<p>Passing this along.</p><blockquote data-quoted-history="edited"><blockquote><p>Only the summary.</p></blockquote></blockquote>';
+    await draftsService.update(w.ctx, w.draftId, { body: "Local fallback", html, forwardOfMessageId: w.originalId });
+    const reopened = await draftsService.get(w.ctx, w.draftId);
+    await expect(sendService.send(w.ctx, reopened.id, "unconfirmed", adapters)).rejects.toMatchObject({ httpStatus: 403 });
+    await sendService.send(w.ctx, reopened.id, "confirmed", adapters, { forwardConfirmed: true });
+
+    expect(reopened.html).toBe(html);
+    expect(reopened.body).not.toContain("Local fallback");
+    expect(send.delivered).toHaveLength(1);
+    const delivered = send.delivered[0]!;
+    expect(delivered.html).toBe("<p>Passing this along.</p><blockquote><p>Only the summary.</p></blockquote>");
+    expect(delivered.text).toBe(htmlToPlainText(delivered.html!));
+    expect(delivered.text).toContain("Only the summary.");
+    expect(delivered.text).not.toContain("Here is the plan.");
+    expect(fetch.asked).toEqual(["2"]);
+    expect(delivered.attachments?.[0]?.content).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it.each([false, true])("keeps the untouched MIME bytes with a typed note (forward: %s)", async (isForward) => {
+    const w = await world({
+      withAttachment: true, noteHtml: "<p>A note I typed.</p>", note: "A note I typed.",
+      origHtml: "<p>Here is the <b>plan</b>.</p>",
+    });
+    const parentHeader = "<parent" + "@" + "mail.example>";
+    const rootHeader = "<root" + "@" + "mail.example>";
+    const [thread] = await w.db.insert(threads)
+      .values({ accountId: w.ctx.accountId, subject: "Q3 plan", rootMessageIdHeader: rootHeader }).returning();
+    await w.db.update(messages).set({ messageIdHeader: parentHeader, threadId: thread!.id })
+      .where(eq(messages.id, w.originalId));
+    if (!isForward) await w.db.update(drafts).set({ inReplyToMessageId: w.originalId })
+      .where(eq(drafts.id, w.draftId));
+    const send = sendSpy();
+    const fetch = fetchSpy({ "2": new Uint8Array([1, 3, 5, 7]) });
+    await sendService.send(w.ctx, w.draftId, "same-message", {
+      openSendAdapter: send.openSendAdapter, openFetchAdapter: fetch.openFetchAdapter,
+    }, isForward ? { forwardOf: w.originalId } : {});
+    const msg = send.delivered[0]!;
+    const options = {
+      ...outboundToMail(msg, "<outgoing" + "@" + "mail.example>", FIXED_NOW),
+      baseBoundary: "same-message-boundary", disableFileAccess: true, disableUrlAccess: true,
+    };
+    const bytes = await new MailComposer(options).compile().build();
+    const parts = await normalizeMime(bytes);
+    expect(msg.inReplyTo).toBe(parentHeader);
+    expect(msg.references).toBe(rootHeader + " " + parentHeader);
+    expect(parts.textBody).toContain("A note I typed.");
+    expect(parts.htmlBody).toContain("A note I typed.");
+    expect(fetch.asked).toEqual(isForward ? ["2"] : []);
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(isForward ? "97ae0433d69f1aa7ebe9e47fb2d5ced7a1ace0b2d6833f5f87e76b9961b7659f" : "0a1e881f81e30a67347a20998e30faa6d5676fb1ea561aca52b96a6338494850");
   });
 
   /**
@@ -685,7 +742,7 @@ describe("a forward is refused only when neither its words nor its files can be 
       to: [{ name: null, address: "sam@example.test" }],
       cc: [], bcc: [], status: "draft", createdAt: FIXED_NOW, updatedAt: FIXED_NOW,
     }).returning();
-    const ctx: ServiceContext = { db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-fwd-orig" };
+    const ctx: ServiceContext = { db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-fwd-orig" };
     return { db, ctx, mbX, mbY, draftId: draft!.id, originalId: orig.id };
   }
   type World2 = Awaited<ReturnType<typeof world2>>;

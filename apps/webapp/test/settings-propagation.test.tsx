@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { queryByRole } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, answerConsentWith, answerSyncWith, installShellEnv, mailbox, mountShell,
@@ -28,9 +29,7 @@ import {
  * FORWARDED to the same hosted writer (`apps/desktop/test/desktop-cloud-settings.test.tsx`)
  * whose change reaches this browser's own drain — which is exactly what is driven here.
  *
- * The third render is pinned too: with the flag ON and ZERO folder entities, an unsettled
- * mirror shows SKELETON rows — "no folders on your mail server yet" is a sentence only a
- * settled mirror may say.
+ * With folders enabled and no folder entities, the rail shows the loading state until the mirror settles.
  */
 
 const FOLDER_ID = "fd_props";
@@ -42,7 +41,7 @@ const json = (v: unknown): Response =>
 
 const folderCreate = (seq: number) => ({
   type: "folder", op: "create", id: FOLDER_ID, seq, updatedAt: ISO,
-  entity: { id: FOLDER_ID, name: "Receipts", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO },
+  entity: { id: FOLDER_ID, name: "Project receipts", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO },
 });
 const folderDelete = (seq: number) => ({
   type: "folder", op: "delete", id: FOLDER_ID, seq, updatedAt: ISO,
@@ -63,9 +62,7 @@ const pageOf = (creates: unknown[], deletes: unknown[], cursor: string): Respons
   });
 
 const foldersToggle = (el: HTMLElement): string | undefined =>
-  [...el.querySelectorAll(".rlabel-toggle")]
-    .map((n) => n.textContent?.trim())
-    .find((t) => t === "Folders");
+  queryByRole(el, "button", { name: "Folders" })?.textContent?.trim();
 
 beforeEach(() => {
   installShellEnv();
@@ -84,7 +81,7 @@ describe("a consent read outliving the hook's active era applies nothing", () =>
    * applies neither state nor cache.
    */
   it("a read resolving after active flips false leaves the hook at rest", async () => {
-    const { useConsentState } = await import("../app/shell/consent-state");
+    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
     const React = (await import("react")) as typeof import("react");
     const { createRoot } = await import("react-dom/client");
     const ract = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -103,7 +100,7 @@ describe("a consent read outliving the hook's active era applies nothing", () =>
 
     let seen: { known: boolean } | null = null;
     function Probe({ active }: { active: boolean }): null {
-      seen = useConsentState(active, transport);
+      seen = useConsentState(active, null, transport);
       return null;
     }
     const host = document.createElement("div");
@@ -127,24 +124,30 @@ describe("a consent read outliving the hook's active era applies nothing", () =>
 
 describe("settings changes propagate through the sync channel to an open shell", () => {
   it("a flip to OFF arriving on /sync makes the folders group DISAPPEAR — never the husk", async () => {
-    // Boot: folders on, one folder in the mirror.
     answerConsentWith({ foldersEnabledAt: ISO });
-    let phase: "on" | "off" | "idle" = "on";
+    let phase: "boot" | "folder" | "off" | "idle" = "boot";
     answerSyncWith(() => {
-      if (phase === "on") {
+      if (phase === "boot") {
         phase = "idle";
-        return pageOf([folderCreate(1)], [], "c1");
+        return pageOf([], [], "c1");
+      }
+      if (phase === "folder") {
+        phase = "idle";
+        return pageOf([folderCreate(2)], [], "c2");
       }
       if (phase === "off") {
         phase = "idle";
         // The flip, exactly as the hosted log carries it: the setting AND the entity tombstones.
-        return pageOf([settingsRow(2, null, STAMP_OFF)], [folderDelete(3)], "c3");
+        return pageOf([settingsRow(3, null, STAMP_OFF)], [folderDelete(4)], "c4");
       }
       return pageOf([], [], "cIdle");
     });
     const el = await mountShell([mailbox()]);
     await tick(30_000);
+    phase = "folder";
+    await tick(30_000);
     expect(foldersToggle(el), "the group never rendered — the fixture is broken").toBe("Folders");
+    expect(queryByRole(el, "button", { name: "Project receipts" })).not.toBeNull();
 
     // Another surface flips the master OFF: the account's next /sync page carries the settings
     // row and the folder tombstones, and the live consent answer changes underneath.
@@ -180,7 +183,7 @@ describe("settings changes propagate through the sync channel to an open shell",
     await tick(30_000);
 
     expect(foldersToggle(el), "the group never appeared after a flip made elsewhere").toBe("Folders");
-    expect(el.querySelector(`[data-rail-folder-id="${FOLDER_ID}"]`)).not.toBeNull();
+    expect(queryByRole(el, "button", { name: "Project receipts" })).not.toBeNull();
   });
 
   it("flag on + zero entities: skeleton while the mirror is unsettled, the honest empty line after", async () => {
@@ -203,13 +206,13 @@ describe("settings changes propagate through the sync channel to an open shell",
     // UNSETTLED: the group stands (the flag is on), its content is the skeleton — and the
     // sentence only a settled mirror may say is nowhere.
     expect(foldersToggle(el)).toBe("Folders");
-    expect(el.querySelector('[data-testid="folders-skeleton"]'), "no skeleton over the unsettled mirror").not.toBeNull();
+    expect.soft(queryByRole(el, "status", { name: "Loading folders" }), "no skeleton over the unsettled mirror").not.toBeNull();
     expect(textOf(el)).not.toContain("No folders on your mail server yet.");
 
-    // The drain settles with a genuinely empty inventory: the skeleton yields to the honest line.
+    // A settled inventory drops the loading state and needs no explanatory line.
     release!(pageOf([], [], "c1"));
     await tick(30_000);
-    expect(el.querySelector('[data-testid="folders-skeleton"]')).toBeNull();
-    expect(textOf(el)).toContain("No folders on your mail server yet.");
+    expect(queryByRole(el, "status", { name: "Loading folders" })).toBeNull();
+    expect(textOf(el)).not.toContain("No folders on your mail server yet.");
   });
 });

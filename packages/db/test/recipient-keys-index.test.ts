@@ -7,20 +7,24 @@ import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
 import { pgDialect, sqliteDialect } from "../src/dialect/index.js";
 import { HOT_PATH_INDEX_SPECS } from "../src/hot-path-indexes.js";
 import {
-  PREMIGRATION_PREBUILD_SPECS, RECIPIENT_KEYS_FUNCTION_DDL, RECIPIENT_KEYS_INDEX_DDL, RECIPIENT_KEYS_PREBUILD_SPEC,
+  PREMIGRATION_PREBUILD_SPECS, RECIPIENT_KEYS_COLUMN_INDEX, RECIPIENT_KEYS_COLUMN_INDEX_DDL, RECIPIENT_KEYS_FUNCTION_DDL,
+  RECIPIENT_KEYS_INDEX_DDL, RECIPIENT_KEYS_PREBUILD_SPEC, RETIRED_PREBUILD_SPECS,
 } from "../src/search-setup.js";
 
 /**
- * MAIL 0154's RECIPIENT INDEX HAS ONE SPELLING IN FOUR PLACES: the journal, the prebuild that builds
- * it CONCURRENTLY ahead of the migrator (with the function it names as its prelude), the hot-path
- * spec setup-prod reads back, and the dialect's predicate. A planner uses an expression index only
- * for the SAME expression, so the predicate must carry the index's call textually; and the key
- * must name the account, or the index would hand one account's address to another's search.
+ * THE RECIPIENTS' KEY HAS ONE SPELLING. Mail 0154's journal carries the function and its expression
+ * index byte for byte the constants; the prebuild that built that index CONCURRENTLY ahead of the
+ * migrator is retired, since mail 0208 drops it. Mail 0208 stores the key in a column generated from
+ * the same call over the same three columns, the index's own expression, and builds the column's GIN
+ * as its constant spells it; and the key must name the account, or the index would hand one
+ * account's address to another's search.
  */
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const PG_SQL = read("../../db-mail/drizzle/0154_messages_recipient_keys.sql");
 const JOURNAL = JSON.parse(read("../../db-mail/drizzle/meta/_journal.json")) as { entries: Array<{ idx: number; tag: string; when: number }> };
-const statements = PG_SQL.split("--> statement-breakpoint").map((s) => s.replace(/^\s*--[^\n]*$/gm, "").trim()).filter(Boolean);
+const statementsOf = (text: string) => text.split("--> statement-breakpoint").map((s) => s.replace(/^\s*--[^\n]*$/gm, "").trim()).filter(Boolean);
+const statements = statementsOf(PG_SQL);
+const COLUMN_SQL = statementsOf(read("../../db-mail/drizzle/0208_recipient_keys_column.sql"));
 const renderPg = (k: SQL) => new PgDialect().sqlToQuery(k);
 const canon = (s: string) => s.replace(/\bconcurrently\s+/i, "").replace(/\s+/g, " ").trim().replace(/;$/, "");
 /** The index's key expression with quoting, an alias and spacing taken out. */
@@ -45,23 +49,32 @@ describe("mail 0154's recipient index is spelled once", () => {
     expect(renderPg(RECIPIENT_KEYS_INDEX_DDL).params).toEqual([]);
   });
 
-  it("the prebuild builds it ahead of the migrator, the function first; the hot-path spec shares the DDL", () => {
-    expect(PREMIGRATION_PREBUILD_SPECS).toContain(RECIPIENT_KEYS_PREBUILD_SPEC);
+  it("the prebuild is retired with the index mail 0208 drops: no setup builds it, and its spec keeps 0154's spelling", () => {
+    expect(RETIRED_PREBUILD_SPECS).toContain(RECIPIENT_KEYS_PREBUILD_SPEC);
+    expect(PREMIGRATION_PREBUILD_SPECS.map((s) => s.name)).not.toContain("messages_recipient_keys_idx");
+    expect(HOT_PATH_INDEX_SPECS.map((s) => s.name)).not.toContain("messages_recipient_keys_idx");
     expect(RECIPIENT_KEYS_PREBUILD_SPEC.ddl).toBe(RECIPIENT_KEYS_INDEX_DDL);
     expect(RECIPIENT_KEYS_PREBUILD_SPEC.prelude).toEqual([RECIPIENT_KEYS_FUNCTION_DDL]);
-    const hot = HOT_PATH_INDEX_SPECS.find((s) => s.name === "messages_recipient_keys_idx");
-    expect(hot?.ddl).toBe(RECIPIENT_KEYS_INDEX_DDL);
-    expect(hot?.table).toBe("messages");
   });
 
-  it("the pg predicate is the index's own expression, keyed by the account", () => {
+  it("mail 0208 drops the expression index first, stores the index's own expression, and builds the column's GIN as its constant spells it", () => {
+    const e = JOURNAL.entries.find((x) => x.tag === "0208_recipient_keys_column");
+    expect(e?.idx).toBe(JOURNAL.entries.findIndex((x) => x.tag === "0207_request_folder_moves") + 1);
+    expect(COLUMN_SQL).toHaveLength(3);
+    expect(canon(COLUMN_SQL[0]!)).toBe(`DROP INDEX "messages_recipient_keys_idx"`);
+    const generated = /GENERATED ALWAYS AS \((messages_recipient_keys\([^)]*\))\) STORED/.exec(COLUMN_SQL[1]!);
+    expect(COLUMN_SQL[1]!.startsWith(`ALTER TABLE "messages" ADD COLUMN "recipient_keys" text[] GENERATED ALWAYS AS`)).toBe(true);
+    expect(bare(generated![1]!)).toBe(bare(INDEX_EXPR.exec(renderPg(RECIPIENT_KEYS_INDEX_DDL).sql)![1]!));
+    expect(canon(COLUMN_SQL[2]!)).toBe(canon(renderPg(RECIPIENT_KEYS_COLUMN_INDEX_DDL).sql));
+    expect(renderPg(RECIPIENT_KEYS_COLUMN_INDEX_DDL).sql).toContain(`"${RECIPIENT_KEYS_COLUMN_INDEX}"`);
+    expect(renderPg(RECIPIENT_KEYS_COLUMN_INDEX_DDL).params).toEqual([]);
+  });
+
+  it("the pg predicate reads the stored key, keyed by the account, and calls no function a letter", () => {
     const pred = renderPg(pgDialect().search.recipient({ accountId: "acct", address: "Info@ACME.test" }));
-    const indexExpr = INDEX_EXPR.exec(renderPg(RECIPIENT_KEYS_INDEX_DDL).sql)![1]!;
-    const callInPred = /messages_recipient_keys\([^)]*\)/.exec(pred.sql)![0];
-    expect(bare(callInPred)).toBe(bare(indexExpr));
-    expect(pred.sql).toContain("m.account_id, m.to_addresses, m.cc_addresses");
     // The account leads the key, and the address is folded in SQL, never on the client.
-    expect(pred.sql.replace(/\s+/g, " ")).toMatch(/@> array\[\$1::text \|\| ':' \|\| lower\(\$2\)\]/);
+    expect(pred.sql.replace(/\s+/g, " ")).toBe("m.recipient_keys @> array[$1::text || ':' || lower($2)]");
+    expect(pred.sql).not.toContain("messages_recipient_keys(");
     expect(pred.params).toEqual(["acct", "Info@ACME.test"]);
   });
 

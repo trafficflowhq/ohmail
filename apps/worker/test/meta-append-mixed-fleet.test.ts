@@ -8,7 +8,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { memoryImapServer, type MemoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
-import { driveOutstandingRequests } from "../src/request-drain.js";
+import { driveOutstandingRequests } from "@ohmail/organizer/request-drain";
 
 /**
  * THE OLD BUILD'S READING STAYS TRUE (the mixed-fleet rule). A build up to 0.25.4 reads claims by

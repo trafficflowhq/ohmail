@@ -4,9 +4,10 @@ import {
 } from "@trafficflow/services/mail";
 import { STAGED_CONTENT_DIGEST_RE } from "@trafficflow/db/cloud";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import { mailbox, readBody } from "./shared.js";
+import type { RequestOf, UntrustedBody } from "@ohmail/wire";
 
 /**
  * `POST /attachments/staging` — mint one upload ticket. Server compositions only: a desktop
@@ -19,13 +20,6 @@ import { mailbox, readBody } from "./shared.js";
  * retry finds the same row and re-signs a fresh grant. The durable record is the lock.
  */
 
-interface MintBody {
-  mailboxId?: unknown;
-  filename?: unknown;
-  contentType?: unknown;
-  sizeBytes?: unknown;
-  contentSha256?: unknown;
-}
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
@@ -33,6 +27,7 @@ export const attachmentStagingRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/attachments/staging",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "handler",
@@ -64,7 +59,7 @@ export const attachmentStagingRoutes: Route[] = [
         throw new ServiceError("validation_failed", 400, "Idempotency-Key is too long");
       }
 
-      const body = await readBody<MintBody>(req);
+      const body = await readBody<UntrustedBody<RequestOf<"POST /attachments/staging">>>(req);
 
       /**
        * The same ceiling the inline entrance applies, at the other entrance:
@@ -122,7 +117,7 @@ export const attachmentStagingRoutes: Route[] = [
         accountId: ctx.accountId, filename, contentType, sizeBytes, now: ctx.now(),
         idempotencyKey, contentSha256: digest,
       });
-      return jsonResponse(grant, { status: 201 });
+      return answer<"POST /attachments/staging">()(grant, { status: 201 });
     },
   },
 ];

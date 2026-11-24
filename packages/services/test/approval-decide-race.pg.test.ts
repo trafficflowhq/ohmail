@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { asc, eq } from "drizzle-orm";
 import { accounts, approvals, changeLog, folderState, mailboxes, messages } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { ApprovalService, type ServiceContext } from "@trafficflow/services";
@@ -41,10 +40,11 @@ import { ApprovalService, type ServiceContext } from "@trafficflow/services";
 const PG_UP = await realPgAvailable();
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 const ctx = (accountId: string): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"],
+  db: dbFor(db, accountId),
   accountId,
   userId: null,
   now: () => new Date(),
@@ -67,7 +67,7 @@ async function newWorld(): Promise<World> {
     nativeLocator: { folder: "ohmail/Screener", ref: "1:1" },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
 
@@ -87,9 +87,10 @@ describe.skipIf(!PG_UP)("two concurrent decisions on one approval", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 120_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); await client?.end({ timeout: 5 }); });
 
   it("a second decision landing between the first one's read and its write is refused", async () => {
     const w = await newWorld();

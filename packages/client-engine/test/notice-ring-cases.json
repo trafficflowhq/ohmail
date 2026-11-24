@@ -1,0 +1,697 @@
+{
+  "//": "WHO HEARS A CALENDAR ALERT, AND WHEN: the cases every ringer is held to. Read by packages/client-engine/test/notice-ring.test.ts (the page's book) and by apps/desktop/src-tauri/src/alerts_tests.rs (the shell's book): one table, so the two cannot drift. A step hands the ringer a set of the named alerts under a scope, clears it, asks what is due under the scope signed in then (`live`, null for nobody) at an alert's minute plus `plusMs`, or reads the minute the ringer would wake for (`next`, null for none). `rings` names what rings, in order. Each alert is as `aheadAlert` makes it; the page's test holds that.",
+  "lateMs": 120000,
+  "alerts": {
+    "weekly10": {
+      "id": "ev-weekly.1794319200000.10",
+      "eventId": "ev-weekly",
+      "atMs": 1794318600000,
+      "startMs": 1794319200000,
+      "allDay": false,
+      "label": {
+        "as": "title",
+        "text": "Catalogue weekly"
+      },
+      "leadMin": 10,
+      "acts": []
+    },
+    "weekly0": {
+      "id": "ev-weekly.1794319200000.0",
+      "eventId": "ev-weekly",
+      "atMs": 1794319200000,
+      "startMs": 1794319200000,
+      "allDay": false,
+      "label": {
+        "as": "title",
+        "text": "Catalogue weekly"
+      },
+      "leadMin": 0,
+      "acts": []
+    },
+    "weeklyMoved10": {
+      "id": "ev-weekly.1794321000000.10",
+      "eventId": "ev-weekly",
+      "atMs": 1794320400000,
+      "startMs": 1794321000000,
+      "allDay": false,
+      "label": {
+        "as": "title",
+        "text": "Catalogue weekly"
+      },
+      "leadMin": 10,
+      "acts": []
+    },
+    "shoot15": {
+      "id": "ev-shoot.1794319500000.15",
+      "eventId": "ev-shoot",
+      "atMs": 1794318600000,
+      "startMs": 1794319500000,
+      "allDay": false,
+      "label": {
+        "as": "title",
+        "text": "Catalogue shoot, day 1"
+      },
+      "leadMin": 15,
+      "acts": []
+    },
+    "books60": {
+      "id": "ev-books.1794330000000.60",
+      "eventId": "ev-books",
+      "atMs": 1794326400000,
+      "startMs": 1794330000000,
+      "allDay": false,
+      "label": {
+        "as": "busy"
+      },
+      "leadMin": 60,
+      "acts": []
+    },
+    "day900": {
+      "id": "ev-day.1794438000000.900",
+      "eventId": "ev-day",
+      "atMs": 1794384000000,
+      "startMs": 1794438000000,
+      "allDay": true,
+      "label": {
+        "as": "event"
+      },
+      "leadMin": 900,
+      "acts": []
+    }
+  },
+  "cases": [
+    {
+      "name": "an alert rings at its minute, once, and not before",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10",
+              "books60"
+            ]
+          }
+        },
+        {
+          "next": "weekly10"
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": -1
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": [
+            "weekly10"
+          ]
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 1000
+          },
+          "rings": []
+        },
+        {
+          "next": "books60"
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "books60",
+            "plusMs": 0
+          },
+          "rings": [
+            "books60"
+          ]
+        },
+        {
+          "next": null
+        }
+      ]
+    },
+    {
+      "name": "two alerts of one minute ring together, in the set's order",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "shoot15",
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": [
+            "shoot15",
+            "weekly10"
+          ]
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 500
+          },
+          "rings": []
+        }
+      ]
+    },
+    {
+      "name": "an account switch: nothing rings under another account, and what was set is cleared, not left to fire",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10",
+              "books60"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-2",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        },
+        {
+          "next": null
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "books60",
+            "plusMs": 0
+          },
+          "rings": []
+        }
+      ]
+    },
+    {
+      "name": "a sign-out: with nobody signed in nothing rings, and nothing is left to fire for whoever signs in next",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": null,
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        },
+        {
+          "next": null
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        }
+      ]
+    },
+    {
+      "name": "a sign-out that clears first leaves nothing to ring",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10",
+              "books60"
+            ]
+          }
+        },
+        {
+          "clear": true
+        },
+        {
+          "next": null
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "books60",
+            "plusMs": 0
+          },
+          "rings": []
+        }
+      ]
+    },
+    {
+      "name": "a set of another account leaves nothing of the one before",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "set": {
+            "scope": "mb-2",
+            "alerts": [
+              "books60"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-2",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-2",
+            "at": "books60",
+            "plusMs": 0
+          },
+          "rings": [
+            "books60"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "an event moved: its old minute does not ring, its new one does",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weeklyMoved10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weeklyMoved10",
+            "plusMs": 0
+          },
+          "rings": [
+            "weeklyMoved10"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "an event deleted: it is missing from the next set and does not ring",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10",
+              "books60"
+            ]
+          }
+        },
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "books60"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "books60",
+            "plusMs": 0
+          },
+          "rings": [
+            "books60"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "an alarm removed: the alarm that is left rings, the one removed does not",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10",
+              "weekly0"
+            ]
+          }
+        },
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly0"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly0",
+            "plusMs": 0
+          },
+          "rings": [
+            "weekly0"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "an invitation declined: the next set is empty and nothing rings",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10",
+              "weekly0"
+            ]
+          }
+        },
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": []
+          }
+        },
+        {
+          "next": null
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly0",
+            "plusMs": 0
+          },
+          "rings": []
+        }
+      ]
+    },
+    {
+      "name": "the same set handed again does not ring an alert twice",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": [
+            "weekly10"
+          ]
+        },
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 1000
+          },
+          "rings": []
+        },
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 60000
+          },
+          "rings": []
+        }
+      ]
+    },
+    {
+      "name": "a ringer that wakes within two minutes still rings",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 120000
+          },
+          "rings": [
+            "weekly10"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a ringer that wakes later than two minutes draws nothing, then or afterwards",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10",
+              "books60"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 120001
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 120002
+          },
+          "rings": []
+        },
+        {
+          "next": "books60"
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "books60",
+            "plusMs": 0
+          },
+          "rings": [
+            "books60"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a whole day's alert rings its lead before the day starts",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "day900"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "day900",
+            "plusMs": -60000
+          },
+          "rings": []
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "day900",
+            "plusMs": 0
+          },
+          "rings": [
+            "day900"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "switching alerts off and back on keeps a recent delivery with its account",
+      "steps": [
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 0
+          },
+          "rings": [
+            "weekly10"
+          ]
+        },
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": []
+          }
+        },
+        {
+          "set": {
+            "scope": "mb-1",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-1",
+            "at": "weekly10",
+            "plusMs": 119999
+          },
+          "rings": []
+        },
+        {
+          "set": {
+            "scope": "mb-2",
+            "alerts": [
+              "weekly10"
+            ]
+          }
+        },
+        {
+          "due": {
+            "live": "mb-2",
+            "at": "weekly10",
+            "plusMs": 119999
+          },
+          "rings": [
+            "weekly10"
+          ]
+        }
+      ]
+    }
+  ]
+}

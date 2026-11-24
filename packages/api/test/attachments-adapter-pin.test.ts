@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -53,7 +54,7 @@ async function seed(resolver: HostResolver | null): Promise<{ deps: ApiDeps; mai
     .values({ accountId, provider: "imap", address: ADDRESS })
     .returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: row!.id, accountId: accountOfMailbox(row!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: NAME, port: 993, secure: true, user: ADDRESS },
   });
   const deps = {

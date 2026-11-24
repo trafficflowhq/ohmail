@@ -1,0 +1,5 @@
+@layer oh {
+  .trash-provider {
+    margin-block-start: var(--s3);
+  }
+}

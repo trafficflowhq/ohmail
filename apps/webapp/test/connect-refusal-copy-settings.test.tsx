@@ -6,7 +6,15 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import deMessages from "../messages/de.json";
 import { ApiError, type MailboxDTO, type SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import { within } from "@testing-library/react";
+import { MailGround, mailSettings, mailStages, NO_PANE_PARTS } from "@ohmail/app/mail";
+import type { ConsentWire, FirstRunWire, HostContract } from "@ohmail/app/host";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeAddress } from "../../../packages/app/test/support/fake-window.js";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
+import { fakePane, ok } from "../../../packages/app/test/mailboxes/pane/support.js";
+import { MailFrame } from "../app/shell/browser-mail";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /**
@@ -26,12 +34,6 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 const copy = messages.mailboxes as unknown as Record<string, string>;
 const picker = messages.providerPicker as unknown as Record<string, string>;
 const onb = messages.onboarding as unknown as Record<string, string>;
-
-const QUIET: MailState = {
-  key: "quiet", clock: false, count: 0, total: null, reason: null, errorCode: null, asOf: null,
-  address: null, minutes: null, slow: false, screenerCandidate: false, pending: 0, filing: null,
-  continuesAtFolder: null, settled: true, owed: false,
-};
 
 const healthy = {
   subscription: {
@@ -83,10 +85,6 @@ vi.mock("../app/api-client", async () => {
   };
 });
 
-vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: QUIET, refresh: () => { /* nothing to refresh here */ } }),
-}));
-
 const refused = (reason: string, extra: Record<string, unknown> = {}): ApiError =>
   new ApiError(400, "mailbox_probe_failed", "server sentence", { reason, transport: "imap", ...extra });
 
@@ -116,36 +114,83 @@ async function typeInto(el: Element | null, value: string): Promise<void> {
 }
 
 function press(el: HTMLElement, prefix: string): HTMLElement {
-  const hits = [...el.querySelectorAll("button, a")].filter((n) => (n.textContent ?? "").trim().startsWith(prefix));
+  const name = (label: string) => label.startsWith(prefix);
+  const ui = within(el);
+  const hits = ["button", "link", "radio"].flatMap((role) => ui.queryAllByRole(role, { name }));
   expect(hits.length, `"${prefix}" matched ${hits.length} controls, not one`).toBe(1);
-  return hits[0] as HTMLElement;
+  return hits[0]!;
 }
 
-/** The connect form on the generic entry, with every field it asks for typed. */
-async function typedForm(locale: "en" | "de" = "en"): Promise<HTMLDivElement> {
-  const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
+async function openConnect(locale: "en" | "de" = "en"): Promise<HTMLDivElement> {
+  const [{ WEB_MAIL_PARTS }, { webConnectWire }] = await Promise.all([
+    import("../app/(product)/mailbox/mail-parts"),
+    import("../app/(product)/mailbox/connect-wire"),
+  ]);
+  const account = "connect-fixture";
+  const settings = mailSettings({ ...NO_PANE_PARTS, mailboxes: WEB_MAIL_PARTS.paneParts.mailboxes });
+  const steps = mailStages(WEB_MAIL_PARTS.stageParts);
+  const allow = ok({ emailVerified: true, access: null });
+  const { wire } = fakePane({ list: [ok([])], allowance: [allow] });
+  const connect = webConnectWire({ owner: () => account, returned: "page" });
+  const firstRun = {
+    ai: "unset", probe: connect.probe, connect: connect.connect,
+    organize: async () => "stored", complete: async () => {}, setAiEnabled: async () => {},
+    probeReason: () => null, probeMessage: () => null,
+  } as unknown as FirstRunWire;
+  const consent = { state: async () => ({
+    seedConfirmedAt: "2026-11-01T00:00:00.000Z",
+    dormancyDays: 60, blockRemoteImagesAt: null, loadTrackingPixelsAt: null,
+    onboardingCompletedAt: "2026-11-02T00:00:00.000Z", screeningBaselineAt: null,
+  }) } as unknown as ConsentWire;
+  const engine = Object.assign(fakeMail([]).engine, { storeCoverage: () => ({ state: "unknown" as const }) });
+  const { host: testHost } = fakeHost({
+    engine, service: "managed", scope: account, account, above: MailGround,
+    address: fakeAddress("#/settings/mailboxes"), places: { settings }, stages: steps,
+    features: { mailboxes: { name: "mailboxes", render: () => null } },
+    mailboxes: async () => [], wires: { mailboxes: wire, connect, firstRun, consent },
+  });
+  const frame: HostContract = {
+    ...testHost, capabilities: { ...testHost.capabilities, firstRunDoor: "cloud", mailboxes: "here" },
+  };
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
+  const words = locale === "de" ? deMessages : messages;
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale, messages: locale === "de" ? deMessages : messages, children: h(MailboxSection),
+      locale, messages: words, timeZone: "UTC",
+      children: h(ThemeProvider, { children: h(ToastHost, { children: h(MailFrame, { host: frame }) }) }),
     }));
   });
   await settle();
+  const mailboxes = within(host).getByRole("region", { name: words.settings.mailboxes });
+  await click(within(mailboxes).getByRole("button", { name: words.mailboxes.connect }));
+  return within(host).getByRole<HTMLDivElement>("dialog");
+}
+
+const addressField = (el: HTMLElement) => within(el).queryByRole<HTMLInputElement>("textbox", {
+  name: (name) => [messages.onboarding.address, deMessages.onboarding.address].includes(name),
+});
+const server = (el: HTMLElement, kind: "imap" | "smtp") => within(el).queryByRole<HTMLInputElement>("textbox", {
+  name: (name) => name.toLowerCase().includes(kind),
+});
+const secretField = (el: HTMLElement) => within(el).queryByLabelText<HTMLInputElement>(/password|passwort/i);
+
+/** The connect form on the generic entry, with every field it asks for typed. */
+async function typedForm(locale: "en" | "de" = "en"): Promise<HTMLDivElement> {
+  const host = await openConnect(locale);
   const said = locale === "de" ? deMessages : messages;
-  await click(press(host, said.mailboxes.connect));
-  await click(press(host, said.providerPicker.otherLabel));
-  await typeInto(host.querySelector("#mb-address"), "person@example.test");
-  await typeInto(host.querySelector("#mb-imap"), "mail.example.test");
-  await typeInto(host.querySelector("#mb-smtp"), "smtp.example.test");
-  await typeInto(host.querySelector("#mb-pass"), "app-password-fixture");
+  await click(press(host, said.providerPicker.otherShort));
+  await typeInto(addressField(host), "person@example.test");
+  await typeInto(server(host, "imap"), "mail.example.test");
+  await typeInto(server(host, "smtp"), "smtp.example.test");
+  await typeInto(secretField(host), "app-password-fixture");
   return host;
 }
 
 /** From the typed form to the create: the connect is tried on submit. */
 async function ceremony(el: HTMLElement): Promise<void> {
-  await submit(el.querySelector("#mb-address")!.closest("form"));
+  await submit(addressField(el)!.closest("form"));
 }
 
 beforeEach(() => {
@@ -165,7 +210,7 @@ describe("Settings > Connect names no port field", () => {
       mockProbeThrows = refused(reason, reason === "tls" ? { tls: { kind: "self_signed" } } : {});
       const el = await typedForm();
       await click(press(el, onb.test!));
-      const said = el.querySelector(".set-verdict.bad")?.textContent ?? "";
+      const said = within(el).queryByRole("alert")?.textContent ?? "";
       expect(said).toContain("IMAP server name");
       // No port FIELD is named; the connect and timeout sentences say a port goes after the name.
       expect(said).not.toMatch(/host and port|whether the port/i);
@@ -176,8 +221,8 @@ describe("Settings > Connect names no port field", () => {
     mockCreateThrows = refused("connect");
     const el = await typedForm();
     await ceremony(el);
-    expect(el.querySelector("#mb-address"), "the refusal did not return to the form").toBeTruthy();
-    const said = el.querySelector('[role="alert"]')?.textContent ?? "";
+    expect(addressField(el), "the refusal did not return to the form").toBeTruthy();
+    const said = within(el).queryByRole("alert")?.textContent ?? "";
     expect(said).toContain("IMAP server name");
     expect(said).toContain("goes after the name, as mail.example.com:1143");
     expect(said).not.toMatch(/host and port/i);
@@ -187,7 +232,7 @@ describe("Settings > Connect names no port field", () => {
     mockCreateThrows = refused("tls", { tls: { kind: "self_signed" } });
     const el = await typedForm();
     await ceremony(el);
-    expect(el.querySelector('[role="alert"]')?.textContent).toBe(copy.probe_tls_self_signed);
+    expect(within(el).queryByRole("alert")?.textContent).toBe(copy.probe_tls_self_signed);
   });
 });
 
@@ -213,7 +258,7 @@ describe("Settings > Connect and the outgoing server", () => {
     await click(press(el, onb.test!));
     expect(mockProbeBodies[0]?.smtp).toEqual({ host: "smtp.example.test", user: "person@example.test" });
     expect(el.textContent).toContain(onb.sendingRefusedAuth!.replace("{host}", "smtp.example.test"));
-    expect(el.querySelector(".set-verdict.ok"), "the incoming verdict went with the outgoing one").toBeTruthy();
+    expect(within(el).queryByText(onb.probeOkDetail!), "the incoming verdict went with the outgoing one").toBeTruthy();
   });
 
   it("a password only the outgoing server refused names it, in English and in German", async () => {
@@ -221,7 +266,7 @@ describe("Settings > Connect and the outgoing server", () => {
       mockCreateThrows = refused("auth", { transport: "smtp" });
       const el = await typedForm(locale);
       await ceremony(el);
-      expect(el.querySelector('[role="alert"]')?.textContent).toBe(said.mailboxes.probe_auth_smtp);
+      expect(within(el).queryByRole("alert")?.textContent).toBe(said.mailboxes.probe_auth_smtp);
       await unmount();
     }
     expect(deMessages.mailboxes.probe_auth_smtp).not.toBe(messages.mailboxes.probe_auth_smtp);
@@ -231,38 +276,30 @@ describe("Settings > Connect and the outgoing server", () => {
     mockCreateThrows = refused("auth");
     const el = await typedForm();
     await ceremony(el);
-    expect(el.querySelector('[role="alert"]')?.textContent).toBe(copy.probe_auth);
+    expect(within(el).queryByRole("alert")?.textContent).toBe(copy.probe_auth);
   });
 });
 
 describe("Settings > Connect asks for the address first", () => {
-  async function openForm(): Promise<HTMLDivElement> {
-    const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, { locale: "en", messages, children: h(MailboxSection) }));
-    });
-    await settle();
-    await click(press(host, copy.connect!));
-    return host;
-  }
+  const openForm = () => openConnect();
   async function address(el: HTMLElement, value: string): Promise<void> {
-    await typeInto(el.querySelector("#mb-address"), value);
-    await act(async () => { el.querySelector("#mb-address")!.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+    await typeInto(addressField(el), value);
+    await act(async () => { addressField(el)!.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
     await settle();
   }
-  const checked = (el: HTMLElement) => [...el.querySelectorAll('[role="radio"][aria-checked="true"] .pvp-name')]
-    .map((n) => n.textContent);
+  const checked = (el: HTMLElement) => {
+    const providers = within(el).getByRole("group", { name: picker.label });
+    return within(providers).queryAllByRole("button", { pressed: true })
+      .map((tile) => tile.getAttribute("aria-label") ?? tile.textContent?.trim());
+  };
 
   it("the address is asked before any tile, and its domain preselects one", async () => {
     mockDiscover["acme-workspace.example"] = { preset: "gmail", proton: false, imap: null, smtp: null };
     const el = await openForm();
     expect(checked(el)).toEqual([]);
-    expect(el.querySelector("#mb-address"), "the address is on screen before a choice").toBeTruthy();
+    expect(addressField(el), "the address is on screen before a choice").toBeTruthy();
     await address(el, personalAt("fixture.person", "icloud.com"));
-    expect(checked(el)).toEqual(["iCloud Mail"]);
+    expect(checked(el)).toEqual(["iCloud"]);
     await address(el, "person@acme-workspace.example");
     expect(checked(el)).toEqual(["Gmail"]);
     expect(mockLookups).toEqual([{ domain: "acme-workspace.example" }]);
@@ -272,9 +309,10 @@ describe("Settings > Connect asks for the address first", () => {
     mockCreateThrows = refused("connect", { transport: "smtp" });
     const el = await openForm();
     await address(el, personalAt("fixture.person", "t-online.de"));
-    await typeInto(el.querySelector("#mb-pass"), "app-password-fixture");
+    await click(press(el, "t-online"));
+    await typeInto(secretField(el), "app-password-fixture");
     await ceremony(el);
-    const said = el.querySelector('[role="alert"]')?.textContent ?? "";
+    const said = within(el).queryByRole("alert")?.textContent ?? "";
     expect(said).toContain("outgoing (SMTP)");
     expect(said, "a field the preset form does not show was named").not.toMatch(/host|port|server name/i);
   });
@@ -284,9 +322,10 @@ describe("Settings > Connect asks for the address first", () => {
     const el = await openForm();
     await address(el, personalAt("fixture.person", "t-online.de"));
     expect(checked(el)).toEqual(["t-online"]);
-    await typeInto(el.querySelector("#mb-pass"), "app-password-fixture");
+    await click(press(el, "t-online"));
+    await typeInto(secretField(el), "app-password-fixture");
     await ceremony(el);
-    expect(el.querySelector('[role="alert"]')?.textContent).toBe(copy.probe_auth_tonline);
+    expect(within(el).queryByRole("alert")?.textContent).toBe(copy.probe_auth_tonline);
   });
 
   it("an unreachable host on the generic entry offers the hosts the lookup found, as a fill", async () => {
@@ -298,14 +337,14 @@ describe("Settings > Connect asks for the address first", () => {
     const el = await openForm();
     await address(el, "person@acme-srv.example");
     expect(checked(el), "an unknown provider leaves the choice to the person").toEqual([]);
-    await click(press(el, picker.otherLabel!));
-    await typeInto(el.querySelector("#mb-imap"), "mail.acme-srv.example");
-    await typeInto(el.querySelector("#mb-smtp"), "mail.acme-srv.example");
-    await typeInto(el.querySelector("#mb-pass"), "app-password-fixture");
+    await click(press(el, picker.otherShort!));
+    await typeInto(server(el, "imap"), "mail.acme-srv.example");
+    await typeInto(server(el, "smtp"), "mail.acme-srv.example");
+    await typeInto(secretField(el), "app-password-fixture");
     await ceremony(el);
     await click(press(el, picker.discoveredUse!));
-    expect((el.querySelector("#mb-imap") as HTMLInputElement).value).toBe("imap.acme-srv.example");
-    expect((el.querySelector("#mb-smtp") as HTMLInputElement).value).toBe("smtp.acme-srv.example");
-    expect(el.querySelector('[role="alert"]'), "the old refusal goes with the hosts it was about").toBeNull();
+    expect((server(el, "imap") as HTMLInputElement).value).toBe("imap.acme-srv.example");
+    expect((server(el, "smtp") as HTMLInputElement).value).toBe("smtp.acme-srv.example");
+    expect(within(el).queryByRole("alert"), "the old refusal goes with the hosts it was about").toBeNull();
   });
 });

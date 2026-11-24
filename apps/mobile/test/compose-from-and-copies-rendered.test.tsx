@@ -22,21 +22,25 @@ vi.mock("react-native", async () => {
       drawn.sources.push(p.source);
       return React.createElement("img", { "data-uri": p.source?.uri, "data-resize": p.resizeMethod, onError: p.onError });
     },
-    TextInput: forwardRef<HTMLInputElement, { value: string; accessibilityLabel?: string; disableFullscreenUI?: boolean; keyboardAppearance?: string; onChangeText?: (v: string) => void; onFocus?: () => void; onBlur?: () => void }>(
-      (p, ref) => React.createElement("input", {
+    TextInput: forwardRef<HTMLInputElement, { value: string; accessibilityLabel?: string; disableFullscreenUI?: boolean; keyboardAppearance?: string; onChangeText?: (v: string) => void; onSelectionChange?: (e: { nativeEvent: { selection: { start: number; end: number } } }) => void; onFocus?: () => void; onBlur?: () => void }>(
+      (p, ref) => {
+        if (p.onSelectionChange) caret.select = (start, end) => p.onSelectionChange?.({ nativeEvent: { selection: { start, end } } });
+        return React.createElement("input", {
         ref, value: p.value, "data-label": p.accessibilityLabel, "data-in-place": String(p.disableFullscreenUI === true), "data-keyboard": p.keyboardAppearance, onFocus: p.onFocus, onBlur: p.onBlur,
         onChange: (e: { target: { value: string } }) => p.onChangeText?.(e.target.value),
-      }),
+        });
+      },
     ),
   };
 });
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
-const look = vi.hoisted(() => ({ scheme: "light" as "light" | "dark" }));
+const caret = vi.hoisted(() => ({ select: null as null | ((start: number, end: number) => void) }));
+const look = vi.hoisted(() => ({ paper: false, scheme: "light" as "light" | "dark" }));
 vi.mock("../src/theme", () => ({
   useTheme: () => ({
-    scheme: look.scheme,
+    mail: look.paper, scheme: look.scheme,
     c: new Proxy({}, { get: () => "#000" }), radius: new Proxy({}, { get: () => 8 }), type: new Proxy({}, { get: () => ({}) }),
-    liftUp: () => ({}), textCap: 2, hit: 48, reduceMotion: true,
+    lift: () => ({}), liftUp: () => ({}), textCap: 2, hit: 48, reduceMotion: true,
   }),
 }));
 vi.mock("../src/ui/base", async () => {
@@ -56,7 +60,7 @@ vi.mock("../src/ui/Sheet", () => ({
   useModalKey: () => "k", useSheetPanelBounds: () => ({}), useSheetRoom: () => ({}),
 }));
 vi.mock("../src/ui/glass", () => ({ GlassActionBar: () => null, GlassPill: () => null, nextRoom: () => 0 }));
-vi.mock("../src/ui/posture", () => ({ usePosture: () => ({ heightClass: "regular" }) }));
+vi.mock("../src/ui/posture", () => ({ usePosture: () => ({ heightClass: "regular", panes: 1 }) }));
 vi.mock("../src/ui/keyboard-lift", () => ({ useKeyboardLift: () => 0 }));
 vi.mock("../src/ui/keyboard-native", () => ({ showKeyboardWhenFocused: () => undefined }));
 vi.mock("../src/ui/reader-cover", () => ({ useReaderCover: () => undefined }));
@@ -122,6 +126,7 @@ function composer() {
 
 let open: ReturnType<typeof composer> | null = null;
 afterEach(() => {
+  look.paper = false;
   open?.unmount();
   open = null;
 });
@@ -209,15 +214,16 @@ describe("the composer stays on screen while typing", () => {
 /* THE READER UNDER THE SHEET HEARS A REPLY'S SEND (`sent-reveal.ts`): pressed, then confirmed, for the
    message answered; a send that did not go says only that it was pressed, a new mail says nothing. */
 describe("a reply's send is said to the reader under the sheet", () => {
-  const answer = (outcome: "sent" | "failed", mode: "reply" | "new" = "reply") => {
+  const answer = (outcome: "sent" | "failed", mode: "reply" | "new" = "reply", inline = false, doneOnSend = false) => {
     const c = composer();
     c.unmount();
     const w = scene.world as { actions: Record<string, unknown> };
-    w.actions.sendReply = vi.fn(async () => ({ outcome }));
+    const sendReply = vi.fn(async (..._args: unknown[]) => ({ outcome }));
+    w.actions.sendReply = sendReply;
     const m = { id: "m1", from: { name: "Lena", address: "lena@x.test" }, subject: "Q3 plan", to: [], cc: [], earlier: [], canReplyAll: false };
     const closed: number[] = [];
-    const r = mount(h(ComposeSheet, { m: mode === "new" ? null : m, mode, onClose: () => closed.push(1) } as never));
-    return { r, closed };
+    const r = mount(h(ComposeSheet, { m: mode === "new" ? null : m, mode, inline, doneOnSend, onClose: () => closed.push(1) } as never));
+    return { r, closed, sendReply };
   };
   const heard = (): { said: string[]; off: () => void } => {
     const said: string[] = [];
@@ -239,6 +245,98 @@ describe("a reply's send is said to the reader under the sheet", () => {
     expect(ear.said).toEqual(["m1:pressed", "m1:sent"]);
     expect(closed).toEqual([1]);
     ear.off();
+    r.unmount();
+  });
+
+  it("sends the same reply from the conversation without opening a modal", async () => {
+    const sheet = answer("sent");
+    await sendIn(sheet.r.el);
+    const inline = answer("sent", "reply", true);
+    expect(inline.r.el.querySelector("[data-modal]")).toBeNull();
+    await sendIn(inline.r.el);
+    expect(inline.sendReply.mock.calls[0]?.slice(0, 8)).toEqual(sheet.sendReply.mock.calls[0]?.slice(0, 8));
+    expect(inline.sendReply).toHaveBeenCalledTimes(1);
+    expect(inline.closed).toEqual([1]);
+    sheet.r.unmount();
+    inline.r.unmount();
+  });
+
+  it("the Reply Run's single Send uses the existing Send and Done action", async () => {
+    const run = answer("sent", "reply", true, true);
+    const body = run.r.el.querySelector(`input[data-label="${Copy.replyPlaceholder}"]`) as HTMLInputElement;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(body, "Thank you.");
+      body.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const buttons = [...run.r.el.querySelectorAll<HTMLButtonElement>("button[data-button]")];
+    const done = buttons.find((button) => button.dataset.button === Copy.sendAndDone);
+    expect(done !== undefined, buttons.map((button) => button.dataset.button).join(", ")).toBe(true);
+    await act(async () => { done!.click(); });
+    expect(run.sendReply.mock.calls[0]?.slice(0, 7)).toEqual(["m1", "Thank you.", false, "Ann's signature", null, undefined, true]);
+    expect(run.closed).toEqual([1]);
+    run.r.unmount();
+  });
+
+  it("inserts a picked emoji as plain mail text", async () => {
+    const { r, sendReply } = answer("sent", "reply", true);
+    act(() => { r.el.querySelector<HTMLButtonElement>(`button[data-button="${Copy.composeEmoji}"]`)!.click(); });
+    act(() => { r.el.querySelector<HTMLButtonElement>('button[data-button="🙂"]')!.click(); });
+    await act(async () => { r.el.querySelector<HTMLButtonElement>(`button[data-button="${Copy.replySend}"]`)!.click(); });
+    expect(sendReply.mock.calls[0]?.[1]).toBe("🙂");
+    r.unmount();
+  });
+
+  it("saves and sends a formatted draft as plain text after its last mark is removed", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = composer();
+      c.unmount();
+      const keeps: Record<string, unknown>[] = [];
+      const w = scene.world as { actions: Record<string, unknown> };
+      w.actions.draftKeep = async (k: Record<string, unknown>) => { keeps.push(k); return "kept"; };
+      const sendNew = w.actions.sendNew as ReturnType<typeof vi.fn>;
+      const draft = { id: "d-1", body: "Thanks, Lena.", mailboxId: "mb-1", to: "lena@x.test", cc: "", bcc: "", subject: "Hi",
+        forwardOf: null, forwardParts: null, revision: null };
+      const r = mount(h(ComposeSheet, { m: null, mode: "new", draft, inline: true, onClose: () => undefined } as never));
+      const body = [...r.el.querySelectorAll<HTMLInputElement>("input")].find((input) => input.value === "Thanks, Lena.")!;
+      const labels = () => [...r.el.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.dataset.button);
+      const press = async (label: string) => {
+        const button = [...r.el.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.dataset.button === label);
+        if (!button) throw new Error("no " + label + " in " + labels().join("|"));
+        await act(async () => { button.click(); });
+      };
+      act(() => { body.focus(); caret.select?.(8, 12); });
+      await press(Copy.composeFormat);
+      await press(Copy.composeBold);
+      await act(async () => { vi.advanceTimersByTime(5000); });
+      act(() => { caret.select?.(8, 12); });
+      if (!labels().includes(Copy.composeBold)) await press(Copy.composeFormat);
+      await press(Copy.composeBold);
+      await act(async () => { vi.advanceTimersByTime(5000); });
+      await press(Copy.replySend);
+      expect(keeps.map((k) => k.html)).toEqual(["<p>Thanks, <strong>Lena</strong>.</p>", null]);
+      expect(sendNew.mock.calls[0]?.[11]).toBe(null);
+      r.unmount();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("sends the formatted range as HTML and keeps the text for the send checks", async () => {
+    const { r, sendReply } = answer("sent", "reply", true);
+    const body = [...r.el.querySelectorAll<HTMLInputElement>("input")].find((input) => input.dataset.label === Copy.replyPlaceholder)!;
+    const press = async (label: string) => {
+      const button = [...r.el.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.dataset.button === label)!;
+      await act(async () => { button.click(); });
+    };
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(body, "Thanks, Lena.");
+      body.dispatchEvent(new Event("input", { bubbles: true }));
+      caret.select?.(8, 12);
+    });
+    await press(Copy.composeFormat);
+    await press(Copy.composeBold);
+    await press(Copy.replySend);
+    expect(sendReply.mock.calls[0]?.[1]).toBe("Thanks, Lena.");
+    expect(sendReply.mock.calls[0]?.at(-1)).toBe("<p>Thanks, <strong>Lena</strong>.</p>");
     r.unmount();
   });
 
@@ -324,4 +422,40 @@ describe("an attached file in the composer", () => {
     expect(c.el.querySelector("img")).toBeNull();
     expect(c.q(`[data-label="beach.jpg"]`)).toBeNull();
   });
+});
+
+it.each(["discarded", "queued"] as const)("closes a confirmed %s draft without keeping it again", async (outcome) => {
+  const setup = composer();
+  setup.unmount();
+  look.paper = true;
+  const w = scene.world as { actions: Record<string, unknown> };
+  const discard = vi.fn(async (_id: string) => outcome);
+  const keep = vi.fn(async () => "kept" as const);
+  w.actions.draftDiscard = discard;
+  w.actions.draftKeep = keep;
+  const close = vi.fn();
+  const draft = { id: "d-1", body: "Unsent words", mailboxId: "mb-1", to: "", cc: "", bcc: "", subject: "Hi",
+    forwardOf: null, forwardParts: null, revision: null };
+  const r = mount(h(ComposeSheet, { m: null, mode: "new", draft, onClose: close } as never));
+  try {
+    const press = async (label: string) => {
+      const b = r.el.querySelector<HTMLButtonElement>(`[data-button="${label}"]`);
+      expect(b).not.toBeNull();
+      await act(async () => b!.click());
+    };
+    act(() => {
+      const subject = r.el.querySelector<HTMLInputElement>(`[data-label="${Copy.composeSubject}"]`)!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(subject, "Edited subject");
+      subject.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await press(Copy.draftsDiscard);
+    expect(discard).not.toHaveBeenCalled();
+    await press(Copy.draftsDiscardCancel);
+    expect(close).not.toHaveBeenCalled();
+    await press(Copy.draftsDiscard);
+    await press(Copy.draftsDiscardConfirm);
+    expect(discard.mock.calls).toEqual([["d-1"]]);
+    expect(close).toHaveBeenCalledOnce();
+  } finally { r.unmount(); }
+  expect(keep).not.toHaveBeenCalled();
 });

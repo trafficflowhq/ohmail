@@ -1,0 +1,97 @@
+{
+  "component": "TimeGrid",
+  "state": "days-now",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 24, 360, 250],
+  "clip": [24, 24, 360, 250],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    {
+      "boxShadow": "rgb(221, 213, 201) 0px 0px 0px 1px, rgba(18, 16, 14, 0.22) 0px 6px 20px -8px, rgba(18, 16, 14, 0.08) 0px 1px 3px 0px",
+      "borderRadius": "999px"
+    },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 1 541a4a0ad8ca" },
+    { "backgroundColor": "oklch(0.6 0.14 243)", "borderRadius": "2px" },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 3 e11d3fbc7e31" },
+    { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "20px" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Later: 09:00 Invoices, new template, 09:00 Resurface, 14:00 Catalogue weekly, 14:30 Poster review, 18:30 Bouldering with Tim",
+      "box": [56, 225, 288, 20],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "7px",
+        "paddingBottom": "0px",
+        "paddingLeft": "3px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "09:00 Invoices, new template 09:00 Resurface", "type": 0 }],
+      "surfaces": [
+        { "box": [56, 225, 288, 20], "paint": 0 },
+        { "box": [59, 228, 14, 14], "paint": 1 },
+        { "box": [226.2, 231, 8, 8], "paint": 2 },
+        { "box": [323, 228, 14, 14], "paint": 3 }
+      ]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "03:00 04:00 05:00 06:00", "type": 1 }],
+    "surfaces": [{ "box": [0, 0, 360, 250], "paint": 4 }]
+  }
+}

@@ -20,7 +20,7 @@ const real = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => real.handle(r, { ...d, session: null, idempotency: null });
 
 /** Every name a cleared jar is told to drop. */
-const CLEARED = ["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
+const CLEARED = ["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"];
 
 interface Jar { access: string; refresh: string }
 
@@ -46,6 +46,14 @@ const elsewhere = (j: Jar) => ({
   cookie: `tf_session=${j.access}; tf_csrf=${csrfTokenFor(j.access)}`,
   headers: { "x-csrf-token": csrfTokenFor(j.access) },
 });
+
+const clearFor = (jar: Jar, family: string) => {
+  const wire = atRefreshPath(jar);
+  return req("POST", "/auth/refresh/logout", {
+    cookie: `${wire.cookie}; tf_owner=signed_out_pending; tf_family=${family}`,
+    headers: { ...wire.headers, "X-Ohmail-Clear-Logout": "1", "X-Ohmail-Expected-Family": family },
+  });
+};
 
 async function codeOf(res: Response): Promise<{ code?: string; message?: string }> {
   try {
@@ -92,7 +100,8 @@ describe("a sign-out after another tab lost its renewal answer", () => {
     clock.advance(1_000);
     const out = await H(req("POST", "/auth/refresh/logout", atRefreshPath(stale)), deps);
     expect(out.status, JSON.stringify(await codeOf(out))).toBe(204);
-    expectCleared(out, "the door's 204");
+    expect(out.headers.getSetCookie()).toEqual([]);
+    expectCleared(await H(clearFor(stale, stale.familyId), deps), "the stale family's serialized clear");
 
     // Inside the grace, where the resume splash used to converge the spent token into a mint.
     clock.advance(4_000);
@@ -131,7 +140,8 @@ describe("the ordinary sign-out through the door", () => {
     const live = await jarFor(db, FIXED_NOW);
     const out = await H(req("POST", "/auth/refresh/logout", atRefreshPath(live)), deps);
     expect(out.status).toBe(204);
-    expectCleared(out, "the door's 204");
+    expect(out.headers.getSetCookie()).toEqual([]);
+    expectCleared(await H(clearFor(live, live.familyId), deps), "the revoked family's serialized clear");
 
     expect((await H(req("GET", "/auth/session", { bearer: live.access }), deps)).status).toBe(401);
     // A saved copy of the jar is refused plainly: the revoked family never reaches the sweep.
@@ -157,18 +167,18 @@ describe("the ordinary sign-out through the door", () => {
     expect((await H(req("POST", "/auth/refresh", atRefreshPath(live)), deps)).status).toBe(204);
   });
 
-  it("a jar that names nothing: our 401, and the five cookies cleared", async () => {
+  it("a jar that names nothing: our 401 and no cookie write", async () => {
     const { deps } = await makeDeps();
     const res = await H(req("POST", "/auth/refresh/logout"), deps);
     expect(res.status).toBe(401);
     expect((await codeOf(res)).code).toBe("unauthorized");
-    expectCleared(res, "the door's 401");
+    expect(res.headers.getSetCookie()).toEqual([]);
     // A token never minted names nothing: 401, nothing revoked. One ever minted answers 204 in any
     // state and ends its family — the door tells a holder whether the token in hand was minted.
     const unknown = await H(req("POST", "/auth/refresh/logout", { cookie: `tf_refresh=${generateToken()}` }), deps);
     expect(unknown.status).toBe(401);
     expect(await codeOf(unknown)).toEqual({ code: "unauthorized", message: "nothing to sign out" });
-    expectCleared(unknown, "the unknown token's 401");
+    expect(unknown.headers.getSetCookie()).toEqual([]);
   });
 
   it("a FAULT keeps the jar, so the retry has the cookie to present", async () => {
@@ -203,9 +213,15 @@ describe("the ordinary sign-out through the door", () => {
       headers: { "x-csrf-token": csrfTokenFor(enrolling.token) },
     }), deps);
     expect(out.status, JSON.stringify(await codeOf(out))).toBe(204);
-    expectCleared(out, "the enrollment sign-out");
-    const [row] = await db.select({ revokedAt: sessions.revokedAt }).from(sessions)
+    expect(out.headers.getSetCookie()).toEqual([]);
+    const [row] = await db.select({ revokedAt: sessions.revokedAt, familyId: sessions.familyId }).from(sessions)
       .where(eq(sessions.id, enrolling.sessionId));
+    const clear = await H(req("POST", "/auth/refresh/logout", {
+      cookie: `tf_session=${enrolling.token}; tf_owner=signed_out_pending; tf_family=${row!.familyId}`,
+      headers: { "X-Ohmail-Clear-Logout": "1", "X-Ohmail-Expected-Family": row!.familyId },
+    }), deps);
+    expect(clear.status).toBe(204);
+    expectCleared(clear, "the enrollment family's serialized clear");
     expect(row!.revokedAt, "the enrollment session outlived its sign-out").toBeInstanceOf(Date);
     expect((await H(req("GET", "/auth/session", { bearer: enrolling.token }), deps)).status).toBe(401);
   });
@@ -223,7 +239,8 @@ describe("the ordinary sign-out through the door", () => {
     try {
       const out = await H(req("POST", "/auth/refresh/logout", atRefreshPath(live)), pruneDown as ApiDeps);
       expect(out.status, JSON.stringify(await codeOf(out))).toBe(204);
-      expectCleared(out, "the door's 204 over a failed prune");
+      expect(out.headers.getSetCookie()).toEqual([]);
+      expectCleared(await H(clearFor(live, live.familyId), deps), "the clear after a failed prune");
       expect(logged.mock.calls.filter((c) => String(c[0]).includes("\"event\":\"auth_logout_wake_prune_failed\"")))
         .toHaveLength(1);
     } finally {
@@ -256,4 +273,104 @@ describe("`/auth/logout` keeps its own arms", () => {
     // The other family was never this door's to end.
     expect((await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${other.refresh}` }), deps)).status).toBe(204);
   });
+});
+
+
+it("a sign-out for a different family leaves the current browser session intact", async () => {
+  const { db, deps } = await makeDeps();
+  const confirmed = await jarFor(db, FIXED_NOW);
+  const current = await jarFor(db, FIXED_NOW);
+  const out = await H(req("POST", "/auth/refresh/logout", {
+    cookie: `tf_refresh=${current.refresh}`,
+    headers: { "X-Ohmail-Expected-Family": confirmed.familyId },
+  }), deps);
+  expect(out.status).toBe(409);
+  expect(out.headers.has("set-cookie")).toBe(false);
+  expect((await H(req("GET", "/auth/session", elsewhere(current)), deps)).status).toBe(200);
+});
+
+it("the account a browser request expects must match before a write handler runs", async () => {
+  const { db, deps } = await makeDeps();
+  const current = await jarFor(db, FIXED_NOW);
+  const handler = vi.fn(async () => new Response(null, { status: 204 }));
+  const app = createApp([{ method: "POST", pattern: "/write", relay: true, cost: "ceremony", handler }]);
+  const wire = elsewhere(current);
+  const res = await app.handle(req("POST", "/write", {
+    ...wire,
+    headers: { ...wire.headers, "X-Ohmail-Expected-Account": "other-account" },
+  }), { ...deps, session: null, idempotency: null });
+  expect(res.status).toBe(409);
+  expect(handler).not.toHaveBeenCalled();
+});
+
+
+it("a renewal for another account leaves the presented family usable", async () => {
+  const { db, deps } = await makeDeps();
+  const current = await jarFor(db, FIXED_NOW);
+  const cookie = `tf_refresh=${current.refresh}`;
+  const refused = await H(req("POST", "/auth/refresh", {
+    cookie,
+    headers: { "X-Ohmail-Expected-Account": "other-account" },
+  }), deps);
+  expect(refused.status).toBe(409);
+  expect(refused.headers.has("set-cookie")).toBe(false);
+
+  const renewed = await H(req("POST", "/auth/refresh", {
+    cookie,
+    headers: { "X-Ohmail-Expected-Account": current.accountId, "X-Ohmail-Expected-Family": current.familyId },
+  }), deps);
+  expect(renewed.status).toBe(204);
+  expect(renewed.headers.get("X-Ohmail-Account")).toBe(current.accountId);
+  expect(setCookieMap(renewed).tf_family).toBe(current.familyId);
+});
+
+it("a background sign-out only revokes the confirmed family", async () => {
+  const { db, deps } = await makeDeps();
+  const current = await jarFor(db, FIXED_NOW);
+  const res = await H(req("POST", "/auth/refresh/logout", {
+    cookie: `tf_refresh=${current.refresh}`,
+    headers: {
+      "X-Ohmail-Expected-Family": current.familyId,
+    },
+  }), deps);
+  expect(res.status).toBe(204);
+  expect(res.headers.has("set-cookie")).toBe(false);
+  expect((await H(req("GET", "/auth/session", elsewhere(current)), deps)).status).toBe(401);
+});
+
+
+it("the clear refuses a live or replaced family without revoking it", async () => {
+  const { db, deps } = await makeDeps();
+  const original = await jarFor(db, FIXED_NOW);
+  const replacement = await jarFor(db, FIXED_NOW);
+  for (const call of [clearFor(original, original.familyId), clearFor(replacement, original.familyId)]) {
+    const res = await H(call, deps);
+    expect(res.status).toBe(409);
+    expect(res.headers.getSetCookie()).toEqual([]);
+  }
+  expect((await H(req("GET", "/auth/session", elsewhere(original)), deps)).status).toBe(200);
+  expect((await H(req("GET", "/auth/session", elsewhere(replacement)), deps)).status).toBe(200);
+});
+
+it("requires the captured account when browser logout has only the access cookie", async () => {
+  const { db, deps } = await makeDeps();
+  const current = await jarFor(db, FIXED_NOW);
+  const prior = await jarFor(db, FIXED_NOW);
+  const wire = elsewhere(current);
+  const request = (account: string) => req("POST", "/auth/refresh/logout", {
+    ...wire,
+    headers: {
+      ...wire.headers,
+      "X-Ohmail-Expected-Family": current.familyId,
+      "X-Ohmail-Expected-Account": account,
+    },
+  });
+  const refusal = await H(request(prior.accountId), deps);
+  expect(refusal.status).toBe(409);
+  expect(refusal.headers.getSetCookie()).toEqual([]);
+  expect((await H(req("GET", "/auth/session", wire), deps)).status).toBe(200);
+
+  const accepted = await H(request(current.accountId), deps);
+  expect(accepted.status).toBe(204);
+  expect(accepted.headers.getSetCookie()).toEqual([]);
 });

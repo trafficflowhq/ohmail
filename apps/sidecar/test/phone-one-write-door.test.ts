@@ -22,7 +22,7 @@
  * ── IT RUNS UNDER THE SQLITE PROJECT, AND THE OTHER RUN SAYS SO ───────────────────────────
  *
  * The services are typed against the server twin and the device twin is substituted by
- * `vitest.sqlite.config.ts`; under the default project the first statement dies on
+ * `test/vitest.sqlite.config.ts`; under the default project the first statement dies on
  * `gen_random_uuid`. So the default run gets a PREMISE CASE rather than a silent skip.
  */
 import { createRequire } from "node:module";
@@ -30,7 +30,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { snippets } from "@trafficflow/db";
 import { dialect, onLocalNotify } from "@trafficflow/db/dialect";
-import { snippetsService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, snippetsService, type ServiceContext } from "@trafficflow/services";
 import { openPhoneStore, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
 import type { LocalDb } from "../src/db.js";
 
@@ -114,7 +114,7 @@ async function phoneStore(): Promise<{ db: LocalDb; ctx: ServiceContext }> {
   open = await openPhoneStore(nodeExecutor());
   const db = open.db;
   const ctx: ServiceContext = {
-    db,
+    db: dbFor(db, ACCOUNT),
     accountId: ACCOUNT,
     userId: null,
     now: () => new Date(1_760_000_000_000),

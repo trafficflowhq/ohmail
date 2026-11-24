@@ -1,20 +1,20 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { brandDialect } from "../src/dialect/index.js";
 import { migrationSqlHash, readJournalOf, type JournalEntry, type JournalSpec } from "../src/baseline.js";
-import { journalProblems, journalStatuses, admittedDriftLines } from "../src/setup-prod.js";
+import { journalProblems, journalStatuses, admittedDriftLines, setupProdDatabase } from "../src/setup-prod.js";
 import {
   classifyDrift, gitProvenanceReader, type HistoricalSql, type ProvenanceReader,
 } from "../src/migration-provenance.js";
 import { allowanceFor, MIGRATION_ALLOWANCES } from "../src/migration-allowances.js";
-import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
+import { MIGRATED_DB_TEARDOWN_BUDGET_MS, PG_TEST_URL, realPgAvailable, throwawayDb } from "../src/testing.js";
 
 /**
  * A JOURNAL ROW IS VERIFIED AGAINST THE SQL THAT RAN, AND WHAT RAN IS PROVED FROM HISTORY.
@@ -53,6 +53,14 @@ const ALLOWANCE = MIGRATION_ALLOWANCES[0]!;
  * left this file; the arms here never read history beyond a hash no version carries.
  */
 const COMMENT_ONLY_TAG = "0006_idempotency_keys";
+
+const RECORDED_BEFORE_REPLAY_FIX = [
+  ["0214_invitation_proposals", "7343a3baa62f050aba6c4fb2027735853825e819c1158c968857ad7cb4761b9d"],
+  ["0215_calendar_removed_occurrences", "10686a3b7e8baff72f2fa5cb58c5b374681c6d12348fe9f3980970cd6ff8f9d5"],
+  ["0216_calendar_native_move", "cb4e271d2635f17eedc180dc4cb1da3341afd2ddeba0077cca6efb8685097d21"],
+  ["0217_calendar_portable_copy", "3eb593144386ac280eb8a9917ca32cc9615d0eccddd24ede4b05fd32eecd7f7c"],
+  ["0219_hosted_invitation_details", "ba48747593712fda9ccc22919c19c97fa0b9058939658e50be688bce4f4b2149"],
+] as const;
 
 /** A history that answers whatever an arm needs it to, so a refusal can be reached at all. */
 const fakeHistory = (versions: string[]): ProvenanceReader => ({
@@ -145,6 +153,31 @@ describe("classifyDrift refuses everything it cannot prove", () => {
   const mismatch = (tag: string, recorded: string) => ({
     tag, when: entryFor(tag).when, expected: migrationSqlHash(SPEC, tag), recorded, rowsAtWhen: 1,
   });
+
+  it.each(RECORDED_BEFORE_REPLAY_FIX)("%s admits the exact previously applied SQL", (tag, recorded) => {
+    const shipped = shippedSqlOf(tag);
+    const oldSql = shipped.replace("ADD COLUMN IF NOT EXISTS", "ADD COLUMN");
+    expect(sha256Utf8(oldSql)).toBe(recorded);
+    const drift = classifyDrift("mail", MAIL_DIR, mismatch(tag, recorded), shipped, fakeHistory([oldSql]));
+    expect(drift).toMatchObject({ kind: "allowed", provenance: { source: "history" } });
+  });
+
+  it.each(["recorded", "shipped"] as const)(
+    "refuses an unlisted %s hash when Git history is unavailable",
+    (side) => {
+      const [tag, recorded] = RECORDED_BEFORE_REPLAY_FIX[0];
+      const control = mismatch(tag, recorded);
+      const shipped = shippedSqlOf(tag);
+      const reader: ProvenanceReader = {
+        history() { throw new Error("not a git repository"); },
+      };
+      const otherSql = `-- different shipped bytes\n${shipped}`;
+      const drift = side === "recorded"
+        ? classifyDrift("mail", MAIL_DIR, { ...control, recorded: "f".repeat(64) }, shipped, reader)
+        : classifyDrift("mail", MAIL_DIR, { ...control, expected: sha256Utf8(otherSql) }, otherSql, reader);
+      expect(drift).toMatchObject({ kind: "unreadable", provenance: null, note: "not a git repository" });
+    },
+  );
 
   it("EXECUTABLE drift with no allowance is refused, naming the version that ran", () => {
     const ran = "ALTER TABLE t ADD COLUMN x text;";
@@ -258,4 +291,40 @@ describe.skipIf(!PG_UP)("the 2026-09-16 refusal, on a lane database", () => {
     expect(journalProblems([status!])).toEqual([]);
     expect(admittedDriftLines([status!])).toEqual([]);
   });
+});
+
+describe.skipIf(!PG_UP)("setup from a source archive", () => {
+  const archiveDb = throwawayDb("setup_archive");
+  afterAll(() => archiveDb.drop(), MIGRATED_DB_TEARDOWN_BUDGET_MS);
+
+  it("starts over the exact previously applied fingerprints without Git history", async () => {
+    const previouslyApplied = [
+      ["0120_held_release_dismissed", "a6103bca59c94c095b92b5fd59e52b608c6fb34fce486ff02cf4d311e703bb65"],
+      RECORDED_BEFORE_REPLAY_FIX[0],
+    ] as const;
+    await archiveDb.createFromTemplate();
+    const client = postgres(archiveDb.url, { max: 1, onnotice: () => {} });
+    try {
+      for (const [tag, recorded] of previouslyApplied) {
+        const rows = await client`update drizzle_mail.__drizzle_migrations set hash = ${recorded}
+                                  where created_at = ${entryFor(tag).when} returning hash`;
+        expect(rows).toHaveLength(1);
+      }
+    } finally {
+      await client.end({ timeout: 5 });
+    }
+
+    const logged: string[] = [];
+    // Keep Git from discovering the repository above the migration directory, as in an archive.
+    vi.stubEnv("GIT_CEILING_DIRECTORIES", realpathSync(join(MAIL_DIR, "..")));
+    try {
+      expect(() => gitProvenanceReader().history(MAIL_DIR, previouslyApplied[0][0])).toThrow();
+      await setupProdDatabase(archiveDb.url, { log: (line) => logged.push(line) });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    for (const [tag] of previouslyApplied) {
+      expect(logged.some((line) => line.includes(`ADMITTED: mail ${tag}:`))).toBe(true);
+    }
+  }, 120_000);
 });

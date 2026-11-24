@@ -10,7 +10,10 @@ import * as React from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createRoot, type Root } from "react-dom/client";
-import { ToastHost } from "@ohmail/ui";
+import { Frame, FrameReports, useReport } from "@ohmail/app/frame";
+import { TextProvider } from "@ohmail/app/text";
+import { fakeHost, NO_ENGINE } from "../../../packages/app/test/support/fake-host.js";
+import { FRAME_WORDS } from "../../../packages/app/test/support/frame-words.js";
 import { fireEvent, within } from "@testing-library/react";
 
 import { RELOADED_PARAM, RELOADED_VALUE, RendererReloaded, takeReloadedMark } from "../src/renderer-reloaded.js";
@@ -64,16 +67,17 @@ describe("RendererReloaded", () => {
     root = null;
     host.remove();
   });
-  const mount = async (reloaded: boolean): Promise<void> => {
+  const mount = async (reloaded: boolean, children?: React.ReactNode): Promise<void> => {
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
       root!.render(
         <React.StrictMode>
-          <ToastHost>
+          <FrameReports>
             <RendererReloaded reloaded={reloaded} />
-          </ToastHost>
+            {children}
+          </FrameReports>
         </React.StrictMode>,
       );
     });
@@ -81,32 +85,60 @@ describe("RendererReloaded", () => {
 
   it("says the one sentence after a reload, in the polite live region", async () => {
     await mount(true);
+    const line = DOOR_COPY.rendererReloaded.replace(/\.$/, "");
     const text = host.textContent ?? "";
-    expect(text).toContain(DOOR_COPY.rendererReloaded);
-    expect(text.split(DOOR_COPY.rendererReloaded).length - 1).toBe(1);
+    expect(text).toContain(line);
+    expect(text.split(line).length - 1).toBe(1);
     const live = [...host.querySelectorAll('[role="status"][aria-live="polite"]')].map((el) => el.textContent);
-    expect(live).toContain(DOOR_COPY.rendererReloaded + DOOR_COPY.rendererReloadedDismiss);
+    expect(live).toContain(`${line} ${DOOR_COPY.rendererReloadedDismiss}`);
   });
 
   it("reads as a status named by the sentence, stands past its old 8 s, and leaves on its Dismiss button", async () => {
     vi.useFakeTimers();
     try {
       await mount(true);
+      await act(async () => { vi.advanceTimersByTime(50); });
       const status = within(host).getByRole("status", { name: DOOR_COPY.rendererReloaded });
       await act(async () => { vi.advanceTimersByTime(60_000); });
       expect(within(host).getByRole("status", { name: DOOR_COPY.rendererReloaded })).toBe(status);
       const dismiss = within(status).getByRole("button", { name: DOOR_COPY.rendererReloadedDismiss });
       await act(async () => { fireEvent.click(dismiss); vi.advanceTimersByTime(1000); });
       expect(within(host).queryByRole("status", { name: DOOR_COPY.rendererReloaded })).toBeNull();
-      expect(host.textContent ?? "").not.toContain(DOOR_COPY.rendererReloaded);
+      expect(host.textContent ?? "").not.toContain(DOOR_COPY.rendererReloaded.replace(/\.$/, ""));
     } finally {
       vi.useRealTimers();
     }
   });
 
+  it("keeps the recovery notice alongside an active mail Undo", async () => {
+    function Mail() {
+      const report = useReport();
+      return <button onClick={() => report("Parked", { action: "Undo", onAction: () => {} })}>Park</button>;
+    }
+    const { host: frameHost } = fakeHost({
+      engine: NO_ENGINE,
+      service: "self",
+      scope: "mail",
+      places: { ohbox: { id: "ohbox", body: "ohbox", rail: null, panes: { kind: "wide", Wide: Mail } } },
+    });
+    await mount(true, (
+      <TextProvider locale="en" messages={FRAME_WORDS.en} timeZone="UTC">
+        <Frame host={frameHost} />
+      </TextProvider>
+    ));
+    const window = within(host);
+    const line = DOOR_COPY.rendererReloaded.replace(/\.$/, "");
+    expect(host.textContent).toContain(line);
+    await act(async () => { fireEvent.click(window.getByRole("button", { name: "Park" })); });
+    expect(window.getByRole("button", { name: "Undo" })).toBeTruthy();
+    await act(async () => { fireEvent.click(window.getByRole("button", { name: DOOR_COPY.rendererReloadedDismiss })); });
+    expect(host.textContent).not.toContain(line);
+    expect(window.getByRole("button", { name: "Undo" })).toBeTruthy();
+  });
+
   it("says nothing on an ordinary launch", async () => {
     await mount(false);
-    expect(host.textContent ?? "").not.toContain(DOOR_COPY.rendererReloaded);
+    expect(host.textContent ?? "").not.toContain(DOOR_COPY.rendererReloaded.replace(/\.$/, ""));
   });
 
   it("the sentence is the brief's, in English", () => {

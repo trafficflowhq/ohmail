@@ -1,3 +1,4 @@
+import type { SyncResponse } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -7,8 +8,8 @@ import {
   type EntityType,
 } from "@trafficflow/db";
 import {
-  COALESCE_SCAN_WINDOW, STALE_COALESCE_SPAN, SyncService,
-  type ServiceContext, type SyncResponse,
+  COALESCE_SCAN_WINDOW, STALE_COALESCE_SPAN, SyncService, dbFor,
+  type ServiceContext,
 } from "../src/index.js";
 import { ClientMirror, flatten } from "./_apply-harness.js";
 
@@ -31,7 +32,7 @@ async function setup() {
   const accountId = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "a@x.example" }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-08-29T00:00:00.000Z"), requestId: "r",
   };
   return { db, accountId, mailboxId: mb.id, ctx };
@@ -42,7 +43,7 @@ async function addMessage(db: Db, accountId: string, mailboxId: string, subject:
     accountId, mailboxId, bodyHash: "h", dedupKey: randomUUID(), subject, fromAddress: "f@x.example",
   }).returning();
   await db.insert(folderState).values({
-    messageId: m.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m.id, accountId: m.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   return m.id;
 }

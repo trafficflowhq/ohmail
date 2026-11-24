@@ -1,0 +1,38 @@
+/* ───────────────────────────────────────────────────────────────────────────────────────
+   The body on the reader's sheet (`look="sheet"`): the sheet's measure, type and ground, from
+   the design's tokens.
+   ─────────────────────────────────────────────────────────────────────────────────────── */
+
+.mb:is([data-look="sheet"], [data-look="reader"]) {
+  gap: var(--s3);
+  color: var(--ink);
+  font-size: var(--t-read);
+  line-height: var(--lh-read);
+}
+
+/* A letter in the app's own type keeps the sheet's measure. */
+.mb:is([data-look="sheet"], [data-look="reader"]) > :is(.msg-p, .msg-h, .msg-list, .msg-quote) {
+  max-width: var(--measure);
+}
+
+/* A designed letter is its own paper from edge to edge of the sheet, as the kit draws one. */
+.mb:is([data-look="sheet"], [data-look="reader"]) .mb-sheet {
+  margin: 0 calc(var(--sheet-pad) * -1);
+  border-radius: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.oh-message[data-unread] .mb:is([data-look="sheet"], [data-look="reader"]) .mb-sheet {
+  --ohmail-unread-paper-inset: calc(var(--sheet-pad) - var(--new-bar));
+  margin-left: calc(var(--new-bar) - var(--sheet-pad));
+}
+
+.mb[data-look="reader"] .mb-sheet {
+  max-width: none;
+}
+
+/* The last thing on the sheet closes it: the paper takes the sheet's lower corners. */
+.mb:is([data-look="sheet"], [data-look="reader"]):last-child .mb-sheet:last-child {
+  border-radius: 0 0 var(--r-sheet) var(--r-sheet);
+}

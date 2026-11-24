@@ -6,6 +6,7 @@ import {
   AttachmentsService, DOWNLOAD_ALL_MAX_PARTS, DOWNLOAD_ALL_MAX_BYTES, type OpenAdapter,
 } from "../src/attachments-service.js";
 import { ServiceError } from "../src/errors.js";
+import { dbFor } from "../src/context.js";
 import { MessageGoneError } from "@trafficflow/core/adapters/imap";
 import { makeCtx, seedMessage } from "./helpers.js";
 
@@ -74,7 +75,8 @@ describe("AttachmentsService.listForMessage / getMeta", () => {
     const id = await seedAttachment(a.db, a.accountId, messageId);
 
     // Another account's context querying account A's attachment id → 404.
-    const otherCtx = { ...a.ctx, accountId: randomUUID() };
+    const other = randomUUID();
+    const otherCtx = { ...a.ctx, accountId: other, db: dbFor(a.db, other) };
     await expect(svc.getMeta(otherCtx, id)).rejects.toBeInstanceOf(ServiceError);
     await expect(svc.getMeta(otherCtx, id)).rejects.toMatchObject({ httpStatus: 404 });
   });

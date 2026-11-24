@@ -1,0 +1,153 @@
+{
+  "component": "Notice",
+  "state": "full",
+  "look": "ohmarchy-light-desktop",
+  "place": "block",
+  "target": [22, 699.6563, 204, 91.0938],
+  "clip": [22, 699, 204, 92],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "17.55px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "17.55px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(255, 252, 240)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(159, 157, 150) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "rgb(32, 94, 166)" }
+  ],
+  "nodes": [
+    {
+      "role": "status",
+      "name": "",
+      "box": [0, 0, 204, 91.1],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "17.55px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "10px",
+        "paddingRight": "12px",
+        "paddingBottom": "10px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Storage 92% full", "type": 0 },
+        { "said": "6.1 GB after the import.", "type": 1 }
+      ],
+      "surfaces": [
+        { "box": [0, 0, 204, 91.1], "paint": 0 },
+        { "box": [137.8, 17.5, 5.5, 5.5], "paint": 1 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Storage",
+      "box": [12, 53.1, 74.6, 28],
+      "drawn": {
+        "color": "rgb(255, 252, 240)",
+        "backgroundColor": "rgb(16, 15, 15)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "13px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "10px",
+        "paddingBottom": "0px",
+        "paddingLeft": "10px",
+        "borderColor": "rgb(255, 252, 240)"
+      },
+      "text": [{ "said": "Storage", "type": 2 }]
+    },
+    {
+      "role": "button",
+      "name": "Not now",
+      "box": [90.6, 53.1, 70.6, 28],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "13px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Not now", "type": 3 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

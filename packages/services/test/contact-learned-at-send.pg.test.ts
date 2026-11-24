@@ -1,11 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { accounts, contacts, drafts, mailboxes } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -36,14 +34,14 @@ import { SendService, type ServiceContext } from "../src/index.js";
  */
 const PG_UP = await realPgAvailable();
 
-const sql = postgres(PG_TEST_URL, { max: 8, onnotice: () => {} });
-const db = brandDialect(drizzle(sql, { schema }), "pg");
+const owned = makeOwnedDb(PG_TEST_URL);
+const db = owned.db;
 const svc = new SendService();
 const NOW = new Date("2026-09-22T09:00:00.000Z");
 const SENT = "Sent";
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sql.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); });
 
 /**
  * An adapter that ERASES THE ACCOUNT between the reservation and the finalize — the window where
@@ -104,7 +102,7 @@ async function seeded(to: string[], opts: { cc?: string[]; bcc?: string[] } = {}
     status: "draft",
   }).returning();
   const ctx: ServiceContext = {
-    db: db as unknown as ServiceContext["db"],
+    db: dbFor(db, accountId),
     accountId, userId: null, now: () => NOW, requestId: "r",
   };
   return { accountId, mailboxId: mb!.id, draftId: d!.id, ctx };

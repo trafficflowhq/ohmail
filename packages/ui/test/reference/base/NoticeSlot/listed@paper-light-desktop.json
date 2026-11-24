@@ -1,0 +1,158 @@
+{
+  "component": "NoticeSlot",
+  "state": "listed",
+  "look": "paper-light-desktop",
+  "place": "block",
+  "target": [12, 568, 318.5469, 176],
+  "clip": [12, 568, 319, 176],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "20.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    {
+      "boxShadow": "rgba(18, 16, 14, 0.28) 0px 18px 48px -12px, rgba(18, 16, 14, 0.08) 0px 2px 6px 0px",
+      "borderRadius": "20px"
+    },
+    { "backgroundColor": "rgb(248, 67, 26)", "borderRadius": "999px" },
+    { "backgroundColor": "rgb(18, 16, 14)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "menu",
+      "name": "",
+      "box": [0, 0, 318.5, 176],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "20px",
+        "paddingTop": "8px",
+        "paddingRight": "8px",
+        "paddingBottom": "8px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "surfaces": [{ "box": [0, 0, 318.5, 176], "paint": 0 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "2 changes could not be saved",
+      "box": [8, 8, 302.5, 40],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(240, 235, 227)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "19.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "2 changes could not be saved", "type": 0 }],
+      "surfaces": [{ "box": [22, 24.5, 7, 7], "paint": 1 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "4 changes wait for the other ohmail",
+      "box": [8, 48, 302.5, 40],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "19.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "4 changes wait for the other ohmail", "type": 0 }],
+      "surfaces": [{ "box": [22, 64.5, 7, 7], "paint": 1 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Storage 92% full",
+      "box": [8, 88, 302.5, 40],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "19.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Storage 92% full", "type": 0 }],
+      "surfaces": [{ "box": [22, 104.5, 7, 7], "paint": 1 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Trial ends Wed 18 Nov",
+      "box": [8, 128, 302.5, 40],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "19.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Trial ends Wed 18 Nov", "type": 0 }],
+      "surfaces": [{ "box": [22, 144.5, 7, 7], "paint": 2 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

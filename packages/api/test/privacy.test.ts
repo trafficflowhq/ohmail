@@ -1,13 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
+import type { Socket } from "node:net";
 import { createApp, apiRoutes, privacyRoutesGroup, type ApiDeps } from "@trafficflow/api";
 import { accountSettings, messages, trackerEvents } from "@trafficflow/db";
 import { DbAcquireTimeoutError, DbConnectionCapError } from "@trafficflow/db/cloud";
-import { PROXY_URL_MAX_CHARS, ServiceError } from "@trafficflow/services/mail";
+import { PROXY_URL_MAX_CHARS, ServiceError, makeNodeRemoteFetch, type RemoteFetch } from "@trafficflow/services/mail";
 import {
   makeDeps, seedSession, seedMessage, seedBody, req, FIXED_NOW,
 } from "./helpers.js";
 import { PNG_2X3 } from "../../core/test/fixtures/images.js";
+import { farSide, NOT_HTTP, sendersChain, UNNAMED_CHAIN_FAULTS, type Identity } from "../../core/test/far-side.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
@@ -23,15 +25,11 @@ const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, s
  * THE NEW CONSUMER, named rather than implied — this is not a weakened assertion, it
  * is the same one re-decided against a fact that changed:
  *
- *   `apps/webapp/app/shell/remote-images.ts`   builds `/img?mid=…&u=…`
- *   `apps/webapp/app/shell/MessagePane.tsx`    hands it to `MessageBody` as `imageProxy`
- *   `apps/webapp/app/components/MessageBody.tsx` rewrites every consented `<img src>`
- *                                              and CSS `url()` through it
- *   `apps/webapp/test/remote-images.test.tsx`  asserts the RENDERED frame does it
- *
- * The reading path now blocks a pixel by default and offers one consented way to load
- * a picture — which is the sentence `MessageBody.tsx:96-101` said was waiting on a
- * route, and the reason the route exists at all.
+ *   `apps/webapp/app/(product)/mailbox/image-wire.ts` supplies the web proxy address.
+ *   `packages/app/src/mail/ground/door-inputs.ts` hands the image wire and consent policy to the reader.
+ *   `packages/app/src/reader/body/LetterBody.tsx` renders the shared body.
+ *   `packages/letter-body/src/MessageBody.tsx` rewrites consented images and CSS URLs.
+ *   `apps/webapp/test/remote-images.test.tsx` exercises the rendered body.
  *
  * WHAT MUST STAY TRUE is therefore no longer "it is absent". It is the two gates
  * below: the SSRF refusal in front of the fetch (proven in depth, with a real socket
@@ -437,8 +435,8 @@ describe("GET /img — a deliberate refusal is logged, and says only which arm",
 });
 
 describe("GET /img counts its own faults, as the envelope does", () => {
-  const fetchThrowing = async (thrown: unknown) => {
-    const { db, deps } = await makeDeps(FIXED_NOW, {}, { remote: { async fetch() { throw thrown; } } });
+  const fetchedWith = async (remote: RemoteFetch) => {
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { remote });
     const s = await seedSession(db, { now: FIXED_NOW });
     const { id } = await seedMessage(db, { accountId: s.accountId, folder: "INBOX" });
     await seedBody(db, { messageId: id, html: "<img>", loadedRemoteContent: true });
@@ -446,8 +444,55 @@ describe("GET /img counts its own faults, as the envelope does", () => {
     deps.faultLog = { record: async (r) => { rows.push({ route: r.route, status: r.status, errorClass: r.errorClass }); } };
     const u = encodeURIComponent("https://cdn.acme-cdn.com/hero.png");
     const res = await H(req("GET", `/img?mid=${id}&u=${u}`, { bearer: s.token }), deps);
+    return { res, rows };
+  };
+  const fetchThrowing = async (thrown: unknown) => {
+    const { res, rows } = await fetchedWith({ async fetch() { throw thrown; } });
     return { status: res.status, rows };
   };
+  /** The product's own port, re-aimed at a far side of this file's own: the gate rightly never clears this machine. */
+  const answeredBy = async (act: (socket: Socket) => void, scheme: "http" | "https" = "http", identity?: Identity) => {
+    const far = await farSide(act, identity);
+    try {
+      const at = far.url.replace("http:", `${scheme}:`);
+      const port = makeNodeRemoteFetch({ timeoutMs: 1_000 });
+      return await fetchedWith({ fetch: (url, _pin, opts) => port.fetch(`${at}${new URL(url).pathname}`, ["127.0.0.1"], opts) });
+    } finally {
+      await far.close();
+    }
+  };
+
+  it.each([
+    ["bytes that are no HTTP", (socket: Socket) => socket.write(NOT_HTTP)],
+    ["a status line, then garbage", (socket: Socket) => socket.write("HTTP/1.1 200 OK\r\n\x00\x01garbage\r\n\r\n")],
+  ])("a sender's server that answers %s is the sender's failing: the proxy's 424, and no row", async (_shape, act) => {
+    const { res, rows } = await answeredBy(act);
+    expect({ status: res.status, rows }).toEqual({ status: 424, rows: [] });
+  });
+
+  it("an https address whose server speaks no TLS is the sender's failing too: the proxy's 424, and no row", async () => {
+    const { res, rows } = await answeredBy((socket) => socket.write("HTTP/1.1 400 Bad Request\r\n\r\n"), "https");
+    expect({ status: res.status, rows }).toEqual({ status: 424, rows: [] });
+  });
+
+  it.each(UNNAMED_CHAIN_FAULTS)(
+    "an https server whose chain has %s, a fault the platform's table does not name, is the sender's failing too: the proxy's 424, and no row",
+    async (fault) => {
+      // The picture a server whose chain were taken would serve; the handshake never gets that far.
+      const picture = (socket: Socket) => socket.write(Buffer.concat([
+        Buffer.from(`HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${PNG_2X3.byteLength}\r\n\r\n`), PNG_2X3,
+      ]));
+      const { res, rows } = await answeredBy(picture, "https", sendersChain(fault));
+      expect({ status: res.status, rows }).toEqual({ status: 424, rows: [] });
+    },
+  );
+
+  it("a body longer than its length says is taken at its length: the picture, and nothing after it", async () => {
+    const head = `HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${PNG_2X3.byteLength}\r\n\r\n`;
+    const { res, rows } = await answeredBy((socket) => socket.write(Buffer.concat([Buffer.from(head), PNG_2X3, Buffer.from(NOT_HTTP)])));
+    expect({ status: res.status, rows }).toEqual({ status: 200, rows: [] });
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(PNG_2X3));
+  });
 
   it("an unnamed throw is a 500 and one fault row naming the route and the class, never the url", async () => {
     expect(await fetchThrowing(new TypeError("x is undefined")))
@@ -455,7 +500,7 @@ describe("GET /img counts its own faults, as the envelope does", () => {
   });
 
   it("a refusal of ours at 5xx is one row too", async () => {
-    const r = await fetchThrowing(new ServiceError("proxy_broken", 503, "no"));
+    const r = await fetchThrowing(new ServiceError("upstream_unavailable", 503, "no"));
     expect(r.rows.map((x) => x.status)).toEqual([503]);
   });
 

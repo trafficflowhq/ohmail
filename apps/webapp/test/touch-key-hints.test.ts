@@ -1,19 +1,12 @@
-/** @vitest-environment jsdom */
 import { existsSync, readFileSync } from "node:fs";
-import { modGlyph } from "../app/shell/keymap";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import {
-  ISO,
-  act,
-  installShellEnv,
-  mailbox,
-  mountShell,
-  teardownShellEnv,
-} from "./fixtures/live-walk-shell";
-
+import { describe, expect, it } from "vitest";
+import { createElement as h } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ActionPanel } from "@ohmail/ui/mail";
+import { entryCss } from "../../../packages/ui/test/compare/harness.js";
+import { launch } from "../../../test/compare/render.mjs";
 /**
  * KEYBOARD CHROME ON A DEVICE WITH NO KEYBOARD.
  *
@@ -51,12 +44,11 @@ import {
  * somebody's phone.
  */
 
-const h = React.createElement;
 
 /** Read from the repo root — vitest's `root`, and the one path shape that survives jsdom. */
 const read = (p: string): string => readFileSync(resolve(process.cwd(), p), "utf8");
 /* Comments carry no braces, so a naive scan folds them into the selector before them. */
-const css = read("apps/webapp/app/shell/touch-keys.css").replace(/\/\*[\s\S]*?\*\//g, "");
+const css = read("packages/app/src/frame/touch-keys.css").replace(/\/\*[\s\S]*?\*\//g, "");
 
 /**
  * The body of the one `@media (pointer: coarse)` block, or the empty string.
@@ -134,224 +126,38 @@ describe("the rules exist, and they are the ones the audit asked for", () => {
   it("the stylesheet is in the bundle — a rule nobody imports is a rule nobody has", () => {
     // `touch-keys.css` has no component of its own, so the only thing that puts it in the route
     // bundle is this import. Deleting it leaves every assertion in this file green and the
-    // product unfixed, which is exactly the failure mode worth one line of grep.
-    const keymap = read("apps/webapp/app/shell/keymap.tsx");
+    // product unfixed, which is exactly the failure mode worth one line of grep. The registry
+    // is the frame's own now (`OwnKeys` of `Frame.tsx`, mounted by every host's frame): the
+    // stylesheet rides with it there, as it rode with today's `KeymapProvider`.
+    const keymap = read("packages/app/src/frame/Frame.tsx");
     expect(keymap).toContain('import "./touch-keys.css"');
   });
 });
 
-describe("and each selector still matches the thing it was written for", () => {
-  beforeEach(installShellEnv);
-  afterEach(teardownShellEnv);
-
-  it("`.topbar > .tb-btn:last-child` is the ⌘K pill in the shipped shell", async () => {
-    const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
-
-    const topbar = c.querySelector(".topbar");
-    expect(topbar, "the premise: the shell renders a mobile top bar").not.toBeNull();
-
-    const pill = c.querySelector<HTMLElement>(".topbar > .tb-btn:last-child");
-    expect(pill, "the selector no longer matches anything in the top bar").not.toBeNull();
-    // It is the CHORD that is being hidden, not some other button that drifted into last place.
-    // The modifier's cap is the platform's (`modGlyph`): ⌘ on a Mac, Ctrl where jsdom stands.
-    expect(pill!.textContent).toBe(`${modGlyph()}K`);
-
-    // And the palette is still reachable without it: the rail's labelled Command row, in the
-    // same document, opening the same thing. This is why hiding the pill outright is not a loss.
-    // At this width the rail IS the drawer the ☰ button on the left of this top bar opens.
-    const commandRow = c.querySelector<HTMLElement>("nav.rail .rail-dock .dock-cmd");
-    expect(commandRow, "hiding the pill would leave no way to the palette on touch").not.toBeNull();
-    expect(commandRow!.textContent).toContain("Command");
-  });
-
-  /**
-   * THE CONTROL MOVED, SO THIS TEST FOLLOWED IT — and the version that did not follow is the
-   * reason it is worth saying. It mounted `Dock` + `DockKey` from `@ohmail/ui` and asserted
-   * `.dock .dock-k kbd`. Those components are deleted: the two app-level controls are rows at
-   * the foot of the rail now (`RailNav`'s `dock`), written in the rail's own vocabulary.
-   *
-   * Asserted against the SHIPPED SHELL rather than against a hand-built `RailNav`, because the
-   * question this file exists to answer is "does the selector match what the app renders", and
-   * a fixture I write here would answer "does it match what I wrote here".
-   */
-  it("`.rail-dock .ritem kbd` is the keycap, and the row survives without it", async () => {
-    const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
-
-    const dock = c.querySelector<HTMLElement>("nav.rail .rail-dock");
-    expect(dock, "the shell renders no dock group at the foot of the rail").not.toBeNull();
-    const rows = [...dock!.querySelectorAll<HTMLButtonElement>(".ritem")];
-    expect(rows).toHaveLength(2);
-
-    // Selected by CLASS and not by index: the two controls share one line now, so "the second
-    // `.ritem`" is a statement about source order rather than about which control this is.
-    const cmd = dock!.querySelector<HTMLButtonElement>(".dock-cmd");
-    const themeBtn = dock!.querySelector<HTMLButtonElement>(".dock-theme");
-    expect(cmd, "no Command control in the dock").not.toBeNull();
-    expect(themeBtn, "no theme control in the dock").not.toBeNull();
-
-    const cap = c.querySelector<HTMLElement>(".rail-dock .ritem kbd");
-    expect(cap, "the Command row renders no keycap").not.toBeNull();
-    expect(cap!.matches("button kbd"), "the touch rule no longer reaches the Command row's keycap").toBe(true);
-    expect(cap!.textContent).toBe(`${modGlyph()}K`);
-
-    // The acceptance in one assertion: with the keycap gone the control is still a button with
-    // a name. The row renders `{label}<span class="cnt"><kbd/></span>`, so this is what is left.
-    cap!.remove();
-    expect(cmd!.textContent).toBe("Command");
-    expect(cmd!.tagName).toBe("BUTTON");
-
-    // THE THEME CONTROL IS ICON-ONLY, so its name has to come from somewhere other than text —
-    // and this is the assertion that used to say the opposite. Both attributes are required, and
-    // for different readers: `aria-label` is the accessible name, `title` is the only thing a
-    // pointer user has to identify a lone glyph. Asserting `textContent` is empty is half the
-    // point — it is what makes the two attributes load-bearing rather than decorative.
-    expect(themeBtn!.textContent).toBe("");
-    /* The name states the STATE and the PRESS — one glyph cycling three states needs both, and
-       jsdom's matchMedia stub answers light, so auto renders light and a press goes to dark. */
-    expect(themeBtn!.getAttribute("aria-label")).toBe("Theme: Auto (light). Press for Dark");
-    expect(themeBtn!.getAttribute("title")).toBe("Theme: Auto (light). Press for Dark");
-    expect(themeBtn!.querySelector("svg.ic"), "the glyph itself is gone").not.toBeNull();
-  });
-
-  /**
-   * AND BOTH CONTROLS STILL DO THE THING THEY NAME.
-   *
-   * The move from a floating capsule to the rail's foot re-wrote the markup by hand — `DockKey`
-   * and `DockIcon` took an `onPress` and this takes an `onClick` — so "the control is there" is
-   * only half of what was lost if it went wrong. Something that renders and does nothing is the
-   * exact shape of failure a selector test cannot see, and it got sharper when the theme control
-   * lost its label: an icon-only button that no longer toggles looks identical to one that does.
-   *
-   * Mutation: restore the deleted `<Dock>` block and drop `dock={railDock}` from `ShellRail`,
-   * and every assertion in both of these tests fails at once.
-   */
-  it("the Command row opens the palette, and the theme button cycles the scheme", async () => {
-    const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
-    const cmd = c.querySelector<HTMLButtonElement>("nav.rail .rail-dock .dock-cmd");
-    const themeBtn = c.querySelector<HTMLButtonElement>("nav.rail .rail-dock .dock-theme");
-
-    expect(c.querySelector(".palette"), "the premise: the palette is closed").toBeNull();
-    await act(async () => cmd!.click());
-    expect(c.querySelector(".palette"), "the Command row did not open the palette").not.toBeNull();
-
-    // `ThemeProvider` stamps an explicit preference on <html>; absent means "follow the system".
-    const before = document.documentElement.dataset.theme;
-    await act(async () => themeBtn!.click());
-    expect(document.documentElement.dataset.theme, "the theme button did not flip the theme")
-      .not.toBe(before);
-  });
-
-  it("`.reader-hint:has(kbd)` is the 'esc to return' hint, and only the keycap form of it", async () => {
-    const { Reader } = await import("@ohmail/ui");
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const root: Root = createRoot(host);
-
-    await act(async () => {
-      root.render(
-        h(Reader, {
-          open: true,
-          onClose: () => {},
-          ariaLabel: "Reading",
-          closeLabel: "Back",
-          returnHint: "to return",
-          children: h("div", null, "body"),
-        }),
-      );
-    });
-    const hint = host.querySelector(".reader-hint:has(kbd)");
-    expect(hint, "the selector no longer matches the reader's default hint").not.toBeNull();
-    expect(hint!.textContent).toBe("esc to return");
-
-    // `:has(kbd)` and not `.reader-hint`: `Reader` accepts a custom `hint`, and prose passed
-    // there is not key chrome and must not be deleted on half the devices in the world.
-    await act(async () => {
-      root.render(
-        h(Reader, {
-          open: true,
-          onClose: () => {},
-          ariaLabel: "Reading",
-          closeLabel: "Back",
-          returnHint: "to return",
-          hint: "Sent from a shared mailbox",
-          children: h("div", null, "body"),
-        }),
-      );
-    });
-    expect(host.querySelector(".reader-hint")).not.toBeNull();
-    expect(host.querySelector(".reader-hint:has(kbd)")).toBeNull();
-
-    await act(async () => root.unmount());
-    host.remove();
-    document.body.classList.remove("reading");
-  });
-
-  it("`.decide .dbtn button kbd` is the decision capsules' caps, and the verbs survive without them", async () => {
-    const { DecisionBar, DECISION_KEY, DECISION_QUIET } = await import("@ohmail/ui");
-    type Dest = "ohbox" | "reads" | "receipts" | "screened" | "spam";
-    /* The words, as the catalogue serves them. `DecisionBar` has none of its own — the host
-       brings them (`app/shell/decision-copy.ts`), and a test is a host like any other. */
-    const enBarCopy = (target: string) => {
-      const place: Record<Dest, string> = {
-        ohbox: "Ohbox", reads: "Reads", receipts: "Receipts", screened: "Screened out", spam: "Spam",
-      };
-      const verb: Record<Dest, string> = { ...place, screened: "Screen out" };
-      const dest = {} as Record<Dest, { label: string; title: string; check?: { label: string; title: string } }>;
-      for (const d of Object.keys(place) as Dest[]) {
-        const k = DECISION_KEY[d];
-        dest[d] = {
-          label: verb[d],
-          title: `${place[d]} (${k})`,
-          ...(DECISION_QUIET.has(d)
-            ? {}
-            : { check: { label: `${place[d]}, mark read`, title: `${place[d]}, mark read (${k.toUpperCase()})` } }),
-        };
-      }
-      return {
-        dest,
-        scopeAria: "Decision scope",
-        scopeSender: "this sender",
-        scopeDomain: "whole domain",
-        rule: `Becomes a rule — future mail from ${target} files automatically.`,
-        halvesLabel: "What each half of the button does",
-        halves: "The name files the mail waiting here; the ✓ files it and marks it read.",
-        back: "Screener",
-      };
-    };
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const root: Root = createRoot(host);
-    await act(async () => {
-      root.render(
-        h(DecisionBar, {
-          aiDest: "ohbox",
-          scope: "sender",
-          onScopeChange: () => {},
-          copy: enBarCopy("anna@example.test"),
-          onDecide: () => {},
-        }),
-      );
-    });
-
-    // Eight caps: a letter on each of the five capsules, and a shifted twin on the ✓ of the
-    // three mail piles only. The demoting destinations (Screen out, Spam) carry no ✓ — you
-    // don't read what you triage out — so no ⇧N / ⇧X.
-    const caps = [...host.querySelectorAll<HTMLElement>(".decide .dbtn button kbd")];
-    expect(caps.every((k) => k.matches("button kbd")), "the touch rule no longer reaches a capsule's cap").toBe(true);
-    expect(caps.map((k) => k.textContent)).toEqual([
-      "o", "⇧O", "r", "⇧R", "c", "⇧C", "n", "x",
-    ]);
-
-    // The acceptance: with every cap gone the bar is still five named destinations and eight
-    // buttons (three capsules with a ✓, two without). Nothing here is only reachable by a key.
-    for (const k of caps) k.remove();
-    expect([...host.querySelectorAll(".dbtn .d-main")].map((b) => b.textContent)).toEqual([
-      "Ohbox", "Reads", "Receipts", "Screen out", "Spam",
-    ]);
-    expect(host.querySelectorAll(".dbtn button")).toHaveLength(8);
-
-    await act(async () => root.unmount());
-    host.remove();
+describe("the current decision panel on touch", () => {
+  it("hides keyboard hints and keeps all five filing controls", async () => {
+    const { chromium } = createRequire(resolve(process.cwd(), "package.json"))("@playwright/test") as
+      typeof import("@playwright/test");
+    const browser = await launch(chromium);
+    try {
+      const page = await browser.newPage({ viewport: { width: 390, height: 740 }, hasTouch: true });
+      const verbs = ["Ohbox", "News", "Receipts", "Screen out", "Spam"];
+      const keys = ["o", "r", "c", "n", "x"];
+      const body = renderToStaticMarkup(h(ActionPanel, {
+        label: "Actions", keysShown: true,
+        items: verbs.map((label, i) => ({ id: label, label, keyHint: keys[i], onPress: () => {} })),
+      }));
+      await page.setContent(`<!doctype html><html data-face="paper" data-scheme="light" data-touch="0">
+        <head><style>${await entryCss("mail")}</style></head><body><div class="oh-root">${body}</div></body></html>`);
+      expect(await page.locator("kbd:visible").allTextContents()).toEqual(keys);
+      await page.evaluate(() => { document.documentElement.dataset.touch = "1"; });
+      expect(await page.locator("kbd:visible").count()).toBe(0);
+      const panel = page.getByRole("toolbar", { name: "Actions" });
+      expect(await panel.getByRole("button").count()).toBe(5);
+      for (const name of verbs) expect(await panel.getByRole("button", { name }).isVisible()).toBe(true);
+    } finally {
+      await browser.close();
+    }
   });
 });
 
@@ -388,7 +194,7 @@ describe("the floating capsule is gone, and so is everything that referred to it
       "packages/ui/src/primitives/toast.css",
       "apps/webapp/app/app.css",
       "apps/webapp/app/shell/action-bar.css",
-      "apps/webapp/app/shell/touch-keys.css",
+      "packages/app/src/frame/touch-keys.css",
     ]) {
       expect(bare(p), `${p} still styles a component that no longer exists`)
         .not.toMatch(/\.dock[\s.,:>{[]|\.dock$/m);

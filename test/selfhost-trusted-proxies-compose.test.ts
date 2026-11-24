@@ -126,7 +126,7 @@ describe("the proxy entrypoint", () => {
     expect(resolve({ OHMAIL_EXTERNAL_TLS: "1", OHMAIL_TLS_TERMINATOR: "0.0.0.0/32", OHMAIL_PROC_NET_ROUTE: route("no-route") })).toEqual({
       out: "proxy: external door honours X-Forwarded-For from 0.0.0.0/32 (OHMAIL_TLS_TERMINATOR set)", err: "", rc: 0,
     });
-    expect(resolve({ OHMAIL_PROC_NET_ROUTE: route("in-pool") })).toEqual({ out: "", err: "", rc: 0 });
+    expect(resolve({ OHMAIL_ORIGIN: "https://mail.example.com", OHMAIL_PROC_NET_ROUTE: route("in-pool") })).toEqual({ out: "", err: "", rc: 0 });
   });
 
   const NOT_ADDRESSES =

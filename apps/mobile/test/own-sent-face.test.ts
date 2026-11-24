@@ -3,8 +3,8 @@
  * own name, where the web and the desktop say "Me → recipient" — and a conversation answered last
  * is faced by the reply, so every answered conversation showed it. The web's words, both decks.
  */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import { type EngineMessage, type RuleDTO } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";

@@ -2,20 +2,27 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { within } from "@testing-library/react";
 
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import {
   PHONE_HOLDER_WHY_KEY, filingElsewhereKey, holderSentence, phoneHolder, phoneHolderKey,
-} from "../app/shell/reader-holder";
-import { holderFingerprint, readingAlong, setReadingAlong, clearReadingAlong } from "../app/shell/reading-along";
-import type { MailState } from "../app/shell/mail-state";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
+} from "@ohmail/app-logic/reading/reader-holder";
+import { holderFingerprint, readingAlong, setReadingAlong, clearReadingAlong } from "@ohmail/app-logic/reading/reading-along";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import type { OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import { mountStage, stageRow } from "./_first-run-stage.js";
+import { ROSTER } from "./_draft-shell.js";
+import {
+  installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh, scriptSession,
+  sessionFull, teardownConfirmEnv, tick, warmCloudShell,
+} from "./fixtures/cloud-confirm-shell.js";
 
 /**
  * ═══ A PHONE HOLDS THE MAILBOX AND NO SURFACE SAID SO ═══════════════════════════════════════
@@ -132,8 +139,9 @@ describe("the one derivation", () => {
  */
 describe("nowhere else composes the phone's words", () => {
   const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-  const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/desktop/src"];
-  const DERIVATION = "apps/webapp/app/shell/reader-holder.ts";
+  /* The new shell's surfaces (the first run's stage, the ground's notices, the reader) are under `packages/app/src`. */
+  const ROOTS = ["apps/webapp/app", "packages/app/src", "packages/letter-body/src", "packages/app-logic/src", "apps/desktop/src"];
+  const DERIVATION = "packages/app-logic/src/reading/reader-holder.ts";
 
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -272,9 +280,14 @@ const QUIET: MailState = {
 };
 
 let railState: MailState = QUIET;
-vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: railState, refresh: () => {} }),
-}));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async (load) => {
+  const actual = await load<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>();
+  return {
+    ...actual,
+    useMailState: () => React.useContext(actual.MailStateContext)
+      ?? { state: railState, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} },
+  };
+});
 
 /** The `elsewhere` arm, with the holder each case is about. */
 const heldBy = (
@@ -300,7 +313,7 @@ const heldBy = (
 
 async function rail(state: MailState): Promise<HTMLElement> {
   railState = state;
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -309,27 +322,29 @@ async function rail(state: MailState): Promise<HTMLElement> {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC",
       /* The RAIL variant, because it is the rail this row is about: the shell variant lays the
-         same sentence out differently and `.rs-line b` is the rail's own title node. */
-      children: h(SyncBar, { variant: "rail" }),
+         same sentence out differently and the notice's title is its first bold node. */
+      children: h(SyncBar),
     }));
   });
   return container;
 }
 
 /** The rail's title, alone — the detail line below it names a count and is not the sentence. */
-const railTitle = (el: HTMLElement): string => (el.querySelector(".rs-line b")?.textContent ?? "").trim();
+// The rail draws the closing dot separately from the sentence text.
+const railWords = (sentence: string): string => sentence.replace(/\.$/, "");
+const railTitle = (el: HTMLElement): string => (el.querySelector("[role='status'] b")?.textContent ?? "").trim();
 
 describe("SURFACE 1 — the rail says a phone is a phone", () => {
   it("a phone holding the mailbox is named as one, with the clause", async () => {
     const el = await rail(heldBy({ kind: "mobile", name: PHONE, stopped: false }));
-    expect(railTitle(el)).toBe(tm.readerHolderPhone!.replace("{name}", PHONE));
+    expect(railTitle(el)).toBe(railWords(tm.readerHolderPhone!.replace("{name}", PHONE)));
     expect(el.textContent ?? "", "the rail called a phone another install")
       .not.toContain(ts.filingElsewhereUnknown!);
   });
 
   it("a phone whose claim recorded no name still gets a phone's sentence", async () => {
     const el = await rail(heldBy({ kind: "mobile", name: null, stopped: false }));
-    expect(railTitle(el)).toBe(tm.readerHolderPhoneUnnamed);
+    expect(railTitle(el)).toBe(railWords(tm.readerHolderPhoneUnnamed!));
     expect(railTitle(el), "an unnamed phone rendered a sentence with a hole in it")
       .not.toContain("{name}");
   });
@@ -341,9 +356,9 @@ describe("SURFACE 1 — the rail says a phone is a phone", () => {
    */
   it("a phone whose claim has LAPSED is not filing anything, and the rail says so", async () => {
     const el = await rail(heldBy({ kind: "mobile", name: PHONE, stopped: true }));
-    expect(railTitle(el)).toBe(tm.readerHolderPhoneStopped!.replace("{name}", PHONE));
+    expect(railTitle(el)).toBe(railWords(tm.readerHolderPhoneStopped!.replace("{name}", PHONE)));
     expect(railTitle(el), "a stopped phone was reported as organizing")
-      .not.toBe(tm.readerHolderPhone!.replace("{name}", PHONE));
+      .not.toBe(railWords(tm.readerHolderPhone!.replace("{name}", PHONE)));
     const all = el.textContent ?? "";
     expect(all, "a stopped phone was told to be filing on a schedule")
       .not.toContain(ts.filingElsewhereUnknown!);
@@ -353,7 +368,7 @@ describe("SURFACE 1 — the rail says a phone is a phone", () => {
 
   it("a lapsed phone with no name takes the stopped sentence that names none", async () => {
     const el = await rail(heldBy({ kind: "mobile", name: null, stopped: true }));
-    expect(railTitle(el)).toBe(tm.readerHolderPhoneStoppedUnnamed);
+    expect(railTitle(el)).toBe(railWords(tm.readerHolderPhoneStoppedUnnamed!));
   });
 
   /* THE THREE NON-PHONE HOLDERS KEEP THEIR OWN SENTENCES — and each now ENDS with the clause
@@ -363,13 +378,13 @@ describe("SURFACE 1 — the rail says a phone is a phone", () => {
      asserted unchanged beside them, because a surface with no press still reads those. */
   it("CONTROL: Cloud, a named computer, a stopped computer and an unknown holder keep their own sentences, each now saying what to press", async () => {
     const cloud = await rail(heldBy({ kind: "cloud", name: "ohmail Cloud", stopped: false }));
-    expect(railTitle(cloud)).toBe(ts.filingElsewhereCloudHow);
+    expect(railTitle(cloud)).toBe(railWords(ts.filingElsewhereCloudHow!));
     const local = await rail(heldBy({ kind: "local", name: "omarchy", stopped: false }));
-    expect(railTitle(local)).toBe(ts.filingElsewhereLocalHow!.replace("{name}", "omarchy"));
+    expect(railTitle(local)).toBe(railWords(ts.filingElsewhereLocalHow!.replace("{name}", "omarchy")));
     const stopped = await rail(heldBy({ kind: "local", name: "omarchy", stopped: true }));
-    expect(railTitle(stopped)).toBe(ts.filingElsewhereStoppedHow!.replace("{name}", "omarchy"));
+    expect(railTitle(stopped)).toBe(railWords(ts.filingElsewhereStoppedHow!.replace("{name}", "omarchy")));
     const unknown = await rail(heldBy({ kind: "unknown", name: null, stopped: false }));
-    expect(railTitle(unknown)).toBe(ts.filingElsewhereUnknownHow);
+    expect(railTitle(unknown)).toBe(railWords(ts.filingElsewhereUnknownHow!));
     /* Each `How` twin is its plain sentence plus a clause — not a rewording of it. */
     for (const [plain, how] of [
       ["filingElsewhereCloud", "filingElsewhereCloudHow"],
@@ -384,25 +399,28 @@ describe("SURFACE 1 — the rail says a phone is a phone", () => {
      or unnamed holder that stopped was said to file this mailbox on its own schedule. */
   it("a stopped Cloud or unnamed holder files nothing, and the rail says so", async () => {
     const cloud = await rail(heldBy({ kind: "cloud", name: "ohmail Cloud", stopped: true }));
-    expect(railTitle(cloud)).toBe(ts.filingElsewhereStoppedHow!.replace("{name}", "ohmail Cloud"));
-    expect(railTitle(cloud), "a stopped Cloud was said to file").not.toBe(ts.filingElsewhereCloudHow);
+    expect(railTitle(cloud)).toBe(railWords(ts.filingElsewhereStoppedHow!.replace("{name}", "ohmail Cloud")));
+    expect(railTitle(cloud), "a stopped Cloud was said to file").not.toBe(railWords(ts.filingElsewhereCloudHow!));
     const unknown = await rail(heldBy({ kind: "unknown", name: null, stopped: true }));
-    expect(railTitle(unknown)).toBe(ts.filingElsewhereStoppedUnknownHow);
-    expect(railTitle(unknown), "a stopped install was said to file").not.toBe(ts.filingElsewhereUnknownHow);
+    expect(railTitle(unknown)).toBe(railWords(ts.filingElsewhereStoppedUnknownHow!));
+    expect(railTitle(unknown), "a stopped install was said to file").not.toBe(railWords(ts.filingElsewhereUnknownHow!));
   });
 
   it("reading along here silences the strip, and a different holder brings it back", async () => {
+    // A read-along choice is saved under the signed-in account's storage scope.
+    setStorageOwner("acct-reads-along");
     const who = { kind: "local", name: "omarchy", stopped: false };
     const said = await rail(heldBy(who));
-    expect(railTitle(said)).toBe(ts.filingElsewhereLocalHow!.replace("{name}", "omarchy"));
-    setReadingAlong("mbx-1", { ...who, since: null }, null);
+    expect(railTitle(said)).toBe(railWords(ts.filingElsewhereLocalHow!.replace("{name}", "omarchy")));
+    setReadingAlong("mbx-1", { ...who, since: null }, "acct-reads-along");
     const quiet = await rail(heldBy(who));
     expect(railTitle(quiet), "the strip went on saying it after the press")
-      .not.toBe(ts.filingElsewhereLocalHow!.replace("{name}", "omarchy"));
+      .not.toBe(railWords(ts.filingElsewhereLocalHow!.replace("{name}", "omarchy")));
     /* A DIFFERENT INSTALL MAY NEVER BE HIDDEN by an intention about the last one. */
     const other = await rail(heldBy({ kind: "local", name: "someone else", stopped: false }));
-    expect(railTitle(other)).toBe(ts.filingElsewhereLocalHow!.replace("{name}", "someone else"));
-    clearReadingAlong("mbx-1", null);
+    expect(railTitle(other)).toBe(railWords(ts.filingElsewhereLocalHow!.replace("{name}", "someone else")));
+    clearReadingAlong("mbx-1", "acct-reads-along");
+    resetStorageOwnerForTest();
   });
 });
 
@@ -424,26 +442,6 @@ const holder = (kind: string, name: string): OnboardingMailbox => ({
   organizerState: "held",
 });
 
-const onboardingFacts = (mailbox: OnboardingMailbox): OnboardingFacts => ({
-  door: "local",
-  mailbox,
-  account: { onboardingCompletedAt: null },
-  ai: "unset",
-  queuedSenders: 0,
-});
-
-const HOST: FirstRunHost = {
-  door: "local",
-  ai: "unset",
-  probe: async () => ({ host: "h", user: "u", folders: 1 }),
-  connect: async () => ({ id: "mb-1" }),
-  organize: async () => "stored",
-  complete: async () => { /* the summary's own verb */ },
-  setAiEnabled: async () => { /* answered */ },
-  probeReason: () => null,
-  probeMessage: () => null,
-};
-
 interface FirstRunHarness {
   el: HTMLElement;
   press: (label: string) => Promise<void>;
@@ -451,128 +449,93 @@ interface FirstRunHarness {
   heading: () => string;
 }
 
+/* The first run as the new shell's stage (today's `FirstRun.tsx` left with today's shell), at the address that opens
+   it, over the one row the case names; the holder's date as the seat feeds it, a real date, so the dated arms are
+   reachable and the phone arm cannot pass merely because there was no date to print. */
 async function firstRun(mailbox: OnboardingMailbox): Promise<FirstRunHarness> {
-  const { FirstRun } = await import("../app/shell/FirstRun.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-
-  const Stage = () => {
-    const [, bump] = React.useState(0);
-    return h(FirstRun as never, {
-      host: HOST,
-      facts: onboardingFacts(mailbox),
-      onRefresh: () => bump((n) => n + 1),
-      onLeave: () => { /* left */ },
-      pull: { screened: 0, history: 0, mirrorCount: 0 },
-      decide: null,
-      mailboxId: "mb-1",
-      /* Derived the way `AppShell` derives it: a real instant, so the dated arms are reachable
-         and the phone arm cannot pass merely because there was no date to print. */
-      organizedSince: "30 Aug 2026",
-    } as never);
+  /* Today's stage was the hosted web's: ohmail Cloud is the managed service there, and is said as itself. */
+  const stage = await mountStage({ rows: [stageRow({ ...mailbox, holderSince: "30 Aug 2026" })], service: "managed" });
+  const choice = { here: t.elsewhereChoiceHere!, read: t.elsewhereChoiceRead! };
+  return {
+    el: stage.el,
+    press: stage.press,
+    pick: (value) => stage.pick(choice[value]),
+    heading: stage.heading,
   };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider as never, { children: h(Stage, null) } as never),
-    }));
-  });
-
-  const press = async (label: string) => {
-    const button = [...el.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith(label));
-    if (!button) {
-      throw new Error(`no button labelled ${JSON.stringify(label)}; saw: `
-        + [...el.querySelectorAll("button")].map((b) => JSON.stringify(b.textContent)).join(", "));
-    }
-    await act(async () => {
-      button.click();
-      for (let i = 0; i < 12; i++) await Promise.resolve();
-    });
-  };
-
-  const pick = async (value: "here" | "read") => {
-    const radios = [...el.querySelectorAll("input[type=radio]")] as HTMLInputElement[];
-    const radio = radios.find((i) => i.value === value);
-    if (!radio) throw new Error(`no ${JSON.stringify(value)} option`);
-    await act(async () => { radio.click(); for (let i = 0; i < 4; i++) await Promise.resolve(); });
-  };
-
-  return { el, press, pick, heading: () => (el.querySelector("h1")?.textContent ?? "").trim() };
 }
 
 const t = (messages as unknown as { onboarding: Record<string, string> }).onboarding;
 
-/** The banner's own description, by equality — `toContain` cannot separate these sentences. */
-const bannerSaid = (el: HTMLElement): string =>
-  (el.querySelector(".set-banner .lab span")?.textContent ?? "").trim();
+/** The value in the setting line named for this organizer. */
+function holderSaid(el: HTMLElement, name: string): string {
+  const label = tm.readerLabel!.replace("{name}", name);
+  const line = within(el).getByRole("group", { name: label });
+  return (line.textContent ?? "").slice(label.length).trim();
+}
+
+function claimHeading(name: string, stopped = false): string {
+  return (stopped ? t.elsewhereSayStopped! : t.elsewhereSay!).replace("{name}", name).replace(/\.$/, "");
+}
 
 describe("SURFACE 2 — the claim question's banner", () => {
   it("a phone holder gets the phone sentence, never the local one about 'this computer'", async () => {
     const s = await firstRun(holder("mobile", PHONE));
-    expect(s.heading()).toBe(t.elsewhereTitle);
-    expect(bannerSaid(s.el)).toBe(tm.readerHolderPhone!.replace("{name}", PHONE));
+    expect(s.heading()).toBe(claimHeading(PHONE));
+    expect(holderSaid(s.el, PHONE)).toBe(tm.readerHolderPhone!.replace("{name}", PHONE));
     expect(s.el.textContent ?? "", "a phone was described as a computer")
       .not.toContain(tm.readerSinceLocal!.replace("{since}", "30 Aug 2026").replace("{name}", PHONE));
   });
 
   it("a phone that has STOPPED gets the past-tense sentence, not `readerStopped`", async () => {
     const s = await firstRun({ ...holder("mobile", PHONE), organizerState: "stopped" });
-    expect(bannerSaid(s.el)).toBe(tm.readerHolderPhoneStopped!.replace("{name}", PHONE));
-    expect(bannerSaid(s.el), "the stopped phone took the holder-kind-blind sentence")
+    expect(holderSaid(s.el, PHONE)).toBe(tm.readerHolderPhoneStopped!.replace("{name}", PHONE));
+    expect(holderSaid(s.el, PHONE), "the stopped phone took the holder-kind-blind sentence")
       .not.toBe(tm.readerStopped!.replace("{name}", PHONE));
   });
 
   it("CONTROL: a computer, Cloud and a stopped computer keep their sentences", async () => {
     const local = await firstRun(holder("local", "omarchy"));
-    expect(bannerSaid(local.el))
+    expect(holderSaid(local.el, "omarchy"))
       .toBe(tm.readerSinceLocal!.replace("{since}", "30 Aug 2026").replace("{name}", "omarchy"));
     const cloud = await firstRun(holder("cloud", "ohmail Cloud"));
-    expect(bannerSaid(cloud.el)).toBe(tm.readerSinceCloud!.replace("{since}", "30 Aug 2026"));
+    expect(holderSaid(cloud.el, "ohmail Cloud")).toBe(tm.readerSinceCloud!.replace("{since}", "30 Aug 2026"));
     const stopped = await firstRun({ ...holder("local", "omarchy"), organizerState: "stopped" });
-    expect(bannerSaid(stopped.el)).toBe(tm.readerStopped!.replace("{name}", "omarchy"));
+    expect(holderSaid(stopped.el, "omarchy")).toBe(tm.readerStopped!.replace("{name}", "omarchy"));
   });
 });
 
 describe("SURFACE 3 — the reader summary's holder row", () => {
   /** The summary is reached the way a person reaches it: the claim question, answered "just read". */
-  async function summary(mailbox: OnboardingMailbox): Promise<HTMLElement> {
+  async function summary(mailbox: OnboardingMailbox, name: string): Promise<HTMLElement> {
     const s = await firstRun(mailbox);
     // A stopped holder's claim question carries its own title.
     expect(s.heading(), "the walk did not start on the claim question")
-      .toBe(mailbox.organizerState === "stopped" ? t.elsewhereTitleStopped : t.elsewhereTitle);
+      .toBe(claimHeading(name, mailbox.organizerState === "stopped"));
     await s.pick("read");
     await s.press(t.continue!);
     expect(s.heading(), "the walk did not reach the reader summary").toBe(t.doneReaderTitle);
     return s.el;
   }
 
-  /* The holder row is the SECOND of the summary's rows; the first reports what it reads. That
-     position is asserted here so a row inserted above cannot move every case onto another
-     sentence and leave them all still passing. */
-  const rowSaid = (el: HTMLElement): string => {
-    const rows = el.querySelectorAll(".ob-done .set-row");
-    expect((rows[0]?.querySelector(".lab b")?.textContent ?? "").trim(),
-      "the summary's rows moved — the holder row is no longer second").toBe(t.doneReaderReads);
-    return (rows[1]?.querySelector(".lab span")?.textContent ?? "").trim();
+  const rowSaid = (el: HTMLElement, name: string): string => {
+    const reads = within(el).getByRole("group", { name: t.doneReaderReads });
+    const label = tm.readerLabel!.replace("{name}", name);
+    expect(reads.nextElementSibling).toBe(within(el).getByRole("group", { name: label }));
+    return holderSaid(el, name);
   };
 
   it("a phone holder gets the phone sentence here too, from the same derivation", async () => {
-    expect(rowSaid(await summary(holder("mobile", PHONE))))
+    expect(rowSaid(await summary(holder("mobile", PHONE), PHONE), PHONE))
       .toBe(tm.readerHolderPhone!.replace("{name}", PHONE));
   });
 
   it("a stopped phone is past tense here too — the two rows may not disagree", async () => {
-    const el = await summary({ ...holder("mobile", PHONE), organizerState: "stopped" });
-    expect(rowSaid(el)).toBe(tm.readerHolderPhoneStopped!.replace("{name}", PHONE));
+    const el = await summary({ ...holder("mobile", PHONE), organizerState: "stopped" }, PHONE);
+    expect(rowSaid(el, PHONE)).toBe(tm.readerHolderPhoneStopped!.replace("{name}", PHONE));
   });
 
   it("CONTROL: a computer keeps the dated local sentence", async () => {
-    expect(rowSaid(await summary(holder("local", "omarchy"))))
+    expect(rowSaid(await summary(holder("local", "omarchy"), "omarchy"), "omarchy"))
       .toBe(tm.readerSinceLocal!.replace("{since}", "30 Aug 2026").replace("{name}", "omarchy"));
   });
 });
@@ -582,55 +545,64 @@ describe("SURFACE 3 — the reader summary's holder row", () => {
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 
 describe("SURFACE 4 — the restore card names the phone that saved the settings", () => {
-  async function card(kind: string): Promise<HTMLElement> {
-    const { ProfileImportCard } = await import("../app/shell/ProfileImportCard.js");
-    const el = document.createElement("div");
-    document.body.appendChild(el);
-    const root = createRoot(el);
-    roots.push(root);
-    await act(async () => {
-      root.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
-        children: h(ProfileImportCard as never, {
-          offer: {
-            mailboxId: "mb-1",
-            address: "someone@example.com",
-            candidate: {
-              state: "found",
-              fingerprint: "a".repeat(64),
-              updatedAt: "2026-08-10T09:00:00.000Z",
-              producer: { kind, version: "0.18.0" },
-              counts: { screener: 3, rules: 1, notifyRules: 0, tags: 0, awayResponder: false },
-            },
-          },
-          phase: { kind: "offer" },
-          onImport: () => { /* pressed elsewhere */ },
-          onNotNow: () => { /* pressed elsewhere */ },
-          onAcknowledge: () => { /* pressed elsewhere */ },
-        } as never),
-      }));
-    });
-    return el;
+  beforeAll(warmCloudShell);
+
+  async function checkCard(kind: string, check: (offer: HTMLElement) => void): Promise<void> {
+    installConfirmEnv();
+    scriptRefresh(refresh204);
+    scriptSession(sessionFull);
+    rememberOwner();
+    window.history.replaceState(null, "", "/mailbox#/ohbox");
+    const cloud = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input), location.origin).pathname;
+      if (path === "/api/mailboxes") return Response.json({ items: ROSTER });
+      if (path === `/api/mailboxes/${ROSTER[0]!.id}/profile-import`) {
+        return Response.json({
+          state: "found",
+          fingerprint: "a".repeat(64),
+          updatedAt: "2026-08-10T09:00:00.000Z",
+          producer: { kind, version: "0.18.0" },
+          counts: { screener: 3, rules: 1, notifyRules: 0, tags: 0, awayResponder: false },
+        });
+      }
+      return cloud(input, init);
+    };
+    try {
+      const host = await mountCloudShell((shell) => (
+        <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+          {shell}
+        </NextIntlClientProvider>
+      ));
+      await tick(2500);
+      const offer = await vi.waitFor(() => within(host).getByRole("region", { name: messages.profileImport.title }));
+      check(offer);
+    } finally {
+      await teardownConfirmEnv();
+      window.history.replaceState(null, "", "/");
+    }
   }
 
   it("a phone's profile says a phone saved it, and the clause it has no room for is its title", async () => {
-    const el = await card("mobile");
-    const line = [...el.querySelectorAll("p.pfi-meta")]
-      .find((p) => (p.textContent ?? "").trim() === tm.readerHolderPhoneShort);
-    expect(line, "the card did not name the phone").toBeTruthy();
-    expect(line!.getAttribute("title"), "the short form lost its clause")
-      .toBe(tm.readerHolderPhoneWhy);
-    expect(el.textContent ?? "", "a phone was described as another computer")
-      .not.toContain("on another computer");
+    await checkCard("mobile", (el) => {
+      const line = within(el).getByText(tm.readerHolderPhoneShort!);
+      expect(line, "the card did not name the phone").toBeTruthy();
+      expect(line.getAttribute("title"), "the short form lost its clause")
+        .toBe(tm.readerHolderPhoneWhy);
+      expect(el.textContent ?? "", "a phone was described as another computer")
+        .not.toContain("on another computer");
+    });
   });
 
   it("CONTROL: a computer and Cloud keep their own lines and gain no phone line", async () => {
-    const local = await card("local");
-    expect(local.textContent ?? "").toContain("on another computer");
-    expect(local.textContent ?? "").not.toContain(tm.readerHolderPhoneShort!);
-    const cloud = await card("cloud");
-    expect(cloud.textContent ?? "").toContain("by ohmail Cloud");
-    expect(cloud.textContent ?? "").not.toContain(tm.readerHolderPhoneShort!);
+    await checkCard("local", (el) => {
+      expect(el.textContent ?? "").toContain("on another computer");
+      expect(el.textContent ?? "").not.toContain(tm.readerHolderPhoneShort!);
+    });
+    await checkCard("cloud", (el) => {
+      expect(el.textContent ?? "").toContain("by ohmail Cloud");
+      expect(el.textContent ?? "").not.toContain(tm.readerHolderPhoneShort!);
+    });
   });
 });
 

@@ -1,0 +1,6 @@
+A	.github/scripts/admitted-fonts.tsv
+M	.github/scripts/assert-pr-guard.sh
+M	.github/workflows/guard.yml
+M	CLAUDE.md
+M	CONTRIBUTING.md
+M	test/pr-guard.test.ts

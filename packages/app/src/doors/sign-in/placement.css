@@ -1,0 +1,16 @@
+/* The sign-in's own placement: the page is one form and lays out nothing of its own; its fields stand one under the
+   other; a sign-out's reason and where the sign-in carries on stand over the sentence. */
+.way-form {
+  display: contents;
+}
+
+.way-fields {
+  display: grid;
+  gap: var(--s4);
+  max-width: 28em;
+}
+
+.way-context {
+  margin: 0;
+  color: var(--ink2);
+}

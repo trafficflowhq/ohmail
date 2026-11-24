@@ -5,11 +5,11 @@ import { accounts, mailboxCredentials, mailboxes, messages, type Tx } from "@tra
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { createLogger } from "@trafficflow/core/mail";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { startWorker } from "../src/index.js";
 import { syncKickPass } from "../src/sync-kick.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * "ORGANIZE HERE" WAKES THE PASS (VERIFY-026 L6). The press stamped only `takeover_authorized_at`,
@@ -42,10 +42,10 @@ async function handedBack(db: Db, fresh = false): Promise<ServiceContext & { mai
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
-  return { db, accountId, userId: null, now: () => new Date(), requestId: randomUUID(), mailboxId: row!.id };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: randomUUID(), mailboxId: row!.id };
 }
 
 const rowOf = async (db: Db, id: string) =>

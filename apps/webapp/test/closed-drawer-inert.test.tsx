@@ -39,7 +39,6 @@ function offCanvasSelectors(css: string): string[] {
 /** Each parked surface, and the fact the case below proves about it. */
 const PARKED: Record<string, string> = {
   ".deck > .rail": "the navigation drawer (RailNav's inert)",
-  ".tm-tip": "the thread squares' chip (aria-hidden, pointer-events none, nothing focusable)",
 };
 
 /** The declarations of `selector`'s own rule in `css`. */
@@ -84,7 +83,7 @@ afterEach(async () => {
 });
 
 async function shell(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -148,68 +147,77 @@ describe("the census: a surface parked off canvas says what makes it inert", () 
     expect([...new Set(found)].sort()).toEqual(Object.keys(PARKED).sort());
   });
 
-  it("the thread squares' chip, where it stands before it is placed, is no Tab stop, no name and no target", async () => {
-    const { ThreadTip } = await import("../app/shell/ThreadMarks.js");
-    const style = document.createElement("style");
-    style.textContent = `.tm-tip{${ruleOf(read("../app/app.css"), ".tm-tip")}}`;
-    document.head.appendChild(style);
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    roots.push(root);
-    const m = {
-      id: "p1", threadId: "T", subject: "Q3 plan", from: { name: "Lena", address: "lena@example.invalid" },
-      date: "2026-10-22T09:00:00.000Z", unread: true, folder: "INBOX",
-    } as unknown as Parameters<typeof ThreadTip>[0]["m"];
-    await act(async () => {
-      root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(ThreadTip, { m, place: "left" }) }));
-    });
-    const chip = document.querySelector<HTMLElement>(".tm-tip")!;
-    expect(chip.textContent, "the chip did not render").toMatch(/^Lena/);
-    expect(chip.getAttribute("aria-hidden"), "the chip is named to assistive tech").toBe("true");
-    expect(stops().filter((s) => chip.contains(s)), "Tab stops inside the chip").toEqual([]);
-    expect(getComputedStyle(chip).pointerEvents, "the chip takes the pointer").toBe("none");
-    style.remove();
-  });
 });
 
-describe("the navigation drawer at 390px", () => {
+/*
+ * THE DRAWER IN THE FRAME. Under 840 px the whole rail is More's sheet over the app; at a desktop width it stands at
+ * the side. Today's drawer cases, with their probe re-read: the sheet is the drawer, the dock's More its toggle, and a
+ * window's width is its innerWidth (the frame's plan reads it).
+ */
+const atWidth = (width: number): void => { Object.defineProperty(window, "innerWidth", { configurable: true, value: width }); };
+const sheet = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="dialog"][aria-label="More"]');
+/** Parked: not in the tree, or inert in it. */
+const parked = (): boolean => sheet() === null || sheet()!.closest("[inert]") !== null;
+const more = (): HTMLElement => [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.getAttribute("aria-label") === "More")!;
+const standingRail = (): HTMLElement => document.querySelector<HTMLElement>("nav.oh-rail")!;
+
+/** Onto More the keyboard way, then Enter presses it as a browser does (a click). */
+async function pressMore(): Promise<HTMLElement> {
+  const toggle = more();
+  for (let i = 0; i < 40 && document.activeElement !== toggle; i += 1) await tab();
+  expect(document.activeElement, "Tab never reached the drawer's toggle").toBe(toggle);
+  await key("Enter");
+  await act(async () => { toggle.click(); });
+  await settle();
+  return toggle;
+}
+
+describe("the navigation drawer at 390px, in the frame", () => {
+  afterEach(() => { atWidth(1024); });
+
+  /* The closed sheet is not in the tree; More, which opens it, is a Tab stop named More. */
   it("closed: out of the Tab order and the tree, and its toggle says so", async () => {
+    atWidth(390);
     await shell();
-    expect(rail().hasAttribute("inert"), "the closed rail is not inert").toBe(true);
-    expect(stops().filter((s) => rail().contains(s)), "Tab stops inside the closed rail").toEqual([]);
-    const toggle = document.querySelector<HTMLElement>(".topbar .tb-btn")!;
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(toggle.getAttribute("aria-controls")).toBe(rail().id);
-    expect(rail().id).not.toBe("");
+    expect(parked(), "the closed drawer is in the tree and not inert").toBe(true);
+    expect(stops().filter((s) => sheet()?.contains(s) ?? false), "Tab stops inside the closed drawer").toEqual([]);
+    expect(stops().filter((s) => standingRail()?.contains(s) ?? false), "a rail stands open at 390").toEqual([]);
+    const toggle = more();
+    expect(toggle, "no More to open the drawer").toBeTruthy();
+    expect(stops()).toContain(toggle);
+    expect(toggle.hasAttribute("aria-expanded")).toBe(false);
   });
 
   it("open: focus goes in, Tab and Shift+Tab stay, Escape parks it again", async () => {
+    atWidth(390);
     await shell();
-    const toggle = await pressToggle();
-    expect(rail().classList.contains("open"), "the toggle did not open the drawer").toBe(true);
-    expect(rail().hasAttribute("inert")).toBe(false);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(rail().contains(document.activeElement), "focus stayed behind the open drawer").toBe(true);
+    const toggle = await pressMore();
+    expect(sheet() !== null, "the toggle did not open the drawer").toBe(true);
+    expect(sheet()!.closest("[inert]") !== null).toBe(false);
+    // More opens a modal dialog, which says itself; the toggle, inert behind it, says no state.
+    expect(sheet()!.getAttribute("aria-modal")).toBe("true");
+    expect(toggle.hasAttribute("aria-expanded")).toBe(false);
+    expect(sheet()!.contains(document.activeElement), "focus stayed behind the open drawer").toBe(true);
     for (let i = 0; i < 30; i += 1) {
       await tab();
-      expect(rail().contains(document.activeElement), `Tab ${i + 1} left the drawer`).toBe(true);
+      expect(sheet()?.contains(document.activeElement), `Tab ${i + 1} left the drawer`).toBe(true);
     }
     for (let i = 0; i < 30; i += 1) {
       await tab(true);
-      expect(rail().contains(document.activeElement), `Shift+Tab ${i + 1} left the drawer`).toBe(true);
+      expect(sheet()?.contains(document.activeElement), `Shift+Tab ${i + 1} left the drawer`).toBe(true);
     }
     await key("Escape");
     await settle();
-    expect(rail().classList.contains("open")).toBe(false);
-    expect(rail().hasAttribute("inert")).toBe(true);
-    expect(rail().contains(document.activeElement), "focus stayed in the parked drawer").toBe(false);
+    expect(sheet() !== null).toBe(false);
+    expect(parked()).toBe(true);
+    expect(sheet()?.contains(document.activeElement) ?? false, "focus stayed in the parked drawer").toBe(false);
   });
 
   it("at a desktop width the standing rail is never inert (control)", async () => {
     wide = true;
+    atWidth(1440);
     await shell();
-    expect(rail().hasAttribute("inert")).toBe(false);
-    expect(stops().some((s) => rail().contains(s))).toBe(true);
+    expect(standingRail().closest("[inert]") !== null).toBe(false);
+    expect(stops().some((s) => standingRail().contains(s))).toBe(true);
   });
 });

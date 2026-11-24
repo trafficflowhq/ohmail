@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
+import { testHttpAdapter } from "../../../test/support/engine-fixtures.js";
 import { drafts, outboundSends } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
@@ -39,6 +40,78 @@ describe("drafts CRUD + X-Sync-Seq", () => {
     expect(del.status).toBe(204);
     expect(del.headers.get("x-sync-seq")).toBeTruthy();
     expect((await H(req("GET", `/drafts/${draft.id}`, { bearer: s.token }), deps)).status).toBe(404);
+  });
+
+  it("keeps a newer save when Discard names the reader's earlier revision", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+
+    const created = await H(req("POST", "/drafts", {
+      bearer: s.token, body: JSON.stringify({ mailboxId, subject: "An unfinished letter", body: "First version" }),
+    }), deps);
+    expect(created.status).toBe(201);
+    const seen = await created.json();
+    const path = `/drafts/${seen.id}`;
+
+    const saved = await H(req("PUT", path, {
+      bearer: s.token, body: JSON.stringify({ body: "Newer words" }),
+    }), deps);
+    expect(saved.status).toBe(200);
+    const newer = await saved.json();
+    const adapter = testHttpAdapter({
+      baseUrl: "http://localhost",
+      fetch: (url, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set("authorization", `Bearer ${s.token}`);
+        return H(new Request(url, { ...init, headers }), deps);
+      },
+    });
+    const discard = (revision: string, idempotencyKey: string) => adapter.mutate(
+      { kind: "draft_discard", draftId: seen.id, ifContentRevision: revision }, { idempotencyKey },
+    );
+
+    await expect(discard(seen.contentRevision, "earlier-discard")).rejects.toMatchObject({
+      status: 409, code: "draft_changed",
+    });
+    const kept = await H(req("GET", path, { bearer: s.token }), deps);
+    expect(kept.status).toBe(200);
+    expect((await kept.json()).body).toBe("Newer words");
+    await expect(discard(newer.contentRevision, "current-discard")).resolves.toMatchObject({
+      changes: [{ type: "draft", id: seen.id, op: "delete" }],
+    });
+  });
+
+  it("requires a precondition and accepts a matching timestamp on conditional Discard", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const created = await H(req("POST", "/drafts", {
+      bearer: s.token, body: JSON.stringify({ mailboxId, body: "Keep until the press is verified" }),
+    }), deps);
+    expect(created.status).toBe(201);
+    const draft = await created.json();
+    const path = `/drafts/${draft.id}/conditional`;
+    const discard = (query = "") => H(req("DELETE", path + query, { bearer: s.token }), deps);
+    const at = (date: string) => `?ifUpdatedAt=${encodeURIComponent(date)}`;
+
+    expect((await discard()).status).toBe(400);
+    expect((await discard("?ifContentRevision=invalid")).status).toBe(400);
+    expect((await discard(at("invalid"))).status).toBe(400);
+    expect((await discard(at(new Date(Date.parse(draft.updatedAt) - 1).toISOString()))).status).toBe(409);
+    const other = await seedSession(db, { now: FIXED_NOW });
+    const foreign = await H(req("DELETE", path + at(draft.updatedAt), { bearer: other.token }), deps);
+    expect(foreign.status).toBe(204);
+    expect(foreign.headers.get("x-sync-seq")).toBeNull();
+    const preserved = await H(req("GET", `/drafts/${draft.id}`, { bearer: s.token }), deps);
+    expect(preserved.status).toBe(200);
+    expect((await preserved.json()).body).toBe("Keep until the press is verified");
+    const deleted = await discard(at(draft.updatedAt));
+    expect(deleted.status).toBe(204);
+    expect(deleted.headers.get("x-sync-seq")).toBeTruthy();
+    const alreadyGone = await discard(at(draft.updatedAt));
+    expect(alreadyGone.status).toBe(204);
+    expect(alreadyGone.headers.get("x-sync-seq")).toBeNull();
   });
 
   it("a created draft surfaces in GET /sync creates (no-tombstone proof)", async () => {

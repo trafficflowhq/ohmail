@@ -35,9 +35,7 @@ journeysOf("reads", () => {
     const { person, named } = await personWith(b, LETTER);
     await person.arrive("reads");
     const unread = say("message.rowUnread", {}, person.lang);
-    const rows = (await person.see("list-reads")).getByRole("option");
-    const before: string[] = [];
-    for (const row of await rows.all()) if ((await row.getAttribute("aria-description"))?.endsWith(unread)) before.push((await row.getAttribute("aria-label"))!);
+    const before = (await person.rows("list-reads", "option")).filter((row) => row.description.endsWith(unread)).map((row) => row.name);
     expect(before.length).toBeGreaterThan(3);
     const last = before[before.length - 1]!;
     await person.act("wheel", "list-reads", { value: "4000" });

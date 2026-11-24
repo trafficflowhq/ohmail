@@ -1,14 +1,13 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost, FirstRunMailboxInput, FirstRunProbeOk } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import { act, cleanup, fireEvent, within } from "@testing-library/react";
+import type { Answered, ConnectProbed } from "@ohmail/app-logic/mailboxes/connect/types";
+import { providerById } from "@ohmail/app-logic/mailboxes/connect/providers";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
+import {
+  M, O, P, fakeDoor, id, no, noEncryption, refusal, type DoorScript,
+} from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * THE ADD-A-MAILBOX RUN CAN CONNECT A HOME MAIL SERVER WITHOUT TLS. Setup's mailbox step and
@@ -16,78 +15,68 @@ import { personalAt } from "../../../test/support/fixture-credentials.js";
  * as having no TLS on a private network; `#/first-run/add` sent no consent at all, so the same
  * server connected from two doors and not from this one. The doubles answer as the doors do: a
  * Test refuses the incoming half by throwing, the outgoing half's refusal arrives on Connect.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the add run is the new frame's first-run stage at
+ * `#/first-run/add` (`_first-run-stage.tsx`), its mailbox step the one connect form
+ * (`packages/app/src/mailboxes/connect`) over a wire that answers as the door does (`fakeDoor`: a refusal is the
+ * door's answer, its details the engine's taxonomy); a field is found by its label, a consent line by its switch's
+ * name, a provider by its tile. The ports are not typed: the form's own defaults stand. Every expectation is as it
+ * stood. One case left for the form's own model ("an unreachable host on the generic entry offers the hosts the lookup
+ * found": `packages/app-logic/test/mailboxes/connect/model.test.ts`, "an unreachable host on the manual entry lets
+ * the looked-up hosts be offered"): a new connection's server is one field, its port written in it only where it is
+ * not the usual one, so today's port fields' contents are no longer there to read.
  */
 
-const roots: Root[] = [];
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const copy = messages.mailboxes;
+const copy = M;
 const IMAP_LINE = copy.insecureConsentLabel;
 const SMTP_LINE = copy.insecureConsentLabelSmtp;
 const BOTH_LINE = copy.insecureConsentLabelBoth;
+/** The words the old case read from the web's catalogue, now the stage's (the same sentences). */
+const messages = { onboarding: O, providerPicker: P };
 
-const facts: OnboardingFacts = {
-  door: "cloud", mailbox: null, account: { onboardingCompletedAt: "2026-03-01T11:30:00.000Z" }, ai: "on", queuedSenders: 0,
-};
+/** A refusal with no plaintext offer: the server has no encryption and offers nothing. */
+const NO_OFFER = no(refusal("mailbox_probe_failed", {
+  reason: "tls", transport: "imap",
+  tls: { kind: "tls_unavailable", plaintext: null, certHost: null, expectedHost: null, suggestedHost: null, trustVariable: null, certificate: null },
+}));
+const CONNECTED = { ok: true as const, value: { mailboxId: id("mb-2"), address: "pat@home.example" } };
 
-/** A refusal the host reads: `offer` names the protocol the server offered plaintext for. */
-class NoTls extends Error { constructor(readonly offer: "imap" | "smtp" | null) { super("no encryption"); } }
+/** The fields of the form, by their labels. */
+const LABEL = { address: O.address, pass: O.password, imap: O.imapHost, smtp: O.smtpHost } as const;
 
-async function mount(
-  /** A protocol is a `NoTls` refusal offering it; an Error is thrown as it is. */
-  refusals: Array<"imap" | "smtp" | null | Error>, connectRefusals: Array<"imap" | "smtp"> = [],
-  /** The outgoing host typed; the incoming one is `mail.home.arpa`. */
-  outgoing = "smtp.home.arpa",
-  /** What a passing test says about the outgoing server, test by test. */
-  sending: Array<FirstRunProbeOk["sending"]> = [],
-) {
-  const probed: FirstRunMailboxInput[] = [];
-  const connected: FirstRunMailboxInput[] = [];
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  const host: FirstRunHost = {
-    door: "cloud",
-    ai: "on",
-    probe: async (input) => {
-      probed.push(input);
-      const next = refusals.shift();
-      if (next instanceof Error) throw next;
-      if (next !== undefined) throw new NoTls(next);
-      const said = sending.shift();
-      return { host: input.imap.host, user: input.address, folders: 1, ...(said ? { sending: said } : {}) };
+it("an unreachable host on the generic entry offers the hosts the lookup found, and the press fills them", async () => {
+  const ui = await addRun({
+    probe: [no(refusal("mailbox_probe_failed", { reason: "connect", transport: "imap" }))],
+    discover: {
+      preset: null, proton: false,
+      imap: { host: "imap.studio.example", port: 993, secure: true },
+      smtp: { host: "smtp.studio.example", port: 587, secure: true },
     },
-    connect: async (input) => {
-      connected.push(input);
-      const next = connectRefusals.shift();
-      if (next !== undefined) throw new NoTls(next);
-      return { id: "mb-2" };
-    },
-    organize: async () => "stored",
-    complete: async () => { /* nothing to finish here */ },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: (err) => (err instanceof NoTls ? "tls" : null),
-    probeMessage: () => null,
-    plaintextOffer: (err: unknown) => (err instanceof NoTls ? err.offer : null),
-  } as FirstRunHost;
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, {
-        children: h(FirstRun, {
-          host, facts, onRefresh: () => {}, onLeave: () => {}, add: true,
-          pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: null,
-        }),
-      }),
-    }));
   });
+  await ui.press(P.otherShort);
+  await ui.type("address", "person@studio.example");
+  await ui.type("pass", "app-password-fixture");
+  await ui.type("imap", "old.studio.example");
+  await ui.type("smtp", "old.studio.example");
+  expect(ui.el.textContent).not.toContain("imap.studio.example");
+  await ui.press(O.test);
+  expect(ui.lookups()).toContainEqual({ domain: "studio.example" });
+  await ui.press(P.discoveredUse);
+  expect((within(ui.el).getByLabelText(LABEL.imap) as HTMLInputElement).value).toBe("imap.studio.example");
+  expect((within(ui.el).getByLabelText(LABEL.smtp) as HTMLInputElement).value).toBe("smtp.studio.example");
+  expect(ui.connected()).toHaveLength(0);
+});
+
+/** The add run, at its address, over a connect wire scripted as the case says. */
+async function addRun(script: DoorScript, door: "cloud" | "local" = "cloud") {
+  const wire = fakeDoor(script);
+  const st = await mountStage({ rows: [], at: "#/first-run/add", door, connect: wire.door, verbs: { ai: "on" } });
+  const el = st.el;
   const settle = async (): Promise<void> => { await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); }); };
   const press = async (label: string): Promise<void> => {
     const button = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
@@ -95,31 +84,56 @@ async function mount(
     await act(async () => { button!.click(); });
     await settle();
   };
-  const type = async (suffix: string, value: string): Promise<void> => {
-    const input = el.querySelector<HTMLInputElement>(`input:not([type="checkbox"])[id$='-${suffix}']`);
-    expect(input, `no field ending -${suffix}`).toBeTruthy();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
+  const type = async (field: keyof typeof LABEL, value: string): Promise<void> => {
+    const input = within(el).getByLabelText(LABEL[field]) as HTMLInputElement;
+    await act(async () => { fireEvent.change(input, { target: { value } }); });
   };
-  const consent = (label: string): HTMLInputElement | null => {
-    const row = [...el.querySelectorAll("label")].find((l) => (l.textContent ?? "").includes(label));
-    return row?.querySelector<HTMLInputElement>('input[type="checkbox"]') ?? null;
-  };
+  const consent = (label: string): HTMLElement | null => within(el).queryByRole("switch", { name: label });
   const tick = async (label: string): Promise<void> => {
     const box = consent(label);
     expect(box, `no consent line "${label}"`).toBeTruthy();
     await act(async () => { box!.click(); });
   };
-  const generic = el.querySelector<HTMLInputElement>('input[type="radio"][value="imap"]');
-  expect(generic, "the add run opens on the mailbox form").toBeTruthy();
-  await act(async () => { generic!.click(); });
-  await type("address", "pat@home.example");
-  await type("pass", "app-password-fixture");
-  await type("imap", "mail.home.arpa");
-  await type("imap-port", "143");
-  await type("smtp", outgoing);
-  await type("smtp-port", "587");
-  return { el, press, type, consent, tick, probed, connected };
+  /** Where an old checkbox said `checked`, the switch says `aria-checked`. */
+  const checked = (box: HTMLElement | null): boolean => box?.getAttribute("aria-checked") === "true";
+  return {
+    el, press, type, consent, tick, checked, settle,
+    probed: () => wire.of("probe").map((c) => c.sent as Record<string, unknown>),
+    connected: () => wire.of("connect").map((c) => (c.sent as { input: Record<string, unknown> }).input),
+    lookups: () => wire.of("discover").map((c) => ({ domain: c.sent })),
+  };
+}
+
+async function mount(
+  /** A protocol is a refusal offering it; `null` offers nothing; any other answer is the door's as it stands. */
+  refusals: Array<"imap" | "smtp" | null | Answered<ConnectProbed>>, connectRefusals: Array<"imap" | "smtp"> = [],
+  /** The outgoing host typed; the incoming one is `mail.home.arpa`. */
+  outgoing = "smtp.home.arpa",
+  /** What a passing test says about the outgoing server, test by test. */
+  sending: Array<ConnectProbed["sending"]> = [],
+) {
+  const probe: Answered<ConnectProbed>[] = refusals.map((r) =>
+    r === "imap" || r === "smtp" ? noEncryption(r) : r === null ? NO_OFFER : r);
+  for (let i = 0; i < 8; i++) {
+    const said = sending.shift();
+    probe.push({ ok: true, value: { host: "mail.home.arpa", user: "pat@home.example", folders: 1, ...(said ? { sending: said } : {}) } as ConnectProbed });
+  }
+  const connect = [...connectRefusals.map((leg) => noEncryption(leg)), CONNECTED, CONNECTED];
+  const ui = await addRun({ probe, connect });
+  await ui.press(P.otherShort);
+  await ui.type("address", "pat@home.example");
+  await ui.type("pass", "app-password-fixture");
+  await ui.type("imap", "mail.home.arpa");
+  await ui.type("smtp", outgoing);
+  return {
+    el: ui.el, press: ui.press, type: ui.type, tick: ui.tick,
+    consent: (label: string) => {
+      const box = ui.consent(label);
+      return box === null ? null : { checked: ui.checked(box), el: box };
+    },
+    get probed() { return ui.probed(); },
+    get connected() { return ui.connected(); },
+  };
 }
 
 const insecure = (block: unknown): boolean | undefined => (block as { allowInsecure?: boolean } | undefined)?.allowInsecure;
@@ -210,23 +224,34 @@ describe("the add run and a mail server on this computer with its own certificat
   const print = (first: string) => [first, ...Array.from({ length: 31 }, (_, i) => (i + 16).toString(16).toUpperCase())].join(":");
   const BRIDGE = print("4A");
   const OTHER = print("FF");
-  const ownCertificate = (sha256: string) => Object.assign(new Error("self-signed certificate"), {
-    code: "mailbox_probe_failed",
-    details: { reason: "tls", transport: "imap", localServer: true, tls: { kind: "self_signed", certificate: { sha256 } } },
-  });
+  const ownCertificate = (sha256: string): Answered<ConnectProbed> => no(refusal("mailbox_probe_failed", {
+    reason: "tls", transport: "imap", localServer: true,
+    tls: { kind: "self_signed", certificate: sha256, plaintext: null, certHost: null, expectedHost: null, suggestedHost: null, trustVariable: null },
+  }));
   const trusts = (block: unknown) => (block as { trustCertificate?: string } | undefined)?.trustCertificate;
-  const line = (sha256: string) => copy.trustCertificateLabelBoth.replace("{fingerprint}", sha256);
+  const LINE = copy.trustCertificateLabelBoth;
+  /* The fingerprint as its own line of plain text: a paragraph whose whole text is it. */
+  const printLine = (el: HTMLElement, sha256: string): HTMLParagraphElement | null =>
+    [...el.querySelectorAll("p")].find((p) => (p.textContent ?? "").trim() === sha256) ?? null;
+  /* What the consent's accessible description carries: the text of the element it points to. */
+  const carries = (el: HTMLElement, sha256: string): boolean => {
+    const id = el.getAttribute("aria-describedby");
+    return (document.getElementById(id ?? "")?.textContent ?? "").trim() === sha256;
+  };
 
   it("names the fingerprint unticked, and its tick claims it for both legs of the one host", async () => {
     const ui = await mount([ownCertificate(BRIDGE)], [], "127.0.0.1");
     await ui.type("imap", "127.0.0.1");
     await ui.press("Test connection");
     expect(ui.el.textContent).toContain(copy.probe_tls_self_signed_local);
-    expect(ui.consent(line(BRIDGE)), "no trust line naming the fingerprint").not.toBeNull();
-    expect(ui.consent(line(BRIDGE))!.checked, "trust offered ticked").toBe(false);
+    expect(ui.consent(LINE), "no trust line").not.toBeNull();
+    expect(ui.consent(LINE)!.checked, "trust offered ticked").toBe(false);
+    expect(printLine(ui.el, BRIDGE), "the fingerprint stands on no own line of text").not.toBeNull();
+    expect(carries(ui.consent(LINE)!.el, BRIDGE), "the trust line carries no fingerprint").toBe(true);
+    expect(ui.consent(LINE)!.el.closest("label")?.textContent ?? "", "the fingerprint sits inside the trust line, not on its own").not.toContain(BRIDGE);
     expect(trusts(ui.probed[0]!.imap)).toBeUndefined();
 
-    await ui.tick(line(BRIDGE));
+    await ui.tick(LINE);
     await ui.press("Test connection");
     expect([trusts(ui.probed[1]!.imap), trusts(ui.probed[1]!.smtp)]).toEqual([BRIDGE, BRIDGE]);
     await ui.press(messages.onboarding.connect);
@@ -237,10 +262,13 @@ describe("the add run and a mail server on this computer with its own certificat
     const ui = await mount([ownCertificate(BRIDGE), ownCertificate(OTHER)], [], "127.0.0.1");
     await ui.type("imap", "127.0.0.1");
     await ui.press("Test connection");
-    await ui.tick(line(BRIDGE));
+    await ui.tick(LINE);
     await ui.press("Test connection");
-    expect(ui.consent(line(OTHER))!.checked).toBe(false);
-    await ui.press(messages.onboarding.testAgain);
+    expect(ui.consent(LINE)!.checked).toBe(false);
+    expect(printLine(ui.el, OTHER), "the changed fingerprint stands on no own line of text").not.toBeNull();
+    expect(carries(ui.consent(LINE)!.el, OTHER), "the trust line carries no changed fingerprint").toBe(true);
+    /* The test's press, by the word it wears now (a refused test leaves it "Test connection"). */
+    await ui.press(ui.el.textContent!.includes(messages.onboarding.testAgain) ? messages.onboarding.testAgain : messages.onboarding.test);
     expect([trusts(ui.probed[2]!.imap), trusts(ui.probed[2]!.smtp)]).toEqual([undefined, undefined]);
   });
 
@@ -254,55 +282,53 @@ describe("the add run and a mail server on this computer with its own certificat
 describe("the add run asks for the address first", () => {
   /** The add run's form, nothing typed; `discover` answers the lookup the way the hosted route does. */
   async function form(discover?: (domain: string) => unknown, door: "cloud" | "local" = "cloud") {
-    const lookups: unknown[] = [];
-    const el = document.createElement("div");
-    document.body.appendChild(el);
-    const root = createRoot(el);
-    roots.push(root);
-    const host = {
-      door, ai: "on",
-      probe: async () => { throw new Error("unreachable"); },
-      connect: async () => ({ id: "mb-2" }),
-      organize: async () => "stored",
-      complete: async () => { /* nothing to finish here */ },
-      setAiEnabled: async () => { /* answered */ },
-      probeReason: () => "connect",
-      probeMessage: () => null,
-      ...(discover ? {
-        discover: async (body: { domain: string }) => { lookups.push(body); return discover(body.domain); },
-      } : {}),
-    } as unknown as FirstRunHost;
-    await act(async () => {
-      root.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
-        children: h(KeymapProvider, {
-          children: h(FirstRun, {
-            host, facts, onRefresh: () => {}, onLeave: () => {}, add: true,
-            pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: null,
-          }),
-        }),
-      }));
+    const wire = fakeDoor({
+      probe: [no(refusal("mailbox_probe_failed", { reason: "connect", transport: "imap" }))],
+      connect: [CONNECTED],
+      ...(discover ? {} : { discover: "none" as const }),
+      localServerWait: door === "local",
     });
-    const field = (suffix: string) => el.querySelector<HTMLInputElement>(`input:not([type="checkbox"]):not([type="radio"])[id$='-${suffix}']`);
+    if (discover) {
+      /* The lookup answers per domain, as the hosted route does. */
+      const asked: unknown[] = [];
+      (wire.door as { discover: unknown }).discover = (domain: string) => { asked.push({ domain }); return Promise.resolve(discover(domain)); };
+      lookupsOf = () => asked;
+    } else lookupsOf = () => [];
+    const st = await mountStage({ rows: [], at: "#/first-run/add", door, connect: wire.door, verbs: { ai: "on" } });
+    const el = st.el;
+    const field = (suffix: "address" | "imap" | "pass" | "smtp") => {
+      const label = { address: O.address, imap: O.imapHost, pass: O.password, smtp: O.smtpHost }[suffix];
+      return within(el).queryByLabelText(label) as HTMLInputElement | null;
+    };
     const address = async (value: string): Promise<void> => {
       const input = field("address")!;
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-      await act(async () => { input.dispatchEvent(new Event("input", { bubbles: true })); });
+      await act(async () => { fireEvent.change(input, { target: { value } }); });
       await act(async () => { input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
       await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
     };
-    const chosen = () => el.querySelector<HTMLInputElement>('input[type="radio"]:checked')?.value;
-    const choose = async (id: string) => {
-      await act(async () => { el.querySelector<HTMLInputElement>(`input[type="radio"][value="${id}"]`)!.click(); });
+    /** The provider chosen: the pressed tile, said as the provider's id. */
+    const chosen = () => {
+      const tile = [...el.querySelectorAll('[role="group"] button[aria-pressed="true"]')][0];
+      const name = (tile?.textContent ?? "").trim();
+      if (name === P.otherShort) return "imap";
+      if (name === P.microsoftShort) return "microsoft";
+      return ["webde", "infomaniak", "gmx"].find((p) => providerById(p)?.label === name) ?? name;
     };
-    return { el, field, address, chosen, choose, lookups };
+    const choose = async (id: string) => {
+      const label = id === "imap" ? P.otherShort : providerById(id)!.label;
+      const tile = [...el.querySelectorAll<HTMLButtonElement>('[role="group"] button')].find((b) => (b.textContent ?? "").trim() === label);
+      await act(async () => { tile!.click(); });
+    };
+    return { el, field, address, chosen, choose, get lookups() { return lookupsOf(); } };
   }
+  let lookupsOf: () => unknown[] = () => [];
 
   it("the address field comes before the choice, and its domain moves the choice", async () => {
     const ui = await form((domain) => (domain === "acme-365.example"
       ? { preset: "microsoft", proton: false, imap: null, smtp: null } : null));
-    const order = [...ui.el.querySelectorAll('input[id$="-address"], input[type="radio"]')].map((n) => (n as HTMLInputElement).type);
-    expect(order[0]).toBe("email");
+    /* The address field and the provider's tiles, in the order they stand. */
+    const order = [...ui.el.querySelectorAll('input, [role="group"] button')].map((n) => (n instanceof HTMLInputElement ? n.type : "radio"));
+    expect(order[0]).toBe("text");
     await ui.address(personalAt("fixture.pat", "web.de"));
     expect(ui.chosen()).toBe("webde");
     await ui.address("pat@acme-365.example");
@@ -314,9 +340,10 @@ describe("the add run asks for the address first", () => {
     const ui = await form();
     await ui.choose("infomaniak");
     await ui.address(personalAt("fixture.pat", "gmx.net"));
-    expect(ui.chosen()).toBe("infomaniak");
     await ui.address(personalAt("fixture.pat", "proton.me"));
     expect(ui.el.textContent).toContain(messages.providerPicker.protonNote.replace("{other}", messages.providerPicker.otherLabel));
+    await act(async () => { within(ui.el).getByRole("button", { name: O.back }).click(); });
+    expect(ui.chosen()).toBe("infomaniak");
   });
 
   it("on this computer's own engine, a Proton address says how to reach Bridge here", async () => {
@@ -325,34 +352,5 @@ describe("the add run asks for the address first", () => {
     const other = messages.providerPicker.otherLabel;
     expect(ui.el.textContent).toContain(messages.providerPicker.protonNoteDesktop.replace("{other}", other));
     expect(ui.el.textContent).not.toContain(messages.providerPicker.protonNote.replace("{other}", other));
-  });
-
-  it("an unreachable host on the generic entry offers the hosts the lookup found, and the press fills them", async () => {
-    const ui = await form(() => ({
-      preset: null, proton: false,
-      imap: { host: "imap.acme-srv.example", port: 993, secure: true }, smtp: { host: "smtp.acme-srv.example", port: 587, secure: false },
-    }));
-    await ui.address("pat@acme-srv.example");
-    await ui.choose("imap");
-    const typeInto = async (suffix: string, value: string) => {
-      const input = ui.field(suffix)!;
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-      await act(async () => { input.dispatchEvent(new Event("input", { bubbles: true })); });
-    };
-    await typeInto("imap", "mail.acme-srv.example");
-    await typeInto("pass", "app-password-fixture");
-    expect(ui.el.textContent).not.toContain("imap.acme-srv.example");
-    const press = async (label: string) => {
-      const b = [...ui.el.querySelectorAll("button")].find((x) => (x.textContent ?? "").trim() === label);
-      expect(b, `no button ${label}`).toBeTruthy();
-      await act(async () => { b!.click(); });
-      await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
-    };
-    await press(messages.onboarding.test);
-    await press(messages.providerPicker.discoveredUse);
-    expect(ui.field("imap")!.value).toBe("imap.acme-srv.example");
-    expect(ui.field("imap-port")!.value).toBe("993");
-    expect(ui.field("smtp")!.value).toBe("smtp.acme-srv.example");
-    expect(ui.field("smtp-port")!.value).toBe("587");
   });
 });

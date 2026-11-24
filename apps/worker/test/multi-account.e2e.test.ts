@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { mailboxes, mailboxCredentials, contacts, messages } from "@trafficflow/db";
@@ -7,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { startWorker } from "../src/index.js";
 import { loadEnabledMailboxes } from "../src/mailboxes.js";
 import { LEADER_LOCK_KEY, leaderLockKeyFor } from "../src/leader-lock.js";
-import { imapCfg, rawClient, emlOf } from "./_workerenv.js";
+import { imapCfg, rawClient, emlOf } from "../../../packages/organizer/test/_workerenv.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 
 type Db = ReturnType<typeof makeDb>;
@@ -43,7 +44,7 @@ async function seedImapCreds(
 ): Promise<void> {
   const enc = await KP.encrypt(pass);
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId, accountId: accountOfMailbox(mailboxId), transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host, port, secure: false, user },
   });
 }

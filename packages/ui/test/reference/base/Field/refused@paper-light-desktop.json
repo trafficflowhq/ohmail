@@ -1,0 +1,87 @@
+{
+  "component": "Field",
+  "state": "refused",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 48, 320, 114.5625],
+  "clip": [24, 48, 320, 115],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(18, 16, 14) 0px 0px 0px 2px inset", "borderRadius": "12px" },
+    { "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 3 93b4b80b8950" }
+  ],
+  "nodes": [
+    {
+      "role": "textbox",
+      "name": "App password",
+      "box": [0, 24.2, 320, 48],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(240, 235, 227)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "0px",
+        "paddingRight": "16px",
+        "paddingBottom": "0px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "state": ["filled 5"],
+      "surfaces": [{ "box": [0, 24.2, 320, 48], "paint": 0 }]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "App password", "type": 0 },
+      { "said": "This provider needs an app password, not the account password.", "type": 1 }
+    ],
+    "surfaces": [{ "box": [0, 78.2, 18, 18], "paint": 1 }]
+  }
+}

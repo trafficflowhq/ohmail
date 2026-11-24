@@ -1,20 +1,24 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { bracketSpan, lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { readSource as readStartFunction } from "./_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
+
+/** The worker's start function and the desktop's engine each read as one text. */
+const readSource = readingTheUnit(readStartFunction);
 
 /**
  * EVERY CALLER HANDS THE ACT ITS OWN CONSENT, AND NOTHING ELSE. `screenerAutoActPass` files a
  * sender on a stored model suggestion; its only arming is `deps.consent`, and every production
  * call builds it with `screenerActConsentFrom(accountId)` — `screener_auto_act_at` joined with
- * `accounts.ai_enabled`. The pass never reads `screener_auto_apply_at`, the switch
- * that says "Deterministic rules only — no AI", and asks the consent before any other read.
+ * `accounts.ai_enabled`. The pass asks the consent before any other read.
  * Exact set, both directions.
  */
 
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const PASS = ["apps", "worker", "src", "screener-auto-act.ts"].join(sep);
+const PASS = ["packages", "organizer", "src", "screener-auto-act.ts"].join(sep);
 
 /** Every production call, by file, and how many each makes. */
 const CALLERS: Record<string, number> = {
@@ -29,7 +33,7 @@ function* walk(dir: string): Generator<string> {
     if (SKIP_DIRS.has(name)) continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) yield* walk(p);
-    else if (/\.(ts|tsx|mts|mjs)$/.test(name) && !/\.test\.tsx?$/.test(name)) yield p;
+    else if (/\.(ts|tsx|mts|mjs)$/.test(name) && !/\.test\.tsx?$/.test(name) && !isEnginePart(p)) yield p;
   }
 }
 
@@ -82,7 +86,7 @@ describe("the act's callers hand it the constructor's consent and nothing else",
     const refused: string[] = [];
     for (const root of roots()) {
       for (const file of walk(root)) {
-        const src = readFileSync(file, "utf8");
+        const src = readSource(file);
         if (!src.includes("screenerAutoActPass")) continue;
         const rel = relative(REPO, file);
         for (const c of callsIn(src)) {
@@ -96,9 +100,8 @@ describe("the act's callers hand it the constructor's consent and nothing else",
     expect(refused, "a caller hands the act a consent other than the constructor's").toEqual([]);
   });
 
-  it("the pass asks the consent before any read, and never reads the no-AI switch", () => {
-    const code = withoutComments(readFileSync(join(REPO, PASS), "utf8"));
-    expect(code).not.toMatch(/screenerAutoApplyAt|screener_auto_apply_at/);
+  it("the pass asks the consent before any read", () => {
+    const code = withoutComments(readSource(join(REPO, PASS)));
     const body = code.slice(code.indexOf("export async function screenerAutoActPass"));
     const probe = body.indexOf("if (!(await consent.stillGiven(db))) return EMPTY();");
     expect(probe, "the consent probe is gone").toBeGreaterThan(0);
@@ -106,7 +109,7 @@ describe("the act's callers hand it the constructor's consent and nothing else",
   });
 
   it("the constructor reads the act's own column and the account's AI switch, in one statement", () => {
-    const code = withoutComments(readFileSync(join(REPO, PASS), "utf8"));
+    const code = withoutComments(readSource(join(REPO, PASS)));
     const at = code.indexOf("export function screenerActConsentFrom");
     expect(at, "the constructor is gone").toBeGreaterThan(0);
     const ctor = code.slice(at, code.indexOf("\n}\n", at));

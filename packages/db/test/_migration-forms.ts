@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { JOURNALS, readJournalOf, type JournalSpec } from "../src/admin.js";
+import { JOURNALS, inTransitionWindow, readJournalOf, type JournalSpec, type ServerJournal } from "../src/admin.js";
 
 /**
  * ONE LEFT-TO-RIGHT PASS THAT BLANKS SQL NOISE — comments and quoted literals to spaces, never
@@ -245,9 +245,21 @@ export const keyOf = (m: { journal: string; tag: string }): string => `${m.journ
  * allow list; the census asserts it against what a real second application actually RAISES, which
  * is what keeps the two halves from drifting into disagreeing about the same file.
  */
-export function refusedByForm(): string[] {
-  return allMigrations()
+export function refusedByForm(migrations: readonly MigrationFile[] = outsideTheWindow(allMigrations())): string[] {
+  return outsideTheWindow(migrations)
     .filter((m) => nonIdempotentForms(statementsOf(m.text)).length > 0)
     .map(keyOf)
     .sort();
+}
+
+/**
+ * THE 2.0 TRANSITION'S WINDOW IS NOT JUDGED BY EITHER CENSUS. Its entries are applied once by
+ * construction: one transaction that refuses before its first statement unless every name an
+ * entry needs stands and every name it makes is free, and whose ledger rows make a second
+ * application impossible (`src/transition/`, proven by `transition.pg.test.ts`). Written in the
+ * bare forms on purpose: an `IF EXISTS` there would let a store that lost an index pass in
+ * silence. An entry numbered past the window is an ordinary migration and is judged again.
+ */
+export function outsideTheWindow<T extends { journal: string; tag: string }>(migrations: readonly T[]): T[] {
+  return migrations.filter((m) => !inTransitionWindow(m.journal as ServerJournal, m.tag));
 }

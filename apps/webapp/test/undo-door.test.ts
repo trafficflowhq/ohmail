@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToastOptions } from "@ohmail/ui";
-import { createUndoDoor } from "../app/shell/undo-door";
+import { createUndoDoor } from "@ohmail/app-logic/press/undo-door";
 
 /**
  * THE ONE UNDO DOOR — the button and `z` press one consume-once take. Driven with

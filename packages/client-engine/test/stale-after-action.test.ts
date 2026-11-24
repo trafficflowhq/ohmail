@@ -6,6 +6,13 @@
  * came back until the next poll. Every case drives a door that lags the server that took the
  * write; the row may return only through a refusal, and the mirror is the truth once it agrees.
  */
+import type {
+  EngineDraft,
+  EngineMessage,
+  EngineMutation,
+  MessageStateDTO,
+  SyncSnapshotPage,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
@@ -19,13 +26,8 @@ import {
   ohboxView,
   pressVerdict,
   type EngineAdapter,
-  type EngineDraft,
-  type EngineMessage,
-  type EngineMutation,
-  type MessageStateDTO,
   type SyncChange,
   type SyncResponse,
-  type SyncSnapshotPage,
 } from "@ohmail/client-engine";
 import { SHADOW_DRAIN_BOUND } from "../src/shadow.js";
 

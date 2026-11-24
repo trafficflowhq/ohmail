@@ -2,18 +2,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import en from "../messages/en.json";
-import de from "../messages/de.json";
+import en from "../../../packages/app/messages/mailboxes.en.json";
+import de from "../../../packages/app/messages/mailboxes.de.json";
+import enSite from "../../../packages/app/messages/site.en.json";
+import deSite from "../../../packages/app/messages/site.de.json";
 
-/**
- * WHAT A CLOUD DRAFT SENDS, SAID ON THE FIRST-RUN CONSENT STEP. The sentence said only the sender,
- * the subject and a short extract go out for "Suggestions and drafts". A draft is grounded in up
- * to `MAX_THREAD_MESSAGES` other messages of its thread (sender and extract) and up to
- * `DEFAULT_KB_K` knowledge-base notes. The counts are read off the service, so a change to what a
- * draft sends breaks this file before it can make the sentence false.
- */
-
-/* @reads: packages/services/src/drafting-service.ts apps/webapp/app/shell/FirstRun.tsx */
+/** The consent names the context sent for drafts. The drafting service supplies both limits. */
+/* @reads: packages/services/src/drafting-service.ts packages/app/src/mailboxes/first-run/Ai.tsx */
 const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const SERVICE = read("../../../packages/services/src/drafting-service.ts");
 
@@ -33,17 +28,35 @@ describe("the Cloud consent step says what a draft sends", () => {
   });
 
   it("the first-run step shows this sentence", () => {
-    expect(read("../app/shell/FirstRun.tsx")).toContain('t("providerCloudBody")');
+    const ai = read("../../../packages/app/src/mailboxes/first-run/Ai.tsx");
+    expect(ai).toContain('say("onboarding.aiSends")');
+    expect(ai).toContain('door === "cloud" ? [{ note: say("onboarding.aiDraftSends") }]');
+    expect(ai).not.toContain("providerCloudBody");
   });
 
   it("names both counts, in English and German, and no longer says only", () => {
-    const enBody = en.onboarding.providerCloudBody;
-    const deBody = de.onboarding.providerCloudBody;
+    expect(en.onboarding.aiSends).toBe("A suggestion sends the sender, the subject and a short extract.");
+    expect(de.onboarding.aiSends).toContain("Absender, Betreff und ein kurzer Auszug");
+
+    const enBody = en.onboarding.aiDraftSends;
+    const deBody = de.onboarding.aiDraftSends;
     expect(enBody).toContain(`up to ${THREAD} other messages in its thread`);
     expect(enBody).toContain(`up to ${NOTES} matching knowledge-base notes`);
+    // The site FAQ is the single source of the provider's name in each language.
+    const enProvider = /^On Cloud: via the (.+? API) \([^()]+\),/.exec(enSite.faq.a3)?.[1];
+    expect(enProvider).toBeDefined();
+    expect(/, through the ([^.]+)\./.exec(enBody)?.[1]).toBe(enProvider);
+    expect(enBody).toContain("Codes and login links are never sent");
     expect(enBody).not.toContain("Only the sender");
     expect(deBody).toContain(`bis zu ${THREAD} weiteren Nachrichten im Thread`);
     expect(deBody).toContain(`bis zu ${NOTES} passende Notizen aus der Wissensdatenbank`);
+    const deProvider = /^In der Cloud: über die (.+?-API) \([^()]+\),/.exec(deSite.faq.a3)?.[1];
+    expect(deProvider).toBeDefined();
+    expect(/^Ein Entwurf sendet über die (.+?) dieselben Angaben\b/.exec(deBody)?.[1]).toBe(deProvider);
+    expect(deBody).toContain("Codes und Login-Links werden nie gesendet");
     expect(deBody).not.toContain("Gesendet werden nur");
+
+    expect(en.onboarding).not.toHaveProperty("providerCloudBody");
+    expect(de.onboarding).not.toHaveProperty("providerCloudBody");
   });
 });

@@ -1,0 +1,64 @@
+{
+  "component": "Button",
+  "state": "two",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 48, 123.8594, 48],
+  "clip": [24, 48, 124, 48],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [{ "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 1 9f76e510b51d" }],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Attach",
+      "box": [0, 0, 123.9, 48],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "24px",
+        "paddingBottom": "0px",
+        "paddingLeft": "24px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Attach", "type": 0 }],
+      "surfaces": [{ "box": [24, 14, 20, 20], "paint": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

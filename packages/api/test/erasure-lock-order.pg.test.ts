@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
@@ -5,7 +6,7 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, accountSyncState, changeLog, folderOps, mailboxFolders, mailboxes, messages,
   refreshTokens, sessions, threads, users, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, UNMETERED_ACCESS,
-  type EntitlementsPort, type Tx,
+  bindDb, type EntitlementsPort, type Tx,
 } from "@trafficflow/db";
 import {
   credentials, invites, makeOwnedDb, pushSubscriptions, recoveryCodes, totpSecrets, webauthnCredentials, type OwnedDb,
@@ -14,7 +15,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import {
   generateToken, hashToken, makeAuthService, makeTestAuthDeps, mintPairingToken, redeemDevicePair,
-  FolderOpsService, MailService, SpyMailer, ThreadService, reapStaleWebSessions, throttleKeysFor, type Db, type ServiceContext,
+  FolderOpsService, MailService, SpyMailer, ThreadService, dbFor, reapStaleWebSessions, throttleKeysFor, type Db, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -56,10 +57,14 @@ function named(app: string): OwnedDb {
 /** Every transaction the handle opens reports how it ended: a 40P01 a caller swallows is still read. */
 function watched(o: OwnedDb, ended: string[]): OwnedDb {
   const h = o.db as unknown as { transaction: (fn: unknown, ...rest: unknown[]) => Promise<unknown> };
-  const inner = h.transaction.bind(h);
+  const inner = h.transaction;
   Object.defineProperty(h, "transaction", {
     configurable: true, writable: true,
-    value: (fn: unknown, ...rest: unknown[]) => inner(fn, ...rest).catch((e: unknown) => { ended.push(codeOf(e)); throw e; }),
+    // Called on whatever handle asked: a view bound over this pool opens its transaction through
+    // here too, and it must open as that view's, with its binding.
+    value: function (this: unknown, fn: unknown, ...rest: unknown[]) {
+      return inner.call(this, fn, ...rest).catch((e: unknown) => { ended.push(codeOf(e)); throw e; });
+    },
   });
   return o;
 }
@@ -150,8 +155,10 @@ async function family(p: Person, twofaAt: Date | null = null): Promise<Family> {
 }
 
 const auth = () => makeAuthService(makeTestAuthDeps());
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctxOn = (handle: unknown, over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db: handle as never, accountId: "", userId: null, sessionId: null, now: () => new Date(),
+  db: over.accountId === undefined ? bindDb(handle as Db, { account: null }) : dbFor(handle as Db, over.accountId),
+  accountId: "", userId: null, sessionId: null, now: () => new Date(),
   requestId: `fix026-${randomUUID()}`, ip: scenarioIp, ...over,
 });
 const at = (msAgo: number) => ({ now: () => new Date(Date.now() - msAgo) });
@@ -171,7 +178,8 @@ function port(releases: string[]): EntitlementsPort {
 function routeDeps(handle: unknown, releases: string[]): ApiDeps {
   const authDeps = makeTestAuthDeps({});
   return {
-    db: handle, now: () => new Date(), requestId: `fix026-${randomUUID()}`, session: null, idempotency: null,
+    // A request's own container, its handle minted bound to nothing as a host mints it.
+    db: bindDb(handle as Db, { account: null }), now: () => new Date(), requestId: `fix026-${randomUUID()}`, session: null, idempotency: null,
     authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
     services: { auth: makeAuthService(authDeps), entitlementsPort: port(releases) },
   } as unknown as ApiDeps;
@@ -525,7 +533,7 @@ const asUser = (h: unknown, p: Person): ServiceContext =>
 const authorizeQuery = () => ({ client_id: "tf-macos", redirect_uri: "trafficflow://auth", code_challenge: "A".repeat(43),
   code_challenge_method: "S" + "256", state: "fix026" }) as never;
 const withPassword: ParkPrior = async (p) => {
-  await db().insert(credentials).values({ userId: p.userId, passwordHash: await makeTestAuthDeps().passwordHasher.hash(PASSWORD), algo: "scrypt" });
+  await db().insert(credentials).values({ userId: p.userId, accountId: accountOfUser(p.userId), passwordHash: await makeTestAuthDeps().passwordHasher.hash(PASSWORD), algo: "scrypt" });
   return {};
 };
 const emailOf = async (p: Person): Promise<string> =>
@@ -540,7 +548,7 @@ const PARKED: Array<[string, ParkPrior, ParkWriter, string]> = [
   ["generateRecoveryCodes, no prior codes", none, (h, p) => auth().generateRecoveryCodes(asUser(h, p)), "account_erased"],
   ["generateRecoveryCodes, over existing codes", async (p) => {
     const batchId = randomUUID();
-    for (let i = 0; i < 3; i++) await db().insert(recoveryCodes).values({ userId: p.userId, codeHash: hashToken(generateToken()), batchId });
+    for (let i = 0; i < 3; i++) await db().insert(recoveryCodes).values({ userId: p.userId, accountId: accountOfUser(p.userId), codeHash: hashToken(generateToken()), batchId });
     return {};
   }, (h, p) => auth().generateRecoveryCodes(asUser(h, p)), "account_erased"],
   ["totpEnroll, no prior secret", none, (h, p) => auth().totpEnroll(asUser(h, p)), "account_erased"],
@@ -558,13 +566,13 @@ const PARKED: Array<[string, ParkPrior, ParkWriter, string]> = [
   ["login, a factor enrolled (the login token)", async (p) => {
     await withPassword(p);
     const { ciphertext, keyVersion } = await makeTestAuthDeps().keyProvider.encrypt("JBSWY3DPEHPK3PXP");
-    await db().insert(totpSecrets).values({ userId: p.userId, secretEnc: ciphertext, keyVersion, activated: true });
+    await db().insert(totpSecrets).values({ userId: p.userId, accountId: accountOfUser(p.userId), secretEnc: ciphertext, keyVersion, activated: true });
     return {};
   }, async (h, p) => auth().login(ctxOn(h), { email: await emailOf(p), password: PASSWORD }), "credential_refused"],
   ["webauthnRegisterOptions (the registration challenge)", none,
     (h, p) => auth().webauthnRegisterOptions(asUser(h, p)), "account_erased"],
   ["stepUpWebauthnOptions (the step-up challenge)", async (p) => {
-    await db().insert(webauthnCredentials).values({ userId: p.userId, credentialId: `fix026-${randomUUID()}`, publicKey: "AAAA" });
+    await db().insert(webauthnCredentials).values({ userId: p.userId, accountId: accountOfUser(p.userId), credentialId: `fix026-${randomUUID()}`, publicKey: "AAAA" });
     return {};
   }, (h, p) => auth().stepUpWebauthnOptions(asUser(h, p)), "account_erased"],
 ];
@@ -666,12 +674,12 @@ async function held(p: Person): Promise<Held> {
       dedupKey: `fix026:${tag}:${i}`, subject: "hello", nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
     });
   }
-  const [f] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Projects" }).returning();
+  const [f] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Projects" }).returning();
   await db().insert(folderOps).values({
     accountId: p.accountId, mailboxId: mb!.id, folderId: f!.id, op: "rename", toFolder: "Elsewhere",
     status: "failed", error: "exists",
   });
-  const [c] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Fresh" }).returning();
+  const [c] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Fresh" }).returning();
   await db().insert(folderOps).values({
     accountId: p.accountId, mailboxId: mb!.id, folderId: c!.id, op: "create", status: "failed", error: "exists",
   });

@@ -1,3 +1,4 @@
+import type { SyncChange } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -9,7 +10,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { syncService } from "@trafficflow/services";
-import type { ServiceContext, SyncChange } from "@trafficflow/services";
+import type { ServiceContext } from "@trafficflow/services";
 import { ClientMirror, flatten } from "./_apply-harness.js";
 
 /**
@@ -69,7 +70,7 @@ async function commitMessage(
       nativeLocator: { folder: "INBOX", ref: `1:${tag}` },
     }).returning();
     await tx.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
     await recordChange(tx, {
       accountId, entityType: "message", entityId: m!.id, op: "create", meta: null,

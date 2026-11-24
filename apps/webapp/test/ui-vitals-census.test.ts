@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { shellFrameOf, sliceOfDeclaration } from "./source-anchor";
+import { sliceOfDeclaration } from "./source-anchor";
 import {
   INTERACTION_TIMEOUT_MS,
   LONG_FRAME_MS,
@@ -10,7 +10,7 @@ import {
   REPORT_MAX_MS,
   REPORT_MIN_MS,
   takeUiVitals,
-} from "../app/shell/ui-vitals";
+} from "@ohmail/app-logic/session/ui-vitals";
 import * as check from "../../../scripts/perf-smoke-check.mjs";
 
 /**
@@ -34,6 +34,20 @@ const ROOT = resolve(process.cwd());
 
 function read(path: string): string {
   return readFileSync(resolve(ROOT, path), "utf8");
+}
+
+/** Every source file of the new shell (`packages/app/src`), its comments stripped, as one text. */
+function appTree(): string {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+      const at = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(at);
+      else if (/\.tsx?$/.test(e.name)) out.push(read(at).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1"));
+    }
+  };
+  walk("packages/app/src");
+  return out.join("\n");
 }
 
 /** The call, not the name: `beginSwitch()` and never `beginSwitch` in a comment or an import. */
@@ -60,14 +74,19 @@ describe("every navigation starts the switch mark", () => {
     });
   }
 
+  /* Read where a letter is opened now: the Ohbox's open (`app-logic/ohbox/live-open.ts`), its press on a row and its
+     entering at one column, each of which names the letter it opens. */
   it("reflectMessage starts the open mark, and closing a reading starts nothing", () => {
-    const body = sliceOfDeclaration(routing, "reflectMessage");
-    expect(callsIn(body, "beginOpen")).toBe(1);
-    // The guard is what keeps a CLOSE (`messageId === null`) from opening a mark nothing ends.
-    expect(body).toMatch(/messageId !== null && messageId !== route\.messageId/);
+    const body = read("packages/app-logic/src/ohbox/live-open.ts");
+    const opens = callsIn(body, "beginOpen");
+    expect(opens, "no open starts the open mark").toBeGreaterThan(0);
+    // The guard is what keeps a CLOSE (no letter named) from opening a mark nothing ends: every start is under it.
+    const guarded = [...body.matchAll(
+      /if \((?:id !== null && id !== args\.route\.open|messageId !== args\.route\.open)\) \{\s*beginOpen\(/g,
+    )].length;
+    expect(guarded, "an open mark started without naming another letter").toBe(opens);
     // …and a close abandons the open in flight, which would otherwise expire as a timeout.
-    expect(callsIn(body, "abandonOpen")).toBe(1);
-    expect(body).toMatch(/else if \(messageId === null\) abandonOpen\(\)/);
+    expect(body).toMatch(/if \(open === null\) abandonOpen\(\)/);
   });
 });
 
@@ -79,14 +98,13 @@ describe("the marks that end", () => {
    * on a spinner, the readiness without the key ends it on whatever committed last.
    */
   it("the shell ends the switch mark once, at the route it rendered", () => {
-    /* The mark and its readiness table left `AppShell.tsx` for `shell-keys.tsx` (ARCH-022 L6),
-       asked of the frame that declares `viewOnScreen` rather than of a path. ONCE still means
-       once in the shell as a whole: a second call in the composition root would be a second
-       owner, so both frames are counted. */
-    const shell = shellFrameOf("viewOnScreen").source;
-    const root = read("apps/webapp/app/shell/AppShell.tsx");
-    expect(callsIn(shell, "useSwitchEnd") + callsIn(root, "useSwitchEnd")).toBe(1);
-    expect(shell).toMatch(/useSwitchEnd\(viewOnScreen \? switchKeyOf\(route\) : null\)/);
+    const marks = read("packages/app-logic/src/session/ui-vitals.ts");
+    const own = sliceOfDeclaration(marks, "useSwitchEnded");
+    expect(callsIn(own, "useSwitchEnd")).toBe(1);
+    expect(callsIn(appTree(), "useSwitchEnd")).toBe(0);
+    expect(own).toMatch(/const key = placeSwitchKey\(at\)/);
+    expect(own).toMatch(/useSwitchEnd\(onScreen \? key : null\)/);
+    expect(read("packages/app/src/frame/Frame.tsx")).toMatch(/beginSwitch\(placeSwitchKey\(next\)\)/);
   });
 
   /**
@@ -96,44 +114,54 @@ describe("the marks that end", () => {
    * one view at a time.
    */
   it("every view the shell renders is named in the readiness table, or is pinned as its own content", () => {
-    /* TWO FRAMES, and that is the point of the question since ARCH-022 L6: the table is in
-       `shell-keys.tsx` with `viewOnScreen`, the view branches it must cover are the JSX that
-       stayed in `AppShell.tsx`. While both were one file a branch and its arm matched out of the
-       same text; now the claim really is that one file's table covers another file's renders. */
-    const shell = shellFrameOf("viewOnScreen").source;
-    const from = shell.indexOf("const viewOnScreen =");
-    expect(from, "the readiness table could not be found").toBeGreaterThan(-1);
-    const table = shell.slice(from, shell.indexOf("useSwitchEnd(", from));
-    const rendered = new Set(
-      [...read("apps/webapp/app/shell/AppShell.tsx").matchAll(/effectiveView === "([a-z]+)"/g)]
-        .map((m) => m[1]!),
-    );
-    const answered = new Set([...table.matchAll(/effectiveView === "([a-z]+)"/g)].map((m) => m[1]!));
-    const unanswered = [...rendered].filter((v) => !answered.has(v)).sort();
-    /* Search's results are the SEARCH mark's subject; the other three have no list of their own.
-       A fifth name here is a view whose switch ends before it has anything to show. */
-    expect(unanswered).toEqual(["address", "compose", "search", "settings"]);
+    const registry = read("packages/app/src/mail/places.ts");
+    const block = /^const SEATED: MailPlaces = \{([\s\S]*?)^\};/m.exec(registry);
+    expect(block, "the mounted registry").not.toBeNull();
+    const seated = block![1]!;
+    const rendered = [...seated.matchAll(/^  (\w+):/gm)].map((match) => match[1]!);
+    const ownContent = new Set(["address", "search", "write"]); // Settings is registered by its host.
+    const owners: Record<string, string> = {
+      drafts: "drafts/Seat.tsx",
+      folder: "folder/Seat.tsx",
+      history: "history/Seat.tsx",
+      later: "piles/Seat.tsx",
+      news: "stream/Seat.tsx",
+      ohbox: "ohbox/Seat.tsx",
+      parked: "piles/Seat.tsx",
+      receipts: "stream/Seat.tsx",
+      resurface: "piles/Seat.tsx",
+      screener: "screener/ScreenerList.tsx",
+      tags: "tags/Seat.tsx",
+      trash: "trash/Seat.tsx",
+    };
+    expect(rendered.filter((id) => !ownContent.has(id)).sort()).toEqual(Object.keys(owners).sort());
+    const unanswered = Object.entries(owners)
+      .filter(([, path]) => callsIn(read(`packages/app/src/${path}`), "useSwitchEnded") !== 1)
+      .map(([id]) => id);
+    expect(unanswered, "places without one readiness-gated finish").toEqual([]);
   });
 
   it("the message pane ends the open mark on a terminal body state", () => {
-    const pane = read("apps/webapp/app/shell/MessagePane.tsx");
+    /* The letter the reader draws is where its text lands now (`packages/app/src/reader/Letter.tsx`). */
+    const pane = read("packages/app/src/reader/Letter.tsx");
     expect(callsIn(pane, "endOpen")).toBe(1);
     // Not on `loading`/`snippet`: ending there would report the spinner as the mail.
-    expect(pane).toMatch(/body\.state !== "snippet" && body\.state !== "loading"/);
+    expect(pane).toMatch(/body\.state === "snippet" \|\| body\.state === "loading"\) return/);
   });
 
   it("the search view ends the search mark when its first results exist", () => {
-    const view = read("apps/webapp/app/views/SearchView.tsx");
+    const view = read("packages/app-logic/src/search/local-pass.ts");
     expect(callsIn(view, "endSearch")).toBe(1);
   });
 });
 
 describe("the startup marks", () => {
   it("the shell mounts the instrument and marks a usable list", () => {
-    const shell = read("apps/webapp/app/shell/AppShell.tsx");
+    /* Boot mounts the instrument, and Search starts its timer through its own live model. */
+    const shell = appTree();
     expect(callsIn(shell, "useUiVitals")).toBe(1);
     expect(shell).toMatch(/markStartup\("listUsable"\)/);
-    expect(callsIn(shell, "beginSearch")).toBe(1);
+    expect(callsIn(shell, "beginSearch") + callsIn(read("packages/app-logic/src/search/live.ts"), "beginSearch")).toBe(1);
   });
 
   /**
@@ -143,7 +171,7 @@ describe("the startup marks", () => {
    * wait. The needle is the CONDITION, not a comment: reword the docblock and this still holds.
    */
   it("marks a usable list from the mirror's own rows and not from the sync posture", () => {
-    const shell = read("apps/webapp/app/shell/AppShell.tsx");
+    const shell = read("packages/app/src/mail/ground/boot-marks.ts");
     const at = shell.indexOf('markStartup("listUsable")');
     expect(at, "the mark must exist to be judged").toBeGreaterThan(-1);
     const line = shell.slice(shell.lastIndexOf("\n", at) + 1, shell.indexOf("\n", at));

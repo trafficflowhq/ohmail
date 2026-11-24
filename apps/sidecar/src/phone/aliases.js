@@ -189,8 +189,10 @@ const WORKSPACE_MODULE_SUBSTITUTES = {
   "packages/api/routes/local": { "./events.js": path.join(PHONE, "events.ts") },
   /* The blank repair, which the phone's composition switches off (`blankRepair: "off"` in
      `mobile.ts`): the pass and its one store read, each twin refusing by name (about 11 KB). */
-  "apps/worker/sync": { "./blank-repair.js": path.join(PHONE, "blank-repair.ts") },
+  "packages/organizer/sync": { "./blank-repair.js": path.join(PHONE, "blank-repair.ts") },
   "packages/core/adapters/drizzle-repo": { "./blank-rows.js": path.join(PHONE, "blank-rows.ts") },
+  /* A mailbox's erasure, its calendar part: a phone's own store keeps no calendar. */
+  "packages/db/mailbox-erasure": { "./calendar/erasure.js": path.join(PHONE, "calendar-erasure.ts") },
 };
 
 /** The {@link WORKSPACE_MODULE_SUBSTITUTES} key of a file in the workspace, or null outside it. */
@@ -230,7 +232,7 @@ const SIDECAR_SUBSTITUTES = {
   "./db.js": path.join(PHONE, "db.ts"),
   /* `store-lanes.ts` names the desktop store's two lanes with `AsyncLocalStorage`, and
      `node:async_hooks` is not on a phone — the import is a crash at load. The drain imports
-     `inStoreLane` directly (`engine.ts`), so the row is needed even though `./db.js` beside it is
+     `inStoreLane` directly (`engine-mailbox-drain.ts`), so the row is needed even though `./db.js` beside it is
      already substituted. See `phone/store-lanes.ts` for why a pass-through is the honest answer
      and not a stub with a hole in it. */
   "./store-lanes.js": path.join(PHONE, "store-lanes.ts"),
@@ -249,6 +251,9 @@ const SIDECAR_SUBSTITUTES = {
   /* The desktop's streamed save writes a file the shell named; a phone names none. The route's own
      module, the specifier `engine.ts` writes; `attachment-file.ts` then is in no phone graph. */
   "./attachment-file-route.js": path.join(PHONE, "attachment-file-route.ts"),
+  /* The copies a desktop's store update keeps in its data folder, and what removes them
+     (`node:fs`). A phone's store keeps none there, so its engine removes none. */
+  "./store-copies.js": path.join(PHONE, "store-copies.ts"),
 };
 
 /**

@@ -76,7 +76,7 @@ vi.mock("../app/api-client", async () => {
 // `ApiError` is compared with `instanceof` inside the screen, so the mocked module's class has to
 // be the one the test throws. Imported AFTER the mock so the augmented module is in play.
 const { ApiError, apiOwnerBinding, bindApiOwner } = await import("../app/api-client");
-const { markSessionAlive } = await import("../app/shell/session-truth");
+const { markSessionAlive } = await import("@ohmail/app-logic/session/session-truth");
 
 /** What the real client sent, and what answered it. */
 type Wire = { status: number; body?: unknown; cookie?: string };
@@ -133,18 +133,21 @@ async function settle(): Promise<void> {
 
 async function mount(request = HANDLE, locale: "en" | "de" = "en"): Promise<HTMLDivElement> {
   await unmount();
-  const { AuthorizeDesktopScreen } = await import("../app/(product)/authorize-desktop/AuthorizeDesktopScreen.js");
+  const { AuthorizeDesktopRoute } = await import("../app/(product)/authorize-desktop/AuthorizeDesktopRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale, messages: locale === "de" ? de : en, children: h(AuthorizeDesktopScreen, { request }),
+      locale, messages: locale === "de" ? de : en, children: h(AuthorizeDesktopRoute, { request }),
     }));
   });
   await settle();
   return host;
 }
+
+/** The one step-up dialog's code field, over the page. */
+const codeField = (el: HTMLElement): HTMLInputElement | null => el.querySelector<HTMLInputElement>('[role="dialog"] input');
 
 /** The button whose label starts with `label`. Found by TEXT, the way a person finds it. */
 function button(el: HTMLElement, label: string): HTMLButtonElement {
@@ -211,21 +214,22 @@ describe("/authorize-desktop — the confirmation", () => {
     });
     vi.useFakeTimers();
     const el = await mount();
-    expect(el.textContent ?? "").toContain("7 seconds");
+    // The time left, as the page's tag counts it (minutes and seconds).
+    expect(el.textContent ?? "").toContain(en.approve.left.replace("{time}", "0:07"));
 
     // Past the server's window. `advanceTimersByTimeAsync`, so the interval's own work settles —
     // the synchronous form would leave the state it sets unpainted and this would pass for nothing.
     await act(async () => { await vi.advanceTimersByTimeAsync(8000); });
     await settle();
     expect(() => button(el, "Yes, sign it in")).toThrow();
-    expect(el.textContent ?? "").toContain("no longer open");
+    expect(el.textContent ?? "").toContain(en.authorizeDesktop.overWhy);
   });
 
   it("the press confirms exactly once and follows the server's redirect", async () => {
     const el = await mount();
     await press(button(el, "Yes, sign it in"));
     expect(confirmCalls).toBe(1);
-    expect(el.textContent ?? "").toContain("Done");
+    expect(el.textContent ?? "").toContain(en.authorizeDesktop.doneTitle.replace(/\.$/, ""));
   });
 
   it("a closed step-up window asks for the factor in place and confirms once more", async () => {
@@ -235,23 +239,26 @@ describe("/authorize-desktop — the confirmation", () => {
       : Promise.resolve({ redirect: "trafficflow://auth?code=xyz&state=s" }));
     const el = await mount();
     await press(button(el, "Yes, sign it in"));
-    await waitFor(el, () => el.querySelector("#stepup-code") != null, "the step-up prompt");
+    await waitFor(el, () => codeField(el) != null, "the step-up prompt");
     expect(el.textContent ?? "", "the ask left the screen").toContain(MASKED);
 
-    const code = el.querySelector<HTMLInputElement>("#stepup-code")!;
+    const code = codeField(el)!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(code, "123456");
       code.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => { code.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
-    await waitFor(el, () => (el.textContent ?? "").includes("Done"), "the retried confirm");
+    await waitFor(el, () => (el.textContent ?? "").includes(en.authorizeDesktop.doneTitle.replace(/\.$/, "")), "the retried confirm");
     expect(confirmCalls).toBe(2);
   });
 
   it("a dead handle is ONE sentence, whatever killed it", async () => {
     readAnswer = () => Promise.reject(new ApiError(400, "invalid_grant", "that authorization request is no longer open"));
     const el = await mount();
-    expect(el.textContent ?? "").toContain("no longer open");
+    // The over page: how to start again, and the reasons it may be over, said once.
+    expect(el.textContent ?? "").toContain(en.authorizeDesktop.expiredHint);
+    expect(el.textContent ?? "").toContain(en.authorizeDesktop.overWhy);
+    expect(el.querySelector('[role="alert"]')).toBeNull();
     expect(confirmCalls).toBe(0);
   });
 
@@ -259,19 +266,34 @@ describe("/authorize-desktop — the confirmation", () => {
     const el = await mount("");
     expect(readCalls).toBe(0);
     expect(confirmCalls).toBe(0);
-    expect(el.textContent ?? "").toContain("no longer open");
+    expect(el.textContent ?? "").toContain(en.authorizeDesktop.overWhy);
   });
 
   it("a browser with no marker and no session is shown the sign-in door, and the request is not read", async () => {
     realRead = true;
     wire((_m, url) => (url === "/auth/refresh" ? REFRESH_MISSING : UNAUTHORIZED));
     const el = await mount();
-    await waitFor(el, () => el.querySelector('a[href="/login"]') !== null, "the sign-in door");
+    const signIn = (): HTMLButtonElement | undefined =>
+      [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === en.login.title);
+    await waitFor(el, () => signIn() !== undefined, "the sign-in door");
     expect(el.textContent).toContain(en.linkDesktop.signInFirst);
     expect(el.textContent).not.toMatch(LOST);
     expect(sent).toContain("GET /api/auth/session");
     expect(reads()).toEqual([]);
     expect(() => button(el, "Yes, sign it in")).toThrow();
+    // The door leaves for the sign-in page as a document.
+    const real = window.location;
+    let went: string | null = null;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { get href() { return document.URL; }, assign: (url: string) => { went = url; } },
+    });
+    try {
+      await press(signIn()!);
+      expect(went).toBe("/login");
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: real });
+    }
   });
 
   it("control: a signed-in browser reads the request through the real client", async () => {
@@ -327,16 +349,16 @@ describe("/authorize-desktop — the confirmation", () => {
     const el = await mount();
     await waitFor(el, () => (el.textContent ?? "").includes(MASKED), "the request");
     await press(button(el, "Yes, sign it in"));
-    await waitFor(el, () => el.querySelector("#stepup-code") !== null, "the inline prompt's code field");
+    await waitFor(el, () => codeField(el) !== null, "the inline prompt's code field");
     // Another tab signed out between the confirm's refusal and the factor.
     document.cookie = "tf_owner=; path=/; max-age=0";
-    const code = el.querySelector<HTMLInputElement>("#stepup-code")!;
+    const code = codeField(el)!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(code, "123456");
       code.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => { code.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
-    await waitFor(el, () => el.querySelector("#stepup-code") === null
+    await waitFor(el, () => codeField(el) === null
       && [...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith("Yes, sign it in")), "the page settled again");
     expect(el.textContent).not.toMatch(LOST);
     expect(sent, "the factor went out with no account named").not.toContain("POST /api/auth/step-up/totp");
@@ -346,7 +368,9 @@ describe("/authorize-desktop — the confirmation", () => {
   it("renders in German from the German catalogue — no raw keys on either screen", async () => {
     const el = await mount(HANDLE, "de");
     const text = el.textContent ?? "";
-    expect(text).toContain("Die App anmelden?");
+    expect(text).toContain(
+      de.authorizeDesktop.titleAs.replace("{app}", de.authorizeDesktop.client["tf-macos"]).replace("<a>{address}</a>", MASKED).replace(/\.$/, ""),
+    );
     expect(text).toContain("Ja, anmelden");
     expect(text).toContain(MASKED);
     // A missing key renders as `authorizeDesktop.<key>`; nothing on the screen may look like one.

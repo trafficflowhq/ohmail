@@ -107,3 +107,8 @@ export function say(key: CatalogueKey, args: Record<string, string | number> = {
   if (text === null) throw new Error(`the ${lang} catalogue has no key ${JSON.stringify(key)}`);
   return format(text, args, lang);
 }
+
+/** The kit draws the closing full stop as a dot outside the text. */
+export function wordsWithDot(key: CatalogueKey, lang: Language): string {
+  return say(key, {}, lang).trimEnd().replace(/(?<!\.)\.$/u, "");
+}

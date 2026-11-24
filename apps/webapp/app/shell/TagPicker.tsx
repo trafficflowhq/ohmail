@@ -5,12 +5,12 @@
  * closes, outside click dismisses. Position is computed from the anchor
  * exactly like the prototype (below, clamped to the viewport).
  */
+import type { TagEntity as TagDTO } from "@ohmail/wire";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import type { TagDTO } from "@ohmail/client-engine";
-import { TagDot, TextField, cssRect, cssViewport } from "@ohmail/ui";
+import { TAG_HUES, TagDot, TextField, cssRect, cssViewport } from "@ohmail/ui";
 import { hueOf } from "./format";
-import { useFocusFollows } from "./focus-follows";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 
 export interface TagPickerState {
   forId: string;
@@ -147,7 +147,7 @@ export function TagPicker({
               className={i === 0 ? "sel" : undefined}
               onClick={() => toggle(tag)}
             >
-              <TagDot hue={hueOf(tag)} />
+              <TagDot hue={hueOf(tag, TAG_HUES)} />
               {tag.name}
               {assigned.includes(tag.id) ? <span className="ck">✓</span> : null}
             </li>

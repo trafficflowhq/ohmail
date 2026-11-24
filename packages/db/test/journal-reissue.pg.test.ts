@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "../src/migrate.js";
+// The 1.0 road and nothing after it: the reissue is that road's, and a replay over it stops there.
+import { migrateToOldHeads } from "../src/migrate.js";
+import { OLD_HEADS } from "../src/journal-heads.js";
 import { pgTestUrl } from "../src/testing.js";
 
 /**
@@ -76,7 +78,7 @@ describe("the reissued folders migration heals every population it names", () =>
     const url = probeUrl();
 
     // ── 1. Fresh replay: complete bookkeeping, both rows present. ──
-    await runMigrations(url);
+    await migrateToOldHeads(url);
     const db = postgres(url, { max: 1, prepare: false });
     try {
       const rowsAt = async (when: number): Promise<number> =>
@@ -98,7 +100,7 @@ describe("the reissued folders migration heals every population it names", () =>
                   or created_at > ${REISSUE_WHEN}`;
       await db`alter table account_settings drop column if exists folders_enabled_at`;
 
-      await runMigrations(url);
+      await migrateToOldHeads(url);
       const col = await db`select column_name from information_schema.columns
                            where table_name = 'account_settings' and column_name = 'folders_enabled_at'`;
       expect(col.length, "0069 healed the column").toBe(1);
@@ -111,11 +113,11 @@ describe("the reissued folders migration heals every population it names", () =>
       // uniqueness means no `when` is missing, which is exactly what `journalStatuses` checks.
       const total = Number((await db`select count(*)::int as n from drizzle_mail.__drizzle_migrations`)[0]!.n);
       const entries = (JSON.parse(readFileSync(join(MAIL_DIR, "meta", "_journal.json"), "utf8")) as
-        { entries: unknown[] }).entries.length;
+        { entries: Array<{ when: number }> }).entries.filter((e) => e.when <= OLD_HEADS.mail.when).length;
       expect(total, "rows match journal entries — nothing missing, nothing extra").toBe(entries);
 
       // ── 3. Idempotence: a third run records nothing new. ──
-      await runMigrations(url);
+      await migrateToOldHeads(url);
       expect(Number((await db`select count(*)::int as n from drizzle_mail.__drizzle_migrations`)[0]!.n))
         .toBe(total);
 
@@ -125,7 +127,7 @@ describe("the reissued folders migration heals every population it names", () =>
       const PRIOR = "ac41c89e9a966ad47bba888d5e867cd8950650ed842f61b4d6852cae487bd111";
       await db`update drizzle_mail.__drizzle_migrations set hash = ${PRIOR}
                where created_at = ${REISSUE_WHEN}`;
-      await runMigrations(url);
+      await migrateToOldHeads(url);
       const canonical = createHash("sha256")
         .update(readFileSync(join(MAIL_DIR, "0069_folders_enabled_reissue.sql"))).digest("hex");
       const stored = (await db`select hash from drizzle_mail.__drizzle_migrations

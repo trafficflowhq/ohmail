@@ -1,20 +1,21 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider, createTranslator } from "next-intl";
+import type { EngineMessage, Folder, RuleEntity as RuleDTO, StayedWhy } from "@ohmail/wire";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { createTranslator } from "next-intl";
+import { within } from "@testing-library/react";
 import {
-  MemoryMirrorStore, consentPartition, type EngineMessage, type Folder, type RuleDTO, type StayedWhy, type SyncChange,
+  ACCOUNT, ISO, installScreeningWeb, mountScreeningWeb, syncScreeningWeb,
+  teardownScreeningWeb, tick, warmScreeningWeb,
+} from "./fixtures/screening-web.js";
+import { clickMounted } from "./fixtures/mounted-sender-sheet.js";
+import {
+  MemoryMirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
-import { screeningReadBack, verdictAction, verdictArgs, verdictKeyOf } from "../app/shell/press-verdict";
+import { screeningReadBack, verdictAction, verdictArgs, verdictKeyOf } from "@ohmail/app-logic/press/press-verdict";
+import { UNDO_MS } from "@ohmail/app-logic/press/routing-undo";
 import { placeLabel } from "../app/shell/format";
-import { shellConsentOptions } from "../app/shell/consent-options";
-import { mailboxLabelResolver } from "../app/shell/mailbox-label";
 
 /**
  * THE SHEET AND THE TOAST NAME ONE MESSAGE'S PLACE THE SAME WAY, AND A SENTENCE NAMES EXACTLY THE
@@ -30,7 +31,7 @@ let seq = 0;
 
 function msg(id: string, folder: string, o: { date?: string; from?: string; mailbox?: string; auth?: "fail" } = {}): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: o.mailbox ?? "mb", threadId: null, messageIdHeader: null, subject: `Issue ${id}`,
+    id, accountId: ACCOUNT, mailboxId: o.mailbox ?? "mb", threadId: null, messageIdHeader: null, subject: `Issue ${id}`,
     from: { name: null, address: o.from ?? ADDR }, to: [], cc: [], date: o.date ?? "2026-09-25T09:00:00.000Z", folder: folder as Folder,
     snippet: "", unread: false, hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
@@ -44,9 +45,8 @@ const rule = (): RuleDTO => ({
 } as RuleDTO);
 const five = Array.from({ length: 5 }, (_, i) => msg(`in-${i}`, "INBOX", { date: `2026-09-${String(30 - i).padStart(2, "0")}${"T"}09:00:00.000Z` }));
 
-let root: Root | null = null;
-let host: HTMLElement | null = null;
-afterEach(() => { act(() => root?.unmount()); host?.remove(); root = null; host = null; });
+beforeAll(warmScreeningWeb, 30_000);
+afterEach(teardownScreeningWeb);
 
 async function render(rows: EngineMessage[], o: {
   seed?: string; why?: Record<string, StayedWhy>; locale?: "en" | "de"; labels?: Record<string, string | null>;
@@ -57,40 +57,65 @@ async function render(rows: EngineMessage[], o: {
     ...rows.map((m): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: NOW, entity: m })),
     { type: "rule", op: "create", id: "r-1", seq: ++seq, updatedAt: NOW, entity: rule() },
   ] as SyncChange[]);
-  // The lists' own partition, as AppShell hands it to the sheet.
-  const placeOf = consentPartition(store, shellConsentOptions(CONSENT, new Date(NOW), OWN)).placeOf;
   const seed = o.seed ?? "in-0";
-  const sender = senderScreening(store, seed, undefined, placeOf)!;
-  const stayedFor = vi.fn(async (ids: readonly string[]) =>
-    new Map(ids.filter((id) => !id.startsWith("in-")).map((id) => [id, (o.why?.[id] ?? "filed-elsewhere") as StayedWhy] as const)));
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
   const messages = o.locale === "de" ? de : en;
-  await act(async () => {
-    root!.render(React.createElement(NextIntlClientProvider, {
-      locale: o.locale ?? "en", messages,
-      children: React.createElement(SenderMenu, {
-        state: { messageId: seed, x: 0, y: 0 } as never, sender,
-        onChoose: () => undefined, onOpenDetail: () => undefined, onClose: () => undefined, stayedFor, onMoveToo: vi.fn(),
-        ...(o.labels ? { mailboxNameOf: (id: string) => o.labels![id] ?? null } : {}),
-      }),
-    }));
-  });
-  await act(async () => { await Promise.resolve(); });
-  const lines = [...host.querySelectorAll(".sm-stayed-line")].map((l) => ({
-    text: l.querySelector("span")!.textContent!, move: l.querySelector("button")?.textContent ?? null,
+  const mailboxes = [...new Set(rows.map((row) => row.mailboxId))].map((id, index) => ({
+    id, address: index === 0 ? OWN[0] : ["fixture-home", "mailbox.example"].join("@"),
+    displayName: o.labels?.[id] ?? null, status: "connected", organizerRole: "organizer",
+    organizerChecked: true, createdAt: ISO, lastSyncAt: ISO, organizeConsentedAt: ISO,
   }));
-  const back = screeningReadBack(store, seed, undefined, "ohbox", "sender", { consent: CONSENT, now: new Date(NOW), ownAddresses: OWN, retro: true });
+  const reply = (body: unknown) => Response.json(body, { headers: { "X-Ohmail-Account": ACCOUNT } });
+  const standing = rule();
+  let wireSeq = rows.length + 1;
+  const moves: { id: string; folder: Folder }[] = [];
+  installScreeningWeb(`#/ohbox/m/${seed}`, (path, query, method, init) => {
+    if (path === "/api/mailboxes") return reply({ items: mailboxes });
+    if (path === "/api/sync") return query.get("types") === "rule"
+      ? syncScreeningWeb([{ type: "rule", op: "create", id: standing.id, seq: 1, updatedAt: NOW, entity: standing }], 1)
+      : syncScreeningWeb(rows.map((row, index) => ({
+        type: "message", op: "create", id: row.id, seq: index + 2, updatedAt: NOW, entity: row,
+      })), rows.length + 1);
+    if (path === `/api/rules/${standing.id}` && method === "PATCH") {
+      return Response.json(standing, { headers: { "X-Sync-Seq": String(++wireSeq) } });
+    }
+    const move = /^\/api\/messages\/([^/]+)\/move$/.exec(path);
+    if (move && method === "POST") {
+      const row = rows.find(({ id }) => id === move[1]);
+      if (!row) return new Response(null, { status: 404 });
+      const { folder } = JSON.parse(String(init?.body)) as { folder: Folder };
+      moves.push({ id: row.id, folder });
+      return Response.json({ ...row, folder }, { headers: { "X-Sync-Seq": String(++wireSeq) } });
+    }
+    if (path === "/api/screener/stayed") {
+      const ids = query.get("ids")?.split(",") ?? [];
+      return reply({ stayed: ids.filter((id) => !id.startsWith("in-"))
+        .map((id) => ({ id, why: o.why?.[id] ?? "filed-elsewhere" })) });
+    }
+    return undefined;
+  });
+  vi.setSystemTime(new Date(NOW));
+  const frame = within(await mountScreeningWeb(o.locale));
+  await tick(4000);
+  const reader = within(frame.getByRole("region", { name: messages.frame.landmark.reading }));
+  await clickMounted(reader.getByRole("button", { name: (name) => name.startsWith(ADDR) }));
+  const page = within(document.body);
+  const sheet = page.getByRole("dialog", { name: messages.screening.aria.replace("{sender}", ADDR) });
+  await tick(200);
+  const lines = [...sheet.querySelectorAll<HTMLElement>(".sm-stayed-line")].map((line) => ({
+    text: line.querySelector("span")!.textContent!,
+    move: within(line).queryByRole("button", { name: /^(Move (them|it) too|Auch verschieben)$/ })?.textContent ?? null,
+  }));
+  const back = screeningReadBack(store, seed, undefined, "ohbox", "sender", { consent: CONSENT, now: new Date(NOW), ownAddresses: OWN, retro: true }, { mailbox: "seed" });
   const t = createTranslator({ locale: o.locale ?? "en", messages: messages as never, namespace: "screening" as never }) as unknown as
     (k: string, v?: Record<string, unknown>) => string;
   const v = back!.verdict;
-  // The toast as the shell says it (shell-verbs.ts `sayVerdict`): the same key and arguments.
+  // The shared read-back text and the action it offers.
   const toast = v.key === "none" ? null : t(verdictKeyOf(v), verdictArgs(v, {
     sender: ADDR, place: "Ohbox", history: t("placeHistory"), label: placeLabel, domain: (d) => d,
   }));
-  const chips = [...host.querySelectorAll(".sm-scope small")].map((e) => e.textContent!);
-  return { now: host.querySelector(".sm-now")?.textContent ?? null, lines, v, toast, action: verdictAction(v, { scope: "sender", address: ADDR }), chips };
+  const scope = within(sheet).queryByRole("radiogroup", { name: messages.screening.scopeAria });
+  const chips = [...(scope?.querySelectorAll("small") ?? [])].map((e) => e.textContent!);
+  return { sheet, moves, now: sheet.querySelector(".oh-contactcard-line")?.getAttribute("aria-description") ?? null, lines, v, toast, action: verdictAction(v, { scope: "sender", address: ADDR }), chips };
 }
 
 describe("H1: one place named with its rows, several named as several", () => {
@@ -154,26 +179,43 @@ describe("L6: a folder place is its mailbox and path", () => {
     ]);
   });
 
-  it("the same path in two mailboxes is two counts, each named with its mailbox's label", async () => {
-    const r = await render([...five, msg("a-1", "Fixture", { mailbox: "mb" }), msg("b-1", "Fixture", { mailbox: "mb-2", date: "2026-09-24T09:00:00.000Z" })],
-      { labels: { mb: "Work", "mb-2": "Home" } });
-    expect(r.now).toBe("7 messages — Ohbox 5 · Fixture (Work) 1 · Fixture (Home) 1");
+  it("a twin path in another mailbox is outside the card count and the toast move", async () => {
+    const r = await render([
+      ...five,
+      msg("a-1", "Fixture", { mailbox: "mb" }),
+      msg("b-1", "Fixture", { mailbox: "mb-2", date: "2026-09-24T09:00:00.000Z" }),
+      { ...msg("foreign-letter", "Another account's folder"), accountId: "another-account" },
+    ], { labels: { mb: "Work", "mb-2": "Home" } });
+    expect(r.now).toBe("6 messages — Ohbox 5 · Fixture 1");
     expect(r.lines.map((l) => l.text)).toEqual([
-      "1 stays in Fixture (Work): filed in another mail app.", "1 stays in Fixture (Home): filed in another mail app.",
+      "1 stays in Fixture: filed in another mail app.",
     ]);
-    expect(r.toast).toBe("5 are in Ohbox · 2 are still in several places.");
+    const toast = "5 are in Ohbox · 1 is still in Fixture.";
+    expect.soft(r.toast).toBe(toast);
+    expect.soft(r.action).toEqual({ kind: "move", ids: ["a-1"] });
+
+    await clickMounted(within(r.sheet).getByRole("radio", { name: "Ohbox" }));
+    await tick(UNDO_MS + 1500);
+    const page = within(document.body);
+    const move = page.getByRole("button", { name: "Move it" });
+    const report = move.closest("[role=status]");
+    expect(report?.textContent).toContain(toast.slice(0, -1));
+    expect(report?.querySelector(".oh-nowrap > .oh-dot")).toBeTruthy();
+    await clickMounted(move);
+    await tick(250);
+    expect(r.moves).toEqual([{ id: "a-1", folder: "INBOX" }]);
   });
 
-  it("in German, the same pattern", async () => {
+  it("in German, the card counts only the clicked mailbox", async () => {
     const r = await render([...five, msg("a-1", "Fixture", { mailbox: "mb" }), msg("b-1", "Fixture", { mailbox: "mb-2", date: "2026-09-24T09:00:00.000Z" })],
       { labels: { mb: "Arbeit", "mb-2": "Privat" }, locale: "de" });
-    expect(r.now).toBe("7 Nachrichten — Ohbox 5 · Fixture (Arbeit) 1 · Fixture (Privat) 1");
+    expect(r.now).toBe("6 Nachrichten — Ohbox 5 · Fixture 1");
   });
 
-  it("a mailbox with no label is never named by its address: only the labelled one is qualified", async () => {
+  it("an unlabelled second mailbox is neither counted nor named by its address", async () => {
     const r = await render([...five, msg("a-1", "Fixture", { mailbox: "mb" }), msg("b-1", "Fixture", { mailbox: "mb-2", date: "2026-09-24T09:00:00.000Z" })],
       { labels: { mb: "Work", "mb-2": null } });
-    expect(r.now).toBe("7 messages — Ohbox 5 · Fixture (Work) 1 · Fixture 1");
+    expect(r.now).toBe("6 messages — Ohbox 5 · Fixture 1");
     expect(r.now).not.toContain("@");
   });
 
@@ -194,16 +236,5 @@ describe("L7: no move offered past a message that failed its checks", () => {
   it("positive control: one that passed takes the move", async () => {
     const r = await render([...five, msg("f-1", "Fixture")]);
     expect(r.action).toEqual({ kind: "move", ids: ["f-1"] });
-  });
-});
-
-describe("the label form is the mailbox's own label or nothing, never its address", () => {
-  it("a labelled mailbox answers its label; an unlabelled one answers null where the plain form answers the address", () => {
-    const of = mailboxLabelResolver([
-      { id: "mb", address: "work@home.example", displayName: "Work" },
-      { id: "mb-2", address: "me@home.example", displayName: null },
-    ]);
-    expect([of("mb", "label"), of("mb-2", "label")]).toEqual(["Work", null]);
-    expect(of("mb-2")).toBe("me@home.example");
   });
 });

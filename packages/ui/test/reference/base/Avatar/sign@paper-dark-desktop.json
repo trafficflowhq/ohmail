@@ -1,0 +1,40 @@
+{
+  "component": "Avatar",
+  "state": "sign",
+  "look": "paper-dark-desktop",
+  "place": "cell",
+  "target": [24, 24, 80, 36],
+  "clip": [24, 24, 80, 36],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    { "backgroundColor": "rgb(52, 48, 43)", "borderRadius": "999px" },
+    { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 1 c41ff74d4b66" },
+    { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 2 340697009586" }
+  ],
+  "nodes": [],
+  "loose": {
+    "text": [],
+    "surfaces": [
+      { "box": [0, 0, 36, 36], "paint": 0 },
+      { "box": [8, 8, 20, 20], "paint": 1 },
+      { "box": [44, 0, 36, 36], "paint": 0 },
+      { "box": [52, 8, 20, 20], "paint": 2 }
+    ]
+  }
+}

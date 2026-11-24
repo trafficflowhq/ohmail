@@ -20,7 +20,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 const NOW = new Date("2026-10-19T12:00:00.000Z");
 const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
-const { FACTS_POLL_MS } = await import("../app/shell/MailStateProvider.js");
+const { FACTS_POLL_MS } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
 
 const row = () => ({
   id: "mb_1", address: "rig@example.invalid", status: "connected", errorCode: null, disabledReason: null,
@@ -54,7 +54,8 @@ describe("factsReadAt", () => {
     const facts: unknown[] = [];
 
     const { EngineProvider } = await import("../app/shell/engine.js");
-    const { MailStateProvider, useMailState } = await import("../app/shell/MailStateProvider.js");
+    const { MailStateProvider } = await import("@ohmail/app/mail-state");
+    const { useMailState } = await import("@ohmail/app-logic/mail-state/mail-state-binding");
     function Watch(): React.ReactElement {
       const b = useMailState();
       readAt = b.factsReadAt;
@@ -69,7 +70,7 @@ describe("factsReadAt", () => {
         locale: "en", messages: messages as never, timeZone: "UTC", now: NOW,
         children: h(EngineProvider as never, {
           demo: false, engine,
-          children: h(MailStateProvider as never, { probe, mirrored: 0, children: h(Watch) } as never),
+          children: h(MailStateProvider as never, { scope: null, probe, mirrored: 0, children: h(Watch) } as never),
         } as never),
       } as never));
     });

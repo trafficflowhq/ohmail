@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { authThrottle } from "@trafficflow/db/cloud";
+import { accounts, accountSettings, bindDb, users } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { makeAuthService, makeTestAuthDeps, throttleKeysFor, type ServiceContext } from "@trafficflow/services";
+import {
+  makeAuthService, makeTestAuthDeps, throttleKeysFor, MailService, SpyMailer, type ServiceContext,
+} from "@trafficflow/services";
 
 /**
  * THE THROTTLE, ON REAL POSTGRES — because PGlite hid a server error in production.
@@ -39,11 +39,12 @@ import { makeAuthService, makeTestAuthDeps, throttleKeysFor, type ServiceContext
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let pool: OwnedDb;
+let db: OwnedDb["db"];
 
+// The sign-in doors run before any session: their handle is bound to nothing.
 const ctx = (): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(),
+  db: bindDb(db, { account: null }), accountId: "", userId: null, now: () => new Date(),
   requestId: "throttle-pg", ip: `10.0.0.${Math.floor(Math.random() * 250) + 1}`,
 });
 
@@ -51,11 +52,13 @@ describe.skipIf(!PG_UP)("auth throttle against the postgres-js driver", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     // postgres-js DELIBERATELY, not the shared `makePooledDb`: the bug this file exists for
-    // is a postgres-js parameter-serialization fault, so the driver is the subject.
-    client = postgres(PG_TEST_URL, { max: 5 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    // is a postgres-js parameter-serialization fault, so the driver is the subject. The factory's
+    // own session pool of five: the binder takes a server handle only from the factory that
+    // registered its door.
+    pool = makeOwnedDb(PG_TEST_URL);
+    db = pool.db;
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await pool?.close(); });
 
   it("POST /auth/register's throttle write succeeds (it used to be ERR_INVALID_ARG_TYPE)", async () => {
     const svc = makeAuthService(makeTestAuthDeps({ inviteCodes: new Set(["INVITE-OK"]) }));
@@ -100,5 +103,51 @@ describe.skipIf(!PG_UP)("auth throttle against the postgres-js driver", () => {
     const row = (await db.select().from(authThrottle).where(eq(authThrottle.key, `pw:${k.address(email)}:${k.client("10.9.9.9")}`)))[0]!;
     expect(row.lockedUntil).toBeInstanceOf(Date);
     expect(row.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+  });
+});
+
+/**
+ * THE SECURITY NOTICE IN THE ACCOUNT'S LANGUAGE, read the way the cron door reads it: through the
+ * unbound handle (bound to nothing, as the clock's door hands it) on real Postgres. A settings row the drain could not read would
+ * quietly pick English for everybody, which only this file would show.
+ */
+describe.skipIf(!PG_UP)("the security notice drain reads each account's own language", () => {
+  const owned = PG_UP ? makeOwnedDb(PG_TEST_URL) : null;
+  afterAll(async () => { await owned?.close(); });
+
+  async function seed(locale: "de" | "en" | null): Promise<{ userId: string; email: string }> {
+    const raw = owned!.db;
+    const [a] = await raw.insert(accounts).values({ name: "notice-language" }).returning();
+    const email = `notice-${randomUUID().slice(0, 8)}@lichtgrat.example`;
+    const [u] = await raw.insert(users).values({ accountId: a!.id, email }).returning();
+    if (locale !== null) await raw.insert(accountSettings).values({ accountId: a!.id, locale });
+    const now = new Date();
+    await raw.insert(authThrottle).values({ key: `notice:factor:${u!.id}`, failures: 1, windowStartedAt: now, updatedAt: now });
+    return { userId: u!.id, email };
+  }
+
+  it("German to the German account, English where none is set, and never one account's language for another", async () => {
+    const de = await seed("de");
+    const unset = await seed(null);
+    const en = await seed("en");
+    const spy = new SpyMailer();
+    const mail = new MailService({
+      mailer: spy, config: { appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app", supportEmail: "support@ohmail.app" },
+      throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
+    });
+    const svc = makeAuthService(makeTestAuthDeps({}, mail));
+    const at = new Date("2026-03-09T23:04:00.000Z");
+    await svc.drainSecurityNotices({ db: bindDb(owned!.db, { account: null }), accountId: "", userId: null, now: () => at, requestId: "notice-language" }, 500);
+    const sentTo = (email: string) => spy.sent.filter((s) => s.to === email && s.template === "security_notice");
+    for (const who of [de, unset, en]) expect(sentTo(who.email), who.email).toHaveLength(1);
+    const [deMail] = sentTo(de.email);
+    expect(deMail!.data).toMatchObject({ locale: "de", at: "9. März 2026, 23:04 UTC" });
+    expect(deMail!.rendered.subject).toBe("Dein ohmail-Passwort wurde benutzt, und der zweite Schritt schlug fehl");
+    expect(deMail!.rendered.html).toContain('<html lang="de" ');
+    for (const who of [unset, en]) {
+      const [m] = sentTo(who.email);
+      expect(m!.data, who.email).toMatchObject({ locale: "en", at: "9 March 2026, 23:04 UTC" });
+      expect(m!.rendered.subject, who.email).toBe("Your ohmail password was used and the second step failed");
+    }
   });
 });

@@ -1,3 +1,4 @@
+import type { EngineMessage } from "@ohmail/wire";
 import {
   compareRanked,
   compoundForms,
@@ -11,7 +12,7 @@ import {
   type SearchTier,
 } from "@trafficflow/core/search-rank";
 import type { EntityReader } from "./store.js";
-import { folderLeaf, VIEW_OF_FOLDER, type EngineMessage } from "./types.js";
+import { folderLeaf, VIEW_OF_FOLDER } from "./types.js";
 
 /**
  * Instant local search over the mirror: field-weighted lexical tokens over
@@ -756,14 +757,26 @@ export class SearchIndex {
    * every query token, on every keystroke. On a large mirror that is the dominant cost of a search, and under this
    * rule the common case — a query with an answer — never pays it.
    */
-  search(query: string, opts: { limit?: number } = {}): LocalSearchResult {
+  search(query: string, opts: { limit?: number; accept?: (message: EngineMessage) => boolean; compare?: (a: EngineMessage, b: EngineMessage) => number } = {}): LocalSearchResult {
     // AN EXCLUDED WORD ONLY LEAVES LETTERS OUT, as in the stores: the words asked are searched, and
     // a letter holding an excluded word is left out of both tiers. Excluded words alone paint nothing.
     const asked = positiveText(query);
-    const leftOut = this.holding(excludedOperands(query));
+    const excluded = this.holding(excludedOperands(query));
+    const { accept, compare } = opts;
+    const leftOut = accept ? (id: string) => {
+      const message = this.messages.get(id);
+      return excluded?.(id) === true || message === undefined || !accept(message);
+    } : excluded;
     const qTokens = tokenize(asked);
     const limit = opts.limit ?? 50;
-    if (qTokens.length === 0) return this.verbatim(asked, limit, leftOut);
+    const ordered = (items: LocalSearchResult["items"]) => compare
+      ? items.sort((a, b) => compare(a.message, b.message)).slice(0, limit)
+      : items;
+    const rankLimit = compare ? this.messages.size : limit;
+    if (qTokens.length === 0) {
+      const result = this.verbatim(asked, rankLimit, leftOut);
+      return compare ? { ...result, items: ordered(result.items) } : result;
+    }
     // A single-token query has no phrase to prefer — the token IS the phrase, and every hit
     // would earn the same bonus, which is not an ordering.
     const phrase = qTokens.length > 1 ? phraseField(asked) : null;
@@ -772,7 +785,7 @@ export class SearchIndex {
 
     const exact = without(this.intersect(qTokens, (q) => this.literalHits(q, stopword)), leftOut);
     if (!showSimilar(exact.size)) {
-      const items = this.rank(exact, phrase, limit);
+      const items = ordered(this.rank(exact, phrase, rankLimit));
       return { items, similar: [], tier: "exact", facets: facetsOf(items), coverage: this.coverage(), indexing: false };
     }
 
@@ -780,8 +793,8 @@ export class SearchIndex {
     // the floor can move without this quietly listing a message under both headings.
     const withFuzzy = without(this.intersect(qTokens, (q) => this.fuzzyHits(q, stopword)), leftOut);
     for (const id of exact.keys()) withFuzzy.delete(id);
-    const items = this.rank(exact, phrase, limit);
-    const similar = this.rank(withFuzzy, phrase, limit);
+    const items = ordered(this.rank(exact, phrase, rankLimit));
+    const similar = ordered(this.rank(withFuzzy, phrase, rankLimit));
     return {
       items,
       similar,

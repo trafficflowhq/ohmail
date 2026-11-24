@@ -1,3 +1,4 @@
+import type { WorkflowStep } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -7,8 +8,8 @@ import {
   workflows, workflowRuns, type Tx,
 } from "@trafficflow/db";
 import { WorkflowExecutor } from "@trafficflow/core";
-import type { DraftPort, WorkflowStep } from "@trafficflow/core";
-import { WorkflowsService } from "../src/index.js";
+import type { DraftPort } from "@trafficflow/core";
+import { WorkflowsService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { ServiceError } from "../src/errors.js";
 
@@ -19,7 +20,7 @@ const MOCK: DraftPort = { async draft() { return { subject: "Re:", body: "b", ra
 
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 async function statusOf(p: Promise<unknown>): Promise<number> {
   try { await p; return 0; } catch (e) { if (e instanceof ServiceError) return e.httpStatus; throw e; }

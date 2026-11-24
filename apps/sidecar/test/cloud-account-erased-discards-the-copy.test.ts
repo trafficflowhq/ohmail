@@ -1,3 +1,4 @@
+import type { MessageDTO, SyncChange, SyncResponse } from "@ohmail/wire";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { changeLog, messages } from "@trafficflow/db/mail";
-import type { MessageDTO, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import {
   createCloudSidecar, enforceMirrorOwner, readMirrorErased, readMirrorRevoked, MIRROR_OWNER_FILE, type CloudSidecar,
 } from "../src/cloud-engine.js";

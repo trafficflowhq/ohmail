@@ -497,6 +497,10 @@ const ALERT = new RegExp(
     `\\bunusual\\s+(sign[-\\s]?in|log[-\\s]?in|activity|access)\\b`,
     `\\b(security|account)\\s+alert\\b|\\bsuspicious\\s+(activity|sign[-\\s]?in|login)\\b`,
     `\\b(was\\s+this\\s+you|verify\\s+it'?s\\s+you|did\\s+you\\s+(just\\s+)?(sign|log)\\s?in)\\b`,
+    // Account security notices for failed sign-in, failed second factor and a completed password change.
+    `\\bfailed\\s+sign[-\\s]?in\\s+attempts\\s+on\\s+your\\b|\\bfehlgeschlagene\\s+anmeldeversuche\\s+bei\\s+deinem\\b`,
+    `\\bpassword\\s+was\\s+used,?\\s+and\\s+the\\s+second\\s+step\\s+failed\\b|\\bpasswort\\s+wurde\\s+benutzt,?\\s+und\\s+der\\s+zweite\\s+schritt\\s+schlug\\s+fehl\\b`,
+    `\\byour\\s+(?:ohmail\\s+)?password\\s+was\\s+changed\\b|\\bdein\\s+(?:ohmail-)?passwort\\s+wurde\\s+ge[äa]ndert\\b`,
     `\\b(neue[rs]?\\s+anmeldung|sicherheitswarnung|ungew[öo]hnliche\\s+aktivit[äa]t)\\b`,
     `\\b(nouvelle\\s+connexion|alerte\\s+de\\s+s[ée]curit[ée]|activit[ée]\\s+inhabituelle)\\b`,
     `\\b(nuovo\\s+accesso|avviso\\s+di\\s+sicurezza|attivit[àa]\\s+insolita)\\b`,

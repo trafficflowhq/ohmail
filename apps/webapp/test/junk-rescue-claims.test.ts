@@ -25,8 +25,8 @@ import { readFileSync } from "node:fs";
 
 const REPO = `${process.cwd().replace(/\/$/, "")}/`;
 const ROUTE = `${REPO}packages/api/src/junk-window.ts`;
-const CLIENT = `${REPO}apps/webapp/app/shell/junk-window.ts`;
-const VIEW = `${REPO}apps/webapp/app/views/ScreenerView.tsx`;
+const CLIENT = `${REPO}packages/app-logic/src/screener/junk-window.ts`;
+const LETTER = `${REPO}packages/app/src/screener/held/JunkLetter.tsx`;
 
 /**
  * The rescue's own body, bounded by the next top-level `export` after it — never the whole
@@ -51,12 +51,12 @@ function refusalCodes(): string[] {
 
 /**
  * Every rescue sentence the surface renders, read from its own `t("…")` literals — the HOOK,
- * which toasts what a press answered, and the VIEW, which renders what a standing row is
+ * which toasts what a press answered, and the held letter, which renders what a standing row is
  * waiting for. Both, because the refused state is a row's badge and never a toast: reading the
  * hook alone would report `junkRescueRefused` as a sentence nothing renders.
  */
 function renderedKeys(): string[] {
-  const src = [CLIENT, VIEW].map((f) => readFileSync(f, "utf8")).join("\n");
+  const src = [CLIENT, LETTER].map((f) => readFileSync(f, "utf8")).join("\n");
   return [...new Set(
     [...src.matchAll(/"(junkRescue[A-Za-z]*|junkRescued[A-Za-z]*)"/g)].map((m) => m[1]!),
   )].sort();

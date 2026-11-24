@@ -1,22 +1,15 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, OhmailEngine, type EngineAdapter, type EngineMessage, type SyncChange, type SyncResponse,
+  MemoryMirrorStore, OhmailEngine, type EngineAdapter, type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 import { liveMessage, type WorldView } from "../src/state/live";
-import { threadHeading } from "../src/ui/thread-heading";
-import { EN } from "../src/copy.en";
-import { DE } from "../src/copy.de";
+import { railItemsOf, readerGroups } from "../src/ui/reader-marks";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
-/**
- * THE PHONE READER'S HEADING OVER THE OTHER MEMBERS: the reader lists them below the
- * opened message, oldest first, and the heading named them all "Earlier" — over letters written
- * after the opened one when it was the first or a middle one. Through a real engine: a1, a2, a3;
- * opened at a1 they are Later, at a3 Earlier, at a2 the rest. Mutations: the `later` flag dropped
- * in `liveMessage`, the all-later branch dropped in `threadHeading` — each red here.
- */
+/** The phone draws every member in time order around the addressed message. */
 
 const AT = Date.UTC(2026, 8, 20, 8, 0, 0);
 const LENA = { name: "Lena", address: "lena@example.test" };
@@ -52,32 +45,40 @@ async function thread(): Promise<OhmailEngine> {
   return engine;
 }
 
-describe("the heading over the conversation's other members", () => {
-  it("opened at the first letter, every other one is Later, never Earlier", async () => {
+describe("the phone conversation order", () => {
+  it("the other letters follow the first letter", async () => {
     const m = liveMessage(await thread(), "a1", view)!;
     expect(m.earlier.map((h) => [h.id, h.later === true])).toEqual([["a2", true], ["a3", true]]);
-    expect(threadHeading(EN, m.earlier)).toBe("Later in this conversation — all 3 shown");
-    expect(threadHeading(DE, m.earlier)).toBe("Später in diesem Verlauf — alle 3 gezeigt");
+    const { above, below } = readerGroups(m);
+    expect(above.map((h) => h.id)).toEqual([]);
+    expect(below.map((h) => h.id)).toEqual(["a2", "a3"]);
   });
-  it("opened at the newest, every other one is Earlier (the heading as before)", async () => {
+  it("the other letters precede the newest letter", async () => {
     const m = liveMessage(await thread(), "a3", view)!;
     expect(m.earlier.map((h) => [h.id, h.later === true])).toEqual([["a1", false], ["a2", false]]);
-    expect(threadHeading(EN, m.earlier)).toBe("Earlier in this conversation — all 3 shown");
-    expect(threadHeading(DE, m.earlier)).toBe("Früher in diesem Verlauf — alle 3 gezeigt");
+    const { above, below } = readerGroups(m);
+    expect(above.map((h) => h.id)).toEqual(["a1", "a2"]);
+    expect(below.map((h) => h.id)).toEqual([]);
   });
-  it("opened in the middle, the others are the rest of the conversation", async () => {
+  it("the middle letter keeps its place among the other letters", async () => {
     const m = liveMessage(await thread(), "a2", view)!;
     expect(m.earlier.map((h) => [h.id, h.later === true])).toEqual([["a1", false], ["a3", true]]);
-    expect(threadHeading(EN, m.earlier)).toBe("The rest of this conversation — all 3 shown");
-    expect(threadHeading(DE, m.earlier)).toBe("Der Rest dieses Verlaufs — alle 3 gezeigt");
+    const { above, below } = readerGroups(m);
+    expect(above.map((h) => h.id)).toEqual(["a1"]);
+    expect(below.map((h) => h.id)).toEqual(["a3"]);
   });
   it("each member carries who wrote it, name and address", async () => {
     const m = liveMessage(await thread(), "a2", view)!;
     expect(m.earlier.map((h) => [h.id, h.sender, h.address])).toEqual([["a1", "Lena", LENA.address], ["a3", "Lena", LENA.address]]);
   });
-  it("the reader renders this heading, not the bare Earlier line", () => {
+  it("every letter has one square in time order from any addressed member", async () => {
     const src = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/MessageReader.tsx", import.meta.url)), "utf8"));
-    expect(src).toContain("{threadHeading(Copy, m.earlier)}");
+    expect(src).toContain("readerGroups(m)");
     expect(src).not.toContain("Copy.earlierInThread(");
+    const engine = await thread();
+    for (const id of ["a1", "a2", "a3"]) {
+      const mail = liveMessage(engine, id, view)!;
+      expect(railItemsOf(mail).map((item) => item.id)).toEqual(["a1", "a2", "a3"]);
+    }
   });
 });

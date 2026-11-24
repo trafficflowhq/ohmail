@@ -3,11 +3,9 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { accounts, mailboxes } from "@trafficflow/db";
 import { A, B, GOLDEN, MIN, NOW, at, ctxFor, goldenAnswer, id, outstandingDrift, seed, svc, type Db } from "./helpers/mailbox-facts-seed.js";
 import { loadRosterMailboxes, markMailboxSyncBlocked } from "../../../apps/worker/src/mailboxes.js";
@@ -22,20 +20,22 @@ const urlFor = (name: string): string => { const u = new URL(PG_TEST_URL); u.pat
 
 describe.skipIf(!PG_UP)("the mailbox facts on real Postgres", () => {
   let admin: ReturnType<typeof postgres>;
-  let client: ReturnType<typeof postgres> | undefined;
+  // The factory's handle: each context binds its account, and the binder takes a server handle only
+  // from the factory that registered its door.
+  let owned: OwnedDb | undefined;
   let db: Db;
 
   beforeAll(async () => {
     admin = postgres(PG_TEST_URL, { connection: { statement_timeout: 0, lock_timeout: 0 }, max: 1, onnotice: () => {} });
     await admin.unsafe(`create database "${NAME}"`);
     await runMigrations(urlFor(NAME));
-    client = postgres(urlFor(NAME), { max: 2, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg") as unknown as Db;
+    owned = makeOwnedDb(urlFor(NAME));
+    db = owned.db as unknown as Db;
     await seed(db);
   }, 180_000);
 
   afterAll(async () => {
-    await client?.end({ timeout: 5 }).catch(() => {});
+    await owned?.close().catch(() => {});
     await admin?.unsafe(`drop database if exists "${NAME}" with (force)`).catch(() => {});
     await admin?.end({ timeout: 5 }).catch(() => {});
   }, 60_000);

@@ -11,10 +11,10 @@ import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, ImapBoundExceeded } from "@trafficflow/core/adapters/imap";
 import { MessageService, SearchService, SyncService, buildSeedReview, type ServiceContext } from "@trafficflow/services";
 import { MemoryMirrorStore } from "@ohmail/client-engine";
-import { runSyncCycle } from "../src/sync.js";
-import { goneLetterTidyAccounts, goneLetterTidyPass } from "../src/gone-letter-tidy.js";
-import { FIXTURE_LEASE } from "./_door.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { goneLetterTidyAccounts, goneLetterTidyPass } from "@ohmail/organizer/gone-letter-tidy";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * A SENT MESSAGE DELETED IN ANOTHER MAIL APP LEAVES OHMAIL.
@@ -324,7 +324,7 @@ describe("letters emptied before deleted mail took its words keep none of them",
       deletedAt: o.deleted === false ? null : new Date(), nativeLocator: { folder: "INBOX", ref: `1:${key.length}` },
     }).returning();
     const id = m!.id;
-    await db.insert(messageBodies).values({ messageId: id, text: "", html: null, headers: WHOLE, withheldReason: o.withheld ?? "expunged" });
+    await db.insert(messageBodies).values({ messageId: id, accountId: at.accountId, text: "", html: null, headers: WHOLE, withheldReason: o.withheld ?? "expunged" });
     if (o.copy) {
       await db.insert(messageInstances).values({
         accountId: at.accountId, messageId: id, mailboxId: at.mailboxId, folder: "INBOX", uid: 7, uidvalidity: 1n, isPrimary: true,
@@ -332,7 +332,7 @@ describe("letters emptied before deleted mail took its words keep none of them",
     }
     if (o.state) {
       await db.insert(folderState).values({
-        messageId: id, desiredFolder: o.state.desired, observedFolder: "INBOX", lastSetBy: "us",
+        messageId: id, accountId: at.accountId, desiredFolder: o.state.desired, observedFolder: "INBOX", lastSetBy: "us",
         reconcileStatus: o.state.pending ? "pending" : "reconciled",
       });
     }

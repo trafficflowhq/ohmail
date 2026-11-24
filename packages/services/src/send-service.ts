@@ -1,14 +1,15 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
-  attachments, CERT_CODES, contacts, drafts, isSafeMailboxErrorDetail, mailboxes, messageBodies, messages, outboundSends,
-  outboundSendFingerprints, outboundSentCopies, readAccountErasedAt, recordChange, SERVER_UNAVAILABLE_RESPONSE_CODES,
-  threads, type LedgerTx, type Tx, upgradeContactsToPerson,
+  accountSyncState, attachments, CERT_CODES, contacts, drafts, isSafeMailboxErrorDetail, mailboxes, messageBodies, messages, outboundSends,
+  outboundSendFingerprints, outboundSentCopies, readAccountErasedAt, reclaimSpace, recordChange,
+  SERVER_UNAVAILABLE_RESPONSE_CODES, threads, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
   createLogger, cutFileParts, HTML_TRUNCATION_MARKER, htmlWords, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime,
   prepareHtmlForStorage, recordSentMessage, SendNotSubmitted, SentCopyAppendFailed, spliceFileParts, type SentCopyFilePart,
-  type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundAddress, type OutboundMessage,
+  type AppendedSent, type Logger, type NativeLocator, type OutboundAddress, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -25,10 +26,12 @@ import {
   readerFor, repairedPart, REPAIRS_PER_REQUEST, type FetchedBytes, type OpenAdapter, type RepairBudget,
 } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
+import { answerEnvelopeRefusal, isInvitationAnswerDraft, threadHeadersFit, type AnswerCalendar } from "./invitation-answer-draft.js";
 import { requireUuid } from "./ids.js";
-import { htmlToPlainText, sanitizeOutboundHtml, sanitizeQuotedHtml } from "./outbound-html.js";
+import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
+import { htmlToPlainText, prepareOutboundDelivery, sanitizeQuotedHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
-import { carryDialect, dialect, dialectOf } from "@trafficflow/db/dialect";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -496,6 +499,12 @@ export interface SendInput {
    * answers its replays. Never with staged files or forward fields: the held row names its original.
    */
   again?: boolean;
+  /**
+   * AN INVITATION'S ANSWER: the calendar part its letter carries, written from the invitation's row,
+   * and the envelope it was written for. Set by the answer's service alone, for its own draft
+   * (`invitation-answer-draft.ts`); never stored, and never on any other letter.
+   */
+  calendar?: AnswerCalendar;
 }
 
 /** How many original parts a forward may re-attach, and their combined byte ceiling. */
@@ -953,6 +962,11 @@ export function sendContentFingerprint(input: {
   attachments: ReadonlyArray<{
     filename: string; contentType: string; sizeBytes: number; contentSha256: string | null;
   }>;
+  /**
+   * The calendar part's SHA-256, when the letter carries one (an invitation's answer): two answers
+   * to one invitation differ in it alone. Absent keeps every older digest.
+   */
+  calendar?: string | null;
 }): string {
   const addrs = (xs: readonly EmailAddress[]): string[] =>
     [...new Set(xs.map((a) => a.address.trim().toLowerCase()))].sort();
@@ -970,6 +984,7 @@ export function sendContentFingerprint(input: {
     input.sendAt ? input.sendAt.toISOString() : null,
     files,
     ...(input.forwardParts ? [[...new Set(input.forwardParts)].sort()] : []),
+    ...(input.calendar ? [{ calendar: input.calendar }] : []),
   ]);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
@@ -1001,6 +1016,7 @@ function contentFingerprintOf(
     ...(forwardParts ? { forwardParts } : {}),
     sendAt: d.sendAt ?? null,
     attachments: files,
+    ...(input.calendar ? { calendar: createHash("sha256").update(input.calendar.text, "utf8").digest("hex") } : {}),
   });
 }
 
@@ -1064,6 +1080,8 @@ export interface SendResult {
   providerMessageId: string | null;
   draftId: string;
   seq: number | null;
+  /** At this committed account sequence the reservation's draft was still sent. A replay emits no change of its own. */
+  sentDraftThrough?: number;
   /**
    * WHOSE SEND THIS ANSWER IS ABOUT, when it is not this request's — see {@link FirstSendFacts}.
    * Present only where a reservation this key already held answered, which is exactly the state
@@ -2474,14 +2492,12 @@ export class SendService {
   }
 
   /**
-   * Hand the deleted bytes' space back. The desktop's store (PGlite) runs no autovacuum, so without
-   * this every sent attachment stays in its files; SQLite reuses freed pages and needs nothing. Only
-   * a host that keeps owed copies (the local engine) ever deletes one. Outside any transaction.
+   * Hand the deleted bytes' space back (`reclaimSpace`: the desktop's store only; a server is sent
+   * nothing). Only a host that keeps owed copies (the local engine) ever deletes one. Outside any
+   * transaction.
    */
   private async reclaimOwedSpace(ctx: ServiceContext): Promise<void> {
-    if (dialectOf(ctx.db) !== "pg") return;
-    await dialect(ctx.db).exec(ctx.db, sql`VACUUM outbound_sent_copies`)
-      .catch(() => { /* the store's open reclaims it */ });
+    await reclaimSpace(ctx.db, "outbound_sent_copies");
   }
 
   /**
@@ -2877,6 +2893,7 @@ export class SendService {
         accountId: ctx.accountId,
         mailboxId,
         storageCap,
+        log: deps.log ?? defaultLog,
         // The read phase runs on the request's own handle, outside a transaction — the same shape
         // the worker's plan phase has.
         repo: makeDrizzleRepo(ctx.db as never) as RepoPort,
@@ -2954,6 +2971,14 @@ export class SendService {
     return held ?? null;
   }
 
+  /** Read both facts in one snapshot. A newer sending attempt must never inherit an older key's delivery. */
+  private async sentDraftThrough(ctx: ServiceContext, draftId: string): Promise<number | undefined> {
+    const [row] = await asTx(ctx).select({ through: accountSyncState.nextSeq }).from(drafts)
+      .innerJoin(accountSyncState, eq(accountSyncState.accountId, drafts.accountId))
+      .where(and(eq(drafts.accountId, ctx.accountId), eq(drafts.id, draftId), eq(drafts.status, "sent")));
+    return row ? Number(row.through) : undefined;
+  }
+
   /** A press about a draft already sent is answered from its delivery, as a settled key's replay is. */
   private async answerSentDraft(ctx: ServiceContext, draftId: string): Promise<SendResult> {
     const [s] = await asTx(ctx).select({
@@ -2966,6 +2991,7 @@ export class SendService {
       .limit(1);
     return {
       status: "sent", providerMessageId: s?.providerMessageId ?? null, draftId, seq: null,
+      sentDraftThrough: await this.sentDraftThrough(ctx, draftId),
       firstSend: firstSendFacts("sent", s?.sentAt ?? s?.createdAt ?? ctx.now()),
     };
   }
@@ -3175,6 +3201,9 @@ export class SendService {
         );
       }
       const forwardOf = input.forwardOf ?? d.forwardOfMessageId ?? null;
+      // AN INVITATION'S ANSWER leaves only with its calendar part, and only as it was made.
+      const answerRefusal = answerEnvelopeRefusal(d, mb?.address, input.calendar);
+      if (answerRefusal !== null) throw answerRefusal;
 
       // THE RECIPIENT CAP, with the other NEW-RESERVATION preconditions. The three lists are on
       // the row this transaction already locked, so the total costs nothing — and this is the
@@ -3249,17 +3278,11 @@ export class SendService {
         }
       }
 
-      /**
-       * THE LAST GATE BEFORE THE BYTES LEAVE THE BUILDING. `DraftsService` already sanitized this
-       * html, so this pass is normally a no-op — `sanitizeOutboundHtml` is idempotent, asserted
-       * rather than assumed. It is here because "DraftsService is the only writer" is a claim
-       * about today: the AI workflow code already inserts into `drafts` directly, and the next
-       * writer will not remember to ask; sanitizing where the envelope is assembled closes every
-       * writer at once. Promoted markup is a FIXED POINT of this pass, asserted. `text` stays
-       * `d.body` untouched: for a rich draft, `body` IS the alternative derived from this html at
-       * write time — deriving it again could differ from the stored one.
-       */
-      const html = d.html ? sanitizeOutboundHtml(d.html) : null;
+      // Re-sanitize at the envelope boundary for every draft writer. Add recipient-client styles here,
+      // after the grammar check, so draft storage and editing still use the same unstyled markup.
+      const delivery = d.html ? prepareOutboundDelivery(d.html, d.body) : null;
+      const html = delivery?.html ?? null;
+      const text = delivery?.text ?? d.body;
 
       // ── FORWARD: THE ORIGINAL IS QUOTED SERVER-SIDE, AND A no_forward ONE IS REFUSED ────────
       //
@@ -3345,12 +3368,15 @@ export class SendService {
             .orderBy(asc(attachments.id)).limit(FORWARD_MAX_PARTS);
           if (sentRows.length !== want.length) throw forwardPartsChanged();
         }
-        const words: ForwardWords = loadable
+        // An edited quote is stored with the draft body. The original was still checked above,
+        // and every inherited file follows the ordinary streaming path.
+        const editedHistory = hasEditedQuotedHistory(d.html);
+        const words: ForwardWords = loadable || editedHistory
           ? { kind: "stored" }
-          : { kind: "mailbox", banner, clock, note: d.body, noteHtml: html, blankNote };
-        if (loadable) {
+          : { kind: "mailbox", banner, clock, note: text, noteHtml: html, blankNote };
+        if (loadable && !editedHistory) {
           fwdBody = composeForward(
-            { text: d.body, html, blank: blankNote }, banner, body!.text ?? "", body!.html ?? null, clock, inlineCids(sentRows),
+            { text, html, blank: blankNote }, banner, body!.text ?? "", body!.html ?? null, clock, inlineCids(sentRows),
           );
         }
         forward = {
@@ -3390,9 +3416,9 @@ export class SendService {
         // (`composeForward`); otherwise the note alone — a normal send, or a forward whose words
         // are read from the mailbox at send and composed there by the same function. The html
         // half exists when the draft is rich or a forwarded original has html of its own.
-        ...(fwdBody ?? { text: d.body, ...(html ? { html } : {}) }),
+        ...(fwdBody ?? { text, ...(html ? { html } : {}) }),
         messageId: mintedMessageId,
-        ...(inReplyTo ? { inReplyTo, references } : {}),
+        ...(inReplyTo && threadHeadersFit(input.calendar, inReplyTo, references) ? { inReplyTo, references } : {}),
         // ── ATTACHMENTS RIDE THE REQUEST, NOT THE ROW ──────────────────────────────────────
         //
         // The bytes are the send request's, decoded by the route. They go onto the `OutboundMessage`
@@ -3400,6 +3426,7 @@ export class SendService {
         // one object, so both copies carry the files and neither this transaction nor any other
         // writes a byte of them to disk. Empty ⇒ omitted, so a plain send is unchanged.
         ...(input.attachments && input.attachments.length ? { attachments: input.attachments } : {}),
+        ...(input.calendar ? { calendar: { method: input.calendar.method, text: input.calendar.text } } : {}),
       };
 
       // THE ACCOUNT'S CLAIM ON THIS CONTENT — LAST, IMMEDIATELY BEFORE THE FLIP; the duplicate
@@ -3777,10 +3804,11 @@ export class SendService {
        * own stamp is the fallback, on the same reasoning the duplicate refusal states at length.
        */
       // A Send again whose own submission may have delivered it: this key sent it, not an earlier one.
+      const deliveredId = draftOfTerminalAttempt(row);
       const ownAgain = row.retryRefusal === EARLIER_UNVERIFIED && !SENT_NOTHING.has(row.offerState);
       return {
         status: "sent", providerMessageId: row.providerMessageId,
-        draftId: draftOfTerminalAttempt(row), seq: null,
+        draftId: deliveredId, seq: null, sentDraftThrough: await this.sentDraftThrough(ctx, deliveredId),
         ...(ownAgain ? {} : { firstSend: firstSendFacts("sent", row.sentAt ?? row.createdAt) }),
       };
     }
@@ -4275,9 +4303,10 @@ export class SendService {
    */
   private async recipientsOf(tx: LedgerTx, ctx: ServiceContext, draftId: string): Promise<string[]> {
     // scoped-by: draftId is the reservation's own draft, loaded by (id, accountId) upstream
-    const [d] = await tx.select({ to: drafts.to, cc: drafts.cc, bcc: drafts.bcc })
+    const [d] = await tx.select({ to: drafts.to, cc: drafts.cc, bcc: drafts.bcc, workflowDedupKey: drafts.workflowDedupKey })
       .from(drafts).where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
-    if (!d) return [];
+    // An invitation's answer teaches nobody: one No to a stranger's invitation must not admit them.
+    if (!d || isInvitationAnswerDraft(d)) return [];
     return [...new Set(
       [...(d.to as EmailAddress[]), ...(d.cc as EmailAddress[]), ...(d.bcc as EmailAddress[])]
         .map((a) => a?.address?.trim().toLowerCase())

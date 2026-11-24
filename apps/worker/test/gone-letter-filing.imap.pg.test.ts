@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import type { NativeLocator } from "@trafficflow/core";
 import { MessageGoneError, type MoveManyResult } from "@trafficflow/core/adapters/imap";
@@ -7,10 +8,10 @@ import { and, eq } from "drizzle-orm";
 import { auditLog, folderState, mailboxes, messageBodies, messageInstances, messages, messageSearch } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
-import { MailboxService, MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
-import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { makeHarness, rawClient, uidInFolder, DB_URL, ORGANIZER_CONSENT } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { dbFor, MailboxService, MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
+import { makeHarness, rawClient, uidInFolder, DB_URL, ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * A DELETE PRESSED ON A LETTER THE SERVER NO LONGER HOLDS IS CLOSED AT THE NEXT PASS.
@@ -54,7 +55,7 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
       storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
       role: "organizer", trustedAuthservIds: new Set<string>(),
     };
-    const ctx: ServiceContext = { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "gone" };
+    const ctx: ServiceContext = { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "gone" };
     const idOf = async (header: string) => (await h.db.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.mailboxId, h.mailboxId), eq(messages.messageIdHeader, header))))[0]?.id;
     const filingOf = async (id: string) =>
@@ -594,7 +595,7 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     expect(id, "the precondition: ingested").toBeDefined();
     // A destination the server does not have: the move is refused, the message is still there.
     await w.h.db.insert(folderState).values({
-      messageId: id!, desiredFolder: `Missing-${tag}`, observedFolder: "INBOX",
+      messageId: id!, accountId: accountOfMessage(id!), desiredFolder: `Missing-${tag}`, observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     }).onConflictDoUpdate({
       target: folderState.messageId,

@@ -1,6 +1,7 @@
 import { STAFF_STEP_UP_WINDOW_SECONDS } from "@trafficflow/services";
 import { resolveStaffSession, staffTokenOf } from "./routes/admin-staff.js";
 import { presentsSecret, secretRouteJson } from "./secret-auth.js";
+import { staffDb } from "./staff-audit.js";
 import type { Middleware } from "./middleware.js";
 
 /**
@@ -40,7 +41,7 @@ export const withStaffStepUp: Middleware = (next, route) => async (req, deps, pa
   }
 
   const now = deps.now();
-  const staff = await resolveStaffSession(deps.db, staffTokenOf(body), now);
+  const staff = await resolveStaffSession(staffDb(deps), staffTokenOf(body), now);
   if (!staff) return next(req, deps, params);
   if (now.getTime() - staff.lastTwofaAt.getTime() <= STAFF_STEP_UP_WINDOW_SECONDS * 1000) {
     return next(req, deps, params);

@@ -1,0 +1,173 @@
+/* Two answers with consequences: a line each, with what it is about under it. */
+@layer oh {
+  .oh-radiolines {
+    padding-bottom: var(--s1);
+  }
+  .oh-radioline {
+    --oh-radioline-mark: 14px;
+    --oh-radioline-pad: 6px var(--s3);
+    --oh-radioline-ring: none;
+    --oh-radioline-off: inset 0 0 0 1.5px var(--ctl-ring);
+    --oh-radioline-on: inset 0 0 0 4.5px var(--ink);
+    display: grid;
+    grid-template-columns: var(--oh-radioline-mark) minmax(0, 1fr);
+    gap: var(--oh-hair) var(--s2);
+    align-items: center;
+    width: 100%;
+    min-height: var(--h-m);
+    padding: var(--oh-radioline-pad);
+    border-radius: var(--r-row);
+    box-shadow: var(--oh-radioline-ring);
+    font-weight: var(--w-mid);
+    line-height: 1.3;
+  }
+  .oh-radioline::before {
+    content: "";
+    grid-row: 1 / span 2;
+    align-self: start;
+    width: var(--oh-radioline-mark);
+    height: var(--oh-radioline-mark);
+    margin-top: var(--oh-focus);
+    border-radius: var(--dot-r);
+    box-shadow: var(--oh-radioline-off);
+    transition: box-shadow var(--d-hover) var(--e-std);
+  }
+  .oh-radioline:hover {
+    background: var(--hover);
+  }
+  .oh-radioline:focus-visible {
+    --oh-radioline-ring: var(--oh-ring-focus);
+    border-radius: var(--r-row);
+    background: transparent;
+    outline: none;
+  }
+  .oh-radioline[aria-checked="true"]::before {
+    box-shadow: var(--oh-radioline-on);
+  }
+  .oh-radioline-word {
+    grid-column: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    text-overflow: ellipsis;
+  }
+  /* A plan as one of a choice: a word after its name, and its figure at the line's end, whole. */
+  .oh-radioline-word > .oh-tag {
+    margin-left: var(--s2);
+    vertical-align: middle;
+  }
+
+  .oh-radioline-figure {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    align-self: center;
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .oh-radioline-note {
+    grid-column: 2;
+    justify-self: start;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  /* On a sheet of settings an answer is one of the sheet's lines: its mark, its name and tag, what it is about
+     beside them in the second ink, its figure at the line's end. It reaches a step past the sheet's text at both
+     sides, as a line of the sheet that takes a press does. */
+  .oh-radiolines[data-kind="sheet"] {
+    padding-bottom: 0;
+  }
+  .oh-radiolines[data-kind="sheet"] > .oh-radioline {
+    --oh-radioline-mark: 18px;
+    --oh-radioline-out: var(--s3);
+    --oh-radioline-pad: var(--s1) var(--oh-radioline-out);
+    --oh-radioline-reach: 0 calc(var(--oh-radioline-out) * -1);
+    --oh-radioline-off: inset 0 0 0 2px var(--ink2);
+    --oh-radioline-on: inset 0 0 0 2px var(--solid), inset 0 0 0 5px var(--sheet);
+    --oh-radioline-figure: 4.5em;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s2);
+    width: calc(100% + 2 * var(--oh-radioline-out));
+    min-height: var(--h-l);
+    margin: var(--oh-radioline-reach);
+    font-weight: var(--w-text);
+    line-height: var(--oh-lh);
+    text-align: start;
+    /* A line of the sheet sets its words as the sheet does, not as a button's own default does. */
+    text-rendering: inherit;
+  }
+  .oh-radiolines[data-kind="sheet"] > .oh-radioline::before {
+    content: none;
+  }
+  .oh-radioline-mark {
+    flex: none;
+    width: var(--oh-radioline-mark);
+    height: var(--oh-radioline-mark);
+    border-radius: var(--dot-r);
+    box-shadow: var(--oh-radioline-off);
+  }
+  .oh-radioline[aria-checked="true"] > .oh-radioline-mark {
+    background: var(--solid);
+    box-shadow: var(--oh-radioline-on);
+  }
+  .oh-radiolines[data-kind="sheet"] .oh-radioline-word {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s2);
+    overflow: visible;
+    max-width: 100%;
+    font-weight: var(--w-mid);
+    text-overflow: clip;
+  }
+  .oh-radiolines[data-kind="sheet"] .oh-radioline-word > .oh-tag {
+    margin-left: 0;
+  }
+  .oh-radiolines[data-kind="sheet"] > [aria-checked="true"] > .oh-radioline-word {
+    font-weight: var(--w-bold);
+  }
+  .oh-radiolines[data-kind="sheet"] .oh-radioline-note {
+    flex: 0 1 auto;
+    overflow: hidden;
+    min-width: 0;
+    margin-left: auto;
+    font-size: var(--t-ui);
+    font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+  }
+  .oh-radiolines[data-kind="sheet"] .oh-radioline-figure {
+    flex: none;
+    min-width: var(--oh-radioline-figure);
+    text-align: right;
+  }
+  /* With nothing said about the answer its figure still ends the line. */
+  .oh-radiolines[data-kind="sheet"] .oh-radioline-word + .oh-radioline-figure {
+    margin-left: auto;
+  }
+  /* Under a finger: the name and the figure keep one line, and what the answer is about goes under them, whole. */
+  :root[data-touch="1"] .oh-radiolines[data-kind="sheet"] > .oh-radioline {
+    --oh-radioline-pad: var(--s2) var(--oh-radioline-out);
+  }
+  :root[data-touch="1"] .oh-radiolines[data-kind="sheet"] .oh-radioline-figure {
+    order: 2;
+    margin-left: auto;
+  }
+  :root[data-touch="1"] .oh-radiolines[data-kind="sheet"] .oh-radioline-note {
+    order: 3;
+    flex-basis: 100%;
+    white-space: normal;
+  }
+  :root[data-device="phone"] .oh-radioline {
+    min-height: var(--h-l);
+  }
+  :root[data-face="ohmarchy"] .oh-radioline:hover {
+    background: var(--off);
+  }
+  :root[data-face="ohmarchy"] .oh-radioline:focus-visible {
+    background: transparent;
+  }
+}

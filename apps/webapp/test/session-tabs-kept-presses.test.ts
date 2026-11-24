@@ -8,8 +8,9 @@
  * sign-in lands; a recovery waiting for the lock while it lands. Each is kept, never rolled back, never
  * applied on B and never renews B; applied on A once when A is back. Both sentences read in both catalogues.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineAdapter, EngineMutation } from "@ohmail/client-engine";
+import type { EngineAdapter } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 
@@ -97,13 +98,14 @@ function otherTabHoldsLock(): () => void {
 /** One tab: the real modules, and an engine whose presses leave through the gate, the adapter and the transport. */
 async function openTab() {
   vi.resetModules();
-  const truth = await import("../app/shell/session-truth");
+  const truth = await import("@ohmail/app-logic/session/session-truth");
   const client = await import("../app/api-client");
   await import("../app/session-refresh");
   const locale = await import("../app/shell/locale");
   const engineMod = await import("@ohmail/client-engine");
-  const { erasedAwareFetch } = await import("../app/shell/account-erased");
-  const { createSyncGate } = await import("../app/shell/sync-scheduler");
+  const { FixturesAdapter } = await import("@ohmail/testing/adapter");
+  const { erasedAwareFetch } = await import("@ohmail/app-logic/session/account-erased");
+  const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
   client.bindApiOwner("acct_A");
   const gate = createSyncGate("acct_A");
   gate.confirm("acct_A");
@@ -112,7 +114,7 @@ async function openTab() {
     headers: () => ({}),
     fetch: erasedAwareFetch(truth.sessionFetch, engineMod.sessionEndedResponse),
   }) as never) as unknown as { mutate: EngineAdapter["mutate"] };
-  const fixtures = new engineMod.FixturesAdapter();
+  const fixtures = new FixturesAdapter();
   const adapter: EngineAdapter = {
     fetchBody: fixtures.fetchBody.bind(fixtures),
     sync: fixtures.sync.bind(fixtures),
@@ -179,7 +181,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  const { resetSessionTruthForTests } = await import("../app/shell/session-truth");
+  const { resetSessionTruthForTests } = await import("@ohmail/app-logic/session/session-truth");
   resetSessionTruthForTests();
   const { setActiveCatalog } = await import("../app/shell/locale");
   setActiveCatalog("en", null);
@@ -211,7 +213,7 @@ describe("a press held across a renewal the server refused", () => {
   it("CONTROL: an account erased meanwhile keeps nothing: the held press is refused as the closed door", async () => {
     refreshMode = "refused";
     const tab = await openTab();
-    const { markAccountErased, resetAccountErasedForTests } = await import("../app/shell/account-erased");
+    const { markAccountErased, resetAccountErasedForTests } = await import("@ohmail/app-logic/session/account-erased");
     try {
       tab.truth.markSessionAlive();
       const pressed = tab.engine.mutate(TAG("probe"));

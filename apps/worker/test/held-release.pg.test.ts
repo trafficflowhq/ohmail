@@ -1,21 +1,18 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accounts, auditLog, folderState, mailboxes, messageBodies, messages, recordChange, rules, threads,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import {
   dismissHeldRelease, heldReleaseFingerprint, heldReleaseGroups, heldReleaseSummary, releaseHeld,
   HELD_RELEASE_AUDIT_ACTION,
 } from "@trafficflow/services/mail";
-import type { Db, ServiceContext } from "@trafficflow/services";
-import { ruleRetroPass } from "../src/rule-retro.js";
+import { dbFor, type Db, type ServiceContext } from "@trafficflow/services";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
 
 /**
  * "N HELD MESSAGES FROM SENDERS YOU ALREADY DECIDED" — THE COUNT, THE PRESS AND WHAT MOVES.
@@ -40,16 +37,16 @@ interface World { accountId: string; mailboxId: string }
 
 describe.skipIf(!AVAILABLE)("held mail released by a press", () => {
   let db: Db;
-  let sql: ReturnType<typeof postgres>;
+  let owned: OwnedDb;
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    sql = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(sql, { schema }), "pg") as unknown as Db;
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db as unknown as Db;
   }, 120_000);
 
   const ctxOf = (w: World): ServiceContext => ({
-    db: db as never, accountId: w.accountId, userId: null,
+    db: dbFor(db, w.accountId), accountId: w.accountId, userId: null,
     now: () => new Date("2026-09-12T12:00:00Z"), requestId: `hr-${randomUUID()}`,
   });
 
@@ -87,9 +84,9 @@ describe.skipIf(!AVAILABLE)("held mail released by a press", () => {
       ...(o.threadId ? { threadId: o.threadId } : {}),
       nativeLocator: { folder: GATE, ref: `1:${Math.floor(Math.random() * 100000)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: o.desired ?? GATE, observedFolder: o.observed ?? GATE,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: o.desired ?? GATE, observedFolder: o.observed ?? GATE,
       lastSetBy: o.lastSetBy ?? "external", reconcileStatus: "reconciled", conflict: false,
     });
     // The change row every production placement writes: the offer's dismissal anchors on the log.
@@ -110,9 +107,9 @@ describe.skipIf(!AVAILABLE)("held mail released by a press", () => {
       threadId: t!.id, nativeLocator: { folder: "INBOX", ref: `1:${Math.floor(Math.random() * 100000)}` },
     }).returning();
     // Plain headers: a REAL reply, not the away responder's (`autoReplyByUsWhere` must not fire).
-    await db.insert(messageBodies).values({ messageId: reply!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: reply!.id, accountId: reply!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: reply!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: reply!.id, accountId: reply!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
     });
     return t!.id;

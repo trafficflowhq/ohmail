@@ -1,0 +1,867 @@
+[
+  {
+    "key": "MonthGrid/month@paper-light-fold",
+    "reason": "On the unfolded phone the month's lines stand closer (4 px before the title, 6 px inside, 2 px after), as the Month screen draws them there. The sheet's specimen is drawn without that screen's rule.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "MonthGrid/month@paper-light-foldl",
+    "reason": "On the unfolded phone the month's lines stand closer (4 px before the title, 6 px inside, 2 px after), as the Month screen draws them there. The sheet's specimen is drawn without that screen's rule.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "MonthGrid/month@paper-dark-fold",
+    "reason": "On the unfolded phone the month's lines stand closer (4 px before the title, 6 px inside, 2 px after), as the Month screen draws them there. The sheet's specimen is drawn without that screen's rule.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "MonthGrid/month@paper-dark-foldl",
+    "reason": "On the unfolded phone the month's lines stand closer (4 px before the title, 6 px inside, 2 px after), as the Month screen draws them there. The sheet's specimen is drawn without that screen's rule.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "MonthGrid/month@ohmarchy-light-fold",
+    "reason": "On the unfolded phone the month's lines stand closer (4 px before the title, 6 px inside, 2 px after), as the Month screen draws them there. The sheet's specimen is drawn without that screen's rule.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "MonthGrid/month@ohmarchy-light-foldl",
+    "reason": "On the unfolded phone the month's lines stand closer (4 px before the title, 6 px inside, 2 px after), as the Month screen draws them there. The sheet's specimen is drawn without that screen's rule.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "MonthGrid/month@ohmarchy-dark-fold",
+    "reason": "On the unfolded phone the month's lines stand closer (4 px before the title, 6 px inside, 2 px after), as the Month screen draws them there. The sheet's specimen is drawn without that screen's rule.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "MonthGrid/month@ohmarchy-dark-foldl",
+    "reason": "On the unfolded phone the month's lines stand closer (4 px before the title, 6 px inside, 2 px after), as the Month screen draws them there. The sheet's specimen is drawn without that screen's rule.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "EventChip/block-dragged",
+    "reason": "While an event is dragged, the copy at its target is a drawing: the part hides it from a screen reader and takes it out of the keys' order. The reference names both as buttons.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "button", "name": "Dentist" }]
+  },
+  {
+    "key": "CalendarHead/narrow@paper-light-fold",
+    "reason": "The sheet sheds the title's long form by the width of the calendar's column, which its specimen does not stand in, so the specimen keeps the long title at 620 px. The part sheds by its own width, as the screen does, and shows the short title there.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "CalendarHead/narrow@paper-light-foldl",
+    "reason": "The sheet sheds the title's long form by the width of the calendar's column, which its specimen does not stand in, so the specimen keeps the long title at 620 px. The part sheds by its own width, as the screen does, and shows the short title there.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "CalendarHead/narrow@paper-dark-fold",
+    "reason": "The sheet sheds the title's long form by the width of the calendar's column, which its specimen does not stand in, so the specimen keeps the long title at 620 px. The part sheds by its own width, as the screen does, and shows the short title there.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "CalendarHead/narrow@paper-dark-foldl",
+    "reason": "The sheet sheds the title's long form by the width of the calendar's column, which its specimen does not stand in, so the specimen keeps the long title at 620 px. The part sheds by its own width, as the screen does, and shows the short title there.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "CalendarHead/narrow@ohmarchy-light-fold",
+    "reason": "The sheet sheds the title's long form by the width of the calendar's column, which its specimen does not stand in, so the specimen keeps the long title at 620 px. The part sheds by its own width, as the screen does, and shows the short title there.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "CalendarHead/narrow@ohmarchy-light-foldl",
+    "reason": "The sheet sheds the title's long form by the width of the calendar's column, which its specimen does not stand in, so the specimen keeps the long title at 620 px. The part sheds by its own width, as the screen does, and shows the short title there.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "CalendarHead/narrow@ohmarchy-dark-fold",
+    "reason": "The sheet sheds the title's long form by the width of the calendar's column, which its specimen does not stand in, so the specimen keeps the long title at 620 px. The part sheds by its own width, as the screen does, and shows the short title there.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "CalendarHead/narrow@ohmarchy-dark-foldl",
+    "reason": "The sheet sheds the title's long form by the width of the calendar's column, which its specimen does not stand in, so the specimen keeps the long title at 620 px. The part sheds by its own width, as the screen does, and shows the short title there.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@paper-light-desktop",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@paper-light-phone",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@paper-light-fold",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@paper-light-foldl",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@paper-dark-desktop",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@paper-dark-phone",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@paper-dark-fold",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@paper-dark-foldl",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@ohmarchy-light-desktop",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@ohmarchy-light-phone",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@ohmarchy-light-fold",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@ohmarchy-light-foldl",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@ohmarchy-dark-desktop",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@ohmarchy-dark-phone",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@ohmarchy-dark-fold",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "TodayList/coming@ohmarchy-dark-foldl",
+    "reason": "All events, under the rows in the reference, is an item of the contact card's menu: the card draws it after the list. The part ends with its rows and names itself as a group.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "InvitationCard/answered@paper-light-desktop",
+    "reason": "The specimen stands in a cell of the design system's page, whose paragraph line height sets the card's lines 4 px higher; the same card in a letter (to answer, a new time proposed) matches box for box.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "EventCard/sheet@paper-light-phone",
+    "reason": "The title keeps the close's room (52 px) so that a long title never runs under it; the specimen's short title has none kept. The card's head is a plain block, not a page banner, inside its dialog.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "EventCard/sheet@paper-dark-phone",
+    "reason": "The title keeps the close's room (52 px) so that a long title never runs under it; the specimen's short title has none kept. The card's head is a plain block, not a page banner, inside its dialog.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "EventCard/sheet@ohmarchy-light-phone",
+    "reason": "The title keeps the close's room (52 px) so that a long title never runs under it; the specimen's short title has none kept. The card's head is a plain block, not a page banner, inside its dialog. On this face the reference's sheet stands 5.6 px higher in the window.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "EventCard/sheet@ohmarchy-dark-phone",
+    "reason": "The title keeps the close's room (52 px) so that a long title never runs under it; the specimen's short title has none kept. The card's head is a plain block, not a page banner, inside its dialog. On this face the reference's sheet stands 5.6 px higher in the window.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "CalendarRail/open@paper-light-desktop",
+    "reason": "The simulation scrolls the rail to the list it opened; the part is drawn from its top, and scrolling is the app's. What stands in view (the head, New event, the month, the places) matches.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "QuestionBeforeAct/series@ohmarchy-light-desktop",
+    "reason": "The question's frame is the base Menu, whose items are 4 px wider on this face than the sheet's menu in that place. Names and words as on the other face.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "QuestionBeforeAct/series@ohmarchy-dark-desktop",
+    "reason": "The question's frame is the base Menu, whose items are 4 px wider on this face than the sheet's menu in that place. Names and words as on the other face.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "QuickAdd/typed@ohmarchy-light-desktop",
+    "reason": "The reference's capture read no name for these controls on this look (on the other face it reads them all); the kit names them. Their boxes and drawn values bind.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "button", "name": "Day" },
+      { "role": "textbox", "name": "Starts" },
+      { "role": "textbox", "name": "Ends" },
+      { "role": "button", "name": "Invite Ben Arnold" },
+      { "role": "button", "name": "Add invitees" },
+      { "role": "button", "name": "Calendar" },
+      { "role": "button", "name": "Show as" },
+      { "role": "switch", "name": "Private" }
+    ]
+  },
+  {
+    "key": "QuickAdd/typed@ohmarchy-light-phone",
+    "reason": "The reference's capture read no name for these controls on this look (on the other face it reads them all); the kit names them. Their boxes and drawn values bind.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "button", "name": "Invite Ben Arnold" },
+      { "role": "button", "name": "Add invitees" },
+      { "role": "switch", "name": "Private" }
+    ]
+  },
+  {
+    "key": "QuickAdd/typed@ohmarchy-light-foldl",
+    "reason": "The reference's capture read no name for these controls on this look (on the other face it reads them all); the kit names them. Their boxes and drawn values bind.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "button", "name": "Day" },
+      { "role": "textbox", "name": "Starts" },
+      { "role": "textbox", "name": "Ends" },
+      { "role": "button", "name": "Invite Ben Arnold" },
+      { "role": "button", "name": "Add invitees" },
+      { "role": "button", "name": "Calendar" },
+      { "role": "button", "name": "Show as" },
+      { "role": "switch", "name": "Private" }
+    ]
+  },
+  {
+    "key": "QuickAdd/typed@ohmarchy-dark-desktop",
+    "reason": "The reference's capture read no name for these controls on this look (on the other face it reads them all); the kit names them. Their boxes and drawn values bind.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "button", "name": "Day" },
+      { "role": "textbox", "name": "Starts" },
+      { "role": "textbox", "name": "Ends" },
+      { "role": "button", "name": "Invite Ben Arnold" },
+      { "role": "button", "name": "Add invitees" },
+      { "role": "button", "name": "Calendar" },
+      { "role": "button", "name": "Show as" },
+      { "role": "switch", "name": "Private" }
+    ]
+  },
+  {
+    "key": "QuickAdd/typed@ohmarchy-dark-phone",
+    "reason": "The reference's capture read no name for these controls on this look (on the other face it reads them all); the kit names them. Their boxes and drawn values bind.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "button", "name": "Invite Ben Arnold" },
+      { "role": "button", "name": "Add invitees" },
+      { "role": "switch", "name": "Private" }
+    ]
+  },
+  {
+    "key": "QuickAdd/typed@ohmarchy-dark-fold",
+    "reason": "The reference's capture read no name for these controls on this look (on the other face it reads them all); the kit names them. Their boxes and drawn values bind.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "button", "name": "Invite Ben Arnold" },
+      { "role": "button", "name": "Add invitees" },
+      { "role": "switch", "name": "Private" }
+    ]
+  },
+  {
+    "key": "QuickAdd/typed@ohmarchy-dark-foldl",
+    "reason": "The reference's capture read no name for these controls on this look (on the other face it reads them all); the kit names them. Their boxes and drawn values bind.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "button", "name": "Day" },
+      { "role": "textbox", "name": "Starts" },
+      { "role": "textbox", "name": "Ends" },
+      { "role": "button", "name": "Invite Ben Arnold" },
+      { "role": "button", "name": "Add invitees" },
+      { "role": "button", "name": "Calendar" },
+      { "role": "button", "name": "Show as" },
+      { "role": "switch", "name": "Private" }
+    ]
+  },
+  {
+    "key": "EventForm/new@ohmarchy-light-desktop",
+    "reason": "The reference's capture read no name for these controls on this look (on the other face it reads them all); the kit names them. Their boxes and drawn values bind.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "button", "name": "Day" },
+      { "role": "textbox", "name": "Starts" },
+      { "role": "textbox", "name": "Ends" },
+      { "role": "button", "name": "Invite Ben Arnold" },
+      { "role": "button", "name": "Add invitees" },
+      { "role": "button", "name": "Calendar" },
+      { "role": "button", "name": "Show as" },
+      { "role": "switch", "name": "Private" }
+    ]
+  },
+  {
+    "key": "EventForm/new@ohmarchy-dark-desktop",
+    "reason": "The reference's capture read no name for these controls on this look (on the other face it reads them all); the kit names them. Their boxes and drawn values bind.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "button", "name": "Day" },
+      { "role": "textbox", "name": "Starts" },
+      { "role": "textbox", "name": "Ends" },
+      { "role": "button", "name": "Invite Ben Arnold" },
+      { "role": "button", "name": "Add invitees" },
+      { "role": "button", "name": "Calendar" },
+      { "role": "button", "name": "Show as" },
+      { "role": "switch", "name": "Private" }
+    ]
+  },
+  {
+    "key": "SidePanel/agenda@paper-light-desktop",
+    "reason": "The reference's capture read only the panel itself: the simulation draws its contents while it opens. The picture matches; the kit's head, close, days, the lists of each day and their rows are named.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "banner", "name": "" },
+      { "role": "heading", "name": "Agenda" },
+      { "role": "button", "name": "Close · g a" },
+      { "role": "heading", "name": "Mon 5 Jun 2028 1" },
+      { "role": "list", "name": "" },
+      { "role": "button", "name": "Studio Monday 09:00–09:30 Studio, Winterthur · Rahel Beck" },
+      { "role": "heading", "name": "Tue 6 Jun 2028 2" },
+      { "role": "button", "name": "Catalogue weekly 14:00–14:45 13:00–13:45 Porto · Call · Inês Carvalho" },
+      { "role": "button", "name": "Bouldering with Tim 18:30–20:00 Boulder hall, Winterthur" },
+      { "role": "heading", "name": "Wed 7 Jun 2028 1" },
+      { "role": "button", "name": "Open bench 18:00–20:00 Studio, Winterthur · Ben Arnold" },
+      { "role": "heading", "name": "Thu 8 Jun 2028 3" },
+      { "role": "button", "name": "Run with Reto 07:00–07:45 Forest loop" },
+      { "role": "button", "name": "Glaze firing 13:00–14:00 Kiln room · Ben Arnold" },
+      { "role": "button", "name": "Catalogue check-in 16:30–17:00" },
+      { "role": "heading", "name": "Mon 12 Jun 2028 1" }
+    ]
+  },
+  {
+    "key": "SidePanel/agenda@paper-dark-desktop",
+    "reason": "The reference's capture read only the panel itself: the simulation draws its contents while it opens. The picture matches; the kit's head, close, days, the lists of each day and their rows are named.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "banner", "name": "" },
+      { "role": "heading", "name": "Agenda" },
+      { "role": "button", "name": "Close · g a" },
+      { "role": "heading", "name": "Mon 5 Jun 2028 1" },
+      { "role": "list", "name": "" },
+      { "role": "button", "name": "Studio Monday 09:00–09:30 Studio, Winterthur · Rahel Beck" },
+      { "role": "heading", "name": "Tue 6 Jun 2028 2" },
+      { "role": "button", "name": "Catalogue weekly 14:00–14:45 13:00–13:45 Porto · Call · Inês Carvalho" },
+      { "role": "button", "name": "Bouldering with Tim 18:30–20:00 Boulder hall, Winterthur" },
+      { "role": "heading", "name": "Wed 7 Jun 2028 1" },
+      { "role": "button", "name": "Open bench 18:00–20:00 Studio, Winterthur · Ben Arnold" },
+      { "role": "heading", "name": "Thu 8 Jun 2028 3" },
+      { "role": "button", "name": "Run with Reto 07:00–07:45 Forest loop" },
+      { "role": "button", "name": "Glaze firing 13:00–14:00 Kiln room · Ben Arnold" },
+      { "role": "button", "name": "Catalogue check-in 16:30–17:00" },
+      { "role": "heading", "name": "Mon 12 Jun 2028 1" }
+    ]
+  },
+  {
+    "key": "SidePanel/agenda@ohmarchy-light-desktop",
+    "reason": "The reference's capture read only the panel itself: the simulation draws its contents while it opens. The picture matches; the kit's head, close, days, the lists of each day and their rows are named.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "banner", "name": "" },
+      { "role": "heading", "name": "Agenda" },
+      { "role": "button", "name": "Close · g a" },
+      { "role": "heading", "name": "Mon 5 Jun 2028 1" },
+      { "role": "list", "name": "" },
+      { "role": "button", "name": "Studio Monday 09:00–09:30 Studio, Winterthur · Rahel Beck" },
+      { "role": "heading", "name": "Tue 6 Jun 2028 2" },
+      { "role": "button", "name": "Catalogue weekly 14:00–14:45 13:00–13:45 Porto · Call · Inês Carvalho" },
+      { "role": "button", "name": "Bouldering with Tim 18:30–20:00 Boulder hall, Winterthur" },
+      { "role": "heading", "name": "Wed 7 Jun 2028 1" },
+      { "role": "button", "name": "Open bench 18:00–20:00 Studio, Winterthur · Ben Arnold" },
+      { "role": "heading", "name": "Thu 8 Jun 2028 3" },
+      { "role": "button", "name": "Run with Reto 07:00–07:45 Forest loop" },
+      { "role": "button", "name": "Glaze firing 13:00–14:00 Kiln room · Ben Arnold" },
+      { "role": "button", "name": "Catalogue check-in 16:30–17:00" }
+    ]
+  },
+  {
+    "key": "SidePanel/agenda@ohmarchy-dark-desktop",
+    "reason": "The reference's capture read only the panel itself: the simulation draws its contents while it opens. The picture matches; the kit's head, close, days, the lists of each day and their rows are named.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "banner", "name": "" },
+      { "role": "heading", "name": "Agenda" },
+      { "role": "button", "name": "Close · g a" },
+      { "role": "heading", "name": "Mon 5 Jun 2028 1" },
+      { "role": "list", "name": "" },
+      { "role": "button", "name": "Studio Monday 09:00–09:30 Studio, Winterthur · Rahel Beck" },
+      { "role": "heading", "name": "Tue 6 Jun 2028 2" },
+      { "role": "button", "name": "Catalogue weekly 14:00–14:45 13:00–13:45 Porto · Call · Inês Carvalho" },
+      { "role": "button", "name": "Bouldering with Tim 18:30–20:00 Boulder hall, Winterthur" },
+      { "role": "heading", "name": "Wed 7 Jun 2028 1" },
+      { "role": "button", "name": "Open bench 18:00–20:00 Studio, Winterthur · Ben Arnold" },
+      { "role": "heading", "name": "Thu 8 Jun 2028 3" },
+      { "role": "button", "name": "Run with Reto 07:00–07:45 Forest loop" },
+      { "role": "button", "name": "Glaze firing 13:00–14:00 Kiln room · Ben Arnold" },
+      { "role": "button", "name": "Catalogue check-in 16:30–17:00" }
+    ]
+  },
+  {
+    "key": "EventCard/inline@paper-light-desktop",
+    "reason": "The reference's capture read no node in the card in place (the simulation draws it inside a row that is not yet named). The kit names the card and its controls.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "dialog", "name": "Tech check, main hall" },
+      { "role": "button", "name": "Open in Maps" },
+      { "role": "button", "name": "Mila" },
+      { "role": "button", "name": "Petra Wyss" },
+      { "role": "button", "name": "Invitation: Tech check, main hall" }
+    ]
+  },
+  {
+    "key": "TodayList/today",
+    "reason": "The kit names the list as a group by its heading; the sheet's list is an unnamed block under the count.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "group", "name": "TodayTue 10 Nov" }]
+  },
+  {
+    "key": "AnswerSwitch/rest@paper-light-desktop",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "AnswerSwitch/rest@paper-dark-desktop",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-light-desktop",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-dark-desktop",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "AnswerSwitch/given@paper-light-desktop",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@paper-dark-desktop",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@paper-light-fold",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@paper-dark-fold",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@paper-dark-foldl",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@ohmarchy-light-desktop",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@ohmarchy-dark-desktop",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@ohmarchy-light-foldl",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@ohmarchy-dark-foldl",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@ohmarchy-light-fold",
+    "reason": "In the simulation the card stands 20.5 px past the window's left edge on this look, so the reference's picture is cut there; names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/invited@ohmarchy-dark-fold",
+    "reason": "In the simulation the card stands 20.5 px past the window's left edge on this look, so the reference's picture is cut there; names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventCard/inline@paper-light-desktop",
+    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "CalendarRail/shut@paper-light-desktop",
+    "reason": "One row of pixels at the rail's foot, where the window's edge cuts the reference; names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "CalendarRail/shut@paper-dark-desktop",
+    "reason": "One row of pixels at the rail's foot, where the window's edge cuts the reference; names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "CalendarRail/shut@ohmarchy-light-desktop",
+    "reason": "One row of pixels at the rail's foot, where the window's edge cuts the reference; names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "CalendarRail/shut@ohmarchy-dark-desktop",
+    "reason": "One row of pixels at the rail's foot, where the window's edge cuts the reference; names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventBridge/beside@paper-light-desktop",
+    "reason": "The reference is cut from the live week, where the card's own edge and its head's colour stand in the bridge's last column and in its fade; the part is drawn alone. Its shape, marks and boxes are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventBridge/beside@paper-dark-desktop",
+    "reason": "The reference is cut from the live week, where the card's own edge and its head's colour stand in the bridge's last column and in its fade; the part is drawn alone. Its shape, marks and boxes are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventBridge/beside@ohmarchy-light-desktop",
+    "reason": "The reference is cut from the live week, where the card's own edge and its head's colour stand in the bridge's last column and in its fade; the part is drawn alone. Its shape, marks and boxes are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventBridge/beside@ohmarchy-dark-desktop",
+    "reason": "The reference is cut from the live week, where the card's own edge and its head's colour stand in the bridge's last column and in its fade; the part is drawn alone. Its shape, marks and boxes are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "InvitationCard/to-answer@paper-light-fold",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "InvitationCard/to-answer@paper-light-foldl",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "InvitationCard/to-answer@paper-dark-fold",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "InvitationCard/to-answer@paper-dark-foldl",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "InvitationCard/to-answer@ohmarchy-light-fold",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "QuickAdd/typed@paper-dark-fold",
+    "reason": "The retaken reference's typed line runs on under the close: the fill of its next mark (1pm) shows behind the close's cross, where the kit's field ends its line at its own edge. The rest of the picture is equal.",
+    "since": "2026-11-15",
+    "question": "picture"
+  },
+  {
+    "key": "QuickAdd/typed@ohmarchy-light-fold",
+    "reason": "The retaken reference's typed line runs on under the close: the fill of its next mark (1pm) shows behind the close's cross, where the kit's field ends its line at its own edge. The rest of the picture is equal.",
+    "since": "2026-11-15",
+    "question": "picture"
+  },
+  {
+    "key": "QuickAdd/typed@ohmarchy-dark-fold",
+    "reason": "The retaken reference's typed line runs on under the close: the fill of its next mark (1pm) shows behind the close's cross, where the kit's field ends its line at its own edge. The rest of the picture is equal.",
+    "since": "2026-11-15",
+    "question": "picture"
+  },
+  {
+    "key": "QuestionBeforeAct/series@paper-light-desktop",
+    "reason": "The reference is cut from the live week, with the grid's edge in its corner; the words are rasterised on another fraction of a pixel. Names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "QuestionBeforeAct/series@paper-dark-desktop",
+    "reason": "The reference is cut from the live week, with the grid's edge in its corner; the words are rasterised on another fraction of a pixel. Names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "QuestionBeforeAct/tell@paper-light-desktop",
+    "reason": "The reference is cut from the live week, with the grid's edge in its corner; the words are rasterised on another fraction of a pixel. Names, boxes and drawn values are equal.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "ViewSwitch",
+    "reason": "The reference draws the switch inside a head; the part is the switch alone, so the head is not there.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "banner", "name": "" }]
+  },
+  {
+    "key": "CalendarRow/view-only",
+    "reason": "The part names the lock (view only); in the reference the lock is decoration without a name. The lock is read as that decoration, so its ink and its box still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-calrow-ico"]
+  },
+  {
+    "key": "CalendarRow/neutral",
+    "reason": "The part names the lock (view only); in the reference the lock is decoration without a name. The lock is read as that decoration, so its ink and its box still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-calrow-ico"]
+  },
+  {
+    "key": "QuestionBeforeAct",
+    "reason": "The question stands in the menu's frame; the kit names it a dialog by its question (it asks, it offers no command list), the sheet's frame is an unnamed menu. Its box and drawing bind.",
+    "since": "2026-11-14",
+    "alike": [{ "role": "dialog", "as": "menu", "unnamed": true }]
+  },
+  {
+    "key": "InvitationCard/to-answer@ohmarchy-light-foldl",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "InvitationCard/to-answer@ohmarchy-dark-fold",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "InvitationCard/to-answer@ohmarchy-dark-foldl",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "InvitationCard/proposed@ohmarchy-light-fold",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "InvitationCard/answered@ohmarchy-light-desktop",
+    "reason": "The specimen stands in a cell of the design system's page, whose paragraph line height sets the card's lines 4 px higher; the same card in a letter (to answer, a new time proposed) matches box for box.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "InvitationCard/proposed@paper-light-fold",
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone. The retaken reference reads the letter's tight answers, as the part draws them.",
+    "since": "2026-11-15",
+    "question": "picture"
+  },
+  {
+    "key": "EventChip/block-from-mail-focus@paper-light-desktop",
+    "reason": "With the keys on it the part rings a found chip as it rings every chip. The sheet draws its dashed outline with the outline property, so with the keys on the chip it draws the same dashes as without them and shows nowhere where the keys are.",
+    "since": "2026-11-14",
+    "question": "picture"
+  },
+  {
+    "key": "EventChip",
+    "reason": "An event's chip says whether what it opens is open (aria-expanded); the reference's says no state. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed", "expanded"] }]
+  },
+  {
+    "key": "AgendaRow",
+    "reason": "An agenda row says whether what it opens is open (aria-expanded); the reference's says no state. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed", "expanded"] }]
+  },
+  {
+    "key": "TimeGrid",
+    "reason": "The grid's events are the kit's chips, each of which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state. Today's head says it is the current date (aria-current), which the reference's does not.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed", "current date"] }]
+  },
+  {
+    "key": "AllDayRow",
+    "reason": "The row's events are the kit's chips, each of which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "MonthGrid",
+    "reason": "The month's events are the kit's chips, each of which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "CalendarRow",
+    "reason": "A calendar's row carries the kit's menu button, which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "ViewSwitch",
+    "reason": "The kit's capsule says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "CalendarHead",
+    "reason": "The head's More button says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "EventCard",
+    "reason": "A person on the card is the kit's button that says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "QuickAdd",
+    "reason": "The line's slots are the kit's Slot: each says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "EventForm",
+    "reason": "The form's slots and people are the kit's buttons: each says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "InvitationCard",
+    "reason": "A person on the card is the kit's button that says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "MonthGrid",
+    "reason": "Today's day is the kit's button that says it is the current date (aria-current, MonthGrid.tsx), and the open event's chip says it is open (aria-expanded, EventChip.tsx); the reference's buttons say no state. Their boxes, words and drawing bind.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["expanded", "current date"] }]
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-light-desktop",
+    "question": "names",
+    "reason": "On this face the answers show their keys. The part draws each key by its stylesheet (AnswerSwitch.tsx: the kbd's ::before reads data-key), so the letter is no part of the answer's name or text; the sheet writes the letter into the button. The boxes bind; the same keys as drawn values are the row beside this one, and the picture is reported under its own row (the words a fraction of a pixel apart).",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-dark-desktop",
+    "question": "names",
+    "reason": "On this face the answers show their keys. The part draws each key by its stylesheet (AnswerSwitch.tsx: the kbd's ::before reads data-key), so the letter is no part of the answer's name or text; the sheet writes the letter into the button. The boxes bind; the same keys as drawn values are the row beside this one, and the picture is reported under its own row (the words a fraction of a pixel apart).",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-light-desktop",
+    "question": "drawn",
+    "reason": "The same keys, read as drawn values: the kit's letter is the kbd's ::before (its content, colour and type), the sheet's is a word in the button. The boxes bind; the picture is reported under its own row (the words a fraction of a pixel apart).",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-dark-desktop",
+    "question": "drawn",
+    "reason": "The same keys, read as drawn values: the kit's letter is the kbd's ::before (its content, colour and type), the sheet's is a word in the button. The boxes bind; the picture is reported under its own row (the words a fraction of a pixel apart).",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-light-fold",
+    "question": "picture",
+    "reason": "The retaken reference's typed line runs on under the close: the fill of its next mark (1pm) shows behind the close's cross, where the kit's field ends its line at its own edge. The rest of the picture is equal.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-light-fold",
+    "question": "names",
+    "reason": "The retaken reference's typed line runs on under the close, and the capture reads its next mark (1pm) and that mark's fill there; the kit's field ends its line at its own edge, so the mark is not on screen and not read. The other words and surfaces bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-light-fold",
+    "question": "boxes",
+    "reason": "The retaken reference's typed line runs on under the close, and the capture reads its next mark (1pm) and that mark's fill there; the kit's field ends its line at its own edge, so the mark is not on screen and not read. The other words and surfaces bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-dark-fold",
+    "question": "names",
+    "reason": "The retaken reference's typed line runs on under the close, and the capture reads its next mark (1pm) and that mark's fill there; the kit's field ends its line at its own edge, so the mark is not on screen and not read. The other words and surfaces bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-dark-fold",
+    "question": "boxes",
+    "reason": "The retaken reference's typed line runs on under the close, and the capture reads its next mark (1pm) and that mark's fill there; the kit's field ends its line at its own edge, so the mark is not on screen and not read. The other words and surfaces bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "TodayList/today",
+    "question": "boxes",
+    "reason": "The design system sheet resets the Today heading's padding. The app's heading keeps its padding, which shifts the date and the rows below.",
+    "since": "2026-11-21"
+  },
+  {
+    "key": "TodayList/today",
+    "question": "drawn",
+    "reason": "The design system sheet resets the Today heading's padding. The app's heading keeps its padding, which shifts the date and the rows below.",
+    "since": "2026-11-21"
+  },
+  {
+    "key": "TodayList/today",
+    "question": "picture",
+    "reason": "The design system sheet resets the Today heading's padding. The app's heading keeps its padding, which shifts the date and the rows below.",
+    "since": "2026-11-21"
+  },
+  {
+    "key": "EventChip/block-from-mail-focus@paper-light-desktop",
+    "question": "drawn",
+    "reason": "The kit draws a solid 2 px keyboard focus ring on the found event. The specimen keeps the dashed outline it uses at rest.",
+    "since": "2026-11-21"
+  }
+]

@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTranslator } from "next-intl";
 import {
   HttpAdapter,
   MemoryMirrorStore,
   OhmailEngine,
-  type EngineMessage,
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
@@ -14,13 +14,13 @@ import {
   armDeleteIntent,
   deleteIntentsKey,
   takeDeleteIntents,
-} from "../app/shell/delete-intents";
+} from "@ohmail/app-logic/press/delete-intents";
 import {
   UNDO_MS,
   createDeleteUndo,
   replayDeleteIntents,
   type ReplayEnv,
-} from "../app/shell/delete-undo";
+} from "@ohmail/app-logic/press/delete-undo";
 
 /**
  * ═══ A DELETE REPORTED DONE SURVIVES THE RELOAD THAT INTERRUPTED IT ═════════════════════════
@@ -193,10 +193,10 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
        mirror, took the 404 for an answer and cleared the journal — the delete abandoned in
        silence. It now waits for the read the app was already making. */
     const { engine, store, deleted, dispatch } = rig(["m1"]);
-    armDeleteIntent({ id: "press-1", messageIds: ["m1"], at: Date.now(), kind: "delete" });
+    armDeleteIntent({ id: "press-1", messageIds: ["m1"], at: Date.now(), kind: "delete" }, null);
 
     const said: string[] = [];
-    const count = replayDeleteIntents(dispatch, Date.now(), undefined, {
+    const count = replayDeleteIntents(dispatch, Date.now(), null, undefined, {
       hydrated: () => engine.hydrate(),
       tell: (s) => said.push(s),
       copy: copyOf(t),
@@ -205,13 +205,13 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
 
     await settle();
     expect(deleted, "nothing on the wire while the mirror is still being read").toEqual([]);
-    expect(takeDeleteIntents(Date.now()), "AND THE INTENT IS STILL WRITTEN DOWN").toHaveLength(1);
+    expect(takeDeleteIntents(Date.now(), null), "AND THE INTENT IS STILL WRITTEN DOWN").toHaveLength(1);
 
     store.open();
     await settle(10);
 
     expect(deleted, "the delete went out once the mirror held the row").toEqual(["m1"]);
-    expect(takeDeleteIntents(Date.now()), "and only then was the record cleared").toEqual([]);
+    expect(takeDeleteIntents(Date.now(), null), "and only then was the record cleared").toEqual([]);
     expect(
       engine.read().get<EngineMessage>("message", "m1"),
       "the row is gone from the mirror — the deletion the person was told about happened",
@@ -224,15 +224,15 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
        real waiting, the replay still has not dispatched. A timer-based fix passes case (1) and
        fails this one, which is the whole reason it is here. */
     const { store, engine, deleted, dispatch } = rig(["m1"]);
-    armDeleteIntent({ id: "press-2", messageIds: ["m1"], at: Date.now(), kind: "delete" });
-    replayDeleteIntents(dispatch, Date.now(), undefined, {
+    armDeleteIntent({ id: "press-2", messageIds: ["m1"], at: Date.now(), kind: "delete" }, null);
+    replayDeleteIntents(dispatch, Date.now(), null, undefined, {
       hydrated: () => engine.hydrate(),
       tell: () => {},
       copy: copyOf(t),
     });
     await settle(40);
     expect(deleted).toEqual([]);
-    expect(takeDeleteIntents(Date.now())).toHaveLength(1);
+    expect(takeDeleteIntents(Date.now(), null)).toHaveLength(1);
     expect(store.reads, "the read was asked for exactly once, by this replay or the scheduler").toBe(1);
     store.open();
     await settle(10);
@@ -245,16 +245,16 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
        the mailbox's own 404 — it is already gone — settles the intent. Keeping it would leave a
        journal that only grows and a sentence about mail nobody has. */
     const { engine, store, deleted, dispatch } = rig([], { status: 404, code: "not_found" });
-    armDeleteIntent({ id: "press-3", messageIds: ["gone-1"], at: Date.now(), kind: "delete" });
+    armDeleteIntent({ id: "press-3", messageIds: ["gone-1"], at: Date.now(), kind: "delete" }, null);
     const said: string[] = [];
-    replayDeleteIntents(dispatch, Date.now(), undefined, {
+    replayDeleteIntents(dispatch, Date.now(), null, undefined, {
       hydrated: () => engine.hydrate(),
       tell: (s) => said.push(s),
       copy: copyOf(t),
     });
     store.open();
     await settle(10);
-    expect(takeDeleteIntents(Date.now()), "settled, because the world already agrees").toEqual([]);
+    expect(takeDeleteIntents(Date.now(), null), "settled, because the world already agrees").toEqual([]);
     expect(deleted, "and nothing was deleted: the mailbox said it was already gone").toEqual([]);
     expect(said, "a delete that already happened explains nothing").toEqual([]);
   });
@@ -264,9 +264,9 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
        refusal this replay cannot read as either done or gone. So the record stands for the next
        launch and the person is told, rather than the delete being dropped in silence. */
     const { engine, store, dispatch } = rig(["m1"], { status: 422, code: "no_trash_folder" });
-    armDeleteIntent({ id: "press-4", messageIds: ["m1"], at: Date.now(), kind: "delete" });
+    armDeleteIntent({ id: "press-4", messageIds: ["m1"], at: Date.now(), kind: "delete" }, null);
     const said: string[] = [];
-    replayDeleteIntents(dispatch, Date.now(), undefined, {
+    replayDeleteIntents(dispatch, Date.now(), null, undefined, {
       hydrated: () => engine.hydrate(),
       tell: (s) => said.push(s),
       copy: copyOf(t),
@@ -276,7 +276,7 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
     store.open();
     await settle(12);
 
-    expect(takeDeleteIntents(Date.now()), "STILL OWED — nobody said this delete happened").toHaveLength(1);
+    expect(takeDeleteIntents(Date.now(), null), "STILL OWED — nobody said this delete happened").toHaveLength(1);
     expect(said).toEqual([
       t("ohbox.deleteReplayRetrying", { count: 1 }),
       t("ohbox.deleteReplayFailed", { count: 1 }),
@@ -295,11 +295,12 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
     /* One journal, two verbs. The sentence is resolved from the row's own `kind`, or a refused
        restore would tell somebody their DELETE did not finish — a false state about the opposite
        action. */
-    armDeleteIntent({ id: "press-5", messageIds: ["m9"], at: Date.now(), kind: "restore" });
+    armDeleteIntent({ id: "press-5", messageIds: ["m9"], at: Date.now(), kind: "restore" }, null);
     const said: string[] = [];
     replayDeleteIntents(
       async () => ({ status: "applied" }),
       Date.now(),
+      null,
       async () => ({ status: "rolled_back" }),
       {
         hydrated: async () => {},
@@ -310,7 +311,7 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
       },
     );
     await settle(8);
-    expect(takeDeleteIntents(Date.now()), "kept: the restore did not happen").toHaveLength(1);
+    expect(takeDeleteIntents(Date.now(), null), "kept: the restore did not happen").toHaveLength(1);
     expect(said).toEqual([t("trash.restoreReplayFailed", { count: 1 })]);
   });
 
@@ -322,6 +323,7 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
     try {
       const sent: string[] = [];
       const make = (pressId: string) => createDeleteUndo({
+        scope: null,
         mutate: async (id) => { sent.push(id); return { status: "confirmed" }; },
         toast: () => {},
         copy: {
@@ -337,9 +339,9 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
 
       const undone = make("press-a");
       undone.remove({ id: "m1", mailboxId: "mb" });
-      expect(takeDeleteIntents(1_000_000), "written down before the timer exists").toHaveLength(1);
+      expect(takeDeleteIntents(1_000_000, null), "written down before the timer exists").toHaveLength(1);
       undone.undo("m1");
-      expect(takeDeleteIntents(1_000_000), "and taken off disk by Undo").toEqual([]);
+      expect(takeDeleteIntents(1_000_000, null), "and taken off disk by Undo").toEqual([]);
       expect(sent, "nothing was sent").toEqual([]);
 
       const kept = make("press-b");
@@ -347,7 +349,7 @@ describe("the boot replay waits for the mirror, and keeps what it could not sett
       await vi.advanceTimersByTimeAsync(UNDO_MS);
       await vi.advanceTimersByTimeAsync(0);
       expect(sent, "the window closed and the delete went").toEqual(["m2"]);
-      expect(takeDeleteIntents(1_000_000), "cleared by its own completion").toEqual([]);
+      expect(takeDeleteIntents(1_000_000, null), "cleared by its own completion").toEqual([]);
     } finally {
       vi.useRealTimers();
     }

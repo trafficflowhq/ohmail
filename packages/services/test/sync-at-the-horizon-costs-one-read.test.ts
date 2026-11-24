@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { folderState, mailboxes, messages, recordChange } from "@trafficflow/db";
-import { SyncService, type ServiceContext } from "../src/index.js";
+import { SyncService, dbFor, type ServiceContext } from "../src/index.js";
 
 /**
  * ═══ A WINDOW THAT IS UP TO DATE ASKS ONCE ══════════════════════════════════════════════════
@@ -38,7 +38,7 @@ async function setup() {
   const [mb] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: "a@x.example" }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-09-16T00:00:00.000Z"), requestId: "r",
   };
   return { db, accountId, mailboxId: mb!.id, ctx };
@@ -69,7 +69,7 @@ describe("the delta reader at its own horizon", () => {
       subject: "s", fromAddress: "f@x.example",
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
     await db.transaction((tx) => recordChange(tx as never, {
       accountId, entityType: "message", entityId: m!.id, op: "create",
@@ -105,7 +105,7 @@ describe("the delta reader at its own horizon", () => {
         subject: `s${i}`, fromAddress: "f@x.example",
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
       });
       await db.transaction((tx) => recordChange(tx as never, {
         accountId, entityType: "message", entityId: m!.id, op: "create",

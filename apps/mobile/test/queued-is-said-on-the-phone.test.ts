@@ -17,9 +17,10 @@
  * kind: "applied" } : PRESS_THREW), …)` — the shipped fold — and every case here goes red on the
  * sentence while the positive controls stay green.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
-import { FOLDER_OF_VIEW, type EngineMessage } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, type LiveWorldActions } from "../src/state/live";
 import { Copy } from "../src/copy";

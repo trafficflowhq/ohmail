@@ -12,7 +12,7 @@ import {
 } from "@ohmail/client-engine";
 import { ScreenerService } from "../../src/screener-service.js";
 import { materializeMessages, materializeRules } from "../../src/dto/materialize.js";
-import type { ServiceContext } from "../../src/context.js";
+import { dbFor, type ServiceContext } from "../../src/context.js";
 
 /**
  * A REMOVED MAILBOX ASKS NOTHING — one world for every door that reads the Screener: the services'
@@ -151,9 +151,9 @@ export async function removedMailboxWorld(second: SecondMailbox): Promise<Remove
     await db.insert(messageInstances).values({
       accountId, mailboxId, messageId: m!.id, folder: l.folder, uidvalidity: 1n, uid, isPrimary: true,
     });
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: l.folder, observedFolder: l.folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: l.folder, observedFolder: l.folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     byName.set(l.name, m!.id);
     byId.set(m!.id, l.name);
@@ -165,9 +165,11 @@ export async function removedMailboxWorld(second: SecondMailbox): Promise<Remove
   await db.insert(rules).values({ accountId, kind: "sender", match: SENDERS.G, destination: "ohmail/Screened", enabled: true, priority: 0, provenance: "manual" });
   await db.insert(contacts).values({ accountId, address: SENDERS.H, source: "person" });
 
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `rm-${accountId.slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `rm-${accountId.slice(0, 8)}` };
+  // The route is called past the pipeline, with its session set here: its handle is as the
+  // session's door leaves it, bound to the session's account.
   const deps = {
-    db, now: () => NOW, requestId: ctx.requestId,
+    db: dbFor(db, accountId), now: () => NOW, requestId: ctx.requestId,
     session: { accountId, userId: null, sessionId: null },
     services: { screener: new ScreenerService({}) },
   } as unknown as ApiDeps;

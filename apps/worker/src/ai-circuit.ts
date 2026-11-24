@@ -1,5 +1,5 @@
-import type { SpendPort } from "@trafficflow/db";
-import { ClassifierFaultError } from "./classifier-fault.js";
+import { ModelConsentWithdrawn, type SpendPort } from "@trafficflow/db";
+import { ClassifierFaultError } from "@ohmail/organizer/classifier-fault";
 import { ModelDeclinedError, SensitivePayloadRefusal } from "@trafficflow/core";
 import type { AiCallOptions, ClassifierPort, ClassifierInput, ClassifierResult, Logger } from "@trafficflow/core";
 
@@ -26,7 +26,7 @@ export const DEFAULT_MAX_COOLDOWN_MS = 15 * 60_000;
  * a leaf module with no imports: `sync.ts` needs only the discriminator, and importing it from
  * here dragged the whole breaker into the sync loop's closure. See `classifier-fault.ts`.
  */
-export { ClassifierFaultError } from "./classifier-fault.js";
+export { ClassifierFaultError } from "@ohmail/organizer/classifier-fault";
 
 export interface ClassifierCircuitState {
   open: boolean;
@@ -206,6 +206,7 @@ export function makeClassifierCircuit(
       // The call's usage hook rides through unchanged; the breaker counts, it does not attribute.
       result = await (call ? ask(input, call) : ask(input));
     } catch (err) {
+      if (err instanceof ModelConsentWithdrawn) throw err;
       // A REFUSAL AT THE SINK IS NOT A MODEL FAULT, AND COUNTING IT AS ONE WAS THE BUG.
       // `SensitivePayloadRefusal` says on the class the breaker must never count it as an outage; without
       // this the sensitivity gate FIRING incremented `consecutiveFaults` and `DEFAULT_FAULT_THRESHOLD` of
@@ -310,6 +311,11 @@ export function makeClassifierCircuit(
             });
           }
           return outcome;
+        },
+        async release(accountId, details) {
+          const charge = openCharges.get(mailboxId);
+          if (details.refund && charge?.attempt === details.attempt) openCharges.delete(mailboxId);
+          return port.release(accountId, details);
         },
       };
     },

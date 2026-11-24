@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { AppState, View } from "react-native";
 import { useFocusEffect, useIsFocused, useNavigation } from "expo-router";
 import { Copy } from "../../src/copy";
+import { useTheme } from "../../src/theme";
 import {
   onOrganizerState, organizerStateVersion, readingAtConnectSaid, sayReadingAtConnect,
 } from "../../src/engine/organizer-session";
@@ -36,6 +37,9 @@ import { WaitingStrip } from "../../src/ui/WaitingStrip";
 import { useSeedOffer } from "../../src/ui/SeedOfferCard";
 import { unscreenedOffered } from "../../src/state/seed-offer";
 import { FilingStrip } from "../../src/ui/FilingStrip";
+import { MailListMenu } from "../../src/ui/MailListMenu";
+import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
+import { FullMailboxNotice } from "../../src/ui/FullMailboxNotice";
 import { LateStrip } from "../../src/ui/LateStrip";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { readingAtConnectLine, readingAtConnectNow } from "../../src/ui/standalone-form";
@@ -57,6 +61,7 @@ function OhboxBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const w = useWorld();
+  const t = useTheme();
   // The offer and the doorbell come from the engine's queue reads, asked when this screen is shown.
   useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
@@ -106,9 +111,9 @@ function OhboxBody() {
   const surface = listSurface({ settled: w.boot.settled, count: total });
 
   const groups: ListGroup<WorldMail>[] = [
-    { key: "resurfaced", title: Copy.groupResurfaced, rows: resurfaced },
-    { key: "fresh", title: Copy.groupNew, rows: fresh },
-    { key: "seen", title: Copy.groupSeen, rows: seen },
+    { key: "resurfaced", title: Copy.groupResurfaced, rows: resurfaced, count: resurfaced.length },
+    { key: "fresh", title: Copy.groupNew, rows: fresh, count: fresh.length },
+    { key: "seen", title: Copy.groupSeen, rows: seen, count: seen.length },
   ];
 
   const list = (
@@ -128,15 +133,16 @@ function OhboxBody() {
         refresh={pull}
         head={
           <>
+            <LateStrip />
+            {t.mail ? <FullMailboxNotice /> : null}
             <ViewHeadOhbox
               meta={metaWhen(surface, meta)}
               unread={shown.ohbox.unreadIds.length}
               onMarkAll={() => w.actions.markAllSeen(shown.ohbox.unreadIds)}
               filed={shown.ohbox.filed}
+              calendar={t.mail ? <MailCalendarSwitch /> : undefined}
+              bell={t.mail && knock.k === "knock" ? <Doorbell {...shown.doorbell} compact /> : undefined}
             />
-            {/* New mail is late: the paired server says it is not fetching. First, where a person
-                looks for new mail; it leaves by itself. */}
-            <LateStrip />
             {reading ? (
               <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
                 <Txt variant="note" tone="ink2" accessibilityRole="text">
@@ -165,7 +171,7 @@ function OhboxBody() {
             {/* The filings the mail server has not taken yet — the web's strip, linking to Settings. */}
             <FilingStrip link />
             {knock.k === "state" ? <StateKnock say={notOrganizingSay(knock.why)} />
-              : knock.k === "knock" ? <Doorbell initials={shown.doorbell.initials} count={shown.doorbell.count} /> : null}
+              : knock.k === "knock" && !t.mail ? <Doorbell initials={shown.doorbell.initials} count={shown.doorbell.count} /> : null}
           </>
         }
         empty={
@@ -263,23 +269,35 @@ function ViewHeadOhbox({
   unread,
   onMarkAll,
   filed,
+  bell,
+  calendar,
 }: {
   meta: string | undefined;
   unread: number;
   onMarkAll: () => void;
   filed: FiledSince | null;
+  bell?: React.ReactNode;
+  calendar?: React.ReactNode;
 }) {
+  const theme = useTheme();
   return (
     <ViewHead
       style={{ paddingTop: 8, paddingBottom: 14 }}
       title={Copy.ohbox}
+      leading={calendar}
+      attention={unread > 0}
       /* Silenced over a skeleton (`metaWhen`): "0 unread of 0" about an unread mirror
          would be an invented count. The line keeps its slot so nothing shifts. */
-      meta={meta ?? " "}
+      meta={theme.mail ? undefined : meta ?? " "}
       /* When mail was last checked and where it went — `OhboxWhere`. */
       inline={(oneLine) => <OhboxWhere filed={filed} inline={oneLine} />}
       /* Renders nothing over a cleared list — the component's own rule. */
-      right={<MarkAllRead unreadCount={unread} onPress={onMarkAll} />}
+      right={theme.mail ? (
+        <View style={{ marginLeft: "auto", flexDirection: "row", alignItems: "center" }}>
+          {bell}
+          <MailListMenu unread={unread} onMarkAll={onMarkAll} />
+        </View>
+      ) : <MarkAllRead unreadCount={unread} onPress={onMarkAll} />}
     />
   );
 }

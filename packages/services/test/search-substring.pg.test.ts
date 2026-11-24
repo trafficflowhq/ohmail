@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
+import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
-import { SearchService } from "@trafficflow/services";
+import { SearchService, dbFor } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 
 /**
@@ -19,8 +17,9 @@ import type { ServiceContext } from "@trafficflow/services";
  * ranking and phrase cases. Every read is scoped to this file's own random accounts.
  */
 const URL = pgTestUrl(import.meta.url);
-const client = postgres(URL, { max: 5 });
-const db = brandDialect(drizzle(client, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(URL);
+const db = owned.db;
 const svc = new SearchService();
 
 const NOW = new Date("2026-09-23T12:00:00.000Z");
@@ -29,7 +28,7 @@ const Y = randomUUID();
 const ids: Record<string, string> = {};
 
 function ctx(accountId: string): ServiceContext {
-  return { db, accountId, userId: null, now: () => NOW, requestId: "search-substring" };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "search-substring" };
 }
 
 async function seed(o: {
@@ -41,9 +40,14 @@ async function seed(o: {
     date: new Date(NOW.getTime() - o.daysAgo * 86_400_000), unread: false, hasAttachments: false,
     nativeLocator: { folder: "INBOX", ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: o.body });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.body });
+  // As every writer of a body does: the letter's search document with it.
+  await upsertMessageSearch(db as never, m!.id, {
+    accountId: o.accountId, subject: o.subject, from: { name: null, address: o.from }, to: [], cc: [],
+    attachmentNames: [], bodyText: o.body, source: "text",
+  });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   ids[o.key] = m!.id;
 }
@@ -69,20 +73,21 @@ describe("the store finds a word inside another word (real Postgres, pg_trgm)", 
 
   afterAll(async () => {
     for (const acct of [X, Y]) {
+      await db.execute(sql`delete from message_search where account_id = ${acct}`);
       await db.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${acct})`);
       await db.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${acct})`);
       await db.execute(sql`delete from messages where account_id = ${acct}`);
       await db.execute(sql`delete from mailboxes where account_id = ${acct}`);
     }
-    await client.end({ timeout: 5 });
+    await owned.close();
   });
 
   it("(1) `axa` matches the subject `myAXA Portal` and the sender domain — as matches, not guesses", async () => {
     // The premise, measured: the lexical arm alone holds neither row.
     const lex = (await db.execute<{ n: number }>(sql`
       select count(*)::int as n from messages m left join message_bodies b on b.message_id = m.id
-      where m.account_id = ${X} and (m.subject_tsv @@ websearch_to_tsquery('english', 'axa')
-        or b.body_tsv @@ websearch_to_tsquery('english', 'axa'))`)) as unknown as Array<{ n: number }>;
+      where m.account_id = ${X} and (to_tsvector('english', coalesce(m.subject, '') || ' ' || coalesce(m.from_address, '')) @@ websearch_to_tsquery('english', 'axa')
+        or to_tsvector('english', left(coalesce(b.text, ''), 65536)) @@ websearch_to_tsquery('english', 'axa'))`)) as unknown as Array<{ n: number }>;
     expect(lex[0]!.n).toBe(0);
 
     const r = await svc.search(ctx(X), { q: "axa" });
@@ -105,8 +110,10 @@ describe("the store finds a word inside another word (real Postgres, pg_trgm)", 
     // Unquoted, both words anywhere: the lexical AND admits the scattered subject too.
     const loose = await svc.search(ctx(Y), { q: "portal access" });
     expect(new Set(loose.items.map((m) => m.id))).toEqual(new Set([ids.phrase, ids.scattered]));
-    // And `"axa"` quoted does not reach inside `myAXA`: the exact tier is empty.
-    expect((await svc.search(ctx(X), { q: '"axa"' })).tier).toBe("similar");
+    // And `"axa"` quoted does not reach inside `myAXA`: the word itself, in the sender's domain, is all it finds.
+    const word = await svc.search(ctx(X), { q: '"axa"' });
+    expect(word.tier).toBe("exact");
+    expect(word.items.map((m) => m.id)).toEqual([ids.domain]);
   });
 
   it("(4) an exact subject hit ranks above a body hit that is newer and louder", async () => {

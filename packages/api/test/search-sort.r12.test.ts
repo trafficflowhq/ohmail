@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { SEARCH_SORTS } from "@trafficflow/services/mail";
-import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, seedSearchDocuments, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
@@ -35,6 +35,7 @@ describe("GET /search?sort=", () => {
     const old = await mk("heron one", new Date("2026-07-01T09:00:00Z"), "zoe@late.example");
     const mid = await mk("heron two", new Date("2026-07-10T09:00:00Z"), "anna@early.example");
     const recent = await mk("heron three", new Date("2026-07-20T09:00:00Z"), "mike@mid.example");
+    await seedSearchDocuments(db, s.accountId);
     return { deps, token: s.token, old, mid, recent };
   };
 
@@ -126,7 +127,7 @@ describe("GET /search?sort=", () => {
  *
  * `SEARCH_SORTS` is declared twice in this repository, and it has to be. The server's copy is in
  * `packages/services/src/search-service.ts`; the client's is `SERVER_SEARCH_SORTS` in
- * `packages/client-engine/src/engine.ts`, which is the STANDALONE GPL desktop payload and may not
+ * `packages/client-engine/src/engine/server-wire.ts`, which is the STANDALONE GPL desktop payload and may not
  * import a hosted service — the same reason `owner-cookie.ts` repeats a cookie name rather than
  * importing the API's constant.
  *
@@ -140,7 +141,7 @@ describe("GET /search?sort=", () => {
  * happens to resolve.
  */
 const ENGINE_SRC = fileURLToPath(
-  new URL("../../client-engine/src/engine.ts", import.meta.url),
+  new URL("../../client-engine/src/engine/server-wire.ts", import.meta.url),
 );
 
 describe("the client's sort vocabulary matches the server's", () => {
@@ -149,7 +150,7 @@ describe("the client's sort vocabulary matches the server's", () => {
     // silently. `readFileSync` has no such behaviour — it either returns the bytes or throws.
     const src = readFileSync(ENGINE_SRC, "utf8");
     const decl = /export const SERVER_SEARCH_SORTS = \[([^\]]*)\] as const;/.exec(src);
-    expect(decl, "SERVER_SEARCH_SORTS declaration not found in engine.ts").not.toBeNull();
+    expect(decl, "SERVER_SEARCH_SORTS declaration not found in engine/server-wire.ts").not.toBeNull();
 
     const clientSide = decl![1]!
       .split(",")

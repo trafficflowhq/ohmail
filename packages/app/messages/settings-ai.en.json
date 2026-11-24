@@ -1,0 +1,22 @@
+{
+  "settingsAi": {
+    "notRead": "Not read",
+    "notChanged": "Not changed",
+    "on": "On",
+    "off": "Off",
+    "notSetUp": "Not set up",
+    "model": "Model",
+    "where": "Where the model runs",
+    "cloud": "ohmail Cloud",
+    "working": "Working",
+    "draftCost": "{credits, number} credits a draft",
+    "draftReply": "Draft reply",
+    "budget": "AI budget left",
+    "creditsAmount": "{remaining, number} of {total, number}",
+    "creditsLeft": "{remaining, number} of {total, number} left",
+    "creditsDetail": "{remaining, number} of {total, number} credits",
+    "creditsEmpty": "0 credits",
+    "plans": "Plans",
+    "creditsBalance": "{remaining, number} credits left"
+  }
+}

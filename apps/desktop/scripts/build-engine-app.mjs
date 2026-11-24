@@ -45,6 +45,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { buildVariant } from "./build-variant.mjs";
 import { bridgePackaging } from "./linux-atk-bridge.mjs";
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -64,8 +65,12 @@ const bundles = bundlesAt >= 0 ? own[bundlesAt + 1] : null;
  */
 const distAt = own.indexOf("--distribution");
 const distribution = distAt >= 0 ? own[distAt + 1] : "direct";
-if (!["direct", "mas"].includes(distribution)) {
-  process.stderr.write(`\nbuild-engine-app: unknown --distribution ${distribution} (direct | mas)\n`);
+/* The halves this word selects (`build-variant.mjs` holds the table), refused before any stage runs. */
+let variant;
+try {
+  variant = buildVariant({ distribution, platform: process.platform });
+} catch (err) {
+  process.stderr.write(`\nbuild-engine-app: ${err.message}\n`);
   process.exit(1);
 }
 
@@ -157,8 +162,8 @@ if (!existsSync(cli)) die(`the Tauri CLI is not installed at ${cli} — run \`np
 const tauriArgs = [
   /* ONE `--features`, comma-joined. Repeating the flag is not the same thing: whether a second
      one appends or replaces is the CLI's business and not something an artifact should depend on. */
-  "--features", ["local-engine", ...(distribution === "mas" ? ["mas"] : [])].join(","),
-  "--config", join(APP, "src-tauri", "tauri.engine.conf.json"),
+  "--features", variant.features,
+  ...variant.configs.flatMap((name) => ["--config", join(APP, "src-tauri", name)]),
   ...(atkBridge ? ["--config", JSON.stringify(atkBridge)] : []),
   ...(bundles ? ["--bundles", bundles] : []),
   ...passThrough,

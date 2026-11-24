@@ -1,7 +1,7 @@
+import type { EngineMutation, Folder, RuleEntity as RuleDTO, RuleKeyAddress } from "@ohmail/wire";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { outranks } from "./consent-cutline.js";
 import { storedRuleDestination } from "./selectors.js";
-import type { EngineMutation, Folder, RuleDTO, RuleKeyAddress } from "./types.js";
 
 /**
  * A SUBJECT'S RULE TWINS AND WHAT A SCREENING PRESS WRITES OVER THEM — the ladder past the gate,

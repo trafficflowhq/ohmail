@@ -2,11 +2,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { IntlProvider } from "use-intl";
+import { fireEvent, within } from "@testing-library/react";
+import { IntlProvider, createTranslator } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { MemoryMirrorStore, OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
 
+import { DesktopFrame, type DesktopFrameProps } from "../src/DesktopFrame.js";
+import type { EngineStatus } from "../src/bridge-fetch.js";
+import { CLOUD_URL } from "../src/doors.js";
+import { linkSlot } from "../src/link-in.js";
+import { encodeDesktopAnswer } from "./_install-pane.js";
+
+import { DEFAULT_LOCALE, setActiveCatalog } from "../../webapp/app/shell/locale.js";
 import messages from "../../webapp/messages/en.json";
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import messagesDe from "../../webapp/messages/de.json";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /**
@@ -53,6 +63,9 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
  * that value. Held in a mutable binding so each case can set it before mounting.
  */
 let FACTS: MailboxFacts[] | null = null;
+let liveRoster = false;
+let wireRoster: readonly MailboxFacts[] = [];
+let countedSearchReply: { items?: unknown } | null = null;
 /** How many times the pane asked the shared poller to re-read. */
 let refreshed = 0;
 /**
@@ -73,16 +86,16 @@ let MAIL_STATE: { key: string; clock: boolean; settled: boolean } =
  */
 let FRESHNESS: { state: "unknown" | "stale" | "current" } = { state: "current" };
 
-vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async () => {
   /* THE WHOLE MODULE, then the overrides: a factory that NAMES its exports leaves the
      others `undefined`, and the day a pane under test reads one the rig fails as a
      TypeError rather than as the assertion. */
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
-    "../../webapp/app/shell/MailStateProvider",
+  const real = await vi.importActual<typeof import("@ohmail/app-logic/mail-state/mail-state-binding")>(
+    "@ohmail/app-logic/mail-state/mail-state-binding",
   );
   return {
     ...real,
-    useMailState: () => ({
+    useMailState: () => liveRoster ? real.useMailState() : ({
       state: MAIL_STATE,
       mailboxes: FACTS,
       mirrored: MIRRORED,
@@ -94,6 +107,7 @@ vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
 
 /** What the bridge answered, per request. Set by the cases that press "Sync now". */
 let bridgeReply: () => Response | Promise<Response> = () => new Response(null, { status: 202 });
+let nativeBridge = false;
 /** Every request the pane put down the pipe, in order. */
 let bridged: { url: string; method: string }[] = [];
 /**
@@ -155,34 +169,21 @@ let shellCommands: string[] = [];
  */
 const loggedOutCount = (): number => shellCommands.filter((c) => c === "engine_logout").length;
 let logoutFails: string | null = null;
-/** Whether the gate wired its status sink — false stands in for a shell that cannot be told. */
-let SHELL_SINK = true;
 /** What the sign-out answers with, or the error it throws. Set by the cases that press it. */
 let logoutReply: () => Promise<{ state: string; mode?: string | null }> =
   async () => ({ state: "not_configured", mode: null });
 /** The engine states the pane published upward — the gate's `onStatus`. */
 let published: { state: string; mode?: string | null }[] = [];
 
-/**
- * THE WINDOW'S MIRROR, for the cases that count unsent drafts. `null` leaves the
- * real hook, which answers `null` here (no provider): every other case renders as before.
- */
+/** Draft rows in the in-memory mirror that the mounted desktop frame reads. */
 let DRAFTS: Array<{ id: string; mailboxId: string; status: string }> | null = null;
-vi.mock("../../webapp/app/shell/engine", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/shell/engine")>(
-    "../../webapp/app/shell/engine",
-  );
+
+vi.mock("../src/local-mailbox-facts.js", async () => {
+  const real = await vi.importActual<typeof import("../src/local-mailbox-facts.js")>("../src/local-mailbox-facts.js");
   return {
     ...real,
-    useEngineOrNull: () => {
-      const live = real.useEngineOrNull();
-      if (DRAFTS === null) return live;
-      const drafts = DRAFTS;
-      return {
-        read: () => ({ list: (type: string) => (type === "draft" ? drafts : []) }),
-        syncOnce: async () => undefined,
-      } as never;
-    },
+    readMailboxFacts: async (options: Parameters<typeof real.readMailboxFacts>[0]) =>
+      liveRoster ? real.readMailboxFacts(options) : FACTS ?? [],
   };
 });
 
@@ -197,9 +198,18 @@ vi.mock("../src/bridge-fetch.js", async () => {
   return {
     ...real,
     bridgeFetch: async (url: string, init?: { method?: string; body?: unknown; deadlineMs?: number }) => {
-      bridged.push({ url, method: init?.method ?? "GET" });
+      if (nativeBridge) return real.bridgeFetch(url, init as Parameters<typeof real.bridgeFetch>[1]);
+      const method = init?.method ?? "GET";
+      // The mounted frame reads these independently of the pane and its presses.
+      if (method === "GET" && url === "/consent") return Response.json({ dormancyDays: 60 });
+      if (method === "GET" && url === "/away-responder") return Response.json({ enabled: false });
+      if (method === "GET" && url === "/mirror/freshness") return Response.json({ state: "current" });
+      if (method === "GET" && /^\/mailboxes\/[^/]+\/profile-import$/.test(url)) {
+        return Response.json({ state: "none" });
+      }
+      bridged.push({ url, method });
       sentDeadlines.push({
-        url, method: init?.method ?? "GET",
+        url, method,
         ...(init?.deadlineMs !== undefined ? { deadlineMs: init.deadlineMs } : {}),
       });
       if (typeof init?.body === "string") sentBodies.push({ url, body: init.body });
@@ -211,7 +221,12 @@ vi.mock("../src/bridge-fetch.js", async () => {
        is `retrying-read.test.ts`'s subject, not this file's. A partial mock would leave the
        export `undefined` and fail 82 cases with a mock error rather than an assertion. */
     retryingBridgeFetch: async (url: string, init?: { method?: string }) => {
+      if (nativeBridge) return real.retryingBridgeFetch(url, init);
       bridged.push({ url, method: init?.method ?? "GET" });
+      if (url === "/mailboxes?counts=1" && countedSearchReply !== null) return Response.json(countedSearchReply);
+      if (url === "/mailboxes" || url === "/mailboxes?counts=1") {
+        return Response.json({ items: liveRoster ? wireRoster : FACTS ?? [] });
+      }
       return bridgeReply();
     },
     /* THE SHELL'S OWN SIGN-OUT, which the pane runs after removing the LAST mailbox. Mocked here
@@ -264,6 +279,8 @@ const queuedNote = (name: string): string =>
   (messages as unknown as { mailboxes: Record<string, string> })
     .mailboxes.organizeHereQueued!.replace("{name}", name);
 
+/** The mounted mailbox the pane keeps its choices for, as the window's frame hands it. */
+const PANE_SCOPE = "mbx-1";
 const MAILBOX: MailboxFacts = {
   id: "mbx-1",
   address: "someone@example.test",
@@ -280,49 +297,112 @@ const MAILBOX: MailboxFacts = {
 let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
 
-/** Mailbox rows only. `.set-row` is also used by the pane's own notes, so counting it raw is one
- *  too many — measured, and the reason this helper exists rather than a bare selector. */
+/** The main roster's rows, apart from the per-mailbox check section beneath them. */
 function addressRows(el: HTMLElement): HTMLElement[] {
-  return [...el.querySelectorAll(".set-row")].filter(
-    (r) => (r.querySelector(".lab b")?.textContent ?? "").includes("@"),
+  return [...el.querySelectorAll("[data-mailbox] > .oh-sheet > .oh-settingssheet > .oh-settingline")].filter(
+    (r) => (r.querySelector(".oh-settingline-label")?.textContent ?? "").includes("@"),
   ) as HTMLElement[];
 }
 
-async function render(
-  door: string | null,
-  extra: { flavor?: string; server?: string; host?: string } = {},
-): Promise<HTMLElement> {
-  /* Imported inside, so the module graph is built after `vi.mock` is registered. */
-  const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
+interface DoorFact {
+  account?: string;
+  flavor?: string;
+  server?: string;
+  host?: string;
+  paired?: boolean;
+  withoutStatusSink?: boolean;
+  locale?: "en" | "de";
+}
+
+const adapter: EngineAdapter = {
+  sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] },
+    cursor: "1", hasMore: false, serverTime: "2026-08-11T09:00:00.000Z" }),
+  mutate: async () => ({ changes: [], seq: null }),
+  withdrawSend: async () => ({ outcome: "unsupported" }),
+  fetchBody: async () => null,
+};
+let engine: OhmailEngine | null = null;
+let links = linkSlot();
+const emptySignal = { read: () => null, subscribe: () => () => undefined };
+const onStatus = (next: EngineStatus): void => { published.push(next); };
+
+function frameProps(door: string, extra: DoorFact): DesktopFrameProps {
+  const { server, host } = extra;
+  const flavor = extra.flavor ?? (host === undefined ? undefined : "desktop-host");
+  const status = {
+    state: "serving", mode: door, mailboxId: PANE_SCOPE,
+    ...(door === "local" ? { localDoorVersion: 1 } : {}),
+    ...(flavor === undefined ? {} : { flavor }),
+    ...(door !== "cloud" ? {} : { cloudUrl: server === undefined ? CLOUD_URL : `https://${server}` }),
+  } as EngineStatus;
+  return {
+    engine: engine!, status, session: "live", sessionRefused: false, sealFailed: false,
+    paired: extra.paired ?? host !== undefined, hostLabel: host ?? null, freshness: null, account: extra.account ?? null,
+    storage: null, mayLinkOut: true, manageOffered: false, withdrawManage: () => undefined,
+    rereadAccess: () => undefined, reuseSweeps: [], recheckSweeps: async () => undefined,
+    ai: null, setAi: () => undefined, onStatus, openOverlay: () => undefined, takeOver: () => undefined,
+    firstRunOpen: false, firstRun: undefined, takesMailLinks: false, scope: PANE_SCOPE,
+    onUnread: () => undefined, liveBody: async () => ({ kind: "refused", reason: "gone" }),
+    links, connection: emptySignal,
+  };
+}
+
+async function paint(door: string | null, extra: DoorFact = {}): Promise<void> {
+  let pane: React.ReactNode;
+  if (door === null || extra.withoutStatusSink) {
+    // These compatibility cases supply facts the window's gate does not hand to the frame.
+    const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
+    pane = h(DesktopMailboxes, { door, scope: PANE_SCOPE, ...extra,
+      ...(extra.withoutStatusSink ? { removalDoor: { active: true, version: 1 } } : {}),
+    });
+  } else {
+    pane = h(DesktopFrame, frameProps(door, extra));
+  }
+  await act(async () => {
+    root!.render(
+      h(IntlProvider, {
+        locale: extra.locale ?? "en",
+        messages: (extra.locale === "de" ? messagesDe : messages) as never,
+        timeZone: "UTC",
+        children: h(ThemeProvider, { storageKey: "ohmail.theme", children: h(ToastHost, null, pane) }),
+      }),
+    );
+  });
+}
+
+async function unmountPane(): Promise<void> {
+  if (root) await act(async () => { root!.unmount(); });
+  mountPoint?.remove();
+  root = null;
+  mountPoint = null;
+  engine = null;
+}
+
+async function render(door: string | null, extra: DoorFact = {}, at = "#/settings/mailboxes"): Promise<HTMLElement> {
+  // A replacement frame must retire the previous frame's route and key listeners.
+  await unmountPane();
+  if (door !== null && !extra.withoutStatusSink) {
+    window.history.replaceState(null, "", at);
+    const store = new MemoryMirrorStore();
+    if (DRAFTS) {
+      await store.applyChanges(DRAFTS.map((entity, i) => ({
+        type: "draft", op: "create", id: entity.id, seq: i + 1,
+        updatedAt: "2026-08-11T09:00:00.000Z", entity,
+      })));
+    }
+    engine = new OhmailEngine({ adapter, store, storePolicy: { mode: "full" } });
+  }
   mountPoint = document.createElement("div");
   document.body.appendChild(mountPoint);
   root = createRoot(mountPoint);
-  await act(async () => {
-    root!.render(
-      h(
-        IntlProvider,
-        { locale: "en", messages: messages as never, timeZone: "UTC" },
-        h(
-          ThemeProvider,
-          { storageKey: "ohmail.theme" },
-          h(ToastHost, null, h(DesktopMailboxes, {
-            door,
-            ...extra,
-            /* The gate's own sink. Withheld by the ONE case that drives a shell which cannot be
-               told — see "a shell that cannot be told". */
-            ...(SHELL_SINK
-              ? {
-                  onShellStatus: (next: { state: string; mode?: string | null }) => {
-                    published.push(next);
-                  },
-                }
-              : {}),
-          })),
-        ),
-      ),
-    );
-  });
-  return mountPoint;
+  await paint(door, extra);
+  if (engine === null) return mountPoint;
+  const catalogue = extra.locale === "de" ? messagesDe : messages;
+  if (at === "#/search") {
+    await within(mountPoint).findByRole("textbox", { name: catalogue.search.aria });
+  }
+  if (at !== "#/settings/mailboxes") return mountPoint;
+  return within(mountPoint).findByRole("region", { name: catalogue.settings.mailboxes });
 }
 
 /** A button by its label, so a second control cannot be mistaken for the one under test. */
@@ -340,8 +420,8 @@ const openButton = (el: HTMLElement) => buttonSaying(el, "Open ohmail.app");
  * which mailbox a removal names depends on pressing the right one.
  */
 function rowRemove(el: HTMLElement, address: string): HTMLButtonElement {
-  const row = [...el.querySelectorAll<HTMLElement>(".set-row")]
-    .find((r) => (r.querySelector(".lab b")?.textContent ?? "").includes(address));
+  const row = addressRows(el)
+    .find((r) => (r.querySelector(".oh-settingline-label")?.textContent ?? "").includes(address));
   if (!row) throw new Error(`no row for ${address}`);
   const verb = [...row.querySelectorAll("button")]
     .find((b) => (b.textContent ?? "").trim() === "Remove");
@@ -356,12 +436,14 @@ function rowRemove(el: HTMLElement, address: string): HTMLButtonElement {
  */
 function buttonExactly(el: HTMLElement, label: string): HTMLButtonElement | null {
   return (
-    [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === label) ?? null
+    (within(el).queryAllByRole("button", { name: label, exact: true })[0] as HTMLButtonElement | undefined) ?? null
   );
 }
 
 beforeEach(() => {
   FACTS = [MAILBOX];
+  liveRoster = false;
+  wireRoster = [];
   DRAFTS = null;
   MIRRORED = 0;
   shellCommands = [];
@@ -374,13 +456,23 @@ beforeEach(() => {
   sentBodies = [];
   sentDeadlines = [];
   bridgeReply = () => new Response(null, { status: 202 });
+  nativeBridge = false;
   logoutFails = null;
-  SHELL_SINK = true;
   DIST = "direct";
   invoked = [];
+  links = linkSlot();
+  vi.stubGlobal("matchMedia", (media: string) => ({
+    media, matches: false, onchange: null, addListener() {}, removeListener() {},
+    addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false,
+  }));
+  vi.stubGlobal("CSS", { escape: (value: string) => value });
   host.__TAURI_INTERNALS__ = {
     transformCallback: () => 1,
     invoke: async (command, payload) => {
+      // The frame independently asks whether the operating system uses this app for mail.
+      if (command === "default_mail_status" && payload === undefined) return { state: "default" };
+      // The frame subscribes to native notification opens independently of mailbox actions.
+      if (command === "plugin:event|listen" && payload?.event === "notice:open") return null;
       invoked.push({ command, ...(payload ? { payload } : {}) });
       return null;
     },
@@ -388,10 +480,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  mountPoint?.remove();
-  root = null;
-  mountPoint = null;
+  await unmountPane();
+  setActiveCatalog(DEFAULT_LOCALE, null);
+  window.history.replaceState(null, "", "/");
+  vi.unstubAllGlobals();
   delete host.__TAURI_INTERNALS__;
   vi.restoreAllMocks();
 });
@@ -438,7 +530,7 @@ describe("the desktop mailbox pane and a mail server it cannot reach", () => {
        also read the row's CONTROLS, so `Sign in again` — a verb that has to be offered in every
        state, because a password is changed before the server starts refusing — tripped a claim
        about the sentence. A needle names the element it is a claim about. */
-    const said = el.querySelector(".mbx-reach")?.textContent?.toLowerCase() ?? "";
+    const said = el.querySelector("[data-reach]")?.textContent?.toLowerCase() ?? "";
     expect(said).toContain("can't reach the mail server");
     expect(said).not.toContain("sign in");
     expect(said).not.toContain("signed out");
@@ -547,7 +639,7 @@ describe("the desktop mailbox pane and a mail server it cannot reach", () => {
    * is one specific request, a GET, and an action that sent a POST or a DELETE to the same path
    * would have been invisible to every assertion in this file.
    */
-  it("does not hide a NON-GET request to the connections path", () => {
+  it("does not hide a NON-GET request to the connections path", async () => {
     bridged = [
       { url: "/local/mailboxes/connections", method: "GET" },
       { url: "/local/mailboxes/connections", method: "POST" },
@@ -556,6 +648,35 @@ describe("the desktop mailbox pane and a mail server it cannot reach", () => {
       pressed(),
       "a write to the poll's URL was filtered away with the poll",
     ).toEqual([{ url: "/local/mailboxes/connections", method: "POST" }]);
+
+    nativeBridge = true;
+    const selected = MAILBOX;
+    FACTS = [selected, { ...MAILBOX, id: "mbx-other", address: personalAt("fixture.other", "example.test") }];
+    const reach = "/local/mailboxes/connections";
+    const removal = `/local/mailboxes/${selected.id}`;
+    const invoke = host.__TAURI_INTERNALS__!.invoke;
+    host.__TAURI_INTERNALS__!.invoke = async (command, payload) => {
+      if (command !== "engine_request") return invoke(command, payload);
+      invoked.push({ command, payload });
+      const url = payload?.url;
+      return encodeDesktopAnswer({ body: url === reach ? { items: [] } : {} });
+    };
+
+    const pane = await render("local");
+    const remove = within(pane).getAllByRole("group", { name: selected.address })
+      .flatMap((row) => within(row).queryAllByRole("button", { name: "Remove" }));
+    expect(remove).toHaveLength(1);
+    await act(async () => remove[0]!.click());
+    const name = messages.mailboxes.removeTitle.replace("{address}", selected.address);
+    const confirm = within(pane).getByRole("alertdialog", { name });
+    await act(async () => within(confirm).getByRole("button", { name: "Remove mailbox" }).click());
+
+    const requests = invoked.filter(({ command }) => command === "engine_request").map(({ payload }) => ({
+      url: payload?.url, method: payload?.method,
+    }));
+    expect(requests.filter(({ url }) => url === reach)).toEqual([{ url: reach, method: "GET" }]);
+    expect(requests.filter(({ url }) => typeof url === "string" && url.startsWith("/local/mailboxes/") && url !== reach))
+      .toEqual([{ url: removal, method: "DELETE" }]);
   });
 
   /**
@@ -571,6 +692,29 @@ describe("the desktop mailbox pane and a mail server it cannot reach", () => {
     const text = (await render("local")).textContent ?? "";
     expect(text).toContain("Up to date");
     expect(text).not.toContain("Can't reach the mail server");
+  });
+});
+
+describe("the Desktop Search mailbox count", () => {
+  it("displays zero for an explicitly empty roster and stays silent for a missing or invalid roster", async () => {
+    try {
+      countedSearchReply = {};
+      liveRoster = true;
+      const missing = await render("local", {}, "#/search");
+      expect(within(missing).getByRole("textbox", { name: "Search" })).toBeTruthy();
+      expect(bridged).toContainEqual({ url: "/mailboxes?counts=1", method: "GET" });
+      expect(within(missing).queryByText("0 messages")).toBeNull();
+
+      countedSearchReply = { items: [] };
+      const empty = await render("local", {}, "#/search");
+      expect(within(empty).getByText("0 messages")).toBeTruthy();
+
+      countedSearchReply = { items: [{ messageCount: 0 }, { messageCount: "0" }] };
+      const invalid = await render("local", {}, "#/search");
+      expect(within(invalid).queryByText("0 messages")).toBeNull();
+    } finally {
+      countedSearchReply = null;
+    }
   });
 });
 
@@ -612,6 +756,63 @@ describe("the local search index's progress", () => {
     await render("cloud");
     expect(bridged.filter((c) => c.url === "/local/search-index")).toEqual([]);
   });
+});
+
+describe("the mailbox roster opened through desktop Settings", () => {
+  it.each([
+    { name: "this computer's mailbox service", door: "local", details: {} },
+    { name: "the managed service", door: "cloud", details: {} },
+    { name: "a self-hosted server", door: "cloud", details: { flavor: "selfhost", server: "self-hosted.test" } },
+    { name: "a paired computer", door: "cloud", details: { host: "Paired fixture" } },
+  ])("shows both mailboxes on $name from the engine's full list", async ({ door, details }) => {
+    const second = { ...MAILBOX, id: "mbx-2", address: `second.${MAILBOX.address}` };
+    liveRoster = true;
+    FACTS = null;
+    wireRoster = [MAILBOX, second];
+    const pane = await render(door, details);
+    expect(pane.textContent).toContain(MAILBOX.address);
+    expect(pane.textContent).toContain(second.address);
+    expect(bridged.some(({ url, method }) => url.startsWith("/mailboxes") && method === "GET")).toBe(true);
+  });
+  it.each([
+    { flavor: "desktop-host", paired: true, server: "" },
+    { flavor: "selfhost", server: "" },
+  ])("keeps Mailboxes on its own door while the $flavor address is unavailable", async (details) => {
+    const pane = await render("cloud", details);
+    expect(pane.textContent).toContain(MAILBOX.address);
+    expect(openButton(pane)).toBeNull();
+    expect(pane.textContent).not.toContain(messages.mailboxes.desktopManageOnWeb);
+    FACTS = [];
+    await paint("cloud", details);
+    expect(buttonExactly(pane, messages.mailboxes.desktopOpenSetup)).toBeNull();
+    expect(pane.textContent).not.toContain(messages.mailboxes.desktopNoneCloud);
+  });
+
+  it("opens all affected mailboxes from the organizer notice without dismissing them", async () => {
+    const at = "2026-08-07T09:00:00.000Z";
+    liveRoster = true;
+    FACTS = null;
+    wireRoster = [1, 2, 3, 4].map((number) => ({
+      ...MAILBOX,
+      id: `mbx-${number}`,
+      address: `${number}.${MAILBOX.address}`,
+      organizerRole: "reader",
+      organizedBy: { kind: "local", name: "Fixture computer", since: at },
+      organizerState: "held",
+      organizerEventAt: at,
+      organizerEventSeenAt: null,
+    }));
+    const frame = await render("local", {}, "#/ohbox");
+    const action = within(frame).getByRole("button", { name: messages.mailboxes.noticeCountShow });
+    expect(action.closest('[role="status"]')?.textContent).toContain("4 mailboxes are organized elsewhere now");
+    await act(async () => action.click());
+    const roster = within(frame).getByRole("dialog");
+    expect(within(roster).getAllByRole("listitem").map((row) => row.textContent))
+      .toEqual(wireRoster.map((mailbox) => `${mailbox.address} · Fixture computer`));
+    expect(window.location.hash).toBe("#/ohbox");
+    expect(pressed().filter(({ method }) => method !== "GET")).toEqual([]);
+  });
+
 });
 
 describe("the desktop mailbox pane on the hosted door", () => {
@@ -757,7 +958,7 @@ describe("the desktop mailbox pane on the hosted door", () => {
        where that ceremony can be run, and the hand-off row above is the way there. */
     const el = await render("cloud");
     expect(buttonExactly(el, "Remove")).toBeNull();
-    expect(el.querySelector(".mbx-remove-list")).toBeNull();
+    expect(el.querySelector("[data-removal-consequences]")).toBeNull();
   });
 
   it("says nothing at all until the engine has answered", async () => {
@@ -781,14 +982,14 @@ describe("the desktop mailbox pane on the hosted door", () => {
  */
 describe("the hand-off row names the door's own place", () => {
   const rows: ReadonlyArray<{
-    door: string; extra: { flavor?: string; server?: string; host?: string };
+    door: string; extra: DoorFact;
     says: string | null; button: string | null; key: string | null; never: string[];
   }> = [
     { door: "local", extra: { flavor: "local" }, says: null, button: null, key: null,
       never: ["managed in ohmail on the web", "your server's web app", "Open ohmail.app"] },
     { door: "cloud", extra: { flavor: "managed" }, says: "Mailboxes are managed in ohmail on the web",
       button: "Open ohmail.app", key: "mailboxes", never: ["your server's web app"] },
-    { door: "cloud", extra: { flavor: "selfhost", server: "mail.example.test" },
+    { door: "cloud", extra: { flavor: "selfhost", server: "mail.example.test", account: PANE_SCOPE },
       says: "Mailboxes are managed on your server's web app", button: "Open mail.example.test",
       key: "server-mailboxes", never: ["ohmail on the web", "ohmail.app"] },
     { door: "cloud", extra: { flavor: "desktop-host", host: "Kitchen Mac" },
@@ -808,9 +1009,10 @@ describe("the hand-off row names the door's own place", () => {
       const b = buttonSaying(el, r.button);
       expect(b, `no "${r.button}" press`).not.toBeNull();
       await act(async () => { b!.click(); });
-      expect(invoked, "the window named something other than a key").toEqual([
-        { command: "open_link", payload: { key: r.key } },
-      ]);
+      const payload = r.extra.account === undefined
+        ? { key: r.key }
+        : { key: r.key, expectedAccount: PANE_SCOPE, expectedServer: `https://${r.extra.server}` };
+      expect(invoked, "the window opened the wrong Settings page").toEqual([{ command: "open_link", payload }]);
     });
   }
 
@@ -918,13 +1120,15 @@ describe("the desktop mailbox pane on the standalone door", () => {
     const el = await render("local");
     const add = buttonExactly(el, "Add mailbox");
     expect(add, "a standalone install cannot connect a second mailbox from this pane").not.toBeNull();
+    expect(add!.compareDocumentPosition(addressRows(el)[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const beforePress = pressed();
 
     await act(async () => { add!.click(); });
     /* `#/first-run/add`, NEVER the bare hash. The install has been through setup, so
        `deriveOnboardingStep` answers null for it — correctly — and the intent has to ride the
        route or the stage opens, finds the completion stamp and closes again on the same render. */
     expect(window.location.hash).toBe("#/first-run/add");
-    expect(pressed(), "the press connected something instead of opening the flow").toEqual([]);
+    expect(pressed(), "the press connected something instead of opening the flow").toEqual(beforePress);
   });
 
   it("does not offer Add mailbox on the hosted door", async () => {
@@ -932,6 +1136,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     // the button would navigate to a route that renders nothing at all.
     const el = await render("cloud");
     expect(buttonExactly(el, "Add mailbox")).toBeNull();
+    expect(buttonExactly(el, "Run setup")).toBeNull();
   });
 
   it("RUN SETUP AGAIN is a row control and it names its own mailbox", async () => {
@@ -945,9 +1150,23 @@ describe("the desktop mailbox pane on the standalone door", () => {
     const el = await render("local");
     const rows = addressRows(el);
     expect(rows.length).toBe(2);
-    const second = [...rows[1]!.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").trim() === "Run setup");
-    expect(second, "the second mailbox has no way to re-run its own setup").toBeDefined();
+    const rail = mountPoint!.querySelector<HTMLElement>('nav[aria-label="Places"]')!;
+    const menu = mountPoint!.querySelector<HTMLElement>(`nav[aria-label="${messages.settings.navAria}"]`)!;
+    const settings = within(rail).getByRole("button", { name: messages.settings.title });
+    const mailboxes = within(menu).getByRole("button", { name: messages.settings.mailboxes });
+    const key = (key: string) => act(async () => {
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+    settings.focus();
+    await key("ArrowRight");
+    expect.soft(document.activeElement).toBe(mailboxes);
+    await key("ArrowRight");
+    expect.soft(document.activeElement).toBe(el);
+
+    const first = buttonExactly(rows[0]!, "Run setup");
+    const second = buttonExactly(rows[1]!, "Run setup");
+    expect(first, "the first mailbox has no way to re-run its own setup").not.toBeNull();
+    expect(second, "the second mailbox has no way to re-run its own setup").not.toBeNull();
     await act(async () => { second!.click(); });
     expect(window.location.hash).toBe("#/first-run/again?mailbox=mbx-2");
   });
@@ -973,6 +1192,8 @@ describe("the desktop mailbox pane on the standalone door", () => {
    *    case reds, having destroyed a stored password on one press.
    */
   it("OFFERS REMOVE, and it opens a confirmation rather than removing anything", async () => {
+    let land!: (answer: Response) => void;
+    bridgeReply = () => new Promise<Response>((done) => { land = done; });
     const el = await render("local");
     const verb = buttonExactly(el, "Remove");
     expect(verb, "the standalone door still has no way to remove a mailbox").not.toBeNull();
@@ -980,12 +1201,36 @@ describe("the desktop mailbox pane on the standalone door", () => {
     // THE PRESS IS NOT THE REMOVAL. On the hosted door the destructive press is two screens away
     // behind the account's second factor; here there is no factor to ask for, so the statement of
     // consequences IS the ceremony.
+    verb!.focus();
     await act(async () => { verb!.click(); });
     expect(pressed(), "the row's verb removed the mailbox with nothing confirmed").toEqual([]);
 
     const panel = el.querySelector('[role="alertdialog"]');
     expect(panel, "the confirmation is not an alertdialog").not.toBeNull();
-    expect(panel!.textContent ?? "").toContain("Remove someone@example.test?");
+    expect(panel!.textContent ?? "").toContain("Remove someone@example.test");
+    const dialog = within(el).getByRole("alertdialog");
+    const keep = within(dialog).getByRole("button", { name: "Keep it" }) as HTMLButtonElement;
+    expect(document.activeElement).toBe(keep);
+    await act(async () => { within(dialog).getByRole("button", { name: "Remove mailbox" }).click(); });
+    expect(keep.disabled).toBe(true);
+    await act(async () => {
+      keep.click();
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      fireEvent.pointerDown(dialog.parentElement!);
+      fireEvent.click(dialog.parentElement!);
+    });
+    expect(within(el).getByRole("alertdialog")).toBe(dialog);
+    expect(pressed().filter(({ method }) => method === "DELETE")).toHaveLength(1);
+    await act(async () => {
+      land(new Response(JSON.stringify({ error: { code: "internal", message: "fixture refusal" } }), {
+        status: 500, headers: { "content-type": "application/json" },
+      }));
+    });
+    expect(within(dialog).getByRole("alert").textContent).toContain("fixture refusal");
+    expect(keep.disabled).toBe(false);
+    await act(async () => { keep.click(); });
+    expect(within(el).queryByRole("alertdialog")).toBeNull();
+    expect(document.activeElement).toBe(verb);
   });
 
   it("STATES FIVE CONSEQUENCES, and the fifth is this door's and not the account's", async () => {
@@ -995,7 +1240,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     FACTS = [MAILBOX, { ...MAILBOX, id: "mbx-2", address: "second@example.test" }];
     const el = await render("local");
     await act(async () => { buttonExactly(el, "Remove")!.click(); });
-    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    const items = [...el.querySelectorAll("[data-removal-consequences] li")].map((li) => li.textContent ?? "");
     expect(items).toHaveLength(5);
 
     // The four that are true on both doors.
@@ -1024,7 +1269,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     // door out afterwards — a bigger consequence than the five above, stated before the press.
     const el = await render("local");
     await act(async () => { buttonExactly(el, "Remove")!.click(); });
-    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    const items = [...el.querySelectorAll("[data-removal-consequences] li")].map((li) => li.textContent ?? "");
     expect(items).toHaveLength(6);
     expect(items[5]).toContain("only mailbox on this computer");
     expect(items[5]).toContain("returns to its setup screen");
@@ -1044,7 +1289,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     ];
     const el = await render("local");
     await act(async () => { rowRemove(el, "someone@example.test").click(); });
-    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    const items = [...el.querySelectorAll("[data-removal-consequences] li")].map((li) => li.textContent ?? "");
     expect(items).toHaveLength(6);
     expect(items[5]).toContain("2 unsent drafts stay in Drafts on this computer");
     expect(items[5]).toContain("on no mail server");
@@ -1055,7 +1300,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     DRAFTS = [{ id: "d1", mailboxId: "mbx-1", status: "unverified" }];
     const el = await render("local");
     await act(async () => { buttonExactly(el, "Remove")!.click(); });
-    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    const items = [...el.querySelectorAll("[data-removal-consequences] li")].map((li) => li.textContent ?? "");
     expect(items).toHaveLength(7);
     expect(items[5]).toContain("1 unsent draft stays in Drafts on this computer");
     expect(items[5]).toContain("once you add a mailbox");
@@ -1063,10 +1308,25 @@ describe("the desktop mailbox pane on the standalone door", () => {
   });
 
   it("the drafts sentences exist in English and German, with the count", async () => {
-    const de = (await import("../../webapp/messages/de.json")).default as { mailboxes: Record<string, string> };
-    for (const key of ["removeDraftsKept", "removeDraftsKeptLast"]) {
-      for (const catalogue of [messages.mailboxes as Record<string, string>, de.mailboxes]) {
-        expect(catalogue[key], key).toContain("#");
+    for (const [locale, catalogue] of [["en", messages], ["de", messagesDe]] as const) {
+      const t = createTranslator({ locale, messages: catalogue, namespace: "mailboxes" });
+      DRAFTS = [
+        { id: "draft-one", mailboxId: MAILBOX.id, status: "draft" },
+        { id: "draft-two", mailboxId: MAILBOX.id, status: "scheduled" },
+      ];
+      for (const last of [true, false]) {
+        FACTS = last ? [MAILBOX] : [MAILBOX, {
+          ...MAILBOX, id: "another-mailbox", address: personalAt("fixture.other", "example.test"),
+        }];
+        const key = last ? "removeDraftsKeptLast" : "removeDraftsKept";
+        expect(catalogue.mailboxes[key], key).toContain("#");
+        const pane = await render("local", { locale });
+        const remove = within(pane).getAllByRole("group", { name: MAILBOX.address })
+          .flatMap((row) => within(row).queryAllByRole("button", { name: t("remove") }));
+        expect(remove).toHaveLength(1);
+        await act(async () => { remove[0]!.click(); });
+        const dialog = within(pane).getByRole("alertdialog", { name: t("removeTitle", { address: MAILBOX.address }) });
+        expect(within(dialog).getByText(t(key, { count: 2 }))).toBeTruthy();
       }
     }
   });
@@ -1075,7 +1335,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     DRAFTS = [{ id: "d3", mailboxId: "mbx-1", status: "sent" }];
     const el = await render("local");
     await act(async () => { buttonExactly(el, "Remove")!.click(); });
-    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    const items = [...el.querySelectorAll("[data-removal-consequences] li")].map((li) => li.textContent ?? "");
     expect(items).toHaveLength(6);
     expect(el.textContent ?? "").not.toContain("unsent draft");
   });
@@ -1097,7 +1357,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     }];
     const el = await render("local");
     await act(async () => { buttonExactly(el, "Remove")!.click(); });
-    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((n) => n.textContent ?? "");
+    const items = [...el.querySelectorAll("[data-removal-consequences] li")].map((n) => n.textContent ?? "");
     expect(items[0]).toBe(messages.mailboxes.removeStopsReader);
     expect(items[0], "the bullet claimed organizing this install never did")
       .not.toBe(messages.mailboxes.removeStops);
@@ -1108,7 +1368,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     FACTS = [{ ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: "2026-09-01T09:00:00.000Z" }];
     const el = await render("local");
     await act(async () => { buttonExactly(el, "Remove")!.click(); });
-    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((n) => n.textContent ?? "");
+    const items = [...el.querySelectorAll("[data-removal-consequences] li")].map((n) => n.textContent ?? "");
     expect(items[0]).toBe(messages.mailboxes.removeStops);
   });
 
@@ -1254,18 +1514,15 @@ describe("the desktop mailbox pane on the standalone door", () => {
   });
 
   it("A SHELL THAT CANNOT BE TOLD still removes the mailbox", async () => {
-    // The prop is optional, so an older gate degrades to the released behaviour — the removal
-    // happens and the door configuration survives it — rather than to a removal that refuses.
-    SHELL_SINK = false;
     bridgeReply = () => new Response(null, { status: 200 });
-    const el = await render("local");
-    await act(async () => { buttonExactly(el, "Remove")!.click(); });
-    await act(async () => {
-      buttonExactly(el, "Remove mailbox")!.click();
-      for (let i = 0; i < 12; i++) await Promise.resolve();
+    const el = await render("local", { withoutStatusSink: true });
+    await act(async () => within(el).getByRole("button", { name: "Remove" }).click());
+    const confirm = within(el).getByRole("alertdialog", {
+      name: messages.mailboxes.removeTitle.replace("{address}", MAILBOX.address),
     });
+    await act(async () => within(confirm).getByRole("button", { name: "Remove mailbox" }).click());
     expect(pressed()).toEqual([{ url: "/local/mailboxes/mbx-1", method: "DELETE" }]);
-    expect(loggedOutCount(), "the pane signed the install out with nowhere to report it").toBe(0);
+    expect(loggedOutCount()).toBe(0);
     expect(refreshed).toBeGreaterThan(0);
   });
 
@@ -1314,7 +1571,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
 
-    const said = el.querySelector("p.join-error")?.textContent ?? "";
+    const said = el.querySelector(".oh-refusal")?.textContent ?? "";
     expect(said, "the pane did not say the removal was refused").toBe(
       messages.mailboxes.desktopRemovedNotCleared,
     );
@@ -1353,7 +1610,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
       buttonExactly(el, "Remove mailbox")!.click();
       for (let i = 0; i < 12; i++) await Promise.resolve();
     });
-    const said = el.querySelector("p.join-error")?.textContent ?? "";
+    const said = el.querySelector(".oh-refusal")?.textContent ?? "";
     expect(said).toBe("this install is offline, so writes are paused");
     expect(said, "a refusal that is not the wipe's was told to remove it again")
       .not.toContain("Remove it again to retry");
@@ -1400,7 +1657,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
     expect(el.querySelectorAll('[role="alertdialog"]').length,
       "one press opened a confirmation on more than one row").toBe(1);
     expect(el.querySelector('[role="alertdialog"]')!.textContent ?? "")
-      .toContain("Remove second@example.test?");
+      .toContain("Remove second@example.test");
 
     bridgeReply = () => new Response(null, { status: 200 });
     await act(async () => {
@@ -1569,7 +1826,7 @@ describe("the desktop mailbox pane on the standalone door", () => {
   it("a REMOVED mailbox leaves the pane — its tombstone is listed, its block is not drawn", async () => {
     FACTS = [MAILBOX, GONE];
     const el = await render("local");
-    expect(addressRows(el).map((r) => r.querySelector(".lab b")?.textContent),
+    expect(addressRows(el).map((r) => r.querySelector(".oh-settingline-label")?.textContent),
       "the removed mailbox's block is still on screen").toEqual([MAILBOX.address]);
     expect(el.textContent ?? "").not.toContain(GONE.address);
   });
@@ -1587,12 +1844,22 @@ describe("the desktop mailbox pane on the standalone door", () => {
   });
 
   it("an install that has not chosen a door yet is treated as standalone, not hosted", async () => {
-    // `door` is `status?.mode ?? null`. Only the string "cloud" earns the hand-off; anything else
-    // — null, an unset mode, a mode a newer engine invented — must not put a link to a hosted
-    // account in front of somebody who may not have one.
-    const el = await render(null);
-    expect(el.textContent ?? "").not.toContain("Mailboxes are managed in ohmail on the web");
-    expect(openButton(el)).toBeNull();
+    const { DesktopGate } = await import("../src/DesktopGate.js");
+    const { DesktopLocale } = await import("../src/DesktopLocale.js");
+    const { DOOR_COPY } = await import("../src/door-copy.js");
+    const invoke = host.__TAURI_INTERNALS__!.invoke;
+    host.__TAURI_INTERNALS__!.invoke = (command, payload) => command === "engine_status"
+      ? Promise.resolve({ state: "not_configured", mode: null })
+      : invoke(command, payload);
+    window.history.replaceState(null, "", "#/settings/mailboxes");
+    mountPoint = document.createElement("div");
+    document.body.appendChild(mountPoint);
+    root = createRoot(mountPoint);
+    await act(async () => root!.render(h(DesktopLocale, { children: h(DesktopGate) })));
+    const frame = within(mountPoint);
+    await frame.findByRole("heading", { name: DOOR_COPY.chooserTitle });
+    expect(mountPoint.textContent ?? "").not.toContain("Mailboxes are managed in ohmail on the web");
+    expect(openButton(mountPoint)).toBeNull();
   });
 });
 
@@ -1647,7 +1914,7 @@ describe("the holdings line — a windowed copy stated plainly, on the pane, wit
     expect(line, "the holdings sentence is not on the pane at all").toBeTruthy();
     // `set-note-inline` is the pane's plain informational paragraph. `SettingsNote` leads with an
     // icon, and the one thing this line must not do is carry a mark of any kind.
-    expect(line!.className).toBe("set-note-inline");
+    expect(line!.classList.contains("oh-text")).toBe(true);
     expect(line!.querySelector("svg")).toBeNull();
     expect(el.textContent ?? "").not.toContain("⚠");
     // The strip's own sentence, verbatim, must not have followed the fact over here.
@@ -1845,33 +2112,7 @@ describe("a standing stop request is on the row, and the pane's notes end when t
     organizeConsentedAt: "2026-08-01T09:00:00.000Z",
   };
 
-  /** Re-render the SAME root so the pane's own state (its per-press notes) survives while the
-   *  facts under it move — the shape of the engine's next poll answering. `render()` would mount
-   *  a fresh pane and silently discard the very state these cases are about. */
-  async function repaint(door: string): Promise<void> {
-    const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
-    await act(async () => {
-      root!.render(
-        h(
-          IntlProvider,
-          /* `as never` because `h(Provider, props, child)` passes children positionally, which
-             the overloads type as a missing `children` prop — the same shape the file's own
-             `render()` helper carries; cast here so this copy adds no new noise. */
-          { locale: "en", messages: messages as never, timeZone: "UTC" } as never,
-          h(
-            ThemeProvider,
-            { storageKey: "ohmail.theme" } as never,
-            h(ToastHost, null, h(DesktopMailboxes, {
-              door,
-              onShellStatus: (next: { state: string; mode?: string | null }) => {
-                published.push(next);
-              },
-            })),
-          ),
-        ),
-      );
-    });
-  }
+  const repaint = paint;
 
   it("a pending stop says so and withholds the stop control", async () => {
     FACTS = [{ ...ORGANIZING, releaseRequestedAt: "2026-09-07T09:00:00.000Z" }];
@@ -2092,9 +2333,9 @@ describe("a standing stop request is on the row, and the pane's notes end when t
       status: 202, headers: { "content-type": "application/json" },
     });
     const el = await render("local");
-    const state = (): string | null => el.querySelector(".mbx-org")?.getAttribute("data-state") ?? null;
+    const state = (): string | null => el.querySelector("[data-organizer]")?.getAttribute("data-state") ?? null;
     const chipLabel = (): string =>
-      (el.querySelector(".mbx-org .mbx-chip .gloss-cap")?.textContent ?? "").trim();
+      (el.querySelector("[data-organizer] .gloss-cap")?.textContent ?? "").trim();
 
     // (1) The press: this window's own memory says "requested" and the chip reads Stopping.
     await act(async () => { buttonSaying(el, mailboxCopy.stopOrganizingHandBack!)!.click(); });
@@ -2222,7 +2463,7 @@ describe("the reader row's three states, and the one that had no holder at all",
     /* The role CHIP: its caption is the label, and the node its `aria-describedby` points at is
        the sentence. Read through the description link on purpose — the same path a screen reader
        takes — so a chip whose sentence is present but not linked reads as having none. */
-    const node = el.querySelector(".mbx-org .mbx-chip .gloss-t");
+    const node = el.querySelector("[data-organizer] .gloss-t");
     if (!node) {
       throw new Error("no role chip on the row; chips: "
         + [...el.querySelectorAll(".mbx-chip .gloss-cap")]
@@ -2445,28 +2686,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
     items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null, ...over }],
   }), { status: 200, headers: { "content-type": "application/json" } });
 
-  /** Re-render the SAME root, so the pane's per-press notes survive the facts moving under them. */
-  async function repaint(door: string): Promise<void> {
-    const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
-    await act(async () => {
-      root!.render(
-        h(
-          IntlProvider,
-          { locale: "en", messages: messages as never, timeZone: "UTC" } as never,
-          h(
-            ThemeProvider,
-            { storageKey: "ohmail.theme" } as never,
-            h(ToastHost, null, h(DesktopMailboxes, {
-              door,
-              onShellStatus: (next: { state: string; mode?: string | null }) => {
-                published.push(next);
-              },
-            })),
-          ),
-        ),
-      );
-    });
-  }
+  const repaint = paint;
 
   /**
    * (1) THE GATE. The report says the outage sentence never reaches a row
@@ -2732,7 +2952,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
   it("(3b) CONTROL — a consent-less organizer with nothing pending shows no banner", async () => {
     FACTS = [{ ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: null }];
     const el = await render("local");
-    expect(el.querySelector(".mbx-org"),
+    expect(el.querySelector("[data-organizer]"),
       "a row with nothing to say about organizing grew a banner").toBeNull();
   });
 
@@ -2767,7 +2987,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
   it("(3d) CONTROL — an ordinary hosted row has no organizer banner", async () => {
     FACTS = [{ ...MAILBOX, organizerRole: "organizer", organizeConsentedAt: "2026-08-01T09:00:00.000Z" }];
     const el = await render("cloud");
-    expect(el.querySelector(".mbx-org"),
+    expect(el.querySelector("[data-organizer]"),
       "the hosted door grew a banner about organizing that it cannot act on").toBeNull();
   });
 
@@ -2805,7 +3025,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
       .not.toContain(mailboxCopy.stateOrganizingHere!);
     expect(buttonSaying(el, mailboxCopy.stopOrganizingHandBack!),
       "a reader row grew a control over somebody else's organizing").toBeNull();
-    expect(el.querySelector(".mbx-org"),
+    expect(el.querySelector("[data-organizer]"),
       "the hosted reader row grew an organizer banner off a stamp").toBeNull();
     /* THE ROW ITSELF still says what it is — the state line is not the block. */
     expect(said, "the reader row lost its own state").toContain(mailboxCopy.stateReading!);
@@ -2885,8 +3105,8 @@ describe("the pane tells the truth about the outage, the holder and the standing
       organizeConsentedAt: null,
     }];
     const el = await render("local");
-    const label = (el.querySelector(".mbx-org .mbx-chip .gloss-cap")?.textContent ?? "").trim();
-    const said = (el.querySelector(".mbx-org .mbx-chip .gloss-pop")?.textContent ?? "").trim();
+    const label = (el.querySelector("[data-organizer] .gloss-cap")?.textContent ?? "").trim();
+    const said = (el.querySelector("[data-organizer] .gloss-pop")?.textContent ?? "").trim();
     expect(label, "the row named its holder with an empty string").toBe(
       mailboxCopy.readerLabel!.replace("{name}", mailboxCopy.readerHolderUnknown!),
     );
@@ -2911,7 +3131,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
       organizeConsentedAt: null,
     }];
     const el = await render("local");
-    const label = (el.querySelector(".mbx-org .mbx-chip .gloss-cap")?.textContent ?? "").trim();
+    const label = (el.querySelector("[data-organizer] .gloss-cap")?.textContent ?? "").trim();
     expect(label).toBe(mailboxCopy.readerLabel!.replace("{name}", "omarchy"));
     expect(el.textContent ?? "").toContain("omarchy");
   });
@@ -2983,7 +3203,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
       [...el.querySelectorAll("button")]
         .find((b) => (b.textContent ?? "").includes("Organize here"))!.click();
     });
-    const well = (el.querySelector(".mbx-handover-what")?.textContent ?? "").trim();
+    const well = (el.querySelector("[data-organizer-confirmation]")?.textContent ?? "").trim();
     expect(well, "the well never opened").not.toBe("");
     expect(well, "the consequence was described for an install that does not exist")
       .toBe(mailboxCopy.organizeHereWhatNobody!);
@@ -3007,7 +3227,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
       [...el.querySelectorAll("button")]
         .find((b) => (b.textContent ?? "").includes("Organize here"))!.click();
     });
-    const well = (el.querySelector(".mbx-handover-what")?.textContent ?? "").trim();
+    const well = (el.querySelector("[data-organizer-confirmation]")?.textContent ?? "").trim();
     expect(well).toBe(mailboxCopy.organizeHereWhat!.replace("{name}", "ohmail Cloud"));
   });
 
@@ -3031,7 +3251,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
       [...el.querySelectorAll("button")]
         .find((b) => (b.textContent ?? "").includes("Organize here"))!.click();
     });
-    const well = (el.querySelector(".mbx-handover-what")?.textContent ?? "").trim();
+    const well = (el.querySelector("[data-organizer-confirmation]")?.textContent ?? "").trim();
     expect(well, "the well never opened").not.toBe("");
     expect(well).toBe(mailboxCopy.organizeHereWhatNobody!);
     expect(well, "a machine that stopped was said to stop").not.toContain("Studio laptop");
@@ -3742,7 +3962,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
 
   /** The chip: its trigger, its caption, and the node its description points at. */
   const chip = (el: HTMLElement) => {
-    const btn = el.querySelector<HTMLButtonElement>(".mbx-org .mbx-chip .gloss-t");
+    const btn = el.querySelector<HTMLButtonElement>("[data-organizer] .gloss-t");
     if (!btn) throw new Error("no role chip on the row");
     const id = btn.getAttribute("aria-describedby");
     const said = id ? document.getElementById(id) : null;
@@ -3751,31 +3971,16 @@ describe("the compact card — the role chip, its description, the quiet verb an
       label: (btn.querySelector(".gloss-cap")?.textContent ?? "").trim(),
       said,
       description: (said?.textContent ?? "").trim(),
-      state: btn.closest(".mbx-org")?.getAttribute("data-state") ?? null,
-      role: btn.closest(".mbx-org")?.getAttribute("data-role") ?? null,
+      state: btn.closest("[data-organizer]")?.getAttribute("data-state") ?? null,
+      role: btn.closest("[data-organizer]")?.getAttribute("data-role") ?? null,
     };
   };
 
   /** The row's state cell — the live region inside the value slot. */
   const cell = (el: HTMLElement): HTMLElement | null =>
-    el.querySelector<HTMLElement>('.set-row .set-val [role="status"]');
+    el.querySelector<HTMLElement>('[data-mailbox] .oh-settingline-value [role="status"]');
 
-  async function repaint(door: string): Promise<void> {
-    const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
-    await act(async () => {
-      root!.render(
-        h(
-          IntlProvider,
-          { locale: "en", messages: messages as never, timeZone: "UTC" } as never,
-          h(
-            ThemeProvider,
-            { storageKey: "ohmail.theme" } as never,
-            h(ToastHost, null, h(DesktopMailboxes, { door })),
-          ),
-        ),
-      );
-    });
-  }
+  const repaint = paint;
 
   it("an organizer row's chip reads Organizing, and its DESCRIPTION is the filing sentence", async () => {
     FACTS = [ORGANIZING];
@@ -3792,7 +3997,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
     expect(c.said!.hidden).toBe(true);
     expect(c.btn.getAttribute("aria-expanded")).toBe("false");
     // The banner is gone from this pane — the chip is the container now, not a second copy.
-    expect(el.querySelector(".mbx-org .set-banner")).toBeNull();
+    expect(el.querySelector("[data-organizer] .set-banner")).toBeNull();
   });
 
   it("a press opens the sentence beside the chip; Escape closes it", async () => {
@@ -3818,12 +4023,12 @@ describe("the compact card — the role chip, its description, the quiet verb an
     expect(c.description).not.toBe(mailboxCopy.stateOrganizingHere!);
     expect(buttonExactly(el, mailboxCopy.stopOrganizingHandBack!),
       "the verb was offered on a row that already carries the ask").toBeNull();
-    /* This case asserted `.mbx-verb` ABSENT — the state the countermand row calls the defect: with
+    /* This case asserted `[data-organizer] .oh-settingline-value > .oh-settingacts` ABSENT — the state the countermand row calls the defect: with
        the stop verb withheld and nothing in its place, the engine's "changed my mind" arm was
        unreachable from the product. The claim is narrowed to what it was really about (the STOP
        verb is not re-offered) and the new consumer is named: the takeover, which is the door that
        arm reads. */
-    const verb = el.querySelector(".mbx-verb");
+    const verb = el.querySelector("[data-organizer] .oh-settingline-value > .oh-settingacts");
     expect(verb, "the countermand's slot is empty again").not.toBeNull();
     expect(verb!.textContent ?? "").toContain(mailboxCopy.organizeHere!);
   });
@@ -3840,7 +4045,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
     expect(c.label, "the press left no trace on the chip").toBe(mailboxCopy.chipStopping!);
     expect(c.state).toBe("queued");
     expect(c.description).toBe(mailboxCopy.stopOrganizingQueued!);
-    expect(el.querySelector(".mbx-org .set-verdict"),
+    expect(el.querySelector('[data-organizer] .oh-settingnote[role="status"]'),
       "the asked-for sentence is rendered twice — on the chip and as a verdict line").toBeNull();
 
     // The poll brings the stamp: same chip, the row's own clock.
@@ -3871,7 +4076,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
     expect(buttonExactly(el, mailboxCopy.organizeHereInstead!)).not.toBeNull();
     expect(buttonExactly(el, mailboxCopy.stopOrganizingHandBack!),
       "a reader row grew a stop verb over somebody else's organizing").toBeNull();
-    expect(el.querySelector(".mbx-verb")).toBeNull();
+    expect(el.querySelector("[data-organizer] .oh-settingline-value > .oh-settingacts")).toBeNull();
   });
 
   it("a released row's chip says nothing organizes it, dated; the verb is the primary remedy", async () => {
@@ -3892,7 +4097,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
     ), c.description).toBe(true);
     const press = buttonExactly(el, mailboxCopy.organizeHere!);
     expect(press).not.toBeNull();
-    expect(press!.classList.contains("primary"), "the remedy on a row nothing files is not primary").toBe(true);
+    expect(press!.dataset.kind, "the row remedy is a quiet word").toBe("quiet");
   });
 
   it("the quiet verb carries its own (i) naming what follows, and the two go together", async () => {
@@ -3900,7 +4105,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
     const el = await render("local");
     const verb = buttonExactly(el, mailboxCopy.stopOrganizingHandBack!);
     expect(verb, "the ordinary organizer lost its stop verb").not.toBeNull();
-    const pair = verb!.closest(".mbx-verb")!;
+    const pair = verb!.closest(".oh-settingacts")!;
     const glyph = pair.querySelector<HTMLButtonElement>(".gloss-t");
     expect(glyph, "the verb has no (i)").not.toBeNull();
     // No caption on this gloss, so the sentence is the glyph's NAME — a reader focusing the
@@ -3909,9 +4114,9 @@ describe("the compact card — the role chip, its description, the quiet verb an
     // The verb still opens the confirm well with its own, unchanged sentence — and the verb and
     // its (i) are withheld together while the well is open.
     await act(async () => { verb!.click(); });
-    expect((el.querySelector(".mbx-handover-what")?.textContent ?? "").trim())
+    expect((el.querySelector("[data-organizer-confirmation]")?.textContent ?? "").trim())
       .toBe(mailboxCopy.stopOrganizingWhat!);
-    expect(el.querySelector(".mbx-verb")).toBeNull();
+    expect(el.querySelector("[data-organizer] .oh-settingline-value > .oh-settingacts")).toBeNull();
     expect(buttonExactly(el, mailboxCopy.stopOrganizingHandBack!)).toBeNull();
   });
 
@@ -3942,11 +4147,11 @@ describe("the compact card — the role chip, its description, the quiet verb an
     expect(c).not.toBeNull();
     // The VERDICT is the live node's whole text; the duration stands beside it in the cell.
     expect((c!.textContent ?? "").trim()).toBe(mailboxCopy.desktopStateUnreachable!);
-    const wholeCell = el.querySelector(".set-row .set-val")?.textContent ?? "";
+    const wholeCell = el.querySelector("[data-mailbox] .oh-settingline-value")?.textContent ?? "";
     expect(wholeCell).toContain("Can't reach the mail server");
     expect(wholeCell).toContain("20 minutes ago");
     // One live region per row's state, and the chip's description is not one of them.
-    expect(el.querySelectorAll('.set-row .set-val [role="status"]').length).toBe(1);
+    expect(el.querySelectorAll('[data-mailbox] .oh-settingline-value [role="status"]').length).toBe(1);
   });
 
   /**
@@ -3971,17 +4176,17 @@ describe("the compact card — the role chip, its description, the quiet verb an
     const el = await render("local");
     const first = (cell(el)!.textContent ?? "").trim();
     expect(first).toBe(mailboxCopy.desktopStateUnreachable!);
-    expect(el.querySelector(".set-row .set-val")?.textContent ?? "").toContain("20 minutes ago");
+    expect(el.querySelector("[data-mailbox] .oh-settingline-value")?.textContent ?? "").toContain("20 minutes ago");
 
     // A minute later the pane paints again (any poll, any state change elsewhere does this).
     vi.spyOn(Date, "now").mockReturnValue(t0 + 60_000);
     await repaint("local");
-    expect(el.querySelector(".set-row .set-val")?.textContent ?? "", "the duration stopped counting")
+    expect(el.querySelector("[data-mailbox] .oh-settingline-value")?.textContent ?? "", "the duration stopped counting")
       .toContain("21 minutes ago");
     expect((cell(el)!.textContent ?? "").trim(), "the live node re-announced the minute")
       .toBe(first);
     // And the duration is in the tree, not a bare span: a reader who reaches the cell hears it.
-    expect(el.querySelector('.set-row .set-val [role="note"]')?.textContent ?? "")
+    expect(el.querySelector('[data-mailbox] .oh-settingline-value [role="note"]')?.textContent ?? "")
       .toContain("21 minutes ago");
   });
 
@@ -3999,7 +4204,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
       status: 202, headers: { "content-type": "application/json" },
     });
     const el = await render("local");
-    const live = () => el.querySelector<HTMLElement>('.mbx-org [role="status"]');
+    const live = () => el.querySelector<HTMLElement>('[data-organizer] [role="status"]');
     expect(live(), "no live node in the role line").not.toBeNull();
     expect((live()!.textContent ?? "").trim()).toBe(mailboxCopy.stateOrganizing!);
     // Outside the chip's button: a button's descendants are presentational.
@@ -4052,26 +4257,7 @@ describe("a reader row says who organizes the mailbox and what to press", () => 
 
   beforeEach(() => { try { globalThis.localStorage.clear(); } catch { /* no jar */ } });
 
-  /** Re-render the SAME root, so the pane's per-press state survives while the facts move —
-   *  the shape of the next poll answering. `render()` would mount a fresh pane and discard the
-   *  very state the staleness case is about. The file's other repaint helper is local to its
-   *  own block; this is the same shape, kept to what these cases pass. */
-  async function repaint(door: string): Promise<void> {
-    const { DesktopMailboxes } = await import("../src/DesktopMailboxes.js");
-    await act(async () => {
-      root!.render(
-        h(
-          IntlProvider,
-          { locale: "en", messages: messages as never, timeZone: "UTC" } as never,
-          h(
-            ThemeProvider,
-            { storageKey: "ohmail.theme" } as never,
-            h(ToastHost, null, h(DesktopMailboxes, { door } as never)),
-          ),
-        ),
-      );
-    });
-  }
+  const repaint = paint;
 
   it("names the holder AND the press, in one sentence", async () => {
     FACTS = [HELD];
@@ -4093,7 +4279,7 @@ describe("a reader row says who organizes the mailbox and what to press", () => 
     await act(async () => { buttonSaying(el, "Organize here instead")!.click(); });
     await act(async () => { buttonSaying(el, "Organize here")!.click(); });
 
-    const row = el.querySelector(".mbx-org");
+    const row = el.querySelector("[data-organizer]");
     expect(row, "the organizer block is gone").not.toBeNull();
     expect(
       row!.textContent ?? "",
@@ -4104,7 +4290,7 @@ describe("a reader row says who organizes the mailbox and what to press", () => 
       "the refusal named no holder and no press — the defect issue #5 reports",
     ).toContain("To organize it here, press Organize here instead");
     /* AND NOT in the pane's one line, which is for failures that name no mailbox. */
-    expect(el.querySelector("p.join-error")).toBeNull();
+    expect(el.querySelector(".oh-refusal")).toBeNull();
   });
 
   it("the accepted note names the holder CAPTURED AT THE PRESS, not the one a later poll brings", async () => {
@@ -4149,7 +4335,7 @@ describe("a reader row says who organizes the mailbox and what to press", () => 
     expect(el.textContent ?? "", "the press left no trace").toContain("You are reading along");
     /* The block a person comes here to read is still labelled as the answer's place. */
     expect(
-      el.querySelector(".mbx-org")?.getAttribute("aria-label"),
+      el.querySelector("[data-organizer]")?.getAttribute("aria-label"),
       "the settings block lost the name of what it holds",
     ).toBe("Who organizes this mailbox");
   });
@@ -4535,7 +4721,7 @@ describe("the row takes a new password without the mailbox being removed", () =>
     expect(field.value, "the field opened carrying something").toBe("");
     await act(async () => { type(field, "the-new-one"); });
     await act(async () => {
-      el.querySelector("form.acct-confirm")!
+      el.querySelector("[data-mailbox] form[aria-label]")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
 
@@ -4565,7 +4751,7 @@ describe("the row takes a new password without the mailbox being removed", () =>
     await act(async () => { second.click(); });
     await act(async () => { type(el.querySelector<HTMLInputElement>("#mbx-new-password")!, "the-new-one"); });
     await act(async () => {
-      el.querySelector("form.acct-confirm")!
+      el.querySelector("[data-mailbox] form[aria-label]")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
     expect(sentBodies).toEqual([
@@ -4591,7 +4777,7 @@ describe("the row takes a new password without the mailbox being removed", () =>
   };
   const submitSignIn = async (el: HTMLElement): Promise<void> => {
     await act(async () => {
-      el.querySelector("form.acct-confirm")!
+      el.querySelector("[data-mailbox] form[aria-label]")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
   };
@@ -4687,7 +4873,7 @@ describe("the row takes a new password without the mailbox being removed", () =>
       type(el.querySelector<HTMLInputElement>("#mbx-new-password")!, "the-new-one");
     });
     await act(async () => {
-      el.querySelector("form.acct-confirm")!
+      el.querySelector("[data-mailbox] form[aria-label]")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
     expect(el.textContent).toContain(copy.signInAgainDone!);
@@ -4711,7 +4897,7 @@ describe("the row takes a new password without the mailbox being removed", () =>
       type(el.querySelector<HTMLInputElement>("#mbx-new-password")!, "still-wrong");
     });
     await act(async () => {
-      el.querySelector("form.acct-confirm")!
+      el.querySelector("[data-mailbox] form[aria-label]")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
     expect(el.textContent).toContain("the server said no");
@@ -4756,7 +4942,7 @@ describe("the row takes a new password without the mailbox being removed", () =>
     expect(box, "the row offered no plaintext consent for a server with no TLS").not.toBeNull();
     expect(box!.checked, "the consent arrived ticked").toBe(false);
     expect(consentBox(el, "smtp"), "a consent nobody was asked for").toBeNull();
-    expect(el.textContent).toContain("the server offers no encryption");
+    expect.soft(el.textContent).toContain("the server offers no encryption");
     expect(el.textContent).not.toContain(copy.signInAgainDone!);
     await tick(box!);
     await submitSignIn(el);
@@ -4861,7 +5047,7 @@ describe("the row takes a new password without the mailbox being removed", () =>
     const el = await render("local");
     await openAndType(el, "still-wrong");
     await submitSignIn(el);
-    expect(el.textContent).toContain("the server said no");
+    expect.soft(el.textContent).toContain("the server said no");
     expect(consentBox(el, "imap")).toBeNull();
     expect(consentBox(el, "smtp")).toBeNull();
   });
@@ -4904,14 +5090,14 @@ describe("a store that cannot keep up is disclosed, with the retry beside it", (
     FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage", errorDetail: "MAILBOX_STORE_REFUSED" }];
     bridgeReply = reachUp;
     const el = await render("local");
-    expect(el.querySelector(".mbx-reach")?.textContent).toBe("This computer cannot store mail right now");
+    expect(el.querySelector("[data-reach]")?.textContent).toBe("This computer cannot store mail right now");
   });
 
   it("a LOCAL row held over a healthy store keeps the code's own sentence", async () => {
     FACTS = [{ ...MAILBOX, status: "error", errorCode: "storage" }];
     bridgeReply = reachUp;
     const el = await render("local");
-    expect(el.querySelector(".mbx-reach")?.textContent).toBe("Not connecting (storage)");
+    expect(el.querySelector("[data-reach]")?.textContent).toBe("Not connecting (storage)");
   });
 
   it("a PAIRED row carrying the host's store refusal keeps the code: 'this computer' is not the host", async () => {
@@ -4959,15 +5145,15 @@ describe("messages this computer set aside are said under the row", () => {
   it("two set aside: the second line says so, and the row's state is untouched", async () => {
     bridgeReply = reachWith(2);
     const el = await render("local");
-    expect(el.querySelector(".mbx-set-aside")?.textContent)
+    expect(el.querySelector("[data-set-aside]")?.textContent)
       .toBe("2 messages could not be read and were set aside.");
-    expect(el.querySelector(".mbx-reach")?.textContent).not.toContain("set aside");
+    expect(el.querySelector("[data-reach]")?.textContent).not.toContain("set aside");
   });
 
   it("one set aside is said in the singular", async () => {
     bridgeReply = reachWith(1);
     const el = await render("local");
-    expect(el.querySelector(".mbx-set-aside")?.textContent)
+    expect(el.querySelector("[data-set-aside]")?.textContent)
       .toBe("One message could not be read and was set aside.");
   });
 
@@ -4976,8 +5162,8 @@ describe("messages this computer set aside are said under the row", () => {
       bridgeReply = reachWith(v);
       const el = await render("local");
       await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-      expect(el.querySelector(".mbx-reach")).not.toBeNull();
-      expect(el.querySelector(".mbx-set-aside")).toBeNull();
+      expect(el.querySelector("[data-reach]")).not.toBeNull();
+      expect(el.querySelector("[data-set-aside]")).toBeNull();
     });
   }
 });
@@ -5057,7 +5243,7 @@ describe("a mailbox this computer has not dialled yet", () => {
     const el = await render("local");
     const text = el.textContent ?? "";
     expect(text, "a runtime that dialled nothing was reported unreachable").not.toContain(copy.desktopStateUnreachable!);
-    expect(el.querySelector(".mbx-org")?.textContent ?? "").not.toContain(copy.stateOrganizingHereUnreachable!);
+    expect(el.querySelector("[data-organizer]")?.textContent ?? "").not.toContain(copy.stateOrganizingHereUnreachable!);
   });
 
   it("CONTROL: the same row with the field absent is an older engine's outage, said as before", async () => {
@@ -5065,7 +5251,7 @@ describe("a mailbox this computer has not dialled yet", () => {
     bridgeReply = reach({});
     const el = await render("local");
     expect(el.textContent ?? "").toContain(copy.desktopStateUnreachable!);
-    expect(el.querySelector(".mbx-org")?.textContent ?? "").toContain(copy.stateOrganizingHereUnreachable!);
+    expect(el.querySelector("[data-organizer]")?.textContent ?? "").toContain(copy.stateOrganizingHereUnreachable!);
   });
 });
 
@@ -5082,7 +5268,7 @@ describe("the organizer chip and a mail server this computer cannot reach", () =
     items: [{ mailboxId: "mbx-1", reachable: true, unreachableSince: null, ...over }],
   }), { status: 200, headers: { "content-type": "application/json" } });
   const DEAD = { reachable: false, unreachableSince: new Date(Date.now() - 20 * 60_000).toISOString() };
-  const chip = (el: HTMLElement): string => el.querySelector(".mbx-org")?.textContent ?? "";
+  const chip = (el: HTMLElement): string => el.querySelector("[data-organizer]")?.textContent ?? "";
 
   it("an unreachable organizer row says what it does when the connection returns", async () => {
     FACTS = [ORGANIZER];
@@ -5232,7 +5418,7 @@ describe("H1: Sign in again on a server on this computer — the long wait, and 
     await act(async () => { named(el, copy.signInAgainAction!)[0]!.click(); });
     await act(async () => { type(el.querySelector<HTMLInputElement>("#mbx-new-password")!, "the-new-one"); });
     await act(async () => {
-      el.querySelector("form.acct-confirm")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      el.querySelector("[data-mailbox] form[aria-label]")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     });
   };
   const seals = (): number => bridged.filter((c) => c.method === "PATCH").length;
@@ -5269,4 +5455,17 @@ describe("H1: Sign in again on a server on this computer — the long wait, and 
     await press(again);
     expect(seals(), "the hold outlived the sign-in it guarded").toBe(2);
   });
+});
+
+it("an unrecognized cloud connection offers no handoff to the managed service", async () => {
+  const pane = await render("cloud", { server: "" });
+  expect(pane.textContent).toContain(MAILBOX.address);
+  expect(openButton(pane)).toBeNull();
+  expect(pane.textContent).not.toContain(messages.mailboxes.desktopManageOnWeb);
+  FACTS = [];
+  await paint("cloud", { server: "" });
+  expect(buttonExactly(pane, messages.mailboxes.desktopOpenSetup)).toBeNull();
+  expect(pane.textContent).toContain(messages.mailboxes.noneYet);
+  expect(pane.textContent).not.toContain(messages.mailboxes.desktopNoneCloud);
+  expect(invoked).toEqual([]);
 });

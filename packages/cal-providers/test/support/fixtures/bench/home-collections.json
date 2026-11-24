@@ -1,0 +1,15 @@
+{
+  "provider": "caldav",
+  "name": "home-collections",
+  "request": {
+    "method": "PROPFIND",
+    "url": "http://127.0.0.1:8821/bench/",
+    "depth": "1",
+    "body": "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" xmlns:cs=\"http://calendarserver.org/ns/\"><d:prop><d:resourcetype/><d:displayname/><c:supported-calendar-component-set/><cs:getctag/><d:sync-token/></d:prop></d:propfind>"
+  },
+  "response": {
+    "status": 207,
+    "contentType": "text/xml",
+    "body": "<?xml version='1.0' encoding='utf-8'?>\n<multistatus xmlns=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\" xmlns:CS=\"http://calendarserver.org/ns/\"><response><href>/bench/ohmail-bench-r2-cal-accounts-20261113/</href><propstat><prop><resourcetype><C:calendar /><collection /></resourcetype><displayname>ohmail-bench-r2-cal-accounts-20261113</displayname><C:supported-calendar-component-set><C:comp name=\"VEVENT\" /></C:supported-calendar-component-set><CS:getctag>ctag-1</CS:getctag><sync-token>sync-1</sync-token></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>"
+  }
+}

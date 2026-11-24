@@ -11,6 +11,7 @@ import type { CloudAuth } from "../src/cloud-auth.js";
 import type { CloudMirror } from "../src/cloud-mirror.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS * 2 });
 
@@ -58,9 +59,9 @@ async function standUp(): Promise<Sidecar> {
         '[]'::jsonb, '[]'::jsonb
       from generate_series(1, ${n}) g`);
   }
-  await s.db.execute(sql`insert into message_bodies (message_id, text) select m.id, 'a letter' from messages m where m.account_id = ${accountId}::uuid`);
-  await s.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-    select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
+  await s.db.execute(sql`insert into message_bodies (message_id, account_id, text) select m.id, m.account_id, 'a letter' from messages m where m.account_id = ${accountId}::uuid`);
+  await s.db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+    select m.id, m.account_id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
   const built = await searchIndexBackfillPass({ db: s.db as unknown as Tx, accountId, rounds: 100, batch: 1_000 });
   expect(built.marked).toBe(true);
   return s;
@@ -79,7 +80,7 @@ async function park(s: Sidecar): Promise<() => Promise<void>> {
 
 /** Every statement PGlite runs, by its text: a simple query's, or an extended query's Parse. */
 function statements(s: Sidecar, before?: (text: string) => void): string[] {
-  const client = (s.db as unknown as { session: { client: { execProtocol(m: Uint8Array, o?: unknown): Promise<unknown> } } }).session.client;
+  const client = pgliteOf(s.db) as unknown as { execProtocol(m: Uint8Array, o?: unknown): Promise<unknown> };
   const log: string[] = [];
   const real = client.execProtocol.bind(client);
   client.execProtocol = (m, o) => {
@@ -138,7 +139,7 @@ function parkingOn(s: Sidecar, q: string): { ran: string[]; hook: (e: Sent) => v
   let armed: boolean | null = false;
   let release: (() => Promise<void>) | null = null;
   const ran = statements(s, (text) => {
-    if (armed !== true || !/^select "sessions"\./.test(text)) return;
+    if (armed !== true || !/ from "sessions" where \("sessions"\."access_token_hash" = /.test(text)) return;
     armed = null;
     void park(s).then((r) => { release = r; });
   });

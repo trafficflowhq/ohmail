@@ -5,9 +5,10 @@
  * held send stops "checking". `nextClockEdge` names that instant; `worldClock` arms one timer to it
  * and ticks, and a resume from the background ticks at once when the edge passed while asleep.
  */
+import type { EngineDraft } from "@ohmail/wire";
 import {
   HELD_SEND_RECHECK_MS, SENDING_STALE_AFTER_MS, zonedFields, zonedInstant,
-  type EngineDraft, type EntityReader,
+  type EntityReader,
 } from "./live";
 
 /** The next instant after `now` at which a clock-read list says something different. */

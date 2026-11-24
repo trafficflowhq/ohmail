@@ -1,0 +1,612 @@
+{
+  "component": "TimeGrid",
+  "state": "week",
+  "look": "ohmarchy-light-phone",
+  "place": "cell",
+  "target": [24, 24, 1392, 600],
+  "clip": [24, 24, 1392, 600],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "17.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLineClamp": "1",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "17.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "17.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "9",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "15.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "17.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "1",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "17.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "7",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(32, 94, 166)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "outline": "1px dashed rgb(56, 54, 53) -1px" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 3 8c8578e2e715" },
+    { "boxShadow": "oklch(0.59 0.099 142.3) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "oklch(0.59 0.099 142.3)" },
+    { "opacity": "0.75" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 4 b8f33a558d38" },
+    { "boxShadow": "oklch(0.59 0.099 232.3) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "oklch(0.59 0.099 232.3)" },
+    { "boxShadow": "rgb(195, 193, 184) 0px 0px 0px 1px inset" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 3 e11d3fbc7e31" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 2 6a115827ced0" },
+    { "backgroundColor": "rgb(32, 94, 166)" },
+    { "boxShadow": "rgb(195, 193, 184) 0px 0px 0px 1px" },
+    { "ink": "stroke rgb(56, 54, 53) 1.6px square miter 4; shapes 1 541a4a0ad8ca" },
+    { "backgroundColor": "oklch(0.59 0.099 277.3)" },
+    { "backgroundColor": "rgb(255, 252, 240)", "boxShadow": "rgb(140, 139, 135) 0px 0px 0px 2px" },
+    { "backgroundColor": "rgb(32, 94, 166)", "boxShadow": "rgb(255, 252, 240) 0px 0px 0px 2px" }
+  ],
+  "nodes": [
+    {
+      "role": "group",
+      "name": "all day",
+      "box": [0, 8, 1392, 28],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "6px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      }
+    },
+    {
+      "role": "button",
+      "name": "Glaze order #2291 arrives",
+      "box": [630.6, 8, 178.9, 22],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "text": [{ "said": "Glaze order #2291 arrives", "type": 0 }],
+      "surfaces": [
+        { "box": [630.6, 8, 178.9, 22], "paint": 0 },
+        { "box": [638.6, 12, 14, 14], "paint": 1 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Studio Monday",
+      "box": [64, 382, 180.8, 26],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "oklch(0.93 0.039 142.3)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "6px",
+        "paddingBottom": "3px",
+        "paddingLeft": "6px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Studio Monday", "type": 1 }],
+      "surfaces": [
+        { "box": [64, 382, 180.8, 26], "paint": 2 },
+        { "box": [70, 390.3, 8, 8], "paint": 3 },
+        { "box": [225.8, 386.3, 13, 13], "paint": 4 },
+        { "box": [226.8, 386.3, 13, 13], "paint": 5 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Invoices, new template",
+      "box": [252.8, 382, 164.9, 54],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "oklch(0.93 0.039 232.3)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "6px",
+        "paddingBottom": "3px",
+        "paddingLeft": "6px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Invoices, new template", "type": 2 }],
+      "surfaces": [
+        { "box": [252.8, 382, 164.9, 54], "paint": 6 },
+        { "box": [258.8, 389, 8, 8], "paint": 7 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Resurface · Domain renewal: lichtgrat.example expires 30 November",
+      "box": [417.7, 372, 20, 20],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [417.7, 372, 20, 20], "paint": 8 },
+        { "box": [420.7, 375, 14, 14], "paint": 9 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Kiln technician Kiln room",
+      "box": [441.7, 326, 164.9, 222],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "oklch(0.93 0.039 142.3)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "6px",
+        "paddingBottom": "3px",
+        "paddingLeft": "6px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Kiln technician", "type": 3 },
+        { "said": "Kiln room", "type": 4 }
+      ],
+      "surfaces": [
+        { "box": [441.7, 326, 164.9, 222], "paint": 2 },
+        { "box": [447.7, 333, 8, 8], "paint": 3 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Send later · Re: Would you teach the December glaze evening?",
+      "box": [606.6, 316, 20, 20],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [606.6, 316, 20, 20], "paint": 8 },
+        { "box": [609.6, 319, 14, 14], "paint": 10 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Run with Reto",
+      "box": [630.6, 270, 180.9, 40],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "oklch(0.93 0.039 232.3)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "6px",
+        "paddingBottom": "3px",
+        "paddingLeft": "6px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Run with Reto", "type": 5 }],
+      "surfaces": [
+        { "box": [630.6, 270, 180.9, 40], "paint": 6 },
+        { "box": [636.6, 278, 8, 8], "paint": 7 },
+        { "box": [792.4, 274, 13, 13], "paint": 4 },
+        { "box": [793.4, 274, 13, 13], "paint": 5 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Dentist",
+      "box": [630.6, 410, 180.9, 68],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "oklch(0.93 0.039 232.3)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "6px",
+        "paddingBottom": "3px",
+        "paddingLeft": "6px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Dentist", "type": 5 }],
+      "surfaces": [
+        { "box": [630.6, 410, 180.9, 68], "paint": 6 },
+        { "box": [636.6, 417, 8, 8], "paint": 7 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Glaze evening, planning call",
+      "box": [655.9, 438, 155.5, 26],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "oklch(0.93 0.039 232.3)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "6px",
+        "paddingBottom": "3px",
+        "paddingLeft": "6px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Glaze evening, planning call", "type": 1 }],
+      "surfaces": [
+        { "box": [655.9, 438, 155.5, 26], "paint": 6 },
+        { "box": [661.9, 445.8, 8, 8], "paint": 7 },
+        { "box": [797.4, 447.5, 8, 8], "paint": 11 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Train to Lugano Winterthur → Lugano",
+      "box": [1008.3, 327.9, 180.9, 186.5],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "17.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "6px",
+        "paddingBottom": "3px",
+        "paddingLeft": "6px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Train to Lugano", "type": 6 },
+        { "said": "Winterthur → Lugano", "type": 4 }
+      ],
+      "surfaces": [
+        { "box": [1008.3, 327.9, 180.9, 186.5], "paint": 0 },
+        { "box": [1013.3, 333.6, 14, 14], "paint": 1 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Later: 15:00 Menu cards to Gartenlokal Rosa",
+      "box": [204.8, 467, 38, 24],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "9px",
+        "paddingBottom": "0px",
+        "paddingLeft": "5px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [204.8, 467, 38, 24], "paint": 12 },
+        { "box": [209.8, 472, 14, 14], "paint": 13 },
+        { "box": [225.8, 475, 8, 8], "paint": 7 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Later: 14:00 Catalogue weekly, 14:30 Poster review, 18:30 Bouldering with Tim",
+      "box": [369.7, 467, 62, 24],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "9px",
+        "paddingBottom": "0px",
+        "paddingLeft": "5px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [369.7, 467, 62, 24], "paint": 12 },
+        { "box": [374.7, 472, 14, 14], "paint": 13 },
+        { "box": [390.7, 475, 8, 8], "paint": 14 },
+        { "box": [402.7, 475, 8, 8], "paint": 3 },
+        { "box": [414.7, 475, 8, 8], "paint": 7 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Later: 18:00 Open bench",
+      "box": [582.6, 467, 38, 24],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "9px",
+        "paddingBottom": "0px",
+        "paddingLeft": "5px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [582.6, 467, 38, 24], "paint": 12 },
+        { "box": [587.6, 472, 14, 14], "paint": 13 },
+        { "box": [603.6, 475, 8, 8], "paint": 3 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Later: 13:00 Glaze firing, 16:30 Catalogue check-in, 20:15 Film night",
+      "box": [747.4, 467, 62, 24],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "9px",
+        "paddingBottom": "0px",
+        "paddingLeft": "5px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [747.4, 467, 62, 24], "paint": 12 },
+        { "box": [752.4, 472, 14, 14], "paint": 13 },
+        { "box": [768.4, 475, 8, 8], "paint": 3 },
+        { "box": [780.4, 475, 8, 8], "paint": 14 },
+        { "box": [792.4, 475, 8, 8], "paint": 7 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Later: 12:15 Lunch with Anna, 15:00 Glaze test review, 18:00 Pizza, wood oven",
+      "box": [936.3, 467, 62, 24],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "9px",
+        "paddingBottom": "0px",
+        "paddingLeft": "5px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [936.3, 467, 62, 24], "paint": 12 },
+        { "box": [941.3, 472, 14, 14], "paint": 13 },
+        { "box": [957.3, 475, 8, 8], "paint": 7 },
+        { "box": [969.3, 475, 8, 8], "paint": 7 },
+        { "box": [981.3, 475, 8, 8], "paint": 3 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Later: 12:00 Monte Brè with Reto",
+      "box": [1149.1, 467, 38, 24],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "9px",
+        "paddingBottom": "0px",
+        "paddingLeft": "5px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "surfaces": [
+        { "box": [1149.1, 467, 38, 24], "paint": 12 },
+        { "box": [1154.1, 472, 14, 14], "paint": 13 },
+        { "box": [1170.1, 475, 8, 8], "paint": 7 }
+      ]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "03:00 04:00 05:00 06:00 07:00 08:00 09:00 10:00 11:00 12:00", "type": 7 },
+      { "said": "09:24", "type": 8 }
+    ],
+    "surfaces": [
+      { "box": [0, 0, 1392, 600], "paint": 15 },
+      { "box": [245.8, 399.4, 10, 10], "paint": 16 }
+    ]
+  }
+}

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  APP_ROUTE, SESSION_COOKIE, SESSION_ENDPOINT, looksLikeSessionToken, resolveSurface,
+  APP_ROUTE, SESSION_COOKIE, SESSION_ENDPOINT, firstPageUnasked, looksLikeSessionToken, resolveFirstPage, resolveSurface,
 } from "../app/session-gate.js";
 import { EDGE_PATHS, OWN_ROUTES } from "../routes.mjs";
 
@@ -317,7 +317,7 @@ describe("the middleware wiring cannot drift from the gate", () => {
     expect(paths).toContain(APP_ROUTE);
   });
 
-  it("the matcher is EVERY html path this deployment answers, and nothing else", () => {
+  it("the matcher covers the declared page, landing zone and API routes", () => {
     // Widened in the repair so the canonical-host redirect and the strict script policy
     // cover the whole origin rather than only `/`. Derived from the route table in
     // `routes.mjs` — the enumerated split of the namespace — so a route added there and
@@ -337,11 +337,9 @@ describe("the middleware wiring cannot drift from the gate", () => {
     expect(matcherPaths().sort()).toEqual([...EDGE_PATHS].sort());
   });
 
-  it("the paths that must NOT be matched, are not — the proxy stays the hot path", () => {
-    // A function in front of `/api/*` or `/auth/refresh` would add an edge invocation to
-    // every request the mail client makes, and `next.config.mjs`'s `headers()` already
-    // covers them for the policy the matcher was widened for.
-    for (const never of ["/api", "/api/:path*", "/auth/refresh", "/_next", "/demo"]) {
+  it("matches the API rewrite for address authentication and leaves the refresh handlers and assets outside", () => {
+    expect(matcherPaths()).toContain("/api/:path*");
+    for (const never of ["/api", "/auth/refresh", "/_next", "/demo"]) {
       expect(matcherPaths(), never).not.toContain(never);
     }
   });
@@ -350,7 +348,7 @@ describe("the middleware wiring cannot drift from the gate", () => {
     // The widened matcher must not widen the AMPLIFIER. `resolveSurface` is reached only
     // after an explicit `pathname !== "/"` early return.
     expect(middleware).toMatch(/if \(pathname !== "\/"\) \{/);
-    expect(middleware.indexOf(`if (pathname !== "/")`)).toBeLessThan(middleware.indexOf("resolveSurface("));
+    expect(middleware.indexOf(`if (pathname !== "/")`)).toBeLessThan(middleware.indexOf("resolveFirstPage("));
   });
 
   it("a direct request for the internal route is answered with a 308 to `/`", () => {
@@ -399,4 +397,69 @@ describe("the middleware wiring cannot drift from the gate", () => {
     const cookies = readFileSync(`${HERE}../../../packages/api/src/cookies.ts`, "utf8");
     expect(cookies).toContain(`${SESSION_COOKIE}=\${tokens.accessToken}`);
   });
+});
+
+/**
+ * THE SIGNED-IN FIRST PAGE THE EDGE DOES NOT ASK ABOUT, behind one setting that is off. With it on, a shape-valid token
+ * AND the resume marker are served the app's empty document without a probe; the browser's own check decides what is
+ * drawn. Every other jar is answered exactly as without it.
+ */
+describe("the first page without the probe", () => {
+  const on = { firstPageUnasked: true } as const;
+
+  it("a token and the marker: the unasked app, and no request leaves", async () => {
+    expect(await resolveSurface({
+      sessionToken: TOKEN, resumeMarker: true, search: "", apiOrigin: API, fetchImpl: noNetwork, ...on,
+    })).toBe("app-unasked");
+  });
+
+  it("a token without the marker is still probed, which keeps an enrollment session out", async () => {
+    const { fetchImpl, calls } = stubFetch(() => json({ user: { userId: "u-1" }, scope: "enrollment" }));
+    expect(await resolveSurface({ sessionToken: TOKEN, search: "", apiOrigin: API, fetchImpl, ...on })).toBe("marketing");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("the marker without a token resumes, as before", async () => {
+    expect(await resolveSurface({
+      sessionToken: null, resumeMarker: true, search: "", apiOrigin: API, fetchImpl: noNetwork, ...on,
+    })).toBe("resume");
+  });
+
+  it("is never the answer for a token of impossible shape, no API, a pending sign-out or the demo", async () => {
+    const base = { sessionToken: TOKEN, resumeMarker: true, search: "", apiOrigin: API, fetchImpl: noNetwork, ...on };
+    for (const input of [
+      { ...base, sessionToken: "not a token!" },
+      { ...base, apiOrigin: null },
+      { ...base, signOutPending: true },
+      { ...base, search: "demo=1" },
+    ]) {
+      expect(await resolveSurface(input), JSON.stringify({ ...input, fetchImpl: undefined })).not.toBe("app-unasked");
+    }
+  });
+
+  it("off, a token and the marker are probed as before", async () => {
+    const { fetchImpl, calls } = stubFetch(fullSession);
+    expect(await resolveSurface({ sessionToken: TOKEN, resumeMarker: true, search: "", apiOrigin: API, fetchImpl })).toBe("app");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("the setting is on only when it is exactly 1", () => {
+    expect(firstPageUnasked("1")).toBe(true);
+    for (const value of [undefined, "", "0", "true", " 1", "01", "1 ", "yes"]) {
+      expect(firstPageUnasked(value), String(value)).toBe(false);
+    }
+  });
+});
+
+it("carries a confirmed account only when the full edge probe answers", async () => {
+  const request = {
+    sessionToken: "x".repeat(43), resumeMarker: true, search: "", apiOrigin: "https://api.example.test",
+  };
+  const full = async () => Response.json({ scope: "full", user: { userId: "user", accountId: "reader" } });
+  expect(await resolveFirstPage({ ...request, fetchImpl: full })).toEqual({ account: "reader" });
+  expect(await resolveFirstPage({ ...request, fetchImpl: full, throttled: true })).toBe("app");
+  expect(await resolveFirstPage({ ...request, fetchImpl: full, firstPageUnasked: true })).toBe("app-unasked");
+  expect(await resolveFirstPage({
+    ...request, fetchImpl: async () => { throw new DOMException("Expired", "TimeoutError"); },
+  })).toBe("app");
 });

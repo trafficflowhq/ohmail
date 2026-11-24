@@ -22,6 +22,12 @@
       "node": "./dist/ics.js",
       "default": "./src/ics.ts"
     },
+    "./suggestion-consent": {
+      "types": "./src/suggestion-consent.ts",
+      "ohmail-source": "./src/suggestion-consent.ts",
+      "node": "./dist/suggestion-consent.js",
+      "default": "./src/suggestion-consent.ts"
+    },
     "./away-scope": {
       "types": "./src/away-scope.ts",
       "ohmail-source": "./src/away-scope.ts",
@@ -215,6 +221,7 @@
     "imapflow": "1.7.8",
     "mailparser": "3.9.32",
     "nodemailer": "8.0.11",
+    "@ohmail/wire": "*",
     "@trafficflow/db": "*"
   }
 }

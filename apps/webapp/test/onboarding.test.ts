@@ -164,12 +164,26 @@ describe("the presets cannot be a downgrade or a dead end", () => {
     expect(providerById("does-not-exist").id).toBe("imap");
     expect(providerById("").manual).toBe(true);
   });
+
+  it("the shell's path to the table offers the table's names, as it did before the move, and no rule that moved beside it", async () => {
+    const path = await import("../app/shell/providers.js");
+    expect(Object.keys(path).sort()).toEqual([
+      "AUTH_HINTS", "PROTON", "PROVIDERS", "appPasswordPresetFor", "asAuthHint", "authHintPreset", "authHintWantsLinks",
+      "discoveryRequestFor", "hostsFor", "isProtonAddress", "passwordLabelKey", "portMeansImplicitTls", "presetForAddress",
+      "providerById", "providerLabel", "readDiscovery", "serverGuessFor",
+    ].sort());
+  });
 });
 
 describe("refusals are the server's sentence, never a client copy of it", () => {
   const client = read("../app/api-client.ts");
-  // The wizard, with its mailbox step (moved to its own file).
-  const join = read("../app/(product)/join/JoinScreen.tsx") + read("../app/(product)/join/MailboxStep.tsx");
+  // The wizard, with its mailbox step: the one connect form's drawing and the web's wire for it.
+  const join = read("../app/(product)/join/JoinRoute.tsx") + read("../app/(product)/join/use-join-door.ts")
+    + read("../app/(product)/mailbox/connect-wire.ts")
+    + ["ConnectForm", "Fields", "Lines"]
+      .map((part) => read(`../../../packages/app/src/mailboxes/connect/${part}.tsx`)).join("")
+    + ["JoinPage", "AccountSteps", "FactorSteps", "PlanSteps", "parts"]
+      .map((part) => read(`../../../packages/app/src/doors/join/${part}.tsx`)).join("");
 
   /**
    * EVERY webapp source file, not two of them.
@@ -181,7 +195,9 @@ describe("refusals are the server's sentence, never a client copy of it", () => 
    * one place the grep could not see. Copy files are exactly where a duplicated server
    * sentence ends up, because that is where copy is written.
    */
-  const WEBAPP_SOURCE = walkSources(`${HERE}../app`).concat([`${HERE}../messages/en.json`]);
+  const WEBAPP_SOURCE = walkSources(`${HERE}../app`).concat(walkSources(`${HERE}../../../packages/letter-body/src`), [`${HERE}../messages/en.json`])
+    /* The composer and its helpers left this app for app-logic's writing folder; the AI refusals' words its text folder. */
+    .concat(walkSources(`${HERE}../../../packages/app-logic/src/writing`), [`${HERE}../../../packages/app-logic/src/text/ai-refusal-copy.ts`]);
 
   it("the client passes `error.message` through verbatim", async () => {
     // The server's own sentence first; the fallback is this client's, in the reader's language.
@@ -233,19 +249,18 @@ describe("refusals are the server's sentence, never a client copy of it", () => 
     const messages = JSON.parse(read("../messages/en.json")) as {
       join: Record<string, string>; accessLock: Record<string, string>;
     };
-    /*
-     * TWO trial sentences are ruled in. `planTrial` (2026-10-17): the plan step says what the site's
-     * tier buttons promise, in the same words as the wall's never-started state. `planStartTrial`
-     * (2026-10-26): the plan step's button for an account that never started a trial, in the account
-     * page's own words. No price and no tier in either; the terms are the plane's (a 14-day trial, no
-     * card while trial-eligible), so a change there changes these and the wall's together, which the
-     * next checks hold.
-     */
     const { planTrial, planStartTrial, ...rest } = messages.join;
-    expect(planTrial).toBe("14 days free, no card.");
-    expect(messages.accessLock.neverStartedLead.startsWith(planTrial!)).toBe(true);
-    expect(planStartTrial, "the button names no trial length").toMatch(/\d+/);
-    expect(planStartTrial!.match(/\d+/g), "the button and the trial sentence name two trials").toEqual(planTrial!.match(/\d+/g));
+    const trial = messages.accessLock.neverStartedLead;
+    expect(trial).toMatch(/^14 days free, no card\./);
+    const duration = trial.match(/\b(\d+)[ -]days?\b/i)?.[1];
+    expect(duration).toBeDefined();
+    // The same two keys own the plan step's two headings, card note, and start button.
+    // The mounted eligibility and ineligibility cases are in join-plan-hint.test.tsx.
+    expect(planTrial).toMatch(/\b14[ -]days?\b/);
+    expect(planTrial!.match(/\d+/g)).toEqual([duration, duration]);
+    expect(planTrial).toContain("payment {No card}");
+    expect(planStartTrial).toMatch(/\b14[ -]days?\b/);
+    expect(planStartTrial!.match(/\d+/g)).toEqual([duration]);
     const copy = Object.values(rest).join(" ");
     expect(copy.length, "the join namespace is empty — then this guards nothing")
       .toBeGreaterThan(400);

@@ -9,7 +9,7 @@ import { zonedMonth } from "../src/reader-clock.js";
  * HISTORY'S MONTHS ARE THE READER'S. The rail bucketed in UTC while
  * rows read in the reader's zone, so in Zurich a message at 00:30 on 1 September counted in August
  * and pressing August landed on it. Runs on both stores: the default project opens PGlite, the
- * `vitest.sqlite.config.ts` project the device's SQLite.
+ * `test/vitest.sqlite.config.ts` project the device's SQLite.
  *
  * Mutations watched red: `zonedMonths` skipped (the UTC buckets stand) → the Zurich cases; the
  * window's `[-1, 0, 1]` narrowed to `[0]` → the west-of-UTC case.

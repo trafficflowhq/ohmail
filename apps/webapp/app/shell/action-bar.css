@@ -522,10 +522,6 @@
 .abar-danger {
   color: var(--danger, #b3261e);
 }
-/* A panel section is a grouping for the container queries below and NOT a box: its buttons
-   must be flex children of the panel itself, or they would lay out as one unbreakable unit
-   and reintroduce the clipping this change removes. */
-.abar-pg { display: contents; }
 .abar-chev {
   transform: rotate(90deg);
   opacity: .55;
@@ -623,7 +619,6 @@
   .reader .msg-actions .abar-row,
   .reader .msg-actions .abar-panel { opacity: 1; }
 }
-
 
 /* ── THE DENSITY LAW — ONE MECHANISM: MEASURED ADMISSION ─────────────────────────────────
  *
@@ -856,5 +851,4 @@
   /* A minimum wider than the content would leave a lone glyph at the left edge of its target. */
   .abar-more,.abar-read,.abar-reply,.abar-fwd .abar-b{justify-content:center}
   .mm-item{min-height:44px}
-  .abar-date{min-height:44px}
 }

@@ -2,6 +2,9 @@
   "files": [],
   "references": [
     {
+      "path": "./packages/wire"
+    },
+    {
       "path": "./packages/core"
     },
     {
@@ -23,6 +26,9 @@
       "path": "./packages/api/tsconfig.contract.json"
     },
     {
+      "path": "./packages/organizer"
+    },
+    {
       "path": "./apps/worker"
     },
     {
@@ -38,13 +44,24 @@
       "path": "./packages/tokens"
     },
     {
-      "path": "./packages/fixtures"
+      "path": "./packages/testing"
     },
     {
       "path": "./packages/ui"
     },
+    { "path": "./packages/cal-core" },
+    { "path": "./packages/cal-providers" },
     {
       "path": "./packages/client-engine"
+    },
+    {
+      "path": "./packages/app-logic"
+    },
+    {
+      "path": "./packages/letter-body"
+    },
+    {
+      "path": "./packages/app"
     }
   ]
 }

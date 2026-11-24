@@ -59,15 +59,15 @@ describe("the renewal's 204 rotates the session and leaves the marker alone", ()
     ["a jar with no marker", () => ""],
     ["a jar naming the account", (s: Seeded) => `; tf_owner=${s.accountId}`],
     ["a pending sign-out", () => "; tf_owner=signed_out_pending"],
-  ] as const)("%s: four cookies, no tf_owner", async (_jar, extra) => {
+  ] as const)("%s: five cookies, no tf_owner", async (_jar, extra) => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const refresh = await seedRefresh(db, s);
     const res = await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${refresh}${extra(s)}`, body: "{}" }), deps);
     expect(res.status).toBe(204);
     // It rotated, so this is no green over a refused refresh; `refresh` resolves a token family, never a user.
-    expect(res.headers.getSetCookie()).toHaveLength(4);
+    expect(res.headers.getSetCookie()).toHaveLength(5);
     expect(Object.keys(setCookieMap(res)).sort(), "the renewal wrote the marker")
-      .toEqual(["tf_csrf", "tf_refresh", "tf_resume", "tf_session"]);
+      .toEqual(["tf_csrf", "tf_family", "tf_refresh", "tf_resume", "tf_session"]);
   });
 });

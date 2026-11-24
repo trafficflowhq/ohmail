@@ -1,17 +1,26 @@
 import { sql, type SQL } from "drizzle-orm";
 import { exactAsked, positiveText, showSimilar, substringOpen, type SearchTier } from "@trafficflow/core/search-rank";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
-import { accountSettings, messageSearch, messages, readFlightOf } from "@trafficflow/db";
+import { messageSearch, messages, passDone, poolKeyOf, readFlightOf } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
 import { boolLiteral, dialect, orSidesOf, pgOnly, queryOperandsOf, partSidesOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
 import { clampLimit } from "./pagination.js";
+import type {
+  AddressSearchResult,
+  Assert,
+  Complete,
+  Facets,
+  MessageDTO,
+  SearchPlacesResult,
+  SearchResult,
+  AddressSearchDirection as WireAddressSearchDirection,
+} from "@ohmail/wire";
 import { ServiceError } from "./errors.js";
 import { storeProbe } from "./store-probe.js";
 import { afterSettings, afterSettingsRead } from "./settings-first.js";
 import { importOpen, storeStillImporting, truthy } from "./search-coverage.js";
 import { instantRefusal, readInstant } from "./instant.js";
-import type { MessageDTO } from "./dto/types.js";
 import type { SearchSize } from "./search-timing.js";
 
 /**
@@ -145,6 +154,8 @@ const SENDER_FACET_LIMIT = 10;
 const SUMMARY_EXACT_CAP = 2_000;
 /** The exact count's own time box, transaction-local; past it the summary answers as past the cap. */
 const SUMMARY_EXACT_TIMEOUT_MS = 1_500;
+/** The account-wide Place inventory is a single menu and one response. */
+const SEARCH_PLACES_MAX = 1_000;
 /** The address view counts exactly up to this many letters, then says "at least". */
 const ADDRESS_EXACT_CAP = 10_000;
 /**
@@ -158,6 +169,12 @@ const NEWEST_WALK = 2_000;
  * {@link SUMMARY_EXACT_CAP} the filter keeps: a filter that keeps fewer is counted exactly up to here.
  */
 const FILTERED_SCAN = 20_000;
+/**
+ * A SEARCH WITH NO WORDS reads a person's letters off their own index while they are at most this
+ * many, whatever else is asked: what one walk would ask ({@link SearchService.filterRows}). Each person
+ * is counted to one past it.
+ */
+const PERSON_FEW = FILTERED_SCAN;
 /**
  * UNDER A FOLDER an arm whose words have at most this many cuts of matches (counted off the index, at most one more)
  * reads them there, each asked its folder by key, and walks nothing: in a folder of one letter in 100 a walk reads
@@ -176,6 +193,8 @@ const FOLDER_HISTORY_CUTS = 240;
 export interface SearchFilters {
   folder?: string;            // a Destination (folder_state.desiredFolder, else native/INBOX)
   sender?: string;            // exact from_address (case-insensitive) — a facet click
+  to?: string;                // an exact To or Cc address, case-folded (mail 0154's keys)
+  party?: string;             // an exact address on either side: From, To or Cc
   unread?: boolean;
   hasAttachments?: boolean;
   dateFrom?: string;          // ISO — inclusive lower bound on date
@@ -251,37 +270,7 @@ export interface SearchOptions {
   cursor?: string;
 }
 
-export interface SearchResult {
-  items: MessageDTO[];
-  /**
-   * `null` when only the page was asked for (`parts: "page"`), and on a summary past its cap: the
-   * estimate's, over the page's candidates, stand. Over the candidates for `estimate`.
-   */
-  facets: Facets | null;
-  /** How many messages match, over the tier being returned — never over both tiers. */
-  total: number;
-  /** WHICH TIER THIS ANSWER IS: `exact` literal matches, or `similar` typo guesses. Never mixed. */
-  tier: SearchTier;
-  /**
-   * `false` when `total` is a lower bound: an arm was cut, or the summary passed its cap. Then the
-   * facets, when present, count only the page's candidates. No count is ever read from planner
-   * statistics: they cover every account's mail.
-   */
-  totalExact: boolean;
-  /** This answer's server time in milliseconds. */
-  ms: number;
-  /** The next page's cursor, or `null` on the last page (always `null` for `summary`). */
-  nextCursor: string | null;
-  /**
-   * On the last RELEVANCE page: an arm was cut at its top-K, so matches exist past the fused set
-   * and the date orders walk them all.
-   */
-  bounded: boolean;
-  /** Present on a summary while this account's search documents are still being built. */
-  indexed?: { done: number; total: number };
-  /** Present on every part while the store has not taken in the whole mailbox ({@link importOpen}). */
-  importing?: true;
-}
+/** The text search's answer, its facets, and the address arm's answer: declared with the wire's vocabulary. */
 
 /** A part's reading of {@link SearchResult.importing}, taken in the part's own session. */
 interface Coverage { importing?: true }
@@ -318,25 +307,15 @@ interface SearchSummary {
 /** The counts over the fused candidates: the whole match set exactly when no arm was cut. */
 type SearchEstimate = SearchSummary & { facets: Facets };
 
-export interface Facets {
-  /** desiredFolder (else native locator, else INBOX) → count. */
-  folder: Record<string, number>;
-  /** top-N senders by count within the match set. */
-  sender: Array<{ address: string; count: number }>;
-  unread: { true: number; false: number };
-  hasAttachments: { true: number; false: number };
-  /** coarse recency buckets. */
-  date: { today: number; last7: number; last30: number; older: number };
-}
-
 /**
  * THE ADDRESS ARM — one address, an EQUALITY, in a direction. Not a filter on `search`, which
  * requires a `q` — an address query has no words. `from` is `lower(from_address) = $1`, an INDEX
- * SCAN of `messages_account_from_addr_idx`; `to` is To and Cc through mail 0154's account-keyed
- * expression index (the device store: its trigger-kept side table); `any` is the two as a UNION
+ * SCAN of `messages_account_from_addr_idx`; `to` is To and Cc through the account-keyed recipients'
+ * key (mail 0208's column and its GIN; the device store: its trigger-kept side table); `any` is the two as a UNION
  * of index-served branches, never an OR in one predicate (an OR loses both indexes).
  */
-export const ADDRESS_DIRECTIONS = ["any", "from", "to"] as const;
+export const ADDRESS_DIRECTIONS = ["any", "from", "to"] as const satisfies readonly WireAddressSearchDirection[];
+type _AddressDirectionsComplete = Assert<Complete<WireAddressSearchDirection, typeof ADDRESS_DIRECTIONS>>;
 export type AddressSearchDirection = (typeof ADDRESS_DIRECTIONS)[number];
 
 /**
@@ -357,22 +336,6 @@ export interface AddressSearchOptions {
   /** Which side of the message. Only the members of {@link ADDRESS_DIRECTIONS_SERVED} are answered. */
   direction: AddressSearchDirection;
   limit?: number;
-}
-
-export interface AddressSearchResult {
-  /** Newest first — `SQL_RANK_ORDER`'s key sequence with the relevance term removed. */
-  items: MessageDTO[];
-  /** How many messages match, over the whole archive rather than over this page. */
-  total: number;
-  /** `false` past {@link ADDRESS_EXACT_CAP}: `total` is then a lower bound. Absent: exact. */
-  totalExact?: false;
-  /**
-   * WHICH DIRECTION THIS ANSWER IS ABOUT — on the wire rather than inferred: a client that fell
-   * back to `from` against an older server labels its rows by this field, not by what it asked.
-   */
-  direction: AddressSearchDirection;
-  /** Present while the store has not taken in the whole mailbox ({@link importOpen}): `total` is of the mail synced so far. */
-  importing?: true;
 }
 
 /** The empty facets — a blank query, or a query nothing matches. */
@@ -406,10 +369,16 @@ const INDEX_PROGRESS_FRESH_MS = 30_000;
 // pg_trgm and the word index are properties of the physical database, not the request: asked once
 // per handle, and a "no" to either asked again after a while (`storeProbe`), so a later install is seen.
 const trgmProbe = storeProbe();
-/** What the probe read, and each account's search documents as the catalog's statistics estimate them (kept in memory only). */
-interface IndexFacts { readonly trigram: boolean; readonly words: boolean; readonly docs: ReadonlyMap<string, number> }
+/**
+ * What the probe read, and each account's search documents as the catalog's statistics estimate
+ * them (kept in memory only). `oldColumns`: do the columns the search read before the search
+ * document (`message_bodies.body_tsv`, with `messages.subject_tsv`) still stand on this store?
+ * Mail 0200 drops them where no letter is found by them alone, so a store made from empty has
+ * none, and an arm that names them fails there.
+ */
+interface IndexFacts { readonly trigram: boolean; readonly words: boolean; readonly oldColumns: boolean; readonly docs: ReadonlyMap<string, number> }
 const indexFacts = new WeakMap<object, IndexFacts>();
-const NO_INDEXES: IndexFacts = { trigram: false, words: false, docs: new Map() };
+const NO_INDEXES: IndexFacts = { trigram: false, words: false, oldColumns: false, docs: new Map() };
 /** From this many search documents a mailbox is `large` in `search_timing`. */
 const SEARCH_LARGE_DOCS = 50_000;
 function storeIndexes(db: Db): Promise<IndexFacts> {
@@ -419,7 +388,7 @@ function storeIndexes(db: Db): Promise<IndexFacts> {
   // database that HAS the extension and one that does not; the device is neither, and its answer
   // is a fact about the store.
   if (dialect(db).name !== "pg") return Promise.resolve(NO_INDEXES);
-  const key = db as unknown as object;
+  const key = poolKeyOf(db);
   return trgmProbe(key, () =>
     /* A DECLARED POSTGRES-ONLY ARM, and it is unreachable elsewhere: the guard above answers no
        for any store that is not the server, so this statement is never composed there.
@@ -431,13 +400,18 @@ function storeIndexes(db: Db): Promise<IndexFacts> {
     db.execute(pgOnly(sql`select to_regprocedure('word_similarity(text,text)') is not null as trigram,
         exists (select 1 from pg_index x where x.indexrelid = to_regclass('public.message_search_words_idx')
           and x.indisvalid and x.indisready) as words,
+        exists (select 1 from information_schema.columns c where c.table_schema = 'public'
+          and c.table_name = 'message_bodies' and c.column_name = 'body_tsv') as old_columns,
         (select c.reltuples from pg_class c where c.oid = to_regclass('public.message_search')) as tuples,
         (select json_object_agg(u.v, u.f) from (select st.most_common_vals::text::text[] as vals, st.most_common_freqs as freqs
             from pg_stats st where st.schemaname = 'public' and st.tablename = 'message_search' and st.attname = 'account_id'
             order by st.inherited limit 1) st cross join lateral unnest(st.vals, st.freqs) as u(v, f)) as shares`))
       .then((r) => {
-        const row = rowsOf<{ trigram: boolean; words: boolean; tuples: unknown; shares: unknown }>(r)[0];
-        const facts = { trigram: Boolean(row?.trigram), words: Boolean(row?.words), docs: docsOf(row?.tuples, row?.shares) };
+        const row = rowsOf<{ trigram: boolean; words: boolean; old_columns: boolean; tuples: unknown; shares: unknown }>(r)[0];
+        const facts = {
+          trigram: Boolean(row?.trigram), words: Boolean(row?.words), oldColumns: Boolean(row?.old_columns),
+          docs: docsOf(row?.tuples, row?.shares),
+        };
         indexFacts.set(key, facts);
         return facts.trigram && facts.words;
       })).then(() => indexFacts.get(key) ?? NO_INDEXES);
@@ -459,7 +433,7 @@ function docsOf(tuples: unknown, shares: unknown): ReadonlyMap<string, number> {
 
 /** The account's mailbox size for `search_timing`, from the handle's statistics: `small` when they are unknown. */
 function searchSizeOf(db: Db, accountId: string): SearchSize {
-  const docs = indexFacts.get(db as unknown as object)?.docs.get(accountId.toLowerCase()) ?? 0;
+  const docs = indexFacts.get(poolKeyOf(db))?.docs.get(accountId.toLowerCase()) ?? 0;
   return docs >= SEARCH_LARGE_DOCS ? "large" : "small";
 }
 
@@ -532,7 +506,11 @@ const folderParts = new WeakMap<SQL, { rest: SQL; of: (id: SQL) => SQL }>();
  * account-keyed word index (`message_search_words_idx`), and whether the account has any search
  * document yet (`docs`, read while the marker is unwritten).
  */
-interface StoreFacts { readonly built: boolean; readonly trigram: boolean; readonly words: boolean; readonly docs: boolean; readonly letters?: number }
+interface StoreFacts {
+  readonly built: boolean; readonly trigram: boolean; readonly words: boolean; readonly docs: boolean; readonly letters?: number;
+  /** The store still carries the columns the search read before the search document ({@link IndexFacts}). */
+  readonly oldColumns: boolean;
+}
 
 /** One branch of an arm: an index-served predicate and the rank the arm orders by. */
 interface Branch {
@@ -618,6 +596,45 @@ interface SetProbe {
   readonly oldest?: SQL; readonly oldestOf: number;
   readonly reach: number;
   readonly letters?: number;
+}
+
+/** The person filters, in the order a wordless search reads them off an index ({@link SearchService.filterParts}). */
+const PERSON_FILTERS = ["sender", "to", "party"] as const;
+/**
+ * A person filter of a wordless search ({@link SearchService.filterParts}): its own predicate, the
+ * other filters, and `count`, its letters counted off its own indexes to at most one past
+ * {@link PERSON_FEW}, a scalar.
+ */
+interface FilterPerson { readonly own: SQL; readonly rest: SQL | null; readonly count: SQL }
+/**
+ * A wordless search's predicates ({@link SearchService.filterParts}): `base` the account, the
+ * deletion and the dates; one entry a person filter present; `asked` every filter but the dates.
+ */
+interface FilterParts {
+  readonly base: SQL;
+  readonly persons: readonly FilterPerson[];
+  readonly asked: SQL | null;
+  /** The device's store: a person's branch is gated by its limit as well ({@link SearchService.filterRows}). */
+  readonly limitGates: boolean;
+  /**
+   * The server's planner (the desktop's own store has it too): after a dated cursor the walk starts at the cursor by
+   * an index condition ({@link SearchService.filterRows}). The device's store asks the cursor of the index entry
+   * before it reads the row, and keeps its one read.
+   */
+  readonly seeks: boolean;
+}
+/**
+ * A wordless read ({@link SearchService.filterRows}): `rows` its letters with the shape picked, `tail`
+ * the walk's last letter, `last(pick)` that letter read again for a picked shape, `beyond` whether a
+ * letter lies past the walk.
+ */
+interface FilterRead {
+  readonly with: SQL | null;
+  readonly rows: SQL;
+  readonly pick: SQL;
+  readonly tail: SQL | null;
+  readonly last: (pick: number) => SQL | null;
+  readonly beyond: SQL;
 }
 
 /** A relevance cursor: the last row's fused score, date and id, and the tier it belongs to. */
@@ -708,6 +725,41 @@ export class SearchService {
       (select mq.native_locator->>'folder' from messages mq where mq.id = ${id}), 'INBOX')`;
   }
 
+  /** The folder filter uses paths across all of the account's mailboxes. Count that same corpus. */
+  async places(ctx: ServiceContext): Promise<SearchPlacesResult> {
+    const d = dialect(ctx.db);
+    const statement = sql`
+      select folder, sum(n) as total
+      from (
+        select ${this.folderExpr} as folder, count(*) as n
+        from messages m
+        left join folder_state fs on fs.message_id = m.id
+        where ${this.whereSql(d, ctx.accountId, {})}
+        group by ${this.folderExpr}
+        union all
+        select mf.folder, 0 as n
+        from mailbox_folders mf
+        join mailboxes mb on mb.id = mf.mailbox_id
+        where mf.account_id = ${ctx.accountId} and mb.account_id = ${ctx.accountId}
+      ) inventory
+      group by folder
+      order by total desc, folder
+      limit ${SEARCH_PLACES_MAX + 1}
+    `;
+    let rows: unknown[][];
+    try {
+      rows = await this.inSession(ctx, d, { tier: "exact", preferIndexes: false, statementTimeoutMs: SUMMARY_EXACT_TIMEOUT_MS },
+        (db) => d.exec(db, statement));
+    } catch (err) {
+      if (!isStatementTimeout(err)) throw err;
+      throw new ServiceError("unavailable", 503, "Search folder counts could not be read in time", undefined, true);
+    }
+    if (rows.length > SEARCH_PLACES_MAX) {
+      throw new ServiceError("search_too_many_folders", 422, `Too many folders to list in Search (limit: ${SEARCH_PLACES_MAX})`);
+    }
+    return { places: rows.map(([folder, count]) => ({ folder: String(folder), count: Number(count) })) };
+  }
+
   /** Refuse an over-long query BEFORE anything scans it; see {@link SEARCH_QUERY_MAX_CHARS}. */
   private static termOf(raw: string | undefined): string {
     const q0 = raw ?? "";
@@ -743,7 +795,10 @@ export class SearchService {
     // reads them, every branch held to the exclusion.
     const ops = queryOperandsOf(q);
     const pos = positiveText(q);
-    const legacy = built ? null : d.search.unindexed(pos, { trigram, threshold: FUZZY_THRESHOLD });
+    // The arm for letters without a document names the old columns: planned only where the store
+    // still has them AND the account's index is not stamped built. A store without them has no
+    // letter that only they find (mail 0200's guard), so nothing is left unread.
+    const legacy = built || !store.oldColumns ? null : d.search.unindexed(pos, { trigram, threshold: FUZZY_THRESHOLD });
     const legacyNone = legacy !== null && pos !== q ? d.search.unindexed(q, { trigram, threshold: FUZZY_THRESHOLD })?.excluded : undefined;
     const docless = legacy !== null && !store.docs;
     const bare = (b: SearchArm): Branch => {
@@ -885,7 +940,9 @@ export class SearchService {
   private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL, spare?: SQL, stream?: FolderStream): SQL {
     const cut = arm.ranked ? window : k;
     const rankOf = (b: Branch): SQL => (arm.ranked ? b.rank : sql`0`);
-    const indexed = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${rankOf(b)} as rank
+    // Carry the exclusion answer from the same document read. Refused rows still count toward the cut.
+    const keeps = (b: Branch): SQL => b.after ?? sql`true`;
+    const indexed = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${rankOf(b)} as rank, ${keeps(b)} as kept
       ${this.from} where ${SearchService.docWhere(where, b)} and ${b.pred}
       order by m.date desc nulls last, m.id desc limit ${cut})`;
     // UNDER A FOLDER a branch whose words have more than a few matches ({@link FOLDER_INDEX_CUTS}, `bl`) and are
@@ -893,24 +950,24 @@ export class SearchService {
     // walks the folder's letters (`bw`); short of its cut where that walk stopped at its bound, it reads its index.
     const read = (b: Branch): SQL => {
       if (stream === undefined || b.raw === undefined || b.keyRead === undefined) return indexed(b);
-      const doc = sql`select ${rankOf(b)} as rank from message_search s where s.message_id = w.id and ${b.pred}`;
+      const doc = sql`select ${rankOf(b)} as rank, ${keeps(b)} as kept from message_search s where s.message_id = w.id and ${b.pred}`;
       const walked = sql`(select v from bp) and ((select count(*) from bw) >= ${cut} or not ${stream.cut})`;
       return sql`(with bl as materialized (select ${SearchService.fewMatches([sql`${b.keyRead} and ${b.raw}`], FOLDER_INDEX_CUTS * k)} as v),
         bp as materialized (select count(*) >= ${Math.ceil(cut / SEARCH_EXCLUSION_WALK_FACTOR)} as v
           from (select id from ${stream.rows} where not (select v from bl) limit ${k}) w where exists (${doc} limit 1 offset 0)),
-        bw as materialized (select w.id as id, w.date as date, h.rank as rank from (select id, date from ${stream.rows} where (select v from bp)) w
+        bw as materialized (select w.id as id, w.date as date, h.rank as rank, h.kept from (select id, date from ${stream.rows} where (select v from bp)) w
           cross join lateral (${doc} offset 0) h limit ${cut})
-        select id, date, rank from bw where ${walked}
+        select id, date, rank, kept from bw where ${walked}
         union all
-        select id, date, rank from ${indexed(b)} r where not (${walked}))`;
+        select id, date, rank, kept from ${indexed(b)} r where not (${walked}))`;
     };
     const capped = SearchService.capped(arm);
     // A branch held to `after` keeps its cut rows that pass; a full cut says the arm is cut (`x`). A
     // row that fails stays as a row with no id, so the flag outlives every row.
     const branch = (b: Branch): SQL => (b.after !== undefined
-      ? sql`(select case when ${this.keeps(b.after, sql`c.id`)} then c.id end as id, c.date, c.rank, c.x
+      ? sql`(select case when c.kept then c.id end as id, c.date, c.rank, c.x
           from (select r.*, case when count(*) over () >= ${cut} then 1 else 0 end as x from ${read(b)} r) c)`
-      : capped ? sql`(select r.*, 0 as x from ${read(b)} r)` : read(b));
+      : capped ? sql`(select r.id, r.date, r.rank, 0 as x from ${read(b)} r)` : read(b));
     const merged = arm.local && walk ? this.localRead(where, arm, k, cut, walk)
       : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo, k, arm.letters, stream)
       // Under a folder the text arm walks the folder's letters too: no index serves the folder.
@@ -1568,6 +1625,8 @@ export class SearchService {
    * arms' predicates, walked by its own keyset. The tier is the exact tier unless it has no row.
    */
   async page(ctx: ServiceContext, opts: SearchOptions): Promise<SearchPage> {
+    const asked = SearchService.wordless(opts);
+    if (asked !== null) return this.filterPage(ctx, opts, asked);
     const q = SearchService.termOf(opts.q);
     if (!q) return { items: [], tier: "exact", nextCursor: null, bounded: false, candidates: 0, cut: false };
     const limit = SearchService.pageOf(opts.limit);
@@ -1813,6 +1872,8 @@ export class SearchService {
    * answered in, and the backfill's progress while it runs. Off the first page's path.
    */
   async summary(ctx: ServiceContext, opts: SearchOptions, pastCap = false): Promise<SearchSummary> {
+    const asked = SearchService.wordless(opts);
+    if (asked !== null) return this.filterCounts(ctx, opts, asked);
     const q = SearchService.termOf(opts.q);
     if (!q) return { total: 0, facets: emptyFacets(), tier: "exact", exact: true };
     const d = dialect(ctx.db);
@@ -1971,6 +2032,8 @@ export class SearchService {
    * exact unless it has no candidate.
    */
   async estimate(ctx: ServiceContext, opts: SearchOptions): Promise<SearchEstimate> {
+    const asked = SearchService.wordless(opts);
+    if (asked !== null) return this.filterCounts(ctx, opts, asked);
     const q = SearchService.termOf(opts.q);
     if (!q) return { total: 0, facets: emptyFacets(), tier: "exact", exact: true };
     const limit = SearchService.pageOf(opts.limit);
@@ -2009,7 +2072,7 @@ export class SearchService {
   /** This account's search documents while something is still building them, else nothing. */
   private async indexing(ctx: ServiceContext, db: unknown, store: StoreFacts): Promise<{ done: number; total: number } | undefined> {
     if (store.built || !this.opts.indexFills) return undefined;
-    const handle = ctx.db as unknown as object;
+    const handle = poolKeyOf(ctx.db);
     const memo = progressRead.get(handle) ?? new Map<string, { at: number; p: { done: number; total: number } }>();
     progressRead.set(handle, memo);
     const now = ctx.now().getTime();
@@ -2072,6 +2135,206 @@ export class SearchService {
       items: page.items, facets: s.facets ?? emptyFacets(), total: s.total, tier: page.tier, totalExact: s.exact,
       nextCursor: page.nextCursor, bounded: page.bounded, ...(s.indexed ? { indexed: s.indexed } : {}), ...cov(s), ms: ms(),
     };
+  }
+
+  // ── a search with no words: the filters alone, newest first ─────────────────────────────
+
+  /**
+   * THE FILTERS OF A SEARCH WITH NO WORDS, or `null` when it has words or no filter. Decided on the
+   * RAW query, never on {@link termOf}: excluded words alone (`-word`) ask for nothing and stay empty,
+   * where a reading of "no words" would list everything the filters keep.
+   */
+  private static wordless(opts: SearchOptions): SearchFilters | null {
+    const raw = opts.q ?? "";
+    if (raw.length > SEARCH_QUERY_MAX_CHARS + 1 || raw.trim() !== "") return null;
+    const f = opts.filters ?? {};
+    return Object.values(f).some((v) => v !== undefined) ? f : null;
+  }
+
+  /**
+   * A wordless search's predicates, each written by {@link whereSql}. A person (`sender`, `to`,
+   * `party`) is read whole off their own index while they have at most {@link PERSON_FEW} letters,
+   * whatever else is asked (each letter read is asked the other filters). The mailbox's walk asks
+   * {@link FILTERED_SCAN} letters a page, a recipient among the filters or not: on the server the
+   * recipients' key is a column in the row read (mail 0208), on the device's store its side table.
+   *
+   * A PERSON IS COUNTED OFF THEIR OWN INDEXES ONLY, WITHOUT THE DATES: no index of a person carries
+   * them, so beside a range the count read every letter of a dense person (35,086 buffers a page at
+   * 300,000 letters); a dense person inside a range is the mailbox's walk inside it, and a dense
+   * sender beside a range reads that sender's count (21,793 buffers at 300,000 letters). From by the
+   * account and the sender's index; To by the recipients' key, which carries the account: on the
+   * server the column's GIN, while its bitmap fits the working memory (`work_mem`), and past that each
+   * letter on a lossy page is compared again with the key it holds. Deleted letters are counted too,
+   * so a count is never under the person's letters. Either side is From's count and To's, each
+   * limited, as one set (the address view's count); past {@link PERSON_FEW} To alone says so without
+   * From, whose count reads a letter an entry on the server (an expression index answers no count
+   * alone).
+   */
+  private filterParts(d: Dialect, accountId: string, f: SearchFilters): FilterParts {
+    const { dateFrom, dateTo, ...rest } = f;
+    const dates = { ...(dateFrom !== undefined ? { dateFrom } : {}), ...(dateTo !== undefined ? { dateTo } : {}) };
+    const base = this.whereSql(d, accountId, dates);
+    const any = (x: SearchFilters): boolean => Object.values(x).some((v) => v !== undefined);
+    const present = PERSON_FILTERS.filter((k) => rest[k] !== undefined);
+    const read = (pred: SQL): SQL => sql`select m.id as id from messages m where ${pred} limit ${PERSON_FEW + 1}`;
+    const from = (a: string): SQL => read(sql`m.account_id = ${accountId} and lower(m.from_address) = lower(${a})`);
+    const to = (a: string): SQL => read(d.search.recipient({ accountId, address: a }));
+    const count = (ids: SQL): SQL => sql`(select count(*) from (${ids}) c)`;
+    const counts = {
+      sender: (a: string): SQL => count(from(a)),
+      to: (a: string): SQL => count(to(a)),
+      // Past PERSON_FEW To alone, either side is too: From is not read (its entries cost a letter each on the server).
+      party: (a: string): SQL => sql`(case when ${count(to(a))} > ${PERSON_FEW} then ${PERSON_FEW + 1}
+        else ${count(sql`select id from (${from(a)}) cf union select id from (${to(a)}) ct`)} end)`,
+    };
+    const persons = present.map((k) => {
+      const others: SearchFilters = { ...rest };
+      delete others[k];
+      return {
+        own: this.whereSql(d, accountId, { [k]: rest[k] }),
+        rest: any(others) ? this.whereSql(d, accountId, others) : null,
+        count: counts[k](rest[k]!),
+      };
+    });
+    const asked = any(rest) ? this.whereSql(d, accountId, rest) : null;
+    return { base, persons, asked, limitGates: d.name !== "pg", seeks: d.name === "pg" };
+  }
+
+  /**
+   * AT MOST `n` LETTERS THE FILTERS KEEP, newest first after `after`, as `(id, date, pick)`. No person
+   * and nothing asked: a keyset page of History. Something asked: the newest {@link FILTERED_SCAN}
+   * letters walked, each asked once. A person: ONE statement whose uncorrelated scalar `fw` picks the
+   * shape, by each person's count (`n<i>`, asked only when the CASE reaches it, once however often it
+   * is named): the first person, in the order sender, to, party, within {@link PERSON_FEW} is read
+   * whole and ordered, the other filters asked of their letters (pick `i`); else the mailbox's walk
+   * asks every filter of each letter (pick 0). Exactly one branch answers. Plain `with` (the device's
+   * store has no `materialized`). `tail` is the walk's last letter; `last(pick)` reads it for the pick
+   * a page made, counting nothing; the next page starts after it.
+   */
+  private filterRows(p: FilterParts, n: number, after: { keyset: SQL; dated: SQL | null } | null): FilterRead {
+    const at = after === null ? p.base : sql`${p.base} and ${after.keyset}`;
+    const order = sql`m.date desc nulls last, m.id desc`;
+    // No index holds this order, so a person's letters are read off their own index and sorted.
+    const own = sql`(m.date is null), m.date desc, m.id desc`;
+    const named = p.persons.length > 0;
+    const pick = named ? sql`(select pick from fw)` : sql`0`;
+    // A branch the pick did not name reads nothing: on the server its WHERE holds a one-time filter, and
+    // its limits stay constants the planner plans by (a limit it cannot read put a page's join on a
+    // walk of the primary key, 300,000 letters). The device's store reads an OR's indexes and an IN's
+    // list before it asks a WHERE that names no table (150 ms a branch on 60,000), so there a person's
+    // branch is gated by its LIMIT too: no store reads a letter for a limit of 0.
+    const gate = (v: number): SQL => (named ? sql` and ${pick} = ${sql.raw(String(v))}` : sql``);
+    const upTo = (v: number, k: number): SQL => (p.limitGates ? sql`(case when ${pick} = ${sql.raw(String(v))} then ${k} else 0 end)` : sql`${k}`);
+    // The k-th letter of the mailbox's walk under `base`, gated by the pick or not.
+    const nth = (base: SQL, k: number, gated: boolean): SQL =>
+      sql`select m.id as id, m.date as date from messages m where ${base}${gated ? gate(0) : sql``} order by ${order} limit 1 offset ${k}`;
+    // Past the walk's bound: is there a letter it did not ask? Counts are exact only where there is none.
+    const beyond = p.asked === null ? sql`0` : sql`(case when exists (${nth(p.base, FILTERED_SCAN, true)}) then 1 else 0 end)`;
+    if (p.asked === null) {
+      return {
+        with: null, pick, tail: null, last: () => null, beyond,
+        rows: sql`select m.id as id, m.date as date, 0 as pick from messages m where ${at} order by ${order} limit ${n}`,
+      };
+    }
+    const tail = nth(at, FILTERED_SCAN - 1, true);
+    const last = (v: number): SQL | null => (v > 0 ? null : nth(at, FILTERED_SCAN - 1, false));
+    // Each walked letter is asked the filters once, in the row the walk reads. Asked again by its id it
+    // cost a second read of the letter, three index pages and its heap page: 82,571 buffers for a page
+    // of 20,000 letters walked to keep 40.
+    const letters = (cond: SQL): SQL => sql`select m.id as id, m.date as date, (${p.asked}) as hit from messages m
+        where ${cond}${gate(0)} order by ${order} limit ${FILTERED_SCAN}`;
+    // After a dated cursor the walk starts at it: the dated letters by an index condition, then the undated, which
+    // lie after every dated one, merged in History's order. Under the keyset alone, a filter, every letter before
+    // the cursor is read, row and all, to be thrown away.
+    const walked = after === null || after.dated === null || !p.seeks ? letters(at)
+      : sql`select u.id as id, u.date as date, u.hit as hit from (select * from (${letters(sql`${at} and ${after.dated}`)}) wd
+          union all select * from (${letters(sql`${p.base} and m.date is null`)}) wu) u
+        order by u.date desc nulls last, u.id desc limit ${FILTERED_SCAN}`;
+    const walk = sql`select w.id as id, w.date as date from (${walked}) w
+      where w.hit
+      order by w.date desc nulls last, w.id desc limit ${n}`;
+    const out = (branches: SQL[]): SQL => sql`select x.id as id, x.date as date, ${pick} as pick from (${sql.join(branches, sql` union all `)}) x
+        order by x.date desc nulls last, x.id desc limit ${n}`;
+    if (!named) return { with: null, rows: out([sql`select id, date from (${walk}) b`]), pick, tail, last, beyond };
+    const count = (i: number): SQL => sql`(select n from ${sql.raw(`n${i}`)})`;
+    const whole = p.persons.map((_, i) => sql`when ${count(i)} <= ${PERSON_FEW} then ${sql.raw(String(i + 1))}`);
+    const counts = p.persons.map((x, i) => sql`${sql.raw(`n${i}`)} as (select ${x.count} as n)`);
+    const fw = sql.join([...counts, sql`fw as (select case ${sql.join(whole, sql` `)} else 0 end as pick)`], sql`, `);
+    const reads = p.persons.map((x, i) => sql`select id, date from (select m.id as id, m.date as date from messages m
+      where ${at} and ${x.own}${x.rest === null ? sql`` : sql` and ${x.rest}`}${gate(i + 1)}
+      order by ${own} limit ${upTo(i + 1, n)}) ${sql.raw(`o${i}`)}`);
+    // Ordered and cut once more, so no store flattens the union into the page's join.
+    return { with: fw, rows: out([...reads, sql`select id, date from (${walk}) b`]), pick, tail, last, beyond };
+  }
+
+  /** Only newest first is served without words: any other order is refused, never re-read. */
+  private static wordlessOrder(opts: SearchOptions): void {
+    const sort = opts.sort ?? "relevance";
+    if (sort !== "relevance" && sort !== "date_desc") {
+      throw new ServiceError("validation_failed", 400, "a search with no words lists newest first: sort must be relevance or date_desc");
+    }
+  }
+
+  /**
+   * A PAGE OF A WORDLESS SEARCH, newest first, behind an ordered cursor. A page from a walk that
+   * met fewer letters than it holds still carries a cursor while letters lie past the walk, so it
+   * may hold fewer rows than asked; the next page reads on from the walk's last letter.
+   */
+  private async filterPage(ctx: ServiceContext, opts: SearchOptions, f: SearchFilters): Promise<SearchPage> {
+    SearchService.wordlessOrder(opts);
+    const cursor = opts.cursor ? decodeCursor(opts.cursor) : null;
+    if (cursor !== null && (cursor.k !== "o" || cursor.o !== "date_desc")) {
+      throw new ServiceError("validation_failed", 400, "cursor belongs to another order");
+    }
+    const limit = SearchService.pageOf(opts.limit);
+    const d = dialect(ctx.db);
+    const p = this.filterParts(d, ctx.accountId, f);
+    const r = this.filterRows(p, limit + 1, cursor === null ? null : {
+      keyset: afterDateDesc(d, cursor.d, cursor.i, sql`m.id`),
+      dated: cursor.d === null ? null : sql`m.date <= ${d.ts(new Date(cursor.d))}`,
+    });
+    // An empty page from a walk brings back the walk's last letter, flagged: its cursor, and the pick, in the page's own statement.
+    const rows = r.tail === null ? sql`select id, date, pick, 0 as tail from (${r.rows}) pg`
+      : sql`with ${r.with === null ? sql`` : sql`${r.with}, `}pg as (${r.rows})
+        select id, date, pick, 0 as tail from pg
+        union all select t.id, t.date, ${r.pick}, 1 from (${r.tail}) t where not exists (select 1 from pg)`;
+    const { items, next, importing } = await this.session(ctx, d, async (db) => {
+      const read = await materializePage(db as Db, ctx.accountId, {
+        // Ordered by the read's own columns: a store that walked the page's join from History would ask the read once a letter.
+        rows, keys: ["pick", "tail"], order: sql`p.date desc nulls last, p.id desc`,
+      }, dtoOf(ctx));
+      const walkEnd = read.find((x) => truthy(x.keys[1]));
+      const rows0 = read.filter((x) => x !== walkEnd);
+      const page = rows0.slice(0, limit).map((x) => x.dto);
+      const tail = page[page.length - 1];
+      if (rows0.length > limit && tail) return { items: page, next: { d: millisOf(tail.date), i: tail.id } };
+      if (walkEnd !== undefined) return { items: page, next: { d: millisOf(walkEnd.dto.date), i: walkEnd.dto.id } };
+      // The pick the page made: a person's own letters read whole leave nothing past them; a walk reads on from its last letter.
+      const last = rows0.length === 0 ? null : r.last(Number(rows0[0]!.keys[0]));
+      if (last === null) return { items: page, next: null };
+      const [w] = await d.exec(db, last);
+      return { items: page, next: w === undefined ? null : { d: millisOf(w[1]), i: String(w[0]) } };
+    });
+    const nextCursor = next === null ? null : encodeCursor({ k: "o", t: "exact", o: "date_desc", x: null, d: next.d, i: next.i });
+    return { items, tier: "exact", nextCursor, bounded: false, candidates: items.length, cut: true, ...(importing ? { importing } : {}) };
+  }
+
+  /**
+   * THE COUNT AND FACETS OF A WORDLESS SEARCH: the letters {@link filterRows} reads, at most
+   * {@link SUMMARY_EXACT_CAP} + 1, counted in one statement. Exact while within the cap and no
+   * letter lay past the walk; otherwise a lower bound, and the facets the letters read.
+   */
+  private async filterCounts(ctx: ServiceContext, opts: SearchOptions, f: SearchFilters): Promise<SearchEstimate> {
+    SearchService.wordlessOrder(opts);
+    const d = dialect(ctx.db);
+    const p = this.filterParts(d, ctx.accountId, f);
+    const r = this.filterRows(p, SUMMARY_EXACT_CAP + 1, null);
+    const named = sql`${r.with === null ? sql`` : sql`${r.with}, `}fb as (select ${r.beyond} as v)`;
+    const { read, importing } = await this.session(ctx, d, async (db) => ({
+      read: await this.facets(ctx, db, d, sql`select id from (${r.rows}) x`, { named, extras: [sql`${d.castInt(sql`(select v from fb)`)} as x0`] }),
+    }), true);
+    const exact = read.total <= SUMMARY_EXACT_CAP && read.extras[0] === 0;
+    return { total: read.total, facets: read.facets, tier: "exact", exact, ...(importing ? { importing } : {}) };
   }
 
   /**
@@ -2185,7 +2448,7 @@ export class SearchService {
     const gate = sup === undefined ? null : followUp ? () => sup.turn() : async () => sup.check();
     // Before the transaction: the probe runs on the handle, and memoized, once per handle.
     const facts = await storeIndexes(ctx.db);
-    const { trigram, words } = facts;
+    const { trigram, words, oldColumns } = facts;
     // The account's letters as the catalog's statistics estimate them, where they name it: a set read's walk of History whole.
     const estimated = facts.docs.get(ctx.accountId.toLowerCase());
     const letters = estimated === undefined ? {} : { letters: estimated };
@@ -2195,9 +2458,9 @@ export class SearchService {
     if (setup === null) {
       if (gate) await gate();
       const [built, open] = await Promise.all([searchIndexBuilt(ctx.db as never, ctx.accountId), storeStillImporting(ctx)]);
-      return covered(await fn(ctx.db, { built, trigram, words, docs: true, ...letters }), open);
+      return covered(await fn(ctx.db, { built, trigram, words, oldColumns, docs: true, ...letters }), open);
     }
-    const handle = ctx.db as unknown as object;
+    const handle = poolKeyOf(ctx.db);
     const known = markerWritten.get(handle) ?? new Set<string>();
     markerWritten.set(handle, known);
     const tx = txOf(ctx);
@@ -2206,13 +2469,12 @@ export class SearchService {
       const warm = sql`select ${importOpen(d, ctx.accountId, ctx.now(), { inline: true })} as importing, s.* from (${setup}) s`;
       return tx(async (t) => {
         if (gate) await gate();
-        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words, docs: true, ...letters }));
+        const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram, words, oldColumns, docs: true, ...letters }));
         return covered(out, truthy(settings[0]?.[0]));
       });
     }
     // Scoped by the caller's account like every read below: a marker is one account's fact.
-    const marker = sql`exists (select 1 from ${accountSettings}
-      where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
+    const marker = passDone("search_index_backfill", ctx.accountId);
     const docs = sql`exists (select 1 from ${messageSearch} where ${messageSearch.accountId} = ${ctx.accountId})`;
     return tx(async (t) => {
       if (gate) await gate();
@@ -2222,7 +2484,7 @@ export class SearchService {
         if (known.size >= MARKER_MEMO_MAX) known.clear();
         known.add(ctx.accountId);
       }
-      return covered(await fn(t, { built, trigram, words, docs: truthy(row?.[2]), ...letters }), truthy(row?.[1]));
+      return covered(await fn(t, { built, trigram, words, oldColumns, docs: truthy(row?.[2]), ...letters }), truthy(row?.[1]));
     });
   }
 
@@ -2232,12 +2494,13 @@ export class SearchService {
    * shaping.
    */
   private async inSession<T>(
-    ctx: ServiceContext, d: Dialect, opts: { tier: SearchTier; preferIndexes: boolean },
+    ctx: ServiceContext, d: Dialect, opts: { tier: SearchTier; preferIndexes: boolean; statementTimeoutMs?: number },
     fn: (db: unknown) => Promise<T>,
   ): Promise<T> {
     const setup = d.search.searchSession({
       ...(opts.tier === "similar" ? { typoThreshold: FUZZY_THRESHOLD } : {}),
       preferIndexes: opts.preferIndexes,
+      ...(opts.statementTimeoutMs === undefined ? {} : { statementTimeoutMs: opts.statementTimeoutMs }),
     });
     if (setup === null) return fn(ctx.db);
     return txOf(ctx)((t) => afterSettings(t, d, setup, () => fn(t)));
@@ -2336,23 +2599,33 @@ export class SearchService {
     return read.at;
   }
 
+  /** The filters' dates, as {@link whereSql} writes them. */
+  private static datesOf(d: Dialect, f: SearchFilters): SQL[] {
+    const out: SQL[] = [];
+    if (f.dateFrom !== undefined) out.push(sql`m.date >= ${d.ts(SearchService.instantOr400(f.dateFrom, "dateFrom"))}`);
+    if (f.dateTo !== undefined) out.push(sql`m.date <= ${d.ts(SearchService.instantOr400(f.dateTo, "dateTo"))}`);
+    return out;
+  }
+
   private whereSql(d: Dialect, accountId: string, f: SearchFilters): SQL {
     // `deleted_at is null` unconditionally (mail 0065): search is a living view, and a deleted
     // or fully-expunged message must not come back as a hit over its stored (husked) headers.
     const preds: SQL[] = [sql`m.account_id = ${accountId}`, sql`m.deleted_at is null`];
     const inFolder = (id: SQL): SQL => sql`${SearchService.folderOf(id)} = ${f.folder}`;
     const folder = f.folder === undefined ? undefined : inFolder(sql`m.id`);
-    if (folder !== undefined) preds.push(folder);
     if (f.sender !== undefined) preds.push(sql`lower(m.from_address) = lower(${f.sender})`);
+    // The recipients' key and its index (mail 0154's key, stored by mail 0208), and for either side the From index beside it.
+    if (f.to !== undefined) preds.push(d.search.recipient({ accountId, address: f.to }));
+    if (f.party !== undefined) {
+      preds.push(sql`(lower(m.from_address) = lower(${f.party}) or ${d.search.recipient({ accountId, address: f.party })})`);
+    }
     // Literals, not bound booleans — see `boolLiteral`.
     if (f.unread !== undefined) preds.push(sql`m.unread = ${boolLiteral(f.unread)}`);
     if (f.hasAttachments !== undefined) preds.push(sql`m.has_attachments = ${boolLiteral(f.hasAttachments)}`);
-    if (f.dateFrom !== undefined) {
-      preds.push(sql`m.date >= ${d.ts(SearchService.instantOr400(f.dateFrom, "dateFrom"))}`);
-    }
-    if (f.dateTo !== undefined) {
-      preds.push(sql`m.date <= ${d.ts(SearchService.instantOr400(f.dateTo, "dateTo"))}`);
-    }
+    preds.push(...SearchService.datesOf(d, f));
+    // LAST: the folder is the one filter that reads another row (the letter's folder state, by its key). A walk asks
+    // its filters in this order, in the row it reads, so a letter another filter refuses is never asked its folder.
+    if (folder !== undefined) preds.push(folder);
     const out = sql.join(preds, sql` and `);
     if (preds.length > 2) filteredWheres.add(out);
     if (folder !== undefined) {

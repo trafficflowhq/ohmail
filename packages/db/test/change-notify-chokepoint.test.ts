@@ -29,6 +29,7 @@ const SRC_DIRS = [
   "packages/core/src",
   "packages/client-engine/src",
   "apps/worker/src",
+  "packages/organizer/src",
   "apps/sidecar/src",
 ];
 

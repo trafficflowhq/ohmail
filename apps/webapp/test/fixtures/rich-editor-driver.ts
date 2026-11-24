@@ -38,7 +38,7 @@
  * consumed. That is now proven by `inline-reply.test.ts` rather than assumed.
  */
 import type { Editor } from "@tiptap/react";
-import { escapeAsParagraphs } from "../../app/shell/rich-text";
+import { escapeAsParagraphs } from "@ohmail/app-logic/writing/rich-text";
 
 /** The editable surface of a mounted `RichEditor`. */
 export type RichSurface = HTMLElement;
@@ -71,5 +71,31 @@ export function typeInto(surface: RichSurface, text: string): void {
   const editor = editorOf(surface);
   if (text === "") editor.commands.clearContent(true);
   else editor.commands.setContent(escapeAsParagraphs(text));
+}
+
+/**
+ * Paste into the surface the way a browser does: a `paste` event carrying the clipboard's
+ * `text/plain` and `text/html`, which ProseMirror's own handler reads and turns into ONE
+ * transaction through every paste prop of the editor. `plain` holds Shift down first, which is
+ * how ProseMirror learns of the system's paste-as-plain-text key (Ctrl+Shift+V).
+ */
+export function pasteInto(
+  surface: RichSurface,
+  clip: { text?: string; html?: string },
+  { plain = false }: { plain?: boolean } = {},
+): void {
+  const key = { key: "V", keyCode: 86, ctrlKey: true, shiftKey: true, bubbles: true };
+  if (plain) surface.dispatchEvent(new KeyboardEvent("keydown", key));
+  const data: Record<string, string> = { "text/plain": clip.text ?? "", "text/html": clip.html ?? "" };
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", {
+    value: {
+      types: Object.keys(data).filter((t) => data[t] !== ""),
+      files: [],
+      getData: (type: string) => data[type] ?? "",
+    },
+  });
+  surface.dispatchEvent(event);
+  if (plain) surface.dispatchEvent(new KeyboardEvent("keyup", { key: "Shift", keyCode: 16, bubbles: true }));
 }
 

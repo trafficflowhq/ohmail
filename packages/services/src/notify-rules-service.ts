@@ -1,9 +1,9 @@
+import type { NotifyRuleDTO, Page } from "@ohmail/wire";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { notifyRules } from "@trafficflow/db";
 import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
-import type { NotifyRuleDTO, Page } from "./dto/types.js";
 
 export interface CreateNotifyRuleBody {
   target: string;

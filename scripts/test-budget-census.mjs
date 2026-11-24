@@ -32,7 +32,7 @@ import { fileURLToPath } from "node:url";
 
 /** vitest's own `testTimeout` when no config sets one. */
 export const VITEST_DEFAULT_MS = 5000;
-const CONFIGS = { default: "vitest.config", sqlite: "vitest.sqlite.config" };
+const CONFIGS = { default: "vitest.config", sqlite: "test/vitest.sqlite.config" };
 const CONFIG_EXTS = [".ts", ".mts", ".mjs", ".js"];
 const TEST_FILE = /\.test\.tsx?$/;
 const SUITE_NAMES = new Set(["describe", "suite"]);

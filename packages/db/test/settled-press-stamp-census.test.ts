@@ -148,7 +148,7 @@ describe("the press stamp has one writer and one reader", () => {
   it("CONTROL: the walk reaches every product root it names", () => {
     const scanned = new Set(roots().map((r) => relative(REPO, r)));
     for (const r of ["packages/db/src", "packages/services/src", "packages/api/src", "packages/core/src",
-      "apps/worker/src", "apps/sidecar/src", "apps/webapp/app", "packages/client-engine/src"]) {
+      "apps/worker/src", "packages/organizer/src", "apps/sidecar/src", "apps/webapp/app", "packages/client-engine/src"]) {
       expect(scanned.has(r), `${r} is not scanned`).toBe(true);
     }
   });

@@ -1,3 +1,4 @@
+import type { Db } from "@trafficflow/services";
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { workflows, workflowProposals, idempotencyKeys } from "@trafficflow/db";
@@ -9,7 +10,7 @@ const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, s
 
 /** Insert an OPEN proposal row directly (the worker cron would normally write it). */
 async function seedProposal(
-  db: ApiDeps["db"], accountId: string,
+  db: Db, accountId: string,
   over: { name?: string; steps?: unknown[]; trigger?: unknown } = {},
 ): Promise<string> {
   const [p] = await db.insert(workflowProposals).values({

@@ -242,7 +242,7 @@ the default or one you set, never the address.
 
 ### In the desktop app
 
-Settings → Suggestions and drafts, where you pick one of four:
+In Desktop on its own, Settings → Desktop → AI for suggestions and drafts lets you pick one of four:
 
 - **Your Anthropic key.** Requests go to `api.anthropic.com`, billed to you.
 - **Your OpenAI key.** Requests go to `api.openai.com`, billed to you.
@@ -278,4 +278,30 @@ Whichever you choose, an API key is sealed under a key held in your operating
 system's keystore, is never written down in the clear, is never read back, and
 is sent to no host but its own vendor's. Mail carrying a one-time code or other
 authentication material is refused before any request is built and is never
-sent to any model, under any provider.
+sent to the selected Desktop model.
+
+## Calendar
+
+The bundled compose file turns Calendar on for the server (`OHMAIL_CALENDAR`
+is set for both `api` and `organizer`). A person turns Calendar on for their
+account and connects iCloud or another CalDAV calendar, or subscribes to an
+ICS feed. Subscribed feeds are read-only. Desktop on its own does not have
+Calendar; a Desktop connected to a server uses that server's Calendar.
+
+To connect a calendar on the server's own network, set
+`OHCAL_ALLOW_PRIVATE=1` in `.env` (the compose file passes it to both
+services). This lets every account on the server connect to services on that
+network, including without TLS; enable it only if you trust those accounts.
+
+## Place suggestions in the calendar
+
+On a self-hosted server, the place field suggests places from your own calendar.
+Map suggestions are off by default. To enable them, set
+`PLACES_SUGGEST_URL=https://photon.komoot.io` in `deploy/selfhost/.env` or set
+`PLACES_SUGGEST_URL` to your own Photon server. Use komoot's public endpoint
+fairly. It may throttle heavy use and gives no availability guarantee.
+The public endpoint needs no token. If your own geocoder requires a bearer
+token, set `PLACES_SUGGEST_TOKEN` too.
+
+When map suggestions are on, your server sends what a person types in the
+place field to the configured geocoder. ohmail Cloud uses its own keyed geocoder.

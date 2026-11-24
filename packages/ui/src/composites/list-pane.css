@@ -38,9 +38,7 @@
    nothing may move by a pixel, and 2px under ohmarchy, where the ring is 2px. One rule for
    every scroller rather than a margin per surface, because the clip belongs to the scroller and
    the next boxed surface put inside one must not repeat the defect. */
-/* `--pill-h` is the first-sync pill's height while it floats over the corner (SyncBar writes it,
-   0 where the pill is not drawn), so a scroller's last row rests clear of it at every width. */
-.scroller{overflow-y:auto;flex:1;min-height:0;padding-top:calc(var(--focus-w) * var(--teach));padding-bottom:calc(48px + var(--pill-h, 0px))}
+.scroller{overflow-y:auto;flex:1;min-height:0;padding-top:calc(var(--focus-w) * var(--teach));padding-bottom:48px}
 .grouplabel{font-size:calc(12px + var(--type-up));font-weight:600;color:var(--ink3);padding:16px 30px 6px}
 .rows{padding:0 16px} /* wide enough that a raised row's shadow isn't sheared at the pane edge */
 /* No-collapse rule: mail is never hidden behind a "+n more" affordance, so

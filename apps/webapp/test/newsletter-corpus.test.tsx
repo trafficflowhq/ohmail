@@ -18,8 +18,8 @@ import { createRoot, type Root } from "react-dom/client";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../../../packages/letter-body/src/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/MessageBody.js");
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIR = join(HERE, "fixtures/newsletters");
@@ -39,7 +39,7 @@ async function render(text: string, html: string): Promise<HTMLDivElement> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, { messageId: "m1", text, html })); });
+  await act(async () => { root!.render(h(MessageBody, { owner: null, messageId: "m1", text, html })); });
   return host;
 }
 

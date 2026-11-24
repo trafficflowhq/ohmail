@@ -2,16 +2,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
+import { ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
+import { screen } from "@testing-library/react";
+import { Frame } from "@ohmail/app/frame";
+import { ScreenerAbove, screenerPlace } from "@ohmail/app/screener";
+import { NO_RUN } from "@ohmail/app-logic/screener";
+import { useScreenerSuggestions, type SenderSuggestion } from "@ohmail/app-logic/screener/screener-suggest";
+import type { SuggestStanding } from "@ohmail/app-logic/screener/no-suggestion";
+import { BESIDE, inWords, modelOf, screenerEngine } from "../../../packages/app/test/screener/screener-world.js";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeAddress } from "../../../packages/app/test/support/fake-window.js";
 
 import messages from "../../webapp/messages/en.json";
-import { CloudSuggest } from "../src/CloudSuggest.js";
 import { cloudSuggestWire } from "../src/cloud-suggest.js";
 import { suggestDoorFor } from "../src/doors.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
-import type { SenderSuggestion } from "../../webapp/app/shell/screener-suggest";
-import type { SuggestStanding } from "../../webapp/app/shell/no-suggestion";
 
 /**
  * BUYING SUGGESTIONS FOR A HOSTED ACCOUNT, FROM THE APP.
@@ -114,6 +120,10 @@ function engineAnswering(refuseBuy?: { status: number; code: string }): { asked:
         requested: senders.length,
         quoted: senders.length,
         quotedCredits: senders.length * 2,
+        ...(dryRun ? { quoteGrant: {
+          proof: "fixture-quote",
+          pairs: senders.map((sender, i) => ({ sender, messageId: "m-" + i })),
+        } } : {}),
         charged: dryRun ? 0 : senders.length * 2,
         remainingCredits: dryRun ? undefined : 500,
         suggestions: dryRun ? [] : senders.map((s, i) => ({
@@ -135,6 +145,35 @@ describe("the hosted door's suggest control", () => {
   let absorbed: Array<{ address: string; suggestion: SenderSuggestion }>;
   let stood: Array<SuggestStanding | null>;
 
+  function Framed({ senders, resuggestable }: { senders: string[]; resuggestable: string[] }) {
+    const text = { screener: useTranslations("screener") as never, aiRefusal: useTranslations("aiRefusal") as never };
+    const suggestions = useScreenerSuggestions({
+      active: true,
+      toast: useToast(),
+      text,
+      wire: cloudSuggestWire,
+      publish: (rows) => { absorbed.push(...rows); },
+      publishStanding: (standing) => { stood.push(standing); },
+    });
+    const [host] = React.useState(() => fakeHost({
+      engine: screenerEngine().engine,
+      service: "managed",
+      scope: "suggestion-fixture",
+      places: { screener: screenerPlace },
+      address: fakeAddress("#/screener"),
+    }).host);
+    const model = modelOf({ flushes: 0 }, {
+      waitingCount: senders.length + resuggestable.length,
+      suggestedCount: resuggestable.length,
+    });
+    const control = suggestions.forSenders(senders, resuggestable, 0);
+    return inWords(h(ScreenerAbove, {
+      model,
+      beside: { ...BESIDE, suggest: { control, priced: true, noAdvice: NO_RUN } },
+      children: h(Frame, { host }),
+    }));
+  }
+
   const mount = async (senders = SENDERS, resuggestable: string[] = []) => {
     absorbed = [];
     stood = [];
@@ -142,39 +181,15 @@ describe("the hosted door's suggest control", () => {
     document.body.append(hostEl);
     root = createRoot(hostEl);
     await act(async () => {
-      root.render(
-        h(
-          NextIntlClientProvider,
-          { locale: "en", messages: messages as never, timeZone: "UTC" },
-          h(
-            ThemeProvider,
-            null,
-            h(
-              ToastHost,
-              null,
-              h(CloudSuggest, {
-                senders,
-                resuggestable,
-                unanswered: 0,
-                absorb: (rows) => { absorbed.push(...rows); },
-                absorbStanding: (s) => { stood.push(s); },
-              }),
-            ),
-          ),
-        ),
-      );
+      const children = h(ThemeProvider, null, h(ToastHost, null, h(Framed, { senders, resuggestable })));
+      root.render(h(NextIntlClientProvider, { locale: "en", messages: messages as never, timeZone: "UTC", children }));
     });
   };
 
-  const buttons = () => [...hostEl.querySelectorAll("button")];
+  const buttons = () => screen.getAllByRole("button");
 
   const click = async (label: string) => {
-    const button = buttons().find((b) => b.textContent?.trim() === label);
-    if (!button) {
-      throw new Error(
-        `no button labelled "${label}" — found: ${buttons().map((b) => b.textContent).join(" | ")}`,
-      );
-    }
+    const button = screen.getByRole("button", { name: label });
     await act(async () => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -182,10 +197,7 @@ describe("the hosted door's suggest control", () => {
 
   /** The confirm, whatever number the server quoted into its label. */
   const confirm = async () => {
-    const button = buttons().find((b) => /^Suggest for \d+ sender/.test(b.textContent ?? ""));
-    if (!button) {
-      throw new Error(`no confirm — found: ${buttons().map((b) => b.textContent).join(" | ")}`);
-    }
+    const button = screen.getByRole("button", { name: /^Suggest for (?:all |the first )?\d+ senders?$/ });
     expect(button.hasAttribute("disabled")).toBe(false);
     await act(async () => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -328,7 +340,8 @@ describe("the hosted door's suggest control", () => {
     engineAnswering();
     await mount([], SENDERS.slice(0, 7));
     expect(hostEl.textContent).toContain("7");
-    expect(buttons().map((b) => b.textContent)).toContain("Suggest again…");
+    await click("List");
+    expect(screen.getByRole("menuitem", { name: "Suggest again…" }).textContent).toContain("7");
   });
 });
 

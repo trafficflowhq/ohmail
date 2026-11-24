@@ -2,8 +2,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { composePlan } from "../app/shell/compose";
-import { canSend } from "../app/shell/mail-send";
+import { composePlan } from "@ohmail/app-logic/writing/compose";
+import { canSend } from "@ohmail/app-logic/writing/mail-send";
 
 /**
  * AN ENTRY BEING TYPED IS UNFINISHED, NOT WRONG.
@@ -49,15 +49,24 @@ describe("the send guard is untouched by the display gate", () => {
   });
 });
 
+/*
+ * OVER WRITE (the older tests' sorting): today's `ComposeView` leaves with the switch, and the display
+ * gate with it. Write's people lines draw what does not parse through ONE gate, `gatedInvalid` of
+ * `packages/app-logic/src/writing/recipient-lines.ts` (Write's model hands it as `lines.refused`), which People
+ * (`packages/app/src/write/head/People.tsx`) asks once per line for both the refused people and the line's sentence.
+ * The census reads those files by path; each claim is today's.
+ */
 describe("the display gate withholds exactly one entry, and only while focused", () => {
-  const view = read("../app/views/ComposeView.tsx");
+  const gate = read("../../../packages/app-logic/src/writing/recipient-lines.ts");
+  const people = read("../../../packages/app/src/write/head/People.tsx");
+  const model = read("../../../packages/app-logic/src/writing/writing-of.ts");
 
   it("suppresses only the LAST entry, and only while the field has focus", () => {
     // Not "hide errors while typing" — that would hide a committed entry's error too. The
     // predicate names the last segment and requires focus.
-    expect(view).toContain("toFocused && !/,\\s*$/.test(fields.to)");
-    expect(view).toContain('fields.to.split(",").pop()');
-    expect(view).toMatch(/plan\.invalid\.filter\(\(entry\) => entry !== stillTyping\)/);
+    expect(gate).toContain("focused && !/[,;]\\s*$/.test(raw)");
+    expect(gate).toContain("raw.split(/[,;]/).pop()");
+    expect(gate).toMatch(/invalid\.filter\(\(entry\) => entry !== stillTyping\)/);
   });
 
   it("a trailing comma means the entry IS committed, so its error shows", () => {
@@ -69,16 +78,21 @@ describe("the display gate withholds exactly one entry, and only while focused",
 
   it("the error line and the field's aria-invalid read the SAME list", () => {
     // Two sources here would let the red bar disappear while the field still announced itself
-    // as invalid to a screen reader.
-    expect(view).toMatch(/invalid=\{shownInvalid\.length > 0\}/);
-    expect(view).toMatch(/\{shownInvalid\.length > 0 \? \(/);
-    expect(view).toMatch(/entries: shownInvalid\.join/);
+    // as invalid to a screen reader. (Write: each refused person is marked from the line's gated list, and the
+    // sentence under the lines is the same lists joined.)
+    expect(people).toMatch(/const refusedOf = \(row: RecipientRow\): string\[\] =>\s+beside\.lines\.refused\(/);
+    expect(people).toMatch(/const refused = ROWS\.flatMap\(refusedOf\);/);
+    expect(people).toMatch(/const bad = new Set\(refusedOf\(row\)\);/);
+    expect(people).toMatch(/refusal=\{refused\.length > 0 \? t\("refused", \{ list: refused\.join/);
   });
 
   it("canSend is NOT computed from the gated list", () => {
     // The mutation is what the send is judged on, and it is built by `composePlan` from the
-    // ungated parse. If `shownInvalid` ever reaches the send path, this is what says so.
-    const send = view.slice(view.indexOf("const canSendNow"), view.indexOf("return ("));
-    expect(send).not.toMatch(/shownInvalid/);
+    // ungated parse. If the gated list ever reaches the send path, this is what says so. (Write: the gate is read
+    // only as the lines' `refused` member of the model; People draws, and sends nothing.)
+    const uses = model.split("gatedInvalid").length - 1;
+    expect(uses, "the model names the gate beyond its import and its lines' member").toBe(2);
+    expect(model).toMatch(/refused: gatedInvalid,/);
+    expect(people).not.toMatch(/canSend|sendRefusal|mutation/);
   });
 });

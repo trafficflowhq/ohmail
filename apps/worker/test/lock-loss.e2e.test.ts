@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";
 import { like } from "drizzle-orm";
@@ -8,9 +8,32 @@ import { StaticKeyProvider, createLogger } from "@trafficflow/core";
 import { acquireLeaderLock, LEADER_LOCK_KEY, leaderLockKeyFor, type LeaderLock } from "../src/leader-lock.js";
 import { runWorkerSupervised } from "../src/supervisor.js";
 import type { WorkerConfig } from "../src/config.js";
+import type { WorkerScope } from "../src/start/scope.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 import { DbDoor, surviveDriverWriteRace } from "./_dbdoor.js";
+
+interface TurnCount { started: number; atLoss: number | null }
+const turnsByLogger = vi.hoisted(() => new WeakMap<object, TurnCount>());
+
+vi.mock("../src/start/cycle.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/start/cycle.js")>();
+  return {
+    ...actual,
+    cycleSection(scope: WorkerScope): void {
+      const turns = scope.config.logger && turnsByLogger.get(scope.config.logger);
+      if (turns) {
+        const record = scope.visitStarts.set.bind(scope.visitStarts);
+        // Count admission, before the visit awaits its lease and calls the adapter.
+        vi.spyOn(scope.visitStarts, "set").mockImplementation((mailboxId, startedAt) => {
+          turns.started += 1;
+          return record(mailboxId, startedAt);
+        });
+      }
+      actual.cycleSection(scope);
+    },
+  };
+});
 
 type Db = ReturnType<typeof makeDb>;
 
@@ -23,7 +46,7 @@ async function seedMailbox(db: Db): Promise<string> {
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return row!.id;
@@ -243,8 +266,7 @@ describe("leader-lock loss (split-brain guard)", () => {
     sup: Awaited<ReturnType<typeof runWorkerSupervised>>;
     started: Promise<void>;
     door: DbDoor; fleet: FakeAdapterFleet; lines: Line[]; fatals: unknown[];
-    /** Turns this instance had started when it logged `leader_lock_lost`. */
-    turnsWhenLost: number | null;
+    turns: TurnCount;
   }
   const HEARTBEAT_MS = 300;
   /** What a leader may go without a proof of its lock: three heartbeats, and one more for the tick that reads it. */
@@ -255,19 +277,20 @@ describe("leader-lock loss (split-brain guard)", () => {
     await door.up();
     const fleet = new FakeAdapterFleet();
     fleet.behave(mailboxId, { syncDelayMs: 40 });
-    const turns = (): number => fleet.indicesOf(mailboxId, "sync_start").length;
     const self: Instance = {
-      sup: null as unknown as Instance["sup"], started: Promise.resolve(), door, fleet, lines: [], fatals: [], turnsWhenLost: null,
+      sup: null as unknown as Instance["sup"], started: Promise.resolve(), door, fleet, lines: [], fatals: [],
+      turns: { started: 0, atLoss: null },
     };
     const logger = createLogger({
       service: "worker",
       sink: (raw) => {
         const line = JSON.parse(raw) as { event?: unknown; errorCode?: unknown };
         const event = String(line.event);
-        if (event === "leader_lock_lost") self.turnsWhenLost = turns();
+        if (event === "leader_lock_lost") self.turns.atLoss ??= self.turns.started;
         self.lines.push({ event, errorCode: typeof line.errorCode === "string" ? line.errorCode : null });
       },
     });
+    turnsByLogger.set(logger, self.turns);
     self.started = runWorkerSupervised(
       cfgFor(fleet, {
         databaseUrl: door.via(DB), instanceId: `wkr-${name}`, logger, lockHeartbeatMs: HEARTBEAT_MS,
@@ -364,7 +387,7 @@ describe("leader-lock loss (split-brain guard)", () => {
     // A is given the time it needs either to learn or to beat again: its turns end in a beat, and that
     // beat used to take the row back from B. Then one letter for each of them: whoever writes it shows
     // whom the fence lets write.
-    const turnsOfA = (): number => a.fleet.indicesOf(mailboxId, "sync_start").length;
+    const turnsOfA = (): number => a.turns.started;
     const turnsWhenBLed = turnsOfA();
     await seen(() => a.sup.state() !== "leader" || turnsOfA() >= turnsWhenBLed + 3, 8000);
     const letterA = letterFor("a");
@@ -383,8 +406,9 @@ describe("leader-lock loss (split-brain guard)", () => {
     const { named, mostHolders, bothLeaderMs } = watching.saw;
 
     expect.soft(aLeft, "(a) A still calls itself leader").toBe(true);
-    expect.soft(a.turnsWhenLost, "(a) A never learned that its lock is gone").not.toBeNull();
-    expect.soft(turnsAtEnd, "(a) A started a turn after it knew").toBe(a.turnsWhenLost);
+    expect.soft(a.turns.atLoss, "(a) A never learned that its lock is gone").not.toBeNull();
+    expect.soft(a.turns.atLoss ?? 0, "(a) no turn admission was observed before loss").toBeGreaterThan(0);
+    expect.soft(turnsAtEnd, "(a) A started a turn after it knew").toBe(a.turns.atLoss);
     // Not by the driver seeing a close: the door held the session, so A learned from the row or from its own clock.
     expect.soft(lossCodes(a).every((c) => c === "LOCK_SUPERSEDED" || c === "LOCK_UNPROVEN" || c === "LOCK_FENCED"),
       `(a) A's loss was ${JSON.stringify(lossCodes(a))}`).toBe(true);

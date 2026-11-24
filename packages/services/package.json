@@ -21,6 +21,24 @@
       "ohmail-source": "./src/mail.ts",
       "node": "./dist/mail.js",
       "default": "./src/mail.ts"
+    },
+    "./calendar": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
+    },
+    "./calendar-connect": {
+      "types": "./src/calendar/connect-door.ts",
+      "ohmail-source": "./src/calendar/connect-door.ts",
+      "node": "./dist/calendar/connect-door.js",
+      "default": "./src/calendar/connect-door.ts"
+    },
+    "./invitation-answer": {
+      "types": "./src/invitation-answer-service.ts",
+      "ohmail-source": "./src/invitation-answer-service.ts",
+      "node": "./dist/invitation-answer-service.js",
+      "default": "./src/invitation-answer-service.ts"
     }
   },
   "dependencies": {
@@ -31,7 +49,14 @@
     "otplib": "13.4.1",
     "sanitize-html": "2.17.6",
     "tldts": "7.4.9",
+    "@ohmail/wire": "*",
+    "@ohmail/cal-core": "*",
+    "@ohmail/cal-providers": "*",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*"
+  },
+  "devDependencies": {
+    "@ohmail/testing": "*",
+    "postgres": "3.4.9"
   }
 }

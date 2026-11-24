@@ -1,0 +1,91 @@
+/* Text that is not kept here: a label, a line, the one act and its note. */
+@layer oh {
+  .oh-notkept {
+    --oh-notkept-lh-label: 1.2;
+    --oh-notkept-lh: 1.5;
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    max-width: var(--measure);
+    margin-top: var(--s5);
+  }
+
+  /* Under the head it stands the head's 16 away: directly, or first in the body the app draws. */
+  .oh-messagehead + .oh-notkept,
+  .oh-messagehead + * > .oh-notkept:first-child {
+    margin-top: var(--s1);
+  }
+
+  /* The letter's preview over the notice: muted, in the letter's face. */
+  .oh-notkept-preview {
+    max-width: var(--measure);
+    color: var(--ink2);
+    font-size: var(--t-read);
+    line-height: var(--lh-read);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    text-wrap: pretty;
+  }
+
+  .oh-notkept-label {
+    font-size: var(--t-title);
+    line-height: var(--oh-notkept-lh-label);
+    text-wrap: balance;
+  }
+
+  .oh-notkept-line {
+    color: var(--ink2);
+    font-size: var(--t-ui);
+    line-height: var(--oh-notkept-lh);
+    text-wrap: pretty;
+  }
+
+  .oh-notkept-acts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    margin-top: var(--s2);
+  }
+
+  /* While it loads the act rests where it stands, and says so: off to a press, the keys still on it. */
+  .oh-notkept[aria-busy="true"] .oh-notkept-acts > .oh-button[aria-busy="true"] {
+    background: var(--soft-sheet);
+    color: var(--ink2);
+  }
+
+  .oh-notkept-fine {
+    --oh-notkept-lh: 1.5;
+    --oh-notkept-measure: 46em;
+
+    max-width: var(--oh-notkept-measure);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    line-height: var(--oh-notkept-lh);
+    text-wrap: pretty;
+  }
+
+  .oh-message-body + .oh-notkept-fine,
+  .oh-lettercolumns + .oh-notkept-fine {
+    margin-top: var(--s4);
+  }
+
+  .oh-notkept-source {
+    --oh-notkept-lh: 1.5;
+    --oh-notkept-out: calc(var(--s2) * -1) 0 var(--s3);
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--s1);
+    margin: var(--oh-notkept-out);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    line-height: var(--oh-notkept-lh);
+  }
+
+  .oh-notkept-source > .oh-button {
+    font-size: var(--t-meta);
+  }
+}

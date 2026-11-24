@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../scripts/lib/source-scan.mjs";
+import { readAsUnit } from "./support/engine-unit.js";
 
 /**
  * EVERY IDLE-PATH DERIVATION IS KEYED ON A CHANGE SIGNAL.
@@ -50,21 +50,21 @@ const REGISTRY: readonly Site[] = [
   {
     site: 2,
     what: "a cached cycle still reconstructed all remembered locators",
-    file: "apps/worker/src/sync.ts",
+    file: "packages/organizer/src/sync.ts",
     signal: "the known-set generation, and each folder's own row epoch",
     needle: "derived.rowEpochs.get(f) !== cur",
   },
   {
     site: 3,
     what: "an empty drain still ranked the mirror (the windowed prune)",
-    file: "packages/client-engine/src/engine.ts",
+    file: "packages/client-engine/src/engine/windowed.ts",
     signal: "stampExcept over every type but bodies, and the cutline generation",
     needle: "=== this.prunedAtStamp",
   },
   {
     site: 3,
     what: "an empty drain still rebuilt the eager window (the body pass)",
-    file: "packages/client-engine/src/engine.ts",
+    file: "packages/client-engine/src/engine/hydration.ts",
     signal: "the store version — any record write, a landed body included",
     needle: "rankedAt === this.eagerRankedAt",
   },
@@ -104,7 +104,7 @@ const REGISTRY: readonly Site[] = [
 ];
 
 /** The file's code, comments blanked — a gate that lives in prose is not a gate. */
-const codeOf = (file: string): string => withoutComments(readFileSync(join(REPO, file), "utf8"));
+const codeOf = (file: string): string => withoutComments(readAsUnit(join(REPO, file)));
 
 describe("the idle-derivation registry", () => {
   it("covers the seven sites the inventory named, and no others", () => {

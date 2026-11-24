@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MessageBodyRecord, MessageBodyWire, MutationOutcome } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,14 +8,10 @@ import {
   OhmailEngine,
   bodyOf,
   type EngineAdapter,
-  type EngineMessage,
-  type MessageBodyRecord,
-  type MessageBodyWire,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { MessageBody } from "../app/components/MessageBody";
+import { MessageBody } from "../../../packages/letter-body/src/MessageBody";
 import {
   OWNER_BILLING_HTML,
   OWNER_BILLING_TEXT,
@@ -183,7 +180,7 @@ async function render(store: MemoryMirrorStore): Promise<HTMLDivElement> {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(MessageBody, { text: body.text, html: body.html, remoteLoaded: body.loadedRemoteContent }));
+    root!.render(h(MessageBody, { owner: null, text: body.text, html: body.html, remoteLoaded: body.loadedRemoteContent }));
   });
   // `MessageBody` builds the frame on the render AFTER mount, deliberately — see its
   // `mounted` state, which exists so the first client render matches the server's.

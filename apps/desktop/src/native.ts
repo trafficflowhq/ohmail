@@ -65,6 +65,7 @@ export const MAILTO_EVENT = "link:mailto";
 
 /** The commands the shell registers for this file. Named once so a typo is one place. */
 const NOTIFY_COMMAND = "notify";
+const ALERTS_COMMAND = "alerts_set";
 const BADGE_COMMAND = "set_badge";
 const OPEN_COMMAND = "open_link";
 const MAILTO_CLAIM_COMMAND = "mailto_claim";
@@ -95,7 +96,7 @@ export const WEB_PLACES = [
   // holds no password, no authenticator secret, and a passkey ceremony needs a real browser
   // origin this window does not have. So the honest surface is a read-only list and a way out to
   // the browser, and this key is the way out.
-  "mailboxes",
+  "mailboxes", "calendar",
   // `devices` is Settings → Devices on the hosted door: the sessions signed into the account, the
   // pairing mint that puts its mail on a phone, and the take-back. Here for `mailboxes`' reason
   // said about a different pair of routes — `POST /pair` and `DELETE /devices/:id` are step-up
@@ -117,7 +118,7 @@ export const WEB_PLACES = [
   "privacy", "subprocessors",
   // The Cloud door's sign-up page and the setup behind a sign-in; both lead to the purchase step,
   // so their presses render only where `linksOutToBilling()` is true.
-  "join", "setup",
+  "join", "setup", "forgot-password",
 ] as const;
 
 export type WebPlace = (typeof WEB_PLACES)[number];
@@ -138,15 +139,26 @@ export async function openWeb(place: WebPlace, challenge?: string): Promise<void
   await shell.invoke(OPEN_COMMAND, challenge ? { key: place, challenge } : { key: place });
 }
 
-/**
- * Open Settings → Mailboxes on the SELF-HOSTED server this install is signed in to. A key and
- * still no address: the shell composes the page from the door its own configuration holds, and
- * refuses on any other door — so this window cannot point the browser anywhere by it.
- */
-export async function openServerMailboxes(): Promise<void> {
+/** The shell checks that this is still the configured server, then supplies the recovery path. */
+export async function openServerPasswordReset(expectedServer: string): Promise<void> {
   const shell = internals();
   if (!shell) return;
-  await shell.invoke(OPEN_COMMAND, { key: "server-mailboxes" });
+  await shell.invoke(OPEN_COMMAND, { key: "server-forgot-password", expectedServer });
+}
+
+export type ServerSettingsPane =
+  | "account" | "security" | "devices" | "storage" | "mailboxes"
+  | "calendar-google" | "calendar-microsoft";
+
+/** Ask the native shell to prepare a browser handoff for the account shown by this frame. */
+export async function openServerSettings(
+  place: ServerSettingsPane,
+  expectedServer: string | undefined,
+  expectedAccount: string | null,
+): Promise<void> {
+  const shell = internals();
+  if (!shell || !expectedServer || !expectedAccount) throw new Error("No server account is confirmed");
+  await shell.invoke(OPEN_COMMAND, { key: `server-${place}`, expectedServer, expectedAccount });
 }
 
 /**
@@ -408,20 +420,86 @@ async function listen<T>(
   });
 }
 
+/** A notice as the shell reads it: a kind, with its numbers and closed words beside it. */
+export interface OsNotice {
+  readonly kind: string;
+  readonly [member: string]: unknown;
+}
+
 /**
- * Put one notice in the operating system's notification centre. The window composes the words
- * and the shell shows them — the page has no notification permission under this CSP, and the
- * shell has no idea what a message is. A refusal (notifications off, a platform without them)
- * comes back as a rejection and is the caller's to swallow: a notice that could not be shown
- * must never take a mail client down. NAMED `postOsNotice`, NOT `notify`: `notify` is also the
- * client-engine's subscriber callback with dozens of unrelated call sites, and the census that
- * enforces "nothing draws a notice outside an emitter" keys on a name — one name meaning two
- * things makes its output mostly false positives. The Rust command is still `notify`.
+ * Put one notice in the operating system's notification centre. The window hands over the notice
+ * as the gate answered it, a kind and its numbers and closed words, and the SHELL writes the words
+ * (`src-tauri/src/notice.rs`): the page has no notification permission under this CSP, and a window
+ * that could post any title and body is a door for whatever reached the page. A refusal
+ * (notifications off, a platform without them) comes back as a rejection and is the caller's to
+ * swallow. NAMED `postOsNotice`, NOT `notify`: the census "nothing draws a notice outside an
+ * emitter" keys on a name, and `notify` is also the client-engine's subscriber callback. The
+ * notice's full type is the emitter's (`NoticeShell.post`); this file keeps its own shape of it: the
+ * first frame's stamp reaches this file and may reach no package, not even for a type.
  */
-export async function postOsNotice(title: string, body: string): Promise<void> {
+export async function postOsNotice(
+  notice: OsNotice, opening?: NoticeWriter & { letter?: string; details?: { sender: string; subject: string }; summary?: readonly unknown[] },
+): Promise<void> {
   const shell = internals();
   if (!shell) return;
-  await shell.invoke(NOTIFY_COMMAND, { title, body });
+  await shell.invoke(NOTIFY_COMMAND, opening === undefined ? { notice } : { notice, opening });
+}
+
+/** The shell's current document and sign-in, captured when the frame mounts. */
+export interface NoticeWriter { document: number; session: number }
+type NoticeOpening = NoticeWriter & { scope: string } & ({ letter: string | null } | { event: string; startMs?: number });
+
+let noticeOpening: ((opening: NoticeOpening) => void) | null = null;
+let noticeOpeningShell: ReturnType<typeof internals> = null;
+
+/** Keep one native listener and dispatch only to the mounted frame. */
+export function watchNoticeOpening(run: (opening: NoticeOpening) => void): () => void {
+  noticeOpening = run;
+  const shell = internals();
+  if (shell && shell !== noticeOpeningShell) {
+    noticeOpeningShell = shell;
+    void listen("notice:open", readNoticeOpening, (opening) => noticeOpening?.(opening)).catch(() => {
+      if (noticeOpeningShell === shell) noticeOpeningShell = null;
+    });
+  }
+  return () => { if (noticeOpening === run) noticeOpening = null; };
+}
+
+function readNoticeOpening(event: unknown): NoticeOpening | null {
+  const value = (event as { payload?: Partial<NoticeWriter> & {
+    scope?: unknown; letter?: unknown; event?: unknown; startMs?: unknown;
+  } } | null)?.payload;
+  if (!value || typeof value.scope !== "string" || typeof value.document !== "number" ||
+      typeof value.session !== "number" || !Number.isSafeInteger(value.document) || !Number.isSafeInteger(value.session)) return null;
+  const owner = { document: value.document, session: value.session, scope: value.scope };
+  if (typeof value.event === "string" && /^[\w:-]{1,128}$/.test(value.event)) {
+    if (value.startMs !== undefined && (typeof value.startMs !== "number" || !Number.isSafeInteger(value.startMs) || value.startMs < 0)) return null;
+    return { ...owner, event: value.event, startMs: value.startMs as number | undefined };
+  }
+  if (value.letter === null || (typeof value.letter === "string" && /^[\w-]{1,128}$/.test(value.letter))) {
+    return { ...owner, letter: value.letter };
+  }
+  return null;
+}
+
+let noticeRevision = 0;
+
+/**
+ * Hand the shell the calendar's alerts for the mailbox it serves, whole: the set replaces the one before and an
+ * empty set takes every alert back. The SHELL rings them at their minute with this window minimized or hidden
+ * (`src-tauri/src/alerts.rs`), in its own words; it refuses anything but one closed set made under the mailbox it is
+ * serving, and answers the ids it now holds. A refusal comes back as a rejection, the caller's to swallow.
+ */
+export async function setOsAlerts(set: { readonly scope: string; readonly alerts: readonly unknown[] }, writer: NoticeWriter | null): Promise<string[]> {
+  const shell = internals();
+  if (!shell || writer === null) return [];
+  // Different IPC fetches and their postMessage retries can reach the shell in any order.
+  const held = await shell.invoke(ALERTS_COMMAND, { set }, { headers: {
+    "x-ohmail-notice-document": String(writer.document),
+    "x-ohmail-notice-session": String(writer.session),
+    "x-ohmail-notice-revision": String(++noticeRevision),
+  } });
+  return Array.isArray(held) ? held.filter((id): id is string => typeof id === "string") : [];
 }
 
 /**

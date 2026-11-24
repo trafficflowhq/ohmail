@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, MailboxErasure } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * REMOVE AND ERASE OHMAIL'S COPY — the pane's half of the per-mailbox erase.
@@ -65,7 +65,7 @@ vi.mock("../app/api-client", async () => {
   };
 });
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: QUIET, refresh: () => {} }),
 }));
 
@@ -238,10 +238,11 @@ describe("the copy is a claim, in both catalogues", () => {
 
   it("the sentences that say ohmail never erases mail stay true: they are about the mail server", () => {
     const en = messages as unknown as Record<string, Record<string, string>>;
-    const never = [en.rail?.folderErrNoTrash, en.ohbox?.deleteNote, en.trash?.noErase]
+    const never = [en.rail?.folderErrNoTrash, en.ohbox?.deleteNoTrash, en.trash?.noErase]
       .filter((v): v is string => typeof v === "string");
     expect(never.length, "a cited sentence moved — this reads it by key").toBe(3);
     for (const line of never) expect(line).toMatch(/ohmail never erases mail/);
+    expect(en.ohbox).not.toHaveProperty("deleteNote");
     // The new sentences never claim to erase MAIL: every erase names the copy.
     for (const k of keys) expect(copy[k]).not.toMatch(/erases? (your|the) mail\b/i);
   });

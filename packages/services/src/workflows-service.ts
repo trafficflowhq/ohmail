@@ -1,3 +1,4 @@
+import type { Page, WorkflowDTO, WorkflowRunDTO, WorkflowStep, WorkflowTrigger } from "@ohmail/wire";
 import { and, asc, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
@@ -6,7 +7,7 @@ import {
 } from "@trafficflow/db";
 import {
   validateSteps, validateTrigger, MAX_WORKFLOW_STEPS,
-  type WorkflowStep, type WorkflowTrigger, type NativeLocator,
+  type NativeLocator,
 } from "@trafficflow/core/mail";
 // TYPE-ONLY. `WorkflowInverse` is declared with the workflow execution module in
 // `ai/workflows/`, which calls the drafter; a type import is erased at emit, so naming it here
@@ -19,7 +20,6 @@ import {
 } from "./reader-request.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import { requireUuid } from "./ids.js";
-import type { Page, WorkflowDTO, WorkflowRunDTO } from "./dto/types.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -415,7 +415,7 @@ export class WorkflowsService {
       // Re-set DESIRED to the prior folder — the worker reconciles the physical move.
       // scoped-by: inv.messageId was just proved this account's (`owned`, two lines up)
       await tx.insert(folderState).values({
-        messageId: inv.messageId, desiredFolder: inv.toFolder, observedFolder: observed,
+        messageId: inv.messageId, accountId: ctx.accountId, desiredFolder: inv.toFolder, observedFolder: observed,
         lastSetBy: "us", reconcileStatus, conflict: false,
       }).onConflictDoUpdate({
         target: folderState.messageId,

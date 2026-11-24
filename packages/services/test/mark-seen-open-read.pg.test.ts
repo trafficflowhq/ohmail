@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, inArray } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { accounts, mailboxes, messages, folderState, flagState, changeLog, messageStates, threads } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { MessageService, TriageService, type ServiceContext } from "@trafficflow/services";
+import { MessageService, TriageService, dbFor, type ServiceContext } from "@trafficflow/services";
 import { OPEN_READ_SHAPES, type OpenReadRow } from "../../client-engine/test/fixtures/open-read-shapes.js";
 
 /**
@@ -19,14 +17,17 @@ import { OPEN_READ_SHAPES, type OpenReadRow } from "../../client-engine/test/fix
  */
 const PG_UP = await realPgAvailable();
 
+// The factory's handle: the binder takes a server handle only from the factory that registered its
+// door. `client` is the raw client that reads the catalog and plays the rival device.
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let pool: OwnedDb;
+let db: OwnedDb["db"];
 const made: string[] = [];
 
 const t0 = Date.UTC(2031, 0, 1, 0, 0, 0);
 function ctx(accountId: string): ServiceContext {
   let n = 0;
-  return { db: db as ServiceContext["db"], accountId, userId: null, now: () => new Date(t0 + (n += 1000)), requestId: "open-read" };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(t0 + (n += 1000)), requestId: "open-read" };
 }
 
 async function seed(rows: readonly OpenReadRow[]): Promise<{ accountId: string; ids: Map<string, string> }> {
@@ -50,7 +51,7 @@ async function seed(rows: readonly OpenReadRow[]): Promise<{ accountId: string; 
       date: new Date(r.arrived), nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     });
     await db.insert(folderState).values({
-      messageId: id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: id, accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     ids.set(r.label, id);
   }
@@ -73,7 +74,8 @@ describe.skipIf(!PG_UP)("the open read, on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    pool = makeOwnedDb(PG_TEST_URL);
+    db = pool.db;
   }, 120_000);
   afterEach(async () => {
     for (const accountId of made.splice(0)) {
@@ -88,7 +90,7 @@ describe.skipIf(!PG_UP)("the open read, on real Postgres", () => {
       await db.delete(accounts).where(eq(accounts.id, accountId));
     }
   });
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await pool?.close(); await client?.end({ timeout: 5 }); });
 
   /**
    * THE READ AND A PARK FROM ANOTHER DEVICE, INTERLEAVED. markSeen's first select sees the row

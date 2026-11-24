@@ -1,0 +1,79 @@
+/* The handle of a folded history and of a long letter's next page: a word with three dots before it, in the
+   second ink at the small size. No fill until the pointer is on it; its glyph stands where the letter's text starts. */
+@layer oh {
+  .oh-history {
+    --oh-history-out: var(--s2) 0 0 calc(var(--cap-q) * -1);
+
+    margin: var(--oh-history-out);
+  }
+
+  .oh-history-handle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    height: var(--h-s);
+    padding: 0 var(--cap-q);
+    border-radius: var(--r-pill);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+    line-height: var(--oh-lh-tight);
+    white-space: nowrap;
+    transition:
+      transform var(--d-press) var(--e-press),
+      background-color var(--d-fade) var(--e-std);
+  }
+
+  .oh-history-handle:hover {
+    background: var(--oh-hover, var(--hover));
+    color: var(--ink);
+  }
+
+  .oh-history-handle[aria-expanded="true"] {
+    color: var(--ink);
+  }
+
+  .oh-history-handle:active {
+    transform: var(--x-press);
+  }
+
+  .oh-history-handle:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  .oh-history-quoted {
+    max-width: var(--measure);
+    margin-top: var(--s2);
+    font-size: var(--t-read);
+    line-height: var(--lh-read);
+    overflow-wrap: break-word;
+    text-wrap: pretty;
+  }
+
+  .oh-history-attribution {
+    --oh-history-lh: 1.5;
+
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    line-height: var(--oh-history-lh);
+  }
+
+  .oh-history-quote {
+    --oh-history-bar: inset 3px 0 0 var(--ctl-ring);
+
+    margin: var(--s2) 0;
+    padding: 0 0 0 var(--s4);
+    box-shadow: var(--oh-history-bar);
+    color: var(--ink2);
+    white-space: pre-line;
+  }
+
+  .oh-history-quote > .oh-history-attribution {
+    margin-top: var(--s3);
+  }
+
+  :root[data-face="ohmarchy"] .oh-history-handle {
+    gap: var(--s2);
+    font-weight: var(--w-text);
+  }
+}

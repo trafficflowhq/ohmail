@@ -1,8 +1,8 @@
+import type { SyncResponse } from "@ohmail/wire";
 import { randomBytes } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { SyncResponse } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { ERASED_ANSWER_HEADER } from "../src/cloud-auth.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";

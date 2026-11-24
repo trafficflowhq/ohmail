@@ -46,6 +46,7 @@ function methodBodies(): Map<string, string> {
 const PUBLIC_GRANTS: Readonly<Record<string, string>> = {
   "POST /auth/register": "the invite and the password mint an ENROLLMENT session only",
   "POST /auth/verify-email": "the mailed token plus the password",
+  "POST /auth/password/reset": "a reset link sent only to the address on the matched account",
   "POST /auth/login": "the password; the answer is a first-factor token, not a session",
   "POST /auth/desktop-claim": "the one-use code a step-up-gated browser minted",
   "POST /auth/desktop-approval": "an unbound request — nothing is granted until a stepped-up confirm",
@@ -60,6 +61,23 @@ const SERVICE_GATED: Readonly<Record<string, string>> = {
   "POST /auth/2fa/webauthn/register/verify": "webauthnRegisterVerify",
   "POST /auth/2fa/totp/enroll": "totpEnroll",
 };
+
+/**
+ * THE PAIRING SERVICE'S MINTS, module-level functions: each one that writes a pairing code grants one (a QR code's
+ * device pairing, an invite, a phone app's handoff). A route reaching one is step-up gated, or named here with the
+ * check its service makes in its place. Frozen.
+ */
+const PAIRING_FILE = "packages/services/src/pairing.ts";
+const PHONE_GATED: Readonly<Record<string, { grant: string; check: RegExp }>> = {
+  // The handoff costs a phone's own refresh token (the route rotates it first), from a full session of a named phone
+  // device; the code is bound to the sibling app's challenge.
+  "POST /pair/handoff": { grant: "mintAppHandoff", check: /session\.scope !== "full"[\s\S]*MOBILE_KINDS\.has\(device\.kind\)/ },
+};
+function functionBodies(file: string): Map<string, string> {
+  const src = withoutComments(readFileSync(`${root}${file}`, "utf8"));
+  const heads = [...src.matchAll(/\nexport (?:async )?function (\w+)/g)].map((m) => ({ name: m[1]!, at: m.index! }));
+  return new Map(heads.map((h, i) => [h.name, src.slice(h.at, heads[i + 1]?.at ?? src.length)]));
+}
 
 const keyOf = (r: Route): string => `${r.method} ${r.pattern}`;
 const callsOf = (r: Route): string[] =>
@@ -89,6 +107,20 @@ describe("every door that grants a credential is step-up gated or named", () => 
       ungated.push(`${k} → ${callsOf(r).filter((c) => grants.has(c)).join(",")}`);
     }
     expect(ungated, "a door that grants a credential without a recent factor").toEqual([]);
+  });
+
+  it("every route that reaches a pairing mint is step-up gated, or named with the check its service makes", () => {
+    const pairing = functionBodies(PAIRING_FILE);
+    const mints = [...pairing].filter(([, body]) => /writePairingToken\(/.test(body)).map(([name]) => name);
+    expect(mints).toEqual(expect.arrayContaining(["mintPairingToken", "mintAppHandoff"]));
+    const reaching = apiRoutes.filter((r) => mints.some((m) => String(r.handler).includes(`${m}(`)));
+    expect(reaching.map(keyOf).sort()).toEqual(["POST /pair", "POST /pair/handoff"]);
+    const ungated = reaching.filter((r) => {
+      if (r.options?.stepUp === true) return false;
+      const named = PHONE_GATED[keyOf(r)];
+      return !(named && String(r.handler).includes(`${named.grant}(`) && named.check.test(pairing.get(named.grant) ?? ""));
+    }).map(keyOf);
+    expect(ungated, "a door that mints a pairing code without a recent factor or its named check").toEqual([]);
   });
 
   it("the named lists name only routes that exist and still grant", () => {

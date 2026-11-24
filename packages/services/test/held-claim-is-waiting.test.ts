@@ -1,3 +1,6 @@
+import type { AuthVerdict } from "@ohmail/wire";
+import { accountOfMessage } from "@trafficflow/db";
+import { dbFor } from "../src/context.js";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -9,7 +12,7 @@ import {
 import { sql } from "drizzle-orm";
 import { checkUncheckedById } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  DEFAULT_OHBOX_POLICY, asAuthVerdict, evaluateRules, type AuthVerdict, type NormalizedMessage,
+  DEFAULT_OHBOX_POLICY, asAuthVerdict, evaluateRules, type NormalizedMessage,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ScreenerService } from "../src/screener-service.js";
@@ -42,9 +45,9 @@ async function world(o: { claim: boolean; rule: boolean }) {
     senderCheck: o.claim ? "impersonation" : "none", senderCheckBrand: o.claim ? "PostFinance" : null,
     date: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   // What the act leaves behind when it admits a sender: its promoted rule and an inferred contact.
   if (o.rule) {
@@ -53,7 +56,7 @@ async function world(o: { claim: boolean; rule: boolean }) {
     });
   }
   await db.insert(contacts).values({ accountId, address: SENDER, source: "inferred" });
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `hc-${randomUUID().slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `hc-${randomUUID().slice(0, 8)}` };
   return { db: db as unknown as Tx, accountId, ctx };
 }
 
@@ -116,9 +119,9 @@ async function consented(cs: readonly Consent[], o: { date?: Date; auth?: string
     date: o.date ?? at, arrivedAt: o.date ?? at, unread: false, createdAt: at, nativeLocator: { folder: GATE, ref: "1:1" },
     ...(o.date ? { senderCheckBy: "ingest" } : {}),
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   for (const c of cs) {
     if ("list" in c) await db.insert(listAddresses).values({ accountId, address: c.list, consentedBrands: [...c.brands] });
@@ -128,7 +131,7 @@ async function consented(cs: readonly Consent[], o: { date?: Date; auth?: string
       enabled: c.rule.enabled ?? true, priority: 0, provenance: c.rule.provenance,
     });
   }
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `pc-${randomUUID().slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `pc-${randomUUID().slice(0, 8)}` };
   return { db: db as unknown as Tx, accountId, ctx, claimId: m!.id, mailboxId: mb!.id };
 }
 
@@ -321,9 +324,9 @@ describe("the contact line's press and its offer read one bag", () => {
         senderCheck: o.check, senderCheckBrand: o.check === "impersonation" ? "PostFinance" : null, authVerdict: o.auth ?? null,
         date: at, arrivedAt: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: `1:${randomUUID()}` },
       } as never).returning();
-      await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+      await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: {} });
       await w.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: GATE, observedFolder: o.observed ?? GATE, lastSetBy: o.lastSetBy ?? "us",
+        messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: GATE, observedFolder: o.observed ?? GATE, lastSetBy: o.lastSetBy ?? "us",
         reconcileStatus: "reconciled", conflict: false, decidedAt: o.decidedAt ?? null,
       } as never);
       return m!.id as string;

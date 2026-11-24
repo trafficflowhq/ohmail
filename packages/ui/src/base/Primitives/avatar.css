@@ -1,0 +1,95 @@
+/* The contact circle: one letter, one of eight hues; both come from the person. */
+@layer oh {
+  .oh-avatar {
+    --oh-avatar-size: var(--av);
+    --oh-avatar-bg: var(--oh-hue-bg);
+    --oh-avatar-fg: var(--oh-hue-fg);
+    --oh-avatar-ring: inset 0 0 0 var(--av-ring) var(--btn-ring);
+    --oh-avatar-dot: 12px;
+    --oh-avatar-dot-at: -3px;
+    position: relative;
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: var(--oh-avatar-size);
+    height: var(--oh-avatar-size);
+    border-radius: var(--av-r);
+    background: var(--oh-avatar-bg);
+    box-shadow: var(--oh-avatar-ring);
+    color: var(--oh-avatar-fg);
+    font-family: var(--f-display);
+    font-size: var(--t-ui);
+    font-style: normal;
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz);
+    line-height: var(--oh-lh-tight);
+    letter-spacing: 0;
+    user-select: none;
+  }
+  .oh-avatar[data-size="s"] {
+    --oh-avatar-size: var(--av-s);
+    --oh-avatar-dot: 10px;
+    font-size: var(--t-meta);
+  }
+  .oh-avatar[data-size="xs"] {
+    --oh-avatar-size: var(--av-xs);
+    --oh-avatar-dot: 10px;
+    font-size: var(--t-meta);
+  }
+  .oh-avatar[data-size="l"] {
+    --oh-avatar-size: var(--av-l);
+    font-size: var(--t-title);
+  }
+  /* The sign of a row that is not a person: the circle's shape and place, an icon in it. */
+  .oh-avatar[data-sign] {
+    --oh-avatar-bg: var(--soft-sheet);
+    --oh-avatar-fg: var(--ink2);
+  }
+  /* The unread dot rides the circle's shoulder, ringed in whatever it stands on. */
+  .oh-avatar > .oh-dot {
+    --oh-avatar-dot-ring: 0 0 0 var(--oh-focus) var(--oh-under, var(--sheet));
+    position: absolute;
+    top: var(--oh-avatar-dot-at);
+    left: var(--oh-avatar-dot-at);
+    width: var(--oh-avatar-dot);
+    height: var(--oh-avatar-dot);
+    margin: 0;
+    border-radius: var(--dot-r);
+    box-shadow: var(--oh-avatar-dot-ring);
+  }
+
+  /* A few circles, overlapping. */
+  .oh-faces {
+    --oh-faces-step: -5px;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    font-style: normal;
+  }
+  .oh-faces > .oh-avatar {
+    --oh-avatar-ring: 0 0 0 var(--oh-focus) var(--oh-under, var(--sheet));
+  }
+  .oh-faces > .oh-avatar + .oh-avatar {
+    margin-left: var(--oh-faces-step);
+  }
+  .oh-faces-more {
+    margin-left: var(--s1);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+
+  :root[data-face="ohmarchy"] .oh-avatar:not([data-sign]) {
+    --oh-avatar-bg: color-mix(in oklch, var(--oh-hue-tint) 14%, var(--sheet));
+  }
+  :root[data-face="ohmarchy"] .oh-avatar > .oh-dot {
+    --oh-avatar-dot: 8px;
+    --oh-avatar-dot-at: -4px;
+  }
+  :root[data-face="ohmarchy"] .oh-faces {
+    --oh-faces-step: 2px;
+  }
+  :root[data-face="ohmarchy"] .oh-faces > .oh-avatar {
+    --oh-avatar-ring: var(--oh-ring-btn);
+  }
+}

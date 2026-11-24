@@ -10,11 +10,12 @@
  * everything above it is the shipped code.
  * Runs under the SQLITE project (the device store); the default project states the premise.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  HttpAdapter, OhmailEngine, type EngineMutation, type MutationResult, type SqlExecutor, type SqlRow, type SqlValue,
+  HttpAdapter, OhmailEngine, type MutationResult, type SqlExecutor, type SqlRow, type SqlValue,
 } from "@ohmail/client-engine";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { outboundToMail, type MailboxAdapter, type OutboundMessage } from "@trafficflow/core/adapters/imap";

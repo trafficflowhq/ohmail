@@ -13,7 +13,7 @@ import { presentRoots } from "./support/public-root.mjs";
  * rather than measured in somebody's tab.
  */
 
-const READER_ROOTS = presentRoots(["apps/webapp/app", "apps/mobile/src", "apps/desktop/src", "apps/admin/app"]);
+const READER_ROOTS = presentRoots(["apps/webapp/app", "packages/app/src", "packages/app-logic/src", "packages/letter-body/src", "apps/mobile/src", "apps/desktop/src", "apps/paired-page/src", "apps/admin/app"]);
 const SKIP = new Set(["node_modules", "dist", "build", ".next", "test", "__tests__"]);
 
 /** Every `.ts`/`.tsx` source under `root`, tests and build outputs excluded. */
@@ -42,7 +42,7 @@ function roleOf(src: string): Role {
   return {
     mints: /(?<![A-Za-z0-9_$])createObjectURL\s*\(/.test(code),
     asks: /\.openAttachment\s*\(/.test(code),
-    releases: /\.release(?:All)?Attachments\s*\(/.test(code) || /(?<![A-Za-z0-9_$])revokeObjectURL\s*\(/.test(code),
+    releases: /\.release(?:All)?Attachments\s*\(/.test(code) || /(?<![A-Za-z0-9_$])revokeObjectURL(?:\?\.)?\s*\(/.test(code),
   };
 }
 
@@ -51,11 +51,11 @@ function roleOf(src: string): Role {
  * and holds no lifetime of its own.
  */
 const PINNED: Record<string, Role> = {
-  // The ONE seam. Mounted once in `AppShell`, keyed on the open message: it asks the engine to
+  // The ONE seam. Mounted once in `DoorsMount`, keyed on the open message: it asks the engine to
   // fetch, and its cleanup releases the whole selection — the focused message and its
   // conversation's siblings. Its own `createObjectURL` is a separate thing: a short-lived save
   // handle for `<a download>`, revoked on its own timer and never an engine URL.
-  "apps/webapp/app/shell/attachments.ts": { mints: true, asks: true, releases: true },
+  "packages/app-logic/src/reader/attachments.ts": { mints: true, asks: true, releases: true },
   // The phone's reader ASKS and never mints: React Native has no `URL.createObjectURL`, so no
   // `blob:` URL exists to pin a file. It still RELEASES, and that half is the load-bearing one —
   // the engine holds the list, the inline pictures and every fetched Blob until somebody drops
@@ -70,7 +70,9 @@ const PINNED: Record<string, Role> = {
   // The one minter that holds no attachment's bytes: the page the reader builds for a link whose
   // label names another site (`link-ask.ts`), a few kilobytes of its own text per address and at
   // most 256 per frame, revoked when the frame's next document loads and when the reader unmounts.
-  "apps/webapp/app/components/link-ask.ts": { mints: true, asks: false, releases: true },
+  "packages/letter-body/src/link-ask.ts": { mints: true, asks: false, releases: true },
+  // The shared composer's image tile owns its local attachment preview until the tile changes or unmounts.
+  "packages/app/src/write/files/Files.tsx": { mints: true, asks: false, releases: true },
   // The compose rows' pictures: one URL per attached raster image, revoked when its row leaves or the form closes.
   "apps/webapp/app/components/compose-attach-look.tsx": { mints: true, asks: false, releases: true },
 };

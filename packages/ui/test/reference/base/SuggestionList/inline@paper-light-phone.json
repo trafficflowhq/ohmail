@@ -1,0 +1,289 @@
+{
+  "component": "SuggestionList",
+  "state": "inline",
+  "look": "paper-light-phone",
+  "place": "cell",
+  "target": [24, 48, 340, 287.375],
+  "clip": [24, 48, 340, 288],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "20px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "20px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.25px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 3 56066793629a" },
+    { "before.backgroundColor": "rgb(221, 213, 201)" },
+    {
+      "ink": "stroke rgb(90, 83, 75) 1.8px round round; stroke rgb(90, 83, 75) 2.2px round round; shapes 4 819f0b9c8ffd"
+    },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 3 49dff42e4c4a" },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 2 877dbc0c8604" }
+  ],
+  "nodes": [
+    {
+      "role": "listbox",
+      "name": "Suggestions",
+      "box": [0, 0, 340, 263.2],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
+      "role": "group",
+      "name": "Your places",
+      "box": [0, 0, 340, 86.2],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Your places", "type": 0 }]
+    },
+    {
+      "role": "option",
+      "name": "Kino Seeblick",
+      "box": [0, 30.2, 340, 56],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "Kino", "type": 1 },
+        { "said": "See", "type": 2 },
+        { "said": "blick", "type": 1 }
+      ],
+      "surfaces": [{ "box": [14, 48.2, 20, 20], "paint": 0 }]
+    },
+    {
+      "role": "group",
+      "name": "",
+      "box": [0, 90.2, 340, 173],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "surfaces": [{ "box": [0, 90.2, 340, 173], "paint": 1, "parts": { "before": [316, 1] } }]
+    },
+    {
+      "role": "option",
+      "name": "Seen Winterthur, Zurich",
+      "box": [0, 95.2, 340, 56],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "See", "type": 2 },
+        { "said": "n", "type": 1 },
+        { "said": "Winterthur, Zurich", "type": 3 }
+      ],
+      "surfaces": [{ "box": [14, 113.2, 20, 20], "paint": 2 }]
+    },
+    {
+      "role": "option",
+      "name": "Seestrasse 8002 Zurich",
+      "box": [0, 151.2, 340, 56],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "See", "type": 2 },
+        { "said": "strasse", "type": 1 },
+        { "said": "8002 Zurich", "type": 3 }
+      ],
+      "surfaces": [{ "box": [14, 169.2, 20, 20], "paint": 3 }]
+    },
+    {
+      "role": "option",
+      "name": "Seebad Enge Mythenquai 9, 8002 Zurich",
+      "box": [0, 207.2, 340, 56],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "See", "type": 2 },
+        { "said": "bad Enge", "type": 1 },
+        { "said": "Mythenquai 9, 8002 Zurich", "type": 3 }
+      ],
+      "surfaces": [{ "box": [14, 225.2, 20, 20], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "© OpenStreetMap contributors",
+      "box": [146.7, 267.2, 181.3, 18.2],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "2px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "© OpenStreetMap contributors", "type": 4 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

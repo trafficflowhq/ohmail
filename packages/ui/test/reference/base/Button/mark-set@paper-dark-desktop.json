@@ -1,0 +1,65 @@
+{
+  "component": "Button",
+  "state": "mark-set",
+  "look": "paper-dark-desktop",
+  "place": "block",
+  "target": [268, 176, 88.5313, 32],
+  "clip": [268, 176, 89, 32],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [{ "opacity": "0.8", "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 1 447c0f4542bb" }],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Ohbox",
+      "box": [0, 0, 88.5, 32],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(246, 241, 233)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "state": ["pressed"],
+      "text": [{ "said": "Ohbox", "type": 0 }],
+      "surfaces": [{ "box": [63.5, 8, 16, 16], "paint": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

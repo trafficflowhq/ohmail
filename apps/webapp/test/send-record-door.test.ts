@@ -11,8 +11,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   allSendLocks, claimSendLock, releaseSendLock, releaseSendLockForRow, resumeSendLock, sendIdentity,
   sendLocksKey, SEND_LOCK_FORMAT, SEND_LOCK_TTL_MS, type SendLock,
-} from "../app/shell/send-lock";
-import { sendUnsettledFromLastSession } from "../app/shell/mail-send";
+} from "@ohmail/app-logic/writing/send-lock";
+import { sendUnsettledFromLastSession } from "@ohmail/app-logic/writing/mail-send";
 
 const NOW = Date.now();
 const DAY = 24 * 60 * 60 * 1000;

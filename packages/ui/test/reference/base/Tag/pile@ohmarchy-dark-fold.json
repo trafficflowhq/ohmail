@@ -1,0 +1,48 @@
+{
+  "component": "Tag",
+  "state": "pile",
+  "look": "ohmarchy-dark-fold",
+  "place": "cell",
+  "target": [24, 25, 119.2188, 22],
+  "clip": [24, 25, 120, 22],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "fold",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "boxShadow": "rgb(62, 64, 82) 0px 0px 0px 1px inset" }],
+  "nodes": [],
+  "loose": {
+    "text": [{ "said": "Later Parked", "type": 0 }],
+    "surfaces": [
+      { "box": [0, 0, 52, 22], "paint": 0 },
+      { "box": [60, 0, 59.2, 22], "paint": 0 }
+    ]
+  }
+}

@@ -6,11 +6,11 @@
  * HttpAdapter against the fake speaking the drafts routes; the sheet's wiring is READ, the
  * `compose-offline-send` idiom (no React Native renderer in this workspace).
  */
+import type { EngineDraft, EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EngineDraft, EngineMessage } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { Copy } from "../src/copy";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
@@ -48,6 +48,12 @@ describe("which drafts the phone edits", () => {
     expect(parseRecipients(edit!.to), "the typed To does not parse back to the row's recipients").toEqual([
       { name: "Ada", address: "ada@fake.test" }, { name: "Doe, Bob", address: "bob@fake.test" }, { name: null, address: "cy@fake.test" },
     ]);
+  });
+
+  it("opens formatting the native composer can preserve", () => {
+    const html = "<p>See the <strong>draft</strong></p>";
+    const row = { ...draftRow({ body: "See the draft" }), html };
+    expect(draftEditOf(row)?.html).toBe(html);
   });
 
   it.each([
@@ -133,7 +139,8 @@ describe("a draft opened here is one row from the first keystroke to the send", 
 
   it("the sheet is seeded from the row, saves into it as it goes, and keeps what is on screen on close", () => {
     expect(SHEET).toContain("const [draftId, setDraftId] = useState<string | null>(draft?.id ?? null);");
-    expect(SHEET).toContain("const [body, setBody] = useState(draft?.body ?? prefill?.body ?? \"\");");
+    expect(SHEET).toContain('const seed = draft?.body ?? prefill?.body ?? "";');
+    expect(SHEET).toContain("return { body: seed, runs: draft?.html ? runsOf(seed, draft.html) : null };");
     expect(SHEET).toContain("mode: m !== null ? mode : \"new\", messageId: m?.id ?? null,");
     expect(SHEET).toContain("mailboxId, to: m === null || addressed ? keptRecipients(to) : [], ...(m === null || fresh ? copiesToKeep(copies) : {}),");
     expect(SHEET).toContain("}, DRAFT_AUTOSAVE_MS);");

@@ -1,0 +1,180 @@
+import { useContext, useId, type KeyboardEvent, type ReactNode } from "react";
+import { RefusalLine } from "../Feedback/RefusalLine.js";
+import { Button } from "../Primitives/Button.js";
+import { EndDot } from "../Primitives/EndDot.js";
+import { Sentence } from "../Primitives/Sentence.js";
+import { useSaidOnArrival } from "../said-on-arrival.js";
+import "./dialog.css";
+import { Overlay } from "./Overlay.js";
+import { portalRenderer } from "./portal-renderer.js";
+
+export interface DialogProps {
+  open: boolean;
+  onClose: () => void;
+  /** Whether a press outside closes the question. Escape always closes it. */
+  dismissOnScrim?: boolean;
+  /** A decision that must be made before the requested action can continue. */
+  alert?: boolean;
+  /** Keep the question in its host layer and make the surrounding document inert. */
+  inline?: boolean;
+  /** A press that may have lost focus while its answer was pending. */
+  returnFocus?: () => HTMLElement | null;
+  /** The question, as a sentence. It ends in the dot. */
+  title: string;
+  /** Hot while the sentence holds something still to be decided. */
+  hot?: boolean;
+  /** The sentence is about one of the two apps: it ends in that app's own dot. */
+  product?: "mail" | "cal";
+  /** At most one line under it. */
+  line?: string;
+  /** Use the line as the dialog description and announce changes to it. */
+  announceLine?: boolean;
+  /** `delete`: Enter confirms wherever the keys are. */
+  kind?: "delete";
+  /**
+   * Where the keys land as it opens. `confirm` (left out): the answer that does it. `cancel`: the
+   * answer that does nothing, for a question whose yes cannot be taken back by Enter (a link that
+   * leaves for another site). A dialog without `confirm` starts on the way out either way.
+   */
+  keysOn?: "confirm" | "cancel";
+  /** The answer that does it: the dialog's first button, where the keys land unless `keysOn` says otherwise. Left out: a dialog that only tells. */
+  confirm?: { label: string; onPress: () => void; disabled?: boolean; keyHint?: string };
+  /**
+   * A second answer, where the question has two that do something: a second button between the answer and the way
+   * out ("Keep them", "Forget them", Cancel).
+   */
+  second?: { label: string; onPress: () => void; disabled?: boolean };
+  /** The way out. It closes the dialog. */
+  cancel: { label: string; keyHint?: string; disabled?: boolean };
+  /** Show the answers' keys whatever the face says. */
+  keysShown?: boolean;
+  /** What the answer needs: a field, the list of what waits. A long one scrolls; the sentence and the answers stay. */
+  children?: ReactNode;
+  /** The body is a list: of what waits. */
+  list?: boolean;
+  /**
+   * What a press inside it came to, in one line over the answers: no item of the list and outside what scrolls, so
+   * it stands in sight under the longest list. `refused`: it names why the press did not act, behind the warning sign.
+   */
+  said?: { line: string; refused?: boolean };
+  /** Other ways to the same answer, under the answers: small quiet buttons, one under the other ("Use a passkey instead"). */
+  under?: ReactNode;
+}
+
+/* The way out is the last of the answers. */
+const wayOut = (box: HTMLElement) => box.querySelector<HTMLElement>(".oh-dialog-acts > button:last-child");
+
+/**
+ * Only for a yes that cannot be undone. The keys land on its first button and stay inside; Esc
+ * and a press on the scrim close it, and the keys go back to what opened it.
+ */
+export function Dialog(props: DialogProps) {
+  const renderPortal = useContext(portalRenderer);
+  const {
+    open,
+    onClose,
+    dismissOnScrim,
+    title,
+    hot,
+    product,
+    line,
+    announceLine,
+    kind,
+    keysOn,
+    confirm,
+    second,
+    cancel,
+    keysShown,
+    children,
+    list,
+    said,
+    under,
+  } = props;
+  const name = useId();
+  const description = line && announceLine ? `${name}-line` : undefined;
+  /* What a press came to is said when it appears: by a change inside a region that stands. */
+  const held = useSaidOnArrival(Boolean(props.open && props.said && !props.said.refused)) ? true : undefined;
+  const keys = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" || kind !== "delete" || !confirm || confirm.disabled) return false;
+    e.preventDefault();
+    confirm.onPress();
+    return true;
+  };
+  const dialog = (
+    <Overlay
+      open={open}
+      onClose={onClose}
+      dismissOnScrim={dismissOnScrim}
+      inertBackground={props.inline}
+      returnFocus={props.returnFocus}
+      role={props.alert ? "alertdialog" : "dialog"}
+      label={props.alert ? title : undefined}
+      labelledBy={props.alert ? undefined : name}
+      describedBy={description}
+      className={list ? "oh-dialog oh-dialog-listed" : "oh-dialog"}
+      scrimMotion="backdrop"
+      onKey={keys}
+      first={keysOn === "cancel" ? wayOut : undefined}
+    >
+      <Sentence id={name} level={2}>
+        <EndDot kind={hot ? "hot" : "ink"} product={product}>
+          {title}
+        </EndDot>
+      </Sentence>
+      {line ? (
+        <p id={description} className="oh-text oh-dialog-line" role={announceLine ? "status" : undefined}>
+          {line}
+        </p>
+      ) : null}
+      {children ? (
+        <div className="oh-dialog-body" role={list ? "list" : undefined}>
+          {children}
+        </div>
+      ) : null}
+      {said ? (
+        <div className="oh-dialog-said">
+          {said.refused ? (
+            <RefusalLine alert start>
+              {said.line}
+            </RefusalLine>
+          ) : (
+            <p className="oh-text" role="status">
+              <span aria-hidden={held}>{said.line}</span>
+            </p>
+          )}
+        </div>
+      ) : null}
+      <div className="oh-dialog-acts">
+        {confirm ? (
+          <Button
+            onPress={confirm.onPress}
+            disabled={confirm.disabled}
+            keyHint={confirm.keyHint}
+            keyShown={keysShown}
+          >
+            {confirm.label}
+          </Button>
+        ) : null}
+        {second ? (
+          <Button kind="two" onPress={second.onPress} disabled={second.disabled}>
+            {second.label}
+          </Button>
+        ) : null}
+        <Button
+          kind="quiet"
+          onPress={onClose}
+          disabled={cancel.disabled}
+          keyHint={cancel.keyHint}
+          keyShown={keysShown}
+        >
+          {cancel.label}
+        </Button>
+      </div>
+      {under ? <div className="oh-dialog-under">{under}</div> : null}
+    </Overlay>
+  );
+  // An interrupting question must receive clicks above every column, including its opener's siblings.
+  return props.alert && !props.inline && open && typeof document !== "undefined"
+    ? renderPortal(dialog, document.body)
+    : dialog;
+}

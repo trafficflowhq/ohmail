@@ -1007,7 +1007,7 @@ export class SameFolderMoveError extends Error {
  * The copy landed and the SOURCE did not go, so the move is half done and the mailbox holds the
  * message twice. Deliberately not {@link MoveVerifyError}, which means the new UID could not be
  * learned: this one knows exactly where the copy is and refuses to report a move as complete while
- * the original is still there — `apps/worker/src/sync.ts` states the rule, "a move is complete when
+ * the original is still there — `packages/organizer/src/sync.ts` states the rule, "a move is complete when
  * the source is GONE". The caller must not commit the returned locator; the next reconcile pass
  * retries the whole move, and the destination pre-check makes that retry ADOPT the copy already
  * made instead of adding another.
@@ -6289,6 +6289,14 @@ export function outboundToMail(msg: OutboundMessage, messageId: string, date: Da
             ...(/^message\//i.test(a.contentType) ? { contentTransferEncoding: "base64" as const } : {}),
           })),
         }
+      : {}),
+    // ── A CALENDAR PART: an invitation's answer, an alternative of the body ──────────────────
+    //
+    // Literal keys onto nodemailer's `alternatives`, never the caller's object: a `path`, `href`
+    // or `raw` there would have nodemailer read a file or fetch an address. Not `icalEvent`, which
+    // also attaches the text as a file. Omitted when absent: every other letter is unchanged.
+    ...(msg.calendar !== undefined
+      ? { alternatives: [{ contentType: `text/calendar; charset=utf-8; method=${msg.calendar.method}`, content: msg.calendar.text }] }
       : {}),
   };
 }

@@ -14,6 +14,7 @@ import { Copy } from "../copy";
 import { logNotice } from "../engine/engine-log";
 import { sayArg } from "../refusal";
 import { useTheme } from "../theme";
+import { MailAppearance, mailColors, mailSize } from "../theme/mail";
 import { useWorld, useWorldToast } from "../state/world";
 import { AT_REST, riseForAction, riseForNotice, riseForPress, type Rise, type ToastEntry } from "../state/toast-one";
 import { firstSyncContinuesSaid, topLineSaid } from "../state/live";
@@ -136,8 +137,9 @@ export function PaneTop() {
  * disconnected phone there), where there is no history to pop — the back
  * affordance hides rather than offering a press that goes nowhere.
  */
-export function DetailBar({ title, right, back }: {
+export function DetailBar({ title, right, back, backCapsule = false }: {
   title?: string; right?: React.ReactNode;
+  backCapsule?: boolean;
   /** The screen's own way out, drawn whatever the stack holds (the Servers pane: a pop can land back on it). */
   back?: () => void;
 }) {
@@ -158,7 +160,7 @@ export function DetailBar({ title, right, back }: {
       style={{
         paddingTop: top,
         paddingBottom: 8,
-        paddingHorizontal: 10,
+        paddingHorizontal: backCapsule ? 12 : 10,
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
@@ -169,17 +171,28 @@ export function DetailBar({ title, right, back }: {
           onPress={back ?? (() => router.back())}
           accessibilityRole="button"
           accessibilityLabel={Copy.back}
-          style={{ flexDirection: "row", alignItems: "center", gap: 4, padding: 8 }}
+          style={[
+            { flexDirection: "row", alignItems: "center", gap: 4, padding: 8 },
+            backCapsule ? {
+              minHeight: mailSize.back,
+              maxWidth: "60%",
+              paddingHorizontal: 12,
+              backgroundColor: t.c.panel,
+              borderColor: t.c.hair,
+              borderWidth: 1,
+              borderRadius: t.radius.pill,
+            } : null,
+          ]}
         >
           <View style={{ transform: [{ rotate: "180deg" }] }}>
             <Icon name="chev" size={15} color={t.c.ink2} />
           </View>
-          <Txt variant="button" tone="ink2">
-            {Copy.back}
+          <Txt variant="button" tone={backCapsule ? "ink" : "ink2"} numberOfLines={1} style={{ flexShrink: 1 }}>
+            {backCapsule ? title ?? Copy.back : Copy.back}
           </Txt>
         </Tap>
       ) : null}
-      {title ? (
+      {title && (!backCapsule || !canBack) ? (
         <Txt variant="button" tone="ink3" numberOfLines={1} style={{ flexShrink: 1, marginLeft: 4 }}>
           {title}
         </Txt>
@@ -200,12 +213,27 @@ export function DetailBar({ title, right, back }: {
  * are.
  */
 export function Doorbell(
-  { initials, count, max }: { initials: string[]; count: number; max?: number },
+  { initials, count, max, compact = false }: { initials: string[]; count: number; max?: number; compact?: boolean },
 ) {
   const t = useTheme();
   const [width, setWidth] = useState(0);
   const { fontScale } = useWindowDimensions();
   if (count === 0) return null;
+  if (compact) {
+    return (
+      <Tap
+        onPress={() => router.push("/screener")}
+        accessibilityRole="button"
+        accessibilityLabel={Copy.doorbellAria(count, Copy.doorbellGo)}
+        style={{
+          backgroundColor: t.c.accent, borderRadius: t.radius.pill, minHeight: 32, minWidth: 32,
+          paddingHorizontal: 8, alignItems: "center", justifyContent: "center",
+        }}
+      >
+        <Txt variant="button" tone="onAccent" tabular>{count}</Txt>
+      </Tap>
+    );
+  }
   // FACES AND A COUNT, the web's rule (`doorbell-stack.ts` holds it and the suite drives it), the
   // number of faces read off the capsule's own width so the sentence and "Screener" always fit.
   const cap = max ?? doorbellMax(width, fontScale);
@@ -337,7 +365,7 @@ export function StateKnock({ say }: { say: { title: string; hint: string; press:
  * the arrival only, deferred while the button is held — so the offer stays on screen for its whole
  * window and never moves from under a finger. Reduced motion places it at once (`t.ms`).
  */
-export function Toast() {
+export function Toast({ mail = false }: { mail?: boolean } = {}) {
   const t = useTheme();
   const { slots, dismiss, onScreen } = useWorldToast();
   const lift = useRef(new Animated.Value(0)).current;
@@ -371,7 +399,7 @@ export function Toast() {
     if (noticeId === null) noticeHeight.current = null;
   }, [noticeId]);
 
-  return (
+  const pills = (
     <>
       {slots.action ? (
         <ToastPill
@@ -397,6 +425,7 @@ export function Toast() {
       ) : null}
     </>
   );
+  return mail ? <MailAppearance>{pills}</MailAppearance> : pills;
 }
 
 /**
@@ -490,6 +519,7 @@ function ToastPill({ entry, newest, dismiss, onScreen, lift, onHeight, onPressin
   }, [toastId, anim, dismiss, t]);
 
   if (!message) return null;
+  const paper = t.mail ? mailColors(t) : null;
 
   return (
     <Animated.View
@@ -511,10 +541,11 @@ function ToastPill({ entry, newest, dismiss, onScreen, lift, onHeight, onPressin
       <GlassPill
         horizontal
         level="l2"
-        style={{ alignSelf: "center", maxWidth: "100%" }}
-        contentStyle={{ alignItems: "center", gap: 12, paddingVertical: 7, paddingHorizontal: 15 }}
+        style={{ alignSelf: paper ? "stretch" : "center", maxWidth: "100%" }}
+        contentStyle={{ alignItems: "center", gap: 12, paddingVertical: 7, paddingHorizontal: paper ? 22 : 15,
+          minHeight: paper ? 46 : undefined, backgroundColor: paper?.solid, justifyContent: "space-between" }}
       >
-        <Txt variant="meta" numberOfLines={2} style={{ flexShrink: 1 }}>
+        <Txt variant={paper ? "rowSubject" : "meta"} numberOfLines={2} style={{ flexShrink: 1, color: paper?.["on-solid"] }}>
           {message}
         </Txt>
         {undo ? (
@@ -531,7 +562,7 @@ function ToastPill({ entry, newest, dismiss, onScreen, lift, onHeight, onPressin
             }}
             style={{ paddingVertical: 4, paddingLeft: 4 }}
           >
-            <Txt variant="button" tone="accent">
+            <Txt variant="button" tone="accent" style={{ color: paper?.["on-solid"] }}>
               {Copy.undo}
             </Txt>
           </Tap>

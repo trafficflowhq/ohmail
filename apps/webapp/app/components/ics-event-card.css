@@ -23,6 +23,13 @@
   margin: 0 0 16px;
 }
 
+.rd-invitation-note {
+  max-width: 60ch;
+  margin: 12px 0 0;
+  color: var(--ink3);
+  font-size: calc(12px + var(--type-up));
+}
+
 .ics-card {
   flex: 1;
   min-width: 0;

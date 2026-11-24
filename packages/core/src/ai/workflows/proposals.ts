@@ -1,11 +1,11 @@
+import type { WorkflowPattern, WorkflowStep, WorkflowTrigger } from "@ohmail/wire";
 import { and, eq, isNotNull, or, sql } from "drizzle-orm";
 import {
   messages, rules, learningSignals, workflowProposals, fencedAccountWrite, type Tx,
 } from "@trafficflow/db";
-import type { WorkflowStep, WorkflowTrigger } from "../../workflow-shapes.js";
 import { canonicalDestination, DESTINATIONS } from "../../types.js";
 import type { Logger } from "../../log.js";
-import { deriveProposals, type WorkflowPattern, type WorkflowPort } from "./propose.js";
+import { deriveProposals, type WorkflowPort } from "./propose.js";
 
 // Pattern ASSEMBLY + proposal GENERATION. In CORE (db-coupled, worker-importable — the executor's
 // seam) so the worker's `proposal-cron` and the services `ProposalsService` both delegate here
@@ -147,6 +147,7 @@ export interface GenerateProposalsDeps {
    * worse than showing yesterday's.
    */
   authorize?: (patterns: WorkflowPattern[]) => Promise<boolean>;
+  beforeDispatch?: () => Promise<void>;
   /** Where the dropped answers are counted, by class and never by content. Absent ⇒ silent. */
   log?: Logger;
 }
@@ -168,7 +169,10 @@ export async function generateProposals(
   // pass still runs to completion — the empty result clears the open set exactly as it always
   // did — it is only the MONEY question that is skipped.
   if (patterns.length > 0 && deps.authorize && !(await deps.authorize(patterns))) return [];
-  const proposals = patterns.length === 0 ? [] : await deps.port.propose(patterns);
+  if (patterns.length > 0 && deps.beforeDispatch) await deps.beforeDispatch();
+  const proposals = patterns.length === 0 ? [] : deps.beforeDispatch
+    ? await deps.port.propose(patterns, { beforeDispatch: deps.beforeDispatch })
+    : await deps.port.propose(patterns);
 
   // BEFORE the write below: an answer that cannot be stored must never cost the open set.
   const { proposals: valid, dropped } = deriveProposals(proposals, patterns);

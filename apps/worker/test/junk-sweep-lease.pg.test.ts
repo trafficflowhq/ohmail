@@ -16,10 +16,10 @@ import type { NativeLocator } from "@trafficflow/core";
 import { junkSweepPass } from "../src/junk-sweep.js";
 import {
   MIN_PERMIT_TTL_MS, OrganizerStandDownError, acquireLeasePermit,
-} from "../src/lease.js";
-import { FakeMetaFolder } from "./_fakeadapter.js";
-import { PermitClock } from "./_permit-clock.js";
-import { FIXTURE_LEASE } from "./_door.js";
+} from "@ohmail/organizer/lease";
+import { FakeMetaFolder } from "../../../packages/organizer/test/_fakeadapter.js";
+import { PermitClock } from "../../../packages/organizer/test/_permit-clock.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ═══ A DECISION READ EARLIER MAY NOT BECOME A WRITE TO SOMEBODY'S REAL MAIL SERVER ═══════════
@@ -64,7 +64,7 @@ import { FIXTURE_LEASE } from "./_door.js";
  *
  * The claim is that a SECOND SESSION's committed `desired_folder` is seen by this pass's re-read
  * under READ COMMITTED, mid-pass. PGlite is single-connection: the interleave cannot exist there
- * and every assertion would pass vacuously — the blindness CLAUDE.md records for transactional
+ * and every assertion would pass vacuously — the blindness AGENTS.md records for transactional
  * code, and the reason three production bugs were invisible until they met real Postgres.
  *
  * ── THE TAKEOVER IS DRIVEN FOR REAL ──────────────────────────────────────────────────────────
@@ -196,10 +196,10 @@ describe.skipIf(!AVAILABLE)("the junk sweep asks again before it writes to the s
         uid: 50 + i, uidvalidity: 1n, isPrimary: true,
       });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: PILE, observedFolder: PILE,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: PILE, observedFolder: PILE,
         lastSetBy: "us", reconcileStatus: "reconciled",
       });
-      await db.insert(messageBodies).values({ messageId: m!.id, text: `buy things ${i}` });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `buy things ${i}` });
       ids.push(m!.id);
     }
     return { accountId, mailboxId: mb!.id, ids };

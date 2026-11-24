@@ -7,12 +7,12 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import DOMPurify from "dompurify";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
-import { MessageBody } from "../app/components/MessageBody";
+import { MessageBody } from "../../../packages/letter-body/src/MessageBody";
 import {
   forgetMailDocs, mailDocCacheFor, MAIL_DOC_ENTRIES_MAX, type MailDocInputs,
-} from "../app/components/mail-doc-cache";
+} from "../../../packages/letter-body/src/mail-doc-cache";
 import { EngineProvider } from "../app/shell/engine";
-import { registerSyncGate, type SyncGate, type SyncIdentity } from "../app/shell/sync-scheduler";
+import { registerSyncGate, type SyncGate, type SyncIdentity } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * THE SANITIZED DOCUMENT IS KEPT PER ENGINE, AND SERVED ONLY FOR THE INPUTS IT WAS MADE FROM
@@ -98,7 +98,7 @@ async function show(engine: OhmailEngine | null, props: BodyProps): Promise<{ do
 
 const base = (over: Partial<BodyProps> = {}): BodyProps => ({
   messageId: "m1", text: "The letter's copy.", html: DESIGNED(), remoteLoaded: false,
-  imageProxy: proxyFor("m1"), loadTrackingPixels: false, ...over,
+  imageProxy: proxyFor("m1"), loadTrackingPixels: false, owner: null, ...over,
 });
 
 describe("a body shown again is read back, not sanitized again", () => {

@@ -3,6 +3,26 @@
   "version": "0.0.0",
   "license": "AGPL-3.0-only",
   "type": "module",
+  "exports": {
+    "./program": {
+      "types": "./src/program.ts",
+      "ohmail-source": "./src/program.ts",
+      "node": "./dist/program.js",
+      "default": "./src/program.ts"
+    },
+    "./settings": {
+      "types": "./src/settings.ts",
+      "ohmail-source": "./src/settings.ts",
+      "node": "./dist/settings.js",
+      "default": "./src/settings.ts"
+    },
+    "./clocks": {
+      "types": "./src/clocks.ts",
+      "ohmail-source": "./src/clocks.ts",
+      "node": "./dist/clocks.js",
+      "default": "./src/clocks.ts"
+    }
+  },
   "dependencies": {
     "drizzle-orm": "0.36.4",
     "@trafficflow/api": "*",

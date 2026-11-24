@@ -2,12 +2,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import {
   deriveMailState, seedGrowth, type FilingFacts, type MailState, type MailStateInputs, type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THE STUCK STRIP COUNTS WHAT IS STUCK, UNDER ITS OWN CLOCK, FOR THE REASON ON RECORD.
@@ -24,8 +25,8 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 let current: MailState | null = null;
-vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: current, refresh: () => {} }),
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
+  useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 let root: Root | null = null;
@@ -48,6 +49,7 @@ const mailbox = (filing: Partial<FilingFacts>): MailboxFacts => ({
   id: "mb1", address: "person@example.invalid", status: "connected", errorCode: null,
   disabledReason: null, syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: ago(30_000),
   initialImportCompletedAt: ago(600_000), createdAt: ago(900_000),
+  pendingMoves: (filing.due ?? 0) + (filing.deferred ?? 0),
   filing: { ...resting, ...filing },
 });
 
@@ -56,7 +58,7 @@ const inputs = (filing: Partial<FilingFacts>): MailStateInputs => ({
   failureStreak: 3, mailboxes: [mailbox(filing)], mirrored: 495, growth: seedGrowth(495),
   freshness: { state: "current" as const, asOf: ago(30_000) },
   engineFreshness: { state: "current" as const, asOf: ago(30_000) },
-  now: NOW, demo: false,
+  now: NOW, demo: false, scope: null,
 } as MailStateInputs);
 
 async function strip(filing: Partial<FilingFacts>, locale: "en" | "de" = "en"): Promise<string> {
@@ -66,7 +68,7 @@ async function strip(filing: Partial<FilingFacts>, locale: "en" | "de" = "en"): 
 /** The strip over several mailboxes: its text and the link it offers. */
 async function stripOf(mbs: MailboxFacts[], locale: "en" | "de" = "en"): Promise<{ text: string; hrefs: string[] }> {
   current = deriveMailState({ ...inputs({}), mailboxes: mbs });
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -76,10 +78,18 @@ async function stripOf(mbs: MailboxFacts[], locale: "en" | "de" = "en"): Promise
       children: h(SyncBar, null),
     }));
   });
-  return {
-    text: container.textContent ?? "",
-    hrefs: [...container.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? ""),
-  };
+  /* Where the notice's one act leads: the strip's link became the frame's "Mailboxes", pressed here. */
+  const more = within(container).queryByRole("button", { name: /more notices?/i });
+  if (more) await act(async () => { more.click(); });
+  const text = container.textContent ?? "";
+  const goes = [...container.querySelectorAll("button")].filter((b) => b.textContent === en.frame.connection.act.mailboxes);
+  const hrefs: string[] = [];
+  for (const press of goes) {
+    window.location.hash = "";
+    await act(async () => { press.click(); });
+    hrefs.push(window.location.hash);
+  }
+  return { text, hrefs };
 }
 
 const named = (id: string, displayName: string | null, filing: Partial<FilingFacts>, address = `${id}@example.invalid`): MailboxFacts =>
@@ -174,7 +184,7 @@ describe("the stuck and waiting sentences name the mailbox and the reason on rec
     expect(r.text).toContain("6 messages have not been filed for 5 hours");
     expect(r.text).toContain("Work · the last try did not go through");
     expect(r.text).not.toContain("refused it");
-    expect(r.text.split("Settings → Mailboxes").length - 1, "the pane was named twice").toBe(1);
+    expect(r.text.split(en.frame.connection.act.mailboxes).length - 1, "the pane was named twice").toBe(1);
     expect(r.hrefs).toEqual(["#/settings/mailboxes?mailbox=mbx1"]);
   });
 

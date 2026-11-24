@@ -29,6 +29,43 @@ it("the fixture keys have the vendors' key shapes", () => {
   expect(stripeTestKey("anthropic-client-wrong-row")).toMatch(FIXTURE_SHAPES.stripeTest);
 });
 
+it("streams the structured draft body before the final answer and reports the provider's usage", async () => {
+  const encoder = new TextEncoder();
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { writer = controller; } });
+  const events = fakeFetch([() => new Response(stream, { headers: { "content-type": "text/event-stream" } })]);
+  const usage: AnthropicCallReport[] = [];
+  const client = makeAnthropicClient({ apiKey: KEY, fetchImpl: events.fetch, onUsage: (report) => { usage.push(report); } });
+  const drafter = makeSonnetDrafter(client, { model: "claude-haiku-5-5", stream: true });
+  const emit = (event: unknown) => writer.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+  const delta = (text: string) => emit({ type: "content_block_delta", delta: { type: "text_delta", text } });
+  const previews: string[] = [];
+  let firstWord!: () => void;
+  const first = new Promise<void>((resolve) => { firstWord = resolve; });
+  const answer = drafter.draft({
+    incoming: { subject: "Question", from: "Sender", snippet: "What day?" },
+    context: { threadMessages: [], kbEntries: [] },
+  }, { onPreview(text) { previews.push(text); firstWord(); } });
+
+  emit({ type: "message_start", message: { model: "claude-haiku-5-5", usage: { input_tokens: 90 } } });
+  delta('{"body":"Hello');
+  await first;
+  expect(previews).toEqual(["Hello"]);
+  expect(usage).toEqual([]);
+  delta('\\');
+  delta('nWe can meet Monday.", "subject":"Re: Question","rationale":"From the thread"}');
+  emit({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 18 } });
+  emit({ type: "message_stop" });
+  writer.close();
+
+  expect(JSON.parse(String(events.calls[0]?.init.body))).toMatchObject({ model: "claude-haiku-5-5", stream: true });
+  expect(await answer).toEqual({
+    body: "Hello\nWe can meet Monday.", subject: "Re: Question", rationale: "From the thread",
+  });
+  expect(previews).toEqual(["Hello", "Hello\nWe can meet Monday."]);
+  expect(usage).toMatchObject([{ inputTokens: 90, outputTokens: 18, ok: true }]);
+});
+
 interface Call { url: string; init: RequestInit }
 
 /**
@@ -479,7 +516,9 @@ describe("the per-call usage hook — one call's report, handed to that call's c
     };
     await classifier.classify(input, hook("classify"));
     await classifier.screen!(input, hook("screen"));
-    await askScreeningQuestion(classifier, { fromAddress: "a@b.example", subject: "Hi", snippet: "hello" }, hook("ask"));
+    await askScreeningQuestion(classifier, { fromAddress: "a@b.example", subject: "Hi", snippet: "hello" }, {
+      ...hook("ask"), beforeDispatch: async () => undefined,
+    });
     await makeSonnetDrafter(client).draft({
       incoming: { subject: "q", from: "c@acme.example", snippet: "s" },
       context: { kbEntries: [], threadMessages: [] },
@@ -635,4 +674,52 @@ describe("assertAnthropicKey — a wrong secret must fail the DEPLOYMENT, not th
       if (wrong !== "") expect(err!.message).not.toContain(wrong);    // never the secret
     }
   });
+});
+
+it("does not follow redirects on guarded requests", async () => {
+  const { fetch, calls } = fakeFetch([fail(307, {}, { location: "https://elsewhere.invalid/submit" })]);
+  const client = makeAnthropicClient({ apiKey: KEY, fetchImpl: fetch, maxRetries: 0 });
+  await expect(client.messages.create({ model: "fixture" }, {
+    beforeDispatch: async () => undefined,
+  })).rejects.toBeInstanceOf(AnthropicApiError);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.init.redirect).toBe("error");
+});
+
+it.each([
+  { body: { error: { type: "invalid_request_error", message: "Private draft excerpt" } }, type: "invalid_request_error" },
+  { body: { error: { type: "Private draft excerpt", message: "Private draft excerpt" } }, type: null },
+  { body: "Private draft excerpt", type: null },
+])("guarded errors retain only fixed diagnostics ($type)", async ({ body, type }) => {
+  const { fetch } = fakeFetch([fail(400, body, { "request-id": "Private draft excerpt" })]);
+  const client = makeAnthropicClient({ apiKey: KEY, fetchImpl: fetch, maxRetries: 0 });
+  await expect(client.messages.create({ model: "fixture" }, {
+    beforeDispatch: async () => undefined,
+  })).rejects.toMatchObject({
+    name: "AnthropicApiError", status: 400, errorType: type, requestId: null,
+    message: "The model provider rejected the request.",
+  });
+});
+
+it("reports a guarded unreadable success without the response fragment", async () => {
+  const { fetch } = fakeFetch([fail(200, "Private draft excerpt")]);
+  const client = makeAnthropicClient({ apiKey: KEY, fetchImpl: fetch, maxRetries: 0 });
+  await expect(client.messages.create({ model: "fixture" }, {
+    beforeDispatch: async () => undefined,
+  })).rejects.toMatchObject({
+    name: "AnthropicApiError", status: 200,
+    message: "The model provider returned an unreadable response.",
+  });
+});
+
+it("reports a guarded transport failure without storing its cause", async () => {
+  const client = makeAnthropicClient({
+    apiKey: KEY, maxRetries: 0,
+    fetchImpl: async () => { throw new Error("Private draft excerpt"); },
+  });
+  const err = await client.messages.create({ model: "fixture" }, {
+    beforeDispatch: async () => undefined,
+  }).catch((error: unknown) => error);
+  expect(err).toBeInstanceOf(AnthropicTransportError);
+  expect(err).toMatchObject({ message: "The model provider could not be reached.", cause: undefined });
 });

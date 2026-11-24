@@ -1,0 +1,43 @@
+/* Attach is one press: the clip. Under the sheet, how the pictures go and how much room is used. */
+@layer oh {
+  .oh-attach {
+    --oh-attach-sign: 18px;
+
+    flex: none;
+    display: inline-flex;
+  }
+
+  .oh-attach > .oh-button {
+    background: var(--soft-sheet);
+    color: var(--ink);
+  }
+
+  .oh-attach > .oh-button:hover {
+    background: var(--off);
+  }
+
+  .oh-attach > .oh-button > .oh-icon {
+    width: var(--oh-attach-sign);
+    height: var(--oh-attach-sign);
+  }
+
+  .oh-attachroom {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s1) var(--s4);
+    padding: var(--s4) var(--sheet-pad) 0;
+    color: var(--ink2);
+  }
+
+  .oh-attachroom-weight,
+  .oh-attachroom-used {
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .oh-attachroom-used {
+    margin-left: auto;
+  }
+}

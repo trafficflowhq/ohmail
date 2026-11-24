@@ -14,6 +14,7 @@ export type IconName = keyof typeof PATHS;
 const PATHS = {
   /* — verbatim from the prototype's symbol defs — */
   ohbox: "M2 8.5V12a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 14 12V8.5M2 8.5 4 3.6A1.5 1.5 0 0 1 5.4 2.7h5.2a1.5 1.5 0 0 1 1.4.9L14 8.5M2 8.5h3.4l1 1.8h3.2l1-1.8H14",
+  calendar: "M3 4.2h10v9H3zM5.5 2.8v2.6M10.5 2.8v2.6M3 7h10M5.5 9.7h1",
   clock: "M8 4.8V8l2.2 1.4",
   pause: "M5.8 3.8v8.4M10.2 3.8v8.4",
   up: "M8 10.6V5.6M5.8 7.6 8 5.4l2.2 2.2",
@@ -22,12 +23,20 @@ const PATHS = {
   clip: "M10.6 5.1 6.2 9.5a1.6 1.6 0 0 0 2.3 2.3l4.6-4.6a3 3 0 0 0-4.3-4.3L4.2 7.5a4.4 4.4 0 0 0 6.2 6.2l3.4-3.4",
   route: "M4.8 11.4c2.6-1 5.6-4 6.6-6.6",
   spark: "M8 2.4 9.3 6.7 13.6 8l-4.3 1.3L8 13.6 6.7 9.3 2.4 8l4.3-1.3z",
+  screener: "M2.5 13.1h3V5.5L8 3.4h4.7v9.7h1.5M7.2 13.1h5.5M10.2 8.8h.1",
+  hourglass: "M4.6 2.8h6.8M4.6 13.2h6.8M5.3 3c0 2.4 1 3.4 2.7 5-1.7 1.6-2.7 2.6-2.7 5m5.4-10c0 2.4-1 3.4-2.7 5 1.7 1.6 2.7 2.6 2.7 5",
+  attachmentDownload: "M8 2.6v7.1m-2.6-2.6L8 9.7l2.6-2.6M3.4 11.4v1.9h9.2v-1.9",
+  person: "M3.5 13c.4-2.6 2.1-4 4.5-4s4.1 1.4 4.5 4M8 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4",
+  send: "M2.5 4 13.5 8 2.5 12l1.6-4L2.5 4ZM4.4 8h8.9",
+  format: "M2.2 11.7 5 4.2l2.8 7.5M3.1 9h3.8m6.9 2.7V8.4a1.7 1.7 0 0 0-1.9-1.8c-.7 0-1.3.2-1.7.6m3.6 2.1h-2.3a1.3 1.3 0 0 0 0 2.6c1.1 0 2.3-.6 2.3-1.7",
+  smile: "M13.4 8a5.4 5.4 0 1 1-10.8 0 5.4 5.4 0 0 1 10.8 0ZM5.7 9.3c.9 1.7 3.7 1.7 4.6 0M6 6.6h.1m3.8 0h.1",
   door: "M9.5 2.5h3v11h-3M9.5 8h-7M4.9 5.6 2.5 8l2.4 2.4",
   sun: "M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1",
   info: "M8 7.4v3.4M8 5.2v.1",
   x: "m4.5 4.5 7 7M11.5 4.5l-7 7",
   check: "m3.5 8.5 3 3 6-6.5",
   menu: "M3 5.2h10M3 10.8h10",
+  diagonal: "M7 3.3h5.7V9M12.7 3.3 3.6 12.4",
   open: "M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 13.5h-4v-4M2.5 13.5 7.5 8.5",
   tag: "M2.6 7.4V3.2a.6.6 0 0 1 .6-.6h4.2a1 1 0 0 1 .7.3l5 5a1 1 0 0 1 0 1.4l-4.2 4.2a1 1 0 0 1-1.4 0l-5-5a1 1 0 0 1-.3-.7z",
   plus: "M8 3.6v8.8M3.6 8h8.8",
@@ -48,6 +57,10 @@ const PATHS = {
   trash: "M3.4 4.6h9.2M6.4 4.6V3.4a.7.7 0 0 1 .7-.7h1.8a.7.7 0 0 1 .7.7v1.2M4.6 4.6l.6 8a.8.8 0 0 0 .8.7h4a.8.8 0 0 0 .8-.7l.6-8M6.7 7.2v3.6M9.3 7.2v3.6",
   /** folder: one of the mailbox's own folders — the tab carries the identity. */
   folder: "M2.5 12.6V4.1a.7.7 0 0 1 .7-.7h3l1.4 1.7h5.2a.7.7 0 0 1 .7.7v6.8a.7.7 0 0 1-.7.7H3.2a.7.7 0 0 1-.7-.7z",
+  download: "M8 2v8m-3-3 3 3 3-3M3 13h10",
+  down: "m4 6 4 4 4-4",
+  computer: "M2 3.5h12v8H2zM8 11.5v2.5m-2.5 0h5",
+  phone: "M5 2h6v12H5zM7 12h2",
 
   /* — the glass rail's verbs, verbatim from the foldable prototype's ICONS table — */
   reply: "M6.2 4.2 2.6 7.6l3.6 3.4M3 7.6h6.2a3.6 3.6 0 0 1 3.6 3.6v1.2",
@@ -148,6 +161,18 @@ export function Wordmark({ color, dot, size = 16 }: { color: string; dot: string
       <Path d={OH_O} fill={color} />
       <Path d={OH_H} fill={color} />
       <Circle cx={849.39} cy={651.07} r={54.16} fill={dot} />
+    </Svg>
+  );
+}
+
+/** Welcome uses the shared type mark. Its two outlines are from the admitted Bricolage Grotesque
+ * 96pt ExtraBold font (OFL-1.1 in packages/tokens/fonts). The app icon keeps its own artwork. */
+export function WelcomeWordmark({ color, dot, em }: { color: string; dot: string; em: number }) {
+  return (
+    <Svg width={1.32 * em} height={0.825 * em} viewBox="0 -700 1320 825" accessibilityLabel="ohmail">
+      <Path fill={color} d="M282 14Q206 14 147 -16Q88 -47 55 -108Q22 -170 22 -263Q22 -360 56 -421Q91 -483 150 -512Q210 -542 285 -542Q363 -542 421 -511Q480 -481 512 -419Q545 -358 545 -264Q545 -167 510 -105Q476 -44 416 -15Q357 14 282 14ZM286 -105Q317 -105 338 -122Q359 -140 370 -174Q381 -208 381 -255Q381 -307 369 -342Q357 -378 334 -397Q312 -416 280 -416Q250 -416 229 -398Q208 -381 197 -347Q186 -313 186 -265Q186 -189 212 -147Q239 -105 286 -105Z" />
+      <Path fill={color} transform="translate(517 0)" d="M36 0L36 -700L198 -700L198 -568Q198 -547 195 -512Q193 -478 188 -439Q184 -400 179 -364Q175 -329 172 -305L181 -305Q190 -388 212 -440Q234 -493 272 -517Q310 -542 364 -542Q449 -542 490 -481Q531 -421 531 -299L531 0L369 0L369 -292Q369 -348 354 -374Q339 -400 305 -400Q275 -400 251 -377Q227 -355 212 -306Q198 -257 198 -179L198 0Z" />
+      <Circle cx={1195} cy={0} r={125} fill={dot} />
     </Svg>
   );
 }

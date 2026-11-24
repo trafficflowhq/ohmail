@@ -1,21 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { accounts, recordChange, sessions, users } from "@trafficflow/db";
-import { schema, pushSubscriptions, makeChangeWakeHub } from "@trafficflow/db/cloud";
+import {
+  CALENDAR_RECORD_KINDS, accounts, fencedAccountWrite, recordCalendarChanges, recordChange, sessions, users,
+} from "@trafficflow/db";
+import { makeOwnedDb, pushSubscriptions, makeChangeWakeHub, type OwnedDb } from "@trafficflow/db/cloud";
 import {
   makePushEndpointGuard, makeVapidIdentity,
   type HostResolver, type VapidFromEnv,
 } from "@trafficflow/core/net";
-import { makeAuthService, makePushService, makeTestAuthDeps } from "@trafficflow/services";
+import { dbFor, makeAuthService, makePushService, makeTestAuthDeps } from "@trafficflow/services";
 import { startPushWake, WAKE_BODY, type PushWakePost } from "../src/push-wake.js";
 import type { Tx } from "@trafficflow/db";
 import {
@@ -144,9 +143,14 @@ const waitFor = async (p: () => boolean, ms = 8_000): Promise<void> => {
 const tick = (ms: number): Promise<void> => new Promise((r) => { setTimeout(r, ms); });
 
 describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () => {
-  let sql: ReturnType<typeof postgres>;
-  let dz: ReturnType<typeof drizzle>;
+  // The worker's own pool, made by its factory: a handle a binder can name (one built straight on the
+  // driver is refused by the binder, and a context on the pool's own handle by a transaction).
+  let owned: OwnedDb;
+  let dz: OwnedDb["db"];
   let db: Tx;
+  /** A wake registration names an account that exists (cloud 0103's key). */
+  const anAccount = async (): Promise<string> =>
+    (await db.insert(accounts).values({ name: `wake-${randomUUID()}` }).returning())[0]!.id;
 
   /**
    * WAIT FOR THE HUB'S LISTEN TO BE LIVE, by proving it delivers.
@@ -180,13 +184,13 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    sql = postgres(PG_TEST_URL, { max: 6, onnotice: () => { /* quiet */ } });
-    dz = brandDialect(drizzle(sql, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    dz = owned.db;
     db = dz as unknown as Tx;
   }, 120_000);
 
   afterAll(async () => {
-    await sql?.end({ timeout: 5 });
+    await owned?.close();
   });
 
   /** A service context shaped the way the routes build one. */
@@ -194,13 +198,13 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     ReturnType<typeof makePushService>["subscribe"]
   >[0] => ({
     accountId,
-    db,
+    db: dbFor(dz, accountId),
     now: () => new Date(),
     ...(sessionId ? { sessionId } : {}),
   } as unknown as Parameters<ReturnType<typeof makePushService>["subscribe"]>[0]);
 
   it("MANAGED ARM — registers a public endpoint, wakes once per batch, coalesces, prunes, revokes", async () => {
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const host = "push.managed-arm.example.com";
     const endpoint = `https://${host}/up/${randomUUID()}`;
 
@@ -230,7 +234,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
 
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 150,
       // ZERO on purpose: the per-endpoint floor is asserted in its own right elsewhere, and with a
       // floor in place this test cannot tell the ACCOUNT debounce from it. Measured — deleting the
@@ -285,7 +289,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
   }, 60_000);
 
   it("MANAGED ARM — an explicit unsubscribe stops wakes", async () => {
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const host = "push.revoke-arm.example.com";
     const endpoint = `https://${host}/up/${randomUUID()}`;
     const guard = makePushEndpointGuard(
@@ -298,7 +302,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const post: PushWakePost = (url) => { posts.push(url); return Promise.resolve({ status: 201 }); };
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 100, minIntervalMs: 0,
     });
 
@@ -351,7 +355,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const post: PushWakePost = (url) => { posts.push(url); return Promise.resolve({ status: 201 }); };
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid, debounceMs: 100, minIntervalMs: 0,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid, debounceMs: 100, minIntervalMs: 0,
     });
 
     try {
@@ -380,7 +384,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
 
   it("SELF-HOST ARM — the real POST on a real socket carries the byte-identical constant", async () => {
     const l = await listener();
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const endpoint = `${l.origin}/up/${randomUUID()}`;
 
     // The RELAXED policy — `TF_PUSH_ALLOW_PRIVATE=1`'s branch. Loopback is permitted, http is
@@ -392,7 +396,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const hub = makeChangeWakeHub(PG_TEST_URL);
     // NO injected post: the real `defaultPost`, on a real socket, pinned to 127.0.0.1.
     const wake = startPushWake({
-      db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 100, minIntervalMs: 0,
     });
 
@@ -427,6 +431,69 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     }
   }, 60_000);
 
+  /**
+   * A CALENDAR THAT MOVED RINGS NO WAKE. A closed app draws one fixed notice for a wake, and that
+   * notice says new mail: so a window that holds the calendar's records alone dials nothing, on the
+   * real log, through the calendar's own door and the real hub. Absence is read between two wakes
+   * that did arrive, so it is the sender's answer and not a listener that was still coming up.
+   */
+  it("CALENDAR ARM — a calendar-only advance dials nothing; a mail advance dials once with the constant; a window of both dials once", async () => {
+    const l = await listener();
+    const accountId = await anAccount();
+    const endpoint = `${l.origin}/up/${randomUUID()}`;
+    const guard = makePushEndpointGuard(fixedResolver({}), { allowPrivate: true });
+    await makePushService({ endpointGuard: guard }).subscribe(ctxFor(accountId), { transport: "unifiedpush", endpoint });
+
+    /** One committed calendar change through the calendar's own door, under the account's fence as its writers take it. */
+    const calendar = (kind: (typeof CALENDAR_RECORD_KINDS)[number]): Promise<unknown> =>
+      fencedAccountWrite(dbFor(dz, accountId) as never, { accountId }, (tx) =>
+        recordCalendarChanges(tx as never, accountId, [{ kind, id: randomUUID(), op: "update" }]));
+
+    const hub = makeChangeWakeHub(PG_TEST_URL);
+    // The real POST on a real socket, so the bytes and the headers are the ones a distributor gets.
+    const wake = startPushWake({
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID, debounceMs: 150, minIntervalMs: 0,
+    });
+    /** The requests so far, once every open window has had time to close and dial. */
+    const settled = async (): Promise<number> => { await tick(900); return l.captured.length; };
+
+    try {
+      await settleHub(accountId, () => l.captured.length);
+      const start = await settled();
+      expect(start, "the control mail never produced a wake").toBeGreaterThanOrEqual(1);
+
+      // ── THE CALENDAR ALONE: every kind of its records. No request.
+      for (const kind of CALENDAR_RECORD_KINDS) await calendar(kind);
+      expect(await settled(), "a calendar change rang a wake").toBe(start);
+
+      // ── MAIL: one request, the fifteen bytes and the fixed headers.
+      await mail(accountId);
+      await waitFor(() => l.captured.length > start);
+      expect(await settled(), "one mail advance did not dial exactly once").toBe(start + 1);
+      const c = l.captured[start]!;
+      expect(c.method).toBe("POST");
+      expect(c.raw.equals(Buffer.from(WAKE_BODY, "utf8"))).toBe(true);
+      expect(c.raw.length).toBe(15);
+      expect(c.headers["content-type"]).toBe("application/json");
+      expect(c.headers["content-length"]).toBe("15");
+      expect(c.headers.ttl).toBe("240");
+      expect(c.headers.authorization).toBeUndefined();
+      expect(`${c.url}\n${JSON.stringify(c.headers)}\n${c.body}`).not.toContain(accountId);
+
+      // ── BOTH, CLOSE TOGETHER: the calendar's records beside it neither add a request nor hide the mail.
+      await calendar("calendar_event");
+      await mail(accountId);
+      await calendar("calendar");
+      await waitFor(() => l.captured.length > start + 1);
+      expect(await settled(), "a window of mail and calendar did not dial exactly once").toBe(start + 2);
+      expect(l.captured[start + 1]!.body).toBe(WAKE_BODY);
+    } finally {
+      wake.stop();
+      await hub.end();
+      l.close();
+    }
+  }, 60_000);
+
   it("SEALED ARM — a keyed registration receives an ENCRYPTED wake that decrypts to the constant", async () => {
     /**
      * ══════════════════════════════════════════════════════════════════════════════════════
@@ -446,7 +513,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * exercised here by a synthetic device that is real in every respect the code can observe.
      */
     const l = await listener();
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const endpoint = `${l.origin}/up/${randomUUID()}`;
     const sub = makeSubscriber();
 
@@ -488,7 +555,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const hub = makeChangeWakeHub(PG_TEST_URL);
     // NO injected post: the real `defaultPost`, on a real socket, doing the real encryption.
     const wake = startPushWake({
-      db, source: hub, guard, ownsAccount: OWN_ALL, vapid,
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid,
       debounceMs: 100, minIntervalMs: 0,
     });
 
@@ -534,7 +601,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     }
   }, 60_000);
 
-  it("BROWSER ARM — a `webpush` registration is DIALLED, and its wake decrypts to the constant", async () => {
+  it("BROWSER ARM — a `webpush` registration is DIALLED, and its wake decrypts to the session binding", async () => {
     /**
      * THE ROWS THAT WERE STORED AND NEVER DIALLED.
      *
@@ -548,7 +615,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * This is the guard for the predicate. It is deliberately an END-TO-END assertion rather than
      * a unit test of the WHERE clause: what matters is not that the query mentions a string, but
      * that a real registration made the way a browser makes it results in a real POST carrying the
-     * real constant. A test that asserted the predicate's text would pass on a sender that dialled
+     * real browser binding. A test that asserted the predicate's text would pass on a sender that dialled
      * nothing.
      *
      * The keys are not optional here the way they are for a connector: a browser subscription
@@ -556,7 +623,13 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * plaintext case exists for it.
      */
     const l = await listener();
-    const accountId = randomUUID();
+    const accountId = await anAccount();
+    const familyId = randomUUID();
+    const [user] = await db.insert(users).values({ accountId, email: `wake-${randomUUID()}@example.invalid` }).returning();
+    const [session] = await db.insert(sessions).values({
+      accountId, userId: user!.id, familyId,
+      accessExpiresAt: new Date(Date.now() + 3_600_000), refreshExpiresAt: new Date(Date.now() + 3_600_000),
+    }).returning({ id: sessions.id });
     const endpoint = `${l.origin}/wp/${randomUUID()}`;
     const sub = makeSubscriber();
 
@@ -564,7 +637,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const push = makePushService({ endpointGuard: guard });
 
     // Registration exactly as a browser makes it: the three values `PushSubscription` yields.
-    const reg = await push.subscribe(ctxFor(accountId), {
+    const reg = await push.subscribe(ctxFor(accountId, session!.id), {
       transport: "webpush", endpoint, p256dh: sub.p256dh, auth: sub.auth,
     });
     expect(reg.transport).toBe("webpush");
@@ -588,7 +661,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
 
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, ownsAccount: OWN_ALL, vapid,
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid,
       debounceMs: 100, minIntervalMs: 0,
     });
 
@@ -600,15 +673,22 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
       ).toBeGreaterThanOrEqual(1);
 
       const c = l.captured[0]!;
-      // Sealed to THIS browser, and it opens to the same fifteen bytes as every other arm.
+      // Sealed to this browser, with the exact binding for the family that registered it.
       expect(c.headers["content-encoding"]).toBe("aes128gcm");
-      expect(openAes128Gcm(c.raw, sub).toString("utf8")).toBe(WAKE_BODY);
+      const plaintext = openAes128Gcm(c.raw, sub).toString("utf8");
+      expect(JSON.parse(plaintext)).toEqual({
+        type: "wake",
+        binding: createHash("sha256").update(JSON.stringify([accountId, familyId])).digest("hex"),
+      });
       expect(() => openAes128Gcm(c.raw, makeSubscriber())).toThrow();
 
       // Still content-free: widening WHICH rows are dialled must not widen WHAT is sent.
       expect(c.url).toBe(new URL(endpoint).pathname);
       const whole = `${c.url}\n${JSON.stringify(c.headers)}\n${c.raw.toString("binary")}`;
-      expect(whole).not.toContain(accountId);
+      for (const identity of [accountId, familyId]) {
+        expect(whole).not.toContain(identity);
+        expect(plaintext).not.toContain(identity);
+      }
       expect(whole).not.toContain(sub.auth);
 
       await waitFor(() => wake.sent() >= 1);
@@ -628,7 +708,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * that is not one, and nothing on the wire would ever say so.
      */
     const l = await listener();
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const endpoint = `${l.origin}/up/${randomUUID()}`;
     const sub = makeSubscriber();
 
@@ -641,7 +721,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const warnings: string[] = [];
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 100, minIntervalMs: 0,
       log: { info: () => { /* quiet */ }, warn: (e) => { warnings.push(e); } },
     });
@@ -682,7 +762,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * sealed body says nothing about where it is going — a re-pointed endpoint on a keyed
      * registration is the same attack with a different payload, so it gets the same refusal.
      */
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const host = "sealed-flips.example.com";
     const endpoint = `https://${host}/up/${randomUUID()}`;
     const sub = makeSubscriber();
@@ -711,7 +791,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     };
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid,
       debounceMs: 100, minIntervalMs: 0,
       log: { info: () => { /* quiet */ }, warn: (e) => { warnings.push(e); } },
     });
@@ -738,7 +818,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
   }, 60_000);
 
   it("SSRF at REGISTRATION — a private-range endpoint is refused before any row is written", async () => {
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const guard = makePushEndpointGuard(
       fixedResolver({ "rebind.example.com": ["169.254.169.254"] }), { allowPrivate: false },
     );
@@ -780,7 +860,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * by the time the worker dials it. Nothing about the stored row changed; the world did. A
      * design that cleared once and trusted the row forever would POST to `169.254.169.254` here.
      */
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const host = "flips.example.com";
     const endpoint = `https://${host}/up/${randomUUID()}`;
 
@@ -797,7 +877,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     const post: PushWakePost = (url) => { posts.push(url); return Promise.resolve({ status: 201 }); };
     const hub = makeChangeWakeHub(PG_TEST_URL);
     const wake = startPushWake({
-      db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
+      dbOf: () => db, source: hub, guard, post, ownsAccount: OWN_ALL, vapid: NO_VAPID,
       debounceMs: 100, minIntervalMs: 0,
       log: { info: () => { /* quiet */ }, warn: (e) => { warnings.push(e); } },
     });
@@ -837,7 +917,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     // The absent-config-safe branch. `pushService` (the plain singleton) is what a composition
     // root gets by forgetting, and forgetting must not mean "accept an unvalidated endpoint".
     const { pushService } = await import("@trafficflow/services");
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     await expect(pushService.subscribe(
       ctxFor(accountId), { transport: "unifiedpush", endpoint: "https://push.example.com/up/x" },
     )).rejects.toThrow(/not enabled on this server/);

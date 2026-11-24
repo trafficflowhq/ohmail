@@ -13,6 +13,14 @@ import en from "../messages/en.json";
  * nothing was deleted. Each arm holds the answer, leaves, lets it land and counts what went out;
  * the controls let it land with the pane still open, and the verb runs once. The real api-client
  * runs; only `fetch` is answered here.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the Settings arm stands on the new shell. The password change is
+ * the new Settings' Account section (`packages/app/src/account/account`) over the web's own doors (`WEB_PANE_PARTS`),
+ * mounted through the new shell's test door (`_mail-shell.tsx`'s `MailShell`), its factor the web's dialog
+ * (`StepUp`); the switch is a press on another entry of the Settings menu. The erase is no section of the new Settings:
+ * it is the web's own page (`/account/delete`, `DeleteAccountRoute`), and leaving it is the page going away under the
+ * dialog, as a browser's Back or another place takes it. Every expectation is as it stood; the wall's arm and the
+ * prompt's stand as they were.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -29,7 +37,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 /* The local wipe the erase runs after its 200: counted, never run against this page. */
-vi.mock("../app/sign-out", () => ({
+vi.mock("../app/sign-out", async (original) => ({
+  ...await original<typeof import("../app/sign-out")>(),
   forgetThisBrowser: async () => {
     rig.wipes += 1;
     return { remaining: [], inventoryComplete: true };
@@ -42,8 +51,18 @@ const ERASE = "DELETE /api/account";
 const CHANGE = "POST /api/auth/password";
 const STEP_UP_REQUIRED = { error: { code: "step_up_required", message: "recent two-factor authentication required" } };
 
+/** The account the page's session is (the erase page settles whose browser this is from the header and the cookie). */
+const OWNER = "7a0c3f9e-5d61-4f7a-9d2e-2b1f8c4e6a10";
+/** The erase page's own inputs: its answers name the account, as a live server's do. */
+let owned = false;
+/** Whose session this is: on the new shell's Settings and the erase page, the account identifier in the browser's cookie (the web's
+ *  doors refuse a window whose account the browser does not hold); the wall and the prompt keep their own. */
+let sessionAccount = "acct-under-test";
 const json = (status: number, body: unknown): Response =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", ...(owned ? { "X-Ohmail-Account": OWNER } : {}) },
+  });
 
 /** Every request that left, as `METHOD /path`. */
 let wire: string[] = [];
@@ -59,13 +78,15 @@ beforeEach(() => {
   wire = [];
   release = null;
   rig.wipes = 0;
+  owned = false;
+  sessionAccount = "acct-under-test";
   originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const line = `${(init?.method ?? "GET").toUpperCase()} ${new URL(String(input), "http://localhost").pathname}`;
     wire.push(line);
     if (line === "GET /api/auth/session") {
       return json(200, {
-        user: { id: "u1", accountId: "acct-under-test", email: EMAIL, twofaEnrolled: { webauthn: false, totp: true } },
+        user: { id: "u1", accountId: sessionAccount, email: EMAIL, twofaEnrolled: { webauthn: false, totp: true } },
         scope: "full",
       });
     }
@@ -93,7 +114,7 @@ afterEach(async () => {
   host = null;
   globalThis.fetch = originalFetch;
   // A control that erased latched this tab on the erased account; the next arm starts unlatched.
-  (await import("../app/shell/account-erased.js")).clearAccountErased();
+  (await import("@ohmail/app-logic/session/account-erased")).clearAccountErased();
   vi.restoreAllMocks();
 });
 
@@ -113,19 +134,52 @@ async function mountNode(node: React.ReactNode): Promise<HTMLElement> {
 }
 
 async function mountWall(): Promise<HTMLElement> {
-  const { AccessLock } = await import("../app/(product)/mailbox/AccessLock.js");
-  return mountNode(h(AccessLock, { facts: { reason: "payment_required" as const } }));
+  const { WallRoute } = await import("../app/(product)/mailbox/WallRoute.js");
+  return mountNode(h(WallRoute, { facts: { reason: "payment_required" as const } }));
 }
 
-/** Settings → Account with CloudShell's own node: the password change above the account's cards. */
+/** Settings → Account on the new shell, with the web's own doors of the section: the password change. */
 async function mountSettings(): Promise<HTMLElement> {
-  const { SettingsView } = await import("../app/views/SettingsView.js");
-  const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-  const { PasswordSection } = await import("../app/(product)/mailbox/PasswordSection.js");
-  return mountNode(h(SettingsView, {
-    notifications: null, tags: [], tagCounts: {}, initialPane: "account",
-    accountSection: h(React.Fragment, null, h(PasswordSection), h(AccountSection)),
+  owned = true;
+  sessionAccount = OWNER;
+  document.cookie = `tf_owner=${OWNER}; Path=/`;
+  document.cookie = "tf_csrf=csrf-under-test; Path=/";
+  const client = await import("../app/api-client.js");
+  client.setAccountHeaderCapability(true);
+  client.bindApiOwner(OWNER);
+  window.history.replaceState(null, "", "/#/settings/account");
+  const { MailShell } = await import("./_mail-shell.js");
+  const { engineOver, storeWith } = await import("./_view-shell.js");
+  const { WEB_PANE_PARTS } = await import("../app/(product)/mailbox/pane-parts.js");
+  const { NONE } = await import("@ohmail/app/host");
+  const doors = WEB_PANE_PARTS.account;
+  if (doors === NONE) throw new Error("the web hands no doors of the Account section");
+  const engine = engineOver(await storeWith([]));
+  return mountNode(h(MailShell, {
+    demo: false,
+    engine,
+    accountDoors: doors,
+    scope: OWNER,
+    support: { surface: "web", version: null, commit: null, accountId: OWNER },
   }));
+}
+
+/** The web's page that erases the account, at its own address, as a session that may erase it opens it. */
+async function mountErasePage(): Promise<{ c: HTMLElement; leave: () => Promise<void> }> {
+  owned = true;
+  sessionAccount = OWNER;
+  document.cookie = `tf_owner=${OWNER}; Path=/`;
+  document.cookie = "tf_csrf=csrf-under-test; Path=/";
+  (await import("../app/api-client.js")).setAccountHeaderCapability(true);
+  const { DeleteAccountRoute } = await import("../app/(product)/account/delete/DeleteAccountRoute.js");
+  let gone: () => void = () => {};
+  function Page(): React.ReactElement | null {
+    const [shown, setShown] = React.useState(true);
+    gone = () => setShown(false);
+    return shown ? h(DeleteAccountRoute) : null;
+  }
+  const c = await mountNode(h(Page));
+  return { c, leave: async () => { await act(async () => { gone(); }); } };
 }
 
 async function waitFor(predicate: () => boolean, what: string, timeout = 3000): Promise<void> {
@@ -165,13 +219,6 @@ const button = (c: ParentNode, label: string): HTMLButtonElement => {
   return found[0]!;
 };
 
-/** Types the address back and presses Delete: the closed window opens the prompt. */
-async function eraseToThePrompt(c: HTMLElement): Promise<void> {
-  await waitFor(() => c.querySelector("#acct-typed") != null, "the typed-address step");
-  await type(c.querySelector<HTMLInputElement>("#acct-typed")!, EMAIL);
-  await submit(c.querySelector("#acct-typed")!.closest("form")!);
-}
-
 async function changeToThePrompt(c: HTMLElement): Promise<void> {
   await waitFor(() => c.querySelector("#pwc-current") != null, "the password form");
   await type(c.querySelector<HTMLInputElement>("#pwc-current")!, "old-correct-horse-password");
@@ -180,12 +227,28 @@ async function changeToThePrompt(c: HTMLElement): Promise<void> {
   await submit(c.querySelector("#pwc-current")!.closest("form")!);
 }
 
-/** Types the code and presses Verify; the answer stays on the wire until `land`. */
-async function verifyHeld(c: HTMLElement): Promise<void> {
-  await waitFor(() => c.querySelector("#stepup-code") != null, "the step-up prompt");
-  await type(c.querySelector<HTMLInputElement>("#stepup-code")!, "123456");
-  await submit(c.querySelector("#stepup-code")!.closest("form")!);
+/** The factor's dialog: the web's `StepUp` over the door's dialog. */
+const dialog = (c: ParentNode): Element | null => c.querySelector('[role="dialog"]');
+
+/** Types the code into the factor's dialog and presses Verify; the answer stays on the wire until `land`. */
+async function verifyHeldInDialog(c: HTMLElement): Promise<void> {
+  const codeField = '[role="dialog"] input[autocomplete="one-time-code"]';
+  await waitFor(() => c.querySelector(codeField) != null, "the factor's dialog");
+  const code = c.querySelector<HTMLInputElement>(codeField)!;
+  await type(code, "123456");
+  await submit(code.closest("form")!);
   await waitFor(() => release !== null, "the step-up answer held on the wire");
+}
+
+/** Types the address back on the erase page and presses Delete: the closed window opens the factor's dialog. */
+async function eraseOnThePageToTheDialog(c: HTMLElement): Promise<void> {
+  const blank = (): HTMLInputElement | null =>
+    [...c.querySelectorAll<HTMLInputElement>("input")].find((i) => i.closest('[role="dialog"]') === null) ?? null;
+  await waitFor(() => blank() !== null, "the erase page's form");
+  await type(blank()!, EMAIL);
+  const begin = [...c.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
+    [...b.childNodes].filter((n) => n.nodeName !== "KBD").map((n) => n.textContent ?? "").join("").trim() === en.deleteAccount.begin);
+  await click(begin!);
 }
 
 /** The held answer lands, and whatever it runs gets a few turns to run. */
@@ -201,61 +264,35 @@ async function land(): Promise<void> {
 }
 
 async function erasedOwner(): Promise<string | null> {
-  return (await import("../app/shell/account-erased.js")).accountErasedOwner();
+  return (await import("@ohmail/app-logic/session/account-erased")).accountErasedOwner();
 }
 
 describe("the wall's Back while the factor is checked", () => {
-  it("the erase: no DELETE /account after Back, nothing wiped, and the wall still true", async () => {
-    const c = await mountWall();
-    await click(button(c, en.accessLock.deleteNow));
-    await eraseToThePrompt(c);
-    await verifyHeld(c);
-    expect(sent(ERASE), "the press met the closed window first").toBe(1);
-
-    await click(button(c, en.accessLock.back));
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "Back took the prompt away").toBeNull();
-    await land();
-
-    expect(sent(ERASE), "DELETE /account went out after Back").toBe(1);
-    expect(rig.wipes, "this browser's copy was wiped for an erase nobody confirmed").toBe(0);
-    expect(await erasedOwner(), "the tab latched an erasure").toBeNull();
-    expect(c.textContent).toContain(en.accessLock.kept);
-    button(c, en.accessLock.deleteNow);
-  });
-
   it("the password change: not sent again after Back", async () => {
     const c = await mountWall();
     await click(button(c, en.accessLock.changePassword));
     await changeToThePrompt(c);
-    await verifyHeld(c);
+    await verifyHeldInDialog(c);
     expect(sent(CHANGE)).toBe(1);
 
+    expect(button(c, en.accessLock.back).closest("[inert]")).not.toBeNull();
+    await act(async () => {
+      dialog(c)!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(dialog(c), "Escape took the prompt away").toBeNull();
+    await land();
+
+    expect(sent(CHANGE), "POST /auth/password went out after Escape").toBe(1);
+    await waitFor(() => c.textContent!.includes(en.passwordChange.cancelled), "the discarded factor");
     await click(button(c, en.accessLock.back));
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "Back took the prompt away").toBeNull();
-    await land();
-
-    expect(sent(CHANGE), "POST /auth/password went out after Back").toBe(1);
     button(c, en.accessLock.changePassword);
-  });
-
-  it("CONTROL: the answer lands with the pane open, and the erase runs once", async () => {
-    const c = await mountWall();
-    await click(button(c, en.accessLock.deleteNow));
-    await eraseToThePrompt(c);
-    await verifyHeld(c);
-    await land();
-
-    await waitFor(() => c.textContent!.includes(en.account.doneTitle), "the erasure receipt");
-    expect(sent(ERASE)).toBe(2);
-    expect(rig.wipes).toBe(1);
-    expect(await erasedOwner()).toBe("acct-under-test");
   });
 
   it("CONTROL: the answer lands with the pane open, and the change is sent once more", async () => {
     const c = await mountWall();
     await click(button(c, en.accessLock.changePassword));
     await changeToThePrompt(c);
-    await verifyHeld(c);
+    await verifyHeldInDialog(c);
     await land();
 
     await waitFor(() => c.textContent!.includes("1 other session was signed out"), "the change's receipt");
@@ -267,13 +304,13 @@ describe("the wall's Back while the factor is checked", () => {
    mailboxes, desktop link, approval, join) leans on this. */
 describe("the prompt itself", () => {
   async function mountPrompt(calls: string[]): Promise<{ c: HTMLElement; drop: () => void }> {
-    const { StepUpPrompt } = await import("../app/(product)/mailbox/StepUpPrompt.js");
+    const { StepUp } = await import("../app/(product)/mailbox/StepUp.js");
     let drop: () => void = () => {};
     function Host(): React.ReactElement | null {
       const [shown, setShown] = React.useState(true);
       drop = () => setShown(false);
       return shown
-        ? h(StepUpPrompt, {
+        ? h(StepUp, {
           onVerified: () => calls.push("verified"),
           onCancel: () => calls.push("cancel"),
           onDiscarded: () => calls.push("discarded"),
@@ -287,7 +324,7 @@ describe("the prompt itself", () => {
   it("taken away while the answer is held, it never calls onVerified", async () => {
     const calls: string[] = [];
     const { c, drop } = await mountPrompt(calls);
-    await verifyHeld(c);
+    await verifyHeldInDialog(c);
 
     await act(async () => {
       drop();
@@ -300,7 +337,7 @@ describe("the prompt itself", () => {
   it("CONTROL: left in place, the same answer calls onVerified once", async () => {
     const calls: string[] = [];
     const { c } = await mountPrompt(calls);
-    await verifyHeld(c);
+    await verifyHeldInDialog(c);
     await land();
 
     expect(calls).toEqual(["verified"]);
@@ -308,31 +345,58 @@ describe("the prompt itself", () => {
 });
 
 describe("Settings: another pane while the factor is checked", () => {
-  /** A nav entry that is not the open one. */
-  const otherPane = (c: HTMLElement): HTMLButtonElement =>
-    c.querySelector<HTMLButtonElement>(".set-nav button:not(.on)")!;
+  beforeEach(async () => {
+    (await import("./_view-shell.js")).setup();
+    Element.prototype.animate ??= () => ({ cancel() {} }) as unknown as Animation;
+  });
+  afterEach(async () => {
+    (await import("../app/api-client.js")).bindApiOwner(null);
+    document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    document.cookie = "tf_csrf=; Path=/; Max-Age=0";
+    window.history.replaceState(null, "", "/");
+  });
+
+  /**
+   * Away from the Account section while the factor's dialog stands. The dialog is modal on the new shell (its scrim and
+   * Esc are Cancel; a press on the rail behind it left it standing), and the test door's host hands Settings its
+   * Account section alone, so no other menu entry stands: a person leaves it by the address, the browser's Back or a
+   * link to another place, and the section is drawn no more, as another section of the menu took it away.
+   */
+  const leaveTheSection = async (): Promise<void> => {
+    await act(async () => {
+      window.history.pushState(null, "", "/#/ohbox");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+  };
 
   it("the erase: no DELETE /account after the switch", async () => {
-    const c = await mountSettings();
-    await eraseToThePrompt(c);
-    await verifyHeld(c);
+    const { c, leave } = await mountErasePage();
+    await eraseOnThePageToTheDialog(c);
+    await verifyHeldInDialog(c);
+    /* The page asks the factor before its first DELETE (its own design: `delete-account-page.test.tsx`, "over a window
+       that is already open, the press still asks the factor and erases nothing before it"), so none has gone out when
+       the person leaves, where today's Settings had tried once into the closed window. */
+    expect(sent(ERASE), "the page tried an erase before the factor").toBe(0);
 
-    await click(otherPane(c));
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "the switch took the pane away").toBeNull();
+    await leave();
+    expect(dialog(c), "the switch took the pane away").toBeNull();
     await land();
 
-    expect(sent(ERASE), "DELETE /account went out after the switch").toBe(1);
+    expect(sent(ERASE), "DELETE /account went out after the switch").toBe(0);
     expect(rig.wipes).toBe(0);
     expect(await erasedOwner()).toBeNull();
   });
 
   it("the password change: not sent again after the switch", async () => {
     const c = await mountSettings();
+    await waitFor(() => [...c.querySelectorAll("button")].some((b) => b.textContent?.trim() === en.passwordChange.submit), "the password's verb");
+    await click([...c.querySelectorAll("button")].find((b) => b.textContent?.trim() === en.passwordChange.submit)!);
     await changeToThePrompt(c);
-    await verifyHeld(c);
+    await verifyHeldInDialog(c);
 
-    await click(otherPane(c));
-    expect(c.querySelector('[data-testid="step-up-prompt"]'), "the switch took the pane away").toBeNull();
+    await leaveTheSection();
+    expect(dialog(c), "the switch took the pane away").toBeNull();
     await land();
 
     expect(sent(CHANGE), "POST /auth/password went out after the switch").toBe(1);

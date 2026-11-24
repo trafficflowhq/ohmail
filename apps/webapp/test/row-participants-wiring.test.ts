@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { shellFrameOf, shellFramePaths } from "./source-anchor.js";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { sliceOfDeclaration } from "./source-anchor.js";
 
 /**
  * THE CIRCLES ARE AN APP-WIDE ROW LANGUAGE, NOT AN OHBOX FEATURE.
@@ -23,12 +25,31 @@ import { shellFrameOf, shellFramePaths } from "./source-anchor.js";
  * replace the one face the row exists to show.
  */
 
-const at = (p: string) => fileURLToPath(new URL(`../app/${p}`, import.meta.url));
-const read = (p: string) => readFileSync(at(p), "utf8");
+const repo = (p: string) => fileURLToPath(new URL(`../../../${p}`, import.meta.url));
 
-/** Every list surface that renders a mail row, and therefore draws thread circles. */
+/** The new tree's models and seats: where a place's rows are read from the mirror. */
+const NEW_TREE = {
+  index: repo("packages/app-logic/src/ohbox/live-mirror.ts"),
+  files(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (/\.tsx?$/.test(entry.name)) out.push(full);
+      }
+    };
+    walk(repo("packages/app-logic/src"));
+    walk(repo("packages/app/src"));
+    return out;
+  },
+};
+
+/**
+ * The compatibility views still pass their participants input. The mounted lists are checked against their
+ * frame registration and the row each registration draws.
+ */
 const MAIL_LISTS = [
-  "OhboxView",
   "ReadsView",
   "ReceiptsView",
   "HistoryView",
@@ -36,36 +57,64 @@ const MAIL_LISTS = [
   "TriageView",
 ] as const;
 
+const MOUNTED_LISTS = [
+  ["news", "StreamList", "stream/StreamList.tsx"],
+  ["receipts", "StreamList", "stream/StreamList.tsx"],
+  ["history", "HistoryList", "history/HistoryList.tsx", "<LetterRows"],
+  ["tags", "TagsList", "tags/TagsList.tsx", "<LetterRows"],
+  ["piles", "PilesList", "piles/PilesList.tsx"],
+  ["ohbox", "OhboxList", "ohbox/OhboxList.tsx", "<OhboxGroup"],
+] as const;
+const MOUNTED_ROWS = [
+  ["stream/StreamList.tsx", "ItemRow", "rowPeople(m, recipient ?? who)", "rowPeople={rowPeople}"],
+  ["piles/PilesList.tsx", "PileItem", "rowPeople(m, who)", "rowPeople={rowPeople}"],
+  ["place-list/LetterRows.tsx", "LetterRows", "rowPeople(m,", "useRowPeople()"],
+] as const;
+const app = (file: string) => readFileSync(repo(`packages/app/src/${file}`), "utf8");
+
 describe("thread circles are wired into every mail list", () => {
   it.each(MAIL_LISTS)("%s takes the shell's participants binding and passes it on its row", (view) => {
-    const src = read(`views/${view}.tsx`);
-    // (a) the prop exists, with the shape the shell binds…
-    expect(src).toContain(
-      "threadParticipants?: (threadId: string) => { initials: string; hue: number }[];",
-    );
-    // …and is destructured rather than left on an unread props object.
-    expect(src).toMatch(/^\s*threadParticipants,$/m);
-    // (b) and a row is actually given participants. `MessageRow` decides whether to draw them.
-    expect(src).toMatch(/participants=\{/);
+    if (view === "TriageView") {
+      expect(app("piles/place.ts")).toMatch(/\bList: PilesList\b/);
+      const piles = app("piles/PilesList.tsx");
+      expect(piles).toContain("const rowPeople = useRowPeople()");
+      expect(piles).toMatch(/<PileItem[\s\S]*?rowPeople=\{rowPeople\}/);
+      expect(sliceOfDeclaration(piles, "PileItem")).toContain("rowPeople(m, who)");
+      return;
+    }
+    if (view === "TagView" || view === "HistoryView") {
+      const [place, list, file] = view === "TagView" ? MOUNTED_LISTS[3] : MOUNTED_LISTS[2];
+      expect(app(`${place}/place.ts`)).toMatch(new RegExp(`\\bList: ${list}\\b`));
+      expect(app(file)).toMatch(/<LetterRows\b/);
+      const rows = app("place-list/LetterRows.tsx");
+      expect(rows).toContain("const rowPeople = useRowPeople()");
+      expect(sliceOfDeclaration(rows, "LetterRows")).toMatch(/<Row[\s\S]*?\{\.\.\.rowPeople\(m,/);
+      return;
+    }
+    const place = view === "ReadsView" ? "news" : "receipts";
+    expect(app(`${place}/place.ts`)).toMatch(/\bList: StreamList\b/);
+    const stream = app("stream/StreamList.tsx");
+    expect(stream).toContain("const rowPeople = useRowPeople()");
+    expect(stream).toMatch(/<ItemRow[\s\S]*?rowPeople=\{rowPeople\}/);
+    expect(sliceOfDeclaration(stream, "ItemRow")).toMatch(/<Row[\s\S]*?\{\.\.\.rowPeople\(m, recipient \?\? who\)\}/);
   });
 
   it("the shell hands its indexed binding to every one of them", () => {
-    const shell = read("shell/AppShell.tsx");
-    for (const view of MAIL_LISTS) {
-      const open = shell.indexOf(`<${view}`);
-      expect(open, `${view} is not rendered by the shell`).toBeGreaterThan(-1);
-      /* The prop has to be inside THIS element, not merely somewhere in a file thousands of lines long —
-         and getting that bound wrong is how this guard would pass over a view mounted without
-         it (measured: a mis-indented terminator ran the slice on into the NEXT view's props
-         and found the string there). The opening tag ends at the first `/>` sitting at the
-         element's own indentation, so the bound is derived from the tag, never hard-coded. */
-      const indent = " ".repeat(open - shell.lastIndexOf("\n", open) - 1);
-      const close = shell.indexOf(`\n${indent}/>`, open);
-      expect(close, `${view}'s opening tag does not terminate at its own indentation`).toBeGreaterThan(open);
-      expect(shell.slice(open, close), `${view} is mounted without threadParticipants`).toContain(
-        "threadParticipants={participantsOf}",
-      );
+    for (const [place, list, file, child] of MOUNTED_LISTS) {
+      expect(app(`${place}/place.ts`), `${place} no longer mounts ${list}`).toMatch(new RegExp(`\\bList: ${list}\\b`));
+      if (child) expect(app(file)).toContain(child);
     }
+    for (const [file, declaration, people, bind] of MOUNTED_ROWS) {
+      const source = app(file);
+      expect(source).toContain("const rowPeople = useRowPeople()");
+      expect(source).toContain(bind);
+      expect(sliceOfDeclaration(source, declaration)).toContain(people);
+    }
+    expect(app("ohbox/OhboxGroup.tsx")).toContain("model.groupPeople(row)");
+    expect(app("ohbox/OhboxGroup.tsx")).toContain("people={people}");
+    expect(app("place-list/people.ts")).toContain("useOtherThreadPeople()");
+    const presented = readFileSync(repo("packages/app-logic/src/reading/presented-mirror.ts"), "utf8");
+    expect(sliceOfDeclaration(presented, "readThreadIndex")).toContain("threadParticipantsIndex(presented)");
   });
 
   /**
@@ -75,11 +124,14 @@ describe("thread circles are wired into every mail list", () => {
    * creeping back into it.
    */
   it("the shell reads a per-version index, never the per-thread scan", () => {
-    // The index is in whichever shell frame declares it (`shell-derivations.ts` since ARCH-022);
-    // the scan is refused in EVERY frame, so it cannot creep back through the file that moved.
-    expect(shellFrameOf("participantIndex").source).toContain("threadParticipantsIndex(presented)");
-    for (const frame of shellFramePaths(process.cwd())) {
-      expect(readFileSync(frame, "utf8"), `${frame} scans per thread again`)
+    /* RE-POINTED TO THE NEW SHELL (RULING-NEW-SHELL-FIRST D (3)): a seat's rows read the conversation's people from
+       its live model, which indexes them once a mirror version (`useThreadFacts` of `ohbox/live-mirror.ts`, the
+       model the later list seats copy); the scan is refused in EVERY file of the new tree's models and seats, so it
+       cannot creep back through a seat that copies the model. */
+    expect(sliceOfDeclaration(readFileSync(NEW_TREE.index, "utf8"), "useThreadFacts"))
+      .toContain("threadParticipantsIndex(presented)");
+    for (const file of NEW_TREE.files()) {
+      expect(readFileSync(file, "utf8"), `${file} scans per thread again`)
         .not.toContain("threadParticipants(presented");
     }
   });

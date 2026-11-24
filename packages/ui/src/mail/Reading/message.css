@@ -1,0 +1,167 @@
+/* A message is a sheet. Unread, the sheet is tinted and what stands on it takes the tint as its ground. */
+@layer oh {
+  .oh-message {
+    --oh-message-lh-subject: 1.2;
+    --oh-message-tint: color-mix(in srgb, var(--hot) 16%, var(--sheet-new));
+    --oh-message-top: 28px;
+    --oh-message-new:
+      0 0 0 var(--ringw) var(--new-ring), inset var(--new-bar) 0 0 0 var(--hot),
+      inset 0 0 0 var(--oh-hair) var(--oh-message-tint);
+
+    box-sizing: border-box;
+    min-width: 0;
+    padding: var(--s5) var(--sheet-pad) var(--s6);
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--ring);
+    transition:
+      background-color var(--d-tint) var(--e-std),
+      box-shadow var(--d-tint) var(--e-std);
+  }
+
+  /* What stands on an unread sheet takes the tint as its ground, and the sheet's own colour where it is raised. */
+  .oh-message[data-unread] {
+    --oh-under: var(--sheet-new);
+    --oh-soft: var(--sheet);
+    --oh-tag-ground: var(--sheet);
+    --oh-messagehead-over: var(--sheet);
+    --oh-file-over: var(--soft-sheet);
+    --oh-file-kind: var(--sheet-new);
+    --oh-file-way: var(--soft-sheet);
+    --oh-columns-ground: var(--sheet);
+
+    background: var(--sheet-new);
+    box-shadow: var(--oh-message-new);
+  }
+
+  .oh-message:not([data-unread]) {
+    --oh-under: var(--sheet);
+    --oh-soft: var(--soft-sheet);
+  }
+
+  .oh-message-line {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-bottom: var(--s3);
+    color: var(--ink2);
+    font-weight: var(--w-mid);
+  }
+
+  .oh-message-subject {
+    max-width: var(--measure);
+    margin-bottom: var(--s3);
+    font-size: var(--t-title);
+    line-height: var(--oh-message-lh-subject);
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+  }
+
+  .oh-message-heading[data-preview] {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s4);
+  }
+
+  .oh-message-heading[data-preview] > .oh-message-amount {
+    order: 1;
+    margin-inline-start: auto;
+  }
+
+  .oh-message-subject[data-compact] {
+    font-family: var(--f-text);
+    font-size: var(--subject-preview-heading);
+    font-weight: var(--w-bold);
+    letter-spacing: normal;
+  }
+
+  .oh-message-amount {
+    margin-bottom: var(--s2);
+    font-size: var(--t-title);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--oh-message-lh-subject);
+    white-space: nowrap;
+  }
+
+  .oh-message-body {
+    max-width: var(--measure);
+    font-size: var(--t-read);
+    line-height: var(--lh-read);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    text-wrap: pretty;
+  }
+
+  /* In a stream a letter is cut after a few lines until it is opened, its last line fading. A letter that fits is
+     whole. Its control stands in the middle of the sheet's foot; the arrow turns while it stands open. */
+  /* The cut is the text's own box: as wide as the text's measure, and its fade is counted in the text's size. */
+  .oh-message-clip {
+    --oh-message-clip-lines: 6;
+    --oh-message-clip-fade: calc(2.6 * var(--t-read));
+
+    overflow: hidden;
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .oh-message-clip[data-shut] {
+    max-height: calc(var(--oh-message-clip-lines) * var(--lh-read) * var(--t-read));
+    mask-image: linear-gradient(to bottom, var(--ink) calc(100% - var(--oh-message-clip-fade)), transparent);
+  }
+
+  .oh-message-clip[data-shut][data-pending] {
+    min-block-size: min(
+      var(--stream-preview-reserve),
+      calc((var(--oh-message-clip-lines) - 1) * var(--lh-read) * var(--t-read))
+    );
+  }
+
+  .oh-message-clip[data-shut][data-fits] {
+    mask-image: none;
+  }
+
+  .oh-message-more {
+    --oh-message-more-pull: calc(var(--s3) * -1);
+
+    display: flex;
+    justify-content: center;
+    margin: var(--s3) 0 var(--oh-message-more-pull);
+  }
+
+  .oh-message-more[data-open] {
+    margin-top: var(--s5);
+  }
+
+  /* Expand and Collapse: the word a step from its sign, which is drawn whole and turns when the letter opens. */
+  .oh-message-more > .oh-button[data-size="s"] {
+    --oh-button-pad: 0 var(--s3) 0 var(--s4);
+
+    gap: var(--s1);
+  }
+
+  .oh-message-more .oh-button-mark {
+    margin-right: 0;
+    opacity: 1;
+    transition: transform var(--d-pop) var(--e-std);
+  }
+
+  .oh-message-more > .oh-button[aria-expanded="true"] > .oh-button-mark {
+    transform: rotate(180deg);
+  }
+
+  :root[data-face="ohmarchy"] .oh-message {
+    --oh-message-new: 0 0 0 var(--ringw) var(--new-ring), inset var(--new-bar) 0 0 0 var(--hot);
+  }
+
+  :root[data-face="ohmarchy"][data-touch="0"] .oh-message {
+    padding-top: var(--oh-message-top);
+  }
+}
+
+[data-stream-item] .oh-message {
+  transition: box-shadow var(--d-pop) var(--e-std);
+}
+
+[data-stream-item][data-held] .oh-message {
+  box-shadow: var(--float);
+}

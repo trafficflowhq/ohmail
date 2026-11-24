@@ -7,11 +7,11 @@ import { StaticKeyProvider, createLogger, type Logger } from "@trafficflow/core"
 import { startWorker, type RunningWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { threadJoinHealPass } from "../src/thread-join-heal.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { threadJoinHealPass } from "@ohmail/organizer/thread-join-heal";
 
-vi.mock("../src/thread-join-heal.js", async (load) => {
-  const real = await load<typeof import("../src/thread-join-heal.js")>();
+vi.mock("@ohmail/organizer/thread-join-heal", async (load) => {
+  const real = await load<typeof import("@ohmail/organizer/thread-join-heal")>();
   return { ...real, threadJoinHealPass: vi.fn(real.threadJoinHealPass) };
 });
 
@@ -32,7 +32,7 @@ async function seedMailbox(db: Db, accountId = randomUUID()): Promise<{ accountI
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };

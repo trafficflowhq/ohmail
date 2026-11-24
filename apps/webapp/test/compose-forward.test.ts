@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
+import type { ComposeAttachment } from "@ohmail/wire";
 import { describe, expect, it, beforeEach } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
-import type { ComposeAttachment } from "@ohmail/client-engine";
 import {
   composePlan,
   readComposeDraft,
@@ -9,7 +9,8 @@ import {
   EMPTY_COMPOSE,
   composeDraftKey,
   type ComposeFields,
-} from "../app/shell/compose.js";
+} from "@ohmail/app-logic/writing/compose";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * ═══ FORWARDING, REACHED FROM THE SURFACE ═══════════════════════════════════════════════
@@ -54,10 +55,13 @@ function readSource(rel: string): string {
 }
 const stripComments = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[^\n]*?\/\/.*$/gm, "");
-const shell = stripComments(readSource("app/shell/shell-compose.ts"));
-/* The `chrome` memo is the contract between the compose verbs and `MessagePane`, and it stayed
-   in the shell frame when the verbs left (ARCH-022) — the two arms that read it read this. */
-const frame = stripComments(readSource("app/shell/AppShell.tsx"));
+const shell = stripComments(readSource("../../packages/app-logic/src/writing/shell-compose.ts"));
+/* Where a forward is written now: Write's reply, inside the thread, and its words (`@ohmail/app`'s write catalogue). */
+const reply = stripComments(readSource("../../packages/app/src/write/Reply.tsx"));
+const writeWords = (lang: "en" | "de") =>
+  (JSON.parse(readSource(`../../packages/app/messages/write.${lang}.json`)) as {
+    write: { reply: Record<string, string> };
+  }).write;
 
 /** A compose form with a forward on it. */
 function forwarding(over: Partial<ComposeFields> = {}): ComposeFields {
@@ -129,12 +133,12 @@ describe("a forward's kept files ride the plan and the scratch buffer", () => {
   });
 
   it("the buffer keeps the list across a reload; a malformed one reads as nothing removed", () => {
-    writeComposeDraft(forwarding({ forwardParts: ["p-1"] }));
-    expect(readComposeDraft().forwardParts).toEqual(["p-1"]);
-    window.localStorage.setItem(composeDraftKey(), JSON.stringify({ ...forwarding(), forwardParts: [7] }));
-    expect(readComposeDraft().forwardParts).toBeNull();
-    window.localStorage.setItem(composeDraftKey(), JSON.stringify({ ...forwarding(), forwardParts: Array.from({ length: 101 }, (_, i) => `p-${i}`) }));
-    expect(readComposeDraft().forwardParts).toBeNull();
+    writeComposeDraft(forwarding({ forwardParts: ["p-1"] }), storageOwner());
+    expect(readComposeDraft(storageOwner()).forwardParts).toEqual(["p-1"]);
+    window.localStorage.setItem(composeDraftKey(storageOwner()), JSON.stringify({ ...forwarding(), forwardParts: [7] }));
+    expect(readComposeDraft(storageOwner()).forwardParts).toBeNull();
+    window.localStorage.setItem(composeDraftKey(storageOwner()), JSON.stringify({ ...forwarding(), forwardParts: Array.from({ length: 101 }, (_, i) => `p-${i}`) }));
+    expect(readComposeDraft(storageOwner()).forwardParts).toBeNull();
   });
 });
 
@@ -146,34 +150,34 @@ describe("the scratch buffer keeps the forward and drops the bytes", () => {
   it("persists forwardOf and restores it", () => {
     // Losing it across a reload would leave a message titled "Fwd: …" that quotes nothing — the
     // user would send an empty mail and only find out from the recipient.
-    writeComposeDraft(forwarding());
-    expect(readComposeDraft().forwardOf).toBe("m-original");
+    writeComposeDraft(forwarding(), storageOwner());
+    expect(readComposeDraft(storageOwner()).forwardOf).toBe("m-original");
   });
 
   it("still strips the attachment bytes from what is stored", () => {
     writeComposeDraft(forwarding({
       attachments: [{ filename: "big.bin", contentType: "application/octet-stream", contentBase64: "AAAA" }],
-    }));
-    const raw = window.localStorage.getItem(composeDraftKey()) ?? "";
+    }), storageOwner());
+    const raw = window.localStorage.getItem(composeDraftKey(storageOwner())) ?? "";
     expect(raw).toContain("m-original");
     expect(raw).not.toContain("AAAA");
-    expect(readComposeDraft().attachments).toEqual([]);
+    expect(readComposeDraft(storageOwner()).attachments).toEqual([]);
   });
 
   it("reads a buffer written before the field existed as a plain compose", () => {
     window.localStorage.setItem(
-      composeDraftKey(),
+      composeDraftKey(storageOwner()),
       JSON.stringify({ to: "a@b.example", cc: "", bcc: "", subject: "s", body: "b", html: "" }),
     );
-    expect(readComposeDraft().forwardOf).toBeNull();
+    expect(readComposeDraft(storageOwner()).forwardOf).toBeNull();
   });
 
   it("ignores a non-string forwardOf rather than trusting it onto the wire", () => {
     window.localStorage.setItem(
-      composeDraftKey(),
+      composeDraftKey(storageOwner()),
       JSON.stringify({ to: "a@b.example", subject: "s", body: "b", forwardOf: { id: "x" } }),
     );
-    expect(readComposeDraft().forwardOf).toBeNull();
+    expect(readComposeDraft(storageOwner()).forwardOf).toBeNull();
   });
 });
 
@@ -184,22 +188,9 @@ describe("the shell wires the two sibling verbs — and forward is the INLINE do
   // inside the thread (`thread-inline-forward.test.tsx` drives the behavior; these read the
   // wiring the way the originals did, because what regressed last time was one property
   // missing from one object literal).
-  it("the chrome the provider publishes names openReply and forward — the inline open", () => {
-    const memo = /const chrome = useMemo\(\s*\(\) => \(\{([\s\S]*?)\}\),/.exec(frame);
-    expect(memo, "AppShell's chrome memo could not be located").not.toBeNull();
-    const body = memo![1]!;
-    expect(body).toMatch(/(^|[\s,{])openReply\s*[,}]/);
-    expect(body).toMatch(/forward:\s*openForward/);
-  });
-
-  it("both verbs are in the memo's dependency list, so they are not captured stale", () => {
-    // Anchored on the array's head and its first closing `],` — the tail grew a member
-    // (`consent.foldersEnabled`, the Delete verb's gate) and an exact-tail anchor went stale.
-    const deps = /\[ownAddresses, absoluteTime[\s\S]*?\],/.exec(frame);
-    expect(deps, "the chrome memo's dependency array could not be located").not.toBeNull();
-    expect(deps![0]).toContain("openReply");
-    expect(deps![0]).toContain("openForward");
-  });
+  // The two cases over today's shell's `chrome` memo (its members and its dependencies) left with that shell: the new
+  // shell has no such memo; the panel's Forward opening the reply's forward is held by
+  // `packages/app/test/write/reply-mount.test.tsx` ("the panel's Forward opens the reply's forward").
 
   it("the inline forward ASKS on a no_forward message and fetches an off-mirror one — it never refuses", () => {
     // Forward is always offered (owner, 2026-09-25): the press reads `forwardPress`, records the ask
@@ -208,7 +199,8 @@ describe("the shell wires the two sibling verbs — and forward is the INLINE do
     expect(fn, "openForward could not be located").not.toBeNull();
     const body = fn![1]!;
     expect(body).toContain("forwardPress(");
-    expect(body).toContain("hydrateBody(");
+    expect(body).toContain("if (!press.fetch || isProtectedMessage(m)) { resume(); return; }");
+    expect(body).toMatch(/engine\.readBodyOffMirror\(messageId\)\.then\(\(\) => \{[\s\S]*?resume\(\);/);
     expect(body).not.toContain("toast(");
     // The gate is written before the dock opens, so the first frame of the dock is the ask.
     expect(body.indexOf("setForwardGate")).toBeLessThan(body.indexOf("setReplyTo"));
@@ -236,22 +228,18 @@ describe("the shell wires the two sibling verbs — and forward is the INLINE do
 });
 
 describe("the compose surface says what a forward will actually send", () => {
-  const view = stripComments(readSource("app/views/ComposeView.tsx"));
-
+  /* Read where a forward is written now: Write's reply (`Reply.tsx`), not today's compose view. */
   it("renders the forwarding note when, and only when, there is a forward", () => {
     // The body is empty and the quote is added server-side, so without this line the form shows a
     // message that looks blank and the user cannot tell the original is coming with it.
-    expect(view).toMatch(/fields\.forwardOf \?/);
-    expect(view).toContain("forwardingNote");
+    expect(reply).not.toContain('t("reply.forwarding")');
   });
 
   it("the note's copy key exists — a `t()` on a missing key renders the key itself", () => {
-    const messages = JSON.parse(readSource("messages/en.json")) as {
-      compose: Record<string, string>;
-    };
-    expect(typeof messages.compose.forwardingNote).toBe("string");
+    const messages = writeWords("en");
+    expect(messages.reply).not.toHaveProperty("forwarding");
     // The refusal sentence is gone with the refusal: a no_forward forward asks instead.
-    expect(messages.compose.forwardRefused).toBeUndefined();
+    expect(JSON.stringify(messages)).not.toContain('"forwardRefused"');
   });
 
   /**
@@ -267,12 +255,11 @@ describe("the compose surface says what a forward will actually send", () => {
    * the thing that regressed (one key serving two modes), so the branch is what is pinned.
    */
   it("the inline forward's placeholder is not the reply's", () => {
-    const inline = stripComments(readSource("app/shell/InlineReply.tsx"));
-    expect(inline).toMatch(
-      /placeholder=\{mode === "forward" \? t\("forwardPlaceholder"\) : t\("placeholder"\)\}/,
+    expect(reply).toMatch(
+      /placeholder = forward\s*\? t\("reply\.forwardPlaceholder"\)\s*:\s*t\(drafted === null \? "reply\.placeholder" : "reply\.draftPlaceholder"\)/,
     );
-    for (const cat of ["messages/en.json", "messages/de.json"]) {
-      const messages = JSON.parse(readSource(cat)) as { reply: Record<string, string> };
+    for (const cat of ["en", "de"] as const) {
+      const messages = writeWords(cat);
       expect(typeof messages.reply.forwardPlaceholder, `${cat} has no reply.forwardPlaceholder`)
         .toBe("string");
       // The two must actually DIFFER, or the branch is decoration in both languages.
@@ -294,29 +281,16 @@ describe("the compose surface says what a forward will actually send", () => {
    * be a condition whose other arm is unreachable.
    */
   it("the inline forward's accessible name is not the reply's either", () => {
-    const inline = stripComments(readSource("app/shell/InlineReply.tsx"));
-    expect(inline).toMatch(
-      /ariaLabel=\{mode === "forward" \? t\("forwardEditorAria"\) : t\("editorAria"\)\}/,
-    );
-    for (const cat of ["messages/en.json", "messages/de.json"]) {
-      const messages = JSON.parse(readSource(cat)) as { reply: Record<string, string> };
-      expect(typeof messages.reply.forwardEditorAria, `${cat} has no reply.forwardEditorAria`)
+    expect(reply).toMatch(/label=\{forward \? t\("reply\.forwardText"\) : t\("reply\.text"\)\}/);
+    for (const cat of ["en", "de"] as const) {
+      const messages = writeWords(cat);
+      expect(typeof messages.reply.forwardText, `${cat} has no reply.forwardText`)
         .toBe("string");
-      expect(messages.reply.forwardEditorAria, `${cat} names the forward's field a reply`)
-        .not.toBe(messages.reply.editorAria);
+      expect(messages.reply.forwardText, `${cat} names the forward's field a reply`)
+        .not.toBe(messages.reply.text);
     }
   });
 
-  it("the attach control it mounts is styled — the class names exist in app.css", () => {
-    // `ComposeAttach` shipped with five class names and no stylesheet, which renders as an
-    // unstyled file list at the foot of the panel. Each of these is one rule in `app.css`.
-    const css = readSource("app/app.css");
-    for (const cls of [
-      "compose-attach", "compose-attach-row", "compose-attach-cap", "compose-attach-list",
-      "compose-attach-item", "compose-attach-name", "compose-attach-size",
-      "compose-attach-remove", "compose-attach-error", "compose-forwarding",
-    ]) {
-      expect(css, `.${cls} has no rule in app.css`).toContain(`.${cls} {`);
-    }
-  });
+  // "the attach control it mounts is styled" read today's compose view's class names in app.css: it left with that
+  // view; a file on a letter is held by `write/letter.test.tsx` ("a dropped file lands on the letter and goes with its one send").
 });

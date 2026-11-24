@@ -1,0 +1,97 @@
+/* The way through a long list's time: a narrow rail of years and months at the list's right edge. What keeps it
+   takes no room of the rows' run and stays at the run's top; the list it holds ends where the rail starts. */
+@layer oh {
+  .oh-monthrail {
+    --oh-monthrail-w: var(--month-rail-touch-width);
+    --oh-monthrail-layer: 2;
+    --oh-monthrail-room: calc(var(--oh-monthrail-w) + var(--s2));
+  }
+
+  .oh-monthrail-keep {
+    position: sticky;
+    top: 0;
+    z-index: var(--oh-monthrail-layer);
+    height: 0;
+  }
+
+  .oh-monthrail-list {
+    margin-right: var(--oh-monthrail-room);
+  }
+
+  /* No step to take: the list stands as if alone, its two boxes unseen by the layout. */
+  .oh-monthrail[data-bare],
+  .oh-monthrail[data-bare] > .oh-monthrail-list {
+    display: contents;
+  }
+
+  .oh-monthrail-steps {
+    position: absolute;
+    top: var(--s1);
+    right: var(--s2);
+    box-sizing: border-box;
+    width: var(--oh-monthrail-w);
+    display: flex;
+    flex-direction: column;
+    gap: var(--month-rail-gap);
+    padding: var(--month-rail-padding);
+    border-radius: var(--r-row);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-ring-btn);
+  }
+
+  .oh-monthrail-step {
+    height: var(--month-rail-pointer-step);
+    border-radius: var(--r-pill);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    white-space: nowrap;
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+
+  .oh-monthrail-step[data-year] {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-monthrail-step:hover {
+    background: var(--hover-ground);
+  }
+
+  .oh-monthrail-step[aria-current="true"] {
+    background: var(--pick);
+    box-shadow: var(--oh-ring-pick);
+    color: var(--on-pick);
+    font-weight: var(--w-bold);
+  }
+
+  /* With a pointer the rail is narrower. */
+  :root[data-touch="0"] .oh-monthrail {
+    --oh-monthrail-w: var(--month-rail-pointer-width);
+  }
+
+  /* Under a finger a step is as tall as the smallest control a finger takes. */
+  :root[data-touch="1"] .oh-monthrail-step {
+    height: var(--h-s);
+  }
+
+  /* The row and the rail keep a little space between their edges. */
+  .oh-monthrail[data-spaced] {
+    --oh-monthrail-room: calc(var(--oh-monthrail-w) + var(--s3));
+  }
+
+  :root[data-touch="0"] .oh-monthrail[data-spaced] {
+    --month-rail-row-gap: calc((var(--s1) + var(--s2)) / 2);
+    --oh-monthrail-room: calc(var(--oh-monthrail-w) + var(--month-rail-row-gap));
+  }
+
+  :root[data-touch="0"] .oh-monthrail[data-spaced]:not([data-bare]) .oh-row-first {
+    gap: var(--month-rail-row-gap);
+  }
+
+  :root[data-device="phone"] .oh-monthrail[data-spaced] .oh-monthrail-steps {
+    top: var(--s2);
+  }
+}

@@ -13,6 +13,9 @@
  * seventh folder added tomorrow makes this red until the sentence names it.
  */
 import fs from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { FolderMap } from "../../../packages/app/src/mailboxes/first-run/Consent.js";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DESTINATIONS } from "@trafficflow/core/destinations";
@@ -24,6 +27,18 @@ const read = (lang: "en" | "de"): Record<string, Record<string, string>> =>
 const EN = read("en");
 const DE = read("de");
 const ob = (lang: "en" | "de"): Record<string, string> => (lang === "en" ? EN : DE).onboarding;
+const folderMap = (lang: "en" | "de"): string => {
+  const messages = lang === "en" ? EN : DE;
+  return renderToStaticMarkup(createElement(FolderMap, {
+    history: true,
+    say: (key) => {
+      const [namespace, name] = key.split(".");
+      const label = messages[namespace!]?.[name!];
+      expect(label, key).toBeDefined();
+      return label!;
+    },
+  }));
+};
 
 /**
  * What each organized destination is CALLED in each language.
@@ -54,7 +69,7 @@ describe("the consent sentence names every place mail can be put", () => {
     // pass over nothing at all.
     expect(DESTINATIONS.length).toBe(6);
     for (const lang of ["en", "de"] as const) {
-      const body = ob(lang).consentBody;
+      const body = folderMap(lang);
       const missing = DESTINATIONS.filter((d) => {
         const name = NAME_OF[d];
         expect(name, `no name recorded for ${d} — a destination was added`).toBeDefined();
@@ -84,7 +99,7 @@ describe("the consent sentence names every place mail can be put", () => {
    */
   it("names the folder as the mailbox will show it, in both languages", () => {
     for (const lang of ["en", "de"] as const) {
-      const body = ob(lang).consentBody;
+      const body = folderMap(lang);
       const missing = DESTINATIONS.filter((d) => d !== "INBOX" && !body.includes(d.split("/")[1]!));
       expect(
         missing,
@@ -103,15 +118,18 @@ describe("the consent sentence names every place mail can be put", () => {
       expect(list, `${lang}: the created-folders row names the Ohbox`).not.toContain(NAME_OF.INBOX![lang]);
       expect(created.filter((leaf) => !list.includes(leaf)), `${lang}: a created folder is missing`).toEqual([]);
     }
-    expect(ob("en").consentBody).toContain("The Ohbox is your Inbox");
-    expect(ob("de").consentBody).toContain("Die Ohbox ist deine Inbox");
+    for (const lang of ["en", "de"] as const) {
+      const map = folderMap(lang);
+      expect(map).toMatch(/>Inbox<[\s\S]*?data-sub=""[\s\S]*?>Ohbox</);
+      expect(map.match(/>Ohbox</g)).toHaveLength(1);
+    }
   });
 
   it("says the folders are ordinary IMAP folders other clients can see", () => {
     // The load-bearing half of the promise: these are real folders in the person's own mailbox,
     // not a private view, which is what makes leaving cost nothing.
-    expect(ob("en").consentBody).toMatch(/IMAP/);
-    expect(ob("de").consentBody).toMatch(/IMAP/);
+    expect(folderMap("en")).toMatch(/IMAP/);
+    expect(folderMap("de")).toMatch(/IMAP/);
   });
 });
 
@@ -168,13 +186,13 @@ describe("no rate is a literal — the number comes from the client's own measur
     expect(RATE_LITERAL.test("About 4 minutes left · 210" + " messages a minute")).toBe(true);
     expect(RATE_LITERAL.test("Noch etwa 4 Minuten · 210 Nachrichten pro Minute")).toBe(true);
     // …and that the shipped sentence, which uses a placeholder, is not caught by it.
-    expect(RATE_LITERAL.test(ob("en").eta)).toBe(false);
-    expect(RATE_LITERAL.test(ob("de").eta)).toBe(false);
+    expect(RATE_LITERAL.test(ob("en").etaRate)).toBe(false);
+    expect(RATE_LITERAL.test(ob("de").etaRate)).toBe(false);
   });
 
   it("the ETA sentence takes its rate as an argument rather than stating one", () => {
-    expect(ob("en").eta).toContain("{rate");
-    expect(ob("de").eta).toContain("{rate");
+    expect(ob("en").etaRate).toContain("{rate");
+    expect(ob("de").etaRate).toContain("{rate");
   });
 });
 

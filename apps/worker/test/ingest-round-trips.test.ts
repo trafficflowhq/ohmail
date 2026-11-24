@@ -4,15 +4,15 @@ import { randomUUID } from "node:crypto";
 import { accountStorage, mailboxes, messages, rules, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { runSyncCycle } from "../src/sync.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
 import { ingestRunRepository } from "../src/ingest-run.js";
 import { INGEST_RUN_BOUNDS } from "../src/config.js";
 import {
   INGEST_RUN_AT_CAP_STATEMENTS_CEILING, INGEST_RUN_STATEMENTS_CEILING, INGEST_RUN_TRANSACTIONS_CEILING,
   INGEST_STATEMENTS_CEILING, INGEST_TRANSACTIONS_CEILING,
 } from "../../../scripts/perf/ingest-cost-pin.mjs";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ═══ WHAT ONE INGESTED MESSAGE COSTS IN DATABASE ROUND TRIPS ═════════════════════════════

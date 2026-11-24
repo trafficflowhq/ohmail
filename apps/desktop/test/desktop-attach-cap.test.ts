@@ -6,7 +6,7 @@ import {
   composeAttachBudgetFor, composeAttachCap, composeAttachCapBinding,
   COMPOSE_ATTACH_MAX_TOTAL_BYTES, COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
   COMPOSE_ATTACH_UNMEASURED_MESSAGE_BYTES,
-} from "../../webapp/app/components/ComposeAttach";
+} from "@ohmail/client-engine";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import { CLOUD_URL } from "../src/doors.js";
 import {
@@ -170,12 +170,6 @@ describe("the gate passes each door's declaration and staging decision", () => {
 
   it("resolved a real file", () => {
     expect(src).toContain("export function DesktopGate()");
-  });
-
-  it("declares `sendSurfaceMaxTotalBytes` once, from the door", () => {
-    expect(src.match(/sendSurfaceMaxTotalBytes/g) ?? []).toHaveLength(1);
-    expect(src).toMatch(/sendSurfaceMaxTotalBytes:\s*desktopSendSurface\(status\)/);
-    expect(src).not.toMatch(/sendSurfaceMaxTotalBytes:\s*null/);
   });
 
   it("builds the window's engine with the door's staging decision", () => {

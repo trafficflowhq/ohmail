@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * ONE PIPELINE IMPLEMENTATION — the ruling this whole package exists to obey, asserted.
@@ -41,7 +42,7 @@ function sources(dir: string, into: string[] = []): string[] {
   return into;
 }
 
-const FILES = sources(SRC).map((p) => ({ path: p.slice(REPO.length + 1), text: readFileSync(p, "utf8") }));
+const FILES = sources(SRC).filter((p) => !isEnginePart(p)).map((p) => ({ path: p.slice(REPO.length + 1), text: readAsUnit(p) }));
 /**
  * Comments say what the code should do; only the code decides what it does — read through the
  * repo's one scanner. A block-first pair of regexes reads a block-comment OPENER quoted inside a
@@ -59,7 +60,7 @@ describe("the sidecar drives the pipeline and is not a second one", () => {
   });
 
   it("imports the worker's sync loop rather than defining one", () => {
-    const importers = FILES.filter((f) => /from\s+"@trafficflow\/worker\/sync"/.test(f.text));
+    const importers = FILES.filter((f) => /from\s+"@ohmail\/organizer\/sync"/.test(f.text));
     /* TWO FILES MAY NAME THE LOOP'S MODULE, AND EXACTLY ONE MAY RUN IT.
      *
      * `engine.ts` is the driver. `roster.ts` is the second, and it is here for the reason the
@@ -82,9 +83,9 @@ describe("the sidecar drives the pipeline and is not a second one", () => {
     for (const f of importers) {
       if (f.path === "apps/sidecar/src/engine.ts") continue;
       expect(f.text, `${f.path} may import TYPES from the sync loop and nothing else`)
-        .toMatch(/import\s+type\s*\{[^}]*\}\s*from\s+"@trafficflow\/worker\/sync"/);
+        .toMatch(/import\s+type\s*\{[^}]*\}\s*from\s+"@ohmail\/organizer\/sync"/);
       expect(f.text, `${f.path} must not carry a value import from the sync loop`)
-        .not.toMatch(/import\s*\{[^}]*\}\s*from\s+"@trafficflow\/worker\/sync"/);
+        .not.toMatch(/import\s*\{[^}]*\}\s*from\s+"@ohmail\/organizer\/sync"/);
     }
     /* THE VALUE IMPORT IS THE CLAIM. This used to require the clause to name `runSyncCycle` and
        nothing else, which read as strictness and was really a coincidence: the module also exports
@@ -98,12 +99,12 @@ describe("the sidecar drives the pipeline and is not a second one", () => {
        about the engine on others — the shape of a guard that passes by luck. */
     const driver = importers.find((f) => f.path === "apps/sidecar/src/engine.ts");
     expect(driver, "the engine must be the file that imports the loop").toBeDefined();
-    expect(driver!.text).toMatch(/import\s*\{[^}]*\brunSyncCycle\b[^}]*\}\s*from\s+"@trafficflow\/worker\/sync"/);
+    expect(driver!.text).toMatch(/import\s*\{[^}]*\brunSyncCycle\b[^}]*\}\s*from\s+"@ohmail\/organizer\/sync"/);
     /* …and nothing but TYPES may ride along. A second VALUE pulled out of the loop's module is a
        second piece of the pipeline executing in this process, which is the thing being prevented;
        a type cannot execute. Written as "every other name is prefixed `type`" rather than as a
        list, so a new export cannot join the clause by being unlisted. */
-    const clause = /import\s*\{([^}]*)\}\s*from\s+"@trafficflow\/worker\/sync"/.exec(driver!.text)![1]!;
+    const clause = /import\s*\{([^}]*)\}\s*from\s+"@ohmail\/organizer\/sync"/.exec(driver!.text)![1]!;
     const others = clause.split(",").map((s) => s.trim()).filter((s) => s && !/^runSyncCycle$/.test(s));
     expect(others.filter((s) => !s.startsWith("type "))).toEqual([]);
   });
@@ -129,7 +130,7 @@ describe("the sidecar drives the pipeline and is not a second one", () => {
   });
 
   it("the detector is not vacuous — it fires on the shapes it is looking for", () => {
-    // A guard nobody has watched fail is not evidence (CLAUDE.md). These are the violations.
+    // A guard nobody has watched fail is not evidence (AGENTS.md). These are the violations.
     expect(/\bplanChange\s*\(/.test(code("const plan = await planChange(change, deps);"))).toBe(true);
     expect(/["'`]ohmail\/(Screener|Reads|News)["'`]/.test(code('const dest = "ohmail/News";'))).toBe(true);
     // …and it ignores the same words in prose, so the rule can be explained without breaking it.
@@ -231,7 +232,7 @@ describe("the sidecar drives the DRAIN POLICY and does not define one", () => {
   });
 
   it("the detectors are not vacuous — they fire on the shapes they are looking for", () => {
-    // A guard nobody has watched fail is not evidence (CLAUDE.md). These are the violations,
+    // A guard nobody has watched fail is not evidence (AGENTS.md). These are the violations,
     // written out verbatim as they stood in this file before the adoption.
     const planted = code("const CLOUD_STALE_RESUME_MS = 5 * 60_000;");
     expect([...planted.matchAll(/(?:export\s+)?const\s+([A-Z][A-Z0-9_]*_MS)\s*=/g)].map((m) => m[1]))

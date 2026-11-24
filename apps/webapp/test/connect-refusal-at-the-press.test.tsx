@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 
 type Messages = typeof en;
 
@@ -105,7 +106,13 @@ async function mountOn(surface: (typeof SURFACES)[number], messages: Messages = 
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  /* What the product's layout does for every page of its group, `/join` among them (`(product)/LocaleShell.tsx`): the
+     reader's catalogue is the active one, through which the shipped step worded the refusals it handed the runner. */
+  const locale = await import("../app/shell/locale.js");
+  locale.setActiveCatalog(messages === de ? "de" : "en", messages as never);
+  const api = await import("../app/api-client.js");
+  const shipped = await import("../app/shell/probe-refusal.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -124,22 +131,12 @@ async function mountOn(surface: (typeof SURFACES)[number], messages: Messages = 
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
 
-  const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
-  };
-  const choose = async (label: string) => {
-    const tiles = [...host.querySelectorAll('[role="radio"]')].filter((b) => (b.textContent ?? "").startsWith(label));
-    expect(tiles.length, `"${label}" matched ${tiles.length} tiles`).toBe(1);
-    await act(async () => { (tiles[0] as HTMLElement).click(); });
-  };
+  /* The step is the one connect form: its fields by their labels, its tiles by their names. */
+  const { type, choose, field, refusal, button } = mailboxProbes(host, messages, act);
   const connect = () => {
-    const label = (messages.join as unknown as Record<string, string>).connectMailbox!;
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
-    expect(button, "no Connect mailbox button").toBeTruthy();
-    return button!;
+    const press = button(messages.join.manualConnect) ?? button(messages.join.connectMailbox);
+    expect(press, "no Connect button").toBeTruthy();
+    return press!;
   };
   /** The viewport where a person pressing the button has it: the button at the bottom edge. */
   const toButton = () => { scrollY = topOf(connect()) + ROW - VIEW; };
@@ -155,13 +152,14 @@ async function mountOn(surface: (typeof SURFACES)[number], messages: Messages = 
     expect(found.length, "one refusal on screen").toBe(1);
     return found[0] as HTMLElement;
   };
-  return { host, type, choose, toButton, press, alert };
+  return { host, type, choose, field, toButton, press, alert, refusal, api, shipped };
 }
 
 async function manualForm(surface: (typeof SURFACES)[number], messages: Messages = en) {
   const ui = await mountOn(surface, messages);
-  expect(ui.host.textContent).toContain((messages.join as unknown as Record<string, string>).step_mailbox_title);
-  await ui.choose((messages.providerPicker as unknown as Record<string, string>).otherLabel!);
+  expect(ui.host.textContent).toContain(messages.onboarding.providerFirst);
+  await ui.choose(messages.providerPicker.otherShort);
+  expect(ui.host.querySelector("[data-page-filling-form] h1")?.textContent).toBe(messages.join.manualTitle);
   await ui.type("join-mb-address", "pat@family.example");
   await ui.type("join-imap", "mail.family.example");
   await ui.type("join-smtp", "smtp.family.example");
@@ -174,7 +172,7 @@ describe.each(SURFACES)("the /join connect form on $name", (surface) => {
     const ui = await manualForm(surface);
     // The model is live: with the button in view, the top of the step is above the fold.
     ui.toButton();
-    expect(inView(ui.host.querySelector("h1")!), "the modelled page does not scroll").toBe(false);
+    expect(inView(ui.host.querySelector("[data-page-filling-form] h1")!), "the modelled page does not scroll").toBe(false);
 
     for (const attempt of [1, 2]) {
       await ui.press();
@@ -214,18 +212,43 @@ describe("the /join refusal copy", () => {
     });
   }
 
-  it("a sentence that names no port is still the server's own (self-signed certificate)", async () => {
+  it("a named certificate fault names no port: the catalogue's own sentence (self-signed certificate)", async () => {
     const own = "That mail server's certificate is self-signed, which we cannot verify, so we stopped before sending the password.";
     refuse("tls", "imap", { tls: { kind: "self_signed" } }, own);
     const ui = await manualForm(managed);
     await ui.press();
-    expect(ui.alert().textContent).toBe(own);
+    expect(ui.alert().textContent).toBe(en.mailboxes.probe_tls_self_signed);
+  });
+
+  it("German, a self-signed certificate: the sentence the shipped step said, through the product's catalogue", async () => {
+    const server = "That mail server's certificate is self-signed, which we cannot verify, so we stopped before sending the password. Ask whoever runs the server to install a certificate from a public authority.";
+    const tls = { kind: "self_signed" };
+    refuse("tls", "imap", { tls }, server);
+    const ui = await manualForm(managed, de);
+    await ui.press();
+    const thrown = new ui.api.ApiError(400, "mailbox_probe_failed", server, { reason: "tls", transport: "imap", tls });
+    // The shipped step's own chain for this refusal: no no-port sentence for a named kind, then the runner's `messageOf`.
+    expect(ui.shipped.noPortProbeSentence(thrown, true)).toBeNull();
+    expect(ui.api.messageOf(thrown)).toBe(de.mailboxes.probe_tls_self_signed);
+    expect(ui.refusal()).toBe(ui.api.messageOf(thrown));
+  });
+
+  it("a certificate for another host says both hosts, as the shipped step's catalogue sentence named them", async () => {
+    const server = "That mail server's certificate does not match the host you entered, so we stopped before sending the password. Check the IMAP host with your provider.";
+    const tls = { kind: "hostname_mismatch", certHost: "mail.provider.example", expectedHost: "mail.family.example" };
+    refuse("tls", "imap", { tls }, server);
+    const ui = await manualForm(managed);
+    await ui.press();
+    const shipped = ui.api.messageOf(new ui.api.ApiError(400, "mailbox_probe_failed", server, { reason: "tls", transport: "imap", tls }));
+    expect(shipped).toContain("mail.provider.example");
+    expect(shipped).toContain("mail.family.example");
+    expect(ui.refusal()).toBe(shipped);
   });
 
   it("behind a named provider there is no server field to name", async () => {
     const ui = await mountOn(managed);
     await ui.choose("Fastmail");
-    expect(ui.host.querySelector("#join-imap")).toBeNull();
+    expect(ui.field("join-imap")).toBeNull();
     await ui.type("join-mb-address", "pat@fastmail.example");
     await ui.type("join-mb-pass", "app-password-fixture");
     await ui.press();

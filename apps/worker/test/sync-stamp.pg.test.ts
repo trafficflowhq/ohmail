@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -12,6 +11,7 @@ import { accounts, mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { evaluateAlerts } from "@trafficflow/db/cloud";
 import { stampMailboxSync, stampMailboxSyncNow, stampInitialImportComplete } from "../src/mailboxes.js";
+import { readSource } from "./_start-function.js";
 
 /**
  * `mailboxes.last_sync_at` HAD THREE READERS AND NO WRITER.
@@ -232,7 +232,7 @@ describe.skipIf(!AVAILABLE)("stampMailboxSync — the writer last_sync_at never 
 });
 
 describe("the worker actually calls it", () => {
-  const src = readFileSync(`${HERE}../src/index.ts`, "utf8");
+  const src = readSource(`${HERE}../src/index.ts`);
 
   /**
    * ── THE ANCHORS ARE THE CALLS, NOT THE LINES THEY SIT ON ────────────────────────
@@ -253,8 +253,8 @@ describe("the worker actually calls it", () => {
   // API stamps with SQL `now()`, so the cycle's stamps must come off the DATABASE's clock. A
   // mutation that reintroduces `new Date()` here re-inserts the worker host's wall clock into
   // that comparison and turns this anchor red.
-  const BATCHED = "stampMailboxSyncNow(db, synced, Date.now() - passStartedMs)";
-  const IMPORT_DONE = "stampInitialImportComplete(db, rt.mailboxId, new Date())";
+  const BATCHED = "stampMailboxSyncNow(roster, synced, Date.now() - passStartedMs)";
+  const IMPORT_DONE = "stampInitialImportComplete(forAccount(rt.accountId).db, rt.mailboxId, new Date())";
 
   it("every mailbox that completed a cycle is collected and stamped", () => {
     // A writer nobody calls leaves the column exactly as broken as it was. The collection

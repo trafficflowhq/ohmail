@@ -1,0 +1,18 @@
+Subject: Du hast schon ein ohmail-Konto
+
+ohmail.
+
+Du hast schon ein ohmail-Konto.
+
+Jemand hat versucht, mit dieser Adresse ein ohmail-Konto anzulegen. Es gibt schon eins, also wurde nichts angelegt und nichts geändert.
+
+Warst du das, melde dich stattdessen an. Dein Konto ist, wie es war.
+
+Warst du es nicht, kannst du diese Mail ignorieren. Wer es versucht hat, hat nicht erfahren, ob es zu dieser Adresse ein Konto gibt, und kommt ohne dein Passwort oder deinen Passkey nicht hinein.
+
+Bei ohmail anmelden:
+https://ohmail.app/login
+
+--
+Schreib an support@ohmail.app, und ein Mensch antwortet.
+TrafficFlow GmbH, Zürich, Schweiz

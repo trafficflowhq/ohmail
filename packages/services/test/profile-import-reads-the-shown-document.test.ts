@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
@@ -28,12 +29,12 @@ async function world(marker: Record<string, unknown>) {
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: "shown" });
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${randomUUID()}@x.test` }).returning();
-  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
+  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
   await db.insert(auditLog).values({
     accountId, action: auditAction(PROFILE_FOUND_AUDIT_ACTION), inverse: null,
     payload: { mailboxId: mb!.id, state: "found", heldForImport: true, updatedAt: DOC.updatedAt, ...marker },
   });
-  const ctx = { db, accountId, now: () => new Date("2026-09-28T12:00:00.000Z") } as unknown as ServiceContext;
+  const ctx = { db: dbFor(db, accountId), accountId, now: () => new Date("2026-09-28T12:00:00.000Z") } as unknown as ServiceContext;
   const asked: Array<ProfileLocator | undefined> = [];
   const read = async (retain?: ProfileLocator): Promise<ProfileReadResult> => {
     asked.push(retain);

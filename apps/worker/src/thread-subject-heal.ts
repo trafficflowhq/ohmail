@@ -18,6 +18,12 @@ export const SUBJECT_HEAL_BATCH = 100;
 
 export interface SubjectHealDeps {
   db: Tx;
+  /**
+   * The one account whose threads are healed. A store that holds many accounts' mail is healed
+   * account by account, each on its own handle (`run-thread-subject-heal.ts`); absent ⇒ every
+   * thread the handle reaches.
+   */
+  accountId?: string;
   /** False ⇒ dry run: count and report, write nothing. */
   apply: boolean;
   log?: Logger;
@@ -57,6 +63,7 @@ export async function runThreadSubjectHeal(deps: SubjectHealDeps): Promise<Subje
         // the case-insensitivity the JS side gets from the `i` flag.
         sql`${threads.subject} ~* ${SUBJECT_PREFIX_PATTERN}`,
         cursor === null ? undefined : sql`${threads.id} > ${cursor}::uuid`,
+        deps.accountId === undefined ? undefined : eq(threads.accountId, deps.accountId),
       ))
       .orderBy(asc(threads.id))
       .limit(batch);

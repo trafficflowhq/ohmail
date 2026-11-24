@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes } from "@trafficflow/db";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * A poll's filing aggregate reads the caller's own rows, however much mail another account on the
@@ -40,8 +40,8 @@ async function filed(c: Client, account: string, mailbox: string, n: number): Pr
   await c.query(`insert into messages (account_id, mailbox_id, dedup_key, body_hash)
     select $1, $2, 'mid:<' || $3 || '-' || g || '@example.test>', 'plan-' || g from generate_series(1, $4::int) g`,
   [account, mailbox, mailbox.slice(-3), n]);
-  await c.query(`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status)
-    select id, 'Archive', 'Archive', 'us', 'reconciled' from messages where mailbox_id = $1`, [mailbox]);
+  await c.query(`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status)
+    select id, account_id, 'Archive', 'Archive', 'us', 'reconciled' from messages where mailbox_id = $1`, [mailbox]);
 }
 
 async function planOf(c: Client, text: string, params: unknown[]): Promise<PlanNode> {
@@ -97,7 +97,7 @@ describe("the poll's filing aggregate beside a larger account", () => {
 
     const svc = makeMailboxService({ installId: "install-here", organizerStanding: async () => ({ lastCycleAt: null, behind: false, since: null }) });
     const ctx: ServiceContext = {
-      db, accountId: MINE, userId: null, now: () => new Date("2026-10-21T10:00:00.000Z"), requestId: "r",
+      db: dbFor(db, MINE), accountId: MINE, userId: null, now: () => new Date("2026-10-21T10:00:00.000Z"), requestId: "r",
     };
     const sent: Array<{ text: string; params: unknown[] }> = [];
     const query = c.query;

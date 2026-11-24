@@ -1,6 +1,7 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { OhmailEngine, INLINE_IMAGE_MAX_BYTES, type StagedPreview } from "../src/engine.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * EMBEDDED PICTURES BY OBJECT URL (`inlineImageUrls: "object"`, the browser doors). The map's value

@@ -152,6 +152,17 @@ describe("auth — session, logout, refresh", () => {
     expect(cookieMaxAge(out, "tf_session")).toBe(0);
     expect(cookieMaxAge(out, "tf_refresh")).toBe(0);
     expect(cookieMaxAge(out, "tf_csrf")).toBe(0);
+    // A browser drops a cookie only for a clear with the name, host and path it was set with; a
+    // clear at another path leaves the session in the jar. Every cookie the sign-in set is cleared
+    // with the attributes it was set with.
+    const attrs = (line: string): [string, string[]] => {
+      const [pair, ...rest] = line.split(";").map((p) => p.trim());
+      return [pair!.split("=")[0]!, rest.filter((p) => !/^max-age=/i.test(p)).map((p) => p.toLowerCase()).sort()];
+    };
+    const cleared = new Map(out.headers.getSetCookie().map(attrs));
+    const minted = verify.headers.getSetCookie().map(attrs);
+    expect(minted.length).toBeGreaterThanOrEqual(3);
+    for (const [name, a] of minted) expect(cleared.get(name), `${name} is cleared as it was set`).toEqual(a);
   });
 
   it("POST /auth/refresh via tf_refresh cookie rotates → new tf_session; LATE reuse revokes the family (401)", async () => {
@@ -194,8 +205,9 @@ describe("auth — session, logout, refresh", () => {
     clock.advance(30_000);
     const first = setCookieMap(await loginWithTotp(deps, clock, "gil@x.example", secret));
     const read = (access: string): Promise<Response> => H(req("GET", "/auth/session", { cookie: `tf_session=${access}` }), deps);
-    // Nothing to tell: the answer keeps its old shape.
-    expect(Object.keys(await (await read(first.tf_session!)).json()).sort()).toEqual(["scope", "user"]);
+    const before = await (await read(first.tf_session!)).json();
+    expect(Object.keys(before).sort()).toEqual(["familyId", "scope", "user"]);
+    expect(before.familyId).toEqual(first.tf_family);
 
     const r2 = setCookieMap(await H(req("POST", "/auth/refresh", { cookie: `tf_refresh=${first.tf_refresh}` }), deps)).tf_refresh!;
     clock.advance(1_000);

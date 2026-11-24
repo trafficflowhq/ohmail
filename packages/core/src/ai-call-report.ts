@@ -61,4 +61,6 @@ export interface AnthropicCallReport {
  */
 export interface AiCallOptions {
   onUsage?: (report: AnthropicCallReport) => void;
+  /** Recheck authority at the actual model dispatch, including transport retries. */
+  beforeDispatch?: () => Promise<void>;
 }

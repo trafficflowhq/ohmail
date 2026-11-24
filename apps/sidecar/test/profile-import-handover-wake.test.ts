@@ -34,7 +34,7 @@ describe("withImportHandover", () => {
   });
 
   it("wraps the confirm route alone; every other route passes through untouched", () => {
-    const other: Route = { ...answered(202), pattern: "/mailboxes/:id/profile-import/decline" };
+    const other = { ...answered(202), pattern: "/mailboxes/:id/profile-import/decline" } as Route;
     const [same] = withImportHandover([other], () => undefined);
     expect(same).toBe(other);
   });

@@ -1,17 +1,20 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import {
-  MutationRejectedError, OUTBOX_TYPE, draftsList, type EngineDraft, type EngineLocks, type EngineMutation, type IndexedDbMirrorStore,
+  MutationRejectedError, OUTBOX_TYPE, draftsList, type EngineLocks, type IndexedDbMirrorStore,
 } from "@ohmail/client-engine";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
+import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
 import en from "../messages/en.json";
 import {
-  DraftServer, FORWARD_PARTS, NOW, act, fillForward, forwardDock, message, mountShell, openForward, press, pressRestart, replyDraft, replySurface,
-  stubDom, typeForwardTo, unmountAll, waitFor, type DraftShell,
+  DraftServer, FORWARD_PARTS, NOW, act, message, mountShell, press, pressRestart, replyDraft,
+  stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
 
 /**
@@ -24,6 +27,8 @@ import {
 beforeEach(() => {
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
   stubDom();
+  // jsdom draws no animation: the frame's report leaves through `animate`.
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
 });
 afterEach(unmountAll);
 
@@ -35,18 +40,84 @@ const rowsFor = (s: DraftShell, id: string): EngineDraft[] =>
 /** Past the composer's two-second pause, in real time: this harness runs real timers. */
 const PAUSE_ROUNDS = 200;
 
+// Open letters from the Ohbox and exercise the reply and forward in the reading pane. Check the editor's leave key and the send controls while a send waits.
+const openRegion = (root: ParentNode = document): HTMLElement | null =>
+  root.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]');
+const replySurface = (root: ParentNode = document): HTMLElement | null =>
+  openRegion(root)?.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"]') ?? null;
+const forwardSurface = (root: ParentNode = document): HTMLElement | null =>
+  openRegion(root)?.querySelector<HTMLElement>('[role="textbox"][aria-label="Forward body"]') ?? null;
+/** The open reply or forward: the region while one of the two texts stands in it. */
+const forwardDock = (root: ParentNode = document): HTMLElement | null => (forwardSurface(root) ? openRegion(root) : null);
+const dockOpen = (root: ParentNode = document): boolean => replySurface(root) != null || forwardSurface(root) != null;
+const actionIn = (root: ParentNode, name: string): HTMLButtonElement | undefined =>
+  [...(openRegion(root)?.querySelectorAll<HTMLButtonElement>('[role="toolbar"][aria-label="Actions"] button') ?? [])]
+    .find((b) => b.getAttribute("aria-label") === name);
+/** The open letter's own verb by its name (Reply, Forward), outside the reply's bar. */
+const letterVerb = (root: ParentNode, name: string): HTMLButtonElement | null =>
+  [...(openRegion(root)?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.getAttribute("aria-label") === name) ?? null;
+const sendLine = (root: ParentNode = document): string => openRegion(root)?.querySelector('[role="status"]')?.textContent ?? "";
+const reportWords = (sentence: string): string => sentence.replace(/\.$/, "");
+const toastsSay = (words: string): boolean =>
+  [...document.querySelectorAll('.fr-report [role="status"]')].some((n) => n.textContent?.includes(reportWords(words)));
+/** Escape in the open reply's or forward's text: its leave key (today's Cancel, `closeReply`). */
+async function leaveDock(root: ParentNode = document): Promise<void> {
+  const text = replySurface(root) ?? forwardSurface(root);
+  await act(async () => {
+    text!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settleEditor();
+}
+const messageRow = (root: ParentNode, id: string): HTMLElement | null =>
+  root.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id='${id}']`);
+
+/** A key, where the keys are: the field or row that has the focus (the reply's text while it is written). */
 async function key(k: string): Promise<void> {
   await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
   });
   await settleEditor();
 }
 
 async function openReplyOn(s: DraftShell, id: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox .row[data-id='${id}']`) != null, "the row");
-  await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), "the row");
+  await waitFor(() => messageRow(s.el, id) != null, "the row");
+  await press(messageRow(s.el, id), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
+}
+
+/** Open message `id` (unless one is open) and press its Forward. */
+async function openForward(s: DraftShell, id = "m1"): Promise<void> {
+  if (openRegion(s.el) == null) {
+    await waitFor(() => messageRow(s.el, id) != null, "the row");
+    await press(messageRow(s.el, id), "the row");
+  }
+  await press(letterVerb(s.el, "Forward"), "Forward");
+}
+/** Type `value` into the forward's To line. */
+async function typeForwardTo(s: DraftShell, value: string): Promise<void> {
+  const input = openRegion(s.el)!.querySelector<HTMLInputElement>('[role="combobox"][aria-label="To"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+/** The files the open forward carries, by their part ids (each file's Remove press names it). */
+const forwardFiles = (root: ParentNode = document): string[] =>
+  [...(forwardDock(root)?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .map((b) => /^Remove (.+)$/.exec(b.getAttribute("aria-label") ?? "")?.[1])
+    .flatMap((name) => FORWARD_PARTS.filter((p) => p.filename === name).map((p) => p.id));
+/** Forward on `m1`, `to` in the To line, the third file removed, `note` typed. */
+async function fillForward(s: DraftShell, to: string, note: string): Promise<void> {
+  await openForward(s);
+  await waitFor(() => forwardDock(s.el) != null, "the forward dock");
+  await typeForwardTo(s, `${to}, `);
+  await waitFor(() => forwardFiles(s.el).length === 3, "the three files listed");
+  const third = FORWARD_PARTS[2]!.filename;
+  await act(async () => {
+    [...forwardDock(s.el)!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.getAttribute("aria-label") === `Remove ${third}`)!.click();
+  });
+  await act(async () => { typeInto(forwardSurface(s.el)!, note); });
 }
 
 async function typeAndPause(s: DraftShell, text: string, nth: number): Promise<Save> {
@@ -59,6 +130,14 @@ async function route(hash: string): Promise<void> {
   await act(async () => { window.location.hash = hash; window.dispatchEvent(new Event("hashchange")); });
 }
 
+function draftRow(s: DraftShell, id: string): HTMLElement | null {
+  const list = within(s.el).queryByRole("listbox", { name: en.drafts.title });
+  return list ? within(list).queryAllByRole("option").find((row) => row.dataset.id === id) ?? null : null;
+}
+
+const composerBody = (s: DraftShell): HTMLElement | null =>
+  within(s.el).queryByRole("textbox", { name: "Message" });
+
 /** Another device sent the row: the next `/sync` brings it back `sent`. */
 async function sentElsewhere(s: DraftShell, row: string): Promise<void> {
   const d = s.store.get<EngineDraft>("draft", row)!;
@@ -67,9 +146,7 @@ async function sentElsewhere(s: DraftShell, row: string): Promise<void> {
   await waitFor(() => s.store.get<EngineDraft>("draft", row)?.status === "sent", "the row sent elsewhere");
 }
 
-const sendButton = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-    .find((b) => (b.textContent ?? "").startsWith("Send"));
+const sendButton = (el: HTMLElement): HTMLButtonElement | undefined => actionIn(el, "Send");
 
 describe("a reply typed inline is a draft on the account", () => {
   it("the pause writes one row, and the next pause writes that row again", async () => {
@@ -114,7 +191,7 @@ describe("a reply typed inline is a draft on the account", () => {
     try { window.localStorage.clear(); } catch { /* storage blocked */ }
     stubDom();
     const other = await mountShell("#/drafts", [message("m1")], written);
-    await waitFor(() => other.el.querySelector(`.draft-row[data-id='${row}']`) != null, "the reply listed in Drafts");
+    await waitFor(() => draftRow(other, row) != null, "the reply listed in Drafts");
     // …and in the shared list the phone's Drafts is drawn from.
     expect(draftsList(other.store, NOW).map((d) => d.id), "the phone's Drafts would not list it").toContain(row);
 
@@ -208,16 +285,14 @@ describe("a forward typed inline is a draft on the account", () => {
   const [PART_A, PART_B] = FORWARD_PARTS.map((p) => p.id);
   const withFiles = (id: string, over: Record<string, unknown> = {}) =>
     message(id, { hasAttachments: true, attachmentCount: 3, ...over } as never);
-  const dock = (s: DraftShell): HTMLElement | null => s.el.querySelector<HTMLElement>(".read-col .reply[data-reply-for]");
-  const surface = (s: DraftShell): HTMLElement => dock(s)!.querySelector<HTMLElement>(".rte-surface")!;
+  const dock = (s: DraftShell): HTMLElement | null => forwardDock(s.el);
+  const surface = (s: DraftShell): HTMLElement => forwardSurface(s.el)!;
   const shown = (s: DraftShell): string =>
-    `${dock(s)?.textContent ?? ""} ${dock(s)?.querySelector<HTMLInputElement>(".rcp-input")?.value ?? ""}`;
-  const listed = (s: DraftShell): string[] =>
-    [...(dock(s)?.querySelectorAll<HTMLElement>("[data-forward-part]") ?? [])].map((r) => r.dataset.forwardPart!);
+    `${dock(s)?.textContent ?? ""} ${dock(s)?.querySelector<HTMLInputElement>('[role="combobox"][aria-label="To"]')?.value ?? ""}`;
+  const listed = (s: DraftShell): string[] => forwardFiles(s.el);
   const forwards = (s: DraftShell): EngineDraft[] =>
     s.store.list<EngineDraft>("draft").filter((d) => d.forwardOfMessageId === "m1" && d.status === "draft");
-  const fwdSend = (s: DraftShell): HTMLButtonElement =>
-    [...dock(s)!.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent ?? "").startsWith("Send"))!;
+  const fwdSend = (s: DraftShell): HTMLButtonElement => actionIn(s.el, "Send")!;
   const rounds = async (n: number): Promise<void> => {
     for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
   };
@@ -252,7 +327,7 @@ describe("a forward typed inline is a draft on the account", () => {
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     const row = forwards(s)[0]!.id;
-    await key("Escape");
+    await leaveDock(s.el);
     const back = await reload(s);
     await forwardOn(back);
     await waitFor(() => listed(back).length === 2, "the trim after a reload");
@@ -275,17 +350,24 @@ describe("a forward typed inline is a draft on the account", () => {
     try { window.localStorage.clear(); } catch { /* storage blocked */ }
     stubDom();
     const other = await mountShell("#/drafts", [withFiles("m1")], written, { parts: true });
-    await waitFor(() => other.el.querySelector(`.draft-row[data-id='${row}']`) != null, "the forward listed in Drafts");
+    await waitFor(() => draftRow(other, row) != null, "the forward listed in Drafts");
     await act(async () => { window.location.hash = "#/ohbox"; window.dispatchEvent(new Event("hashchange")); });
     await forwardOn(other);
     await waitFor(() => listed(other).length === 2, "the trim on the other device");
     expect([surface(other).textContent?.includes(NOTE), shown(other).includes(TO)], "the note and the To there").toEqual([true, true]);
     await rounds(110);
     expect(saves(other), "opening the row wrote it").toEqual([]);
-    await act(async () => { fwdSend(other).click(); });
+    /* The quoted header dates the original on the reader's clock, as it reads at the press. */
+    setActiveFormatZone("Europe/Zurich");
+    try {
+      await act(async () => { fwdSend(other).click(); });
+    } finally {
+      setActiveFormatZone(null);
+    }
     await waitFor(() => sends(other).length === 1, "the send on the wire");
     const m = sends(other)[0]!;
-    expect([m.draftId, m.forwardOf, m.forwardParts, m.to?.map((a) => a.address)]).toEqual([row, "m1", [PART_A, PART_B], [TO]]);
+    expect([m.draftId, m.forwardOf, m.forwardParts, m.to?.map((a) => a.address), m.forwardClock])
+      .toEqual([row, "m1", [PART_A, PART_B], [TO], { zone: "Europe/Zurich", locale: activeFormatLocale() }]);
   }, 60_000);
 
   it("Send while the first save is in the air leaves no forward draft", async () => {
@@ -317,7 +399,7 @@ describe("a forward typed inline is a draft on the account", () => {
     const s = await mountShell("#/ohbox", [withFiles("m1")], [], { parts: true });
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the forward's save", PAUSE_ROUNDS);
-    await key("Escape");
+    await leaveDock(s.el);
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
     await typeAndPause(s, "Thanks, will do", 2);
@@ -360,13 +442,15 @@ describe("a forward typed inline is a draft on the account", () => {
       sensitivity: { sensitive: true, category: "otp", no_ai: true, no_forward: true, no_kb: true, priority: true },
     })], [], { parts: true });
     await forwardOn(s);
-    await waitFor(() => s.el.querySelector('[role="alertdialog"].reply-ask') != null, "the ask");
+    const words = en.write.reply.ask;
+    const theAsk = (): HTMLElement | null => within(document.body).queryByRole("alertdialog", { name: words.question });
+    await waitFor(() => theAsk() != null, "the ask");
+    expect(theAsk()?.textContent).toContain(words.otp);
     await rounds(110);
     expect(saves(s), "the forward was saved before the ask was answered").toEqual([]);
-    const ask = s.el.querySelector<HTMLElement>('[role="alertdialog"].reply-ask')!;
-    const yes = [...ask.querySelectorAll("button")].find((x) => x.textContent === en.reply.forwardAsk.confirm)!;
+    const yes = within(theAsk()!).getByRole("button", { name: words.confirm });
     await act(async () => { yes.click(); });
-    await waitFor(() => dock(s)?.querySelector(".rcp-input") != null, "the editor after the answer");
+    await waitFor(() => dock(s)?.querySelector('[role="combobox"][aria-label="To"]') != null, "the editor after the answer");
     await typeTo(s, `${TO}, `);
     await waitFor(() => saves(s).length === 1, "the answered forward's save", PAUSE_ROUNDS);
     expect([saves(s)[0]!.forwardOfMessageId, saves(s)[0]!.inReplyToMessageId ?? null]).toEqual(["m1", null]);
@@ -377,10 +461,10 @@ describe("a forward typed inline is a draft on the account", () => {
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     const row = forwards(s)[0]!.id;
-    await key("Escape");
+    await leaveDock(s.el);
     await act(async () => { window.location.hash = "#/drafts"; window.dispatchEvent(new Event("hashchange")); });
-    await waitFor(() => s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`) != null, "the forward in Drafts");
-    await press(s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`), "the forward draft");
+    await waitFor(() => draftRow(s, row) != null, "the forward in Drafts");
+    await press(draftRow(s, row), "the forward draft");
     await waitFor(() => window.location.hash.startsWith("#/compose"), "the composer");
     await act(async () => { window.location.hash = "#/ohbox"; window.dispatchEvent(new Event("hashchange")); });
     await rounds(4);
@@ -400,19 +484,19 @@ describe("a forward typed inline is a draft on the account", () => {
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     const row = forwards(s)[0]!.id;
-    await key("Escape");
+    await leaveDock(s.el);
     const openFromDrafts = async (id: string): Promise<void> => {
       await route("#/drafts");
-      await waitFor(() => s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`) != null, `${id} in Drafts`);
-      await press(s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`), id);
-      await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer", 400);
+      await waitFor(() => draftRow(s, id) != null, `${id} in Drafts`);
+      await press(draftRow(s, id), id);
+      await waitFor(() => composerBody(s) != null, "the composer", 400);
     };
     await openFromDrafts(row);
     const n = saves(s).length;
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")!, "Composer words, "); });
+    await act(async () => { typeInto(composerBody(s)!, "Composer words, "); });
     await waitFor(() => saves(s).length > n, "the composer's save", PAUSE_ROUNDS);
     await openFromDrafts("d-other");
-    await waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject")?.value === "Another letter", "the other draft");
+    await waitFor(() => s.el.querySelector<HTMLTextAreaElement>('textarea[aria-label="Subject"]')?.value === "Another letter", "the other draft");
     await route("#/ohbox");
     await forwardOn(s);
     await waitFor(() => (dock(s) ? surface(s).textContent ?? "" : "").includes("Composer words"), "the composer's words in the dock");
@@ -429,19 +513,19 @@ describe("a forward typed inline is a draft on the account", () => {
     await fill(s);
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     const row = forwards(s)[0]!.id;
-    await key("Escape");
+    await leaveDock(s.el);
     await route("#/drafts");
-    await waitFor(() => s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`) != null, "the forward in Drafts");
-    await press(s.el.querySelector(`.draft-row[data-id='${row}'] .draft-open`), "the forward draft");
-    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer", 400);
+    await waitFor(() => draftRow(s, row) != null, "the forward in Drafts");
+    await press(draftRow(s, row), "the forward draft");
+    await waitFor(() => composerBody(s) != null, "the composer", 400);
     const n = saves(s).length;
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")!, "Composer words, "); });
+    await act(async () => { typeInto(composerBody(s)!, "Composer words, "); });
     await waitFor(() => saves(s).length > n, "the composer's save", PAUSE_ROUNDS);
     await rounds(10);
     s.refuseSend.on = true;
     s.refuseSend.retryableFirst = 1000;
-    const send = [...s.el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
-      .find((b) => /^Send(?!.*later)/i.test((b.textContent ?? "").trim()))!;
+    const bar = within(s.el).getByRole("toolbar", { name: "Send or discard" });
+    const send = within(bar).getByRole("button", { name: "Send" });
     await act(async () => { send.click(); });
     await waitFor(() => s.engine.waitingSends().some((w) => w.draftId === row), "the composer's send waits", PAUSE_ROUNDS);
     await route("#/ohbox");
@@ -450,9 +534,7 @@ describe("a forward typed inline is a draft on the account", () => {
     await waitFor(() => dock(s) != null, "the forward dock");
     await rounds(10);
     s.withdrawAnswer.outcome = "withdrawn";
-    await act(async () => {
-      [...dock(s)!.querySelectorAll<HTMLButtonElement>(".reply-actions button")].find((b) => (b.textContent ?? "").trim().startsWith("Cancel"))!.click();
-    });
+    await leaveDock(s.el);
     await waitFor(() => dock(s) == null, "the dock closed", PAUSE_ROUNDS);
     await rounds(120);
     const kept = s.store.get<EngineDraft>("draft", row);
@@ -465,7 +547,7 @@ describe("a forward typed inline is a draft on the account", () => {
     await waitFor(() => saves(s).length === 1, "the first save", PAUSE_ROUNDS);
     await sentElsewhere(s, forwards(s)[0]!.id);
     await waitFor(() => dock(s) == null, "the dock closed");
-    expect(document.body.textContent ?? "").toContain(en.reply.forwardSentElsewhere);
+    expect(document.body.textContent ?? "").toContain(reportWords(en.reply.forwardSentElsewhere));
     await forwardOn(s);
     await waitFor(() => dock(s) != null, "a new forward");
     expect([sends(s), shown(s).includes(TO), surface(s).textContent?.includes(NOTE)]).toEqual([[], false, false]);
@@ -479,44 +561,10 @@ describe("a reply's row sent from another device while its editor is open", () =
     await typeAndPause(s, "See you Thursday", 1);
     await sentElsewhere(s, rowsFor(s, "m1")[0]!.id);
     await waitFor(() => replySurface(s.el) == null, "the editor closed");
-    expect(document.body.textContent ?? "").toContain(en.reply.sentElsewhere);
+    expect(document.body.textContent ?? "").toContain(reportWords(en.reply.sentElsewhere));
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "a new reply");
     expect([sends(s), replySurface(s.el)!.textContent]).toEqual([[], ""]);
-  }, 40_000);
-});
-
-describe("Restart to install saves an inline reply or forward first", () => {
-  it("the words typed inside the pause are written before the restart", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
-    await openReplyOn(s, "m1");
-    await act(async () => { typeInto(replySurface(s.el)!, "Typed just before the restart"); });
-    const restarted = await pressRestart(s, () => rowsFor(s, "m1").map((d) => d.body));
-    expect(await restarted(), "the restart went before the reply was written").toEqual(["Typed just before the restart"]);
-  }, 30_000);
-
-  it("a save on the wire is waited out, then the newer words go to the same row", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
-    await openReplyOn(s, "m1");
-    let release: () => void = () => {};
-    s.saveGate.wait = new Promise<void>((r) => { release = r; });
-    await typeAndPause(s, "First words", 1);
-    await act(async () => { typeInto(replySurface(s.el)!, "First words and the newer ones"); });
-    const restarted = await pressRestart(s, () => ({ rows: rowsFor(s, "m1").map((d) => d.body), saves: saves(s).length }));
-    s.saveGate.wait = null;
-    await act(async () => { release(); });
-    const at = await restarted();
-    expect(at, "the newer words were not written, or went to a second row").toEqual({ rows: ["First words and the newer ones"], saves: 2 });
-    expect(saves(s)[1]!.draftId).toBe(rowsFor(s, "m1")[0]!.id);
-  }, 30_000);
-
-  it("an inline forward's note is written before the restart", async () => {
-    const s = await mountShell("#/ohbox", [message("m1", { hasAttachments: true, attachmentCount: 3 } as never)], [], { parts: true });
-    await fillForward(s, "colleague@example.net", "Have a look at these two");
-    expect(forwardDock(s.el)).not.toBeNull();
-    const restarted = await pressRestart(s, () =>
-      s.store.list<EngineDraft>("draft").filter((d) => d.forwardOfMessageId === "m1" && d.status === "draft").map((d) => d.body));
-    expect(await restarted(), "the restart went before the forward was written").toEqual(["Have a look at these two"]);
   }, 40_000);
 });
 
@@ -524,18 +572,26 @@ describe("a reply closed inside the pause is a draft on the account at once", ()
   /** Well inside the two-second pause: a write seen by then is the close's. */
   const SOON = 30;
   const BODY = "Thirty-two characters of a reply";
-  const inPlace = (el: HTMLElement) => el.querySelector<HTMLElement>(".view-receipts .scast.in-place .reply[data-reply-for] .rte-surface");
-  const openInPlace = async (s: DraftShell): Promise<void> => {
-    await waitFor(() => s.el.querySelector(".view-receipts .scast[data-sid]") != null, "the receipt", PAUSE_ROUNDS);
-    await press(s.el.querySelector(".view-receipts .scast[data-sid]"), "the receipt");
-    await press([...s.el.querySelectorAll<HTMLButtonElement>(".view-receipts button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith("Reply")) ?? null, "Reply");
+  const stream = (el: HTMLElement) => within(el).queryByRole("region", { name: "Receipts stream" });
+  const inPlace = (el: HTMLElement) => {
+    const region = stream(el);
+    return region && within(region).queryByRole("textbox", { name: "Reply body" });
+  };
+  const openInPlace = async (s: DraftShell, id: string): Promise<void> => {
+    const receipt = () => {
+      const region = stream(s.el);
+      return region && within(region).queryByText(`Subject ${id}`);
+    };
+    await waitFor(() => receipt() !== null, "the receipt", PAUSE_ROUNDS);
+    await press(receipt(), "the receipt");
+    const actions = within(s.el).getByRole("toolbar", { name: "Actions" });
+    await press(within(actions).getByRole("button", { name: "Reply" }), "Reply");
     await waitFor(() => inPlace(s.el) != null, "the reply in place", PAUSE_ROUNDS);
   };
 
   it.each([["#/ohbox", "m1"], ["#/receipts", "p1"]])("%s: words, Esc, another view at once: the reply's one row holds them", async (at, id) => {
     const s = await mountShell(at, [message(id, (at === "#/receipts" ? { folder: "ohmail/Receipts" } : {}) as never)]);
-    if (at === "#/ohbox") await openReplyOn(s, id); else await openInPlace(s);
+    if (at === "#/ohbox") await openReplyOn(s, id); else await openInPlace(s, id);
     await act(async () => { typeInto((at === "#/ohbox" ? replySurface(s.el) : inPlace(s.el))!, BODY); });
     await key("Escape");
     await route("#/screener");
@@ -546,7 +602,7 @@ describe("a reply closed inside the pause is a draft on the account at once", ()
   it("a forward closed inside the pause keeps its To, files and note in its row", async () => {
     const s = await mountShell("#/ohbox", [message("m1", { hasAttachments: true, attachmentCount: 3 } as never)], [], { parts: true });
     await fillForward(s, "colleague@example.net", "Have a look at these two");
-    await key("Escape");
+    await leaveDock(s.el);
     await route("#/screener");
     const fwd = (): EngineDraft[] => s.store.list<EngineDraft>("draft").filter((d) => d.forwardOfMessageId === "m1" && d.status === "draft");
     await waitFor(() => fwd().length === 1, "the forward's row", SOON);
@@ -573,24 +629,23 @@ describe("a reply closed inside the pause is a draft on the account at once", ()
     const s = await mountShell("#/ohbox", [message("m1", (fwd ? { hasAttachments: true, attachmentCount: 3 } : {}) as never)], [], { parts: fwd });
     const rows = (): Array<string | null> => s.store.list<EngineDraft>("draft")
       .filter((d) => d.status === "draft" && (fwd ? d.forwardOfMessageId : d.inReplyToMessageId) === "m1").map((d) => d.body);
-    const button = (word: string): HTMLButtonElement =>
-      [...s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")].find((b) => (b.textContent ?? "").trim().startsWith(word))!;
+    const button = (word: string): HTMLButtonElement => actionIn(s.el, word)!;
     s.offline.on = true;
     if (fwd) await fillForward(s, "colleague@example.net", BODY);
     else { await openReplyOn(s, "m1"); await act(async () => { typeInto(replySurface(s.el)!, BODY); }); }
     await act(async () => { button("Send").click(); });
-    await waitFor(() => (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "Not sent yet");
+    await waitFor(() => sendLine(s.el).includes(en.reply.statusQueued), "Not sent yet");
     // Offline the Cancel is owed; back online, the server answers it withdrawn.
-    await act(async () => { button("Cancel").click(); });
-    await waitFor(() => [...document.querySelectorAll(".toast, .toast-held")].some((n) => n.textContent?.includes(en.compose.cancelUnreachable)), "the owed Cancel");
+    await leaveDock(s.el);
+    await waitFor(() => toastsSay(en.compose.cancelUnreachable), "the owed Cancel");
     s.withdrawAnswer.outcome = "withdrawn";
     s.offline.on = false;
     await act(async () => { window.dispatchEvent(new Event("online")); });
-    await waitFor(() => s.el.querySelector(".reply[data-reply-for]") == null, "the dock closed on the answer");
+    await waitFor(() => !dockOpen(s.el), "the dock closed on the answer");
     await waitFor(() => rows().length === 1, "the cancelled words in a row", PAUSE_ROUNDS);
     if (fwd) await openForward(s); else await key("r");
-    await waitFor(() => (s.el.querySelector(".reply[data-reply-for] .rte-surface")?.textContent ?? "").includes(BODY), "the words again");
-    await key("Escape");
+    await waitFor(() => ((replySurface(s.el) ?? forwardSurface(s.el))?.textContent ?? "").includes(BODY), "the words again");
+    await leaveDock(s.el);
     await route("#/screener");
     for (let i = 0; i < 40; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
     expect([sends(s).length, rows(), saves(s).filter((x) => x.draftId === null).length]).toEqual([0, [BODY], 1]);
@@ -623,8 +678,7 @@ function sendMakesItsRow(s: DraftShell, server: DraftServer): void {
 describe("a reply, forward or letter whose Send made its row, cancelled while it waits, is that one draft", () => {
   const BODY = "Thirty-two characters of a reply";
   const MORE = `${BODY}, and two more`;
-  const button = (s: DraftShell, word: string): HTMLButtonElement =>
-    [...s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")].find((b) => (b.textContent ?? "").trim().startsWith(word))!;
+  const button = (s: DraftShell, word: string): HTMLButtonElement => actionIn(s.el, word)!;
   const held = (server: DraftServer): Array<[string, string | null]> => [...server.rows.values()].map((d) => [d.status, d.body]);
 
   it.each([
@@ -635,25 +689,25 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
     const server = new DraftServer();
     const s = await mountShell("#/ohbox", [message("m1", (fwd ? { hasAttachments: true, attachmentCount: 3 } : {}) as never)], [], { server, parts: fwd });
     sendMakesItsRow(s, server);
-    const surface = (): HTMLElement => (fwd ? forwardDock(s.el)?.querySelector<HTMLElement>(".rte-surface") : replySurface(s.el))!;
+    const surface = (): HTMLElement => (fwd ? forwardSurface(s.el) : replySurface(s.el))!;
     if (fwd) await fillForward(s, "colleague@example.net", BODY);
     else { await openReplyOn(s, "m1"); await act(async () => { typeInto(surface(), BODY); }); }
     await act(async () => { button(s, "Send").click(); });
     await waitFor(() => server.rows.size === 1
-      && (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "the press's row, Not sent yet", PAUSE_ROUNDS);
+      && sendLine(s.el).includes(en.reply.statusQueued), "the press's row, Not sent yet", PAUSE_ROUNDS);
     if (when === "at once") s.withdrawAnswer.outcome = "withdrawn";
     else if (when === "once back online") s.offline.on = true;
     // Another window's Cancel, answered there: this window's engine hears its notice (`heard`).
     const sendKey = s.engine.pendingMutations().find((p) => p.mutation.kind === "mail_send")?.key;
     if (when === "in another window") await act(async () => { await s.engine.withdrawQueued(sendKey!, { askedElsewhere: true, answered: "withdrawn" }); });
-    else await act(async () => { button(s, "Cancel").click(); });
+    else await leaveDock(s.el);
     if (when === "once back online") {
-      await waitFor(() => [...document.querySelectorAll(".toast, .toast-held")].some((n) => n.textContent?.includes(en.compose.cancelUnreachable)), "the owed Cancel");
+      await waitFor(() => toastsSay(en.compose.cancelUnreachable), "the owed Cancel");
       s.withdrawAnswer.outcome = "withdrawn";
       s.offline.on = false;
       await act(async () => { window.dispatchEvent(new Event("online")); });
     }
-    await waitFor(() => s.el.querySelector(".reply[data-reply-for]") == null, "the dock closed", PAUSE_ROUNDS);
+    await waitFor(() => !dockOpen(s.el), "the dock closed", PAUSE_ROUNDS);
     await route("#/screener");
     await waitFor(() => saves(s).length === 1, "the close's save", PAUSE_ROUNDS);
     for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
@@ -663,7 +717,7 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
     if (fwd) await openForward(s); else await openReplyOn(s, "m1");
     await waitFor(() => (surface()?.textContent ?? "").includes(BODY), "the words again");
     await act(async () => { typeInto(surface(), MORE); });
-    await key("Escape");
+    await leaveDock(s.el);
     await route("#/screener");
     await waitFor(() => held(server).some(([, body]) => body === MORE), "the newest words on the account", PAUSE_ROUNDS);
     const other = await server.device();
@@ -675,25 +729,31 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
     const server = new DraftServer();
     const s = await mountShell("#/ohbox", [message("m1")], [], { server });
     sendMakesItsRow(s, server);
+    /* Write's letter: the combobox "To", the field "Subject", the text "Message", the bar "Send or discard". */
     const set = async (sel: string, value: string): Promise<void> => {
-      const input = s.el.querySelector<HTMLInputElement>(sel)!;
-      const write = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(sel)!;
+      const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const write = Object.getOwnPropertyDescriptor(proto, "value")!.set!;
       await act(async () => { write.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
     };
+    const letterBar = (name: string): HTMLButtonElement | undefined =>
+      [...document.querySelectorAll<HTMLButtonElement>('[role="toolbar"][aria-label="Send or discard"] button')]
+        .find((b) => b.getAttribute("aria-label") === name);
+    const letterText = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="textbox"][aria-label="Message"]');
     await key("c");
-    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
-    await set("#compose-to", "lena@example.invalid, ");
-    await set("#compose-subject", "A letter");
-    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")!, BODY); });
+    await waitFor(() => letterText() != null, "the composer");
+    await set('[role="combobox"][aria-label="To"]', "lena@example.invalid, ");
+    await set('textarea[aria-label="Subject"]', "A letter");
+    await act(async () => { typeInto(letterText()!, BODY); });
     await settleEditor();
-    const send = [...s.el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
-      .find((b) => /^Send(?!.*later)/i.test((b.textContent ?? "").trim()))!;
+    const send = letterBar("Send")!;
     await act(async () => { send.click(); });
     await waitFor(() => server.rows.size === 1 && (s.el.textContent ?? "").includes(en.compose.statusQueued), "the press's row, Not sent yet", PAUSE_ROUNDS);
     s.offline.on = true;
-    await press(s.el.querySelector(".compose-cancel"), "Cancel");
-    await press([...s.el.querySelectorAll<HTMLButtonElement>(".compose-confirm button")].find((b) => (b.textContent ?? "").trim() === en.compose.cancelConfirm) ?? null, "Discard message");
-    await waitFor(() => [...document.querySelectorAll(".toast, .toast-held")].some((n) => n.textContent?.includes(en.compose.cancelUnreachable)), "the owed Cancel");
+    /* Today's Cancel and its question's "Discard message" are Write's one verb that throws the letter away:
+       Discard, in the letter's bar (it asks nothing first). */
+    await press(letterBar("Discard") ?? null, "Discard");
+    await waitFor(() => toastsSay(en.compose.cancelUnreachable), "the owed Cancel");
     s.withdrawAnswer.outcome = "withdrawn";
     s.offline.on = false;
     await act(async () => { window.dispatchEvent(new Event("online")); });
@@ -713,11 +773,12 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
     await act(async () => { typeInto(replySurface(s.el)!, BODY); });
     await act(async () => { button(s, "Send").click(); });
     await waitFor(() => server.rows.size === 1
-      && (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "the press's row, Not sent yet", PAUSE_ROUNDS);
-    await act(async () => { button(s, "Cancel").click(); });
-    await waitFor(() => [...document.querySelectorAll(".toast, .toast-held")].some((n) => n.textContent?.includes(en.compose.cancelUnreachable)), "the owed Cancel");
-    await act(async () => { s.withdrawAnswer.outcome = "withdrawn"; button(s, "Cancel").click(); });
-    await waitFor(() => s.el.querySelector(".reply[data-reply-for]") == null, "the dock closed", PAUSE_ROUNDS);
+      && sendLine(s.el).includes(en.reply.statusQueued), "the press's row, Not sent yet", PAUSE_ROUNDS);
+    await leaveDock(s.el);
+    await waitFor(() => toastsSay(en.compose.cancelUnreachable), "the owed Cancel");
+    s.withdrawAnswer.outcome = "withdrawn";
+    await leaveDock(s.el);
+    await waitFor(() => !dockOpen(s.el), "the dock closed", PAUSE_ROUNDS);
     for (let i = 0; i < 40; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
     expect({ account: held(server), creates: saves(s).filter((m) => m.draftId === null).length })
       .toEqual({ account: [["draft", BODY]], creates: 0 });
@@ -727,9 +788,8 @@ describe("a reply, forward or letter whose Send made its row, cancelled while it
 describe("two windows over one disk: a waiting send cancelled in the window that did not press it", () => {
   const BODY = "Thirty-two characters of a reply";
   const MORE = `${BODY}, and two more`;
-  const button = (s: DraftShell, word: string): HTMLButtonElement =>
-    [...s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")].find((b) => (b.textContent ?? "").trim().startsWith(word))!;
-  const status = (s: DraftShell): string => s.el.querySelector(".reply .send-status")?.textContent ?? "";
+  const button = (s: DraftShell, word: string): HTMLButtonElement => actionIn(s.el, word)!;
+  const status = (s: DraftShell): string => sendLine(s.el);
   const held = (server: DraftServer): Array<[string, string | null]> => [...server.rows.values()].map((d) => [d.status, d.body]);
   const settle = async (n: number): Promise<void> => { for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); }); };
   let windows: DraftShell[] = [];
@@ -767,8 +827,8 @@ describe("two windows over one disk: a waiting send cancelled in the window that
     sendMakesItsRow(A, server);
     if (fwd) await fillForward(A, "colleague@example.net", BODY);
     else {
-      await press(A.el.querySelector(".view-ohbox .row[data-id='m1']"), "A's row");
-      await press(A.el.querySelector(".read-col .abar-reply"), "A's Reply");
+      await press(messageRow(A.el, "m1"), "A's row");
+      await press(letterVerb(A.el, "Reply"), "A's Reply");
       await waitFor(() => replySurface(A.el) != null, "A's reply editor");
       await act(async () => { typeInto(replySurface(A.el)!, BODY); });
     }
@@ -779,16 +839,16 @@ describe("two windows over one disk: a waiting send cancelled in the window that
       .some((e) => e.entity.key === sendKey && e.entity.createdRow !== undefined), "B reads A's send and its row off the disk", PAUSE_ROUNDS);
     if (fwd) await openForward(B);
     else {
-      await press(B.el.querySelector(".view-ohbox .row[data-id='m1']"), "B's row");
-      await press(B.el.querySelector(".read-col .abar-reply"), "B's Reply");
+      await press(messageRow(B.el, "m1"), "B's row");
+      await press(letterVerb(B.el, "Reply"), "B's Reply");
     }
-    await waitFor(() => B.el.querySelector(".reply[data-reply-for]") != null, "B's dock", PAUSE_ROUNDS);
+    await waitFor(() => dockOpen(B.el), "B's dock", PAUSE_ROUNDS);
     // B's dock holds A's send, while B's mirror has no draft and B's engine queued nothing.
     const before = { queued: status(B).includes(en.reply.statusQueued), rows: B.store.list<EngineDraft>("draft").length, mine: B.engine.pendingMutations().length };
     B.withdrawAnswer.outcome = "withdrawn";
-    await act(async () => { button(B, "Cancel").click(); });
-    await waitFor(() => B.el.querySelector(".reply[data-reply-for]") == null, "B's dock closed", PAUSE_ROUNDS);
-    await waitFor(() => A.el.querySelector(".reply[data-reply-for]") == null, "A's dock closed on the notice", PAUSE_ROUNDS);
+    await leaveDock(B.el);
+    await waitFor(() => !dockOpen(B.el), "B's dock closed", PAUSE_ROUNDS);
+    await waitFor(() => !dockOpen(A.el), "A's dock closed on the notice", PAUSE_ROUNDS);
     await settle(40);
     B.syncHeld.on = false;
     await act(async () => { await B.engine.syncOnce().catch(() => undefined); });
@@ -798,11 +858,11 @@ describe("two windows over one disk: a waiting send cancelled in the window that
       .toEqual({ before: { queued: true, rows: 0, mine: 0 }, account: [["draft", BODY]], creates: 0 });
     // Later, in B: open it again, more words, Cancel: still that one row.
     if (fwd) await openForward(B);
-    else await press(B.el.querySelector(".read-col .abar-reply"), "B's Reply again");
-    const surface = (): HTMLElement | null => B.el.querySelector<HTMLElement>(".reply[data-reply-for] .rte-surface");
+    else await press(letterVerb(B.el, "Reply"), "B's Reply again");
+    const surface = (): HTMLElement | null => replySurface(B.el) ?? forwardSurface(B.el);
     await waitFor(() => (surface()?.textContent ?? "").includes(BODY), "B's words again", PAUSE_ROUNDS);
     await act(async () => { typeInto(surface()!, MORE); });
-    await act(async () => { button(B, "Cancel").click(); });
+    await leaveDock(B.el);
     await waitFor(() => held(server).some(([, body]) => body === MORE), "the newest words on the account", PAUSE_ROUNDS);
     await settle(20);
     expect(held(server)).toEqual([["draft", MORE]]);

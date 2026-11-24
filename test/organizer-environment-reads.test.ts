@@ -52,7 +52,6 @@ const CANONICAL = "packages/core/src/organizer-install.ts";
  * identity. Each is a `TF_ENV || VERCEL_ENV` pair feeding a config field, never an install id.
  */
 const LABEL_READERS = new Set([
-  "apps/api-vercel/src/config.ts",
   "apps/server/src/config.ts",
 ]);
 

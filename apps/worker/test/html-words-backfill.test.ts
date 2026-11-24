@@ -5,6 +5,7 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   AccountErasedError, accounts, accountSettings, accountStorage, applyBodyBytesDelta, bodyBytesOf, changeLog,
   mailboxes, messageBodies, messages, messageSearch, type Tx,
+  accountPass, readPassProgress,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -13,10 +14,10 @@ import {
   upsertMessageSearchRows,
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { runSyncCycle } from "../src/sync.js";
-import { htmlWordsBackfillPass, htmlWordsOwedAccounts, type HtmlWordsBackfillOptions } from "../src/html-words-backfill.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { htmlWordsBackfillPass, htmlWordsOwedAccounts, type HtmlWordsBackfillOptions } from "@ohmail/organizer/html-words-backfill";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * THE HTML-WORDS BACKFILL (mail 0172), on the in-process store (PGlite here, the device's SQLite in
@@ -91,9 +92,10 @@ async function world() {
   const deltas = async (id?: string) => (await db.select({ id: changeLog.entityId, op: changeLog.op }).from(changeLog)
     .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityType, "message"))))
     .filter((c) => id === undefined || c.id === id);
-  const settings = async () => (await db.select({
-    at: accountSettings.htmlWordsBackfillAt, cursor: accountSettings.htmlWordsBackfillCursor,
-  }).from(accountSettings).where(eq(accountSettings.accountId, accountId)))[0] ?? { at: null, cursor: null };
+  const settings = async () => {
+    const marks = await readPassProgress(db, accountPass("html_words_backfill", accountId));
+    return { at: marks.doneAt, cursor: marks.cursor };
+  };
   const source = async (id: string) => (await db.select({ s: messageSearch.source }).from(messageSearch)
     .where(eq(messageSearch.messageId, id)))[0]?.s;
   const pass = (o: Omit<HtmlWordsBackfillOptions, "accountId"> = {}) => htmlWordsBackfillPass(db, { accountId, ...o });

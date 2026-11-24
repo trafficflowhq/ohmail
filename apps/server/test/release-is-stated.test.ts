@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { buildReleaseOf } from "../src/config.js";
+import { buildReleaseOf, processDoor } from "../src/build-release.js";
 
 /**
  * THE SELF-HOST SERVER STATES WHICH RELEASE IT IS, not which commit. The published images carry a
@@ -13,6 +13,8 @@ describe("the release this server is a build of", () => {
     const manifest = (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version: string }).version;
     expect(buildReleaseOf()).toBe(manifest);
     expect(buildReleaseOf(() => " 0.31.2 ")).toBe("0.31.2");
+    // And it is what the process door hands the settings, so a server that starts states it.
+    expect(processDoor(() => "").release).toBe(manifest);
   });
 
   it("is what the bundler baked in, ahead of the manifest", () => {

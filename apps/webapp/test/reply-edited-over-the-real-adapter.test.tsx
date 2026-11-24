@@ -56,10 +56,11 @@ async function world() {
 
 /** One surface: compose (`inReplyTo: null`) or the inline reply to m-1. */
 async function mount(e: OhmailEngine, said: string[]) {
-  const { useMailSend, COMPOSE_SEND_KEY } = await import("../app/shell/mail-send.js");
+  const { useMailSend, COMPOSE_SEND_KEY } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("./_write-1-send-text.js");
   let api!: { compose: (body: string) => Promise<void>; reply: (body: string) => Promise<void>; phase: (lane: string) => string; code: (lane: string) => string | null; lane: string };
   const Probe = (): null => {
-    const mail = useMailSend(e as never, ((t: string) => { said.push(t); }) as never, (() => {}) as never, (() => false) as never);
+    const mail = useMailSend(e as never, null, ((t: string) => { said.push(t); }) as never, useMailSendText(), (() => {}) as never, (() => false) as never);
     const press = (m: Record<string, unknown>, o?: unknown) => act(async () => { (mail.send as unknown as (m: unknown, o?: unknown) => void)(m, o); });
     api = {
       lane: COMPOSE_SEND_KEY,

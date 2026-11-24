@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import type { ScreenerQuoteGrant } from "@ohmail/wire";
 import {
   messages,
   mailboxes,
@@ -13,13 +14,13 @@ import {
   automaticAiAdmits,
   SCREENER_SUGGESTION_PROVENANCE,
   UNPRICED,
-  reverseCharge, type ReverseChargeFact,
+  readSuggestionGrant, reverseCharge, suggestionConsentGate, ModelConsentWithdrawn, type ReverseChargeFact,
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
-  senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet, notGoneSql, readGoneMailboxIds,
-  senderHasHeldClaimSql, heldForIdentitySql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
+  senderIsActiveSql, activeSenderKeysSql, activeSenderMessageSql, cutlineInstant, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet, notGoneSql, readGoneMailboxIds,
+  senderHasHeldClaimSql, heldClaimKeysSql, heldForIdentitySql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, parseDecisionScope, confirmedScreenerRows, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql, ruleSetNamesSenderSql,
   readRequestEligibility, decisionCanBeApplied, readListAddresses, readListAddressesLetIn, mailboxTakesPressSql,
-  readListClaimsFiledAlone, listOutstandingForAccount,
+  readListClaimsFiledAlone, listOutstandingForAccount, inTransactionHandle, onServerPool,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
   type AppliedScreenerRow, type RequestEligibility, type OrganizedBy,
   type Tx,
@@ -34,8 +35,8 @@ import type {
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import { usageLines } from "./ai-usage-lines.js";
 import type {
-  AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy, SenderReasonCode,
-  SenderSignals,
+  AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy,
+  KeyProvider, SenderSignals,
 } from "@trafficflow/core/mail";
 import {
   applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
@@ -55,7 +56,7 @@ import { requestRefusalReason } from "@trafficflow/core/reader-refusal";
 import {
   moveDestinationWord, planAccountFanOut, writeReaderRequest, writeReaderRequestSet, type AccountFanOut, type FanOutTarget,
 } from "./reader-request.js";
-import { bridgeDb, bridgeTx, type ServiceContext } from "./context.js";
+import { bridgeDb, bridgeTx, type Db, type ServiceContext } from "./context.js";
 import { materializeRules } from "./dto/materialize.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { refuseAiSpend, type AiRefusalClass } from "./ai-refusal.js";
@@ -65,7 +66,18 @@ import { LearningService } from "./learning-service.js";
 import { refuseOwnAddressRule, SHARED_PROVIDER_REFUSAL_SENTENCE } from "./rules-service.js";
 import { isSharedProviderDomain, sharedProviderAllowRefusal } from "@trafficflow/core/rule-order";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
-import type { Folder, Page, RuleDTO, ScreenerItem } from "./dto/types.js";
+import type {
+  Folder,
+  Page,
+  RuleDTO,
+  ScreenBody,
+  ScreenDecisionResult,
+  ScreenerItem,
+  ScreenerPendingDecision,
+  ScreenRequestedMailbox,
+  ScreenRequestResult,
+  SenderReasonCode,
+} from "@ohmail/wire";
 
 /**
  * ONE SENDER'S REFUSAL, KEPT WHOLE UNTIL THE STATUS IS DECIDED.
@@ -165,6 +177,8 @@ export interface ScreenerDeps {
 export interface ScreenerSuggestDeps extends ScreenerDeps {
   /** The model. Absent ⇒ `POST /screener/suggest` answers 503; no read path is affected. */
   classifier?: ClassifierPort;
+  /** Stable across processes serving the same deployment. */
+  quoteKeys?: Pick<KeyProvider, "deriveSubkey">;
   /**
    * The AI spend gate FACTORY, per account like every other gate. Absent ⇒ unmetered. A factory
    * rather than a gate because this service is constructed ONCE per host bag and serves every
@@ -175,13 +189,8 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
    */
   credits?: SpendPort;
   /**
-   * THE ACCESS HALF, READ ONLY WHEN THE GATE HAS ALREADY REFUSED — never on the way in.
-   *
-   * It is what makes a 402 corroborated: a `state` refusal is cross-checked against a fresh read
-   * of this account's access, and one that says AI is available answers 503 instead of demanding
-   * money (`ai-refusal.ts` holds the rule for this call site and the drafting one). ABSENT is a
-   * host that wired no such reader, and then a `state` refusal answers exactly what it always
-   * answered — the cross-check narrows a payment demand, it never widens one.
+   * The managed account's AI access is rechecked before dispatch. A spend refusal also uses it
+   * to corroborate a payment demand.
    */
   access?: AccessPort;
   /**
@@ -221,26 +230,7 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
   pricing?: ActionPricing;
 }
 
-export interface ScreenBody {
-  decision: "yes" | "no";
-  /**
-   * WHERE THE USER ASKED FOR IT — one of `DECIDABLE_FOLDERS`. Optional, and absence is the
-   * endpoint's original behaviour: `yes` ⇒ `INBOX`, `no` ⇒ `ohmail/Screened`. Optional because a
-   * shipped desktop mirror and the API's contract tests post `{decision}` alone, and a client
-   * that cannot name a folder should still admit a sender. NOT "the server will guess": present,
-   * it decides the folder outright; absent, the two-folder default stands and `appliedFolder`
-   * says which.
-   */
-  dest?: Destination;
-  scope?: "sender" | "domain";   // default "sender"
-  /**
-   * Also apply the PROMOTED rule to this sender's mail that has already left the gate. Absent is
-   * `true`, the contract `POST /rules` already carries; a non-boolean is a 400 rather than a
-   * coercion, because `"false"` is truthy and reading an attempt to decline as consent to
-   * reorganize a mailbox is the failure that check exists for.
-   */
-  applyRetro?: boolean;
-}
+/** A Screener decision's body: declared with the wire's vocabulary. */
 
 /** Idempotency handle threaded in by the route; the row is written IN the decide tx. */
 export interface ScreenIdempotency {
@@ -249,71 +239,7 @@ export interface ScreenIdempotency {
 }
 
 
-/** One queued half of an account-wide decision — which mailbox waits, on whom, under which request. */
-export interface ScreenRequestedMailbox {
-  mailboxId: string;
-  requestId: string;
-  holder: OrganizedBy;
-}
-
-/**
- * WHERE AN ACCOUNT-WIDE DECISION LANDED, PER MAILBOX (0.20). `filed` re-routed now; `requested`
- * queued on the request road for the named install. A mailbox in neither list either held nothing
- * from this sender or is held by an install that cannot take requests — those rows stay visibly
- * held, which is the truthful rendering. Optional on the wire: an older server omits it.
- */
-export interface ScreenDecisionMailboxes {
-  filed: string[];
-  requested: ScreenRequestedMailbox[];
-  /**
-   * Mailboxes this install was asked to organize and does not yet: the rule is written, the held
-   * mail moves on the first organizing pass after the claim lands. Absent when there are none.
-   */
-  awaiting?: string[];
-}
-
-export interface ScreenDecisionResult {
-  messageId: string;
-  appliedFolder: Folder;
-  createdRuleId: string | null;
-  /**
-   * The rules this decision wrote, as `/sync` carries them: the promoted rule, and every twin it
-   * retargeted. A client whose drain lags the server holds the decision from the confirm on, as
-   * `POST /rules` has always answered with its rule. Absent from an older server.
-   */
-  createdRule?: RuleDTO | null;
-  retargetedRules?: RuleDTO[];
-  /** See {@link ScreenDecisionMailboxes}. Absent from an older server; never absent from this one. */
-  mailboxes?: ScreenDecisionMailboxes;
-  /**
-   * WHAT THIS REQUEST'S UNSUBSCRIBE FAN-OUT DID, and what it left: `done` of `of` is the honest
-   * half of a per-request ceiling, since the hourly drain finishes the rest.
-   *
-   * ABSENT MEANS THIS REQUEST STARTED NO FAN-OUT — a "yes", a deployment with no unsubscribe
-   * port, a decision that re-routed nothing, or an IDEMPOTENT REPLAY, served from the stored row
-   * before `decide` runs and therefore posting to nobody. It never means the fan-out finished.
-   */
-  unsubscribed?: { done: number; of: number };
-}
-
-/**
- * `POST /screener/:id`'s OTHER shape (0.14.1) — a reader's decision, accepted but not
- * yet applied. `202`, never `200`: "Rule saved" is never claimed before the organizer's own pass
- * actually applies it (the ruling's own words). `holder` is who the client names in "Decided —
- * <holder> files it on its next pass."
- */
-export interface ScreenRequestResult {
-  pending: true;
-  requestId: string;
-  holder: OrganizedBy;
-  /**
-   * The account-wide picture (0.20): `filed` is always empty on this shape (nothing was written
-   * here), and `requested` names EVERY queued mailbox — the primary `requestId`/`holder` above
-   * stay what they always were, the TARGET mailbox's, so an older client reads them unchanged.
-   * Where a screen-out filed a list's claims alone they are the target's move, else the first.
-   */
-  mailboxes?: ScreenDecisionMailboxes;
-}
+/** What a decision answers, applied or queued, and where it landed per mailbox: declared with the wire's vocabulary. */
 
 /* ── The explicit suggestion purchase ───────────────────────────────────────────────────── */
 
@@ -572,6 +498,7 @@ export interface ScreenerSuggestBody {
    * ignored field — a money bound that silently disappears is worse than none claimed.
    */
   maxCredits?: unknown;
+  quoteGrant?: unknown;
   /**
    * NOBODY PRESSED THIS ONE — the opt-in's automatic batch says so with `true`. Such a request asks
    * only about held mail {@link automaticAiAdmits} passes, the always-on pass's own rule; a flagged
@@ -676,6 +603,7 @@ export interface ScreenerSuggestResult {
    * multiplies.
    */
   quotedCredits?: number;
+  quoteGrant?: ScreenerQuoteGrant;
   /** Credits this request moved. A re-run over the same mail is a `duplicate` and charges 0. */
   charged: number;
   /**
@@ -769,37 +697,7 @@ export interface ScreenerPage extends Page<ScreenerItem> {
   gone?: string[];
 }
 
-/** One entry of {@link ScreenerPage.pendingDecisions}. */
-export interface ScreenerPendingDecision {
-  /** The address (sender scope) or the domain (domain scope) the decision covers, lower-cased. */
-  subject: string;
-  scope: "sender" | "domain";
-  decidedAt: string;
-  /**
-   * Has this install's own cycle appended it to the mailbox yet?
-   *
-   * KEPT ALONGSIDE {@link state} rather than replaced by it: a client written against the 0.14.1
-   * shape reads this field, and `state === "sent"` is exactly what it always meant. Renaming it
-   * would have been a wire break for a rename's worth of benefit.
-   */
-  sent: boolean;
-  /**
-   * WHERE THE DECISION ACTUALLY IS (mail 0090). `pending` — queued here, not yet handed to the
-   * mailbox. `sent` — in the mailbox, waiting for the organizer. `refused` — the organizer said
-   * no; THE SENDER IS BACK IN THE QUEUE, and this entry explains why the decision did not take
-   * effect. `applied` and `expired` never appear: the first needs no explaining, the second
-   * returns the sender to the queue with the ordinary "nobody is organizing this" notice.
-   */
-  state: "pending" | "sent" | "refused";
-  /**
-   * What the organizer said no to — a closed vocabulary this codebase defines (`unauthenticated`,
-   * `conflict`, `wrong_mailbox`, `invalid_payload`, `unhandled_kind`, `stale`, `account_erased`),
-   * never free text and never a stranger's. `null` outside `refused`, and also for a refusal whose
-   * named reason this build does not recognise — a newer organizer's vocabulary reaches an older
-   * reader as "refused, reason unknown" rather than as an unrendered string.
-   */
-  refusedReason: string | null;
-}
+/** One entry of {@link ScreenerPage.pendingDecisions}: declared with the wire's vocabulary. */
 
 interface ScreenerRow {
   /**
@@ -1107,10 +1005,22 @@ export class ScreenerReadService {
    *  the other's.
    * ══════════════════════════════════════════════════════════════════════════════════════════
    */
+  private screenerRequestPayload(v: {
+    scope: "sender" | "domain"; address: string; domain: string; decision: "yes" | "no";
+    appliedFolder: Destination; applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
+  }) {
+    const { scope, address, domain, decision, appliedFolder, applyRetro, confirmedIds } = v;
+    return {
+      scope: confirmedIds ? (scope === "sender" ? "confirmed_sender" : "confirmed_domain") : scope,
+      address, appliedFolder, decision, match: scope === "sender" ? address : domain, applyRetro,
+      ...(confirmedIds ? { confirmedIds } : {}),
+    };
+  }
+
   private async validateScreenerDecision(ctx: ServiceContext, id: string, b: ScreenBody): Promise<{
     scope: "sender" | "domain"; decision: "yes" | "no"; dest: Destination | undefined;
     target: AppliedScreenerRow; address: string; domain: string; appliedFolder: Destination;
-    applyRetro: boolean;
+    applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
   }> {
     // ── THE ROUTE HANDS THIS BODY OVER UNVALIDATED ──────────────────────────────────────────
     //
@@ -1120,10 +1030,14 @@ export class ScreenerReadService {
     // that the same word also decides how much mail moves and how many strangers get an
     // unsubscribe request, a typo silently selecting a branch is no longer survivable. Named
     // here rather than in the route because this is the only reader of the field.
-    const scope = b.scope ?? "sender";
-    if (scope !== "sender" && scope !== "domain") {
-      throw new ServiceError("validation_failed", 400, "scope must be 'sender' or 'domain'");
+    const parsed = parseDecisionScope(b.scope ?? "sender", b.confirmedIds, b.unsubscribeIds);
+    if (!parsed) {
+      throw new ServiceError("validation_failed", 400, "scope must be sender or domain with a valid confirmed message set when required");
     }
+    if (parsed.confirmedIds && !parsed.confirmedIds.includes(id)) {
+      throw new ServiceError("validation_failed", 400, "the confirmed set must contain the screener item");
+    }
+    const { scope, confirmedIds } = parsed;
     // ── `decision` IS CHECKED NOW, AND IT WAS NOT ───────────────────────────────────────────
     //
     // This used to be a bare `b.decision === "yes" ? … : …`, so EVERY other value — `"Yes"`, a
@@ -1148,7 +1062,7 @@ export class ScreenerReadService {
     if (b.applyRetro !== undefined && typeof b.applyRetro !== "boolean") {
       throw new ServiceError("validation_failed", 400, "applyRetro must be a boolean");
     }
-    const applyRetro = b.applyRetro ?? true;
+    const applyRetro = confirmedIds === undefined && (b.applyRetro ?? true);
     // A pre-0.22 client's decision still names the News pile `ohmail/Reads` — the same pile.
     const destRaw = typeof b.dest === "string" ? canonicalDestination(b.dest) : b.dest;
     if (destRaw !== undefined) {
@@ -1212,7 +1126,7 @@ export class ScreenerReadService {
       throw new ServiceError("shared_provider_domain", 422, SHARED_PROVIDER_REFUSAL_SENTENCE);
     }
 
-    return { scope, decision, dest, target, address, domain, appliedFolder, applyRetro };
+    return { ...parsed, decision, dest, target, address, domain, appliedFolder, applyRetro };
   }
 
   /**
@@ -1291,12 +1205,12 @@ export class ScreenerReadService {
     ctx: ServiceContext, id: string,
     v: {
       scope: "sender" | "domain"; decision: "yes" | "no"; address: string; domain: string;
-      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean;
+      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
     },
     fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
   ): Promise<{ result: ScreenDecisionResult; seq: number | null }> {
-    const { scope, decision, address, domain, appliedFolder, target, applyRetro } = v;
+    const { scope, decision, address, domain, appliedFolder, target, applyRetro, confirmedIds, unsubscribeIds } = v;
     let rerouted: AppliedScreenerRow[] = [];
     let filed: string[] = [];
     // `null` when the decision wrote no change: the key already held it and nothing moved.
@@ -1322,6 +1236,7 @@ export class ScreenerReadService {
         applied = await applyScreenerDecision(carryDialect(ctx.db, tx) as typeof tx, {
           accountId: ctx.accountId, scope, address, appliedFolder, decision,
           triggeringActionId: `screener:${id}`, now: ctx.now(), applyRetro,
+          ...(confirmedIds ? { within: confirmedScreenerRows(confirmedIds) } : {}),
           // A press: the decision is the person's, so a `no` licenses the unsubscribe pass, and it
           // converges the sender's existing rule rather than adding one beside it.
           decidedBy: "person", overExisting: "converge",
@@ -1352,10 +1267,7 @@ export class ScreenerReadService {
        * covered by nobody. The drain NEVER queues (see `applyScreenerDecision`'s result doc);
        * only this door does, which bounds the mesh at one hop.
        */
-      const payload = {
-        scope, address, appliedFolder, decision,
-        match: scope === "domain" ? domain : address, applyRetro,
-      };
+      const payload = this.screenerRequestPayload(v);
       const awaiting: string[] = [];
       const requested: ScreenRequestedMailbox[] = [];
       if (applied.claimsOnly) {
@@ -1487,26 +1399,13 @@ export class ScreenerReadService {
       }
     }
 
-    // AFTER the tx has committed, never inside, and only on a REJECT; `onScreenOut` never throws
-    // — a sender who cannot be unsubscribed is still screened out. THE TRIGGER IS THE CONSENT,
-    // NOT THE FOLDER: this read `appliedFolder === NO_FOLDER`, which `dest: "ohmail/Quarantine"`
-    // would have made quietly false for every SPAM press. `unsubscribe-service.ts` names its
-    // actionable set as `ohmail/Screened` and `ohmail/Quarantine` — the user said no — so
-    // `decision === "no"` is the same senders and the sentence that file is written against. The
-    // narrowing is still done twice: `onScreenOut` filters to those two folders itself.
-    // `rerouted`, not `heldMail`: a row this decision did not claim may not be unsubscribed for.
-    // NOT performed on the drain's apply of a reader's request — see `applyScreenerDecision`'s
-    // header.
-    // No rule, no screen-out of the sender: a forged letter through a list's address never unsubscribes.
-    if (this.deps.unsubscribe && decision === "no" && !claimsOnly) {
-      const targets = rerouted.map((m) => m.messageId);
-      // The sweep is REPORTED now rather than discarded. It used to be awaited and thrown away,
-      // which was honest only while the fan-out ran every target: under a per-request ceiling the
-      // caller would otherwise be told a decision was applied with no way to know that the
-      // courtesy it started is still running somewhere. `considered` is what this request
-      // actually looked at; the rest are the drain's.
-      const sweep = await this.deps.unsubscribe.onScreenOut(ctx, targets);
+    // Only this press can grant a send, and only for messages it filed in this account.
+    // Reader handoffs and filing-only decisions have no grant.
+    if (this.deps.unsubscribe && decision === "no" && !claimsOnly && unsubscribeIds?.length) {
+      const granted = new Set(unsubscribeIds);
+      const targets = rerouted.map((m) => m.messageId).filter((id) => granted.has(id));
       if (targets.length > 0) {
+        const sweep = await this.deps.unsubscribe.onScreenOut(ctx, targets);
         result.unsubscribed = { done: sweep.considered, of: targets.length };
       }
     }
@@ -1556,15 +1455,14 @@ export class ScreenerReadService {
     ctx: ServiceContext, id: string,
     v: {
       scope: "sender" | "domain"; decision: "yes" | "no"; address: string; domain: string;
-      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean;
+      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
     },
     eligibility: RequestEligibility,
     fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
   ): Promise<ScreenRequestResult> {
-    const { scope, decision, address, domain, appliedFolder, applyRetro } = v;
+    const { scope, decision, address, appliedFolder, confirmedIds } = v;
     const requestId = randomUUID();
-    const match = scope === "domain" ? domain : address;
     const decidedAt = ctx.now();
 
     const dto: ScreenRequestResult = {
@@ -1582,7 +1480,8 @@ export class ScreenerReadService {
         let claims: AppliedScreenerRow[] = [];
         if (decision === "no" && scope === "sender") {
           if (await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId) != null) throw new AccountErasedError(ctx.accountId);
-          claims = await readListClaimsFiledAlone(tx, ctx.accountId, address, checkUncheckedById);
+          claims = await readListClaimsFiledAlone(tx, ctx.accountId, address, checkUncheckedById,
+            confirmedIds ? confirmedScreenerRows(confirmedIds) : undefined);
         }
         if (claims.length > 0) {
           const requested = await this.requestClaimMoves(tx, ctx, id, claims, appliedFolder);
@@ -1611,7 +1510,7 @@ export class ScreenerReadService {
             // Exactly what the drain needs to call `applyScreenerDecision` again, unchanged — see
             // that function's `ApplyScreenerDecisionInput`. `match` rides along for
             // `listOutstandingForAccount`'s own read; the drain does not use it.
-            payload: { scope, address, appliedFolder, decision, match, applyRetro },
+            payload: this.screenerRequestPayload(v),
             holder: eligibility.by,
             requestId,
             decidedAt,
@@ -1628,7 +1527,7 @@ export class ScreenerReadService {
             if (t.mailboxId === v.target.mailboxId) continue;
             const r = await writeReaderRequest(tx, ctx, {
               mailboxId: t.mailboxId, kind: "screener.decide",
-              payload: { scope, address, appliedFolder, decision, match, applyRetro },
+              payload: this.screenerRequestPayload(v),
               holder: t.holder, decidedAt,
             });
             requested.push({ mailboxId: t.mailboxId, requestId: r.requestId, holder: t.holder });
@@ -1699,11 +1598,18 @@ export class ScreenerReadService {
     // A mailbox narrows the held rows only; activity, decided and own stay account-wide.
     const { d, filters, window } = this.heldWindow(ctx, mailboxId === undefined ? undefined : eq(messages.mailboxId, mailboxId), cutline, gone);
     // scoped-by: `filters` leads with eq(messages.accountId, ctx.accountId)
-    const reps = ctx.db.select({ messageId: messages.id, fromAddress: messages.fromAddress, ...window }).from(messages)
-      .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .where(and(...filters))
-      .as("reps");
-    return { reps, d };
+    const held = ctx.db.select({ messageId: messages.id, fromAddress: messages.fromAddress, ...window })
+      .from(messages).innerJoin(folderState, eq(folderState.messageId, messages.id));
+    const dated = cutline ? held.leftJoin(mailboxes, and(
+      eq(mailboxes.id, messages.mailboxId), eq(mailboxes.accountId, ctx.accountId),
+    )) : held;
+    const rows = dated.where(and(...filters));
+    // The CTE reference supplies typed columns; the page spells out its materialized body below.
+    // scoped-by: `rows` inherits heldWindow's messages.accountId filter for ctx.accountId.
+    const reps = d.name === "pg" && cutline
+      ? ctx.db.$with("reps").as(ctx.db.select().from(rows.as("ranked")))
+      : rows.as("reps");
+    return { reps, rows, d };
   }
 
   /**
@@ -1724,6 +1630,8 @@ export class ScreenerReadService {
       // stand in for a sender whose older mail is live.
       isNull(messages.deletedAt),
     ];
+    // The Postgres placement has the message's account; older device rows can have no account.
+    if (d.name === "pg") filters.push(eq(folderState.accountId, ctx.accountId));
     const live = notGoneSql(d, messages.mailboxId, gone);
     if (live) filters.push(live);
     if (extra) filters.push(extra);
@@ -1747,12 +1655,21 @@ export class ScreenerReadService {
         partition by ${sender}
         order by case when ${messages.senderCheck} = 'impersonation' then 1 else 0 end desc, ${sortKey} desc, ${messages.id} desc
       )`.as("sender_marked_brand"),
+      /* A held letter is already in a presented folder. For its sender, unread or recent
+         held mail can answer the activity check without visiting the other folders. */
+      heldActive: (d.name === "pg" && cutline
+        ? sql<number>`max(case when ${activeSenderMessageSql(d, cutline, {
+          at: cutlineInstant({ date: sql`${messages.date}`, arrivedAt: sql`${messages.createdAt}` }),
+          unread: sql`${messages.unread}`, mailboxId: sql`${messages.mailboxId}`,
+        })} then 1 else 0 end) over (partition by ${sender})`
+        : sql<number>`0`).as("held_active"),
       /* A held letter that arrived inside the cutline (`heldArrivedInsideSql`), over the same
          partition: the partition is the sender's held rows, so no per-sender probe is needed. */
       heldArrival: (cutline
         ? sql<number>`max(case when ${heldArrivedInsideSql(d, {
           folder: sql`${folderState.desiredFolder}`, deletedAt: sql`${messages.deletedAt}`, date: sql`${messages.date}`,
           arrivedAt: sql`${messages.arrivedAt}`, recordedAt: sql`${messages.createdAt}`, mailboxId: sql`${messages.mailboxId}`,
+          importDone: sql`${mailboxes.initialImportCompletedAt}`,
         }, cutline)} then 1 else 0 end) over (partition by ${sender})`
         : sql<number>`0`).as("held_arrival"),
     };
@@ -1814,12 +1731,12 @@ export class ScreenerReadService {
         .as("waiting_total")
       : sql<null>`null`.as("waiting_total");
     // scoped-by: `reps` is the account-scoped messages subquery (eq messages.accountId, ctx.accountId)
-    const page = ctx.db.select({
+    const cutline = d.name === "pg" ? opts.cutline : undefined;
+    const picked = ctx.db.select({
       messageId: reps.messageId, sortKey: reps.sortKey, senderMarked: reps.senderMarked,
       senderMarkedBrand: reps.senderMarkedBrand, senderHeld: reps.senderHeld, waitingTotal,
-    }).from(reps)
-      .where(and(
-        ...this.waitingFilters(ctx, held, opts.cutline, opts.gone),
+    }).from(reps).where(and(
+        ...this.waitingFilters(ctx, held, opts.cutline, opts.gone, cutline !== undefined),
         opts.after
           // Row comparison, which is the `date desc, id desc` keyset written as one expression:
           // strictly "older" than the cursor tuple, with the id breaking a shared date. Bound
@@ -1829,16 +1746,45 @@ export class ScreenerReadService {
           : undefined,
       ))
       .orderBy(desc(reps.sortKey), desc(reps.messageId))
-      .limit(opts.limit)
-      .as("page");
-    // scoped-by: `page` holds only ids of the account-scoped `reps` subquery above
-    const rows = await ctx.db.select({
-      ...HELD_COLUMNS, sortKey: page.sortKey, senderMarked: page.senderMarked,
-      senderMarkedBrand: page.senderMarkedBrand, senderHeld: page.senderHeld, waitingTotal: page.waitingTotal,
-    }).from(page)
-      .innerJoin(messages, eq(messages.id, page.messageId))
-      .innerJoin(folderState, eq(folderState.messageId, messages.id))
-      .orderBy(desc(page.sortKey), desc(page.messageId));
+      .limit(opts.limit);
+    // Only senders whose held rows did not already answer the cutline need activity
+    // from their other mail. The list and the count use the same set.
+    const needsActivity = (from: SQL) => sql`select lower(from_address) from ${from}
+      where rank = 1 and held_active = 0 and held_arrival = 0`;
+    const read = (db: Db, candidates: SQL = needsActivity(sql`reps`)) => {
+      const page = cutline ? db.select({
+        messageId: sql<string>`picked.id`.as("picked_message_id"),
+        sortKey: sql<Date>`picked.sort_key`.mapWith(messages.date).as("sort_key"),
+        senderMarked: sql<number>`picked.sender_marked`.as("sender_marked"),
+        senderMarkedBrand: sql<string | null>`picked.sender_marked_brand`.as("sender_marked_brand"),
+        senderHeld: sql<number>`picked.sender_held`.as("sender_held"),
+        waitingTotal: sql<number | string | null>`picked.waiting_total`.as("waiting_total"),
+      }).from(sql`(
+        with reps as materialized (
+          select * from (${held.rows}) ranked where rank = 1
+        ),
+          active_senders as materialized (${activeSenderKeysSql(d, ctx.accountId, cutline, opts.gone, candidates)}),
+          claimed_senders as materialized (${heldClaimKeysSql(d, ctx.accountId, cutline, SCREENING_AUTH_VERDICTS, opts.gone)})
+        ${picked}
+      ) picked`).as("page") : picked.as("page");
+      // scoped-by: `page` holds only ids of the account-scoped `reps` subquery above
+      return db.select({
+        ...HELD_COLUMNS, sortKey: page.sortKey, senderMarked: page.senderMarked,
+        senderMarkedBrand: page.senderMarkedBrand, senderHeld: page.senderHeld, waitingTotal: page.waitingTotal,
+      }).from(page)
+        .innerJoin(messages, eq(messages.id, page.messageId))
+        .innerJoin(folderState, eq(folderState.messageId, messages.id))
+        .orderBy(desc(page.sortKey), desc(page.messageId));
+    };
+
+    // Binding the candidate set in a separate statement lets Postgres scan activity in parallel.
+    // Both reads use one snapshot. A sender whose mail changes between them cannot slip through.
+    const rows = cutline && onServerPool(ctx.db) && !inTransactionHandle(ctx.db)
+      ? await asTx(ctx).transaction(async (tx) => {
+        const candidates = await d.screenerActivityCandidates(tx, needsActivity(sql`(${held.rows}) activity_reps`));
+        return await read(bridgeDb(tx), candidates ?? undefined);
+      }, { isolationLevel: "repeatable read", accessMode: "read only" })
+      : await read(ctx.db);
 
     // `sum` is a bigint on the server and arrives as a string there; no row is an empty queue.
     const total = opts.withTotal ? Number(rows[0]?.waitingTotal ?? 0) : undefined;
@@ -1851,7 +1797,7 @@ export class ScreenerReadService {
    */
   private waitingFilters(
     ctx: ServiceContext, held: ReturnType<ScreenerReadService["heldSenderKeys"]>, cutline: CutlineSet | undefined,
-    gone: readonly string[],
+    gone: readonly string[], useSets: boolean,
   ): Array<SQL | undefined> {
     const { reps, d } = held;
     const sender = sql`lower(${reps.fromAddress})`;
@@ -1860,13 +1806,17 @@ export class ScreenerReadService {
     // Such a claim is a live held message marked 'impersonation', a row of the window's partition,
     // so `sender_marked` is 1 wherever one can exist: asked first, the probe skips every other sender.
     const claim = cutline
-      ? sql`(${reps.senderMarked} = 1 and ${senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS, gone)})`
+      ? sql`(case when ${reps.senderMarked} = 1 then
+        ${useSets ? sql`${sender} in (select sender from claimed_senders)`
+          : senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS, gone)}
+        else false end)`
       : undefined;
+    const active = cutline && (useSets ? sql`${sender} in (select sender from active_senders)` : senderIsActiveSql(d, ctx.accountId, sender, cutline, gone));
     // A held letter that arrived inside the cutline whatever its Date, as the gate dated it.
-    const arrival = cutline ? sql`${reps.heldArrival} = 1` : undefined;
+    const arrival = useSets ? sql`(${reps.heldArrival} = 1 or ${reps.heldActive} = 1)` : sql`${reps.heldArrival} = 1`;
     return [
       eq(reps.rank, 1),
-      cutline ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline, gone)} or ${claim} or ${arrival})` : undefined,
+      active ? sql`(${arrival} or ${claim} or ${active})` : undefined,
       // A decided sender is waiting again while the gate holds such a claim of theirs.
       claim
         ? sql`(not ${senderIsDecidedSql(d, ctx.accountId, sender)} or ${claim})`
@@ -1883,20 +1833,21 @@ export class ScreenerReadService {
    */
   private decisionInFlightSql(ctx: ServiceContext, d: ReturnType<typeof dialect>, sender: SQL): SQL {
     const field = (key: string) => d.jsonText(sql`o.payload`, key);
+    const kind = field("scope");
+    const match = field("match");
+    const destination = field("appliedFolder");
     // scoped-by: `o.account_id` leads the in-flight read (organizer_requests is per account)
-    return sql`exists (
-      select 1 from organizer_requests o
-       where o.account_id = ${d.castUuid(ctx.accountId)}
-         and o.state in ('pending', 'sent')
-         and ${ruleNamesSenderSql(d, { kind: field("scope"), match: field("match"), destination: field("appliedFolder") }, sender)}
-    )`;
+    const source = sql`from organizer_requests o
+      where o.account_id = ${d.castUuid(ctx.accountId)} and o.state in ('pending', 'sent')`;
+    return d.name === "pg" ? ruleSetNamesSenderSql(d, { kind, match, destination }, sender, source)
+      : sql`exists (select 1 ${source} and ${ruleNamesSenderSql(d, { kind, match, destination }, sender)})`;
   }
 
   /**
    * `heldRowById` / `heldRowsForSender` / `heldRowsForDomain` USED TO LIVE HERE, and now live in
    * `@trafficflow/db#screener-apply.ts` — see that module's own header (0.14.1):
    * `decide`'s validate step and `applyScreenerDecision`'s own internals both read through them,
-   * and the organizer's request drain (`apps/worker/src/request-drain.ts`) needs the identical
+   * and the organizer's request drain (`packages/organizer/src/request-drain.ts`) needs the identical
    * queries without importing this package. `decide` was their only caller in this class; moving
    * them left nothing behind to keep.
    */
@@ -1984,7 +1935,7 @@ export class ScreenerService extends ScreenerReadService {
    */
   private readonly classifier?: ClassifierPort;
   private readonly credits?: SpendPort;
-  /** The access half for the refusal cross-check. See {@link ScreenerSuggestDeps.access}. */
+  /** The access half for dispatch and the refusal cross-check. */
   private readonly access?: AccessPort;
   /** The balance READ. Destructured out for the same reason as the two above. */
   private readonly remaining?: (db: Tx, accountId: string) => Promise<number>;
@@ -1994,9 +1945,11 @@ export class ScreenerService extends ScreenerReadService {
   private readonly pricing: ActionPricing;
   /** See {@link ScreenerSuggestDeps.usageHost}. */
   private readonly usageHost?: AiUsageHost;
+  private readonly quoteKeys?: Pick<KeyProvider, "deriveSubkey">;
+  private quoteKey?: Buffer;
 
   constructor(deps: ScreenerSuggestDeps) {
-    const { classifier, credits, access, remaining, invocationBudgetMs, pricing, usageHost, ...readOnly } = deps;
+    const { classifier, credits, access, remaining, invocationBudgetMs, pricing, usageHost, quoteKeys, ...readOnly } = deps;
     super(readOnly);
     this.classifier = classifier;
     this.credits = credits;
@@ -2005,6 +1958,16 @@ export class ScreenerService extends ScreenerReadService {
     this.invocationBudgetMs = invocationBudgetMs;
     this.pricing = pricing ?? UNPRICED;
     this.usageHost = usageHost;
+    this.quoteKeys = quoteKeys;
+  }
+
+  private quoteProof(
+    account: string, senders: readonly string[], pairs: ScreenerQuoteGrant["pairs"], ceiling: number,
+  ): string {
+    this.quoteKey ??= this.quoteKeys?.deriveSubkey("ohmail screener quote v1") ?? randomBytes(32);
+    return createHmac("sha256", this.quoteKey)
+      .update(JSON.stringify([account, ceiling, senders, pairs.map(({ sender, messageId }) => [sender, messageId])]))
+      .digest("hex");
   }
 
   /**
@@ -2022,6 +1985,7 @@ export class ScreenerService extends ScreenerReadService {
     body: ScreenerSuggestBody,
     opts: {
       idempotency?: ScreenIdempotency | null;
+      requireQuoteGrant?: boolean;
       /** Where a refund this press owes is written down, per request like the drafting route's;
        *  composed wherever {@link ScreenerSuggestDeps.credits} is. Absent on an unmetered host. */
       obligations?: RefundObligationPort;
@@ -2038,6 +2002,12 @@ export class ScreenerService extends ScreenerReadService {
     const ceiling = parseConfirmedCeiling(body);
     /* A press, or the opt-in's automatic batch — the same place, for the same reason. */
     const automatic = parseAutomatic(body);
+    const proof = body?.quoteGrant;
+    if (proof !== undefined && (dryRun || automatic)) throw changedSuggestionQuote();
+    const mustVerify = !dryRun && !automatic && (proof !== undefined || (ceiling !== null && opts.requireQuoteGrant));
+    if (mustVerify && (typeof proof !== "string" || !/^[0-9a-f]{64}$/.test(proof) || ceiling === null)) {
+      throw changedSuggestionQuote();
+    }
     const classifier = this.classifier;
     if (!classifier) {
       // The same grammar as `drafter_unconfigured`: a host with no model is not broken,
@@ -2204,6 +2174,7 @@ export class ScreenerService extends ScreenerReadService {
     const stops: Array<ScreenerSuggestResult["stopped"] | undefined> = senders.map(() => undefined);
     const refusals: Array<GateRefusal | undefined> = senders.map(() => undefined);
     const purchases: Purchase[] = [];
+    const pairs: Array<ScreenerQuoteGrant["pairs"][number]> = [];
     // The same check the always-on pass runs, over the senders THIS press named — the pressed
     // path asks the same question about the same mail, so withholding the facts here would leave
     // the defect standing on the path a person pays for.
@@ -2245,6 +2216,7 @@ export class ScreenerService extends ScreenerReadService {
         };
         return;
       }
+      if (dryRun || mustVerify) pairs.push({ sender, messageId: r.messageId });
       /**
        * THE QUOTE IS THE CEILING — the first of two bounds, and the lower one is
        * {@link MAX_SUGGEST_SENDERS}, which caps the set before this loop sees it.
@@ -2268,6 +2240,19 @@ export class ScreenerService extends ScreenerReadService {
       purchases.push({ index, sender, row: r });
     });
 
+    if (mustVerify && typeof proof === "string" && ceiling !== null) {
+      const expected = this.quoteProof(ctx.accountId, senders, pairs, ceiling);
+      if (price === null || pairs.length * price > ceiling ||
+          !timingSafeEqual(Buffer.from(proof, "hex"), Buffer.from(expected, "hex"))) {
+        throw changedSuggestionQuote();
+      }
+    }
+
+    const grant = automatic
+      ? (purchases.length > 0 ? await readSuggestionGrant(asTx(ctx), ctx.accountId) : null)
+      : undefined;
+    const consent = suggestionConsentGate(asTx(ctx), ctx.accountId, grant, this.access);
+
     /** One sender's purchase, end to end. Everything below used to be the body of the loop. */
     const buy = async ({ index, sender, row: r }: Purchase): Promise<void> => {
       /**
@@ -2280,6 +2265,10 @@ export class ScreenerService extends ScreenerReadService {
        * (`spend_unavailable`) that spent nothing; `refusal: "fault"` so a run producing nothing
        * answers 503, not a demand for money.
        */
+      if (consent.withdrawn) {
+        refused[index] = { sender, reason: "spend_unavailable" };
+        return;
+      }
       if (!(await laneGate.acquire(laneDeadline))) {
         refused[index] = { sender, reason: "spend_unavailable" };
         stops[index] = "spend_unavailable";
@@ -2295,6 +2284,10 @@ export class ScreenerService extends ScreenerReadService {
 
     /** The purchase itself, inside a lane slot. */
     const buyAdmitted = async ({ index, sender, row: r }: Purchase): Promise<void> => {
+      if (consent.withdrawn) {
+        refused[index] = { sender, reason: "spend_unavailable" };
+        return;
+      }
       // The BARE key: the MESSAGE, which is what makes a re-ask of the same held mail free and
       // what makes the cron and this press claim the same work. The source is composed by
       // whoever answers.
@@ -2309,8 +2302,8 @@ export class ScreenerService extends ScreenerReadService {
       /** Set only where the gate hands this lane the claim; `inflight` names another holder. */
       let claimed = false;
       let released = false;
-      /** The model declined this sender; its credit leaves `charged` once the refund settles. */
-      let declined = false;
+      /** A withheld or declined request leaves `charged` once the refund settles. */
+      let refundedIfSettled = false;
       /** The model call's usage, carried by the release below — a model fault's line included. */
       const usage = usageLines(this.usageHost, ctx.accountId, "screener");
       /**
@@ -2334,7 +2327,7 @@ export class ScreenerService extends ScreenerReadService {
           accountId: ctx.accountId, action: "screener", attemptKey, attempt: refunding, reason: "drafter_failed", meta,
           ...usage.field(),
         }, (f) => saySuggestRefund(f, ctx.accountId, refunding));
-        if (declined && receipt === "settled") charged -= price ?? 0;
+        if (refundedIfSettled && receipt === "settled") charged -= price ?? 0;
       };
       try {
         if (gate) {
@@ -2443,14 +2436,19 @@ export class ScreenerService extends ScreenerReadService {
             snippet: r.snippet,
             ...(ohboxBar ? { ohboxBar } : {}),
             ...(facts ? { senderFacts: facts } : {}),
-          }, usage.call);
+          }, { ...usage.call, beforeDispatch: consent.beforeDispatch });
         } catch (err) {
+          if (err instanceof ModelConsentWithdrawn) {
+            refused[index] = { sender, reason: "spend_unavailable" };
+            refundedIfSettled = true;
+            return;
+          }
           // A DECLINE IS SAID FOR THIS SENDER AND REFUNDED. Asking again draws the same refusal, so
           // the free retry `model_unavailable` promises would be a promise about nothing: the charge
           // stays set for the door below to reverse, and leaves `charged` once that reversal settles.
           if (err instanceof ModelDeclinedError) {
             refused[index] = { sender, reason: "model_declined" };
-            declined = true;
+            refundedIfSettled = true;
             return;
           }
           suggestLog.warn("screener_suggest_model_failed", {
@@ -2619,6 +2617,9 @@ export class ScreenerService extends ScreenerReadService {
       const dto: ScreenerSuggestResult = {
         dryRun, requested: senders.length, quoted,
         ...(price !== null ? { quotedCredits: quoted * price } : {}), charged,
+        ...(dryRun && !automatic && price !== null && pairs.length === quoted ? {
+          quoteGrant: { pairs, proof: this.quoteProof(ctx.accountId, senders, pairs, quoted * price) },
+        } : {}),
         ...(stopped ? { stopped } : {}),
         ...(typeof remainingCredits === "number" ? { remainingCredits } : {}),
         suggestions, skipped,
@@ -2825,6 +2826,10 @@ function parseSenderSet(body: ScreenerSuggestBody): string[] {
     throw new ServiceError("validation_failed", 400, "senders must name at least one sender");
   }
   return [...out];
+}
+
+function changedSuggestionQuote(): ServiceError {
+  return new ServiceError("suggest_quote_changed", 409, "The waiting mail changed. Check the quote again.");
 }
 
 /**

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -34,14 +35,14 @@ async function world() {
       ...(unconfirmed ? { unconfirmedHold: true } : {}),
       date: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: `1:${n}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
   };
   await db.insert(contacts).values({ accountId, address: SENDER, source: "inferred" });
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `hr-${randomUUID().slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `hr-${randomUUID().slice(0, 8)}` };
   const desired = async (id: string) =>
     (await db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
   return { db, accountId, ctx, held, desired };

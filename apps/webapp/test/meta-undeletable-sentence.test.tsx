@@ -2,12 +2,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { screen } from "@testing-library/react";
+import { createTranslator, NextIntlClientProvider } from "next-intl";
+import type { MailboxId } from "@ohmail/app-logic/mailboxes/connect/types";
+import { rowStateOf } from "@ohmail/app-logic/mailboxes/pane/said";
+import { stampsOf } from "@ohmail/app-logic/mailboxes/pane/stamps";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import {
   deriveMailState, seedGrowth, type MailState, type MailStateInputs, type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A `_meta` THAT TAKES NO DELETE ASKS FOR A PERMISSION, NEVER A DELETION (mail 0143). The server
@@ -22,8 +26,8 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 let current: MailState | null = null;
-vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: current, refresh: () => {} }),
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
+  useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 let root: Root | null = null;
@@ -47,12 +51,12 @@ const inputs = (reason: string): MailStateInputs => ({
   failureStreak: 3, mailboxes: [blocked(reason)], mirrored: 495, growth: seedGrowth(495),
   freshness: { state: "current" as const, asOf: ago(30_000) },
   engineFreshness: { state: "current" as const, asOf: ago(30_000) },
-  now: NOW, demo: false,
+  now: NOW, demo: false, scope: null,
 } as MailStateInputs);
 
 async function strip(reason: string, locale: "en" | "de"): Promise<string> {
   current = deriveMailState(inputs(reason));
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -67,6 +71,30 @@ async function strip(reason: string, locale: "en" | "de"): Promise<string> {
 
 /** An imperative to delete or remove, or one aimed at the person's mail, in either catalogue. */
 const DELETE_ASKED = /(^|[.—]\s*)(delete|remove|lösche|entferne)\b|\b(delete|remove|lösche|entferne)\s+(your|the|deine|die|dort)\b/i;
+
+describe("the full mailbox's remedy in Mailboxes", () => {
+  it.each([
+    ["en", "Free up space", "cannot read its own folder"],
+    ["de", "Schaffe Platz", "kann seinen eigenen Ordner"],
+  ] as const)("%s gives the remedy for a full mailbox", (locale, room, wrongReason) => {
+    const translate = createTranslator({ locale, messages: locale === "en" ? en : de });
+    const facts = blocked("mailbox_full");
+    const state = rowStateOf({ ...facts, id: facts.id as MailboxId, provider: "imap" }, {
+      now: NOW,
+      stamps: stampsOf(locale, "UTC", translate("relativeTime.justNow")),
+      say: ({ ns = "mailboxes", key, values }) => translate(`${ns}.${key}`, values),
+      figure: (n) => n.toLocaleString(locale),
+      filer: "server",
+      queued: false,
+      importingSole: false,
+    });
+    expect(state.kind).toBe("bad");
+    const text = "text" in state ? state.text : "";
+    expect(text).toContain(room);
+    expect(text).not.toContain(wrongReason);
+    expect(text, "the cure asks the person to delete mail").not.toMatch(DELETE_ASKED);
+  });
+});
 
 describe("the undeletable meta folder's sentence", () => {
   it.each([
@@ -87,17 +115,15 @@ describe("the undeletable meta folder's sentence", () => {
   });
 });
 
-/* A mailbox at its quota refused the claim for room (mail 0185): the sentence names the full
-   mailbox and where to make room, never the folder ohmail could not read. */
+/* The notice names the full mailbox and takes the reader to the remedy in Mailboxes. */
 describe("the full mailbox's sentence", () => {
   it.each([
-    ["en", "full", "Free up space", ["cannot read its own folder"]],
-    ["de", "voll", "Schaffe Platz", ["kann seinen eigenen Ordner"]],
-  ] as const)("%s says the mailbox is full and where to make room", async (locale, full, room, never) => {
+    ["en", "full", en.frame.connection.act.mailboxes],
+    ["de", "voll", de.frame.connection.act.mailboxes],
+  ] as const)("%s says the mailbox is full and offers Mailboxes", async (locale, full, mailboxes) => {
     const text = await strip("mailbox_full", locale);
     expect(text).toContain(full);
-    expect(text).toContain(room);
-    for (const n of never) expect(text).not.toContain(n);
+    expect(screen.getByRole("button", { name: mailboxes })).toBeDefined();
     expect(text).not.toContain("_meta");
     expect(text).not.toContain("blocked_mailbox_full");
     expect(text, "the cure asks the person to delete mail").not.toMatch(DELETE_ASKED);

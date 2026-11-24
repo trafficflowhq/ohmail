@@ -1,14 +1,16 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider, useText } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words";
+import type { Translator } from "@ohmail/app-logic/text/translator";
 import {
   OhmailEngine, MemoryMirrorStore,
-  type EngineMessage, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "../app/shell/screener-state.js";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import { settleFirstPaint } from "./_first-paint.js";
 import messages from "../messages/en.json";
 
@@ -115,34 +117,37 @@ function installFetch(): void {
 }
 
 /**
- * Mount the REAL pair, wired the way `AppShell` wires them — `forSenders` handed the queue AND
+ * Mount the REAL pair, wired as the mounted Screener model connects them — `forSenders` handed the queue AND
  * its settle flag at every render. `withSuggest: false` mounts the state hook alone (claim 1).
  */
 /** The debounce window, off the module itself — imported here so the import stays dynamic. */
 async function debounceMs(): Promise<number> {
-  return (await import("../app/shell/screener-suggest.js")).HYDRATE_DEBOUNCE_MS;
+  return (await import("@ohmail/app-logic/screener/screener-suggest")).HYDRATE_DEBOUNCE_MS;
 }
 
 async function mount(
   engine: OhmailEngine, withSuggest: boolean,
 ): Promise<{ latest: () => ScreenerState }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-  // (api-client reads API_BASE at load — the module top sets it, and every shell import stays dynamic.)
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerSuggestions } = await import("@ohmail/app-logic/screener/screener-suggest");
+  const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
 
   let live: ScreenerState | null = null;
 
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
+    const text = useScreenerWords();
+    const aiRefusal = useText("aiRefusal") as unknown as Translator;
     const suggestions = useScreenerSuggestions({
+      text: { screener: text.screener, aiRefusal },
+      wire: CLOUD_WIRE,
       active: withSuggest,
       toast: (() => {}) as never,
     });
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions.suggestions);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, text, suggestions.suggestions);
     live = state;
-    // The shell's own seam: the queue and its settle flag travel together, every render.
+    // The model's seam: the queue and its settle flag travel together, every render.
     if (withSuggest) suggestions.forSenders(state.unsuggestedSenders, state.suggestedSenders, 0, state.queueSettled);
     return h(React.Fragment, {});
   }
@@ -152,12 +157,9 @@ async function mount(
   root = createRoot(host);
   await act(async () => {
     root!.render(
-      h(NextIntlClientProvider, {
+      h(TextProvider, {
         locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(KeymapProvider, { children: h(Probe) }),
-        }),
+        children: h(Probe),
       }),
     );
   });

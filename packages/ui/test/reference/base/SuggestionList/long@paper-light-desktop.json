@@ -1,0 +1,271 @@
+{
+  "component": "SuggestionList",
+  "state": "long",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 48, 340, 277.1875],
+  "clip": [24, 48, 340, 278],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "20px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "20px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.25px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "16.25px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "2",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 2 877dbc0c8604" },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 3 6e5b27cdc156" },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 3 49dff42e4c4a" },
+    {
+      "backgroundColor": "rgb(255, 255, 255)",
+      "boxShadow": "rgba(18, 16, 14, 0.28) 0px 18px 48px -12px, rgba(18, 16, 14, 0.08) 0px 2px 6px 0px",
+      "borderRadius": "20px"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "listbox",
+      "name": "Suggestions",
+      "box": [8, 8, 324, 237],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
+      "role": "group",
+      "name": "",
+      "box": [8, 8, 324, 237],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      }
+    },
+    {
+      "role": "option",
+      "name": "Konzil Konstanz Hafenstraße 2, 78462 Konstanz, Germany",
+      "box": [8, 8, 324, 49.3],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "Kon", "type": 0 },
+        { "said": "zil", "type": 1 },
+        { "said": "Kon", "type": 0 },
+        { "said": "stanz", "type": 1 },
+        { "said": "Hafenstraße 2, 78462", "type": 2 },
+        { "said": "Kon", "type": 3 },
+        { "said": "stanz, Germany", "type": 2 }
+      ],
+      "surfaces": [{ "box": [22, 22.6, 20, 20], "paint": 0 }]
+    },
+    {
+      "role": "option",
+      "name": "Universitätsstraße 10 78464 Konstanz, Germany",
+      "box": [8, 57.3, 324, 49.3],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "Universitätsstraße 10", "type": 1 },
+        { "said": "78464", "type": 2 },
+        { "said": "Kon", "type": 3 },
+        { "said": "stanz, Germany", "type": 2 }
+      ],
+      "surfaces": [{ "box": [22, 71.9, 20, 20], "paint": 1 }]
+    },
+    {
+      "role": "option",
+      "name": "Kunst- und Ausstellungshalle der Bundesrepublik Deutschland Helmut-Kohl-Allee 4, 53113 Bonn, Germany",
+      "box": [8, 106.5, 324, 69.3],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "Kunst- und Ausstellungshalle der Bundesrepublik Deutschland", "type": 1 },
+        { "said": "Helmut-Kohl-Allee 4, 53113 Bonn, Germany", "type": 2 }
+      ],
+      "surfaces": [{ "box": [22, 131.1, 20, 20], "paint": 0 }]
+    },
+    {
+      "role": "option",
+      "name": "Bischöflich-Geistlicher-Rat-Josef-Zinnbauer-Straße 84130 Dingolfing, Germany",
+      "box": [8, 175.8, 324, 69.3],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "Bischöflich-Geistlicher-Rat-Josef-Zinnbauer-Straße", "type": 1 },
+        { "said": "84130 Dingolfing, Germany", "type": 2 }
+      ],
+      "surfaces": [{ "box": [22, 200.4, 20, 20], "paint": 2 }]
+    },
+    {
+      "role": "button",
+      "name": "© OpenStreetMap contributors",
+      "box": [138.7, 249, 181.3, 18.2],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "2px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "© OpenStreetMap contributors", "type": 4 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [{ "box": [0, 0, 340, 277.2], "paint": 3 }] }
+}

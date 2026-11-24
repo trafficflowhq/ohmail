@@ -15,17 +15,20 @@ import { bracketSpan, withoutComments } from "../../../scripts/lib/source-scan.m
  */
 
 const ROOT = resolve(__dirname, "../../..");
-const ENGINE = "packages/client-engine/src/engine.ts";
-const SURFACE_ROOTS = ["apps/webapp/app", "apps/desktop/src", "apps/mobile/src"];
+/** The engine: its door and every file of its folder (the door stands in one, the drain that rings in another). */
+const ENGINE = ["packages/client-engine/src/engine.ts", "packages/client-engine/src/engine"];
+const engineText = (): string => [join(ROOT, ENGINE[0]!), ...readdirSync(join(ROOT, ENGINE[1]!)).sort().map((n) => join(ROOT, ENGINE[1]!, n))]
+  .map((f) => readFileSync(f, "utf8")).join("\n");
+const SURFACE_ROOTS = ["apps/webapp/app", "packages/app-logic/src", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src"];
 /** The adapter wrapper that FORWARDS the capability; forwarding is not a read. */
-const FORWARDER = "apps/webapp/app/shell/sync-scheduler.ts";
+const FORWARDER = "packages/app-logic/src/session/sync-scheduler.ts";
 
 const call = (name: string) => new RegExp(`\\b${name}\\s*\\(`);
 
 /** The body of the class method `name`, comments blanked, or null when it is not declared. */
 export function methodBody(src: string, name: string): string | null {
   const code = withoutComments(src);
-  const m = new RegExp(`\\n\\s*(?:private\\s+|async\\s+)*${name}\\s*\\([^)]*\\)[^{;]*\\{`).exec(code);
+  const m = new RegExp(`\\n\\s*(?:private\\s+|protected\\s+|async\\s+)*${name}\\s*\\([^)]*\\)[^{;]*\\{`).exec(code);
   if (!m) return null;
   const s = bracketSpan(code, m.index + m[0].length - 1, "{", "}");
   return s.closed ? code.slice(s.start, s.end) : null;
@@ -75,7 +78,7 @@ function walk(dir: string, acc: string[] = []): string[] {
 
 describe("the engine keeps one held-release door with a bell", () => {
   it("the real engine is admitted", () => {
-    expect(engineRefusals(readFileSync(join(ROOT, ENGINE), "utf8"))).toEqual([]);
+    expect(engineRefusals(engineText())).toEqual([]);
   });
 
   const door = "  async refreshHeldReleases(): Promise<void> {\n    const w = await this.adapter.heldReleases();\n  }\n";
@@ -109,10 +112,10 @@ describe("no surface reads the offer around the door", () => {
   /** Positive controls: the walk reached the renderer and the forwarder, on all three roots. */
   it("the walk reached every root, the renderer and the forwarder", () => {
     for (const r of SURFACE_ROOTS) {
-      expect(files.filter((f) => relative(ROOT, f).startsWith(`${r}/`)).length, r).toBeGreaterThan(10);
+      expect(files.filter((f) => relative(ROOT, f).startsWith(`${r}/`)).length, r).toBeGreaterThan(r === "apps/paired-page/src" ? 9 : 10);
     }
     const src = (p: string) => readFileSync(join(ROOT, p), "utf8");
-    expect(call("heldReleaseDismissedOf").test(withoutComments(src("apps/webapp/app/shell/screener-state.ts")))).toBe(true);
+    expect(call("fileHeldDecisions").test(withoutComments(src("packages/app-logic/src/screener/screener-state.ts")))).toBe(true);
     expect(/\.heldReleases\b/.test(withoutComments(src(FORWARDER)))).toBe(true);
   });
 

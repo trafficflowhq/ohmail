@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { launchRefused } from "@trafficflow/services/mail";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 
 const AUTHORIZE = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?x=2";
 const FULL = {
@@ -73,14 +74,14 @@ afterEach(async () => {
 });
 
 /** The wizard at its mailbox step, the password refused for `tile` (the Microsoft one by its app-password link). */
-async function refusedOn(tile: "Microsoft 365" | "Gmail") {
+async function refusedOn(tile: string) {
   vi.resetModules();
   process.env.NEXT_PUBLIC_API_BASE = "/api";
   delete process.env.NEXT_PUBLIC_OHMAIL_FLAVOR;
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -105,26 +106,22 @@ async function refusedOn(tile: "Microsoft 365" | "Gmail") {
     await act(async () => { b!.click(); });
     await settle();
   };
-  const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
-  };
-  const pick = [...host.querySelectorAll<HTMLElement>('[role="radio"]')].find((b) => (b.textContent ?? "").startsWith(tile));
-  await act(async () => { pick!.click(); });
+  /* The step is the one connect form: its fields by their labels, its tiles by their names, its refusal by its role. */
+  const probes = mailboxProbes(host, en, act);
+  const { type } = probes;
+  await probes.choose(tile);
   await settle();
   if (button(en.mailboxes.microsoftUseAppPassword)) await press(en.mailboxes.microsoftUseAppPassword);
   await type("join-mb-address", "pat@outlook.test");
   await type("join-mb-pass", "an-app-password");
   await press(en.join.connectMailbox);
-  const refusal = () => host.querySelector(".join-error.at-press")?.textContent ?? null;
+  const { refusal } = probes;
   return { host, button, press, refusal };
 }
 
 describe("a password refused on the Microsoft tile", () => {
   it("where the sign-in runs: the sign-in sentence and the button, not the app-password advice", async () => {
-    const ui = await refusedOn("Microsoft 365");
+    const ui = await refusedOn(en.providerPicker.microsoftShort);
     expect(ui.refusal()).toBe(en.join.mailboxMicrosoftRefused);
     expect(ui.host.textContent).not.toContain(en.mailboxes.probe_auth);
     expect(ui.button(en.mailboxes.oauthContinue), "the sign-in sits beside the refusal").toBeTruthy();
@@ -136,7 +133,7 @@ describe("a password refused on the Microsoft tile", () => {
 
   it("where it does not: the refusal is Microsoft's app-password sentence, with no button", async () => {
     available = false;
-    const ui = await refusedOn("Microsoft 365");
+    const ui = await refusedOn(en.providerPicker.microsoftShort);
     expect(ui.refusal()).toBe(en.mailboxes.probe_auth_microsoft);
     expect(ui.button(en.mailboxes.oauthContinue)).toBeNull();
   });

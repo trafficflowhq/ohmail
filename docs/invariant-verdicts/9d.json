@@ -1,0 +1,33 @@
+{
+  "id": "9d",
+  "base": "ff5f0453bac394cfaa60db65e7d126c1240b2828",
+  "recorded": "2026-11-18",
+  "command": "npx vitest run packages/services/test/row-security-isolation.pg.test.ts",
+  "tests": [
+    "packages/services/test/row-security-isolation.pg.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "packages/db/src/bound.ts",
+      "line": "  `select set_config('${ACCOUNT_SETTING}', $1, true) as account, set_config('${KEY_SETTING}', $2, true) as key`;",
+      "to": "  `select $1::text as account, set_config('${KEY_SETTING}', $2, true) as key`;",
+      "failed": 18
+    },
+    {
+      "file": "packages/db/src/row-security/logins.ts",
+      "line": "export const ACCOUNT_SETTING = \"ohmail.account\";",
+      "to": "export const ACCOUNT_SETTING = \"ohmail.unbound\";",
+      "failed": 14
+    },
+    {
+      "file": "packages/db/src/row-security/names.ts",
+      "line": "    body: `select case when pg_catalog.pg_input_is_valid(pg_catalog.current_setting('${ACCOUNT_SETTING}', true), 'pg_catalog.uuid') `",
+      "to": "    body: `select case when pg_catalog.pg_input_is_valid(pg_catalog.current_setting('ohmail.unbound', true), 'pg_catalog.uuid') `",
+      "failed": 30
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 67
+  }
+}

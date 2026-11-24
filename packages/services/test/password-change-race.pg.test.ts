@@ -1,7 +1,9 @@
+import { accountOfUser } from "@trafficflow/db";
+import { dbFor } from "../src/context.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { accounts, sessions, users } from "@trafficflow/db";
+import { accounts, bindDb, sessions, users } from "@trafficflow/db";
 import { authThrottle, credentials, loginTokens, makeOwnedDb, totpSecrets, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -85,10 +87,10 @@ async function person(): Promise<Person> {
   const [a] = await db().insert(accounts).values({ name: `pw-race-${tag}` }).returning();
   const email = `pw-race-${tag}@x.example`;
   const [u] = await db().insert(users).values({ accountId: a!.id, email }).returning();
-  await db().insert(credentials).values({ userId: u!.id, passwordHash: await deps.passwordHasher.hash(OLD), algo: "scrypt" });
+  await db().insert(credentials).values({ userId: u!.id, accountId: accountOfUser(u!.id), passwordHash: await deps.passwordHasher.hash(OLD), algo: "scrypt" });
   // An activated factor, so a right password answers with a first step and not a session.
   const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(generateToken());
-  await db().insert(totpSecrets).values({ userId: u!.id, secretEnc: ciphertext, keyVersion, activated: true });
+  await db().insert(totpSecrets).values({ userId: u!.id, accountId: accountOfUser(u!.id), secretEnc: ciphertext, keyVersion, activated: true });
   const session = async (): Promise<string> => {
     const now = Date.now();
     const [s] = await db().insert(sessions).values({
@@ -102,8 +104,9 @@ async function person(): Promise<Person> {
 }
 
 /** A request on `handle`: as the caller's session, or (no session) as an anonymous sign-in. */
-const ctxOn = (handle: unknown, p: Person, sessionId: string | null): ServiceContext => ({
-  db: handle as never, accountId: sessionId ? p.accountId : "", userId: sessionId ? p.userId : null, sessionId,
+/** A signed-in session's context is bound to its account; a sign-in or a redeem, before one, to nothing. */
+const ctxOn = (handle: Db, p: Person, sessionId: string | null): ServiceContext => ({
+  db: sessionId ? dbFor(handle, p.accountId) : bindDb(handle, { account: null }), accountId: sessionId ? p.accountId : "", userId: sessionId ? p.userId : null, sessionId,
   now: () => new Date(), requestId: `pw-race-${randomUUID()}`, ip: randomIp(),
 });
 

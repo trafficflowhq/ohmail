@@ -7,7 +7,7 @@ export type {
   AlertArmHealth, AlertSinkSummary,
   HelloConfig,
   ChangeWakeHub,
-  AttachmentStagingPort, AttachmentStagingFactory, StagedUploadGrantWire,
+  AttachmentStagingPort, AttachmentStagingFactory,
 } from "./deps.js";
 export { DEFAULT_SSE } from "./deps.js";
 /* THE HOSTED HALF OF THE DEPENDENCY SURFACE. Re-exporting from `deps-cloud.js` is what carries
@@ -18,7 +18,7 @@ export { DEFAULT_SSE } from "./deps.js";
 export type { AlertsConfig, AdminConfig } from "./deps-cloud.js";
 
 // Service-context builder + web cookie helpers (slice B).
-export { serviceContext } from "./context.js";
+export { serviceContext, doorDb } from "./context.js";
 export { sessionCookies, enrollmentCookies, clearSessionCookies, ownerCookieValue, OWNER_COOKIE } from "./cookies.js";
 /* Beside the guard that recomputes it, not beside the cookie set that carries it — see
  * `csrf.ts`. Verifying a CSRF token is work every host's request pipeline does; minting the

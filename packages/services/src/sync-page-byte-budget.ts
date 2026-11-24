@@ -21,6 +21,13 @@ import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 const ROW_FIELDS = 64 * 1024;
 export const DRAFT_ROW_MAX_BYTES = 2 * DRAFT_BODY_MAX_BYTES + ROW_FIELDS;
 
+/**
+ * What one calendar event's record may weigh. An invitation's notes and its list of invitees are
+ * text a stranger chose; past this the record is sent with its times, repeat and title whole and
+ * its notes and invitees emptied, marked `cut`, so one invitation never wedges a page.
+ */
+export const CALENDAR_EVENT_MAX_BYTES = 256 * 1024;
+
 /** The bytes one change adds to the page body: its own JSON plus the comma that joins it. */
 export function weighChange(change: unknown): number {
   return Buffer.byteLength(JSON.stringify(change), "utf8") + 1;

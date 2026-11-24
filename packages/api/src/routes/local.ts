@@ -5,6 +5,7 @@ import { pushRoutes } from "./push.js";
 import { mailboxRoutes } from "./mailboxes.js";
 import { rulesRoutes } from "./rules.js";
 import { messageRoutes } from "./messages.js";
+import { draftFromTextRoutes } from "./draft-from-text.js";
 import { threadRoutes } from "./threads.js";
 import { screenerRoutes } from "./screener.js";
 import { trashRoutes } from "./trash.js";
@@ -25,6 +26,8 @@ import { attachmentRoutes } from "./attachments.js";
 import { kbRoutes } from "./kb.js";
 import { tagsRoutes } from "./tags.js";
 import { draftsRoutes } from "./drafts.js";
+// Yes, Maybe or No on an invitation, sent by mail: a desktop and a phone that organize on their own answer too.
+import { invitationRoutes } from "./invitations.js";
 // Send later with files, kept as the composition's `scheduledFiles` declares (mail 0179, 0180).
 import { scheduleFilesRoutes } from "./schedule-files.js";
 import { workflowsRoutes } from "./workflows.js";
@@ -111,6 +114,7 @@ export const localRoutes: Route[] = [
   ...mailboxRoutes,
   ...rulesRoutes,
   ...messageRoutes,
+  ...draftFromTextRoutes,
   ...threadRoutes,
   ...screenerRoutes,
   ...trashRoutes,
@@ -140,6 +144,7 @@ export const localRoutes: Route[] = [
   ...kbRoutes,
   ...tagsRoutes,
   ...draftsRoutes,
+  ...invitationRoutes,
   ...scheduleFilesRoutes,
   ...workflowsRoutes,
 ];

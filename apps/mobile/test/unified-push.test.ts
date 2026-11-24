@@ -229,8 +229,10 @@ describe("the wake listener's lifetime is the APP's, not a screen's", () => {
     // The generation is captured BEFORE the await, not read after it — reading it after would
     // compare the new value to itself and never fire.
     expect(src).toMatch(/const mine = generation\.current;[\s\S]*?await registerWake/);
-    // Every write is gated on `fresh()`, which is mounted AND same-generation.
-    expect(src).toMatch(/const fresh = \(\): boolean => mounted\(\) && generation\.current === mine;/);
+    // Every write requires a mounted attempt, its original generation and the same live session.
+    expect(src).toMatch(
+      /const fresh = \(\): boolean => mounted\(\) && generation\.current === mine && liveSession\.current === session;/,
+    );
     /**
      * ── THE SUPERSEDED ARM, CHECKED BY WHAT IT MAY NOT DO ────────────────────────────────
      *
@@ -248,7 +250,12 @@ describe("the wake listener's lifetime is the APP's, not a screen's", () => {
     expect(supersededAt, "the superseded arm must exist").toBeGreaterThan(-1);
     const idWrite = src.indexOf("subscriptionId.current = next.k ===");
     expect(idWrite).toBeGreaterThan(supersededAt);
-    const arm = src.slice(supersededAt, idWrite);
+    // The superseded arm ends at its own return; the fresh path's checks (the page's no, then the id) come after it.
+    const armEnd = src.indexOf("\n        return;\n      }", supersededAt) + "\n        return;\n      }".length;
+    expect(armEnd).toBeLessThan(idWrite);
+    const arm = src.slice(supersededAt, armEnd);
+    // The page's no landing while this was in the air writes only while the session it was made for is current.
+    expect(src).toMatch(/await forgetWake\(session, unifiedPushDistributor\(\), next\.id, nativeServerProfiles\(\)\);\s*\n\s*if \(fresh\(\)\) \{/);
     expect(arm, "a superseded result may not write the id").not.toMatch(/subscriptionId\.current\s*=/);
     expect(arm, "a superseded result may not write the pane's state").not.toMatch(/setState\(/);
     expect(arm, "and it must leave before the fresh path's writes").toMatch(/\n        return;\n      \}/);
@@ -481,7 +488,7 @@ describe("the wake renderer draws ONE fixed notice, and never server content", (
     expect(kotlin).toMatch(/if \(WakeAppState\.interactive\) return null/);
     // The suppress path returns BEFORE anything is posted.
     const guard = kotlin.indexOf("if (WakeAppState.interactive) return null");
-    const post = kotlin.indexOf("postWakeNotification(context)");
+    const post = kotlin.indexOf("postWakeNotification(context, instance)");
     expect(guard).toBeGreaterThan(-1);
     expect(post).toBeGreaterThan(guard);
   });
@@ -823,7 +830,21 @@ describe("enabling wakes asks for the notification permission the closed-app not
 const nodeRequire = createRequire(import.meta.url);
 const STUB_DISTRIBUTOR = "org.example.updist";
 
+/**
+ * The binary's own answer to "is the push connector's native module in this build": the mail app carries it, the
+ * calendar's app is built without it. The adapter asks before it loads the package.
+ */
+function seedNativePresence(present: boolean): void {
+  const resolved = nodeRequire.resolve("expo");
+  const m = new Module(resolved) as NodeModule;
+  m.filename = resolved;
+  m.loaded = true;
+  m.exports = { requireOptionalNativeModule: (name: string) => (present && name === "ExpoUnifiedPush" ? {} : null) };
+  nodeRequire.cache[resolved] = m;
+}
+
 function seedNativeModule(): string {
+  seedNativePresence(true);
   const resolved = nodeRequire.resolve("expo-unified-push");
   const m = new Module(resolved) as NodeModule;
   m.filename = resolved;
@@ -860,12 +881,14 @@ function seedNativeModule(): string {
 describe("the adapter keeps one instance's events out of another's", () => {
   afterEach(() => {
     delete nodeRequire.cache[nodeRequire.resolve("expo-unified-push")];
+    delete nodeRequire.cache[nodeRequire.resolve("expo")];
     mocks.platform.OS = "android";
     vi.resetModules();
   });
 
   /** A native stub that RECORDS its calls and lets the test fire the connector's own events. */
   function seedDrivable() {
+    seedNativePresence(true);
     const calls: { fn: string; args: unknown[] }[] = [];
     const listeners: ((e: { action: string; data: Record<string, unknown> }) => void)[] = [];
     const resolved = nodeRequire.resolve("expo-unified-push");
@@ -991,6 +1014,7 @@ describe("the adapter keeps one instance's events out of another's", () => {
 describe("the platform gate sits in FRONT of the native require", () => {
   afterEach(() => {
     delete nodeRequire.cache[nodeRequire.resolve("expo-unified-push")];
+    delete nodeRequire.cache[nodeRequire.resolve("expo")];
     mocks.platform.OS = "android";
     vi.resetModules();
   });
@@ -1032,6 +1056,18 @@ describe("the platform gate sits in FRONT of the native require", () => {
       const mod = await import("../src/net/unified-push");
       expect(mod.savedDistributor(), `${os} reached the native require`).toBeNull();
       delete nodeRequire.cache[nodeRequire.resolve("expo-unified-push")];
+      delete nodeRequire.cache[nodeRequire.resolve("expo")];
     }
+  });
+
+  it("an app built without the push connector never loads its package, a working one seeded or not", async () => {
+    seedNativeModule();
+    seedNativePresence(false);
+    mocks.platform.OS = "android";
+    vi.resetModules();
+    const mod = await import("../src/net/unified-push");
+    expect(mod.savedDistributor()).toBeNull();
+    expect(mod.listDistributors()).toEqual([]);
+    expect(mod.unifiedPushDistributor().available()).toBe(false);
   });
 });

@@ -32,6 +32,13 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
 }));
 
+const build = vi.hoisted(() => ({ selfHost: false }));
+
+vi.mock("../app/hello", async (load) => ({
+  ...await load<typeof import("../app/hello")>(),
+  get SELF_HOST_BUILD() { return build.selfHost; },
+}));
+
 type Answer = { status: number; body?: unknown };
 let answers: Record<string, Answer> = {};
 let originalFetch: typeof globalThis.fetch;
@@ -44,6 +51,7 @@ const coded = (status: number, code: string, message: string): Answer => ({
 });
 
 beforeEach(() => {
+  build.selfHost = false;
   answers = {
     // The already-signed-in check on mount: no session, so the form stays.
     "/api/auth/session": coded(401, "unauthorized", "authentication required"),
@@ -71,7 +79,7 @@ afterEach(async () => {
 });
 
 async function mountLogin(props: { publicSignup?: boolean } = {}): Promise<HTMLElement> {
-  const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+  const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -113,7 +121,6 @@ describe("STA-F1 — the passkey promise renders only over a passkey ceremony", 
 
     // Password step: the account's methods are unknown, so nothing may promise a passkey.
     expect(container.textContent).not.toMatch(/passkey/i);
-    expect(container.textContent).toContain("Your password first, then your second factor.");
 
     await submitPassword(container);
 
@@ -148,7 +155,7 @@ describe("STA-F6 — a bare 401 gets the form's own sentence, not the wire strin
     answers["/api/auth/2fa/totp/verify"] = coded(401, "credential_refused", "two-factor verification failed");
     await type(container.querySelector<HTMLInputElement>("#login-code")!, "000000");
     await act(async () => {
-      container.querySelector("form.login-totp")!
+      container.querySelector("#login-code")!.closest("form")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await Promise.resolve();
     });
@@ -183,52 +190,19 @@ describe("STA-F6 — a bare 401 gets the form's own sentence, not the wire strin
   });
 });
 
-/**
- * WHAT THE CARD SAYS ABOUT SIGNING UP IS TRUE OF THIS DEPLOYMENT.
- *
- * Measured at that change: the note read "an invite code is not required" on every managed build,
- * `TF_PUBLIC_SIGNUP` or not, while `/join` chose its lead by that flag — so an invite-only beta
- * answered a stranger two ways in one visit. These read the RENDERED sentence, not the key: the
- * posture table next door is asserted by `signup-posture-claims.test.ts`, and a table nobody
- * renders is a guard about nothing.
- */
-describe("the sign-in note states this deployment's posture", () => {
-  it("an OPEN deployment says no invite code is needed", async () => {
-    const note = (await mountLogin({ publicSignup: true }))
-      .querySelector(".login-invite-note")!;
-    expect(note.textContent).toContain("an invite code is not required");
-    expect(note.textContent).not.toContain("invite-only");
-  });
+describe("sign-in offers account creation only where signup is open", () => {
+  it.each([
+    { deployment: "managed open", selfHost: false, publicSignup: true, joins: ["Create an account"] },
+    { deployment: "managed invite-only", selfHost: false, publicSignup: false, joins: [] },
+    { deployment: "self-hosted", selfHost: true, publicSignup: false, joins: [] },
+    { deployment: "self-hosted with public signup set", selfHost: true, publicSignup: true, joins: [] },
+  ])("$deployment shows only the signup action the deployment supports", async ({ selfHost, publicSignup, joins }) => {
+    build.selfHost = selfHost;
+    const page = await mountLogin({ publicSignup });
 
-  it("an INVITE-ONLY deployment says so, and does not promise open signup", async () => {
-    const note = (await mountLogin({ publicSignup: false }))
-      .querySelector(".login-invite-note")!;
-    expect(note.textContent).toContain("Accounts are by invitation during the beta");
-    expect(note.textContent).not.toContain("not required");
-  });
-
-  it("an OPEN deployment offers 'Create an account' to /join; an invite-only one does not", async () => {
-    const open = (await mountLogin({ publicSignup: true })).querySelector(".login-invite-note")!;
-    const create = [...open.querySelectorAll("a")].find((a) => a.textContent === "Create an account");
-    expect(create, "no sign-up link where anyone can sign up").toBeDefined();
-    expect(create!.getAttribute("href")).toBe("/join");
-    await act(async () => root!.unmount());
-    host?.remove(); root = null; host = null;
-
-    const gated = (await mountLogin({ publicSignup: false })).querySelector(".login-invite-note")!;
-    expect(gated.textContent).not.toContain("Create an account");
-  });
-
-  it("…and the link to redeem a code survives in both postures", async () => {
-    // The note changes; the way in for somebody holding a code does not.
-    for (const publicSignup of [true, false]) {
-      const note = (await mountLogin({ publicSignup })).querySelector(".login-invite-note")!;
-      const redeem = [...note.querySelectorAll('a[href="/join"]')].map((a) => a.textContent);
-      expect(redeem).toContain("Have an invite code?");
-      if (root) await act(async () => root!.unmount());
-      host?.remove();
-      root = null;
-      host = null;
-    }
+    expect([...page.querySelectorAll('a[href="/join"]')].map((link) => link.textContent)).toEqual(joins);
+    expect(page.textContent?.includes("Create an account")).toBe(joins.length > 0);
+    expect(page.textContent).not.toContain("Have an invite code?");
+    expect(page.textContent).not.toMatch(/invite-only|by invitation|you can sign up|invite code is not required/i);
   });
 });

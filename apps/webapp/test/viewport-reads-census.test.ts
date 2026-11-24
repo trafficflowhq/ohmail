@@ -12,26 +12,36 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * belongs in viewport px. Comments are blanked first (`source-scan.mjs`); a planted raw read is the
  * positive control.
  */
-/* @reads: apps/webapp/app/shell, apps/webapp/app/views, apps/webapp/app/components, packages/ui/src */
+/* @reads: apps/webapp/app/shell, apps/webapp/app/components, packages/letter-body/src, packages/app-logic/src, packages/app/src/frame/rail-drag.ts, packages/app/src/keys, packages/ui/src */
 const REPO = join(__dirname, "..", "..", "..");
-const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/components", "apps/webapp/app/(product)", "packages/ui/src"];
+const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/components", "packages/letter-body/src", "apps/webapp/app/(product)", "packages/app-logic/src", "packages/app/src/keys", "packages/ui/src"];
+const RAIL_DRAG = "packages/app/src/frame/rail-drag.ts";
 const RAW = /getBoundingClientRect\s*\(|\.clientX\b|\.clientY\b|\binnerWidth\b|\binnerHeight\b/g;
 
 /** Reads that belong in viewport px, each with why. A new one is a reviewed diff. */
 const ADMITTED: Record<string, { count: number; why: string }> = {
   "packages/ui/src/ui-zoom.ts": { count: 5, why: "the helper itself" },
-  "apps/webapp/app/shell/drag-file.ts": {
+  "packages/app-logic/src/geometry/ui-zoom.ts": { count: 5, why: "the helper's twin, for behaviour that may not import the kit" },
+  [RAIL_DRAG]: {
     count: 6,
     why: "the drag's slop compares two pointer reads, and the hit test `elementFromPoint` takes viewport px",
   },
-  "apps/webapp/app/views/OhboxView.tsx": { count: 4, why: "a press-and-hold slop: two pointer reads compared" },
-  "apps/webapp/app/shell/list-window.ts": {
+  "packages/app-logic/src/ohbox/pointer.ts": { count: 4, why: "a press-and-hold slop: two pointer reads compared" },
+  "packages/app-logic/src/lists/list-window.ts": {
     count: 2,
     why: "the page-scroll half: the ROOT scroller's scrollTop is viewport px under the zoom (measured)",
   },
   "packages/ui/src/composites/StreamCard.tsx": {
     count: 1,
     why: "mirrors a `max-width: 640px` media query, and media queries are viewport px",
+  },
+  "packages/ui/src/base/ui-zoom.ts": {
+    count: 5,
+    why: "the helper itself: the next design's twin, inside the border its parts may not cross to today's",
+  },
+  "packages/ui/src/mail/Editor/recipient-drag.ts": {
+    count: 4,
+    why: "the lift's slop: two pointer reads compared, the hand's own travel; the ghost, the caret and the hit test go through cssPoint and cssRect",
   },
 };
 
@@ -55,6 +65,8 @@ function walkCss(dir: string): string[] {
 
 describe("viewport reads in the shell go through ui-zoom", () => {
   const counts = new Map<string, number>();
+  const dragReads = rawCount(readFileSync(join(REPO, RAIL_DRAG), "utf8"));
+  if (dragReads > 0) counts.set(RAIL_DRAG, dragReads);
   for (const root of ROOTS) {
     for (const file of walk(join(REPO, root))) {
       const n = rawCount(readFileSync(file, "utf8"));

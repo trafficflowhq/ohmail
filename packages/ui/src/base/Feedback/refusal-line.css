@@ -1,0 +1,41 @@
+/* One line that says why a control did not act. */
+@layer oh {
+  .oh-refusal {
+    --oh-refusal-pad: 0 var(--s3) var(--s1) var(--s4);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--s2);
+    padding: var(--oh-refusal-pad);
+    color: var(--ink);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+  .oh-refusal:has(> .oh-button) {
+    --oh-refusal-pad: 0 var(--s2) var(--s1) var(--s4);
+  }
+  .oh-refusal-say {
+    min-width: 0;
+  }
+  .oh-refusal > .oh-button {
+    --oh-refusal-way-gap: 0 0 0 var(--s1);
+    flex: none;
+    margin: var(--oh-refusal-way-gap);
+  }
+  /* Under a finger a line is narrow: the sentence folds wherever it must, and where its way no longer fits
+     beside it the way stands whole under it. */
+  :root[data-touch="1"] .oh-refusal {
+    flex-wrap: wrap;
+    row-gap: var(--s1);
+  }
+  :root[data-touch="1"] .oh-refusal-say {
+    overflow-wrap: anywhere;
+  }
+  .oh-refusal[data-start] {
+    --oh-refusal-pad: 0 var(--s3) var(--s1) var(--s3);
+    justify-content: flex-start;
+  }
+  .oh-refusal[data-start] > .oh-refusal-say {
+    overflow-wrap: anywhere;
+  }
+}

@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
+import { queryByRole, within } from "@testing-library/react";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { resetUiVitalsForTest, takeUiVitals } from "../app/shell/ui-vitals";
+import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
+import { ohboxRows, openSubject as subjectOpen } from "./ohbox/_finders.js";
 
 /**
  * AN OPEN IS TIMED FROM ITS OWN PRESS, THROUGH THE WHOLE SHELL. The pane ends the mark in a
@@ -13,6 +15,10 @@ import { resetUiVitalsForTest, takeUiVitals } from "../app/shell/ui-vitals";
  * end ran first and the mark stood until that message was opened again: 0.24.0 read an open p95
  * of 6 816 173 ms on Windows. Demo bodies are all in the mirror, so every open here is that case —
  * and each is one reading, from the key to the paint (0.25.2 read `openCount 0` over 15 opens).
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): the shell is the one there is (`_mail-shell.tsx`: the frame
+ * over the mail ground, the seated Ohbox and the reader), and the open letter's subject is read where the reader
+ * says it (the open letter's head, by role and name). Expectations as they stood.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -57,13 +63,10 @@ const key = async (k: string): Promise<void> => {
   });
 };
 
-const openSubject = (): string =>
-  host!.querySelector(".reader .msg .msg-subject")?.textContent
-  ?? host!.querySelector(".read-col .msg .msg-subject")?.textContent
-  ?? "";
+const openSubject = (): string => subjectOpen(host!);
 
 async function mountShell(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -78,7 +81,7 @@ async function mountShell(): Promise<void> {
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
 }
 
 beforeEach(() => {
@@ -139,10 +142,14 @@ describe("the open mark in the shell", () => {
   it("an open in History's own column is timed too, from the pointer", async () => {
     window.location.hash = "#/history";
     await mountShell();
-    await waitFor(() => (host!.querySelectorAll(".view-history .row[data-id]").length > 1), "History never listed rows");
+    const historyRows = () => {
+      const list = queryByRole(host!, "listbox", { name: "History" });
+      return list ? within(list).queryAllByRole("option") : [];
+    };
+    await waitFor(() => historyRows().length > 1, "History never listed rows");
     await flush();
     takeUiVitals(); // the window so far
-    const row = host!.querySelectorAll<HTMLElement>(".view-history .row[data-id]")[1]!;
+    const row = historyRows()[1]!;
     await act(async () => {
       row.dispatchEvent(new Event("pointerdown", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));

@@ -1,0 +1,214 @@
+/**
+ * THE WEB SHELL'S ANSWERS, PER SETTING. What `webHost` says for the managed build and for a
+ * self-hosted server, held to what the running app showed in each: the sections its Settings
+ * menu listed, and the control each capability decides. Nothing mounts through `webHost` yet, so
+ * this is what keeps it true until something does.
+ */
+import { describe, expect, it } from "vitest";
+import { FEATURE_NAMES, NONE, panesOf, type FeatureName, type HostContract } from "@ohmail/app/host";
+import { DESKTOP_DOWNLOAD_URL, webHost, type WebFacts, type WebSupplies } from "../app/(product)/mailbox/host";
+
+const WIRES = [
+  "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk",
+  "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "connect",
+  "mailboxes", "calendar",
+] as const;
+/** A stand-in that is only ever compared: which thing was handed on, not what it does. */
+const named = <T,>(name: string) => ({ named: name }) as unknown as T;
+
+const has: WebSupplies = {
+  session: { resolve: named("resolve"), confirmed: named("confirmed"), signOut: named("signOut") },
+  reads: { mailboxes: named("mailboxes"), access: named("access") },
+  wires: Object.fromEntries(WIRES.map((wire) => [wire, named(wire)])) as WebSupplies["wires"],
+  features: Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, named(feature)])) as WebSupplies["features"],
+  notifications: named("notifications"),
+  language: named("language"),
+  openLink: named("openLink"),
+  frame: {
+    places: named("places"), stages: named("stages"), reader: named("reader"), above: named("above"), overs: named("overs"), address: named("address"),
+    window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
+  },
+};
+const engine = named<HostContract["engine"]>("engine");
+
+/** The managed build, as it was read: the server pairs devices and fetches pictures, and meters nothing. */
+const managed: WebFacts = {
+  selfHost: false,
+  server: { pairing: true, remoteImages: true, searchPeople: false },
+  invites: false,
+  subscriptionPage: false,
+  storageBlock: false,
+  sendSurface: undefined,
+  foldersStorable: true,
+  scope: "an-account",
+  account: "an-account",
+  build: { version: "1.0.11", commit: "abc" },
+};
+/** A self-hosted server, as it was read: the same server words, invitations, and a staged send. */
+const selfHosted: WebFacts = { ...managed, selfHost: true, invites: true, sendSurface: 20 * 1024 * 1024 };
+
+it("offers Calendar only for the advertised service and the confirmed mirror's port", () => {
+  const port = named<Exclude<HostContract["wires"]["calendar"], typeof NONE>>("calendar-port");
+  const supplies = { ...has, wires: { ...has.wires, calendar: port } };
+  const enabled = { ...managed, server: { ...managed.server, calendar: true } };
+  expect(webHost(engine, enabled, supplies).capabilities.products).toBe("both");
+  expect(webHost(engine, enabled, supplies).wires.calendar).toBe(port);
+  for (const facts of [managed, { ...enabled, account: null }, { ...enabled, account: "another-account" }]) {
+    const host = webHost(engine, facts, supplies);
+    expect(host.capabilities.products).toBe(NONE);
+    expect(host.wires.calendar).toBe(NONE);
+  }
+});
+
+const listed = (host: HostContract) => Object.entries(panesOf(host)).filter(([, shown]) => shown).map(([pane]) => pane).sort();
+const withheld = (host: HostContract) => Object.entries(host.wires).filter(([, wire]) => wire === NONE).map(([wire]) => wire).sort();
+/** The whole record of features: the entry supplied under each name handed on, `none` under every other. */
+const entries = (...handedOn: FeatureName[]) =>
+  ({
+    ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (has.features as Record<string, unknown>)[feature] : NONE])),
+    places: has.frame.places,
+    stages: has.frame.stages,
+    overs: has.frame.overs,
+    reader: has.frame.reader,
+    above: has.frame.above,
+    calendar: has.frame.calendar,
+  });
+/** A page in a browser: its own notification reader and language controls, a mailto that leaves, no badge, and no other verb or signal wired yet. */
+const BROWSER_DEVICE = {
+  build: { surface: "web", version: "1.0.11", commit: "abc", mailtoLeaves: true, desktopDownload: DESKTOP_DOWNLOAD_URL },
+  notifications: has.notifications,
+  badge: NONE, language: has.language, openLink: has.openLink, pickFile: NONE, saveFile: NONE, defaultMail: NONE,
+  textSize: NONE, fold: NONE, liveTheme: NONE,
+  address: has.frame.address, window: has.frame.window, appearance: has.frame.appearance,
+};
+const NO_SIGNAL = {
+  hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
+  posture: NONE, insets: NONE, keyboard: NONE, back: NONE, wake: NONE,
+};
+/** What the account's page hands on in every setting, before what the server's words and the build add. */
+const THE_ACCOUNT = ["account", "mailboxes", "ai", "storageCard", "accountStrip", "security", "about", "screener"] as const;
+
+describe("the web shell's answers on the managed service", () => {
+  const host = webHost(engine, managed, has);
+
+  it("lists the sections its Settings menu showed", () => {
+    expect(listed(host)).toEqual([
+      "about", "account", "ai", "away", "devices", "folders", "help", "mailboxes", "rules", "screener", "security", "signatures",
+    ]);
+  });
+
+  it("answers each capability as its control showed it", () => {
+    expect(host.capabilities).toEqual({
+      service: "managed", prices: "none", sendCeiling: "strict", awayRunsOn: "service", rulesMarked: true,
+      imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced", pairing: "account",
+      account: "here", firstRunDoor: "cloud", mailboxes: "here", language: "account", searchBy: "words", products: "none",
+    });
+  });
+
+  it("hands on every wire it has but the switch for a person's own model", () => {
+    expect(withheld(host)).toEqual(["calendar", "ownModelAutoSuggest"]);
+    expect(host.wires.liveBody).toBe(has.wires.liveBody);
+    expect(host.wires.connect).toBe(has.wires.connect);
+    expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access });
+  });
+
+  it("is the account's own page: a live session under the account's scope, and a browser's device", () => {
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", mirrorAccount: "an-account", account: "an-account", accountAddress: null, accountDisplayName: null, recover: has.frame.recover, today: NONE });
+    expect(host.device).toEqual(BROWSER_DEVICE);
+    expect(host.signals).toEqual(NO_SIGNAL);
+    expect(host.engine).toBe(engine);
+  });
+
+  it("hands on the account's features with Devices and Help, and nothing of a desktop's", () => {
+    expect(host.features).toEqual(entries(...THE_ACCOUNT, "devices", "help"));
+  });
+
+  it("lists Subscription and Storage only where the service serves the page and the answer carries the block", () => {
+    const served = webHost(engine, { ...managed, subscriptionPage: true, storageBlock: true }, has);
+    expect(listed(served)).toEqual(expect.arrayContaining(["billing", "storage"]));
+    expect(served.features).toEqual(entries(...THE_ACCOUNT, "devices", "help", "subscription", "storage"));
+    expect(webHost(engine, { ...managed, subscriptionPage: true }, has).capabilities.prices).toBe("linkOut");
+  });
+
+  it("says what a send may carry: strict where it cannot stage, the mailbox's own, or the bytes", () => {
+    expect(webHost(engine, { ...managed, sendSurface: null }, has).capabilities.sendCeiling).toBe("mailbox");
+    expect(webHost(engine, { ...managed, sendSurface: 1024 }, has).capabilities.sendCeiling).toBe(1024);
+  });
+
+  it("draws no pictures and pairs nothing where the server does not say it will", () => {
+    const quiet = webHost(engine, { ...managed, server: { pairing: false, remoteImages: false, searchPeople: false } }, has);
+    expect(quiet.capabilities).toMatchObject({ imagesFrom: "none", pairing: "none" });
+    expect(quiet.wires.images).toBe(NONE);
+    expect(listed(quiet)).not.toContain("devices");
+    expect(quiet.features).toEqual(entries(...THE_ACCOUNT, "help"));
+  });
+
+  it("searches by a person only where the server's hello says its search takes one", () => {
+    expect(webHost(engine, managed, has).capabilities.searchBy).toBe("words");
+    const people = { ...managed, server: { ...managed.server, searchPeople: true } };
+    expect(webHost(engine, people, has).capabilities.searchBy).toBe("people");
+    expect(webHost(engine, { ...selfHosted, server: people.server }, has).capabilities.searchBy).toBe("people");
+  });
+});
+
+describe("the web shell's answers on a self-hosted server", () => {
+  const host = webHost(engine, selfHosted, has);
+
+  it("lists the sections its Settings menu showed: Invites, and no Help", () => {
+    expect(listed(host)).toEqual([
+      "about", "account", "ai", "away", "devices", "folders", "invites", "mailboxes", "rules", "screener", "security", "signatures",
+    ]);
+  });
+
+  it("answers each capability as its control showed it", () => {
+    expect(host.capabilities).toEqual({
+      service: "self", prices: "none", sendCeiling: 20 * 1024 * 1024, awayRunsOn: "service", rulesMarked: true,
+      imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced", pairing: "account",
+      account: "here", firstRunDoor: "selfhost", mailboxes: "here", language: "account", searchBy: "words", products: "none",
+    });
+  });
+
+  it("has no Load it now: a server its operator runs keeps every body", () => {
+    expect(withheld(host)).toEqual(["calendar", "liveBody", "ownModelAutoSuggest"]);
+  });
+
+  it("hands on the account's features with Devices and Invites, and is the same page in a browser", () => {
+    expect(host.features).toEqual(entries(...THE_ACCOUNT, "devices", "invites"));
+    expect(host.device).toEqual(BROWSER_DEVICE);
+    expect(host.signals).toEqual(NO_SIGNAL);
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", mirrorAccount: "an-account", account: "an-account", accountAddress: null, accountDisplayName: null, recover: has.frame.recover, today: NONE });
+    expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access });
+  });
+
+  it("lists no Folders where the server drops the choice", () => {
+    expect(listed(webHost(engine, { ...selfHosted, foldersStorable: false }, has))).not.toContain("folders");
+  });
+});
+
+describe("the web shell's account and pictures, in every setting", () => {
+  const SETTINGS: [string, WebFacts][] = [
+    ["managed", managed],
+    ["self-hosted", selfHosted],
+    ["a server that pairs nothing and fetches no picture", { ...managed, server: { pairing: false, remoteImages: false, searchPeople: false } }],
+    ["before the account is confirmed", { ...managed, account: null }],
+  ];
+
+  it("hands the verified address only to the frame for the same account", () => {
+    const facts = { ...managed, accountAddress: "person@example.invalid" };
+    expect(webHost(engine, facts, has).session.accountAddress).toBe(facts.accountAddress);
+    expect(webHost(engine, { ...facts, account: "another-account" }, has).session.accountAddress).toBeNull();
+    expect(webHost(engine, { ...facts, account: null }, has).session.accountAddress).toBeNull();
+    const profile = { ...facts, accountDisplayName: "Fixture Person" };
+    expect(webHost(engine, profile, has).session.accountDisplayName).toBe("Fixture Person");
+    expect(webHost(engine, { ...profile, account: "another-account" }, has).session.accountDisplayName).toBeNull();
+  });
+
+  it.each(SETTINGS)("%s: the session names the account the server confirmed, and nothing else", (_, facts) => {
+    expect(webHost(engine, facts, has).session.account).toBe(facts.account);
+  });
+
+  it.each(SETTINGS)("%s: pictures come from nowhere or from the machine that unsubscribes", (_, facts) => {
+    const { imagesFrom, unsubscribeFrom } = webHost(engine, facts, has).capabilities;
+    expect(imagesFrom === "none" || imagesFrom === unsubscribeFrom).toBe(true);
+  });
+});

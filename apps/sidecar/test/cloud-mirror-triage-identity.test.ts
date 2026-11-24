@@ -1,3 +1,12 @@
+import type {
+  MailboxDTO,
+  MessageDTO,
+  MessageStateDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+  ThreadDTO,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,10 +14,9 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { changeLog, messageStates } from "@trafficflow/db/mail";
-import { syncService } from "@trafficflow/services/mail";
+import { dbFor, syncService } from "@trafficflow/services/mail";
 import type {
-  MailboxDTO, MessageDTO, MessageStateDTO, ServiceContext, SnapshotResponse, SyncChange,
-  SyncResponse, ThreadDTO,
+  ServiceContext,
 } from "@trafficflow/services/mail";
 import {
   MemoryMirrorStore, ohboxView, parkedMessageIds, triagePiles,
@@ -225,7 +233,7 @@ function fakeAuthBySince(feed: SyncResponse, resumeCursor: string): CloudAuth {
 }
 
 const ctxFor = (opened: OpenLocalDb, world: LocalWorld): ServiceContext => ({
-  db: opened.db, accountId: world.accountId, userId: world.userId, sessionId: null,
+  db: dbFor(opened.db, world.accountId), accountId: world.accountId, userId: world.userId, sessionId: null,
   now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined,
 });
 

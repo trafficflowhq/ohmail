@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { engineUnitFiles } from "../../../test/support/engine-unit.js";
 
 /**
  * THE STRUCTURAL CENSUS — Cloud mode cannot reach the organizer.
@@ -13,8 +14,8 @@ import { describe, expect, it } from "vitest";
  * from:
  *
  *   · the IMAP adapter        `@trafficflow/core/adapters/imap`  (opens the user's mailbox)
- *   · the organizer lease     `@trafficflow/worker/lease`        (claims the mailbox)
- *   · the shared sync loop     `@trafficflow/worker/sync`         (files mail)
+ *   · the organizer lease     `@ohmail/organizer/lease`        (claims the mailbox)
+ *   · the shared sync loop     `@ohmail/organizer/sync`         (files mail)
  *
  * The census is transitive: it resolves every workspace and relative import to its SOURCE and
  * recurses, so a forbidden module reached three packages deep fails exactly as a direct import
@@ -55,13 +56,13 @@ const CLOUD_ENGINE = resolve(HERE, "../src/cloud-engine.ts");
 /** The three modules an organizer is built from. Their exact `/sync`-visible specifiers. */
 const FORBIDDEN_SPECIFIERS = [
   "@trafficflow/core/adapters/imap",
-  "@trafficflow/worker/lease",
-  "@trafficflow/worker/sync",
+  "@ohmail/organizer/lease",
+  "@ohmail/organizer/sync",
 ];
 const FORBIDDEN_FILES = new Set([
   r("packages/core/src/adapters/imap.ts"),
-  r("apps/worker/src/lease.ts"),
-  r("apps/worker/src/sync.ts"),
+  r("packages/organizer/src/lease.ts"),
+  r("packages/organizer/src/sync.ts"),
 ]);
 
 /**
@@ -77,7 +78,7 @@ const ALIASES: Record<string, string> = {
   // incomplete — the suite sat red from the slice that added it until this entry.
   "@trafficflow/core/adapters/imap-types": r("packages/core/src/adapters/imap-types.ts"),
   "@trafficflow/core/adapters/organizer-lease": r("packages/core/src/adapters/organizer-lease.ts"),
-  // The organizer profile's document and store halves — imported by apps/worker/src/profile.ts,
+  // The organizer profile's document and store halves — imported by packages/organizer/src/profile.ts,
   // which the census reaches through the worker's sync surface.
   "@trafficflow/core/adapters/organizer-profile": r("packages/core/src/adapters/organizer-profile.ts"),
   "@trafficflow/core/adapters/organizer-profile-store": r("packages/core/src/adapters/organizer-profile-store.ts"),
@@ -134,6 +135,7 @@ const ALIASES: Record<string, string> = {
   "@trafficflow/core/destinations": r("packages/core/src/destinations.ts"),
   "@trafficflow/core/reply-subject": r("packages/core/src/reply-subject.ts"),
   "@trafficflow/core/sender-headers": r("packages/core/src/sender-headers.ts"),
+  "@trafficflow/core/suggestion-consent": r("packages/core/src/suggestion-consent.ts"),
   "@trafficflow/core/model-name": r("packages/core/src/model-name.ts"),
   "@trafficflow/core/ai-transports": r("packages/core/src/ai/transports/index.ts"),
   "@trafficflow/core/ai-provider-env": r("packages/core/src/ai/transports/host.ts"),
@@ -148,19 +150,42 @@ const ALIASES: Record<string, string> = {
   "@trafficflow/api/match-path": r("packages/api/src/match-path.ts"),
   "@trafficflow/api/health-cloud": r("packages/api/src/routes/health-cloud.ts"),
   "@trafficflow/api": r("packages/api/src/index.ts"),
-  "@trafficflow/worker/sync": r("apps/worker/src/sync.ts"),
-  "@trafficflow/worker/lease": r("apps/worker/src/lease.ts"),
-  "@trafficflow/worker/entry": r("apps/worker/src/entry.ts"),
+  "@ohmail/organizer/sync": r("packages/organizer/src/sync.ts"),
+  "@ohmail/organizer/lease": r("packages/organizer/src/lease.ts"),
+  "@ohmail/organizer/entry": r("packages/organizer/src/entry.ts"),
   "@ohmail/sidecar": r("apps/sidecar/src/index.ts"),
   "@ohmail/db-mail": r("packages/db-mail/src/index.ts"),
   "@ohmail/client-engine": r("packages/client-engine/src/index.ts"),
-  "@ohmail/fixtures": r("packages/fixtures/src/index.ts"),
+  "@ohmail/testing": r("packages/testing/src/index.ts"),
+  /* What a client and a server exchange, as types: reached through the engine's and the services'
+     type imports. It imports no package and exports no value, so it adds nodes and no reachability. */
+  "@ohmail/wire": r("packages/wire/src/index.ts"),
   "@ohmail/tokens": r("packages/tokens/src/index.ts"),
   "@ohmail/ui": r("packages/ui/src/index.ts"),
   "@trafficflow/db/testing": r("packages/db/src/testing.ts"),
   "@trafficflow/db/admin": r("packages/db/src/admin.ts"),
   "@trafficflow/db/journal": r("packages/db/src/journal.ts"),
   "@trafficflow/db/cloud": r("packages/db/src/cloud.ts"),
+  // The calendar's part of the database package: its bounds, a desktop's copy stores by.
+  "@trafficflow/db/calendar": r("packages/db/src/calendar/index.ts"),
+  // The calendar's builders, which the copy's own feed serves the window with, and the time model
+  // they read a row's range by.
+  "@trafficflow/services/calendar": r("packages/services/src/calendar/index.ts"),
+  "@ohmail/cal-core": r("packages/cal-core/src/index.ts"),
+  "@ohmail/cal-core/recur/span": r("packages/cal-core/src/recur/span.ts"),
+  // The calendar's write door reads a repeat's grammar, a zone and a stored time through these.
+  "@ohmail/cal-core/recur/rrule": r("packages/cal-core/src/recur/rrule.ts"),
+  // And, for a press on a day and the days after it, a series' days and a moment's clock time in its zone.
+  "@ohmail/cal-core/ical/event": r("packages/cal-core/src/ical/event.ts"),
+  "@ohmail/cal-core/recur/series": r("packages/cal-core/src/recur/series.ts"),
+  "@ohmail/cal-core/time/arith": r("packages/cal-core/src/time/arith.ts"),
+  "@ohmail/cal-core/stored/event-range": r("packages/cal-core/src/stored/event-range.ts"),
+  "@ohmail/cal-core/stored/time": r("packages/cal-core/src/stored/time.ts"),
+  "@ohmail/cal-core/time/zones": r("packages/cal-core/src/time/zones.ts"),
+  // The write door asks a series' shape of the repeats proven where its calendar is, and reckons a series' end and the
+  // series its days from one on become, as the drain does, through these two doors of the calendar's providers.
+  "@ohmail/cal-providers/repeat-shapes": r("packages/cal-providers/src/repeat-shapes.ts"),
+  "@ohmail/cal-providers/series": r("packages/cal-providers/src/series.ts"),
   /* The dialect seam, reached from `engine.ts` — which names the store this install actually
      opened, so `/health` can say `sqlite` or `pglite` instead of null. A new workspace edge is an
      unresolved edge until it is listed here, and this census failed naming it, which is the
@@ -267,10 +292,20 @@ describe("cloud-engine.ts cannot reach the organizer — the structural safety o
     // why it has to be inside the graph this census walks rather than beside it.
     expect(result.visited.has(resolve(HERE, "../src/cloud-signin.ts")), "the sign-in surface is not in the Cloud-engine graph").toBe(true);
     expect(result.visited.has(ALIASES["@trafficflow/services/mail"]!)).toBe(true);
+    // The calendar's write door reaches the providers through their two pure doors alone (ruling (i)): the walk goes into both, so
+    // a forbidden import planted in either is seen, and neither can drop out of the graph unnoticed.
+    expect(result.visited.has(ALIASES["@ohmail/cal-providers/repeat-shapes"]!), "the providers' proof door is not in the Cloud-engine graph").toBe(true);
+    expect(result.visited.has(ALIASES["@ohmail/cal-providers/series"]!), "the providers' series door is not in the Cloud-engine graph").toBe(true);
     expect(result.visited.size).toBeGreaterThan(20);
   });
 
   it("reaches NEITHER the IMAP adapter, NOR the worker lease, NOR the worker sync loop", () => {
+    // The census is only as good as its names: a forbidden specifier that no key of ALIASES resolves, or a
+    // forbidden file that does not exist, would leave both readings below empty and green.
+    expect(
+      [...FORBIDDEN_SPECIFIERS.filter((s) => !(s in ALIASES)), ...[...FORBIDDEN_FILES].filter((f) => !existsSync(f))],
+      "a forbidden name of this census resolves to nothing",
+    ).toEqual([]);
     expect(
       result.forbiddenHits,
       "cloud-engine's graph imported an organizer module — Cloud mode could open IMAP / take the lease / run the loop",
@@ -282,6 +317,6 @@ describe("cloud-engine.ts cannot reach the organizer — the structural safety o
   it("does not reach the local organizer engine either — the module that legitimately holds all three", () => {
     // `engine.ts` is where the IMAP adapter, the lease and the sync loop are imported for real.
     // If cloud-engine ever imported it, the three would arrive together; this pins the seam.
-    expect(result.visited.has(resolve(HERE, "../src/engine.ts"))).toBe(false);
+    for (const unit of engineUnitFiles()) expect(result.visited.has(unit), unit).toBe(false);
   });
 });

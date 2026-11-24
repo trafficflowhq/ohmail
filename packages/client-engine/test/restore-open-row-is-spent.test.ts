@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_NOW, FixturesAdapter, OhmailEngine, ohboxView } from "@ohmail/client-engine";
+import { OhmailEngine, ohboxView } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * `restoreOpenRow` RE-HOLDS ONLY THE ROW AN ACT JUST TOOK, AND ONLY UNTIL THE READER MOVES. Every

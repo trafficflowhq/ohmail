@@ -34,6 +34,8 @@ interface Fixture {
   contactId: string; tagId: string; draftId: string; sendId: string;
   decisionId: string; ruleId: string; workflowId: string;
   userId: string; deviceId: string; sessionId: string;
+  /** An unsubscribe record of the account's, which an examined letter names. */
+  recordId: string;
 }
 
 /** Resolves a fixture key to the account that owns it FOR THIS CASE — A for the pair under test. */
@@ -141,9 +143,6 @@ const CASES: readonly Case[] = [
   { id: "away_replies~messages", table: "away_replies", foreign: "messageId",
     row: (p, o) => ({ account_id: o.accountId, mailbox_id: p("mailboxId"), message_id: p("messageId"),
       sender: "iso@iso.test", outcome: "pending" }) },
-  { id: "away_responder_sent~messages", table: "away_responder_sent", foreign: "messageId",
-    row: (p, o) => ({ account_id: o.accountId, message_id: p("messageId"), sender: "iso@iso.test",
-      responder_updated_at: new Date(0).toISOString() }) },
   { id: "organizer_requests~mailboxes", table: "organizer_requests", foreign: "mailboxId",
     row: (p, o) => ({ account_id: o.accountId, mailbox_id: p("mailboxId"), kind: "rule.create",
       payload: "{}", decided_at: new Date(0).toISOString() }) },
@@ -168,6 +167,54 @@ const CASES: readonly Case[] = [
     row: (p, o) => ({ account_id: o.accountId, device_id: p("deviceId"), transport: "web" }) },
   { id: "auth_events~users", table: "auth_events", foreign: "userId",
     row: (p, o) => ({ account_id: o.accountId, user_id: p("userId"), event: "iso" }) },
+  // ── mail 0201: the tables that borrowed their parent's account carry their own, under a key
+  //    onto the parent's (id, account_id); and three keys that pinned no account though both
+  //    sides carried one ───────────────────────────────────────────────────────────────────────
+  { id: "message_bodies~messages", table: "message_bodies", foreign: "messageId",
+    row: (p, o) => ({ account_id: o.accountId, message_id: p("messageId") }) },
+  { id: "folder_state~messages", table: "folder_state", foreign: "messageId",
+    row: (p, o) => ({ account_id: o.accountId, message_id: p("messageId"), desired_folder: "INBOX",
+      observed_folder: "INBOX", last_set_by: "us" }) },
+  { id: "flag_state~messages", table: "flag_state", foreign: "messageId",
+    row: (p, o) => ({ account_id: o.accountId, message_id: p("messageId"), desired_seen: true,
+      observed_seen: true, last_set_by: "us" }) },
+  { id: "mailbox_credentials~mailboxes", table: "mailbox_credentials", foreign: "mailboxId",
+    row: (p, o) => ({ account_id: o.accountId, mailbox_id: p("mailboxId"), transport: "imap",
+      secret_enc: "iso", key_version: 1 }) },
+  { id: "mailbox_folders~mailboxes", table: "mailbox_folders", foreign: "mailboxId",
+    row: (p, o, n) => ({ account_id: o.accountId, mailbox_id: p("mailboxId"), folder: `iso-${n}` }) },
+  { id: "pairing_tokens~users", table: "pairing_tokens", foreign: "userId",
+    row: (p, o) => ({ account_id: o.accountId, created_by_user_id: p("userId"), grant: "invite",
+      token_hash: hex64(), expires_at: future() }) },
+  { id: "junk_rescues~mailboxes", table: "junk_rescues", foreign: "mailboxId",
+    row: (p, o, n) => ({ account_id: o.accountId, mailbox_id: p("mailboxId"), folder: "Junk",
+      uidvalidity: 1, uid: n }) },
+  { id: "unsubscribe_examined~messages", table: "unsubscribe_examined", foreign: "messageId",
+    row: (p, o) => ({ account_id: o.accountId, message_id: p("messageId"), record_id: p("recordId") }) },
+  { id: "unsubscribe_examined~unsubscribe_records", table: "unsubscribe_examined", foreign: "recordId",
+    row: (p, o) => ({ account_id: o.accountId, message_id: p("messageId"), record_id: p("recordId") }) },
+  // ── cloud 0100: the seven sign-in tables carry the user's account, under a key onto
+  //    `users (id, account_id)`; two of them only when they name a user ─────────────────────────
+  { id: "credentials~users", table: "credentials", foreign: "userId",
+    row: (p, o) => ({ account_id: o.accountId, user_id: p("userId"), password_hash: "iso" }) },
+  { id: "webauthn_credentials~users", table: "webauthn_credentials", foreign: "userId",
+    row: (p, o) => ({ account_id: o.accountId, user_id: p("userId"), credential_id: hex64(), public_key: "iso" }) },
+  { id: "totp_secrets~users", table: "totp_secrets", foreign: "userId",
+    row: (p, o) => ({ account_id: o.accountId, user_id: p("userId"), secret_enc: "iso", key_version: 1 }) },
+  { id: "recovery_codes~users", table: "recovery_codes", foreign: "userId",
+    row: (p, o) => ({ account_id: o.accountId, user_id: p("userId"), code_hash: hex64(), batch_id: randomUUID() }) },
+  { id: "oauth_auth_codes~users", table: "oauth_auth_codes", foreign: "userId",
+    row: (p, o) => ({ account_id: o.accountId, user_id: p("userId"), client_id: "iso", code_hash: hex64(),
+      code_challenge: "iso", redirect_uri: "https://iso.test/cb", expires_at: future() }) },
+  { id: "login_tokens~users", table: "login_tokens", foreign: "userId",
+    row: (p, o) => ({ account_id: o.accountId, user_id: p("userId"), token_hash: hex64(), expires_at: future() }) },
+  { id: "webauthn_challenges~users", table: "webauthn_challenges", foreign: "userId",
+    row: (p, o) => ({ account_id: o.accountId, user_id: p("userId"), challenge: hex64(), type: "registration",
+      rp_id: "iso.test", origin: "https://iso.test", expires_at: future() }) },
+  // ── mail 0204: an invitation's identity is its letter's child, under the same key ───────────
+  { id: "message_invitations~messages", table: "message_invitations", foreign: "messageId",
+    row: (p, o) => ({ account_id: o.accountId, message_id: p("messageId"), mailbox_id: o.mailboxId,
+      uid: "iso@example.test", method: "REQUEST" }) },
   // ── the ONE key scoped by MAILBOX: a folder op may not name another mailbox's folder ───────
   { id: "folder_ops~folders~mailboxes (same account, other mailbox)", table: "folder_ops",
     foreign: "mailboxTwoId", within: "mailboxId",
@@ -188,7 +235,7 @@ describe.skipIf(!HAVE_PG)("account isolation is a database constraint (real Post
       threadId: randomUUID(), messageId: randomUUID(), contactId: randomUUID(),
       tagId: randomUUID(), draftId: randomUUID(), sendId: randomUUID(),
       decisionId: randomUUID(), ruleId: randomUUID(), workflowId: randomUUID(),
-      userId: randomUUID(), deviceId: randomUUID(), sessionId: randomUUID(),
+      userId: randomUUID(), deviceId: randomUUID(), sessionId: randomUUID(), recordId: randomUUID(),
     };
     const q = client;
     await q`insert into accounts (id, name) values (${f.accountId}, ${`iso-${tag}`})`;
@@ -198,10 +245,10 @@ describe.skipIf(!HAVE_PG)("account isolation is a database constraint (real Post
             values (${f.sessionId}, ${f.accountId}, ${f.userId}, ${randomUUID()}, ${future()}, ${future()})`;
     await q`insert into mailboxes (id, account_id, provider, address)
             values (${f.mailboxId}, ${f.accountId}, 'imap', ${`${tag}-${f.mailboxId}@iso.test`})`;
-    await q`insert into mailbox_folders (id, mailbox_id, folder) values (${f.folderId}, ${f.mailboxId}, 'INBOX')`;
+    await q`insert into mailbox_folders (id, account_id, mailbox_id, folder) values (${f.folderId}, ${f.accountId}, ${f.mailboxId}, 'INBOX')`;
     await q`insert into mailboxes (id, account_id, provider, address)
             values (${f.mailboxTwoId}, ${f.accountId}, 'imap', ${`${tag}-2-${f.mailboxTwoId}@iso.test`})`;
-    await q`insert into mailbox_folders (id, mailbox_id, folder) values (${f.folderTwoId}, ${f.mailboxTwoId}, 'INBOX')`;
+    await q`insert into mailbox_folders (id, account_id, mailbox_id, folder) values (${f.folderTwoId}, ${f.accountId}, ${f.mailboxTwoId}, 'INBOX')`;
     await q`insert into threads (id, account_id) values (${f.threadId}, ${f.accountId})`;
     await q`insert into messages (id, account_id, mailbox_id, body_hash, dedup_key)
             values (${f.messageId}, ${f.accountId}, ${f.mailboxId}, 'h', ${`iso-root-${f.messageId}`})`;
@@ -215,6 +262,8 @@ describe.skipIf(!HAVE_PG)("account isolation is a database constraint (real Post
     await q`insert into routing_decisions (id, account_id, message_id, input_provenance, destination, status)
             values (${f.decisionId}, ${f.accountId}, ${f.messageId}, 'iso', 'inbox', 'applied')`;
     await q`insert into workflows (id, account_id, name) values (${f.workflowId}, ${f.accountId}, 'iso')`;
+    await q`insert into unsubscribe_records (id, account_id, mailbox_id, message_id, list_key, state)
+            values (${f.recordId}, ${f.accountId}, ${f.mailboxId}, ${f.messageId}, ${`iso-root-${f.recordId}`}, 'claimed')`;
     return f;
   }
 
@@ -265,23 +314,40 @@ describe.skipIf(!HAVE_PG)("account isolation is a database constraint (real Post
 
   it("covers every pair the isolation audit derived, and says so by count", () => {
     // The audit's 39 LESS `outbound_send_fingerprints~mailboxes`, plus the one case only the
-    // mailbox-scoped key refuses, plus the forward key, plus the owed Sent copy (mail 0170). A case
-    // removed silently is a pair nobody measures, so the number is asserted rather than counted by eye.
-    expect(CASES.length).toBe(41);
-    expect(new Set(CASES.map((c) => c.id)).size).toBe(41);
+    // mailbox-scoped key refuses, plus the forward key, plus the owed Sent copy (mail 0170), plus
+    // mail 0201's nine, less `away_responder_sent~messages` (mail 0202 dropped the table), plus
+    // the invitation's key (mail 0204), plus the seven sign-in tables (cloud 0100). A case removed
+    // silently is a pair nobody measures, so the number is asserted rather than counted by eye.
+    expect(CASES.length).toBe(57);
+    expect(new Set(CASES.map((c) => c.id)).size).toBe(57);
   });
 
-  it("REFUSES a webauthn challenge naming a user that does not exist", async () => {
-    // The one child of a scoped parent that carried no key at all: the parent was not even
-    // guaranteed to be there. Nullable still, because a registration ceremony has no user yet.
-    const text = `insert into "webauthn_challenges" ` +
-      `("user_id", "challenge", "type", "rp_id", "origin", "expires_at") values ($1,$2,$3,$4,$5,$6)`;
-    const args = [randomUUID(), randomUUID(), "registration", "iso.test", "https://iso.test", future()];
-    let code: string | null = null;
-    try {
-      await client.begin(async (tx) => { await tx.unsafe(text, args as never[]); throw ROLLBACK; });
-    } catch (err) { if (err !== ROLLBACK) code = String((err as { code?: unknown }).code ?? "unknown"); }
-    expect(code).toBe("23503");
+  it("REFUSES a challenge or a login token naming a user who is not there, or half of the pair", async () => {
+    // Nullable still: an assertion ceremony names a login token and no user, and a desktop approval
+    // nobody confirmed names no user yet. When either names a user it names the user's account
+    // (cloud 0100): the key refuses a user who is not there, and the pair's CHECK refuses one half
+    // without the other.
+    const attempt = async (table: string, userId: string | null, accountId: string | null): Promise<string | null> => {
+      const cols = table === "webauthn_challenges"
+        ? { challenge: randomUUID(), type: "registration", rp_id: "iso.test", origin: "https://iso.test", expires_at: future() }
+        : { token_hash: hex64(), purpose: "desktop_approval", expires_at: future() };
+      const row = { user_id: userId, account_id: accountId, ...cols };
+      const names = Object.keys(row);
+      const text = `insert into "${table}" (${names.map((n) => `"${n}"`).join(", ")}) values (${names.map((_n, i) => `$${i + 1}`).join(", ")})`;
+      try {
+        await client.begin(async (tx) => { await tx.unsafe(text, Object.values(row) as never[]); throw ROLLBACK; });
+        return null;
+      } catch (err) {
+        return err === ROLLBACK ? null : String((err as { code?: unknown }).code ?? "unknown");
+      }
+    };
+    for (const table of ["webauthn_challenges", "login_tokens"]) {
+      expect(await attempt(table, A.userId, A.accountId), `${table}: the control`).toBeNull();
+      expect(await attempt(table, null, null), `${table}: neither`).toBeNull();
+      expect(await attempt(table, randomUUID(), A.accountId), `${table}: a user who is not there`).toBe("23503");
+      expect(await attempt(table, A.userId, null), `${table}: a user and no account`).toBe("23514");
+      expect(await attempt(table, null, A.accountId), `${table}: an account and no user`).toBe("23514");
+    }
   });
 
   it("still admits the two states auth_events keeps nullable", async () => {
@@ -301,6 +367,26 @@ describe.skipIf(!HAVE_PG)("account isolation is a database constraint (real Post
     expect(await one(null, null)).toBeNull();
     expect(await one(null, B.accountId)).toBeNull();
     expect(await one(B.userId, null)).toBeNull();
+  });
+
+  it("a pairing token carries an account exactly when it has a creator", async () => {
+    // The first setup token has no creator and so no account; every other token has both. A
+    // token with one and not the other would be under no key at all.
+    const one = async (userId: string | null, accountId: string | null) => {
+      let code: string | null = null;
+      try {
+        await client.begin(async (tx) => {
+          await tx.unsafe(`insert into "pairing_tokens" ("created_by_user_id", "account_id", "grant", "token_hash", "expires_at")
+            values ($1,$2,'invite',$3,$4)`, [userId, accountId, hex64(), future()] as never[]);
+          throw ROLLBACK;
+        });
+      } catch (err) { if (err !== ROLLBACK) code = String((err as { code?: unknown }).code ?? "unknown"); }
+      return code;
+    };
+    expect(await one(null, null)).toBeNull();
+    expect(await one(B.userId, B.accountId)).toBeNull();
+    expect(await one(null, B.accountId)).toBe("23514");
+    expect(await one(B.userId, null)).toBe("23514");
   });
 
   it.each(CASES.map((c) => [c.id, c] as const))(

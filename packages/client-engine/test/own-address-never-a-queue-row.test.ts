@@ -1,3 +1,4 @@
+import type { EngineMessage, Folder } from "@ohmail/wire";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,8 +10,6 @@ import {
   screenerSegments,
   senderKey,
   type ConsentOptions,
-  type EngineMessage,
-  type Folder,
   type SyncChange,
 } from "@ohmail/client-engine";
 

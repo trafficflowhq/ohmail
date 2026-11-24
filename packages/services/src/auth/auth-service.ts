@@ -1,12 +1,13 @@
 import { randomInt, randomUUID } from "node:crypto";
 // `lt` is imported UNDER AN ALIAS: `lt` is the local name every 2FA verify uses for its
 // login-token row, and the shadowing turns a comparison into "call an object".
-import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, lte, or, sql } from "drizzle-orm";
 import {
-  accounts, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
-  markFenced, type Tx,
+  accounts, accountSettings, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
+  markFenced, accountOfUser, assertBinding, bindDb, onServerPool, rebindTx, isCredentialKey, BINDING_KEY_MAX, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
+import { recordSettingsChange } from "../consent-seed.js";
 import { createLogger } from "@trafficflow/core/mail";
 import {
   credentials,
@@ -19,13 +20,14 @@ import {
   authEvents,
   authThrottle,
   invites,
+  mailboxOauthDeviceCeremonies,
   waitlist,
   pushSubscriptions,
   pruneWebauthnChallenges,
   erasedBearerAccount,
   KNOWN_CLIENT_RETENTION_MS,
 } from "@trafficflow/db/cloud";
-import { bridgeTx, type Db, type ServiceContext } from "../context.js";
+import { assertPassWalk, bridgeTx, credentialContext, keyedCredentialDb, registrationContext, type Db, type PassRoster, type ServiceContext, type UnboundDb } from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { pruneWakeRows } from "../push-service.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
@@ -40,7 +42,7 @@ import { normalizeRecipient } from "../mail/port.js";
 // re-spelled: a second literal here that drifted from the mail service's would make `verifyEmail`
 // peek at rows `consumeEmailVerification` cannot consume, i.e. a link that validates and never
 // works.
-import { EMAIL_VERIFY_PURPOSE } from "../mail/mail-service.js";
+import { EMAIL_VERIFY_PURPOSE, PASSWORD_RESET_PURPOSE } from "../mail/mail-service.js";
 import { mailLocaleOf } from "../mail/templates.js";
 import { generateToken, hashToken, sha256, type PasswordHasher } from "./crypto.js";
 import { throttleKeysFor, THROTTLE_PREFIX, type ThrottleKeys } from "./throttle-keys.js";
@@ -62,8 +64,11 @@ import {
 } from "./origins.js";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp.js";
 import {
-  PAIRED_DEVICE_KINDS, SessionLifecycle, holdLiveSession, lockUserRow, refuseCrossAccountCredential,
+  PAIRED_DEVICE_KINDS, SessionLifecycle, holdLiveSession, lockUserRow, mintsNamedDevice, refuseCrossAccountCredential,
 } from "./session-lifecycle.js";
+import { ringDeviceMade } from "./device-doorbell.js";
+
+type NoticeRecipient = { accountId: string; id: string };
 
 /** Where a swallowed auth fault is named: `err` is class and code, never its message. */
 const authLog = createLogger({ service: "auth" });
@@ -74,6 +79,8 @@ const REUSE_SWEEP_WINDOW_DAYS = 14;
 export const REUSE_SWEEPS_MAX = 20;
 /** Sweep rows read per listing, acknowledged ones included, before the newest open ones are kept. */
 const REUSE_SWEEPS_SCAN = 100;
+/** Ended session families, and matched mailbox grants, one sign-out prune statement takes. */
+const GRANT_PRUNE_BATCH = 500;
 /** An acknowledgement row's `device`: this prefix and the sweep row's id. */
 const REUSE_ACK_PREFIX = "ack=";
 /** The swept session's id in the sweep row's `device` (`family=… session=… depth=…`). */
@@ -382,6 +389,7 @@ const NO_USER = "00000000-0000-0000-0000-000000000000";
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A security notice is owed at most once per key per day (`noteNotice`). */
+const NOTICE_RETRY_MS = 5 * 60_000;
 export const NOTICE_EVERY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -418,6 +426,12 @@ const invalidVerification = (): ServiceError => new ServiceError(
   "This verification link is not valid any more. Links work once and expire; " +
   "sign in and we will send you a fresh one.",
 );
+
+const invalidPasswordReset = (): ServiceError => new ServiceError(
+  "invalid_token", 400, "This link has expired or was already used. Ask for a new one.",
+);
+
+const RESET_REUSE_MS = 5 * 60_000;
 
 /**
  * The `purpose` a desktop handoff code is stored under in `login_tokens`.
@@ -796,7 +810,10 @@ export class AuthService extends SessionLifecycle {
     // network call with its own timeout, and holding a Postgres transaction (and its connection,
     // on a small serverless pool) across one is a self-inflicted outage — and a mail failure can
     // then never roll back a committed account.
-    const created = await this.inTransaction(ctx, async (txCtx) => {
+    const registration = registrationContext(ctx);
+    const created = await this.inTransaction(registration, async (txCtx) => {
+      assertBinding(txCtx.db, null);
+      await rebindTx(txCtx.db, { key: email });
       const tx = asTx(txCtx);
 
       // (1) THE INVITE, consumed atomically — when one was offered. `consumedByUserId` is
@@ -847,12 +864,21 @@ export class AuthService extends SessionLifecycle {
         throw openGate ? new AddressAlreadyRegistered() : emailTaken(true);
       }
 
-      // scoped-by: sign-up creates the account itself — there is no prior account to scope by
-      const [acct] = await tx.insert(accounts).values({ name: b.displayName }).returning();
+      const accountId = randomUUID();
+      // Open signup carries no session back. Invite signup must not replace another account's session.
+      if (!openGate) refuseCrossAccountCredential(ctx, accountId);
+      const accountDb = await rebindTx(txCtx.db, { account: accountId, key: email });
+      await tx.insert(accounts).values({ id: accountId, name: b.displayName });
       // FENCED BY CREATION: no erasure can stamp a row before the transaction that inserts it commits.
-      markFenced(tx, acct!.id);
+      markFenced(accountDb, accountId);
+      if (this.cfg.autoSuggestAtSignup) {
+        const settingsTx = bridgeTx(accountDb) as LedgerTx;
+        const now = ctx.now();
+        await settingsTx.insert(accountSettings).values({ accountId, autoSuggestAt: now, updatedAt: now });
+        await recordSettingsChange(settingsTx, accountId);
+      }
       const [user] = await tx.insert(users).values({
-        accountId: acct!.id, email, displayName: b.displayName,
+        accountId, email, displayName: b.displayName,
         // #9 — a consumed ROW that PROVES control is the only thing that stamps: mailed invites
         // and the first-boot setup invite carry `confers_verified = true`, a user's
         // pairing-minted invite carries `false` (its holder typed the address; nothing was
@@ -876,7 +902,7 @@ export class AuthService extends SessionLifecycle {
         }
         throw e;
       });
-      await tx.insert(credentials).values({ userId: user!.id, passwordHash, algo: "scrypt" });
+      await tx.insert(credentials).values({ userId: user!.id, accountId: user!.accountId, passwordHash, algo: "scrypt" });
 
       if (outcome?.ok) {
         await tx.update(invites).set({ consumedByUserId: user.id }).where(eq(invites.id, outcome.inviteId));
@@ -889,8 +915,8 @@ export class AuthService extends SessionLifecycle {
       // The INVITE path gets its session here, inside the transaction, exactly as before. The
       // open path does not get one at all, so it only needs to carry the new user out.
       return openGate
-        ? { openUserId: user!.id }
-        : await this.establishEnrollment(txCtx, user!);
+        ? { openUserId: user!.id, accountId }
+        : await this.establishEnrollment({ ...txCtx, db: accountDb, accountId }, user!);
     }).catch((e: unknown) => {
       // The ONLY thing caught here is the open path's "already registered" sentinel, and it is
       // caught OUTSIDE the transaction so the rollback has already happened. Everything else —
@@ -916,7 +942,9 @@ export class AuthService extends SessionLifecycle {
     const locale = mailLocaleOf(b.locale);
     const result = created === null
       ? await mail.sendAccountExists(ctx, { to: email, locale })
-      : await mail.issueEmailVerification(ctx, { userId: created.openUserId, to: email, locale });
+      : await mail.issueEmailVerification(credentialContext(ctx, created.accountId), {
+          userId: created.openUserId, to: email, locale,
+        });
     return { status: "verification_pending", mailed: result.status === "sent" };
   }
 
@@ -946,22 +974,26 @@ export class AuthService extends SessionLifecycle {
     // so "no token" and "not a real token" are one answer.
     if (token === "") throw invalidVerification();
 
-    const db = asTx(ctx);
+    const digest = hashToken(token);
+    const lookup = bridgeTx(keyedCredentialDb(ctx, digest));
 
     // PEEK first, so the password check has a user to run against. This reads the row WITHOUT
     // consuming it: a wrong password must not burn the link, or one mistyped attempt would cost
     // the user their only credential and force a resend.
-    const [row] = await db.select({ userId: loginTokens.userId })
+    const [row] = await lookup.select({
+      userId: loginTokens.userId, accountId: loginTokens.accountId, consumedAt: loginTokens.consumedAt,
+    })
       .from(loginTokens)
       .where(and(
-        eq(loginTokens.tokenHash, hashToken(token)),
+        eq(loginTokens.tokenHash, digest),
         eq(loginTokens.purpose, EMAIL_VERIFY_PURPOSE),
-        isNull(loginTokens.consumedAt),
         gt(loginTokens.expiresAt, ctx.now()),
       ))
       .limit(1);
-    if (!row) throw invalidVerification();
+    if (!row?.accountId) throw invalidVerification();
 
+    const owner = credentialContext(ctx, row.accountId);
+    const db = asTx(owner);
     const user = await this.loadUser(db, boundUserId(row.userId));
 
     // The lockout on `login`'s client key, ahead of the scrypt verify so a locked-out client does
@@ -972,9 +1004,17 @@ export class AuthService extends SessionLifecycle {
     const { pwKey, ceilingKey, hA } = this.passwordKeys(user.email, ctx);
     const guessKey = pwKey ?? ceilingKey;
     const guessPolicy = pwKey ? this.passwordPolicy() : this.ceilingPolicy();
-    if (pwKey) await this.throttleReserve(db, pwKey);
-    else await this.reserveCeiling(db, ceilingKey, hA);
-    await this.throttleCheck(db, `user:${user.id}`);
+    const replay = row.consumedAt !== null;
+    try {
+      if (pwKey) await this.throttleReserve(db, pwKey);
+      else await this.reserveCeiling(db, ceilingKey, hA, async () => user);
+      await this.throttleCheck(db, `user:${user.id}`);
+    } catch (err) {
+      if (replay && err instanceof ServiceError && (err.httpStatus === 423 || err.httpStatus === 429)) {
+        throw invalidVerification();
+      }
+      throw err;
+    }
 
     const cred = (await db.select().from(credentials).where(eq(credentials.userId, user.id)).limit(1))[0];
     const ok = await this.deps.passwordHasher.verify(password, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher)) && cred !== undefined;
@@ -982,29 +1022,42 @@ export class AuthService extends SessionLifecycle {
       await this.throttleLock(db, guessKey, guessPolicy);
       await this.audit(db, user, "login_failed", "password", ctx);
       // `login`'s exact sentence. The token is still live and still single-use.
-      throw credentialRefused("invalid email or password");
+      throw replay ? invalidVerification() : credentialRefused("invalid email or password");
     }
 
     await this.throttleRefund(db, guessKey, guessPolicy);
+    // A spent link proves nothing by itself. Only the correct password can recover this receipt,
+    // and recovering it never enrolls a factor or issues a session.
+    if (replay) {
+      if (user.emailVerifiedAt !== null) return { status: "already_verified" };
+      throw invalidVerification();
+    }
     await this.rehashIfStale(db, user.id, cred!.passwordHash, password);
 
     const methods = await this.enrolledMethods(db, user.id);
+    if (methods.length === 0) refuseCrossAccountCredential(ctx, user.accountId);
 
-    return this.inTransaction(ctx, async (txCtx) => {
+    return this.inTransaction(owner, async (txCtx) => {
       const tx = asTx(txCtx);
       // CONSUME INSIDE the transaction that stamps, so the two cannot come apart: a crash
       // between them would otherwise spend the token without recording the proof, and the user
       // would hold a dead link for an account still refused at the gate.
       const consumed = await mail.consumeEmailVerification(txCtx, token);
-      // Lost the race against another presentation of the same link. The single-statement
-      // consumption guarantees exactly one winner; this is the loser.
-      if (!consumed) throw invalidVerification();
-
-      // `COALESCE` — verification is monotonic. A second (legitimately re-issued) link opened
-      // later must not rewrite the instant the address was first proven.
-      await tx.update(users)
-        .set({ emailVerifiedAt: sql`coalesce(${users.emailVerifiedAt}, ${ctx.now().toISOString()}::timestamptz)` })
-        .where(eq(users.id, user.id));
+      // Only one presentation can consume the link. Read the stamp again if the other
+      // presentation won while this one was checking the password.
+      if (!consumed) {
+        const current = await this.loadUser(tx, user.id);
+        if (current.emailVerifiedAt !== null) return { status: "already_verified" as const };
+        throw invalidVerification();
+      }
+      if (consumed.userId !== user.id) throw invalidVerification();
+      // Stamp the first confirmation only. A second valid link can be spent without
+      // changing when the address was confirmed or issuing another enrollment session.
+      const [stamped] = await tx.update(users)
+        .set({ emailVerifiedAt: ctx.now() })
+        .where(and(eq(users.id, user.id), isNull(users.emailVerifiedAt)))
+        .returning({ id: users.id });
+      if (!stamped) return { status: "already_verified" as const };
       await this.audit(tx, user, "email_verified", "password", ctx);
 
       // Login's own re-entry rule. See the header for why a factor changes the answer.
@@ -1015,8 +1068,7 @@ export class AuthService extends SessionLifecycle {
 
   /**
    * Send this session's owner another verification link. AUTHENTICATED, and that is what makes it
-   * safe: the natural unauthenticated address-taking endpoint is a mail-bomb and an enumeration
-   * oracle at once — no endpoint takes a RECIPIENT from an anonymous caller. The recipient is
+   * safe: an unauthenticated verification resend would expose a mail-bomb and enumeration surface. The recipient is
    * `users.email` for the session's own user; there is no parameter, and `issueEmailVerification`
    * refuses any other `to`. Both limiters, neither new: `reserveIpSlot` under `verify:ip` (429)
    * and the `unsolicited` per-recipient budget. An unknown IP does NOT refuse here: the session
@@ -1054,6 +1106,82 @@ export class AuthService extends SessionLifecycle {
     return { ok: true };
   }
 
+  /** The public answer is independent of account existence and mail delivery. */
+  async requestPasswordReset(ctx: ServiceContext, b: { email?: unknown; locale?: unknown }): Promise<void> {
+    const email = requireEmail(b.email);
+    const mail = this.deps.mail;
+    if (!mail) throw new ServiceError("mail_unconfigured", 503, "Password reset is not available on this deployment.");
+
+    const ip = (ctx.ip ?? "").trim();
+    if (!ip || !await reserveIpSlot(asTx(ctx), this.keys, {
+      namespace: "verify:ip",
+      ip,
+      now: ctx.now(),
+      max: this.cfg.maxPublicRegistrationsPerWindow,
+      windowMs: this.cfg.failureWindowMs,
+    })) {
+      throw new ServiceError("rate_limited", 429, "Too many reset requests from this connection. Try again in a few minutes.");
+    }
+
+    const key = isCredentialKey(email) ? email : null;
+    const [user] = await bridgeTx(keyedCredentialDb(ctx, key))
+      .select({ id: users.id, accountId: users.accountId }).from(users).where(eq(users.email, key ?? "")).limit(1);
+    const subject = user ? credentialContext(ctx, user.accountId) : ctx;
+    await mail.issuePasswordReset(subject, { userId: user?.id ?? null, to: email, locale: mailLocaleOf(b.locale) },
+      async (tx, userId, digest, now, expiresAt) => {
+        const pending = and(
+          eq(loginTokens.userId, userId), eq(loginTokens.purpose, PASSWORD_RESET_PURPOSE), isNull(loginTokens.consumedAt),
+        );
+        // The mail service holds the user row through this check and any replacement.
+        const [recent] = await tx.select({ id: loginTokens.id }).from(loginTokens).where(and(
+          pending, gt(loginTokens.expiresAt, now), gt(loginTokens.createdAt, new Date(now.getTime() - RESET_REUSE_MS)),
+        )).limit(1);
+        if (recent) return false;
+        await tx.update(loginTokens).set({ consumedAt: now }).where(pending);
+        await tx.insert(loginTokens).values({
+          userId, accountId: subject.accountId, tokenHash: digest, purpose: PASSWORD_RESET_PURPOSE, methods: [],
+          createdAt: now, expiresAt,
+        });
+        return true;
+      }, this.deps.afterAnswer);
+  }
+
+  /** Burn the link and replace the password together. A reset never establishes a session. */
+  async completePasswordReset(ctx: ServiceContext, b: { token?: unknown; password?: unknown }): Promise<void> {
+    const token = typeof b.token === "string" ? b.token.trim() : "";
+    if (token.length === 0 || token.length > BINDING_KEY_MAX) throw invalidPasswordReset();
+    const digest = hashToken(token);
+    const live = (now: Date) => and(
+      eq(loginTokens.tokenHash, digest), eq(loginTokens.purpose, PASSWORD_RESET_PURPOSE),
+      isNull(loginTokens.consumedAt), gt(loginTokens.expiresAt, now),
+    );
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, digest))
+      .select({ userId: loginTokens.userId, accountId: loginTokens.accountId })
+      .from(loginTokens).where(live(ctx.now())).limit(1);
+    if (!row?.accountId || !row.userId) throw invalidPasswordReset();
+    const { accountId, userId } = row;
+    refuseCrossAccountCredential(ctx, accountId);
+    const subject = { ...credentialContext(ctx, accountId), sessionId: undefined };
+    const passwordHash = await this.deps.passwordHasher.hash(requirePassword(b.password));
+
+    const changed = await this.inTransaction(subject, async (txCtx) => {
+      const tx = asTx(txCtx);
+      await lockUserRow(tx, userId);
+      const now = txCtx.now();
+      const [burned] = await tx.update(loginTokens).set({ consumedAt: now })
+        .where(live(now)).returning({ id: loginTokens.id });
+      if (!burned) throw invalidPasswordReset();
+      const [swapped] = await tx.update(credentials).set({ passwordHash, algo: "scrypt", updatedAt: now })
+        .where(eq(credentials.userId, userId)).returning({ id: credentials.id });
+      if (!swapped) throw invalidPasswordReset();
+      await this.revokeOtherSessions(txCtx, userId);
+      const user = await this.loadUser(tx, userId);
+      await this.audit(tx, user, "password_reset", "password", txCtx);
+      return { email: user.email, at: now };
+    }, { fence: { accountId, onErased: () => { throw invalidPasswordReset(); } } });
+    await this.sendPasswordChangedNotice(subject, changed.email, changed.at);
+  }
+
   async login(ctx: ServiceContext, b: { email: string; password: string }): Promise<LoginResult> {
     const db = asTx(ctx);
     const email = requireField(b.email, "email").trim().toLowerCase();
@@ -1082,25 +1210,30 @@ export class AuthService extends SessionLifecycle {
     // RESERVED, not read — see {@link throttleReserve}.
     const { pwKey, ceilingKey, hA, hC } = this.passwordKeys(email, ctx);
     const known = hC !== null && await this.isKnownClient(db, hA, hC);
-    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
+    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known, () => this.noticeRecipient(ctx, email));
 
-    // scoped-by: pre-auth sign-in — the row is located by the presented email, throttled and timing-hardened above
-    const rows = await db.select().from(users).where(eq(users.email, email)).limit(1);
-    const user = rows[0];
+    // An input the binder cannot carry follows the same unknown-address path.
+    const key = isCredentialKey(email) ? email : null;
+    const [found] = await bridgeTx(keyedCredentialDb(ctx, key))
+      .select().from(users).where(eq(users.email, key ?? "")).limit(1);
+    const user = found && (ctx.credentialDb || !ctx.accountId || ctx.accountId === found.accountId)
+      ? found : undefined;
+    const owner = user ? credentialContext(ctx, user.accountId) : ctx;
+    const accountDb = asTx(owner);
 
     // THE UNKNOWN ADDRESS WALKS THE KNOWN ONE'S STATEMENTS: the factor-lock read and the credential
     // read run against a user id no row carries, and the verify runs against the decoy whenever
     // there is no stored hash, so status, statements and hash cost do not tell the two apart. A
     // password failure never touches `user:<id>`: that key is the second factor's.
     await this.throttleCheck(db, `user:${user?.id ?? NO_USER}`);
-    const cred = (await db.select().from(credentials)
+    const cred = (await accountDb.select().from(credentials)
       .where(eq(credentials.userId, user?.id ?? NO_USER)).limit(1))[0];
     const verified = await this.deps.passwordHasher.verify(
       b.password, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher));
     if (!verified || !user || !cred) {
       if (pwKey) await this.throttleLock(db, pwKey);
       if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
-      if (user) await this.audit(db, user, "login_failed", "password", ctx);
+      if (user) await this.audit(accountDb, user, "login_failed", "password", owner);
       throw credentialRefused("invalid email or password");
     }
 
@@ -1110,9 +1243,9 @@ export class AuthService extends SessionLifecycle {
     // their own client. See {@link throttleRefund} for why this is a decrement and never a reset.
     if (pwKey) await this.throttleRefund(db, pwKey);
     if (!known) await this.throttleRefund(db, ceilingKey, this.ceilingPolicy());
-    const verifiedHash = await this.rehashIfStale(db, user.id, cred.passwordHash, b.password);
+    const verifiedHash = await this.rehashIfStale(accountDb, user.id, cred.passwordHash, b.password);
 
-    const methods = await this.enrolledMethods(db, user.id);
+    const methods = await this.enrolledMethods(accountDb, user.id);
 
     // RE-ENTRY. Zero enrolled methods ⇒ there is no second factor to
     // challenge. This used to return `{twofa_required, methods: []}` and no endpoint
@@ -1125,12 +1258,15 @@ export class AuthService extends SessionLifecycle {
     // BOTH ARMS write a row keyed to the user (a session, a login token), so each opens on the
     // account row; one erased under it answers what its credentials answer once it is gone.
     const fence = { accountId: user.accountId, onErased: refusedSignIn };
-    if (methods.length === 0) return this.inTransaction(ctx, (txCtx) => this.establishEnrollment(txCtx, user), { fence });
+    if (methods.length === 0) {
+      refuseCrossAccountCredential(ctx, user.accountId);
+      return this.inTransaction(owner, (txCtx) => this.establishEnrollment(txCtx, user), { fence });
+    }
 
     // First factor OK → mint a single-use, short-lived login token carrying the
     // user's enrolled 2FA methods (never a full session on step one).
     const rawToken = generateToken();
-    const minted = await this.inTransaction(ctx, async (txCtx) => {
+    const minted = await this.inTransaction(owner, async (txCtx) => {
       const tx = asTx(txCtx);
       // ONLY WHILE THE PASSWORD IT CHECKED IS STILL THE ACCOUNT'S. A password change voids every
       // first step there is ({@link voidPendingGrants}); one committing between the verify above
@@ -1141,7 +1277,7 @@ export class AuthService extends SessionLifecycle {
         .limit(1).for("share");
       if (!still) return false;
       await tx.insert(loginTokens).values({
-        userId: user.id,
+        userId: user.id, accountId: user.accountId,
         tokenHash: hashToken(rawToken),
         methods,
         purpose: "login",
@@ -1152,10 +1288,10 @@ export class AuthService extends SessionLifecycle {
     if (!minted) {
       // What this sign-in checked is a wrong password now, and it is answered as one: counted (the
       // refund above is taken back), locked at the threshold, audited, refused in the same words.
-      await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
+      await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known, () => this.noticeRecipient(ctx, email));
       if (pwKey) await this.throttleLock(db, pwKey);
       if (!known) await this.throttleLock(db, ceilingKey, this.ceilingPolicy());
-      await this.audit(db, user, "login_failed", "password", ctx);
+      await this.audit(accountDb, user, "login_failed", "password", owner);
       throw credentialRefused("invalid email or password");
     }
     return { status: "twofa_required", loginToken: rawToken, methods };
@@ -1336,7 +1472,7 @@ export class AuthService extends SessionLifecycle {
         eq(loginTokens.purpose, DESKTOP_LINK_PURPOSE),
       ));
       await db.insert(loginTokens).values({
-        userId,
+        userId, accountId: accountOfUser(userId),
         tokenHash: hashToken(code),
         methods: [],
         purpose: DESKTOP_LINK_PURPOSE,
@@ -1408,8 +1544,9 @@ export class AuthService extends SessionLifecycle {
     const binding = verifier.length > 0
       ? eq(loginTokens.challengeHash, hashToken(verifier))
       : isNull(loginTokens.challengeHash);
+    const digest = hashToken(raw);
     const liveCode = () => and(
-      eq(loginTokens.tokenHash, hashToken(raw)),
+      eq(loginTokens.tokenHash, digest),
       eq(loginTokens.purpose, DESKTOP_LINK_PURPOSE),
       isNull(loginTokens.consumedAt),
       gt(loginTokens.expiresAt, now),
@@ -1421,10 +1558,10 @@ export class AuthService extends SessionLifecycle {
     // cross-account refusal, which cannot live at `establish`: by the time that runs the code is
     // spent, and a 409 would leave the claimant unable to retry after signing out. A row consumed
     // between this read and the burn still loses there, on `consumed_at IS NULL`.
-    const [owner] = await db.select({ userId: users.id, accountId: users.accountId })
-      .from(loginTokens).innerJoin(users, eq(users.id, loginTokens.userId))
-      .where(liveCode()).limit(1);
-    if (owner) refuseCrossAccountCredential(ctx, owner.accountId);
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, digest))
+      .select({ userId: loginTokens.userId, accountId: loginTokens.accountId })
+      .from(loginTokens).where(liveCode()).limit(1);
+    if (row?.accountId) refuseCrossAccountCredential(ctx, row.accountId);
 
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
@@ -1438,20 +1575,23 @@ export class AuthService extends SessionLifecycle {
       if (!claimed) throw desktopClaimRateLimited();
     }
     // No live code: the burn's own answer, given after the slot as it always was.
-    if (!owner) throw invalidDesktopCode();
+    if (!row?.accountId || !row.userId) throw invalidDesktopCode();
+    const accountId = row.accountId;
+    const userId = row.userId;
+    const owner = credentialContext(ctx, accountId);
 
     // THE BURN AND THE SESSION IT BUYS, ONE TRANSACTION. Committed apart, a revoke landing between
     // them found the code spent and no session yet, and the session written after it outlived the
     // revoke. An account erased under the claim answers what its code answers once it is gone.
-    return this.inTransaction(ctx, async (txCtx) => {
+    const claimed = await this.inTransaction(owner, async (txCtx) => {
       const tx = asTx(txCtx);
       const [row] = await tx.update(loginTokens)
         .set({ consumedAt: now })
         .where(liveCode())
         .returning({ userId: loginTokens.userId, oauthMeta: loginTokens.oauthMeta });
-      if (!row || row.userId !== owner.userId) throw invalidDesktopCode();
+      if (!row || row.userId !== userId) throw invalidDesktopCode();
 
-      const user = await this.loadUser(tx, owner.userId);
+      const user = await this.loadUser(tx, userId);
       // The device row is labelled for the app — the claimant's declared kind, or legacy `"macos"`
       // when it said nothing — so `GET /devices` shows the machine and `DELETE /devices/:id` can
       // take it away; that revocation path is what makes the handoff safe to offer. `surface:
@@ -1470,7 +1610,10 @@ export class AuthService extends SessionLifecycle {
       // that would turn a code displayed on a screen into a browser session, are both things
       // this route deliberately does not hand back. The route sets no cookies either.
       return { tokens: established.tokens! };
-    }, { fence: { accountId: owner.accountId, onErased: () => { throw invalidDesktopCode(); } } });
+    }, { fence: { accountId, onErased: () => { throw invalidDesktopCode(); } } });
+    // Every admissible kind of this claim makes the app's own device row: committed, and told.
+    await ringDeviceMade(owner, accountId);
+    return claimed;
   }
 
   // ── Signing a desktop in by confirming in the browser ───────────────────────
@@ -1501,11 +1644,12 @@ export class AuthService extends SessionLifecycle {
       if (!admitted) throw desktopClaimRateLimited();
     }
     const approvalId = randomUUID();
+    const digest = hashToken(approvalId);
     const unit = addressUnitOf(ip);
-    await db.insert(loginTokens).values({
+    await bridgeTx(keyedCredentialDb(ctx, digest)).insert(loginTokens).values({
       id: approvalId,
       userId: null,
-      tokenHash: hashToken(approvalId),
+      tokenHash: digest,
       methods: [],
       purpose: DESKTOP_APPROVAL_PURPOSE,
       challengeHash: challenge,
@@ -1519,9 +1663,8 @@ export class AuthService extends SessionLifecycle {
     return { approvalId, expiresIn: Math.floor(this.cfg.desktopApprovalTtlMs / 1000) };
   }
 
-  /** The request row, or null — by id and purpose, never by anything the caller could widen. */
+  /** The row for a validated approval id and purpose. */
   private async approvalRow(db: Tx, approvalId: string) {
-    if (!APPROVAL_ID_RE.test(approvalId)) return null;
     const [row] = await db.select().from(loginTokens)
       .where(and(eq(loginTokens.id, approvalId), eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE)))
       .limit(1);
@@ -1543,7 +1686,9 @@ export class AuthService extends SessionLifecycle {
   }> {
     const userId = this.requireUser(ctx);
     const now = ctx.now();
-    const row = await this.approvalRow(asTx(ctx), approvalId);
+    if (!APPROVAL_ID_RE.test(approvalId)) throw approvalNotFound();
+    const lookup = bridgeTx(keyedCredentialDb(ctx, hashToken(approvalId.toLowerCase())));
+    const row = await this.approvalRow(lookup, approvalId);
     if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
     const refusal = approvalRefusal(row, now);
     if (refusal) throw refusal;
@@ -1576,8 +1721,9 @@ export class AuthService extends SessionLifecycle {
       // The confirming session's factor time, for the claim to inherit as a desktop link's does:
       // stamped `approved_at`, a desktop signed in here could confirm the next one into a fresh window.
       const meta = await desktopGrantMeta(db, ctx);
+      await rebindTx(txCtx.db, { key: hashToken(approvalId.toLowerCase()) });
       const [bound] = await db.update(loginTokens)
-        .set({ userId, approvedAt: now, oauthMeta: meta })
+        .set({ userId, accountId: accountOfUser(userId), approvedAt: now, oauthMeta: meta })
         .where(and(
           eq(loginTokens.id, approvalId),
           eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
@@ -1610,8 +1756,9 @@ export class AuthService extends SessionLifecycle {
     // Fenced for the confirm's reason: this bind gives the row to this user too.
     return this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
+      await rebindTx(txCtx.db, { key: hashToken(approvalId.toLowerCase()) });
       const [killed] = await db.update(loginTokens)
-        .set({ userId, revokedAt: now })
+        .set({ userId, accountId: accountOfUser(userId), revokedAt: now })
         .where(and(
           eq(loginTokens.id, approvalId),
           eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
@@ -1659,14 +1806,24 @@ export class AuthService extends SessionLifecycle {
       if (!admitted) throw desktopClaimRateLimited();
     };
 
-    const row = await this.approvalRow(db, approvalId);
+    if (!APPROVAL_ID_RE.test(approvalId)) {
+      await chargeSlot();
+      throw approvalExpired();
+    }
+    const digest = hashToken(approvalId.toLowerCase());
+    const lookup = bridgeTx(keyedCredentialDb(ctx, digest));
+    const row = await this.approvalRow(lookup, approvalId);
     if (!row) {
       await chargeSlot();
       throw approvalExpired();
     }
-    if (row.challengeHash !== hashToken(verifier)) {
+    const accountId = row.accountId;
+    const verifierHash = hashToken(verifier);
+    if (row.challengeHash !== verifierHash) {
       await chargeSlot();
-      const [hit] = await db.update(loginTokens)
+      const owner = accountId === null ? null : credentialContext(ctx, accountId);
+      const attemptDb = owner ? asTx(owner) : lookup;
+      const [hit] = await attemptDb.update(loginTokens)
         .set({
           attempts: sql`${loginTokens.attempts} + 1`,
           revokedAt: sql`case when ${loginTokens.attempts} + 1 >= ${DESKTOP_APPROVAL_MAX_ATTEMPTS} then ${now.toISOString()}::timestamptz else ${loginTokens.revokedAt} end`,
@@ -1674,36 +1831,44 @@ export class AuthService extends SessionLifecycle {
         .where(and(eq(loginTokens.id, row.id), isNull(loginTokens.revokedAt), isNull(loginTokens.consumedAt)))
         .returning({ attempts: loginTokens.attempts });
       if (hit && hit.attempts === DESKTOP_APPROVAL_MAX_ATTEMPTS) {
-        const owner = row.userId ? await this.loadUser(db, row.userId) : null;
-        await this.audit(db, owner, "desktop_approval_refused", undefined, ctx);
+        if (owner && row.userId) {
+          await this.audit(attemptDb, await this.loadUser(attemptDb, row.userId), "desktop_approval_refused", undefined, owner);
+        } else if (!onServerPool(ctx.db)) {
+          await this.audit(attemptDb, null, "desktop_approval_refused", undefined, ctx);
+        } else {
+          // An unconfirmed request has no account for the audit table.
+          authLog.warn("desktop_approval_refused", { requestId: ctx.requestId });
+        }
       }
       throw approvalWrongVerifier();
     }
     // THE OWNER, read before the burn: the fence must be the transaction's first statement. A row no
     // browser has confirmed has no owner and cannot be spent, so it is answered from this read as the
     // burn would answer it, and the burn below is bound to the user the fence was taken for.
-    if (row.userId === null) {
+    if (row.userId === null || accountId === null) {
       const refusal = approvalRefusal(row, now);
       if (refusal) throw refusal;
       return { status: "pending" as const, retryAfterMs: DESKTOP_APPROVAL_POLL_MS };
     }
-    const owner = await this.loadUser(db, row.userId);
     // Before the burn, for `claimDesktopLink`'s reason: a claimant holding another account's
     // session must be refused while the approval can still be spent by the right desktop.
-    if (ctx.accountId) refuseCrossAccountCredential(ctx, owner.accountId);
+    refuseCrossAccountCredential(ctx, accountId);
+    const owner = credentialContext(ctx, accountId);
+    const userId = row.userId;
 
     // THE BURN DECIDES a confirmed row, and every other answer is read off the row after it missed:
     // pending, used, denied, expired (the same `approvalRefusal` the unconfirmed arm above asks). The
     // concurrent loser reads `approval_used`.
-    return this.inTransaction(ctx, async (txCtx) => {
+    const answer = await this.inTransaction(owner, async (txCtx) => {
+      await rebindTx(txCtx.db, { key: digest });
       const tx = asTx(txCtx);
       const [spent] = await tx.update(loginTokens)
         .set({ consumedAt: now })
         .where(and(
           eq(loginTokens.id, row.id),
           eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
-          eq(loginTokens.challengeHash, hashToken(verifier)),
-          eq(loginTokens.userId, owner.id),
+          eq(loginTokens.challengeHash, verifierHash),
+          eq(loginTokens.userId, userId),
           isNotNull(loginTokens.approvedAt),
           isNull(loginTokens.consumedAt),
           isNull(loginTokens.revokedAt),
@@ -1717,7 +1882,7 @@ export class AuthService extends SessionLifecycle {
         if (refusal) throw refusal;
         return { status: "pending" as const, retryAfterMs: DESKTOP_APPROVAL_POLL_MS };
       }
-      const user = await this.loadUser(tx, owner.id);
+      const user = await this.loadUser(tx, userId);
       const [dev] = await tx.insert(devices).values({
         accountId: user.accountId, userId: user.id, kind,
         label: spent.label || (APPROVAL_DEVICE_LABELS[kind] ?? "ohmail for desktop"), ip: txCtx.ip ?? "",
@@ -1727,7 +1892,10 @@ export class AuthService extends SessionLifecycle {
         kind, deviceId: dev!.id, twofaAt: meta?.twofaAt ? new Date(meta.twofaAt) : null, surface: "native",
       });
       return { tokens: established.tokens! };
-    }, { fence: { accountId: owner.accountId } });
+    }, { fence: { accountId } });
+    // Only the answer that carries the pair made a device; a poll that still waits made none.
+    if ("tokens" in answer) await ringDeviceMade(owner, accountId);
+    return answer;
   }
 
   // ── WebAuthn (primary 2FA) ──────────────────────────────────────────────────
@@ -1767,7 +1935,7 @@ export class AuthService extends SessionLifecycle {
     // The challenge is consumed and the signature verified BEFORE the transaction
     // opens: single-use must survive a rolled-back enrollment (burning it on a failed
     // verify is the safe direction), and the crypto touches no rows.
-    const ch = await this.consumeChallenge(asTx(ctx), ctx, { userId, type: "registration" });
+    const ch = await this.consumeChallenge(asTx(ctx), ctx, { userId, accountId: ctx.accountId, type: "registration" });
     // `expectedOrigin` is the STORED origin, so a passkey created on one allow-listed
     // origin cannot land through a ceremony opened on another even
     // though both are allow-listed. A verification failure is a 401, not the 500 the
@@ -1782,10 +1950,10 @@ export class AuthService extends SessionLifecycle {
     // ONE transaction for "the factor lands ⇄ the enrollment session is retired".
     // Autocommitting them separately left a window in which the passkey existed and
     // the password-only session was still live (or vice versa).
-    return this.inTransaction(ctx, async (tctx) => {
+    const enrolled = await this.inTransaction(ctx, async (tctx) => {
       const db = asTx(tctx);
       const [row] = await db.insert(webauthnCredentials).values({
-        userId, credentialId: reg.credentialId, publicKey: reg.publicKey,
+        userId, accountId: accountOfUser(userId), credentialId: reg.credentialId, publicKey: reg.publicKey,
         counter: reg.counter, transports: reg.transports, label: b.label ?? "",
         deviceType: reg.deviceType, backedUp: reg.backedUp,
       }).returning();
@@ -1793,19 +1961,21 @@ export class AuthService extends SessionLifecycle {
       const session = await this.exchangeEnrollmentSession(tctx, userId, "webauthn", o.client);
       return { credentialId: row!.id, twofaEnrolled, ...(session ? { session } : {}) };
     }, { fence: { accountId: ctx.accountId } });
+    // A desktop's enrollment exchanged its session for a full one, which made the app's device row.
+    if (enrolled.session !== undefined && mintsNamedDevice(o.client ?? "web")) await ringDeviceMade(ctx, ctx.accountId);
+    return enrolled;
   }
 
   async webauthnAssertOptions(ctx: ServiceContext, b: { loginToken: string }): Promise<{ options: unknown }> {
-    const db = asTx(ctx);
     requireField(b.loginToken, "loginToken");
-    // Origin admission, before the FIRST DATABASE READ (`peekLoginToken`) — same ordering
-    // as `webauthnRegisterOptions`. `asTx` above only unwraps the handle; it queries
-    // nothing.
     const origin = resolveCeremonyOrigin(this.cfg, ctx.origin);
-    const lt = await this.peekLoginToken(db, ctx, b.loginToken);
+    const lt = await this.peekLoginToken(ctx, b.loginToken);
+    refuseCrossAccountCredential(ctx, lt.accountId);
+    const owner = credentialContext(ctx, lt.accountId);
+    const db = asTx(owner);
     const allow = await this.webauthnCreds(db, lt.userId);
     const options = await buildAuthenticationOptions(this.cfg, allow);
-    await this.openChallenge(db, ctx, {
+    await this.openChallenge(db, owner, {
       loginTokenId: lt.id, challenge: options.challenge, type: "authentication", origin,
     });
     return { options };
@@ -1814,17 +1984,14 @@ export class AuthService extends SessionLifecycle {
   async webauthnAssertVerify(
     ctx: ServiceContext, b: { loginToken: string; credential: any },
   ): Promise<SessionEstablished> {
-    const db = asTx(ctx);
     requireField(b.loginToken, "loginToken");
     if (b.credential == null) throw new ServiceError("validation_failed", 400, "credential is required");
-    const lt = await this.peekLoginToken(db, ctx, b.loginToken);
+    const lt = await this.peekLoginToken(ctx, b.loginToken);
+    // A conflicting session is refused before any factor or login token is spent.
+    refuseCrossAccountCredential(ctx, lt.accountId);
+    const owner = credentialContext(ctx, lt.accountId);
+    const db = asTx(owner);
     const user = await this.loadUser(db, lt.userId);
-    // BEFORE THE CREDENTIAL IS SPENT. `peekLoginToken` reads without consuming, so refusing here
-    // burns nothing: the login token, the factor's replay window and the recovery code are all
-    // still intact, and clearing the ambient session and retrying succeeds. Placed at the peek
-    // rather than inside `establish` because `establish` runs after the consume — a 409 from
-    // there answered correctly and destroyed the credential on the way out.
-    refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read — see {@link throttleReserve}. `peekLoginToken` deliberately does not
     // consume, so one live login token can be presented arbitrarily many times at once; with a
     // pure read in front of the verify the second factor had the same concurrency bound the
@@ -1834,7 +2001,14 @@ export class AuthService extends SessionLifecycle {
     await this.throttleReserve(db, `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
     await this.throttleReserve(db, `user:${user.id}`);
 
-    const ch = await this.consumeChallenge(db, ctx, { loginTokenId: lt.id, type: "authentication" });
+    const challenge = challengeOfAssertion(b.credential);
+    if (!challenge || challenge.length > BINDING_KEY_MAX || !/^[A-Za-z0-9_-]+$/.test(challenge)) {
+      await this.twofaFail(db, user, ctx, true);
+      throw credentialRefused("two-factor verification failed");
+    }
+    const ch = await this.consumeChallenge(bridgeTx(keyedCredentialDb(ctx, challenge)), ctx, {
+      loginTokenId: lt.id, challenge, type: "authentication",
+    });
     const credId = b.credential?.id as string | undefined;
     const stored = (await this.webauthnCreds(db, user.id)).find((c) => c.credentialId === credId);
     if (!stored) {
@@ -1857,7 +2031,7 @@ export class AuthService extends SessionLifecycle {
     // The first step's burn, the session and the day counter's refund, one transaction
     // ({@link firstStepFence}): a refund that fails takes the session back with it. A WebAuthn
     // assertion just succeeded, here. `now` is the factor's real time.
-    return this.inTransaction(ctx, async (txCtx) => {
+    return this.inTransaction(owner, async (txCtx) => {
       await this.consumeLoginToken(asTx(txCtx), lt.id, txCtx.now());
       const est = await this.establish(txCtx, user, { method: "webauthn", kind: "web", twofaAt: ctx.now() });
       await this.throttleRefund(asTx(txCtx), `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
@@ -1897,7 +2071,7 @@ export class AuthService extends SessionLifecycle {
         return;
       }
       await db.delete(totpSecrets).where(and(eq(totpSecrets.userId, userId), eq(totpSecrets.activated, false)));
-      await db.insert(totpSecrets).values({ userId, secretEnc: ciphertext, keyVersion, activated: false });
+      await db.insert(totpSecrets).values({ userId, accountId: user.accountId, secretEnc: ciphertext, keyVersion, activated: false });
     }, { fence: { accountId: user.accountId } });
 
     const otpauthUrl = totpUri({ issuer: this.cfg.totpIssuer, label: user.email, secret });
@@ -1914,7 +2088,7 @@ export class AuthService extends SessionLifecycle {
     // ONE transaction: activation, the single-use `lastConsumedStep` advance and the
     // enrollment-session exchange are the same privilege change. `FOR UPDATE` on the
     // secret row also serializes two concurrent activations of the same secret.
-    return this.inTransaction(ctx, async (tctx) => {
+    const activated = await this.inTransaction(ctx, async (tctx) => {
       const db = asTx(tctx);
       const row = (await db.select().from(totpSecrets)
         .where(eq(totpSecrets.userId, userId)).limit(1).for("update"))[0];
@@ -1930,6 +2104,11 @@ export class AuthService extends SessionLifecycle {
       const session = await this.exchangeEnrollmentSession(tctx, userId, "totp", o.client);
       return { twofaEnrolled, ...(session ? { session } : {}) };
     }, { fence: { accountId: ctx.accountId } });
+    // As for a passkey: a desktop's enrollment exchange made the app's device row.
+    if ("session" in activated && activated.session !== undefined && mintsNamedDevice(o.client ?? "web")) {
+      await ringDeviceMade(ctx, ctx.accountId);
+    }
+    return activated;
   }
 
   /**
@@ -1979,7 +2158,6 @@ export class AuthService extends SessionLifecycle {
   async totpVerify(
     ctx: ServiceContext, b: { loginToken: string; code: string; kind?: unknown },
   ): Promise<SessionEstablished> {
-    const db = asTx(ctx);
     requireField(b.loginToken, "loginToken");
     requireField(b.code, "code");
     let kind: DeviceKind = "web";
@@ -1989,14 +2167,12 @@ export class AuthService extends SessionLifecycle {
       }
       kind = b.kind as DeviceKind;
     }
-    const lt = await this.peekLoginToken(db, ctx, b.loginToken);
+    const lt = await this.peekLoginToken(ctx, b.loginToken);
+    // A conflicting session is refused before any factor or login token is spent.
+    refuseCrossAccountCredential(ctx, lt.accountId);
+    const owner = credentialContext(ctx, lt.accountId);
+    const db = asTx(owner);
     const user = await this.loadUser(db, lt.userId);
-    // BEFORE THE CREDENTIAL IS SPENT. `peekLoginToken` reads without consuming, so refusing here
-    // burns nothing: the login token, the factor's replay window and the recovery code are all
-    // still intact, and clearing the ambient session and retrying succeeds. Placed at the peek
-    // rather than inside `establish` because `establish` runs after the consume — a 409 from
-    // there answered correctly and destroyed the credential on the way out.
-    refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read: six digits behind a pure-read gate is a code an attacker can spray as
     // wide as their connection count. See {@link throttleReserve}.
     // THE DAY CAP, first, so a locked day refuses before the 15-minute counter moves. Pre-session
@@ -2046,12 +2222,15 @@ export class AuthService extends SessionLifecycle {
     // ({@link firstStepFence}). A TOTP code was just verified, here. `now` is the factor's real
     // time. `kind` is the caller's declaration or `"web"` — either way it derives the cookie window
     // (see the header), so the declaration reaches the device row and nothing else.
-    return this.inTransaction(ctx, async (txCtx) => {
+    const verified = await this.inTransaction(owner, async (txCtx) => {
       await this.consumeLoginToken(asTx(txCtx), lt.id, txCtx.now());
       const est = await this.establish(txCtx, user, { method: "totp", kind, twofaAt: ctx.now() });
       await this.throttleRefund(asTx(txCtx), `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
       return est;
     }, { fence: firstStepFence(user.accountId) });
+    // A desktop that declared itself got a device row of its own; a browser's sign-in made none.
+    if (mintsNamedDevice(kind)) await ringDeviceMade(owner, user.accountId);
+    return verified;
   }
 
   // ONE TRANSACTION: factor removal is a compromise ceremony, so it takes the credential-change
@@ -2106,7 +2285,7 @@ export class AuthService extends SessionLifecycle {
     // ceiling for a client that never signed in here. Never `user:<id>`, the second factor's.
     const { pwKey, ceilingKey, hA, hC } = this.passwordKeys(user.email, ctx);
     const known = hC !== null && await this.isKnownClient(db, hA, hC);
-    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known);
+    await this.reservePasswordKeys(db, { pwKey, ceilingKey, hA }, known, async () => user);
     const cred = (await db.select().from(credentials).where(eq(credentials.userId, user.id)).limit(1))[0];
     const verified = await this.deps.passwordHasher.verify(
       current, cred?.passwordHash ?? await decoyHashFor(this.deps.passwordHasher));
@@ -2121,10 +2300,12 @@ export class AuthService extends SessionLifecycle {
 
     // Hashed before the transaction: scrypt must not hold row locks.
     const nextHash = await this.deps.passwordHasher.hash(next);
-    return this.inTransaction(ctx, async (txCtx) => {
+    const changed = await this.inTransaction<{ revoked: number; at: Date } | null>(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
+      await lockUserRow(tx, user.id);
+      const now = txCtx.now();
       const swapped = await tx.update(credentials)
-        .set({ passwordHash: nextHash, algo: "scrypt", updatedAt: txCtx.now() })
+        .set({ passwordHash: nextHash, algo: "scrypt", updatedAt: now })
         .where(and(eq(credentials.userId, user.id), eq(credentials.passwordHash, cred.passwordHash)))
         .returning({ id: credentials.id });
       if (swapped.length === 0) {
@@ -2134,8 +2315,24 @@ export class AuthService extends SessionLifecycle {
       // registrations ({@link revokeClaimedSessions}).
       const { revoked } = await this.revokeOtherSessions(txCtx, user.id);
       await this.audit(tx, user, "password_changed", "password", txCtx);
-      return { revoked };
-    }, { fence: { accountId: ctx.accountId, onErased: () => ({ revoked: 0 }) } });
+      return { revoked, at: now };
+    }, { fence: { accountId: ctx.accountId, onErased: () => null } });
+    if (changed === null) return { revoked: 0 };
+    await this.sendPasswordChangedNotice(ctx, user.email, changed.at);
+    return { revoked: changed.revoked };
+  }
+
+  private async sendPasswordChangedNotice(ctx: ServiceContext, to: string, at: Date): Promise<void> {
+    const mail = this.deps.mail;
+    if (!mail) return;
+    try {
+      const [settings] = await asTx(ctx).select({ locale: accountSettings.locale }).from(accountSettings)
+        .where(eq(accountSettings.accountId, ctx.accountId)).limit(1);
+      await mail.sendSecurityNotice(ctx, { to, kind: "password_changed", at, locale: mailLocaleOf(settings?.locale) });
+    } catch {
+      // The committed password change still succeeds when its notice cannot be sent.
+      return;
+    }
   }
 
   // Step-up re-verification — the inline ceremony behind a stale 5-minute window. `withStepUp`
@@ -2252,7 +2449,9 @@ export class AuthService extends SessionLifecycle {
     // is re-spoken in the wrong-code sentence — the caller must not learn WHICH part failed.
     let ch;
     try {
-      ch = await this.consumeChallenge(db, ctx, { userId: user.id, type: "authentication", challenge: submitted });
+      ch = await this.consumeChallenge(db, ctx, {
+        userId: user.id, accountId: user.accountId, type: "authentication", challenge: submitted,
+      });
     } catch {
       await this.twofaFail(db, user, ctx);
       throw credentialRefused("two-factor verification failed");
@@ -2360,13 +2559,13 @@ export class AuthService extends SessionLifecycle {
       // Regenerating invalidates the prior set.
       await db.delete(recoveryCodes).where(eq(recoveryCodes.userId, userId));
       const batchId = randomUUID();
-      const values = [] as Array<typeof recoveryCodes.$inferInsert>;
+      const values = [] as Array<Omit<typeof recoveryCodes.$inferInsert, "accountId">>;
       for (let i = 0; i < 10; i++) {
         const code = `${rand4()}-${rand4()}-${rand4()}`;
         codes.push(code);
         values.push({ userId, codeHash: hashToken(code), batchId });
       }
-      await db.insert(recoveryCodes).values(values);
+      await db.insert(recoveryCodes).values(values.map((v) => ({ ...v, accountId: accountOfUser(userId) })));
     }, { fence: { accountId: ctx.accountId } });
     return { codes, generatedAt: ctx.now().toISOString() };
   }
@@ -2439,17 +2638,14 @@ export class AuthService extends SessionLifecycle {
   async recoveryVerify(
     ctx: ServiceContext, b: { loginToken: string; code: string },
   ): Promise<SessionEstablished & { remainingCodes: number }> {
-    const db = asTx(ctx);
     requireField(b.loginToken, "loginToken");
     requireField(b.code, "code");
-    const lt = await this.peekLoginToken(db, ctx, b.loginToken);
+    const lt = await this.peekLoginToken(ctx, b.loginToken);
+    // A conflicting session is refused before any factor or login token is spent.
+    refuseCrossAccountCredential(ctx, lt.accountId);
+    const owner = credentialContext(ctx, lt.accountId);
+    const db = asTx(owner);
     const user = await this.loadUser(db, lt.userId);
-    // BEFORE THE CREDENTIAL IS SPENT. `peekLoginToken` reads without consuming, so refusing here
-    // burns nothing: the login token, the factor's replay window and the recovery code are all
-    // still intact, and clearing the ambient session and retrying succeeds. Placed at the peek
-    // rather than inside `establish` because `establish` runs after the consume — a 409 from
-    // there answered correctly and destroyed the credential on the way out.
-    refuseCrossAccountCredential(ctx, user.accountId);
     // RESERVED, not read — {@link throttleReserve}.
     // THE DAY CAP, first, so a locked day refuses before the 15-minute counter moves. Pre-session
     // verifies only: a live session's step-up keeps `user:` alone (a password holder cannot lock it).
@@ -2468,7 +2664,7 @@ export class AuthService extends SessionLifecycle {
     // code is exactly as it was found. The `used_at IS NULL` race guard is unchanged.
     let spent: { est: SessionEstablished; remaining: number };
     try {
-      spent = await this.inTransaction(ctx, (txCtx) =>
+      spent = await this.inTransaction(owner, (txCtx) =>
         this.spendRecoveryCode(txCtx, user, { ...match, loginTokenId: lt.id }),
       { fence: { accountId: user.accountId } });
     } catch (e) {
@@ -2543,7 +2739,7 @@ export class AuthService extends SessionLifecycle {
         eq(loginTokens.purpose, OAUTH_AUTHORIZE_PURPOSE),
       ));
       await db.insert(loginTokens).values({
-        userId,
+        userId, accountId: accountOfUser(userId),
         tokenHash: hashToken(handle),
         methods: [],
         purpose: OAUTH_AUTHORIZE_PURPOSE,
@@ -2635,7 +2831,7 @@ export class AuthService extends SessionLifecycle {
       // session row), so this is the arm that keeps it that way if a caller ever appears.
       if (!stored || stored.sessionId === null || stored.sessionId !== (ctx.sessionId ?? null)) return null;
       await db.insert(oauthAuthCodes).values({
-        userId, clientId: stored.clientId, codeHash: hashToken(rawCode),
+        userId, accountId: accountOfUser(userId), clientId: stored.clientId, codeHash: hashToken(rawCode),
         codeChallenge: stored.codeChallenge, codeChallengeMethod: "S256",
         redirectUri: stored.redirectUri, scope: stored.scope,
         twofaAt: stored.twofaAt === null ? null : new Date(stored.twofaAt),
@@ -2725,9 +2921,9 @@ export class AuthService extends SessionLifecycle {
     requireField(b.redirect_uri, "redirect_uri");
     requireField(b.client_id, "client_id");
     requireField(b.code_verifier, "code_verifier");
-    const db = asTx(ctx);
-    const row = (await db.select().from(oauthAuthCodes)
-      .where(eq(oauthAuthCodes.codeHash, hashToken(b.code))).limit(1))[0];
+    const digest = hashToken(b.code);
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, digest)).select().from(oauthAuthCodes)
+      .where(eq(oauthAuthCodes.codeHash, digest)).limit(1);
     // A SECOND PRESENTATION OF A REAL CODE, which is what RFC 6749 §4.1.2 asks two answers to and
     // only got one of. Refusing is not enough: these codes travel through a redirect URI, so a code
     // arriving twice is the signal somebody other than the client read it — and what the first
@@ -2737,6 +2933,7 @@ export class AuthService extends SessionLifecycle {
     // Judged BEFORE PKCE on purpose: a replay that cannot produce the verifier is still a replay,
     // and waiting for a correct one would mean the case this defends against never triggers it.
     if (row?.consumedAt) {
+      const db = asTx(credentialContext(ctx, row.accountId));
       const revoked = await this.revokeFamily(db, row.id, ctx.now());
       await this.pruneWakeRegistrations(db, [row.id]);
       // The counts leave by the ERROR, which is the only seam this layer has to a logger: what the
@@ -2761,15 +2958,13 @@ export class AuthService extends SessionLifecycle {
     // has to be its first statement. It also carries the cross-account refusal, for the reason the
     // verify ceremonies give: a cross-account exchange must not spend the code on its way to a 409.
     // A user gone under the code is the burn's own answer.
-    const [owner] = await db.select({ accountId: users.accountId }).from(users)
-      .where(eq(users.id, row.userId)).limit(1);
-    if (!owner) throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code");
-    refuseCrossAccountCredential(ctx, owner.accountId);
+    refuseCrossAccountCredential(ctx, row.accountId);
+    const owner = credentialContext(ctx, row.accountId);
 
     // THE BURN AND THE SESSION IT BUYS, ONE TRANSACTION, `claimDesktopLink`'s reason: committed
     // apart, a revoke landing between them found the code spent and no session yet. An account
     // erased under the exchange answers what its code answers once it is gone.
-    return this.inTransaction(ctx, async (txCtx) => {
+    const tokens = await this.inTransaction(owner, async (txCtx) => {
       const tx = asTx(txCtx);
       // Single-use, and the predicate is the enforcement. The `row.consumedAt` check
       // twenty lines up is a READ; without repeating the condition in the write, two token
@@ -2800,10 +2995,13 @@ export class AuthService extends SessionLifecycle {
       return est.tokens!;
     }, {
       fence: {
-        accountId: owner.accountId,
+        accountId: row.accountId,
         onErased: () => { throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code"); },
       },
     });
+    // The exchange signs a desktop app in, and that sign-in made the app's device row.
+    await ringDeviceMade(owner, row.accountId);
+    return tokens;
   }
 
   // ── The audit read (the lifecycle's device list/revoke moved to the base class) ──
@@ -2881,8 +3079,9 @@ export class AuthService extends SessionLifecycle {
     const expiresAt = new Date(now.getTime() + this.cfg.loginTokenTtlMs);
 
     await this.revokeEnrollmentSessions(db, user.id, now);
+    const familyId = randomUUID();
     await db.insert(sessions).values({
-      accountId: user.accountId, userId: user.id, deviceId: null, familyId: randomUUID(),
+      accountId: user.accountId, userId: user.id, deviceId: null, familyId,
       scope: "enrollment",
       accessTokenHash: hashToken(token),
       accessExpiresAt: expiresAt,
@@ -2899,7 +3098,7 @@ export class AuthService extends SessionLifecycle {
     // `/auth/login`, `/auth/verify-email` and `/auth/register` answered with an enrollment
     // credential and named nobody. Success tail, and inside a transaction the report is buffered
     // to the commit by `inTransaction`.
-    ctx.noteCredentialAccount?.(user.accountId);
+    ctx.noteCredentialAccount?.(user.accountId, familyId);
     return {
       status: "enrollment",
       user: await this.sessionUser(db, user.id),
@@ -2947,17 +3146,17 @@ export class AuthService extends SessionLifecycle {
    * control.
    */
   private async peekLoginToken(
-    db: Tx, ctx: ServiceContext, raw: string,
-  ): Promise<{ id: string; userId: string; methods: Method[] }> {
-    const row = (await db.select().from(loginTokens)
-      .where(and(
-        eq(loginTokens.tokenHash, hashToken(raw)),
-        eq(loginTokens.purpose, "login"),
-      )).limit(1))[0];
-    if (!row || row.consumedAt || row.expiresAt.getTime() <= ctx.now().getTime()) {
+    ctx: ServiceContext, raw: string,
+  ): Promise<{ id: string; accountId: string; userId: string }> {
+    const digest = hashToken(raw);
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, digest)).select({
+      id: loginTokens.id, accountId: loginTokens.accountId, userId: loginTokens.userId,
+      consumedAt: loginTokens.consumedAt, expiresAt: loginTokens.expiresAt,
+    }).from(loginTokens).where(and(eq(loginTokens.tokenHash, digest), eq(loginTokens.purpose, "login"))).limit(1);
+    if (!row?.accountId || row.consumedAt || row.expiresAt.getTime() <= ctx.now().getTime()) {
       throw credentialRefused("login session expired");
     }
-    return { id: row.id, userId: boundUserId(row.userId), methods: (row.methods as Method[]) ?? [] };
+    return { id: row.id, accountId: row.accountId, userId: boundUserId(row.userId) };
   }
 
   /**
@@ -2995,19 +3194,20 @@ export class AuthService extends SessionLifecycle {
   ): Promise<void> {
     const open = async (tx: Tx): Promise<void> => {
       await tx.insert(webauthnChallenges).values({
-        ...(v.userId !== undefined ? { userId: v.userId } : {}),
+        // The account is named exactly when the user is (cloud 0100).
+        ...(v.userId !== undefined ? { userId: v.userId, accountId: accountOfUser(v.userId) } : {}),
         ...(v.loginTokenId !== undefined ? { loginTokenId: v.loginTokenId } : {}),
         challenge: v.challenge, type: v.type,
         rpId: this.cfg.rpID, origin: v.origin,
         expiresAt: new Date(ctx.now().getTime() + this.cfg.webauthnChallengeTtlMs),
       });
     };
-    // A challenge bound to the session's own USER is a row the erasure deletes, so it opens on
-    // that account's row. An assertion's challenge names only its login token: no key to `users`.
+    // User ceremonies are fenced in their account. A login ceremony keeps the unowned
+    // challenge format, and the insert and claim each name the single generated challenge.
     if (v.userId !== undefined) {
       await this.inTransaction(ctx, (txCtx) => open(asTx(txCtx)), { fence: { accountId: ctx.accountId } });
     } else {
-      await open(db);
+      await open(bridgeTx(keyedCredentialDb(ctx, v.challenge)));
     }
     await pruneWebauthnChallenges(db, { now: ctx.now() }).catch(() => 0);
   }
@@ -3019,10 +3219,13 @@ export class AuthService extends SessionLifecycle {
     // with several open ceremonies gets "the newest", which is how two overlapping step-ups
     // burned each other. It is a selector only: the signature check downstream still binds the
     // claimed row's challenge and origin.
-    q: { userId?: string; loginTokenId?: string; type: string; challenge?: string },
+    // `accountId` rides with `userId`: cloud 0100's index on the user arm leads with the account,
+    // so a read that names the user alone would scan every open ceremony of the deployment.
+    q: { userId?: string; accountId?: string; loginTokenId?: string; type: string; challenge?: string },
   ): Promise<typeof webauthnChallenges.$inferSelect> {
     const preds = [eq(webauthnChallenges.type, q.type), isNull(webauthnChallenges.consumedAt)];
     if (q.userId) preds.push(eq(webauthnChallenges.userId, q.userId));
+    if (q.userId && q.accountId) preds.push(eq(webauthnChallenges.accountId, q.accountId));
     if (q.loginTokenId) preds.push(eq(webauthnChallenges.loginTokenId, q.loginTokenId));
     if (q.challenge) preds.push(eq(webauthnChallenges.challenge, q.challenge));
     const row = (await db.select().from(webauthnChallenges)
@@ -3180,9 +3383,14 @@ export class AuthService extends SessionLifecycle {
       .where(eq(authThrottle.key, key));
   }
 
-  /** Cloud 0043's read — see the base declaration in `SessionLifecycle`. */
-  override async bearerOfErasedAccount(db: Db, token: string, now: Date): Promise<string | null> {
-    return erasedBearerAccount(bridgeTx(db), hashToken(token), now);
+  /**
+   * Cloud 0043's read — see the base declaration in `SessionLifecycle`. Bound here to no account
+   * and keyed by the token's digest, as the session's own look-up is: the token resolved to
+   * nothing, so no account is known, and the account answered is the row's.
+   */
+  override async bearerOfErasedAccount(db: UnboundDb, token: string, now: Date): Promise<string | null> {
+    const digest = hashToken(token);
+    return erasedBearerAccount(bridgeTx(bindDb(db, { account: null, key: digest })), digest, now);
   }
 
   protected override async throttleReset(db: Tx, key: string): Promise<void> {
@@ -3263,24 +3471,34 @@ export class AuthService extends SessionLifecycle {
    */
   private async reservePasswordKeys(
     db: Tx, keys: { pwKey: string | null; ceilingKey: string; hA: string }, known: boolean,
+    recipient: () => Promise<NoticeRecipient | undefined>,
   ): Promise<void> {
     if (keys.pwKey) await this.throttleReserve(db, keys.pwKey);
     if (known) return;
     try {
-      await this.reserveCeiling(db, keys.ceilingKey, keys.hA);
+      await this.reserveCeiling(db, keys.ceilingKey, keys.hA, recipient);
     } catch (err) {
       if (keys.pwKey) await this.throttleRefund(db, keys.pwKey).catch(() => undefined);
       throw err;
     }
   }
 
+  private async noticeRecipient(ctx: ServiceContext, email: string): Promise<NoticeRecipient | undefined> {
+    const key = isCredentialKey(email) ? email : null;
+    const [row] = await bridgeTx(keyedCredentialDb(ctx, key)).select({ id: users.id, accountId: users.accountId })
+      .from(users).where(eq(users.email, key ?? "")).limit(1);
+    return row;
+  }
+
   /** Reserve the address ceiling; the refusal that trips it owes the account a notice ({@link noteNotice}). */
-  private async reserveCeiling(db: Tx, key: string, hA: string): Promise<void> {
+  private async reserveCeiling(
+    db: Tx, key: string, hA: string, recipient: () => Promise<NoticeRecipient | undefined>,
+  ): Promise<void> {
     try {
       await this.throttleReserve(db, key, this.ceilingPolicy());
     } catch (err) {
       if (err instanceof ServiceError && err.code === "sign_in_slowed") {
-        await this.noteNotice(db, `${THROTTLE_PREFIX.notice}ceiling:${hA}`);
+        await this.noteNotice(db, `${THROTTLE_PREFIX.notice}ceiling:${hA}`, await recipient());
       }
       throw err;
     }
@@ -3291,14 +3509,18 @@ export class AuthService extends SessionLifecycle {
    * {@link drainSecurityNotices}. At most one per key per {@link NOTICE_EVERY_MS}: a row younger
    * than that is left alone. `failures` 1 = owed, 0 = sent; `window_started_at` = when it was owed.
    */
-  private async noteNotice(db: Tx, key: string): Promise<void> {
+  private async noteNotice(db: Tx, key: string, recipient: NoticeRecipient | undefined): Promise<void> {
     const now = new Date();
     const horizon = new Date(now.getTime() - NOTICE_EVERY_MS).toISOString();
+    const notice = {
+      failures: 1, lockedUntil: null, windowStartedAt: now, updatedAt: now,
+      noticeAccountId: recipient?.accountId ?? null, noticeUserId: recipient?.id ?? null,
+    };
     await db.insert(authThrottle)
-      .values({ key, failures: 1, windowStartedAt: now, updatedAt: now })
+      .values({ key, ...notice })
       .onConflictDoUpdate({
         target: authThrottle.key,
-        set: { failures: 1, windowStartedAt: now, updatedAt: now },
+        set: notice,
         setWhere: sql`${authThrottle.windowStartedAt} < ${horizon}::timestamptz`,
       });
   }
@@ -3310,48 +3532,79 @@ export class AuthService extends SessionLifecycle {
    * Each row is CLAIMED before its send (two drains never mail twice); a failed send gives it back.
    * An address with no account behind it is dropped: there is nobody to tell.
    */
-  async drainSecurityNotices(ctx: ServiceContext, limit = 50): Promise<{ sent: number; dropped: number; failed: number }> {
+  async drainSecurityNotices(
+    ctx: ServiceContext, limit = 50, roster?: PassRoster,
+  ): Promise<{ sent: number; dropped: number; failed: number }> {
+    assertPassWalk(ctx.db);
     const out = { sent: 0, dropped: 0, failed: 0 };
     const mail = this.deps.mail;
     if (!mail) return out;
     const db = asTx(ctx);
-    const owed = await db.select({ key: authThrottle.key }).from(authThrottle)
-      .where(and(like(authThrottle.key, `${THROTTLE_PREFIX.notice}%`), eq(authThrottle.failures, 1))).limit(limit);
-    let byAddress: Map<string, { id: string; email: string }> | null = null;
-    for (const { key } of owed) {
-      const [, kind = "", subject = ""] = key.split(":");
-      let who: { id: string; email: string } | undefined;
-      if (kind === "factor" && UUID_SHAPE.test(subject)) {
-        who = (await db.select({ id: users.id, email: users.email }).from(users).where(eq(users.id, subject)).limit(1))[0];
-      } else if (kind === "ceiling") {
-        byAddress ??= await this.usersByAddressHash(db);
-        who = byAddress.get(subject);
+    const now = ctx.now();
+    const ready = or(isNull(authThrottle.lockedUntil), lte(authThrottle.lockedUntil, now));
+    const owed = await db.select({
+      key: authThrottle.key, accountId: authThrottle.noticeAccountId, userId: authThrottle.noticeUserId,
+      queuedAt: authThrottle.windowStartedAt,
+    }).from(authThrottle)
+      .where(and(like(authThrottle.key, `${THROTTLE_PREFIX.notice}%`), eq(authThrottle.failures, 1), ready))
+      .orderBy(authThrottle.updatedAt, authThrottle.id).limit(limit);
+    const legacyFactors = new Set<string>();
+    for (const notice of owed) {
+      const [, kind, id] = notice.key.split(":");
+      if (notice.accountId === null && kind === "factor" && id && UUID_SHAPE.test(id)) legacyFactors.add(id);
+    }
+    const legacyAccounts = new Map<string, string>();
+    if (roster && legacyFactors.size > 0) {
+      for (let offset = 0; legacyAccounts.size < legacyFactors.size; offset += limit) {
+        const page = await roster(limit, offset);
+        for (const row of page) if (legacyFactors.has(row.id)) legacyAccounts.set(row.id, row.accountId);
+        if (page.length < limit) break;
       }
-      const claimed = await db.update(authThrottle).set({ failures: 0, updatedAt: new Date() })
-        .where(and(eq(authThrottle.key, key), eq(authThrottle.failures, 1))).returning({ key: authThrottle.key });
+    }
+    let unresolved = 0;
+    for (const notice of owed) {
+      const [, kind = "", subject = ""] = notice.key.split(":");
+      const userId = notice.userId ?? (legacyFactors.has(subject) ? subject : null);
+      let accountId = notice.accountId ?? (userId === null ? null : legacyAccounts.get(userId) ?? null);
+      if (!roster && !accountId && userId) {
+        // A standalone store can resolve a legacy factor notice by its user ID.
+        const [legacy] = await db.select({ accountId: users.accountId }).from(users).where(eq(users.id, userId)).limit(1);
+        accountId = legacy?.accountId ?? null;
+      }
+      const recipient = accountId ? credentialContext(ctx, accountId) : null;
+      const scoped = recipient ? asTx(recipient) : db;
+      const [who] = accountId && userId ? await scoped.select({ email: users.email }).from(users)
+        .where(and(eq(users.id, userId), eq(users.accountId, accountId))).limit(1) : [];
+      const settings = who && accountId ? (await scoped.select({ locale: accountSettings.locale }).from(accountSettings)
+        .where(eq(accountSettings.accountId, accountId)).limit(1))[0] : undefined;
+      const sameNotice = and(eq(authThrottle.key, notice.key), eq(authThrottle.windowStartedAt, notice.queuedAt));
+      const claimed = await scoped.update(authThrottle).set({ failures: 0, updatedAt: new Date() })
+        .where(and(sameNotice, eq(authThrottle.failures, 1), ready)).returning({ key: authThrottle.key });
       if (claimed.length === 0) continue;
-      if (!who) { out.dropped++; continue; }
+      if (!who || !recipient) {
+        if (kind === "ceiling" && notice.userId === null) unresolved += 1;
+        out.dropped += 1;
+        continue;
+      }
       let sent = false;
       try {
-        const r = await mail.sendSecurityNotice(ctx, {
+        const r = await mail.sendSecurityNotice(recipient, {
           to: who.email, kind: kind === "factor" ? "factor_refused" : "sign_in_slowed", at: ctx.now(),
+          locale: mailLocaleOf(settings?.locale) ?? "en",
         });
         sent = r.status !== "failed";
       } catch {
-        // A throwing mailer is a failed send: the claim is given back below and the next run retries.
+        // A failed delivery gives this same claim back. A newer notice stays as queued.
         sent = false;
       }
-      if (sent) { out.sent++; continue; }
-      out.failed++;
-      await db.update(authThrottle).set({ failures: 1, updatedAt: new Date() }).where(eq(authThrottle.key, key));
+      if (sent) { out.sent += 1; continue; }
+      out.failed += 1;
+      await scoped.update(authThrottle).set({
+        failures: 1, updatedAt: new Date(), lockedUntil: new Date(ctx.now().getTime() + NOTICE_RETRY_MS),
+      }).where(sameNotice);
     }
+    if (unresolved > 0) authLog.info("security_notices_unresolved", { count: unresolved });
     return out;
-  }
-
-  /** Every user by the keyed hash of their address — read only while a ceiling notice is owed. */
-  private async usersByAddressHash(db: Tx): Promise<Map<string, { id: string; email: string }>> {
-    const all = await db.select({ id: users.id, email: users.email }).from(users);
-    return new Map(all.map((u) => [this.keys.address(u.email.trim().toLowerCase()), u]));
   }
 
   private passwordPolicy(): ThrottlePolicy {
@@ -3389,7 +3642,7 @@ export class AuthService extends SessionLifecycle {
       await this.throttleCheck(db, `user:${user.id}`);
       if (preSession) await this.throttleCheck(db, dayKey);
     } catch (err) {
-      if (preSession) await this.noteNotice(db, `${THROTTLE_PREFIX.notice}factor:${user.id}`);
+      if (preSession) await this.noteNotice(db, `${THROTTLE_PREFIX.notice}factor:${user.id}`, user);
       throw err;
     }
   }
@@ -3531,26 +3784,15 @@ export class AuthService extends SessionLifecycle {
    * Signing out a device takes its wake registration with it — {@link revokeDevice}'s rule, on the
    * door people actually use: a phone that forgot a server kept a live row, its endpoint answering 2xx
    * for ever. HERE, not `SessionLifecycle`: the desktop-host door's database has no push table.
-   * `/auth/logout`'s arms prune AFTER `super.logout` (a step-up refusal deletes nothing), in ONE
-   * transaction: the revoked family is the only credential that could retry. The web's door COMMITS its
-   * revoke and audit first and prunes after, logged on failure and never rethrown: a fault that rolled
-   * the sign-out back would leave a session live; a row left is wakes to a signed-out device.
+   * The session arms prune wake registrations and unused mailbox grants in the same transaction
+   * after `super.logout`. Refresh sign-out prunes each family on its account handle after revocation.
    */
   override async logout(
-    ctx: ServiceContext, b: { allDevices?: boolean; refreshToken?: string } = {},
+    ctx: ServiceContext, b: {
+      allDevices?: boolean; refreshToken?: string; expectedFamily?: string; browser?: boolean; expectedAccount?: string;
+    } = {},
   ): Promise<{ familyIds: string[] }> {
-    if (!b.allDevices && b.refreshToken !== undefined) {
-      const out = await super.logout(ctx, b);
-      try {
-        await this.pruneWakeRegistrations(asTx(ctx), out.familyIds);
-      } catch (err) {
-        authLog.error("auth_logout_wake_prune_failed", {
-          requestId: ctx.requestId, count: out.familyIds.length, err,
-          reason: "the sign-out committed; the signed-out device's wake registration was left in place",
-        });
-      }
-      return out;
-    }
+    if (!b.allDevices && b.refreshToken !== undefined) return super.logout(ctx, b);
     // Asked before the fence, which needs the session's account: the same 401 `super.logout` gives.
     this.requireUser(ctx);
     return this.inTransaction(ctx, async (txCtx) => {
@@ -3575,8 +3817,54 @@ export class AuthService extends SessionLifecycle {
         ));
       }
       await this.pruneWakeRegistrations(db, out.familyIds);
+      await this.pruneDeviceGrants(db, out.familyIds);
       return out;
     }, { fence: { accountId: ctx.accountId, onErased: () => ({ familyIds: [] }) } });
+  }
+
+  protected override async pruneDeviceGrants(db: Tx, familyIds: readonly string[]): Promise<void> {
+    const families = [...new Set(familyIds)];
+    const table = mailboxOauthDeviceCeremonies;
+    for (let i = 0; i < families.length; i += GRANT_PRUNE_BATCH) {
+      const chunk = families.slice(i, i + GRANT_PRUNE_BATCH);
+      const ended = await db.select({ id: sessions.id, accountId: sessions.accountId })
+        .from(sessions).where(and(inArray(sessions.familyId, chunk), isNotNull(sessions.revokedAt)));
+      if (ended.length === 0) continue;
+
+      // A family keeps the account it was minted in (a rotation never moves it), so these are at
+      // most one account per family of the chunk.
+      const accountsBySession = new Map(ended.map(({ id, accountId }) => [id, accountId]));
+      const unusedMailboxGrant = and(
+        eq(table.purpose, "mailbox"),
+        isNull(table.consumedAt),
+        inArray(table.accountId, [...new Set(accountsBySession.values())]),
+      );
+      const grants = await db.select({
+        state: table.state, accountId: table.accountId, ciphertext: table.deviceCodeEnc, keyVersion: table.deviceCodeKeyVersion,
+      }).from(table).where(unusedMailboxGrant);
+
+      // The session identity is inside the sealed grant. Older or unreadable grants already fail
+      // closed at poll time, as do grants whose session was revoked before this cleanup.
+      const toDelete: string[] = [];
+      for (const grant of grants) {
+        try {
+          const sealed = await this.deps.keyProvider.decrypt(grant.ciphertext, grant.keyVersion);
+          const sessionId: unknown = JSON.parse(sealed)?.sessionId;
+          if (typeof sessionId === "string" && accountsBySession.get(sessionId) === grant.accountId) {
+            toDelete.push(grant.state);
+          }
+        } catch {
+          // Retention will remove a grant whose session cannot be read.
+        }
+      }
+      for (let j = 0; j < toDelete.length; j += GRANT_PRUNE_BATCH) {
+        // scoped-by: unusedMailboxGrant limits accounts to those of the revoked sessions.
+        await db.delete(table).where(and(
+          unusedMailboxGrant,
+          inArray(table.state, toDelete.slice(j, j + GRANT_PRUNE_BATCH)),
+        ));
+      }
+    }
   }
 
   /**
@@ -3614,7 +3902,7 @@ export class AuthService extends SessionLifecycle {
     await super.voidPendingGrants(db, userId, now);
     await db.update(loginTokens).set({ consumedAt: now }).where(and(
       eq(loginTokens.userId, userId),
-      inArray(loginTokens.purpose, ["login", DESKTOP_LINK_PURPOSE]),
+      or(inArray(loginTokens.purpose, ["login", DESKTOP_LINK_PURPOSE]), eq(loginTokens.purpose, PASSWORD_RESET_PURPOSE)),
       isNull(loginTokens.consumedAt),
       gt(loginTokens.expiresAt, now),
     ));

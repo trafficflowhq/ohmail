@@ -1,5 +1,5 @@
 import type { MailboxDTO } from "../../api-client";
-import type { MailboxFacts } from "../../shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * One mailbox row, narrowed from the wire to what the shell may read. A module and not a closure in `CloudShell`,

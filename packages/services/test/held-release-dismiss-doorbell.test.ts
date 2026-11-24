@@ -1,11 +1,12 @@
+import type { SettingsDTO } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accountSettings, changeLog, mailboxes } from "@trafficflow/db";
 import {
-  SyncService, dismissHeldRelease, setBlockRemoteImages,
-  type ServiceContext, type SettingsDTO,
+  SyncService, dbFor, dismissHeldRelease, setBlockRemoteImages,
+  type ServiceContext,
 } from "../src/index.js";
 
 /**
@@ -26,7 +27,7 @@ async function setup(start = "2026-09-25T14:00:00.000Z") {
   await db.insert(mailboxes).values({ accountId, provider: "imap", address: "own@example.com" });
   let tick = 0;
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date(Date.parse(start) + ++tick * 1_000),
     requestId: "r",
   };

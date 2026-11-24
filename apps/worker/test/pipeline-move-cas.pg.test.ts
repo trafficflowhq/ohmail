@@ -72,7 +72,7 @@ describe("applyReconcileAction — a desire committed during the move survives (
     });
     // The intent the door committed before the move — every production caller writes one.
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: OLD, observedFolder: SOURCE,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: OLD, observedFolder: SOURCE,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false, attempts: 0,
     });
     return { accountId, messageId: m!.id, repo: makeDrizzleRepo(db as never) };

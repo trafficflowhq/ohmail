@@ -22,10 +22,11 @@
  * harness. The surfaces themselves are asserted over their source: there is no React Native
  * renderer in this workspace.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { FOLDER_OF_VIEW, IMPORT_FLOOR_MAX_MS, type EngineMessage } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, IMPORT_FLOOR_MAX_MS } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import {
   liveHistory,

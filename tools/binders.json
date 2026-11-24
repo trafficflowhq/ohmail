@@ -1,0 +1,88 @@
+{
+  "names": ["bindDb", "rebindTx", "passContext", "dbFor"],
+  "binders": [
+    {
+      "id": "the-binder",
+      "account": "None of its own: it binds what its caller names, and refuses an id that is no account's.",
+      "reason": "The binder's own module, the database package's door that hands it out, and the roster's reader, whose one statement runs on a view that names no account.",
+      "files": ["packages/db/src/bound.ts", "packages/db/src/index.ts", "packages/db/src/roster-db.ts"]
+    },
+    {
+      "id": "the-services-makers",
+      "account": "passContext: the account of the row a pass read or claimed. dbFor: the account of a row its caller read, never an id a request carries.",
+      "reason": "Where a context's handle is made for an account outside a request, and the two doors of the services' package that hand the makers out.",
+      "files": [
+        "packages/services/src/context.ts",
+        "packages/services/src/index.ts",
+        "packages/services/src/mail.ts"
+      ]
+    },
+    {
+      "id": "the-token-lookups",
+      "account": "None for a look-up, keyed by the digest of the presented token or by the sign-up or password reset address. At sign-up, the id the transaction generated for the new account. For a desktop approval's confirm and deny, the session's account, with the approval id's digest as key.",
+      "reason": "Credential and address look-ups name an exact row before its account is known. Password reset binds the account found by address for issuance and by token digest for completion. The signup transaction binds the account it creates. Confirm and deny bind the pending approval by digest while keeping the signed-in account.",
+      "files": ["packages/services/src/auth/resolve-session.ts", "packages/services/src/auth/auth-service.ts"]
+    },
+    {
+      "id": "the-passes",
+      "account": "The account of the row the pass is working on, read or claimed in this pass on the handle that names none.",
+      "reason": "A pass walks rows of many accounts and does each row's work on that row's own handle.",
+      "files": [
+        "packages/services/src/account-lifecycle-pass.ts",
+        "packages/services/src/away-responder-pass.ts",
+        "packages/services/src/schedule-send-pass.ts",
+        "packages/services/src/send-reconcile-pass.ts",
+        "packages/services/src/sent-copy-pass.ts",
+        "packages/services/src/storage-mail-pass.ts"
+      ]
+    },
+    {
+      "id": "the-request",
+      "account": "The session row's own account, as the pipeline resolved it from the presented token; nothing for a door without a session.",
+      "reason": "The one place a request's handle comes to name an account, and the handle of a door that runs for none.",
+      "files": ["packages/api/src/context.ts"]
+    },
+    {
+      "id": "the-staff-door",
+      "account": "None at the door, which carries the door's word; for an act on a customer, the account of the target's row read at the door.",
+      "reason": "The operators' tables are reached through the staff door alone, and an act binds the row it is for.",
+      "files": ["packages/api/src/staff-audit.ts"]
+    },
+    {
+      "id": "the-calendar-notices",
+      "account": "None for the channel's read, which is keyed by the channel id the provider's call names; for the pull, the account of the channel row that read found, never anything the call says.",
+      "reason": "A provider's notice names a channel and never an account: its door reads the channel's row under the channel's key, then pulls that row's own calendar on the row's account.",
+      "files": ["packages/api/src/routes/calendar-notices.ts"]
+    },
+    {
+      "id": "the-server-host",
+      "account": "None: the host mints every request's handle bound to nothing, and the first-run setup runs for no account.",
+      "reason": "The composition root that hands each request its handle, and the setup token's own transaction.",
+      "files": ["apps/server/src/deps.ts", "apps/server/src/setup-token.ts"]
+    },
+    {
+      "id": "the-organizer",
+      "account": "The account of the roster row a mailbox's runtime was attached from; nothing for the roster's own reads.",
+      "reason": "The worker's one binder: the view that names no account, and each account's handle.",
+      "files": ["apps/worker/src/start/bind.ts"]
+    },
+    {
+      "id": "the-calendar-turn",
+      "account": "The account of the connection's key, from one roster row of the connections.",
+      "reason": "A calendar turn's handle is bound to its connection's account before its first transaction.",
+      "files": ["packages/organizer/src/calendar/connection.ts"]
+    },
+    {
+      "id": "the-device-store",
+      "account": "The store's one world, found by the engine that opened it; nothing for the view a request, a session's look-up and a pass's walk hold.",
+      "reason": "A device binds as a type and a mark; this is the one file of the desktop's and the phone's engine that calls the binder.",
+      "files": ["apps/sidecar/src/store-binding.ts"]
+    },
+    {
+      "id": "the-device-doors",
+      "account": "The account of the session row this request's bearer resolved to.",
+      "reason": "The local door's own actions and the hosted door's read surface build their contexts by hand, ahead of the route table.",
+      "files": ["apps/sidecar/src/cloud-engine.ts", "apps/sidecar/src/engine-request-door.ts"]
+    }
+  ]
+}

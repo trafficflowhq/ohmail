@@ -9,10 +9,10 @@ import { makeTestDb, serviceUp } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import type { ChangeBatch, ImapConfig } from "@trafficflow/core/adapters/imap-types";
-import { MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
+import { MessageService, SearchService, type ServiceContext, dbFor, type Db as ServicesDb } from "@trafficflow/services";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
 
 /**
  * A MESSAGE OVER THE DOWNLOAD CEILING IS STILL IN THE LIST (OVERSIZE-MESSAGE-IS-STORED-NOWHERE).
@@ -171,7 +171,7 @@ describe("a message over the download ceiling", () => {
       }
       await whereIsBig();
     };
-    const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => new Date(), requestId: "too-large" };
+    const ctx: ServiceContext = { db: dbFor(db as unknown as ServicesDb, accountId), accountId, userId: null, now: () => new Date(), requestId: "too-large" };
     const found = async (q: string) => (await new SearchService().search(ctx, { q, limit: 20 })).items.map((m) => m.id);
 
     await drain();
@@ -270,7 +270,7 @@ describe("a message over the download ceiling", () => {
     await drain(adapter, "fixing-build");
     const row = await bigRow();
     expect(row, "the written-off message is still missing after the update").toBeDefined();
-    const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => new Date(), requestId: "too-large-heal" };
+    const ctx: ServiceContext = { db: dbFor(db as unknown as ServicesDb, accountId), accountId, userId: null, now: () => new Date(), requestId: "too-large-heal" };
     expect((await new MessageService().getBody(ctx, row!.id)).withheld).toBe("too_large");
     expect(await failures(), "the failure row is closed once the message is a row").toEqual([]);
   }, 180_000);

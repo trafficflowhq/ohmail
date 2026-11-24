@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW, FixturesAdapter, HttpAdapter, OhmailEngine, SERVER_ADDRESS_DIRECTIONS_SERVED,
+  HttpAdapter, OhmailEngine, SERVER_ADDRESS_DIRECTIONS_SERVED,
   type ServerAddressOpts,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * THE ADDRESS VIEW'S DIRECTION REACHES THE WIRE. The archive answers `to` and `any` since mail 0154,

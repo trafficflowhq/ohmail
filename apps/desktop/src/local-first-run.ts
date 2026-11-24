@@ -15,9 +15,9 @@ import type { ReactNode } from "react";
 import type {
   FirstRunDecisionCount, FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeIntent, FirstRunOrganizeOutcome,
   FirstRunProbeOk,
-} from "../../webapp/app/shell/first-run-host";
-import type { OnboardingAi } from "../../webapp/app/shell/onboarding";
-import { refusedByLocalServer } from "../../webapp/app/shell/local-server-host";
+} from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingAi } from "@ohmail/app-logic/doors/onboarding";
+import { refusedByLocalServer } from "@ohmail/app-logic/doors/local-server-host";
 import { durableSet, type DurableWrite } from "@ohmail/client-engine/durable";
 import { bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { CONSENT_SETTINGS_PATH } from "./local-consent.js";
@@ -311,6 +311,9 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
        the whole mailbox when it says no. Without the password: one form, one identity, and the
        service falls back to the incoming one — a second copy of a secret buys nothing here. An
        absent block is a form with nothing typed on the outgoing side, which is an answer. */
+    // The form fills a blank login with the address. The engine already defaults it on both legs.
+    const { user, ...imap } = input.imap;
+    const defaultLogin = !user || user === input.address;
     return jsonOf<FirstRunProbeOk>(
       await bridgeFetch(PROBE_PATH, {
         method: "POST",
@@ -318,14 +321,15 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
         deadlineMs: LOCAL_SERVER_CALL_DEADLINE_MS,
         body: JSON.stringify({
           address: input.address,
-          imap: input.imap,
+          imap: defaultLogin ? imap : input.imap,
           ...(input.smtp
             ? {
                 smtp: {
                   host: input.smtp.host,
                   ...(input.smtp.port === undefined ? {} : { port: input.smtp.port }),
                   ...(input.smtp.secure === undefined ? {} : { secure: input.smtp.secure }),
-                  ...(input.smtp.user === undefined ? {} : { user: input.smtp.user }),
+                  ...(input.smtp.user === undefined || (defaultLogin && input.smtp.user === input.address)
+                    ? {} : { user: input.smtp.user }),
                   ...(input.smtp.allowInsecure === true ? { allowInsecure: true } : {}),
                   ...(input.smtp.trustCertificate ? { trustCertificate: input.smtp.trustCertificate } : {}),
                 },

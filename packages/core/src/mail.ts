@@ -15,6 +15,8 @@ export * from "./identity.js";
 export * from "./mime.js";
 export * from "./mime-sections.js";
 export * from "./ics.js";
+export * from "./invitation-mail.js";
+export * from "./invitation-reply.js";
 export * from "./html-storage.js";
 export * from "./sensitive.js";
 export * from "./rules.js";
@@ -54,7 +56,7 @@ export * from "./message-search.js";
 export type { ClassifierInput, ClassifierResult, ClassifierPort } from "./classifier-port.js";
 export type { AiCallOptions, AnthropicCallReport } from "./ai-call-report.js";
 export type {
-  DraftIncoming, DraftContext, DraftInput, DraftResult, DraftPort, DraftCallOptions,
+  DraftIncoming, DraftContext, DraftInput, DraftOwnWords, DraftResult, DraftPort, DraftCallOptions,
 } from "./draft-port.js";
 // The token-source port, from the auth-assembly seam (`adapters/imap-auth.js`) where it is
 // defined — the same line as the two ports above: a consumer of this entry point can be handed
@@ -111,4 +113,7 @@ export * from "./sent-record.js";
 export * from "./outbound-text.js";
 export * from "./crypto.js";
 export * from "./log.js";
+// Whose fault a store's refusal of one statement is: the worker's ingest classifier and a writer
+// that keeps a letter without one of its rows read the same classes.
+export * from "./statement-fault.js";
 export * from "./privacy/tracker-blocker.js";

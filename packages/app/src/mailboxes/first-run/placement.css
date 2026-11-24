@@ -1,0 +1,82 @@
+/* The first run's own placement: where its parts stand, never how they look. Own classes: `mbx-run-`. */
+
+/* The stage: how far the run is, the step and the factor's dialog, one under the other. */
+.mbx-run,
+.mbx-run-step,
+.mbx-run-material {
+  display: grid;
+  gap: var(--s4);
+  min-width: 0;
+}
+
+/* A row of presses, the foot's verbs, and a ticked line with its words: a row that wraps. */
+.mbx-run-acts,
+.mbx-run-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+
+/* The foot fills the page's action slot, including the space it needs to wrap at large text sizes. */
+.mbx-run-acts {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+.mbx-run-acts > [type="button"],
+.mbx-run-acts > [type="submit"] {
+  max-inline-size: 100%;
+  white-space: normal;
+}
+
+/* A line that says what is going on beside the material. */
+.mbx-run-status {
+  margin: 0;
+}
+
+/* The pull's counters, side by side. */
+.mbx-run-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s5);
+  margin: 0;
+}
+
+.mbx-run-counter {
+  display: grid;
+  gap: var(--s1);
+}
+
+.mbx-run-count {
+  margin: 0;
+}
+
+/* The lists of the review and the decision's keys. */
+.mbx-run-list,
+.mbx-run-legend {
+  display: grid;
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The pull's track spans the material. */
+.mbx-run-track {
+  inline-size: 100%;
+}
+
+/* The pairing panel and the factor's dialog stand on their own. */
+.mbx-run-pair,
+.mbx-run-factor,
+.mbx-run-folded {
+  display: grid;
+  gap: var(--s3);
+}
+
+:root[data-device="phone"] .mbx-run-material:has([data-page-filling-form]) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}

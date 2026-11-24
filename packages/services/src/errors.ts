@@ -1,11 +1,13 @@
+import type { ServiceErrorCode } from "@ohmail/wire";
+
 /**
  * Typed application error. Services throw these; route handlers (1f) map them to
  * the `ApiError` envelope (contract §1.4). `code` is the stable machine code the
- * client switches on; `httpStatus` is the response status.
+ * client switches on, a word from the wire's closed list; `httpStatus` is the response status.
  */
 export class ServiceError extends Error {
   constructor(
-    readonly code: string,
+    readonly code: ServiceErrorCode,
     readonly httpStatus: number,
     message: string,
     readonly details?: unknown,

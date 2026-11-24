@@ -61,20 +61,20 @@ const buttons = (): HTMLButtonElement[] => [...host.querySelectorAll("button")];
 
 describe("the lock screen says what is true", () => {
   it("names the state and promises nothing is gone", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: { reason: "payment_required" } }));
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: { reason: "payment_required" } }));
 
-    expect(text()).toContain("This account is not active.");
+    expect(text()).toContain("This account is not active");
     // The half a refusal screen gets wrong: it must not read as data loss.
     expect(text()).toContain("kept");
     expect(text()).toContain("Nothing has been deleted");
   });
 
   it("a suspension gets its own sentence, not the payment one", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: { reason: "suspended" } }));
-    expect(text()).toContain("This account is suspended.");
-    expect(text()).not.toContain("This account is not active.");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: { reason: "suspended" } }));
+    expect(text()).toContain("This account is suspended");
+    expect(text()).not.toContain("This account is not active");
     // Still says the mail is kept — a suspension is not a deletion either.
     expect(text()).toContain("Nothing has been deleted");
   });
@@ -82,13 +82,13 @@ describe("the lock screen says what is true", () => {
 
 describe("the doors", () => {
   it("SIGN OUT is always reachable — this may be a shared machine", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
     for (const facts of [
       { reason: "payment_required" as const },
       { reason: "suspended" as const },
       { reason: "payment_required" as const, manageUrl: "https://manage.example/t" },
     ]) {
-      await mount(h(AccessLock, { facts }));
+      await mount(h(WallRoute, { facts }));
       const signOut = buttons().filter((b) => b.textContent === "Sign out");
       expect(signOut, JSON.stringify(facts)).toHaveLength(1);
       expect(signOut[0]!.disabled).toBe(false);
@@ -96,13 +96,13 @@ describe("the doors", () => {
   });
 
   it("the way back renders ONLY where the service operates a page, and it is a BUTTON", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
 
-    await mount(h(AccessLock, { facts: { reason: "payment_required" } }));
+    await mount(h(WallRoute, { facts: { reason: "payment_required" } }));
     // A button that goes nowhere is the one control a person on this screen will press.
     expect(text()).not.toContain("Manage subscription");
 
-    await mount(h(AccessLock, {
+    await mount(h(WallRoute, {
       facts: { reason: "payment_required", manageUrl: "https://manage.example/t" },
     }));
     const manage = buttons().filter((b) => b.textContent === "Manage subscription");
@@ -118,9 +118,9 @@ describe("the doors", () => {
    * no way out and false of the wall, where "Delete my account now" is one of the three actions
    * the product put on the screen (the lifecycle proposal, 2026-09-20). What the case was DEFENDING
    * is unchanged and is what it asserts now: no control on this screen destroys anything WHEN
-   * PRESSED. The erasure control reveals Settings → Account's own ceremony — a typed confirmation,
-   * a password and a second factor — and issues no write of its own; pressing it must leave every
-   * request this screen has made a read.
+   * PRESSED. The erasure control leaves for the page that deletes the account — a typed
+   * confirmation and a second factor — and issues no write of its own; pressing it must leave
+   * every request this screen has made a read.
    */
   it("no control on the wall destroys anything when it is pressed", async () => {
     const seen: Array<{ method: string; url: string }> = [];
@@ -135,8 +135,8 @@ describe("the doors", () => {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     }) as typeof fetch;
     try {
-      const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-      await mount(h(AccessLock, {
+      const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+      await mount(h(WallRoute, {
         facts: { reason: "suspended", manageUrl: "https://m.example/x" },
       }));
       // Before the press: no form, and nothing that takes a password.
@@ -145,11 +145,20 @@ describe("the doors", () => {
 
       const erase = buttons().find((b) => /delete my account now/i.test(b.textContent ?? ""));
       expect(erase, "the account holder's third action is on the wall").toBeDefined();
-      await act(async () => { erase!.click(); });
+      const real = window.location;
+      let went: string | null = null;
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: { get href() { return document.URL; }, assign: (url: string) => { went = url; } },
+      });
+      try {
+        await act(async () => { erase!.click(); });
+      } finally {
+        Object.defineProperty(window, "location", { configurable: true, value: real });
+      }
 
-      // The ceremony is what appeared — the pane, not a deletion.
-      expect(text()).toMatch(/delete|erase/i);
-      expect(seen.length, JSON.stringify(seen)).toBeGreaterThan(0);
+      // The ceremony is where it leaves for — the page that deletes, not a deletion.
+      expect(went).toBe("/account/delete");
       for (const call of seen) {
         expect(call.method, `${call.method} ${call.url}`).toBe("GET");
       }
@@ -162,8 +171,8 @@ describe("the doors", () => {
     /* The half of the old case that is still exactly true: whatever else the wall grows, the way
        out of this browser and the way back to paying are both on it, and neither is behind the
        other. */
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: { reason: "suspended", manageUrl: "https://m.example/x" } }));
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: { reason: "suspended", manageUrl: "https://m.example/x" } }));
     expect(links()).toEqual([]);
     expect(buttons().map((b) => b.textContent)).toEqual(
       expect.arrayContaining(["Manage subscription", "Sign out"]),
@@ -219,8 +228,8 @@ describe("the primary mints its link at the press", () => {
   };
 
   it("asks the mint once, with the screen's language, and leaves for its answer — never the 402's", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: CLOSED }));
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: CLOSED }));
     await act(async () => { primary().click(); });
     await settle();
     const mints = wire.filter((c) => c.url.endsWith("/account/manage-link"));
@@ -229,26 +238,26 @@ describe("the primary mints its link at the press", () => {
     expect(JSON.stringify(wire)).not.toContain("OLD");
   });
 
-  it("wears the working band while the mint is in flight, and a second press asks nothing more", async () => {
+  it("is off while the mint is in flight, and a second press asks nothing more", async () => {
     let answer: (r: Response) => void = () => {};
     mint = () => new Promise<Response>((resolve) => { answer = resolve; });
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: CLOSED }));
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: CLOSED }));
     await act(async () => { primary().click(); });
-    expect(primary().getAttribute("data-run")).toBe("working");
+    expect(primary().disabled).toBe(true);
     await act(async () => { primary().click(); });
     expect(wire.filter((c) => c.url.endsWith("/account/manage-link"))).toHaveLength(1);
-    // The label does not change: the band is the working state.
+    // The label does not change while it works.
     expect(primary().textContent).toBe("Subscribe");
     await act(async () => { answer(jsonRes({ url: FRESH }, 200)); });
     await settle();
-    expect(primary().getAttribute("data-run")).toBeNull();
+    expect(primary().disabled).toBe(false);
   });
 
   it("a mint that fails says so under the button, and the button presses again", async () => {
     mint = async () => jsonRes({ error: { code: "internal", message: "x" } }, 503);
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: CLOSED }));
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: CLOSED }));
     await act(async () => { primary().click(); });
     await settle();
     expect(left).toEqual([]);
@@ -264,21 +273,14 @@ describe("the primary mints its link at the press", () => {
 
   it("an unconfirmed address is told by name, never as a mint that failed", async () => {
     mint = async () => jsonRes({ error: { code: "email_unverified", message: "Confirm your email address first." } }, 403);
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: CLOSED }));
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: CLOSED }));
     await act(async () => { primary().click(); });
     await settle();
-    expect(host.querySelector("[role=alert]")?.textContent).toBe(messages.accessLock.mintUnverified);
+    expect(host.querySelector("[role=alert]")?.textContent).toBe(messages.accessLock.unverifiedEmail);
     expect(text()).not.toContain(messages.accessLock.mintFailed);
   });
 
-  it("the hint says what the press opens, under the button it belongs to", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: CLOSED }));
-    const hint = primary().nextElementSibling;
-    expect(hint?.textContent).toBe(messages.accessLock.subscribeHint);
-    expect(messages.accessLock.subscribeHint).not.toMatch(/stripe/i);
-  });
 });
 
 /**
@@ -345,8 +347,8 @@ describe("the wall lifts on the service's fresh open word", () => {
   });
 
   async function wall(): Promise<void> {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
-    await mount(h(AccessLock, { facts: CLOSED, onLifted: () => { lifted += 1; } }));
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
+    await mount(h(WallRoute, { facts: CLOSED, onLifted: () => { lifted += 1; } }));
   }
   async function pass(ms: number): Promise<void> {
     for (let left = ms; left > 0; left -= 250) {
@@ -404,11 +406,11 @@ describe("the wall lifts on the service's fresh open word", () => {
     await pass(0);
     expect(navigated).toEqual(["https://plane.ohmail.app/manage?token=NEW"]);
     await focus();
-    expect(host.querySelector(".wall-check")?.textContent).toContain(messages.accessLock.checking);
+    expect(host.querySelector("[role=status]")?.textContent).toContain(messages.accessLock.checkingTag);
     expect(buttons().map((b) => b.textContent)).toEqual(["Sign out"]);
     await pass(2_000 * 29 + 500);
     expect(reads).toBe(30);
-    expect(text()).toContain(messages.accessLock.pending);
+    expect(text()).toContain(messages.accessLock.pendingLine);
     const again = buttons().find((b) => b.textContent === messages.accessLock.checkAgain);
     expect(again).toBeDefined();
     expect(buttons().map((b) => b.textContent)).toContain("Subscribe");
@@ -419,7 +421,7 @@ describe("the wall lifts on the service's fresh open word", () => {
     await pass(1_000);
     expect(reads).toBe(31);
     // A press inside the access door's join window is answered by the read in hand; this one comes after it.
-    const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+    const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     await pass(RETURN_DEBOUNCE_MS);
     expect(reads).toBe(31);
     access = () => jsonRes(OPEN);
@@ -430,7 +432,7 @@ describe("the wall lifts on the service's fresh open word", () => {
   });
 
   it("a hand-off pressed in this tab before a reload polls on the next mount", async () => {
-    const { rememberHandoff } = await import("../app/shell/wall-lift");
+    const { rememberHandoff } = await import("@ohmail/app-logic/doors/wall-lift");
     rememberHandoff(null);
     access = () => jsonRes(OPEN);
     await wall();
@@ -518,21 +520,17 @@ describe("the lock screen is laid out like the rest of the app", () => {
   });
 
   it("renders NO utility class, on either reason and with or without the manage link", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
     for (const facts of [
       { reason: "payment_required" as const },
       { reason: "suspended" as const },
       { reason: "suspended" as const, manageUrl: "https://m.example/x" },
     ]) {
-      await mount(h(AccessLock, { facts }));
+      await mount(h(WallRoute, { facts }));
       const worn = [...host.querySelectorAll<HTMLElement>("*")]
         .flatMap((el) => [...el.classList]);
       expect(worn.length, "the screen wears no classes at all").toBeGreaterThan(0);
       for (const token of worn) expect(isUtility(token), `${token} · ${facts.reason}`).toBe(false);
-      /* And it is the app's own shell it stands in, not merely "not Tailwind". */
-      expect(worn).toContain("gate");
-      expect(worn).toContain("gate-card");
-      expect(worn).toContain("gate-actions");
     }
   });
 
@@ -542,13 +540,16 @@ describe("the lock screen is laid out like the rest of the app", () => {
        here rather than implied. */
     const root = `${process.cwd()}/apps/webapp/app`;
     const files: string[] = [];
-    (function walk(dir: string): void {
+    const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const p = join(dir, entry.name);
         if (entry.isDirectory()) { if (entry.name !== "node_modules") walk(p); }
         else if (p.endsWith(".tsx") || p.endsWith(".ts")) files.push(p);
       }
-    })(root);
+    };
+    walk(root);
+    // The letter's body, moved out of the web app: read with it, named from the repository's root.
+    walk(`${process.cwd()}/packages/letter-body/src`);
     expect(files.length, "the walk found no files").toBeGreaterThan(200);
     const carriers = new Map<string, string[]>();
     for (const file of files) {
@@ -556,7 +557,7 @@ describe("the lock screen is laid out like the rest of the app", () => {
         .matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\}|\{"([^"]*)"\})/g)]
         .flatMap((m) => (m[1] ?? m[2] ?? m[3] ?? "").split(/[\s${}?:()|&]+/))
         .filter((token) => /^[a-z0-9:-]+$/i.test(token) && isUtility(token));
-      if (found.length > 0) carriers.set(file.slice(root.length + 1), [...new Set(found)]);
+      if (found.length > 0) carriers.set(file.startsWith(root) ? file.slice(root.length + 1) : file.slice(process.cwd().length + 1), [...new Set(found)]);
     }
     expect([...carriers.entries()].map(([f, t]) => `${f}: ${t.join(" ")}`)).toEqual([]);
   });

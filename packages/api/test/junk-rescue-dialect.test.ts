@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -5,6 +6,7 @@ import { accountSettings, junkRescues, mailboxCredentials, mailboxes } from "@tr
 import { makeTestDb } from "@trafficflow/db/testing";
 import { ImapAdapter, type FolderPage } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { dbFor } from "@trafficflow/services/mail";
 import { dismissJunkRescue, listJunk, rescueJunk } from "../src/junk-window.js";
 import type { ApiDeps } from "../src/deps.js";
 
@@ -55,7 +57,7 @@ async function world(over: { epoch?: string } = {}) {
     junkFolder: JUNK_PATH,
   }).returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
   });
   /* THE LOCAL ADMISSION PORT, not the hosted one — `apps/sidecar/src/engine.ts`'s
@@ -69,7 +71,7 @@ async function world(over: { epoch?: string } = {}) {
     services: { imapAdmission: { acquire: async () => true, release: async () => {} } },
     now: () => NOW,
   } as unknown as ApiDeps;
-  const ctx = { accountId, now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
+  const ctx = { accountId, db: dbFor(db, accountId), now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
   return { db, deps, ctx, accountId, mailboxId: mb!.id, epoch: over.epoch ?? BIG_EPOCH };
 }
 

@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
-import { JoinScreen } from "./JoinScreen";
-import { cookieFromStore } from "../../shell/cookie-jar";
-import { OWNER_COOKIE, OWNER_SIGNED_OUT, isOwnerShaped } from "../../shell/owner-cookie";
+import { JoinRoute } from "./JoinRoute";
+import { cookieFromStore } from "@ohmail/app-logic/storage/cookie-jar";
+import { OWNER_COOKIE, OWNER_SIGNED_OUT, isOwnerShaped } from "@ohmail/app-logic/storage/owner-cookie";
 import type { SearchParamsLike } from "../../demo-mode";
 import { publicSignupEnabled } from "../../signup-mode";
 import { planHintOf } from "../../plan-hint";
@@ -29,7 +29,7 @@ export default async function JoinPage(props: { searchParams?: Promise<SearchPar
   const billing = Array.isArray(rawBilling) ? rawBilling[0] : rawBilling;
   const owner = cookieFromStore(await cookies(), OWNER_COOKIE);
   return (
-    <JoinScreen
+    <JoinRoute
       initialCode={typeof first === "string" ? first.trim().slice(0, 64) : ""}
       billingReturn={billing === "success" || billing === "cancelled" ? billing : undefined}
       publicSignup={publicSignupEnabled()}

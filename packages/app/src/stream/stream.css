@@ -1,0 +1,44 @@
+/* A stream place's own layout: where its parts stand. Every look is the kit's; the list stands in `ListColumn`. */
+.st-item {
+  display: block;
+}
+
+.st-pile-note,
+.st-search-tail {
+  padding: var(--s2) var(--s3) var(--s3) var(--flush);
+}
+
+.st-search-tail {
+  text-align: center;
+}
+
+/* Keep the card gap in its cached height when a card becomes part of a spacer. */
+.st-window {
+  display: flex;
+  flex-direction: column;
+}
+
+.st-window-card {
+  margin-block-end: var(--gap);
+}
+
+.st-window-card:last-child {
+  margin-block-end: 0;
+}
+
+.st-window .st-item {
+  container: stream-card / inline-size;
+}
+
+.st-receipt-amount {
+  float: inline-end;
+  margin-inline-start: var(--s4);
+}
+
+.pl-list:has(> [data-stream-list-top]) {
+  position: relative;
+}
+
+.fr-frame[data-rail="dock"]:has(.fr-dockbox) .st-phone-list {
+  --oh-sheet-foot-offset: calc(var(--h-xl) + var(--s3));
+}

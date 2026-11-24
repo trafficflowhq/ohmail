@@ -1,0 +1,27 @@
+/* How far a new account is, at a first step's top: the part in the meta size, the steps as small dots, the way the
+   reference draws its count. Own classes: `way-`. */
+.way-steps {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+
+.way-steps-part {
+  color: var(--ink2);
+  font-size: var(--t-meta);
+  font-weight: var(--w-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+.way-steps-dots {
+  --way-steps-dot: 8px;
+  --dot-size: var(--way-steps-dot);
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+/* The dots stand at the row's gap alone: a dot ending words keeps its own room, a dot in a row does not. */
+.way-steps-dots > * {
+  margin: 0;
+}

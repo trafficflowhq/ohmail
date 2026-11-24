@@ -1,7 +1,8 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { apiRoutes, matchRoute, type Route } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
-import { HttpAdapter, PRESS_AGE_KINDS, type EngineMutation } from "@ohmail/client-engine";
+import { HttpAdapter, PRESS_AGE_KINDS } from "@ohmail/client-engine";
 
 /**
  * THE PRESS AGE REACHES EVERY STATE VERB'S ROUTE, AND NO OTHER. A route that forgets

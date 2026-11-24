@@ -13,7 +13,7 @@
 # The decision is here rather than in a `run:` block because it is the thing a test can execute:
 # a workflow's YAML can be read, and a workflow's shell can only be run by GitHub.
 #
-# Inputs (environment): EVENT_NAME, REF_NAME, DISPATCH_VERSION, DISPATCH_CANDIDATE, TREE_VERSION
+# Inputs (environment): EVENT_NAME, REF_NAME, DISPATCH_VERSION, DISPATCH_CANDIDATE, TREE_VERSION, GITHUB_SHA
 # Output: `key=value` lines — version, candidate, image_tag, promote_public — on stdout, which the
 # caller appends to $GITHUB_OUTPUT.
 #
@@ -37,6 +37,10 @@ if [ -n "$DISPATCH_CANDIDATE" ]; then
   esac
   if [ "${#DISPATCH_CANDIDATE}" -ne 40 ] || [ -n "${DISPATCH_CANDIDATE//[0-9a-f]/}" ]; then
     echo "refusing candidate: '$DISPATCH_CANDIDATE' is not 40 lower-case hex"; exit 1
+  fi
+  if [ "$DISPATCH_CANDIDATE" != "${GITHUB_SHA:-}" ]; then
+    echo "refusing candidate: the requested commit must match GITHUB_SHA" >&2
+    exit 1
   fi
   # A candidate names a commit, so the tag names the commit and nothing else. `rc-` is the prefix
   # that keeps it out of docker's version grammar by eye as well as by rule.

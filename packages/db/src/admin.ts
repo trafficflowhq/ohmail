@@ -10,11 +10,27 @@
  */
 export { ensureHotPathIndexes, HOT_PATH_INDEXES, HOT_PATH_INDEX_SPECS } from "./hot-path-indexes.js";
 export {
-  runMigrations, PartialMigrationError,
+  runMigrations, migrateToOldHeads, PartialMigrationError, TransitionNeedsRunner, type MigrateOptions,
   LEGACY_MIGRATIONS_DIR, MAIL_MIGRATIONS_DIR, CLOUD_MIGRATIONS_DIR,
   MAIL_JOURNAL, CLOUD_JOURNAL, JOURNALS,
   MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS,
 } from "./migrate.js";
+/**
+ * The 2.0 transition: one transaction that takes a store at 1.0.11's heads to 2.0, or changes
+ * nothing. `runMigrations` runs it in the one state it fires in; a rehearsal calls it directly.
+ */
+export {
+  runTransition, transitionState, sealedOpener, describeEvent, safeName, readWindow,
+  TransitionRefused, TransitionFailed, NOTHING_OPENS, MAP_2_0, tablesOf, accountTablesOf, accountTablesFromCatalog,
+  type StoreKind, type TransitionInput, type TransitionReport, type TransitionState, type TransitionEvent,
+  type TransitionLog, type SealedOpener, type Decrypts, type Verdict, type CountLine,
+} from "./transition/index.js";
+/** Where the 1.0 line ends and 2.0 begins. */
+export {
+  OLD_HEADS, LINE_2_0_START, TRANSITION_WINDOW, entryNumber, inTransitionWindow, windowEntries,
+  type ServerJournal,
+} from "./journal-heads.js";
+
 export {
   adoptBaseline, adoptionVerdict, baselineEntries, baselineObjects, readJournalOf,
   findLegacyMigrationsTable, missingObjects, AdoptionRefused,
@@ -23,7 +39,7 @@ export {
 } from "./baseline.js";
 export {
   ensureSearchExtensions, ensureWordIndex, WORD_INDEX_SPEC,
-  retireBodyVector, BodyVectorLockTimeout, BODY_VECTOR_INDEX, type BodyVectorRetirement,
+  retireOldSearch, BodyVectorLockTimeout, BODY_VECTOR_INDEX, OLD_SEARCH_RETIREMENT, type OldSearchRetirement,
 } from "./search-setup.js";
 /**
  * The pre-migration duplicate guard. On `/admin` beside the migrator because it runs at the
@@ -45,6 +61,27 @@ export {
   type ProdSetupReport, type JournalStatus, type JournalMismatch, type AppliedRows,
   type AppliedWhens, type ProdSetupOptions,
 } from "./setup-prod.js";
+export { printSetupReport, setupTargetOf, storeKindOf } from "./setup-prod-command.js";
+/**
+ * THE LOCK'S STEP AND ITS CENSUS: what the setup runs where the runtime logins exist, and the
+ * read-only comparison of the catalog with the list. Provisioning only: no request runs them.
+ */
+export {
+  ensureLock, createPolicyStatement, readDeadlines, LOCK_STEP_LOCK_TIMEOUT, type LockReport, type LockStep, type LockSession,
+} from "./row-security/apply.js";
+export {
+  lockCensus, lockDrift, readLockFacts, expectedPolicies, listDigest, catalogDigest,
+  viewListDigest, viewCatalogDigest, viewComment, viewDifferences, viewGrants,
+  type LockFacts, type TableFacts, type PolicyFacts, type ReaderFacts, type ViewFacts, type ViewCode, type Right, type ColumnRight,
+} from "./row-security/census.js";
+export {
+  rolesCheckStream, rolesPostconditionStream, rolesVerdict, runRolesCheck, runRolesPostcondition, RUNTIME_ROLES_SCRIPT, ROLES_CHECK_CUT,
+  ROLES_CHECK_PIN, type RolesCheck, type HearNotices,
+} from "./row-security/roles-check.js";
+export {
+  switchLock, LockSwitchRefused, SWITCH_LOCK_TIMEOUT_MS, SWITCH_TRIES, type SwitchReport,
+} from "./row-security/switch.js";
+export { markerText, parseMarker, MARKER_WHY, type MarkerWhy } from "./row-security/census.js";
 /**
  * The Data API half of the lockdown, for a caller that provisions a Supabase-shaped host and
  * must therefore reach a verdict about the endpoint in front of it — not just about the grants.

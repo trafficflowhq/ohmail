@@ -4,12 +4,13 @@
  * store can say: the boot replay with auto-replay on, a refused replacement mid-flush, a send
  * that outran its deadline, and Try again's row after a kill (LOW-4).
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
-  IndexedDbMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
+  IndexedDbMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
   OUTBOX_BACKOFF_CAP_MS, OUTBOX_MAX_SERVER_FAILURES,
-  type EngineMutation, type MutationResult, type SendAndDonePlan,
+  type MutationResult, type SendAndDonePlan,
 } from "@ohmail/client-engine";
 
 const NOW = Date.parse("2026-10-02T08:00:00.000Z");
@@ -260,7 +261,8 @@ describe("a refused replacement over a send on the wire", () => {
     const e = engineOn(store, srv, { autoReplay: false });
     await e.start();
     srv.net.mode = "offline";
-    const pressed = send("ada", "first");
+    // A send that names its row: its record is planned over the store's abandoned rows, a read that can throw.
+    const pressed = { ...send("ada", "first"), draftId: "d-ada" } as EngineMutation;
     const a = await e.mutate(pressed);
     expect(a.status).toBe("queued");
     srv.net.mode = "ok";
@@ -268,13 +270,12 @@ describe("a refused replacement over a send on the wire", () => {
     const flush = e.flushPending();
     await until(() => srv.attempts.length === 2, "the send on the wire");
     // The road a refusal does not take: the record THROWS instead of answering `persisted: false`.
-    const inner = e as unknown as { commitReplacement: (...a: unknown[]) => Promise<unknown> };
-    const commit = inner.commitReplacement.bind(e);
+    const entries = store.entries.bind(store);
     let throws = true;
-    inner.commitReplacement = async (...args: unknown[]) => {
-      if (throws) { throws = false; throw new Error("the record threw"); }
-      return commit(...args);
-    };
+    store.entries = ((type: string) => {
+      if (throws && type === OUTBOX_ABANDONED_TYPE) { throws = false; throw new Error("the record threw"); }
+      return entries(type);
+    }) as typeof store.entries;
     const again = await e.mutate(pressed, { key: a.key }).then(() => "answered", (err: unknown) => (err as Error).message);
     expect(again).toBe("the record threw");
     srv.release();

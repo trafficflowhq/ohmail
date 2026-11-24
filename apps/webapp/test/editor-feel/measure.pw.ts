@@ -6,7 +6,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "@playwright/test";
-import { caretAt, openHarness, posOf, read, setDoc } from "./rig";
+import { caretAt, openHarness, posOf, read, setDoc } from "./writing-rig";
 
 const OUT = resolve(__dirname, "../../../../build/editor-feel");
 const MARKS: Record<string, string> = {

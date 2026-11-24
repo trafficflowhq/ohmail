@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { sql } from "drizzle-orm";
-import { accounts, mailboxes, messages, folderState } from "@trafficflow/db";
+import { accountSettings, accounts, mailboxes, messages, folderState } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -103,7 +103,7 @@ async function seed(opts: {
       nativeLocator: { folder: desired, ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: desired, observedFolder: "ohmail/Screener",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: desired, observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -348,6 +348,7 @@ describe.skipIf(!PG_UP)("the Screener pages exactly once, on real Postgres", () 
   it("buys one row per named sender, not that sender's whole held bag", async () => {
     const accountId = randomUUID();
     await db.insert(accounts).values({ id: accountId, name: `w3-bound-${accountId.slice(0, 8)}` });
+    await db.insert(accountSettings).values({ accountId, autoSuggestAt: new Date() });
     const [mb] = await db.insert(mailboxes).values({
       accountId, provider: "imap", address: `w3-bound-${accountId.slice(0, 8)}@example.test`,
     }).returning();
@@ -363,7 +364,7 @@ describe.skipIf(!PG_UP)("the Screener pages exactly once, on real Postgres", () 
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${k}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       ids.push(m!.id);
@@ -443,6 +444,7 @@ describe.skipIf(!PG_UP)("the Screener pages exactly once, on real Postgres", () 
   it("buys the same representative the page priced, at a date shared by every message", async () => {
     const accountId = randomUUID();
     await db.insert(accounts).values({ id: accountId, name: `w3-rep-${accountId.slice(0, 8)}` });
+    await db.insert(accountSettings).values({ accountId, autoSuggestAt: new Date() });
     const [mb] = await db.insert(mailboxes).values({
       accountId, provider: "imap", address: `w3-rep-${accountId.slice(0, 8)}@example.test`,
     }).returning();
@@ -461,7 +463,7 @@ describe.skipIf(!PG_UP)("the Screener pages exactly once, on real Postgres", () 
           nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
         }).returning();
         await db.insert(folderState).values({
-          messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+          messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
           lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
         });
       }

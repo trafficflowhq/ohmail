@@ -1,12 +1,13 @@
+import type { WorkflowPattern } from "@ohmail/wire";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { accounts, learningSignals, rules, workflowProposals, type Tx } from "@trafficflow/db";
+import { accounts, bindDb, learningSignals, rules, workflowProposals, type Tx } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { generateProposals } from "../../../src/ai/workflows/proposals.js";
-import { makeOpusProposer, type WorkflowPattern } from "../../../src/ai/workflows/propose.js";
+import { makeOpusProposer } from "../../../src/ai/workflows/propose.js";
 import type { AnthropicLike } from "../../../src/ai/classify.js";
 
 /**
@@ -65,7 +66,8 @@ describe.skipIf(!PG_UP)("generateProposals on Postgres: the stored row is derive
       await owned.db.insert(rules).values({ accountId, kind: "domain", match: "billing.test", destination: "ohmail/Receipts", hits: 9 });
 
       const client = cannedClient();
-      const stored = await generateProposals(owned.db as unknown as Tx, accountId, {
+      // The account's own pass: its handle bound to the account, as the proposal pass's is.
+      const stored = await generateProposals(bindDb(owned.db, { account: accountId }) as unknown as Tx, accountId, {
         port: makeOpusProposer(client), now: () => NOW,
       });
 

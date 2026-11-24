@@ -14,14 +14,15 @@
  *
  * Mounted exactly as the keymap census mounts the shipped shell on the fixture world.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { chordKeys, modGlyph } from "../app/shell/keymap";
-import { readColumnHidden } from "../app/shell/narrow";
-import { currentZone } from "../app/shell/zone-nav";
+import { chordKeys, modGlyph } from "@ohmail/app-logic/keys/keymap";
+import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
+import { currentZone } from "@ohmail/app-logic/keys/zone-nav";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -63,6 +64,8 @@ function mkMatchMedia(px: number) {
 }
 async function resize(px: number): Promise<void> {
   widthNow = px;
+  // The frame's plan reads the window's own width, as a browser hands it on a resize.
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: px });
   await act(async () => {
     for (const l of lists) {
       const next = answer(l.query, px);
@@ -70,11 +73,13 @@ async function resize(px: number): Promise<void> {
       l.matches = next;
       for (const fn of l.listeners) fn({ matches: next });
     }
+    window.dispatchEvent(new Event("resize"));
   });
 }
 
 function setup(px: number): void {
   window.location.hash = "";
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: px });
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -95,6 +100,11 @@ function setup(px: number): void {
   vi.spyOn(console, "error").mockImplementation(() => {});
 }
 
+// The first case measures a keypress. Warm the full mail entry outside that case's clock.
+beforeAll(async () => {
+  await import("./_todays-shell.js");
+}, 90_000);
+
 beforeEach(() => {
   setup(1280);
   window.localStorage.clear();
@@ -113,8 +123,20 @@ afterEach(async () => {
   window.localStorage.clear();
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
   vi.restoreAllMocks();
 });
+
+/*
+ * THE FRAME'S PROBES: a letter over the list stands in the reading overlay. A letter beside the list stays in the
+ * reading region. The keyboard help and palette are the frame's own overlays.
+ */
+const OPEN_ROW = 'section[aria-label="Messages"] [role=option][data-open][data-id]';
+const letterOver = (): Element | null => document.querySelector(".fr-frame[data-letter]");
+const readingOver = (): Element | null => document.querySelector(".fr-reading[data-over]");
+const letterOpen = (): Element | null => document.querySelector('[role="region"][aria-label="Open message"]');
+const replyBody = (root: ParentNode = document): HTMLElement | null =>
+  root.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"]');
 
 async function shell(opts: { zero?: boolean } = {}): Promise<HTMLElement> {
   if (opts.zero) {
@@ -123,9 +145,9 @@ async function shell(opts: { zero?: boolean } = {}): Promise<HTMLElement> {
     window.localStorage.setItem("ohmail.layout", "zero");
     document.documentElement.dataset.layout = "zero";
   }
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  const { localStorageDoor } = await import("../app/shell/durable.js");
+  const { localStorageDoor } = await import("@ohmail/app-logic/storage/durable");
 
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -149,6 +171,7 @@ async function shell(opts: { zero?: boolean } = {}): Promise<HTMLElement> {
       }),
     );
   });
+  await within(container).findByRole("navigation", { name: messages.frame.landmark.places });
   return container;
 }
 
@@ -165,6 +188,19 @@ const tick = async (): Promise<void> => {
     await new Promise((r) => setTimeout(r, 25));
   });
 };
+
+/** `j` then Enter, as a person opens the first letter; resolves once the letter stands where `shown` looks. */
+async function openLetter(container: HTMLElement, shown: () => Element | null): Promise<void> {
+  await key("j");
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline && !container.querySelector(OPEN_ROW)) await tick();
+  await key("Enter");
+  const until = Date.now() + 4000;
+  while (Date.now() < until && !shown()) await tick();
+  expect(shown(), "the reader sheet never rose").toBeTruthy();
+}
+
+const openSheet = (container: HTMLElement): Promise<void> => openLetter(container, readingOver);
 
 describe("`w` — the layout cycle through the one provider", () => {
   it("stamps zero, persists the device choice, and cycles back", async () => {
@@ -187,9 +223,9 @@ describe("`w` — the layout cycle through the one provider", () => {
     setup(800);
     const container = await shell();
     await key("?");
-    const sheet = container.querySelector(".ks");
+    const sheet = within(container).queryByRole("dialog", { name: messages.shortcuts.title });
     expect(sheet, "the ? sheet is not open").toBeTruthy();
-    const caps = [...sheet!.querySelectorAll(".ks-keys")].map((el) => el.textContent ?? "");
+    const caps = [...sheet!.querySelectorAll(".oh-keyhelp-keys")].map((el) => el.textContent ?? "");
     // `w` carries no modifier, but `chordKeys` requires the glyph from every caller now —
     // a default would be the shipped Mac-cap-on-Linux bug waiting in the signature.
     expect(caps).toContain(chordKeys("w", modGlyph()).join(""));
@@ -201,15 +237,15 @@ describe("`w` is live only where the two layouts look different", () => {
   /** The sheet's `w` row: whether it rests, and the reason it gives. */
   const sheetRow = async (container: HTMLElement): Promise<{ off: boolean; why: string | null } | null> => {
     await key("?");
-    const row = [...container.querySelectorAll<HTMLElement>(".ks li")]
-      .find((li) => li.querySelector(".ks-lab")?.textContent === messages.shortcuts.layout);
-    const out = row ? { off: row.classList.contains("off"), why: row.getAttribute("title") } : null;
+    const row = [...container.querySelectorAll<HTMLElement>(".oh-keyhelp-row")]
+      .find((li) => li.querySelector(".oh-keyhelp-label")?.textContent === messages.shortcuts.layout);
+    const out = row ? { off: row.getAttribute("aria-disabled") === "true", why: row.getAttribute("title") } : null;
     await key("Escape");
     return out;
   };
   const paletteLabels = async (): Promise<string[]> => {
     await key("k", { ctrlKey: true });
-    const labels = [...document.querySelectorAll(".palette li[role=option]")].map((el) => el.textContent ?? "");
+    const labels = [...document.querySelectorAll(".oh-palette [role=option]")].map((el) => el.textContent ?? "");
     await key("Escape");
     return labels;
   };
@@ -263,19 +299,7 @@ describe("the ladder's JS boundary is exact (shell/narrow.ts)", () => {
 });
 
 describe("the fix round — reconcile, exits, names", () => {
-  const openSheet = async (container: HTMLElement): Promise<void> => {
-    await key("j");
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) {
-      await tick();
-    }
-    await key("Enter");
-    const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reader")) {
-      await tick();
-    }
-    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
-  };
+
 
   /**
    * SINCE THE WIDTH LADDER (DESIGN-FOLD-WIDTHS §0) classic seats two panes from 700, so there is
@@ -292,7 +316,7 @@ describe("the fix round — reconcile, exits, names", () => {
     await tick();
     expect(document.documentElement.dataset.layout).toBeUndefined();
     expect(
-      document.querySelector(".reader"),
+      readingOver(),
       "the sheet stood over the two-pane column it duplicates",
     ).toBeNull();
   });
@@ -302,14 +326,14 @@ describe("the fix round — reconcile, exits, names", () => {
     const container = await shell();
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) await tick();
+    while (Date.now() < deadline && !container.querySelector(OPEN_ROW)) await tick();
     await key("Enter");
     await tick();
-    expect(document.querySelector(".reader"), "a sheet rose at 800 under classic — the two-pane band lost its column").toBeNull();
+    expect(readingOver(), "a sheet rose at 800 under classic — the two-pane band lost its column").toBeNull();
     await key("w");
     await tick();
     expect(document.documentElement.dataset.layout).toBe("zero");
-    expect(document.querySelector(".reader")).toBeNull();
+    expect(readingOver()).toBeNull();
   });
 
   it("`h` leaves the re-housed reader at the push tier (one meaning for h)", async () => {
@@ -318,7 +342,7 @@ describe("the fix round — reconcile, exits, names", () => {
     await openSheet(container);
     await key("h");
     await tick();
-    expect(document.querySelector(".reader"), "`h` did not put the list back").toBeNull();
+    expect(readingOver(), "`h` did not put the list back").toBeNull();
     // …and under CLASSIC the sheet cedes h exactly as before (modal grammar).
     setup(600);
   });
@@ -326,42 +350,41 @@ describe("the fix round — reconcile, exits, names", () => {
   it("classic's sheet still cedes `h` — the exit stays Escape", async () => {
     setup(600);
     const container = await shell();
-    await openSheet(container);
+    await openLetter(container, letterOver);
     await key("h");
     await tick();
-    expect(document.querySelector(".reader"), "classic behavior moved").toBeTruthy();
+    expect(letterOver(), "classic behavior moved").toBeTruthy();
   });
 
+  /* Under 840 px the frame's rail is More's sheet: the summon opens it with focus inside, its toggle stays More (it opens
+     a modal dialog, which says itself), and Escape parks it again. */
   it("a keyboard summon lands focus IN the drawer, and the toggle says what it does", async () => {
     setup(800);
-    const container = await shell({ zero: true });
-    await key("h");
-    const deadline = Date.now() + 4000;
-    while (
-      Date.now() < deadline &&
-      !(container.querySelector(".rail.open")?.contains(document.activeElement) ?? false)
-    ) {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 800 });
+    try {
+      await shell({ zero: true });
+      const sheet = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="dialog"][aria-label="More"]');
+      await key("h");
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline && !(sheet()?.contains(document.activeElement) ?? false)) await tick();
+      expect(sheet(), "the drawer did not open").toBeTruthy();
+      expect(sheet()!.contains(document.activeElement), "focus stayed in the list after the summon").toBe(true);
+      expect(sheet()!.getAttribute("aria-modal")).toBe("true");
+      const toggle = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.getAttribute("aria-label") === "More");
+      expect(toggle, "the drawer's toggle is not named More").toBeTruthy();
+      await key("Escape");
       await tick();
+      expect(sheet()).toBeNull();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     }
-    const drawer = container.querySelector(".rail.open");
-    expect(drawer, "the drawer did not open").toBeTruthy();
-    expect(
-      drawer!.contains(document.activeElement),
-      "focus stayed in the list after the summon",
-    ).toBe(true);
-    const toggle = container.querySelector<HTMLElement>(".rail-expand");
-    expect(toggle?.getAttribute("aria-label")).toBe("Close navigation");
-    await key("Escape");
-    await tick();
-    expect(container.querySelector(".rail.open")).toBeNull();
-    expect(toggle?.getAttribute("aria-label")).toBe("Open navigation");
   });
 
   it("the push tier's reader is non-modal to ARIA; the floating tier's stays modal", async () => {
     setup(600);
     let container = await shell({ zero: true });
     await openSheet(container);
-    expect(document.querySelector(".reader")?.getAttribute("aria-modal")).toBeNull();
+    expect(readingOver()?.getAttribute("aria-modal")).toBeNull();
     await key("Escape");
     await tick();
     for (const root of roots) {
@@ -375,43 +398,31 @@ describe("the fix round — reconcile, exits, names", () => {
     document.documentElement.dataset.layout = "zero";
     container = await shell({ zero: true });
     await openSheet(container);
-    expect(document.querySelector(".reader")?.getAttribute("aria-modal")).toBe("true");
+    expect(readingOver()?.getAttribute("aria-modal")).toBe("true");
   });
 });
 
 describe("the fix round, round 2 — tiers, transitions, the drawer's zone", () => {
-  const openSheet = async (container: HTMLElement): Promise<void> => {
-    await key("j");
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) {
-      await tick();
-    }
-    await key("Enter");
-    const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reader")) {
-      await tick();
-    }
-    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
-  };
+
 
   it("the floating tier's modal sheet cedes `h` — Escape stays its one exit", async () => {
     setup(390);
     const container = await shell({ zero: true });
-    await openSheet(container);
+    await openLetter(container, letterOver);
     await key("h");
     await tick();
-    expect(document.querySelector(".reader"), "`h` dismissed the modal sheet").toBeTruthy();
+    expect(letterOver(), "`h` dismissed the modal sheet").toBeTruthy();
   });
 
   it("a narrow→narrow cycle keeps the sheet, and its ARIA claim follows the layout live", async () => {
     setup(600);
     const container = await shell({ zero: true });
     await openSheet(container);
-    expect(document.querySelector(".reader")?.getAttribute("aria-modal")).toBeNull();
+    expect(readingOver()?.getAttribute("aria-modal")).toBeNull();
     await key("w"); // zero → classic at 600: the column stays hidden in both
     await tick();
     await tick();
-    const sheet = document.querySelector(".reader");
+    const sheet = readingOver();
     expect(sheet, "a narrow→narrow cycle must not take the open message away").toBeTruthy();
     expect(
       sheet?.getAttribute("aria-modal"),
@@ -419,109 +430,10 @@ describe("the fix round, round 2 — tiers, transitions, the drawer's zone", () 
     ).toBe("true");
   });
 
-  it("closing the summoned drawer releases focus from the off-canvas rail", async () => {
-    setup(800);
-    const container = await shell({ zero: true });
-    await key("h");
-    const deadline = Date.now() + 4000;
-    while (
-      Date.now() < deadline &&
-      !(container.querySelector(".rail.open")?.contains(document.activeElement) ?? false)
-    ) {
-      await tick();
-    }
-    expect(container.querySelector(".rail.open")?.contains(document.activeElement)).toBe(true);
-    await key("Escape");
-    await tick();
-    expect(container.querySelector(".rail.open")).toBeNull();
-    expect(
-      container.querySelector(".rail")?.contains(document.activeElement),
-      "focus stayed inside invisible navigation",
-    ).toBe(false);
-  });
-
-  it("with the drawer raised over the push reader, the drawer owns the keys", async () => {
-    setup(600);
-    const container = await shell({ zero: true });
-    await openSheet(container);
-    // The pointer path: the ribbon's ≡ stays operable beside the re-housed reader.
-    const toggle = container.querySelector<HTMLElement>(".rail-expand");
-    await act(async () => {
-      toggle!.click();
-    });
-    await tick();
-    const drawer = container.querySelector(".rail.open");
-    expect(drawer, "≡ did not raise the drawer").toBeTruthy();
-    const row = drawer!.querySelector<HTMLElement>(".ritem");
-    await act(async () => {
-      row!.focus();
-    });
-    expect(currentZone(), "focus in an open drawer is the rail zone, sheet or no sheet").toBe(
-      "rail",
-    );
-    await key("h");
-    await tick();
-    expect(
-      document.querySelector(".reader"),
-      "`h` in the drawer must not close the reader behind it",
-    ).toBeTruthy();
-  });
-});
-
-describe("`h` at the rail boundary — summon under zero and under classic (§12)", () => {
-  it("zero at 800px: h summons the full drawer, esc re-docks it", async () => {
-    setup(800);
-    const container = await shell({ zero: true });
-    // The zone derives "list" with focus at rest on the body; `h` walks toward the rail,
-    // which at ribbon widths means drawer-in (zone-nav's summon seam).
-    await key("h");
-    await tick();
-    expect(
-      container.querySelector(".rail.open"),
-      "`h` did not summon the drawer at the ribbon tier",
-    ).toBeTruthy();
-    await key("Escape");
-    await tick();
-    expect(
-      container.querySelector(".rail.open"),
-      "Escape did not re-dock the drawer",
-    ).toBeNull();
-  });
-
-  /* Was "summons nothing — classic behavior does not move": a stability pin that held a dead key.
-     At classic drawer widths ← and `h` sat in the `?` sheet as "Focus the menu" and did nothing
-     (390px); they now summon the drawer ≡ opens, as under zero. */
-  it("classic at 800px and 390px: the same key summons the drawer, esc closes it", async () => {
-    for (const px of [800, 390]) {
-      setup(px);
-      const container = await shell();
-      await key("h");
-      await tick();
-      expect(container.querySelector(".rail.open"), `\`h\` summoned no drawer at classic ${px}px`).toBeTruthy();
-      await key("Escape");
-      await tick();
-      expect(container.querySelector(".rail.open"), `Escape did not close the drawer at ${px}px`).toBeNull();
-      for (const root of roots) await act(() => { root.unmount(); });
-      roots = [];
-      document.body.innerHTML = "";
-    }
-  });
 });
 
 describe("the fix round, round 3 — the reconcile asks at the current width", () => {
-  const openSheet = async (container: HTMLElement): Promise<void> => {
-    await key("j");
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) {
-      await tick();
-    }
-    await key("Enter");
-    const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reader")) {
-      await tick();
-    }
-    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
-  };
+
 
   /**
    * A RESIZE BETWEEN CYCLES must not be remembered as the old answer. The reconcile only
@@ -539,7 +451,7 @@ describe("the fix round, round 3 — the reconcile asks at the current width", (
     const container = await shell({ zero: true });
     // the premise: wide zero reads its message in the standing column, no sheet stands
     expect(
-      document.querySelector(".reader"),
+      readingOver(),
       "a sheet stood at 1280 — this test's premise is gone",
     ).toBeNull();
 
@@ -554,7 +466,7 @@ describe("the fix round, round 3 — the reconcile asks at the current width", (
     await tick();
     expect(document.documentElement.dataset.layout).toBeUndefined();
     expect(
-      document.querySelector(".reader"),
+      readingOver(),
       "the sheet stood over the column classic just brought back (a stale narrow answer)",
     ).toBeNull();
   });
@@ -583,12 +495,12 @@ describe("crossing 700 with a message open — the overlay and the column trade 
   const openOverlay = async (container: HTMLElement): Promise<string> => {
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) await tick();
-    const id = container.querySelector<HTMLElement>(".view .row.sel[data-id]")!.dataset.id!;
+    while (Date.now() < deadline && !container.querySelector(OPEN_ROW)) await tick();
+    const id = container.querySelector<HTMLElement>(OPEN_ROW)!.dataset.id!;
     await key("Enter");
     const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reader")) await tick();
-    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
+    while (Date.now() < until && !letterOver()) await tick();
+    expect(letterOver(), "the reader sheet never rose").toBeTruthy();
     return id;
   };
 
@@ -600,18 +512,18 @@ describe("crossing 700 with a message open — the overlay and the column trade 
     const { typeInto } = await import("./fixtures/rich-editor-driver.js");
     await key("r");
     const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reply-editor .rte-surface")) await tick();
-    const surface = document.querySelector<HTMLElement>(".reply-editor .rte-surface");
+    while (Date.now() < until && !replyBody()) await tick();
+    const surface = replyBody();
     expect(surface, "`r` did not open the inline reply in the overlay").not.toBeNull();
     await act(async () => { typeInto(surface!, "typed before the unfold"); });
 
     await resize(821);
     await tick();
-    expect(document.querySelector(".reader"), "the overlay stood over the two panes").toBeNull();
-    const col = container.querySelector(".read-col");
+    expect(letterOver(), "the overlay stood over the two panes").toBeNull();
+    const col = container.querySelector('section[aria-label="Reading"]');
     expect(col, "no reading column at 821").not.toBeNull();
-    expect(container.querySelector(`.view .row.sel[data-id="${id}"]`), "the column lost the message").not.toBeNull();
-    const colSurface = col!.querySelector<HTMLElement>(".reply-editor .rte-surface");
+    expect(container.querySelector(`${OPEN_ROW.replace("[data-id]", `[data-id="${id}"]`)}`), "the column lost the message").not.toBeNull();
+    const colSurface = replyBody(col!);
     expect(colSurface, "the reply did not move into the column").not.toBeNull();
     expect(colSurface!.textContent).toContain("typed before the unfold");
     // the keyboard stays in the reply: a key typed through the unfold is text, never a list command
@@ -619,37 +531,38 @@ describe("crossing 700 with a message open — the overlay and the column trade 
 
     await resize(650);
     await tick();
-    const sheet = document.querySelector(".reader");
+    const sheet = letterOver();
     expect(sheet, "folding back raised no overlay on the column's message").not.toBeNull();
-    expect(sheet!.querySelector(".reply-editor .rte-surface")?.textContent ?? "").toContain("typed before the unfold");
+    expect(replyBody(sheet!)?.textContent ?? "").toContain("typed before the unfold");
   });
 
-  it("the column's ✕ on a fallback column rests the column — it never swaps in the first row", async () => {
-    /* Triage: a column view whose pick is the plain `selectedId` path and whose column falls back to
-       its first row when nothing is picked (History's paged rows need the engine's page reads). */
+  it("Escape in Triage rests the reading column without opening the first row", async () => {
     setup(821);
-    const container = await shell();
-    await act(async () => { window.location.hash = "#/triage"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
+    await shell();
+    await act(async () => {
+      window.location.hash = "#/triage";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    const pile = within(await screen.findByRole("listbox", { name: "Answer Later" }));
+    const rows = pile.getAllByRole("option");
+    const chosen = rows[1]!;
+    expect(chosen, "the pile needs a second letter to distinguish a fallback").toBeDefined();
+    const name = chosen.getAttribute("aria-label")!;
+    await act(async () => { chosen.click(); });
     await tick();
+    expect(letterOpen(), "the chosen letter did not open").not.toBeNull();
+    const before = window.location.hash;
+    expect(before).toContain("/m/");
+
+    await key("Escape");
     await tick();
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view-triage .row[data-id]")) await tick();
-    const row = container.querySelector<HTMLElement>(".view-triage .row[data-id]")!;
-    const id = row.dataset.id!;
-    // a column view's own pick is its row's press (the keys open through the shell's column pick)
-    await act(async () => { row.click(); });
+    expect(window.location.hash).toBe("#/triage");
+    expect(letterOpen(), "Escape swapped another letter into the column").toBeNull();
+
+    await act(async () => { pile.getByRole("option", { name }).click(); });
     await tick();
-    const close = container.querySelector<HTMLButtonElement>(".read-col .read-col-close");
-    expect(close, "no ✕ on the Triage column with a row picked").not.toBeNull();
-    expect(container.querySelector(".read-col .msg"), "no message in the column before the close").not.toBeNull();
-    await act(async () => { close!.click(); });
-    await tick();
-    expect(container.querySelector(".read-col .msg"), "the close swapped another message into the column").toBeNull();
-    expect(container.querySelector(".read-col .read-col-close"), "the ✕ stayed on a column at rest").toBeNull();
-    // the next pick brings the column back
-    await act(async () => { container.querySelector<HTMLElement>(`.view-triage .row[data-id="${id}"]`)!.click(); });
-    await tick();
-    expect(container.querySelector(".read-col .msg"), "a pick after the close did not open").not.toBeNull();
+    expect(letterOpen(), "selecting a row after Escape did not reopen it").not.toBeNull();
+    expect(window.location.hash).toBe(before);
   });
 
   it("control: a message open in the column at 821 is untouched by a resize that stays above 700", async () => {
@@ -657,13 +570,102 @@ describe("crossing 700 with a message open — the overlay and the column trade 
     const container = await shell();
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) await tick();
+    while (Date.now() < deadline && !container.querySelector(OPEN_ROW)) await tick();
     await key("Enter");
     await tick();
-    expect(document.querySelector(".reader")).toBeNull();
+    expect(letterOver()).toBeNull();
     await resize(1023);
     await tick();
-    expect(document.querySelector(".reader")).toBeNull();
-    expect(container.querySelector(".read-col")).not.toBeNull();
+    expect(letterOver()).toBeNull();
+    expect(letterOpen()).not.toBeNull();
+  });
+});
+
+/*
+ * THE DRAWER IN THE FRAME. Under 840 px the whole rail is More's sheet over the app, whatever the stored layout.
+ * Today's drawer cases with their probe re-read: the sheet is the drawer, the dock's More its toggle, a window's
+ * width is also its innerWidth (the frame's plan reads it), and a key is pressed where the keys are, as a browser does.
+ */
+describe("the drawer in the frame — summon, Escape, the keys", () => {
+  const atWidth = (px: number): void => { Object.defineProperty(window, "innerWidth", { configurable: true, value: px }); };
+  const sheet = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="dialog"][aria-label="More"]');
+  const press = async (k: string): Promise<void> => {
+    await act(async () => {
+      (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    });
+  };
+  const summoned = async (): Promise<void> => {
+    await press("h");
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && !(sheet()?.contains(document.activeElement) ?? false)) await tick();
+  };
+  afterEach(() => { atWidth(1024); });
+
+  it("closing the summoned drawer releases focus from the off-canvas rail", async () => {
+    setup(800);
+    atWidth(800);
+    await shell({ zero: true });
+    await summoned();
+    expect(sheet()?.contains(document.activeElement)).toBe(true);
+    await press("Escape");
+    await tick();
+    expect(sheet()).toBeNull();
+    expect(sheet()?.contains(document.activeElement) ?? false, "focus stayed inside invisible navigation").toBe(false);
+  });
+
+  /* Beside the upright dock, from 700 wide: under 700 a letter stands over the list as on a phone and no dock is drawn
+     over it (the frame's rule), so there is no More to press while a letter is open. */
+  it("with the drawer raised over an open reader, the drawer owns the keys", async () => {
+    setup(700);
+    atWidth(700);
+    await shell({ zero: true });
+    await press("j");
+    let deadline = Date.now() + 4000;
+    while (Date.now() < deadline && !document.querySelector(OPEN_ROW)) await tick();
+    await press("Enter");
+    deadline = Date.now() + 4000;
+    while (Date.now() < deadline && !letterOpen()) await tick();
+    expect(letterOpen(), "the reader sheet never rose").toBeTruthy();
+    // The pointer path: the dock's More stays operable beside the re-housed reader.
+    const toggle = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.getAttribute("aria-label") === "More");
+    await act(async () => { toggle!.click(); });
+    await tick();
+    const drawer = sheet();
+    expect(drawer, "≡ did not raise the drawer").toBeTruthy();
+    const row = drawer!.querySelector<HTMLElement>("[data-rail-id] button");
+    await act(async () => { row!.focus(); });
+    expect(currentZone(), "focus in an open drawer is the rail zone, sheet or no sheet").toBe("rail");
+    await press("h");
+    await tick();
+    expect(letterOpen(), "`h` in the drawer must not close the reader behind it").toBeTruthy();
+  });
+
+  it("zero at 800px: h summons the full drawer, esc re-docks it", async () => {
+    setup(800);
+    atWidth(800);
+    await shell({ zero: true });
+    await press("h");
+    await tick();
+    expect(sheet(), "`h` did not summon the drawer at the ribbon tier").toBeTruthy();
+    await press("Escape");
+    await tick();
+    expect(sheet(), "Escape did not re-dock the drawer").toBeNull();
+  });
+
+  it("classic at 800px and 390px: the same key summons the drawer, esc closes it", async () => {
+    for (const px of [800, 390]) {
+      setup(px);
+      atWidth(px);
+      await shell();
+      await press("h");
+      await tick();
+      expect(sheet(), `\`h\` summoned no drawer at classic ${px}px`).toBeTruthy();
+      await press("Escape");
+      await tick();
+      expect(sheet(), `Escape did not close the drawer at ${px}px`).toBeNull();
+      for (const root of roots) await act(() => { root.unmount(); });
+      roots = [];
+      document.body.innerHTML = "";
+    }
   });
 });

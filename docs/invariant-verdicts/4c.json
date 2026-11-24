@@ -1,0 +1,22 @@
+{
+  "id": "4c",
+  "base": "368eb65cf6571a11270ee1d055861b4f02666154",
+  "recorded": "2026-11-15",
+  "command": "npx vitest run packages/testing/test/contract.test.ts packages/client-engine/test/durable-outbox.test.ts",
+  "tests": [
+    "packages/testing/test/contract.test.ts",
+    "packages/client-engine/test/durable-outbox.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "packages/client-engine/src/mutations.ts",
+      "line": "if (!msg || to === null) return [];",
+      "to": "if (!msg || to === null || true) return [];",
+      "failed": 4
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 60
+  }
+}

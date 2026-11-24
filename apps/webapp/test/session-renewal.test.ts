@@ -13,7 +13,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type Tab = {
-  truth: typeof import("../app/shell/session-truth");
+  truth: typeof import("@ohmail/app-logic/session/session-truth");
   refresh: typeof import("../app/session-refresh");
 };
 
@@ -40,7 +40,7 @@ const revoked = (): Response => new Response(
 
 async function openTab(): Promise<Tab> {
   vi.resetModules();
-  const truth = await import("../app/shell/session-truth");
+  const truth = await import("@ohmail/app-logic/session/session-truth");
   const refresh = await import("../app/session-refresh");
   return { truth, refresh };
 }

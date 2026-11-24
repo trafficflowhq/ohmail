@@ -1,0 +1,514 @@
+/* The open event, read. The card wears its event's colour: the head stands on it, and a line of it runs round the card. */
+@layer oh {
+  .oh-ecard {
+    --oh-ecard-pad: var(--s3);
+    --oh-ecard-width: 344px;
+    --oh-ecard-edge: var(--oh-cal-mark, var(--ink));
+    --oh-ecard-ground: var(--oh-cal-open, var(--oh-cal-open-plain));
+    --oh-ecard-ring: 0 0 0 var(--oh-cal-open-line) var(--oh-ecard-edge), var(--float);
+    --oh-ecard-glass: color-mix(in oklab, var(--sheet) 70%, transparent);
+    --oh-ecard-z: 6;
+    /* What stands beside the close: the room the close takes. */
+    --oh-ecard-beside: 36px;
+    --oh-soft: var(--soft-sheet);
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: var(--oh-ecard-z);
+    width: var(--oh-ecard-width);
+    max-height: calc(100% - 172px);
+    padding: var(--oh-ecard-pad);
+    overflow: hidden auto;
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--oh-ecard-ring);
+    scrollbar-width: none;
+    transform-origin: var(--x-pop-origin);
+    animation: oh-ecard-pop var(--d-pop) var(--e-pop) both;
+  }
+  .oh-ecard[data-side] {
+    --x-pop: var(--x-tie);
+  }
+  @keyframes oh-ecard-pop {
+    from {
+      transform: var(--x-pop);
+      opacity: var(--o-pop);
+    }
+  }
+  .oh-ecard[data-still] {
+    animation: none;
+  }
+  :root[data-face="ohmarchy"] .oh-ecard {
+    --oh-ecard-width: 372px;
+    --oh-ecard-ring: var(--float);
+  }
+  /* The unfolded phone: a card never crosses the hinge. */
+  :root[data-device="fold"] .oh-ecard {
+    width: min(var(--oh-ecard-width), calc(50% - 16px));
+  }
+  .oh-ecard-head {
+    --oh-ecard-head-out: calc(var(--oh-ecard-pad) * -1) calc(var(--oh-ecard-pad) * -1) 0;
+    position: relative;
+    display: block;
+    margin: var(--oh-ecard-head-out);
+    padding: var(--oh-ecard-pad);
+    background: var(--oh-ecard-ground);
+  }
+  .oh-ecard[data-neutral-head] {
+    --oh-ecard-edge: var(--ink);
+    --oh-ecard-ground: var(--oh-cal-open-plain);
+  }
+  .oh-ecard[data-editing] > .oh-ecard-head {
+    padding-block-end: var(--s4);
+  }
+  .oh-ecard[data-editing]:not([data-frame]) .oh-ecard-close > .oh-button {
+    inset: var(--s2) var(--s2) auto auto;
+  }
+  .oh-ecard-close {
+    display: contents;
+  }
+  .oh-ecard-close > .oh-button {
+    position: absolute;
+    top: var(--s1);
+    right: var(--s1);
+    color: var(--ink2);
+  }
+  /* Edit, and where there is nothing to edit the same place says why. */
+  .oh-ecard .oh-ecard-edit {
+    --oh-button-pad: 0 12px 0 10px;
+  }
+  .oh-ecard-edit {
+    --oh-ecard-edit-gap: 6px;
+    position: absolute;
+    top: var(--s1);
+    right: calc(var(--s1) + var(--oh-ecard-beside));
+    gap: var(--oh-ecard-edit-gap);
+    height: 32px;
+    min-height: 32px;
+    background: var(--oh-ecard-glass);
+    font-size: var(--t-meta);
+  }
+  .oh-ecard-edit:hover {
+    background: var(--sheet);
+  }
+  .oh-ecard-edit-ico {
+    width: 16px;
+    height: 16px;
+  }
+  /* A tag in the head is the kit's tag; here it may be cut, and one that waits is hot. */
+  .oh-ecard-tag {
+    display: block;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    line-height: var(--oh-tag-h);
+    text-overflow: ellipsis;
+  }
+  .oh-ecard-tag[data-hot] {
+    background: var(--wash);
+    color: var(--hot-ink);
+  }
+  .oh-ecard-tag > .oh-csq {
+    --oh-ecard-tag-sq: 0 6px 0 0;
+    display: inline-block;
+    margin: var(--oh-ecard-tag-sq);
+  }
+  .oh-ecard-why {
+    --oh-ecard-why-gap: 4px;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--oh-ecard-why-gap);
+  }
+  .oh-ecard-head > .oh-ecard-why {
+    position: absolute;
+    top: calc(var(--s1) + 5px);
+    right: calc(var(--s2) + var(--oh-ecard-beside));
+    background: var(--oh-ecard-glass);
+    line-height: var(--oh-lh);
+  }
+  .oh-ecard-lock {
+    width: var(--cal-lock-size);
+    height: var(--cal-lock-size);
+  }
+  .oh-ecard-title {
+    padding-right: var(--s6);
+    font-size: var(--t-title);
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+  }
+  .oh-ecard-title-input {
+    --oh-ecard-title-line: inset 0 calc(var(--oh-hair) * -1) 0 var(--line);
+    --oh-ecard-title-focus: inset 0 calc(var(--oh-focus) * -1) 0 currentColor;
+    inline-size: calc(100% - var(--oh-ecard-beside));
+    padding: var(--oh-hair) var(--s1);
+    --oh-ecard-title-out: calc(var(--oh-hair) * -1) calc(var(--s1) * -1);
+    margin: var(--oh-ecard-title-out);
+    background: transparent;
+    border: 0;
+    border-radius: var(--r-sq);
+    box-shadow: var(--oh-ecard-title-line);
+    color: inherit;
+  }
+  .oh-control.oh-ecard-title-input:focus-visible {
+    outline: none;
+    box-shadow: var(--oh-ecard-title-focus);
+  }
+  .oh-ecard-head[data-act="edit"] > .oh-ecard-title {
+    --oh-ecard-title-room: calc(88px + var(--oh-ecard-beside));
+    padding-right: var(--oh-ecard-title-room);
+  }
+  .oh-ecard-head[data-act="why"] > .oh-ecard-title {
+    --oh-ecard-title-room: calc(100px + var(--oh-ecard-beside));
+    padding-right: var(--oh-ecard-title-room);
+  }
+  .oh-ecard-when {
+    margin-top: var(--s1);
+    font-weight: var(--w-mid);
+  }
+  .oh-ecard-was {
+    margin-right: var(--s2);
+    font-weight: var(--w-text);
+  }
+  .oh-ecard-where {
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+  .oh-ecard-link {
+    max-width: 100%;
+    overflow: hidden;
+    border-radius: var(--r-sq);
+    font-weight: var(--w-mid);
+    text-decoration: underline;
+    text-decoration-color: var(--line);
+    text-overflow: ellipsis;
+    text-underline-offset: 0.2em;
+    white-space: nowrap;
+  }
+  .oh-ecard-link:hover {
+    text-decoration-color: var(--ink);
+  }
+  .oh-ecard-where > .oh-ecard-link {
+    margin-left: var(--s2);
+    font-size: var(--t-meta);
+  }
+  .oh-ecard-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+    min-width: 0;
+    margin-top: var(--s2);
+  }
+  .oh-ecard-head > .oh-ans {
+    margin-top: var(--s3);
+  }
+  .oh-ecard-rows {
+    --oh-ecard-rows-out: var(--s4) 0 0;
+    --oh-ecard-rows-gap: var(--s2) var(--s3);
+    --oh-ecard-term: 72px;
+    display: grid;
+    grid-template-columns: var(--oh-ecard-term) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--oh-ecard-rows-gap);
+    margin: var(--oh-ecard-rows-out);
+  }
+  .oh-ecard-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    color: var(--ink2);
+    font-size: var(--t-ui);
+    font-weight: var(--w-mid);
+  }
+  .oh-ecard-status[data-failed] {
+    color: var(--hot-ink);
+    font-weight: var(--w-bold);
+  }
+  .oh-ecard-row {
+    display: contents;
+  }
+  .oh-ecard-term {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+  .oh-ecard-value {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    min-height: 22px;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .oh-ecard-value[data-stacked] {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s1);
+  }
+  .oh-ecard-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-ecard-note {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+  .oh-ecard-words {
+    font-size: var(--t-meta);
+    line-height: 1.9;
+  }
+  .oh-ecard-mark {
+    --oh-ecard-mark-pad: 0.14em 0.4em;
+    padding: var(--oh-ecard-mark-pad);
+    border-radius: var(--r-sq);
+    background: var(--wash);
+    color: var(--ink);
+  }
+  .oh-ecard-file {
+    --oh-ecard-file-gap: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-ecard-file-gap);
+    min-width: 0;
+    font-weight: var(--w-mid);
+  }
+  .oh-ecard-file-ico {
+    width: 14px;
+    height: 14px;
+    color: var(--ink2);
+  }
+  .oh-ecard-file-size {
+    --oh-ecard-size-gap: 2px;
+    margin-left: var(--oh-ecard-size-gap);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+  /* Join, wherever a call can be joined: the word and the video glyph on the soft sheet. */
+  .oh-ecard-join {
+    background: var(--soft-sheet);
+    color: var(--ink);
+  }
+  .oh-ecard-join-ico {
+    width: 16px;
+    height: 16px;
+  }
+  .oh-ecard-address {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    min-width: 0;
+    max-width: 100%;
+  }
+  .oh-ecard-address-text {
+    min-width: 0;
+    overflow: hidden;
+    cursor: text;
+    text-overflow: ellipsis;
+    user-select: text;
+    white-space: nowrap;
+  }
+  .oh-ecard-address > .oh-button {
+    --oh-ecard-copy-out: -5px 0 -5px -2px;
+    margin: var(--oh-ecard-copy-out);
+  }
+  .oh-ecard-notes {
+    margin-top: var(--s3);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+
+  /* Set into a list, it has no frame: the row above it is its head, so the title, the time and the close are that row's. */
+  .oh-ecard[data-frame="inline"] {
+    --oh-ecard-pad: var(--s2) var(--s4) var(--s4) calc(var(--s1) + var(--gutter));
+    position: static;
+    z-index: auto;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    animation: none;
+  }
+  .oh-ecard[data-frame="inline"] > .oh-ecard-head {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+  }
+  .oh-ecard[data-frame="inline"] > .oh-ecard-head > .oh-ecard-close,
+  .oh-ecard[data-frame="inline"] > .oh-ecard-head > .oh-ecard-title,
+  .oh-ecard[data-frame="inline"] > .oh-ecard-head > .oh-ecard-when {
+    display: none;
+  }
+  .oh-ecard[data-frame="inline"] > .oh-ecard-head > .oh-ecard-tags:first-of-type {
+    margin-top: var(--s2);
+  }
+  .oh-ecard[data-frame="inline"] > .oh-ecard-rows {
+    --oh-ecard-rows-out: var(--s3) 0 0;
+  }
+
+  /* On the phone it comes up from the foot, as wide as the window, and the open event stays in sight above it. */
+  .oh-ecard[data-frame="sheet"] {
+    --oh-ecard-pad: var(--s3) var(--s5) var(--s4);
+    --oh-ecard-z: 9;
+    --oh-ecard-top: var(--r-sheet) var(--r-sheet) 0 0;
+    --oh-ecard-grab-space: calc(var(--s3) + var(--s4) + var(--s1));
+    top: auto;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: calc(100% - 56px);
+    border-radius: var(--oh-ecard-top);
+    box-shadow: var(--float);
+    transform-origin: 50% 100%;
+    animation: oh-ecard-rise var(--d-slide) var(--e-out) both;
+    touch-action: pan-y;
+  }
+  @keyframes oh-ecard-rise {
+    from {
+      transform: translateY(100%);
+    }
+  }
+  @keyframes oh-ecard-fade {
+    from {
+      opacity: 0;
+    }
+  }
+  :root[data-rm="1"] .oh-ecard:not([data-frame="inline"], [data-still]) {
+    animation: oh-ecard-fade var(--d-reduced) var(--e-std) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-ecard:not([data-frame="inline"], [data-still]) {
+      animation: oh-ecard-fade var(--d-reduced) var(--e-std) both;
+      animation-duration: var(--d-reduced) !important;
+    }
+  }
+  .oh-ecard[data-frame="sheet"][data-still] {
+    animation: none;
+  }
+  .oh-ecard-grab {
+    --oh-ecard-grab-out: 0 auto var(--s4);
+    --oh-ecard-grab-z: 1;
+    position: relative;
+    z-index: var(--oh-ecard-grab-z);
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: var(--oh-ecard-grab-out);
+    border-radius: var(--r-sq);
+    background: var(--line);
+    cursor: grab;
+    /* The pull is the hand's: the sheet around it lets the browser pan (pan-y), which takes a finger's pull away. */
+    touch-action: none;
+  }
+  /* The grabber is taken with a finger: its room is larger than its drawing. */
+  .oh-ecard-grab::after {
+    position: absolute;
+    inset: -16px -80px -24px;
+    content: "";
+  }
+  .oh-ecard[data-frame="sheet"] > .oh-ecard-head {
+    --oh-ecard-head-out: calc(var(--oh-ecard-grab-space) * -1) calc(var(--s5) * -1) 0;
+    --oh-ecard-head-pad: var(--oh-ecard-grab-space) var(--s5) var(--s3);
+    padding: var(--oh-ecard-head-pad);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ecard-close > .oh-button {
+    top: var(--oh-ecard-grab-space);
+    right: var(--s3);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ecard-title {
+    --oh-ecard-title-room: calc(var(--h-s) + var(--s2));
+    padding-right: var(--oh-ecard-title-room);
+    font-size: var(--t-head);
+    font-variation-settings: var(--opsz-l);
+    line-height: 1.12;
+  }
+  .oh-ecard[data-frame="sheet"][data-editing] > .oh-ecard-head {
+    padding: var(--oh-ecard-grab-space) var(--s5) var(--s2);
+  }
+  .oh-ecard[data-frame="sheet"][data-editing] .oh-ecard-close > .oh-button {
+    top: calc(-1 * var(--oh-hair));
+    right: var(--s3);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ecard-title-input {
+    inline-size: calc(100% - var(--cal-edit-title-inset));
+    margin-inline: 0;
+    padding-inline: var(--s1);
+  }
+  :root[data-touch="1"] .oh-ecard[data-frame="sheet"] .oh-ecard-title-input {
+    min-height: var(--cal-edit-touch);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ecard-when {
+    margin-top: var(--s2);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ecard-link {
+    line-height: var(--h-s);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ecard-rows {
+    --oh-ecard-rows-out: var(--s5) 0 0;
+    --oh-ecard-rows-gap: 0 var(--s3);
+    --oh-ecard-term: 76px;
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ecard-term {
+    display: flex;
+    align-items: center;
+    min-height: var(--h-s);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ecard-value {
+    min-height: var(--h-s);
+  }
+  /* The answers fill the sheet's width: three equal parts, and Propose a time as its glyph alone. */
+  .oh-ecard[data-frame="sheet"] .oh-ecard-head > .oh-ans {
+    flex-wrap: nowrap;
+    margin-top: var(--s4);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ans .oh-seg {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ans .oh-seg-item {
+    flex: 1 1 0;
+    padding: 0;
+    text-align: center;
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ans .oh-button {
+    flex: 1 1 0;
+    height: var(--h-s);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ans .oh-ans-propose {
+    --oh-button-pad: 0;
+    flex: none;
+    width: 48px;
+    border-radius: var(--r-pill);
+    background: var(--oh-ans-ground);
+    box-shadow: var(--oh-ans-ring);
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ans .oh-ans-word {
+    display: none;
+  }
+  .oh-ecard[data-frame="sheet"] .oh-ans .oh-ans-clock {
+    width: 20px;
+    height: 20px;
+  }
+  /* The event's verbs stay at the sheet's foot while its rows scroll. */
+  .oh-ecard-foot {
+    --oh-ecard-foot-out: var(--s5) calc(var(--s2) * -1) 0;
+    --oh-ecard-foot-z: 10;
+    position: sticky;
+    bottom: 0;
+    z-index: var(--oh-ecard-foot-z);
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--s1);
+    margin: var(--oh-ecard-foot-out);
+  }
+}

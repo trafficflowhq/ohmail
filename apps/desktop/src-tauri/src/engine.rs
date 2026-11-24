@@ -835,6 +835,18 @@ pub fn plan_with(
     })
 }
 
+/// What a launch with no stored door reads from the environment for `name`.
+///
+/// A preview reads everything but the data directory, which is then the app's own and nothing
+/// else. `OHMAIL_DATA_DIR` left in a shell could name the released install's folder, and a newer
+/// build that opened that store would migrate it for good.
+fn launch_env(name: &str, preview: bool, read: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    if preview && name == DATA_DIR_VAR {
+        return None;
+    }
+    read(name)
+}
+
 /// Where the packaged engine bundle is, given the app's resource directory. One spelling, so the
 /// plan and anything that wants to report the layout cannot disagree about it.
 ///
@@ -1018,6 +1030,9 @@ struct Shared {
     /// Per RUN, like `ready`: cleared when a new child starts, because a signal belongs to the
     /// launch that produced it. `None` on every disarmed launch, and until an armed one speaks.
     host_signal: Option<crate::host::HostSignal>,
+    /// None until this run reports. Zero is signed out, positive identifies one signed-in session.
+    hosted_session: Option<u64>,
+    local_session: u64,
     /// The LAN door's own slot — `host_lan_*` lines. A SEPARATE slot, not a widened vocabulary:
     /// one launch can hold both listeners, and the LAN door's later line must not overwrite
     /// what the loopback listener said (the tailnet publication gates on THAT). Same per-run
@@ -1073,6 +1088,11 @@ struct Inner {
     timer_wakes: AtomicU64,
 }
 
+fn next_notice_session() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 fn new_shared(state: EngineState, finished: bool) -> Shared {
     Shared {
         state,
@@ -1086,6 +1106,8 @@ fn new_shared(state: EngineState, finished: bool) -> Shared {
         first_error: None,
         latest_error: None,
         host_signal: None,
+        hosted_session: None,
+        local_session: next_notice_session(),
         lan_signal: None,
         witness: None,
         stop: false,
@@ -1418,7 +1440,7 @@ impl ShellPaths {
                     if name == KEK_VAR {
                         Some(resolved.clone())
                     } else {
-                        std::env::var(name).ok()
+                        launch_env(name, crate::variant::PREVIEW, &|n| std::env::var(n).ok())
                     }
                 };
                 match plan(&get, resources, self.app_data.as_deref(), &look) {
@@ -1437,6 +1459,35 @@ impl ShellPaths {
                 }
             }
         }
+    }
+}
+
+/// The version the window saw for an installed standalone door. The config and the engine
+/// identity stay in this process; a window receives only the version number.
+#[derive(Default)]
+struct ObservedLocalDoor {
+    version: u32,
+    door: Option<(Config, std::sync::Weak<Engine>)>,
+}
+
+impl ObservedLocalDoor {
+    fn matches(&self, config: Option<&Config>, engine: &Arc<Engine>) -> bool {
+        self.door.as_ref().is_some_and(|(seen, running)| {
+            Some(seen) == config && running.ptr_eq(&Arc::downgrade(engine))
+        })
+    }
+
+    fn observe(&mut self, config: Option<&Config>, engine: &Arc<Engine>) -> Option<u32> {
+        let Some(local @ Config::Local(_)) = config else {
+            self.door = None;
+            return None;
+        };
+        if !self.matches(Some(local), engine) {
+            self.door = None;
+            self.version = self.version.checked_add(1)?;
+            self.door = Some((local.clone(), Arc::downgrade(engine)));
+        }
+        Some(self.version)
     }
 }
 
@@ -1461,6 +1512,7 @@ pub struct Shell {
     /// pressed on and refuses if it moved. Nothing takes it while holding another of this struct's
     /// locks, which is what keeps the order trivial.
     door: Mutex<()>,
+    observed_local: Mutex<ObservedLocalDoor>,
     /// How far this app is through leaving.
     ///
     /// ── WHY A QUIT NO LONGER RUNS ON THE THREAD THAT DRAWS ──────────────────────────────────
@@ -1650,6 +1702,7 @@ impl Shell {
             engine: Mutex::new(Arc::new(Engine::inert(EngineState::Stopped))),
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
+            observed_local: Mutex::new(ObservedLocalDoor::default()),
             leaving: Shutdown::new(),
             pending_door: Mutex::new(None),
         }
@@ -1664,6 +1717,7 @@ impl Shell {
             engine: Mutex::new(Arc::new(engine)),
             host_plan: Mutex::new(None),
             door: Mutex::new(()),
+            observed_local: Mutex::new(ObservedLocalDoor::default()),
             leaving: Shutdown::new(),
             pending_door: Mutex::new(None),
         }
@@ -1757,6 +1811,7 @@ impl Shell {
             engine: Mutex::new(Arc::new(engine)),
             host_plan: Mutex::new(host),
             door: Mutex::new(()),
+            observed_local: Mutex::new(ObservedLocalDoor::default()),
             leaving: Shutdown::new(),
             pending_door: Mutex::new(None),
         }
@@ -2611,9 +2666,22 @@ impl Shell {
     /// [`LOGOUT_UNCHANGED`], because host mode must not stand down for a sign-out that did not
     /// happen.
     fn logout_of(&self, pressed: Option<Config>) -> Result<serde_json::Value, String> {
+        self.logout_matching(pressed, None)
+    }
+
+    fn logout_matching(
+        &self,
+        pressed: Option<Config>,
+        expected_local_door: Option<u32>,
+    ) -> Result<serde_json::Value, String> {
         let _door = self.door.lock().expect("shell door");
         let config = self.paths.config();
-        if config != pressed {
+        let changed = expected_local_door.is_some_and(|version| {
+            let engine = self.engine();
+            let seen = self.observed_local.lock().expect("observed local door");
+            seen.version != version || !seen.matches(config.as_ref(), &engine)
+        });
+        if config != pressed || changed {
             return Err(format!(
                 "{LOGOUT_UNCHANGED}The door this install comes in by changed while you were \
                  signing out, so nothing was cleared and you have NOT been signed out. Check which \
@@ -2764,11 +2832,58 @@ impl Shell {
         Ok(self.status())
     }
 
+    /// A calendar alert belongs to the serving mailbox and, on a cloud door, to the current
+    /// signed-in session behind its mirror. A new sign-in gets its own schedule.
+    pub fn live_mailbox(&self) -> crate::alerts::Live {
+        self.with_live_mailbox(|live| live)
+    }
+
+    /// Keep the engine and its hosted session current through the OS submission. A withdrawal
+    /// takes the alert book, an engine replacement takes its slot, and sign-out takes its state.
+    fn with_live_mailbox<T>(&self, submit: impl FnOnce(crate::alerts::Live) -> T) -> T {
+        self.with_live_engine(|live, _| submit(live))
+    }
+
+    fn with_live_engine<T>(&self, submit: impl FnOnce(crate::alerts::Live, &Arc<Engine>) -> T) -> T {
+        use crate::alerts::Live;
+        let engine = self.engine.lock().expect("shell engine");
+        let state = engine.inner.shared.lock().expect("engine state");
+        let live = match (self.paths.config(), &state.state) {
+            (None, _) => Live::Nobody,
+            (Some(_), _) if state.stop => Live::Unknown,
+            (Some(Config::Cloud(_)), EngineState::Serving { mailbox_id }) => match state.hosted_session {
+                Some(0) => Live::Nobody,
+                Some(session) if !mailbox_id.is_empty() => Live::Mailbox(mailbox_id.clone(), session),
+                _ => Live::Unknown,
+            },
+            (Some(_), EngineState::Serving { mailbox_id }) if !mailbox_id.is_empty() => Live::Mailbox(mailbox_id.clone(), state.local_session),
+            _ => Live::Unknown,
+        };
+        submit(live, &engine)
+    }
+
+    fn calendar_engine(&self, expected: u64) -> Option<Arc<Engine>> {
+        self.with_live_engine(|live, engine| match live {
+            crate::alerts::Live::Mailbox(_, session) if session == expected => Some(Arc::clone(engine)),
+            _ => None,
+        })
+    }
+
     /// What the window renders. See [`status_json`]; this adds the facts only the shell holds.
     pub fn status(&self) -> serde_json::Value {
-        let mut out = status_json(&self.engine());
+        let engine = self.engine();
+        let mut out = status_json(&engine);
         if let Some(object) = out.as_object_mut() {
-            match self.paths.config() {
+            let config = self.paths.config();
+            let version = self
+                .observed_local
+                .lock()
+                .expect("observed local door")
+                .observe(config.as_ref(), &engine);
+            if let Some(version) = version {
+                object.insert("localDoorVersion".into(), version.into());
+            }
+            match config {
                 Some(config) => door_fields(object, &config),
                 // NAMED RATHER THAN OMITTED. A window that reads an absent `mode` as "still
                 // loading" would spin for ever on a fresh install, which is exactly the state that
@@ -3108,7 +3223,6 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             command.creation_flags(0x0800_0000);
         }
         command
-            .args(&launch.args)
             // Piped, all three, and each for its own reason. stdin because the write end must
             // belong to this process and nothing else — that is the graceful stop and the orphan
             // defence at once. stdout because it is the frame stream. stderr because inheriting
@@ -3126,11 +3240,13 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
         for (key, value) in &launch.env {
             command.env(key, value);
         }
-        // HOW MANY ALLOCATOR ARENAS THE ENGINE MAY HAVE. On this command and not in the shell's own
+        // THE ENGINE'S MEMORY SETTINGS: how many allocator arenas it may have, and how soon its JavaScript engine
+        // collects after its heap grows. On this command and not in the shell's own
         // environment: glibc reads the variable when a process starts, so the child gets it and
         // this process does not. Capping it here was measured to be a redistribution rather than a
         // saving in the WEBVIEW's process, which is why that half does not exist.
         crate::allocator_arenas::apply_to_engine(&mut command);
+        command.args(&launch.args);
         // THE WITNESS, taken for this spawn and handed to this engine alone ([`witness`]).
         let held = plan_data_dir(&launch).and_then(|dir| witness::take(&dir).map(|file| (dir, file)));
         if let Some((_, file)) = &held {
@@ -3184,6 +3300,7 @@ fn supervise(inner: Arc<Inner>, launch: Launch) {
             s.stdin = Some(to_engine);
             s.pid = Some(child.id());
             s.ready = None;
+            s.hosted_session = None;
             s.boot_phase = None;
             s.boot_progress = None;
             s.fault = None;
@@ -3666,6 +3783,20 @@ fn accept_header(header: &[u8], inner: &Arc<Inner>) -> Result<Answer, String> {
     // list lands, and the engine then names it once. Only an EMPTY id is filled, and only while the
     // run is serving: a launch serves one mailbox, so a frame that would move it is refused. Held
     // to an id's grammar before it is stored, like a phase.
+    if kind == Some("hosted-session") {
+        let mut s = inner.shared.lock().expect("engine state");
+        if matches!(s.state, EngineState::Serving { .. }) {
+            match parsed.get("signedIn").and_then(|value| value.as_bool()) {
+                Some(true) if s.hosted_session.unwrap_or(0) == 0 => {
+                    s.hosted_session = Some(next_notice_session());
+                }
+                Some(true) => {}
+                Some(false) => s.hosted_session = Some(0),
+                None => s.hosted_session = None,
+            }
+        }
+        return Ok(Answer::None);
+    }
     if kind == Some("mailbox") {
         if let Some(id) = parsed.get("mailboxId").and_then(serde_json::Value::as_str) {
             if !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
@@ -4329,8 +4460,21 @@ pub const KEK_VAR: &str = "OHMAIL_KEK";
 /// The service name is the product rather than the bundle identifier on purpose: two artifacts of
 /// this app must never end up with two different keys for one data directory, and a bundle id is
 /// exactly the thing that differs between them.
-pub const KEYSTORE_SERVICE: &str = "ohmail";
+///
+/// A preview build is the one artifact that gets a name of its own: it runs beside a released
+/// install with a data directory of its own, and under the product's name it would read that
+/// install's key and write its own over it.
+pub const KEYSTORE_SERVICE: &str = keystore_service(crate::variant::PREVIEW);
 pub const KEYSTORE_ENTRY: &str = "install-key";
+
+/// The keystore service of the released app, or of a preview.
+pub const fn keystore_service(preview: bool) -> &'static str {
+    if preview {
+        "ohmail-preview"
+    } else {
+        "ohmail"
+    }
+}
 
 /// Where the SAME key already lives on a Mac that has run the SwiftUI client.
 ///
@@ -4633,7 +4777,7 @@ fn look_up(entry: &keyring::Entry) -> Stored {
 /// `Empty` everywhere else, which is the honest answer: there is nothing to migrate FROM on a
 /// machine where no earlier version ever stored anything.
 #[cfg(target_os = "macos")]
-fn look_up_older() -> Stored {
+fn look_up_older_store() -> Stored {
     match keyring::Entry::new(LEGACY_KEYSTORE_SERVICE, LEGACY_KEYSTORE_ENTRY) {
         Ok(entry) => look_up(&entry),
         Err(err) => Stored::Refused(err.to_string()),
@@ -4641,8 +4785,22 @@ fn look_up_older() -> Stored {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn look_up_older() -> Stored {
+fn look_up_older_store() -> Stored {
     Stored::Empty
+}
+
+fn look_up_older() -> Stored {
+    older_key(crate::variant::PREVIEW, look_up_older_store)
+}
+
+/// The earlier version's key, which a preview never asks for: that key belongs to the released
+/// install beside it, and adopting it would copy that install's key under the preview's name.
+fn older_key(preview: bool, store: impl FnOnce() -> Stored) -> Stored {
+    if preview {
+        Stored::Empty
+    } else {
+        store()
+    }
 }
 
 /// Write a key and prove it can be read back.
@@ -4980,8 +5138,16 @@ fn status_json(engine: &Engine) -> serde_json::Value {
 
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
-fn engine_status(shell: tauri::State<'_, Arc<Shell>>) -> serde_json::Value {
-    shell.status()
+fn engine_status(shell: tauri::State<'_, Arc<Shell>>, alerts: tauri::State<'_, Arc<crate::alerts::Alerts>>) -> serde_json::Value {
+    let document = alerts.document();
+    let mut status = shell.status();
+    if let crate::alerts::Live::Mailbox(scope, session) = shell.live_mailbox() {
+        if status["mailboxId"].as_str() == Some(&scope) {
+            status["noticeDocument"] = document.into();
+            status["noticeSession"] = session.into();
+        }
+    }
+    status
 }
 
 /// Choose a door, or change the one already chosen.
@@ -5006,7 +5172,14 @@ fn engine_configure<R: tauri::Runtime>(
 ) -> Result<serde_json::Value, String> {
     // The exact `true` and nothing truthy: a provisional switch is one a pairing asked for.
     let provisional = provisional == Some(true);
-    if config::parse(&config)?.mode() == Mode::Local {
+    let asked = config::parse(&config)?;
+    // A preview signs in to a preview server only, refused here before a door is staged or written.
+    if crate::variant::PREVIEW {
+        if let Some(why) = config::preview_door_refusal(&asked) {
+            return Err(why);
+        }
+    }
+    if asked.mode() == Mode::Local {
         return shell.switch_door_with(&config, provisional, None);
     }
     // TAKEN BEFORE THE STAND-DOWN, which writes `host.json` off: a provisional switch keeps it in
@@ -5131,8 +5304,12 @@ fn engine_logout<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     shell: tauri::State<'_, Arc<Shell>>,
     host: tauri::State<'_, Arc<crate::host::HostRuntime<R>>>,
+    expected_local_door: Option<u32>,
 ) -> Result<serde_json::Value, String> {
-    let outcome = shell.logout();
+    let outcome = match expected_local_door {
+        Some(version) => shell.logout_matching(shell.paths.config(), Some(version)),
+        None => shell.logout(),
+    };
     // ── THE STAND-DOWN FOLLOWS THE ENGINE, NOT THE SUCCESS ──────────────────────────────────
     //
     // Only a PRE-STOP refusal leaves the install untouched, and only that one may skip the
@@ -5143,6 +5320,21 @@ fn engine_logout<R: tauri::Runtime>(
     // names in its own words, reached from the other side.
     let unchanged = matches!(&outcome, Err(reason) if reason.starts_with(LOGOUT_UNCHANGED));
     if !unchanged {
+        // THE BADGE GOES WITH THE ACCOUNT. It is the window's number while a mailbox is open, and
+        // nothing of the account left may stay on the icon: the shell takes it off itself, so a
+        // window that never ran its own sign-out path cannot leave it behind.
+        if let Err(reason) = set_badge(app.clone(), 0) {
+            log_line(format_args!("signing out could not take the badge off ({reason})"));
+        }
+        // AND SO DO THE CALENDAR'S ALERTS. Whatever was set to ring for the account left is dropped
+        // here, not left to wait: the ringing thread would refuse it at its minute anyway, and this
+        // makes the sign-out itself the moment it is gone.
+        {
+            use tauri::Manager;
+            if let Some(alerts) = app.try_state::<Arc<crate::alerts::Alerts>>() {
+                alerts.clear();
+            }
+        }
         crate::host::stand_down_on_shell_transition(
             &app,
             host.inner(),
@@ -5663,13 +5855,23 @@ fn engine_request(
     body: Option<Vec<u8>>,
     body_text: Option<String>,
     body64: Option<String>,
+    expected_calendar_session: Option<u64>,
 ) -> Result<tauri::ipc::Response, String> {
     let body = window_request_body(body, body_text, body64)?;
     let headers = window_headers(headers);
     // Read ONCE, into an `Arc` this request holds for its whole life. A reconfigure can replace the
     // engine while this is in flight, and the answer must come from the engine the question went to
     // — re-reading the slot for the reply would deliver it against a different child's bookkeeping.
-    let answer = shell.engine().request(EngineRequest { method, url, headers, body })?;
+    let engine = match expected_calendar_session {
+        Some(session) => shell.calendar_engine(session).ok_or("the calendar session changed")?,
+        None => shell.engine(),
+    };
+    let answer = engine.request(EngineRequest { method, url, headers, body })?;
+    if let Some(session) = expected_calendar_session {
+        if shell.calendar_engine(session).is_none_or(|current| !Arc::ptr_eq(&current, &engine)) {
+            return Err("the calendar session changed".into());
+        }
+    }
     let meta = serde_json::json!({
         "status": answer.status,
         "statusText": answer.status_text,
@@ -5702,17 +5904,36 @@ pub(crate) fn window_headers(headers: Vec<(String, String)>) -> Vec<(String, Str
 /// process has both. The division is the honest one — the client knows a message arrived, and the
 /// shell knows how this operating system tells somebody about it.
 ///
+/// ── AND THE SHELL WRITES THE WORDS ──────────────────────────────────────────────────────────
+///
+/// The window hands over a NOTICE, a kind with its count or closed word, never a title or a body:
+/// a notice is read on a locked screen, and a window that could post any sentence would be a door
+/// for whatever reached the page. [`crate::notice::read`] refuses anything but one of the closed
+/// kinds with exactly its members, and [`crate::notice::compose`] writes the shell's own words in
+/// the language this run speaks. A refusal names its rule and nothing the value held.
+///
 /// The webview is granted THIS command and NOT the notification plugin's own permissions, which
-/// is the difference between "the window may ask for one notice with a title and a body" and "the
-/// window may drive the notification API". The plugin is reached only from here.
+/// is the difference between "the window may ask for one notice of a closed kind" and "the window
+/// may drive the notification API". The plugin is reached only from here.
 #[cfg(feature = "local-engine")]
 #[tauri::command(async)]
 fn notify<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    title: String,
-    body: String,
+    notice: serde_json::Value,
+    opening: Option<serde_json::Value>,
 ) -> Result<(), String> {
+    use tauri::Manager;
     use tauri_plugin_notification::{NotificationExt, PermissionState};
+    let language = crate::shell_language::spoken();
+    let (mail, title, body) = if notice["kind"].as_str() == Some("cal_summary") {
+        let (title, body) = crate::notice::summary_fields(&notice, opening.as_ref(), language)
+            .ok_or_else(|| crate::notice::Refused::Members.to_string())?;
+        (None, title, body)
+    } else {
+        let mail = crate::notice::read(&notice).map_err(|refused| refused.to_string())?;
+        let (title, body) = crate::notice::compose(&mail, language);
+        (Some(mail), title, body)
+    };
     // ASK ONCE, AND ONLY WHEN THE ANSWER IS NOT ALREADY KNOWN. A permission prompt on every
     // notification is the behaviour that gets an app's notifications turned off for good; a
     // refusal is reported and never retried in a loop.
@@ -5725,12 +5946,240 @@ fn notify<R: tauri::Runtime>(
         },
         Err(err) => return Err(format!("this computer would not say whether ohmail may post notifications ({err})")),
     }
+    if matches!(mail, None | Some(crate::notice::Notice::Ohbox { .. })) {
+        let count = match mail { Some(crate::notice::Notice::Ohbox { count }) => count, _ => 0 };
+        let refused = || crate::alerts::Refused::Superseded.to_string();
+        let shell = app.try_state::<Arc<Shell>>().ok_or_else(refused)?;
+        let alerts = app.try_state::<Arc<crate::alerts::Alerts>>().ok_or_else(refused)?;
+        return submit_mail_notice(&shell, &alerts, opening.as_ref(), |live, document| {
+            let details = opening.as_ref().filter(|value| count == 1 && mail_notice_letter(value).is_some())
+                .and_then(|value| value["details"].as_object())
+                .filter(|value| value.len() == 2)
+                .and_then(|value| {
+                    let sender = crate::notice::clean_title(value.get("sender")?.as_str()?)?;
+                    let subject = crate::notice::clean_title(value.get("subject")?.as_str()?)?;
+                    #[cfg(target_os = "linux")]
+                    let subject = subject.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+                    Some((sender, subject))
+                });
+            let (title, body) = details.as_ref().map_or((title.as_str(), body.as_str()), |(sender, subject)| {
+                (sender.as_str(), subject.as_str())
+            });
+            if mail.is_none() {
+                return app.notification().builder().title(title).body(body).show()
+                    .map_err(|err| format!("the notification could not be shown ({err})"));
+            }
+            show_mail_notice(&app, title, body, count, opening.as_ref(), live, document)
+        }).map_err(|error| error.to_string())?;
+    }
     app.notification()
         .builder()
         .title(title)
         .body(body)
         .show()
         .map_err(|err| format!("the notification could not be shown ({err})"))
+}
+
+#[cfg(any(feature = "local-engine", test))]
+fn submit_mail_notice<T>(
+    shell: &Shell, alerts: &crate::alerts::Alerts, opening: Option<&serde_json::Value>,
+    submit: impl FnOnce(crate::alerts::Live, u64) -> T,
+) -> Result<T, crate::alerts::Refused> {
+    use crate::alerts::{Live, Refused};
+
+    let opening = opening.ok_or(Refused::Superseded)?;
+    let document = opening["document"].as_u64().ok_or(Refused::Superseded)?;
+    let session = opening["session"].as_u64().ok_or(Refused::Superseded)?;
+    alerts.with_document(document, || shell.with_live_mailbox(|live| {
+        if !matches!(live, Live::Mailbox(_, current) if current == session) {
+            return Err(Refused::Superseded);
+        }
+        Ok(submit(live, document))
+    })).ok_or(Refused::Superseded)?
+}
+
+#[cfg(feature = "local-engine")]
+fn mail_notice_letter(value: &serde_json::Value) -> Option<&str> {
+    value["letter"].as_str().filter(|id| !id.is_empty() && id.len() <= 128
+        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'))
+}
+
+#[cfg(all(feature = "local-engine", not(target_os = "macos")))]
+fn show_mail_notice<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>, title: &str, body: &str, count: u32, opening: Option<&serde_json::Value>,
+    live: crate::alerts::Live, document: u64,
+) -> Result<(), String> {
+    let letter = opening.filter(|_| count == 1).and_then(mail_notice_letter);
+
+    let mut notification = notify_rust::Notification::new();
+    notification.summary(title).body(body).auto_icon();
+    #[cfg(target_os = "windows")]
+    if let Ok(executable) = tauri::utils::platform::current_exe() {
+        if let Some(directory) = executable.parent() {
+            if !directory.ends_with("target/debug") && !directory.ends_with("target/release") {
+                notification.app_id(&app.config().identifier);
+            }
+        }
+    }
+    if let Some(result) = show_openable_notice(app, &mut notification, live, document, serde_json::json!({ "letter": letter })) {
+        return result;
+    }
+    notification.show().map(|_| ()).map_err(|error| format!("the notification could not be shown ({error})"))
+}
+
+#[cfg(all(feature = "local-engine", target_os = "macos"))]
+fn show_mail_notice<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>, title: &str, body: &str, _count: u32, _opening: Option<&serde_json::Value>,
+    _live: crate::alerts::Live, _document: u64,
+) -> Result<(), String> {
+    // The plugin detaches submission. Keep the existing backend and submit while ownership is held.
+    let _ = notify_rust::set_application(if tauri::is_dev() { "com.apple.Terminal" } else { &app.config().identifier });
+    mac_notification_sys::Notification::new().title(title).message(body).asynchronous(false).send()
+        .map(|_| ()).map_err(|error| format!("the notification could not be shown ({error})"))
+}
+
+#[cfg(all(feature = "local-engine", not(target_os = "macos")))]
+fn show_openable_notice<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>, notification: &mut notify_rust::Notification,
+    live: crate::alerts::Live, document: u64, mut target: serde_json::Value,
+) -> Option<Result<(), String>> {
+    use tauri::{Emitter, Manager};
+
+    // A notification center may keep a dismissible notice for a long time.
+    static WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    struct WaitSlot;
+    impl Drop for WaitSlot {
+        fn drop(&mut self) { WAITING.fetch_sub(1, Ordering::Relaxed); }
+    }
+
+    let shell = Arc::clone(app.try_state::<Arc<Shell>>()?.inner());
+    let alerts = Arc::clone(app.try_state::<Arc<crate::alerts::Alerts>>()?.inner());
+    let crate::alerts::Live::Mailbox(scope, session) = &live else { return None };
+    target["scope"] = serde_json::json!(scope);
+    target["session"] = serde_json::json!(session);
+    target["document"] = serde_json::json!(document);
+    WAITING.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| (count < 32).then_some(count + 1)).ok()?;
+    let slot = WaitSlot;
+    let open = match crate::shell_language::spoken() {
+        crate::words::Language::En => "Open",
+        crate::words::Language::De => "Öffnen",
+    };
+    notification.action("default", open);
+    let handle = match notification.show() {
+        Ok(handle) => handle,
+        Err(error) => return Some(Err(format!("the notification could not be shown ({error})"))),
+    };
+    let app = app.clone();
+    let _ = thread::Builder::new().name("notification-open".into()).spawn(move || {
+        let _slot = slot;
+        let _ = handle.wait_for_response(|response: &notify_rust::NotificationResponse| {
+            use notify_rust::NotificationResponse;
+            let activate = matches!(response, NotificationResponse::Default)
+                || matches!(response, NotificationResponse::Action(action) if action == "default");
+            if !activate || alerts.document() != document || shell.live_mailbox() != live { return; }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.emit("notice:open", target);
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        });
+    });
+    Some(Ok(()))
+}
+
+/// Milliseconds since the epoch, by this computer's clock.
+#[cfg(feature = "local-engine")]
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// The calendar's alerts for the mailbox this shell serves, set ahead: the whole set each time.
+///
+/// ── WHY THE SHELL RINGS, AND WHAT IT IS HANDED ──────────────────────────────────────────────
+///
+/// A window that is hidden or minimized has its timers slowed by the system, so an alert that
+/// must ring at its minute is rung by this process ([`ring_alerts`]). The window hands over
+/// numbers, ids and each event's label; [`crate::alerts::read`] refuses anything else whole, and
+/// refuses a set made under any scope but the mailbox this shell is serving right now, so a page
+/// cannot set alerts for an account this install is not signed in as. The set replaces the one
+/// before; an empty set clears. The answer lists the ids now held, and nothing of an event.
+///
+/// Like `notify`, this is the shell's own command and none of the notification plugin's
+/// permissions: the window may hand over one closed set, and that is the whole of it. No
+/// permission is asked for here. The window hands over an empty set until the person has switched
+/// alerts on and the system has granted notices, and an alert whose minute comes while the system
+/// refuses is not shown.
+// IPC fetches can arrive out of order. Their document, sign-in and revision travel as transport
+// metadata; the application payload remains one closed schedule.
+#[cfg(feature = "local-engine")]
+#[tauri::command]
+fn alerts_set(
+    shell: tauri::State<'_, Arc<Shell>>,
+    alerts: tauri::State<'_, Arc<crate::alerts::Alerts>>,
+    set: serde_json::Value,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Vec<String>, String> {
+    let number = |header: &str| request.headers().get(header).and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok()).filter(|n| *n <= 9_007_199_254_740_991)
+        .ok_or_else(|| crate::alerts::Refused::Superseded.to_string());
+    alerts.receive_ordered(&set, || shell.live_mailbox(), unix_ms(),
+        number("x-ohmail-notice-document")?, number("x-ohmail-notice-session")?, number("x-ohmail-notice-revision")?)
+        .map_err(|refused| refused.to_string())
+}
+
+/// Show one alert whose minute has come, in the shell's own words. Nothing of it is logged.
+#[cfg(feature = "local-engine")]
+fn show_alert<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>, alert: &crate::alerts::Alert, live: crate::alerts::Live, document: u64,
+) {
+    let (title, body) = crate::alerts::compose(alert, crate::shell_language::spoken());
+    // The plugin queues a task before calling this backend. Submit here, on the existing
+    // timer thread, while withdrawal and redaction are still serialized with delivery.
+    let mut notification = notify_rust::Notification::new();
+    notification.summary(&title).body(&body).auto_icon();
+    #[cfg(target_os = "windows")]
+    {
+        let Ok(executable) = tauri::utils::platform::current_exe() else { return };
+        let Some(directory) = executable.parent() else { return };
+        if !directory.ends_with("target/debug") && !directory.ends_with("target/release") {
+            notification.app_id(&app.config().identifier);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    if let Some(result) = show_openable_notice(app, &mut notification, live, document, serde_json::json!({ "event": alert.event_id, "startMs": alert.start_ms })) {
+        if result.is_err() { log_line(format_args!("a calendar alert could not be shown")); }
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (live, document);
+        let _ = notify_rust::set_application(if tauri::is_dev() { "com.apple.Terminal" } else { &app.config().identifier });
+    }
+    if notification.show().is_err() {
+        log_line(format_args!("a calendar alert could not be shown"));
+    }
+}
+
+/// The thread that rings the calendar's alerts. Each pass asks the book what is due under the
+/// mailbox this shell serves at that moment, shows it, and sleeps until the next alert's minute, a
+/// new set or a sign-out, never longer than [`crate::alerts::POLL`] while an alert waits.
+#[cfg(feature = "local-engine")]
+fn ring_alerts<R: tauri::Runtime>(app: tauri::AppHandle<R>, shell: Arc<Shell>, alerts: Arc<crate::alerts::Alerts>) {
+    let spawned = std::thread::Builder::new().name("calendar-alerts".into()).spawn(move || loop {
+        use tauri_plugin_notification::{NotificationExt, PermissionState};
+        let (sleep, turn) = alerts.dispatch(
+            || shell.live_mailbox(), unix_ms,
+            || matches!(app.notification().permission_state(), Ok(PermissionState::Granted)),
+            |alert, expected, document| shell.with_live_mailbox(|current| {
+                if current == *expected { show_alert(&app, alert, current, document); }
+            }),
+        );
+        alerts.sleep(turn, sleep);
+    });
+    if let Err(err) = spawned {
+        log_line(format_args!("the calendar's alerts will not ring: their thread did not start ({err})"));
+    }
 }
 
 /// THE WINDOW'S OWN VITALS, into the log the sidecar already writes to.
@@ -5953,7 +6402,7 @@ fn set_badge<R: tauri::Runtime>(app: tauri::AppHandle<R>, count: u32) -> Result<
 /// The table is also why the addresses live HERE rather than in the frontend: the bundle is
 /// asserted to name no host at all, which is the claim the whole preview artifact rests on.
 #[cfg(feature = "local-engine")]
-const LINKS: [(&str, &str); 12] = [
+const LINKS: [(&str, &str); 14] = [
     ("account", "https://ohmail.app/mailbox#/settings"),
     ("security", "https://ohmail.app/mailbox#/settings"),
     ("billing", "https://ohmail.app/mailbox#/settings"),
@@ -5965,6 +6414,7 @@ const LINKS: [(&str, &str); 12] = [
     // and this line decides the whole address, so nothing a caller could shape reaches the browser.
     // `engine_tests.rs` admits this query by name and refuses any other.
     ("mailboxes", "https://ohmail.app/mailbox?settings=mailboxes#/settings"),
+    ("calendar", "https://ohmail.app/mailbox#/cal/cal-setup?step=signin&way=icloud"),
     // THE SECOND ENTRY THAT CARRIES A QUERY, and the same constant-of-this-table rule applies to
     // every character of it. Settings → Devices on the hosted door is a way out to the account's
     // own device list, whose mint and revoke are step-up gated; landing on the web client's first
@@ -5989,6 +6439,7 @@ const LINKS: [(&str, &str); 12] = [
     // The Cloud door's way to an account: sign-up, and setup behind a sign-in. `next=join` is a
     // constant like every character here; `engine_tests.rs` admits it for `setup` by name.
     ("join", "https://ohmail.app/join"),
+    ("forgot-password", "https://ohmail.app/forgot-password"),
     ("setup", "https://ohmail.app/login?next=join"),
 ];
 
@@ -6097,38 +6548,74 @@ fn named(value: Option<&str>) -> bool {
     value.map(str::trim).is_some_and(|v| !v.is_empty())
 }
 
-/// Settings → Mailboxes on the self-hosted server this install is signed in to.
-///
-/// A key of its own and not a row of [`LINKS`], whose every address is ohmail.app's: this page is
-/// on the operator's server. The window still names no address — [`server_link_for`] composes it
-/// from the door THIS shell's configuration holds, and refuses on any other door.
 #[cfg(feature = "local-engine")]
-pub const SERVER_MAILBOXES_KEY: &str = "server-mailboxes";
-
-/// The self-hosted server's Settings → Mailboxes page for `config`, through the external gate.
-#[cfg(feature = "local-engine")]
-pub fn server_link_for(config: Option<&Config>) -> Result<String, String> {
-    let origin = config
-        .and_then(config::self_hosted_origin)
-        .ok_or_else(|| "ohmail: this install is not signed in to a server of its own".to_string())?;
-    let url = format!("{origin}/mailbox?settings=mailboxes#/settings");
-    external_url(&url)?;
-    Ok(url)
+fn server_settings_pane(key: &str) -> Option<&'static str> {
+    match key {
+        "server-account" => Some("account"),
+        "server-security" => Some("security"),
+        "server-devices" => Some("devices"),
+        "server-storage" => Some("storage"),
+        "server-mailboxes" => Some("mailboxes"),
+        "server-calendar-google" => Some("calendar-google"),
+        "server-calendar-microsoft" => Some("calendar-microsoft"),
+        _ => None,
+    }
 }
 
-/// What `open_link` opens for [`SERVER_MAILBOXES_KEY`]: the key takes NO value — a challenge or a
-/// request offered to it is refused, so neither can ride to the operator's page — and the page is
-/// [`server_link_for`] over the door this shell configured.
 #[cfg(feature = "local-engine")]
-pub fn server_open_target(
-    challenge: Option<&str>,
-    request: Option<&str>,
-    config: Option<&Config>,
-) -> Result<String, String> {
-    if named(challenge) || named(request) {
-        return Err(format!("ohmail: {SERVER_MAILBOXES_KEY} takes no value"));
+fn server_settings_origin(config: Option<&Config>, server: &str, pane: &str) -> Option<String> {
+    let config = config?;
+    let Config::Cloud(cloud) = config else { return None };
+    if cloud.cloud_url != server || config.is_identity_pending() || config.is_door_pending() {
+        return None;
     }
-    server_link_for(config)
+    if matches!(pane, "calendar-google" | "calendar-microsoft") {
+        return (cloud.cloud_url == config::MANAGED_CLOUD_BASE
+            && matches!(cloud.flavor.as_deref(), None | Some("managed")))
+            .then(|| "https://ohmail.app".to_string());
+    }
+    config::self_hosted_origin(config)
+}
+
+#[cfg(feature = "local-engine")]
+fn server_password_reset_target(config: Option<&Config>, server: Option<&str>) -> Result<String, String> {
+    let origin = server.and_then(|base| server_settings_origin(config, base, "forgot-password"))
+        .ok_or_else(|| "ohmail: this install's server changed".to_string())?;
+    let target = format!("{origin}/forgot-password");
+    external_url(&target)?;
+    Ok(target)
+}
+
+#[cfg(feature = "local-engine")]
+fn server_settings_request(pane: &str, challenge: Option<&str>, request: Option<&str>) -> Result<EngineRequest, String> {
+    if named(challenge) || named(request) {
+        return Err("ohmail: server Settings takes no sign-in value".to_string());
+    }
+    Ok(EngineRequest {
+        method: "GET".into(),
+        url: format!("/auth/session?settingsPane={pane}"),
+        headers: Vec::new(),
+        body: Vec::new(),
+    })
+}
+
+#[cfg(feature = "local-engine")]
+fn server_settings_target(origin: &str, account: &str, response: EngineResponse) -> Result<String, String> {
+    let refused = || "ohmail: the server could not prepare Settings for this account".to_string();
+    if response.status != 200 || response.body.len() > 2_048 || account.is_empty() {
+        return Err(refused());
+    }
+    let body: serde_json::Value = serde_json::from_slice(&response.body).map_err(|_| refused())?;
+    let reference = body["reference"].as_str().ok_or_else(refused)?;
+    if body["account"].as_str() != Some(account)
+        || !(40..=720).contains(&reference.len())
+        || !reference.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(refused());
+    }
+    let target = format!("{origin}/login?settingsHandoff={reference}");
+    external_url(&target)?;
+    Ok(target)
 }
 
 /// What `open_link` opens: the approval page by its request, every other key by [`link_url_for`].
@@ -6397,10 +6884,42 @@ fn open_link(
     key: String,
     challenge: Option<String>,
     request: Option<String>,
+    expected_server: Option<String>,
+    expected_account: Option<String>,
 ) -> Result<(), String> {
-    if key == SERVER_MAILBOXES_KEY {
-        let config = shell.paths.config();
-        return spawn_opener(&server_open_target(challenge.as_deref(), request.as_deref(), config.as_ref())?);
+    if key == "server-forgot-password" {
+        if named(challenge.as_deref()) || named(request.as_deref()) || named(expected_account.as_deref()) {
+            return Err("ohmail: password recovery takes only the configured server".to_string());
+        }
+        let target = {
+            let _door = shell.door.lock().expect("shell door");
+            server_password_reset_target(shell.paths.config().as_ref(), expected_server.as_deref())?
+        };
+        return spawn_opener(&target);
+    }
+    if let Some(pane) = server_settings_pane(&key) {
+        let request = server_settings_request(pane, challenge.as_deref(), request.as_deref())?;
+        let moved = || "ohmail: this install's server or account changed".to_string();
+        let server = expected_server.as_deref().ok_or_else(moved)?;
+        let account = expected_account.as_deref().filter(|id| !id.is_empty()).ok_or_else(moved)?;
+        let (engine, origin) = {
+            let _door = shell.door.lock().expect("shell door");
+            if shell.pending_door.lock().expect("pending door").is_some() {
+                return Err(moved());
+            }
+            let origin = server_settings_origin(shell.paths.config().as_ref(), server, pane).ok_or_else(moved)?;
+            (shell.engine(), origin)
+        };
+        let response = engine.request(request)?;
+        let target = server_settings_target(&origin, account, response)?;
+        let _door = shell.door.lock().expect("shell door");
+        if shell.pending_door.lock().expect("pending door").is_some()
+            || !Arc::ptr_eq(&engine, &shell.engine())
+            || server_settings_origin(shell.paths.config().as_ref(), server, pane).as_deref() != Some(origin.as_str())
+        {
+            return Err(moved());
+        }
+        return spawn_opener(&target);
     }
     let target = open_target(&key, challenge.as_deref(), request.as_deref())?;
     spawn_opener(&target)
@@ -7575,9 +8094,9 @@ fn deliver_popup<R: tauri::Runtime>(app: &tauri::AppHandle<R>, route: PopupRoute
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), press its Try again (the shell starts an engine it has given up on again and removes nothing, refused unless it has given up), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, read the platform's name and the newest lines of the log (no argument), hand back one diagnostic file of the app's own JSON shape for the shell to write beside that log under a name the shell chooses (the shell refuses any other text, and nothing is sent), open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), report the http/https links a surface it draws shows (a message's links, a draft's or a signature's, the account page an answer named), which the shell keeps in a bounded list and opens nothing for (no command takes an address to open: a link reaches that same browser only as the webview's own new-window request on the person's own click, and only when it is one of those links or one of the shell's own constant links), confirm a held press of a link whose label names another site by the token the shell handed it with that link's ask (the window names no address: the shell opens the link it holds, once, and only within two minutes of the press), name one attachment by its id for the shell to have the engine stream into this computer's Downloads folder (the shell picks the folder and the staging file and composes every part of the name; a name already taken is numbered, never overwritten), name one attachment by its id and declared type for the shell to stage for the in-app preview (an image is answered as a token on the shell's own preview scheme, which serves only files the shell staged in its own folder; text comes back inline only under a 2 MiB cap; the window names no path) and release that token when the preview closes, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, ask for the check the app makes at launch, turn Settings' install-automatically switch on or off, and say that a send waits — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever), one bool choosing between installing a verified release at the next quit or launch and waiting for a press, and one bool holding every install for at most two minutes while a send waits; it may not name a feed, a version or a path, see a payload or cause an install, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. It may say, with no argument, that it has written its open editors after a quit or a close asked it to, which lets that quit go before its bound and can never start or delay one. It may REPORT that its first frame is composed, with that frame's background colour as one #rrggbb string the shell parses strictly: the shell paints the still-hidden window that colour, keeps it for the next launch in one file it names itself, and shows the window. It may set its own TEXT SIZE as one of five percentages, which the shell makes the main window's zoom and keeps for the next launch in one more file it names itself; any other number is refused. It may TAKE, once and within ten seconds, the files a person dropped on it from another program, which the shell saw dropped itself and opened at the take: a command with no argument answers each file's name (never its path), size and type, and a second reads one taken file's next chunk of at most 1 MiB by the token the take answered and the file's place in that answer; a drag the page started is never held, and no file stays open past two minutes. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), press its Try again (the shell starts an engine it has given up on again and removes nothing, refused unless it has given up), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), hand the shell one notice as one of four kinds of mail notice with its count or closed word, which the shell refuses whole if it holds anything else and words itself in its own language (the window names no title and no text), hand the shell the calendar's alerts for the mailbox it is serving as one set of numbers, ids and labels that replaces the set before and clears when empty (the shell refuses a set of any other scope and any member it does not know, asks again at each alert's minute whether that mailbox is still the one it serves, writes the words itself, and answers only the ids it holds), set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, read the platform's name and the newest lines of the log (no argument), hand back one diagnostic file of the app's own JSON shape for the shell to write beside that log under a name the shell chooses (the shell refuses any other text, and nothing is sent), open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), report the http/https links a surface it draws shows (a message's links, a draft's or a signature's, the account page an answer named), which the shell keeps in a bounded list and opens nothing for (no command takes an address to open: a link reaches that same browser only as the webview's own new-window request on the person's own click, and only when it is one of those links or one of the shell's own constant links), confirm a held press of a link whose label names another site by the token the shell handed it with that link's ask (the window names no address: the shell opens the link it holds, once, and only within two minutes of the press), name one attachment by its id for the shell to have the engine stream into this computer's Downloads folder (the shell picks the folder and the staging file and composes every part of the name; a name already taken is numbered, never overwritten), name one attachment by its id and declared type for the shell to stage for the in-app preview (an image is answered as a token on the shell's own preview scheme, which serves only files the shell staged in its own folder; text comes back inline only under a 2 MiB cap; the window names no path) and release that token when the preview closes, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, ask for the check the app makes at launch, turn Settings' install-automatically switch on or off, and say that a send waits — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever), one bool choosing between installing a verified release at the next quit or launch and waiting for a press, and one bool holding every install for at most two minutes while a send waits; it may not name a feed, a version or a path, see a payload or cause an install, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. It may say, with no argument, that it has written its open editors after a quit or a close asked it to, which lets that quit go before its bound and can never start or delay one. It may REPORT that its first frame is composed, with that frame's background colour as one #rrggbb string the shell parses strictly: the shell paints the still-hidden window that colour, keeps it for the next launch in one file it names itself, and shows the window. It may set its own TEXT SIZE as one of five percentages, which the shell makes the main window's zoom and keeps for the next launch in one more file it names itself; any other number is refused. It may name the language the shell draws its menu, tray and dialogs in as one of two tags, which the shell keeps in one more file it names itself for the words it draws from the next launch, any other text refused, the answer one bool. It may TAKE, once and within ten seconds, the files a person dropped on it from another program, which the shell saw dropped itself and opened at the take: a command with no argument answers each file's name (never its path), size and type, and a second reads one taken file's next chunk of at most 1 MiB by the token the take answered and the file's place in that answer; a drag the page started is never held, and no file stays open past two minutes. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-engine-start-over", "allow-engine-retry", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-diagnostic-facts", "allow-diagnostic-save", "allow-open-link", "allow-rendered-links-batch", "allow-link-ask-open", "allow-save-attachment", "allow-stage-attachment-preview", "allow-release-attachment-preview", "allow-dropped-files-take", "allow-dropped-file-chunk", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-omarchy-theme-refused", "allow-update-state", "allow-update-press", "allow-update-poll", "allow-update-set-auto", "allow-update-hold", "allow-leave-saved", "allow-window-ready", "allow-set-text-size", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-engine-start-over", "allow-engine-retry", "allow-host-candidate-probe", "allow-notify", "allow-alerts-set", "allow-set-badge", "allow-ui-vitals", "allow-diagnostic-facts", "allow-diagnostic-save", "allow-open-link", "allow-rendered-links-batch", "allow-link-ask-open", "allow-save-attachment", "allow-stage-attachment-preview", "allow-release-attachment-preview", "allow-dropped-files-take", "allow-dropped-file-chunk", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-omarchy-theme-refused", "allow-update-state", "allow-update-press", "allow-update-poll", "allow-update-set-auto", "allow-update-hold", "allow-leave-saved", "allow-window-ready", "allow-set-text-size", "allow-set-shell-language", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -7686,6 +8205,14 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
         // has no mail and therefore nothing to announce. The webview is granted the `notify`
         // command above and none of this plugin's own permissions.
         .plugin(tauri_plugin_notification::init())
+        .on_page_load(|webview, payload| {
+            use tauri::Manager;
+            if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                if let Some(alerts) = webview.app_handle().try_state::<Arc<crate::alerts::Alerts>>() {
+                    alerts.start_document();
+                }
+            }
+        })
         // Start-at-login, for host mode's always-on role. The same grant shape as the
         // notification centre: the window gets this shell's own `autostart_get`/`autostart_set`
         // commands (and arming/disarming host mode drives it), never the plugin's permissions.
@@ -7714,6 +8241,8 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             // The paired door's first step, on an install with no engine to ask — see the command.
             host_candidate_probe,
             notify,
+            // The calendar's alerts, set ahead: one closed set, taken under the mailbox served.
+            alerts_set,
             set_badge,
             // The window's own performance numbers, into the engine's log. The shell composes the
             // line from a fixed list of NUMBERS, so this command cannot carry text out of the page.
@@ -7781,7 +8310,9 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             // hidden window is painted that colour and shown. `launch_window.rs` has why.
             crate::launch_window::window_ready,
             // Settings → Text size: the main window's zoom, kept for the next launch.
-            crate::text_scale::set_text_size
+            crate::text_scale::set_text_size,
+            // The language the shell draws its own words in, kept for the next launch.
+            crate::shell_language::set_shell_language
         ])
 }
 
@@ -7843,6 +8374,11 @@ pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     }
 
     // Staged files a crash, a kill or an update install left behind; nothing is staged yet.
+    // The calendar's alerts: the book the window's one command fills, before the grant that lets it
+    // ask, and the thread that rings from it under the mailbox this shell serves.
+    let alerts = Arc::new(crate::alerts::Alerts::default());
+    app.manage(Arc::clone(&alerts));
+    ring_alerts(app.handle().clone(), Arc::clone(&shell), alerts);
     crate::attachment_preview::sweep_at_launch(&shell);
     app.manage(shell);
     app.manage(crate::attachment_preview::Previews::default());

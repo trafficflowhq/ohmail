@@ -1,0 +1,42 @@
+/* The tiles of a choice: second buttons of one width, four in a row where there is room for four, else two. */
+@layer oh {
+  .oh-choicetiles {
+    container-type: inline-size;
+  }
+  .oh-choicetiles-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s2);
+  }
+  @container (min-width: 440px) {
+    .oh-choicetiles-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  @container (min-width: 340px) {
+    .oh-choicetiles-grid[data-compact] {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+  .oh-choicetiles-tile {
+    display: grid;
+    min-width: 0;
+  }
+  /* A tile is as wide as its place, and a name longer than it folds inside it: the tile grows, never the row. */
+  .oh-choicetiles-tile > .oh-button {
+    width: 100%;
+    padding: 0 var(--s3);
+    min-width: 0;
+    height: auto;
+    min-height: var(--h-xl);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: center;
+  }
+  /* It does not fit what was typed: no ground, the second ink. Its ring stays, so the grid keeps its shape. */
+  .oh-choicetiles-tile[data-dim] > .oh-button,
+  .oh-choicetiles-tile[data-dim] > .oh-button:hover {
+    background: transparent;
+    color: var(--ink2);
+  }
+}

@@ -12,13 +12,25 @@
  *     anybody sees anything. They exist because the thing being pinned is an ABSENCE (no second
  *     Escape binding, no import of the desktop's form) and absences do not render.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { firstRunStep, initialWindow } from "../app/shell/FirstRun";
-import { firstRunSubject } from "../app/shell/first-run-subject";
-import { canonicalHash, parseHash } from "../app/shell/routing";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+/* The stage's rules live beside the new first run's (today's `FirstRun.tsx` re-exported them, and leaves with today's
+   shell); the address is read by the frame's own router, which is what the new shell reads it with. */
+import { firstRunStep } from "@ohmail/app-logic/mailboxes/first-run/step";
+import { initialWindow } from "@ohmail/app-logic/mailboxes/first-run/rules";
+import { firstRunSubject } from "@ohmail/app-logic/doors/first-run-subject";
+import { fragmentOf, routeOf } from "@ohmail/app/frame/route";
+import {
+  HOST_B,
+  answeredWith,
+  pressOf,
+  refused,
+  saidKey,
+  typed,
+  walkForm,
+} from "./_first-run-and-account-1-connect.js";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 /* Four callbacks in `FirstRun.tsx` and `MailboxSection.tsx` are read as source below, each
    anchored on its DECLARED NAME. Neither file has been through the render-identity codemod — both
    still declare eight callbacks as `const <name> = useCallback(` and neither holds a single
@@ -28,7 +40,27 @@ import type { OnboardingFacts } from "../app/shell/onboarding";
 import { sliceOfDeclaration } from "./source-anchor.js";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
-const STAGE = read("apps/webapp/app/shell/FirstRun.tsx");
+/* THE FIRST RUN AS THE NEW SHELL's STAGE: one file a step under `RUN`, its model under `RUN_MODEL`, its mailbox step
+   the one connect form (`CONNECT`). Each source pin below reads the file that now makes the promise it pinned in
+   today's `FirstRun.tsx`. */
+const RUN = "packages/app/src/mailboxes/first-run";
+const RUN_MODEL = "packages/app-logic/src/mailboxes/first-run";
+const CONNECT = "packages/app/src/mailboxes/connect";
+const screen = (name: string) => read(`${RUN}/${name}`);
+const model = (name: string) => read(`${RUN_MODEL}/${name}`);
+const everyFileOf = (dir: string) =>
+  readdirSync(resolve(process.cwd(), dir))
+    .filter((f) => /\.tsx?$/.test(f))
+    .map((f) => read(`${dir}/${f}`))
+    .join("\n");
+/** The whole stage, screens and model. */
+const STAGE_NOW = `${everyFileOf(RUN)}\n${everyFileOf(RUN_MODEL)}`;
+/** Whether an address names the first run's stage, and a re-run of it. */
+type Route = ReturnType<typeof routeOf>;
+const namesFirstRun = (r: Route) => r.stage?.id === "firstRun";
+const namesRerun = (r: Route) => r.stage?.id === "firstRun" && r.stage.words.how === "again";
+/* The stage's step rule moved beside the new first run's rules; its probe follows it. */
+const STEP_RULE = read("packages/app-logic/src/mailboxes/first-run/step.ts");
 
 /** A run with everything still to do, on the standalone door. */
 const facts = (over: Partial<OnboardingFacts> = {}): OnboardingFacts => ({
@@ -47,6 +79,60 @@ const CONNECTED = {
   organizeConsentedAt: null,
   initialImportCompletedAt: null,
 };
+
+describe("the hosted facts and frame contract", () => {
+  it("A FIRST RUN IS HANDED NOTHING, so the dial is 365 and not the product default snapped", () => {
+    const live = model("live.ts");
+    expect(live).toContain("const stored = consent.screeningBaselineAt !== null");
+    expect(live).toContain("screening === undefined ? {} : { screening }");
+    expect(initialWindow(undefined)).toBe("365");
+  });
+
+  it("THE HOLDER'S DATE IS PASSED, and nothing passed it — the screens printed a blank", () => {
+    expect(model("live.ts")).toContain("dateOf(m.organizedBy?.since)");
+    expect(model("live.ts")).toContain("{ holderSince: since }");
+    expect(screen("Elsewhere.tsx")).toContain("row?.holderSince ?? null");
+  });
+
+  it("holds the modal gate and answers EXACTLY ONE key of its own, Escape", () => {
+    const mounted = screen("stage.tsx");
+    expect(mounted).toContain("useModalGate(true)");
+    expect([...mounted.matchAll(/event\.key\s*[!=]+\s*"([^"]+)"/g)].map((match) => match[1])).toEqual(["Escape"]);
+    expect([...mounted.matchAll(/chord:\s*"([^"]+)"/g)]).toEqual([]);
+  });
+
+  it("Escape ASKS rather than acting — a keystroke may not silently end setup", () => {
+    expect(screen("stage.tsx")).toMatch(/event\.preventDefault\(\);\s*run\.acts\.escape\(\);/);
+    expect(model("actions.ts")).toContain('escape: () => a.setConfirm((c) => (c === "cancel" ? null : "cancel"))');
+  });
+
+  it("every field handler goes through the retire, not through a bare clear", () => {
+    const passed = walkForm([
+      pressOf("test"),
+      answeredWith({ ok: true, value: { host: HOST_B, user: "fixture", folders: 2 } }),
+    ]);
+    expect(passed.tested).not.toBeNull();
+    for (const [field, value] of [["address", "new@example.test"], ["user", "Changed user"], ["imapHost", HOST_B], ["smtpHost", HOST_B], ["imapPort", "1993"], ["smtpPort", "2587"]] as const) {
+      expect(walkForm([typed(field, value)], passed).tested, field).toBeNull();
+    }
+  });
+
+  it("withholds the mailbox while an ADD run has not made one yet", () => {
+    expect(firstRunSubject([{ id: "existing" }], null, true)).toEqual({ mailbox: null, state: "pending" });
+    expect(screen("MailboxStep.tsx")).toContain("run.facts.mailbox === null ? null : run.mailbox");
+  });
+
+  it("hands the created mailbox's id back to the route, without a history entry", () => {
+    expect(model("actions.ts")).toContain('if (input.how === "add") input.name(id, "replace")');
+    expect(screen("stage.tsx")).toContain('host.device.address.write(fragmentOf({ ...route, open: null, stage }), "replace")');
+  });
+
+  it("passes the add intent down, so the connect mode is never a fallback", () => {
+    expect(routeOf("#/first-run/add").stage?.words.how).toBe("add");
+    expect(model("use-first-run.ts")).toContain('const add = how === "add"');
+    expect(screen("MailboxStep.tsx")).toContain('kind: run.add ? "add" : "firstRun"');
+  });
+});
 
 describe("where the stage opens, and what a cursor may and may not do", () => {
   it("a run with nothing behind it opens on the WELCOME, not on the derived step", () => {
@@ -289,23 +375,23 @@ describe("a re-run from Settings, and why it is a ROUTE and not a cleared stamp"
     // rather than component state: `normalizedHash` rewrites any hash that does not round-trip,
     // so a re-run whose spelling the router could not reproduce would be corrected to the bare
     // form on the first render — closing the flow by fixing the address bar.
-    const again = parseHash("#/first-run/again");
-    expect(again.firstRun).toBe(true);
-    expect(again.firstRunRerun).toBe(true);
-    expect(canonicalHash(again)).toBe("#/first-run/again");
+    const again = routeOf("#/first-run/again");
+    expect(namesFirstRun(again)).toBe(true);
+    expect(namesRerun(again)).toBe(true);
+    expect(fragmentOf(again)).toBe("#/first-run/again");
 
-    const first = parseHash("#/first-run");
-    expect(first.firstRun).toBe(true);
-    expect(first.firstRunRerun).toBe(false);
-    expect(canonicalHash(first)).toBe("#/first-run");
+    const first = routeOf("#/first-run");
+    expect(namesFirstRun(first)).toBe(true);
+    expect(namesRerun(first)).toBe(false);
+    expect(fragmentOf(first)).toBe("#/first-run");
   });
 
   it("the stage rides BESIDE the view, so the app is still behind it", () => {
     // A `ViewId` member would have put setup in the rail, in the number keys and in every `go()`
     // call's type — and "Open ohmail meanwhile" could not leave the flow without ending it.
-    expect(parseHash("#/first-run").view).toBe("ohbox");
-    expect(parseHash("#/ohbox").firstRun).toBe(false);
-    expect(parseHash("#/settings/mailboxes").firstRun).toBe(false);
+    expect(routeOf("#/first-run").place).toBe("ohbox");
+    expect(namesFirstRun(routeOf("#/ohbox"))).toBe(false);
+    expect(namesFirstRun(routeOf("#/settings/mailboxes"))).toBe(false);
   });
 });
 
@@ -335,88 +421,39 @@ describe("a re-run shows the state it is about to change", () => {
     expect(initialWindow({ dormancyDays: 1, scope: "window" })).toBe("90");
   });
 
-  it("A FIRST RUN IS HANDED NOTHING, so the dial is 365 and not the product default snapped", () => {
-    /* MEASURED on the released 0.13.6, on a fresh HOME: "90 days" was pre-selected while the row
-     * beside it read "One year · usual". Nobody had chosen 90 or anything near it.
-     *
-     * The mechanism is entirely at the MOUNT and the two lines under test are each correct.
-     * `consent.dormancyDays` rests at `DEFAULT_DORMANCY_DAYS` (60) — a plausible value filled in
-     * deliberately, because it reaches date arithmetic — and `initialWindow` snaps a stored
-     * value to the nearest OFFERED rung, and 60 is nearer 90 than 365. So handing the prop
-     * unconditionally made the control report a product default as the person's own answer.
-     *
-     * `screeningBaselineAt` is the truth-condition for "an answer exists": written by the consent
-     * transaction and by the first screener decision and by nothing else, and — unlike
-     * `dormancyDays` one field along — deliberately NOT filled in with a plausible value.
-     *
-     * A SOURCE PIN, and weaker than a render, said out loud: what is being asserted is that the
-     * prop is WITHHELD, and an absent prop does not render. MUTATION: drop the guard and the two
-     * assertions below both go red, which is the released mount exactly. */
-    const SHELL = read("apps/webapp/app/shell/AppShell.tsx");
-    expect(SHELL, "the mount hands the flow a window nobody chose")
-      .toMatch(/\{\.\.\.\(consent\.screeningBaselineAt\s*\n?\s*\? \{ screening: \{ dormancyDays: consent\.dormancyDays, scope: consent\.screeningScope \} \}\s*\n?\s*: \{\}\)\}/);
-    expect(SHELL, "an unconditional `screening=` prop is back on the stage")
-      .not.toMatch(/\n\s*screening=\{\{ dormancyDays: consent\.dormancyDays/);
-    // And the seed with nothing stored is the number the flow writes, not the one it defaults to.
-    expect(initialWindow(undefined)).toBe("365");
-  });
-
-  it("THE HOLDER'S DATE IS PASSED, and nothing passed it — the screens printed a blank", () => {
-    /* `FirstRunProps.organizedSince` is interpolated into `mailboxes.readerSince*` by the claim
-     * question's banner and by a reader's summary, and the ONE mount there is never supplied it:
-     * both rendered "Since  · ohmail Cloud." A sentence with a hole where a date belongs reads as
-     * a bug about the mailbox rather than about the copy, and the summary's own claim is that it
-     * names the organizer AND since when.
-     *
-     * Invisible to the render tests, which pass the prop directly — which is exactly why the pin
-     * is on the MOUNT. Withheld when the DTO names no instant, so the screens keep their own
-     * "we do not know" arm instead of printing an empty one.
-     *
-     * MUTATION: delete the spread and both assertions go red. */
-    const SHELL = read("apps/webapp/app/shell/AppShell.tsx");
-    expect(SHELL, "the flow's holder date has no source")
-      .toMatch(/\{\.\.\.\(holderSince \? \{ organizedSince: holderSince \} : \{\}\)\}/);
-    expect(SHELL, "the date is derived from the row's own instant, in the app's own language")
-      .toMatch(/const holderSince = useMemo\(\(\) => \{[\s\S]{0,400}?organizedBy\?\.since/);
-    expect(SHELL).toMatch(/toLocaleDateString\(activeFormatLocale\(\)/);
-  });
+  /* Two pins on today's mount left with `AppShell.tsx` (the window handed only where the account stored one; the
+     holder's date handed in the app's language). The new stage's seat reads both off the ground itself, and its own
+     cases hold them over the real ground: `packages/app/test/mailboxes/first-run/seat.test.tsx`, "a re-run shows
+     the window the account stored, and only where one is stored" and "a mailbox another install organizes is asked
+     about with that holder's day". */
 });
 
 describe("the stage renders the derivation, and holds no step counter", () => {
   it("asks `deriveOnboardingStep` for the step", () => {
-    expect(STAGE).toMatch(/deriveOnboardingStep\(facts\)/);
+    expect(STEP_RULE).toMatch(/deriveOnboardingStep\(facts\)/);
   });
 
   it("never stores a numeric step, and never increments one", () => {
     // A counter and the facts it claims to summarise drift the moment anything happens outside
     // the flow. The rail's `railAt + 1` is DISPLAY — "3 / 7" — and is derived from the step, not
     // the other way round, so it is excluded by naming the shapes rather than the word "step".
-    expect(STAGE).not.toMatch(/useState<number>\(\s*0\s*\)/);
-    expect(STAGE).not.toMatch(/setStep\(|step\s*\+\+|step:\s*\w+\.step\s*\+\s*1/);
+    expect(STAGE_NOW).not.toMatch(/useState<number>\(\s*0\s*\)/);
+    expect(STAGE_NOW).not.toMatch(/setStep\(|step\s*\+\+|step:\s*\w+\.step\s*\+\s*1/);
   });
 
   it("clears the cursor on every write — `run` is the one write path", () => {
     // `setAt(keepCursor ?? null)` inside `run`, with the clear in a `finally`-guarded flow, is
-    // what "re-derive after every write" means concretely.
-    expect(STAGE).toMatch(/setAt\(keepCursor \?\? null\)/);
+    // what "re-derive after every write" means concretely. (The run's one write path is its own hook now.)
+    expect(model("use-writes.ts")).toMatch(/setAt\(keepCursor \?\? null\)/);
   });
 });
 
 describe("the structural rules that do not render", () => {
-  it("holds the modal gate and answers EXACTLY ONE key of its own, Escape", () => {
-    // The gate silences every shell binding behind the stage (a `g s` there used to unmount it with
-    // nothing asked), so the stage's one key is its own listener rather than a keymap binding.
-    expect(STAGE).toMatch(/useModalGate\(true\);/);
-    expect([...STAGE.matchAll(/chord:\s*"([^"]+)"/g)], "the stage registered a keymap chord").toEqual([]);
-    const keys = [...STAGE.matchAll(/e\.key !== "([^"]+)"/g)].map((m) => m[1]);
-    expect(keys, "the stage answers a key other than Escape").toEqual(["Escape"]);
-  });
-
-  it("Escape ASKS rather than acting — a keystroke may not silently end setup", () => {
-    // Cancel writes a completion stamp. A key that stamped it with no confirmation is the kind
-    // of thing a person does not know they did.
-    expect(STAGE).toMatch(/e\.preventDefault\(\);\s*setConfirm\(\(c\) => \(c === "cancel" \? null : "cancel"\)\);/);
-  });
+  /* The modal gate with Escape as the stage's one key, and Escape asking rather than acting: today's stage
+     listened for Escape itself; the new stage's questions are the kit's dialog and its keys are held by the frame's
+     stage. Both are held over the new stage by its own cases: `seat.test.tsx` "a key the place behind binds runs
+     nothing while a step is on screen" (and the chords' twin), `stage.test.tsx` "Escape asks to close with the keys on
+     its first verb". */
 
   it("the webapp NEVER imports the desktop's AI provider form", () => {
     // Ruling 2(d) and its claim-pin: the provider step exists on the standalone door alone, and
@@ -424,21 +461,22 @@ describe("the structural rules that do not render", () => {
     // mounts, so there is ONE write path to the install's model file. The desktop injects the
     // node; a direct import here would be a second copy of that write path, in a bundle that
     // does not even ship the engine it writes to.
-    expect(STAGE).not.toMatch(/AiProviderForm/);
-    expect(STAGE, "the provider step must render the INJECTED node").toMatch(/host\.providerForm/);
+    expect(STAGE_NOW).not.toMatch(/AiProviderForm/);
+    expect(screen("Ai.tsx"), "the provider step must render the INJECTED node").toMatch(/slots\.aiProvider\(\)/);
   });
 
   it("`Agree and start organizing` is ONE call, carrying the window with the consent", () => {
     // The window cannot be a second request: `screening_baseline_at` is what the window is
     // measured from and the consent is what writes it, so a separate "set the window" call
     // leaves a gap in which the cutoff is the product default rather than the answer just given.
-    const organizeCalls = [...STAGE.matchAll(/host\.organize\(/g)];
+    const organizeCalls = [...model("actions.ts").matchAll(/verbs\.organize\(/g)];
     // Two call sites: the window's press, and the re-entry claim on the elsewhere screen for a
     // mailbox that has already been consented to and has nothing left to ask.
     expect(organizeCalls).toHaveLength(2);
-    expect(STAGE).toMatch(/screening: win === "all"/);
-    expect(STAGE).toMatch(/scope: "all_time"/);
-    expect(STAGE).toMatch(/dormancyDays: Number\(win\), scope: "window"/);
+    const agree = model("use-agree.ts");
+    expect(agree).toMatch(/win === "all" \?/);
+    expect(agree).toMatch(/scope: "all_time"/);
+    expect(agree).toMatch(/dormancyDays: Number\(win\), scope: "window"/);
   });
 
   it("the window is SEEDED from truth, never from the product default", () => {
@@ -447,56 +485,55 @@ describe("the structural rules that do not render", () => {
     // number. On a RE-RUN the seed is what the account actually holds — the behaviour of
     // `initialWindow` is driven directly in its own describe above; this pins that the control
     // reads it rather than hard-coding a rung.
-    expect(STAGE).toMatch(/useState<WindowChoice>\(\(\) => initialWindow\(screening\)\)/);
+    expect(model("use-agree.ts")).toMatch(/useState<WindowChoice>\(\(\) => initialWindow\(input\.screening\)\)/);
   });
 
   it("the pull screen shows a remainder only when the SERVER has counted something", () => {
     // `serverMessageCount` is absent until a cycle has counted a folder, and a "0 still to read"
     // over a running pull is a confident wrong answer.
-    expect(STAGE).toMatch(/remaining !== null \? \(/);
-    expect(STAGE).toMatch(/t\("etaSoon"\)/);
+    const pull = screen("Pull.tsx");
+    expect(pull).toMatch(/if \(pull\.remaining !== null\) \{\s*counts\.push/);
+    expect(pull).not.toContain("onboarding.etaSoon");
   });
 });
 
 describe("each promise is rendered on the step that makes it", () => {
-  /** The body of one step's branch, so a key cannot satisfy a pin from another screen. */
-  const stepBody = (marker: string): string => {
-    const at = STAGE.indexOf(marker);
-    expect(at, `the ${marker} branch is gone`).toBeGreaterThan(-1);
-    const rest = STAGE.slice(at + marker.length);
-    const end = rest.indexOf('{step === "');
-    return end === -1 ? rest : rest.slice(0, end);
-  };
+  /** One step's own screen (a file a step now), so a key cannot satisfy a pin from another screen. */
+  const stepBody = (file: string): string => screen(file);
 
   it("`consentBody` and `consentHistory` are on the CONSENT screen", () => {
-    const body = stepBody('{step === "consent"');
-    expect(body).toMatch(/t\("consentBody"\)/);
-    expect(body).toMatch(/t\("consentHistory"\)/);
-    // And the promise that nothing has happened yet, which is true only because the consent
-    // screen writes nothing at all — the write is one screen later.
-    expect(body).toMatch(/t\("consentNothingYet"\)/);
-    expect(body, "the consent screen writes something").not.toMatch(/host\.organize|run\(/);
+    const body = stepBody("Window.tsx");
+    expect(body).not.toContain("onboarding.consentBody");
+    expect(body).not.toContain("onboarding.consentHistory");
+    expect(body).toMatch(/<FolderMap say=\{say\}/);
+    // Combining the two screens keeps the single explicit Agree press.
+    expect(body).toContain("submit={run.acts.agree}");
+    expect(body).not.toContain("onboarding.consentNothingYet");
+    expect(body, "the consent screen writes something").not.toMatch(/\.organize\(|writes\.run\(/);
   });
 
   it("`windowLater` is on the WINDOW screen, beside the choice it qualifies", () => {
-    expect(stepBody('{step === "window"')).toMatch(/t\("windowLater"\)/);
+    expect(stepBody("Window.tsx")).toContain('<SettingNote>{say("onboarding.windowLater")}</SettingNote>');
+    expect(stepBody("Window.tsx")).toMatch(/say\("onboarding\.nothingMoves"\)/);
   });
 
   it("`probeOk` is filled from the probe's own three answers and nothing else", () => {
-    const body = stepBody('{step === "mailbox"');
-    expect(body).toMatch(/host: verdict\.ok\.host, user: verdict\.ok\.user, count: verdict\.ok\.folders/);
+    /* The mailbox step's verdict is the connect form's (`Tested`), the same part the pane's edit draws. */
+    const body = read(`${CONNECT}/Tested.tsx`);
+    expect(body).toMatch(/host: ok\.host, user: ok\.user, count: ok\.folders/);
   });
 
   it("the failure verdicts are the mailbox pane's `probe_*`, not a second set", () => {
     // Through the chooser the pane uses too (`probe_<reason>`, or its `_local` twin for a server on
     // this computer, or Google's `probe_auth_gmail_<hint>`): one key family and one function for both surfaces.
-    expect(stepBody('{step === "mailbox"')).toMatch(/tm\(probeCopyKey\(verdict\.reason, verdict\.localServer, verdict\.transport, verdict\.authHint, preset\.id\)/);
+    expect(read("packages/app-logic/src/mailboxes/connect/refusal.ts")).toMatch(/probeCopyKey\(reason, r\.details\.localServer, transport, hint, /);
   });
 
   it("`elsewhereChoiceHereWhy` is on the ELSEWHERE screen, naming the holder", () => {
-    const body = stepBody('{step === "elsewhere"');
-    expect(body).toMatch(/t\("elsewhereChoiceHereWhy", \{/);
-    expect(body).toMatch(/t\("elsewhereQueued"\)/);
+    const body = stepBody("Elsewhere.tsx");
+    expect(body).toContain('note: stopped ? undefined : say("onboarding.elsewhereChoiceHereWhy", { name })');
+    expect(body).toMatch(/"onboarding\.elsewhereSay", \{ name \}/);
+    expect(body).not.toContain("onboarding.elsewhereQueued");
   });
 
   /**
@@ -510,16 +547,20 @@ describe("each promise is rendered on the step that makes it", () => {
    * door.
    */
   it("promises the pass on every door, because every door now makes it", () => {
-    const body = stepBody('{step === "elsewhere"');
-    expect(body).toMatch(/\{claimed \? <SettingsVerdict state="wait" headline=\{t\("elsewhereQueued"\)\} \/> : null\}/);
+    const body = stepBody("Elsewhere.tsx");
+    expect(body).not.toContain("onboarding.elsewhereQueued");
+    expect(body).toContain("submit={run.acts.answerClaim}");
     expect(body, "the door-aware branch survived its own premise")
       .not.toMatch(/organizeHereQueued/);
   });
 
 
-  it("`Connect and continue` is disabled until a test has PASSED", () => {
-    const body = stepBody('{step === "mailbox"');
-    expect(body).toMatch(/disabled: !tested/);
+  it("offers Test connection while Connect remains available without a prior test", () => {
+    const body = read(`${CONNECT}/Lines.tsx`);
+    const acts = body.slice(body.indexOf("export function Acts"));
+    expect(acts).toContain("const off = !form.ready || busy !== null || form.asking !== null");
+    expect(acts).toMatch(/type="submit"\s+size="l"\s+disabled=\{off\}/);
+    expect(acts).toMatch(/disabled=\{off\} onPress=\{form.test\}/);
   });
 });
 
@@ -528,18 +569,10 @@ describe("each promise is rendered on the step that makes it", () => {
  * unreachable from the surface a person is actually looking at.
  */
 describe("the entry points", () => {
-  it("the cloud funnel hands off INTO the flow, not into a cold mail client", () => {
-    // The funnel proves an address, takes a plan and connects a mailbox, and says nothing about
-    // what ohmail is about to do to that mailbox. Its last screen opens the flow, which lands on
-    // the consent statement because a mailbox now exists.
-    const join = read("apps/webapp/app/(product)/join/JoinScreen.tsx");
-    expect(join, "the funnel still ends in a bare mail client").toMatch(/href="\/#\/first-run"/);
-  });
-
   it("and never before the address is proven, which the funnel's own order is", () => {
     // Every route the flow's first screens call is refused for an unverified address, so opening
     // it earlier would be a ceremony whose buttons all answer 403. `done` is after `verify`.
-    const join = read("apps/webapp/app/(product)/join/JoinScreen.tsx");
+    const join = read("apps/webapp/app/(product)/join/use-join-door.ts");
     const rail = /const RAIL: Step\[\] = \[([^\]]+)\]/.exec(join)?.[1] ?? "";
     expect(rail).toContain('"verify"');
     expect(rail).toContain('"mailbox"');
@@ -599,7 +632,7 @@ describe("the mailbox pane can test a connection before it pays for a step-up", 
   });
 
   it("BOTH callers exist — the row's remaining half was that neither did", () => {
-    expect(STAGE, "the flow's step 1 lost its test action").toMatch(/host\.probe\(/);
+    expect(read(`${CONNECT}/Lines.tsx`), "the flow's step 1 lost its test action").toMatch(/onPress=\{form\.test\}/);
     expect(pane, "the pane lost its test action").toMatch(/mailboxApi\.probe\(/);
   });
 });
@@ -617,15 +650,16 @@ describe("the pairing step is reachable, and only where the door pairs", () => {
   it("the summary offers it as a SECOND verb, not by making 'Open ohmail' advance", () => {
     // Making the primary advance would put a label on a button that does not do what it says: it
     // would not open ohmail, it would show another setup screen.
-    expect(STAGE).toMatch(/onClick=\{\(\) => goTo\("pair"\)\}/);
-    expect(STAGE).toMatch(/\{t\("pairTitle"\)\}/);
+    const summary = screen("Summary.tsx");
+    expect(summary).toMatch(/onPress=\{\(\) => run\.acts\.goTo\("pair"\)\}/);
+    expect(summary).toMatch(/\{say\("onboarding\.pairTitle"\)\}/);
   });
 
   it("…and withholds the offer where the door has no pairing panel", () => {
     /* AND THE PATH DECIDES TOO. The offer was gated on the panel alone, so an ADD run — whose
        path drops `pair`, because a phone is paired to the INSTALL and not to a mailbox — still
        rendered the verb and `goTo("pair")` walked to a step the run does not contain. */
-    expect(STAGE).toMatch(/host\.pairNode && path\.includes\("pair"\) \? \(/);
+    expect(screen("Summary.tsx")).toMatch(/slots\.pair !== NONE && run\.cursor\.path\.includes\("pair"\)/);
   });
 
   it("it is never a RESUME target — only a step inside a run", () => {
@@ -645,8 +679,10 @@ describe("the pairing step is reachable, and only where the door pairs", () => {
   });
 
   it("and leaving it STAMPS, because on that path the summary's verb was not pressed", () => {
-    const body = STAGE.slice(STAGE.indexOf('{step === "pair"'));
-    expect(body.slice(0, 400)).toMatch(/screen\(leave,/);
+    /* The pairing step is its own screen (`Pair`); its forward verb is the run's close, the stamp that ends setup. */
+    const summary = screen("Summary.tsx");
+    const body = summary.slice(summary.indexOf("export function Pair("));
+    expect(body.slice(0, 400)).toMatch(/submit=\{run\.acts\.close\}/);
   });
 });
 
@@ -720,21 +756,25 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
    * is what makes an EDIT invalidate a request rather than merely blank the screen.
    */
   it("an EDIT retires the request in flight, not merely the sentence on screen", () => {
-    expect(STAGE, "the flow's clear does not retire the request")
-      .toContain("testSeq.current += 1;");
+    /* The flow's half, asked of the connect form the mailbox step now is: Test pressed for server A, the host edited
+       to B while it is on its way, A's answer lands. RED on this tree: STOP fra1-S1 (the form keeps A's verdict). */
+    const pressed = walkForm([typed("address", "a@example.org"), pressOf("test")]);
+    const landed = walkForm(
+      [typed("imapHost", HOST_B), answeredWith({ ok: true, value: { host: "mail-a.home.arpa", user: "a@example.org", folders: 4 } })],
+      pressed,
+    );
+    expect(landed.tested, "the flow's clear does not retire the request").toBeNull();
     expect(pane, "the pane's clear does not retire the request")
       .toContain("probeSeq.current += 1;");
     // …and the pending line stops claiming a request that is no longer ours.
-    expect(STAGE).toMatch(/testSeq\.current \+= 1;[\s\S]{0,80}setTesting\(false\)/);
+    expect(landed.gate.at, "the flow still claims the request").not.toBe("trying");
     expect(pane).toMatch(/probeSeq\.current \+= 1;[\s\S]{0,200}setProbing\(false\)/);
   });
 
-  it("every field handler goes through the retire, not through a bare clear", () => {
-    // A handler that only blanked the verdict would leave the in-flight answer free to land.
-    for (const f of ["setAddress", "setPass", "setImapHost", "setImapPort", "setSmtpHost", "setSmtpPort"]) {
-      expect(STAGE, `${f} does not retire`).toContain(`${f}(e.target.value); retireTest();`);
-    }
-  });
+  /* "every field handler goes through the retire": the new step's fields are the connect form's, and every typed
+     field passes through its one `changed`, which drops the verdict: held by app-logic's
+     `test/mailboxes/connect/model.test.ts` "a passed test keeps what was typed and the password, and its verdict
+     stands until the form changes". */
 
   it("cancelling the pane's form retires too — a reopen may not receive the old answer", () => {
     const cancel = pane.slice(pane.indexOf('setStage("list"); setTyped(emptyTyped())'));
@@ -777,12 +817,14 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
    * already connected, on the strength of evidence gathered before it was.
    */
   it("a run that already has a mailbox CONTINUES from that step instead of creating another", () => {
-    const at = STAGE.indexOf('{step === "mailbox"');
-    expect(at, "the mailbox branch is gone").toBeGreaterThan(-1);
-    const body = STAGE.slice(at, STAGE.indexOf('{step === "elsewhere"'));
-    expect(body).toContain("if (facts.mailbox !== null) { forward(); return; }");
+    /* The mailbox step is its own screen; with a mailbox its only press is the run's forward verb. */
+    const body = screen("MailboxStep.tsx");
+    expect(body).toContain("if (mailbox !== null)");
+    expect(body.slice(body.indexOf("if (mailbox !== null)"), body.indexOf("if (run.lagging)"))).toContain(
+      "<StepForm run={run} submit={run.acts.forward}>",
+    );
     // …and the guard runs BEFORE the create, not after it.
-    expect(body.indexOf("facts.mailbox !== null")).toBeLessThan(body.indexOf("connectTyped("));
+    expect(body.indexOf("if (mailbox !== null)")).toBeLessThan(body.indexOf("<ConnectForm"));
   });
 
   /**
@@ -795,20 +837,28 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
    * authorise nothing at all.
    */
   it("the mailbox step is a STATEMENT once a mailbox exists, not a form", () => {
-    const at = STAGE.indexOf('{step === "mailbox"');
-    const body = STAGE.slice(at, STAGE.indexOf('{step === "elsewhere"'));
-    expect(body).toContain("facts.mailbox !== null ? (");
+    const body = screen("MailboxStep.tsx");
+    expect(body).toContain("if (mailbox !== null)");
     // The statement names the mailbox and offers only the forward verb.
-    expect(body).toContain('tj("mailboxConnected", { address: mailboxAddress ?? "" })');
+    expect(body).toContain('say("onboarding.myMailboxes")');
+    expect(body).toContain("label={row.address}");
     // The form — provider picker, fields, Test — is on the OTHER arm.
-    expect(body.indexOf("facts.mailbox !== null ? (")).toBeLessThan(body.indexOf("SettingsChoice"));
-    expect(body.indexOf("facts.mailbox !== null ? (")).toBeLessThan(body.indexOf("void test()"));
+    expect(body.indexOf("if (mailbox !== null)")).toBeLessThan(body.indexOf("<ConnectForm"));
   });
 
   it("and a successful connect retires the verdict that authorised it", () => {
-    const at = STAGE.indexOf("await host.connect(");
-    expect(at, "the connect call is gone").toBeGreaterThan(-1);
-    expect(STAGE.slice(at, at + 400)).toContain("retireTest();");
+    /* Asked of the connect form the step now is: a passed test, then the connect the server takes. */
+    const passed = walkForm([
+      typed("address", "a@example.org"),
+      pressOf("test"),
+      answeredWith({ ok: true, value: { host: "mail-a.home.arpa", user: "a@example.org", folders: 4 } }),
+    ]);
+    expect(passed.tested, "the connect call is gone").not.toBeNull();
+    const connected = walkForm(
+      [pressOf("connect"), answeredWith({ ok: true, value: { mailboxId: "mbx-1", address: "a@example.org" } })],
+      passed,
+    );
+    expect(connected.tested).toBeNull();
   });
 
   /**
@@ -898,8 +948,15 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
     // them retired.
     /* The declaration (635 bytes) in place of a 900-byte window off a hook spelling: narrower,
        and bounded by the code rather than by a number that drifts as the callback grows. */
-    const retire = sliceOfDeclaration(STAGE, "retireTest");
-    expect(retire).toContain("setProblem(null)");
+    /* Asked of the connect form the step now is: a refused connect, then the address edited. RED on this tree: STOP
+       fra1-S2 (the form keeps the refusal's sentence until the next press). */
+    const refusedNow = walkForm([
+      typed("address", "a@example.org"),
+      pressOf("connect"),
+      answeredWith(refused("mailbox_probe_failed", { reason: "auth" })),
+    ]);
+    expect(saidKey(refusedNow), "the refusal was never said").toBe("mailboxes.probe_auth");
+    expect(saidKey(walkForm([typed("address", "b@example.org")], refusedNow)), "the failed write's sentence stayed").toBeNull();
   });
 
   /**
@@ -915,9 +972,16 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
     /* The declaration, which ends three bytes short of the comment this used to stop at — that
        comment IS the next sibling's docblock, so the helper's structural bound and the hand-typed
        one were aiming at the same place. One of them survives a rename. */
-    const run = sliceOfDeclaration(STAGE, "run");
-    expect(run).toContain("const mine = testSeq.current;");
-    expect(run).toContain("if (testSeq.current === mine) {");
+    /* The SENTENCE half is the connect form's now (the step's Connect is its press): Connect for A, the address
+       edited to B while it is on its way, A refused. RED on this tree: STOP fra1-S2. */
+    const onItsWay = walkForm([typed("address", "a@example.org"), pressOf("connect")]);
+    const overB = walkForm(
+      [typed("address", "b@example.org"), answeredWith(refused("mailbox_probe_failed", { reason: "auth" }))],
+      onItsWay,
+    );
+    expect(saidKey(overB), "A's refusal is said over B").toBeNull();
+    /* The CURSOR half is the run's own write path (`use-writes.ts`), re-pointed by path. */
+    const run = model("use-writes.ts");
     // The CURSOR still moves — the derivation is entitled to answer over the newest facts — so the
     // guard is on the SENTENCE alone, not on the whole catch.
     //
@@ -929,8 +993,10 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
     // AND THE FOUR WRITES THAT ASK TO STAY — Agree, the take-over, Connect and Forget, whose step-up 403
     // must stay on their screen with its sentence and the code prompt;
     // `first-run-agree-step-up.test.tsx` drives them.
-    expect(run).toContain("setAt(rerun === true || opts.stayOnFailure === true ? here : null);");
-    expect(STAGE.match(/stayOnFailure: true/g) ?? [], "only the step-up writes stay on a refusal").toHaveLength(4);
+    expect(run).toContain("setAt(rerun || opts.stayOnFailure === true ? here : null);");
+    /* Agree, the take-over and Forget are the run's own writes; Connect's step-up stays on its screen by the connect
+       form's own gate (`model.test.ts`, "the second factor, asked once"), so three stand here where four stood. */
+    expect(model("actions.ts").match(/stayOnFailure: true/g) ?? [], "only the step-up writes stay on a refusal").toHaveLength(3);
   });
 
   it("the pane retires a failed create's sentence on EVERY field edit, not only a host change", () => {
@@ -955,7 +1021,7 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
   });
 
   it("both callers guard the landing with a generation counter", () => {
-    for (const [name, src, seq] of [["the flow", STAGE, "testSeq"], ["the pane", pane, "probeSeq"]] as const) {
+    for (const [name, src, seq] of [["the pane", pane, "probeSeq"]] as const) {
       expect(src, `${name} has no generation ref`).toContain(`const ${seq} = useRef(0)`);
       expect(src, `${name} does not claim a generation`).toContain(`++${seq}.current`);
       // BOTH landings, and the busy flag with them — an overtaken test that cleared `busy` would
@@ -964,6 +1030,11 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
       expect(guards, `${name} guards ${guards} landings, expected 2`).toBe(2);
       expect(src).toContain(`${seq}.current === mine) set`);
     }
+    /* The flow's step is the connect form now: one press claims the next generation, and an answer is taken only for
+       the generation on its way (the test's and the create's landing alike, one reducer). */
+    const form = read("packages/app-logic/src/mailboxes/connect/model.ts");
+    expect(form, "the flow has no generation").toContain("const seq = state.seq + 1;");
+    expect(form, "the flow guards no landing").toContain('return event.seq === state.seq ? answered(state, event.answer, facts) : still(state);');
   });
 
   it("the pane's TEST sends the plaintext opt-in, because its CREATE does", () => {
@@ -998,8 +1069,15 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
     // suggestion and the consent as well as the verdict.
     const smtp = pane.slice(pane.indexOf("smtpHost: e.target.value }));"), pane.indexOf("smtpHost: e.target.value }));") + 500);
     expect(smtp).toContain("retireHostEvidence()");
-    expect(STAGE).toContain("setSmtpHost(e.target.value); retireTest();");
-    expect(STAGE).toContain("setSmtpPort(e.target.value); retireTest();");
+    /* The flow's half, asked of the connect form the step now is: a passed test, then each SMTP field edited. */
+    const passed = walkForm([
+      typed("address", "a@example.org"),
+      pressOf("test"),
+      answeredWith({ ok: true, value: { host: "mail-a.home.arpa", user: "a@example.org", folders: 4 } }),
+    ]);
+    expect(passed.tested, "the flow's test never passed").not.toBeNull();
+    expect(walkForm([typed("smtpHost", HOST_B)], passed).tested, "setSmtpHost does not retire").toBeNull();
+    expect(walkForm([typed("smtpPort", "2525")], passed).tested, "setSmtpPort does not retire").toBeNull();
   });
 });
 
@@ -1022,7 +1100,6 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
  * the old one.
  */
 describe("the run's subject comes off the route, not off the first row", () => {
-  const shell = read("apps/webapp/app/shell/AppShell.tsx");
 
   /* ── THE THREE RULES BELOW MOVED OUT OF THIS FILE'S SOURCE PINS ─────────────────────────────
    *
@@ -1086,45 +1163,12 @@ describe("the run's subject comes off the route, not off the first row", () => {
      * a group. Against the PATH-FILTERED rail it can miss: the reachable case is `decide`, whose
      * group leaves the rail the moment a background pass drains the Screener queue to zero while
      * somebody is on that screen. `-1` printed "0 / 6" with no dot lit. */
-    expect(STAGE).toMatch(/const railFound = rail\.findIndex\(/);
-    expect(STAGE).toMatch(
-      /const railAt = railFound === -1 \? Math\.max\(0, rail\.length - 1\) : railFound;/,
-    );
+    /* The rail's place is worked out by the run's cursor now (`use-cursor.ts`), re-pointed by path. */
+    const cursor = model("use-cursor.ts");
+    expect(cursor).toMatch(/const found = step === null \? -1 : rail\.findIndex\(/);
+    expect(cursor).toMatch(/railAt: found === -1 \? Math\.max\(0, rail\.length - 1\) : found/);
   });
 
-  it("withholds the mailbox while an ADD run has not made one yet", () => {
-    /* The add run opens on the connect FORM, and the form is withheld the moment `facts.mailbox`
-       is non-null — the step becomes a statement about the mailbox the run is about, which is
-       right for a Back press and wrong here. On an install that already holds mailboxes the
-       fallback above would hand the stage row #1, so somebody who pressed "Add mailbox" would be
-       shown a statement about a mailbox they already have. */
-    /* ONE GATE, not four. `addPending` used to be spelled again at each of the three props that
-       could name a mailbox — the facts, `mailboxId` and `mailboxAddress` — which is three chances
-       for the next edit to forget one. It resolves `firstRunMailbox` to `null` now, so every
-       consumer is covered by construction. */
-    expect(shell).toMatch(/mailbox: firstRunMailbox === null \? null :/);
-    expect(shell).toMatch(/mailboxId=\{firstRunMailbox\?\.id \?\? null\}/);
-  });
-
-  it("hands the created mailbox's id back to the route, without a history entry", () => {
-    /* `nameFirstRunMailbox` uses `replaceState`: the create is not a place somebody navigated to,
-       and an assignment would stack an entry whose Back press lands on a connect form for a
-       mailbox that now exists. */
-    expect(shell).toMatch(/onConnected=\{nameFirstRunMailbox\}/);
-    const routing = read("apps/webapp/app/shell/routing.ts");
-    const fn = routing.slice(routing.indexOf("export function nameFirstRunMailbox"));
-    expect(fn.slice(0, 500)).toContain("window.history.replaceState");
-    /* AND THE EVENT IS DISPATCHED BY HAND. `replaceState` fires no `hashchange`, and
-       `useHashRoute` subscribes to exactly that — without it the shell would go on rendering the
-       old route until something else moved the hash. */
-    expect(fn.slice(0, 500)).toContain('window.dispatchEvent(new Event("hashchange"))');
-  });
-
-  it("passes the add intent down, so the connect mode is never a fallback", () => {
-    expect(shell).toMatch(/add=\{route\.firstRunAdd\}/);
-    // The stage states the word rather than letting the host choose one.
-    expect(STAGE).toMatch(/host\.connect\(mailboxInput\(\), add === true \? "add" : "seed"\)/);
-  });
 });
 
 /**

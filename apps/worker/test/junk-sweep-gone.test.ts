@@ -8,7 +8,7 @@ import {
 } from "@trafficflow/core/adapters/imap";
 import type { NativeLocator } from "@trafficflow/core";
 import { junkSweepPass, SWEEP_GONE_REASON, SWEEP_UNMAPPED_REASON } from "../src/junk-sweep.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ARM 2, PRODUCER HALF — **THE SWEEP MUST DISTINGUISH "THE SERVER REFUSED THIS"
@@ -51,10 +51,10 @@ async function seed(db: Awaited<ReturnType<typeof makeTestDb>>, count = 3) {
       uid: 50 + i, uidvalidity: 12n, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Quarantine", observedFolder: "ohmail/Quarantine",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Quarantine", observedFolder: "ohmail/Quarantine",
       lastSetBy: "us", reconcileStatus: "reconciled",
     });
-    await db.insert(messageBodies).values({ messageId: m!.id, text: `buy things ${i}` });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `buy things ${i}` });
     ids.push(m!.id);
   }
   return { accountId, mailboxId: mb!.id, ids };

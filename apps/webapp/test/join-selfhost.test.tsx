@@ -88,7 +88,7 @@ afterEach(async () => {
 });
 
 async function mountJoin(publicSignup = false): Promise<HTMLElement> {
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -112,7 +112,7 @@ describe("the self-host /join journey", () => {
     const c = await mountJoin();
 
     // The mailbox step, not a plan step waiting on a route this server does not carry.
-    expect(c.textContent).toContain("Connect a mailbox");
+    expect(c.querySelector("h1")?.textContent?.trim()).toBe(messages.onboarding.providerFirst);
     expect(c.textContent).not.toContain("Choose your plan");
     // THE WIRE ASSERTION — the one the reverted composition cannot pass: the managed bootstrap
     // asks `GET /billing/subscription` before it will show a mailbox, and on this server that
@@ -129,19 +129,14 @@ describe("the self-host /join journey", () => {
     answers["/api/mailboxes"] = { status: 200, body: { items: [] } };
     const c = await mountJoin();
 
-    expect(c.textContent).toContain("Save your recovery codes");
-    const check = c.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    await act(async () => {
-      check.click();
-      await Promise.resolve();
-    });
-    const goOn = [...c.querySelectorAll("button")].find((b) => b.textContent === "Continue")!;
+    expect(c.querySelector("h1")?.textContent).toBe("Ten recovery codes");
+    const goOn = [...c.querySelectorAll("button")].find((b) => b.textContent === messages.join.codesSaved)!;
     await act(async () => {
       goOn.click();
       await Promise.resolve();
     });
 
-    expect(c.textContent).toContain("Connect a mailbox");
+    expect(c.querySelector("h1")?.textContent?.trim()).toBe(messages.onboarding.providerFirst);
     expect(c.textContent).not.toContain("Choose your plan");
     expect(calls.some((u) => u.includes("/billing/"))).toBe(false);
   });
@@ -153,7 +148,8 @@ describe("the self-host /join journey", () => {
     answers["/api/auth/session"] = { status: 401 };
     const c = await mountJoin();
 
-    expect(c.textContent).toContain("Accounts on this server are created by invitation.");
+    expect(c.querySelector("h1")?.textContent).toContain("My invite is");
+    expect(c.querySelector('input[aria-label="Invite code"]')).not.toBeNull();
     expect(c.textContent).not.toContain("invite-only during the beta");
   });
 
@@ -187,8 +183,8 @@ describe("the self-host /join journey", () => {
     answers["/api/mailboxes"] = { status: 200, body: { items: [] } };
     const c = await mountJoin();
 
-    const railLabels = [...c.querySelectorAll(".join-rail-label")].map((el) => el.textContent);
-    expect(railLabels).not.toContain("Plan");
-    expect(railLabels).toContain("Mailbox");
+    const stations = c.querySelector('[role="img"][aria-label="Step 2 of 5, Mailbox, 1 of 3"]');
+    expect(stations?.children).toHaveLength(5);
+    expect(c.querySelector('[role="img"][aria-label*="Plan"]')).toBeNull();
   });
 });

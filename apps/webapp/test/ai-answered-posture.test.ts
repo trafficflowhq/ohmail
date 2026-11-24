@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { deriveOnboardingStep, type OnboardingAi, type OnboardingFacts } from "../app/shell/onboarding";
+import { deriveOnboardingStep, type OnboardingAi, type OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * ═══ THE AI QUESTION IS ASKED — and on the hosted door it was not asked at all ══════════════

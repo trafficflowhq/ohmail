@@ -1,0 +1,144 @@
+/* A new event from one typed line: the line in the display face on the draft's own colour, the form under it. */
+@layer oh {
+  /* It stands at the foot of the view's column, in the middle; only the panel itself takes a press. */
+  .oh-qa-wrap {
+    --oh-qa-z: 7;
+    position: absolute;
+    right: 0;
+    bottom: var(--s4);
+    left: 0;
+    z-index: var(--oh-qa-z);
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .oh-qa {
+    --oh-qa-pad: var(--s4) var(--s4) var(--s3) var(--s5);
+    --oh-qa-edge: var(--oh-cal-mark, var(--ink));
+    --oh-qa-ground: var(--oh-cal-open, var(--oh-cal-open-plain));
+    --oh-qa-ring: 0 0 0 var(--oh-cal-open-line) var(--oh-qa-edge), var(--float);
+    --oh-qa-glass: color-mix(in oklab, var(--sheet) 70%, transparent);
+    --oh-qa-line: 36px;
+    --oh-soft: var(--soft-sheet);
+    width: 620px;
+    max-width: calc(100% - 2 * var(--s3));
+    padding: var(--oh-qa-pad);
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--oh-qa-ring);
+    pointer-events: auto;
+    animation: oh-qa-in var(--d-in) var(--e-arrive) both;
+  }
+  @keyframes oh-qa-in {
+    from {
+      transform: var(--x-in);
+      opacity: 0;
+    }
+  }
+  .oh-qa[data-still] {
+    animation: none;
+  }
+  .oh-qa-line {
+    --oh-qa-line-out: calc(var(--s4) * -1) calc(var(--s4) * -1) 0 calc(var(--s5) * -1);
+    --oh-qa-line-pad: var(--s3) var(--s4) var(--s2) var(--s5);
+    /* The two sides of that padding: the marks stand outside the flow and measure from its outer edge. */
+    --oh-qa-line-sides: calc(var(--s4) + var(--s5));
+    --oh-qa-line-top: var(--r-sheet) var(--r-sheet) 0 0;
+    position: relative;
+    min-height: var(--oh-qa-line);
+    margin: var(--oh-qa-line-out);
+    padding: var(--oh-qa-line-pad);
+    border-radius: var(--oh-qa-line-top);
+    background: var(--oh-qa-ground);
+    font-size: var(--t-title);
+    line-height: var(--oh-qa-line);
+  }
+  /* The typed words and their marks lie in the same place: the marks behind, drawn without their letters. */
+  .oh-qa-found,
+  .oh-qa-input {
+    display: block;
+    width: calc(100% - var(--h-m));
+    height: var(--oh-qa-line);
+    overflow: hidden;
+    font: inherit;
+    font-variation-settings: inherit;
+    letter-spacing: inherit;
+    line-height: var(--oh-qa-line);
+    white-space: pre;
+  }
+  .oh-qa-found {
+    position: absolute;
+    inset: var(--oh-qa-line-pad);
+    width: calc(100% - var(--h-m) - var(--oh-qa-line-sides));
+    color: transparent;
+    pointer-events: none;
+  }
+  .oh-qa-mark {
+    --oh-qa-mark-ring: 0 0 0 var(--oh-hair) var(--oh-qa-glass);
+    border-radius: var(--r-sq);
+    background: var(--oh-qa-glass);
+    box-shadow: var(--oh-qa-mark-ring);
+    color: transparent;
+    text-decoration: none;
+  }
+  .oh-qa-input {
+    position: relative;
+    color: var(--ink);
+    caret-color: var(--ink);
+    cursor: text;
+  }
+  .oh-qa-input:focus-visible {
+    outline: none;
+  }
+  .oh-qa-input::placeholder {
+    opacity: 0.5;
+    color: var(--ink);
+  }
+  .oh-qa-close {
+    display: contents;
+  }
+  .oh-qa-close > .oh-button {
+    position: absolute;
+    top: 50%;
+    right: var(--s2);
+    transform: translateY(-50%);
+    color: var(--ink2);
+  }
+  .oh-qa > .oh-evform {
+    margin-top: var(--s3);
+  }
+
+  /* The unfolded phone: as wide as the half it stands in. */
+  :root[data-device="fold"] .oh-qa {
+    width: 100%;
+    max-width: calc(100% - var(--s2));
+  }
+  /* The phone: at the foot, as wide as the window, the line lowest, where the keyboard is. */
+  :root[data-device="phone"] .oh-qa-wrap {
+    --oh-qa-z: 11;
+    bottom: 0;
+  }
+  :root[data-device="phone"] .oh-qa {
+    --oh-qa-pad: var(--s3) var(--s4) var(--s4);
+    --oh-qa-top: var(--r-sheet) var(--r-sheet) 0 0;
+    display: flex;
+    flex-direction: column-reverse;
+    width: 100%;
+    max-width: none;
+    border-radius: var(--oh-qa-top);
+  }
+  :root[data-device="phone"] .oh-qa-line {
+    --oh-qa-line-out: 0 calc(var(--s4) * -1) calc(var(--s4) * -1);
+    --oh-qa-line-pad: var(--s2) var(--s4) var(--s3);
+    --oh-qa-line-sides: calc(var(--s4) * 2);
+    --oh-qa-line-top: 0;
+  }
+  :root[data-device="phone"] .oh-qa > .oh-evform {
+    --oh-qa-form-out: 0 0 var(--s2);
+    flex: none;
+    max-height: 46vh;
+    margin: var(--oh-qa-form-out);
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+}

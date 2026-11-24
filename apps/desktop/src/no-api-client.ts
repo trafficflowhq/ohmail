@@ -9,7 +9,15 @@
  * engine over a pipe; reaching for anything here throws rather than quietly opening a socket.
  */
 
+import type { AnswerOf, AwayResponderEdit, AwayResponderSaveReading } from "@ohmail/wire";
 import type { StorageFacts } from "../../webapp/app/shell/storage-state";
+import type {
+    ProfileImportAppliedWire, ProfileImportCandidateWire, ProfileImportPendingWire, ProfileImportStatusWire,
+} from "@ohmail/app/profile-import";
+
+export type {
+    ProfileImportAppliedWire, ProfileImportCandidateWire, ProfileImportCountsWire, ProfileImportPendingWire, ProfileImportStatusWire,
+} from "@ohmail/app/profile-import";
 
 const UNAVAILABLE = "the ohmail Cloud API is not part of this build — the desktop tier talks to its own local engine";
 
@@ -102,6 +110,7 @@ export const pendApiOwner: (owner: string | null) => void = () => {};
 export const blockApiOwner: () => void = () => {};
 
 export const boundApiOwner: () => string | null = () => null;
+export const boundApiFamily: (_owner: string) => string | null = () => null;
 
 /** Mirrors the hosted client's shape so the shared shell's types resolve. Always `public` here. */
 export const apiOwnerBinding: () => { kind: "public" } = () => ({ kind: "public" });
@@ -145,6 +154,10 @@ export const forgetAccess: () => void = () => {};
  */
 export const accessStorage: (a: AccountAccess | null | undefined) => StorageFacts | null = () => null;
 
+/** The hosted account's AI credit balance is unavailable through the local client. */
+export const accessAiCredits: (a: AccountAccess | null | undefined) => { remaining: number; total?: number } | null =
+  () => null;
+
 /**
  * The account-header negotiation, for the shared shell's types. Always `null` here — "nobody has
  * asked" — which is the honest value: this door has no `/hello` to ask and no answers to check,
@@ -187,7 +200,16 @@ export interface EnrollmentSession {
     next: "enroll_2fa";
     enrollmentToken: string;
     expiresIn: number;
+    familyId?: string;
 }
+
+export interface EnrollmentExpectation {
+    expectedOwner: string;
+    expectedFamily: string;
+    mayProceed(): boolean;
+}
+
+export const captureEnrollment: (owner: string, family: string | undefined) => EnrollmentExpectation = absent;
 
 export interface RegistrationPending {
     status: "ok";
@@ -204,6 +226,7 @@ export type LoginResult = EnrollmentSession | TwofaChallenge;
 export interface AuthenticatedSession {
     status: "authenticated";
     user: SessionUser;
+    familyId?: string;
 }
 
 export interface MailboxDTO {
@@ -310,12 +333,16 @@ export const auth: {
         user: SessionUser;
         scope: "full" | "enrollment";
         reuseSweeps?: ReuseSweep[];
+        familyId?: string;
     }>;
     acknowledgeReuseSweeps: (ids: readonly string[]) => Promise<void>;
     logout: (opts?: {
         mayProceed?: () => boolean;
+        expectedFamily?: string;
+        expectedAccount?: string;
     }) => Promise<void>;
-    armLogoutOnLeave: () => void;
+    clearLogoutCookies: (expectedFamily: string) => Promise<void>;
+    armLogoutOnLeave: (expectedFamily?: string, mayProceed?: () => boolean, expectedAccount?: string) => void;
     webauthnRegisterOptions: () => Promise<{
         options: PublicKeyCredentialCreationOptionsJSON;
     }>;
@@ -499,61 +526,6 @@ export type MailboxRelease = {
     outcome: "disconnected";
 };
 
-export interface ProfileImportCountsWire {
-    screener: number;
-    rules: number;
-    notifyRules: number;
-    tags: number;
-    awayResponder: boolean;
-    signature?: boolean;
-    signatureReplaces?: string;
-    signatureKept?: boolean;
-    removedRules?: number;
-}
-
-export type ProfileImportCandidateWire = {
-    state: "none";
-} | {
-    state: "found";
-    fingerprint: string;
-    updatedAt: string;
-    producer: {
-        kind: string;
-        version: string;
-    };
-    counts: ProfileImportCountsWire;
-} | {
-    state: "newer";
-    v: number;
-};
-
-export interface ProfileImportAppliedWire {
-    imported: ProfileImportCountsWire;
-    skippedRules: number;
-    retiredRules?: number;
-    seq: number | null;
-}
-
-export interface ProfileImportPendingWire {
-    state: "importing";
-    fingerprint: string;
-    reason?: "slow" | "unreachable";
-}
-
-export type ProfileImportStatusWire = {
-    state: "importing";
-    fingerprint: string;
-} | {
-    state: "imported";
-    imported: ProfileImportCountsWire | null;
-    skippedRules: number;
-    retiredRules?: number;
-} | {
-    state: "refused";
-    reason: string;
-    message: string;
-};
-
 export const profileImport: {
     candidate: (mailboxId: string) => Promise<ProfileImportCandidateWire>;
     apply: (mailboxId: string, fingerprint: string, signatureReplaces?: string) => Promise<ProfileImportAppliedWire | ProfileImportPendingWire>;
@@ -603,7 +575,6 @@ export interface ScreeningPreferenceWire {
     ohboxPolicy: "people_only" | "people_and_replied" | null;
     ohboxBar: string | null;
     defaultBar: string;
-    screenerAutoApply: boolean;
     impersonationFiling?: boolean;
     pending?: true;
     change?: ChangeWire;
@@ -614,7 +585,6 @@ export const screeningSettings: {
     set: (body: {
         ohboxPolicy?: ScreeningPreferenceWire["ohboxPolicy"];
         ohboxBar?: string | null;
-        screenerAutoApply?: boolean;
         impersonationFiling?: boolean;
     }) => Promise<ScreeningPreferenceWire>;
 } = absent;
@@ -659,6 +629,7 @@ export interface ConsentStateWire {
     blockAutoUnsubscribeAt?: string | null;
     locale?: string | null;
     resurfaceTime?: string | null;
+    draftReplies?: boolean;
     counts?: {
         decidedSenders: number;
         activeUndecidedSenders: number;
@@ -763,6 +734,7 @@ export const push: {
 
 export const consent: {
     state: () => Promise<ConsentStateWire>;
+    setDraftReplies: (draftReplies: boolean, expectedOwner?: string) => Promise<{ draftReplies: boolean }>;
     setAutoSuggest: (enabled: boolean) => Promise<{
         autoSuggestAt: string | null;
         autoActAt?: string | null;
@@ -814,32 +786,29 @@ export const consent: {
     }>;
 } = absent;
 
-export interface AwayResponderWire {
-    enabled: boolean;
-    body: string | null;
-    startsAt: string | null;
-    /** The instant the responder stops; the pane resolves a picked day to the end of it. */
-    endsAt: string | null;
-    audience: "screened_in" | "everyone";
-    throttle: "always" | "per_message" | "per_day" | "per_week";
-    /** Folder names. `ohmail/Screener` is storable only beside `audience: "everyone"`. */
-    piles: ("INBOX" | "ohmail/News" | "ohmail/Receipts" | "ohmail/Screener")[];
-    updatedAt: string | null;
-    change?: ChangeWire;
-}
+type AwayRead = AnswerOf<"GET /away-responder">;
 
-/**
- * The SAVE's answer: the row plus the 202 discriminator. Mirrored here because the shared
- * settings control imports it by name and this module stands in for the real one in both
- * desktop artifacts — see this file's header on keeping the surface in step.
- */
-export interface AwayResponderSaveWire extends AwayResponderWire {
-    pending?: boolean;
+export interface AwayResponderWire {
+    enabled: AwayRead["enabled"];
+    body: AwayRead["body"];
+    startsAt: AwayRead["startsAt"];
+    endsAt: AwayRead["endsAt"];
+    audience: AwayRead["audience"];
+    throttle: AwayRead["throttle"];
+    piles: AwayRead["piles"];
+    updatedAt: AwayRead["updatedAt"];
+    change?: NonNullable<AwayRead["change"]>;
+}
+export type AwayResponderSaveWire = AwayResponderSaveReading;
+
+export interface AwayTransport {
+    state: () => Promise<AwayResponderWire>;
+    save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>;
 }
 
 export const away: {
-    state: () => Promise<AwayResponderWire>;
-    save: (next: Omit<AwayResponderWire, "updatedAt">) => Promise<AwayResponderSaveWire>;
+    state: () => Promise<AwayRead>;
+    save: (next: AwayResponderEdit) => Promise<AnswerOf<"PUT /away-responder">>;
 } = absent;
 
 export type AccountAccess = {
@@ -907,6 +876,7 @@ export interface ScreenerSuggestWire {
     requested: number;
     quoted: number;
     quotedCredits?: number;
+    quoteGrant?: import("@ohmail/wire").ScreenerQuoteGrant;
     charged: number;
     stopped?: "out_of_credits" | "over_quote" | "spend_unavailable";
     remainingCredits?: number;
@@ -938,6 +908,7 @@ export const screener: {
         dryRun?: boolean;
         idempotencyKey?: string;
         maxCredits?: number;
+        quoteGrant?: string;
         automatic?: boolean;
     }) => Promise<ScreenerSuggestWire>;
     junkList: (opts?: {
@@ -952,7 +923,7 @@ export const screener: {
     }) => Promise<JunkRescueWire>;
     junkSearch: (q: string) => Promise<JunkSearchWire>;
     junkSweepPreview: () => Promise<JunkSweepWire>;
-    junkSweepRequest: () => Promise<JunkSweepWire>;
+    junkSweepRequest: (confirmation: string) => Promise<JunkSweepWire>;
 } = absent;
 
 export interface JunkRescueWire {
@@ -979,6 +950,8 @@ export interface JunkSweepWire {
     mailboxes: JunkSweepMailboxWire[];
     movable: number;
     pending: boolean;
+    confirmationRequired?: boolean;
+    confirmation?: string;
     held?: {
         ids: string[];
         truncated: boolean;

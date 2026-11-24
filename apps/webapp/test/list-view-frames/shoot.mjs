@@ -2,7 +2,7 @@
 /**
  * The list surface's frames, at 1440 and 390, off the harness `build-harness.mjs` makes:
  *
- *   node apps/webapp/test/list-view-frames/shoot.mjs [--out <dir>]
+ *   node apps/webapp/test/list-view-frames/shoot.mjs [--out <dir>] [--trash-live]
  *
  * Each cell prints one line — `FRAME <name> <width> <verdict>` — and a verdict is read off the
  * page (the sentence present or gone), never assumed from the picture. Exit 1 on any red line.
@@ -19,7 +19,9 @@ const out = resolve(repo, argOut >= 0 ? process.argv[argOut + 1] : "build/list-v
 mkdirSync(out, { recursive: true });
 const PAGE = pathToFileURL(resolve(repo, "build/list-view-frames/harness.html")).href;
 const EN = (await import(pathToFileURL(resolve(repo, "apps/webapp/messages/en.json")).href, { with: { type: "json" } })).default;
+const TRASH = (await import(pathToFileURL(resolve(repo, "packages/app/messages/trash.en.json")).href, { with: { type: "json" } })).default.trash;
 const GONE = EN.reader.gone;
+const trashOnly = process.argv.includes("--trash-live");
 
 let red = 0;
 const line = (name, w, ok, note = "") => {
@@ -30,6 +32,7 @@ const line = (name, w, ok, note = "") => {
 const browser = await chromium.launch();
 async function page(w, query = "", hash = "#/ohbox") {
   const p = await browser.newPage({ viewport: { width: w, height: w > 1023 ? 900 : 844 } });
+  if (query === "?view=trash-live") await p.route(/^https?:/, (route) => route.abort());
   await p.goto(`${PAGE}${query}${hash}`);
   await p.waitForFunction(() => window.__lv?.ready === true);
   await p.waitForTimeout(600);
@@ -42,7 +45,30 @@ const openRow = async (p, view, id) => {
   await p.waitForTimeout(300);
 };
 
+async function liveTrash(w) {
+  const p = await page(w, "?view=trash-live", "");
+  await p.getByRole("region", { name: TRASH.liveHead })
+    .getByRole("option", { name: /A receipt the mail server kept/ }).click({ position: { x: 20, y: 10 }, timeout: 5000 });
+  const sheet = p.getByRole("dialog", { name: "Reading", exact: true });
+  const reading = w <= 699 ? sheet : p.getByRole("region", { name: "Reading", exact: true });
+  const article = reading.getByRole("article");
+  await article.getByText("The receipt, read from the mail server's own Trash.", { exact: true })
+    .waitFor({ timeout: 5000 });
+  const sheets = await sheet.count();
+  const { top, inset } = await article.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { top: style.paddingTop, inset: style.getPropertyValue("--s5").trim() };
+  });
+  line("trash-live", w, w > 699 ? sheets === 0 : sheets === 1 && top === "24px" && top === inset, `sheet=${sheets} read-top=${top}`);
+  await shot(p, "trash-live", w);
+  await p.close();
+}
+
 for (const w of [1440, 390]) {
+  if (trashOnly) {
+    await liveTrash(w);
+    continue;
+  }
   // EMPTY: a tag nothing carries, an empty pile, no drafts, an empty store, an empty Trash.
   for (const [name, hash, sentence] of [
     ["empty-tag", "#/tag/tg2", EN.tag.emptyTitle],
@@ -125,25 +151,12 @@ for (const w of [1440, 390]) {
     await p.close();
   }
 
-  // TRASH'S LIVE ROW at this width, and the address view's offline line.
-  {
-    const p = await page(w, "?view=trash-live", "");
-    await p.locator(".trash-live .row").first().click();
-    await p.waitForTimeout(400);
-    const sheet = await p.locator(".reader[role=dialog]").count();
-    const top = await p.evaluate(() => {
-      const el = document.querySelector(".reader .trash-live-read");
-      return el ? getComputedStyle(el).paddingTop : "none";
-    });
-    line("trash-live", w, w > 699 ? sheet === 0 : sheet === 1 && top === "30px", `sheet=${sheet} read-top=${top}`);
-    await shot(p, "trash-live", w);
-    await p.close();
-  }
+  await liveTrash(w);
   {
     const p = await page(w, "?view=address-offline", "");
     await p.waitForTimeout(400);
     const weight = await p.evaluate(() => {
-      const el = document.querySelector(".empty .addr-scope .addr-device");
+      const el = Array.from(document.querySelectorAll("strong")).find((part) => part.textContent === "this computer");
       return el ? `${getComputedStyle(el).fontWeight}/${getComputedStyle(el).display}` : "none";
     });
     line("address-offline", w, (await text(p)).includes(EN.search.addressOffline) && weight === "500/inline", `device=${weight}`);
@@ -152,7 +165,7 @@ for (const w of [1440, 390]) {
   }
 }
 // THE SHEET'S WAY BACK under a coarse pointer between 641 and 699px: drawn 38, hit 44.
-{
+if (!trashOnly) {
   const ctx = await browser.newContext({ viewport: { width: 700, height: 844 }, hasTouch: true });
   const p = await ctx.newPage();
   await p.goto(`${PAGE}#/tag/tg1`);

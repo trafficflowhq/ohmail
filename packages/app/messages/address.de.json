@@ -1,0 +1,50 @@
+{
+  "address": {
+    "title": "Alle Mails",
+    "loading": "Ihre Mails werden geladen",
+    "count": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "side": {
+      "label": "Richtung",
+      "all": "Alle",
+      "from": "Von ihnen",
+      "to": "An sie"
+    },
+    "sideCount": {
+      "all": "Alle {count}",
+      "from": "Von ihnen {count}",
+      "to": "An sie {count}"
+    },
+    "empty": {
+      "all": "Nichts mit ihnen",
+      "from": "Nichts von ihnen",
+      "to": "Nichts an sie"
+    },
+    "row": {
+      "to": "An {name}",
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "archive": {
+      "indexing": "Deine neueren Mails werden noch gelesen. Deshalb kommen weitere Treffer dazu.",
+      "retry": "Erneut versuchen",
+      "offline": "ohmail Cloud ist nicht erreichbar. Das sind die Mails auf <device>diesem Computer</device>.",
+      "unanswered": "Dein Server hat nicht geantwortet. Angezeigt werden die neueren Mails, die dieses Gerät hat.",
+      "searching": "Dein ganzes Postfach wird durchsucht …",
+      "noRecipientsWhy": "Das sind die neueren Mails an diese Adresse. Ältere Mails an diese Adresse lassen sich noch nicht auflisten.",
+      "bySenderWhy": "Dein ganzes Postfach wird nur nach Absender durchsucht. Ältere Mails an diese Adresse werden deshalb noch nicht mitgezählt.",
+      "shown": "die ersten {shown} werden gezeigt",
+      "importing": "Der Rest deiner Mails ist noch nicht synchronisiert.",
+      "empty": {
+        "all": "Nichts von oder an {address}.",
+        "from": "Nichts von {address}.",
+        "to": "Nichts an {address} geschickt."
+      }
+    },
+    "close": "Schliessen"
+  }
+}

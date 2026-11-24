@@ -5,10 +5,10 @@
  * reader's own door (`hydrateOffMirror`) before the forward opens, as the web and desktop do.
  * `forwardPress` decides; the read is shared with the reader's open, so it happens once.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { EngineMessage } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, liveMessage, openOffMirror, type LiveWorldActions } from "../src/state/live";

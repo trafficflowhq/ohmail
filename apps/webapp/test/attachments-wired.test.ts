@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { FixturesAdapter, HttpAdapter, MutationRejectedError, OhmailEngine } from "@ohmail/client-engine";
+import { HttpAdapter, MutationRejectedError, OhmailEngine } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { createEngine } from "../app/shell/engine-config.js";
-import { createSyncGate, transportOf } from "../app/shell/sync-scheduler.js";
+import { createSyncGate, transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 /* The `chrome` memo below is located by its DECLARED NAME, never by the hook it is declared
    with — the rule, and the three ways a hook spelling fails, are in the helper. */
-import { shellFrameOf, sliceOfDeclaration } from "./source-anchor.js";
+import { sliceOfDeclaration } from "./source-anchor.js";
 
 /**
  * ═══ GAP THE PAPERCLIP IS REACHABLE FROM A REAL ACCOUNT ══════════════════════════
@@ -41,7 +42,8 @@ import { shellFrameOf, sliceOfDeclaration } from "./source-anchor.js";
  *     having it, or the demo claims an archive it has no server for);
  *  4. `res.ok` is branched on BEFORE `.blob()`, so a 413's explanatory JSON is never handed
  *     to somebody as a download named after their PDF;
- *  5. the surface consumes it — `MessagePane` renders the strip and no longer toasts.
+ *  5. the surface consumes it — the shared Reader renders the strip and no longer toasts (since the switch to the
+ *     new shell: the new reader's `Letter.tsx` and `LetterFiles`, the ground's one file door; share reader-1).
  */
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
@@ -347,20 +349,23 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
    * a real DOM. These two are only the join between the two halves.
    */
   it("`MessagePane` renders the strip, and no longer reads the fixtures-only field", () => {
-    const pane = code(read("../app/shell/MessagePane.tsx"));
+    /* Re-pointed by path (share reader-1): today's `MessagePane` and `MessageFiles` leave with the switch; the open
+       letter is the new reader's `Letter.tsx`, its strip `LetterFiles` (`packages/app/src/reader/files/Files.tsx`),
+       which draws the kit's file tiles where today's drew `AttachmentStrip`. */
+    const pane = code(read("../../../packages/app/src/reader/Letter.tsx"));
     // RENDERED, not merely imported: an unused import compiles and ships nothing. The strip is
-    // `MessageFiles` now, the one component every pane renders it through.
-    expect(pane, "MessagePane does not render <MessageFiles>").toMatch(/<MessageFiles /);
-    expect(code(read("../app/shell/MessageFiles.tsx")), "MessageFiles does not render <AttachmentStrip>")
-      .toMatch(/<AttachmentStrip/);
-    expect(pane, "MessagePane still gates the attachment surface on the fixtures-only field")
+    // `LetterFiles` now, the one component the letter renders it through.
+    expect(pane, "the letter does not render <LetterFiles>").toMatch(/<LetterFiles\s/);
+    expect(code(read("../../../packages/app/src/reader/files/Files.tsx")), "LetterFiles does not render the kit's <FileTile>")
+      .toMatch(/<FileTile/);
+    expect(pane, "the letter still gates the attachment surface on the fixtures-only field")
       .not.toMatch(/message\.attachment/);
     // The DEAD prop is `onAttachment` (singular) — the fixtures-era per-message download callback.
     // Word-boundaried so it names exactly that and not the reply editor's live `onAttachments`
     // (plural) file-list prop, which threads the same pane on purpose (slice R9-3). A bare
     // `/onAttachment/` fired on the wrong identifier, which is the loosening this file's own
     // `code()` note warns about.
-    expect(pane, "the dead onAttachment prop is still threaded through MessagePane")
+    expect(pane, "the dead onAttachment prop is still threaded through the letter")
       .not.toMatch(/\bonAttachment\b/);
   });
 
@@ -375,71 +380,77 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
    * how a press came to open a viewer instead of saving a file.
    */
   it("`MessageFiles` presses through to the download, and offers the preview separately", () => {
-    const pane = code(read("../app/shell/MessageFiles.tsx"));
-    const from = pane.indexOf("<AttachmentStrip");
-    expect(from, "MessageFiles no longer renders <AttachmentStrip> — re-aim this").toBeGreaterThan(-1);
-    const strip = pane.slice(from, pane.indexOf("/>", from));
+    /* Re-pointed by path (share reader-1) to the new reader's tile (`packages/app/src/reader/files/Files.tsx`):
+       the kit's `FileTile` takes the save as its Download (`save`, today's `onOpen`) and the look as its own press
+       (`main`, today's eye, `onPreview`) where the shell hands a look (`look`, none on a browser host, where the
+       press saves too); `fileLookOf` is today's `isPreviewable`: an SVG is `other`, never looked at. */
+    const pane = code(read("../../../packages/app/src/reader/files/Files.tsx"));
+    const from = pane.indexOf("<FileTile");
+    expect(from, "LetterFiles no longer renders <FileTile> — re-aim this").toBeGreaterThan(-1);
+    /* The tile's own close, at its own indent: its `look` (a thumbnail's <img />) closes before it. */
+    const indent = pane.slice(pane.lastIndexOf("\n", from) + 1, from);
+    const tile = pane.slice(from, pane.indexOf(`\n${indent}/>`, from));
+    const save = tile.slice(tile.indexOf("save={{"));
+    const main = tile.slice(tile.indexOf("main={{"), tile.indexOf("save={{"));
 
-    expect(strip, "a tile press does not reach the download path").toMatch(/onOpen=\{[^}]*attachments\.open\(/);
-    expect(strip, "a tile press opens the viewer instead of saving the file")
-      .not.toMatch(/onOpen=\{[^}]*openAttachmentPreview/);
-    expect(strip, "nothing on a tile opens the preview any more").toMatch(
-      /onPreview=\{[^}]*openAttachmentPreview\(/,
+    expect(save, "a tile press does not reach the download path").toMatch(/onPress: \(\) => files\.open\(/);
+    expect(save, "a tile press opens the viewer instead of saving the file")
+      .not.toMatch(/\blook\b/);
+    expect(main, "nothing on a tile opens the preview any more").toMatch(
+      /onPress: \(\) => \(look \? look\(item\.id\) : files\.open\(messageId, item\.id\)\)/,
     );
     // The predicate is what keeps an SVG — a document that executes script — from being
     // offered a render. Dropping it makes every attachment previewable.
-    expect(strip, "the strip is not told which files may be rendered").toMatch(
-      /canPreview=\{[^}]*isPreviewable\(/,
+    expect(pane, "the strip is not told which files may be rendered").toMatch(
+      /const look = fileLookOf\(item\.mimeType\) !== "other" \? preview : null;/,
     );
   });
 
   it("`AppShell` builds the preview overlay's list WITH inline images, so an inline png opens", () => {
     // Item 4. The overlay must be able to find the id it was opened on. An INLINE image is a real
-    // clickable tile in the strip (`MessagePane` lists them when the body renders as text), so the
+    // clickable tile in the strip (the shared Reader lists them when the body renders as text), so the
     // overlay's own `itemsOf` has to include them too — otherwise clicking an inline picture finds
     // no matching item and, when the message carries nothing else, opens nothing at all. The strip
     // and the overlay must agree on which attachments exist. Source-level because the empty-list →
     // no-overlay path is exactly the "clicking does nothing" the reader saw.
-    const shell = code(read("../app/shell/AppShell.tsx"));
-    const from = shell.indexOf("<AttachmentPreview");
-    expect(from, "AppShell no longer mounts <AttachmentPreview> — re-aim this").toBeGreaterThan(-1);
-    // The `itemsOf` that feeds the overlay's `items` sits just above the mount.
-    const mountBlock = shell.slice(Math.max(0, from - 1200), from);
-    expect(mountBlock, "the overlay's item list drops inline images, so an inline png cannot open")
-      .toMatch(/itemsOf\([^)]*includeInlineParts:\s*true/);
+    const files = sliceOfDeclaration(code(read("../../../packages/app/src/reader/files/Files.tsx")), "LetterFiles");
+    expect(files, "the tile list must supply the same inline item to the preview")
+      .toMatch(/const list = files\.itemsOf\(messageId, \{ includeInlineParts: true \}\)/);
+    expect(files).toMatch(/const items = omit \? list\.items\.filter\(\(item\) => item\.id !== omit\) : list\.items;/);
+    expect(files).toMatch(/items\.map\(\(item\) =>/);
+    expect(files).toMatch(/<LetterPreview[\s\S]*?items=\{items\}/);
   });
 
   it("`AppShell` supplies the chrome, so BOTH mounts share one list of bytes", () => {
+    /* Re-pointed by path (share reader-1): the new shell's ground mounts the one file door above the panes
+       (`packages/app/src/mail/ground/DoorsMount.tsx`, over the inputs of `door-inputs.ts`), where today's
+       `AppShell` called the hook and handed it in its chrome. */
+    const mount = code(read("../../../packages/app/src/mail/ground/DoorsMount.tsx"));
+    const shell = mount + code(read("../../../packages/app/src/mail/ground/door-inputs.ts"));
     // The pane is mounted twice while the reader is open. Two independent lists would mean two
     // IMAP connections for one press and a leaked object URL from whichever mount lost.
-    const shell = code(read("../app/shell/AppShell.tsx"));
-    expect(shell, "AppShell never calls useMessageAttachments — nothing fetches or releases")
+    expect(shell, "the ground never calls useMessageAttachments — nothing fetches or releases")
       .toMatch(/useMessageAttachments\(/);
     expect(shell, "the download-all failure has no report beside the button that was pressed")
       .toMatch(/onDownloadAllFailed/);
     expect(shell, "the dead onAttachment toast is still wired").not.toMatch(/onAttachment=/);
 
     // AND IT REACHES THE PANE. Calling the hook is not the same as handing the result over:
-    // `MessageChrome.attachments` is OPTIONAL, so dropping this one key from the memo compiles,
-    // renders, and takes the strip off every message — on the live path only, which is this
-    // gap's whole subject one layer up. The memo is sliced out by name rather than searched for
-    // loosely, so a rename fails here loudly instead of matching some other `attachments`.
-    // THE START IS THE DECLARED NAME. `sliceOfDeclaration` throws `anchor not found: chrome` if
-    // the memo is gone — the sentence the `toBeGreaterThan(-1)` guard here used to approximate,
-    // and one that a hook rename cannot turn into a window over the wrong bytes.
-    const decl = sliceOfDeclaration(shell, "chrome");
-    // THE END STAYS NARROW, and that is this case rather than an accident: the OBJECT LITERAL
-    // only, stopping at the `}),` that closes it, deliberately NOT the whole declaration. The
-    // declaration carries the DEPENDENCY ARRAY, `attachments` appears there too, and dropping the
-    // key from the object alone would pass. Measured, not assumed: that mutation was GREEN
-    // against the wider slice. So the helper supplies the anchor and this line supplies the bound.
-    const closes = decl.indexOf("\n    }),");
-    expect(closes, "the chrome memo's object literal no longer closes at that indentation — a "
+    // the record the ground provides (`doors`) must carry the file door, and be the one provided.
+    // THE START IS THE DECLARED NAME. `sliceOfDeclaration` throws `anchor not found: doors` if
+    // the memo is gone, and a hook rename cannot turn it into a window over the wrong bytes.
+    const decl = sliceOfDeclaration(mount, "doors");
+    // THE END STAYS NARROW: the OBJECT LITERAL only, stopping at the `})` that closes it,
+    // deliberately NOT the whole declaration: the DEPENDENCY ARRAY names `files` too, and
+    // dropping the key from the object alone would pass over the wider slice.
+    const closes = decl.indexOf("}),");
+    expect(closes, "the doors memo's object literal no longer closes there — a "
       + "missed bound would widen this window back over the dependency array")
       .toBeGreaterThan(-1);
     const memo = decl.slice(0, closes);
-    expect(memo, "the chrome memo does not carry `attachments` — MessagePane gets undefined")
-      .toMatch(/\battachments\b/);
+    expect(memo, "the doors memo does not carry `files` — the reader gets undefined")
+      .toMatch(/\bfiles\b/);
+    expect(mount, "the ground does not provide the doors it built").toMatch(/<DoorsContext\.Provider value=\{doors\}>/);
   });
 
   it("`AppShell` keeps a preview open while a pane shows its message, on every surface", () => {
@@ -449,21 +460,20 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     // selection MOVE, kept here, and the last pane letting the message go, reported by the seam.
     // Behaviour is held in `every-file-is-shown.test.tsx`; this is the join, source-level for
     // the reason every assertion in this group is.
-    const shell = code(shellFrameOf("previewSelection").source);
-    const from = shell.indexOf("setPreviewFor(null)");
-    expect(from, "AppShell no longer derive-closes the preview — re-aim this").toBeGreaterThan(-1);
-    const effect = shell.slice(Math.max(0, from - 1200), from + 400);
-    // The COMPARISON, not the ref's name: the ref's declaration and assignment survive a
-    // deleted comparison, and a pin that matched them stayed green through exactly that
-    // mutation (watched happen — this line was `/previewSelection/` for ten minutes).
-    expect(effect, "the previous-selection comparison is gone — a within-thread move leaves the overlay over revoked bytes")
-      .toMatch(/before !== \(selectedOhbox\?\.id \?\? null\)\) setPreviewFor\(null\)/);
-    // The second trigger: the seam names the message its last pane let go, and the shell closes
-    // a preview over it. Without it a deleted sibling or a closed reader keeps its overlay.
-    const app = code(read("../app/shell/AppShell.tsx"));
-    expect(app, "AppShell does not close a preview when the last pane lets its message go")
-      .toMatch(/onUnshown: \(id\) => setPreviewFor\(\(p\) => \(p\?\.messageId === id \? null : p\)\)/);
-    const seam = code(read("../app/shell/attachments.ts"));
+    const reader = code(read("../../../packages/app/src/reader/Reader.tsx"));
+    expect(reader, "the route and selected letter identify the preview's selection")
+      .toContain('previewSelection={`${route.place}:${openId}`}');
+    const letter = code(read("../../../packages/app/src/reader/Letter.tsx"));
+    expect(letter, "the preview is mounted under the letter that owns its files")
+      .toMatch(/<LetterFiles\s+messageId=\{message\.id\}\s+selection=\{previewSelection\}\s+parts=\{parts\}\s+omit=\{parts\.invitationFile\?\.\(message\)\}\s+\/>/);
+    const files = code(read("../../../packages/app/src/reader/files/Files.tsx"));
+    expect(files, "a changed selection must stop drawing the old preview immediately")
+      .toMatch(/const activeId = picked\?\.selection === selection \? picked\?\.id : undefined;/);
+    expect(files, "a disappeared attachment cannot keep the preview open")
+      .toMatch(/activeId && typeof look === "object" && items\.some\(\(item\) => item\.id === activeId\)/);
+    expect(files, "the last pane's unmount releases its hold on the opened letter")
+      .toMatch(/useEffect\(\(\) => hold\?\.\(messageId\), \[hold, messageId\]\);/);
+    const seam = code(read("../../../packages/app-logic/src/reader/attachments.ts"));
     expect(seam, "the seam no longer reports the last release")
       .toMatch(/holds\.current\.delete\(id\);[\s\S]{0,120}onUnshown\.current\?\.\(id\);/);
   });
@@ -475,7 +485,7 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     // completion release state the committed tree still renders (review finding). The refs
     // may be assigned in exactly one place: the publication effect. Source-level because no
     // jsdom test can schedule an abandoned concurrent render deterministically.
-    const seam = code(read("../app/shell/attachments.ts"));
+    const seam = code(read("../../../packages/app-logic/src/reader/attachments.ts"));
     // LAYOUT-scope (`useCommitEffect` — older-mail.ts's SSR-safe alias), not a passive
     // `useEffect`: passive effects flush after paint, and an already-queued completion running
     // in the commit-to-paint gap read the OLD refs — the round-six finding on the round-five

@@ -1,0 +1,69 @@
+/* A pile, or a tag of the person's own. It is whole or not there. */
+@layer oh {
+  .oh-tag {
+    --oh-tag-h: 22px;
+    --oh-tag-gap: 6px;
+    --oh-tag-ring: var(--oh-ring-btn);
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--oh-tag-gap);
+    height: var(--oh-tag-h);
+    padding: 0 var(--s2);
+    border-radius: var(--r-pill);
+    background: var(--oh-tag-ground, var(--soft-sheet));
+    box-shadow: var(--oh-tag-ring);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+    white-space: nowrap;
+  }
+  .oh-tag-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  :root[data-device="phone"] .oh-tag[data-truncate] {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-tagdot {
+    --oh-tagdot-size: 8px;
+    --oh-tagdot-gap: 0 6px;
+    --oh-tagdot-color: var(--oh-hue-dot);
+    flex: none;
+    width: var(--oh-tagdot-size);
+    height: var(--oh-tagdot-size);
+    margin: var(--oh-tagdot-gap);
+    border-radius: var(--dot-r);
+    background: var(--oh-tagdot-color);
+  }
+  .oh-tag > .oh-tagdot {
+    --oh-tagdot-gap: 0;
+  }
+  /* A place, as a word. */
+  .oh-where {
+    flex: none;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+  }
+
+  :root[data-face="ohmarchy"] .oh-tag {
+    --oh-tag-ring: var(--oh-ring-line);
+    background: transparent;
+    font-weight: var(--w-text);
+  }
+  :root[data-face="ohmarchy"] .oh-tag[data-own] {
+    --oh-tag-ring: none;
+    --oh-tag-tint: color-mix(in oklch, var(--oh-hue-dot) 14%, var(--sheet));
+    --oh-tag-ink: var(--oh-hue-fg);
+    background: var(--oh-tag-tint);
+    color: var(--oh-tag-ink);
+  }
+  :root[data-face="ohmarchy"] .oh-tag[data-own] > .oh-tagdot {
+    display: none;
+  }
+}

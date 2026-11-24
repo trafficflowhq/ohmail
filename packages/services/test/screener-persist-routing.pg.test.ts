@@ -31,7 +31,7 @@ import { evaluateRules, type NormalizedMessage } from "@trafficflow/core/mail";
  *   3. `evaluateRules` sees the deny rule win and files the sender's next message to
  *      `ohmail/Screened`, NOT `ohmail/Screener`.
  * A unit test on any one of the three can be green while the seam between them is broken; and the
- * routing read is exactly the kind of rule-order/effect question CLAUDE.md records PGlite hiding
+ * routing read is exactly the kind of rule-order/effect question AGENTS.md records PGlite hiding
  * three production bugs behind. So decide runs on :5433 and the routing read comes back through
  * the real adapter.
  *
@@ -99,7 +99,7 @@ async function newWorld(each = 3): Promise<World> {
       nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     held.push(m!.id);

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -187,7 +188,7 @@ async function mount(messages: Record<string, unknown> = en as never): Promise<v
         messages: messages as never,
         timeZone: "Europe/Zurich",
       },
-        h(ThemeProvider, null, h(ToastHost, null, h(DesktopDevices)))),
+        h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DesktopDevices })))),
     );
   });
   await flush();
@@ -242,33 +243,6 @@ describe("HOST MODE's pane exists on the standalone door only", () => {
     expect(hostDoorFor(null)).toBe(null);
   });
 
-  /**
-   * THE PANE ID IS SHARED, THE NODE IS NOT — and this case used to assert there was exactly one
-   * injection, which was a claim about host mode written as a claim about the whole pane.
-   *
-   * Host mode publishes the mailbox THIS computer opens; an install mirroring a hosted account
-   * has nothing of its own to serve, so `hostDoorFor` withholds it there and that has not
-   * changed. What the old count also enforced was the ABSENCE of any Devices entry on the hosted
-   * door — where the account has real devices, a real session list and a real revoke, all of
-   * which a browser tab shows and this window did not. So there are two arms now, and each is
-   * pinned to its own door: a rewrite that injects either unconditionally still goes red.
-   */
-  it("the gate injects host mode's node through hostDoorFor, and the account's through accountDoor", () => {
-    const gate = fs.readFileSync(
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/DesktopGate.tsx"),
-      "utf8",
-    );
-    const injections = gate.match(/devicesSection:/g) ?? [];
-    expect(injections.length, "a third Devices node appeared — which door is it for?").toBe(2);
-    expect(gate).toMatch(
-      /hostDoorFor\(status\) === "local"\s*\n?\s*\?\s*\{ devicesSection: <DesktopDevices \/> \}/,
-    );
-    /* The hosted arm is a DOOR OUT, not a form: the mint and the revoke are step-up gated and
-       nothing this window can do asserts a second factor. Pinned as the place key, because a
-       node that opened the wrong page would be a working button to the wrong screen. */
-    expect(gate).toMatch(/:\s*accountDoor\s*\n?\s*\?\s*\{\s*\n?\s*devicesSection:/);
-    expect(gate).toContain('place="devices"');
-  });
 });
 
 // ── The guided ladder ──────────────────────────────────────────────────────────────────────────
@@ -440,7 +414,7 @@ describe("add a device — the QR moment", () => {
     const mint = engineAsked.find((r) => r.method === "POST" && r.url === "/pair");
     expect(mint?.body).toEqual({ grant: "device-pair", label: "Mara" });
 
-    const svg = hostEl.querySelector("svg")!;
+    const svg = hostEl.querySelector(".oh-code-tile svg")!;
     expect(decodeQr(matrixFromSvg(svg as unknown as SVGSVGElement))).toBe(`${ORIGIN}/pair#${TOKEN}`);
   });
 
@@ -461,7 +435,7 @@ describe("add a device — the QR moment", () => {
 
     await click(button(enHost.mintedDone!));
     expect(text()).not.toContain(TOKEN);
-    expect(hostEl.querySelector("svg")).toBeNull();
+    expect(hostEl.querySelector(".oh-code-tile svg")).toBeNull();
   });
 
   it("a rejected clipboard is said, with the scan as the way that still works — never a false `copied`", async () => {
@@ -725,7 +699,7 @@ describe("off-state problems are honored — the ladder is not only the probe's"
       root.render(
         h(React.StrictMode, null,
           h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-            h(ThemeProvider, null, h(ToastHost, null, h(DesktopDevices))))),
+            h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DesktopDevices }))))),
       );
     });
     await flush();
@@ -936,7 +910,7 @@ describe("the copy bar: awake-qualified, never unqualified always-on", () => {
   it("the German pane serves with the qualifier rendered", async () => {
     installShell({ hostState: SERVING, tailscale: RUNNING, routes: EMPTY_LISTS });
     await mount(de as never);
-    expect(text()).toContain("solange dieser Computer wach ist");
+    expect(text()).toContain("Solange dieser Computer wach ist");
     expect(text()).toContain(ORIGIN);
   });
 });

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { deleteAddress, deleteButton, deleteCode } from "./fixtures/delete-account-controls";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
@@ -32,11 +33,13 @@ vi.mock("../app/hello", async () => {
   return { ...actual, get SELF_HOST_BUILD() { return rig.selfHost; }, serverHello: async () => null };
 });
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {}, replace: () => {} }) }));
-vi.mock("../app/sign-out", () => ({
+vi.mock("../app/sign-out", async (original) => ({
+  ...await original<typeof import("../app/sign-out")>(),
   forgetThisBrowser: async () => ({ remaining: [], inventoryComplete: true }),
   signOut: async () => ({ cleared: true, inventoryComplete: true, serverRefused: null, remaining: [] }),
 }));
-vi.mock("../app/api-client", () => {
+vi.mock("../app/api-client", async (original) => {
+  const actual = await original<typeof import("../app/api-client")>();
   class ApiError extends Error {
     status: number;
     constructor(status: number, message: string) { super(message); this.status = status; }
@@ -50,6 +53,7 @@ vi.mock("../app/api-client", () => {
     return answer;
   };
   return {
+    ...actual,
     ApiError,
     apiConfigured: () => true,
     accessFeedFor: () => feed,
@@ -59,7 +63,9 @@ vi.mock("../app/api-client", () => {
     codeOf: () => null,
     messageOf: (e: unknown) => String(e),
     auth: {
-      session: async () => ({ user: { accountId: "acct-1", email: "person@example.test" }, scope: "full" }),
+      ...actual.auth,
+      stepUpTotp: async () => ({ ok: true }),
+      session: async () => ({ user: { accountId: "acct-1", email: "person@example.test", twofaEnrolled: { totp: true, webauthn: false } }, scope: "full" }),
       login: async () => ({ status: "twofa_required", loginToken: "tok", methods: ["totp"] }),
       totpVerify: async () => ({ user: { accountId: "acct-1", email: "person@example.test" } }),
     },
@@ -80,6 +86,8 @@ afterEach(async () => {
   if (root) await act(() => root!.unmount());
   root = null;
   document.body.innerHTML = "";
+  (await import("@ohmail/app-logic/session/account-erased")).clearAccountErased();
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
   vi.restoreAllMocks();
 });
 
@@ -91,8 +99,7 @@ async function waitFor(ok: () => boolean, what: string): Promise<void> {
   }
 }
 
-async function field(c: HTMLElement, sel: string, value: string): Promise<void> {
-  const input = c.querySelector<HTMLInputElement>(sel)!;
+async function field(input: HTMLInputElement, value: string): Promise<void> {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
   await act(async () => { setter.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
 }
@@ -104,24 +111,28 @@ async function submit(form: Element): Promise<void> {
 /** The pane at its facts: the Erased and Kept columns, the sentences this finding is about. */
 async function mount(selfHost: boolean, messages: AbstractIntlMessages, locale = "en"): Promise<HTMLElement> {
   rig.selfHost = selfHost;
-  const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
+  const { DeleteAccountRoute } = await import("../app/(product)/account/delete/DeleteAccountRoute.js");
   const c = document.createElement("div");
   document.body.appendChild(c);
   root = createRoot(c);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale, messages, timeZone: "UTC", children: h(AccountSection) }));
+    root!.render(h(NextIntlClientProvider, { locale, messages, timeZone: "UTC", children: h(DeleteAccountRoute) }));
   });
-  await waitFor(() => c.querySelector("#acct-typed") != null, "the facts");
+  await waitFor(() => deleteAddress(c) !== null, "the facts");
   // `useManageOffer` settles after the session read; one more turn so a managed keptSub is on screen.
   await act(async () => { await new Promise((r) => setTimeout(r, 15)); });
   return c;
 }
 
-/** The press to the receipt (a fresh step-up window, so the erase runs on the press). */
+/** The press and its factor, through to the receipt. */
 async function erase(c: HTMLElement): Promise<void> {
-  await field(c, "#acct-typed", "person@example.test");
-  await submit(c.querySelector("form.acct-confirm")!);
-  await waitFor(() => c.textContent!.includes(en.account.doneTitle), "the receipt");
+  await field(deleteAddress(c)!, "person@example.test");
+  await act(async () => { deleteButton(c, en.deleteAccount.begin)!.click(); });
+  await waitFor(() => deleteCode(c) !== null, "the factor");
+  const code = deleteCode(c)!;
+  await field(code, "123456");
+  await submit(code.closest("form")!);
+  await waitFor(() => c.textContent!.includes(en.deleteAccount.doneTitle.replace(/\.$/, "")), "the receipt");
 }
 
 const text = (c: HTMLElement): string => c.textContent ?? "";
@@ -147,15 +158,15 @@ describe("Delete your account on a self-hosted server", () => {
 
   it("CONTROL: the managed build keeps the managed sentence, its subscription line and its address", async () => {
     const c = await mount(false, en);
-    expect(text(c)).toContain(en.account.kept1);
-    expect(text(c)).toContain(en.account.keptSub);
+    expect(text(c)).toContain(en.deleteAccount.kept1);
+    await waitFor(() => text(c).includes(en.deleteAccount.keptSub), "the subscription line");
     await erase(c);
     expect(text(c)).toContain(en.account.doneHome);
   });
 
   it("PLANTED: a managed sentence in the self-host Kept line is found by the same reading", async () => {
     const planted = structuredClone(en);
-    planted.account.keptSelfHost = "The credit ledger and the subscription record are kept.";
+    planted.deleteAccount.keptSelfHost = "The credit ledger and the subscription record are kept.";
     const c = await mount(true, planted);
     expect(managedWordsIn(text(c))).toEqual(["credit", "subscription"]);
   });

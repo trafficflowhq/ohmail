@@ -1,15 +1,16 @@
+import type { MailboxDTO, MessageDTO } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, contacts, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
-import { ScreenerService, type ServiceContext } from "@trafficflow/services";
-import { materializeMessages, type MailboxDTO, type MessageDTO } from "@trafficflow/services/mail";
+import { ScreenerService, dbFor, type ServiceContext } from "@trafficflow/services";
+import { materializeMessages } from "@trafficflow/services/mail";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, consentPartition, presentationReader, screenerSegments,
   type FetchLike, type SyncChange,
 } from "@ohmail/client-engine";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
-import { firstImportsOf } from "../../webapp/app/shell/consent-options.js";
+import { firstImportsOf } from "@ohmail/app-logic/press/consent-options";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
 import { tearDown } from "./_teardown.js";
@@ -82,15 +83,15 @@ describe("a Cloud claim on a paired desktop and on the server", () => {
         date: new Date("2020-01-01T08:00:00.000Z"), arrivedAt: at(recorded), unread: false, createdAt: at(recorded),
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${who}` },
       }).returning();
-      await server.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+      await server.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
       await server.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await server.insert(contacts).values({ accountId, address: from, source: "inferred" });
       ids.push(m!.id);
     }
-    const ctx: ServiceContext = { db: server as never, accountId, userId: null, now: () => now, requestId: `pd-${randomUUID().slice(0, 8)}` };
+    const ctx: ServiceContext = { db: dbFor(server, accountId), accountId, userId: null, now: () => now, requestId: `pd-${randomUUID().slice(0, 8)}` };
     const serverList = (await new ScreenerService({}).list(ctx, { limit: 50 })).items.map((i) => i.sender.address).sort();
     expect(serverList).toEqual(["before@partner.invalid"]);
 

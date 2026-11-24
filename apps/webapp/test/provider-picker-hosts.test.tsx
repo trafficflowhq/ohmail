@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { cleanup, fireEvent, getByRole, getByLabelText, within } from "@testing-library/react";
+import { draw, fakeDoor, O, P } from "../../../packages/app/test/mailboxes/connect/support.js";
 import { describe, expect, it, afterEach } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -46,6 +48,7 @@ let host: HTMLDivElement | null = null;
 afterEach(async () => {
   if (root) await act(async () => root!.unmount());
   host?.remove();
+  cleanup();
   root = null;
   host = null;
 });
@@ -146,16 +149,31 @@ describe("a preset imposes the hosts it has, and only those", () => {
    *
    * A preset's value must never survive into a different provider's attempt.
    */
+  function pickAndReadManual(label: string): typeof EMPTY {
+    const { door } = fakeDoor({ ways: "none", discover: "none" });
+    const view = draw(door, { purpose: { kind: "firstRun" } });
+    try {
+      const group = within(getByRole(view.container, "group", { name: P.label }));
+      fireEvent.click(group.getByRole("button", { name: label }));
+      expect(group.getByRole("button", { name: label, pressed: true })).toBeTruthy();
+      fireEvent.click(group.getByRole("button", { name: P.otherLabel }));
+      expect(getByRole(view.container, "heading", { name: messages.join.manualTitle })).toBeTruthy();
+      return {
+        imapHost: getByLabelText<HTMLInputElement>(view.container, O.imapHost).value,
+        smtpHost: getByLabelText<HTMLInputElement>(view.container, O.smtpHost).value,
+      };
+    } finally {
+      view.unmount();
+    }
+  }
+
   it("REPRODUCTION: leaving a named provider for the generic entry clears ITS host, not keeps it", () => {
-    // Gmail was chosen, so these are the preset's values, not anybody's typing.
-    const injected = { imapHost: "imap.gmail.com", smtpHost: "smtp.gmail.com" };
-    expect(hostsFor(MANUAL, injected, GMAIL)).toEqual(EMPTY);
+    expect(pickAndReadManual(GMAIL.label)).toEqual(EMPTY);
   });
 
   it("and the same for every named preset — no provider's host leaks into a manual attempt", () => {
-    for (const p of PROVIDERS.filter((x) => !x.manual)) {
-      expect(hostsFor(MANUAL, { imapHost: p.imap.host, smtpHost: p.smtp.host }, p), p.id)
-        .toEqual(EMPTY);
+    for (const preset of PROVIDERS.filter((provider) => !provider.manual)) {
+      expect(pickAndReadManual(preset.label), preset.id).toEqual(EMPTY);
     }
   });
 

@@ -1,4 +1,4 @@
-import type { Locator, Page } from "playwright";
+import type { Locator, Page } from "@playwright/test";
 
 /**
  * What a person does to a control. The journey says the act; how a surface performs it is here.
@@ -19,13 +19,19 @@ async function announcedKey(target: Locator): Promise<string> {
 
 export const ACTS = {
   press: { id: "press", web: (target) => target.click() },
-  /** Fill a box, once, and see that it holds what was typed. Words a box drops are a fault, never typed again. */
+  /**
+   * Fill a box, once, and see that it holds what was typed. Words a box drops are a fault, never typed again, and never
+   * printed. The person is in the box before the first letter, as a person is: the box left (a recipient line that
+   * takes its words as it is left) has answered first, not in the same instant as the first letter typed here.
+   */
   type: {
     id: "type",
     web: async (target, _page, value = "") => {
+      await target.focus();
       await target.fill(value);
       const holds = await target.inputValue();
-      if (holds !== value) throw new Error(`the box did not keep ${JSON.stringify(value)}: it holds ${JSON.stringify(holds)}`);
+      // The count, never the words: what a journey types can be a password, and the message goes into a public log.
+      if (holds !== value) throw new Error(`the box did not keep what was typed: it holds ${holds.length} of the ${value.length} characters`);
     },
   },
   /** Letter by letter, for an editor that reacts to each key. */

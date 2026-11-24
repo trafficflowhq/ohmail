@@ -2,9 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { shellFrameOf } from "./source-anchor.js";
+import { within } from "@testing-library/react";
+import { readingColumn, seatedList } from "./ohbox/_finders.js";
 import {
-  ISO, act, answerStoreWith, answerSyncWith, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv,
+  ISO, act, answerStoreWith, answerSyncWith, goTo, installShellEnv, liveAccountResponse, mailbox, mountShell, teardownShellEnv,
   textOf, tick,
 } from "./fixtures/live-walk-shell";
 
@@ -108,7 +109,7 @@ const answeredWorld = (): Response =>
   ]);
 
 const rowIds = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
+  [...c.querySelectorAll('[role="option"][data-id]')].map((n) => n.getAttribute("data-id") ?? "");
 
 describe("History", () => {
   beforeEach(() => {
@@ -127,29 +128,29 @@ describe("History", () => {
     // The dormant, the unread, the consented and both halves of the thread: everything owned.
     for (const id of ["hist1", "hist2", "loud1", "ohb1", "thr-friend", "thr-stranger"]) expect(ids).toContain(id);
     // …and the count is the store's own.
-    expect(c.querySelector(".view-history .meta")?.textContent).toBe("6 messages");
+    expect(seatedList(c)?.querySelector(".oh-listhead-count")?.textContent).toBe("6 messages");
   });
 
-  it("says what it is, above the list, every time — not as a dismissible tip", async () => {
+  it("shows History without a standing explanation above the list", async () => {
     const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
     await tick(0);
     await goTo("history");
 
-    expect(textOf(c)).toContain("Every message you own, newest first");
-    // …and it says the mail has not moved, which is the claim somebody would otherwise have
-    // to take on trust from a view named after a place that does not exist on their server.
-    expect(textOf(c)).toContain("still where your mail server keeps it");
+    const list = seatedList(c)!;
+    expect(within(list).getByRole("heading", { name: "History" })).toBeTruthy();
+    expect(within(list).getByRole("listbox", { name: "History" })).toBeTruthy();
+    expect(textOf(list)).not.toContain("Every message you own, newest first");
+    expect(textOf(list)).not.toContain("still where your mail server keeps it");
   });
 
-  it("a row names the folder the message is REALLY in", async () => {
+  it("a row names the physical folder using its place label", async () => {
     const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
     await tick(0);
     await goTo("history");
 
-    // Not "Ohbox", which is what `placeLabel(m.folder)` would have said for a message whose
-    // folder is INBOX. History is a presentation and the badge is the server's own answer.
-    const row = c.querySelector('.row[data-id="hist1"]');
-    expect(row?.textContent ?? "").toContain("INBOX");
+    // The place badge translates the physical INBOX to the name used in the app.
+    const row = c.querySelector('[role="option"][data-id="hist1"]');
+    expect(row?.querySelector(".oh-where")?.textContent).toBe("Ohbox");
   });
 
   /**
@@ -178,7 +179,7 @@ describe("History", () => {
     expect(rowIds(c), "an uncorroborated join reached the consented pile").not.toContain("thr-stranger");
 
     // The consented half's row IS there, and opening it renders the whole conversation.
-    const row = c.querySelector('.row[data-id="thr-friend"]') as HTMLElement | null;
+    const row = c.querySelector('[role="option"][data-id="thr-friend"]') as HTMLElement | null;
     expect(row, "the consented half of the thread is not in the Ohbox").toBeTruthy();
     await act(async () => {
       row!.click();
@@ -186,18 +187,18 @@ describe("History", () => {
     });
     await tick(0);
 
-    const pane = c.querySelector(".view-ohbox .read-col")?.textContent ?? "";
+    const pane = readingColumn(c)?.textContent ?? "";
     expect(pane, "the consented half is not in the pane").toContain("Sender thr-friend");
     expect(pane, "a header put the stranger's message in the Ohbox's conversation").not.toContain("Sender thr-stranger");
 
     await goTo("history");
     await tick(0);
-    const held = c.querySelector('.row[data-id="thr-stranger"]') as HTMLElement | null;
+    const held = c.querySelector('[role="option"][data-id="thr-stranger"]') as HTMLElement | null;
     expect(held, "the stranger's row is not in History").toBeTruthy();
     await act(async () => { held!.click(); await Promise.resolve(); });
     await tick(0);
     await tick(0);
-    const col = c.querySelector(".view-history .read-col")?.textContent ?? "";
+    const col = readingColumn(c)?.textContent ?? "";
     expect(col, "the stranger's message is missing from its own conversation").toContain("Sender thr-stranger");
     expect(col, "opened from History, the conversation is not whole").toContain("Sender thr-friend");
   });
@@ -223,21 +224,32 @@ describe("History", () => {
   it("THE FIRST MESSAGE: a row only the store holds opens, and its body is read and rendered", async () => {
     const first = message({ id: "first-ever", from: "origin@example.invalid", date: "2011-06-01T08:00:00.000Z", subject: "the very first message" }, 99).entity;
     answerStoreWith([first], { "first-ever": "Hello from two thousand eleven — the whole text of it." });
+    const fetchMail = globalThis.fetch;
+    const lookups: string[] = [];
+    globalThis.fetch = (input, init) => {
+      if ((init?.method ?? "GET") === "GET" && /\/messages\/first-ever(?:\?|$)/.test(String(input))) {
+        lookups.push(first.id);
+        return Promise.resolve(liveAccountResponse(Response.json(first)));
+      }
+      return fetchMail(input, init);
+    };
     const c = await mountShell([mailbox({ lastSyncAt: ISO })]);
     await tick(0);
     await goTo("history");
     await tick(0);
     // The last slot of the timeline is the account's first message, which the mirror never held.
-    const rail = [...c.querySelectorAll(".history-rail-item")] as HTMLButtonElement[];
-    if (rail.length > 1) await act(async () => { rail[rail.length - 1]!.click(); await Promise.resolve(); });
+    const rail = within(c).queryByRole("navigation", { name: "Month" });
+    const oldest = rail && within(rail).queryAllByRole("button").at(-1);
+    if (oldest) await act(async () => { oldest.click(); await Promise.resolve(); });
     await tick(0);
-    const row = c.querySelector('.row[data-id="first-ever"]') as HTMLElement | null;
+    const row = c.querySelector('[role="option"][data-id="first-ever"]') as HTMLElement | null;
     expect(row, "the first message is not in History").toBeTruthy();
     await act(async () => { row!.click(); await Promise.resolve(); });
     await tick(0);
     await tick(0);
-    const col = c.querySelector(".view-history .read-col")?.textContent ?? "";
+    const col = readingColumn(c)?.textContent ?? "";
     expect(col).toContain("the very first message");
+    expect(lookups).toEqual(["first-ever"]);
     expect(col).toContain("Hello from two thousand eleven");
   });
 
@@ -246,7 +258,7 @@ describe("History", () => {
     await tick(0);
     await goTo("history");
 
-    const row = c.querySelector('.row[data-id="hist1"]') as HTMLElement | null;
+    const row = c.querySelector('[role="option"][data-id="hist1"]') as HTMLElement | null;
     expect(row).toBeTruthy();
     await act(async () => {
       row!.click();
@@ -276,18 +288,13 @@ describe("History", () => {
     await tick(0);
     await goTo("history");
 
-    const view = c.querySelector(".view-history")!;
-    // Mutation watched: restore `layout === "split" ? … : "view center"` and this goes red.
-    expect(view.classList.contains("split")).toBe(true);
-    expect(view.classList.contains("center")).toBe(false);
-    expect(c.querySelector(".view-history .read-col"), "no reading column beside the list")
-      .not.toBeNull();
-
-    // The control, and every path back to the mode it selected, are gone.
-    const labels = [...c.querySelectorAll("button")].map((b) => b.textContent?.trim());
-    expect(labels, "the layout toggle is still on screen").not.toContain("Split");
-    expect(labels, "the layout toggle is still on screen").not.toContain("List");
-    expect(c.querySelector(".view-mode"), "the toggle's slot outlived the toggle").toBeNull();
+    expect(seatedList(c)).not.toBeNull();
+    expect(readingColumn(c), "no reading column beside the list").not.toBeNull();
+    expect(within(c).queryByRole("dialog", { name: "Reading" })).toBeNull();
+    expect(within(c).queryByRole("button", { name: /^Split$/ })).toBeNull();
+    /* The head's one "List" button is the list's own menu (its verbs), never a layout mode. */
+    const lists = within(c).queryAllByRole("button", { name: /^List$/ });
+    expect(lists.filter((b) => b.getAttribute("aria-haspopup") !== "menu"), "no List mode beside Split").toEqual([]);
   });
 
   it("reads a message IN THE COLUMN, in place — never a navigation, never a sheet-only", async () => {
@@ -295,7 +302,7 @@ describe("History", () => {
     await tick(0);
     await goTo("history");
 
-    const row = c.querySelector('.row[data-id="hist2"]') as HTMLElement | null;
+    const row = c.querySelector('[role="option"][data-id="hist2"]') as HTMLElement | null;
     await act(async () => {
       row!.click();
       await Promise.resolve();
@@ -306,33 +313,23 @@ describe("History", () => {
     // which would have navigated to the Ohbox and dropped the reader onto a row that is not there.
     // The address names the letter on the History route.
     expect(window.location.hash).toBe("#/history/m/hist2");
-    expect(c.querySelector(".view-history .read-col")!.textContent ?? "").toContain("subject of hist2");
+    expect(readingColumn(c)!.textContent ?? "").toContain("subject of hist2");
   });
 
-  /**
-   * THE BADGE, ASSERTED ON THE SOURCE.
-   *
-   * A count is a rendering decision made in `railGroups`, and the honest way to pin its absence
-   * is to read the object that declares it. A DOM assertion would pass for the wrong reason on
-   * an account whose History happens to be empty — which is every fixture that forgets to seed
-   * one — and that is exactly the vacuous-green shape this suite has been bitten by before.
-   *
-   * Mutation watched: adding `count: history.length` to the History rail item fails this.
-   */
   it("the rail entry declares NO count — a place that cannot demand attention shows no number", () => {
-    /* The rail and the pile list left `AppShell.tsx` for `shell-keys.tsx` (ARCH-022 L6), asked
-       of the frame that declares them rather than of a path. */
-    const src = shellFrameOf("numberNav").source;
-    const item = /\{\s*id:\s*"history"[^}]*\}/.exec(src)?.[0];
-    expect(item, "the History rail item moved or was renamed").toBeTruthy();
-    expect(item).not.toContain("count");
+    const source = read("../../../packages/app/src/history/place.ts");
+    const rail = /rail:\s*\{([^}]+)\}/.exec(source)?.[1];
+    expect(rail, "the History rail registration").toBeTruthy();
+    expect(rail).not.toMatch(/\b(?:count|useCount)\b/);
   });
 
-  /** …and it is not one of the numbered piles, so `1`…`9` still address the piles they always did. */
   it("is not a numbered pile", () => {
-    const src = shellFrameOf("numberNav").source;
-    const piles = /const PILE_IDS: string\[\] = \[[^\]]*\]/.exec(src)?.[0] ?? "";
-    expect(piles).toBeTruthy();
-    expect(piles).not.toContain("history");
+    const place = read("../../../packages/app/src/history/place.ts");
+    const group = /rail:\s*\{[^}]*\bgroup:\s*"([^"]+)"/.exec(place)?.[1];
+    expect(group, "the History rail group").toBeTruthy();
+    const source = read("../../../packages/app/src/frame/chords.tsx");
+    const groups = /const NUMBERED:[^=]*=\s*\[([^\]]+)\]/.exec(source)?.[1];
+    expect(groups, "the frame's numbered rail groups").toBeTruthy();
+    expect(groups).not.toContain(`"${group}"`);
   });
 });

@@ -1,32 +1,32 @@
 /**
  * SETTINGS → THIS INSTALL: which door, which mailbox, and the three things that change
- * either. The pane the shared `SettingsView` cannot contain — every control here is a call to
- * the native shell, and that file is compiled into a browser tab too, so it takes the pane as
- * a node and this file supplies one (the seam the hosted Account and Security panes use,
- * mirrored: the web has no shell, the desktop has no account). The webview never touches the
- * disk: signing out clears a sealed credential and removes a settings file IN THE SHELL —
- * this page is one command and rendering the answer. What each action costs is said before
- * it is taken: sign-out keeps the mail copy; a door switch freezes the mirror you leave.
+ * either. The desktop registers this pane with Settings. Signing out clears the sealed
+ * credential and removes the settings file through the native shell. The pane says what each
+ * action does before the press, including what happens to the copy of the mail.
  */
 
 import { useState } from "react";
-import { Button, SettingsBanner, SettingsNote, SettingsRow, SettingsSection, SettingsSubhead } from "@ohmail/ui";
+import { Button, Tag } from "@ohmail/ui/base";
+import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 
 import { engineLogout, type EngineStatus, type SignedOut } from "./bridge-fetch.js";
-import { renewCloudSession } from "./cloud-session.js";
+import { renewCloudSession, type CloudSessionWire } from "./cloud-session.js";
 import type { HostedSession } from "./doors.js";
-import { DOOR_COPY, machineWord } from "./door-copy.js";
+import { DOOR_COPY, installName, machineWord } from "./door-copy.js";
 import { hostLabelOf, isDesktopHost, isManagedDoor, pairedHostOf, pairedViaOf } from "./doors.js";
+import { clockOf } from "@ohmail/app-logic/text/format";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { agoStamp } from "../../webapp/app/shell/format";
 import { DesktopAiSettings } from "./DesktopAiSettings.js";
+import { DefaultMailRow } from "./DesktopDefaultMail.js";
 import type { LocalAiStatus } from "./local-ai.js";
 
 /* WHAT THIS INSTALL DOES WITH THE MAILBOX BELOW — "organizes" or "reads". One rule, two
    panes and one confirmation bullet; see `install-role.ts` for the measured defect and
    why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
    so a pane mounted without the provider keeps the sentence it always had. */
-import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
-import { isRemovedMailbox, readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import { isRemovedMailbox, readerHolder, screenerMode, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 
 /**
@@ -141,16 +141,6 @@ function credentialLine(
   }
 }
 
-/**
- * WHY THE ENGINE ROW IS DRAWN AT ALL, and it is drawn only when it is the problem.
- *
- * "Mail engine: Running" was a permanent row stating the ordinary case. It is the ordinary case on
- * every healthy install, which makes it a line that never says anything — and a settings pane whose
- * rows are mostly noise is one whose one real warning gets read as noise too. `serving` renders
- * nothing now; every other state renders the row with the sentence for THAT state, because the
- * recoveries differ and "stopped and did not come back" is false of an engine that is still coming
- * up. That distinction is the whole reason this is a function and not one string.
- */
 function engineWhy(status: EngineStatus): string {
   switch (status.state) {
     case "starting":
@@ -194,6 +184,18 @@ function engineLine(status: EngineStatus): string {
   }
 }
 
+function connectedThrough(status: EngineStatus): string {
+  const host = pairedHostOf(status);
+  if (isDesktopHost(status) && host !== null) return host;
+  if (status.mode === "local") return DOOR_COPY.doorLocalName(machineWord());
+  if (status.mode === "cloud") return isManagedDoor(status) ? DOOR_COPY.doorCloudName : DOOR_COPY.doorServerNamed;
+  return DOOR_COPY.doorNotChosen;
+}
+
+export function desktopStatusSummary(status: EngineStatus): string {
+  return `${connectedThrough(status)} · ${engineLine(status)}`;
+}
+
 export function DesktopSettings({
   status,
   /** The status this pane produced. The gate re-reads its own routing from it. */
@@ -230,6 +232,10 @@ export function DesktopSettings({
    * answering. `null` on every other door, and before the first answer.
    */
   connection,
+  hostedConnection,
+  hostedCheckedAt,
+  hostedAddress,
+  defaultMail = false,
   /** Open the pairing card over the app, for an install whose pairing has ended. */
   onPairAgain,
   /** Begin setting this machine up on its own — the gate owns that flow. */
@@ -239,6 +245,10 @@ export function DesktopSettings({
   session: HostedSession;
   sealFailed?: boolean;
   connection?: { state: "unknown" | "stale" | "current"; asOf: string | null } | null;
+  hostedConnection?: CloudSessionWire | null;
+  hostedCheckedAt?: number | null;
+  hostedAddress?: string | null;
+  defaultMail?: boolean;
   onStatus: (next: EngineStatus, stillListedFrom?: EngineStatus | null, waiting?: SignedOut["waiting"]) => void;
   onSwitchDoor: () => void;
   onSignIn: () => void;
@@ -268,18 +278,13 @@ export function DesktopSettings({
   /* What this install's door is called. Built in the render for the reason `DesktopAbout`'s is:
      both halves are catalogue reads, and a module constant would freeze the locale that was set
      when this file was first imported. */
-  const doorName: Record<string, string> = {
-    local: DOOR_COPY.doorLocalName(machineWord()),
-    cloud: isManagedDoor(status) ? DOOR_COPY.doorCloudName : DOOR_COPY.doorServerNamed,
-  };
-  /* THE OTHER COMPUTER'S NAME, or null. Every paired sentence below interpolates it, and each one
-     falls back to the door's older wording rather than rendering a hole — see `credentialLine`. */
   const host = pairedHostOf(status);
   const paired = isDesktopHost(status) && host !== null;
-  const door = paired
-    ? host
-    : status.mode ? (doorName[status.mode] ?? status.mode) : DOOR_COPY.doorNotChosen;
+  const door = connectedThrough(status);
   const credential = credentialLine(status, session, host);
+  const showCredential =
+    status.mode === "cloud" ? session !== "live" : status.mode === "local" || status.credentialState !== "ready";
+  const compactHosted = status.mode === "cloud" && !paired && session === "live";
   /* "organizes" or "reads" — see `install-role.ts`. This pane said the first on an install that
      did the second, beside a Mailboxes pane saying the truth on the same machine. */
   const facts = useMailboxFacts();
@@ -287,7 +292,8 @@ export function DesktopSettings({
   /* THE MAILBOXES THIS INSTALL HOLDS, from the roster (`GET /mailboxes`). `status.address` is the
      seed in the settings file, which stays when the seed is removed while another mailbox remains,
      so it named a mailbox the install no longer held. Before the roster answers: the seed. */
-  const held = facts === null ? null : facts.filter((m) => !isRemovedMailbox(m)).map((m) => m.address);
+  const roster = facts?.filter((mailbox) => !isRemovedMailbox(mailbox)) ?? null;
+  const held = roster?.map((mailbox) => mailbox.address) ?? null;
   const multipleMailboxes = held !== null && held.length > 1;
   const mailboxValue = held === null ? (status.address ?? "—") : held.length > 0 ? held.join(", ") : "—";
 
@@ -306,172 +312,105 @@ export function DesktopSettings({
     }
   };
 
+  const reach = paired
+    ? connectionLine(connection ?? null, pairedViaOf(status))
+    : { value: connectionValue(status.mode, hostedConnection, roster, hostedCheckedAt) };
+  const signOutLabel = paired ? host : status.mode === "local" && held?.length === 1
+    ? held[0]!
+    : status.mode === "cloud" && session === "live" && hostedAddress
+      ? displayAddress(hostedAddress)
+      : DOOR_COPY.installAccount;
+  const confirmWhy = paired
+    ? DOOR_COPY.installSignOutConfirmWhyHost(machineWord(), host)
+    : DOOR_COPY.installSignOutConfirmWhy(machineWord());
+
   return (
-    <SettingsSection>
-      <SettingsRow
-        label={multipleMailboxes ? DOOR_COPY.mailboxesLabel : DOOR_COPY.mailboxLabel}
-        description={mailboxRowWhy(readOnly, paired ? host : null)}
-        value={mailboxValue}
-        valueClassName={multipleMailboxes ? "set-val-left" : undefined}
-      />
-      <SettingsRow
-        label={DOOR_COPY.installConnectedThrough}
-        description={doorDescription(status, host)}
-        value={door}
-      />
-      <SettingsRow
-        label={credential.label}
-        description={credential.description}
-        value={credential.value}
-      />
-      {/* Under the session row it is about, and only while the engine says so — with its one verb. */}
-      {sealFailed ? (
-        <SettingsBanner
-          label={DOOR_COPY.cloudSealPausedTitle(machineWord())}
-          description={DOOR_COPY.credSealFailedNote(machineWord())}
-          action={
-            status.mode === "cloud" && session === "live" ? (
-              <Button onClick={() => void retrySeal()} disabled={retrying}>{DOOR_COPY.gateTryAgain}</Button>
-            ) : null
-          }
+    <>
+      <SettingsSheet title={installName()} sign="desktop" aside={<Tag>{DOOR_COPY.installThisComputer}</Tag>}>
+        <SettingLine
+          label={DOOR_COPY.installConnectedThrough}
+          description={paired ? doorDescription(status, host) : undefined}
+          value={door}
         />
-      ) : null}
-      {/* ── IS THE OTHER COMPUTER REACHABLE — a PERMANENT row on this door ─────────────────
-          Present in every state, `Reachable` included, unlike the Mail engine row below it. The
-          engine row is about a fault and says nothing on a healthy install by design; this one
-          answers a standing question about somebody else's machine, which a person may want to
-          check at any time and cannot check any other way from here. */}
-      {paired ? (() => {
-        const line = connectionLine(connection ?? null, pairedViaOf(status));
-        return (
-          <SettingsRow
-            label={DOOR_COPY.connLabel}
-            description={line.description}
-            value={line.value}
-          />
-        );
-      })() : null}
-      {/* Only when it is NOT serving — see `engineWhy`. A row that says "Running" on every healthy
-          install is a row nobody reads, including on the day it stops saying it. */}
-      {status.state === "serving" ? null : (
-        <SettingsRow
-          label={DOOR_COPY.engineLabel}
-          description={engineWhy(status)}
-          value={engineLine(status)}
-        />
-      )}
-
-      <SettingsSubhead>{DOOR_COPY.installChangingHead}</SettingsSubhead>
-
-      {problem ? <p className="join-error">{problem}</p> : null}
-
-      {/* SIGN IN AGAIN is the HOSTED door's remedy and only its own. A paired install has no
-          session to renew — what ended was a pairing, and the way back is a new link from the
-          other computer's Devices pane, which is the row directly below. */}
-      {status.mode === "cloud" && session === "out" && !paired ? (
-        <SettingsRow
-          label={DOOR_COPY.installSignInAgain}
-          description={DOOR_COPY.installSignInAgainWhy}
-          control={<Button onClick={onSignIn}>{DOOR_COPY.signIn}</Button>}
-        />
-      ) : null}
-
-      {/* PAIR AGAIN — only when the pairing has actually ended. Offered while it stands it would
-          invite somebody to spend a link for nothing; withheld when it has ended, the pane would
-          state a problem and no remedy. */}
-      {paired && session === "out" && onPairAgain ? (
-        <SettingsRow
-          label={DOOR_COPY.installPairAgain}
-          description={DOOR_COPY.installPairAgainWhy(host!, machineWord())}
-          control={<Button onClick={onPairAgain} disabled={busy}>{DOOR_COPY.hostPair}</Button>}
-        />
-      ) : null}
-
-      {/* ── SET THIS MACHINE UP ON ITS OWN — in EVERY connection state ─────────────────────
-          Not only while the other computer is away. Leaving a host is something a person may do
-          on purpose, and a control that exists only during a failure is one nobody can plan
-          with. Its description leads with the condition ("If {host} will not come back.") so
-          that reading the pane on an ordinary day does not read as a recommendation. */}
-      {paired && onTakeOver ? (
-        <SettingsRow
-          label={DOOR_COPY.takeoverLabel(machineWord())}
-          description={DOOR_COPY.takeoverWhy(host!, machineWord())}
-          control={
-            <Button onClick={onTakeOver} disabled={busy}>{DOOR_COPY.takeoverAction}</Button>
-          }
-        />
-      ) : null}
-
-      {/* "YOUR OHMAIL ACCOUNT" WAS HERE, AND IT HAS MOVED — into the three panes it was standing
-          in for. It was one row that named a password, an authenticator, recovery codes and a plan
-          together, on the pane about this INSTALL, because Settings had no Security, Account or
-          Subscription pane at all on the hosted door. Those panes exist now
-          (`DesktopWebSection`, `DesktopSubscription`) and each carries its own door out, so keeping this
-          row would be a second door to the same place under different words — on the one pane
-          nobody looking for their password would think to open. Everything below this line is about
-          the install: which mailbox, which door, and how to change either. */}
-
-      {/* THE SWITCH SAYS "DISCARDED" ON THIS DOOR AND "FROZEN" ON THE OTHERS, because that is
-          what the code does: `enforceMirrorOwner` discards a mirror whose owner has changed, and
-          leaving a paired door for any other door changes the owner. Borrowing the hosted
-          sentence here would promise a copy that comes back, and it does not. */}
-      <SettingsRow
-        label={DOOR_COPY.installSwitch}
-        description={paired
-          ? DOOR_COPY.installSwitchWhyHost(host!, machineWord())
-          : DOOR_COPY.installSwitchWhy(machineWord())}
-        control={
-          <Button onClick={onSwitchDoor} disabled={busy}>{DOOR_COPY.installSwitchAction}</Button>
-        }
-      />
-      {/* An undone pairing the other computer did not take back: where this install is still listed. */}
-      {status.pairingLeftAt ? (
-        <SettingsNote>
-          {DOOR_COPY.pairingLeftAt(hostLabelOf(status.pairingLeftAt) ?? status.pairingLeftAt, machineWord())}
-        </SettingsNote>
-      ) : null}
-
-      {mode === "confirm" ? (
-        <SettingsRow
-          label={DOOR_COPY.installSignOutConfirm}
-          description={paired
-            ? DOOR_COPY.installSignOutConfirmWhyHost(machineWord(), host!)
-            : DOOR_COPY.installSignOutConfirmWhy(machineWord())}
-          control={
-            <span className="set-tag-acts">
-              <Button variant="primary" className="danger" onClick={() => void signOut()} disabled={busy}>
-                {busy ? DOOR_COPY.installSigningOut : DOOR_COPY.signOut}
-              </Button>
-              <Button variant="ghost" onClick={() => setMode("rest")} disabled={busy}>
-                {DOOR_COPY.cancel}
-              </Button>
+        {compactHosted ? (
+          <SettingLine label={DOOR_COPY.mailboxesLabel} description={readOnly ? mailboxRowWhy(readOnly) : undefined}>
+            <span title={held?.length ? mailboxValue : undefined}>
+              {held === null ? DOOR_COPY.installConnectionUnknown : DOOR_COPY.installMailboxCount(held.length, readOnly ? "reader" : "organizer")}
             </span>
-          }
+          </SettingLine>
+        ) : (
+        <SettingLine
+          label={multipleMailboxes ? DOOR_COPY.mailboxesLabel : DOOR_COPY.mailboxLabel}
+          description={mailboxRowWhy(readOnly, paired ? host : null)}
+          value={multipleMailboxes ? undefined : mailboxValue}
+        >
+          {multipleMailboxes ? <span className="set-val-left">{mailboxValue}</span> : null}
+        </SettingLine>
+        )}
+        <SettingLine label={DOOR_COPY.connLabel} {...reach} />
+        <SettingLine
+          label={DOOR_COPY.engineLabel}
+          value={engineLine(status)}
+          description={status.state === "serving" ? undefined : engineWhy(status)}
         />
-      ) : (
-        <SettingsRow
-          label={DOOR_COPY.signOut}
-          description={paired
-            ? DOOR_COPY.installSignOutWhyHost(host!, machineWord())
-            : DOOR_COPY.installSignOutWhy(machineWord())}
-          control={
-            <Button onClick={() => setMode("confirm")} disabled={busy}>{DOOR_COPY.signOut}</Button>
-          }
-        />
-      )}
+      </SettingsSheet>
 
-      <SettingsNote>{DOOR_COPY.installPasswordNote}</SettingsNote>
+      <SettingsSheet title={DOOR_COPY.installChangingHead}>
+        {showCredential ? <SettingLine {...credential} /> : null}
+        {sealFailed ? (
+          <SettingLine label={DOOR_COPY.cloudSealPausedTitle(machineWord())} description={DOOR_COPY.credSealFailedNote(machineWord())}>
+            {status.mode === "cloud" && session === "live" ? (
+              <Button kind="quiet" size="s" onPress={() => void retrySeal()} disabled={retrying}>
+                {DOOR_COPY.gateTryAgain}
+              </Button>
+            ) : null}
+          </SettingLine>
+        ) : null}
+        {problem ? <SettingNote warn>{problem}</SettingNote> : null}
+        {status.mode === "cloud" && session === "out" && !paired ? (
+          <SettingLine label={DOOR_COPY.installSignInAgain} description={DOOR_COPY.installSignInAgainWhy}>
+            <Button kind="quiet" size="s" onPress={onSignIn}>{DOOR_COPY.signIn}</Button>
+          </SettingLine>
+        ) : null}
+        {paired && session === "out" && onPairAgain ? (
+          <SettingLine label={DOOR_COPY.installPairAgain} description={DOOR_COPY.installPairAgainWhy(host, machineWord())}>
+            <Button kind="quiet" size="s" onPress={onPairAgain} disabled={busy}>{DOOR_COPY.hostPair}</Button>
+          </SettingLine>
+        ) : null}
+        {paired && onTakeOver ? (
+          <SettingLine label={DOOR_COPY.takeoverLabel(machineWord())} description={DOOR_COPY.takeoverWhy(host, machineWord())}>
+            <Button kind="quiet" size="s" onPress={onTakeOver} disabled={busy}>{DOOR_COPY.takeoverAction}</Button>
+          </SettingLine>
+        ) : null}
+        <SettingLine
+          label={DOOR_COPY.installSwitch}
+          description={paired ? DOOR_COPY.installSwitchWhyHost(host, machineWord()) : DOOR_COPY.installSwitchWhy(machineWord())}
+        >
+          <Button kind="quiet" size="s" onPress={onSwitchDoor} disabled={busy}>{DOOR_COPY.installSwitchAction}</Button>
+        </SettingLine>
+        {status.pairingLeftAt ? (
+          <SettingNote>
+            {DOOR_COPY.pairingLeftAt(hostLabelOf(status.pairingLeftAt) ?? status.pairingLeftAt, machineWord())}
+          </SettingNote>
+        ) : null}
+        {mode === "confirm" ? (
+          <SettingLine label={DOOR_COPY.installSignOutConfirm} description={confirmWhy}>
+            <Button kind="quiet" size="s" onPress={() => setMode("rest")} disabled={busy}>{DOOR_COPY.cancel}</Button>
+            <Button size="s" onPress={() => void signOut()} disabled={busy}>
+              {busy ? DOOR_COPY.installSigningOut : DOOR_COPY.signOut}
+            </Button>
+          </SettingLine>
+        ) : (
+          <SettingLine label={signOutLabel}>
+            <Button kind="quiet" size="s" onPress={() => setMode("confirm")} disabled={busy}>{DOOR_COPY.signOut}</Button>
+          </SettingLine>
+        )}
 
-      {/* WHAT BELONGS IN THIS MAILBOX'S OHBOX HAS MOVED, to Settings → Screener, where the rest
-          of the screening controls are and where somebody looking for it would look first. It was
-          here because this pane was the only one on the desktop with a working transport; it is
-          not any more. `DesktopScreening.tsx` is the same editor over the same column. */}
+      </SettingsSheet>
 
-      {/* The model, last, because it is the one part of this install that is optional. Everything
-          above describes a mailbox that has to work; this describes something you may never turn
-          on, and the app is complete without it. */}
+      {defaultMail ? <SettingsSheet><DefaultMailRow /></SettingsSheet> : null}
       <DesktopAiSettings door={status.mode ?? null} {...(onAiStatus ? { onStatus: onAiStatus } : {})} />
-    </SettingsSection>
+    </>
   );
 }
 
@@ -510,15 +449,39 @@ function connectionLine(
   const when = freshness?.asOf ? agoStamp(freshness.asOf, Date.now()).abs : "—";
   const check = via === "lan" ? DOOR_COPY.hostCheckLan(machineWord()) : DOOR_COPY.hostCheckTs;
   if (freshness?.state === "current") {
-    return { value: DOOR_COPY.connCurrentValue, description: DOOR_COPY.connCurrentWhy(when) };
+    return { value: withCheckedTime(DOOR_COPY.connCurrentValue, freshness.asOf), description: DOOR_COPY.connCurrentWhy(when) };
   }
   if (freshness?.state === "stale") {
     return {
-      value: DOOR_COPY.connStaleValue,
+      value: withCheckedTime(DOOR_COPY.connStaleValue, freshness.asOf),
       description: DOOR_COPY.connStaleWhy(when, machineWord()),
     };
   }
   /* `unknown` AND "not asked yet" render alike, and that is the honest reading of both: no pull
      has completed, so there is nothing to report but what to check. */
   return { value: DOOR_COPY.connUnknownValue, description: check };
+}
+
+/** Hosted health and the local mail roster report different parts of the connection. */
+function connectionValue(
+  door: EngineStatus["mode"],
+  session: CloudSessionWire | null | undefined,
+  roster: readonly MailboxFacts[] | null,
+  checkedAt: number | null | undefined,
+): string {
+  if (door === "cloud") {
+    if (session?.state === "live") return withCheckedTime(DOOR_COPY.connCurrentValue, checkedAt);
+    if (session?.state === "unreachable") return withCheckedTime(DOOR_COPY.installUnreachable, checkedAt);
+  }
+  if (door === "local" && roster) {
+    if (roster.some((mailbox) => mailbox.unreachableSince)) return DOOR_COPY.installUnreachable;
+
+  }
+  return DOOR_COPY.installConnectionUnknown;
+}
+
+function withCheckedTime(value: string, at: number | string | null | undefined): string {
+  if (at == null) return value;
+  const date = new Date(at);
+  return Number.isFinite(date.getTime()) ? `${value} · ${clockOf(date.toISOString())}` : value;
 }

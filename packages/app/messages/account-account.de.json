@@ -1,0 +1,17 @@
+{
+  "accountOwn": {
+    "signedInLabel": "Angemeldet als",
+    "managed": "ohmail Cloud",
+    "self": "Dein eigener Server",
+    "ownComputer": "Dieser Computer",
+    "signedIn": "Angemeldet",
+    "thisPhone": "Dieses Telefon",
+    "signOutOnPhone": "Öffnet Server, um die Abmeldung auf diesem Telefon zu bestätigen.",
+    "thisBrowser": "Dieser Browser",
+    "changeLabel": "Passwort",
+    "cancel": "Abbrechen",
+    "notRead": "Nicht gelesen",
+    "stillHere": "Noch da",
+    "notConfirmed": "Nicht bestätigt"
+  }
+}

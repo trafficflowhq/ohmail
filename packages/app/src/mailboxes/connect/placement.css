@@ -1,0 +1,74 @@
+/* The connect form's own placement: where its parts stand, never how they look. Own classes: `mbx-`. */
+
+/* The form's parts, one under the other. */
+.mbx-connect-form,
+.mbx-connect-part {
+  display: grid;
+  gap: var(--s4);
+  min-width: 0;
+}
+
+.mbx-standalone-sentences {
+  display: grid;
+  gap: var(--s3);
+  padding-block-start: var(--s4);
+}
+
+.mbx-standalone-hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+/* The fingerprint a certificate tick claims, standing on its own line under the line that asks for it. */
+.mbx-cert-fingerprint {
+  margin: var(--s2) 0 0;
+  max-width: 34em;
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--w-mid);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.mbx-manual-title {
+  margin: 0;
+  outline: none;
+  font-size: var(--t-ui);
+  font-weight: var(--w-bold);
+}
+
+.mbx-manual-disclosure {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  width: fit-content;
+  list-style: none;
+  padding: var(--s1) var(--s2);
+  border-radius: var(--r-pill);
+  background: var(--sheet);
+  font-size: var(--t-meta);
+  font-weight: var(--w-bold);
+  cursor: pointer;
+}
+
+.mbx-manual-ports > .mbx-manual-disclosure::-webkit-details-marker {
+  display: none;
+}
+
+.mbx-manual-ports[open] > .mbx-manual-disclosure > .mbx-manual-arrow,
+.mbx-manual-disclosure[aria-expanded="true"] > .mbx-manual-arrow {
+  transform: rotate(180deg);
+}
+
+.mbx-manual-ports[open] > .mbx-manual-disclosure {
+  margin-block-end: var(--s3);
+}
+
+:root[data-device="phone"] .mbx-connect-part[data-page-filling-form],
+:root[data-device="phone"] .mbx-connect-part[data-page-filling-form] > .mbx-connect-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}

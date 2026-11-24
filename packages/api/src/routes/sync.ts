@@ -1,8 +1,9 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { devices, sessions } from "@trafficflow/db";
-import type { EntityType } from "@trafficflow/services/mail";
+import { namedCalendarSpan, type EntityType } from "@trafficflow/services/mail";
+import type { Assert, Complete, RecordKind } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import type { ApiDeps } from "../deps.js";
 import { mailbox, sync } from "./shared.js";
@@ -41,7 +42,10 @@ export const VALID_TYPE_LIST = ([
   // The organizer's arrangement of a mailbox this install only reads (`change-log.ts`). The
   // phone names its types, so a member missing here would leave its reader Screener unsplit.
   "mailbox_profile",
-] as const) satisfies readonly EntityType[];
+  // The calendar's four kinds (`@ohmail/wire`, `calendar.ts`). Named or not sent: the reader
+  // serves them only to a request that names one, on an account that switched its calendar on.
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
+] as const) satisfies readonly RecordKind[];
 const VALID_TYPES = new Set<EntityType>(VALID_TYPE_LIST);
 
 /**
@@ -49,16 +53,11 @@ const VALID_TYPES = new Set<EntityType>(VALID_TYPE_LIST);
  * union twice and both times the symptom was silence: the filter drops an unknown token rather
  * than refusing it, so a mirror that asks for the missing type is answered with the rest of its
  * list and converges missing a whole kind of state. `tag` was the first (a desktop rail empty over
- * an account with several tags), `settings` the second. `Exclude<…>` stops being `never` the
- * moment a member is added to the union without being listed here, and the line below then fails
- * to compile naming the type that was forgotten.
+ * an account with several tags), `settings` the second. The proof stops being `true` the
+ * moment a kind is added to the wire's union without being listed here, and the line below then
+ * fails to compile naming the kind that was forgotten.
  */
-type SyncTypeMissing = Exclude<EntityType, typeof VALID_TYPE_LIST[number]>;
-type SyncTypesAreComplete = [SyncTypeMissing] extends [never] ? true
-  : { "EntityType missing from VALID_TYPES — `?types=` would silently drop it": SyncTypeMissing };
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const syncTypesAreComplete: SyncTypesAreComplete = true;
-void syncTypesAreComplete;
+type _SyncTypesComplete = Assert<Complete<RecordKind, typeof VALID_TYPE_LIST>>;
 
 /** Parse `?types=a,b,c` → EntityType[], silently ignoring unknown tokens. */
 function parseTypes(raw: string | null): EntityType[] | undefined {
@@ -123,6 +122,7 @@ export const syncRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/sync",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
@@ -131,10 +131,12 @@ export const syncRoutes: Route[] = [
       const limit = pagingNumber(url.searchParams.get("limit"));
       const types = parseTypes(url.searchParams.get("types"));
 
+      const calendar = deps.services?.calendar;
       const result = await sync(deps).getChanges(serviceContext(deps, req), {
         since,
         ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
         ...(types ? { types } : {}),
+        ...(calendar ? { calendar } : {}),
       });
       // The COMMITTED horizon is the stamp's whole meaning: only the empty tail — the client
       // presenting a cursor that is already the horizon — proves a committed drain. A page
@@ -143,7 +145,7 @@ export const syncRoutes: Route[] = [
         && result.changes.creates.length === 0 && result.changes.updates.length === 0
         && result.changes.moves.length === 0 && result.changes.deletes.length === 0;
       if (emptyTail) await stampDeviceSynced(deps);
-      return jsonResponse(result);
+      return answer<"GET /sync">()(result);
     },
   },
   /**
@@ -158,24 +160,41 @@ export const syncRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/sync/snapshot",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
       const cursor = url.searchParams.get("cursor") ?? undefined;
       const limit = pagingNumber(url.searchParams.get("limit"));
+      const calendar = deps.services?.calendar;
       // `?phase=tail` — the labeled tail alone, for a client re-hydrating mail its own retention
       // policy once evicted. A CLOSED SET AT THE READ, which is where `input-bounds-census` asks
       // for a caller-chosen value's bound: anything else is the ordinary walk, the safe direction
-      // for a parameter a future client might spell differently.
-      const phase = url.searchParams.get("phase") === "tail" ? "tail" as const : undefined;
+      // for a parameter a future client might spell differently. `?phase=calendar` — the
+      // calendar's phase alone — is a word only where a composition keeps a calendar.
+      const asked = url.searchParams.get("phase");
+      const phase = asked === "tail" ? "tail" as const : asked === "calendar" && calendar ? "calendar" as const : undefined;
+      // The kinds named, read only for the calendar's gate; the mail phases serve every kind as before.
+      const types = calendar ? parseTypes(url.searchParams.get("types")) : undefined;
+      const span = phase === "calendar" ? namedCalendarSpan(url.searchParams.get("from"), url.searchParams.get("to")) : undefined;
 
-      const result = await sync(deps).getSnapshot(serviceContext(deps, req), {
+      const context = serviceContext(deps, req);
+      const result = await sync(deps).getSnapshot(context, {
         ...(cursor ? { cursor } : {}),
         ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
         ...(phase ? { phase } : {}),
+        ...(types ? { types } : {}),
+        ...(calendar ? { calendar } : {}),
+        ...(span ? { span } : {}),
       });
-      return jsonResponse(result);
+      const response = answer<"GET /sync/snapshot">()(result);
+      // On this door the browser's storage scope identifies a pairing. The snapshot names the
+      // account that supplied its rows, from the same authenticated context that read them.
+      if (deps.hello?.flavor === "desktop-host" && context.accountId) {
+        response.headers.set("x-ohmail-mirror-account", context.accountId);
+      }
+      return response;
     },
   },
   /**
@@ -191,12 +210,13 @@ export const syncRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/sync/pull",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps) => {
       const result = await mailbox(deps).requestPull(serviceContext(deps, req));
-      return jsonResponse(result, { status: 202 });
+      return answer<"POST /sync/pull">()(result, { status: 202 });
     },
   },
 ];

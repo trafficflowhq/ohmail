@@ -1,8 +1,9 @@
+import type { SnapshotResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { folderState, mailboxes, messages, messageTags, tags } from "@trafficflow/db";
-import type { ServiceContext, SnapshotResponse } from "@trafficflow/services/mail";
+import { dbFor, type ServiceContext } from "@trafficflow/services/mail";
 import { matchReadRoute } from "../src/cloud-read.js";
 
 /**
@@ -27,14 +28,14 @@ async function corpus(): Promise<{ ctx: ServiceContext; tagged: string; recent: 
       subject: `m ${i}`, fromAddress: "sender@example.test", date: new Date(NOW.getTime() - ageDays * DAY),
       nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     }).returning();
-    await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+    await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
     return m!.id;
   };
   const recent = [await add(1, 1), await add(2, 2)];
   const tagged = await add(3, 400);
   const [t] = await db.insert(tags).values({ accountId: ACCOUNT, name: "Invoices", hue: "moss" }).returning();
   await db.insert(messageTags).values({ accountId: ACCOUNT, messageId: tagged, tagId: t!.id });
-  return { ctx: { db, accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "cloud-snapshot-phase" }, tagged, recent };
+  return { ctx: { db: dbFor(db, ACCOUNT), accountId: ACCOUNT, userId: null, now: () => NOW, requestId: "cloud-snapshot-phase" }, tagged, recent };
 }
 
 async function snapshot(ctx: ServiceContext, query: string): Promise<SnapshotResponse> {

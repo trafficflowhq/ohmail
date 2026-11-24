@@ -19,6 +19,17 @@ export interface ToastEntry {
   shown?: () => void;
 }
 
+export interface CopyQuotaNotice {
+  until: string | null;
+}
+
+export function quotaNoticeOf(say: RefusalArg): CopyQuotaNotice | null {
+  if (typeof say !== "object" || say.args?.[0] !== "full") return null;
+  if (say.say === "sentCopyWaiting") return { until: null };
+  return say.say === "sentCopyWaitingUntil" && typeof say.args[2] === "string"
+    ? { until: say.args[2] } : null;
+}
+
 /** The two slots as the provider holds them. */
 export interface ToastSlots {
   action: ToastEntry | null;

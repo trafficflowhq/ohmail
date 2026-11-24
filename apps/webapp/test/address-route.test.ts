@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { addressHash, canonicalHash, normalizedHash, parseHash } from "../app/shell/routing";
-import { addressHref } from "../app/shell/address-view";
+import type { Route } from "../../../packages/app/src/frame/contract.js";
+import { fragmentOf, routeOf } from "../../../packages/app/src/frame/route.js";
+
+const at = (address: string): Route => ({ place: "address", sub: address, open: null, stage: null, words: {} });
+
+function normalizedHash(hash: string): string | null {
+  const canonical = fragmentOf(routeOf(hash));
+  return canonical === hash ? null : canonical;
+}
 
 /**
  * ═══ `#/address/<addr>` — THE ONE ROUTE WHOSE PARAMETER A STRANGER CHOSE ══════════════════
@@ -11,38 +18,37 @@ import { addressHref } from "../app/shell/address-view";
  *
  *   `/`  the router splits the path on it to find the `m/<id>` open-message tail, so a slash in
  *        a quoted local part becomes a path boundary and the view opens on half an address;
- *   `#`  the browser truncates the fragment there, so the address never reaches `parseHash`;
+ *   `#`  the browser truncates the fragment there, so the address never reaches `routeOf`;
  *   `%`  a real `%` and an escape sequence are the same bytes, so encoding on one side only
  *        round-trips wrongly.
  *
  * The property that makes all three safe is the ROUND TRIP:
- * `canonicalHash(parseHash(h)) === h`. It is not a nicety — `normalizedHash` rewrites the
+ * `fragmentOf(routeOf(h)) === h`. It is not a nicety — `normalizedHash` rewrites the
  * address bar whenever the canonical form differs from what is in it, and it does so on every
  * render. A route that fails to round-trip does not 404; it rewrites a correct URL, in place,
  * to a shorter one, and the shortening truncates the address it was correcting. That is why the
  * cases below are written as round trips rather than as "does it parse".
  */
 
-/** `parseHash` after `canonicalHash` must be the identity on the address it started from. */
+/** `routeOf` after `fragmentOf` must be the identity on the address it started from. */
 function roundTrip(address: string): string | null {
-  const href = addressHref(address);
-  const route = parseHash(href);
+  const href = fragmentOf(at(address));
+  const route = routeOf(href);
   // The bar must NOT be rewritten for a hash the product itself produced.
   expect(normalizedHash(href)).toBeNull();
-  expect(route.view).toBe("address");
-  expect(canonicalHash(route)).toBe(href);
-  return route.address;
+  expect(route.place).toBe("address");
+  expect(fragmentOf(route)).toBe(href);
+  return route.sub;
 }
 
 describe("#/address/<addr> — parse, canonicalize, round-trip", () => {
   it("parses an ordinary address and carries it decoded", () => {
-    const route = parseHash("#/address/anna%40acme.test");
-    expect(route.view).toBe("address");
-    expect(route.address).toBe("anna@acme.test");
-    // The parameterized siblings stay null — the fields are not shared.
-    expect(route.tagId).toBeNull();
-    expect(route.folderId).toBeNull();
-    expect(route.messageId).toBeNull();
+    const route = routeOf("#/address/anna%40acme.test");
+    expect(route.place).toBe("address");
+    expect(route.sub).toBe("anna@acme.test");
+    expect(route.stage).toBeNull();
+    expect(route.words).toEqual({});
+    expect(route.open).toBeNull();
   });
 
   it("round-trips every address shape a header can legally carry", () => {
@@ -65,14 +71,11 @@ describe("#/address/<addr> — parse, canonicalize, round-trip", () => {
   });
 
   it("`addressHref` and `goAddress`'s spelling and `canonicalHash` are ONE encoder", () => {
-    // Three callers of `addressHash`. If any of them grew its own `encodeURIComponent` call, the
-    // three would agree for plain addresses and diverge for exactly the ones above — and the
-    // divergence shows up as the address bar being rewritten under a correct link, not as an
-    // error. So the identity is asserted on the shapes most likely to expose it.
+    // The frame's navigation command and URL rewrite both use fragmentOf.
     for (const address of ["anna@acme.test", "a/b@acme.test", "a%b@acme.test", "a b@acme.test"]) {
-      const hash = addressHash(address);
-      expect(addressHref(address)).toBe(hash);
-      expect(canonicalHash(parseHash(hash))).toBe(hash);
+      const hash = fragmentOf(at(address));
+      expect(hash).toBe(`#/address/${encodeURIComponent(address)}`);
+      expect(fragmentOf(routeOf(hash))).toBe(hash);
     }
   });
 
@@ -80,11 +83,11 @@ describe("#/address/<addr> — parse, canonicalize, round-trip", () => {
     // The address view is a MESSAGE VIEW: opening a row from it must survive a reload and a
     // copied link, exactly as opening one from a tag does. The tail is split BEFORE the address
     // branch is chosen, so this also proves the address is not swallowing the tail.
-    const route = parseHash("#/address/anna%40acme.test/m/msg-1");
-    expect(route.view).toBe("address");
-    expect(route.address).toBe("anna@acme.test");
-    expect(route.messageId).toBe("msg-1");
-    expect(canonicalHash(route)).toBe("#/address/anna%40acme.test/m/msg-1");
+    const route = routeOf("#/address/anna%40acme.test/m/msg-1");
+    expect(route.place).toBe("address");
+    expect(route.sub).toBe("anna@acme.test");
+    expect(route.open).toBe("msg-1");
+    expect(fragmentOf(route)).toBe("#/address/anna%40acme.test/m/msg-1");
     expect(normalizedHash("#/address/anna%40acme.test/m/msg-1")).toBeNull();
   });
 
@@ -94,25 +97,25 @@ describe("#/address/<addr> — parse, canonicalize, round-trip", () => {
     // stops it: the same address spelled RAW would be cut in half.
     const address = "a/m/b@acme.test";
     expect(roundTrip(address)).toBe(address);
-    expect(parseHash(addressHref(address)).messageId).toBeNull();
+    expect(routeOf(fragmentOf(at(address))).open).toBeNull();
     // Spelled raw, the router reads `m/b@acme.test` as the open-message tail and the address as
     // `a` — which is the defect the encoding exists to prevent, asserted so the encoding cannot
     // be quietly dropped as unnecessary.
-    const raw = parseHash("#/address/a/m/b@acme.test");
-    expect(raw.address).toBe("a");
-    expect(raw.messageId).toBe("b@acme.test");
+    const raw = routeOf("#/address/a/m/b@acme.test");
+    expect(raw.sub).toBe("a");
+    expect(raw.open).toBe("b@acme.test");
   });
 
   it("a MALFORMED escape opens the view instead of throwing", () => {
-    // `decodeURIComponent` raises `URIError` on a lone `%`, and `parseHash` runs on every
+    // `decodeURIComponent` raises `URIError` on a lone `%`, and `routeOf` runs on every
     // render: a throw here would blank the whole shell for a hand-edited URL or a link a mail
     // client half-escaped. The raw segment is the address in that case — it matches no mail, so
     // the view's empty state names it, which is a legible answer to a broken link.
     for (const bad of ["#/address/%", "#/address/%zz", "#/address/a%2"]) {
-      const route = parseHash(bad);
-      expect(route.view).toBe("address");
-      expect(typeof route.address).toBe("string");
-      expect(route.address).not.toBe("");
+      const route = routeOf(bad);
+      expect(route.place).toBe("address");
+      expect(typeof route.sub).toBe("string");
+      expect(route.sub).not.toBe("");
     }
   });
 
@@ -121,25 +124,21 @@ describe("#/address/<addr> — parse, canonicalize, round-trip", () => {
     // address view whose header names nobody is a screen with no subject. `normalizedHash` then
     // rewrites the bar to the fallback it actually rendered.
     for (const bare of ["#/address", "#/address/"]) {
-      const route = parseHash(bare);
-      expect(route.view).toBe("ohbox");
-      expect(route.address).toBeNull();
+      const route = routeOf(bare);
+      expect(route.place).toBe("ohbox");
+      expect(route.sub).toBeNull();
       expect(normalizedHash(bare)).toBe("#/ohbox");
     }
   });
 
   it("does not disturb the sibling parameterized routes", () => {
-    // `address` was added to `ViewId`, to `MESSAGE_VIEWS` and to every `Route` literal. A
-    // regression in any of those shows up as one of these losing its own parameter.
-    const tag = parseHash("#/tag/pottery/m/x");
-    expect([tag.view, tag.tagId, tag.messageId, tag.address]).toEqual(["tag", "pottery", "x", null]);
-    const folder = parseHash("#/folder/f-1/m/x");
-    expect([folder.view, folder.folderId, folder.messageId, folder.address])
-      .toEqual(["folder", "f-1", "x", null]);
-    const settings = parseHash("#/settings/devices");
-    expect([settings.view, settings.settingsPane, settings.address])
-      .toEqual(["settings", "devices", null]);
-    const ohbox = parseHash("#/ohbox");
-    expect(ohbox.address).toBeNull();
+    const tag = routeOf("#/tag/pottery/m/x");
+    expect([tag.place, tag.sub, tag.open]).toEqual(["tags", "pottery", "x"]);
+    const folder = routeOf("#/folder/f-1/m/x");
+    expect([folder.place, folder.sub, folder.open]).toEqual(["folder", "f-1", "x"]);
+    const settings = routeOf("#/settings/devices");
+    expect([settings.place, settings.sub]).toEqual(["settings", "devices"]);
+    const ohbox = routeOf("#/ohbox");
+    expect(ohbox.sub).toBeNull();
   });
 });

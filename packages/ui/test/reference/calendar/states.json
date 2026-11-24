@@ -1,0 +1,592 @@
+{
+  "with": {},
+  "rows": [
+    {
+      "component": "CalendarSquare",
+      "state": "rest",
+      "looks": "all"
+    },
+    {
+      "component": "CalendarSquare",
+      "state": "large"
+    },
+    {
+      "component": "CalendarSquare",
+      "state": "small"
+    },
+    {
+      "component": "CalendarSquare",
+      "state": "hidden"
+    },
+    {
+      "component": "CalendarSquare",
+      "state": "neutral"
+    },
+    {
+      "component": "EventChip",
+      "state": "block",
+      "looks": "all"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-hover"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-focus"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-open"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-to-answer-new"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-to-answer"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-changed"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-cancelled"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-maybe"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-from-mail"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-from-mail-focus"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-draft"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-zone"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-view-only"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-waiting"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-not-saved"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-half-hour"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-shortest"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-narrow"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-two-hours"
+    },
+    {
+      "component": "EventChip",
+      "state": "block-dragged"
+    },
+    {
+      "component": "EventChip",
+      "state": "pill",
+      "looks": "all"
+    },
+    {
+      "component": "EventChip",
+      "state": "pill-hover"
+    },
+    {
+      "component": "EventChip",
+      "state": "pill-open"
+    },
+    {
+      "component": "EventChip",
+      "state": "pill-view-only"
+    },
+    {
+      "component": "EventChip",
+      "state": "pill-neutral"
+    },
+    {
+      "component": "EventChip",
+      "state": "pill-from-mail"
+    },
+    {
+      "component": "EventChip",
+      "state": "pill-draft"
+    },
+    {
+      "component": "EventChip",
+      "state": "line",
+      "looks": "all"
+    },
+    {
+      "component": "EventChip",
+      "state": "line-hover"
+    },
+    {
+      "component": "EventChip",
+      "state": "line-open"
+    },
+    {
+      "component": "EventChip",
+      "state": "line-to-answer"
+    },
+    {
+      "component": "EventChip",
+      "state": "line-changed"
+    },
+    {
+      "component": "EventChip",
+      "state": "line-cancelled"
+    },
+    {
+      "component": "EventChip",
+      "state": "line-maybe"
+    },
+    {
+      "component": "EventChip",
+      "state": "line-from-mail"
+    },
+    {
+      "component": "EventChip",
+      "state": "line-run"
+    },
+    {
+      "component": "TimeGrid",
+      "state": "week",
+      "looks": "all"
+    },
+    {
+      "component": "TimeGrid",
+      "state": "day"
+    },
+    {
+      "component": "TimeGrid",
+      "state": "day-now"
+    },
+    {
+      "component": "TimeGrid",
+      "state": "days-now"
+    },
+    {
+      "component": "TimeGrid",
+      "state": "all-day"
+    },
+    {
+      "component": "TimeGrid",
+      "state": "hot"
+    },
+    {
+      "component": "AllDayRow",
+      "state": "rest"
+    },
+    {
+      "component": "NowLine",
+      "state": "rest"
+    },
+    {
+      "component": "OutOfSightCapsule",
+      "state": "rest"
+    },
+    {
+      "component": "MonthGrid",
+      "state": "month",
+      "looks": "all"
+    },
+    {
+      "component": "MonthGrid",
+      "state": "week-numbers"
+    },
+    {
+      "component": "WeekNumber",
+      "state": "rest",
+      "looks": "all"
+    },
+    {
+      "component": "MiniMonth",
+      "state": "rail",
+      "looks": [
+        "paper-light-desktop",
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-dark-desktop",
+        "paper-dark-fold",
+        "paper-dark-foldl",
+        "ohmarchy-light-desktop",
+        "ohmarchy-light-fold",
+        "ohmarchy-light-foldl",
+        "ohmarchy-dark-desktop",
+        "ohmarchy-dark-fold",
+        "ohmarchy-dark-foldl"
+      ]
+    },
+    {
+      "component": "MiniMonth",
+      "state": "picked"
+    },
+    {
+      "component": "MiniMonth",
+      "state": "year"
+    },
+    {
+      "component": "MiniMonth",
+      "state": "menu"
+    },
+    {
+      "component": "MiniMonth",
+      "state": "phone",
+      "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    },
+    {
+      "component": "MiniMonth",
+      "state": "widget"
+    },
+    {
+      "component": "CalendarRow",
+      "state": "rest",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "CalendarRow",
+      "state": "hover"
+    },
+    {
+      "component": "CalendarRow",
+      "state": "view-only"
+    },
+    {
+      "component": "CalendarRow",
+      "state": "hidden"
+    },
+    {
+      "component": "CalendarRow",
+      "state": "neutral"
+    },
+    {
+      "component": "ViewSwitch",
+      "state": "segments",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "ViewSwitch",
+      "state": "capsule",
+      "looks": ["paper-light-fold", "paper-dark-fold", "ohmarchy-light-fold", "ohmarchy-dark-fold"]
+    },
+    {
+      "component": "CalendarHead",
+      "state": "rest",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "CalendarHead",
+      "state": "away"
+    },
+    {
+      "component": "CalendarHead",
+      "state": "place"
+    },
+    {
+      "component": "CalendarHead",
+      "state": "narrow",
+      "looks": [
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-dark-fold",
+        "paper-dark-foldl",
+        "ohmarchy-light-fold",
+        "ohmarchy-light-foldl",
+        "ohmarchy-dark-fold",
+        "ohmarchy-dark-foldl"
+      ]
+    },
+    {
+      "component": "CalendarHead",
+      "state": "phone",
+      "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "rest",
+      "looks": "all"
+    },
+    {
+      "component": "AgendaRow",
+      "state": "now",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "hover",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "open",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "to-answer",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "changed",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "cancelled",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "maybe",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "all-day",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "found",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "AgendaRow",
+      "state": "dated",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "SidePanel",
+      "state": "agenda",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "EventCard",
+      "state": "invited",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-dark-fold",
+        "paper-dark-foldl",
+        "ohmarchy-light-fold",
+        "ohmarchy-light-foldl",
+        "ohmarchy-dark-fold",
+        "ohmarchy-dark-foldl"
+      ]
+    },
+    {
+      "component": "EventCard",
+      "state": "own"
+    },
+    {
+      "component": "EventCard",
+      "state": "view-only"
+    },
+    {
+      "component": "EventCard",
+      "state": "call"
+    },
+    {
+      "component": "EventCard",
+      "state": "found"
+    },
+    {
+      "component": "EventCard",
+      "state": "inline"
+    },
+    {
+      "component": "EventCard",
+      "state": "sheet",
+      "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    },
+    {
+      "component": "EventBridge",
+      "state": "beside",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "AnswerSwitch",
+      "state": "rest",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "AnswerSwitch",
+      "state": "given"
+    },
+    {
+      "component": "QuickAdd",
+      "state": "typed",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "paper-dark-phone",
+        "ohmarchy-light-phone",
+        "ohmarchy-dark-phone",
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-dark-fold",
+        "paper-dark-foldl",
+        "ohmarchy-light-fold",
+        "ohmarchy-light-foldl",
+        "ohmarchy-dark-fold",
+        "ohmarchy-dark-foldl"
+      ]
+    },
+    {
+      "component": "EventForm",
+      "state": "new",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "EventForm",
+      "state": "every-row"
+    },
+    {
+      "component": "QuestionBeforeAct",
+      "state": "series",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "QuestionBeforeAct",
+      "state": "tell"
+    },
+    {
+      "component": "CalendarRail",
+      "state": "shut",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "CalendarRail",
+      "state": "open"
+    },
+    {
+      "component": "InvitationCard",
+      "state": "to-answer",
+      "looks": "all"
+    },
+    {
+      "component": "InvitationCard",
+      "state": "answered",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "InvitationCard",
+      "state": "proposed",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-fold", "ohmarchy-light-fold"]
+    },
+    {
+      "component": "FoundEventRow",
+      "state": "found",
+      "looks": "all"
+    },
+    {
+      "component": "FoundEventRow",
+      "state": "added"
+    },
+    {
+      "component": "FoundEventRow",
+      "state": "guess"
+    },
+    {
+      "component": "TodayList",
+      "state": "today",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-dark-fold",
+        "paper-dark-foldl",
+        "ohmarchy-light-fold",
+        "ohmarchy-light-foldl",
+        "ohmarchy-dark-fold",
+        "ohmarchy-dark-foldl"
+      ]
+    },
+    {
+      "component": "TodayList",
+      "state": "coming",
+      "looks": "all"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { act } from "react";
@@ -7,15 +8,14 @@ import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore,
   consentPartition,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
-import { shellSliceOf } from "./source-anchor";
+import { SenderMenu } from "../app/components/sender-menu/SenderMenu";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
+import { within } from "@testing-library/react";
+import { act as webAct, tick } from "./fixtures/screening-web.js";
+import { withMountedSender } from "./fixtures/mounted-sender-sheet.js";
 
 /**
  * THE SHEET SAYS WHERE THE LIST SHOWS THE MAIL (SENDER-SHEET-NOW-IN-READS-THE-FILED-FOLDER). The
@@ -80,11 +80,13 @@ async function sheet(list: EngineMessage[], rules: RuleDTO[], opts: { placed?: b
       }),
     }));
   });
-  const el = host;
+  const dialog = within(host).getByRole("dialog", {
+    name: messages.screening.aria.replace("{sender}", ADDR),
+  });
   return {
     placeOf,
-    now: el.querySelector(".sm-now")?.textContent ?? "",
-    checked: [...el.querySelectorAll("li[role=option]")]
+    now: dialog.querySelector(".sm-now")?.textContent ?? "",
+    checked: within(dialog).getAllByRole("option")
       .filter((li) => li.getAttribute("aria-selected") === "true" || li.querySelector(".ck"))
       .map((li) => (li.firstChild?.textContent ?? "").trim()),
   };
@@ -94,7 +96,7 @@ describe("the sheet reads the list's placement", () => {
   it("allow Ohbox and a deny Screened: the row shows in Screened, and so does the sheet", async () => {
     const s = await sheet([msg("m1", "INBOX")], [rule("r-allow", "INBOX"), rule("r-deny", "ohmail/Screened")]);
     expect(s.placeOf.get("m1")).toBe("ohmail/Screened");
-    expect(s.now, "the sheet named the filed folder").toContain("now in Screened out");
+    expect(s.now, "the sheet named the filed folder").toBe("Now in Screened out");
     expect(s.checked).toEqual(["Screened out"]);
   });
 
@@ -104,21 +106,21 @@ describe("the sheet reads the list's placement", () => {
     // 24: a sheet marking the letters' place hid the rule once the letters were split).
     const s = await sheet([msg("m1", "INBOX")], [rule("r-news", "ohmail/News")]);
     expect(s.placeOf.get("m1")).toBe("INBOX");
-    expect(s.now).toContain("now in Ohbox");
+    expect(s.now).toBe("Now in Ohbox");
     expect(s.checked).toEqual(["News"]);
   });
 
   it("a rule in the News pile's older spelling is the same pile", async () => {
     // Mail the organizer FILED in the old-spelled folder since ARCH-R902 — the place is its folder.
     const s = await sheet([msg("m1", "ohmail/Reads" as never)], [rule("r-old", "ohmail/Reads")]);
-    expect(s.now).toContain("now in News");
+    expect(s.now).toBe("Now in News");
     expect(s.checked).toEqual(["News"]);
   });
 
   it("a dormant stranger's read mail is in History, and no pile is checked", async () => {
     const s = await sheet([msg("m1", "INBOX", { unread: false, date: "2026-01-05T09:00:00.000Z" })], []);
     expect(s.placeOf.get("m1")).toBeNull();
-    expect(s.now).toContain("now in History");
+    expect(s.now).toBe("Now in History");
     expect(s.checked).toEqual([]);
   });
 
@@ -138,23 +140,38 @@ describe("the sheet reads the list's placement", () => {
       msg("m3", "ohmail/Screened"),
       msg("m4", "ohmail/Quarantine"),
     ], []);
-    expect(s.now).toContain("spread across several views");
+    expect(s.now).toBe("Now in 4 places");
   });
 
   it("the ordinary case is unchanged: one rule where the mail is filed", async () => {
     const s = await sheet([msg("m1", "INBOX")], [rule("r-allow", "INBOX")]);
-    expect(s.now).toContain("now in Ohbox");
+    expect(s.now).toBe("Now in Ohbox");
     expect(s.checked).toEqual(["Ohbox"]);
   });
 
   it("with no placement handed in the sheet reads the filed folder, as it always did", async () => {
     const s = await sheet([msg("m1", "INBOX")], [rule("r-allow", "INBOX"), rule("r-deny", "ohmail/Screened")], { placed: false });
-    expect(s.now).toContain("now in Ohbox");
+    expect(s.now).toBe("Now in Ohbox");
   });
 });
 
 describe("the shell hands the sheet the list's placement", () => {
-  it("the sender sheet is resolved with the partition the lists render from", () => {
-    expect(shellSliceOf("senderMenuFor")).toMatch(/senderScreening\([^;]*consentView\?\.placeOf\)/);
+  it("the sender sheet is resolved with the partition the lists render from", async () => {
+    await withMountedSender(async ({ shell, sheet }) => {
+      const history = within(shell).getByRole("listbox", { name: "History" });
+      const row = within(history).getByRole("option", { name: /Ada: A note from Ada/ });
+      expect(within(row).getByText("Ohbox")).toBeTruthy();
+      expect(sheet.getByText(/Now in/).textContent).toContain("Screened out");
+      expect(sheet.getByRole("radio", { name: "Screen out", checked: true })).toBeTruthy();
+
+      await webAct(async () => {
+        window.location.hash = "#/screener/screened";
+        window.dispatchEvent(new Event("hashchange"));
+      });
+      await tick(300);
+      const sections = within(shell).getByRole("group", { name: "Screener sections" });
+      expect(within(sections).getByRole("button", { name: /^Screened out/, pressed: true })).toBeTruthy();
+      expect(within(shell).getByRole("option", { name: /Ada: A note from Ada/ })).toBeTruthy();
+    }, { place: "history", placeDecided: false, rules: ["INBOX", "ohmail/Screened"] });
   });
 });

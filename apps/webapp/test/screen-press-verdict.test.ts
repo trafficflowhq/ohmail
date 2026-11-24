@@ -1,23 +1,25 @@
+import type {
+  EngineMessage,
+  EngineMutation,
+  Folder,
+  MutationOutcome,
+  RuleEntity as RuleDTO,
+} from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   OhmailEngine,
   consentPartition,
   presentationReader,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type MutationOutcome,
-  type RuleDTO,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { shellConsentOptions } from "../app/shell/consent-options";
-import { screeningVerdict, verdictAction } from "../app/shell/press-verdict";
+import { shellConsentOptions } from "@ohmail/app-logic/press/consent-options";
+import { screeningVerdict, verdictAction } from "@ohmail/app-logic/press/press-verdict";
 import {
   dispatchScreeningChange,
   planScreeningChange,
   senderScreening,
-} from "../app/shell/sender-screening";
+} from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE SENDER SHEET'S PRESS, READ BACK FROM THE LIST. A person pressed

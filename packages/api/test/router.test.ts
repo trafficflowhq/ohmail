@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { matchRoute, type Route } from "@trafficflow/api";
+import { createApp, jsonResponse, matchRoute, type Route } from "@trafficflow/api";
+import { makeDeps, req } from "./helpers.js";
 
 const noop: Route["handler"] = async () => new Response();
 
@@ -56,5 +57,35 @@ describe("matchRoute", () => {
     const m = matchRoute(routes, "DELETE", "/threads/abc-123");
     expect(m.matched).toBe(false);
     if (!m.matched) expect(m.methodNotAllowed).toBe(true);
+  });
+});
+
+describe("createApp answers what the match said", () => {
+  it("an unknown path is 404, a known path asked the wrong way is 405, and neither reaches a handler", async () => {
+    let ran = 0;
+    const counted: Route["handler"] = async () => { ran += 1; return jsonResponse({ ok: true }); };
+    const table: Route[] = [
+      { method: "GET", pattern: "/things", cost: "read", relay: false, options: { public: true }, handler: counted },
+      { method: "POST", pattern: "/things/merge", cost: "work", relay: false, options: { public: true }, handler: counted },
+    ];
+    const { deps } = await makeDeps();
+    const app = createApp(table);
+
+    const unknown = await app.handle(req("GET", "/nope/here"), deps);
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toMatchObject({ error: { code: "not_found" } });
+
+    const wrongWay = await app.handle(req("DELETE", "/things"), deps);
+    expect(wrongWay.status).toBe(405);
+    expect(await wrongWay.json()).toMatchObject({ error: { code: "method_not_allowed" } });
+    // A static segment under a param-less path is its own route: GET on a POST-only one is 405 too.
+    expect((await app.handle(req("GET", "/things/merge"), deps)).status).toBe(405);
+    expect(ran).toBe(0);
+
+    // The control: asked the right way, the handler runs and its answer leaves unchanged.
+    const right = await app.handle(req("GET", "/things"), deps);
+    expect(right.status).toBe(200);
+    expect(await right.json()).toEqual({ ok: true });
+    expect(ran).toBe(1);
   });
 });

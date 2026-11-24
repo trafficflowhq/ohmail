@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { clearSignedInSync, serveSignedInSync, SYNC_FIXTURE_OWNER, writeSignedInSync } from "./fixtures/signed-in-sync";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -63,8 +64,9 @@ beforeEach(() => {
   refreshCalls = 0;
   syncAnswer = emptyPage;
   refreshAnswer = coded401;
+  writeSignedInSync();
   originalFetch = globalThis.fetch;
-  globalThis.fetch = vi.fn(async (input: unknown) => {
+  globalThis.fetch = vi.fn(serveSignedInSync(async (input) => {
     const url = String(input);
     if (url.includes("/auth/refresh")) {
       refreshCalls += 1;
@@ -77,7 +79,7 @@ beforeEach(() => {
     }
     if (url.includes("/sync")) return syncAnswer();
     return new Response("{}", { status: 200 });
-  }) as unknown as typeof globalThis.fetch;
+  }));
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(Math, "random").mockReturnValue(0.999999);
 });
@@ -91,6 +93,7 @@ afterEach(async () => {
   roots = [];
   document.body.innerHTML = "";
   globalThis.fetch = originalFetch;
+  clearSignedInSync();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -102,7 +105,7 @@ async function mountShell(opts: { keepTruth?: boolean } = {}): Promise<HTMLEleme
   // production arms it: importing the session client re-registers nothing (module init already
   // ran), so the probe is re-registered here the same way `session-refresh.ts`'s module scope
   // does.
-  const truth = await import("../app/shell/session-truth.js");
+  const truth = await import("@ohmail/app-logic/session/session-truth");
   if (!opts.keepTruth) truth.resetSessionTruthForTests();
   const { resumeSession } = await import("../app/session-refresh.js");
   truth.registerSessionProbe(() => {
@@ -122,7 +125,7 @@ async function mountShell(opts: { keepTruth?: boolean } = {}): Promise<HTMLEleme
         timeZone: "UTC",
         children: h(EngineProvider, {
           demo: false,
-          resolveOwner: async () => ({ kind: "owner", accountId: "acct_live_1" }) as const,
+          resolveOwner: async () => ({ kind: "owner", accountId: SYNC_FIXTURE_OWNER }) as const,
           children: null,
         }),
       }),
@@ -135,7 +138,7 @@ async function mountShell(opts: { keepTruth?: boolean } = {}): Promise<HTMLEleme
   return container;
 }
 
-const prompt = (container: HTMLElement): Element | null => container.querySelector(".session-end");
+const prompt = (container: HTMLElement): Element | null => container.querySelector('[role="alertdialog"]');
 
 describe("the terminal 401 becomes a re-auth prompt", () => {
   it("a revoked session puts the prompt on screen within one probe, not one minute", async () => {
@@ -152,7 +155,7 @@ describe("the terminal 401 becomes a re-auth prompt", () => {
     const dialog = prompt(container);
     expect(dialog, "no re-auth prompt rendered over a session the server confirmed dead").not.toBeNull();
     expect(dialog!.getAttribute("role")).toBe("alertdialog");
-    expect(dialog!.textContent).toContain("You are signed out.");
+    expect(dialog!.getAttribute("aria-label")).toBe("You are signed out.");
     const signIn = dialog!.querySelector('a[href="/login"]');
     expect(signIn, "the prompt carries no sign-in path").not.toBeNull();
   });
@@ -186,7 +189,7 @@ describe("the terminal 401 becomes a re-auth prompt", () => {
      * latched here BEFORE the mount, exactly as that flow leaves it; the shell's own owner
      * confirmation must withdraw it.
      */
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
     const container = await mountShell();
     // Latch as the pre-sign-in /login visit does, then let the shell's confirmation land.
     await act(async () => {

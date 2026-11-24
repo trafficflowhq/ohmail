@@ -1,13 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { accounts, changeLog, folderState, mailboxes, messageBodies, messageInstances, messages } from "@trafficflow/db";
+import { accounts, changeLog, folderState, mailboxes, mailboxFolders, messageBodies, messageInstances, messages } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { MessageGoneError, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
-import { MailboxService, MessageService, type ServiceContext } from "@trafficflow/services";
-import { reconcileMailbox, type SyncDeps } from "../src/sync.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { MailboxService, MessageService, type ServiceContext, dbFor } from "@trafficflow/services";
+import { reconcileMailbox, type SyncDeps } from "@ohmail/organizer/sync";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * RESTORE BEFORE THE DELETE LANDS — the press and the organizer's pass composed on the stores the
@@ -20,7 +20,7 @@ const TRASH = "Trash";
 const t0 = new Date("2026-10-24T08:00:00.000Z");
 const svc = new MessageService();
 
-async function world(opts: { instance?: boolean } = {}) {
+async function world(opts: { instance?: boolean; folders?: string[] } = {}) {
   const db = await makeTestDb();
   const [a] = await db.insert(accounts).values({ name: "rud" }).returning();
   const accountId = a!.id;
@@ -29,6 +29,8 @@ async function world(opts: { instance?: boolean } = {}) {
     organizerRole: "organizer", organizeConsentedAt: t0,
   }).returning();
   const mailboxId = mb!.id;
+  // The person's own folders, as the walk lists them.
+  for (const folder of opts.folders ?? []) await db.insert(mailboxFolders).values({ mailboxId, accountId, folder });
   const [m] = await db.insert(messages).values({
     accountId, mailboxId, dedupKey: "mid:<r@x>", messageIdHeader: "<r@x>", fromAddress: "anna@x.example",
     subject: "s", date: t0, bodyHash: "h", nativeLocator: { folder: "INBOX", ref: "7:11" },
@@ -40,13 +42,13 @@ async function world(opts: { instance?: boolean } = {}) {
       accountId, mailboxId, messageId: id, folder: "INBOX", uidvalidity: 7n, uid: 11, isPrimary: true,
     });
   }
-  await db.insert(messageBodies).values({ messageId: id, text: "the letter" });
+  await db.insert(messageBodies).values({ messageId: id, accountId, text: "the letter" });
   await db.insert(folderState).values({
-    messageId: id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external",
+    messageId: id, accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external",
     reconcileStatus: "reconciled", conflict: false,
   });
   const repo = makeDrizzleRepo(db as never);
-  const ctx = { db, accountId, userId: null, now: () => new Date(), requestId: "rud" } as unknown as ServiceContext;
+  const ctx = { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: "rud" } as unknown as ServiceContext;
   const moves: string[] = [];
   // Where the server holds the letter: its one copy, moved by `move`.
   const server = { folder: "INBOX", uid: 11 };
@@ -100,8 +102,8 @@ async function world(opts: { instance?: boolean } = {}) {
   const reap = async () => repo.transaction((r) => r.tombstoneInstanceless!(accountId, mailboxId, 200));
   const changeAt = async (seq: number) => (await db.select({ op: changeLog.op, entityId: changeLog.entityId })
     .from(changeLog).where(and(eq(changeLog.accountId, accountId), eq(changeLog.seq, BigInt(seq)))))[0];
-  /** The walk reads INBOX without the letter's old UID. */
-  const walkForgets = async () => { await repo.forgetInstanceAt(mailboxId, { folder: "INBOX", ref: "7:11" }); };
+  /** The walk reads the letter's folder (INBOX unless named) without its old UID. */
+  const walkForgets = async (at = { folder: "INBOX", ref: "7:11" }) => { await repo.forgetInstanceAt(mailboxId, at); };
   const filing = async () => (await new MailboxService({ signatureChecks: false }).list(ctx, { counts: true }))
     .find((m) => m.id === mailboxId)!.pendingMoves;
   return {
@@ -264,6 +266,84 @@ describe("a Restore pressed before the delete's move landed", () => {
     expect(out).toMatchObject({ restoreTo: "INBOX", pending: true });
     expect(await w.deletedAt(), "the tombstone stands").not.toBeNull();
     expect(await w.fs()).toMatchObject({ desiredFolder: "INBOX", reconcileStatus: "pending" });
+  });
+});
+
+/**
+ * The same two faults, and a delete that landed, for a letter the person moved into one of their
+ * own folders first: the origin a Restore or an Undo goes back to is that folder, not a place of
+ * ohmail's.
+ */
+describe("a letter in one of the person's own folders, deleted and restored", () => {
+  const ACME = "Clients/Acme";
+  async function filedIntoAcme() {
+    const w = await world({ folders: ["Clients", ACME] });
+    await svc.move(w.ctx, w.id, { folder: ACME });
+    await reconcileMailbox(w.deps);
+    expect(w.server, "the precondition: the move into the folder landed").toEqual({ folder: ACME, uid: 12 });
+    expect(await w.fs()).toMatchObject({ desiredFolder: ACME, observedFolder: ACME, reconcileStatus: "reconciled" });
+    return w;
+  }
+
+  it("a Restore before the delete's move landed: back in that folder at once, nothing sent, and it stays", async () => {
+    const w = await filedIntoAcme();
+    await svc.delete(w.ctx, w.id);
+    expect(await svc.restore(w.ctx, w.id)).toMatchObject({ restoreTo: ACME, pending: false });
+    expect(await w.deletedAt(), "the tombstone is cleared by the press").toBeNull();
+    expect(await w.fs()).toMatchObject({ desiredFolder: ACME, observedFolder: ACME, reconcileStatus: "pending", trashedFrom: ACME });
+
+    await reconcileMailbox(w.deps);
+    expect(w.moves, "the cancelled delete was sent to the server").toEqual([`INBOX->${ACME}`]);
+    expect(w.finds).toEqual([]);
+    expect(await w.fs()).toMatchObject({ desiredFolder: ACME, observedFolder: ACME, reconcileStatus: "reconciled", trashedFrom: null });
+    expect(await w.deletedAt()).toBeNull();
+    expect(await w.inTrash()).toBe(false);
+  });
+
+  it("an Undo after a delete whose move landed with its answer lost: found in Trash, moved back into that folder, text whole", async () => {
+    const w = await filedIntoAcme();
+    await svc.delete(w.ctx, w.id);
+    w.hook.dropAnswer = true;
+    await reconcileMailbox(w.deps);
+    expect(w.server, "the precondition: the server moved it to Trash").toEqual({ folder: TRASH, uid: 900 });
+    expect(await svc.restore(w.ctx, w.id)).toMatchObject({ restoreTo: ACME, pending: false });
+    await w.walkForgets({ folder: ACME, ref: "7:12" });
+    expect(await w.reap(), "the reaper took the letter the Undo kept").toBe(0);
+
+    await reconcileMailbox(w.deps);
+    expect(w.finds).toEqual([TRASH]);
+    expect(await w.fs()).toMatchObject({ desiredFolder: ACME, observedFolder: TRASH, reconcileStatus: "pending", trashedFrom: null });
+    expect(await w.reap()).toBe(0);
+
+    await reconcileMailbox(w.deps);
+    expect(w.moves).toEqual([`INBOX->${ACME}`, `${ACME}->${TRASH}`, `${TRASH}->${ACME}`]);
+    expect(w.server).toEqual({ folder: ACME, uid: 12 });
+    expect(await w.fs()).toMatchObject({ desiredFolder: ACME, observedFolder: ACME, reconcileStatus: "reconciled" });
+    expect(await w.deletedAt()).toBeNull();
+    const b = await w.body();
+    expect([b.withheldReason ?? null, b.text], "the body was emptied").toEqual([null, "the letter"]);
+  });
+
+  // On a one-connection store (PGlite, as the desktop's engine opens it) a read outside the
+  // restore's own transaction waits for that transaction, which waits for the read: the restore
+  // never answers, and neither does any statement after it.
+  it("a delete that landed first: the Restore answers, pending into that folder, and the store keeps answering", async () => {
+    const w = await filedIntoAcme();
+    await svc.delete(w.ctx, w.id);
+    await reconcileMailbox(w.deps);
+    expect(w.server, "the precondition: the delete landed").toEqual({ folder: TRASH, uid: 900 });
+    expect(await w.fs()).toMatchObject({ desiredFolder: TRASH, observedFolder: TRASH, trashedFrom: ACME });
+
+    const out = await svc.restore(w.ctx, w.id);
+    expect(out).toMatchObject({ restoreTo: ACME, pending: true });
+    expect(await w.deletedAt(), "the server still holds it in Trash").not.toBeNull();
+    expect(await w.changeAt(out.seq)).toEqual({ op: "move", entityId: w.id });
+
+    await reconcileMailbox(w.deps);
+    expect(w.moves).toEqual([`INBOX->${ACME}`, `${ACME}->${TRASH}`, `${TRASH}->${ACME}`]);
+    expect(w.server).toEqual({ folder: ACME, uid: 12 });
+    expect(await w.fs()).toMatchObject({ desiredFolder: ACME, observedFolder: ACME, reconcileStatus: "reconciled" });
+    expect(await w.deletedAt()).toBeNull();
   });
 });
 

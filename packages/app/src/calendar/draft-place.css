@@ -1,0 +1,65 @@
+/* The phone's place field opens its own sheet above the editor. */
+.cal-place-sheet {
+  position: absolute;
+  inset: var(--cal-place-sheet-top) 0 var(--kb, 0px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: none;
+  width: 100%;
+  padding: var(--s3) var(--s3) 0;
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  background: var(--sheet);
+  box-shadow: var(--float);
+  --cal-place-sheet-top: 56px;
+}
+
+.cal-place-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.cal-place-field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+  min-height: var(--h-l);
+  padding-inline: var(--s3) var(--s1);
+  border: var(--oh-hair) solid var(--ctl-ring);
+  border-radius: var(--r-row);
+  background: var(--soft-sheet);
+  color: var(--ink2);
+}
+
+.cal-place-field:focus-within {
+  --cal-place-focus-ring: inset 0 0 0 var(--oh-focus) var(--focus);
+  box-shadow: var(--cal-place-focus-ring);
+}
+
+.cal-place-input {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--h-l);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+
+.cal-place-input:focus-visible {
+  outline: none;
+}
+
+.cal-place-status {
+  color: var(--ink2);
+  font-size: var(--t-meta);
+}
+
+.cal-place-results {
+  min-height: 0;
+  margin-block-start: var(--s2);
+}

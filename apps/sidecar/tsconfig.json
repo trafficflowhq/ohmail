@@ -1,12 +1,13 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tools/tsconfig.base.json",
   "compilerOptions": { "outDir": "dist", "rootDir": "src" },
   "include": ["src"],
   "references": [
+    { "path": "../../packages/wire" },
     { "path": "../../packages/core" },
     { "path": "../../packages/db" },
     { "path": "../../packages/services" },
     { "path": "../../packages/api" },
-    { "path": "../worker" }
+    { "path": "../../packages/organizer" }
   ]
 }

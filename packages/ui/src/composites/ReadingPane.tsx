@@ -117,11 +117,7 @@ export function ReadingPane({
   );
   return (
     <article ref={articleRef} className={className ? `msg ${className}` : "msg"} {...articleData}>
-      {/* THE BUILT-IN FROM-LINE, ONLY WHEN A CALLER ASKED FOR ONE. `MessagePane` composes its
-          own `MessageHeader` in the children slot now — richer than this line (recipients, the
-          absolute date on hover) and the same one an expanded sibling wears — so it leaves
-          `from` off and this block does not render. A caller that still hands over a name (the
-          showcase, the smoke test) gets the simple line unchanged. */}
+      {/* The built-in from-line appears only when a caller supplies a name. */}
       {from !== undefined ? (
         <div className="msg-from">
           {onSender ? (
@@ -170,9 +166,7 @@ export function ReadingPane({
       {actions ? <div className="msg-actions">{actions}</div> : null}
       {/* THE REPLY DOCK — the one wrapper the split-column sticky rule pins. In the split reading
           column (`.read-col`) a deep thread scrolls while this stays stuck to the bottom with its own scroll, so the
-          editor is never below the fold; in the reader overlay it is inert flow and the editor
-          scrolls itself into view instead (`InlineReply`). No wrapper when there is no reply, so
-          the dock's own box never sits empty at the foot of the message. */}
+          editor is never below the fold. The wrapper appears only while a reply is supplied. */}
       {reply ? <div className="reply-dock">{reply}</div> : null}
     </article>
   );

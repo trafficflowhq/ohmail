@@ -1,14 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, SEND_RECONCILE_CRON_PATH, SENT_COPIES_CRON_PATH, type ApiDeps } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
-import { drafts, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
+import { accountOfMailbox, drafts, mailboxCredentials, mailboxes, outboundSends, outboundSentCopies, bindDb } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP, type SendAdapter } from "@trafficflow/core";
-import { runOwedSentCopyPass, SEND_COPY_OWED_STAGED_NOT_DUE } from "@trafficflow/services";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
+import { runOwedSentCopyPass, SEND_COPY_OWED_STAGED_NOT_DUE, SEND_RECONCILE_NET_TIMEOUTS } from "@trafficflow/services";
 import { admittedFilingAdapter } from "../src/routes/internal.js";
 import { makeDeps, req } from "./helpers.js";
 
@@ -91,55 +89,42 @@ describe("mounting and the gate", () => {
 });
 
 describe("the abandonment seam reaches production, not just the spies", () => {
-  /**
-   * A SOURCE CENSUS, and the reason is that `makeSendAdapter` CONNECTS eagerly (`adapter.connect()`)
-   * — so the only way to build one is against a live IMAP server, which is not reachable in every
-   * environment this suite runs in. The property still has to be checked somewhere, because it
-   * failed exactly the way an unchecked property does.
-   *
-   * WHAT WENT WRONG: `SendAdapter.forceClose` was added to the seam, forwarded by the reconciler's
-   * own wrapper, and exercised by a spy that defined it — while `makeSendAdapter` returns a
-   * hand-written object literal that did NOT name it. So in production `abandon()` always took the
-   * polite-`close()` fallback: the LOGOUT queued behind the hung command, waited out the very hang
-   * it was escaping, and the admission slot stayed held. Every test passed. The seam was decorative
-   * for its whole life, and only a check that looks at the PRODUCTION factory could have said so.
-   */
-  it("makeSendAdapter forwards forceClose — the reconciler's abandonment depends on it", () => {
-    const src = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "..", "src", "send-adapter.ts"), "utf8",
-    );
-    // Matched on the PROPERTY, not on a formatting of it: an exact-body regex turns red when
-    // somebody adds a log line and stays green when a correct-looking `forceClose` is added to a
-    // second, unreachable literal. What has to be true is that the returned object names it and
-    // that it reaches the adapter's own.
-    const body = src.slice(src.indexOf("return {", src.indexOf("export async function makeSendAdapter")));
-    const decl = /forceClose\s*:\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.exec(body);
-    expect(decl, "the returned object must name forceClose, or the seam is decorative")
-      .not.toBeNull();
-    const after = body.slice(decl!.index, decl!.index + 200);
-    expect(after, "…and it must reach the ADAPTER's, not be a no-op that satisfies the shape")
-      .toContain("adapter.forceClose(");
-  });
+  // That the production door forwards `forceClose`, and builds its connection with the deadlines it
+  // is handed, is held where the door is entered: `send-adapter-keeper.test.ts`.
 
-  it("the reconciler's own deadlines are threaded into the adapter, not raced outside it", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(join(here, "..", "src", "routes", "internal.ts"), "utf8")
-      // BOTH production callers, not just this one. The self-hosted server runs the same pass and
-      // was missed when these deadlines were introduced, leaving it with no dial bound at all —
-      // and a census that looked only at the hosted route could not see it.
-      + readFileSync(join(here, "..", "..", "..", "apps", "server", "src", "index.ts"), "utf8");
-    // Racing a dial does not stop it — imapflow serialises commands — so the bound has to reach
-    // the connection itself. If this call stops passing them, a breach stops meaning "the mailbox
-    // did not answer" and the pass's give-up starts acting on our impatience instead.
-    // NOT `toContain`, which passes on a commented-out line — precisely the regression this is
-    // written against. The constant has to appear on a line that is code.
-    const live = src.split("\n")
-      .filter((l) => !l.trimStart().startsWith("//") && !l.trimStart().startsWith("*"))
-      .join("\n");
-    // Four callers: the reconciler and the late Sent-copy pass, on each of the two hosts.
-    expect(live.match(/timeouts:\s*SEND_RECONCILE_NET_TIMEOUTS/g) ?? [],
-      "every production caller of the pass must thread them",
-    ).toHaveLength(4);
+  /**
+   * Racing a dial does not stop it (imapflow serialises commands), so the bound has to be the
+   * connection's own: without it a breach stops meaning "the mailbox did not answer" and the
+   * give-up acts on our impatience. Four production callers, the reconciler and the late Sent-copy
+   * pass on the route and on a self-hosted server's own chain. This was a count of four call sites
+   * in two source files, untrue once the chain moved file; now each caller is driven and the
+   * adapter it builds is read. The route's two are here, the chain's two in
+   * `apps/server/test/clocks.test.ts`, where the program can be built.
+   */
+  it("the reconciler's own deadlines are threaded into the adapter, not raced outside it", async () => {
+    const { db, deps } = await armed();
+    const built: unknown[] = [];
+    vi.spyOn(ImapAdapter.prototype, "connect").mockImplementation(async function (this: object) {
+      built.push((this as unknown as { config: ImapConfig }).config.timeouts);
+      throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+    });
+    /** One run of the route over a mailbox that has a stored sign-in: the deadlines of every dial it made. */
+    const dialled = async (path: string, mailboxId: string): Promise<unknown[]> => {
+      const enc = await deps.keyProvider.encrypt(randomUUID());
+      await db.insert(mailboxCredentials).values({
+        mailboxId, accountId: accountOfMailbox(mailboxId), transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+        meta: { host: "imap.rec.test", port: 993, secure: true, user: "u@rec.test" },
+      });
+      built.length = 0;
+      expect((await H(req("GET", path, { bearer: SECRET }), deps)).status).toBe(200);
+      return [...built];
+    };
+    expect({
+      reconciler: await dialled(SEND_RECONCILE_CRON_PATH, (await stranded(deps, db)).mailboxId),
+      sentCopies: await dialled(SENT_COPIES_CRON_PATH, (await owedCopy(deps, db)).mailboxId),
+    }, "every production caller of the pass must thread them").toEqual({
+      reconciler: [SEND_RECONCILE_NET_TIMEOUTS], sentCopies: [SEND_RECONCILE_NET_TIMEOUTS],
+    });
   });
 });
 
@@ -273,6 +258,34 @@ describe("`GET /internal/sends/sent-copies/run` — the late Sent-copy pass's do
     expect({ status: res.status, taken, given }).toEqual({ status: 200, taken: 1, given: 1 });
   });
 
+  it("its dial is asked with the pass's own deadlines, may file and look but never submit, and gives its slot back once", async () => {
+    const { db, deps } = await armed();
+    const w = await owedCopy(deps, db);
+    let taken = 0;
+    let given = 0;
+    deps.services!.imapAdmission = {
+      acquire: async () => { taken += 1; return true; },
+      release: async () => { given += 1; },
+    };
+    const asked: unknown[] = [];
+    const seen = { sends: 0, filed: 0 };
+    const adapter = await admittedFilingAdapter(deps, w.mailboxId, async (_deps, mailboxId, opts) => {
+      asked.push({ mailboxId, opts });
+      return {
+        async send() { seen.sends += 1; return { providerMessageId: "x" }; },
+        async messageInSent() { return false; },
+        async fileSentCopy() { seen.filed += 1; return null; },
+        async close() { /* nothing held */ },
+      };
+    });
+    expect(asked).toEqual([{ mailboxId: w.mailboxId, opts: { timeouts: SEND_RECONCILE_NET_TIMEOUTS } }]);
+    await adapter.fileSentCopy!(Buffer.from("raw"), "<m@rec.test>");
+    expect(() => adapter.send({} as never), "the door submitted a delivered letter again").toThrow();
+    await adapter.close();
+    await adapter.close();
+    expect({ ...seen, taken, given }).toEqual({ sends: 0, filed: 1, taken: 1, given: 1 });
+  });
+
   it("a copy kept without its files reads its uploads through the host's staging, under its own account", async () => {
     const { db, deps } = await armed();
     const w = await owedCopy(deps, db);
@@ -359,7 +372,7 @@ describe("`GET /internal/sends/sent-copies/run` — the late Sent-copy pass's do
         async close() { alive = false; },
       };
     };
-    const r = await runOwedSentCopyPass(db, {
+    const r = await runOwedSentCopyPass(bindDb(db, { account: null }), {
       openSendAdapter: (mailboxId) => admittedFilingAdapter(deps, mailboxId, open),
       resolveStorageCap: async () => UNMETERED_STORAGE_CAP, now: deps.now, budgetMs: 60_000,
     });

@@ -1,5 +1,5 @@
 import { REFRESH_REUSE_CAUSE } from "@ohmail/client-engine";
-import type { HostConnection } from "../../webapp/app/shell/host-connection";
+import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 import { bridgeFetch } from "./bridge-fetch.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 

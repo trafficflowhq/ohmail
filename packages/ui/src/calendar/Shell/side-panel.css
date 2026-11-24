@@ -1,0 +1,71 @@
+/* A column beside the view, asked for and never standing: the Agenda, Invitations. It stands level with the view's sheet. */
+@layer oh {
+  :root {
+    --oh-calside-flex: 0 1 auto;
+  }
+
+  .oh-calside {
+    --oh-calside-ring: 0 0 0 var(--ringw) var(--ring);
+    --oh-soft: var(--soft-sheet);
+    flex: var(--oh-calside-flex);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--oh-calside-ring);
+  }
+  .oh-calside-scroll {
+    --oh-calside-end: 0 0 var(--s6);
+    flex: 1;
+    min-height: 0;
+    padding: var(--oh-calside-end);
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .oh-calside-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  /* A day's heading in the calendar ends in a dot of the calendar's own size, in both faces. */
+  .oh-calside .oh-groupheading .oh-dot {
+    --dot-size: 0.36em;
+  }
+  /* What stays at the foot lies over the list's end: the list keeps that room and fades under it. */
+  .oh-calside[data-foot] > .oh-calside-scroll {
+    --oh-calside-end: 0 0 calc(var(--h-xl) + var(--s6));
+    mask-image: linear-gradient(var(--ink) calc(100% - 104px), transparent calc(100% - 56px));
+  }
+  .oh-calside-foot {
+    position: absolute;
+    right: var(--s2);
+    bottom: var(--s2);
+    left: var(--s2);
+  }
+  /* It arrives from the side it stands on; one panel taking another's place only fades. */
+  @keyframes oh-calside-in {
+    from {
+      transform: var(--x-slide);
+      opacity: var(--o-slide);
+    }
+  }
+  @keyframes oh-calside-swap {
+    from {
+      opacity: 0;
+    }
+  }
+  .oh-calside[data-arrives="slide"] {
+    animation: oh-calside-in var(--d-slide) var(--e-out) both;
+  }
+  .oh-calside[data-arrives="swap"] > .oh-calside-scroll {
+    animation: oh-calside-swap var(--d-fade) var(--e-std) both;
+  }
+  /* The unfolded phone: the mini month over the panel's list has a finger's rows. */
+  :root[data-device="fold"] .oh-calside .oh-mini {
+    --oh-mini-row: 40px;
+    --oh-mini-disc: 28px;
+  }
+}

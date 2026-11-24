@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import type { MailboxDTO } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A WRITE NEVER PAINTS THE LIST FROM BEFORE IT — the pane's half of the first-run rule.
@@ -56,7 +56,7 @@ vi.mock("../app/api-client", async () => {
     },
   };
 });
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: QUIET, refresh: () => {} }),
 }));
 

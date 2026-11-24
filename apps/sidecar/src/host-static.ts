@@ -34,10 +34,15 @@ export const HOST_CLIENT_CSP = [
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   "frame-src 'self'",
-  "worker-src 'none'",
+  "worker-src 'self'",
   "manifest-src 'self'",
   "media-src 'self'",
 ].join("; ");
+
+const PDF_FRAME = "/pdf-preview.html";
+const PDF_FRAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; worker-src blob:; connect-src 'none'; font-src blob: data:; form-action 'none'; base-uri 'none'; frame-ancestors 'self'; sandbox allow-scripts";
+const PDF_WORKER = "/pdf.worker.min.mjs";
+const PDF_WORKER_CSP = "default-src 'none'";
 
 /** Vite's content-hashed emissions: `assets/<name>-<hash>.<ext>`. Only these are immutable. */
 const HASHED_ASSET_RE = /^assets\/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\.[A-Za-z0-9]+$/;
@@ -166,6 +171,10 @@ export function createHostStatic(opts: { assetsDir: string | null; log?: Diagnos
     /** An app route is a path with no file extension — `/`, `/pair`, a deep link. */
     const lastSegment = pathname.slice(pathname.lastIndexOf("/") + 1);
     const isAppRoute = !lastSegment.includes(".");
+    // A worker may start only at the shipped PDF worker. Its own response policy seals its global.
+    const pdfWorker = pathname === PDF_WORKER;
+    if (req.headers.get("sec-fetch-dest") === "worker" && !pdfWorker)
+      return refuse(404, "not_found", "no such worker in this build");
 
     if (root === null) {
       // Degraded: API-only. App routes get the sentence; asset paths are honestly absent.
@@ -220,7 +229,9 @@ export function createHostStatic(opts: { assetsDir: string | null; log?: Diagnos
         // ON EVERY FILE, not only the documents — see the header. Inert on a script or a
         // stylesheet; the guard on a planted `.svg`/`.html`, which browsers render with this
         // origin's authority when navigated to directly.
-        "content-security-policy": HOST_CLIENT_CSP,
+        "content-security-policy": pathname === PDF_FRAME
+          ? PDF_FRAME_CSP
+          : pdfWorker ? PDF_WORKER_CSP : HOST_CLIENT_CSP,
         // Immutable ONLY for vite's content-hashed emissions: their name IS their version.
         // Everything else (the icons, a manifest) revalidates, same rule as the shell HTML.
         "cache-control": HASHED_ASSET_RE.test(relative)

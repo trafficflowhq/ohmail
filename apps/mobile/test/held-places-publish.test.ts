@@ -4,8 +4,9 @@
  * and a Move that decides no rule hand the projection nothing; a press that holds a rule shows
  * its place once its record is on disk, and takes it back when its window closes.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { routingSubject, type EngineMutation, type RoutingIntent } from "@ohmail/client-engine";
+import { routingSubject, type RoutingIntent } from "@ohmail/client-engine";
 import type { RoutingJournal } from "../src/state/held-routing";
 
 const RULE: EngineMutation = { kind: "rule_update", ruleId: "r1", destination: "ohmail/News" };

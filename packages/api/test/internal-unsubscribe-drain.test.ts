@@ -4,7 +4,7 @@ import { learningSignals, messageBodies, rules, unsubscribeRecords } from "@traf
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { UNSUB_DRAIN_CEILING_MS, UNSUB_DRAIN_RUN_BUDGET_MS } from "@trafficflow/core/mail";
 import type { OneClickPost } from "@trafficflow/services";
-import { makeDeps, seedSession, seedMailbox, seedMessage } from "./helpers.js";
+import { makeDeps, req, seedSession, seedMailbox, seedMessage } from "./helpers.js";
 
 /**
  * A DATABASE THAT ANSWERS LATE, not one that answers differently. Every call still runs and still
@@ -12,7 +12,8 @@ import { makeDeps, seedSession, seedMailbox, seedMessage } from "./helpers.js";
  * which is the shape a slow production database has. A double that failed instead would measure
  * the error path and say nothing about the budget.
  */
-function slowDb<T extends object>(db: T, delayMs: number): T {
+function slowDb(db: object, delayMs: number): () => number {
+  let statements = 0;
   const late = (b: object): object => new Proxy(b, {
     get(target, prop, recv) {
       const v = Reflect.get(target, prop, recv) as unknown;
@@ -32,7 +33,23 @@ function slowDb<T extends object>(db: T, delayMs: number): T {
       return v;
     },
   });
-  return late(db) as T;
+  // On the pool's own handle, the one the binder knows: the handle the host mints for the request
+  // (a view of it) asks every statement through these, and each answer comes late.
+  for (const statement of [
+    "select", "selectDistinct", "selectDistinctOn", "insert", "update", "delete", "execute", "transaction", "with", "$count",
+  ]) {
+    const own = Reflect.get(db, statement) as unknown;
+    if (typeof own !== "function") continue;
+    Object.defineProperty(db, statement, {
+      configurable: true, writable: true,
+      value: function (this: object, ...args: unknown[]) {
+        statements += 1;
+        const out = (own as (...a: unknown[]) => unknown).apply(this, args);
+        return out !== null && typeof out === "object" ? late(out) : out;
+      },
+    });
+  }
+  return () => statements;
 }
 
 /**
@@ -103,7 +120,7 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
       .toBe("unsubscribe_unconfigured");
   });
 
-  it("leaves the list a screened-out sender published, and says what it did", async () => {
+  it("a scheduler tick leaves a screened-out sender's list to the person", async () => {
     const post = spyPost();
     const { db, deps } = await makeDeps(undefined, {}, { oneClickPost: post, trustedAuthservIds: GMAIL });
     const s = await seedSession(db, { now: deps.now() });
@@ -112,8 +129,8 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
       accountId: s.accountId, mailboxId: mb,
       fromAddress: "news@sender.example", folder: "ohmail/Screened",
     });
-    await db.insert(messageBodies).values({ messageId, text: "", headers: ONE_CLICK });
-    // A person screened the sender out — the only licence the pass acts on (UD-R4-03).
+    await db.insert(messageBodies).values({ messageId, accountId: s.accountId, text: "", headers: ONE_CLICK });
+    // A stored rule by itself does not confirm an unsubscribe.
     await db.insert(rules).values({ accountId: s.accountId, kind: "sender", match: "news@sender.example",
       destination: "ohmail/Screened", provenance: "promoted", personDecidedAt: deps.now() });
     await db.insert(learningSignals).values({ accountId: s.accountId, triggeringActionId: `screener:${crypto.randomUUID()}`,
@@ -126,46 +143,30 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
       accounts: number; claimed: number; delivered: number; failed: number;
       remaining: number; elapsedMs: number;
     };
-    expect(body.accounts).toBe(1);
-    expect(body.claimed).toBe(1);
-    expect(body.delivered).toBe(1);
+    expect(body.accounts).toBe(0);
+    expect(body.claimed).toBe(0);
+    expect(body.delivered).toBe(0);
     expect(body.failed).toBe(0);
-    // The run answers what is LEFT, counted after it settled — nothing here — and how long it
-    // took. A pass that answers only an outcome cannot tell "delivered one and was killed" from
-    // "did nothing", which is the state this route shipped in: two production runs, both recorded
-    // `timeout`, one unsubscribe actually delivered.
     expect(body.remaining).toBe(0);
     expect(body.elapsedMs).toBeGreaterThanOrEqual(0);
-    expect(post.calls).toHaveLength(1);
+    expect(post.calls).toEqual([]);
 
-    const records = await db.select().from(unsubscribeRecords)
+    const records = () => db.select().from(unsubscribeRecords)
       .where(eq(unsubscribeRecords.messageId, messageId));
-    expect(records).toHaveLength(1);
-    expect(records[0]!.state).toBe("sent");
+    expect(await records()).toEqual([]);
 
-    // A second poke is not a second request to a stranger: the record row is the claim.
+    const pressed = await H(req("POST", `/messages/${messageId}/unsubscribe`, { bearer: s.token }), deps);
+    expect(pressed.status).toBe(200);
+    expect(await pressed.json()).toMatchObject({ posted: true, status: 200, refusal: null });
+    expect((await records()).map((record) => record.state)).toEqual(["sent"]);
+
+    // A subsequent scheduler tick cannot duplicate the request.
     expect((await H(get(SECRET), armed)).status).toBe(200);
     expect(post.calls).toHaveLength(1);
   });
 
-  /**
-   * UD-R4-08: the budget assertions here used to read the route's SOURCE TEXT, which measures
-   * nothing — a needle that is source stays green while the pipeline underneath it changes. This
-   * drives the REAL router with a database that never answers inside the run's budget, under a
-   * fake clock so the wait costs the suite nothing.
-   *
-   * What it establishes is the whole of UD-R4-01: a wait that derives no deadline from the budget
-   * is a wait that spends the invocation, and before this every database call and the address
-   * check did exactly that. The route returns, inside its own bound, having sent nothing — which
-   * is the difference between a pass that reports and one the platform kills.
-   *
-   * Watched red by handing the chunk read a fixed ten minutes instead of what is left: elapsed
-   * time far past its bound. The DNS case below is watched red by dropping the
-   * resolver's wrapper, and it RACES THE CEILING rather than asserting on elapsed time, because
-   * an unbounded resolver means the route never answers at all — a case that reddens by test
-   * timeout has proved the suite was slow, not which bound was missing.
-   */
-  it("a database that never answers costs the route its budget and no more — it still returns", async () => {
+  /** Drive the mounted scheduler route with a database that would answer after its budget. */
+  it("a scheduler tick returns without waiting for the database or opening a statement", async () => {
     vi.useFakeTimers();
     try {
       const post = spyPost();
@@ -176,8 +177,8 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
         accountId: s.accountId, mailboxId: mb,
         fromAddress: "news@sender.example", folder: "ohmail/Screened",
       });
-      await db.insert(messageBodies).values({ messageId, text: "", headers: ONE_CLICK });
-      // A person screened the sender out — the only licence the pass acts on (UD-R4-03).
+      await db.insert(messageBodies).values({ messageId, accountId: s.accountId, text: "", headers: ONE_CLICK });
+      // A stored rule still gives the old scheduler something it would have tried to find.
       await db.insert(rules).values({ accountId: s.accountId, kind: "sender", match: "news@sender.example",
         destination: "ohmail/Screened", provenance: "promoted", personDecidedAt: deps.now() });
       await db.insert(learningSignals).values({ accountId: s.accountId, triggeringActionId: `screener:${crypto.randomUUID()}`,
@@ -186,10 +187,8 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
       const armed = {
         ...deps,
         alerts: { secret: SECRET, cronSecret: CRON, sinks: [] },
-        // FOUR TIMES the run's whole budget. A route whose reads take their own clock waits all
-        // of it; one that derives a deadline from what is left stops at the budget.
-        db: slowDb(db, 100_000),
       } as unknown as ApiDeps;
+      const databaseStatements = slowDb(db, 100_000);
 
       const pending = H(get(SECRET), armed);
       // ASYNC advance: the synchronous form settles nothing between timers, so the awaits inside
@@ -198,13 +197,13 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
       const res = await pending;
 
       expect(res.status).toBe(200);
-      const body = await res.json() as { delivered: number; remaining: number | null; elapsedMs: number };
+      const body = await res.json() as { delivered: number; remaining: number; elapsedMs: number };
       // Inside the bound, by the run's own reading of the clock it was given.
       expect(body.elapsedMs).toBeLessThanOrEqual(UNSUB_DRAIN_RUN_BUDGET_MS + 1_000);
       expect(body.elapsedMs).toBeLessThan(UNSUB_DRAIN_CEILING_MS);
       expect(body.delivered).toBe(0);
-      // It did not reach the end of the window, so it says so rather than answering zero.
-      expect(body.remaining).toBeNull();
+      expect(body.remaining).toBe(0);
+      expect(databaseStatements()).toBe(0);
       expect(post.calls, "nothing may leave on a run that could not read its own candidates").toEqual([]);
     } finally {
       vi.useRealTimers();
@@ -230,8 +229,8 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
         accountId: s.accountId, mailboxId: mb,
         fromAddress: "news@sender.example", folder: "ohmail/Screened",
       });
-      await db.insert(messageBodies).values({ messageId, text: "", headers: ONE_CLICK });
-      // A person screened the sender out — the only licence the pass acts on (UD-R4-03).
+      await db.insert(messageBodies).values({ messageId, accountId: s.accountId, text: "", headers: ONE_CLICK });
+      // A stored rule still gives the old scheduler something it would have tried to find.
       await db.insert(rules).values({ accountId: s.accountId, kind: "sender", match: "news@sender.example",
         destination: "ohmail/Screened", provenance: "promoted", personDecidedAt: deps.now() });
       await db.insert(learningSignals).values({ accountId: s.accountId, triggeringActionId: `screener:${crypto.randomUUID()}`,

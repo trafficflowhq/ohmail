@@ -3,17 +3,18 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { once } from "node:events";
-import { createECDH } from "node:crypto";
+import { createECDH, createHash } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import {
   startPushWake, WAKE_BODY, WAKE_BODY_BYTES, type WakeSource, type PushWakePost,
 } from "../src/push-wake.js";
 import type { PushEndpointGuard, VapidFromEnv, WebPushKeys } from "@trafficflow/core/net";
 import { makeVapidIdentity } from "@trafficflow/core/net";
-import type { Tx } from "@trafficflow/db";
+import { changeLog, type Tx } from "@trafficflow/db";
 import {
   makeSubscriber, openAes128Gcm, parseVapidAuthorization, type FakeSubscriber,
 } from "../../../packages/core/test/webpush-subscriber.js";
+import { farSide, NOT_HTTP, SWITCH } from "../../../packages/core/test/far-side.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -119,14 +120,27 @@ interface Row {
   endpoint: string | null;
   p256dh?: string | null;
   auth?: string | null;
+  transport?: "webpush" | "unifiedpush";
+  familyId?: string | null;
 }
 
-/** A db double: the sender does exactly one SELECT and (on 404/410) one DELETE. */
-function fakeDb(rows: Row[]): { db: Tx; deleted: string[] } {
+/**
+ * A db double: the sender reads the registrations, asks the change log whether the window held a
+ * record that is not the calendar's, and (on 404/410) deletes one row. `held` is that answer: a
+ * mail advance unless a case says the window was the calendar's alone. `asked` counts the question.
+ */
+function fakeDb(rows: Row[], held = true): { db: Tx; deleted: string[]; asked: () => number } {
   const deleted: string[] = [];
+  let asked = 0;
   const filled = rows.map((r) => ({ p256dh: null, auth: null, ...r }));
   const db = {
-    select: () => ({ from: () => ({ where: () => Promise.resolve(filled) }) }),
+    select: () => ({
+      from: (table: unknown) => ({
+        where: () => (table === changeLog
+          ? { limit: () => { asked += 1; return Promise.resolve(held ? [{ one: 1 }] : []); } }
+          : Promise.resolve(filled)),
+      }),
+    }),
     delete: () => ({
       where: () => {
         deleted.push("one");
@@ -134,7 +148,7 @@ function fakeDb(rows: Row[]): { db: Tx; deleted: string[] } {
       },
     }),
   } as unknown as Tx;
-  return { db, deleted };
+  return { db, deleted, asked: () => asked };
 }
 
 /** A hub double. `emit` is what the real hub's LISTEN dispatch calls. */
@@ -337,56 +351,53 @@ describe("census 2 — the sender's SOURCE names no message-derived value", () =
     });
   }
 
-  it("carries exactly ONE request body, and it is the constant or the constant sealed", () => {
+  it("carries exactly one request body, with the constant as its only plaintext form", () => {
     const bodies = [...code.matchAll(/\bbody\s*:/g)];
     expect(bodies.length).toBe(1);
-    // The ONLY permitted shape. `sealed` is the encrypted form of `WAKE_BODY` and nothing else —
-    // see the encryptor assertion below, which pins what `sealed` was computed from.
     expect(code).toMatch(/\bbody\s*:\s*sealed\s*\?\?\s*WAKE_BODY\b/);
-    // And nothing builds a body: no stringify, no template, no concatenation into the payload.
-    expect(code).not.toMatch(/JSON\.stringify/);
   });
 
-  it("hands the encryptor exactly ONE thing, and it is the constant by NAME", () => {
-    /**
-     * The encrypted arm's half of the "one body" pin. `sealed` is opaque bytes by the time it
-     * reaches the request, so the assertion that matters is about what went IN: exactly one call,
-     * whose first argument is the identifier `WAKE_BODY` and not an expression. An expression there
-     * — even `WAKE_BODY + ""` — would be a place a value could be substituted.
-     */
-    const calls = [...code.matchAll(/encryptWebPushBody\s*\(/g)];
-    expect(calls.length).toBe(1);
-    expect(code).toMatch(/\bsealed\s*=\s*encryptWebPushBody\(WAKE_BODY,\s*keys\)/);
+  it("seals only the constant or the exact opaque browser binding", () => {
+    expect([...code.matchAll(/encryptWebPushBody\s*\(/g)]).toHaveLength(1);
+    expect(code).toMatch(/\bsealed\s*=\s*encryptWebPushBody\(payload,\s*keys\)/);
+    expect(code).toContain('const payload = binding === undefined ? WAKE_BODY : `{"type":"wake","binding":"${binding}"}`');
+    expect([...code.matchAll(/JSON\.stringify\(/g)]).toHaveLength(1);
+    expect(code).toContain('createHash("sha256").update(JSON.stringify([accountId, familyId])).digest("hex")');
+    expect(code).toMatch(/row.transport === "webpush" && row.familyId\s*\? browserWakeBinding\(accountId, row.familyId\)/);
   });
 
-  it("reads exactly four columns of exactly one table, under exactly four names", () => {
-    /**
-     * Widening the projection is how a message-derived value gets into scope in the first place,
-     * so the SHAPE is pinned and not merely the column set.
-     *
-     * The column-set check alone was measured INSUFFICIENT during the red-watch: the mutation
-     * added `subject: pushSubscriptions.transport`, which introduces a `row.subject` in scope
-     * while using only columns that were already permitted, so a set comparison stayed green.
-     * (Three other censuses went red, so nothing shipped — but a census that a plausible mutation
-     * walks past is not a census.) Pinning the KEYS is what closes it: any fifth projected name,
-     * whatever column it reads, is red here.
-     *
-     * `p256dh` and `auth` joined the permitted set when the encrypting arm landed. They are the
-     * device's own key material, they are the encryptor's only input besides the constant, and
-     * they are never logged — which is asserted separately below.
-     */
+  it("reads only delivery material and the browser session binding from the registration", () => {
     const cols = [...code.matchAll(/pushSubscriptions\.(\w+)/g)].map((m) => m[1]!);
     expect([...new Set(cols)].sort())
-      .toEqual(["accountId", "auth", "endpoint", "id", "p256dh", "transport"]);
+      .toEqual(["accountId", "auth", "endpoint", "id", "p256dh", "sessionFamilyId", "transport"]);
 
     const select = /db\.select\(\{([\s\S]*?)\}\)/.exec(code);
     expect(select).not.toBeNull();
     const keys = [...select![1]!.matchAll(/(\w+)\s*:/g)].map((m) => m[1]!);
-    expect(keys.sort()).toEqual(["auth", "endpoint", "id", "p256dh"]);
+    expect(keys.sort()).toEqual(["auth", "endpoint", "familyId", "id", "p256dh", "transport"]);
     expect(code).toMatch(/id:\s*pushSubscriptions\.id/);
     expect(code).toMatch(/endpoint:\s*pushSubscriptions\.endpoint/);
     expect(code).toMatch(/p256dh:\s*pushSubscriptions\.p256dh/);
     expect(code).toMatch(/auth:\s*pushSubscriptions\.auth/);
+    expect(code).toMatch(/transport:\s*pushSubscriptions\.transport/);
+    expect(code).toMatch(/familyId:\s*pushSubscriptions\.sessionFamilyId/);
+  });
+
+  it("asks the change log one question, by the literal 1, and reads no column of it", () => {
+    /**
+     * The second read decides whether a window dials at all. It is in scope of the request, so
+     * its shape is pinned like the first: one projection, the literal `1`, and three columns named
+     * only to bound it: the account, the window's seqs and the kind. A fourth name here is a value
+     * of somebody's mail log on its way into the sender.
+     */
+    const selects = [...code.matchAll(/db\.select\(\{([\s\S]*?)\}\)/g)].map((m) => m[1]!.trim());
+    expect(selects).toHaveLength(2);
+    expect(selects[1]).toBe("one: sql<number>`1`");
+    const cols = [...code.matchAll(/changeLog\.(\w+)/g)].map((m) => m[1]!);
+    expect([...new Set(cols)].sort()).toEqual(["accountId", "entityType", "seq"]);
+    expect([...code.matchAll(/\.from\((\w+)\)/g)].map((m) => m[1])).toEqual(["pushSubscriptions", "changeLog"]);
+    // The kinds it leaves out are the calendar's own list, by name: not a list typed here.
+    expect(code).toMatch(/notInArray\(changeLog\.entityType,\s*\[\.\.\.CALENDAR_RECORD_KINDS\]\)/);
   });
 
   it("every field it logs SURVIVES the logger's allow-list", async () => {
@@ -442,11 +453,23 @@ describe("census 2 — the sender's SOURCE names no message-derived value", () =
     }
   });
 
-  it("drops the hub's seq at the boundary — it is never bound to a name", () => {
-    // The hub hands (accountId, seq). `seq` is an activity counter, so the callback takes ONE
-    // parameter and the second is discarded by arity rather than by discipline.
-    expect(code).toMatch(/subscribeAll\(\(accountId\)\s*=>/);
-    expect(code).not.toMatch(/subscribeAll\(\(accountId,\s*seq\)/);
+  it("keeps the hub's seq as a window's two bounds, and hands them to the deciding read alone", () => {
+    // The hub hands (accountId, seq). `seq` is an activity counter: it bounds the one read that
+    // asks whether the window held anything but the calendar's records, and goes nowhere else.
+    // That it reaches no request and no log line is run below, on numbers that could not be missed.
+    // Here: the only uses of the two bounds.
+    expect(code).toMatch(/subscribeAll\(\(accountId,\s*seq\)\s*=>/);
+    const uses = code.split("\n").filter((line) => /\b(lowest|highest)\b/.test(line)).map((line) => line.trim());
+    expect(uses).toEqual([
+      "const pending = new Map<string, { timer: ReturnType<typeof setTimeout>; lowest: bigint; highest: bigint }>();",
+      "const fire = async (accountId: string, lowest: bigint, highest: bigint): Promise<void> => {",
+      "gte(changeLog.seq, lowest),",
+      "lte(changeLog.seq, highest),",
+      "if (seq < open.lowest) open.lowest = seq;",
+      "if (seq > open.highest) open.highest = seq;",
+      "void fire(accountId, window.lowest, window.highest).catch((err: unknown) => {",
+      "const window = { timer, lowest: seq, highest: seq };",
+    ]);
   });
 });
 
@@ -470,7 +493,7 @@ describe("census 3a — the KEYLESS wire is byte-for-byte what it always was", (
       const { source, emit } = fakeSource();
       // The REAL default post — no injected double — so what is asserted is what goes on a socket.
       const wake = startPushWake({
-        db,
+        dbOf: () => db,
         source,
         ownsAccount: OWN_ALL,
         // Loopback is only dialable under the relaxed policy; the pin is the literal itself.
@@ -526,7 +549,7 @@ describe("census 3a — the KEYLESS wire is byte-for-byte what it always was", (
       const { db } = fakeDb([{ id: "raw", endpoint: `http://127.0.0.1:${l.port}/up/raw` }]);
       const { source, emit } = fakeSource();
       const wake = startPushWake({
-        db, source, ownsAccount: OWN_ALL,
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
         guard: { async check() { return ["127.0.0.1"]; } },
         vapid: withVapid().vapid,
         debounceMs: 5, minIntervalMs: 0,
@@ -541,6 +564,41 @@ describe("census 3a — the KEYLESS wire is byte-for-byte what it always was", (
       l.close();
     }
   });
+});
+
+it("seals the browser family selected before a delayed delivery", async () => {
+  const account = "account-browser";
+  const family = "family-old";
+  const sub = makeSubscriber();
+  const { vapid } = withVapid();
+  const seen: Captured[] = [];
+  const l = await listener((request) => { seen.push(request); });
+  const reading = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<string[]>();
+  const { db } = fakeDb([
+    { id: "browser", endpoint: `http://127.0.0.1:${l.port}/wake`,
+      p256dh: sub.p256dh, auth: sub.auth, transport: "webpush", familyId: family },
+  ]);
+  const { source, emit } = fakeSource();
+  const wake = startPushWake({
+    dbOf: () => db, source, ownsAccount: OWN_ALL, vapid, debounceMs: 1, minIntervalMs: 0,
+    guard: { check: () => { reading.resolve(); return resume.promise; } },
+  });
+  try {
+    emit(account, 1n);
+    await reading.promise;
+    resume.resolve(["127.0.0.1"]);
+    for (let attempt = 0; attempt < 80 && seen.length === 0; attempt++) await tick(25);
+    expect(seen).toHaveLength(1);
+    const plaintext = openAes128Gcm(seen[0]!.body, sub).toString("utf8");
+    expect(JSON.parse(plaintext)).toEqual({
+      type: "wake",
+      binding: createHash("sha256").update(JSON.stringify([account, family])).digest("hex"),
+    });
+  } finally {
+    wake.stop();
+    l.close();
+  }
 });
 
 describe("census 3b — the SEALED wire carries the same constant and nothing else", () => {
@@ -561,7 +619,7 @@ describe("census 3b — the SEALED wire carries the same constant and nothing el
       ]);
       const { source, emit } = fakeSource();
       const wake = startPushWake({
-        db, source, ownsAccount: OWN_ALL,
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
         guard: { async check() { return ["127.0.0.1"]; } },
         vapid, debounceMs: 5, minIntervalMs: 0,
       });
@@ -675,7 +733,7 @@ describe("a deployment with NO keypair skips keyed rows rather than sending a di
     ]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
       vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0,
       log: { info: () => {}, warn: (e) => { warned.push(e); } },
     });
@@ -706,7 +764,7 @@ describe("a deployment with NO keypair skips keyed rows rather than sending a di
     ]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
       vapid: withVapid().vapid, debounceMs: 5, minIntervalMs: 0,
     });
     emit("acct-1", 1n);
@@ -734,7 +792,7 @@ describe("an INVALID keypair stops the sender dead — including the arm that wo
     };
     const { db } = fakeDb([{ id: "raw", endpoint: "https://p.example/up/raw" }]);
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post,
       vapid: { kind: "invalid", why: "TF_VAPID_PUBLIC_KEY and TF_VAPID_PRIVATE_KEY are not a pair" },
       debounceMs: 5, minIntervalMs: 0,
       log: { info: () => {}, warn: (e) => { warned.push(e); } },
@@ -754,7 +812,7 @@ describe("an INVALID keypair stops the sender dead — including the arm that wo
     const fields: Record<string, unknown>[] = [];
     const { db } = fakeDb([]);
     startPushWake({
-      db, source: { subscribeAll: () => () => {} }, ownsAccount: OWN_ALL, guard: PERMIT,
+      dbOf: () => db, source: { subscribeAll: () => () => {} }, ownsAccount: OWN_ALL, guard: PERMIT,
       vapid: { kind: "invalid", why: "TF_VAPID_PRIVATE_KEY is 2 bytes, expected 32" },
       log: { info: () => {}, warn: (_e, f) => { fields.push(f ?? {}); } },
     });
@@ -817,7 +875,7 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
       const { db } = fakeDb([{ id: "r", endpoint: `http://127.0.0.1:${port}/up/drip` }]);
       const { source, emit } = fakeSource();
       const wake = startPushWake({
-        db, source, ownsAccount: OWN_ALL,
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
         guard: { async check() { return ["127.0.0.1"]; } },
         vapid: NO_VAPID,
         debounceMs: 5, minIntervalMs: 0,
@@ -870,7 +928,7 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
       ]);
       const { source, emit } = fakeSource();
       const wake = startPushWake({
-        db, source, ownsAccount: OWN_ALL,
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
         guard: { async check() { return ["127.0.0.1"]; } },
         vapid: NO_VAPID,
         debounceMs: 5, minIntervalMs: 0, timeoutMs: 1_000,
@@ -883,6 +941,49 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
       wake.stop();
     } finally {
       hostile.close();
+      good.close();
+    }
+  });
+
+  it.each([
+    ["a change of protocol (101)", SWITCH],
+    ["an answer that is no HTTP", NOT_HTTP],
+  ])("%s is a non-delivery, not a hold — the endpoint beside it is still woken", async (_shape, bytes) => {
+    // The 101 endpoint first: a request that never settled held the whole pass, so the second row never got its wake.
+    let switched = 0;
+    const switching = await farSide((socket) => { switched += 1; socket.write(bytes); });
+    let goodHits = 0;
+    const good = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => { goodHits += 1; res.writeHead(201).end(); });
+    });
+    good.listen(0, "127.0.0.1");
+    await once(good, "listening");
+    const goodPort = (good.address() as AddressInfo).port;
+
+    try {
+      const { db, deleted } = fakeDb([
+        { id: "switching", endpoint: `${switching.url}/up/switch` },
+        { id: "good", endpoint: `http://127.0.0.1:${goodPort}/up/ok` },
+      ]);
+      const { source, emit } = fakeSource();
+      const wake = startPushWake({
+        dbOf: () => db, source, ownsAccount: OWN_ALL,
+        guard: { async check() { return ["127.0.0.1"]; } },
+        vapid: NO_VAPID,
+        debounceMs: 5, minIntervalMs: 0, timeoutMs: 1_000,
+      });
+      emit("acct-1", 1n);
+
+      for (let i = 0; i < 120 && goodHits === 0; i++) await tick(25);
+      expect(switched, "the switching endpoint was never dialled, so nothing was proven").toBe(1);
+      expect(goodHits, "a 101 on one endpoint held the pass, and the endpoint beside it was never woken").toBe(1);
+      // Given up as any failed POST is: not counted as sent, not pruned, tried again on the next wake.
+      expect(wake.sent()).toBe(1);
+      expect(deleted).toEqual([]);
+      wake.stop();
+    } finally {
+      await switching.close();
       good.close();
     }
   });
@@ -910,7 +1011,7 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
     ]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: NO_VAPID,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: NO_VAPID,
       debounceMs: 5, minIntervalMs: 0,
     });
     emit("acct-1", 1n);
@@ -926,6 +1027,66 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
   });
 });
 
+describe("a window of the calendar's records alone dials nothing", () => {
+  const ROW = { id: "r", endpoint: "https://push.example.com/up/abc" };
+  const run = async (rows: Row[], held: boolean): Promise<{ posts: number; asked: number }> => {
+    const { db, asked } = fakeDb(rows, held);
+    let posts = 0;
+    const post: PushWakePost = () => { posts += 1; return Promise.resolve({ status: 201 }); };
+    const { source, emit } = fakeSource();
+    const wake = startPushWake({ dbOf: () => db, source, guard: PERMIT, post, ownsAccount: OWN_ALL, vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0 });
+    emit("acct-1", 4n);
+    emit("acct-1", 9n);
+    await tick(200);
+    wake.stop();
+    return { posts, asked: asked() };
+  };
+
+  it("no record but the calendar's: no request, however many registrations stand", async () => {
+    expect(await run([ROW, { ...ROW, id: "r2", endpoint: "https://push.example.com/up/def" }], false)).toEqual({ posts: 0, asked: 1 });
+  });
+
+  it("a record that is not the calendar's: one request per registration, and the question asked once for the window", async () => {
+    expect(await run([ROW, { ...ROW, id: "r2", endpoint: "https://push.example.com/up/def" }], true)).toEqual({ posts: 2, asked: 1 });
+  });
+
+  it("no registration: the change log is not asked at all", async () => {
+    expect(await run([], true)).toEqual({ posts: 0, asked: 0 });
+  });
+
+  it("the window's seqs reach no request and no log line, on every path that writes one", async () => {
+    const SEQS = [7300017300017n, 7300027300027n];
+    const said: unknown[] = [];
+    const log = {
+      info: (event: string, fields?: Record<string, unknown>) => { said.push([event, fields]); },
+      warn: (event: string, fields?: Record<string, unknown>) => { said.push([event, fields]); },
+    };
+    const sent: unknown[][] = [];
+    /** One pass over two registrations: a refusing gate, then a dead endpoint that is pruned. */
+    const pass = async (db: Tx): Promise<void> => {
+      const refuseFirst: PushEndpointGuard = { async check(url) { if (url.endsWith("/refused")) throw new Error("no"); return ["203.0.113.9"]; } };
+      const post: PushWakePost = (...args) => { sent.push(args); return Promise.resolve({ status: 410 }); };
+      const { source, emit } = fakeSource();
+      const wake = startPushWake({ dbOf: () => db, source, guard: refuseFirst, post, ownsAccount: OWN_ALL, vapid: NO_VAPID, log, debounceMs: 5, minIntervalMs: 0 });
+      for (const seq of SEQS) emit("acct-1", seq);
+      await tick(200);
+      wake.stop();
+    };
+    await pass(fakeDb([{ id: "a", endpoint: "https://push.example.com/refused" }, { id: "b", endpoint: "https://push.example.com/gone" }]).db);
+    // And a pass whose own read fails: the one line that carries a thrown value.
+    await pass({ select: () => { throw new Error(`a driver's words: ${SEQS.join(" ")}`); } } as unknown as Tx);
+
+    expect(said.map((line) => (line as [string])[0]).sort()).toEqual(["push_wake_endpoint_pruned", "push_wake_endpoint_refused", "push_wake_pass_failed"]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toHaveLength(3);
+    const fields = said.flatMap((line) => Object.entries((line as [string, Record<string, unknown> | undefined])[1] ?? {}));
+    // The failed pass hands the thrown value to the logger whole, which writes its class and code and no word of it.
+    expect(fields.filter(([name]) => name === "err")).toHaveLength(1);
+    const written = JSON.stringify([fields.filter(([name]) => name !== "err"), sent], (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value));
+    expect(written).not.toContain("73000");
+  });
+});
+
 describe("the shard filter — only the owning shard's leader wakes an account", () => {
   it("an account this shard does not own is never queried and never dialled", async () => {
     let selected = 0;
@@ -937,7 +1098,7 @@ describe("the shard filter — only the owning shard's leader wakes an account",
     const post: PushWakePost = (url) => { posts.push(url); return Promise.resolve({ status: 201 }); };
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, guard: PERMIT, post, vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0,
+      dbOf: () => db, source, guard: PERMIT, post, vapid: NO_VAPID, debounceMs: 5, minIntervalMs: 0,
       // The sharded answer: this account belongs to somebody else's lock.
       ownsAccount: async () => false,
     });
@@ -962,7 +1123,7 @@ describe("census 4 — the POST seam has no parameter content could ride", () =>
     const { db } = fakeDb([{ id: "r", endpoint: "https://push.example.com/up/abc" }]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: NO_VAPID,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: NO_VAPID,
       debounceMs: 5, minIntervalMs: 0,
     });
     emit("acct-1", 1n);
@@ -995,7 +1156,7 @@ describe("census 4 — the POST seam has no parameter content could ride", () =>
     ]);
     const { source, emit } = fakeSource();
     const wake = startPushWake({
-      db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: withVapid().vapid,
+      dbOf: () => db, source, ownsAccount: OWN_ALL, guard: PERMIT, post, vapid: withVapid().vapid,
       debounceMs: 5, minIntervalMs: 0,
     });
     emit("acct-1", 1n);

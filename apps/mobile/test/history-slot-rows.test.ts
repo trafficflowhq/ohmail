@@ -3,13 +3,13 @@
  * row whose badges wrap to a second line widened every slot and left blank space under the others. Each row is now
  * drawn at its own measured height, and a row not yet laid out at the most common one (`history-slot.ts`).
  *
- * CAN MEASURE: the ledger's rule against row heights taken from the device's chip reading and the row's own style
- * literals, and that an offset is the sum of the heights drawn above it (the year jump's landing); the screens'
- * wiring is `history-slot.test.ts`'s. CANNOT: real line heights, or where the native list places a row it has
- * not laid out; a device pass reads both.
+ * The fixture combines a device sample with badge styles and row insets. It checks the height ledger and the sum
+ * that positions a year jump. `history-slot.test.ts` checks screen wiring. A device pass measures real line heights
+ * and where the native list places a row before layout.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { design } from "@ohmail/tokens/design";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { size } from "../src/theme/type";
@@ -30,7 +30,9 @@ function literal(src: string, re: RegExp, what: string): number {
 const badgePad = literal(BASE, /paddingHorizontal: 7,\s*paddingVertical: (\d+)/, "Badge padding");
 const lineGap = literal(ROW, /flexDirection: "row", flexWrap: "wrap", gap: (\d+)/, "badge line gap");
 const chip = 2 * badgePad + size.micro;
-const common = Math.ceil(214 / (420 / 160) + chip + literal(ROW, /paddingHorizontal: 14, paddingVertical: (\d+)/, "MailRow padding"));
+// Add the ordinary MailRow bottom inset after the measured chip position.
+const inset = Number.parseFloat(design.faces.paper.light.s2);
+const common = Math.ceil(214 / (420 / 160) + chip + inset);
 const wrapped = Math.ceil(common + lineGap + chip);
 
 /** The heights the screen draws rows 0..n-1 at — what the list stacks, so what an offset must add up. */
@@ -38,6 +40,11 @@ const drawn = (h: SlotHeights, n: number): number[] => Array.from({ length: n },
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 
 describe("each row keeps its own height", () => {
+  it("the height fixture uses the same inset as the ordinary History row", () => {
+    expect(ROW).toMatch(/paddingBottom: receiptPaper \? \d+ : receipt \? \d+ : mailSize\.inset/);
+    expect(inset).toBeGreaterThan(0);
+  });
+
   it("one wrapped row is taller; the rows around it, laid out or not, stay at the common height", () => {
     const h = new SlotHeights();
     for (let i = 0; i < 12; i++) h.record(i, i === 5 ? wrapped : common);

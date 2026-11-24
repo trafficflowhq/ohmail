@@ -77,7 +77,7 @@ const RETAINED_UNMETERED =
 const RETAINED_METERED = "billing records and any refund still owed to you, under a pseudonymous account id";
 
 /**
- * `DELETE /account` — Art. 17 erasure, self-serve; the screen is `AccountSection.tsx`. `stepUp:
+ * `DELETE /account` — Art. 17 erasure, self-serve; the screen is `/account/delete`. `stepUp:
  * true`: the most destructive call in the API. Not `idempotent`: the second call deletes nothing.
  * The account row survives as a random uuid with a blank name — the `credit_ledger` FK forbids
  * deletion and financial records carry a retention obligation (Art. 17(3)(b)); see
@@ -207,6 +207,13 @@ export const accountRoutes: Route[] = [
           .then((limit) => (limit === null ? null : storageBlockOf(reading, verdict, limit, deps.now())))
           .catch(() => null)
         : null;
+      const trialStart = Date.parse(verdict.trial?.startedAt ?? "");
+      const trialEnd = Date.parse(verdict.lifecycle?.trialEndsAt ?? "");
+      const now = deps.now().getTime();
+      const dayMs = 24 * 60 * 60 * 1000;
+      const trialProgress = answered && verdict.lifecycle?.state === "trialing" && trialStart <= now && now < trialEnd
+        ? { day: Math.floor((now - trialStart) / dayMs) + 1, total: Math.ceil((trialEnd - trialStart) / dayMs) }
+        : null;
       return json({
         metered: true,
         access: "open",
@@ -218,7 +225,12 @@ export const accountRoutes: Route[] = [
         // from the two above — an account may hold every mailbox it is entitled to and have AI
         // off, or the other way round.
         aiEnabled: verdict.limits.aiEnabled,
+        ...(answered && verdict.aiCredits ? { aiCredits: {
+          ...verdict.aiCredits,
+          ...(verdict.prices ? { draftCost: verdict.prices.draft } : {}),
+        } } : {}),
         ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
+        ...(trialProgress !== null ? { trialProgress } : {}),
         exportPath: "/account/export",
         ...(caughtUp !== null && caughtUp !== "fault" ? { caughtUp } : {}),
         ...(storage !== null ? { storage } : {}),

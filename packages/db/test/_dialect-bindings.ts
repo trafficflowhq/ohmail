@@ -58,7 +58,7 @@ export type BindingKind = "date" | "boolean" | "unresolved" | "value";
 /**
  * The compiler options the arm reads the tree under.
  *
- * They mirror `tsconfig.base.json` rather than loading it, and the difference is deliberate: this
+ * They mirror `tools/tsconfig.base.json` rather than loading it, and the difference is deliberate: this
  * program spans packages whose own tsconfigs differ, so adopting any one of them would describe
  * the others wrongly. What matters to a TYPE question is the resolution mode, and `NodeNext`
  * against the workspace's own `node_modules` is what every package here already uses.

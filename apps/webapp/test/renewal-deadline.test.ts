@@ -41,7 +41,7 @@ async function openTab(): Promise<Refresh> {
 }
 
 beforeEach(async () => {
-  (await import("../app/shell/session-truth.js")).resetSessionTruthForTests();
+  (await import("@ohmail/app-logic/session/session-truth")).resetSessionTruthForTests();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-10-23T09:00:00.000Z"));
   sent = [];
@@ -82,7 +82,7 @@ describe("the renewal's own deadline", () => {
 
   it("1 — a renewal that never answers ends unavailable at its deadline, keeps its name, and the session lives", async () => {
     const tab = await openTab();
-    const { sessionIsDead } = await import("../app/shell/session-truth.js");
+    const { sessionIsDead } = await import("@ohmail/app-logic/session/session-truth");
     let answer: string | null = null;
     void tab.resumeSession().then((a) => { answer = a; });
     // Every other caller joins the one renewal while it is out.
@@ -178,13 +178,13 @@ describe("the resume splash over a renewal that timed out", () => {
   it("4 — shows the busy card at once, never the sign-in form, and Try again asks again", async () => {
     vi.resetModules();
     const { RENEWAL_DEADLINE_MS } = await import("../app/session-refresh");
-    const { ResumeScreen } = await import("../app/(product)/resume/ResumeScreen.js");
+    const { ResumeRoute } = await import("../app/(product)/resume/ResumeRoute.js");
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
       root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", children: h(ResumeScreen, { initialOwner: "acct_A" }),
+        locale: "en", messages, timeZone: "UTC", children: h(ResumeRoute, { initialOwner: "acct_A" }),
       }));
     });
     await flush();

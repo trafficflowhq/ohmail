@@ -1,0 +1,44 @@
+{
+  "id": "ohmail/owner-lookup",
+  "base": "2ff89c98e93fdf825376c7b82306934afd72ff21",
+  "recorded": "2026-11-16",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a press reads the storage owner through the door, under another name",
+      "file": "packages/app-logic/src/press/planted-owner-lookup.ts",
+      "line": 1,
+      "refused": "storageOwner reads the storage owner or the session's marker, a host's own; take the scope as an argument from the mount (tools/owner-readers.json lists the hosts' files)"
+    },
+    {
+      "control": "a part of today's views outside the closed list reads the shell's scope",
+      "file": "apps/webapp/app/shell/planted-todays-scope.ts",
+      "line": 1,
+      "refused": "useTodaysScope is read by the closed list in tools/owner-readers.json; a place reads useFrame().host.session.scope"
+    },
+    {
+      "control": "a part of the shell reads the session's marker by hand, by its cookie's name",
+      "file": "apps/webapp/app/shell/planted-owner-cookie.ts",
+      "line": 2,
+      "refused": "OWNER_COOKIE reads the storage owner or the session's marker, a host's own; take the scope as an argument from the mount (tools/owner-readers.json lists the hosts' files)"
+    },
+    {
+      "control": "a part of the shell reads the session's marker by hand, spelling its cookie's name",
+      "file": "apps/webapp/app/shell/planted-owner-marker-name.ts",
+      "line": 4,
+      "refused": "tf_owner is the session's marker's cookie name: only a host's file spells it; take the scope as an argument from the mount (tools/owner-readers.json lists the hosts' files)"
+    },
+    {
+      "control": "a part of the shell keys a stored value on the account the web session client speaks for",
+      "file": "apps/webapp/app/shell/planted-session-client.ts",
+      "line": 1,
+      "refused": "boundApiOwner reads the storage owner or the session's marker, a host's own; take the scope as an argument from the mount (tools/owner-readers.json lists the hosts' files)"
+    }
+  ],
+  "green": [
+    {
+      "control": "a press asks whether a key is the demo's",
+      "file": "packages/app-logic/src/press/planted-demo-owned.ts"
+    }
+  ]
+}

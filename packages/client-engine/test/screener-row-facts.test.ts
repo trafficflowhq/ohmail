@@ -1,11 +1,9 @@
+import type { EngineMessage, Folder, ScreenerSenderDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   mutationEffects,
   screenerSegments,
-  type EngineMessage,
-  type Folder,
-  type ScreenerSenderDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
 

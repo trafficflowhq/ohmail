@@ -1,6 +1,6 @@
+import type { SyncChange, SyncResponse } from "@ohmail/wire";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
 import { createCloudMirror, DEFAULT_CLOUD_POLL_MS, RECONNECT_BASE_MS, WALLED_POLL_MS, type CloudMirror } from "../src/cloud-mirror.js";

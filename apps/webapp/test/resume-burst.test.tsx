@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as shell from "./fixtures/cloud-confirm-shell";
+import en from "../messages/en.json";
 
 /**
  * WEB-RESUME-BURST, THROUGH THE REAL `CloudShell`: every answer takes {@link LATENCY} ms and the
@@ -54,6 +55,10 @@ class FakeEventSource {
 }
 
 const OPEN = { metered: true, access: "open", canAddMailbox: true, mailboxes: 1, aiEnabled: true };
+/** The wall stands: its sentence, which names the closure it says (`accessLock.trialEnded`, its date as a reader reads it). */
+const wallStands = (): boolean =>
+  [...document.body.querySelectorAll("main p")].some((p) => p.textContent?.startsWith(en.accessLock.trialEnded.split("{date}")[0]!));
+
 const CLOSED = {
   metered: true, access: "refused", canAddMailbox: false, mailboxes: 0, aiEnabled: false,
   lifecycle: {
@@ -64,7 +69,7 @@ const CLOSED = {
   manageUrl: "https://plane.ohmail.app/manage?token=t", exportPath: "/account/export",
 };
 const jsonOf = (b: unknown, status = 200): Response =>
-  new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+  Response.json(b, { status, headers: { "X-Ohmail-Account": shell.ACCOUNT } });
 const refused402 = (): Response => jsonOf({
   error: { code: "subscription_required", message: "not active", details: { reason: "payment_required", lifecycle: CLOSED.lifecycle } },
 }, 402);
@@ -228,7 +233,8 @@ async function until(seen: () => boolean, from: number, max: number, step = 25):
 async function mountAndSettle(): Promise<void> {
   await shell.mountCloudShell();
   await shell.tick(30_000);
-  expect(document.body.querySelector(".app-root"), "the premise: the mail opened").not.toBeNull();
+  /* The mail itself: the new shell's frame root (today's `.today` is mounted by no host). */
+  expect(document.body.querySelector(".fr-root"), "the premise: the mail opened").not.toBeNull();
 }
 
 /** Hide for `ms`, then come back as a browser does: visible, then focus. Returns the return's time. */
@@ -258,11 +264,40 @@ describe("a web tab's mount and its return, on the wire", () => {
     expect(beside, `went beside the first read:\n${show(rows, t0)}`).toEqual([]);
     expect(peak(rows), show(rows, t0)).toBeLessThanOrEqual(SLOTS);
     const paths = new Set(reads(rows).map((r) => r.path));
-    for (const p of ["/api/hello", "/api/account/access", "/api/account/ai", "/api/auth/session", "/api/organizer-requests",
-      "/api/consent", "/api/screener", "/api/screener/held-releases", "/api/screener/unscreened", "/api/away-responder",
-      "/api/mailboxes", "/api/messages/timeline", "/api/sync"]) {
-      expect(paths.has(p), `${p} was never read:\n${show(rows, t0)}`).toBe(true);
+    /* The held-mail check belongs to the Screener visit. The other mail reads start with the frame. */
+    const held = "/api/screener/held-releases";
+    for (const p of ["/api/hello", "/api/account/access", "/api/account/ai", "/api/auth/session",
+      "/api/consent", "/api/screener", "/api/screener/held-releases", "/api/screener/unscreened",
+      "/api/mailboxes", "/api/sync"]) {
+      expect(paths.has(p), `${p} had the wrong mount timing:\n${show(rows, t0)}`).toBe(p !== held);
     }
+    const visit = Date.now();
+    await shell.act(async () => { window.location.hash = "#/screener"; });
+    await shell.tick(6_000);
+    const afterOpen = since(visit);
+    expect(reads(afterOpen).filter((r) => r.path === held), show(afterOpen, visit)).toHaveLength(1);
+    expect(afterOpen.filter((r) => r.path === held && r.method !== "GET")).toEqual([]);
+    expect(peak(afterOpen), show(afterOpen, visit)).toBeLessThanOrEqual(SLOTS);
+  });
+
+  /* MOVED OUT OF THE MOUNT's CASE ABOVE, one a place: what today's shell read at the mount for a place the new shell
+     does not mount yet (the Rules pane's group of requests waiting on the organizer, the away line and its pane,
+     History's months). Red until that place's mount, which says whether its read belongs to the mount. */
+  /** Mounts the mail and asserts that `path` was read in the mount's burst. */
+  async function readAtMount(path: string): Promise<void> {
+    const t0 = Date.now();
+    await mountAndSettle();
+    const rows = since(t0);
+    expect(new Set(reads(rows).map((r) => r.path)).has(path), `${path} was never read:\n${show(rows, t0)}`).toBe(true);
+  }
+  it("MOUNT: the Rules pane's requests waiting on the organizer are read, beside the rest", { timeout: 120_000 }, async () => {
+    await readAtMount("/api/organizer-requests");
+  });
+  it("MOUNT: the away responder is read, beside the rest", { timeout: 120_000 }, async () => {
+    await readAtMount("/api/away-responder");
+  });
+  it("MOUNT: History's months are read, beside the rest", { timeout: 120_000 }, async () => {
+    await readAtMount("/api/messages/timeline");
   });
 
   it("RETURN AFTER 2 MIN: GET /sync goes first and alone, and the stream is dialled after its answer", { timeout: 120_000 }, async () => {
@@ -359,7 +394,7 @@ describe("a web tab's mount and its return, on the wire", () => {
     await mountAndSettle();
     const back = await pauseAndReturn(2 * 60_000, () => { syncNext = changedDelta; });
     await until(() => Date.now() - back >= LATENCY + 50, back, 1_000);
-    const { sessionFetch } = await import("../app/shell/session-truth");
+    const { sessionFetch } = await import("@ohmail/app-logic/session/session-truth");
     const askedAt = Date.now();
     // What the engine sends for an open: `priority: "high"` (`person-read-priority.test.ts`).
     const read = sessionFetch("/api/messages/m_opened/body", { priority: "high" });
@@ -374,12 +409,12 @@ describe("a web tab's mount and its return, on the wire", () => {
   });
 
   it("with the account wall up, the access read on return is not held",{ timeout: 120_000 }, async () => {
-    const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+    const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     await mountAndSettle();
     syncWall = true;
     accessAnswer = () => jsonOf(CLOSED);
     await shell.tick(75_000);
-    expect(document.body.querySelector(".wall-card"), "the premise: the wall stands").not.toBeNull();
+    expect(wallStands(), "the premise: the wall stands").toBe(true);
     const back = await pauseAndReturn(Math.max(2 * 60_000, RETURN_DEBOUNCE_MS));
     await shell.tick(3_000);
     const rows = since(back);
@@ -407,7 +442,9 @@ describe("a web tab's mount and its return, on the wire", () => {
     const confirm = rows.find((r) => r.path === "/api/auth/session");
     expect(confirm, show(rows, t0)).toBeDefined();
     expect(confirm!.start - t0, `the confirm waited:\n${show(rows, t0)}`).toBe(0);
-    // Main without the lane, same case: the confirm, the snapshot probe and the delta take one sibling
+    const hello = rows.filter((r) => r.path === "/api/hello");
+    expect(hello.map((r) => r.start - t0), show(rows, t0)).toEqual([0]);
+    // The confirm, the snapshot probe and the delta take one sibling
     // answer each, so the first mail shows at +180; the stream is dialled at the confirm's answer, +60.
     expect(seen, "the first mail never showed").toBeGreaterThanOrEqual(0);
     expect(seen, `the first mail waited:\n${show(rows, t0)}`).toBeLessThanOrEqual(3 * SIBLING_MS);
@@ -424,7 +461,7 @@ describe("a web tab's mount and its return, on the wire", () => {
       latencyOf = (p) => (SCREENER_READS.includes(p) ? SLOW_SCREENER_MS : LATENCY);
     });
     const rowOf = (): HTMLElement | null =>
-      (newId === "" ? null : document.querySelector<HTMLElement>(`.row[data-id="${newId}"]`));
+      (newId === "" ? null : document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${newId}"]`));
     expect(await until(() => rowOf() !== null, back, 5_000), "the premise: the new letter is on screen").toBeGreaterThanOrEqual(0);
     // The drain settled and the eager pass asked the new letter's body: a background read.
     await shell.tick(100);

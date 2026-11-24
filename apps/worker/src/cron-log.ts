@@ -1,7 +1,7 @@
 import { noticeSinkFor, setNoticeSink } from "@trafficflow/db";
 import { createLogger, type LogFields, type LogSink, type Logger } from "@trafficflow/core";
 import { WorkerConfigError, instanceIdFrom, loadConfig, type WorkerConfig } from "./config.js";
-import { flushExit } from "./entry.js";
+import { flushExit } from "@ohmail/organizer/entry";
 
 /**
  * THE COMPOSITION ROOT FOR THE FOUR CRON PROCESSES. Each cron is its own CLI entry point and process,

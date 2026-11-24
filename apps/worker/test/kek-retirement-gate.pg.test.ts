@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -62,7 +63,7 @@ async function seedUnderFirstVersion(db: ReturnType<typeof makeDb>): Promise<voi
   const [u] = await db.insert(users).values({ accountId: a!.id, email: `${randomUUID()}@example.test` }).returning();
   const totp = await firstRing.encrypt("totp-secret");
   await db.insert(totpSecrets).values({
-    userId: u!.id, secretEnc: totp.ciphertext, keyVersion: totp.keyVersion, activated: true,
+    userId: u!.id, accountId: accountOfUser(u!.id), secretEnc: totp.ciphertext, keyVersion: totp.keyVersion, activated: true,
   });
   const staff = await firstRing.encrypt("staff-totp");
   await db.insert(staffUsers).values({

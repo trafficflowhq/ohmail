@@ -1,11 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
-import { users, type Tx } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { bindDb, users, type Tx } from "@trafficflow/db";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { invites } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -34,14 +31,15 @@ import {
  */
 const PG_UP = await realPgAvailable();
 
-let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 const NOW = () => new Date();
 const PW = "pw-correct-horse-battery";
 
+/** A registration is a door before sign-in: its handle is bound to nothing. */
 const ctx = (): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"],
+  db: bindDb(db, { account: null }),
   accountId: "",
   userId: null,
   sessionId: null,
@@ -57,10 +55,10 @@ describe.skipIf(!PG_UP)("on real Postgres — one invite, one account", () => {
     await runMigrations(PG_TEST_URL);
     // A POOL, deliberately: `max: 1` would serialise the statements and reintroduce the
     // exact blind spot this file exists to remove.
-    client = postgres(PG_TEST_URL, { max: 10 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); });
 
   it("ten simultaneous registrations with ONE code produce exactly one account", async () => {
     const svc = makeAuthService(makeTestAuthDeps());

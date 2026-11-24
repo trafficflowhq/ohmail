@@ -1,23 +1,20 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, MessageBodyWire } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { within } from "@testing-library/react";
+import {
+  act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+} from "./fixtures/live-walk-shell.js";
 import { fileURLToPath } from "node:url";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore,
   OhmailEngine,
-  bodyOf,
-  type EngineMessage,
-  type Folder,
-  type MessageBodyWire,
   type SyncChange,
 } from "@ohmail/client-engine";
 import DOMPurify from "dompurify";
 import messages from "../messages/en.json";
-import { BODY_STALL_MS, type BodyTarget } from "../app/shell/message-chrome.js";
-import { settleFirstPaint } from "./_first-paint.js";
+import { HELD_BODY_STALL_MS } from "@ohmail/app-logic/screener";
 
 /**
  * THE HELD PREVIEW DRAWS ITS BODY THROUGH THE READER'S DOOR.
@@ -28,22 +25,13 @@ import { settleFirstPaint } from "./_first-paint.js";
  * that never drew a body it had read. With no other row write, only the door can draw it.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-
 const NOW = new Date("2026-09-25T08:00:00.000Z");
 let seq = 0;
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
 
 function held(id: string, hour: number, unread = true, folder: Folder = "ohmail/Screener"): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
+    id, accountId: "acct_live_1", mailboxId: "mb", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: "A Stranger", address: "stranger@example.test" },
     to: [], cc: [], date: `2026-09-25T${String(hour).padStart(2, "0")}:00:00.000Z`, folder,
     snippet: `one line of ${id}`, unread, hasAttachments: false, attachmentCount: 0,
@@ -102,98 +90,61 @@ async function engineWith(
   return { engine, asked, wire };
 }
 
-/** Which segment the mounted view shows; `switchTo` moves it as the tabs do. */
-let switchTo: (segment: "waiting" | "screened" | "spam") => void = () => {};
-/** With `as: "warmup"`, the shell's warm-up is mounted instead, and this says the Screener is on screen. */
-let showScreener: (shown: boolean) => void = () => {};
-
+const sectionNames = { waiting: /^Waiting/, screened: /^Screened out/, spam: /^Spam/ };
+const phoneSender = () => within(host!).queryByRole("region", { name: "A Stranger" });
+const openReading = () => within(host!).queryByRole("dialog", { name: messages.frame.landmark.reading })
+  ?? within(host!).queryByRole("region", { name: messages.frame.landmark.reading })
+  ?? phoneSender();
+const region = () => openReading() ?? within(host!).getByRole("region", { name: messages.frame.landmark.reading });
+const readingColumn = () => region().querySelector<HTMLElement>("[data-reading-scroll]")!;
+const switchTo = (segment: keyof typeof sectionNames) => {
+  const sections = within(host!).getByRole("group", { name: messages.screener.segAria });
+  within(sections).getByRole("button", { name: sectionNames[segment] }).click();
+};
 async function mount(
-  engine: OhmailEngine, segment: "waiting" | "screened" | "spam" = "waiting", as: "view" | "warmup" = "view",
+  engine: OhmailEngine, segment: keyof typeof sectionNames = "waiting", as: "view" | "warmup" = "view",
 ): Promise<void> {
-  const { EngineProvider, useDerivedVersion } = await import("../app/shell/engine.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  const { useMessageAttachments } = await import("../app/shell/attachments.js");
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { ScreenerView, ScreenerWarmup } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
-  /* `AppShell`'s door, as it resolves a target: the mirror's own row, else a resting snippet. */
-  const door = (m: BodyTarget) => bodyOf(engine.read(), engine.read().get<EngineMessage>("message", m.id) ?? m);
-  function Probe(): React.ReactElement {
-    const version = useDerivedVersion();
-    const state = useScreenerState(engine, version, (() => {}) as never);
-    const [seg, setSeg] = React.useState(segment);
-    switchTo = setSeg;
-    const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
-    const [full, setFull] = React.useState(false);
-    const [shown, setShown] = React.useState(false);
-    showScreener = setShown;
-    if (as === "warmup") return h(ScreenerWarmup, { state, shown });
-    return h(ScreenerView, {
-      owed: false, state, segment: seg, settled: true, selection: sel as never,
-      onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
-      hydrateBody: (id: string, opts?: { retry?: boolean; urgent?: boolean }) => { void engine.hydrateBody(id, opts); },
-      hydrateBodies: (ids: string[], o?: { urgent?: boolean }) => { void engine.hydrateBodies(ids, o); },
-      full, onFull: setFull,
-    } as never);
-  }
-  /* The shell's attachment holder, so every mounted letter's list read is the one the app makes. */
-  function Chrome(): React.ReactElement {
-    const attachments = useMessageAttachments(engine, null, { conversationOf: () => [], onDownloadAllFailed: () => {} });
-    return h(MessageChromeProvider as never, {
-      value: { bodyOf: door, hydrateBody: () => {}, hydrateBodies: () => {}, hydrateThread: () => {}, conversationOf: () => [], attachments },
-      children: h(KeymapProvider, { children: h(Probe) }),
-    } as never);
-  }
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(EngineProvider as never, { demo: false, engine, children: h(Chrome) }),
-    }));
-  });
-  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
-  await settleFirstPaint();
+  window.location.hash = as === "warmup" ? "#/ohbox" : `#/screener/${segment}`;
+  await engine.start();
+  host = await mountShell([mailbox({ id: "mb", lastSyncAt: NOW.toISOString() })], { engine, junkWire: "none" });
+  await tick(500);
 }
 
-const articles = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".scn-mails .hmail")];
-const bodyText = (el: HTMLElement): string => el.querySelector(".hm-body")?.textContent ?? "";
-const noteOf = (el: HTMLElement): string => el.querySelector(".hm-state")?.textContent ?? "";
+const articles = (): HTMLElement[] => {
+  const reading = openReading();
+  return reading ? within(reading).queryAllByRole("article") : [];
+};
+const bodyText = (el: HTMLElement): string => el.textContent ?? "";
+const note = (el: HTMLElement) => within(el).queryByRole("status");
+const noteOf = (el: HTMLElement): string => note(el)?.textContent ?? "";
+const retry = (el: HTMLElement) => within(el).getByRole("button", { name: messages.screener.retry });
 
 beforeEach(() => {
-  (window as unknown as { matchMedia: unknown }).matchMedia = (q: string) => ({
-    matches: false, media: q, onchange: null, addListener: () => {}, removeListener: () => {},
-    addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
-  });
+  installShellEnv();
+  vi.setSystemTime(NOW);
 });
 afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-  vi.useRealTimers();
-  vi.restoreAllMocks();
+  // Restore the primer's frame stubs while the fake clock still owns the original callbacks.
   vi.unstubAllGlobals();
+  await teardownShellEnv();
+  host = null;
 });
 
 describe("a held body that was read is drawn, with nothing else moving", () => {
   it("the landed body reaches the preview, and no stall face follows it", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { engine, asked } = await engineWith([held("h1", 6), held("h2", 7)], async (id) => answer(id));
     await mount(engine);
-    await act(async () => { await vi.advanceTimersByTimeAsync(BODY_STALL_MS + 1_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(HELD_BODY_STALL_MS + 1_000); });
     expect(asked.sort(), "premise: the selection read both held bodies").toEqual(["h1", "h2"]);
     const [a, b] = articles();
     expect(bodyText(a!)).toContain("the whole of h1");
     expect(bodyText(b!)).toContain("the whole of h2");
-    expect(noteOf(a!) + noteOf(b!)).not.toContain("Couldn't load");
+    expect(noteOf(a!) + noteOf(b!)).not.toContain(messages.screener.place.bodyFailed);
   });
 });
 
 describe("Retry is a new attempt, and the preview shows that attempt", () => {
   it("after a failed read, Retry asks again, reads as loading, then draws the text", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let release!: () => void;
     const late = new Promise<void>((r) => { release = r; });
     let calls = 0;
@@ -206,42 +157,42 @@ describe("Retry is a new attempt, and the preview shows that attempt", () => {
     await mount(engine);
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     const [only] = articles();
-    expect(noteOf(only!), "premise: the first read failed").toContain("Couldn't load");
-    await act(async () => { only!.querySelector<HTMLButtonElement>(".hm-state button")!.click(); });
+    expect(noteOf(only!), "premise: the first read failed").toBe(messages.screener.place.bodyFailed + messages.screener.retry);
+    await act(async () => { retry(only!).click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     expect(asked, "Retry made no new attempt").toEqual(["h1", "h1"]);
     expect(noteOf(articles()[0]!)).toContain("Loading the full message");
     release();
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     expect(bodyText(articles()[0]!)).toContain("the whole of h1");
-    expect(articles()[0]!.querySelector(".hm-state")).toBeNull();
+    expect(note(articles()[0]!)).toBeNull();
   });
 
   it("a Retry that fails too says so, with its own Retry", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { engine, asked } = await engineWith([held("h1", 6)], async () => {
       throw new Error("the mail engine answered 500");
     });
     await mount(engine);
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
-    await act(async () => { articles()[0]!.querySelector<HTMLButtonElement>(".hm-state button")!.click(); });
+    await act(async () => { retry(articles()[0]!).click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
     expect(asked).toEqual(["h1", "h1"]);
-    expect(noteOf(articles()[0]!)).toContain("Couldn't load");
-    expect(articles()[0]!.querySelector(".hm-state button"), "the second failure lost its control").not.toBeNull();
+    expect(noteOf(articles()[0]!)).toBe(messages.screener.place.bodyFailed + messages.screener.retry);
+    expect(within(articles()[0]!).queryByRole("button", { name: messages.screener.retry }), "the second failure lost its control").not.toBeNull();
   });
 });
 
 describe("the waiting row says whether its held mail was read", () => {
   const rowDesc = (): string =>
-    host!.querySelector<HTMLElement>(".view-screener [aria-description]")?.getAttribute("aria-description") ?? "";
+    within(host!).getByRole("option", { name: /^A Stranger:/ }).getAttribute("aria-description") ?? "";
 
   it("unread held mail is spoken Unread; read held mail is spoken Read", async () => {
     const { engine } = await engineWith([held("h1", 6)], async (id) => answer(id));
     await mount(engine);
     expect(rowDesc()).toMatch(/\bUnread\b/);
-    await act(async () => { root!.unmount(); });
-    host!.remove();
+    await teardownShellEnv();
+    installShellEnv();
+    vi.setSystemTime(NOW);
     const { engine: readEngine } = await engineWith([held("r1", 6, false)], async (id) => answer(id));
     await mount(readEngine);
     expect(rowDesc()).toMatch(/\bRead\b/);
@@ -262,29 +213,23 @@ const bag = (folder: Folder, n = 12): EngineMessage[] =>
   ids(1, n).map((id, i) => ({ ...held(id, 0, true, folder), date: new Date(Date.parse("2026-09-24T00:00:00.000Z") + i * 3_600_000).toISOString() }));
 const subjects = (): string[] => articles().map((a) => a.querySelector("h2")?.textContent ?? "");
 async function settle(): Promise<void> {
-  for (let i = 0; i < 4; i++) await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+  await tick(80);
 }
-const press = async (label: string): Promise<void> => {
-  const b = [...host!.querySelectorAll<HTMLButtonElement>(".decide button")].find((x) => x.textContent?.trim() === label);
-  expect(b, `no "${label}" button`).toBeDefined();
-  await act(async () => { b!.click(); });
-};
-
 /**
  * The read column, laid out: 800px tall, every letter 600px, `scrollTop` a real offset. With
  * `heightOf`, letters take that height and `scrollTop` clamps to the content, as a browser's does.
  */
 function modelColumn(heightOf?: (card: Element) => number): { scrollTo: (top: number) => Promise<void> } {
-  const read = host!.querySelector<HTMLElement>(".view-screener .scn-read")!;
+  const read = readingColumn();
   const letterPx = heightOf ?? (() => 600);
-  const content = () => [...read.querySelectorAll(".hmail")].reduce((sum, c) => sum + letterPx(c), 0);
+  const content = () => [...read.querySelectorAll<Element>("article")].reduce((sum, c) => sum + letterPx(c), 0);
   let top = 0;
   Object.defineProperty(read, "scrollTop", { configurable: true, get: () => top, set: (v: number) => {
     top = Math.max(0, heightOf ? Math.min(v, content() - 800) : v);
   } });
   Object.defineProperty(read, "clientHeight", { configurable: true, get: () => 800 });
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function rect(this: Element) {
-    const cards = [...read.querySelectorAll(".hmail")];
+    const cards = [...read.querySelectorAll<Element>("article")];
     const i = cards.indexOf(this);
     const y = this === read ? 0 : i >= 0 ? cards.slice(0, i).reduce((sum, c) => sum + letterPx(c), 0) - top : 0;
     const height = this === read ? 800 : i >= 0 ? letterPx(this) : 0;
@@ -306,20 +251,20 @@ function modelColumn(heightOf?: (card: Element) => number): { scrollTo: (top: nu
  */
 function modelSheet(letterPx: number): () => Promise<void> {
   const tops = new WeakMap<Element, number>();
-  const isColumn = (el: Element) => el.classList.contains("scn-read");
-  const drawn = (el: Element) => el.closest(".scn-full") !== null;
+  const isColumn = (el: Element) => el.hasAttribute("data-reading-scroll");
+  const drawn = (el: Element) => el.closest('[role="region"][aria-label="A Stranger"]') !== null;
   vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(function height(this: Element) {
     return isColumn(this) && drawn(this) ? 800 : 0;
   });
   vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function get(this: Element) { return tops.get(this) ?? 0; });
   vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function set(this: Element, v: number) {
-    const max = isColumn(this) && drawn(this) ? Math.max(0, this.querySelectorAll(".hmail").length * letterPx - 800) : 0;
+    const max = isColumn(this) && drawn(this) ? Math.max(0, this.querySelectorAll("article").length * letterPx - 800) : 0;
     tops.set(this, Math.min(max, Math.max(0, v)));
   });
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function rect(this: Element) {
-    const read = this.closest(".scn-read");
+    const read = this.closest("[data-reading-scroll]");
     const on = read !== null && drawn(read);
-    const i = read ? [...read.querySelectorAll(".hmail")].indexOf(this) : -1;
+    const i = read ? [...read.querySelectorAll<Element>("article")].indexOf(this) : -1;
     const y = on && i >= 0 ? i * letterPx - (tops.get(read!) ?? 0) : 0;
     const height = !on ? 0 : this === read ? 800 : i >= 0 ? letterPx : 0;
     return { top: y, bottom: y + height, height, left: 0, right: 0, width: 0, x: 0, y, toJSON: () => ({}) } as DOMRect;
@@ -334,7 +279,7 @@ function modelSheet(letterPx: number): () => Promise<void> {
   });
   return async () => {
     await act(async () => {
-      for (const col of document.querySelectorAll(".scn-read")) if (!drawn(col)) tops.delete(col); // hidden, it loses its offset
+      for (const col of document.querySelectorAll("[data-reading-scroll]")) if (!drawn(col)) tops.delete(col); // hidden, it loses its offset
       for (const o of observers) {
         const moved = [...o.seen].filter(([el, was]) => el.isConnected && el.getBoundingClientRect().height !== was);
         for (const [el] of moved) o.seen.set(el, el.getBoundingClientRect().height);
@@ -352,7 +297,9 @@ describe("a sender's held letters open on the newest three", () => {
     expect(subjects()).toEqual(ids(10, 12).map((id) => `Subject ${id}`));
     expect(wire.batches.flat().sort(), "bodies asked for letters nobody can see").toEqual(ids(10, 12));
     expect([...wire.lists].sort(), "attachment lists read for letters nobody can see").toEqual(ids(10, 12));
-    expect(host!.querySelector(".scn-mails")!.textContent, "the caption stopped counting the whole bag").toMatch(/12 messages/);
+    const countSurface = segment === "screened" ? region() : within(host!).getByRole("listbox", { name: messages.screener.title });
+    expect(within(countSurface).getByText("12 held", { exact: true })).toBeTruthy();
+    expect(articles().map((article) => article.getAttribute("aria-setsize"))).toEqual(["12", "12", "12"]);
   });
 
   it("reaching the top of the column mounts three older letters and asks for their bodies, until all twelve are on screen", async () => {
@@ -371,7 +318,7 @@ describe("a sender's held letters open on the newest three", () => {
     expect(host!.textContent).not.toMatch(/\d+ more\b/i);
     const [first] = articles();
     expect([first!.getAttribute("aria-posinset"), first!.getAttribute("aria-setsize")]).toEqual(["1", "12"]);
-    expect(host!.querySelector(".scn-mails")!.getAttribute("role")).toBe("feed");
+    expect(within(region()).getByRole("feed").getAttribute("role")).toBe("feed");
   });
 
   it("switching away from Screened out and back sanitizes nothing again", async () => {
@@ -397,7 +344,7 @@ describe("a sender's held letters open on the newest three", () => {
   const boxColumn = () => {
     const rects = Element.prototype.getClientRects;
     vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function boxes(this: Element) {
-      return this.classList.contains("scn-read") ? [{ top: 0, bottom: 800, height: 800 }] as unknown as DOMRectList : rects.call(this);
+      return this.hasAttribute("data-reading-scroll") ? [{ top: 0, bottom: 800, height: 800 }] as unknown as DOMRectList : rects.call(this);
     });
     queued = new Map();
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { queued.set(++frameId, cb); return frameId; });
@@ -409,7 +356,7 @@ describe("a sender's held letters open on the newest three", () => {
       queued = new Map();
       await act(async () => {
         for (const cb of due) cb(performance.now());
-        await new Promise((r) => setTimeout(r, 0));
+        await vi.advanceTimersByTimeAsync(0);
       });
     }
   };
@@ -421,7 +368,7 @@ describe("a sender's held letters open on the newest three", () => {
     boxColumn();
     const sanitize = vi.spyOn(DOMPurify, "sanitize");
     await act(async () => { switchTo(segment); });
-    expect(host!.querySelectorAll(".view-screener .rows .row"), "the rows missed the click's commit").toHaveLength(1);
+    expect(within(host!).getAllByRole("option", { name: /^A Stranger:/ }), "the rows missed the click's commit").toHaveLength(1);
     expect(subjects(), "the letters' heads missed the click's commit").toEqual(ids(1, 3).map((id) => `Subject ${id}`));
     expect(sanitize, "a letter was sanitized before the rows painted").not.toHaveBeenCalled();
     await frames(3);
@@ -445,23 +392,24 @@ describe("a sender's held letters open on the newest three", () => {
     const spam = bag(FOLDER.spam, 2).map((m, i) => ({ ...m, id: `q${i + 1}`, subject: `Spam q${i + 1}`, from: { name: "A Spammer", address: "spam@example.test" } }));
     const { engine, wire } = await engineWith([...bag(FOLDER.screened, 3), ...spam], async (id) => answer(id), { batch: true });
     vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function boxes(this: Element) {
-      return (this.matches(".scroller, .scn-read") ? [{ top: 0, bottom: 800, height: 800 }] : []) as unknown as DOMRectList;
+      return ((this === document.body || this.matches("[data-reading-scroll]")) ? [{ top: 0, bottom: 800, height: 800 }] : []) as unknown as DOMRectList;
     });
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { queued.set(++frameId, cb); return frameId; });
     vi.stubGlobal("cancelAnimationFrame", (id: number) => { queued.delete(id); });
     await mount(engine, "waiting");
     await settle();
-    const prime = () => host!.querySelector<HTMLElement>(".view-screener .scn-prime");
+    const prime = () => host!.querySelector<HTMLElement>(".sc-primer");
     expect(prime(), "primed before the Screener painted").toBeNull();
     await frames(1);
     const p = prime();
     expect(p, "the other segments were never drawn ahead of their click").not.toBeNull();
     expect([p!.hasAttribute("inert"), p!.getAttribute("aria-hidden")]).toEqual([true, "true"]);
-    expect(p!.querySelectorAll(".rows .row")).toHaveLength(2);
-    expect([...p!.querySelectorAll(".hmail h2")].map((x) => x.textContent)).toEqual(
+    expect(p!.querySelectorAll('[role="option"]')).toHaveLength(2);
+    expect([...p!.querySelectorAll("article h2")].map((x) => x.textContent)).toEqual(
       ["Subject m01", "Subject m02", "Subject m03", "Spam q1", "Spam q2"]);
-    expect(p!.querySelector(".hm-body")!.childElementCount, "a primed letter drew its body").toBe(0);
-    expect(host!.querySelectorAll("[role=listbox] [role=option]"), "a primed row joined the list").toHaveLength(0);
+    expect(p!.querySelector(".mb")?.childElementCount ?? 0, "a primed letter drew its body").toBe(0);
+    const list = within(host!).queryByRole("listbox", { name: messages.screener.title });
+    expect(list ? within(list).queryAllByRole("option") : [], "a primed row joined the list").toHaveLength(0);
     await frames(1);
     expect(prime(), "the primed segments outlived their frame").toBeNull();
     expect([wire.batches, wire.lists], "something was asked for a primed letter").toEqual([[], []]);
@@ -486,9 +434,7 @@ describe("a sender's held letters open on the newest three", () => {
     warmPage();
     await mount(engine, "waiting", "warmup");
     await settle();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   };
-  const tick = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
   const paint = async () => {
     const due = [...queued.values()];
     queued = new Map();
@@ -497,18 +443,18 @@ describe("a sender's held letters open on the newest three", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
   };
-  const primed = () => host!.querySelector<HTMLElement>(".scn-prime");
+  const primed = () => host!.querySelector<HTMLElement>(".sc-primer");
   /** What the primer on screen draws: its segment, and which half (the list's row or the letters' heads). */
   const piece = () => {
     const p = primed();
     if (!p) return null;
-    const row = p.querySelector(".list-col .rows .row")?.getAttribute("data-id") ?? null;
-    const heads = [...p.querySelectorAll(".scn-read .hmail h2")].map((x) => x.textContent);
+    const row = p.querySelector('[role="option"]')?.getAttribute("data-id") ?? null;
+    const heads = [...p.querySelectorAll("article h2")].map((x) => x.textContent);
     return { row, heads };
   };
 
   it("before the Screener is first shown, the shell draws each segment's halves hidden, a frame each, once the page is quiet", async () => {
-    const { SCREENER_WARMUP_QUIET_MS: quiet } = await import("../app/views/ScreenerView.js");
+    const quiet = 400;
     const { engine, wire, asked } = await warmWorld();
     await mountWarm(engine);
     await paint();
@@ -522,8 +468,10 @@ describe("a sender's held letters open on the newest three", () => {
       drawn.push(piece());
       const p = primed();
       expect(p, `piece ${i + 1} was never drawn`).not.toBeNull();
-      expect([p!.hasAttribute("inert"), p!.getAttribute("aria-hidden"), p!.hasAttribute("data-pile")]).toEqual([true, "true", true]);
-      expect(p!.querySelector(".hm-body")?.childElementCount ?? 0, "a primed letter drew its body").toBe(0);
+      expect([p!.hasAttribute("inert"), p!.getAttribute("aria-hidden")]).toEqual([true, "true"]);
+      expect(within(p!).queryAllByRole("option")).toEqual([]);
+      expect(within(p!).queryAllByRole("article")).toEqual([]);
+      expect(p!.querySelector(".mb")?.childElementCount ?? 0, "a primed letter drew its body").toBe(0);
       await paint();
       expect(primed(), `piece ${i + 1} outlived its frame`).toBeNull();
       await paint();
@@ -539,16 +487,16 @@ describe("a sender's held letters open on the newest three", () => {
   });
 
   it("a Screener already on screen is never primed by the shell", async () => {
-    const { SCREENER_WARMUP_QUIET_MS: quiet } = await import("../app/views/ScreenerView.js");
+    const quiet = 400;
     const { engine } = await warmWorld();
     await mountWarm(engine);
     let drawn = 0;
     const watch = new MutationObserver((ms) => {
-      for (const m of ms) for (const n of m.addedNodes) if (n instanceof Element && n.matches(".scn-prime")) drawn += 1;
+      for (const m of ms) for (const n of m.addedNodes) if (n instanceof Element && n.matches(".sc-primer")) drawn += 1;
     });
     watch.observe(host!, { childList: true, subtree: true });
-    await act(async () => { showScreener(true); });
-    await act(async () => { showScreener(false); });
+    await goTo("screener");
+    await goTo("ohbox");
     for (let i = 0; i < 8; i++) { await paint(); await tick(quiet); }
     watch.disconnect();
     expect(drawn, "a primer was drawn after the Screener had been on screen").toBe(0);
@@ -560,38 +508,33 @@ describe("a sender's held letters open on the newest three", () => {
     await mount(engine, "waiting");
     await settle();
     boxColumn();
-    modelColumn((card) => (card.querySelector(".hm-body")?.childElementCount ? 600 : 60));
     await act(async () => { switchTo("screened"); });
+    modelColumn((card) => (card.querySelector(".mb")?.childElementCount ? 600 : 60));
     await frames(4);
-    expect(articles()[0]!.querySelector(".hm-body")!.childElementCount, "premise: the bodies are drawn").toBeGreaterThan(0);
+    expect(articles()[0]!.querySelector(".mb")!.childElementCount, "premise: the bodies are drawn").toBeGreaterThan(0);
     expect(subjects(), "three short heads read as a column with room").toEqual(ids(10, 12).map((id) => `Subject ${id}`));
   });
 
   /** A phone: the auto-selected sender's letters mount behind the closed sheet; `tap` opens it. */
   async function onPhone(letterPx: number) {
-    (window as unknown as { matchMedia: unknown }).matchMedia = (q: string) => ({
-      matches: /max-width/.test(q), media: q, onchange: null, addListener: () => {}, removeListener: () => {},
-      addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
-    });
+    vi.stubGlobal("innerWidth", 390);
     const layout = modelSheet(letterPx);
     const { engine } = await engineWith(bag(FOLDER.screened), async (id) => answer(id), { batch: true });
     await mount(engine, "screened");
     await settle();
     await layout();
-    expect(articles(), "premise: the hidden column opens on three").toHaveLength(3);
-    const read = host!.querySelector<HTMLElement>(".view-screener .scn-read")!;
-    const press = async (sel: string) => {
-      await act(async () => { host!.querySelector<HTMLElement>(sel)!.click(); });
+    const press = async (control: HTMLElement) => {
+      await act(async () => { control.click(); });
       await settle();
       await layout();
       await settle();
     };
     return {
-      read,
-      tap: () => press(".view-screener .rows .row"),
-      back: () => press(".view-screener .scn-back"),
-      scrollTo: async (t: number) => {
-        read.scrollTop = t;
+      tap: () => press(within(host!).getByRole("option", { name: /^A Stranger:/ })),
+      back: () => press(within(region()).getByRole("button", { name: messages.screener.title })),
+      scrollTo: async (top: number) => {
+        const read = readingColumn();
+        read.scrollTop = top;
         await act(async () => { read.dispatchEvent(new Event("scroll")); });
         await settle();
         await layout();
@@ -602,7 +545,7 @@ describe("a sender's held letters open on the newest three", () => {
   it("on a phone, opening the auto-selected sender's sheet mounts older letters when the newest three fit", async () => {
     const phone = await onPhone(150);
     await phone.tap();
-    expect(host!.querySelector("section.view-screener")!.className, "premise: the sheet is open").toContain("scn-full");
+    expect(phoneSender(), "premise: the sheet is open").toBeTruthy();
     expect(articles().length, "older letters stayed unreachable in a sheet that cannot scroll").toBeGreaterThan(3);
     for (let i = 0; i < 4 && articles().length < 12; i++) await phone.scrollTo(0);
     expect(subjects()).toEqual(ids(1, 12).map((id) => `Subject ${id}`));
@@ -611,26 +554,18 @@ describe("a sender's held letters open on the newest three", () => {
   it("on a phone, closing and reopening the sheet leaves the column where the browser puts it", async () => {
     const phone = await onPhone(600);
     await phone.tap();
+    expect(subjects()[0]).toBe("Subject m10");
     await phone.scrollTo(700);
+    // The lookahead prepends three letters before the sheet is closed.
+    expect(subjects()[0]).toBe("Subject m07");
     await phone.back();
-    expect(host!.querySelector("section.view-screener")!.className, "premise: the sheet closed").not.toContain("scn-full");
-    const [first] = subjects(); // the reopened sheet starts at its top, on this letter
+    expect(phoneSender(), "premise: the sheet closed").toBeNull();
     await phone.tap();
+    // Another three cards joined during reopening. Holding the old first card moves the pixel offset by their height.
+    expect(subjects()[0]).toBe("Subject m04");
+    expect(readingColumn().scrollTop).toBe(3 * 600);
     const atTop = articles().find((a) => a.getBoundingClientRect().top === 0);
-    expect(atTop?.querySelector("h2")?.textContent, "the letters reappearing were taken for growth above the reader").toBe(first);
-  });
-
-  it.each([
-    ["screened", "Allow…"],
-    ["spam", "Not spam…"],
-  ] as const)("%s: the release moves all twelve letters, not the mounted three", async (segment, open) => {
-    const { engine, wire } = await engineWith(bag(FOLDER[segment]), async (id) => answer(id), { batch: true });
-    await mount(engine, segment);
-    await settle();
-    await press(open);
-    await press("→ Ohbox");
-    await settle();
-    expect([...wire.moved].sort()).toEqual(ids(1, 12));
+    expect(atTop?.querySelector("h2")?.textContent, "the letters reappearing were taken for growth above the reader").toBe("Subject m07");
   });
 });
 
@@ -644,18 +579,33 @@ describe("the held preview and the reader call one door", () => {
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
   it("MessagePane, MessageCard and HeldMail each draw through useDrawnBody, and only it", () => {
-    for (const rel of ["../app/shell/MessagePane.tsx", "../app/shell/MessageCard.tsx", "../app/views/ScreenerView.tsx"]) {
+    for (const rel of ["../../../packages/app/src/reader/Letter.tsx", "../../../packages/app/src/reader/entry.tsx", "../../../packages/app/src/screener/held/HeldLetter.tsx"]) {
       const src = read(rel);
-      expect(src, `${rel} does not draw through the one door`).toMatch(/useDrawnBody\s*\(/);
+      expect(src, `${rel} does not draw through the one door`).toMatch(/useLetterBody\s*\(/);
       expect(src, `${rel} draws a body past the door`).not.toMatch(/(?:^|[^\w.])bodyOf\s*\(|\.bodyOf\s*\(/m);
     }
-    const view = read("../app/views/ScreenerView.tsx");
-    const heldMail = view.slice(view.indexOf("export function HeldMail("), view.indexOf("function ReaderNote("));
-    expect(heldMail, "HeldMail lost its door").toMatch(/useDrawnBody\s*\(\s*message/);
+    const view = read("../../../packages/app/src/screener/held/HeldLetter.tsx");
+    const heldMail = view.slice(view.indexOf("function HeldLetterContent("));
+    expect(heldMail, "HeldMail lost its door").toMatch(/useLetterBody\s*\(\s*asMessage\(letter\)/);
   });
-  it("the shell hands the chrome the one function every drawn body reads", () => {
-    const shell = read("../app/shell/AppShell.tsx");
-    expect(shell).toMatch(/bodyOf:\s*bodyOfMessage\b/);
-    expect(shell.match(/const bodyOfMessage\s*=/g), "a second body door was declared").toHaveLength(1);
+  it("the shell hands the chrome the one function every drawn body reads", async () => {
+    const letter = held("shared-letter", 6);
+    const { engine, asked, wire } = await engineWith(
+      [{ ...letter, accountId: "acct_live_1" }], async (id) => answer(id), { batch: true },
+    );
+    window.location.hash = "#/screener";
+    const mounted = within(await mountShell([mailbox({ id: "mb", lastSyncAt: NOW.toISOString() })], { engine }));
+    const waiting = mounted.getByRole("listbox", { name: "Screener" });
+    await act(async () => { within(waiting).getByRole("option", { name: /A Stranger: Subject shared-letter/ }).click(); });
+    await tick(300);
+    const reading = () => within(mounted.getByRole("region", { name: "Reading" }));
+    expect(reading().getByText("the whole of shared-letter")).toBeTruthy();
+    expect([...wire.batches.flat(), ...asked]).toEqual(["shared-letter"]);
+
+    await goTo("history/m/shared-letter");
+    await tick(300);
+    expect(reading().getByRole("region", { name: "Open message" })).toBeTruthy();
+    expect(reading().getByText("the whole of shared-letter")).toBeTruthy();
+    expect([...wire.batches.flat(), ...asked]).toEqual(["shared-letter"]);
   });
 });

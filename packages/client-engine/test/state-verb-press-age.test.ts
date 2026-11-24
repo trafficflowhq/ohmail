@@ -1,15 +1,14 @@
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   HttpAdapter,
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
   OUTBOX_TYPE,
   type EngineAdapter,
-  type EngineMutation,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * A press the server answers for its AGE: the engine measures it at dispatch from the instant the

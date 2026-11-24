@@ -18,9 +18,10 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
+import { Button, Switch } from "@ohmail/ui/base";
+import { SettingActs, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 
-import { flushBeforeRestart, restartHold, subscribeRestartHold } from "../../webapp/app/shell/app-update.js";
+import { flushBeforeRestart, restartHold, subscribeRestartHold } from "@ohmail/app-logic/doors/app-update";
 import { agoStamp } from "../../webapp/app/shell/format.js";
 import {
   autoSentenceKey,
@@ -193,54 +194,48 @@ export function DesktopUpdate() {
     report.autoInstallsAt !== null &&
     SELF_INSTALLING_KINDS.includes(report.installKind);
 
+  const ready = report.state === "ready" || report.canInstall;
+  const refused = key === "failed" || key === "refused" || key === "notStarted" || key === "autoFailed";
+  const working = report.state === "checking" || report.state === "downloading";
+  const pressButton = !managed ? (
+    <Button
+      kind={ready ? "ink" : "quiet"}
+      size={ready ? undefined : "s"}
+      disabled={buttonKey === null || busy}
+      onPress={() => {
+        setBusy(true);
+        void press();
+      }}
+    >
+      {busy ? t("working") : t(buttonKey ?? (ready ? "restart" : "check"))}
+    </Button>
+  ) : null;
+
   return (
-    <>
-      <SettingsSubhead>{t("subhead")}</SettingsSubhead>
-      <SettingsRow
-        label={t("label")}
-        description={sentence}
-        value={managed ? undefined : checked}
-        control={
-          managed ? undefined : (
-            <Button
-              variant={report.canInstall ? "primary" : undefined}
-              /* A BUTTON LABEL MAY NOT WRAP. The row gives the description all the width it wants
-                 and squeezes the control, so a two-line sentence beside "Check now" broke the words
-                 across two lines — measured, not guessed. The rule belongs on the control rather
-                 than in the row's stylesheet, which is shared by every settings surface. */
-              style={{ whiteSpace: "nowrap" }}
-              disabled={buttonKey === null || busy}
-              onClick={() => {
-                setBusy(true);
-                void press();
-              }}
-            >
-              {/* A press with nothing to press is DISABLED and still says what it would do — a
-                  button that changes its own words while it is unavailable reads as broken. The
-                  busy word is the one exception, because that is what just happened. A ready
-                  release held while a send waits still says Restart. */}
-              {busy ? t("working") : t(buttonKey ?? (report.state === "ready" ? "restart" : "check"))}
-            </Button>
-          )
-        }
-      />
+    <SettingsSheet title={t("subhead")} hot={ready || refused || working}>
+      {!managed ? <SettingNote warn={refused} busy={working} said={ready}>{sentence}</SettingNote> : null}
+      <SettingLine label={t("version")} value={report.version} />
+      {managed ? (
+        <SettingNote>{sentence}</SettingNote>
+      ) : (
+        <SettingLine label={t("checked")} value={checked}>
+          {ready ? null : pressButton}
+        </SettingLine>
+      )}
+      {ready && pressButton ? <SettingActs>{pressButton}</SettingActs> : null}
       {switchable ? (
-        <SettingsRow
-          label={t("autoLabel")}
-          description={t(autoSentenceKey(report))}
-          control={
-            <Switch
-              checked={report.autoInstall === true}
-              disabled={switching}
-              ariaLabel={t("autoLabel")}
-              onChange={(on) => {
-                setSwitching(true);
-                void setAuto(on);
-              }}
-            />
-          }
-        />
+        <SettingLine label={t("autoLabel")} description={t(autoSentenceKey(report))}>
+          <Switch
+            on={report.autoInstall === true}
+            disabled={switching}
+            label={t("autoLabel")}
+            onChange={(on) => {
+              setSwitching(true);
+              void setAuto(on);
+            }}
+          />
+        </SettingLine>
       ) : null}
-    </>
+    </SettingsSheet>
   );
 }

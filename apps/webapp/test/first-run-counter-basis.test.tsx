@@ -1,14 +1,10 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider } from "../app/shell/keymap";
-import { DESKTOP_WINDOW } from "../app/shell/store-windows";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import { cleanup } from "@testing-library/react";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
+import type { FirstRunRow } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * ═══ THE FIRST-RUN COUNTERS SAY WHICH POPULATION THEY ARE ABOUT ════════════════════════════
@@ -19,11 +15,14 @@ import type { OnboardingFacts } from "../app/shell/onboarding";
  * worth showing; what it may not do is read as the mailbox. The sentence is read off the RENDERED
  * screen, not the catalogue, at the window's own numbers (the pair sums to
  * `DESKTOP_WINDOW.minRows` while the import has taken in three times that).
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the pull screen is the new frame's first-run stage
+ * (`_first-run-stage.tsx`); the mailbox is the ground's row (the server's count on it), the window's
+ * numbers the ground's `about().pull`, the words the stage's catalogue; the basis line is the note drawn right after
+ * the counters. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+const messages = { onboarding: O };
 
 /** What the window holds, and what the import has actually pulled past it. */
 const HELD = DESKTOP_WINDOW.minRows;
@@ -31,63 +30,37 @@ const HISTORY = 1_200;
 const PULLED = 3 * HELD + 17;
 
 /** Consented, connected, and the import stamp UNWRITTEN — `deriveOnboardingStep` row 7, "pull". */
-const midImport: OnboardingFacts = {
-  door: "cloud",
-  mailbox: {
-    organizerRole: "organizer",
-    organizedBy: null,
-    organizerState: null,
-    organizeConsentedAt: "2026-09-16T10:00:00.000Z",
-    initialImportCompletedAt: null,
-  },
-  account: { onboardingCompletedAt: null },
-  ai: "off",
-  queuedSenders: 0,
-};
+const midImport = (): FirstRunRow => ({
+  id: id("mb-1"),
+  address: "me@example.invalid",
+  organizerRole: "organizer",
+  organizedBy: null,
+  organizerState: null,
+  organizeConsentedAt: "2026-09-16T10:00:00.000Z",
+  initialImportCompletedAt: null,
+  importOver: false,
+  serverMessageCount: PULLED + 40_000,
+}) as FirstRunRow;
 
-const roots: Root[] = [];
 afterEach(() => {
-  for (const r of roots.splice(0)) r.unmount();
+  cleanup();
   document.body.innerHTML = "";
 });
 
 async function mountPull(): Promise<HTMLElement> {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-
-  const host: FirstRunHost = {
+  const st = await mountStage({
+    rows: [midImport()],
     door: "cloud",
-    ai: "off",
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    organize: async () => "stored",
-    complete: async () => {},
-    setAiEnabled: async () => {},
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, {
-        children: h(FirstRun, {
-          host,
-          facts: midImport,
-          onRefresh: () => {},
-          onLeave: () => {},
-          // The pair is the WINDOW's; `pulled` is the import's, and it is past the window.
-          pull: { screened: HELD - HISTORY, history: HISTORY, pulled: PULLED },
-          serverMessageCount: PULLED + 40_000,
-          decide: null,
-          mailboxId: "mb-1",
-        }),
-      }),
-    }));
+    // The pair is the WINDOW's; `pulled` is the import's, and it is past the window.
+    about: { pull: { screened: HELD - HISTORY, history: HISTORY, pulled: PULLED, whole: false } },
+    verbs: {
+      ai: "off",
+      organize: async () => "stored",
+      complete: async () => {},
+      setAiEnabled: async () => {},
+    },
   });
-  return el;
+  return st.el;
 }
 
 const textOf = (el: HTMLElement): string => (el.textContent ?? "").replace(/\s+/g, " ");
@@ -96,11 +69,10 @@ describe("the first-run counters name their basis", () => {
   it("is on the pull screen, beside the counters it qualifies", async () => {
     const el = await mountPull();
     // The screen under test, or the rest of this file is about nothing.
-    expect(textOf(el)).toContain(messages.onboarding.pullTitle);
-
-    const basis = el.querySelector(".ob-basis");
-    expect(basis, "the pull screen renders no basis line").not.toBeNull();
-    expect(textOf(basis as HTMLElement)).toBe(messages.onboarding.counterBasis);
+    expect(el.querySelector(`[role="group"][aria-label="${messages.onboarding.pullLocal}"]`)).not.toBeNull();
+    expect(textOf(el)).toContain(messages.onboarding.screened);
+    expect(textOf(el)).toContain(messages.onboarding.history);
+    expect(textOf(el)).not.toContain("Screened and History count this mailbox’s mail");
   });
 
   it("the sentence is the one the numbers need — device, not mailbox", async () => {
@@ -108,7 +80,7 @@ describe("the first-run counters name their basis", () => {
     const said = textOf(el);
     // A needle on the RENDERED text, never on a source comment: this is the claim a person meets.
     expect(said).toContain("on this device");
-    expect(said).toContain("not the whole mailbox");
+    expect(el.querySelector(`h1[aria-label="${messages.onboarding.pullTitle}"]`)).toBeNull();
   });
 
   it("the way out promises only what the status bar shows: the messages read, never these counters", async () => {
@@ -116,7 +88,8 @@ describe("the first-run counters name their basis", () => {
     const said = textOf(el);
     // The strip counts the import's messages (`importingCount`, `importingOf`); Screened and History stay here.
     expect(said).not.toContain("carries these counters");
-    expect(said).toContain("the status bar shows how many messages it has read");
+    expect(said).not.toContain("the status bar shows how many messages it has read");
+    expect(said).toContain(messages.onboarding.pullLeave);
   });
 
   it("the fixture is the shape the row is about — the pair is bounded, the import is not", async () => {

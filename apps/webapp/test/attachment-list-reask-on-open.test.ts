@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MutationRejectedError, OhmailEngine, type EngineAdapter, threadOf } from "@ohmail/client-engine";
-import { AttachmentStrip, listRetryIsOffered } from "../app/components/AttachmentStrip.js";
-import { useMessageAttachments } from "../app/shell/attachments.js";
-import { resetSessionTruthForTests } from "../app/shell/session-truth.js";
+import { ReaderFilesFixture } from "./fixtures/reader-files";
+import { listRetryIsOffered } from "@ohmail/app-logic/reader";
+import { useMessageAttachments } from "@ohmail/app-logic/reader/attachments";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
 
 /**
  * ═══ ONE RE-ASK PER OPEN, AND ONLY WHERE IT HELPS ══
@@ -56,14 +57,9 @@ function adapterWith(over: Partial<EngineAdapter> = {}): EngineAdapter {
 
 /** `AppShell`'s own wiring: one hook, the OPEN message's id, `null` when nothing is open. */
 function Harness({ engine, messageId }: { engine: OhmailEngine; messageId: string | null }) {
-  const attachments = useMessageAttachments(engine, messageId, { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const attachments = useMessageAttachments(engine, null, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return attachments && messageId
-    ? h(AttachmentStrip, {
-        items: attachments.itemsOf(messageId),
-        onOpen: (attachmentId: string) => attachments.open(messageId, attachmentId),
-        onDownloadAll: () => attachments.downloadAll(messageId),
-        downloadingAll: attachments.downloadingAll(messageId),
-      })
+    ? h(ReaderFilesFixture, { files: attachments, messageId: messageId })
     : null;
 }
 
@@ -77,8 +73,8 @@ async function show(engine: OhmailEngine, messageId: string | null): Promise<voi
   await act(async () => root!.render(h(Harness, { engine, messageId })));
 }
 
-const row = (): HTMLElement | null => host!.querySelector<HTMLElement>(".att-list");
-const retry = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".att-list-retry");
+const row = (): HTMLElement | null => host!.querySelector<HTMLElement>(".oh-warnrow-warn");
+const retry = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".oh-warnrow button");
 
 const refusal = (status: number, code: string, retryable: boolean) => async (): Promise<never> => {
   throw new MutationRejectedError(`HTTP ${status}`, { status, code, retryable });
@@ -158,7 +154,7 @@ describe("a failed attachment list is re-asked once on a later open", () => {
     expect(retry()).not.toBeNull();
     await act(async () => { retry()!.click(); });
     expect(listAttachments).toHaveBeenCalledTimes(2);
-    expect(host!.querySelector(".att-name")!.textContent).toBe("invoice.pdf");
+    expect(host!.querySelector(".oh-file-title")!.textContent).toBe("invoice.pdf");
   });
 });
 

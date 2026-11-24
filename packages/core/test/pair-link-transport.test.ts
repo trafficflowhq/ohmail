@@ -64,4 +64,27 @@ describe("a host link carries an origin, a pin where the origin needs one, and n
     expect(parsePairLink(`${TAILNET}/pair#tok-xyz`)).not.toBeNull();
     expect(parsePairLink(`${LAN}:6245/pair#k1.${PIN}.tok-xyz`)).not.toBeNull();
   });
+
+  it("names its host as it is dialled: ASCII letters, digits, dots and hyphens, or a bracketed IPv6 literal", () => {
+    // What a request to an origin reaches: a URL's own reading of it, which spells a name as the network does.
+    const dialled = (origin: string) => new URL(origin).origin;
+    for (const bad of [
+      `https://dеsk.tail1234.ts.net/pair#tok-xyz`, // a Cyrillic "е": drawn as desk, dialled as xn--dsk-…
+      `https://deſk.tail1234.ts.net/pair#tok-xyz`, // a long s: dialled as desk
+      `https://desk．tail1234.ts.net/pair#tok-xyz`, // a full-width stop: dialled as a dot
+      `https://desk%2Etail1234.ts.net/pair#tok-xyz`, // an escaped dot: dialled as a dot
+    ]) {
+      expect(parsePairLink(bad), bad).toBeNull();
+    }
+    for (const good of [
+      `${TAILNET}/pair#tok-xyz`,
+      `${LAN}:6245/pair#k1.${PIN}.tok-xyz`,
+      `https://[fd7a:115c:a1e0::5]:6245/pair#k1.${PIN}.tok-xyz`,
+      "HTTPS://Desk.Tail1234.TS.net/pair#tok-xyz",
+    ]) {
+      const origin = parsePairLink(good)?.origin;
+      expect(origin, good).toBeDefined();
+      expect(dialled(origin!), good).toBe(origin);
+    }
+  });
 });

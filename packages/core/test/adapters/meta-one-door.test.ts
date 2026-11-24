@@ -21,11 +21,11 @@ import { META_HOLDER_RESERVE_RECORDS } from "../../src/adapters/organizer-lease.
  * shipping constant, and the reader's append headroom keeps its ceilings.
  */
 const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
-const SOURCE_ROOTS = ["packages/core/src", "packages/services/src", "packages/api/src", "apps/worker/src", "apps/sidecar/src", "apps/mobile/src"];
+const SOURCE_ROOTS = ["packages/core/src", "packages/services/src", "packages/api/src", "apps/worker/src", "packages/organizer/src", "apps/sidecar/src", "apps/mobile/src"];
 
 const META_MODULES = new Set([
   "packages/core/src/adapters/organizer-lease.ts", "packages/core/src/adapters/organizer-profile.ts",
-  "apps/worker/src/request-drain.ts",
+  "packages/organizer/src/request-drain.ts",
 ]);
 
 function sources(): Array<{ path: string; code: string }> {

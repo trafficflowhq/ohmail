@@ -92,7 +92,7 @@ async function mintCode(deps: ApiDeps, db: Db): Promise<{ code: string; userId: 
 
 const claim = (deps: ApiDeps, body: unknown, ip = IP): Promise<Response> =>
   H(req("POST", "/auth/desktop-claim", {
-    headers: { "x-vercel-forwarded-for": ip },
+    headers: { "x-forwarded-for": ip },
     body: JSON.stringify(body),
   }), deps);
 

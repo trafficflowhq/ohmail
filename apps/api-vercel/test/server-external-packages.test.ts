@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -8,9 +9,9 @@ import { describe, expect, it } from "vitest";
  * first send fails on Vercel only. Nothing before the deploy notices, so the config is read here.
  */
 type Config = { serverExternalPackages?: string[]; experimental?: object };
-/* By URL: the config is plain `.mjs` with no declaration file, and the test reads what Next reads. */
+/* Use a filesystem path: the config is plain `.mjs` with no declaration file, and the test reads what Next reads. */
 const load = async (): Promise<Config> =>
-  ((await import(/* @vite-ignore */ new URL("../next.config.mjs", import.meta.url).href)) as { default: Config }).default;
+  ((await import(/* @vite-ignore */ fileURLToPath(new URL("../next.config.mjs", import.meta.url)))) as { default: Config }).default;
 
 describe("next.config.mjs externalises the native and dynamic-require packages", () => {
   it("names exactly the four, under the Next 15 option", async () => {

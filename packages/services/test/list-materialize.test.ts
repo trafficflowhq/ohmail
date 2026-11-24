@@ -72,7 +72,7 @@ describe("a page of messages is materialized in one batch, not once per row", ()
     const svc = new MessageService();
     await setFoldersEnabled(ctx, true);
     const [folder] = await db.insert(mailboxFolders)
-      .values({ mailboxId, folder: "Projects", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
+      .values({ mailboxId, accountId, folder: "Projects", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
       .returning();
     const seed = (n: number) => seedMessage(db, accountId, mailboxId, {
       folder: "Projects", subject: `project ${n}`,

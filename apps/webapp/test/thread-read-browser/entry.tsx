@@ -2,16 +2,16 @@
  * reader, in a real engine. Two rigs. `framed`: one unread designed letter in the real `MessageBody`
  * (its frame, its measure, its proxied pictures), opened and entered at once; with `away` the person
  * scrolls into its middle as soon as the frame measures (its top off screen), and back to it later.
- * `landing`: three panels, the opened one held at the top by a copy of `MessagePane`'s thread anchor
+ * `landing`: three panels, the opened one held at the top by a copy of the shared Reader's thread anchor
  * (a ResizeObserver re-scroll), while the body above it lands and grows. `streamPress`: a press inside a
  * stream card's letter, under `readStreamCards`. Bundled by the test;
  * nothing here is product code. */
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createThreadRead } from "@ohmail/client-engine";
-import { MessageBody } from "../../app/components/MessageBody";
-import { createThreadReadDom } from "../../app/shell/reader-seen";
-import { readStreamCards } from "../../app/shell/stream-landing-read";
+import { MessageBody } from "../../../../packages/letter-body/src/MessageBody";
+import { createThreadReadDom } from "@ohmail/app-logic/reading/reader-seen";
+import { readStreamCards } from "@ohmail/app-logic/lists/stream-landing-read";
 
 interface Log { reads: string[][]; at: number[] }
 const frames = (n: number): Promise<void> =>
@@ -63,6 +63,7 @@ async function framed(opts: { rows: number; pictures: number; away: boolean }): 
       <div className="msg-from"><b>Sender</b></div>
       <div className="pm-body">
         <MessageBody
+          owner={null}
           messageId="m1" text="the text part" html={letter(opts.rows, opts.pictures)} remoteLoaded
           imageProxy={(u) => `${location.origin}/api/img?u=${encodeURIComponent(u)}`}
         />
@@ -152,6 +153,7 @@ function three(html: (id: string) => string): HTMLElement {
     <>
       {["p1", "p2", "p3"].map((id) => (
         <MessageBody
+          owner={null}
           key={id} messageId={id} text="the text part" html={html(id)} remoteLoaded
           imageProxy={(u) => `${location.origin}/api/img?u=${encodeURIComponent(u)}`}
         />

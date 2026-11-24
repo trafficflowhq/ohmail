@@ -10,7 +10,7 @@ import { ThemeProvider } from "@ohmail/ui";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
-import { holdFilesForRestart, holdForRestart, resetUpdateStoreForTests } from "../../webapp/app/shell/app-update.js";
+import { holdFilesForRestart, holdForRestart, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 import { DesktopUpdate } from "../src/DesktopUpdate.js";
 import {
   AUTO_INSTALLS_AT,
@@ -128,6 +128,10 @@ const WIRE: Record<string, Wire> = {
   },
   unpackaged: {
     version: VERSION, state: "idle", offered: null, installKind: "unpackaged",
+    canCheck: false, canInstall: false, lastCheckedAt: null, lastResult: "never",
+  },
+  preview: {
+    version: VERSION, state: "idle", offered: null, installKind: "preview",
     canCheck: false, canInstall: false, lastCheckedAt: null, lastResult: "never",
   },
   // The control: an AppImage, which is the same flow this file has always driven, now naming its
@@ -326,6 +330,16 @@ describe("every state the update pane can be in renders, and says the true thing
     expect(hostEl.textContent).toContain(`ohmail ${NEXT} is ready`);
     expect(button()!.textContent).toBe(copy.restart!);
     expect(button()!.disabled).toBe(false);
+    const lines = [...hostEl.querySelectorAll(".oh-settingline")];
+    expect(lines.map((line) => line.textContent)).toEqual(expect.arrayContaining([
+      expect.stringContaining(VERSION),
+      expect.stringContaining("Checked"),
+    ]));
+    expect(lines.find((line) => line.textContent?.includes(VERSION))).not.toBe(
+      lines.find((line) => line.textContent?.includes("Checked")),
+    );
+    expect(button()!.closest(".oh-settingacts")).not.toBeNull();
+    expect(hostEl.querySelector(".oh-settingnote")?.textContent).toContain(`ohmail ${NEXT} is ready`);
     capture("5-ready");
   });
 
@@ -398,6 +412,7 @@ describe("an install ohmail does not update says so, and offers nothing to press
     ["a .deb or .rpm", "deb", "managedPackage"],
     ["a Flatpak", "flatpak", "managedFlatpak"],
     ["a build from source, or an unpacked AppImage", "unpackaged", "managedUnpackaged"],
+    ["a nightly preview of the next version", "preview", "managedPreview"],
   ] as const) {
     it(`${name}: the sentence, and no control at all`, async () => {
       shell(WIRE[wire]!);
@@ -943,6 +958,7 @@ describe("the two pure mappings", () => {
         expect(on("linuxPackage")).toBe("managedPackage");
         expect(on("flatpak")).toBe("managedFlatpak");
         expect(on("macAppStore")).toBe("managedAppStore");
+        expect(on("preview")).toBe("managedPreview");
         expect(on("unpackaged")).toBe("managedUnpackaged");
         // …and the three that CAN install are decided by the flow, exactly as before.
         for (const kind of ["appimage", "windowsSetup", "macBundle", "unknown"] as const) {
@@ -953,7 +969,7 @@ describe("the two pure mappings", () => {
     }
   });
 
-  it("exactly six of the kinds are updated by something other than ohmail", () => {
+  it("exactly seven of the kinds are updated by something other than ohmail", () => {
     const managed = INSTALL_KINDS.filter((installKind) =>
       updateManagedElsewhere({ ...base, installKind }),
     );
@@ -961,7 +977,7 @@ describe("the two pure mappings", () => {
        updated by the App Store, exactly as a .deb is by its package manager. The list and the
        classification are ONE edit — a pin left behind here would have the pane offering a check
        on a build whose shell refuses one. */
-    expect(managed).toEqual(["deb", "rpm", "linuxPackage", "flatpak", "macAppStore", "unpackaged"]);
+    expect(managed).toEqual(["deb", "rpm", "linuxPackage", "flatpak", "macAppStore", "preview", "unpackaged"]);
     // The three with an installer, and the shell that named none, keep the pane's control.
     for (const installKind of ["appimage", "windowsSetup", "macBundle", "unknown"] as const) {
       expect(updateManagedElsewhere({ ...base, installKind })).toBe(false);

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -94,7 +95,7 @@ async function mount(): Promise<void> {
   await act(async () => {
     root.render(
       h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-        h(ThemeProvider, null, h(ToastHost, null, h(DesktopDevices)))),
+        h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DesktopDevices })))),
     );
   });
   await act(async () => {
@@ -180,7 +181,7 @@ describe("every designed state renders — and is captured for the design review
     shell({ hostState: { ...OFF, notice }, tailscale: RUNNING });
     await mount();
     expect(hostEl.textContent).toContain(notice);
-    expect(hostEl.querySelector(".acct-warn[role=alert]")).not.toBeNull();
+    expect([...hostEl.querySelectorAll(".oh-refusal[role=alert]")].map((alert) => alert.textContent?.trim())).toContain(notice);
     capture("3a-off-setting-not-saved");
   });
 
@@ -216,7 +217,7 @@ describe("every designed state renders — and is captured for the design review
     });
     await mount();
     await click(hostCopy.addAction!);
-    expect(hostEl.querySelector("svg")).not.toBeNull();
+    expect(hostEl.querySelector(".oh-code-tile svg")).not.toBeNull();
     expect(hostEl.textContent).not.toContain(TOKEN);
     capture("5-on-qr");
   });

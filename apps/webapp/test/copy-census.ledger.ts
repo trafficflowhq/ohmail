@@ -44,9 +44,6 @@ export interface Exemption {
  * sentence — so listing them would be a stale row, which this ledger treats as an error.
  */
 export const EXEMPT: Record<string, Exemption[]> = {
-  "apps/webapp/app/views/HistoryRail.tsx": [
-    { text: "--history-gutter", why: "machine text — the CSS custom property the rows' gutter rule reads (history-rail.css)" },
-  ],
   "packages/ui/src/composites/RailNav.tsx": [
     { text: "oh", why: "wordmark — the first half of the brand, weighted by the stylesheet" },
     { text: "mail", why: "wordmark — the second half" },
@@ -60,54 +57,15 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "packages/ui/src/composites/FocusReplyOverlay.tsx": [
     { text: "esc", why: "keycap — the run's exit hint names the key" },
   ],
-  "apps/webapp/app/shell/AppShell.tsx": [
-    { text: "oh", why: "wordmark — the first half of the brand" },
-    { text: "mail", why: "wordmark — the second half" },
-  ],
-  "apps/webapp/app/shell/engine.tsx": [
-    { text: "oh", why: "wordmark — the boot screen's mark" },
-    { text: "mail", why: "wordmark — its second half" },
-  ],
-  "apps/webapp/app/shell/FirstRun.tsx": [
-    { text: "oh", why: "wordmark — the first half of the brand" },
-    { text: "mail", why: "wordmark — the second half" },
-    { text: "esc", why: "keycap — the flow's dismiss hint" },
-  ],
-  "apps/webapp/app/shell/SenderMenu.tsx": [
+  "apps/webapp/app/components/sender-menu/SenderMenu.tsx": [
     { text: "esc", why: "keycap — the resolve step's and the confirm's step-back hint" },
-  ],
-  "apps/webapp/app/shell/InlineReply.tsx": [
-    { text: "esc", why: "keycap — the editor's dismiss hint" },
-    { text: "mod+Enter", why: "chord identifier — the keymap parses it; `mod` resolves per platform" },
-    { text: "mod+shift+Enter", why: "chord identifier — Send + Done's, parsed by the keymap and printed by `chordKeys`" },
-  ],
-  "apps/webapp/app/views/ComposeView.tsx": [
-    { text: "mod+Enter", why: "chord identifier — parsed by the keymap, not read by anyone" },
-  ],
-  "apps/webapp/app/views/OhboxView.tsx": [
-    { text: "esc", why: "keycap — the selection capsule's clear hint" },
-    { text: "Backspace", why: "chord identifier — the keymap parses it and `chordKeys` prints ⌫; nobody reads this word" },
-  ],
-  "apps/webapp/app/shell/MessagePane.tsx": [
-    { text: "shift+Backspace", why: "chord identifier — the Trash bar's Restore keycap; the keymap parses it and `chordKeys` prints ⇧⌫, nobody reads this word" },
-  ],
-  /**
-   * A FOLDER PATH IS NOT A WORD, and this one is the fallback of a fallback. `restoreLabel`
-   * answers where a restore would put a message; a row from a server that predates the field
-   * carries no destination, and `"INBOX"` is the path that server's restore would in fact use.
-   * It goes straight into `placeLabel`, which is the ONE function that turns a folder into
-   * something a person reads — so the string never reaches a screen, and translating it would
-   * name a folder no mail server has.
-   */
-  "apps/webapp/app/views/TrashView.tsx": [
-    { text: "INBOX", why: "folder path — fed to `placeLabel`, which is what a reader sees; never rendered itself" },
   ],
   /**
    * MACHINE TEXT, ALL OF IT. These four files return documents, policies, selectors and wire
    * tokens from functions, and the `return` pass reaches them for the first time. Every row here
    * is addressed to a parser rather than to a reader.
    */
-  "apps/webapp/app/components/MessageBody.tsx": [
+  "packages/letter-body/src/MessageBody.tsx": [
     { text: "table table", why: "a CSS rule fragment for the sanitized mail frame's stylesheet" },
     { text: "default-src 'none'", why: "CSP directive — the mail frame's policy, parsed by the browser" },
     { text: "img-src data: blob:{}", why: "CSP directive — the image arm, with the proxy path spliced in" },
@@ -118,7 +76,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "frame-src 'none'", why: "CSP directive — no nested frames in the mail frame" },
     { text: "form-action 'none'", why: "CSP directive — a mail body may not post anywhere" },
     { text: "base-uri 'none'", why: "CSP directive — no base rewriting inside the frame" },
-    { text: "<!doctype html><html{}{}{}><head><meta charset=\"utf-8\">", why: "the mail frame's document, opened" },
+    { text: "<!doctype html><html{}{}{}{}><head><meta charset=\"utf-8\">", why: "the mail frame's document opening and its rendering attributes, parsed by the browser" },
     { text: "<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">", why: "the policy tag that carries the directives above" },
     { text: "<meta name=\"referrer\" content=\"no-referrer\">", why: "a document meta tag, parsed not read" },
     { text: "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">", why: "a document meta tag, parsed not read" },
@@ -127,21 +85,12 @@ export const EXEMPT: Record<string, Exemption[]> = {
   ],
   "packages/ui/src/theme/ThemeProvider.tsx": [
     { text: "(prefers-color-scheme: dark)", why: "a media query the browser evaluates" },
-    { text: "var f=null;try{f=localStorage.getItem({})}catch(e){}", why: "the pre-paint theme script — JavaScript, emitted as text" },
-    { text: "if(f!==\"paper\"&&f!==\"ohmarchy\"){try{f=localStorage.getItem({})}catch(e){}}", why: "the same script, the account-face read" },
     { text: "if(f!==\"paper\"&&f!==\"ohmarchy\")f=(/Linux/.test(navigator.platform||\"\")&&!/Android|CrOS/.test(navigator.userAgent||\"\"))?\"ohmarchy\":\"paper\";", why: "the same script, the platform default" },
     { text: "if(f===\"ohmarchy\")try{document.documentElement.dataset.face=\"ohmarchy\"}catch(e){}", why: "the same script, the face stamp" },
     { text: "var l=null;try{l=localStorage.getItem({})}catch(e){}", why: "the same script, the layout read" },
     { text: "if(l===\"zero\")try{document.documentElement.dataset.layout=\"zero\"}catch(e){}})()", why: "the same script, the layout stamp and its close" },
   ],
-  "apps/webapp/app/views/SearchView.tsx": [
-    { text: ".view-search .search-box input", why: "a CSS selector — how the view reaches its own query box to select the kept text and to put the caret back after Escape" },
-  ],
-  "apps/webapp/app/shell/zone-nav.tsx": [
-    { text: "[role=\"dialog\"], [role=\"alertdialog\"], [role=\"menu\"]", why: "a CSS selector — what counts as a layer above the deck" },
-    { text: "{} button:not([disabled])", why: "a CSS selector, composed per zone" },
-  ],
-  "apps/webapp/app/shell/ThreadMarks.tsx": [
+  "packages/ui/src/mail/Lists/square-tip.tsx": [
     { text: ":focus-visible", why: "a CSS selector — `Element.matches` asks whether a square's focus came from the keyboard" },
   ],
   "apps/webapp/app/components/ComposeAttach.tsx": [
@@ -161,9 +110,41 @@ export const EXEMPT: Record<string, Exemption[]> = {
       + "`GateNotice`: its title is a success and its footer would be false, so it draws its own "
       + "`.gate-card` and carries its own mark" },
   ],
-  "apps/desktop/src/host-client/PairScreen.tsx": [
+  "apps/paired-page/src/PairScreen.tsx": [
     { text: "oh", why: "wordmark — the pairing screen's mark" },
     { text: "mail", why: "wordmark — its second half" },
+  ],
+  "packages/ui/src/base/Primitives/Dot.tsx": [
+    { text: "--oh-dot-light", why: "a CSS custom property's name — an app's own colour in the light scheme, set as the dot's style" },
+    { text: "--oh-dot-dark", why: "the same property in the dark scheme" },
+  ],
+  "packages/ui/src/mail/Lists/ReadSquares.tsx": [
+    { text: "--oh-square-y", why: "a CSS custom property's name, set as a slot's style" },
+    { text: "--oh-readsquares-k", why: "a CSS custom property's name, set as a slot's style" },
+  ],
+  "packages/ui/src/calendar/Grids/EventChip.tsx": [
+    { text: "Alt+Shift+ArrowUp Alt+Shift+ArrowDown", why: "keycap chords in aria-keyshortcuts syntax" },
+    { text: "Alt+ArrowUp Alt+ArrowDown", why: "keycap chords in aria-keyshortcuts syntax" },
+    { text: "ArrowUp ArrowDown", why: "keycap chords in aria-keyshortcuts syntax" },
+  ],
+  "packages/ui/src/calendar/Event/EventCard.tsx": [
+    { text: ".oh-ecard-grab", why: "a CSS selector — `Element.closest` asks whether a pull started on the card's grab handle" },
+  ],
+  "packages/ui/src/calendar/Letter/TodayList.tsx": [
+    { text: "--oh-today-hot-pl", why: "a CSS custom property's name — the calendar's colour inside mail, paper light, set as a style" },
+    { text: "--oh-today-hot-pd", why: "the same, paper dark" },
+    { text: "--oh-today-hot-ol", why: "the same, ohmarchy light" },
+    { text: "--oh-today-hot-od", why: "the same, ohmarchy dark" },
+    { text: "--oh-today-ink-pl", why: "a CSS custom property's name — the ink on the calendar's colour, paper light, set as a style" },
+    { text: "--oh-today-ink-pd", why: "the same, paper dark" },
+    { text: "--oh-today-ink-ol", why: "the same, ohmarchy light" },
+    { text: "--oh-today-ink-od", why: "the same, ohmarchy dark" },
+  ],
+  "packages/ui/src/mail/Shell/Sheet.tsx": [
+    { text: "[data-reading-scroll]", why: "a CSS selector — `querySelector` finds the box a reading column's sheets scroll in, for a part that does not draw the column" },
+  ],
+  "packages/ui/src/mail/Lists/row-swipe.tsx": [
+    { text: "translateX({}px)", why: "a CSS transform the browser parses — the row's travel under a swipe" },
   ],
 };
 
@@ -179,7 +160,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
  * `vite.config.ts`'s `WINDOW_ONLY_NAMESPACES` — window-only for the reason `desktopScreener` is,
  * and provably so: the served client mounts none of these." That is what happened, and the proof
  * is now a case rather than a claim: `apps/desktop/test/desktop-messages.test.ts` walks the
- * served client's import graph from `host-client/main.tsx` and asserts no file in it reads the
+ * served client's import graph from `apps/paired-page/src/main.tsx` and asserts no file in it reads the
  * namespace, next to the assertion that the namespace is on the window-only list and not on the
  * base one.
  *

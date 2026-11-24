@@ -352,7 +352,7 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("Stop, letters, Start on the same p
     const organizer = p.engine.runtimes().organizer;
     expect(organizer[id], "premise: the engine keeps the claim and names the clock").toMatchObject({ organizing: true, unreadableReason: "clock_off" });
 
-    expect(organizerNoticeBody(user, organizer), "the notification said Organizing over a refused gate").toBe(EN.phoneStateClockOff);
+    expect(organizerNoticeBody(organizer), "the notification said Organizing over a refused gate").toBe(EN.phoneStateClockOff);
     expect(holdStandaloneDoor(p.engine as unknown as StandaloneEngine)).toBe(true);
     const claim = claimHere(standaloneHere()!, "idle", false);
     expect(claimChipLabel(claim), "the strip said Organizing over a refused gate").toBe(EN.phoneStateClockOff);

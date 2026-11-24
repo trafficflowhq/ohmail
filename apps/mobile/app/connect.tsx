@@ -10,18 +10,19 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Refusal } from "../src/refusal";
-import { sayRefusal } from "../src/refusal";
-import { TextInput, View } from "react-native";
+import { refuse, sayRefusal } from "../src/refusal";
+import { View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { useConnection } from "../src/net/connection";
 import {
   discardAdmission, parsePairLink, pendingPairOrigin, type PairAdmission,
 } from "../src/net/pairing";
-import { useTheme } from "../src/theme";
-import { Button, Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
+import { Field } from "../src/ui/Field";
+import { clearPairingLinkRequest, pairingLinkRequested } from "../src/ui/manual-pair-mode";
+import { Button, Txt } from "../src/ui/base";
 import { PairConfirm } from "../src/ui/PairConfirm";
-import { DetailBar } from "../src/ui/chrome";
+import { OnboardingPage, OnboardingTag, useOnboardingLook, useOnboardingButton } from "../src/ui/OnboardingPage";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
@@ -42,10 +43,14 @@ export default function ConnectScreen() {
 }
 
 function ConnectBody() {
+  const onboardingButton = useOnboardingButton();
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const conn = useConnection();
+  const { palette } = useOnboardingLook();
+  const [byLink, setByLink] = useState(pairingLinkRequested);
+  useEffect(clearPairingLinkRequest, []);
   // The picker's "enter a pairing token" step carries the address it already negotiated — through
   // a value held in THIS process, never a route parameter. The app registers the `ohmail` scheme
   // as a browsable deep link, so a route parameter here would let any web page choose the server
@@ -73,6 +78,10 @@ function ConnectBody() {
     // its own origin, and splitting it here keeps the one-mechanism rule (the parser is the
     // same one the scanner trusts, query-refusal included).
     const pasted = parsePairLink(token);
+    if (byLink && pasted === null) {
+      setPhase({ k: "failed", reason: refuse("pairCodeRejected") });
+      return;
+    }
     // A HAND-TYPED PAIR CARRIES NO PIN, and that is the honest outcome rather than a gap: a
     // fingerprint is 43 characters nobody will type correctly, so the seam refuses a
     // same-network address typed by hand and says to use the code the desktop shows. A pasted
@@ -88,7 +97,7 @@ function ConnectBody() {
       return;
     }
     setPhase({ k: "confirming", admission: outcome.admission, token: target.token, busy: false });
-  }, [conn, origin, token]);
+  }, [byLink, conn, origin, token]);
 
   const confirm = useCallback(() => {
     setPhase((current) => {
@@ -109,111 +118,61 @@ function ConnectBody() {
     });
   }, [conn]);
 
+  const back = router.canGoBack() ? () => router.back() : undefined;
+  if (phase.k === "confirming") {
+    return (
+      <PairConfirm
+        admission={phase.admission}
+        busy={phase.busy}
+        onConfirm={confirm}
+        onCancel={() => setPhase({ k: "idle" })}
+        back={back}
+      />
+    );
+  }
+
   return (
-    <Screen>
-      {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar />
-      <Scroller bounded avoidKeyboard>
-        {/* The FORM is put away for the confirmation, for the reason the scanner puts the camera
-            away: a field that can still be edited beside three facts about what answered would
-            let somebody read one computer's key while pairing with another — the desktop's own
-            client door locks its link field at exactly this point, for exactly this reason. */}
-        {phase.k === "confirming" ? (
-          <PairConfirm
-            admission={phase.admission}
-            busy={phase.busy}
-            onConfirm={confirm}
-            onCancel={() => setPhase({ k: "idle" })}
-          />
-        ) : null}
-
-        {phase.k !== "confirming" ? (
-        <>
-        <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
-          <Txt variant="h1">{Copy.connectTitle}</Txt>
-          <Txt variant="hint" tone="ink3" style={{ marginTop: 6 }}>
-            {Copy.connectNote}
-          </Txt>
-        </View>
-
-        <Panel style={{ paddingBottom: 16 }}>
-          <Section style={{ paddingTop: 16 }}>{Copy.connectOrigin}</Section>
-          <Field value={origin} onChange={setOrigin} label={Copy.connectOrigin} hint={Copy.connectOriginHint} />
-          <Section>{Copy.connectToken}</Section>
-          <Field value={token} onChange={setToken} label={Copy.connectToken} secret />
-          <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
-            <Button
-              label={phase.k === "probing" ? Copy.pairingBusy : Copy.connectGo}
-              variant="solid"
-              disabled={phase.k === "probing" || !token.trim()}
-              onPress={() => void probe()}
-            />
-          </View>
-        </Panel>
-        </>
-        ) : null}
-
-        {phase.k === "failed" ? (
-          <Panel style={{ marginTop: 14, paddingVertical: 16 }}>
-            <View style={{ paddingHorizontal: 20, gap: 6 }}>
-              <Txt variant="settingsLabel" tone="accent">
-                {Copy.connectRefusedTitle}
-              </Txt>
-              <Txt variant="hint" tone="ink2">
-                {sayRefusal(phase.reason)}
-              </Txt>
-            </View>
-          </Panel>
-        ) : null}
-      </Scroller>
-    </Screen>
-  );
-}
-
-function Field({
-  value,
-  onChange,
-  label,
-  hint,
-  secret,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  label: string;
-  hint?: string;
-  secret?: boolean;
-}) {
-  const t = useTheme();
-  return (
-    <View style={{ paddingHorizontal: 16 }}>
-      <View
-        style={[
-          {
-            paddingHorizontal: 14,
-            borderRadius: t.radius.input,
-            backgroundColor: t.c.canvas,
-          },
-          t.lift("l0"),
-        ]}
-      >
-        <TextInput
-          maxFontSizeMultiplier={t.textCap}
-          disableFullscreenUI
-          keyboardAppearance={t.scheme}
-          value={value}
-          onChangeText={onChange}
-          autoCorrect={false}
-          autoCapitalize="none"
-          secureTextEntry={secret === true}
-          accessibilityLabel={label}
-          style={[t.type.msgBody, { color: t.c.ink, paddingVertical: 12 }]}
+    <OnboardingPage
+      showUnsaved
+      back={back}
+      actions={
+        <Button appearance={onboardingButton}
+          label={phase.k === "probing" ? Copy.pairingBusy : Copy.connectGo}
+          disabled={phase.k === "probing" || !token.trim()}
+          onPress={() => void probe()}
         />
+      }
+    >
+      <View style={{ gap: 12 }}>
+        <View>
+          {byLink ? null : (
+            <Field value={origin} onChange={setOrigin} label={Copy.connectOrigin} locked={phase.k === "probing"}
+              sentence={{ before: Copy.phoneServerSentence, placeholder: Copy.phoneServerBlank, compact: true, after: Copy.phonePairSentenceJoin }}
+              input={{ keyboardType: "url" }}
+            />
+          )}
+          <Field value={token} onChange={setToken} label={byLink ? Copy.phonePairLink : Copy.connectToken} secret locked={phase.k === "probing"}
+            sentence={{
+              before: byLink ? Copy.phonePairLinkSentence : Copy.phonePairTokenSentence,
+              placeholder: Copy.phonePairTokenBlank,
+              compact: !byLink,
+              end: "hot",
+            }}
+            input={{ autoComplete: "off", textContentType: "none", importantForAutofill: "no" }}
+          />
+        </View>
+        {phase.k === "failed" ? (
+          <Txt accessibilityRole="alert" style={{ color: palette.ink, fontWeight: "700" }}>{sayRefusal(phase.reason)}</Txt>
+        ) : null}
+        {byLink ? (
+          phase.k === "probing" ? null : <OnboardingTag label={Copy.phonePairManualSwitch} onPress={() => { setByLink(false); setPhase({ k: "idle" }); }} />
+        ) : (
+          <>
+            <Txt variant="body" style={{ color: palette.ink, fontWeight: "700" }}>{Copy.phonePairLinkHint}</Txt>
+            <Txt variant="body" style={{ color: palette.ink2 }}>{Copy.phonePairNetworkHint}</Txt>
+          </>
+        )}
       </View>
-      {hint ? (
-        <Txt variant="caption" tone="ink3" style={{ marginTop: 6 }}>
-          {hint}
-        </Txt>
-      ) : null}
-    </View>
+    </OnboardingPage>
   );
 }

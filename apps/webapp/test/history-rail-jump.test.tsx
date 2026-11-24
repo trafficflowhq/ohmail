@@ -1,44 +1,38 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { EngineMessage, OhmailEngine, TagDTO } from "@ohmail/client-engine";
-import messages from "../messages/en.json";
-import { HistoryView as HistoryViewRaw } from "../app/views/HistoryView";
-import { KeymapProvider } from "../app/shell/keymap";
-import { WithListGone } from "./_list-gone";
-import { FIXTURE_NOW, idOf, storeFixture, storeMessage } from "./_store-fixture";
+import { within } from "@testing-library/react";
+import type { OhmailEngine } from "@ohmail/client-engine";
+import { idOf, storeFixture, storeMessage } from "./_store-fixture";
+import {
+  ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+} from "./fixtures/live-walk-shell";
+import { ohboxRow, seatedList } from "./ohbox/_finders";
 
 /**
- * A RAIL PRESS LANDS ON THE PERIOD PRESSED. A year or month press puts that period's first row at
- * the top edge and opens that year, over a multi-year store whose rows are measured at uneven
- * heights, under an explainer note that stands above the rows. jsdom has no layout, so the rows'
- * boxes are stacked here from the same heights the window measures; the web and the paired
- * desktop render this one HistoryView.
+ * A year or month puts the period's first row at the top and opens its year.
+ * jsdom has no layout, so rows are stacked with the uneven heights a reader would see.
  */
-
-const HistoryView = (props: React.ComponentProps<typeof HistoryViewRaw>) => (
-  <KeymapProvider><WithListGone><HistoryViewRaw {...props} /></WithListGone></KeymapProvider>
-);
-
-const NOTE_PX = 90;
 const VIEW_PX = 600;
 const FOOT_PX = 48;
 const GHOST_PX = 72;
 const UNEVEN = (i: number): number => 64 + ((i * 7) % 4) * 12;
 let rowPx = UNEVEN;
 
+const slotOf = (row: Element | null | undefined): number | undefined => {
+  const id = row?.getAttribute("data-id");
+  return id ? 0xffffffff - parseInt(id.slice(-12), 16) : undefined;
+};
+const SCROLLER = ".pl-scroll";
+const ROW = '[role="option"]';
+
 function heightOf(el: Element): number {
   if (!(el instanceof HTMLElement)) return 0;
-  if (el.classList.contains("history-gone")) return 0;
-  if (el.classList.contains("history-ghost")) return GHOST_PX;
-  if (el.classList.contains("row") && el.dataset.index !== undefined) return rowPx(Number(el.dataset.index));
-  if (el.classList.contains("view-note")) return NOTE_PX;
-  if (el.classList.contains("tail-row")) return 30;
+  const slot = el.matches(ROW) ? slotOf(el) : undefined;
+  if (slot !== undefined) return rowPx(slot);
   if (el.style.height) return parseFloat(el.style.height);
-  if (el.classList.contains("rows")) return [...el.children].reduce((n, c) => n + heightOf(c), 0);
-  return 0;
+  if (el.getAttribute("aria-hidden") === "true" && el.hasAttribute("data-index")) return GHOST_PX;
+  return [...el.children].reduce((n, child) => n + heightOf(child), 0);
 }
 
 /** Where `el` starts in its scroller's content: every box before it, stacked. */
@@ -61,13 +55,13 @@ function installLayout(): void {
   const rect = Element.prototype.getBoundingClientRect;
   stub(HTMLElement.prototype, "offsetHeight", { get(this: HTMLElement) { return heightOf(this); } });
   stub(Element.prototype, "clientHeight", {
-    get(this: Element) { return this.classList.contains("scroller") ? VIEW_PX : 0; },
+    get(this: Element) { return this.matches(SCROLLER) ? VIEW_PX : 0; },
   });
   stub(Element.prototype, "scrollTop", {
     get(this: Element) { return scrollTop.get!.call(this) as number; },
     set(this: Element, v: number) {
       // A scroller stops at its end, as a browser's does.
-      const max = this.classList.contains("scroller")
+      const max = this.matches(SCROLLER)
         ? Math.max(0, [...this.children].reduce((n, c) => n + heightOf(c), 0) + FOOT_PX - VIEW_PX)
         : Number.POSITIVE_INFINITY;
       scrollTop.set!.call(this, Math.max(0, Math.min(max, v)));
@@ -75,11 +69,21 @@ function installLayout(): void {
   });
   stub(Element.prototype, "getBoundingClientRect", {
     value(this: Element): DOMRect {
-      const scroller = this.closest(".scroller");
+      const scroller = this.closest(SCROLLER);
       if (!scroller) return rect.call(this);
       const top = this === scroller ? 0 : yIn(scroller, this) - scroller.scrollTop;
       const height = this === scroller ? VIEW_PX : heightOf(this);
       return { top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
+    },
+  });
+  stub(Element.prototype, "scrollIntoView", {
+    value(this: Element, options?: ScrollIntoViewOptions): void {
+      if (!this.matches(ROW)) return;
+      const scroller = this.closest(SCROLLER);
+      if (!scroller) return;
+      const { top, bottom } = this.getBoundingClientRect();
+      if (options?.block === "start" || top < 0) scroller.scrollTop += top;
+      else if (bottom > VIEW_PX) scroller.scrollTop += bottom - VIEW_PX;
     },
   });
 }
@@ -111,55 +115,34 @@ function rowsOf(spec: Spec): { rows: EngineMessage[]; starts: Map<string, number
 const MONTH = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const monthsOf = (spec: Spec, year: number): string[] => spec.filter(([y]) => y === year).map(([, mo]) => MONTH[mo - 1]!);
 
-const tags: TagDTO[] = [];
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-let roots: Root[] = [];
-
-async function settle(rounds = 1): Promise<void> {
-  for (let i = 0; i < rounds; i++) {
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-    });
-  }
-}
+const settle = (rounds = 1) => tick(rounds * 10);
 
 async function mount(engine: OhmailEngine): Promise<{ host: HTMLElement; scroller: HTMLElement }> {
-  const host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  roots.push(root);
-  await act(() => {
-    root.render(
-      <NextIntlClientProvider locale="en" messages={messages} now={FIXTURE_NOW} timeZone="UTC">
-        <HistoryView onMarkSeen={() => {}}
-          engine={engine} version={0} settled owed={false} tags={tags} now={FIXTURE_NOW}
-          onOpen={() => {}} hydrateBody={() => {}} onAction={() => {}} onAddTag={() => {}} onScreen={() => {}}
-          canDelete={() => true} canReplyAll={() => true}
-        />
-      </NextIntlClientProvider>,
-    );
-  });
-  return { host, scroller: host.querySelector(".scroller") as HTMLElement };
+  const host = await mountShell([mailbox({ lastSyncAt: ISO })], { engine });
+  await goTo("history");
+  return { host, scroller: seatedList(host)!.querySelector<HTMLElement>(SCROLLER)! };
 }
 
-const rail = (host: HTMLElement) => [...host.querySelectorAll<HTMLButtonElement>(".history-rail-item")];
-const openMonths = (host: HTMLElement) => rail(host).filter((b) => !b.classList.contains("year")).map((b) => b.textContent);
-const current = (host: HTMLElement) => rail(host).find((b) => b.getAttribute("aria-current") === "true")?.textContent ?? null;
+const rail = (host: HTMLElement) => within(within(host).getByRole("navigation", { name: "Month" }));
+const years = (host: HTMLElement) => rail(host).getAllByRole("button", { name: /^\d{4}$/ });
+const openMonths = (host: HTMLElement) => rail(host).getAllByRole("button")
+  .filter((button) => !/^\d{4}$/.test(button.textContent ?? "")).map((button) => button.textContent);
+const current = (host: HTMLElement) => rail(host).queryByRole("button", { current: true })?.textContent ?? null;
+const selected = (host: HTMLElement) => within(host).queryByRole("option", { selected: true });
 
 /** The slot whose box holds the scroller's top edge, and where that box starts against it. */
 function topRow(host: HTMLElement): { slot: number; at: number; real: boolean } | null {
-  for (const n of host.querySelectorAll<HTMLElement>(".rows > [data-index]")) {
-    const r = n.getBoundingClientRect();
-    if (r.bottom > 0.5) return { slot: Number(n.dataset.index), at: Math.round(r.top) + 0, real: n.dataset.id !== undefined };
+  for (const row of seatedList(host)!.querySelectorAll(ROW)) {
+    const r = row.getBoundingClientRect();
+    const slot = slotOf(row);
+    if (r.bottom > 0.5 && slot !== undefined) return { slot, at: Math.round(r.top) + 0, real: true };
   }
   return null;
 }
 
 async function press(host: HTMLElement, label: string, year?: boolean): Promise<void> {
-  const hits = rail(host).filter((b) => b.textContent === label && b.classList.contains("year") === Boolean(year));
-  expect(hits.length, `one rail entry named ${label}`).toBe(1);
-  await act(async () => { hits[0]!.click(); await Promise.resolve(); });
+  const button = rail(host).getByRole("button", { name: year ? label : new RegExp(`^${label}.* [0-9]{4}$`) });
+  await act(async () => { button.click(); });
 }
 
 /** Let the pages land and the placement settle on `slot` (or give up and let the assertions say why). */
@@ -176,24 +159,14 @@ async function landOn(host: HTMLElement, slot: number): Promise<void> {
 
 describe("a rail press lands on the period pressed and opens that year", () => {
   beforeEach(() => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true, writable: true,
-      value: (query: string) => ({
-        matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {},
-        addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false,
-      }),
-    });
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    installShellEnv();
     rowPx = UNEVEN;
     installLayout();
   });
 
   afterEach(async () => {
-    for (const r of roots) await act(() => r.unmount());
-    roots = [];
-    document.body.innerHTML = "";
+    await teardownShellEnv();
     for (const [target, key, desc] of saved.splice(0).reverse()) Object.defineProperty(target, key, desc);
-    vi.restoreAllMocks();
   });
 
   for (const [shape, spec] of [["windowed", WINDOWED], ["whole", WHOLE]] as const) {
@@ -203,7 +176,7 @@ describe("a rail press lands on the period pressed and opens that year", () => {
       const fx = await storeFixture(rows);
       const { host } = await mount(fx.engine);
       await settle(4);
-      expect(rail(host).filter((b) => b.classList.contains("year")).map((b) => b.textContent)).toEqual(["2026", "2025", "2024"]);
+      expect(years(host).map((b) => b.textContent)).toEqual(["2026", "2025", "2024"]);
       expect(openMonths(host)).toEqual(monthsOf(spec, 2026));
 
       for (const year of [2025, 2024, 2026, 2024]) {
@@ -242,20 +215,20 @@ describe("a rail press lands on the period pressed and opens that year", () => {
     await settle(4);
     await press(host, "2025", true);
     const slot = starts.get("2025-10")!;
-    const oct = rail(host).find((b) => b.textContent === "Oct" && !b.classList.contains("year"))!;
+    const oct = rail(host).getByRole("button", { name: "October 2025" });
     // ↵ on a focused button is its click.
     await act(async () => { oct.focus(); oct.click(); await Promise.resolve(); });
     await landOn(host, slot);
-    for (let i = 0; i < 40 && host.querySelector<HTMLElement>(".rows > .row.sel")?.dataset.index !== String(slot); i++) await settle(1);
-    const sel = host.querySelector<HTMLElement>(".rows > .row.sel");
-    expect(sel?.dataset.index, "the month's first row holds the cursor").toBe(String(slot));
+    for (let i = 0; i < 40 && slotOf(selected(host)) !== slot; i++) await settle(1);
+    const sel = selected(host);
+    expect(slotOf(sel), "the month's first row holds the cursor").toBe(slot);
     expect(document.activeElement, "and the focus").toBe(sel);
     await act(async () => {
       document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
     });
     await settle(2);
-    expect(host.querySelector<HTMLElement>(".rows > .row.sel")?.dataset.index, "j walks the month").toBe(String(slot + 1));
-    expect((document.activeElement as HTMLElement).dataset.index).toBe(String(slot + 1));
+    expect(slotOf(selected(host)), "j walks the month").toBe(slot + 1);
+    expect(slotOf(document.activeElement)).toBe(slot + 1);
   });
 
   it("a month pressed before the list has drawn the jump still lands, though the rows above it were priced again", async () => {
@@ -270,16 +243,16 @@ describe("a rail press lands on the period pressed and opens that year", () => {
     const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => frames.push(cb));
     await press(host, "2025", true);
     const slot = starts.get("2025-10")!;
-    const oct = rail(host).find((b) => b.textContent === "Oct" && !b.classList.contains("year"))!;
+    const oct = rail(host).getByRole("button", { name: "October 2025" });
     await act(async () => { oct.focus(); oct.click(); await Promise.resolve(); });
     await settle(4);
     raf.mockRestore();
     await act(async () => { for (const cb of frames.splice(0)) cb(performance.now()); });
     await landOn(host, slot);
     expect(topRow(host), "the month's first row is the top row").toEqual({ slot, at: 0, real: true });
-    for (let i = 0; i < 10 && (document.activeElement as HTMLElement).dataset.index !== String(slot); i++) await settle(1);
-    expect(host.querySelector<HTMLElement>(".rows > .row.sel")?.dataset.index, "and the cursor").toBe(String(slot));
-    expect((document.activeElement as HTMLElement).dataset.index, "and the focus").toBe(String(slot));
+    for (let i = 0; i < 10 && slotOf(document.activeElement) !== slot; i++) await settle(1);
+    expect(slotOf(selected(host)), "and the cursor").toBe(slot);
+    expect(slotOf(document.activeElement), "and the focus").toBe(slot);
   });
 
   it("the keyboard cursor stays on screen under the note: ↓ scrolls before its row passes the bottom edge", async () => {
@@ -290,13 +263,12 @@ describe("a rail press lands on the period pressed and opens that year", () => {
     await settle(4);
     for (let step = 1; step <= 24; step++) {
       await act(async () => {
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+        (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
         scroller.dispatchEvent(new Event("scroll")); // a browser fires it for the move; jsdom does not
-        await new Promise((r) => setTimeout(r, 20));
       });
       await settle(1);
-      const sel = host.querySelector<HTMLElement>(".rows > .row.sel");
-      expect(sel?.dataset.index, `step ${step}: the cursor moved`).toBe(String(step));
+      const sel = selected(host);
+      expect(slotOf(sel), `step ${step}: the cursor moved`).toBe(step);
       const r = sel!.getBoundingClientRect();
       expect(r.top >= 0 && r.bottom <= VIEW_PX, `step ${step}: row ${step} is on screen (${r.top}..${r.bottom})`).toBe(true);
     }
@@ -310,15 +282,14 @@ describe("a rail press lands on the period pressed and opens that year", () => {
     const first = starts.get("2025-12")!;
     await press(host, "2025", true);
     await landOn(host, first);
-    for (let i = 0; i < 40 && !host.querySelector(`.row[data-id="${idOf(first - 1)}"]`); i++) await settle(1);
+    for (let i = 0; i < 40 && !ohboxRow(host, idOf(first - 1)); i++) await settle(1);
     expect(openMonths(host)).toEqual(monthsOf(WINDOWED, 2025));
     // Up until one pixel of 2026's last row shows at the top edge.
-    const above = host.querySelector<HTMLElement>(`.rows > [data-index="${first - 1}"]`)!.getBoundingClientRect();
+    const above = ohboxRow(host, idOf(first - 1))!.getBoundingClientRect();
     await act(async () => {
       scroller.dispatchEvent(new Event("wheel"));
       scroller.scrollTop += above.top + above.height - 1;
       scroller.dispatchEvent(new Event("scroll"));
-      await new Promise((r) => setTimeout(r, 40));
     });
     await settle(4);
     expect(topRow(host)!.slot).toBe(first - 1);
@@ -333,7 +304,7 @@ describe("a rail press lands on the period pressed and opens that year", () => {
     const { host, scroller } = await mount(fx.engine);
     await settle(4);
     await press(host, "2011", true);
-    for (let i = 0; i < 40 && !host.querySelector(`.row[data-id="${idOf(starts.get("2011-06")!)}"]`); i++) await settle(1);
+    for (let i = 0; i < 40 && !ohboxRow(host, idOf(starts.get("2011-06")!)); i++) await settle(1);
     await settle(4);
     // The list stops at its end with 2024's rows on top; the rail stays on the year pressed.
     expect(topRow(host)!.slot).toBeLessThan(starts.get("2011-06")!);
@@ -344,7 +315,6 @@ describe("a rail press lands on the period pressed and opens that year", () => {
       scroller.dispatchEvent(new Event("wheel"));
       scroller.scrollTop = 0;
       scroller.dispatchEvent(new Event("scroll"));
-      await new Promise((r) => setTimeout(r, 40));
     });
     await settle(4);
     expect(topRow(host)!.slot).toBe(0);

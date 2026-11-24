@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
 import { fileURLToPath } from "node:url";
 /* The REAL logger, from the barrel the worker's own `cron-log.ts` reaches it through: `log.ts`
@@ -9,7 +9,8 @@ import {
   RequestUnavailableError, type MetaRecordsList, type RequestOrganizerIo,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { applyMetaRequests } from "../src/request-drain.js";
+import { applyMetaRequests } from "@ohmail/organizer/request-drain";
+import { readSource } from "./_start-function.js";
 
 /**
  * A REFUSED ACK SWEEP IS LOGGED BY ITS CLASS. The drain asks the sweep once per cycle, AHEAD of the
@@ -111,7 +112,9 @@ describe("the drain's ack sweep, ahead of the read", () => {
 describe("the census: the worker hands the logger thrown values, not their text", () => {
   it("no `err:` field in apps/worker/src is a string expression", () => {
     const dir = fileURLToPath(new URL("../src/", import.meta.url));
-    const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+    /* The organizer's package, where the worker's passes that moved out of it stand (ruling:organizer-cut). */
+    const orgDir = fileURLToPath(new URL("../../../packages/organizer/src/", import.meta.url));
+    const files = [dir, orgDir].flatMap((d) => readdirSync(d).filter((f) => f.endsWith(".ts")).map((f) => `${d}${f}`));
     expect(files.length, "the census read no source at all").toBeGreaterThan(10);
     const offenders: string[] = [];
     /* THE VALUE'S OWN END, not a fixed slice: the first cut read 160 characters forward and read
@@ -131,7 +134,7 @@ describe("the census: the worker hands the logger thrown values, not their text"
     for (const name of files) {
       /* Comments and string literals are BLANKED rather than deleted, so `file:line` stays true
        * and a comment quoting the old idiom cannot be read as a call site. */
-      const src = withoutCommentsAndLiterals(readFileSync(`${dir}${name}`, "utf8"));
+      const src = withoutCommentsAndLiterals(readSource(name));
       for (let at = src.indexOf("err:"); at !== -1; at = src.indexOf("err:", at + 1)) {
         const value = valueAt(src, at + 4);
         /* The three spellings that put a STRING where the thrown value goes. A declaration

@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import type { EngineMutation, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
@@ -8,13 +9,11 @@ import {
   routingIntentsKey,
   ruleFingerprint,
   screenIntentsKey,
-  type EngineMutation,
   type EntityReader,
-  type RuleDTO,
   type ScreenIntent,
   type SyncChange,
 } from "@ohmail/client-engine";
-import { useRoutingUndo, type ScreenCommitOutcome } from "../app/shell/routing-undo";
+import { useRoutingUndo, type ScreenCommitOutcome } from "@ohmail/app-logic/press/routing-undo";
 
 /**
  * A SENDER-SHEET PRESS IS HELD AS A SCREEN INTENT, AND ITS ANSWER RIDES IT. Inside the window nothing
@@ -61,7 +60,7 @@ async function windowOver(read: EntityReader) {
       send: async (m) => { out.push(m); return { status: "confirmed" as const }; },
       toast: (s) => { toasts.push(s); },
       copy: { gone: "gone", expired: () => "expired", correction: () => "correction" },
-      owner: OWNER, windowMs: 1_000, now: () => Date.now(),
+      scope: OWNER, windowMs: 1_000, now: () => Date.now(),
     });
     return null;
   }

@@ -18,19 +18,20 @@
  * adapter. `createSyncGate` takes the mirror's name with NO DEFAULT, so a caller that forgets
  * to say syncs nothing rather than everything.
  */
+import type { MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
   type EngineAdapter,
-  type MutationOutcome,
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as scan from "../../../scripts/lib/source-scan.mjs";
+import { createEngine } from "../app/shell/engine-config.js";
 import {
   ForeignSessionError,
   BACKOFF_CAP_MS,
@@ -40,12 +41,13 @@ import {
   WAKE_SAFETY_POLL_MS,
   WAKE_STREAM_CLOSED,
   createSyncGate,
+  confirmSyncOwner,
   registerSyncGate,
   startSyncScheduler,
   syncIdentityOf,
   type SyncStatus,
   type WakeStreamLike,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 
 const ISO = "2026-09-05T10:00:00.000Z";
 const A = "acct_A";
@@ -86,7 +88,7 @@ const membersOf = (src: string, decl: string): string[] => {
 /** The engine's own protocol, plus the four `GatedAdapter` names the wrapper adds to it. */
 const DECLARED: readonly string[] = [
   ...membersOf(source("packages/client-engine/src/adapters/adapter.ts"), "export interface EngineAdapter"),
-  ...membersOf(source("apps/webapp/app/shell/sync-scheduler.ts"), "type GatedAdapter = EngineAdapter &"),
+  ...membersOf(source("packages/app-logic/src/session/sync-scheduler.ts"), "type GatedAdapter = EngineAdapter &"),
 ];
 
 /**
@@ -830,6 +832,8 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     fetchBody: async () => { reads.push("fetchBody"); return null; },
     fetchBodies: async () => { reads.push("fetchBodies"); return []; },
     searchServer: async () => { reads.push("searchServer"); return { messages: [], nextCursor: null }; },
+    searchPlaces: async () => { reads.push("searchPlaces"); return [{ folder: "Archive/Reports", count: 28 }]; },
+    suggestPlaces: async () => { reads.push("suggestPlaces"); return { state: "off", places: [], credit: null }; },
     listMessages: async () => { reads.push("listMessages"); return { messages: [], nextCursor: null }; },
     requestPull: async () => { reads.push("requestPull"); return { ok: true }; },
     reportSyncFailure: async () => { reads.push("reportSyncFailure"); },
@@ -879,7 +883,7 @@ describe("a CONTRADICTED browser reads nothing either", () => {
    * wrapper. A forward deleted from the literal reddens here by name; a capability added to
    * `EngineAdapter` and forgotten by the wrapper reddens here on its first day.
    */
-  it("forwards every capability the adapter declares", () => {
+  it("forwards every capability the adapter declares", async () => {
     setOwnerCookie(A);
     const gate = createSyncGate(A);
     const guarded = gate.guard(capabilities() as never) as unknown as Record<string, unknown>;
@@ -889,6 +893,27 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     expect(DECLARED, "a name no source declares reached the derived set").not.toContain("transport");
     const missing = DECLARED.filter((k) => typeof guarded[k] !== "function");
     expect(missing, "the gate drops a capability the engine binds").toEqual([]);
+
+    const question = { text: "Library", lang: "en" } as const;
+    const answer = {
+      state: "ok",
+      places: [{ kind: "venue", first: "Library", second: "Central district", country: null, lat: 0, lon: 0 }],
+      credit: "osm",
+    };
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json(answer));
+    const engine = createEngine(false, { NEXT_PUBLIC_API_BASE: "/api" }, A, "places");
+    confirmSyncOwner(engine, A);
+
+    expect(await engine.suggestPlaces(question)).toEqual(answer);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenLastCalledWith(
+      "/api/calendar/places/suggest",
+      expect.objectContaining({ method: "POST", body: JSON.stringify(question) }),
+    );
+
+    setOwnerCookie(B);
+    expect(await engine.suggestPlaces(question)).toEqual({ state: "failed", places: [], credit: null });
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -1128,7 +1153,7 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     reads = [];
 
     // Step 3-4: the sign-out's local half, on the path where the server did not confirm it.
-    const { markSignedOutPending } = await import("../app/shell/owner-cookie.js");
+    const { markSignedOutPending } = await import("@ohmail/app-logic/storage/owner-cookie");
     markSignedOutPending();
 
     expect(gate.identity(), "a refused sign-out left a confirmed mirror open").toBe("contradicted");
@@ -1295,20 +1320,34 @@ describe("a CONTRADICTED browser reads nothing either", () => {
   it("discards a read whose session changed while it was in flight", async () => {
     setOwnerCookie(A);
     const gate = createSyncGate(A);
-    let served = 0;
+    const served: string[] = [];
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
     const guarded = gate.guard({
       ...capabilities(),
       fetchBody: async () => {
-        served += 1;
-        setOwnerCookie(B);            // the other tab signs in mid-flight
+        served.push("body");
+        await pending;
         return { text: "another account's message body" };
+      },
+      searchPlaces: async () => {
+        served.push("places");
+        await pending;
+        return [{ folder: "Archive/Reports", count: 28 }];
       },
     } as never) as unknown as Record<string, unknown>;
     gate.confirm(A);
 
-    await expect(call(guarded, "fetchBody"), "a body issued across a session change was returned")
+    const body = call(guarded, "fetchBody");
+    const places = call(guarded, "searchPlaces");
+    setOwnerCookie(B);
+    finish();
+
+    await expect(body, "a body issued across a session change was returned")
       .rejects.toBeInstanceOf(ForeignSessionError);
-    expect(served, "the request never left, so nothing was discarded").toBe(1);
+    await expect(places, "Place counts issued across a session change were returned")
+      .rejects.toBeInstanceOf(ForeignSessionError);
+    expect(served, "the requests never left, so nothing was discarded").toEqual(["body", "places"]);
     // The DEPARTURE check passed — identity was `holds` when this was issued — so the refusal
     // above can only have come from the arrival check. That is the property under test.
     expect(gate.identity()).toBe("contradicted");

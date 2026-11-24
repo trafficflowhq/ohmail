@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, isNull, lt, lte, ne, or } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
-import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, assertPassWalk, bridgeDb, rosterAccountDb, passContext, type Db, type PassRoster, type OpenPassSendAdapter, type UnboundDb } from "./context.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-pass.js";
 import {
@@ -177,8 +177,9 @@ async function bounded<T>(what: string, work: Promise<T>, ceilingMs: number): Pr
 const defaultLog = createLogger({ service: "send-reconcile" });
 
 export interface SendReconcilePassDeps {
+  roster?: PassRoster;
   /** The send transport — `makeSendAdapter` on the API host, the local dial on the desktop. */
-  openSendAdapter: OpenSendAdapter;
+  openSendAdapter: OpenPassSendAdapter;
   /**
    * MAY THIS ACCOUNT'S AUTOMATION STILL DIAL? — the suspension gate, injected for
    * `ScheduledSendPassDeps.accountEligible`'s reasons (cloud-half fact; read on the HANDED
@@ -245,8 +246,9 @@ interface StaleRow {
  * the others, and the summary counts what happened instead.
  */
 export async function runSendReconcilePass(
-  db: Db, deps: SendReconcilePassDeps,
+  walk: UnboundDb, deps: SendReconcilePassDeps,
 ): Promise<SendReconcilePassResult> {
+  assertPassWalk(walk);
   const log = deps.log ?? defaultLog;
   const now = deps.now ?? ((): Date => new Date());
   const batch = deps.batch ?? SEND_RECONCILE_BATCH;
@@ -263,10 +265,12 @@ export async function runSendReconcilePass(
    * otherwise believe it still had.
    */
   const startedAt = now().getTime();
-  const rows = await claimStale(
-    db, now(), batch * SEND_RECONCILE_SCAN_FACTOR, batch * SEND_RECONCILE_SCAN_FACTOR,
-    deps.accountEligible, deps.inherited ?? [],
-  );
+  const window = batch * SEND_RECONCILE_SCAN_FACTOR;
+  const at = now();
+  const rows = deps.roster
+    ? await claimRoster(walk, at, window, deps.roster, deps.accountEligible)
+    : await claimStale(walk, at, { dialable: window, waiting: window, checking: window, mirror: window },
+      deps.accountEligible, deps.inherited ?? []);
   result.claimed = rows.filter((r) => r.kind === "pending").length;
   if (rows.length === 0) return result;
 
@@ -286,7 +290,7 @@ export async function runSendReconcilePass(
   // `resolveStale` does not tear down a connection the next row still needs.
   const held = new Map<string, SendAdapter>();
   const shared = new Map<string, SendAdapter>();
-  const openOnce: OpenSendAdapter = async (mailboxId: string): Promise<SendAdapter> => {
+  const openOnce: OpenPassSendAdapter = async (mailboxId, db): Promise<SendAdapter> => {
     const cached = shared.get(mailboxId);
     if (cached) return cached;
     /**
@@ -303,7 +307,7 @@ export async function runSendReconcilePass(
     try {
       // NOT raced. `SEND_RECONCILE_NET_TIMEOUTS` bounds this inside the adapter, so a failure
       // here is the mailbox's answer and not ours — which is what lets the give-up act on it.
-      real = await deps.openSendAdapter(mailboxId);
+      real = await deps.openSendAdapter(mailboxId, db);
     } catch (err) {
       // FREE ONLY IF NOTHING REACHED THE WIRE, and there are two such refusals, not one.
       // `TransientDialRefusal` is the admission counter; `ServiceError` is `makeSendAdapter`
@@ -339,9 +343,8 @@ export async function runSendReconcilePass(
 
   try {
     for (const row of rows) {
-      const ctx: ServiceContext = {
-        db, accountId: row.send.accountId, userId: null, now, requestId: `reconcile:${row.send.id}`,
-      };
+      const ctx = passContext(walk, row.send.accountId, { userId: null, now, requestId: `reconcile:${row.send.id}` });
+      const open: OpenSendAdapter = (mailboxId) => openOnce(mailboxId, ctx.db);
       const ageMs = now().getTime() - row.send.createdAt.getTime();
       const givingUp = ageMs > SEND_RECONCILE_GIVE_UP_MS;
 
@@ -409,7 +412,7 @@ export async function runSendReconcilePass(
         const heldAgeMs = now().getTime() - (row.heldAt ?? row.send.createdAt).getTime();
         const probe = mayDial && (shared.has(row.mailboxId) || (inUnverifiedProbeWindow(heldAgeMs) && !outOfBudget));
         try {
-          const out = await sends.recheckUnverified(ctx, row.send, row.mailboxId, probe ? openOnce : null);
+          const out = await sends.recheckUnverified(ctx, row.send, row.mailboxId, probe ? open : null);
           if (out.status === "sent") {
             result.recheckedSent += 1;
             log.info("send_reconcile_recheck_sent", {
@@ -449,7 +452,7 @@ export async function runSendReconcilePass(
       let outcome;
       try {
         outcome = await sends.resolveStale(
-          ctx, row.send, row.mailboxId, willDial ? openOnce : null, onMiss,
+          ctx, row.send, row.mailboxId, willDial ? open : null, onMiss,
         );
       } catch (err) {
         // The probe threw (a dead socket, a deadline, `ImapBoundExceeded`). The row is UNTOUCHED
@@ -638,8 +641,38 @@ function probeOnly(real: SendAdapter): SendAdapter {
  * `ORDER BY created_at`, oldest first. A row the caller names as `inherited` is stale whatever its
  * age — see {@link SendReconcilePassDeps.inherited}.
  */
+type ReconcileWindow = "dialable" | "waiting" | "checking" | "mirror";
+
+async function claimRoster(
+  walk: UnboundDb, at: Date, window: number, roster: PassRoster, eligible: SendReconcilePassDeps["accountEligible"],
+): Promise<StaleRow[]> {
+  const windows = { dialable: [] as StaleRow[], waiting: [] as StaleRow[], checking: [] as StaleRow[], mirror: [] as StaleRow[] };
+  const checked = new Set<string>();
+  const checkingAfter = at.getTime() - SEND_UNVERIFIED_RECHECK_MS;
+  for (const candidate of await roster(window * 8)) {
+    if (checked.has(candidate.accountId)) continue;
+    checked.add(candidate.accountId);
+    const limits = {
+      dialable: window - windows.dialable.length, waiting: window - windows.waiting.length,
+      checking: window - windows.checking.length, mirror: window - windows.mirror.length,
+    };
+    if (Object.values(limits).every((limit) => limit === 0)) break;
+    // Discover the account once, then give its error and dialable mailboxes separate windows.
+    // A long backlog on one mailbox cannot crowd out its neighbour on this account.
+    const rows = await claimStale(rosterAccountDb(walk, candidate), at, limits, eligible, []);
+    for (const row of rows) {
+      const group = row.kind === "pending"
+        ? (row.mailboxStatus === "error" ? windows.waiting : windows.dialable)
+        : ((row.heldAt?.getTime() ?? 0) > checkingAfter ? windows.checking : windows.mirror);
+      group.push(row);
+    }
+  }
+  windows.checking.sort((a, b) => (a.heldAt?.getTime() ?? 0) - (b.heldAt?.getTime() ?? 0));
+  return Object.values(windows).flat();
+}
+
 async function claimStale(
-  db: Db, now: Date, dialWindow: number, waitWindow: number,
+  db: Db, now: Date, limits: Record<ReconcileWindow, number>,
   accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
   inherited: readonly string[],
 ): Promise<StaleRow[]> {
@@ -655,7 +688,19 @@ async function claimStale(
     // The mirror is read for a day after the hold; the IMAP probes stay inside the 20-minute window.
     const mirrorAfter = new Date(now.getTime() - SEND_UNVERIFIED_MIRROR_MS);
     const checkingAfter = new Date(now.getTime() - SEND_UNVERIFIED_RECHECK_MS);
-    const page = (which: "dialable" | "waiting" | "checking" | "mirror", limit: number) => d.skipLocked(tx.select({
+    const pending = (which: ReconcileWindow) => and(
+      eq(outboundSends.status, "pending"),
+      stale,
+      which === "dialable" ? ne(mailboxes.status, "error") : eq(mailboxes.status, "error"),
+    );
+    const unverified = (which: ReconcileWindow) => and(
+      eq(outboundSends.status, "unverified"),
+      isNull(outboundSends.resolvedBy),
+      which === "checking" ? gt(drafts.updatedAt, checkingAfter)
+        : and(lte(drafts.updatedAt, checkingAfter), gt(drafts.updatedAt, mirrorAfter)),
+      eq(drafts.status, "unverified"),
+    );
+    const page = async (which: ReconcileWindow) => limits[which] === 0 ? [] : d.skipLocked(tx.select({
       id: outboundSends.id,
       accountId: outboundSends.accountId,
       idempotencyKey: outboundSends.idempotencyKey,
@@ -683,31 +728,10 @@ async function claimStale(
       .from(outboundSends)
       .innerJoin(drafts, eq(drafts.id, outboundSends.draftId))
       .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
-      .where(which === "checking" || which === "mirror"
-        /**
-         * THE RECHECK WINDOWS: closed `unverified`, nobody has answered for it, and its draft
-         * still says `unverified` — a discarded draft's row (`draft_id` NULL, `resolved_by =
-         * 'discard'`) never joins, and a person's answer ends the looking. Split by when it was
-         * held (the draft's `updated_at`, the close's own stamp): `checking` inside
-         * `SEND_UNVERIFIED_RECHECK_MS`, where the IMAP probes run; `mirror` for the rest of the
-         * day, mirror reads only.
-         */
-        ? and(
-          eq(outboundSends.status, "unverified"),
-          isNull(outboundSends.resolvedBy),
-          which === "checking"
-            ? gt(drafts.updatedAt, checkingAfter)
-            : and(lte(drafts.updatedAt, checkingAfter), gt(drafts.updatedAt, mirrorAfter)),
-          eq(drafts.status, "unverified"),
-        )
-        : and(
-          eq(outboundSends.status, "pending"),
-          stale,
-          which === "dialable" ? ne(mailboxes.status, "error") : eq(mailboxes.status, "error"),
-        ))
+      .where(which === "checking" || which === "mirror" ? unverified(which) : pending(which))
       // A held row by when it was held, oldest first: the one nearest its last probe goes first.
       .orderBy(which === "checking" ? drafts.updatedAt : outboundSends.createdAt)
-      .limit(limit), { of: outboundSends });
+      .limit(limits[which]), { of: outboundSends });
 
     /**
      * TWO WINDOWS, because a mailbox in `error` can never be resolved by dialling and would
@@ -720,15 +744,15 @@ async function claimStale(
      * column), so one parked account can still delay newer rows; bounded, not removed.
      */
     const found = [
-      ...(await page("dialable", dialWindow)).map((r) => ({ ...r, kind: "pending" as const })),
-      ...(await page("waiting", waitWindow)).map((r) => ({ ...r, kind: "pending" as const })),
+      ...(await page("dialable")).map((r) => ({ ...r, kind: "pending" as const })),
+      ...(await page("waiting")).map((r) => ({ ...r, kind: "pending" as const })),
       // THEIR OWN WINDOWS, after the pending ones: a second look never delays a first decision.
       // The rows still inside their checking window get a page of their own, ahead of the day's
       // mirror-only rows: one pass serves every account on Cloud, and a page shared oldest-first
       // let a dozen held sends from earlier in the day, in any account, keep a newly held one from
       // ever being probed — the client then says it is not in Sent without anyone having looked.
-      ...(await page("checking", waitWindow)).map((r) => ({ ...r, kind: "unverified" as const })),
-      ...(await page("mirror", waitWindow)).map((r) => ({ ...r, kind: "unverified" as const })),
+      ...(await page("checking")).map((r) => ({ ...r, kind: "unverified" as const })),
+      ...(await page("mirror")).map((r) => ({ ...r, kind: "unverified" as const })),
     ];
 
     // One eligibility read per DISTINCT account, memoised, and run on THIS transaction's handle

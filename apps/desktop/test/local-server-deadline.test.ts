@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 import { BRIDGE_DEADLINE_MS, bridgeFetch } from "../src/bridge-fetch.js";
 import { LOCAL_SERVER_CALL_DEADLINE_MS } from "../src/local-server-deadline.js";
@@ -83,7 +84,6 @@ describe("bridgeFetch — a per-call deadline, forwarded only when present", () 
 /* ── the census: every bridge call to a route that probes, derived from both sides ──────────── */
 
 const DESKTOP_SRC = join(fileURLToPath(new URL(".", import.meta.url)), "..", "src");
-const ENGINE = fileURLToPath(new URL("../../sidecar/src/engine.ts", import.meta.url));
 
 interface Route { method: string; pattern: string }
 interface Call { at: string; method: string | null; path: string | null; deadline: string | null }
@@ -239,6 +239,7 @@ const reaches = (r: Route, c: Call): boolean => c.method === r.method && c.path 
 
 /** The bridge calls whose target a reading cannot know, each with what it reaches instead. */
 const UNRESOLVED: Readonly<Record<string, string>> = {
+  "bridge-fetch.ts fetch": "readDesktopCalendarSettings calls only the adapter's GET /calendar/settings, pinned below",
   "cloud-suggest.ts ask": "the Cloud suggest door's helper: its two callers name the Screener page and the suggest buy, neither a probe",
   "main.tsx post": "the network-return relay's poster: it posts the one retry path (`network-return.ts`), which re-dials and probes nothing",
   "DesktopGate.tsx liveBodyBridge": "Load it now's bridge door: liveBodyVia hands it GET /messages/:id/live-body alone, a hosted read that probes no /local route",
@@ -267,8 +268,18 @@ function wrong(routes: Route[], calls: Call[]): string[] {
 }
 
 describe("the census — every bridge call to a route that probes rides the local deadline", () => {
-  const engine = probingRoutes(readFileSync(ENGINE, "utf8"));
-  const files = sources(DESKTOP_SRC);
+  const engine = probingRoutes(readEngineAsOneText());
+  const files = [
+    ...sources(DESKTOP_SRC),
+    {
+      file: "packages/app-logic/src/consent/consent-wire.ts",
+      code: readFileSync(new URL("../../../packages/app-logic/src/consent/consent-wire.ts", import.meta.url), "utf8"),
+    },
+    {
+      file: "packages/core/src/suggestion-consent.ts",
+      code: readFileSync(new URL("../../../packages/core/src/suggestion-consent.ts", import.meta.url), "utf8"),
+    },
+  ];
   const calls = bridgeCalls(files);
 
   it("the probing routes are read off the engine's own handlers, and the three known ones are among them", () => {
@@ -285,6 +296,14 @@ describe("the census — every bridge call to a route that probes rides the loca
   it("every probing call passes the constant, and nothing else passes any deadline", () => {
     expect(calls.length, "the reading found almost nothing").toBeGreaterThan(40);
     expect(calls.filter((c) => engine.routes.some((r) => reaches(r, c))).length).toBeGreaterThanOrEqual(4);
+    const bridge = files.find(({ file }) => file === "bridge-fetch.ts")?.code ?? "";
+    expect(bridge).toMatch(
+      /export function readDesktopCalendarSettings\(session: number\) \{\s*return new HttpAdapter\(\{\s*baseUrl: "",\s*fetch: \(url, init\) => bridgeFetch\(url, \{ \.\.\.init, expectedCalendarSession: session \}\),\s*\}\)\.calendarSettings\(\);\s*\}/,
+    );
+    const adapter = readFileSync(new URL("../../../packages/client-engine/src/adapters/http-adapter.ts", import.meta.url), "utf8");
+    expect(adapter).toMatch(
+      /async calendarSettings\(\): Promise<CalendarSettingsWire> \{\s*const res = await this.call\("GET \/calendar\/settings", \{\}\);\s*if \(!res.ok\) throw await this.rejectionOf\(res\);\s*return this.readAnswer<"GET \/calendar\/settings">\(res\);\s*\}/,
+    );
     expect(wrong(engine.routes, calls)).toEqual([]);
     const unread = calls.filter((c) => c.path === null || c.method === null).map((c) => c.at).sort();
     expect([...new Set(unread)], "UNRESOLVED names a call that is gone, or misses one").toEqual(Object.keys(UNRESOLVED).sort());

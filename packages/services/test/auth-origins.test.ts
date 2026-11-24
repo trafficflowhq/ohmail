@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { sessions } from "@trafficflow/db";
+import { bindDb, sessions } from "@trafficflow/db";
 import { webauthnChallenges } from "@trafficflow/db/cloud";
 import {
-  AuthService, makeAuthConfig, makeTestAuthDeps,
+  AuthService, dbFor, makeAuthConfig, makeTestAuthDeps,
   allowedOrigins, defaultOrigin, isAllowedOrigin, normalizeOrigin, resolveCeremonyOrigin,
   type AuthConfig, type AuthDeps, type SessionUser, type ServiceContext, type SessionEstablished,
 } from "../src/index.js";
@@ -299,8 +299,10 @@ async function harness(
   const now = (): Date => START;
   return {
     db, svc, cfg: deps.config,
+    // A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
     ctxFor: (over = {}) => ({
-      db, accountId: "", userId: null, now, requestId: "r", ip: "1.2.3.4", ...over,
+      db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+      accountId: "", userId: null, now, requestId: "r", ip: "1.2.3.4", ...over,
     }),
   };
 }

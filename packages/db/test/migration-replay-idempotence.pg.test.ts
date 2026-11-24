@@ -7,10 +7,12 @@
 import { createHash } from "node:crypto";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { LEGACY_CUTOFF_WHEN, runMigrations } from "../src/admin.js";
-import { journalDrift, PG_TEST_URL, realPgAvailable } from "../src/testing.js";
+import { LEGACY_CUTOFF_WHEN, OLD_HEADS, migrateToOldHeads, runMigrations, type ServerJournal } from "../src/admin.js";
 import {
-  allMigrations, keyOf, refusedByForm, replayFloorWhen, type MigrationFile,
+  journalDrift, MIGRATED_DB_TEARDOWN_BUDGET_MS, PG_TEST_URL, realPgAvailable, throwawayDb,
+} from "../src/testing.js";
+import {
+  allMigrations, keyOf, outsideTheWindow, refusedByForm, replayFloorWhen, type MigrationFile,
 } from "./_migration-forms.js";
 
 /**
@@ -21,6 +23,13 @@ import {
  * state is not exotic: `adoptBaseline` records the entries below {@link LEGACY_CUTOFF_WHEN}
  * without running them, so the migrator re-executes EVERYTHING above that watermark against a
  * schema that already has it.
+ *
+ * TWO ROADS, TWO STORES. The 1.0 road (every entry at or below `OLD_HEADS`) is only ever replayed
+ * on a store that stands on it: a store below the old head walks the journals cut at the heads
+ * before anything of 2.0 runs (`runMigrations`), so those entries are re-executed here against a
+ * store AT the old heads, made from empty by that same road. An entry past the 2.0 transition's
+ * window is re-executed against this tree's whole schema, as before. The window itself is applied
+ * once by construction and is judged by neither half (`outsideTheWindow`).
  */
 
 /**
@@ -100,7 +109,12 @@ interface Reading extends Replay {
 
 const readings: Reading[] = [];
 let PG_UP = false;
+/** The store the replay under way runs against; the census points it at one road's store at a time. */
 let client: ReturnType<typeof postgres> | null = null;
+let atOldHeads: ReturnType<typeof postgres> | null = null;
+let atHead: ReturnType<typeof postgres> | null = null;
+const OLD_STORE = throwawayDb("replay_old_heads");
+const onOldRoad = (m: MigrationFile): boolean => m.when <= OLD_HEADS[m.journal as ServerJournal].when;
 /** `select 'x' as t, count(*) as n from "x" union all …`, built once from the live catalog. */
 let countsSql = "";
 
@@ -237,25 +251,47 @@ describe.skipIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")(
       return;
     }
     await runMigrations(PG_TEST_URL);
-    client = postgres(PG_TEST_URL, { max: 1, onnotice: () => { /* a replay re-raises notices */ } });
+    await OLD_STORE.create(migrateToOldHeads);
+    atHead = postgres(PG_TEST_URL, { max: 1, onnotice: () => { /* a replay re-raises notices */ } });
+    atOldHeads = postgres(OLD_STORE.url, { max: 1, onnotice: () => { /* a replay re-raises notices */ } });
+    client = atOldHeads;
     const tables = await client`select table_name from information_schema.tables
                                 where table_schema = 'public' and table_type = 'BASE TABLE'
                                 order by table_name` as unknown as Array<{ table_name: string }>;
     countsSql = tables
       .map((t) => `select '${t.table_name}' as t, count(*)::text as n from "${t.table_name}"`)
       .join(" union all ");
-    expect(tables.length, "the lane database carries this tree's schema").toBeGreaterThan(50);
-  }, 300_000);
+    expect(tables.length, "the store at the old heads carries the 1.0 schema").toBeGreaterThan(50);
+  }, 480_000);
 
-  afterAll(async () => { await client?.end({ timeout: 5 }); }, 30_000);
+  afterAll(async () => {
+    await atHead?.end({ timeout: 5 });
+    await atOldHeads?.end({ timeout: 5 });
+    await OLD_STORE.drop();
+  }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
+
+  /** The count query for whichever store `client` points at: the two stores hold different tables. */
+  const pointAt = async (store: ReturnType<typeof postgres>): Promise<void> => {
+    client = store;
+    const tables = await store`select table_name from information_schema.tables
+                               where table_schema = 'public' and table_type = 'BASE TABLE'
+                               order by table_name` as unknown as Array<{ table_name: string }>;
+    countsSql = tables
+      .map((t) => `select '${t.table_name}' as t, count(*)::text as n from "${t.table_name}"`)
+      .join(" union all ");
+  };
 
   it("the census: every migration re-executed once against the migrated schema", async () => {
     if (!PG_UP) return;
-    const migrations: MigrationFile[] = allMigrations();
+    const migrations: MigrationFile[] = outsideTheWindow(allMigrations());
     expect(migrations.length, "both journals are present").toBeGreaterThan(100);
-    for (const m of migrations) {
-      const r = await replay(m.text.split("--> statement-breakpoint"));
-      readings.push({ ...r, key: keyOf(m), above: m.when > replayFloorWhen() });
+    expect(migrations.filter(onOldRoad).length, "the 1.0 road is read").toBeGreaterThan(100);
+    for (const [store, road] of [[atOldHeads!, migrations.filter(onOldRoad)], [atHead!, migrations.filter((m) => !onOldRoad(m))]] as const) {
+      await pointAt(store);
+      for (const m of road) {
+        const r = await replay(m.text.split("--> statement-breakpoint"));
+        readings.push({ ...r, key: keyOf(m), above: m.when > replayFloorWhen() });
+      }
     }
     if (process.env.OHMAIL_MIGRATION_CENSUS === "print") {
       for (const r of readings) {
@@ -292,8 +328,9 @@ describe.skipIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")(
     expect(readings.length, "the census ran first").toBeGreaterThan(100);
     const floor = replayFloorWhen();
     expect(floor, "the floor sits above the baseline cutoff").toBeGreaterThan(LEGACY_CUTOFF_WHEN);
-    const span = allMigrations().filter((m) => m.when > floor && ALLOWED[keyOf(m)] === undefined);
+    const span = allMigrations().filter((m) => onOldRoad(m) && m.when > floor && ALLOWED[keyOf(m)] === undefined);
     expect(span.length, "the skip window replays everything above the reissue").toBeGreaterThan(40);
+    await pointAt(atOldHeads!);
     const r = await replay(span.flatMap((m) => m.text.split("--> statement-breakpoint")));
     expect(r.raised, "the span the adoption replays raises nothing").toBe(null);
     expect(r.added, "…and creates no catalog row a fresh replay does not have").toEqual([]);
@@ -316,6 +353,7 @@ describe.skipIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")(
   it("control: the bare ADD CONSTRAINT refuses a second application, the flat form does not", async () => {
     if (!PG_UP) return;
     expect(PROBE_SHA).toHaveLength(8);
+    await pointAt(atHead!);
     const bare = await replay([BARE], [DROP, BARE]);
     expect(bare.raised, "a bare ADD CONSTRAINT over one that exists").toMatch(/already exists/);
 

@@ -1,5 +1,5 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { type EngineMessage } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, liveReads, liveReceipts, presentedOf, type WorldView } from "../src/state/live";
 import { sayArg } from "../src/refusal";

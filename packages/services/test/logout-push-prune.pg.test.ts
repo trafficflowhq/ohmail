@@ -1,16 +1,15 @@
+import { accountOfUser, bindDb } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, inArray } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { devices, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { authEvents, credentials, schema, pushSubscriptions, webauthnCredentials } from "@trafficflow/db/cloud";
+import { authEvents, credentials, makeOwnedDb, pushSubscriptions, webauthnCredentials, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, generateToken, hashToken, makeAuthService, makeTestAuthDeps, pushService, type ServiceContext,
+  AuthService, dbFor, generateToken, hashToken, makeAuthService, makeTestAuthDeps, pushService, type ServiceContext,
 } from "@trafficflow/services";
 import { seedFullAccount, type SeededAccount } from "./helpers/erasure-fixture.js";
 
@@ -50,11 +49,13 @@ import { seedFullAccount, type SeededAccount } from "./helpers/erasure-fixture.j
 const PG_UP = await realPgAvailable();
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 let ipCell = 0;
+/** A signed-in session's context is bound to its account; one with no account (a sign-in, a register) to nothing. */
 const ctxFor = (accountId: string, userId: string | null, sessionId: string | null): ServiceContext => ({
-  db, accountId, userId, sessionId: sessionId ?? undefined,
+  db: accountId === "" ? bindDb(db, { account: null }) : dbFor(db, accountId), accountId, userId, sessionId: sessionId ?? undefined,
   now: () => new Date(), requestId: "logout-push-pg", ip: `10.56.${(ipCell += 1) % 250}.7`,
 } as unknown as ServiceContext);
 
@@ -121,9 +122,10 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 5 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); await client?.end({ timeout: 5 }); });
 
   it("a phone's own sign-out leaves ZERO rows for its device", async () => {
     const seeded = await seedFullAccount(db);
@@ -262,22 +264,22 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
 
     const svc = makeAuthService(makeTestAuthDeps());
     const ctx = ctxFor(seeded.accountId, seeded.userId, seeded.sessionId);
-    const exploding = {
-      ...ctx,
-      db: new Proxy(db as object, {
-        get(target, prop, recv) {
-          if (prop !== "transaction") return Reflect.get(target, prop, recv);
-          const real = (target as { transaction: (f: (tx: unknown) => Promise<unknown>) => Promise<unknown> }).transaction;
-          return (fn: (tx: unknown) => Promise<unknown>) =>
-            real.call(target, async (tx: unknown) => {
-              await fn(tx);
-              throw new Error("the connection died between the revoke and the prune");
-            });
-        },
-      }),
-    } as unknown as ServiceContext;
+    // On the pool's own handle, the one the binder knows: the account's handle bound over it opens
+    // its transactions through it. Taken off again once the sign-out has failed.
+    const transaction = db.transaction;
+    Object.defineProperty(db, "transaction", {
+      configurable: true,
+      value: function (this: unknown, fn: Parameters<typeof transaction>[0], config?: Parameters<typeof transaction>[1]) {
+        return transaction.call(this as typeof db, async (tx) => {
+          await fn(tx);
+          throw new Error("the connection died between the revoke and the prune");
+        }, config);
+      },
+    });
+    const exploding = ctx;
 
-    await expect(svc.logout(exploding, {})).rejects.toThrow(/died between/);
+    await expect(svc.logout(exploding, {}).finally(() => { Object.defineProperty(db, "transaction", { value: transaction, configurable: true, writable: true }); }))
+      .rejects.toThrow(/died between/);
 
     // NOTHING happened: the row is still there AND the session is still live, so the client's
     // own retry has a credential to retry with. That pairing is the property.
@@ -315,7 +317,7 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
       return s.changePassword(c, { currentPassword: PASSWORD, newPassword: `${PASSWORD}-next` });
     }],
     ["an authenticator removal", async (s, c, _w1, seeded) => {
-      await db.insert(webauthnCredentials).values({ userId: seeded.userId, credentialId: `c0056-${randomUUID()}`, publicKey: "AAAA" });
+      await db.insert(webauthnCredentials).values({ userId: seeded.userId, accountId: accountOfUser(seeded.userId), credentialId: `c0056-${randomUUID()}`, publicKey: "AAAA" });
       return s.totpRemove(c);
     }],
   ];
@@ -416,13 +418,16 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
     const caller = await browser(seeded, { twofaAt: new Date() });
     const w1 = await browser(seeded);
     const app = `c0056-race-${randomUUID().slice(0, 8)}`;
-    const second = postgres(PG_TEST_URL, { max: 1, onnotice: () => {}, connection: { application_name: app } });
+    // A pool of the factory's, named by its address (a parameter of the address is one of the connection).
+    const address = new URL(PG_TEST_URL);
+    address.searchParams.set("application_name", app);
+    const second = makeOwnedDb(address.toString());
     try {
       const revoke = revokeW1(new Held(makeTestAuthDeps()), seeded, caller.sessionId, w1.sessionId);
       await atPrune;
       const endpoint = `https://push.test/${randomUUID()}`;
       const register = pushService.subscribe(
-        { ...ctxFor(seeded.accountId, seeded.userId, w1.sessionId), db: brandDialect(drizzle(second, { schema }), "pg") } as ServiceContext,
+        { ...ctxFor(seeded.accountId, seeded.userId, w1.sessionId), db: dbFor(second.db, seeded.accountId) },
         { transport: "webpush", endpoint, p256dh: "p", auth: "a" },
       ).then(() => "registered", (e: { httpStatus?: number }) => e.httpStatus);
       expect(await waitsOnALock(app, 5_000), "the registration never waited on the revoke").toBe(true);
@@ -433,7 +438,7 @@ describe.skipIf(!PG_UP)("logout takes this device's wake registration down", () 
       expect(await live([caller.row, w1.row])).toEqual([caller.row]);
     } finally {
       open();
-      await second.end({ timeout: 5 });
+      await second.close();
     }
   }, 30_000);
 });

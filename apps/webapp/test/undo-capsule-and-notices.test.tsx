@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost, useToast, type ToastFn } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { createUndoDoor } from "../app/shell/undo-door";
+import { createUndoDoor } from "@ohmail/app-logic/press/undo-door";
 
 /**
  * THE NOTICES AND THE UNDO CAPSULE, READ AS A SCREEN READER READS THEM. A
@@ -27,7 +28,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-beforeAll(async () => { await import("../app/shell/AppShell.js"); }, 120_000);
+beforeAll(async () => { await import("./_todays-shell.js"); }, 120_000);
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -126,7 +127,7 @@ describe("the capsule's Undo names its key (R22-06)", () => {
 
 async function shell(hash: string): Promise<void> {
   window.location.hash = hash;
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   await render(h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
     children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(AppShell, { demo: true }) }) }),
@@ -149,17 +150,20 @@ async function tab(): Promise<void> {
   const to = stops.find((s) => s !== from && (from.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
   await act(async () => { to?.focus(); });
 }
+const shellUndo = () => within(host!).queryByRole<HTMLButtonElement>("button", { name: "Undo" });
 const onBody = (): boolean => document.activeElement === null || document.activeElement === document.body;
 
 /** A row's delete through the keyboard, then Tab to the capsule's Undo. */
 async function deleteAndReachUndo(): Promise<HTMLElement> {
   await shell("#/ohbox");
+  await vi.waitFor(() => expect(within(host!).getAllByRole("option").length).toBeGreaterThan(0));
   await key("j");
   await key("ArrowLeft");
   await key("ArrowRight");
-  expect((document.activeElement as HTMLElement | null)?.matches(".row[data-id]"), "not on a row").toBe(true);
+  /* A row of the Ohbox's list: an option of its listbox, standing for its letters. */
+  expect((document.activeElement as HTMLElement | null)?.matches(":is(.row, [role=option])[data-id]"), "not on a row").toBe(true);
   await key("Backspace");
-  const undo = (): HTMLElement | null => host!.querySelector<HTMLElement>(".toast-held .toast-act");
+  const undo = shellUndo;
   expect(undo(), "no Undo capsule after Backspace").not.toBeNull();
   for (let i = 0; i < 80 && document.activeElement !== undo(); i += 1) await tab();
   expect(document.activeElement, "Tab never reached the Undo").toBe(undo());
@@ -172,14 +176,14 @@ describe("focus never falls to the page around the capsule (R22-06)", () => {
     await key("Enter");
     await act(async () => { undo.click(); });
     await settle();
-    expect(host!.querySelector(".toast-held .toast-act"), "the capsule stayed").toBeNull();
+    expect(shellUndo(), "the capsule stayed").toBeNull();
     expect(onBody(), "focus fell to the page body").toBe(false);
   });
 
   it("a focused Undo whose window ends: focus lands on the list", async () => {
     await deleteAndReachUndo();
     await tick(30_000);
-    expect(host!.querySelector(".toast-held .toast-act"), "the capsule outlived its window").toBeNull();
+    expect(shellUndo(), "the capsule outlived its window").toBeNull();
     expect(onBody(), "focus fell to the page body").toBe(false);
   });
 });

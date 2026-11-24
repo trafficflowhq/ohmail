@@ -1,6 +1,7 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  MemoryMirrorStore, OhmailEngine, type EngineAdapter, type EngineMessage, type SyncChange, type SyncResponse,
+  MemoryMirrorStore, OhmailEngine, type EngineAdapter, type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 import { createProjector, listStamp, type ProjectionInputs, type Projected } from "../src/state/world-projection";
 import { SCREENING_UNSUPPLIED, type WorldActions } from "../src/state/live";
@@ -93,7 +94,7 @@ describe("every change reaches the rows through one kept projector", () => {
     await r.engine.mutate({ kind: "mark_seen", messageIds: ["i2"], unread: false, via: "glance" });
     expect(rows(r.render()).find((m) => (m.memberIds ?? [m.id]).includes("i2"))?.unread, "a read is not shown").toBe(false);
 
-    await r.engine.mutate({ kind: "move", messageId: "i1", folder: "Archive" as never });
+    await r.engine.mutate({ kind: "move", messageId: "i1", folder: "ohmail/News" });
     expect(ids(r.render()), "a move is not shown").not.toContain("i1");
 
     r.state.heldDeletes = new Set(["i2"]);

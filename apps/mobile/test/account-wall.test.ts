@@ -546,6 +546,8 @@ describe("a date on this screen is the server's or nothing", () => {
   it("a real instant reads as a date in the asked language", () => {
     expect(dayStamp("2026-08-24T10:00:00.000Z", "en", "UTC")).toContain("2026");
     expect(dayStamp("2026-08-24T10:00:00.000Z", "de", "UTC")).toContain("2026");
+    expect(dayStamp("2026-11-18T10:00:00.000Z", "en", "UTC", "weekday")).toBe("Wed 18 Nov");
+    expect(dayStamp("2026-11-18T10:00:00.000Z", "de", "UTC", "weekday")).toContain("18.");
   });
 });
 

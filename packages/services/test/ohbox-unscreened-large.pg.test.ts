@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -38,21 +39,74 @@ let db: ReturnType<typeof drizzle<typeof schema>>;
 let accountId: string;
 /** Statements this file's own client has sent. */
 let sent = 0;
+let pendingSetup: { phase: string; startedAt: number } | null = null;
+
+const measuredWalks = new Map([
+  ["one request reads every sender nobody decided about, and its statements follow the senders", "full"],
+  ["a request out of time answers a part, and the next request goes on from it", "cursor"],
+]);
+
+/** The runner's visible cgroup and this test database. The service container can have a different CPU quota. */
+async function walkCounters() {
+  const throttled = readFile("/proc/self/cgroup", "utf8").then(async (membership) => {
+    const group = /^0::(\/.*)$/m.exec(membership)?.[1];
+    if (!group || group.split("/").includes("..")) return null;
+    const text = await readFile(`/sys/fs/cgroup${group.replace(/\/$/, "")}/cpu.stat`, "utf8");
+    const found = /^throttled_usec (\d+)$/m.exec(text);
+    return found ? Number(found[1]) / 1000 : null;
+  }).catch(() => null);
+  // A separate, short-lived observer keeps its statements out of the fixture's query-count assertion.
+  const observer = postgres(PG_TEST_URL, {
+    max: 1, connect_timeout: 1, onnotice: () => {}, connection: { statement_timeout: 500 },
+  });
+  let dbActive: number | null = null;
+  let sqlExec: number | null = null;
+  try {
+    const [activity] = await observer<{ ms: number; statements: boolean }[]>`
+      select active_time::float8 as ms, to_regclass('pg_stat_statements') is not null as statements
+      from pg_stat_database where datname = current_database()`;
+    dbActive = activity?.ms ?? null;
+    if (activity?.statements) {
+      const [execution] = await observer<{ ms: number | null }[]>`
+        select sum(total_exec_time)::float8 as ms from pg_stat_statements
+        where dbid = (select oid from pg_database where datname = current_database())`;
+      sqlExec = execution?.ms ?? null;
+    }
+  } catch { /* The original walk still runs on an uninstrumented or busy database. */ }
+  finally { await observer.end({ timeout: 0 }).catch(() => {}); }
+  return { dbActive, sqlExec, throttled: await throttled };
+}
+
+function elapsedCounter(start: number | null, end: number | null): number | null {
+  return start !== null && end !== null && end >= start ? Math.round(end - start) : null;
+}
+
+let walkStart: { label: string; wall: number; statements: number; counters: Awaited<ReturnType<typeof walkCounters>> } | null = null;
+
+function enteringSetup(phase: string): void {
+  pendingSetup = { phase, startedAt: performance.now() };
+}
 
 /** The account, set-based: one statement a table, so the seed costs seconds. */
 async function seedLargeAccount(): Promise<string> {
   const id = randomUUID();
   const mailboxId = randomUUID();
   const at = new Date("2026-09-17T08:00:00.000Z").toISOString();
+  enteringSetup("account insertion");
   await client`insert into accounts (id, name) values (${id}, ${`large-${id.slice(0, 8)}`})`;
+  enteringSetup("mailbox insertion");
   await client`insert into mailboxes (id, account_id, provider, address, organizer_role)
                values (${mailboxId}, ${id}, 'imap', ${`me-${id.slice(0, 8)}@example.test`}, 'organizer')`;
+  enteringSetup("rule insertion");
   await client`insert into rules (account_id, kind, match, destination, provenance)
                select ${id}, 'sender', 'r' || g || '@ruled.test', 'INBOX', 'manual' from generate_series(0, 999) g`;
+  enteringSetup("contact insertion");
   await client`insert into contacts (account_id, address)
                select ${id}, 'c' || g || '@known.test' from generate_series(0, 2999) g`;
   // 79,400 letters from the decided senders, then the strangers' 600.
+  enteringSetup("seed transaction start");
   await client.begin(async (tx) => {
+    enteringSetup("seed table creation");
     await tx`
       create temp table large_seed on commit drop as
       select gen_random_uuid() as id,
@@ -62,16 +116,25 @@ async function seedLargeAccount(): Promise<string> {
       select gen_random_uuid(), 'stranger' || k || '@unknown.test'
         from generate_series(0, ${STRANGERS - 1}::int) k, generate_series(1, 5) n
        where n <= 3 + k % 3`;
+    enteringSetup("message insertion");
     await tx`
       insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address,
                             date, created_at, arrived_at, unread, native_locator)
       select id, ${id}::uuid, ${mailboxId}::uuid, 'h', 'large:' || id, 'Note', sender,
              ${at}::timestamptz, ${at}::timestamptz, ${at}::timestamptz, false, '{"folder":"INBOX","ref":"1:1"}'::jsonb
         from large_seed`;
+    // This shared test database may last have counted a nearly empty messages table.
+    // Its folder-state foreign key now looks up all 80,000 newly inserted letters.
+    await tx`analyze messages`;
+    enteringSetup("folder state insertion");
     await tx`
-      insert into folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
-      select id, 'INBOX', 'INBOX', 'external', 'reconciled', false from large_seed`;
+      insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
+      select id, ${id}::uuid, 'INBOX', 'INBOX', 'external', 'reconciled', false from large_seed`;
+    enteringSetup("seed commit");
   });
+  // The offer now joins against every newly placed letter in this mailbox.
+  enteringSetup("folder state statistics");
+  await client`analyze folder_state`;
   return id;
 }
 
@@ -125,10 +188,10 @@ async function seedAgreed(flags: string): Promise<{ id: string; mailboxId: strin
              '{"folder":"Sent","ref":"1:1"}'::jsonb, thread, jsonb_build_array(jsonb_build_object('address', sender))
         from agreed_seed where answered`;
     await tx`
-      insert into folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
-      select id, 'INBOX', 'INBOX', 'external', 'reconciled', false from agreed_seed
+      insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
+      select id, ${id}::uuid, 'INBOX', 'INBOX', 'external', 'reconciled', false from agreed_seed
       union all
-      select answer, 'Sent', 'Sent', 'external', 'reconciled', false from agreed_seed where answered`;
+      select answer, ${id}::uuid, 'Sent', 'Sent', 'external', 'reconciled', false from agreed_seed where answered`;
   });
   return { id, mailboxId };
 }
@@ -157,13 +220,40 @@ async function sweepToEnd(
 }
 
 describe.skipIf(!PG_UP)("the offer on a large account", () => {
+  beforeEach(async ({ task }) => {
+    const label = measuredWalks.get(task.name);
+    if (!label) return;
+    const counters = await walkCounters();
+    walkStart = { label, counters, wall: performance.now(), statements: sent };
+  });
+  afterEach(async () => {
+    const start = walkStart;
+    walkStart = null;
+    if (!start) return;
+    const wallMs = Math.round(performance.now() - start.wall);
+    const statements = sent - start.statements;
+    const end = await walkCounters();
+    console.info("Large Ohbox walk timing", {
+      walk: start.label, wallMs, statements,
+      databaseActiveMs: elapsedCounter(start.counters.dbActive, end.dbActive),
+      sqlExecutionMs: elapsedCounter(start.counters.sqlExec, end.sqlExec),
+      processCgroupThrottledMs: elapsedCounter(start.counters.throttled, end.throttled),
+    });
+  });
   beforeAll(async () => {
+    enteringSetup("migrations");
     await runMigrations(PG_TEST_URL);
+    enteringSetup("fixture client setup");
     client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, debug: () => { sent++; } });
     db = brandDialect(drizzle(client, { schema }), "pg");
     accountId = await seedLargeAccount();
+    pendingSetup = null;
   }, 240_000);
   afterAll(async () => {
+    if (pendingSetup) {
+      const elapsed = Math.round(performance.now() - pendingSetup.startedAt);
+      console.warn(`Large Ohbox fixture setup stopped during ${pendingSetup.phase} after ${elapsed} ms in that phase.`);
+    }
     await closePooledDbs();
     await client?.end({ timeout: 5 });
   });
@@ -227,8 +317,8 @@ describe.skipIf(!PG_UP)("the offer on a large account", () => {
                false, '{"folder":"INBOX","ref":"1:1"}'::jsonb
           from wide_seed`;
       await tx`
-        insert into folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
-        select id, 'INBOX', 'INBOX', 'external', 'reconciled', false from wide_seed`;
+        insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
+        select id, ${id}::uuid, 'INBOX', 'INBOX', 'external', 'reconciled', false from wide_seed`;
     });
     let t = 0;
     const part = await unscreenedSummary(db as never, id, NOW, undefined, undefined, { budgetMs: 3_000, clock: () => (t += 10) });

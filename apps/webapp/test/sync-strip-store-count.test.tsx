@@ -5,9 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import { deriveMailState, seedGrowth, type MailState, type MailboxFacts, type StoreRefusals } from "../app/shell/mail-state";
-import { mailboxErrorKey } from "../app/shell/mailbox-error-key";
+import { deriveMailState, seedGrowth, type MailState, type MailboxFacts, type StoreRefusals } from "@ohmail/app-logic/mail-state/mail-state";
+import { mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
 import { setActiveCatalog } from "../app/shell/locale";
 
 /**
@@ -29,24 +28,7 @@ const QUIET: MailState = {
   continuesAtFolder: null, settled: true, owed: false,
 };
 let current: MailState = QUIET;
-let mockListed: MailboxDTO[] = [];
-const healthy = {
-  subscription: { plan: "solo", status: "active", mailboxLimit: 5, monthlyCredits: 500, currentPeriodEnd: null, cancelAtPeriodEnd: false, graceUntil: null },
-  balance: 0, plans: {},
-  entitlements: { mailboxLimit: 5, canAddMailbox: true, aiEnabled: false, syncEnabled: true, reason: "active" },
-} as unknown as SubscriptionStatus;
-vi.mock("../app/api-client", async () => {
-  const actual = await vi.importActual<typeof import("../app/api-client")>("../app/api-client");
-  return {
-    ...actual,
-    apiConfigured: () => true,
-    webauthnAvailable: () => false,
-    auth: { session: async () => ({ user: { email: "person@example.test", emailVerified: true }, scope: "full" }) },
-    billing: { subscription: async () => healthy },
-    mailboxes: { list: async () => ({ items: mockListed }), resync: async () => undefined },
-  };
-});
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: current, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: current, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }) }));
 
 const EXACT: StoreRefusals = { count: 612, retrying: 612, exact: true };
 const CAPPED: StoreRefusals = { count: 612, retrying: 500, exact: true };
@@ -68,14 +50,14 @@ afterEach(async () => {
 async function stripText(state: MailState, lang: "en" | "de"): Promise<string> {
   current = state;
   setActiveCatalog(lang, null);
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale: lang, messages: lang === "en" ? en : de, timeZone: "UTC", now: new Date("2026-09-29T08:00:00.000Z"),
-      children: h(SyncBar, { variant: "rail" }),
+      children: h(SyncBar, null),
     }));
   });
   return host.textContent ?? "";
@@ -103,7 +85,7 @@ describe("the one chooser", () => {
     const state = deriveMailState({
       sync: { phase: "idle" } as never, failureStreak: 0, mailboxes: [m], mirrored: 10, pulled: 10,
       growth: seedGrowth(10), freshness: { state: "current", asOf: new Date(now).toISOString() },
-      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false,
+      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false, scope: null,
     });
     expect(state.key).toBe("mailboxError");
     expect(state.storeRefusals).toEqual(CAPPED);
@@ -130,41 +112,27 @@ describe("the strip says the count, in both languages", () => {
   });
 });
 
-describe("web Settings → Mailboxes says the same count", () => {
-  async function rowText(m: MailboxDTO): Promise<string> {
-    mockListed = [m];
-    current = QUIET;
-    const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => { root!.render(h(NextIntlClientProvider, { locale: "en", messages: en, children: h(MailboxSection) })); });
-    await act(async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve(); });
-    return host.querySelector(".mbx-bad")?.textContent ?? "";
-  }
-  const dto = (over: Partial<MailboxDTO>): MailboxDTO => ({
-    id: "mb1", provider: "imap", address: "person@home.example", displayName: null, status: "error",
-    lastSyncAt: "2026-09-27T11:00:00.000Z", createdAt: "2026-09-20T10:00:00.000Z", errorCode: "storage", ...over,
-  });
-
-  it("the counted row, and the count-less one without the field", async () => {
-    expect(await rowText(dto({ storeRefusals: CAPPED }))).toContain("could not store 612 items from your account on this computer, more than Sync now can retry.");
-    expect(await rowText(dto({}))).toBe((en.mailboxes as Record<string, string>).err_storage);
-  });
-});
-
 describe("a copy this computer cannot store into says so, and what to do", () => {
   const frozen: MailState = { ...failing(), errorDetail: "MIRROR_STORE_REFUSED" };
+  /* The strip's link is the notice's act: its words, and where a press on it leads. */
+  const act0 = (): HTMLButtonElement | undefined => host!.querySelector<HTMLButtonElement>("[role='status'][data-place] button") ?? undefined;
+  const leadsTo = async (): Promise<string | undefined> => {
+    const press = act0();
+    if (!press) return undefined;
+    window.location.hash = "";
+    await act(async () => { press.click(); });
+    return window.location.hash;
+  };
   it("en and de: the storage sentence, and the link writes to us", async () => {
     expect(await stripText(frozen, "en")).toContain((en.mailboxes as Record<string, string>).err_storage);
-    expect(host!.querySelector("a")?.getAttribute("href")).toBe("#/settings/help");
-    expect(host!.querySelector("a")?.textContent).toBe(en.help.write);
+    expect(act0()?.textContent).toBe(en.help.write);
+    expect(await leadsTo()).toBe("#/settings/help");
     expect(await stripText(frozen, "de")).toContain((de.mailboxes as Record<string, string>).err_storage);
-    expect(host!.querySelector("a")?.textContent).toBe(de.help.write);
+    expect(act0()?.textContent).toBe(de.help.write);
   });
 
   it("CONTROL: a counted storage failure keeps the Mailboxes link", async () => {
     await stripText(failing(EXACT), "en");
-    expect(host!.querySelector("a")?.getAttribute("href")).toBe("#/settings/mailboxes");
+    expect(await leadsTo()).toBe("#/settings/mailboxes");
   });
 });

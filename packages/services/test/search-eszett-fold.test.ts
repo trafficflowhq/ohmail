@@ -28,7 +28,7 @@ describe("the ß/ss fold, on this store", () => {
         subject, from: `s${i}@site.example`, snippet: body, folder: "INBOX",
         date: new Date(Date.parse("2026-09-20T09:00:00Z") - i * 86_400_000),
       });
-      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
       keyOf.set(id, key);
     }
     expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);

@@ -1,10 +1,10 @@
+import type { MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { count } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { messages } from "@trafficflow/db/mail";
-import type { MessageDTO, SnapshotResponse, SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror } from "../src/cloud-mirror.js";
@@ -12,6 +12,7 @@ import type { CloudAuth } from "../src/cloud-auth.js";
 import { loopHold } from "../src/loop-hold.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 import { idleSession } from "./fixtures/cloud-auth-double.js";
 import { tearDown, tracked } from "./_teardown.js";
 
@@ -94,7 +95,7 @@ type Pglite = { transaction: <T>(cb: (tx: TxClient) => Promise<T>) => Promise<T>
  * thrown THROUGH that transaction, the connection a real fault would come from.
  */
 function watchPageTransactions(opened: OpenLocalDb, failAt: number | null) {
-  const client = (opened.db as unknown as { $client: Pglite }).$client;
+  const client = pgliteOf(opened.db) as unknown as Pglite;
   type Mark = { entry: number; firstInsert: number; lastInsert: number; returned: number; committed: number };
   const seen = { pages: 0, turnsInside: [] as number[], turnsBeforeFault: null as number | null, faults: 0, marks: [] as Mark[] };
   let turns = 0;

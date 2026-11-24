@@ -1,0 +1,55 @@
+{
+  "component": "CodeTile",
+  "state": "rest",
+  "look": "paper-dark-fold",
+  "place": "block",
+  "target": [25, 25, 128, 128],
+  "clip": [25, 25, 128, 128],
+  "studioCommit": null,
+  "kitCommit": "fb49d823f4631edece85985237308d4a814e0e44",
+  "variant": {
+    "device": "fold",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 719,
+    "height": 781,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 719, "clientWidth": 719, "scrollHeight": 781 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    {
+      "ink": "fill rgb(0, 0, 0); fill rgb(255, 255, 255); shapes 2 c60e6f5a0d8a"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "img",
+      "name": "Pairing code",
+      "box": [0, 0, 128, 128],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "surfaces": [{ "box": [0, 0, 128, 128], "paint": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

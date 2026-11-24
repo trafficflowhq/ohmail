@@ -1,0 +1,173 @@
+/* A file is a tile: what it is, its name over its size, the arrow that saves it. */
+@layer oh {
+  .oh-file {
+    --oh-file-lh: 1.3;
+    --oh-file-kind-w: 40px;
+    --oh-file-kind-h: 36px;
+    --oh-file-kind-pad: 0 5px;
+    --oh-file-kind-r: 8px;
+    --oh-file-kind-size: 12px;
+    --oh-file-name-max: 22em;
+
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    max-width: 100%;
+    padding: 0 var(--s2) 0 0;
+    border-radius: var(--r-row);
+    background: var(--oh-soft, var(--soft-sheet));
+    box-shadow: var(--oh-ring-btn);
+  }
+
+  .oh-file:has(> .oh-control.oh-file-main:hover) {
+    background: var(--oh-file-over, var(--hover));
+  }
+
+  .oh-file-main {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s3);
+    min-width: 0;
+    height: 100%;
+    padding: var(--s2);
+    border-radius: var(--r-row);
+    text-align: left;
+  }
+
+  .oh-file-kind {
+    flex: none;
+    display: grid;
+    place-items: center;
+    min-width: var(--oh-file-kind-w);
+    height: var(--oh-file-kind-h);
+    padding: var(--oh-file-kind-pad);
+    border-radius: var(--oh-file-kind-r);
+    background: var(--oh-file-kind, var(--sheet));
+    box-shadow: var(--oh-ring-ctl);
+    color: var(--ink2);
+    font-size: var(--oh-file-kind-size);
+    font-style: normal;
+    font-weight: var(--w-bold);
+  }
+
+  /* A picture shows a small look at itself. */
+  .oh-file-look {
+    padding: 0;
+    overflow: hidden;
+    background: var(--off);
+    color: var(--ink);
+  }
+
+  .oh-file-look > * {
+    display: block;
+    width: var(--oh-file-kind-w);
+    height: var(--oh-file-kind-h);
+    object-fit: cover;
+  }
+
+  .oh-file-name {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: var(--oh-file-lh);
+  }
+
+  .oh-file-title {
+    max-width: var(--oh-file-name-max);
+    overflow: hidden;
+    font-weight: var(--w-mid);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-file-size {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+
+  .oh-file-save {
+    display: contents;
+    color: var(--ink2);
+  }
+
+  .oh-file-save > .oh-button {
+    color: var(--ink2);
+  }
+
+  .oh-file-save[data-saved] > .oh-button {
+    color: var(--ink);
+  }
+
+  .oh-files {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    margin-top: var(--s4);
+  }
+
+  /* Several files stand in columns under the line that counts them. */
+  .oh-files[data-set] {
+    --oh-files-col: 248px;
+
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--oh-files-col), 1fr));
+    align-items: stretch;
+  }
+
+  .oh-files[data-set] > .oh-file {
+    display: flex;
+  }
+
+  .oh-files[data-set] .oh-file-main {
+    flex: 1;
+  }
+
+  .oh-files-head {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--s3);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .oh-files-all {
+    --oh-files-sign: 18px;
+    --oh-files-gap: 6px;
+    --oh-files-out: 0 calc(var(--s1) - var(--cap-q)) 0 auto;
+
+    flex: none;
+    margin: var(--oh-files-out);
+    color: var(--ink);
+  }
+
+  .oh-files-all > .oh-button {
+    gap: var(--oh-files-gap);
+    color: inherit;
+  }
+
+  .oh-files-all > .oh-button > .oh-icon {
+    width: var(--oh-files-sign);
+    height: var(--oh-files-sign);
+  }
+
+  .oh-files-all[aria-busy="true"] {
+    color: var(--ink2);
+    pointer-events: none;
+  }
+
+  :root[data-face="ohmarchy"] .oh-file {
+    box-shadow: none;
+  }
+
+  :root[data-face="ohmarchy"] .oh-files-all {
+    --oh-files-gap: var(--s2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-file-kind {
+    border-radius: 0;
+  }
+}

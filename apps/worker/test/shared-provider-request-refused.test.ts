@@ -11,7 +11,7 @@ import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
+import { applyMetaRequests, driveOutstandingRequests } from "@ohmail/organizer/request-drain";
 
 /**
  * A REQUEST FOR EVERYONE AT A SHARED PROVIDER IS REFUSED BY THE ORGANIZER (mail 0148, acceptance 11).
@@ -110,7 +110,7 @@ describe("the key writer's belt, under every validator", () => {
         senderCheck: "none", nativeLocator: { folder: "ohmail/Screener", ref: `1:${randomUUID().slice(0, 6)}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;
     };

@@ -181,7 +181,7 @@ describe("the real service, over HTTP, on the paths that need no mailbox fixture
       .fromSecret(Buffer.alloc(32, 7)).encrypt("pw");
     const { mailboxCredentials } = await import("@trafficflow/db");
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId, accountId: s.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "imap.example", port: 993, secure: true, user: "u" },
     });
     const { auditLog, PROFILE_FOUND_AUDIT_ACTION } = await import("@trafficflow/db");
@@ -217,7 +217,7 @@ describe("the real service, over HTTP, on the paths that need no mailbox fixture
     const s = await seedSession(db, { now: FIXED_NOW });
     const mailboxId = await seedMailbox(db, { accountId: s.accountId });
     const { auditLog, mailboxCredentials, PROFILE_FOUND_AUDIT_ACTION } = await import("@trafficflow/db");
-    await db.insert(mailboxCredentials).values({ mailboxId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
+    await db.insert(mailboxCredentials).values({ mailboxId, accountId: s.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
     const fingerprint = "e".repeat(64);
     await db.insert(auditLog).values({
       accountId: s.accountId, action: PROFILE_FOUND_AUDIT_ACTION,

@@ -150,7 +150,7 @@ describe("a sign-in retires the family its jar's resume marker names", () => {
         const late = await renew(deps, refresh);
         expect(`${late.status} ${await codeOf(late)}`, "the browser's earlier family still renews").toBe("401 refresh_revoked");
         expect(((await late.json()) as { error: { details?: unknown } }).error.details).toBeUndefined();
-        expect(cleared(late)).toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+        expect(cleared(late)).toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
       }
       expect(await trail(db, await userOf(first), "refresh_reuse_revoked"), "a retired family was swept").toEqual([]);
       expect((await renew(deps, setCookieMap(again).tf_refresh!)).status, "the new sign-in does not renew").toBe(204);
@@ -351,9 +351,11 @@ describe("a busy refresh door says a replay is safe", () => {
   });
 
   it("the statement is the refresh door's and the send's alone, and absent it a public write stays not-retryable", () => {
-    // The send's reservation deduplicates every replay of its key, so a busy pool may invite one.
+    // The send's reservation deduplicates every replay of its key, so a busy pool may invite one. An
+    // invitation's answer is that send, under the press's key. A phone app's handoff rotates as the refresh door
+    // does, under the same attempt's name, and answers a replay of it the same way.
     expect(apiRoutes.filter((r) => r.options?.replaySafe).map((r) => `${r.method} ${r.pattern}`).sort())
-      .toEqual(["POST /auth/refresh", "POST /drafts/:id/send"]);
+      .toEqual(["POST /auth/refresh", "POST /drafts/:id/send", "POST /messages/:id/invitation/answer", "POST /pair/handoff"]);
     const post = req("POST", "/auth/login", { body: "{}" });
     const body = async (r: Response) => ((await r.json()) as { error: { retryable?: boolean } }).error.retryable;
     return Promise.all([
@@ -405,7 +407,7 @@ describe("every server reader takes both cookie spellings, and the server still 
     const res = await H(req("POST", "/auth/refresh", { cookie: `__Host-tf_refresh=${refresh}`, body: "{}" }), deps);
     expect(res.status, await res.clone().text()).toBe(204);
     const names = Object.keys(setCookieMap(res)).sort();
-    expect(names).toEqual(["tf_csrf", "tf_refresh", "tf_resume", "tf_session"]);
+    expect(names).toEqual(["tf_csrf", "tf_family", "tf_refresh", "tf_resume", "tf_session"]);
     expect(res.headers.getSetCookie().some((c) => /domain=/i.test(c)), "a cookie grew a Domain=").toBe(false);
   });
 });
@@ -413,7 +415,8 @@ describe("every server reader takes both cookie spellings, and the server still 
 /* ── THE CENSUS: the refresh credential has one reader ─────────────────────────────────────── */
 
 const REPO = join(import.meta.dirname, "..", "..", "..");
-const SERVER_ROOTS = ["packages/api/src", "packages/services/src", "apps/api-vercel/src"];
+// `apps/server/src` holds the API program both doors serve; the function door's own files are thin.
+const SERVER_ROOTS = ["packages/api/src", "packages/services/src", "apps/api-vercel/src", "apps/server/src"];
 /** The NAME in code, any spelling a reader could use; its one type declaration is not a read. */
 const REFRESH_NAME = /["'`](?:__Host-)?tf_refresh["'`]|\.tf_refresh\b|__Host-tf_refresh/g;
 const NAME_DECLARATION = /export type CredentialCookie\b/;

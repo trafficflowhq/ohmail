@@ -1,0 +1,11 @@
+{
+  "extends": "../../tools/tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist", "rootDir": "src",
+    "module": "ESNext", "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src"],
+  "references": [{ "path": "../client-engine" }, { "path": "../app-logic" }, { "path": "../ui" }, { "path": "../tokens" }, { "path": "../core" }]
+}

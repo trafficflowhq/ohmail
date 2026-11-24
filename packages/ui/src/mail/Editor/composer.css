@@ -1,0 +1,459 @@
+/* A letter being written: a sheet with the ink ring, and in it the editor as one box: the marks on a quiet strip at its
+   top, the text under them, the signature, the files, and the foot. The box's line darkens while it has the keys. */
+@layer oh {
+  .oh-composer {
+    --oh-composer-ring: inset 0 0 0 2px var(--ink);
+    --oh-composer-line: var(--oh-ring-ctl);
+    --oh-composer-line-on: inset 0 0 0 var(--oh-hair) var(--ink);
+    --oh-composer-line-drop: inset 0 0 0 2px var(--ink);
+    --oh-composer-under: 0 var(--oh-hair) 0 var(--line);
+    --oh-composer-gap: 2px;
+    --oh-composer-hair-h: 18px;
+    --oh-composer-faint: 0.55;
+    --oh-composer-text-min: 128px;
+    --oh-composer-run: 2px;
+    --oh-composer-layer: 1;
+    --oh-soft: var(--soft-sheet);
+
+    box-sizing: border-box;
+    margin-top: var(--gap);
+    padding: var(--s5) var(--sheet-pad);
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--oh-composer-ring);
+    transform-origin: 50% 0;
+  }
+
+  .oh-composer:first-child {
+    margin-top: 0;
+  }
+
+  /* On its way: the ink ring steps back to a sheet's own. */
+  .oh-composer[data-going] {
+    --oh-composer-ring: 0 0 0 var(--ringw) var(--ring);
+  }
+
+  .oh-composer-editor {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--r-row);
+  }
+
+  .oh-composer-editor::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: var(--oh-composer-line);
+    pointer-events: none;
+    transition: box-shadow var(--d-hover) var(--e-std);
+  }
+
+  .oh-composer-editor:focus-within::after {
+    box-shadow: var(--oh-composer-line-on);
+  }
+
+  .oh-composer-marks {
+    display: flex;
+    align-items: center;
+    gap: var(--oh-composer-gap);
+    padding: var(--s1) var(--s2);
+    overflow-x: auto;
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-composer-under);
+    color: var(--ink2);
+    scrollbar-width: none;
+  }
+
+  .oh-composer-editor:focus-within > .oh-composer-marks,
+  .oh-composer-editor:focus-within > .oh-composer-foot {
+    color: var(--ink);
+  }
+
+  .oh-composer-hair {
+    flex: none;
+    width: var(--oh-hair);
+    height: var(--oh-composer-hair-h);
+    margin: 0 var(--s1);
+    background: var(--ctl-ring);
+    opacity: var(--oh-composer-faint);
+  }
+
+  .oh-composer-mark {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: var(--h-s);
+    height: var(--h-s);
+    padding: 0 var(--s2);
+    border-radius: var(--r-pill);
+    font-weight: var(--w-bold);
+    line-height: var(--oh-lh-tight);
+    transition: background-color var(--d-fade) var(--e-std);
+  }
+
+  .oh-composer-mark:hover {
+    background: var(--hover);
+  }
+
+  .oh-composer-mark:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  .oh-composer-mark:is([aria-pressed="true"], [aria-expanded="true"]) {
+    background: var(--sheet);
+    box-shadow: var(--oh-ring-ctl);
+    color: var(--ink);
+  }
+
+  .oh-composer-mark:disabled {
+    background: transparent;
+    color: var(--on-off);
+  }
+
+  /* A letter that stands for a mark is drawn the way the mark draws text. */
+  .oh-composer-glyph {
+    --oh-composer-under-offset: 0.14em;
+  }
+
+  .oh-composer-glyph[data-as="bold"] {
+    font-weight: var(--w-display);
+  }
+
+  .oh-composer-glyph[data-as="italic"] {
+    font-style: italic;
+  }
+
+  .oh-composer-glyph[data-as="underline"] {
+    text-decoration: underline;
+    text-underline-offset: var(--oh-composer-under-offset);
+  }
+
+  .oh-composer-glyph[data-as="strike"] {
+    text-decoration: line-through;
+  }
+
+  /* The text: the app's editor stands in the letter's measure, at the reading size. */
+  .oh-composer-text {
+    position: relative;
+    max-width: var(--measure);
+    min-height: var(--oh-composer-text-min);
+    padding: var(--s3) var(--s4);
+    color: var(--ink);
+    font-size: var(--t-read);
+    line-height: var(--lh-read);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    text-wrap: pretty;
+    cursor: text;
+  }
+
+  /* The box a screen reader calls the text is the padded one: a press on its edge lands in the text, and what
+     measures the text measures what is drawn. Where the app's editor stands its root or a plain text box here,
+     that box keeps the text's air and its least height, and the room around it holds none of its own. The two
+     names are said one by one: not every reader of a sheet reads a list of names inside `:has()`. */
+  .oh-composer-text[data-preview],
+  .oh-composer-text:has(.oh-lettertext),
+  .oh-composer-text:has(.oh-lettertext-plain) {
+    padding: 0;
+  }
+
+  .oh-composer-text .oh-lettertext,
+  .oh-composer-text .oh-lettertext-plain {
+    box-sizing: border-box;
+    min-height: var(--oh-composer-text-min);
+    padding: var(--s3) var(--s4);
+  }
+
+  /* The words for a text not yet written: on the text's first line, in the second ink, and never in a press's way.
+     They are drawn from what is handed and written nowhere, so nothing that reads the page's text finds them. */
+  .oh-composer-placeholder {
+    position: absolute;
+    top: var(--s3);
+    right: var(--s4);
+    left: var(--s4);
+    color: var(--ink2);
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .oh-composer-placeholder::before {
+    content: attr(data-words);
+  }
+
+  .oh-composer-signature {
+    --oh-composer-tool: calc((var(--t-read) * var(--lh-read) - var(--h-s)) / 2);
+
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--s2);
+    padding: 0 var(--s2) var(--s3) var(--s4);
+    color: var(--ink2);
+    font-size: var(--t-read);
+    line-height: var(--lh-read);
+  }
+
+  .oh-composer-signed {
+    max-width: var(--measure);
+    white-space: pre-wrap;
+  }
+
+  .oh-composer-signed[role="textbox"] {
+    flex: 1;
+    min-width: 0;
+    border-radius: var(--r-sq);
+    outline: none;
+    cursor: text;
+  }
+
+  .oh-composer-signed[role="textbox"]:hover,
+  .oh-composer-signed[role="textbox"]:focus {
+    color: var(--ink);
+  }
+
+  .oh-composer-signature > .oh-button {
+    margin-top: var(--oh-composer-tool);
+    color: var(--ink2);
+  }
+
+  /* A formatted signature stands as it will be sent and is no field. The way to its words and the way off stand at
+     its end, and go under it where the line is too short for both. */
+  .oh-composer-signature[data-formatted] {
+    --oh-composer-signed-least: 14em;
+
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .oh-composer-signature[data-formatted] > .oh-composer-signed {
+    flex: 1 1 var(--oh-composer-signed-least);
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+
+  .oh-composer-signacts {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-composer-gap);
+    max-width: 100%;
+    margin-top: var(--oh-composer-tool);
+  }
+
+  .oh-composer-signacts > .oh-button {
+    color: var(--ink2);
+  }
+
+  /* Files: the tile a received file has, inside the editor's box. */
+  .oh-composer-files {
+    padding: 0 var(--s3) var(--s2);
+  }
+
+  .oh-composer-files > .oh-files {
+    margin-top: 0;
+  }
+
+  .oh-composer-files > .oh-files + .oh-files,
+  .oh-composer-files > .oh-files + .oh-composer-fileshead {
+    margin-top: var(--s2);
+  }
+
+  .oh-composer-fileshead {
+    padding: 0 var(--s1) var(--s1);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-composer-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--oh-composer-gap);
+    padding: var(--s1) var(--s2) var(--s2);
+    color: var(--ink2);
+    container-type: inline-size;
+  }
+
+  .oh-composer-foot > .oh-composer-hair {
+    margin: 0 var(--s2);
+  }
+
+  .oh-composer-format,
+  .oh-composer-emoji {
+    flex: none;
+    display: inline-flex;
+  }
+
+  .oh-composer-format > .oh-button {
+    --oh-button-pad: 0 var(--s2);
+
+    min-width: var(--h-s);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-composer-format > .oh-button[aria-pressed="true"] {
+    background: var(--soft-sheet);
+    box-shadow: none;
+    color: var(--ink);
+  }
+
+  .oh-composer-foot .oh-button:disabled {
+    background: transparent;
+    color: var(--on-off);
+  }
+
+  /* While it drafts: the text is held and gives way, and a line runs along the editor's top. */
+  .oh-composer[data-drafting] .oh-composer-text {
+    color: var(--ink2);
+    cursor: default;
+  }
+
+  .oh-composer[data-drafting] .oh-composer-editor::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: var(--oh-composer-layer);
+    height: var(--oh-composer-run);
+    background: var(--hot);
+    transform-origin: 0 50%;
+    animation: oh-composer-run calc(var(--d-pull) * 2) var(--e-move) both;
+    pointer-events: none;
+  }
+
+  .oh-composer-text[data-preview] > :not(.oh-composer-preview) {
+    display: none;
+  }
+
+  .oh-composer-preview {
+    padding: var(--s3) var(--s4);
+  }
+
+  .oh-composer-preview:empty::before {
+    content: "";
+    display: block;
+    block-size: 3lh;
+    background:
+      linear-gradient(var(--off), var(--off)) 0 0.25lh / 38% 0.5lh no-repeat,
+      linear-gradient(var(--off), var(--off)) 0 1.25lh / 86% 0.5lh no-repeat,
+      linear-gradient(var(--off), var(--off)) 0 2.25lh / 64% 0.5lh no-repeat;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .oh-composer[data-drafting] .oh-composer-editor::before {
+      animation: none;
+    }
+  }
+
+  @keyframes oh-composer-run {
+    from {
+      transform: scaleX(0);
+    }
+
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  /* A file held over the letter: the editor's line turns to ink and the clip is filled. */
+  .oh-composer[data-dropping] .oh-composer-editor::after {
+    box-shadow: var(--oh-composer-line-drop);
+  }
+
+  .oh-composer[data-dropping] .oh-attach > .oh-button {
+    background: var(--solid);
+    box-shadow: none;
+    color: var(--on-solid);
+  }
+
+  /* ohmarchy: hairlines inside, rings outside. The editor is a box of one line with its marks inside. */
+  :root[data-face="ohmarchy"] .oh-composer {
+    --oh-composer-ring: 0 0 0 2px var(--focus);
+    --oh-composer-line: var(--oh-ring-btn);
+    --oh-composer-line-on: inset 0 0 0 var(--oh-hair) var(--hot);
+    --oh-composer-under: 0 var(--oh-hair) 0 var(--line-soft);
+    --oh-composer-over: 0 calc(var(--oh-hair) * -1) 0 var(--line-soft);
+  }
+
+  :root[data-face="ohmarchy"] .oh-composer[data-going] {
+    --oh-composer-ring: 0 0 0 var(--ringw) var(--ring);
+  }
+
+  :root[data-face="ohmarchy"] .oh-composer-editor {
+    border-radius: 0;
+  }
+
+  :root[data-face="ohmarchy"] .oh-composer-marks {
+    background: transparent;
+  }
+
+  :root[data-face="ohmarchy"] .oh-composer-mark {
+    font-weight: var(--w-text);
+  }
+
+  :root[data-face="ohmarchy"] .oh-composer-mark:is([aria-pressed="true"], [aria-expanded="true"]) {
+    box-shadow: none;
+  }
+
+  :root[data-face="ohmarchy"] .oh-composer-foot {
+    padding-top: var(--s1);
+    padding-bottom: var(--s1);
+    box-shadow: var(--oh-composer-over);
+  }
+
+  /* A new message alone in its column: in ohmarchy, beside the phone, its text fills the column down to the foot. The
+     column it stands in lays its sheets out as a column. */
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] {
+    flex: 1 0 auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] > .oh-composer-editor {
+    flex: 1 0 auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] .oh-composer-text {
+    flex: 1 0 auto;
+    max-width: none;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"])
+    .oh-composer[data-fill]
+    .oh-composer-text:has(.oh-lettertext) {
+    display: grid;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] .oh-lettertext {
+    min-height: 100%;
+  }
+
+  /* Under a finger the marks are a line that travels sideways, its far end fading where more waits. */
+  :root[data-touch="1"] .oh-composer-marks {
+    --oh-composer-fade: 28px;
+
+    padding-right: var(--s5);
+    mask-image: linear-gradient(90deg, var(--ink) calc(100% - var(--oh-composer-fade)), transparent);
+  }
+
+  /* The phone's foot is four controls wide: the line between the clip and the rest takes less room. */
+  :root[data-device="phone"] .oh-composer-foot > .oh-composer-hair {
+    margin: 0 var(--s1);
+  }
+}
+
+.oh-sheet[data-writing-keyboard] .oh-composer-editor {
+  --oh-composer-text-min: 3lh;
+}
+
+.oh-sheet[data-writing-keyboard] .oh-lettertext-plain {
+  max-block-size: max(3lh, calc(var(--write-room) / 2));
+  overflow-y: auto;
+}

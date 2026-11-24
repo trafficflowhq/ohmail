@@ -1,4 +1,4 @@
-import type { EngineMutation } from "./types.js";
+import type { EngineMutation } from "@ohmail/wire";
 
 /**
  * `PATCH /messages` takes at most 200 ids and answers 413 above that (the route's

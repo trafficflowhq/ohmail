@@ -1,0 +1,143 @@
+/* The Screener's layout and the progress it reports. */
+.sc-next-sender {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.sc-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.sc-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sc-tools {
+  --oh-soft: var(--soft-sheet);
+
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--oh-layer-raised);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+  min-block-size: var(--group);
+  padding-inline-end: var(--s3);
+  background: var(--sheet);
+}
+.sc-tool-heading {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  white-space: nowrap;
+}
+.sc-tools > [data-kind] {
+  margin-block-start: var(--s1);
+}
+.sc-tools > [data-bare] {
+  color: var(--ink2);
+}
+:root[data-device="phone"] .sc-tools {
+  padding-inline-end: var(--s2);
+}
+:root[data-device="phone"][data-face="ohmarchy"] .sc-scroll {
+  margin-block-start: var(--ringw);
+}
+:root[data-device="phone"][data-face="ohmarchy"] .sc-tools {
+  padding-inline: var(--s2);
+}
+.sc-sentence-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+}
+.sc-suggest-content {
+  min-inline-size: min(calc(288px - 2 * var(--s2)), calc(100vw - 4 * var(--s2)));
+}
+.sc-suggest-size {
+  padding: var(--s1) var(--s2) var(--s2);
+}
+.sc-suggest-content > .sc-progress {
+  padding: var(--s1) var(--s3) var(--s2);
+}
+.sc-suggest-copy {
+  padding: 0 var(--s3) var(--s3);
+  font-weight: var(--w-mid);
+  font-variant-numeric: tabular-nums;
+}
+.sc-suggest-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+  padding: 0 var(--s2) var(--s2);
+}
+.sc-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--ink2);
+  font-size: var(--t-meta);
+  font-variant-numeric: tabular-nums;
+}
+.sc-tools > .sc-progress:not([data-inline]) {
+  flex-basis: 100%;
+}
+.sc-progress-track {
+  appearance: none;
+  inline-size: 120px;
+  max-inline-size: 40%;
+  block-size: var(--s1);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--line);
+  overflow: hidden;
+}
+.sc-progress-track::-webkit-progress-bar {
+  background: var(--line);
+}
+.sc-progress-track::-webkit-progress-value {
+  border-radius: var(--r-pill);
+  background: var(--hot);
+}
+.sc-progress-track::-moz-progress-bar {
+  border-radius: var(--r-pill);
+  background: var(--hot);
+}
+.sc-held-letters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+.sc-primer {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  contain: strict;
+}
+/* The place's notices stand in the list's own inset, as its rows do. */
+.sc-notices {
+  padding-inline: var(--s2);
+}
+/* With everyone decided the mark stands in the middle of the reading column, as a blank column's words do. */
+.sc-all-decided {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+}
+
+:root[data-device="phone"] .sc-mailbox-badge {
+  max-inline-size: 33.333%;
+  min-inline-size: 0;
+  flex: 0 1 auto;
+}

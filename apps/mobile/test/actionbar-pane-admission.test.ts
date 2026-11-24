@@ -33,7 +33,7 @@
  */
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { DECKS } from "../src/copy";
 import {
@@ -65,23 +65,48 @@ let webOrder: { id: string; seg: string | null }[];
 /** bar-density's verb tokens → this app's `ReaderVerbId`s — the census's own map. */
 const NAME: Record<string, string> = { rall: "replyAll", fwd: "forward", screen: "screening" };
 beforeAll(async () => {
-  const url = pathToFileURL(join(APP, "..", "webapp", "app", "shell", "bar-density.ts")).href;
-  const density = (await import(url)) as {
+  const densityPath = resolve(APP, "../../packages/app-logic/src/lists/bar-density.ts");
+  const density = (await import(densityPath)) as {
     admitVerbs: typeof webAdmit;
     BAR_VERB_ORDER: readonly { verb: string; seg: string | null }[];
   };
   webAdmit = density.admitVerbs;
   webOrder = density.BAR_VERB_ORDER.map((v) => ({ id: NAME[v.verb] ?? v.verb, seg: v.seg }));
+  const fitPath = resolve(APP, "../../packages/ui/src/mail/Reading/fit-panel.ts");
+  webFit = ((await import(fitPath)) as { fitPanel: (wrap: unknown) => string[] }).fitPanel;
 });
+
+/* ── the web's floor: the new reader's action panel (`packages/app/src/reader/actions/panel-verbs.ts`)
+      hands the kit each verb's rank, and the kit's fold (`fitPanel`) folds only a rank above 0.
+      Forward's rank is read off the panel's verb list; the kit's own fold is then run over a row
+      with no room, Forward and one foldable verb in it, as fake nodes carrying the data the
+      panel's buttons carry. ───────────────────────────────────────────────────────────────── */
+let webFit: (wrap: unknown) => string[];
+function webForwardFolds(): boolean {
+  const panel = read("../../packages/app/src/reader/actions/panel-verbs.ts");
+  const hit = panel.match(/id: "forward",[^}]*?rank: (\d+),/);
+  expect(hit, "the web panel stands no Forward").not.toBeNull();
+  const node = (id: string, rank: string) => ({ hidden: false, dataset: { id, rank, signed: "" } as Record<string, string> });
+  const verbs = [node("forward", hit![1]!), node("later", "2")];
+  const bar = {
+    querySelectorAll: (sel: string) => (sel === "[data-rank]" ? verbs : []),
+    querySelector: () => null,
+    get scrollWidth() {
+      return verbs.filter((v) => !v.hidden).length * 100;
+    },
+  };
+  const folded = webFit({ firstElementChild: bar, clientWidth: 1 });
+  return folded.includes("forward") || verbs[0]!.hidden;
+}
 
 /* ── the width fixture: en labels × the measured metric + the component's chrome ──────────── */
 const CHAR_DP = 6.95;
 const en = DECKS.en;
 /** Which bar verbs render an icon, read off `barSpec`'s own case lines — never a copy here. */
 const SPEC = [...read("src/ui/MessageActions.tsx").matchAll(
-  /case "(\w+)": return \{ id,( icon: "\w+",)? label: Copy\.(\w+)/g,
+  /case "(\w+)": return \{ id,([^{}\n]*?)label: Copy\.(\w+)/g,
 )].reduce<Record<string, { iconed: boolean; key: string }>>((m, hit) => {
-  m[hit[1]!] = { iconed: hit[2] !== undefined, key: hit[3]! };
+  m[hit[1]!] = { iconed: /\bicon:/.test(hit[2]!), key: hit[3]! };
   return m;
 }, {});
 const capsuleW = (label: string, iconed: boolean) => label.length * CHAR_DP + 24 + (iconed ? 18 : 0);
@@ -107,11 +132,11 @@ function widthsTable(): Record<string, number> {
 
 /** The verbs with their segments, in the desktop's row order — derived above. Forward is the web
  *  bar's FLOOR (DESIGN-026 §2.1): out of the admission order, standing after Reply all
- *  (`MessagePane.tsx`), so the web ROW is the order with Forward in that seat — the reader-verbs
+ *  (the new reader's panel: rank 0, which the kit's fold never folds), so the web ROW is the order with Forward in that seat — the reader-verbs
  *  census's own derivation. */
 function liteVerbs(): BarVerbLite[] {
   expect(webOrder.map((v) => v.id), "Forward is admissible on the web again — it would fold").not.toContain("forward");
-  expect(read("../webapp/app/shell/MessagePane.tsx"), "the web bar's Forward is no longer a floor group").toContain('className="abar-g abar-fwd"');
+  expect(webForwardFolds(), "the web bar's Forward is no longer a floor group").toBe(false);
   const row = [...webOrder];
   row.splice(row.findIndex((v) => v.id === "replyAll") + 1, 0, { id: "forward", seg: null });
   expect(barIds, "the bar's standing set drifted from the webapp's row").toEqual(row.map((v) => v.id));

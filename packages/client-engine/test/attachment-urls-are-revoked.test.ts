@@ -1,7 +1,8 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { OhmailEngine } from "../src/engine.js";
 import { ObjectUrlLedger } from "../src/object-urls.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * Minting an object URL and owing its revocation are ONE act.

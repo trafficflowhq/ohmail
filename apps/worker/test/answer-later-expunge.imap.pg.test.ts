@@ -1,23 +1,21 @@
+import type { MessageStateDTO } from "@ohmail/wire";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { ImapFlow } from "imapflow";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable, serviceUp } from "@trafficflow/db/testing";
 import { accounts, contacts, mailboxes, messages, type Tx } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { SyncService, TriageService, type ServiceContext } from "@trafficflow/services";
-import { MemoryMirrorStore, triagePiles, type MessageStateDTO } from "@ohmail/client-engine";
-import { runSyncCycle } from "../src/sync.js";
-import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
-import { greenmailPorts } from "./_greenmail-ports.js";
-import { DB_URL, refuseDriftedSharedDb } from "./_workerdb.js";
+import { SyncService, TriageService, type ServiceContext, dbFor, type Db as ServicesDb } from "@trafficflow/services";
+import { MemoryMirrorStore, triagePiles } from "@ohmail/client-engine";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FIXTURE_DOOR, FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { greenmailPorts } from "../../../packages/organizer/test/_greenmail-ports.js";
+import { DB_URL, refuseDriftedSharedDb } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * A LETTER DELETED ON THE MAIL SERVER LEAVES ANSWER LATER, the Cloud door's shape:
@@ -29,10 +27,10 @@ import { DB_URL, refuseDriftedSharedDb } from "./_workerdb.js";
  */
 
 const PG_UP = await realPgAvailable();
-const sql = postgres(DB_URL, { max: 4, onnotice: () => {} });
-const db = brandDialect(drizzle(sql, { schema }), "pg") as unknown as Tx;
+const owned = makeOwnedDb(DB_URL);
+const db = owned.db as unknown as Tx;
 beforeAll(async () => { if (PG_UP) { await refuseDriftedSharedDb(); await runMigrations(DB_URL); } }, 120_000);
-afterAll(async () => { await sql.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); });
 
 const closers: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const c of closers.splice(0)) await c().catch(() => undefined); });
@@ -93,7 +91,7 @@ describe.skipIf(!PG_UP || !GM_UP)("Answer Later forgets a letter the server dele
       if (max === 1) return 1;
       throw new Error(`the drain did not settle in ${max} cycles`);
     };
-    const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => new Date(), requestId: "r33-05" };
+    const ctx: ServiceContext = { db: dbFor(db as unknown as ServicesDb, accountId), accountId, userId: null, now: () => new Date(), requestId: "r33-05" };
     const idOf = async (mid: string) => (await db.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.mailboxId, mailboxId), eq(messages.messageIdHeader, mid))))[0]!.id;
     const mirror = new MemoryMirrorStore();

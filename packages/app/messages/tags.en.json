@@ -1,0 +1,73 @@
+{
+  "tag": {
+    "metaCount": "{count, plural, one {1 message} other {# messages}}",
+    "emptyTitle": "Nothing carries this tag yet.",
+    "emptyHint": "Press <kbd>t</kbd> on a message to add it.",
+    "toastTagged": "{name}",
+    "toastUntagged": "Tag off",
+    "pickerPlaceholder": "Tag this message…",
+    "pickerNone": "No tags yet.",
+    "pickerFoot": "↵ toggles",
+    "pickerAria": "Tag",
+    "pickerTitle": "Tag",
+    "pickerCreate": "Create “{name}”",
+    "newPlaceholder": "Name a new tag…",
+    "newTaken": "You already have a tag called “{name}”.",
+    "toastCreated": "Tag “{name}” created.",
+    "toastRenamed": "Renamed to “{name}”.",
+    "toastDeleted": "Tag “{name}” deleted.",
+    "notOnServer": "Tags are stored by ohmail, not in your mailbox. Your folders are real IMAP folders and survive if you leave; tags don’t — erasing your account erases them.",
+    "toastTaggedMany": "Tagged {count, plural, one {1 message} other {# messages}} “{name}”.",
+    "toastUntaggedMany": "Untagged {count, plural, one {1 message} other {# messages}} “{name}”.",
+    "manageAria": "Manage this tag",
+    "rename": "Rename",
+    "delete": "Delete",
+    "save": "Save",
+    "cancel": "Cancel",
+    "renameAria": "Rename tag",
+    "deleteAsk": "Delete “{name}”?",
+    "deleteWhat": "{count, plural, =0 {Nothing carries it. } one {It's on 1 of your messages. } other {It's on # of your messages. }}The messages stay where they are."
+  },
+  "tags": {
+    "title": "Tags",
+    "loading": "Loading your tags",
+    "gone": "This tag is gone",
+    "empty": {
+      "none": "Nothing tagged",
+      "tag": "Nothing tagged"
+    },
+    "count": {
+      "tags": "{count, plural, one {1 tag} other {# tags}}",
+      "letters": "{count, plural, one {1 message} other {# messages}}"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "row": {
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "menu": {
+      "rename": "Rename",
+      "delete": "Delete"
+    },
+    "rename": {
+      "field": "Name",
+      "save": "Save",
+      "cancel": "Cancel",
+      "taken": "You already have a tag called {name}."
+    },
+    "delete": {
+      "title": "Delete {name}.",
+      "stay": "{count, plural, one {1 message carries it and stays where it is.} other {# messages carry it and stay where they are.}}",
+      "nothing": "Nothing carries it.",
+      "confirm": "Delete",
+      "cancel": "Cancel"
+    },
+    "list": {
+      "menu": "List"
+    }
+  }
+}

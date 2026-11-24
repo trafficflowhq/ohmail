@@ -1,0 +1,49 @@
+{
+  "component": "Tag",
+  "state": "dots",
+  "look": "ohmarchy-dark-desktop",
+  "place": "cell",
+  "target": [30, 56, 204, 8],
+  "clip": [30, 56, 204, 8],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    { "backgroundColor": "oklch(0.74 0.11 25)" },
+    { "backgroundColor": "oklch(0.74 0.11 42)" },
+    { "backgroundColor": "oklch(0.74 0.11 78)" },
+    { "backgroundColor": "oklch(0.74 0.11 112)" },
+    { "backgroundColor": "oklch(0.74 0.11 150)" },
+    { "backgroundColor": "oklch(0.74 0.11 196)" },
+    { "backgroundColor": "oklch(0.74 0.11 250)" },
+    { "backgroundColor": "oklch(0.74 0.11 318)" }
+  ],
+  "nodes": [],
+  "loose": {
+    "text": [],
+    "surfaces": [
+      { "box": [0, 0, 8, 8], "paint": 0 },
+      { "box": [28, 0, 8, 8], "paint": 1 },
+      { "box": [56, 0, 8, 8], "paint": 2 },
+      { "box": [84, 0, 8, 8], "paint": 3 },
+      { "box": [112, 0, 8, 8], "paint": 4 },
+      { "box": [140, 0, 8, 8], "paint": 5 },
+      { "box": [168, 0, 8, 8], "paint": 6 },
+      { "box": [196, 0, 8, 8], "paint": 7 }
+    ]
+  }
+}

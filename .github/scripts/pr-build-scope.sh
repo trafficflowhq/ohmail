@@ -41,7 +41,7 @@ inert() {
 shared() {
   case "$1" in
     apps/sidecar/* | apps/worker/* | packages/* | patches/* | scripts/*) return 0 ;;
-    package.json | package-lock.json | tsconfig*.json) return 0 ;;
+    package.json | package-lock.json | tsconfig*.json | tools/tsconfig*.json | test/tsconfig.test-dirs.json) return 0 ;;
     .github/scripts/pr-build-scope.sh | .github/scripts/retry-infra.sh | .gitattributes) return 0 ;;
   esac
   return 1
@@ -58,7 +58,7 @@ desktop() {
 android() {
   case "$1" in
     .github/workflows/android.yml | apps/mobile/*) return 0 ;;
-    .github/scripts/assert-*.sh | .github/scripts/firebase-inert-allowlist.txt) return 0 ;;
+    .github/scripts/assert-*.sh | .github/scripts/firebase-inert-allowlist.txt | .github/scripts/play-upload.mjs) return 0 ;;
   esac
   shared "$1"
 }
@@ -69,7 +69,10 @@ selfhost() {
     patches/* | scripts/apply-patches.mjs | scripts/bundle-host.mjs | scripts/engine-bundle.mjs) return 0 ;;
     apps/server/* | apps/worker/* | apps/webapp/*) return 0 ;;
     packages/core/* | packages/db/* | packages/db-mail/* | packages/services/* | packages/api/*) return 0 ;;
-    packages/client-engine/* | packages/fixtures/* | packages/tokens/* | packages/ui/*) return 0 ;;
+    packages/client-engine/* | packages/testing/* | packages/tokens/* | packages/ui/* | packages/wire/*) return 0 ;;
+    packages/app-logic/* | packages/app/* | packages/letter-body/*) return 0 ;;
+    packages/cal-core/* | packages/cal-providers/*) return 0 ;;
+    packages/organizer/*) return 0 ;;
     deploy/selfhost/* | .github/workflows/selfhost-smoke.yml | .github/scripts/selfhost-smoke.sh | .github/scripts/pr-build-scope.sh) return 0 ;;
   esac
   return 1

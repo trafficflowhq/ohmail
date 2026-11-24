@@ -1,17 +1,16 @@
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
-  FixturesAdapter,
   IndexedDbMirrorStore,
   MemoryMirrorStore,
   SqlMirrorStore,
   flattenResponse,
   triagePiles,
   type BaseMirrorStore,
-  type EngineMessage,
-  type MessageStateDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { sqlWorld } from "./helpers/node-sql-executor.js";
 
 /**

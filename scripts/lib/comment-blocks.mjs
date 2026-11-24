@@ -87,7 +87,9 @@ export const SWEPT_ROOTS = [
   "apps/admin/app", "apps/admin/lib", "apps/" + "admin/middleware.ts", "apps/api-vercel/src",
   "apps/webapp/app", "packages/api/src", "packages/client-engine/src", "packages/core/src",
   "packages/db-mail/src", "packages/db/src", "packages/services/src", "packages/ui/src",
-  "apps/mobile/app", "apps/mobile/src", "apps/desktop/src", "apps/sidecar/src", "apps/worker/src",
+  "apps/mobile/app", "apps/mobile/src", "apps/desktop/src", "apps/paired-page/src", "apps/sidecar/src", "apps/worker/src",
+  "packages/app-logic/src",
+  "packages/organizer/src",
 ];
 
 /** The `.mjs` script roots, walked non-recursively; the public-message store is not comment prose. */
@@ -104,7 +106,7 @@ export const TEST_ROOTS = [
   "apps/admin/test", "apps/api-vercel/test", "apps/webapp/test", "packages/api/test",
   "packages/client-engine/test", "packages/core/test", "packages/db-mail/test", "packages/db/test",
   "packages/services/test", "packages/ui/test", "apps/mobile/test", "apps/desktop/test",
-  "apps/sidecar/test", "apps/worker/test", "test",
+  "apps/sidecar/test", "apps/worker/test", "packages/organizer/test", "test",
 ];
 
 /**

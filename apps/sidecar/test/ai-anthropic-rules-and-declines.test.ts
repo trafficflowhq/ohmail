@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ModelDeclinedError, StaticKeyProvider } from "@trafficflow/core/mail";
 import type { ClassifierInput, DraftInput } from "@trafficflow/core/mail";
-import { ClassifierFaultError } from "@trafficflow/worker/classifier-fault";
+import { ClassifierFaultError } from "@ohmail/organizer/classifier-fault";
 import { createLocalAi, type LocalAi, type LocalAiOptions } from "../src/ai-provider.js";
 import { createSidecarLog } from "../src/log.js";
 import { FIXTURE_SHAPES, anthropicKey } from "../../../test/support/fixture-credentials.js";

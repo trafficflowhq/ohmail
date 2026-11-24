@@ -35,7 +35,7 @@
  * what is uncovered is its rendering.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -46,12 +46,6 @@ import { settleFirstPaint } from "./_first-paint.js";
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-/** A file under `apps/webapp`, whichever directory the runner was started in. */
-function readSource(rel: string): string {
-  const fromRoot = `apps/webapp/${rel}`;
-  return readFileSync(existsSync(fromRoot) ? fromRoot : rel, "utf8");
-}
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -98,7 +92,7 @@ afterEach(async () => {
 });
 
 async function mountCompose(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -123,16 +117,34 @@ async function mountCompose(): Promise<void> {
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 }
 
+/*
+ * OVER WRITE (the older tests' sorting): the shell is the new shell's test door (`MailShell`,
+ * `_todays-shell.js`'s old name of it) on the demo world, `#/compose` is Write's new letter. Its From line is found as a
+ * person finds it (`compose-from.test.ts`): the line labelled "From"; its chooser the button
+ * named "From <address>: choose another address" where there is a choice, else the address as words.
+ */
+/** The sentence beside the address where Write says it switched or substituted (Write's own words). */
+const SAID = [/^Switched to match the recipient's domain$/, /is disconnected, so this message sends from the address above\.$/];
+const isState = (el: Element): boolean => SAID.some((re) => re.test((el.textContent ?? "").trim()));
+const LETTER = '[role="region"][aria-label="New message"]';
+/** The From line of the letter on screen: the element its "From" label stands in. */
+const fromLine = (): HTMLElement | null =>
+  [...host!.querySelectorAll<HTMLElement>(`${LETTER} b`)].find((el) => el.textContent === "From")?.parentElement ?? null;
+/** The chooser, by its name: present only where there is a choice. */
+const fromChooser = (): HTMLButtonElement | null =>
+  [...host!.querySelectorAll<HTMLButtonElement>(`${LETTER} button`)].find((b) =>
+    /^From .+: choose another address$/.test(b.getAttribute("aria-label") ?? "")) ?? null;
+
 /** The From control, and the address a reader sees in it. */
 function sender(): { present: boolean; named: string; labelled: boolean } {
-  const control = host!.querySelector("#compose-from");
+  const line = fromLine();
+  const control = fromChooser()
+    ?? ([...(line?.children ?? [])] as HTMLElement[]).find((el) => el.tagName !== "B" && !isState(el)) ?? null;
   if (!control) return { present: false, named: "", labelled: false };
-  const named = control instanceof HTMLSelectElement
-    /* A selector names the address on its CHOSEN option — the value is a mailbox id, which is
-       not a thing anybody reads. */
-    ? (control.selectedOptions[0]?.textContent ?? "")
-    : (control.textContent ?? "");
-  const label = host!.querySelector('label[for="compose-from"]');
+  /* The chooser names the address it sends from (today's select named it on its CHOSEN option); the words name it
+     where there is no choice. */
+  const named = control.textContent ?? "";
+  const label = line?.querySelector("b");
   return { present: true, named: named.trim(), labelled: (label?.textContent ?? "").trim().length > 0 };
 }
 
@@ -159,9 +171,14 @@ describe("compose says which address it is sending from", () => {
     /* The rendered cases above cannot see this: `matchMedia` drives the app's own layout switch,
        not the browser's CSS. A `display: none` on the row or its region inside a `max-width`
        query is how this claim would come back — visible in every test and gone on a phone. */
-    const css = readSource("app/app.css");
+    /* Re-pointed by path: Write's From line is the kit's people head (`Recipients.tsx`, its line
+       `data-line="from"` in `.oh-recipients-line`, the address `.oh-recipients-static`), styled by the kit's own sheets;
+       today's `app.css` rules for `.compose-head` leave with today's composer. A narrow width is a media query or the
+       kit's container query. */
+    const css = ["recipients.css", "composer.css"]
+      .map((f) => readFileSync(`packages/ui/src/mail/Editor/${f}`, "utf8")).join("\n");
     const offenders: string[] = [];
-    for (const m of css.matchAll(/@media[^{]*max-width[^{]*\{/g)) {
+    for (const m of css.matchAll(/@(?:media|container)[^{]*max-width[^{]*\{/g)) {
       /* The block, taken by counting braces from the query's own opening one. */
       let depth = 0;
       let i = m.index! + m[0].length - 1;
@@ -175,7 +192,7 @@ describe("compose says which address it is sending from", () => {
       for (const rule of block.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
         const sel = (rule[1] ?? "").trim();
         const body = rule[2] ?? "";
-        if (!/\.compose-head\b|\.compose-from\b|#compose-from\b|\.c-static\b/.test(sel)) continue;
+        if (!/\.oh-recipients(?:-line|-static|-label)?\b|data-line="from"/.test(sel)) continue;
         if (/display\s*:\s*none/.test(body)) offenders.push(`${sel} { ${body.trim()} }`);
       }
     }

@@ -130,7 +130,8 @@ describe("the workspace rows name real modules, and the desktop keeps them", () 
       }
     }
     expect(missing).toEqual([]);
-    expect(Object.keys(aliases.WORKSPACE_MODULE_SUBSTITUTES)).toHaveLength(5);
+    // Six since a mailbox erasure's calendar step, which a phone's own store keeps none of.
+    expect(Object.keys(aliases.WORKSPACE_MODULE_SUBSTITUTES)).toHaveLength(6);
   });
 
   /* The DESKTOP engine's metafile, which `scripts/build-engine.mjs` writes: the real modules are
@@ -143,7 +144,7 @@ describe("the workspace rows name real modules, and the desktop keeps them", () 
     for (const real of [/^packages\/api\/(dist|src)\/routes\/health-markers\.(js|ts)$/,
       /^packages\/api\/(dist|src)\/routes\/events\.(js|ts)$/, /^packages\/db\/(dist|src)\/dialect\/pg\.(js|ts)$/,
       // The blank repair runs on the desktop: its pass and its store read are the real modules there.
-      /^apps\/worker\/(dist|src)\/blank-repair\.(js|ts)$/, /^packages\/core\/(dist|src)\/adapters\/blank-rows\.(js|ts)$/]) {
+      /^packages\/organizer\/(dist|src)\/blank-repair\.(js|ts)$/, /^packages\/core\/(dist|src)\/adapters\/blank-rows\.(js|ts)$/]) {
       expect(inputs.filter((p) => real.test(p)), String(real)).toHaveLength(1);
     }
     expect(inputs.filter((p) => p.startsWith("apps/sidecar/src/phone/"))).toEqual([]);
@@ -220,7 +221,7 @@ describe("the substitutes that are unreachable refuse by name", () => {
 
 describe("the duplicated send ceiling cannot drift", () => {
   it("is the same number the desktop uses", () => {
-    // `engine.ts` reads this constant into the send surface on every composition, host mode or not,
+    // `engine-press.ts` reads this constant into the send surface on every composition, host mode or not,
     // so the phone needs a value for it. It is duplicated BY VALUE rather than imported, because
     // importing it would bring the desktop's listener module into the phone's graph — which is the
     // thing the substitution exists to prevent. A duplicated constant is a drift hazard, so the
@@ -302,13 +303,15 @@ describe("the substitutes reach no Node builtin and open no socket", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("is not vacuous — it read eighteen real files with content in them", () => {
-    // A path list that stopped resolving would make both cases above pass over nothing. EIGHTEEN
-    // since the local door's certificate reader (`host-pin-probe.ts`), seventeen since the blank
+  it("is not vacuous — it read twenty real files with content in them", () => {
+    // A path list that stopped resolving would make both cases above pass over nothing. TWENTY
+    // since the desktop's store copies (`store-copies.ts`), nineteen
+    // since a mailbox erasure's calendar step (`calendar-erasure.ts`), eighteen since the local
+    // door's certificate reader (`host-pin-probe.ts`), seventeen since the blank
     // repair's two twins, fifteen since the desktop's streamed save (`attachment-file-route.ts`),
     // fourteen since the three workspace twins. The count moves with the table on purpose, so a row
     // that disappears is a red and not a silence.
-    expect(files).toHaveLength(18);
+    expect(files).toHaveLength(20);
     for (const file of files) {
       expect(readFileSync(file, "utf8").length, basename(file)).toBeGreaterThan(200);
     }

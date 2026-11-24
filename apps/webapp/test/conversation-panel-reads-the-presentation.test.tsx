@@ -9,7 +9,7 @@ import {
  * physically in INBOX, threaded into Lena's conversation by its headers, while the presentation holds
  * it: its sender is undecided, or a screened-out rule for them has landed and not been carried out.
  * The phone's reader (the presented mirror) leaves it out; the web panel and its attachment asks must
- * too. Mutation: point `AppShell`'s `conversationOf` back at `engine.read()` — the panel shows x2.
+ * too. Mutation: hand the reader the raw mirror (`engine.read()`) as its presented one: the panel shows x2.
  */
 
 const ME = "walker@example.invalid";
@@ -49,9 +49,9 @@ const click = async (el: Element | null | undefined, what: string): Promise<void
   await settle();
 };
 const rowOf = (host: HTMLElement, id: string): HTMLElement | null =>
-  host.querySelector<HTMLElement>(`[role="listbox"] .row[data-id="${id}"]`);
+  host.querySelector<HTMLElement>(`[role="listbox"] [role=option][data-id="${id}"]`);
 const panels = (host: HTMLElement): string[] =>
-  [...host.querySelectorAll<HTMLElement>(".read-col article.pm[data-conv-id]")].map((p) => p.dataset.convId!);
+  [...host.querySelectorAll<HTMLElement>('[role="region"][aria-label="Open message"] [data-conv-id]')].map((p) => p.dataset.convId!);
 /** The attachment-list asks the wire saw, by message id. */
 const listAsks = (id: string): number =>
   (globalThis.fetch as unknown as { mock: { calls: Array<[unknown]> } }).mock.calls
@@ -75,7 +75,7 @@ async function openWith(x2: Record<string, unknown>, extra: unknown[] = []): Pro
 }
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 

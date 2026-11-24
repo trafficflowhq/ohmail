@@ -1,0 +1,300 @@
+/* The reading column's head: it stays, on the ground's own colour, while the sheets scroll under it. */
+@layer oh {
+  .oh-readinghead {
+    --oh-readinghead-lh: 1.12;
+    --oh-head-up: 0px;
+    --oh-head-squares: 0px;
+    --oh-readinghead-top: calc(var(--s2) + var(--oh-hair));
+    --oh-readinghead-out: calc(var(--ringw) * -1);
+    /* Cover the scrollport's top padding without moving the subject. */
+    --oh-readinghead-inset: var(--oh-sheet-scroll-top, var(--ringw));
+    --oh-readinghead-out-top: calc(-1 * var(--oh-readinghead-inset));
+    --oh-readinghead-pad-top: calc(var(--oh-readinghead-top) + var(--oh-readinghead-inset));
+    --oh-readinghead-stick: calc(var(--oh-readinghead-out-top) - var(--oh-hair));
+    --oh-readinghead-layer: 2;
+    --oh-readinghead-short: 3ch;
+    --oh-readinghead-basis: 150px;
+    --oh-soft: var(--soft);
+    --oh-tag-ground: var(--soft);
+    --oh-under: var(--ground);
+    --oh-hover: var(--hover-ground);
+
+    position: sticky;
+    top: var(--oh-readinghead-stick);
+    z-index: var(--oh-readinghead-layer);
+    margin: var(--oh-readinghead-out-top) var(--oh-readinghead-out) 0;
+    padding: var(--oh-readinghead-pad-top) var(--sheet-pad) var(--s4);
+    background: var(--ground);
+  }
+
+  .oh-readinghead[data-under]:not([data-back])::after {
+    content: none;
+  }
+
+  .oh-readinghead[data-bare] {
+    padding-bottom: var(--s3);
+  }
+
+  .oh-readinghead-subject {
+    font-family: var(--f-display);
+    font-size: var(--t-head);
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz-l);
+    line-height: var(--oh-readinghead-lh);
+    letter-spacing: var(--track);
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+  }
+
+  .oh-readinghead-short {
+    display: none;
+  }
+
+  @media (max-height: 899px) {
+    :root:not([data-device="phone"]) .oh-readinghead:has(> .oh-readinghead-short) {
+      top: calc(-1 * var(--oh-hair) - var(--oh-head-up, 0px));
+      padding-bottom: var(--s3);
+    }
+    :root:not([data-device="phone"]) .oh-readinghead-short {
+      display: flex;
+      align-items: center;
+      position: absolute;
+      inset: auto var(--oh-head-squares) 0 0;
+      pointer-events: none;
+      height: var(--group);
+      padding: var(--s2) var(--s3) var(--s3) var(--sheet-pad);
+      background: var(--ground);
+      font-size: var(--t-title);
+      line-height: var(--oh-readinghead-lh);
+      visibility: hidden;
+    }
+    :root:not([data-device="phone"]) .oh-readinghead[data-back] .oh-readinghead-short {
+      visibility: visible;
+    }
+    :root:not([data-device="phone"]) .oh-readinghead[data-back] .oh-readinghead-subject {
+      opacity: 0;
+    }
+    :root:not([data-device="phone"]) .oh-readinghead[data-back] .oh-readinghead-byline > * {
+      visibility: hidden;
+    }
+    :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-readinghead-short {
+      padding-left: var(--oh-readinghead-lead);
+    }
+  }
+  .oh-readinghead-short-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .oh-readinghead-byline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    margin-top: var(--s2);
+    color: var(--ink2);
+  }
+
+  .oh-readinghead-byline > * {
+    flex: none;
+  }
+
+  .oh-readinghead[data-bare] .oh-readinghead-byline {
+    min-height: var(--h-s);
+    margin-top: 0;
+  }
+
+  .oh-readinghead-mailbox {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+  }
+
+  .oh-readinghead-mailbox::before {
+    content: "·";
+    margin-right: var(--s2);
+  }
+
+  .oh-readinghead-mailbox:first-child::before {
+    content: none;
+  }
+
+  /* Wider than a phone the line is one line: the names give way first, then the mailbox. */
+  :root[data-device="desktop"] .oh-readinghead-byline,
+  :root[data-face="ohmarchy"] .oh-readinghead-byline {
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  :root[data-face="ohmarchy"] .oh-readinghead-byline {
+    overflow: hidden;
+  }
+
+  :root[data-device="desktop"] .oh-readinghead-names,
+  :root[data-device="fold"] .oh-readinghead-sub .oh-readinghead-names,
+  :root[data-face="ohmarchy"] .oh-readinghead-names {
+    flex: 0 1 auto;
+    min-width: var(--oh-readinghead-short);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  :root[data-device="desktop"] .oh-readinghead-mailbox,
+  :root[data-face="ohmarchy"] .oh-readinghead-mailbox {
+    flex: 0 100 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* Under a sentence: who it is, the check's sign before the address that leads to the card; then why. Their
+     labels go to a second line on a narrow column; nothing is cut. */
+  .oh-readingline {
+    --oh-readingline-line: 2px;
+    --oh-readingline-under: 0.18em;
+    --oh-readingline-reach: -7px -3px -18px;
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    margin-top: var(--s2);
+    color: var(--ink2);
+  }
+
+  .oh-readingline > * {
+    flex: none;
+  }
+
+  .oh-readingline > .oh-readingline-check {
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+  }
+
+  .oh-readingline-check > .oh-icon {
+    flex: none;
+  }
+
+  .oh-readingline-person {
+    display: inline;
+    border-radius: var(--r-sq);
+    font-weight: var(--w-mid);
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  /* Only an address that opens the card answers the pointer and takes a finger's room: one that opens nothing is words. */
+  .oh-control.oh-readingline-person:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-thickness: var(--oh-readingline-line);
+    text-underline-offset: var(--oh-readingline-under);
+  }
+
+  :root[data-touch="1"] .oh-control.oh-readingline-person {
+    position: relative;
+  }
+
+  :root[data-touch="1"] .oh-control.oh-readingline-person::after {
+    content: "";
+    position: absolute;
+    inset: var(--oh-readingline-reach);
+  }
+
+  :root[data-face="ohmarchy"][data-touch="1"] .oh-readingline {
+    --oh-readingline-reach: -9px -3px -18px;
+  }
+
+  .oh-readingline-warns,
+  .oh-readingline-figure {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-readingline-figure {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Why: a size smaller, the sign and how sure it is at the first line's start, the reason folding beside them. */
+  .oh-readingline[data-why] {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: var(--s2);
+    margin-top: var(--s1);
+    font-size: var(--t-meta);
+  }
+
+  .oh-readingline[data-why] > .oh-readingline-reason {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: normal;
+  }
+
+  /* On touch the squares lie along the head, at the line's end. */
+  .oh-readinghead-sub {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+    min-width: 0;
+    margin-top: var(--s2);
+  }
+
+  .oh-readinghead-sub > .oh-readinghead-byline {
+    flex: 1 1 var(--oh-readinghead-basis);
+    min-width: 0;
+    margin-top: 0;
+  }
+
+  /* The unfolded phone, upright: the names take the first line, what follows wraps under them. */
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-readinghead-byline {
+    flex-wrap: wrap;
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-readinghead-sub > .oh-readinghead-byline {
+    display: contents;
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-readinghead-sub .oh-readinghead-names {
+    flex: 1 1 60%;
+    min-width: 0;
+  }
+
+  .oh-readinghead-sub > :last-child {
+    flex: none;
+    margin-left: auto;
+  }
+
+  .oh-readinghead[data-bare] .oh-readinghead-sub {
+    margin-top: 0;
+  }
+
+  /* A subject stands a step closer to the column's top on paper; a sentence keeps the head's own room. */
+  :root[data-face="paper"][data-device="desktop"] .oh-readinghead:not([data-bare], [data-sentence]) {
+    --oh-readinghead-top: calc(var(--s1) + var(--oh-hair));
+  }
+
+  /* On a phone it scrolls away with the sheets. */
+  :root[data-device="phone"] .oh-readinghead {
+    --oh-readinghead-inset: 0px;
+
+    position: static;
+    padding-top: 0;
+  }
+
+  /* ohmarchy keeps a hairline under it. */
+  :root[data-face="ohmarchy"] .oh-readinghead {
+    --oh-readinghead-lead: calc(var(--sheet-pad) + var(--ringw));
+    --oh-readinghead-lined: 0 var(--oh-hair) 0 var(--line);
+
+    padding-left: var(--oh-readinghead-lead);
+    box-shadow: var(--oh-readinghead-lined);
+  }
+}

@@ -27,38 +27,19 @@ const read = (p: string): string => readFileSync(fileURLToPath(new URL(p, import
 const code = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 const railNav = code(read("../../../packages/ui/src/composites/RailNav.tsx"));
-const shell = read("../app/shell/AppShell.tsx");
-const persisted = code(read("../app/shell/persisted-ui.ts"));
+const persisted = code(read("../../../packages/app-logic/src/storage/persisted-ui.ts"));
 
 describe("the Tags group remembers its collapse state", () => {
-  it("the webapp OWNS the state and persists it", () => {
-    expect(shell).toMatch(/usePersistedFlag\(UI_KEYS\.tagsOpen/);
-    expect(shell).toMatch(/open: tagsOpen/);
-    expect(shell).toMatch(/onOpenChange: setTagsOpen/);
-  });
-
-  it("holds the collapse flag in a rail-only component, never on the top-level shell (#97)", () => {
-    // The performance half of the tag-collapse defect. `tagsOpen` on `AppShell` meant a toggle
-    // re-rendered the exported shell and, with it, the active mailbox view — hundreds of rows to
-    // reconcile for a rail fold, which is the ~5s. It now lives in a dedicated `ShellRail`
-    // component, so a toggle re-renders only the rail; the view beside it is left alone (measured:
-    // a toggle produces zero DOM mutations in the mailbox pane). Guarded positionally: the flag
-    // must appear inside `ShellRail` and must NOT appear in `AppShell`'s own body.
-    expect(shell).toMatch(/function ShellRail\([^)]*\)[\s\S]*?usePersistedFlag\(UI_KEYS\.tagsOpen/);
-    const appShellBody = shell.slice(shell.indexOf("export function AppShell"));
-    expect(appShellBody).not.toMatch(/usePersistedFlag\(UI_KEYS\.tagsOpen/);
-  });
 
   it("the shared UI package never touches browser storage", () => {
     // The whole reason the component is controlled-optional. If this ever fails, the desktop
-    // shell has inherited a web-only storage decision it cannot satisfy.
+    // shell has inherited a web-only storage decision it cannot satisfy. The rail every host's
+    // frame draws is the kit's (`@ohmail/ui/mail`: the rail and its entries, the Tags group a
+    // place draws itself among them), read here beside the older `RailNav`.
+    const rails = ["Rail.tsx", "RailEntry.tsx", "RailFoot.tsx"]
+      .map((f) => code(read(`../../../packages/ui/src/mail/Shell/${f}`))).join("\n");
+    expect(rails).not.toMatch(/localStorage|sessionStorage/);
     expect(railNav).not.toMatch(/localStorage|sessionStorage/);
-  });
-
-  it("stays usable uncontrolled — a host that wires nothing still gets a working toggle", () => {
-    // Degrade to today's behaviour (forgets), never to a dead button.
-    expect(railNav).toMatch(/const \[uncontrolled, setUncontrolled\] = useState\(defaultOpen\)/);
-    expect(railNav).toMatch(/const open = openProp \?\? uncontrolled/);
   });
 
   it("reads storage AFTER mount, or the server's value silently wins", () => {
@@ -87,13 +68,15 @@ describe("the Tags group remembers its collapse state", () => {
 });
 
 describe("Tags is a peer in the rail, not a child of Triage", () => {
-  const rail = readFileSync(fileURLToPath(new URL("../../../packages/ui/src/composites/rail.css", import.meta.url)), "utf8");
-
-  it("the subordinate group carries no left indent", () => {
-    // "tags is not indented in the menu (margin left currently within the menu)" — owner.
-    // The 10px indent said Tags belonged to the group above it. It belongs to all of them.
-    const rule = rail.split("\n").find((l) => l.includes(".rgroup.rsub{"));
-    expect(rule, ".rgroup .rgroup.rsub rule not found").toBeTruthy();
-    expect(rule).toBe(".rgroup .rgroup.rsub{margin:3px 0 0}");
+  it("the Tags fold uses the rail's top-level alignment", () => {
+    const place = code(read("../../../packages/app/src/tags/place.ts"));
+    const tags = code(read("../../../packages/app/src/tags/TagsRail.tsx"));
+    const css = code(read("../../../packages/ui/src/mail/Shell/rail-entry.css"));
+    expect(place).toContain('railGroup: { group: "tags", Body: TagsRail }');
+    const fold = tags.match(/<RailEntry\s+kind="fold"[\s\S]*?>/)?.[0];
+    expect(fold).toContain('expanded={open}');
+    expect(fold).not.toMatch(/\bdepth=/);
+    const base = css.match(/\.oh-railentry \{([^}]+)\}/)?.[1];
+    expect(base).toMatch(/--oh-railentry-depth:\s*0;/);
   });
 });

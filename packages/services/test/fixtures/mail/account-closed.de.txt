@@ -1,0 +1,19 @@
+Subject: Dein ohmail-Konto ist geschlossen
+
+ohmail.
+
+Dein Konto ist geschlossen.
+
+Dein ohmail-Konto ist seit dem 16. September 2026, 00:00 UTC, geschlossen. Mit ihm war kein Postfach verbunden, ohmail hat also nie eine deiner Mails gelesen oder verschoben.
+
+Melde dich an, um doch noch zu abonnieren und ein Postfach zu verbinden, oder um dein Konto zu löschen.
+
+Tust du nichts, löschen wir deine ohmail-Kontodaten am 16. Oktober 2026, 00:00 UTC: deine Regeln, deine Screener-Entscheidungen und deine Einstellungen.
+
+Hast du Fragen oder hängst du beim Verbinden fest, antworte auf diese Mail, und ein Mensch antwortet dir.
+
+ohmail-Konto öffnen:
+https://app.ohmail.app/#/settings/account
+
+--
+TrafficFlow GmbH, Zürich, Schweiz

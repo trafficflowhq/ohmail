@@ -1,3 +1,4 @@
+import { perRequest } from "./helpers.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -48,7 +49,8 @@ describe.skipIf(!PG_UP)("api_faults on real Postgres", () => {
    */
   function depsOn(withPort: boolean, withSecret: boolean): ApiDeps {
     const authDeps = makeTestAuthDeps({});
-    return {
+    // A request's container on the file's pool, its handle as a host mints a request's.
+    return perRequest({
       db,
       now: () => NOW,
       requestId: `probe-${randomUUID()}`,
@@ -69,7 +71,7 @@ describe.skipIf(!PG_UP)("api_faults on real Postgres", () => {
           },
         }
         : {}),
-    } as ApiDeps;
+    } as Omit<ApiDeps, "db"> & { db: Db });
   }
 
   const post = (deps: ApiDeps, headers: Record<string, string> = {}): Promise<Response> =>

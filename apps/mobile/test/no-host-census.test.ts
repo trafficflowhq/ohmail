@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { engineUnitFiles } from "../../../test/support/engine-unit.js";
 import { Copy, DECKS } from "../src/copy";
 import { mobileDeviceKind, type MobileDeviceKind } from "../src/net/pairing";
 
@@ -91,7 +92,7 @@ const rel = (p: string): string => relative(REPO, p);
 /**
  * THIS REPOSITORY'S OWN WORKSPACE SCOPE, COMPOSED RATHER THAN WRITTEN OUT.
  *
- * `packages/fixtures/src/privacy.ts` bans the company name as REAL IDENTITY, and `privacy.test.ts`
+ * `packages/testing/src/privacy.ts` bans the company name as REAL IDENTITY, and `privacy.test.ts`
  * scans every file under `apps/mobile` for it — test files deliberately included, on the stated
  * grounds that "a real brand in a test file is still a real brand in this repository". This census
  * was red on exactly that rule the first time it ran beside the rest of the suite.
@@ -147,8 +148,9 @@ function specifiersOf(source: string): string[] {
  * table means this census resolves exactly what the run resolves, and a package added tomorrow is
  * covered with nobody remembering to add it here.
  *
- * The one entry not of this shape is a `RegExp` find (`next-intl`), which no phone module reaches;
- * it falls through to `"external"` like any npm package, which is the correct answer for it.
+ * A `RegExp` find that maps into a source folder (`@ohmail/app-logic/<section>`) is read by
+ * `patternTable` below. Any other `RegExp` find (`next-intl`), which no phone module reaches, falls
+ * through to `"external"` like any npm package, which is the correct answer for it.
  */
 function aliasTable(): Record<string, string> {
   const cfg = readFileSync(r("vitest.config.ts"), "utf8");
@@ -161,6 +163,15 @@ function aliasTable(): Record<string, string> {
 const ALIASES = aliasTable();
 /** Longest first: the bare `…/core` entry must not swallow `…/core/adapters/imap`. */
 const ALIAS_KEYS = Object.keys(ALIASES).sort((a, b) => b.length - a.length);
+
+/** The same table's `RegExp` finds into a source folder: `{ find: /…/, replacement: `${r("./dir")}/$1…` }`. */
+function patternTable(): { find: RegExp; dir: string; tail: string }[] {
+  const cfg = readFileSync(r("vitest.config.ts"), "utf8");
+  return [...cfg.matchAll(/\{\s*find:\s*\/(.+?)\/,\s*replacement:\s*`\$\{r\("\.\/([^"]+)"\)\}([^`]*)`\s*\}/g)].map(
+    (m) => ({ find: new RegExp(m[1]!), dir: r(m[2]!), tail: m[3]! }),
+  );
+}
+const PATTERNS = patternTable();
 
 /** Every `.ts`/`.tsx` under `dir`, recursively. */
 function walk(dir: string, acc: string[] = []): string[] {
@@ -279,6 +290,7 @@ const FORBIDDEN_FILE = (file: string): boolean => {
   const p = rel(file);
   return p.startsWith("apps/sidecar/src/")
     || p.startsWith("apps/worker/src/")
+    || p.startsWith("packages/organizer/src/")
     || p.startsWith("packages/api/src/")
     || p.startsWith("packages/services/src/")
     || p.startsWith("packages/db/src/")
@@ -286,7 +298,28 @@ const FORBIDDEN_FILE = (file: string): boolean => {
     || p.startsWith("packages/core/src/adapters/");
 };
 
-/** Resolve to a source file, `"external"` (npm/node) or `null` (a workspace edge nobody mapped). */
+/**
+ * A workspace package's own `exports` subpath that no alias line names (`@ohmail/app-logic/mailboxes/connect/…`,
+ * three segments deep): the run resolves it by the package's manifest, so the census reads that manifest too and
+ * walks the source file its `ohmail-source` condition names. `null` for anything the manifest does not export.
+ */
+function exportedSource(spec: string): string | null {
+  const m = /^(@[a-z-]+\/[a-z-]+)\/(.+)$/.exec(spec);
+  if (m === null || !(spec.startsWith(`${SCOPE}/`) || spec.startsWith("@ohmail/"))) return null;
+  const dir = join(REPO, "node_modules", m[1]!);
+  if (!existsSync(join(dir, "package.json"))) return null;
+  const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { exports?: Record<string, unknown> };
+  const entry = manifest.exports?.[`./${m[2]}`];
+  const source = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>)["ohmail-source"] : null;
+  if (typeof source !== "string" || !existsSync(join(dir, source))) return null;
+  return realpathSync(join(dir, source));
+}
+
+/**
+ * Resolve to a source file, `"external"` (npm/node) or `null` (a workspace edge nobody mapped). A
+ * relative `.json` import of a file that exists resolves to that data file, which `crawl` walks as a
+ * leaf; of a file that does not exist, it is an unresolved edge like any other.
+ */
 function resolveSpec(
   spec: string,
   fromFile: string,
@@ -295,6 +328,7 @@ function resolveSpec(
   if (spec === ARTIFACT_SPEC || spec === PDF_FRAME_SPEC) return "external";
   if (spec.startsWith(".")) {
     const base = dirname(fromFile);
+    if (spec.endsWith(".json") && lstatSync(join(base, spec), { throwIfNoEntry: false })?.isFile() === true) return join(base, spec);
     const candidates = spec.endsWith(".js")
       ? [join(base, spec.replace(/\.js$/, ".ts")), join(base, spec.replace(/\.js$/, ".tsx"))]
       : [
@@ -310,6 +344,15 @@ function resolveSpec(
   for (const key of ALIAS_KEYS) {
     if (spec === key || spec.startsWith(`${key}/`)) return ALIASES[key]!;
   }
+  for (const { find, dir, tail } of PATTERNS) {
+    const m = find.exec(spec);
+    if (m === null) continue;
+    const file = dir + tail.replace(/\$(\d)/g, (_, k: string) => m[Number(k)] ?? "");
+    if (!existsSync(file)) unresolved.add(`${rel(fromFile)} → ${spec}`);
+    return existsSync(file) ? file : null;
+  }
+  const exported = exportedSource(spec);
+  if (exported !== null) return exported;
   if (spec.startsWith(`${SCOPE}/`) || spec.startsWith("@ohmail/")) {
     unresolved.add(`${rel(fromFile)} → ${spec}`);
     return null;
@@ -333,6 +376,7 @@ function crawl(roots: readonly string[]): Crawl {
     if (visited.has(file)) continue;
     visited.add(file);
     if (FORBIDDEN_FILE(file)) hits.push(`${rel(file)} is in the phone's graph`);
+    if (file.endsWith(".json")) continue; // a data file imports nothing: walked, never read for edges
     let source: string;
     try {
       source = readFileSync(file, "utf8");
@@ -669,11 +713,24 @@ const CONDITION_IN_SIBLING: Record<string, readonly string[]> = {
   doorPhoneSay: ["doorPhoneNeedIos", "doorPhoneNeedAndroid"],
 };
 
+/**
+ * ═══ THE CLAUSE WHOSE CONDITION IS THE SURFACE IT IS DRAWN ON ═══════════════════════════════════
+ *
+ * `notifBody` is the body of the notification the organizing service posts (`organizerNoticeBody`, posted by the
+ * native organizer session). Android shows it only while that service runs, which is only while this phone organizes
+ * its own mailbox, and the stop stands beside it. The surface is the condition. The licence names the ONE file that
+ * draws the key, and its case below holds that no other file of the app reads it: moved to a screen, the sentence
+ * would be a promise, and §4 would read it red again.
+ */
+const CONDITION_IN_PLACE: Record<string, string> = {
+  notifBody: "src/engine/organizer-notice.ts",
+};
+
 /** Every promise clause the licensed keys produce, in both decks — the exact licensed text. */
 function licensedClauses(): Set<string> {
   const out = new Set<string>();
   for (const deck of Object.values(DECKS)) {
-    for (const key of Object.keys(CONDITION_IN_SIBLING)) {
+    for (const key of [...Object.keys(CONDITION_IN_SIBLING), ...Object.keys(CONDITION_IN_PLACE)]) {
       const value = (deck as unknown as Record<string, unknown>)[key];
       if (typeof value !== "string") continue;
       for (const clause of organizingPromises(value)) out.add(clause);
@@ -683,6 +740,17 @@ function licensedClauses(): Set<string> {
 }
 
 describe("§4 the sentence — no copy promises that this phone organizes", () => {
+  it("a key licensed by its surface is drawn by that one file and by no other", () => {
+    const readers = (key: string): string[] =>
+      [...walk(join(APP, "src")), ...walk(join(APP, "app"))]
+        .filter((f) => !/[\\/]copy\.(en|de)\.ts$/.test(f))
+        .filter((f) => new RegExp(`\\.${key}\\b`).test(stripComments(readFileSync(f, "utf8"))))
+        .map((f) => relative(APP, f));
+    for (const [key, drawnBy] of Object.entries(CONDITION_IN_PLACE)) {
+      expect(readers(key), `${key} is drawn somewhere its surface is not the condition`).toEqual([drawnBy]);
+    }
+  });
+
   for (const [locale, file] of Object.entries(DECK_FILES)) {
     const strings = deckStrings(file);
 
@@ -841,11 +909,13 @@ describe("§5 the four doors are named and reachable — the positive control", 
     // without the second is a control that cannot do what its name says.
     expect(doors).toContain("onPress={onStandalone}");
     expect(doors).toContain("standaloneAvailable({ startEngine: phoneEngineStart() })");
-    for (const screen of [welcome, servers]) {
-      expect(screen).toContain("<Doors");
-      expect(screen).toContain("onScan");
-      expect(screen).toContain('router.push("/standalone")');
-    }
+    expect(welcome).toContain('router.push("/servers")');
+    expect(welcome).toContain('router.push("/scan")');
+    expect(welcome).toContain('router.push("/standalone")');
+    expect(welcome).toContain("standaloneAvailable({ startEngine: phoneEngineStart() })");
+    expect(servers).toContain("<Doors");
+    expect(servers).toContain('onScan={() => router.push("/scan")}');
+    expect(servers).toContain('onStandalone={() => router.push("/standalone")}');
     expect(ROUTE_FILES.map(rel)).toContain("apps/mobile/app/scan.tsx");
     expect(ROUTE_FILES.map(rel)).toContain("apps/mobile/app/standalone.tsx");
   });
@@ -982,8 +1052,9 @@ describe("§6 every refusal rule fires — the controls", () => {
 
   it("§1 the file rule refuses each source tree, and admits the one named leaf", () => {
     for (const forbidden of [
-      "apps/sidecar/src/engine.ts",
-      "apps/worker/src/sync.ts",
+      ...engineUnitFiles(),
+      "apps/worker/src/index.ts",
+      "packages/organizer/src/sync.ts",
       "packages/api/src/routes/desktop-host.ts",
       "packages/services/src/mail.ts",
       "packages/core/src/adapters/organizer-lease.ts",
@@ -998,9 +1069,42 @@ describe("§6 every refusal rule fires — the controls", () => {
   it("§1 a crawl that reached a forbidden module reports it", () => {
     // Driven through `crawl` itself rather than through the rule alone: this proves the walker
     // carries a hit out, which is the part a refactor of `crawl` could silently drop.
-    const found = crawl([r("apps/sidecar/src/engine.ts")]);
+    const found = crawl(engineUnitFiles());
     expect(found.hits.length, "the crawl reported nothing about the desktop engine")
       .toBeGreaterThan(0);
+  });
+
+  /**
+   * A DATA FILE IS THE END OF A PATH, watched both ways over this test's own fixtures
+   * (`test/fixtures/no-host-census`). A relative `.json` import of a file that exists resolves to
+   * it, and the crawl walks it as a leaf: a data file imports nothing, so it can open no path, and
+   * its text is never read for edges (the fixture's data holds an import as a string, which read as
+   * code would be an edge). A `.json` import of a file that does not exist stays an unresolved
+   * edge, as before.
+   */
+  const fixture = (name: string): string => join(APP, "test/fixtures/no-host-census", name);
+
+  it("§1 a relative .json import of a file that exists resolves to it, and the data file is walked as a leaf", () => {
+    const walked = crawl([fixture("reads-data.ts")]);
+    expect([...walked.unresolved], "the data file's edge went unresolved, or its text was read for edges")
+      .toEqual([]);
+    expect([...walked.visited].map(rel).sort()).toEqual([
+      "apps/mobile/test/fixtures/no-host-census/data.json",
+      "apps/mobile/test/fixtures/no-host-census/reads-data.ts",
+    ]);
+    expect(walked.hits).toEqual([]);
+  });
+
+  it("§1 a relative .json import of a file that does not exist is an unresolved edge", () => {
+    expect([...crawl([fixture("reads-missing.ts")]).unresolved]).toEqual([
+      "apps/mobile/test/fixtures/no-host-census/reads-missing.ts → ./no-such-file.json",
+    ]);
+  });
+
+  it("§1 a relative .json import of a FOLDER is no data file: the code inside it is walked", () => {
+    expect([...crawl([fixture("reads-folder.ts")]).unresolved]).toEqual([
+      "apps/mobile/test/fixtures/no-host-census/folder.json/index.ts → ./not-a-module",
+    ]);
   });
 
   it("§2 the hand-written host shapes are each found", () => {

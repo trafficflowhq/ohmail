@@ -1,29 +1,25 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder, RuleEntity } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { fireEvent, within } from "@testing-library/react";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine,
   MemoryMirrorStore,
-  consentPartition,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
   type MirrorStore,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import {
-  otherOrganizerOf, readerMoveRefusal, screenerMode, type ScreenerRole,
-} from "../app/shell/mail-state";
-import { postureRefusal, rulesPostureOf } from "../app/shell/rules-posture";
-import { ScreenerView } from "../app/views/ScreenerView";
-import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
-import { KeymapProvider } from "../app/shell/keymap";
-import type { ScreenerState } from "../app/shell/screener-state";
+  screenerMode, type ScreenerRole,
+} from "@ohmail/app-logic/mail-state/mail-state";
+import { postureRefusal, rulesPostureOf } from "@ohmail/app-logic/press/rules-posture";
+import { act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * A MACHINE THAT STOPPED ORGANIZING IS NOT CALLED THE ORGANIZER by the web's reader sentences: the
@@ -36,14 +32,14 @@ import type { ScreenerState } from "../app/shell/screener-state";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = new Date("2026-09-02T12:00:00.000Z");
 const HOLDER = "Studio laptop";
 const LIVE_ROW = {
-  id: "mb", address: "me@example.test", status: "connected", disabledReason: null,
+  id: "mb_1", address: "me@example.test", status: "connected", disabledReason: null,
   organizerRole: "reader" as const,
+  organizerChecked: true,
   organizedBy: { kind: "local", name: HOLDER, since: "2026-09-01T09:00:00.000Z" },
   organizerState: "held" as const,
   organizeConsentedAt: "2026-09-01T09:00:00.000Z",
@@ -51,7 +47,7 @@ const LIVE_ROW = {
 /** The same claim, left by a machine that stopped renewing it. */
 const STOPPED_ROW = { ...LIVE_ROW, organizerState: "stopped" as const };
 
-/** The role as `AppShell` composes it: the roster's mode, and the refusal a press would meet. */
+/** The model role from mailbox facts: the roster's mode, and the refusal a press would meet. */
 const roleOf = (rows: readonly (typeof LIVE_ROW | typeof STOPPED_ROW)[]) =>
   ({ ...screenerMode(rows), pressRefusal: postureRefusal(rulesPostureOf(rows)) });
 const named = (s: string) => s.replace("{name}", HOLDER);
@@ -64,8 +60,8 @@ let host: HTMLDivElement | null = null;
 
 function msg(id: string, from: string, folder: Folder): EngineMessage {
   return {
-    id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
-    subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
+    id, accountId: "acct_live_1", mailboxId: "mb_1", threadId: null, messageIdHeader: null,
+    subject: `Subject ${id}`, from: { name: "Terrace Review", address: from }, to: [], cc: [],
     date: "2026-09-02T09:00:00.000Z", folder, snippet: `snippet ${id}`, unread: true,
     hasAttachments: false, attachmentCount: 0,
     sensitivity: {
@@ -78,12 +74,22 @@ function msg(id: string, from: string, folder: Folder): EngineMessage {
 
 const HELD = msg("h1", "editors@terracereview.invalid", "ohmail/Screener");
 
-async function freshStore(list: EngineMessage[] = [HELD]): Promise<MirrorStore> {
+async function freshStore(list: EngineMessage[] = [HELD], allowSender = false): Promise<MirrorStore> {
   const store = new MemoryMirrorStore();
   await store.load();
   await store.applyChanges(list.map((m) => ({
     type: "message" as const, op: "create" as const, id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
   })));
+  if (allowSender) {
+    const rule: RuleEntity = {
+      id: "allow", kind: "sender", match: HELD.from.address, destination: "INBOX", priority: 0,
+      provenance: "manual", enabled: true, subjectContains: null, bodyContains: null,
+      stats: { hits: 0, lastHitAt: null, demotions: 0 },
+      createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
+      retro: { requestedAt: null, doneAt: null },
+    };
+    await store.applyChanges([{ type: "rule", op: "create", id: rule.id, seq: ++seq, updatedAt: rule.updatedAt, entity: rule }]);
+  }
   return store;
 }
 
@@ -111,8 +117,8 @@ async function render(node: React.ReactElement, locale: "en" | "de" = "en"): Pro
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale, messages: (locale === "de" ? de : en) as never, timeZone: "UTC", now: NOW, children: node,
+    root!.render(h(TextProvider, {
+      locale, messages: locale === "de" ? de : en, timeZone: "UTC", now: NOW, children: node,
     }));
   });
   await settleFirstPaint();
@@ -121,12 +127,12 @@ async function render(node: React.ReactElement, locale: "en" | "de" = "en"): Pro
 
 /** The real Screener state over the real catalogue, read through a getter. */
 async function screenerState(role: ScreenerRole, locale: "en" | "de" = "en"): Promise<() => ScreenerState> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const engine = engineOver(await freshStore());
   let latest: ScreenerState | null = null;
   function Probe(): null {
     latest = useScreenerState(
-      engine, 0, ((m: string) => { toasts.push(m); }) as never, undefined, undefined, true, role,
+      engine, null, 0, ((m: string) => { toasts.push(m); }) as never, useScreenerWords(), undefined, undefined, true, role,
     );
     return null;
   }
@@ -135,7 +141,7 @@ async function screenerState(role: ScreenerRole, locale: "en" | "de" = "en"): Pr
 }
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  installShellEnv();
   vi.setSystemTime(NOW);
   seq = 0;
   sent = [];
@@ -148,9 +154,7 @@ afterEach(async () => {
   host?.remove();
   root = null;
   host = null;
-  vi.clearAllTimers();
-  vi.useRealTimers();
-  document.body.innerHTML = "";
+  await teardownShellEnv();
 });
 
 describe("the role a reader's Screener is built from", () => {
@@ -168,6 +172,8 @@ describe("the Screener's move refusal", () => {
       await act(async () => { s().allowScreened(s().waiting[0]!, "ohbox"); });
       expect(sent, "a move reached the wire from a reader").toEqual([]);
       expect(toasts).toEqual([cat.screener.readerMoveRefusedNobody]);
+      expect(await previewNote("screened", STOPPED_ROW, locale)).toContain(cat.screener.readerBarNoneTitle);
+      expect(sent).toEqual([]);
     });
   }
 
@@ -175,6 +181,8 @@ describe("the Screener's move refusal", () => {
     const s = await screenerState(roleOf([LIVE_ROW]));
     await act(async () => { s().allowScreened(s().waiting[0]!, "ohbox"); });
     expect(toasts).toEqual([named(en.screener.readerMoveRefused)]);
+    expect(await previewNote("screened", LIVE_ROW)).toContain(named(en.screener.place.decides));
+    expect(sent).toEqual([]);
   });
 });
 
@@ -185,114 +193,148 @@ describe("the Screener's decision refusal, from the role alone", () => {
     const s = await screenerState(screenerMode([STOPPED_ROW]));
     await act(async () => { s().decide(s().waiting[0]!, "ohbox", { read: false, scope: "sender" }); });
     expect(sent).toEqual([]);
-    expect(toasts).toEqual([`${en.screener.notFiled} ${en.ohbox.whyRefused.nobody}`]);
+    const refusal = `${en.screener.notFiled} ${en.ohbox.whyRefused.nobody}`;
+    expect(toasts).toEqual([refusal]);
+    await pressWaitingDecision(STOPPED_ROW, refusal);
   });
 
   it("CONTROL: a holder that still renews is named", async () => {
     const s = await screenerState(screenerMode([LIVE_ROW]));
     await act(async () => { s().decide(s().waiting[0]!, "ohbox", { read: false, scope: "sender" }); });
-    expect(toasts).toEqual([named(en.screener.readerRefused)]);
+    const refusal = named(en.screener.readerRefused);
+    expect(toasts).toEqual([refusal]);
+    await pressWaitingDecision(LIVE_ROW, refusal);
   });
 });
 
-/** A `ScreenerState` double for the screened and spam previews: one sender in each. */
-function previewState(role: ScreenerRole): ScreenerState {
-  const sender = {
-    id: "s1",
-    from: { name: "Terrace Review", address: "editors@terracereview.invalid" },
-    initial: "T", derived: true, scope: "sender" as const, ai: null,
-    held: [{
-      id: "h1", subject: "Spring issue", time: "09:00", body: "body", html: null,
-      bodyState: "ready" as const, unsubscribe: "no_header" as const, unsubscribeUrl: null,
-      trackerNote: null,
-    }],
-  };
-  return {
-    waiting: [], waitingCount: 0, suggestedCount: 0, suggestedDests: [],
-    unsuggestedSenders: [], suggestedSenders: [], applying: null,
-    screenedOut: [sender], spam: [{ sender, pinned: false }],
-    isExiting: () => false, refused: () => false, bodyStall: () => null,
-    flush: () => {}, role, pending: [], decided: [], notApplied: [],
-    waitingSource: "store", waitingMore: { available: false, loading: false, failed: false, load: () => {} }, rereadWaiting: () => {},
-  } as unknown as ScreenerState;
+async function mountReader(
+  letter: EngineMessage,
+  row: typeof LIVE_ROW | typeof STOPPED_ROW,
+  locale: "en" | "de",
+  route: string,
+) {
+  window.location.hash = route;
+  const webContactScreening = route === "#/ohbox";
+  const store = await freshStore([letter], webContactScreening);
+  if (webContactScreening) {
+    answerSyncWith(() => Response.json({
+      changes: { creates: [
+        { type: "message", op: "create", id: letter.id, seq: 1, updatedAt: letter.updatedAt, entity: letter },
+        ...store.list<RuleEntity>("rule").map((rule) => ({
+          type: "rule", op: "create", id: rule.id, seq: 2, updatedAt: rule.updatedAt, entity: rule,
+        })),
+      ], updates: [], moves: [], deletes: [] },
+      cursor: "c2", hasMore: false, serverTime: NOW.toISOString(),
+    }));
+  }
+  const shell = await mountShell([mailbox({ ...row, lastSyncAt: NOW.toISOString() })], {
+    ...(webContactScreening ? { webContactScreening } : { engine: engineOver(store) }),
+    locale, junkWire: "none", suggestWire: "none",
+  });
+  await tick(50);
+  return within(shell);
 }
 
-async function previewNote(segment: "screened" | "spam", role: ScreenerRole, locale: "en" | "de" = "en") {
-  const el = await render(h(KeymapProvider, {
-    children: h(ScreenerView, {
-      state: previewState(role), segment, selection: { waiting: null, screened: "s1", spam: "s1" },
-      settled: true, owed: false, onSelect: () => {}, hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never),
-  }), locale);
-  const note = el.querySelector(".scn-reader");
-  expect(note, `no reader note on the ${segment} preview`).not.toBeNull();
-  return note!.textContent ?? "";
+async function pressWaitingDecision(row: typeof LIVE_ROW | typeof STOPPED_ROW, refusal: string) {
+  const shell = await mountReader(HELD, row, "en", "#/screener");
+  const sender = shell.getByRole("option", { name: /Terrace Review/ });
+  await act(async () => { sender.click(); });
+  await tick(0);
+  expect(shell.getByRole("option", { name: /Terrace Review/, selected: true })).toBe(sender);
+  await act(async () => { fireEvent.keyDown(sender, { key: "o", code: "KeyO" }); });
+  await tick(0);
+  expect(within(document.body).queryAllByRole("status").map((status) => status.textContent?.trim())).toContain(refusal.replace(/\.$/u, ""));
+  expect(sent).toEqual([]);
+}
+
+async function previewNote(
+  segment: "screened" | "spam",
+  row: typeof LIVE_ROW | typeof STOPPED_ROW,
+  locale: "en" | "de" = "en",
+) {
+  const folder = segment === "screened" ? "ohmail/Screened" : "ohmail/Quarantine";
+  const shell = await mountReader({ ...HELD, folder }, row, locale, `#/screener/${segment}`);
+  const sender = shell.getByRole("option", { name: /Terrace Review/ });
+  await act(async () => { sender.click(); });
+  await tick(0);
+  const copy = (locale === "de" ? de : en).screener;
+  const toolbar = shell.getByRole("toolbar", { name: copy.place.panel });
+  const panel = within(toolbar);
+  expect(panel.getAllByRole("button")).toEqual([panel.getByRole("button", { name: copy.readerBarOpenMailboxes })]);
+  return toolbar.textContent ?? "";
 }
 
 describe("the screened and spam previews' reader note", () => {
   for (const segment of ["screened", "spam"] as const) {
     it(`${segment}: a holder that stopped reads as nothing organizing it`, async () => {
-      const text = await previewNote(segment, roleOf([STOPPED_ROW]));
-      expect(text).toContain(en.screener.moveBarWhyNobody);
+      const text = await previewNote(segment, STOPPED_ROW);
+      expect(text).toContain(en.screener.readerBarNoneTitle);
       expect(text, "a machine that stopped was called the organizer").not.toContain(HOLDER);
-      expect(text).not.toContain(en.screener.moveBarWhyUnknown);
+      expect(text).not.toContain(en.screener.place.decidesUnknown);
     });
 
     it(`${segment}: in German too`, async () => {
-      const text = await previewNote(segment, roleOf([STOPPED_ROW]), "de");
-      expect(text).toContain(de.screener.moveBarWhyNobody);
+      const text = await previewNote(segment, STOPPED_ROW, "de");
+      expect(text).toContain(de.screener.readerBarNoneTitle);
       expect(text).not.toContain(HOLDER);
     });
 
     it(`${segment}: CONTROL — a holder that still renews is named`, async () => {
-      const text = await previewNote(segment, roleOf([LIVE_ROW]));
-      expect(text).toContain(named(en.screener.moveBarWhy));
+      const text = await previewNote(segment, LIVE_ROW);
+      expect(text).toContain(named(en.screener.place.decides));
     });
   }
 });
 
-describe("the message verbs' refusal (readerMoveRefusal)", () => {
-  const say = (cat: typeof en) => ({
-    named: (name: string) => cat.screener.readerMoveRefused.replace("{name}", name),
-    unknown: () => cat.screener.readerMoveRefusedUnknown,
-    nobody: () => cat.screener.readerMoveRefusedNobody,
-  });
-
-  it("a holder that stopped: nothing organizes it, en and de", () => {
-    const roster = { kind: "known" as const, rows: [STOPPED_ROW] };
-    expect(readerMoveRefusal(roster, ["mb"], say(en))).toBe(en.screener.readerMoveRefusedNobody);
-    expect(readerMoveRefusal(roster, ["mb"], say(de as typeof en))).toBe(de.screener.readerMoveRefusedNobody);
-  });
-
-  it("CONTROL: a holder that still renews is named, and a pending roster names nobody", () => {
-    expect(readerMoveRefusal({ kind: "known", rows: [LIVE_ROW] }, ["mb"], say(en)))
-      .toBe(named(en.screener.readerMoveRefused));
-    expect(readerMoveRefusal({ kind: "pending" }, ["mb"], say(en))).toBe(en.screener.readerMoveRefusedUnknown);
-  });
-});
-
 describe("the sender sheet's organizer line", () => {
-  async function sheetLine(
-    rows: readonly (typeof LIVE_ROW | typeof STOPPED_ROW)[], locale: "en" | "de" = "en",
-  ): Promise<string> {
-    const store = await freshStore([msg("m1", "lena@atelier.example", "INBOX")]);
-    const placeOf = consentPartition(store, { now: NOW }).placeOf;
-    const sender = senderScreening(store, "m1", undefined, placeOf)!;
-    const el = await render(h(SenderMenu, {
-      state: { messageId: "m1", x: 0, y: 0 }, sender, onChoose: () => {}, onOpenDetail: () => {},
-      onClose: () => {}, organizer: otherOrganizerOf(rows, new Set(["mb"])),
-    } as never), locale);
-    return el.querySelector(".sm-org")?.textContent ?? "";
+  async function senderSheet(row: typeof LIVE_ROW | typeof STOPPED_ROW, locale: "en" | "de" = "en") {
+    const letter = { ...HELD, folder: "INBOX" as const, unread: false };
+    const shell = await mountReader(letter, row, locale, "#/ohbox");
+    const option = shell.getByRole("option", { name: /Subject h1/ });
+    await act(async () => { option.click(); });
+    await tick(50);
+    const copy = (locale === "de" ? de : en).screening;
+    const sender = within(option).getByRole("button", { name: copy.openFor.replace("{sender}", letter.from.name!) });
+    await act(async () => { sender.click(); });
+    await tick(0);
+    return within(within(document.body).getByRole("dialog", {
+      name: copy.aria.replace("{sender}", letter.from.address),
+    }));
+  }
+
+  async function subjectSheet(sheet: ReturnType<typeof within>, copy: typeof en) {
+    await act(async () => { sheet.getByRole("menuitem", { name: copy.screening.cardSubject }).click(); });
+    return within(document.body).getByRole("dialog", {
+      name: copy.screening.subjectAria.replace("{who}", HELD.from.address),
+    });
   }
 
   it("a holder that stopped: nothing organizes it, en and de", async () => {
-    expect(await sheetLine([STOPPED_ROW])).toBe(en.screening.orgNobody);
-    await act(async () => root!.unmount());
-    root = null;
-    expect(await sheetLine([STOPPED_ROW], "de")).toBe(de.screening.orgNobody);
+    const english = await senderSheet(STOPPED_ROW);
+    expect(english.getByText(en.screening.orgNobody)).toBeTruthy();
+    expect(within(await subjectSheet(english, en)).getByText(en.screening.subjectOrgNobody)).toBeTruthy();
+    await teardownShellEnv();
+    installShellEnv();
+    const german = await senderSheet(STOPPED_ROW, "de");
+    expect(german.getByText(de.screening.orgNobody)).toBeTruthy();
+    expect(within(await subjectSheet(german, de)).getByText(de.screening.subjectOrgNobody)).toBeTruthy();
   });
 
   it("CONTROL: a holder that still renews is named", async () => {
-    expect(await sheetLine([LIVE_ROW])).toBe(named(en.screening.orgPending));
+    const card = await senderSheet(LIVE_ROW);
+    expect(card.getByText(named(en.screening.orgPending))).toBeTruthy();
+    const subject = within(await subjectSheet(card, en));
+    expect(subject.queryByText(en.screening.subjectOrgNobody)).toBeNull();
+    const mutations = () => vi.mocked(globalThis.fetch).mock.calls.filter(([url, init]) =>
+      init?.method === "POST" && /\/(?:rules|messages\/[^/]+\/move)$/.test(String(url)));
+    const before = mutations().length;
+    await act(async () => { subject.getByRole("radio", { name: /^News/ }).click(); });
+    await act(async () => {
+      subject.getByRole("button", { name: en.screening.subjectMakeRule }).click();
+    });
+    await tick(0);
+    expect(within(document.body).queryAllByRole("status").map((status) => status.textContent?.trim()))
+      .toContain(named(en.ohbox.whyRefused.outdated).replace(/\.$/u, ""));
+    expect(mutations()).toHaveLength(before);
   });
 });

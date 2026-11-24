@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
 import { buildDiagnosticBundle, renderDiagnosticBundle } from "../src/diagnostics/index.js";
-import { createLogger, storeFaultOf } from "../src/log.js";
+import { createLogger, storeFaultOf, StoreStatementFaultError } from "../src/log.js";
+import { valueFaultOf } from "../src/statement-fault.js";
 
 /**
  * A device store's refusal is named by its SQLite class, and only by that. The Android line is the
@@ -98,5 +99,37 @@ describe("the diagnostic file a person sends keeps the class", () => {
     const line = JSON.stringify({ ts: "2026-10-02T04:00:00.000Z", level: "warn", service: "sidecar", event: "x", storeFault: "CHECK constraint failed: t" });
     const { first } = fileOf([line]);
     expect(first?.shape === "event" && first.labels).toEqual({});
+  });
+});
+
+/**
+ * WHOSE A REFUSED STATEMENT IS: the value it carried, by its class (a writer may keep a letter
+ * without one row for it), or the store's own (never: the letter's transaction must fail). The
+ * worker's ingest classifier reads the same classes.
+ */
+describe("valueFaultOf", () => {
+  const pg = (code: string, routine?: string) => Object.assign(new Error(`postgres ${code}`), { code, ...(routine ? { routine } : {}) });
+
+  it("a value Postgres refused names its word: a data exception, a constraint, a limit of one statement", () => {
+    expect(valueFaultOf(pg("22021"))).toBe("data_exception");
+    expect(valueFaultOf(pg("23505"))).toBe("constraint_violation");
+    expect(valueFaultOf(pg("54000", "_bt_check_third_page"))).toBe("data_too_large");
+    expect(valueFaultOf(Object.assign(new Error("over the bind limit"), { code: "OHMAIL_BIND_LIMIT" }))).toBe("data_too_large");
+  });
+
+  it("the store's own fault is no value's: a lock wait cut short, a deadlock, a cancel, a lost connection, our own code", () => {
+    for (const code of ["55P03", "40P01", "40001", "57014", "08006", "53100", "XX000", "CONNECTION_ENDED"]) expect(valueFaultOf(pg(code)), code).toBeNull();
+    expect(valueFaultOf(pg("54000", "a routine nobody has seen"))).toBeNull();
+    expect(valueFaultOf(new TypeError("x is undefined"))).toBeNull();
+    expect(valueFaultOf("a string")).toBeNull();
+  });
+
+  it("a device store's refusal by its class, through the store's mark: a constraint is the value's, busy and full are the store's", () => {
+    expect(valueFaultOf(realSqliteCheckFailure())).toBe("constraint_violation");
+    expect(valueFaultOf(new StoreStatementFaultError("store.run", expo(ANDROID_CHECK)))).toBe("constraint_violation");
+    expect(valueFaultOf(new StoreStatementFaultError("store.run", expo("… Caused by: Error code \u0005: database is locked")))).toBeNull();
+    expect(valueFaultOf(expo("… Caused by: Error code \r: database or disk is full"))).toBeNull();
+    expect(valueFaultOf(new StoreStatementFaultError("store.run", Object.assign(new Error("bad bind"), { code: "ERR_INVALID_ARG_TYPE" })))).toBe("unclassified");
+    expect(valueFaultOf(new StoreStatementFaultError("store.run", pg("22P02")))).toBe("data_exception");
   });
 });

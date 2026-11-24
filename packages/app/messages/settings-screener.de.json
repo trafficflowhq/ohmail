@@ -1,0 +1,9 @@
+{
+  "settingsScreener": {
+    "notApplied": "Nicht übernommen",
+    "suggestions": "Vorschläge",
+    "details": "Über {title}",
+    "confidence": "Nur Aussortieren und Spam, ab 90 % Sicherheit.",
+    "creditPerSender": "1 Credit pro Absender"
+  }
+}

@@ -11,8 +11,8 @@ import {
   type ThreadBackfillDeps, type ThreadBackfillResult,
 } from "../src/thread-backfill.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { byMessageId } from "./_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { byMessageId } from "../../../packages/organizer/test/_workerdb.js";
 
 /**
  * WHERE THE THREAD BACKFILL RUNS, AND WHAT IT MAY COST.
@@ -43,7 +43,7 @@ async function seedMailbox(db: Db, accountId = randomUUID()): Promise<{ accountI
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };

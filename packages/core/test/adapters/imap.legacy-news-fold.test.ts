@@ -4,6 +4,7 @@ import { ImapAdapter, SameFolderMoveError, parseRef } from "../../src/adapters/i
 import { NEWS_FOLDER, LEGACY_NEWS_FOLDER } from "../../src/types.js";
 import { greenmailConfig, eml, seedInbox } from "./_imapenv.js";
 import { FIXTURE_DOOR } from "./_door.js";
+import { connectedWithOwnClient } from "./_own-client.js";
 
 /**
  * A LEGACY `ohmail/Reads` BESIDE `ohmail/News` ON A LIVE MAILBOX (GreenMail). Re-created after the
@@ -57,7 +58,9 @@ type Verb = (...a: unknown[]) => Promise<unknown>;
 interface Client {
   messageMove: Verb; messageCopy: Verb; messageDelete: Verb; mailboxDelete: Verb; capabilities: Map<string, unknown>;
 }
-const clientOf = (a: ImapAdapter): Client => (a as unknown as { client: Client }).client;
+/** The client each adapter was handed, kept by the test that dialled it. */
+const clients = new WeakMap<ImapAdapter, ImapFlow>();
+const clientOf = (a: ImapAdapter): Client => clients.get(a) as unknown as Client;
 /** Every DELETE the adapter sends, counted on the wire. */
 function deletesOf(a: ImapAdapter): string[] {
   const c = clientOf(a);
@@ -66,10 +69,9 @@ function deletesOf(a: ImapAdapter): string[] {
   c.mailboxDelete = async (...args: unknown[]) => { seen.push(String(args[0])); return del(...args); };
   return seen;
 }
-/** A LIST refresh, as a later pass makes one. */
+/** A LIST refresh, as a later pass makes one: the filing pass's own re-check of a folder it holds. */
 async function relist(a: ImapAdapter): Promise<void> {
-  const p = a as unknown as { listBounded(): Promise<unknown>; learnPassiveFolders(l: unknown): void };
-  p.learnPassiveFolders(await p.listBounded());
+  expect(await a.ensureOwnFolder(NEWS_FOLDER, FIXTURE_DOOR)).toBe("exists");
 }
 
 describe("a legacy News folder beside News (GreenMail)", () => {
@@ -77,8 +79,9 @@ describe("a legacy News folder beside News (GreenMail)", () => {
   afterEach(async () => { await adapter?.close(); adapter = undefined; });
 
   async function connected(cfg: Cfg): Promise<ImapAdapter> {
-    adapter = new ImapAdapter(cfg);
-    await adapter.connect();
+    const own = await connectedWithOwnClient(cfg);
+    clients.set(own.adapter, own.client);
+    adapter = own.adapter;
     return adapter;
   }
 

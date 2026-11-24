@@ -30,7 +30,7 @@ const isAdminModule = (rel: string): boolean =>
 /**
  * Bare specifiers the standalone door may not reach. The cloud schema is the private half itself;
  * the `@trafficflow/services` BARREL is refused where its leaves are not, because a value import
- * from it conveys the hosted admin service — the rule CLAUDE.md states as "import from the leaf".
+ * from it conveys the hosted admin service — the rule AGENTS.md states as "import from the leaf".
  */
 const REFUSED_BARE: ReadonlySet<string> = new Set(["@trafficflow/db/cloud", "@trafficflow/services"]);
 

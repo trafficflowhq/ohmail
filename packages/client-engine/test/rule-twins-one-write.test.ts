@@ -1,5 +1,6 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { applyToRecords, pressOverTwins, recordKey, type MirrorRecord, type RuleDTO } from "@ohmail/client-engine";
+import { applyToRecords, pressOverTwins, recordKey, type MirrorRecord } from "@ohmail/client-engine";
 
 /**
  * A PRESS OVER A SENDER'S TWINS IS ONE WRITE. The server converges a key onto the row a PATCH

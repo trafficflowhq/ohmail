@@ -1,13 +1,10 @@
+import type { EngineMessage, EngineMutation, MutationOutcome, ScreenerWaitingWire } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   screenerSegments,
   type EngineAdapter,
-  type EngineMessage,
-  type EngineMutation,
-  type MutationOutcome,
-  type ScreenerWaitingWire,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

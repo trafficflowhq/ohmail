@@ -21,6 +21,7 @@
  *     pairing the keystore outlived is purged before a profile is read — which is what makes
  *     deleting the app a take-back on iOS, where the Keychain survives it.
  */
+import { calendarProfileMayRecover } from "../src/calendar/live-port";
 import { describe, expect, it, vi } from "vitest";
 import { refuse, sayRefusal } from "../src/refusal";
 import { OUTBOX_TYPE, SqlMirrorStore, mirrorDbName } from "@ohmail/client-engine";
@@ -45,6 +46,9 @@ import { ServerProfileStore, type SecureKV } from "../src/state/servers";
 import { listen, pairServer, pairThroughConfirm, sqlWorld } from "./helpers/pair-server";
 import { engineStoreWorld } from "./helpers/expo-sqlite-shape";
 import { Copy } from "../src/copy";
+import { scopeOf } from "../src/shell/scope";
+import { keeperRemembers, purgingShellToo, type ShellStores, type WebDataReading } from "../src/shell/take-back";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -1462,7 +1466,7 @@ describe("removing the mailbox on this phone removes its mail, its key and its i
         door: () => null,
         reopen: async () => ({ ok: false, reason: refuse("standaloneNoEngine") }),
         removeEngine: () => removeStandaloneEngine({
-          openDatabase: engine.open, deleteDatabase: engine.drop, kv,
+          openDatabase: engine.open, deleteDatabase: engine.drop, exists: engine.exists, kv,
         }),
         /* NOT DRIVEN HERE, and loud rather than silent: `standDownAway` is only reached when
            `door()` is non-null and these doubles answer null, so a case that somehow stood the
@@ -1546,6 +1550,7 @@ describe("an interrupted removal refuses on the next launch and finishes the del
   const platform = (w: Awaited<ReturnType<typeof interrupted>>) => openLocalEnginePlatform({
     openDatabase: w.engine.open,
     deleteDatabase: w.engine.drop,
+    exists: w.engine.exists,
     kv: w.kv,
     randomKekHex: () => "b".repeat(64),
     removal: { recorded: () => w.profiles.engineRemoval(), clear: () => w.profiles.clearEngineRemoval() },
@@ -1582,6 +1587,7 @@ describe("an interrupted removal refuses on the next launch and finishes the del
       const outcome = await openLocalEnginePlatform({
         openDatabase: w.engine.open,
         deleteDatabase: async () => undefined,
+        exists: w.engine.exists,
         kv: w.kv,
         randomKekHex: () => "b".repeat(64),
         removal: { recorded: () => w.profiles.engineRemoval(), clear: () => w.profiles.clearEngineRemoval() },
@@ -1648,7 +1654,7 @@ describe("remove A, connect B — and the mailbox beside it is untouched", () =>
         standalone: {
           door: () => null,
           reopen: async () => ({ ok: false, reason: refuse("standaloneNoEngine") }),
-          removeEngine: () => removeStandaloneEngine({ openDatabase: engine.open, deleteDatabase: engine.drop, kv }),
+          removeEngine: () => removeStandaloneEngine({ openDatabase: engine.open, deleteDatabase: engine.drop, exists: engine.exists, kv }),
           /* NOT DRIVEN HERE, and loud rather than silent: `standDownAway` is only reached when
              `door()` is non-null and these doubles answer null, so a case that somehow stood the
              mailbox down would be a case measuring something this file does not drive. */
@@ -1662,6 +1668,7 @@ describe("remove A, connect B — and the mailbox beside it is untouched", () =>
       const opened = await openLocalEnginePlatform({
         openDatabase: engine.open,
         deleteDatabase: engine.drop,
+        exists: engine.exists,
         kv,
         randomKekHex: () => "b".repeat(64),
         removal: { recorded: () => profiles.engineRemoval(), clear: () => profiles.clearEngineRemoval() },
@@ -1702,7 +1709,7 @@ describe("remove A, connect B — and the mailbox beside it is untouched", () =>
       env.standalone = {
         door: () => null,
         reopen: async () => ({ ok: false, reason: refuse("standaloneNoEngine") }),
-        removeEngine: () => removeStandaloneEngine({ openDatabase: engine.open, deleteDatabase: engine.drop, kv }),
+        removeEngine: () => removeStandaloneEngine({ openDatabase: engine.open, deleteDatabase: engine.drop, exists: engine.exists, kv }),
         /* NOT DRIVEN HERE, and loud rather than silent: `standDownAway` is only reached when
            `door()` is non-null and these doubles answer null, so a case that somehow stood the
            mailbox down would be a case measuring something this file does not drive. */
@@ -1788,6 +1795,7 @@ describe("the removal records itself first, and takes the key before the store",
         removeEngine: () => removeStandaloneEngine({
           openDatabase: engine.open,
           deleteDatabase: at === "store" ? async () => undefined : engine.drop,
+          exists: engine.exists,
           kv: held,
         }),
         /* NOT DRIVEN HERE, and loud rather than silent: `standDownAway` is only reached when
@@ -2080,4 +2088,218 @@ describe("a sign-out the server did not hear is owed, and sent when it can be", 
       installPinning(null);
     }
   });
+});
+
+describe("the shell's keeper and the web view's copy share the mirror's fate", () => {
+  /** The shell's stores as the take-back sees them, recording each act and what was owed at that moment. */
+  /** What the web view's storage reads after a clear: nothing left, or the shell's origin still holding data. */
+  const EMPTY: WebDataReading = { listed: false, usage: 0 };
+  const HOLDING: WebDataReading = { listed: true, usage: 65_602 };
+
+  function shellStores(profiles: ServerProfileStore, keepers: string[] = []) {
+    const acts: string[] = [];
+    const answers: { keeper: boolean; view: WebDataReading } = { keeper: true, view: EMPTY };
+    const stores: ShellStores = {
+      scopeOf: (ownerKey) => scopeOf(ownerKey, async (t) => createHash("sha256").update(t).digest("hex")),
+      keeperScopes: async () => [...keepers],
+      forgetKeeper: async (scope) => {
+        acts.push(`keeper ${scope} owed=${(await profiles.pendingWipes()).length}`);
+        return answers.keeper;
+      },
+      clearViewCopies: async () => {
+        acts.push(`view owed=${(await profiles.pendingWipes()).length}`);
+        return answers.view;
+      },
+    };
+    return { stores, acts, answers };
+  }
+  const sha = async (t: string) => createHash("sha256").update(t).digest("hex");
+
+  it("a forget takes the scope's keeper and the view's copy with the mirror, read back, before the debt is cleared", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "selfhost", sessionRoute: true });
+    const origin = await listen(fake.server);
+    try {
+      fake.addMessage("m1", "Welcome");
+      fake.addMessage("m2", "Your invoice");
+      fake.mintPairToken("tok-1");
+      const { env, world, profiles } = testEnv();
+      const shell = shellStores(profiles);
+      env.shell = shell.stores;
+      const session = await pairedWithMail(env, origin, "tok-1");
+      const scope = await scopeOf(session.ownerKey, sha);
+      const row = (await profiles.list())[0]!;
+      expect(await forgetProfile(env, row.id, { closed: Promise.resolve(session.store.close()) })).toEqual({ kind: "forgotten" });
+      expect(shell.acts).toEqual([`keeper ${scope} owed=1`, "view owed=1"]);
+      expect(await tablesUnder(world, session.ownerKey)).toEqual([]);
+      expect(await profiles.pendingWipes()).toEqual([]);
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("a keeper or a view copy that stays keeps the debt, and the next launch pays it", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "selfhost", sessionRoute: true });
+    const origin = await listen(fake.server);
+    try {
+      fake.addMessage("m1", "Welcome");
+      fake.addMessage("m2", "Your invoice");
+      fake.mintPairToken("tok-1");
+      const { env, profiles } = testEnv();
+      const shell = shellStores(profiles);
+      env.shell = shell.stores;
+      const session = await pairedWithMail(env, origin, "tok-1");
+      const row = (await profiles.list())[0]!;
+      shell.answers.view = HOLDING;
+      const outcome = await forgetProfile(env, row.id, { closed: Promise.resolve(session.store.close()) });
+      expect(outcome.kind).toBe("partial");
+      expect((await profiles.pendingWipes()).map((w) => w.owner)).toEqual([session.ownerKey]);
+
+      shell.answers.keeper = false;
+      shell.answers.view = EMPTY;
+      expect(await drainPendingWipes(env)).toEqual([session.ownerKey]);
+      expect((await profiles.pendingWipes()).map((w) => w.owner)).toEqual([session.ownerKey]);
+
+      shell.answers.keeper = true;
+      shell.acts.length = 0;
+      expect(await drainPendingWipes(env)).toEqual([]);
+      expect(shell.acts).toEqual([`keeper ${await scopeOf(session.ownerKey, sha)} owed=1`, "view owed=1"]);
+      expect(await profiles.pendingWipes()).toEqual([]);
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("an emptied origin the storage goes on listing is gone: the forget lands, and the account pairs again", async () => {
+    const fake = pairServer({ accountId: "acct-1", flavor: "selfhost", sessionRoute: true });
+    const origin = await listen(fake.server);
+    try {
+      fake.addMessage("m1", "Welcome");
+      fake.addMessage("m2", "Your invoice");
+      fake.mintPairToken("tok-1");
+      fake.mintPairToken("tok-2");
+      const { env, profiles } = testEnv();
+      const shell = shellStores(profiles);
+      env.shell = shell.stores;
+      const session = await pairedWithMail(env, origin, "tok-1");
+      const row = (await profiles.list())[0]!;
+      // Android goes on listing an origin it emptied, at no bytes, long after the clear.
+      shell.answers.view = { listed: true, usage: 0 };
+      expect(await forgetProfile(env, row.id, { closed: Promise.resolve(session.store.close()) })).toEqual({ kind: "forgotten" });
+      expect(await profiles.pendingWipes()).toEqual([]);
+      const again = await pairedWithMail(env, origin, "tok-2");
+      expect(again.ownerKey).toBe(session.ownerKey);
+
+      // A platform that cannot count what an origin it still lists holds has not shown the copy gone.
+      const next = (await profiles.list())[0]!;
+      shell.answers.view = { listed: true, usage: null };
+      expect((await forgetProfile(env, next.id, { closed: Promise.resolve(again.store.close()) })).kind).toBe("partial");
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("a fresh install wipes every keeper and the view's copies before the stamp; a wipe that stays stamps nothing", async () => {
+    const { env, profiles } = testEnv();
+    await profiles.add({ origin: "http://a.example", flavor: "selfhost", accountId: "acct-1", refreshToken: "ref-1" });
+    const keepers = ["p0123456789abcdef0123456789abcdef", "pfedcba9876543210fedcba9876543210"];
+    const shell = shellStores(profiles, keepers);
+    shell.answers.view = HOLDING;
+    const refused = await settleInstallGeneration(env.engineDeps, purgingShellToo(profiles, shell.stores));
+    expect(refused.kind).toBe("purge-refused");
+    // Nothing was stamped and nothing purged: the next launch tries again.
+    expect(await profiles.list()).toHaveLength(1);
+    expect((await settleInstallGeneration(env.engineDeps, purgingShellToo(profiles, shell.stores))).kind).toBe("purge-refused");
+
+    shell.answers.view = EMPTY;
+    shell.acts.length = 0;
+    const fresh = await settleInstallGeneration(env.engineDeps, purgingShellToo(profiles, shell.stores));
+    expect(fresh.kind).toBe("fresh-install");
+    expect(shell.acts.map((a) => a.split(" owed")[0])).toEqual([`keeper ${keepers[0]}`, `keeper ${keepers[1]}`, "view"]);
+    expect(await profiles.list()).toEqual([]);
+
+    // The same install afterwards: nothing of the shell's is touched again.
+    shell.acts.length = 0;
+    expect((await settleInstallGeneration(env.engineDeps, purgingShellToo(profiles, shell.stores))).kind).toBe("same-install");
+    expect(shell.acts).toEqual([]);
+  });
+
+  it("a missing marker is an update while a keeper remembers the pairing, its old copy already handed across", async () => {
+    /* The launch's sentinel as the connection layer composes it: the screens' mirror, or the scope's keeper. */
+    const sentinelOver = (deps: MobileEngineDeps, stores: ShellStores) => async (p: { origin: string; accountId: string }) => {
+      const ownerKey = mirrorOwnerKey(p.origin, p.accountId);
+      return (await mirrorExists(deps, ownerKey)) || (await keeperRemembers(stores, ownerKey));
+    };
+    const { env, profiles } = testEnv();
+    const row = await profiles.add({ origin: "http://a.example", flavor: "selfhost", accountId: "acct-1", refreshToken: "ref-1" });
+    const remembered = shellStores(profiles, [await scopeOf(mirrorOwnerKey(row.origin, row.accountId), sha)]);
+    const verdict = await settleInstallGeneration(
+      env.engineDeps, purgingShellToo(profiles, remembered.stores), sentinelOver(env.engineDeps, remembered.stores),
+    );
+    expect(verdict.kind).toBe("upgrade");
+    expect(await profiles.list()).toHaveLength(1);
+    expect(remembered.acts).toEqual([]);
+
+    // A reinstall has no keeper: the same pairing, with nothing of this install's beside it, is purged.
+    const other = testEnv();
+    await other.profiles.add({ origin: "http://a.example", flavor: "selfhost", accountId: "acct-1", refreshToken: "ref-1" });
+    const forgotten = shellStores(other.profiles, []);
+    const reinstalled = await settleInstallGeneration(
+      other.env.engineDeps, purgingShellToo(other.profiles, forgotten.stores), sentinelOver(other.env.engineDeps, forgotten.stores),
+    );
+    expect(reinstalled.kind).toBe("fresh-install");
+    expect(await other.profiles.list()).toEqual([]);
+  });
+});
+
+it("keeps a durable forget for an inactive pairing until calendar cleanup succeeds", async () => {
+  const { env, profiles } = testEnv();
+  await profiles.add({ origin: "https://fixture.invalid", flavor: "selfhost", accountId: "fixture", refreshToken: "fixture" });
+  const row = (await profiles.list())[0]!;
+  let canClean = false;
+  const calls: string[] = [];
+  const withCalendar = {
+    ...env, fetchImpl: async () => new Response(null, { status: 200 }), calendar: {
+      revoke: async (id: string) => { calls.push(id); return canClean; },
+    },
+  };
+  const revoke = async () => { calls.push("server"); return true; };
+
+  expect((await forgetProfile(withCalendar, row.id, { revoke, erased: true })).kind).toBe("partial");
+  expect(calls).toEqual([row.id]);
+  expect((await profiles.pendingWipes()).map(({ id }) => id)).toEqual([row.id]);
+  expect(await drainPendingWipes(withCalendar)).toHaveLength(1);
+  canClean = true;
+  expect(await drainPendingWipes(withCalendar)).toEqual([]);
+  expect(calls.filter((id) => id === row.id)).toHaveLength(3);
+  expect(await profiles.pendingWipes()).toEqual([]);
+});
+
+it("launch drains crash-saved wipes and checks the selected profile before recovering the calendar", async () => {
+  const { env, profiles } = testEnv();
+  await profiles.add({ origin: "https://fixture.invalid", flavor: "selfhost", accountId: "fixture", refreshToken: "fixture" });
+  const row = (await profiles.list())[0]!;
+  await profiles.setActive(row.id);
+  expect(await calendarProfileMayRecover(profiles, row.id)).toBe(true);
+  // The process exits after writing the obligation, before the first native call.
+  await profiles.markPendingWipe(row.id, mirrorOwnerKey(row.origin, row.accountId));
+  const restart = { ...env, fetchImpl: async () => new Response(null, { status: 200 }), calendar: { revoke: async () => false } };
+  expect(await drainPendingWipes(restart)).toHaveLength(1);
+  expect(await calendarProfileMayRecover(profiles, row.id)).toBe(false);
+  restart.calendar.revoke = async () => true;
+  expect(await drainPendingWipes(restart)).toEqual([]);
+  expect(await calendarProfileMayRecover(profiles, row.id)).toBe(false);
+
+
+  const whole = read("../src/net/connection.tsx");
+  const launch = whole.slice(whole.indexOf("useEffect(() => {\n    void gate"), whole.indexOf("const api = useMemo<Connection>("));
+  const wipes = launch.indexOf("await drainPendingWipes(env)");
+  const selected = launch.indexOf("await env.profiles.active()");
+  expect(wipes).toBeGreaterThan(-1);
+  expect(selected).toBeGreaterThan(wipes);
+  expect(launch).not.toMatch(/env\.calendar\?\.recover/);
+  const admit = whole.slice(whole.indexOf("const adoptShell"), whole.indexOf("const leaveEntered"));
+  expect(admit.indexOf("session.verifyIdentity()")).toBeGreaterThan(-1);
+  const checked = admit.indexOf("calendarProfileMayRecover(env.profiles, session.profile.id)");
+  expect(checked).toBeGreaterThan(admit.indexOf("session.verifyIdentity()"));
+  expect(admit.indexOf("env.calendar.open(")).toBeGreaterThan(checked);
 });

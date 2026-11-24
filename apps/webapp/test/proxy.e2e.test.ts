@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createHmac, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { AddressInfo } from "node:net";
@@ -39,6 +40,7 @@ import { dirname, join } from "node:path";
  * against the real domains after the DNS flip.
  */
 const ENABLED = process.env.TF_PROXY_E2E === "1";
+const webClientIpSecret = randomBytes(32).toString("hex");
 
 const WEBAPP = fileURLToPath(new URL("..", import.meta.url));
 /** next's own CLI, resolved the way node resolves it from the web app: the package's own copy where
@@ -67,6 +69,12 @@ let upstreamPort = 0;
 let next: ChildProcess | null = null;
 let appPort = 0;
 let seen: Seen[] = [];
+
+/**
+ * What names the demo in a served document: the attribute the demo's gate carries where the SERVER decided the request
+ * is the demo (`demo/DemoShell.tsx`). The ribbon is drawn only after hydration, so no served document holds it.
+ */
+const DEMO_MARK = "data-demo";
 
 /** The response the upstream should give for the NEXT request, set per test. */
 let reply: (req: IncomingMessage, res: ServerResponse) => void = (_req, res) => {
@@ -140,7 +148,7 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
 
     next = spawn(process.execPath, [NEXT_CLI, "start", "-p", String(appPort)], {
       cwd: WEBAPP,
-      env: { ...process.env, TF_API_ORIGIN: origin },
+      env: { ...process.env, TF_API_ORIGIN: origin, VERCEL: "1", TF_WEB_CLIENT_IP_SECRET: webClientIpSecret },
       stdio: "pipe",
     });
     await waitFor(`http://127.0.0.1:${appPort}/`);
@@ -253,6 +261,33 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     expect(r.headers.origin).toBe("https://ohmail.app");
   });
 
+  it("carries the signed client address with a browser POST over the external rewrite", async () => {
+    seen = [];
+    const client = "2001:db8::7";
+    const proofHeader = "x-ohmail-client-ip";
+    const body = JSON.stringify({ transport: "webpush" });
+    const response = await fetch(app("/api/push/subscriptions?test=1"), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://ohmail.app",
+        "x-vercel-forwarded-for": client,
+        [proofHeader]: "unverified",
+      },
+      body,
+    });
+    const r = last();
+    const [ip, seconds, signature] = String(r.headers[proofHeader] ?? "").split(";");
+    const expected = createHmac("sha256", webClientIpSecret).update(`${client};${seconds}`).digest("hex");
+    expect(ip === client && signature === expected).toBe(true);
+    expect(response.headers.has(proofHeader)).toBe(false);
+    expect(r.method).toBe("POST");
+    expect(r.url).toBe("/push/subscriptions?test=1");
+    expect(r.headers.host === `127.0.0.1:${upstreamPort}`).toBe(true);
+    expect(r.body).toBe(body);
+    expect(r.headers.origin).toBe("https://ohmail.app");
+  });
+
   it("HEAD and OPTIONS reach the upstream as themselves", async () => {
     seen = [];
     await fetch(app("/api/health"), { method: "HEAD" });
@@ -353,19 +388,22 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
 
   it("the DEMO makes no upstream request — with the rewrite armed and the API base baked in", async () => {
     // The adversarial shape: `NEXT_PUBLIC_API_BASE=/api` IS in the bundle and the rewrite
-    // IS live, so the demo had every opportunity. This asserts the server half (the
-    // document render); the browser half — zero fetch/EventSource/WebSocket from the
-    // hydrated page — is the Playwright pass recorded in the project's design notes §.
+    // IS live, so the demo had every opportunity. This asserts the server half: the document
+    // the server draws for a request it decided is the demo. The frame lays out by the window,
+    // so that document is the product's empty gate, and the gate carries the server's decision
+    // as DEMO_MARK (the ribbon is drawn after hydration: `frame/demo-hydrated.test.tsx`). The
+    // browser half — zero fetch/EventSource/WebSocket from the hydrated page — is the
+    // Playwright pass recorded in the project's design notes §.
     seen = [];
     const res = await fetch(app("/?demo=1"));
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("demo-ribbon");
+    expect(html, "the server did not decide the demo").toContain(DEMO_MARK);
     expect(seen, "the demo reached the API").toHaveLength(0);
 
     // …and the repeated-parameter shape that used to fall through to the live client.
     const dup = await fetch(app("/?demo=1&demo=0"));
-    expect(await dup.text()).toContain("demo-ribbon");
+    expect(await dup.text(), "the repeated parameter was not the demo").toContain(DEMO_MARK);
     expect(seen).toHaveLength(0);
   });
 
@@ -434,7 +472,7 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     const res = await fetch(app("/"));
     expect(res.status).toBe(404);
     const html = await res.text();
-    expect(html).not.toContain("demo-ribbon");
+    expect(html).not.toContain(DEMO_MARK);
     expect(html).not.toContain("app-body");      // not the product root layout
     expect(seen, "the anonymous page hit the API").toHaveLength(0);
   });
@@ -447,6 +485,8 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     const html = await res.text();
     expect(html).toContain("app-body");                    // the product root layout
     expect(html).not.toContain("l-hero");
+    // The app's document for a request the server decided is NOT the demo: the same gate, unmarked.
+    expect(html, "a live request's document names the demo").not.toContain(DEMO_MARK);
     // Exactly one upstream call, and it authenticated as a bearer.
     expect(seen.map((r) => r.path)).toEqual(["/auth/session"]);
     expect(seen[0]!.headers.authorization).toBe(`Bearer ${TOKEN}`);
@@ -478,7 +518,7 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     sessionUpstream(200, FULL);
     seen = [];
     const html = await fetch(app("/?demo=1"), { ...withSession }).then((r) => r.text());
-    expect(html).toContain("demo-ribbon");
+    expect(html, "the server did not decide the demo").toContain(DEMO_MARK);
     expect(seen, "the demo reached the API").toHaveLength(0);
   });
 
@@ -500,6 +540,29 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
       expect((await fetch(app(asset))).status, asset).toBe(200);
     }
     expect(seen, "a static path reached the API").toHaveLength(0);
+  });
+
+  it("the content-named pdf worker is kept for a year under the blanket policy; no other path is", async () => {
+    const { PDF_WORKER_SRC } = await import("../app/components/AttachmentPreview");
+    const worker = await fetch(app(PDF_WORKER_SRC));
+    expect(worker.status).toBe(200);
+    expect(worker.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(worker.headers.get("content-security-policy")).toBeTruthy();
+    expect(worker.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(worker.headers.get("set-cookie")).toBeNull();
+    const bytes = Buffer.from(await worker.arrayBuffer());
+    const jarred = Buffer.from(await (await fetch(app(PDF_WORKER_SRC), { headers: { cookie: "tf_session=x" } })).arrayBuffer());
+    expect(jarred.equals(bytes)).toBe(true);
+    const wrong = PDF_WORKER_SRC.replace(/\.([0-9a-f]{16})\./, ".0000000000000000.");
+    for (const path of ["/pdf.worker.min.mjs", wrong, "/sw.js", "/"]) {
+      const res = await fetch(app(path), { redirect: "manual" });
+      expect(res.headers.get("cache-control") ?? "", path).not.toContain("immutable");
+    }
+    /* The framework matches a header rule's source without regard to case, so the same name in upper case (no file,
+       a 404) carries the long life too. Nothing links to it; it is held here so a change in either direction shows. */
+    const shouted = await fetch(app(PDF_WORKER_SRC.toUpperCase()), { redirect: "manual" });
+    expect(shouted.status).toBe(404);
+    expect(shouted.headers.get("cache-control")).toContain("immutable");
   });
 
   // ── REPAIR ────────────────────────────────────────────────────────────────────────
@@ -702,5 +765,84 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     });
     expect(refresh.status).not.toBe(405);
     expect(seen.some((r) => r.path === "/auth/refresh" && r.method === "POST"), "refresh not proxied").toBe(true);
+  });
+
+  /**
+   * THE FIRST PAGE WITHOUT THE PROBE, on a second `next start` of the same build with the setting on. Off (the server
+   * above), a token and the marker cost one session read and the page's word is `now`.
+   */
+  describe("with OHMAIL_FIRST_PAGE_NO_PROBE=1", () => {
+    let unasked: ChildProcess | null = null;
+    let unaskedPort = 0;
+    const at = (path: string): string => `http://127.0.0.1:${unaskedPort}${path}`;
+    const jar = (session: string) => ({ cookie: `tf_session=${session}; tf_resume=${"m".repeat(43)}` });
+    const wordIn = (html: string): string | null => /drawMail\\?":\\?"(now|wait)/.exec(html)?.[1] ?? null;
+    const nonceOf = (res: Response): string | null => /'nonce-([^']+)'/.exec(res.headers.get("content-security-policy") ?? "")?.[1] ?? null;
+
+    beforeAll(async () => {
+      unaskedPort = await freePort();
+      unasked = spawn(process.execPath, [NEXT_CLI, "start", "-p", String(unaskedPort)], {
+        cwd: WEBAPP,
+        env: { ...process.env, TF_API_ORIGIN: `http://127.0.0.1:${upstreamPort}`, OHMAIL_FIRST_PAGE_NO_PROBE: "1" },
+        stdio: "pipe",
+      });
+      await waitFor(at("/"));
+    }, 120_000);
+    afterAll(() => { unasked?.kill("SIGTERM"); });
+
+    it("off: a token and the marker cost one session read, and the page says now", async () => {
+      sessionUpstream(200, FULL);
+      seen = [];
+      const res = await fetch(app("/"), { headers: jar(TOKEN) });
+      expect(res.status).toBe(200);
+      expect(seen.map((r) => r.path)).toEqual(["/auth/session"]);
+      expect(wordIn(await res.text())).toBe("now");
+    });
+
+    it("on: the app's empty document, no request upstream, private, two nonces, no cookie value in it, and the word wait", async () => {
+      sessionUpstream(200, FULL);
+      seen = [];
+      const one = await fetch(at("/"), { headers: { ...jar(TOKEN), "x-ohmail-first-page": "now" }, redirect: "manual" });
+      const other = await fetch(at("/"), { headers: jar(`${TOKEN}-other-jar`), redirect: "manual" });
+      expect(seen, "the upstream was asked").toHaveLength(0);
+      for (const res of [one, other]) {
+        expect(res.status).toBe(200);
+        expect(res.headers.get("cache-control")).toContain("private");
+        expect(res.headers.get("cache-control")).toContain("no-store");
+        expect(res.headers.get("set-cookie")).toBeNull();
+      }
+      expect(nonceOf(one)).toBeTruthy();
+      expect(nonceOf(one)).not.toBe(nonceOf(other));
+      const a = await one.text();
+      const b = await other.text();
+      expect(wordIn(a), "a client-sent word was believed").toBe("wait");
+      for (const html of [a, b]) {
+        expect(html).not.toContain(TOKEN);
+        expect(html).not.toContain("m".repeat(43));
+      }
+      const blank = (html: string, res: Response) => {
+        const nonce = nonceOf(res)!;
+        expect(html).toContain(nonce);
+        let blanked = html.replaceAll(nonce, "N");
+        // The serialized boot props can carry a nonce across two React Flight script chunks.
+        const boundary = '"])</script><script nonce="N">self.__next_f.push([1,"';
+        for (let split = 1; split < nonce.length; split += 1) {
+          const divided = nonce.slice(0, split) + boundary + nonce.slice(split);
+          blanked = blanked.replaceAll(divided, "N" + boundary);
+        }
+        return blanked;
+      };
+      expect(blank(a, one)).toBe(blank(b, other));
+      const head = await fetch(at("/"), { method: "HEAD", headers: jar(TOKEN) });
+      expect(head.headers.get("set-cookie")).toBeNull();
+      expect(seen).toHaveLength(0);
+    });
+
+    it("on: a token without the marker is still probed", async () => {
+      sessionUpstream(200, FULL);
+      seen = [];
+      await fetch(at("/"), { headers: { cookie: `tf_session=${TOKEN}` } });
+      expect(seen.map((r) => r.path)).toEqual(["/auth/session"]);
+    });
   });
 });

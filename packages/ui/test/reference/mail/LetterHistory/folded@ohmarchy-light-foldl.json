@@ -1,0 +1,65 @@
+{
+  "component": "LetterHistory",
+  "state": "folded",
+  "look": "ohmarchy-light-foldl",
+  "place": "block",
+  "target": [437, 511.5781, 374, 44],
+  "clip": [437, 511, 374, 45],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "foldl",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 841,
+    "height": 673,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 841, "clientWidth": 841, "scrollHeight": 673 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [{ "ink": "stroke rgb(56, 54, 53) 2.8px square miter 4; shapes 1 bda16f424158" }],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Show history",
+      "box": [0, 0, 126.4, 44],
+      "drawn": {
+        "color": "rgb(56, 54, 53)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "12px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(56, 54, 53)"
+      },
+      "state": ["collapsed"],
+      "text": [{ "said": "Show history", "type": 0 }],
+      "surfaces": [{ "box": [8, 14, 16, 16], "paint": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

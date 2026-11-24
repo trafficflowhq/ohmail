@@ -1,7 +1,8 @@
+import type { AttachmentWire } from "@ohmail/wire";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { OhmailEngine } from "../src/engine.js";
-import { FixturesAdapter } from "../src/adapters/fixtures-adapter.js";
-import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
+import type { EngineAdapter } from "../src/adapters/adapter.js";
 
 /**
  * ═══ THE RUNTIME'S BYTE LAYER FAILS PRESENT-AND-THROWING, NOT ABSENT ═════════════════════════

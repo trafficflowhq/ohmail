@@ -39,6 +39,16 @@ describe("every forwarded write names what it changes on this install", () => {
     expect(wired.filter((k) => !named.has(k)), "verbs no forwarded route carries").toEqual([]);
   });
 
+  it("a route whose body carries a typed sign-in is sent by no window verb: a verb is a queued, stored record", () => {
+    // A mailbox's password, and a calendar's password or its subscription's whole address: each is a direct
+    // call, sent once and kept nowhere. A verb named here would be that body written into the window's queue,
+    // and the case above refuses a wired verb that no entry names.
+    for (const route of ["POST /mailboxes", "PATCH /mailboxes/:id", "POST /calendar/connections", "POST /calendar/connections/:id/sign-in"]) {
+      expect(Object.keys(WRITE_ROWS), route).toContain(route);
+      expect(WRITE_ROWS[route]?.verbs ?? [], route).toEqual([]);
+    }
+  });
+
   it("a request finds its entry through the relay's own matching", () => {
     expect(writeRowsOf("POST", "/messages/abc/triage")?.verbs).toEqual(["triage_set"]);
     expect(writeRowsOf("PUT", "/away-responder")?.rows).toBe("none");

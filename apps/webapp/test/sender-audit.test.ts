@@ -1,18 +1,21 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   consentIndex,
   decidedDestination,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { createElement } from "react";
+import { render, within } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type en from "../messages/en.json";
+import { SenderAuditPanel } from "../app/screening/SenderAuditPanel";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
-import { attributeMessages, ruleMatchesSender } from "../app/shell/sender-audit";
+import { attributeMessages, ruleMatchesSender } from "@ohmail/app-logic/press/sender-audit";
 
 /**
  * WHY YOUR MAIL WENT WHERE IT WENT — and, mostly, what this refuses to claim.
@@ -259,21 +262,24 @@ describe("the why row names the winning rule", () => {
   });
 });
 
-/**
- * THE ARRIVAL SENTENCE CLAIMS ONLY WHAT THE MIRROR CAN SEE. "No rule of yours covers it" was false
- * for an Inbox copy whose sender a newer rule screens out, and for mail whose rule files elsewhere:
- * a rule covers that sender. The sentence now says no rule ohmail can see would file it here.
- */
 describe("the arrival sentence", () => {
-  const whyArrival = (locale: string): string => (JSON.parse(
-    readFileSync(join(process.cwd(), `apps/webapp/messages/${locale}.json`), "utf8"),
-  ) as { screening: { auditWhyArrival: string } }).screening.auditWhyArrival;
-
   it("says no rule it can see would file the message here, in both catalogues", () => {
-    expect(whyArrival("en")).toBe(
-      "Filed when it arrived. ohmail sees no rule of yours that would file it here now — most often it is here because you had already replied to this sender.");
-    expect(whyArrival("de")).toBe(
-      "Beim Eintreffen einsortiert. ohmail sieht keine Regel von dir, die sie jetzt hierher sortieren würde — meist liegt sie hier, weil du diesem Absender schon geantwortet hattest.");
+    const message = msg("arrival", "reader@example.invalid", "ohmail/News");
+    for (const [locale, count] of [["en", "1 message"], ["de", "1 Nachricht"]] as const) {
+      const messages = JSON.parse(readFileSync(join(process.cwd(), `apps/webapp/messages/${locale}.json`), "utf8")) as typeof en;
+      const drawn = render(createElement(NextIntlClientProvider, {
+        locale, messages, timeZone: "UTC",
+        children: createElement(SenderAuditPanel, {
+          state: { title: message.from.address, domain: false, rows: [message] },
+          onClose: () => {},
+        }),
+      }));
+      const panel = within(drawn.getByRole("dialog"));
+      expect(panel.getByText(count)).toBeTruthy();
+      expect(panel.getByRole("listitem").textContent).toBe("Subject arrivalNews · 2026-08-01");
+      expect(messages.screening).not.toHaveProperty("auditWhyArrival");
+      drawn.unmount();
+    }
   });
 });
 

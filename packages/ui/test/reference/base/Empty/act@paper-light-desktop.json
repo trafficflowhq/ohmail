@@ -1,0 +1,83 @@
+{
+  "component": "Empty",
+  "state": "act",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [58.9219, 24, 180.1563, 152],
+  "clip": [58, 24, 182, 152],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "20px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "24px",
+      "letterSpacing": "-0.44px",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 2 340697009586" },
+    { "backgroundColor": "rgb(18, 16, 14)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Write",
+      "box": [32, 72, 116.2, 48],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "24px",
+        "paddingBottom": "0px",
+        "paddingLeft": "24px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Write", "type": 0 }],
+      "surfaces": [{ "box": [56, 86, 20, 20], "paint": 0 }]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "No drafts", "type": 1 }],
+    "surfaces": [{ "box": [131.8, 43.2, 6.8, 6.8], "paint": 1 }]
+  }
+}

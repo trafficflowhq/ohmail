@@ -6,6 +6,7 @@
  * the selection in its `open` param (and the shelf in `seg`) — the same continuity rule the
  * message route follows.
  */
+import { MailAppearance } from "../../../src/theme/mail";
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -26,9 +27,11 @@ export default function SenderScreen() {
   useLocale();
   return (
     <SurfaceBoundary surface="screener">
-      <Gated>
-        <SenderRoute />
-      </Gated>
+      <MailAppearance>
+        <Gated>
+          <SenderRoute />
+        </Gated>
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }

@@ -628,7 +628,7 @@ describe("the cold relaunch — a row, and nothing running", () => {
     /* AND IT CARRIES THE LAUNCH IT BELONGS TO. The import is not awaited, so a relaunch given up
        while it was loading must not raise a session over the engine that was stopped. */
     expect(src).toContain("const launch = standaloneLaunchGeneration();");
-    expect(src).toContain("m.startOrganizerSessionNative(door, door.address, launch)");
+    expect(src).toContain("m.startOrganizerSessionNative(door, launch)");
     /* AND A BUILD THAT CANNOT REACH ITS OWN BACKGROUND HALF SAYS SO. */
     expect(src).toContain("sayOrganizerRestricted()");
     /* THE PORT USES IT, rather than the bare reopen it used to. */
@@ -995,7 +995,7 @@ describe("a refused connect leaves no engine, and a second press makes no second
     const fired = src.indexOf('void import("../src/engine/organizer-session-native")');
     expect(read, "the door screen never reads the launch it is starting").toBeGreaterThan(-1);
     expect(read, "the launch is read after the import was fired").toBeLessThan(fired);
-    expect(src).toContain("m.startOrganizerSessionNative(outcome.door, address, launch)");
+    expect(src).toContain("m.startOrganizerSessionNative(outcome.door, launch)");
   });
 
   it("the connect's refusal arm is the ONE exit — the composition, read", () => {

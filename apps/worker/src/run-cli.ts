@@ -1,10 +1,11 @@
-import { eq } from "drizzle-orm";
-import { mailboxes, type Tx } from "@trafficflow/db";
+import { asc, eq } from "drizzle-orm";
+import { accounts, mailboxes, type Tx } from "@trafficflow/db";
+import type { WorkerRosterDb } from "./start/bind.js";
 import type { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import {
   CLOUD_DISPLAY_NAME, LeaseUnavailableError, OrganizerStandDownError, acquireLeasePermit,
   assertNoLiveTwin, mailboxHasRequestKey, resolveCloudInstallId, type LeasePermit,
-} from "./lease.js";
+} from "@ohmail/organizer/lease";
 
 /**
  * WHAT THE ONE-OFF MAILBOX RUNNERS SHARE — the scaffold around a bounded operator command.
@@ -15,6 +16,17 @@ import {
  * it stood twice. Each runner keeps its own verb and its own closing sentence, which is all an
  * operator reads; a shared test holds both to the words the runners printed
  * before this module existed.
+ */
+
+/*
+ * WHOSE HANDLE A COMMAND RUNS ON. A command opens the organizer's pool and takes its two views
+ * (`bindWorker`, `start/bind.ts`), as the organizer does. The row that says whose the work is, is
+ * read on `roster`, which names no account: the mailbox it was told ({@link readRunnerMailbox}), or
+ * each account's own ({@link runnerAccounts}). Everything else runs on `forAccount` of the account
+ * that row names. The arguments select the row; only the row names the account. A command on the
+ * pool's own handle would, where rows are locked by account, find nothing and report a clean run.
+ * The key re-wrap alone stays on the pool's own handle: it is the migrator's work, on every account's
+ * sealed rows at once.
  */
 
 /** `--flag` and `--opt value` off a runner's argv — the whole of what these commands parse. */
@@ -54,7 +66,8 @@ export const RELEASE_REQUESTED_REFUSAL = (mailboxId: string): string =>
 
 /**
  * The mailbox row, or the reason this command may not touch it. `null` ⇒ no such mailbox;
- * a string ⇒ the sentence to print before exiting. The caller closes its own handle.
+ * a string ⇒ the sentence to print before exiting. The caller closes its own handle. A command
+ * hands the roster's view: the row's `accountId` is what it then binds.
  */
 export async function readRunnerMailbox(
   db: Tx, mailboxId: string,
@@ -66,6 +79,16 @@ export async function readRunnerMailbox(
   if (!mb) return null;
   if (mb.releaseRequestedAt !== null) return { refusal: RELEASE_REQUESTED_REFUSAL(mailboxId) };
   return { mailbox: mb as RunnerMailbox };
+}
+
+/**
+ * THE ACCOUNTS A REPAIR OF EVERY ACCOUNT WALKS: each account's own row, read on the roster's view,
+ * in the order of their ids. The repair then runs once for each, on that account's handle and with
+ * that account as its scope.
+ */
+export async function runnerAccounts(roster: WorkerRosterDb): Promise<string[]> {
+  const rows = await roster.select({ id: accounts.id }).from(accounts).orderBy(asc(accounts.id));
+  return rows.map((r) => r.id);
 }
 
 /** What an operator reads when a runner declines: its verb, and what it leaves behind. */

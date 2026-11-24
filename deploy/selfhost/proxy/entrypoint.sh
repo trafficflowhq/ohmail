@@ -6,7 +6,8 @@
 # CIDRs separated by single spaces, or it exits 78 before Caddy reads it. One line says what is trusted, then the
 # image's own command runs: compose's `entrypoint:` clears it, so it is repeated below and pinned against the
 # image by a test, with `--config` naming the door. `:+` as compose spells it, so OHMAIL_EXTERNAL_TLS chooses
-# a file and never names one. `--resolve` prints and exits; OHMAIL_PROC_NET_ROUTE names a route file for tests.
+# a file and never names one. On the TLS door OHMAIL_ORIGIN must be an http:// or https:// origin of plain
+# characters, or it exits 78. `--resolve` prints and exits; OHMAIL_PROC_NET_ROUTE names a route file for tests.
 set -eu
 
 route_file=${OHMAIL_PROC_NET_ROUTE:-/proc/net/route}
@@ -47,6 +48,16 @@ if [ -n "${OHMAIL_EXTERNAL_TLS:-}" ]; then
     how="gateway: this network's gateway"
   fi
   printf 'proxy: external door honours X-Forwarded-For from %s (OHMAIL_TLS_TERMINATOR %s)\n' "$OHMAIL_TLS_TERMINATOR" "$how"
+else
+  # The TLS door writes OHMAIL_ORIGIN into its site address and its 421 page, substituted before Caddy
+  # parses: only http:// or https:// and an origin's own characters reach it, never a brace, a quote,
+  # a space or markup. What the origin means stays the api's to judge. The value is not echoed. `[]…[`
+  # puts the brackets in the set the way busybox awk (the image's) reads them; `\[\]` it does not. The
+  # pattern is a string with a plain slash: busybox awk keeps the backslash of `\/` inside a bracket.
+  if ! LC_ALL=C awk 'BEGIN { exit !(ENVIRON["OHMAIL_ORIGIN"] ~ "^[Hh][Tt][Tt][Pp]([Ss])?://[][A-Za-z0-9._:/\200-\377-]+$") }'; then
+    printf '%s\n' "proxy: OHMAIL_ORIGIN is not an http:// or https:// address made of letters, digits, dots, dashes, colons, slashes and brackets, so it is not handed to Caddy: write it as https://mail.example.com." >&2
+    exit 78
+  fi
 fi
 
 if [ "${1:-}" = "--resolve" ]; then exit 0; fi

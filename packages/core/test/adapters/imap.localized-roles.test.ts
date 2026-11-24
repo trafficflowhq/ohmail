@@ -71,8 +71,10 @@ const ROWS: Row[] = [
 function fakeClient(row: Row, version: "v150" | "v178") {
   const folders = [{ path: "INBOX", flags: [] as string[], v150: ["\\Inbox", "name"], v178: ["\\Inbox", "name"] }, ...row.folders];
   const created: string[] = [];
+  const locked: string[] = [];
   return {
     created,
+    locked,
     // What the measured server advertised: the `on-` Dovecot SPECIAL-USE, the others nothing.
     capabilities: new Map<string, boolean>([["IDLE", true], ...(row.specialUseCap ? [["SPECIAL-USE", true] as [string, boolean]] : [])]),
     mailbox: false as const,
@@ -87,7 +89,7 @@ function fakeClient(row: Row, version: "v150" | "v178") {
       });
     },
     async mailboxCreate(path: string) { created.push(path); folders.push({ path, flags: [] }); return { path }; },
-    async getMailboxLock(path: string) { return { path, release() {} }; },
+    async getMailboxLock(path: string) { locked.push(path); return { path, release() {} }; },
     async search() { return [] as number[]; },
     async logout() { /* nothing to tear down */ },
     close() { /* nothing to tear down */ },
@@ -101,14 +103,17 @@ async function decide(row: Row, version: "v150" | "v178", stored: Stored) {
   const cfg = { host: "x", port: 0, secure: false, auth: { user: "u", pass: "p" }, ...(stored ? { storedFolders: stored } : {}) };
   const adapter = new ImapAdapter(cfg, { client });
   await adapter.connect();
-  const a = adapter as unknown as {
-    sentFolder: string | null; findSentForScan(): Promise<string | null>; resolveSentFolder(): Promise<string>;
-  };
-  const sentAtConnect = a.sentFolder ?? null;
+  // Each role read where the adapter states or uses it: the Sent of the connect, the folder the
+  // scan opens (on this fake's `/` the server path is the folder's own), and the Sent a send files
+  // into (the send path resolves it before it looks for a copy there).
+  const sentAtConnect = (await adapter.capabilities()).sentFolder ?? null;
   const special = await adapter.findSpecialFolders();
-  const scanSent = await a.findSentForScan();
+  const lockedBefore = client.locked.length;
+  await adapter.scanSentRecipients(1);
+  const scanSent = client.locked[lockedBefore] ?? null;
   const passiveRead = [...adapter.passiveFolderReport().read];
-  const writeSent = await a.resolveSentFolder();
+  await adapter.messageInSent("<probe@roles.invalid>");
+  const writeSent = (await adapter.capabilities()).sentFolder;
   return {
     sentAtConnect, scanSent, writeSent, created: client.created,
     junk: special.junk, trash: special.trash, passiveRead,

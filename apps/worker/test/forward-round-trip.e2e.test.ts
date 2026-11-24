@@ -4,11 +4,11 @@ import { normalizeMime, countRealFiles, UNMETERED_STORAGE_CAP } from "@trafficfl
 import { attachments, drafts, messageBodies, messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { eq } from "drizzle-orm";
-import { SendService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, SendService, type ServiceContext } from "@trafficflow/services";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { byMessageId, makeHarness, rawClient, dbUrlFor } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
+import { byMessageId, makeHarness, rawClient, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 const DB_URL = dbUrlFor(import.meta.url);
 
@@ -117,7 +117,7 @@ describe("forward round trip (GreenMail SMTP+IMAP + Postgres)", () => {
   ] as const)("an HTML-only original with a cid picture and two files arrives whole and parses whole (%s)", async (_shape, note) => {
     const h = await makeHarness();
     closers.push(() => h.adapter.close());
-    const ctx: ServiceContext = { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
+    const ctx: ServiceContext = { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
     const deps: SyncDeps = {
       repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId,
       storageCap: UNMETERED_STORAGE_CAP, role: "organizer", trustedAuthservIds: new Set<string>(),
@@ -202,7 +202,7 @@ describe("forward round trip (GreenMail SMTP+IMAP + Postgres)", () => {
   it("a forward from a conversation carries the inbound member it was handed, never the own auto-reply", async () => {
     const h = await makeHarness();
     closers.push(() => h.adapter.close());
-    const ctx: ServiceContext = { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
+    const ctx: ServiceContext = { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
     const seed = async (o: { from: string; text: string; date: Date; own?: boolean }) => {
       const [m] = await h.db.insert(messages).values({
         accountId: h.accountId, mailboxId: h.mailboxId, bodyHash: "h",
@@ -210,7 +210,7 @@ describe("forward round trip (GreenMail SMTP+IMAP + Postgres)", () => {
         fromAddress: o.from, snippet: o.text.slice(0, 200), date: o.date,
         nativeLocator: { folder: "INBOX", ref: "1:1" },
       }).returning();
-      await h.db.insert(messageBodies).values({ messageId: m!.id, text: o.text, html: null });
+      await h.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.text, html: null });
       return m!.id;
     };
     const inboundId = await seed({ from: "colleague@partner.example", text: "Please review the budget numbers before Friday.", date: new Date(Date.now() - 60_000) });

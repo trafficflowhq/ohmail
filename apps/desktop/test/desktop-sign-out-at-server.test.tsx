@@ -4,8 +4,10 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { within } from "@testing-library/react";
 
 import { DesktopGate } from "../src/DesktopGate.js";
+import { DEFAULT_MAIL_ASKED_KEY } from "../src/DesktopDefaultMail.js";
 import { engineLogout, type EngineStatus } from "../src/bridge-fetch.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import { MACHINE_WORD } from "../src/platform.js";
@@ -46,6 +48,7 @@ const LOCAL: EngineStatus = {
   state: "serving", mode: "local", address: "someone@example.com", mailboxId: "mbx-1", credentialState: "ready",
 } as EngineStatus;
 const SIGNED_OUT = { state: "not_configured", mode: null, missing: ["config.json"] } as unknown as EngineStatus;
+const SELF_HOSTED: EngineStatus = { ...MANAGED, cloudUrl: "https://mail.example.test" };
 
 function encode(status: number, body: string): Uint8Array {
   const meta = new TextEncoder().encode(JSON.stringify({ status, statusText: "OK", h: [] }));
@@ -81,6 +84,8 @@ function fakeShell(
       const url = String(payload?.url ?? "");
       asked.push(command === "engine_request" ? `${method} ${url}` : command);
       if (command === "engine_status") return current;
+      if (command === "default_mail_status") return { state: "not-default" };
+      if (command === "default_mail_request") return { how: "system-dialog", state: "not-default" };
       if (command === "engine_logout" && logout === "throw") throw new Error(LOGOUT_REFUSED);
       if (command === "engine_logout") { current = SIGNED_OUT; return current; }
       if (command === "engine_request") {
@@ -126,6 +131,13 @@ describe("engineLogout(press)", () => {
     expect(shell.asked).toEqual(["DELETE /cloud/session", "engine_logout"]);
     expect(out.status).toEqual(SIGNED_OUT);
     expect(out.stillListedFrom).toEqual(MANAGED);
+  });
+
+  it.each([true, false])("an unread Cloud session still asks the server to revoke it (confirmed: %s)", async (confirmed) => {
+    const shell = fakeShell(MANAGED, { status: "signed_out", revokedAtHost: confirmed });
+    const out = await engineLogout({ status: MANAGED, session: "unknown" });
+    expect(shell.asked).toEqual(["DELETE /cloud/session", "engine_logout"]);
+    expect(out).toEqual({ status: SIGNED_OUT, stillListedFrom: confirmed ? null : MANAGED, waiting: null });
   });
 
   it("THE FENCE: a press over a pending switch or a pending door asks the engine nothing first", async () => {
@@ -182,15 +194,9 @@ describe("Settings → Desktop → Sign out, read where it lands", () => {
     await act(async () => { found[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   }
 
-  /**
-   * Mount the gate on Settings → Desktop, run `seed` once the shell is up, press Sign out and its
-   * confirmation, and wait for the doors (or `landed`).
-   */
-  async function signOutFromSettings(
-    locale: "en" | "de", seed?: () => void, landed = (): boolean => (el?.querySelectorAll(".door-tile").length ?? 0) > 0,
-  ): Promise<void> {
+  async function mountAt(locale: "en" | "de", hash: string): Promise<void> {
     if (locale === "de") setActiveCatalog("de", de as never);
-    window.location.hash = "#/settings/desktop";
+    window.location.hash = hash;
     el = document.createElement("div");
     document.body.appendChild(el);
     root = createRoot(el);
@@ -201,6 +207,16 @@ describe("Settings → Desktop → Sign out, read where it lands", () => {
         </IntlProvider>,
       );
     });
+  }
+
+  /**
+   * Mount the gate on Settings → Desktop, run `seed` once the shell is up, press Sign out and its
+   * confirmation, and wait for the doors (or `landed`).
+   */
+  async function signOutFromSettings(
+    locale: "en" | "de", seed?: () => void, landed = (): boolean => (el?.querySelectorAll(".door-tile").length ?? 0) > 0,
+  ): Promise<void> {
+    await mountAt(locale, "#/settings/desktop");
     await until("the Settings pane's Sign out", () => buttons(DOOR_COPY.signOut).length === 1);
     seed?.();
     await press(DOOR_COPY.signOut);
@@ -255,10 +271,29 @@ describe("Settings → Desktop → Sign out, read where it lands", () => {
     expect(text()).not.toContain(DOOR_COPY.signedOutStillListed(machineWord(), "ohmail.app"));
   });
 
+  it("opens the install from the Settings menu and changes the default mail app from there", async () => {
+    const shell = fakeShell(MANAGED);
+    localStorage.setItem(DEFAULT_MAIL_ASKED_KEY, "1");
+    await mountAt("en", "#/settings");
+    const install = () => {
+      if (!el) return null;
+      const menu = within(el).queryByRole("navigation", { name: en.settings.navAria });
+      return menu && within(menu).queryByRole("button", { name: en.desktopDoor.paneLabel });
+    };
+    await until("the Desktop settings entry", () => install() != null);
+    await act(async () => { install()!.click(); });
+    await until("the default mail action", () => buttons(DOOR_COPY.mailtoMakeDefault).length === 1);
+    expect(window.location.hash).toBe("#/settings/desktop");
+    await press(DOOR_COPY.mailtoMakeDefault);
+    expect(shell.asked.filter((command) => command === "default_mail_request")).toHaveLength(1);
+    expect(shell.asked).not.toContain("engine_logout");
+  });
+
   /* THE WINDOW FORGETS THE MAILBOX IT SHOWED, on every door, whether or not the server confirmed. */
   for (const [name, door, del] of [
     ["managed", MANAGED, { status: "signed_out", revokedAtHost: true }],
     ["managed, the server not confirming", MANAGED, { status: "signed_out", revokedAtHost: false }],
+    ["self-hosted", SELF_HOSTED, { status: "signed_out", revokedAtHost: true }],
     ["paired", PAIRED, { status: "signed_out", revokedAtHost: true }],
     ["local", LOCAL, { status: "signed_out" }],
   ] as const) {

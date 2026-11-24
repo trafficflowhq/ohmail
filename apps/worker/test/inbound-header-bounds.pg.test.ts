@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -11,10 +12,10 @@ import { MAX_BIND_PARAMETERS, schema, withBindLimit } from "@trafficflow/db/clou
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { normalizeMime, UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { markDatabaseFaults } from "../src/db-fault.js";
-import { DatabaseFaultError, classifyIngestFault, isSharedDatabaseFault } from "../src/dead-letter.js";
-import { runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet, rawOf } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { DatabaseFaultError, classifyIngestFault, isSharedDatabaseFault } from "@ohmail/organizer/dead-letter";
+import { runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet, rawOf } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * ONE CRAFTED MESSAGE CANNOT HOLD A FOLDER, on real Postgres through the worker's real ingest.
@@ -298,7 +299,7 @@ describe.skipIf(!PG_UP)("one crafted message is stored and the folder keeps movi
       made.push(accountId);
       await bdb.insert(accounts).values({ id: accountId, name: `hb-${accountId.slice(0, 8)}` });
       const [mb] = await bdb.insert(mailboxes).values({ accountId, provider: "imap", address: `hb-${accountId.slice(0, 8)}@ohmail.test` }).returning();
-      await bdb.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent" } as never);
+      await bdb.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), folder: "Sent" } as never);
       const ids = Array.from({ length: 70_000 }, (_, i) => `<f${i.toString(36)}@x.test>`);
       const lines: string[] = [];
       for (let i = 0; i < ids.length; i += 60) lines.push(ids.slice(i, i + 60).join(" "));

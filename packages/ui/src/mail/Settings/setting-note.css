@@ -1,0 +1,31 @@
+/* A note on a sheet of settings: it hangs under the line above it, in the second ink, at a reading measure. */
+@layer oh {
+  .oh-settingnote {
+    --oh-settingnote-sign-drop: 2px;
+    --oh-settingnote-rise: calc(var(--s2) * -1);
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+    min-width: 0;
+    max-width: var(--measure);
+    overflow-wrap: anywhere;
+    margin-top: var(--oh-settingnote-rise);
+    padding: 0 0 var(--s3);
+    color: var(--ink2);
+  }
+
+  /* The words a sentence leans on: heavier, in the ink. */
+  .oh-settingnote-strong {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-settingnote > .oh-icon {
+    flex: none;
+    margin-top: var(--oh-settingnote-sign-drop);
+  }
+
+  .oh-settingnote > .oh-settingnote-copy {
+    min-width: 0;
+  }
+}

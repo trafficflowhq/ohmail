@@ -1,13 +1,15 @@
+import type { EmailAddress } from "@ohmail/wire";
 import { and, asc, desc, eq, exists, getTableColumns, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, folderQueueOf, flagQueueOf, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock } from "@trafficflow/db";
+import type { AnyPgColumn, PgInsertValue } from "drizzle-orm/pg-core";
+import { accountOfMessage, accountOfMailbox, mailboxPass, markPassDone, passMark, readPassProgress, accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, folderQueueOf, flagQueueOf, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock, writeInvitation as writeInvitationDoor, invitationBackfillPage, settleInvitationBackfill, type InvitationBackfillPage, type InvitationWrite } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
   FolderAttribution,
-  Rule, NativeLocator, EmailAddress,
+  Rule, NativeLocator,
   MessageBodyInput, BodyStorageContext, BodyStorageOutcome, RepoChangeInput, RoutingDecisionInput, ApprovalInput, AttachmentMeta,
   ThreadParent, ThreadUpsertInput, ThreadUpsertResult, ThreadMergeInput, KnownSenders, ContactSource,
+  InvitationWritten,
   // `../mail.js`, not `../index.js`: the repository adapter needs the mail vocabulary, and the
   // default barrel re-exports the model half beside it — so naming it here would put the
   // classifier and the drafter into the import graph of every artifact that stores a message.
@@ -17,6 +19,8 @@ import {
   messageSearchUpsert, reindexMessageSearch, storedSearchInputWith, upsertMessageSearch, type MessageSearchInput,
 } from "../message-search.js";
 import type { NormalizedMessage } from "../types.js";
+import type { PlannedInvitation } from "../invitation-mail.js";
+import { valueFaultOf, type MessageFailureCode } from "../statement-fault.js";
 import {
   refillStorageCapBody as refillStorageCapBodyTx, unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
   type JunkHuskIdentity, type JunkUnhuskOutcome, type StorageCapRefill,
@@ -276,7 +280,7 @@ export interface MessageFailureInput {
    * Deterministic failures are born `null`: `mime_too_large` and `mime_unparseable` are
    * deterministic in the raw bytes by the contract on `mime.ts`'s two typed errors, so a clock can
    * never change their answer and every timed attempt would re-download the body it is about to
-   * refuse. See `apps/worker/src/dead-letter.ts#nextAttemptAfter`.
+   * refuse. See `packages/organizer/src/dead-letter.ts#nextAttemptAfter`.
    */
   nextAttemptAt: Date | null;
 }
@@ -426,6 +430,12 @@ export interface IngestRunContext {
 /** The first `persisted` letters were stored, as these rows, in letter order; the rest are the caller's to commit alone. */
 export interface IngestRunResult { persisted: number; messageIds: string[] }
 
+/** What one place of the invitation pass came to: the letters changed, and the word when the row's value was refused. */
+export interface InvitationBackfillSettled {
+  changed: string[];
+  refused?: MessageFailureCode;
+}
+
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
 export interface WorkerRepo extends RepoPort, RoutingPort {
   /**
@@ -548,7 +558,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   setMailboxBudgetStop(mailboxId: string, stop: BudgetStop | null): Promise<void>;
   /* ── USER-COMMANDED FOLDER OPERATIONS (`folder_ops`, mail 0074; FOLDERS-SPEC.md stage 2) ─────
-   * The worker's repo half (apps/worker/src/folder-ops.ts drives these, fenced). The API
+   * The worker's repo half (packages/organizer/src/folder-ops.ts drives these, fenced). The API
    * records commands; these apply their database consequences beside the IMAP writes. */
   /** Pending commands of one mailbox, FIFO by request time — failed rows wait for dismissal. */
   listFolderOps(mailboxId: string): Promise<FolderOpRow[]>;
@@ -626,7 +636,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   /* ── THE JUNK RESCUE'S DESIRED STATE (`junk_rescues`, mail 0117) ─────────────────────────────
    * `folder_ops`' shape at this seam too, and REQUIRED on this port rather than optional: an
    * optional method lets a fake repo skip the pass in silence, which is how a queued command
-   * comes to be drained on one composition and not another. `apps/worker/src/junk-rescue.ts`
+   * comes to be drained on one composition and not another. `packages/organizer/src/junk-rescue.ts`
    * drives these; the API records the press and never opens IMAP. */
   /**
    * The mailbox's DUE pending rescues, oldest press first — the same due predicate every other
@@ -794,6 +804,22 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   refillStorageCapBody?(
     accountId: string, mailboxId: string, husk: JunkHuskIdentity, fresh: NormalizedMessage, capBytes: number,
   ): Promise<StorageCapRefill>;
+  /**
+   * The invitation pass's place and next page (mail 0204, `@trafficflow/db#invitationBackfillPage`):
+   * this mailbox's letters after the cursor, and the candidates among them. OPTIONAL, as above: a
+   * repo without it runs no pass and marks nothing done.
+   */
+  invitationBackfillPage?(
+    accountId: string, mailboxId: string, opts: { after?: string | null; limit: number },
+  ): Promise<InvitationBackfillPage>;
+  /**
+   * The invitation pass's settle (the cursor, the row, the changes), on this repo's connection: the
+   * letters changed, and the word when the store refused the row for its value (the place is then
+   * settled without it). Any other fault of the store is thrown.
+   */
+  invitationBackfillSettle?(a: {
+    accountId: string; mailboxId: string; cursor: string | null; finished?: boolean; at: Date; invitation?: InvitationWrite;
+  }): Promise<InvitationBackfillSettled>;
   /** One primary-key read of the account's counter row; `null` when it has none. */
   storageRefillCounter?(accountId: string): Promise<StorageRefillCounter | null>;
   /** Why the storage refill must wait for this account, or `null` when it need not. */
@@ -1294,9 +1320,9 @@ export function messageRowOf(input: InsertMessageInput): typeof messages.$inferI
 }
 
 /** The `folder_state` row {@link DrizzleRepo.upsertFolderState} inserts for a message with none. */
-export function folderStateRowOf(messageId: string, s: FolderStateRow): typeof folderState.$inferInsert {
+export function folderStateRowOf(messageId: string, s: FolderStateRow): PgInsertValue<typeof folderState> {
   return {
-    messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
+    messageId, accountId: accountOfMessage(messageId), desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
     lastSetBy: s.lastSetBy, reconcileStatus: reconcileStatusFor(s), conflict: false,
     ...(s.decidedAt !== undefined ? { decidedAt: s.decidedAt } : {}),
   };
@@ -2031,6 +2057,32 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return unhuskJunkFiledBodyTx(this.db, { accountId, husk, fresh, capBytes });
   }
 
+  /** See the interface doc: `@trafficflow/db#invitationBackfillPage` on this repo's connection. */
+  async invitationBackfillPage(
+    accountId: string, mailboxId: string, opts: { after?: string | null; limit: number },
+  ): Promise<InvitationBackfillPage> {
+    return invitationBackfillPage(this.db as unknown as Tx, accountId, mailboxId, opts);
+  }
+
+  /**
+   * See the interface doc: `@trafficflow/db#settleInvitationBackfill` on this repo's connection, a
+   * row in a SAVEPOINT under {@link writeInvitation}'s rule: a refusal of the row's value settles the
+   * place without it (the cursor alone, its word returned), any other fault is thrown on.
+   */
+  async invitationBackfillSettle(a: {
+    accountId: string; mailboxId: string; cursor: string | null; finished?: boolean; at: Date; invitation?: InvitationWrite;
+  }): Promise<InvitationBackfillSettled> {
+    if (a.invitation === undefined) return { changed: await settleInvitationBackfill(this.db as unknown as Tx, a) };
+    try {
+      return { changed: await this.db.transaction((sp) => settleInvitationBackfill(sp as unknown as Tx, a)) };
+    } catch (err) {
+      const refused = valueFaultOf(err);
+      if (refused === null) throw err;
+      const { invitation: _refusedRow, ...place } = a;
+      return { changed: await settleInvitationBackfill(this.db as unknown as Tx, place), refused };
+    }
+  }
+
   /** See the interface doc. Each page seeks the walk's key from where the last one stopped. */
   async listStorageCapHusks(
     accountId: string, mailboxId: string, opts: { limit: number; before?: StorageCapHuskKey },
@@ -2326,6 +2378,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       : await reserveBodyBytesEvicting(this.db, this.d, storage.accountId, bytes, storage.capBytes);
     const bodyInsert = this.db.insert(messageBodies).values({
       messageId,
+      accountId: storage.accountId,
       text: reserved ? body.text : "",
       html: reserved ? body.html : null,
       withheldReason: husk ?? (reserved ? null : ("storage_cap" as const)),
@@ -2371,6 +2424,25 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   async insertAttachments(messageId: string, accountId: string, rows: AttachmentMeta[]): Promise<void> {
     for (let at = 0; at < rows.length; at += MESSAGE_ROWS_CHUNK) {
       await this.db.insert(attachmentsTbl).values(attachmentRowsOf(messageId, accountId, rows.slice(at, at + MESSAGE_ROWS_CHUNK)));
+    }
+  }
+
+  /**
+   * {@link RepoPort.writeInvitation}, through the table's one door, in a SAVEPOINT of the letter's
+   * transaction. The door holds every value to its column before any statement; the savepoint is
+   * the layer under that, for a value nobody foresaw the store refusing: it rolls back to its own
+   * start and the letter is kept without the row, its word returned to be said. A fault that is the
+   * store's own (a lock wait cut short, a deadlock, a timeout, a busy device store, our own code) is
+   * thrown on after the rollback, as from every other statement of the commit: the letter's
+   * transaction fails and the next cycle reads the letter again, never kept without its row.
+   */
+  async writeInvitation(messageId: string, accountId: string, _mailboxId: string, planned: PlannedInvitation): Promise<InvitationWritten> {
+    try {
+      return { touched: await this.db.transaction(async (sp) => (await writeInvitationDoor(sp as unknown as Db, { ...planned, accountId, messageId })).touched) };
+    } catch (err) {
+      const refused = valueFaultOf(err);
+      if (refused === null) throw err;
+      return { touched: [], refused };
     }
   }
 
@@ -2503,7 +2575,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // LOWER bound of when they made it (never the observation's now): an aged ohmail press made
     // before it is refused, one made between the bound and the move is admitted. NULL stamps none.
     const [row] = await this.db.insert(folderState).values({
-      messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
+      messageId, accountId: accountOfMessage(messageId), desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
       lastSetBy: s.lastSetBy, reconcileStatus, conflict: false, decidedAt,
     }).onConflictDoUpdate({
       target: folderState.messageId,
@@ -2573,7 +2645,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   async upsertFlagState(messageId: string, s: FlagStateRow): Promise<void> {
     const reconcileStatus = flagStatusFor(s);
     await this.db.insert(flagState).values({
-      messageId, desiredSeen: s.desiredSeen, observedSeen: s.observedSeen,
+      messageId, accountId: accountOfMessage(messageId), desiredSeen: s.desiredSeen, observedSeen: s.observedSeen,
       lastSetBy: s.lastSetBy, reconcileStatus, conflict: false,
     }).onConflictDoUpdate({
       target: flagState.messageId,
@@ -2596,7 +2668,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    */
   async setFolderConflict(messageId: string, s: FolderStateRow): Promise<void> {
     await this.db.insert(folderState).values({
-      messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
+      messageId, accountId: accountOfMessage(messageId), desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
       lastSetBy: s.lastSetBy, reconcileStatus: reconcileStatusFor(s), conflict: true,
     }).onConflictDoUpdate({
       target: folderState.messageId,
@@ -3208,7 +3280,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async getMailbox(mailboxId: string) {
-    const rows = await this.db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+    // The kickstart's mark rides the one read (`pass_progress` since mail 0203): no row is NULL.
+    const rows = await this.db.select({
+      id: mailboxes.id, accountId: mailboxes.accountId, address: mailboxes.address,
+      foldersDisabledAt: mailboxes.foldersDisabledAt, lastSyncAt: mailboxes.lastSyncAt,
+      kickstartAt: passMark("kickstart", "doneAt", mailboxes.accountId, mailboxes.id),
+    }).from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
     return rows[0]
       ? {
         id: rows[0].id, accountId: rows[0].accountId, address: rows[0].address,
@@ -3219,9 +3296,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Stamp `mailboxes.kickstart_at` — the one-shot kickstart marker (mail 0025).
+   * Stamp the kickstart done for this mailbox — the one-shot marker (mail 0025; a row of
+   * `pass_progress` since mail 0203).
    *
-   * `WHERE kickstart_at IS NULL` and `.returning()`, so the answer is the DATABASE's and not a
+   * Claimed once by the database (`markPassDone`), so the answer is the DATABASE's and not a
    * read-then-write this process performed: two workers mid-leader-handover both finishing the
    * pass produce exactly one `true`. Deliberately NOT fenced on the leader epoch the way
    * `markMailboxFailed` is — this is not a lifecycle claim that a stale leader could get wrong,
@@ -3238,10 +3316,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async markKickstarted(mailboxId: string, at: Date): Promise<boolean> {
-    const rows = await this.db.update(mailboxes).set({ kickstartAt: at })
-      .where(and(eq(mailboxes.id, mailboxId), sql`${mailboxes.kickstartAt} is null`))
-      .returning({ id: mailboxes.id });
-    return rows.length > 0;
+    // The mark is keyed by the mailbox's account; a mailbox that is gone has nothing to mark.
+    const [mb] = await this.db.select({ accountId: mailboxes.accountId }).from(mailboxes)
+      .where(eq(mailboxes.id, mailboxId)).limit(1);
+    if (!mb) return false;
+    return markPassDone(this.db as unknown as Tx, mailboxPass("kickstart", mb.accountId, mailboxId), at);
   }
 
   /** Known correspondents, deduped and lowercased. Returns the count of genuinely NEW rows. */
@@ -3364,7 +3443,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .where(and(eq(mailboxFolders.mailboxId, mailboxId), inArray(mailboxFolders.folder, names))))
       .map((r) => r.folder));
     await this.db.insert(mailboxFolders).values(entries.map(({ folder, cursor }) => ({
-      mailboxId, folder,
+      mailboxId, accountId: accountOfMailbox(mailboxId), folder,
       uidvalidity: BigInt(cursor.uidValidity), uidnext: BigInt(cursor.uidNext), highestmodseq: BigInt(cursor.highestModseq),
       serverExists: cursor.serverExists ?? null,
     }))).onConflictDoUpdate({
@@ -3424,7 +3503,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const [had] = await this.db.select({ id: mailboxFolders.id }).from(mailboxFolders)
       .where(and(eq(mailboxFolders.mailboxId, mailboxId), eq(mailboxFolders.folder, stop.folder))).limit(1);
     await this.db.insert(mailboxFolders).values({
-      mailboxId, folder: stop.folder,
+      mailboxId, accountId: accountOfMailbox(mailboxId), folder: stop.folder,
       budgetStopUid: BigInt(stop.uid), budgetStopUidvalidity: BigInt(stop.uidValidity),
     }).onConflictDoUpdate({
       target: [mailboxFolders.mailboxId, mailboxFolders.folder],
@@ -3435,7 +3514,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /**
    * User-commanded folder operations (`folder_ops`, mail 0074) — the folder-op pass's repo half,
-   * driven by `apps/worker/src/folder-ops.ts` inside the mailbox's serial cycle, fenced. Two
+   * driven by `packages/organizer/src/folder-ops.ts` inside the mailbox's serial cycle, fenced. Two
    * string-prefix idioms recur below, both deliberate: subtree membership is `col = path OR
    * substr(col, 1, len+1) = path || '/'` — exact string functions, never LIKE, since a folder
    * name may contain `_` and an unescaped pattern would let `a_b` claim `axb/...`; the swap is
@@ -3866,15 +3945,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /** See {@link WorkerRepo.isLegacyNewsClean}. */
   async isLegacyNewsClean(accountId: string, mailboxId: string): Promise<boolean> {
-    const [row] = await this.db.select({ at: mailboxes.legacyNewsCleanAt }).from(mailboxes)
-      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId))).limit(1);
-    return row?.at != null;
+    return (await readPassProgress(this.db as unknown as Tx, mailboxPass("news_repair", accountId, mailboxId))).doneAt !== null;
   }
 
   /** See {@link WorkerRepo.markLegacyNewsClean}: the first mark stands. */
   async markLegacyNewsClean(accountId: string, mailboxId: string): Promise<void> {
-    await this.db.update(mailboxes).set({ legacyNewsCleanAt: new Date() })
-      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.legacyNewsCleanAt)));
+    // The door writes a mailbox's mark only for a mailbox this account holds.
+    await markPassDone(this.db as unknown as Tx, mailboxPass("news_repair", accountId, mailboxId), new Date());
   }
 
   /**

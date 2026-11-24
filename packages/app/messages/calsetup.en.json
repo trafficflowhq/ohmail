@@ -1,0 +1,111 @@
+{
+  "calsetup": {
+    "activate": "Connect a calendar",
+    "leave": "Not now",
+    "back": "Back",
+    "continue": "Continue",
+    "unread": "The calendar cannot be read on this device",
+    "way": {
+      "sentence": "My calendar is with <way></way>",
+      "label": "Where your calendar is",
+      "inBrowser": "{provider} (opens in browser)",
+      "group": "Ways to connect a calendar",
+      "none": "No calendar can be connected from here",
+      "icloud": "iCloud",
+      "caldav": "Another CalDAV server",
+      "ics": "A subscription",
+      "google": "Google Calendar",
+      "microsoft": "Microsoft Outlook"
+    },
+    "oauth": {
+      "connecting": "Connecting your calendar…",
+      "connected": "Calendar connected.",
+      "consent_declined": "Calendar access was declined.",
+      "admin_consent_required": "Your organization needs to approve calendar access.",
+      "consent_failed": "The provider could not approve calendar access.",
+      "state_expired": "This calendar sign-in expired. Start again.",
+      "state_invalid": "This calendar sign-in is no longer valid. Start again.",
+      "account_mismatch": "This calendar sign-in was started by a different ohmail account.",
+      "provider_off": "This calendar provider is unavailable.",
+      "exchange_failed": "Calendar sign-in could not finish. Try connecting again.",
+      "start_failed": "Calendar sign-in could not start. Try again.",
+      "calendar_off": "Turn on your calendar before connecting.",
+      "email_unverified": "Verify your email before connecting a calendar.",
+      "conflict": "Remove a calendar connection before adding another.",
+      "missing_permissions": "Allow all requested calendar permissions and try again.",
+      "provider_unavailable": "The calendar provider could not be reached. Try again in a moment."
+    },
+    "signin": {
+      "icloud": "I’m <user></user> with app password <password></password>",
+      "caldav": "My server is <server></server>, I’m <user></user> with password <password></password>",
+      "ics": "I subscribe to <address></address>",
+      "sameAppleId": "Use the same Apple ID",
+      "factorBody": "This verifies that you want to use the mailbox’s sign-in for Calendar.",
+      "factorDiscarded": "The verification was cancelled. Nothing was connected.",
+      "factorExpired": "Sign in again to use the saved Apple ID.",
+      "factorBrowserTitle": "Verify in your browser",
+      "factorBrowserOpen": "Open Calendar setup in browser",
+      "factorBrowserFailed": "The browser could not open. Try again.",
+      "appleIdFor": "Use Apple ID for {address}",
+      "connect": "Connect",
+      "asking": "Asking",
+      "empty": "Every blank needs filling. Nothing was sent.",
+      "notSent": "ohmail’s server did not answer. Nothing was connected."
+    },
+    "blank": {
+      "icloud": {
+        "user": "Apple Account email address",
+        "userHint": "email address",
+        "password": "App-specific password",
+        "passwordHint": "type it"
+      },
+      "caldav": {
+        "server": "The server’s address",
+        "serverHint": "its address",
+        "user": "User name",
+        "userHint": "user name",
+        "password": "Password",
+        "passwordHint": "type it"
+      },
+      "ics": {
+        "address": "The calendar’s address",
+        "addressHint": "its address"
+      }
+    },
+    "calendars": {
+      "sentence": "My calendars",
+      "group": "Calendars",
+      "show": "Show {name}",
+      "notSaved": "Not saved.",
+      "checking": "Reading your calendars",
+      "checkingLine": "This can take a moment. You can leave: they arrive by themselves.",
+      "refused": "Nothing was connected",
+      "again": "Try again"
+    },
+    "default": {
+      "sentence": "New events go to <calendar></calendar>",
+      "label": "New events go to",
+      "none": "a calendar",
+      "notSaved": "Not saved."
+    },
+    "wait": {
+      "counts": "{events, plural, one {# event} other {# events}} in {calendars, plural, one {# calendar} other {# calendars}}",
+      "open": "Open the calendar"
+    },
+    "fault": {
+      "signInRefused": "That sign-in was not accepted. iCloud takes an app-specific password, made at Apple, not the account’s own.",
+      "signInRefusedCaldav": "The server did not accept the username and password. Check them and the server address.",
+      "signInRefusedIcs": "The feed asked for a sign-in.",
+      "signInAgain": "The sign-in is no longer accepted. Sign in again.",
+      "forbidden": "This account may not read the server’s calendars.",
+      "notFound": "No calendar was found at that address.",
+      "noService": "That server offers no calendars.",
+      "addressInvalid": "That is not an address a calendar can be read from.",
+      "addressRefused": "Calendars are not read from that address.",
+      "hostUnknown": "That server could not be found.",
+      "unreachable": "The server did not answer. It is tried again by itself.",
+      "unreadable": "What the server sent could not be read.",
+      "unknown": "The calendar could not be connected."
+    }
+  }
+}

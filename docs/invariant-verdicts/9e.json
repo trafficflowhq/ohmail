@@ -1,0 +1,27 @@
+{
+  "id": "9e",
+  "base": "cbb104abef1d34fe922ae57218e9311d6a69023e",
+  "recorded": "2026-11-15",
+  "command": "npx vitest run packages/db/test/row-security.pg.test.ts",
+  "tests": [
+    "packages/db/test/row-security.pg.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "packages/db/src/row-security/apply.ts",
+      "line": "      if (!t.forced) ddl.push(`alter table public.${quote(t.name)} force row level security`);",
+      "to": "      if (!t.forced && t.name !== \"message_bodies\") ddl.push(`alter table public.${quote(t.name)} force row level security`);",
+      "failed": 30
+    },
+    {
+      "file": "packages/db/src/row-security/census.ts",
+      "line": "    } else if (off ? t.rls || t.forced : !t.rls || !t.forced) {",
+      "to": "    } else if (off ? t.rls || t.forced : !t.rls) {",
+      "failed": 2
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 40
+  }
+}

@@ -1,0 +1,16 @@
+.sc-identity,
+.sc-advice {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.sc-advice {
+  margin-block-start: var(--s1);
+}
+
+.sc-shelf-advice,
+.sc-advice {
+  color: var(--ink2);
+  font-size: var(--t-meta);
+}

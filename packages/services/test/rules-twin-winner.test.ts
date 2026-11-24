@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, rules as rulesTbl } from "@trafficflow/db";
@@ -24,7 +25,7 @@ async function world(): Promise<{ db: Db; ctx: ServiceContext }> {
   const db = (await makeTestDb()) as unknown as Db;
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `twins-${accountId.slice(0, 8)}` });
-  return { db, ctx: { db, accountId, now: () => NOW } as unknown as ServiceContext };
+  return { db, ctx: { db: dbFor(db, accountId), accountId, now: () => NOW } as unknown as ServiceContext };
 }
 
 function next(): NormalizedMessage {

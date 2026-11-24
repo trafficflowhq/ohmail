@@ -1,0 +1,22 @@
+/* A row of acts under a sheet's lines, starting where their names start. */
+@layer oh {
+  .oh-settingacts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1);
+    padding: var(--s2) 0 0;
+  }
+
+  /* A sheet's own row keeps the sheet's room under it; a row inside a block of the sheet takes the block's. */
+  .oh-settingssheet > .oh-settingacts {
+    padding-bottom: var(--s2);
+  }
+
+  /* A word that acts first stands at the row's edge, its words where the lines' names start. */
+  .oh-settingacts > .oh-button[data-kind="quiet"]:not([data-bare]):first-child {
+    --oh-settingacts-pull: calc(var(--cap-q) * -1);
+
+    margin-left: var(--oh-settingacts-pull);
+  }
+}

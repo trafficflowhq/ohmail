@@ -1,11 +1,13 @@
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, contacts, folderState, mailboxes, messageBodies, messages, rules } from "@trafficflow/db";
 import {
   HttpAdapter, MemoryMirrorStore, OhmailEngine, consentPartition,
-  type EngineAdapter, type EngineMessage, type RuleDTO, type SyncChange, type SyncResponse,
+  type EngineAdapter, type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 import { screenerRoutesGroup, type ApiDeps } from "@trafficflow/api";
 import { ScreenerService } from "../src/screener-service.js";
@@ -51,9 +53,9 @@ async function world(o: {
       ...(held && (o.unconfirmed === "marked" || (claim && o.claimMarked)) ? { unconfirmedHold: true } : {}),
       date: at, arrivedAt: at, unread: false, createdAt: at, nativeLocator: { folder, ref: `1:${randomUUID().slice(0, 4)}` },
     } as never).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };
   await put("INBOX", false, new Date("2026-09-30T09:00:00.000Z"));
@@ -66,7 +68,7 @@ async function world(o: {
     });
   }
   await db.insert(contacts).values({ accountId, address: sender, source: o.person ? "person" : "inferred" });
-  const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `kp-${randomUUID().slice(0, 8)}` };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `kp-${randomUUID().slice(0, 8)}` };
   const rows = await db.select().from(messages).where(eq(messages.accountId, accountId));
   const states = await db.select().from(folderState).where(inArray(folderState.messageId, rows.map((m) => m.id)));
   const storedRules = await db.select().from(rules).where(eq(rules.accountId, accountId));
@@ -175,16 +177,17 @@ describe("a letter held for want of confirmation while the first import runs", (
       fromAddress: OWNED, fromName: null, senderCheck: "none", senderCheckBy: "ingest", authVerdict: "unavailable",
       unconfirmedHold: true, date: at, arrivedAt: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: "1:7" },
     } as never).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(contacts).values({ accountId, address: OWNED, source: "inferred" });
-    const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `ki-${randomUUID().slice(0, 8)}` };
+    const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: `ki-${randomUUID().slice(0, 8)}` };
     const listed = (await new ScreenerService({}).list(ctx, { limit: 50 })).items.map((i) => i.sender.address);
 
     const deps = {
-      db, now: () => NOW, requestId: ctx.requestId, session: { accountId, userId: null, sessionId: null },
+      // A request past its session's binding: its handle is bound to the session's account.
+      db: dbFor(db, accountId), now: () => NOW, requestId: ctx.requestId, session: { accountId, userId: null, sessionId: null },
       services: { screener: new ScreenerService({}) },
     } as unknown as ApiDeps;
     const route = screenerRoutesGroup.find((r) => r.method === "GET" && r.pattern === "/screener")!;

@@ -4,6 +4,7 @@
  * own. Opened on first use and unreferenced, so a store that never posts holds nothing open.
  */
 import { isOutboxKey, type OutboxNotice, type OutboxNotices } from "./store.js";
+import { CALENDAR_OUTBOX_TYPE } from "./types.js";
 
 /** A `BroadcastChannel`, or what a test hands in its place. */
 export interface NoticeChannel {
@@ -52,13 +53,16 @@ export class OutboxNoticeBus {
     try { this.opened()?.postMessage(n); } catch { /* a closed channel says nothing */ }
   }
 
-  /** `changed`, once, when any of these `type:id` keys names an outbox row. */
+  /** Post once for each queue this transaction changed. */
   changed(keys: Iterable<string>): void {
+    let mail = false;
+    let calendar = false;
     for (const key of keys) {
-      if (!isOutboxKey(key)) continue;
-      this.post({ t: "changed" });
-      return;
+      if (isOutboxKey(key)) mail = true;
+      if (key.startsWith(`${CALENDAR_OUTBOX_TYPE}:`)) calendar = true;
     }
+    if (mail) this.post({ t: "changed" });
+    if (calendar) this.post({ t: "calendar-changed" });
   }
 
   close(): void {

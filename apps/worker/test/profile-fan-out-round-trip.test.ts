@@ -5,6 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accountSettings, mailboxes, organizerRequests, PROFILE_SIGNATURE_MAX,
   TRAVELLING_OHBOX_BAR_MAX_BYTES, TRAVELLING_SIGNATURE_HTML_MAX_BYTES, type Tx,
+  accountPass, readPassProgress,
 } from "@trafficflow/db";
 import {
   OHBOX_BAR_MAX_BYTES, setMailboxSignature, setScreeningPreference, type ScreeningPreferenceUpdate,
@@ -35,43 +36,37 @@ async function screening(update: ScreeningPreferenceUpdate, seed?: Seed) {
   });
   const [stored] = await organizer.select().from(accountSettings)
     .where(eq(accountSettings.accountId, accountId));
-  return { rt, stored };
+  return { rt, stored, tidy: await readPassProgress(organizer as unknown as Tx, accountPass("ohbox_tidy", accountId)) };
 }
 
 describe("a reader's screening edit reaches the organizer", () => {
-  it("all three keys travel, apply, and the reader is told applied", async () => {
-    const { rt, stored } = await screening({
-      ohboxPolicy: "people_only", ohboxBar: "People I write back to.", screenerAutoApply: true,
-    });
+  it("the posture and the bar travel, apply, and the reader is told applied", async () => {
+    const { rt, stored, tidy } = await screening({ ohboxPolicy: "people_only", ohboxBar: "People I write back to." });
     expect((rt.answer as { pending?: boolean }).pending).toBe(true);
     expect(rt.drain).toEqual({ applied: 1, refused: 0, deferred: 0, standing: 0 });
     expect(rt.ack?.outcome, `refused: ${rt.ack?.reason}`).toBe("applied");
     expect(rt.readerRow?.state).toBe("applied");
     expect(stored?.ohboxPolicy).toBe("people_only");
     expect(stored?.ohboxBar).toBe("People I write back to.");
-    expect(stored?.screenerAutoApplyAt?.toISOString()).toBe(new Date(NOW.getTime() + 2000).toISOString());
-    expect(stored?.ohboxTidyRequestedAt, "the transition into people_only armed nothing").not.toBeNull();
+    expect(tidy.requestedAt, "the transition into people_only armed nothing").not.toBeNull();
   }, T);
 
   it("a partial edit changes only the key it carries", async () => {
-    const on = new Date("2026-09-01T00:00:00.000Z");
-    const { rt, stored } = await screening({ ohboxBar: "new words" }, {
-      ohboxPolicy: "people_only", ohboxBar: "old words", screenerAutoApplyAt: on,
+    const off = new Date("2026-09-01T00:00:00.000Z");
+    const { rt, stored, tidy } = await screening({ ohboxBar: "new words" }, {
+      ohboxPolicy: "people_only", ohboxBar: "old words", impersonationFilingOffAt: off,
     });
     expect(rt.readerRow?.payload).toEqual({ screeningPreference: { ohboxBar: "new words" } });
     expect(rt.readerRow?.state).toBe("applied");
     expect(stored?.ohboxBar).toBe("new words");
     expect(stored?.ohboxPolicy).toBe("people_only");
-    expect(stored?.screenerAutoApplyAt?.toISOString()).toBe(on.toISOString());
-    expect(stored?.ohboxTidyRequestedAt, "a bar edit re-armed the backlog pass").toBeNull();
+    expect(stored?.impersonationFilingOffAt?.toISOString()).toBe(off.toISOString());
+    expect(tidy.requestedAt, "a bar edit re-armed the backlog pass").toBeNull();
   }, T);
 
-  it("the switch off and the posture reset both reach the organizer as NULL", async () => {
-    const { rt, stored } = await screening({ screenerAutoApply: false, ohboxPolicy: null }, {
-      ohboxPolicy: "people_only", screenerAutoApplyAt: new Date("2026-09-01T00:00:00.000Z"),
-    });
+  it("the posture reset reaches the organizer as NULL", async () => {
+    const { rt, stored, tidy } = await screening({ ohboxPolicy: null }, { ohboxPolicy: "people_only" });
     expect(rt.readerRow?.state).toBe("applied");
-    expect(stored?.screenerAutoApplyAt).toBeNull();
     expect(stored?.ohboxPolicy).toBeNull();
   }, T);
 

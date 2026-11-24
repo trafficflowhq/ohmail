@@ -12,6 +12,8 @@
  * Two copies of this seed would mean the two suites could disagree about what "full" means, and
  * the weaker one would be the one that stayed green. There is one copy.
  */
+import { UNWRITTEN_TABLES } from "../../../db/test/_unwritten-tables.js";
+import { accountOfUser } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -25,7 +27,6 @@ import {
   attachments,
   auditLog,
   awayReplies,
-  awayResponderSent,
   awayResponders,
   awaySenderState,
   changeLog,
@@ -38,6 +39,19 @@ import {
   folderState,
   graduations,
   junkRescues,
+  messageInvitations,
+  calAlarms,
+  calAttendees,
+  calCalendars,
+  calConnections,
+  calCredentials,
+  calEvents,
+  calSettings,
+  calSuggestions,
+  calWrites,
+  accountPass,
+  mailboxPass,
+  writePassProgress,
   idempotencyKeys,
   kbEntries,
   learningSignals,
@@ -83,6 +97,8 @@ import {
   attachmentStaging,
   authEvents,
   authThrottle,
+  accountCounters,
+  calPushChannels,
   creditRefundObligations,
   credentials,
   invites,
@@ -173,6 +189,12 @@ export const RETAINED = new Set([
   // random secret, the pseudonymous id and an expiry — the column set is pinned in
   // `account-deletion.test.ts`, so a column that could name a person fails there.
   "erased_bearers",
+  // NOT RETAINED BUT NEVER WRITTEN: tables nothing inserts into yet
+  // (`packages/db/test/_unwritten-tables.ts`), so no account has a row for an erasure to remove or
+  // to leave. That list is held to the tree: a table's first writer takes it off, and it is then
+  // in the erasure's scope without a ruling, red in both suites until the sweep deletes it and
+  // `seedFullAccount` plants its row.
+  ...Object.keys(UNWRITTEN_TABLES),
 ]);
 
 /**
@@ -341,10 +363,10 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   const mailboxId = mb!.id;
 
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: "enc:xxxx", keyVersion: 1,
+    mailboxId, accountId, transport: "imap", secretEnc: "enc:xxxx", keyVersion: 1,
   });
   const [screenerFolder] = await db.insert(mailboxFolders)
-    .values({ mailboxId, folder: "ohmail/Screener" }).returning();
+    .values({ mailboxId, accountId, folder: "ohmail/Screener" }).returning();
 
   const [thread] = await db.insert(threads).values({ accountId }).returning();
   const threadId = thread!.id;
@@ -357,14 +379,14 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   }).returning();
   const messageId = msg!.id;
 
-  await db.insert(messageBodies).values({ messageId, text: "the whole letter" });
+  await db.insert(messageBodies).values({ messageId, accountId, text: "the whole letter" });
   // The message's search document (mail 0125) — its words again, so an erasure must take it.
   await upsertMessageSearch(db as never, messageId, {
     accountId, subject: "ciao", from: null, to: [], cc: [], attachmentNames: [],
     bodyText: "the whole letter", source: "text",
   });
   await db.insert(folderState).values({
-    messageId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId, accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     reconcileStatus: "reconciled", conflict: false,
   });
   // ── WHAT AN ORDINARY SYNC LEAVES BEHIND, and the reason this fixture is its own file ────────
@@ -383,7 +405,7 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
     accountId, mailboxId, folder: "INBOX", uidvalidity: 1n, uid: 42, code: "mime_unparseable",
   });
   await db.insert(flagState).values({
-    messageId, desiredSeen: true, observedSeen: false, lastSetBy: "us", reconcileStatus: "pending",
+    messageId, accountId, desiredSeen: true, observedSeen: false, lastSetBy: "us", reconcileStatus: "pending",
   });
   // `routing_decisions` is also where a BOUGHT SCREENER SUGGESTION lives — same table, told apart
   // by `input_provenance`. Both shapes are seeded so the delete is proven to take both.
@@ -426,12 +448,6 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   await db.insert(kbEntries).values({ accountId, title: "Voice", content: "warm, short" });
   await db.insert(notifyRules).values({ accountId, target: "giulia@example.test" });
   await db.insert(awayResponders).values({ accountId });
-  // The at-most-once record for automatic replies. Seeded because the sweep only sees a table
-  // this helper populates: `sender` is a correspondent's address, so an unseeded row here would be
-  // a retention the catalog test cannot report.
-  await db.insert(awayResponderSent).values({
-    accountId, sender: "giulia@example.test", responderUpdatedAt: NOW,
-  });
   /*
    * THE READER'S SIDE OF THE ORGANIZER HANDOVER — both halves, seeded for the reason the comment
    * three lines above gives: the catalog sweep counts rows AFTER erasure, so a table this helper
@@ -547,6 +563,15 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   await db.insert(junkRescues).values({
     accountId, mailboxId, folder: "Junk", uidvalidity: 7n, uid: 11,
   });
+  // The identity of an invitation the letter carried (mail 0204): an organizer's address, an event's id.
+  await db.insert(messageInvitations).values({
+    accountId, messageId, mailboxId, uid: `event-${u}@calendar.example`, method: "REQUEST",
+    organizer: `organizer-${u}@example.com`, invitedAddress: `me-${u}@example.com`,
+  });
+  // Where two one-time passes stand (mail 0203): a mailbox's and the account's own. The table has
+  // no key into either, so nothing cascades it: the sweep's own delete is what removes these.
+  await writePassProgress(db as never, mailboxPass("sensitive_rescreen", accountId, mailboxId), { cursor: randomUUID(), startedAt: new Date() });
+  await writePassProgress(db as never, accountPass("gate_release", accountId), { doneAt: new Date() });
   const [tag] = await db.insert(tags).values({ accountId, name: `Invoices-${u}` }).returning();
   await db.insert(messageTags).values({ accountId, messageId, tagId: tag!.id });
   await db.insert(outboundSendFingerprints).values({
@@ -596,29 +621,31 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
     accountId, userId, sessionId, familyId: randomUUID(),
     tokenHash: `hash-${u}`, expiresAt: LATER,
   });
-  await db.insert(credentials).values({ userId, passwordHash: `scrypt$password-hash-${u}` });
-  await db.insert(totpSecrets).values({ userId, secretEnc: "enc:totp", keyVersion: 1 });
-  await db.insert(recoveryCodes).values({ userId, codeHash: `h-${u}`, batchId: randomUUID() });
-  await db.insert(webauthnCredentials).values({ userId, credentialId: `cid-${u}`, publicKey: "pk" });
+  await db.insert(credentials).values({ userId, accountId: accountOfUser(userId), passwordHash: `scrypt$password-hash-${u}` });
+  await db.insert(totpSecrets).values({ userId, accountId: accountOfUser(userId), secretEnc: "enc:totp", keyVersion: 1 });
+  await db.insert(recoveryCodes).values({ userId, accountId: accountOfUser(userId), codeHash: `h-${u}`, batchId: randomUUID() });
+  await db.insert(webauthnCredentials).values({ userId, accountId: accountOfUser(userId), credentialId: `cid-${u}`, publicKey: "pk" });
   await db.insert(webauthnChallenges).values({
-    userId, challenge: "chal", type: "registration", rpId: "app.ohmail.app",
+    userId, accountId: accountOfUser(userId), challenge: "chal", type: "registration", rpId: "app.ohmail.app",
     origin: "https://app.ohmail.app", expiresAt: LATER,
   });
-  await db.insert(loginTokens).values({ userId, tokenHash: `lt-${u}`, expiresAt: LATER });
+  await db.insert(loginTokens).values({ userId, accountId: accountOfUser(userId), tokenHash: `lt-${u}`, expiresAt: LATER });
   // A LIVE pairing token (mail 0059): a credential the user minted that still opens the account
   // (device-pair) or the server (invite). Seeded live so the erasure's delete is proven against
   // a row that would otherwise keep working after the account is gone.
   await db.insert(pairingTokens).values({
-    createdByUserId: userId, grant: "device-pair", tokenHash: `pt-${u}`,
+    createdByUserId: userId, accountId: accountOfUser(userId), grant: "device-pair", tokenHash: `pt-${u}`,
     label: "erasure fixture device", expiresAt: LATER,
   });
   await db.insert(oauthAuthCodes).values({
-    userId, clientId: "desktop", codeHash: `ch-${u}`, codeChallenge: "cc",
+    userId, accountId: accountOfUser(userId), clientId: "desktop", codeHash: `ch-${u}`, codeChallenge: "cc",
     redirectUri: "ohmail://cb", expiresAt: LATER,
   });
   await db.insert(authEvents).values({ accountId, userId, event: "login", ip: "1.2.3.4", device: "app.ohmail.app" });
   await db.insert(authThrottle).values({ key: `email:${email}`, failures: 2 });
   await db.insert(authThrottle).values({ key: `user:${userId}`, failures: 1 });
+  // Since cloud 0101 a counter that names a row lives under the account (`account-counters.ts`).
+  await db.insert(accountCounters).values({ accountId, key: `factor-day:${userId}`, failures: 1 });
 
   // ── THE SIGNUP FUNNEL ────────────────────────────────────────────────────────────
   // How this person got in, keyed by their ADDRESS and by nothing else. Neither table carries an
@@ -635,6 +662,47 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
     email, tier: "solo", source: "landing", invitedAt: NOW, registeredAt: NOW,
   }).returning();
   const waitlistId = listed!.id;
+
+  // THE CALENDAR (mail 0205): a connection riding the mailbox, its calendar with a default
+  // reminder, an event with an invitee and its own reminder, and a suggestion a letter made. The
+  // account's sweep takes every one of them.
+  const [conn] = await db.insert(calConnections).values({
+    accountId, provider: "caldav", label: "Mila's work", serverUrl: "https://dav.lichtgrat.example/cal/",
+    principal: "/principals/mila/", mailboxId,
+  }).returning();
+  // Its sealed sign-in, as the connect door writes one: the row an erasure may least leave behind.
+  await db.insert(calCredentials).values({ accountId, connectionId: conn!.id, kind: "basic", secretEnc: `sealed-${u}`, keyVersion: 1 });
+  const [cal] = await db.insert(calCalendars).values({
+    accountId, connectionId: conn!.id, providerId: `/cal/mila/${u}/`, name: "Clinic appointments",
+  }).returning();
+  await db.insert(calAlarms).values({ accountId, calendarId: cal!.id, minutesBefore: 30 });
+  // A provider's notice channel on that calendar, as the worker's notice pass keeps one (cloud 0105):
+  // its id, the digest of its word, the provider's name for what it watches. It hangs on the
+  // connection and goes with it.
+  await db.insert(calPushChannels).values({
+    accountId, connectionId: conn!.id, calendarId: cal!.id, provider: "google", channelId: randomUUID(),
+    tokenHash: `${u}`.padEnd(64, "0"), resourceId: `res-${u}`, expiresAt: LATER,
+  });
+  const [ev] = await db.insert(calEvents).values({
+    accountId, calendarId: cal!.id, providerId: `/cal/mila/${u}/1.ics`, uid: `appt-${u}@lichtgrat.example`,
+    title: "Oncologist", notes: "bring the scans", startKind: "instant", startLocal: "20260801T080000Z",
+    startsAt: new Date("2026-08-01T08:00:00Z"), endsAt: new Date("2026-08-01T09:00:00Z"),
+  }).returning();
+  await db.insert(calAttendees).values({ accountId, eventId: ev!.id, address: email, name: "Mila" });
+  await db.insert(calAlarms).values({ accountId, eventId: ev!.id, minutesBefore: 60 });
+  await db.insert(calSuggestions).values({
+    accountId, messageId, mailboxId, evidence: "dates",
+    proposed: { title: "Follow-up", start: { kind: "date", value: "20260810" }, end: null, place: null },
+  });
+  // A change she made that the provider has not taken yet: her words ride in it.
+  await db.insert(calWrites).values({
+    accountId, calendarId: cal!.id, eventId: ev!.id, op: "update", baseVersionTag: '"3"', idempotencyKey: `press-${u}`,
+    payload: { v: 1, act: { title: "Oncologist, moved" } },
+  });
+  // And the account's calendar settings: the switch on, a second zone, new events into the clinic.
+  await db.insert(calSettings).values({
+    accountId, enabledAt: new Date("2026-07-01T08:00:00Z"), secondZone: "America/New_York", newEventsCalendarId: cal!.id,
+  });
 
   return {
     accountId, userId, email, mailboxId, messageId, threadId, contactId,

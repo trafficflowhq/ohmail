@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, inArray, sql } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { accounts, sessions, users } from "@trafficflow/db";
-import { authEvents, authThrottle, schema, totpSecrets } from "@trafficflow/db/cloud";
+import { authEvents, authThrottle, schema, totpSecrets, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -29,8 +30,15 @@ let tabB: Db;
 let holder: Db;
 let observer: Db;
 /** The backend pid behind each tab's one connection. */
-let pidA = 0;
-let pidB = 0;
+/** Each tab's pool of the factory's, named in pg_stat_activity (a parameter of the address is one of the connection). */
+const TAB_A = `totp-tab-a-${randomUUID().slice(0, 8)}`;
+const TAB_B = `totp-tab-b-${randomUUID().slice(0, 8)}`;
+let tabs: OwnedDb[] = [];
+const namedPool = (app: string): OwnedDb => {
+  const address = new URL(PG_TEST_URL);
+  address.searchParams.set("application_name", app);
+  return makeOwnedDb(address.toString());
+};
 
 const deps = makeTestAuthDeps();
 const svc = new AuthService(deps);
@@ -80,7 +88,7 @@ async function newWorld(): Promise<World> {
   mine.push({ accountId, userId });
 
   const ctxOn = (db: Db, sessionId: string): ServiceContext => ({
-    db: db as unknown as ServiceContext["db"], accountId, userId, sessionId,
+    db: dbFor(db, accountId), accountId, userId, sessionId,
     now: clock.now, requestId: `totp-race-${randomUUID().slice(0, 8)}`, ip: "192.0.2.1",
   });
   const sessionA = await fullSession(holder, { accountId, userId }, clock);
@@ -121,19 +129,16 @@ function holdRow(userId: string, then: (tx: Parameters<Parameters<Db["transactio
 }
 
 /** Resolve once `n` of these backends wait on a lock: the interleaving, read off the server. */
-async function waitingOnLock(pids: number[], n: number): Promise<void> {
+async function waitingOnLock(apps: string[], n: number): Promise<void> {
   const giveUpAt = Date.now() + 15_000;
   for (;;) {
     const rows = await observer.execute(sql`select count(*)::int as n from pg_stat_activity
-      where pid in (${sql.join(pids.map((p) => sql`${p}`), sql`, `)}) and wait_event_type = 'Lock'`);
+      where application_name in (${sql.join(apps.map((a) => sql`${a}`), sql`, `)}) and wait_event_type = 'Lock'`);
     if ((rows as unknown as Array<{ n: number }>)[0]!.n >= n) return;
-    if (Date.now() > giveUpAt) throw new Error(`fewer than ${n} of ${pids.join(",")} ever waited on the row lock`);
+    if (Date.now() > giveUpAt) throw new Error(`fewer than ${n} of ${apps.join(",")} ever waited on the row lock`);
     await new Promise((r) => setTimeout(r, 25));
   }
 }
-
-const pidOf = async (db: Db): Promise<number> =>
-  (await db.execute(sql`select pg_backend_pid()::int as pid`) as unknown as Array<{ pid: number }>)[0]!.pid;
 
 const outcome = (p: Promise<unknown>): Promise<string> =>
   p.then(() => "ok", (e: { httpStatus?: number; message?: string }) => `${e.httpStatus ?? "?"} ${e.message ?? String(e)}`);
@@ -141,9 +146,10 @@ const outcome = (p: Promise<unknown>): Promise<string> =>
 describe.skipIf(!PG_UP)("replacing an authenticator on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    clients = [0, 1, 2, 3].map(() => postgres(PG_TEST_URL, { max: 1, onnotice: () => {} }));
-    [tabA, tabB, holder, observer] = clients.map((c) => brandDialect(drizzle(c, { schema }), "pg")) as [Db, Db, Db, Db];
-    [pidA, pidB] = [await pidOf(tabA), await pidOf(tabB)];
+    clients = [0, 1].map(() => postgres(PG_TEST_URL, { max: 1, onnotice: () => {} }));
+    [holder, observer] = clients.map((c) => brandDialect(drizzle(c, { schema }), "pg")) as [Db, Db];
+    tabs = [namedPool(TAB_A), namedPool(TAB_B)];
+    [tabA, tabB] = tabs.map((t) => t.db as unknown as Db) as [Db, Db];
   }, 120_000);
 
   afterEach(async () => {
@@ -161,6 +167,7 @@ describe.skipIf(!PG_UP)("replacing an authenticator on real Postgres", () => {
 
   afterAll(async () => {
     await Promise.all(clients.map((c) => c.end({ timeout: 5 })));
+    await Promise.all(tabs.map((t) => t.close()));
   });
 
   it("two tabs activating one replacement at once: exactly one promotes", async () => {
@@ -170,7 +177,7 @@ describe.skipIf(!PG_UP)("replacing an authenticator on real Postgres", () => {
     await hold.ready;
     const first = outcome(svc.totpActivate(w.ctxOn(tabA, w.sessionA), { code }));
     const second = outcome(svc.totpActivate(w.ctxOn(tabB, w.sessionB), { code }));
-    await waitingOnLock([pidA, pidB], 2);
+    await waitingOnLock([TAB_A, TAB_B], 2);
     hold.release();
     await hold.done;
 
@@ -193,7 +200,7 @@ describe.skipIf(!PG_UP)("replacing an authenticator on real Postgres", () => {
     });
     await hold.ready;
     const activating = outcome(svc.totpActivate(w.ctxOn(tabA, w.sessionA), { code: totpNow(w.next, w.clock.now()) }));
-    await waitingOnLock([pidA], 1);
+    await waitingOnLock([TAB_A], 1);
     hold.release();
     await hold.done;
 

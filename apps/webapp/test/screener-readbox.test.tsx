@@ -1,71 +1,16 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import {
-  OhmailEngine,
-  MemoryMirrorStore,
-  mutationEffects,
-  type EngineMessage,
-  type EngineMutation,
-  type Folder,
-  type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "../app/shell/screener-state.js";
-import messages from "../messages/en.json";
-import { settleFirstPaint } from "./_first-paint.js";
-
-/**
- * SCR-READBOX — the demoting piles have no "mark read" affordance.
- *
- * Owner UX feedback: a read/seen checkbox is meaningless for mail you are triaging OUT — held in
- * the Screener, or spam. You don't read what you screen out. So the ✓ ("& mark read") half of the
- * decision capsule is kept for the three admitting destinations (Ohbox, News, Receipts) and gone
- * from the two demoting ones (Screen out, Spam).
- *
- * Two things are asserted, and they are the two halves of the fix:
- *  1. THE UI. Render the real waiting Screener and confirm the ✓ exists for the mail piles and
- *     does NOT exist for Screen out / Spam — not merely hidden, absent from the tree. Mutation
- *     watch: before the DecisionBar edit the ✓ rendered for all five, so the absence assertions go
- *     red.
- *  2. THE FUNNEL. Every decision path (the ✓, o/r/c/n/x, ⇧Enter on an AI suggestion of a demoting
- *     destination) converges on `ScreenerState.decide`, which clamps `read` to false for the
- *     demoting piles. Asserted structurally: a screened decision taken WITH read:true emits no
- *     `mark_seen` mutation, while the same read:true to News does. Before the clamp both emitted
- *     one, so this is a projection someone remembers to keep narrow turned into a guard.
- *
- * `apps/webapp` typechecks its tests, so the state and mutation shapes below are checked too.
- */
-
-// See the sync-liveness harness for why React is published as a global.
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({
-    matches: false, media: query, onchange: null,
-    addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {},
-    dispatchEvent() { return false; },
-  })) as never;
+import { act, cleanup, fireEvent, renderHook, screen, waitFor, within } from "@testing-library/react";
+import type { ReactNode } from "react";
+import { OhmailEngine, MemoryMirrorStore, mutationEffects, type SyncChange } from "@ohmail/client-engine";
+import { useScreenerState } from "@ohmail/app-logic/screener/screener-state";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
+import { inWords, mountPlace } from "../../../packages/app/test/screener/screener-world.js";
 
 const NOW = new Date("2026-08-02T12:00:00.000Z");
 let seq = 0;
 let sent: EngineMutation[] = [];
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-
-const json = (v: unknown, status = 200) =>
-  new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
-
 function msg(id: string, from: string, hour: number, folder: Folder = "ohmail/Screener"): EngineMessage {
   return {
     id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
@@ -112,85 +57,33 @@ async function engineWith(held: EngineMessage[]): Promise<OhmailEngine> {
   });
 }
 
-/** Mount the REAL waiting Screener over the REAL state hook; nothing is faked. */
-async function mount(engine: OhmailEngine): Promise<{ latest: () => ScreenerState }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+beforeEach(() => { sent = []; });
+afterEach(cleanup);
 
-  let live: ScreenerState | null = null;
-
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
-    const [sel, setSel] = React.useState<Record<string, string | null>>({
-      waiting: null, screened: null, spam: null,
-    });
-    live = state;
-    return h(ScreenerView, {
-      owed: false,
-      state,
-      segment: "waiting", settled: true, selection: sel as never,
-      onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never);
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(KeymapProvider, { children: h(Probe) }),
-        }),
-      }),
-    );
-  });
-  await flush();
-  await settleFirstPaint();
-  return { latest: () => live! };
+async function mount(engine: OhmailEngine) {
+  const { result } = renderHook(
+    () => useScreenerState(engine, null, 0, () => {}, useScreenerWords()),
+    { wrapper: ({ children }: { children: ReactNode }) => inWords(children) },
+  );
+  await waitFor(() => expect(result.current.queueSettled).toBe(true));
+  mountPlace(result.current, { engine });
+  return { latest: () => result.current };
 }
-
-async function flush(): Promise<void> {
-  for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
-}
-
-beforeEach(() => {
-  sent = [];
-  globalThis.fetch = (async () => json({})) as typeof fetch;
-});
-
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-});
-
-const label = (l: string) => host!.querySelector(`[aria-label="${l}"]`);
 
 describe("SCR-READBOX — the demoting piles have no read/seen checkbox", () => {
   it("the ✓ renders for Ohbox / News / Receipts and NOT for Screen out / Spam", async () => {
     await mount(await engineWith([msg("m0", "stranger@example.com", 11)]));
-
-    // The three admitting destinations keep the "& mark read" ✓.
-    expect(label("Ohbox, mark read")).toBeTruthy();
-    expect(label("News, mark read")).toBeTruthy();
-    expect(label("Receipts, mark read")).toBeTruthy();
-
-    // The two demoting destinations have none — absent from the tree, not hidden. You don't
-    // read what you triage out.
-    expect(label("Screened out, mark read")).toBeNull();
-    expect(label("Spam, mark read")).toBeNull();
-
-    // Exactly three ✓ halves; all five destinations still file (the main segment survives).
-    expect(host!.querySelectorAll(".decide .d-read")).toHaveLength(3);
-    expect(host!.querySelectorAll(".decide .d-main")).toHaveLength(5);
+    const panel = within(screen.getByRole("toolbar", { name: "Actions" }));
+    for (const name of ["Ohbox", "News", "Receipts", "Screen out", "Spam"]) {
+      expect(panel.getByRole("button", { name })).toBeTruthy();
+    }
+    fireEvent.click(panel.getByRole("button", { name: "More" }));
+    const more = within(screen.getByRole("menu", { name: "More" }));
+    expect(more.getAllByRole("menuitem", { name: /, mark read$/ })).toEqual(
+      ["Ohbox", "News", "Receipts"].map((dest) => more.getByRole("menuitem", { name: `${dest}, mark read` })),
+    );
+    expect(more.queryByRole("menuitem", { name: "Screened out, mark read" })).toBeNull();
+    expect(more.queryByRole("menuitem", { name: "Spam, mark read" })).toBeNull();
   });
 
   it("a screened decision taken WITH read:true emits no mark_seen — while News does", async () => {
@@ -218,7 +111,7 @@ describe("SCR-READBOX — the demoting piles have no read/seen checkbox", () => 
       st.decide(b, "reads", { read: true, scope: "sender", quiet: true });
       st.flush();
     });
-    await flush();
+    await waitFor(() => expect(sent.filter((m) => m.kind === "screener_decide")).toHaveLength(2));
 
     const markSeens = sent.filter((m) => m.kind === "mark_seen");
     // One mark_seen — the Reads decision's — and none for the screened one.

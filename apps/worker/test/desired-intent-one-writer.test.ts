@@ -1,9 +1,10 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * ═══ ONE WRITER FOR THE FILING INTENT ══════════════════════════════════════════════════════
@@ -20,10 +21,12 @@ import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const SRC = join(HERE, "../src");
+/** The organizer's package holds the passes that moved out of the worker (ruling:organizer-cut). */
+const ORG_SRC = join(HERE, "../../../packages/organizer/src");
 
-const FILES = readdirSync(SRC)
+const FILES = [SRC, ORG_SRC].flatMap((dir) => readdirSync(dir)
   .filter((f) => f.endsWith(".ts"))
-  .map((f) => ({ name: f, code: withoutCommentsAndLiterals(readFileSync(join(SRC, f), "utf8")) }));
+  .map((f) => ({ name: f, code: withoutCommentsAndLiterals(readSource(join(dir, f))) })));
 
 /** The upsert by its own derivation line — the thing that makes it THIS write and not another. */
 const DERIVATION = /reconcileStatus\s*=\s*destination\s*===\s*row\.observedFolder/g;

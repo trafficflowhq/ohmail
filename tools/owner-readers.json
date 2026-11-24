@@ -1,0 +1,100 @@
+{
+  "readers": [
+    {
+      "id": "storage-door",
+      "reason": "The storage owner's and the session marker's own modules and the storage door that re-exports them: the source of the names, the marker's cookie name among them, not a reader under a frame's scope.",
+      "files": [
+        "packages/app-logic/src/storage/index.ts",
+        "packages/app-logic/src/storage/owner-cookie.ts",
+        "packages/app-logic/src/storage/storage-owner.ts"
+      ]
+    },
+    {
+      "id": "sync-gate",
+      "reason": "The sync gate judges whether its engine's mirror may still be trusted by the session's marker, at every request: a question about the session behind the engine, not a key a view keeps.",
+      "files": ["packages/app-logic/src/session/sync-scheduler.ts"]
+    },
+    {
+      "id": "web-engine",
+      "reason": "The web's engine provider: it opens the remembered mirror from the marker, names the demo's partition, and re-asks a revoked mirror's session. It is the host that builds what the frame stands on.",
+      "files": ["apps/webapp/app/shell/engine.tsx"]
+    },
+    {
+      "id": "web-session-client",
+      "reason": "The web's session client: it binds each request to the account the marker names, renews and ends sessions, and answers a door that was erased or revoked. A request's account, never a view's key.",
+      "files": [
+        "apps/webapp/app/api-client.ts",
+        "apps/webapp/app/erased-door.ts",
+        "apps/webapp/app/revoked-door.ts",
+        "apps/webapp/app/session-refresh.ts",
+        "apps/webapp/app/sign-out.ts"
+      ]
+    },
+    {
+      "id": "web-pages",
+      "reason": "The web's pages and its host's own sections: the sign-in, join, approve, resume and authorize pages ask the marker whose session they stand in, and the host's entry, wall, lock and account notices read the API client's per-account feeds by the marker's name and put a notice away under the same name in the same call. The mailbox section names the account whose session starts the Microsoft sign-in (`rememberOAuthOwner`). None keeps words, and none is drawn under a frame's scope by a view.",
+      "files": [
+        "apps/webapp/app/(product)/account/delete/use-delete-account-door.ts",
+        "apps/webapp/app/(product)/account/manage/route.ts",
+        "apps/webapp/app/(product)/approve/settle-owner.ts",
+        "apps/webapp/app/(product)/approve/signed-in-elsewhere.ts",
+        "apps/webapp/app/(product)/approve/use-approve-door.ts",
+        "apps/webapp/app/(product)/authorize-desktop/use-authorize-desktop-door.ts",
+        "apps/webapp/app/(product)/error.tsx",
+        "apps/webapp/app/(product)/join/invite/use-invite-door.ts",
+        "apps/webapp/app/(product)/join/page.tsx",
+        "apps/webapp/app/(product)/join/use-join-door.ts",
+        "apps/webapp/app/(product)/link-desktop/use-link-desktop-door.ts",
+        "apps/webapp/app/(product)/login/finish-sign-out.ts",
+        "apps/webapp/app/(product)/login/pending-sign-out.tsx",
+        "apps/webapp/app/(product)/login/use-sign-in-door.ts",
+        "apps/webapp/app/(product)/mailbox/CloudShell.tsx",
+        "apps/webapp/app/(product)/mailbox/MailboxSection.tsx",
+        "apps/webapp/app/(product)/mailbox/lifecycle-notice.ts",
+        "apps/webapp/app/(product)/mailbox/oauth-return.ts",
+        "apps/webapp/app/(product)/mailbox/reuse-sweep-feed.ts",
+        "apps/webapp/app/(product)/mailbox/storage-change.tsx",
+        "apps/webapp/app/(product)/mailbox/use-manage-offer.ts",
+        "apps/webapp/app/(product)/mailbox/use-wall-door.ts",
+        "apps/webapp/app/(product)/mailbox/useFirstPaintGate.ts",
+        "apps/webapp/app/(product)/mailbox/useSignedOutElsewhere.ts",
+        "apps/webapp/app/(product)/mailbox/web-supplies.tsx",
+        "apps/webapp/app/(product)/resume/page.tsx",
+        "apps/webapp/app/(product)/resume/use-resume-door.ts",
+        "apps/webapp/app/(product)/verify-email/use-verify-door.ts"
+      ]
+    },
+    {
+      "id": "web-device-owners",
+      "reason": "The web host's Outlook device ceremony binds stored and in-flight device sign-in to the API session. The browser wake coordinator binds each subscription to its account and rechecks the live marker before and after publishing worker state.",
+      "files": [
+        "apps/webapp/app/(product)/mailbox/device-sign-in.ts",
+        "apps/webapp/app/shell/notification-settings.ts"
+      ]
+    },
+    {
+      "id": "web-edge",
+      "reason": "The web's edge file reads the marker's cookie only to answer one question, whether a sign-out is pending, and reads no account's key: it imports the marker's cookie name (OWNER_COOKIE), the marker's word for a sign-out the server never confirmed (OWNER_SIGNED_OUT) and the server cookie that holds that word on the answers that finish a sign-out (pendingSignOutCookie).",
+      "files": ["apps/webapp/middleware.ts"]
+    },
+    {
+      "id": "desktop-window",
+      "reason": "The desktop window's gate names the storage owner for the mailbox it mounts, in its render, and its bridge reads it back to carry the hosted session's verdict for that mailbox.",
+      "files": ["apps/desktop/src/DesktopGate.tsx", "apps/desktop/src/bridge-fetch.ts"]
+    },
+    {
+      "id": "paired-page",
+      "reason": "The paired page's gate names the storage owner for the pairing it serves, in its render.",
+      "files": ["apps/paired-page/src/HostGate.tsx"]
+    },
+    {
+      "id": "phone-page",
+      "reason": "The phone's page names the storage owner for the scope its phone minted, before anything mounts, and reads back that the name took: where the page's storage is not the scope's, it mounts nothing.",
+      "files": ["apps/mobile/web/src/owner.ts"]
+    }
+  ],
+  "markerNameSpellers": {
+    "reason": "Where the session marker's cookie name is spelled as its source and as its record, and nothing more: the server's cookie module writes and clears the marker, and the registry of stored keys names every key a device holds. Neither reads whose storage a browser keeps, and neither may import a lookup.",
+    "files": ["packages/api/src/cookies.ts", "packages/client-engine/src/stored-keys.ts"]
+  }
+}

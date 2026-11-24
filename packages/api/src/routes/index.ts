@@ -2,6 +2,7 @@ import type { Route } from "../router.js";
 /* The auth surface, whole, from its own mail-safe module — see `auth.ts` for why it moved out of
  * this file. Re-exported below so every consumer of this barrel sees exactly what it did. */
 import { authRoutes } from "./auth.js";
+import { withCalendarHandoff } from "./settings-handoff.js";
 // The browser approval of a desktop sign-in: this table only, never `selfHostRoutes`.
 import { desktopApprovalRoutes } from "./desktop-approval.js";
 import { syncRoutes } from "./sync.js";
@@ -10,6 +11,7 @@ import { pushRoutes } from "./push.js";
 import { mailboxRoutes } from "./mailboxes.js";
 import { rulesRoutes } from "./rules.js";
 import { messageRoutes } from "./messages.js";
+import { draftFromTextRoutes } from "./draft-from-text.js";
 import { threadRoutes } from "./threads.js";
 import { screenerRoutes } from "./screener.js";
 import { trashRoutes } from "./trash.js";
@@ -38,6 +40,8 @@ import { tagsRoutes } from "./tags.js";
  * `folderOps` service, and its settings surface withholds the pane (§17). */
 import { foldersRoutes } from "./folders.js";
 import { draftsRoutes } from "./drafts.js";
+// Yes, Maybe or No on an invitation, sent by mail (mail 0204).
+import { invitationRoutes } from "./invitations.js";
 // Send later with files, kept sealed by this host until the letter goes (mail 0180).
 import { scheduleFilesRoutes } from "./schedule-files.js";
 import { workflowsRoutes } from "./workflows.js";
@@ -214,7 +218,7 @@ export const apiRoutes: Route[] = [
   ...adminStaffRoutes,
   ...adminActionRoutes,
   ...adminOAuthRoutes,
-  ...authRoutes,
+  ...authRoutes.map(withCalendarHandoff),
   ...desktopApprovalRoutes,
   // The pairing ceremony, directly after the auth surface it extends: `POST /pair` (ceremony,
   // step-up), `GET /pair` (read), `DELETE /pair/:id` (ceremony, step-up), `POST /pair/redeem`
@@ -228,6 +232,7 @@ export const apiRoutes: Route[] = [
   ...mailboxDiscoverRoutes,
   ...rulesRoutes,
   ...messageRoutes,
+  ...draftFromTextRoutes,
   ...threadRoutes,
   ...screenerRoutes,
   ...trashRoutes,
@@ -247,6 +252,7 @@ export const apiRoutes: Route[] = [
   ...tagsRoutes,
   ...foldersRoutes,
   ...draftsRoutes,
+  ...invitationRoutes,
   ...scheduleFilesRoutes,
   ...workflowsRoutes,
   ...proposalsRoutes,

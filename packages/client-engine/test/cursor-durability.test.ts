@@ -1,8 +1,8 @@
+import type { Cursor } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   BaseMirrorStore,
   recordKey,
-  type Cursor,
   type MirrorRecord,
   type SyncChange,
   type SyncResponse,

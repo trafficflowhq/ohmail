@@ -1,3 +1,4 @@
+import type { AnswerOf, OnlyNamesOf, RequestOf, Untrusted } from "@ohmail/wire";
 import type { ConnectedSession } from "./pairing.js";
 /* THE ONE BASE EVERY REQUEST IS COMPOSED OFF — see `request-base.ts`. */
 import { requestBase } from "./request-base";
@@ -26,7 +27,13 @@ export type AwaySave =
   | { kind: "asked"; row: AwayRow }
   | { kind: "refused"; status: number | null };
 
-function rowOf(body: Record<string, unknown>): AwayRow {
+const AWAY_PATH = "/away-responder";
+
+type ReadAway = Untrusted<AnswerOf<`GET ${typeof AWAY_PATH}`>>;
+type SavedAway = Untrusted<AnswerOf<`PUT ${typeof AWAY_PATH}`>>;
+type AwayRequest = RequestOf<`PUT ${typeof AWAY_PATH}`>;
+
+function rowOf(body: ReadAway): AwayRow {
   return {
     enabled: body.enabled === true,
     body: typeof body.body === "string" ? body.body : null,
@@ -42,8 +49,8 @@ function rowOf(body: Record<string, unknown>): AwayRow {
   };
 }
 
-function refusalOf(body: Record<string, unknown>): AwayRefusal | null {
-  const c = body.change as { state?: unknown; holder?: unknown; refusal?: unknown } | undefined;
+function refusalOf(body: ReadAway): AwayRefusal | null {
+  const c = body.change;
   if (c?.state !== "refused") return null;
   return { holder: typeof c.holder === "string" ? c.holder : null, unreadable: c.refusal !== "other" };
 }
@@ -53,9 +60,9 @@ export async function readAwayAnswer(
   session: ConnectedSession,
 ): Promise<{ row: AwayRow; refused: AwayRefusal | null } | null> {
   try {
-    const res = await session.fetch(`${requestBase(session)}/away-responder`, { method: "GET" });
+    const res = await session.fetch(`${requestBase(session)}${AWAY_PATH}`, { method: "GET" });
     if (res.status !== 200) return null;
-    const body = (await res.json()) as Record<string, unknown>;
+    const body = (await res.json()) as ReadAway;
     return { row: rowOf(body), refused: refusalOf(body) };
   } catch {
     return null;
@@ -73,15 +80,16 @@ export async function readAway(session: ConnectedSession): Promise<AwayRow | nul
  */
 export async function saveAway(session: ConnectedSession, next: AwayRow): Promise<AwaySave> {
   const { updatedAt: _serverOwns, ...put } = next;
+  const body: AwayRequest & OnlyNamesOf<typeof put, AwayRequest> = put;
   try {
-    const res = await session.fetch(`${requestBase(session)}/away-responder`, {
+    const res = await session.fetch(`${requestBase(session)}${AWAY_PATH}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(put),
+      body: JSON.stringify(body),
     });
-    if (res.status === 202) return { kind: "asked", row: rowOf((await res.json()) as Record<string, unknown>) };
+    if (res.status === 202) return { kind: "asked", row: rowOf((await res.json()) as SavedAway) };
     if (res.status !== 200) return { kind: "refused", status: res.status };
-    return { kind: "saved", row: rowOf((await res.json()) as Record<string, unknown>) };
+    return { kind: "saved", row: rowOf((await res.json()) as SavedAway) };
   } catch {
     return { kind: "refused", status: null };
   }

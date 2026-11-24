@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 // ONE scanner, so a `//` inside a string is never read as a comment — the quoted glob in
 // packages/services/src/mailbox-service.ts opened one, and a bracket walk ran off the file.
 import * as scan from "../../../scripts/lib/source-scan.mjs";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -126,7 +127,7 @@ function* walk(dir: string): Generator<string> {
     const st = statSync(p);
     if (st.isDirectory()) yield* walk(p);
     else if (name.endsWith(".ts") || name.endsWith(".tsx")) {
-      if (name.endsWith(".test.ts") || name.endsWith(".test.tsx")) continue;
+      if (name.endsWith(".test.ts") || name.endsWith(".test.tsx") || isEnginePart(p)) continue;
       yield p;
     }
   }
@@ -236,7 +237,7 @@ function tripleWriters(): Writer[] {
   for (const root of rootsOf()) {
     for (const file of walk(root)) {
       const rel = relative(REPO, file);
-      const src = withoutComments(readFileSync(file, "utf8"));
+      const src = withoutComments(readAsUnit(file));
       for (const block of writeBlocks(src)) {
         if (!TRIPLE.test(block)) continue;
         const birth = BIRTH_SITES.find((b) => b.file === rel && b.contains.test(block));

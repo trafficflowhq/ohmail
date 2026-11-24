@@ -752,7 +752,7 @@ const DOOR_SITES: Record<string, string> = {
 
 const OPEN_ADAPTER_SITES: Record<string, string> = {
   "routes/attachments.ts": "the attachment download — bounded in BYTES (ATTACHMENT_MAX_FETCH_BYTES, the driver's own maxBytes inside the stream), in parts, and PER OPERATION: `makeOpenAdapter` races every `fetchPart` against IMAP_OPERATION_DEADLINE_MS and destroys the socket on a breach, so a hung part ends without ending an honest walk",
-  "routes/drafts.ts": "the draft's attachment re-fetch, on the same adapter, the same byte ceilings and the same per-operation clock",
+  "send-deps.ts": "the draft's attachment re-fetch (the send's deps, built for every route that sends), on the same adapter, the same byte ceilings and the same per-operation clock",
 };
 
 /** Which files call `<name>(…)`, by repo-relative path under `packages/api/src`. */

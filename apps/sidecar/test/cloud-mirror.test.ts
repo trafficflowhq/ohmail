@@ -1,3 +1,16 @@
+import type {
+  MailboxDTO,
+  MessageBodyBatchItem,
+  MessageDTO,
+  MessageStateDTO,
+  Page,
+  RuleDTO,
+  SnapshotResponse,
+  SyncChange,
+  SyncResponse,
+  TagDTO,
+  ThreadDTO,
+} from "@ohmail/wire";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,10 +21,9 @@ import {
   accountSettings, changeLog, drafts, folderState, mailboxFolders, mailboxes, messageBodies,
   messageStates, messages, messageTags, outboundSends, rules, tags, threadNotes, threads,
 } from "@trafficflow/db/mail";
-import { syncService } from "@trafficflow/services/mail";
+import { dbFor, syncService } from "@trafficflow/services/mail";
 import type {
-  MailboxDTO, MessageBodyBatchItem, MessageDTO, MessageStateDTO, Page, RuleDTO, SnapshotResponse,
-  SyncChange, SyncResponse, TagDTO, ThreadDTO,
+  ServiceContext,
 } from "@trafficflow/services/mail";
 import { openLocalDb, type LocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld, type LocalWorld } from "../src/identity.js";
@@ -400,7 +412,7 @@ describe("the Cloud mirror pulls and applies the hosted feed", () => {
     expect(Number(firstRule!.seq), "rules must enter the local log before mail")
       .toBeLessThan(Number(firstMessage!.seq));
     const result = await syncService.getChanges(
-      { db, accountId: world.accountId, userId: world.userId, sessionId: null, now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined },
+      { db: dbFor(db, world.accountId), accountId: world.accountId, userId: world.userId, sessionId: null, now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined },
       { since: "0" },
     );
     const all = [...result.changes.creates, ...result.changes.updates];
@@ -1647,7 +1659,7 @@ describe("the Cloud mirror carries tags and their assignments", () => {
 
     // AND IT SURFACES. The local `/sync` is what the window drains, so the assertion is made
     // where the client would see it rather than on the row that backs it.
-    const ctx = { db, accountId: world.accountId, userId: world.userId, sessionId: null, now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined };
+    const ctx = { db: dbFor(db, world.accountId), accountId: world.accountId, userId: world.userId, sessionId: null, now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined };
     const first = await syncService.getChanges(ctx, { since: "0" });
     const seenTag = [...first.changes.creates, ...first.changes.updates].find((c) => c.type === "tag" && c.id === tagId);
     expect(seenTag, "the tag did not surface through the local /sync").toBeDefined();
@@ -1780,9 +1792,9 @@ describe("a mirror bootstrapped before the drain asked for tags repairs itself, 
 
   const snapshotOf = (path: string): boolean => path.startsWith("/sync/snapshot");
 
-  interface LocalCtx { db: LocalDb; accountId: string; userId: string | null; sessionId: string | null; now: () => Date; requestId: string; ip: string; userAgent: undefined; origin: undefined }
+  interface LocalCtx { db: ServiceContext["db"]; accountId: string; userId: string | null; sessionId: string | null; now: () => Date; requestId: string; ip: string; userAgent: undefined; origin: undefined }
   const localCtx = (db: LocalDb, world: LocalWorld): LocalCtx => ({
-    db, accountId: world.accountId, userId: world.userId, sessionId: null,
+    db: dbFor(db, world.accountId), accountId: world.accountId, userId: world.userId, sessionId: null,
     now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined,
   });
 
@@ -3124,9 +3136,9 @@ describe("the Cloud mirror carries the mailbox's own folders", () => {
     expect(settings?.foldersEnabledAt, "the local Use-folders flag was not armed").not.toBeNull();
 
     // AND IT SURFACES where the window drains: the LOCAL /sync, same service as the hosted API.
-    const ctx = { db, accountId: world.accountId, userId: world.userId, sessionId: null, now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined };
+    const ctx = { db: dbFor(db, world.accountId), accountId: world.accountId, userId: world.userId, sessionId: null, now: () => new Date(), requestId: "", ip: "", userAgent: undefined, origin: undefined };
     const first = await syncService.getChanges(ctx, { since: "0" });
-    const seen = [...first.changes.creates, ...first.changes.updates]
+    const seen =[...first.changes.creates, ...first.changes.updates]
       .find((c) => c.type === "folder" && c.id === folderId);
     expect(seen, "the folder did not surface through the local /sync").toBeDefined();
     expect((seen!.entity as { name: string }).name).toBe("Projects/Acme");

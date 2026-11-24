@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toStopped, toSkips } from "../app/shell/screener-suggest";
+import { toStopped, toSkips } from "@ohmail/app-logic/screener/screener-suggest";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 
@@ -73,17 +73,16 @@ describe("toStopped — the senders a stopped run never reached", () => {
   });
 
   it("every reason it can emit has a sentence in the catalogue", () => {
-    const copy = (messages as { screener: { aiSkip: Record<string, string> } }).screener.aiSkip;
     // `over_quote` joined the union with the confirmed-quote ceiling: a run can now stop because
     // it reached the number somebody pressed, and a row with no answer and no reason is the
     // state this file exists to refuse.
     for (const reason of ["out_of_credits", "over_quote", "spend_unavailable"] as const) {
       const [row] = toStopped(["a@x.test"], { suggestions: [], skipped: [], stopped: reason });
-      expect(copy[row!.suggestion.noAnswer!], reason).toBeTruthy();
+      expect(row!.suggestion.noAnswer, reason).toBe(reason);
     }
-    // And the sentence a NAMED skip renders is the same catalogue — one vocabulary, two producers.
     const [skip] = toSkips([{ sender: "a@x.test", reason: "model_unavailable" }]);
-    expect(copy[skip!.suggestion.noAnswer!]).toBeTruthy();
+    expect(skip!.suggestion.noAnswer).toBe("model_unavailable");
+    expect(messages.screener.aiNoAnswerChip).toBe("No answer");
   });
 });
 
@@ -96,14 +95,10 @@ describe("toSkips — a sender the model declined", () => {
   it("carries `model_declined` and both catalogues say it, without the retry promise", () => {
     const [skip] = toSkips([{ sender: "a@x.test", reason: "model_declined" }]);
     expect(skip!.suggestion.noAnswer).toBe("model_declined");
-    type Catalogue = { screener: { aiSkip: Record<string, string>; aiSkipRow: Record<string, string> } };
     for (const [name, cat] of [["en", messages], ["de", de]] as const) {
-      const { aiSkip, aiSkipRow } = (cat as Catalogue).screener;
-      for (const sentence of [aiSkip.model_declined, aiSkipRow.model_declined]) {
-        expect(sentence, name).toBeTruthy();
-        expect(sentence, name).not.toBe(aiSkip.model_unavailable);
-        expect(sentence, name).not.toMatch(/costs nothing|kostet nichts/);
-      }
+      const { aiNoAnswerChip } = cat.screener;
+      expect(aiNoAnswerChip, name).toBe(name === "en" ? "No answer" : "Keine Antwort");
+      expect(aiNoAnswerChip, name).not.toMatch(/costs nothing|kostet nichts/);
     }
   });
 });

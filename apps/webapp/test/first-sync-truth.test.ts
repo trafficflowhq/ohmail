@@ -93,12 +93,12 @@ describe("the first-sync strip speaks about the sync, not about arrival", () => 
   });
 
   it("the shipped shell renders it, on a mailbox that has never completed a cycle", async () => {
-    // Through the real `AppShell`, because the string being right in the catalogue and the
-    // string being on screen are two different claims — which is the whole of that change.
+    // Through the real shell, because the string being right in the catalogue and the string being on screen are two
+    // different claims. The frame says the waiting first sync as its First sync, with today's line beside it.
     const c = await mountShell([mailbox({ lastSyncAt: null, createdAt: ISO })]);
     await tick(0);
 
-    expect(textOf(c)).toContain("The first sync has not finished yet");
+    expect(textOf(c)).toContain(messages.frame.connection.firstSync.title);
     expect(textOf(c)).not.toContain("takes a few minutes");
     expect(textOf(c), "an unfinished first sync was reported as a failure").not.toMatch(
       /failed|error|broken/i,

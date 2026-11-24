@@ -1,12 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, sql } from "drizzle-orm";
 import { accounts, mailboxes, mailboxCredentials, UNMETERED_ACCESS, type AccessVerdict } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import {
   runMigrations, readJournalOf, MAIL_JOURNAL,
   resolveActiveAddressDuplicates, ACTIVE_ADDRESS_UQ,
@@ -36,7 +35,7 @@ import { makeMailboxService, ServiceError, type ServiceContext } from "@trafficf
  * ## Why real Postgres, and why the timings
  *
  * PGlite is single-connection and cannot express one transaction blocking on another's row lock,
- * which IS the mechanism (CLAUDE.md's rule). Two independent `postgres()` pools make the
+ * which IS the mechanism (AGENTS.md's rule). Two independent `postgres()` pools make the
  * concurrency genuine rather than one driver's queue, and the interleaving is forced rather than
  * hoped for: `SlowKeyProvider` stalls 400 ms inside the PATCH's transaction, AFTER it has taken
  * the row lock, so the other actor is guaranteed to arrive while the lock is held. The
@@ -45,10 +44,10 @@ import { makeMailboxService, ServiceError, type ServiceContext } from "@trafficf
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const sqlB = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
-const dbB = brandDialect(drizzle(sqlB, { schema }), "pg");
+const ownedA = makeOwnedDb(PG_TEST_URL);
+const ownedB = makeOwnedDb(PG_TEST_URL);
+const dbA = ownedA.db;
+const dbB = ownedB.db;
 
 const NOW = new Date("2026-08-01T12:00:00.000Z");
 const sleep = (ms: number): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
@@ -79,7 +78,7 @@ const slowSvc = makeMailboxService({
 });
 
 const ctxOn = (db: typeof dbA, accountId: string): ServiceContext =>
-  ({ db: db as unknown as ServiceContext["db"], accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 const IMAP = { host: "imap.example", port: 993, secure: true, user: "u", pass: fixturePassword("mailbox-credential-race") };
 
@@ -99,7 +98,7 @@ beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000)
    vitest's 10 s default and the hook times out on the sum while every test has passed — a red at
    the boundary that reads as a suite failure and is a teardown. */
 afterAll(async () => {
-  await Promise.all([sqlA.end({ timeout: 5 }), sqlB.end({ timeout: 5 })]);
+  await Promise.all([ownedA.close(), ownedB.close()]);
 }, 60_000);
 
 describe.skipIf(!PG_UP)("a disabled mailbox never keeps a credential", () => {
@@ -221,10 +220,10 @@ const ENTRY_0021 = readJournalOf(MAIL_JOURNAL).find((e) => e.tag === "0021_mailb
 describe.skipIf(!PG_UP)("the dedup resolver and a credential PATCH cannot interleave into a tombstone", () => {
   const dbName = `ohmail_credrace_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   let admin: ReturnType<typeof postgres>;
-  let c1: ReturnType<typeof postgres>;
-  let c2: ReturnType<typeof postgres>;
-  let d1: ReturnType<typeof drizzle<typeof schema>>;
-  let d2: ReturnType<typeof drizzle<typeof schema>>;
+  let owned1: OwnedDb;
+  let owned2: OwnedDb;
+  let d1: OwnedDb["db"];
+  let d2: OwnedDb["db"];
 
   beforeAll(async () => {
     expect(ENTRY_0021).toBeDefined();
@@ -233,10 +232,10 @@ describe.skipIf(!PG_UP)("the dedup resolver and a credential PATCH cannot interl
     const u = new URL(PG_TEST_URL);
     u.pathname = `/${dbName}`;
     await runMigrations(u.toString());
-    c1 = postgres(u.toString(), { max: 5, onnotice: () => {} });
-    c2 = postgres(u.toString(), { max: 5, onnotice: () => {} });
-    d1 = brandDialect(drizzle(c1, { schema }), "pg");
-    d2 = brandDialect(drizzle(c2, { schema }), "pg");
+    owned1 = makeOwnedDb(u.toString());
+    owned2 = makeOwnedDb(u.toString());
+    d1 = owned1.db;
+    d2 = owned2.db;
     await d1.execute(sql.raw(`drop index if exists "${ACTIVE_ADDRESS_UQ}"`));
     await d1.execute(sql`delete from drizzle_mail.__drizzle_migrations where created_at = ${ENTRY_0021!.when}`);
   }, 180_000);
@@ -246,8 +245,8 @@ describe.skipIf(!PG_UP)("the dedup resolver and a credential PATCH cannot interl
      under its own bound rather than vitest's 10 s default, which the sum of four awaits exceeds. */
   afterAll(async () => {
     await Promise.all([
-      c1?.end({ timeout: 5 }).catch(() => {}),
-      c2?.end({ timeout: 5 }).catch(() => {}),
+      owned1?.close().catch(() => {}),
+      owned2?.close().catch(() => {}),
     ]);
     await admin?.unsafe(`drop database if exists "${dbName}" with (force)`).catch(() => {});
     await admin?.end({ timeout: 5 }).catch(() => {});
@@ -266,7 +265,7 @@ describe.skipIf(!PG_UP)("the dedup resolver and a credential PATCH cannot interl
         // over the stored connection params. Seeding it here is not a concession to the new
         // code — a row without it never existed in production, and leaving it out made this
         // fixture describe a mailbox the worker could not have logged into either.
-        mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+        mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "enc", keyVersion: 1,
         meta: { host: IMAP.host, port: IMAP.port, secure: IMAP.secure, user: IMAP.user },
       });
       return mb!.id;

@@ -2,9 +2,11 @@ import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type { mailSchema } from "@trafficflow/db/mail";
 import { carryDialect, dialect, type LockMode } from "@trafficflow/db/dialect";
 import {
-  AccountErasedError, claimIdempotencyKey, fencedAccountOf, fencedAccountWrite, inTransactionHandle, markFenced,
-  readAccountErasedAt, type LedgerTx, type Tx,
+  AccountErasedError, assertBinding, bindDb, bindingOf, BindingRefusedError, carryBinding, claimIdempotencyKey,
+  fencedAccountOf, fencedAccountWrite, inTransactionHandle, markFenced, readAccountErasedAt,
+  type AccountBound, type LedgerTx, type NothingBound, type Tx,
 } from "@trafficflow/db";
+import type { SendAdapter } from "@trafficflow/core/mail";
 import { asServiceRefusal } from "./erasure-fence.js";
 import { IdempotencyRaceLost } from "./errors.js";
 import type { SearchTiming } from "./search-timing.js";
@@ -26,6 +28,53 @@ export interface DbRegistry {
 
 /** The database handle services run against: whichever members this program's registry declares. */
 export type Db = DbRegistry[keyof DbRegistry];
+
+/** A handle bound to one account: what a request with a session and a per-account pass hold. Minted only by the binder. */
+export type BoundDb = Db & AccountBound;
+
+/** A handle bound to no account: a route before sign-in, a clock's door. Minted only by the binder. */
+export type UnboundDb = Db & NothingBound;
+
+/**
+ * What a context and a request's container hold: a handle the binder minted, bound to an account or
+ * to nothing. The pool's own handle (`Db`) is neither, and does not fit where this is asked.
+ */
+export type ContextDb = BoundDb | UnboundDb;
+
+/** An internal pass discovers only IDs before it can bind the row's account. */
+export interface PassRosterRow { readonly accountId: string; readonly id: string }
+export type PassRoster = (limit: number, offset?: number, priority?: "recovery") => Promise<PassRosterRow[]>;
+
+/**
+ * A context's handle for `accountId`, which the caller read from a row and never from a request:
+ * bound to that account. No string names "no account": `""` is refused by the binder as any id
+ * that is no account's is, and a door that runs for none says so (`bindDb(db, { account: null })`,
+ * in a file the binder's list names).
+ */
+export function dbFor(db: Db, accountId: string): BoundDb {
+  return bindDb(db, { account: accountId });
+}
+
+/** A credential lookup carries the presented key for one indexed read. */
+export function keyedCredentialDb(
+  ctx: Pick<ServiceContext, "accountId" | "credentialDb"> & { db: Db }, key: string | null,
+): ContextDb {
+  if (ctx.credentialDb !== undefined) return bindDb(ctx.credentialDb, { account: null, key });
+  return ctx.accountId === ""
+    ? bindDb(ctx.db, { account: null, key })
+    : bindDb(ctx.db, { account: ctx.accountId, key });
+}
+
+/** Registration starts on the unowned credential handle before it creates the account. */
+export function registrationContext(ctx: ServiceContext): ServiceContext {
+  return { ...ctx, db: ctx.credentialDb ?? ctx.db, accountId: "" };
+}
+
+/** Account work after a credential identifies its owner. The request's session stays on the caller's context. */
+export function credentialContext(ctx: ServiceContext, accountId: string): ServiceContext {
+  if (ctx.accountId === accountId) return ctx;
+  return { ...ctx, accountId, db: dbFor(ctx.credentialDb ?? ctx.db, accountId) };
+}
 
 /**
  * THE ONE DIALECT BRIDGE (review 020, BACKEND L4). Services are written against the pg builder
@@ -85,7 +134,10 @@ export async function claimOrLose(
  * request body. `now` is an injectable clock for deterministic tests.
  */
 export interface ServiceContext {
-  db: Db;
+  /** Bound to the account this context runs for, or to nothing; never a plain handle (`dbFor`, `serviceContext`). */
+  db: ContextDb;
+  /** The original request handle, available to public credential ceremonies with an ambient session. */
+  credentialDb?: UnboundDb;
   accountId: string;
   userId: string | null;
   now: () => Date;
@@ -103,7 +155,7 @@ export interface ServiceContext {
    * ambient session (`ACCOUNT_HEADER`, `packages/api/src/app.ts`). Optional and ignored by every
    * other caller.
    */
-  noteCredentialAccount?: (accountId: string) => void;
+  noteCredentialAccount?: (accountId: string, familyId?: string) => void;
   /** Client network metadata, threaded for auth audit and lockout. */
   ip?: string;
   userAgent?: string;
@@ -166,10 +218,67 @@ export interface ServiceContext {
   timing?: SearchTiming;
 }
 
+/**
+ * THE CONTEXT OF ONE ROW OF A PASS. A pass walks rows of many accounts on a handle that names none
+ * (`walk`), and whatever it does for one row runs on this: a context whose handle is bound to
+ * `accountId`. The handle and the context's account come from the one argument, so they cannot
+ * disagree.
+ *
+ * `accountId` is the account of the row that named the work, read or claimed in this pass: never
+ * an id the request carries, never the row before it, never one kept from outside the loop. An
+ * empty or malformed id is refused by the binder, and no context is ever bound to nothing here. A
+ * walk that carries a key is refused: a keyed door (the session's look-up, the staff door) binds
+ * no account. No other place builds a context for an account outside a request.
+ */
+export function passContext(
+  walk: UnboundDb, accountId: string, rest: Omit<ServiceContext, "db" | "accountId">,
+): PassContext {
+  return { ...rest, db: rosterAccountDb(walk, { accountId }), accountId };
+}
+
+/** A pass keeps a plain walk even when it has no work or a separate roster callback. */
+export function assertPassWalk(walk: object): void {
+  if (bindingOf(walk)?.keyed === true) {
+    throw new BindingRefusedError("a pass cannot run on a keyed handle");
+  }
+}
+
+/** Bind an account discovered by an internal pass, using its plain walk handle. */
+export function rosterAccountDb(walk: Db, row: Pick<PassRosterRow, "accountId">): BoundDb {
+  const binding = bindingOf(walk);
+  if (binding?.account !== null || binding.keyed) {
+    throw new BindingRefusedError("a pass needs a plain unbound handle to work for a roster account");
+  }
+  return dbFor(walk, row.accountId);
+}
+
+/** What {@link passContext} answers: a context whose handle is bound to its own account. */
+export type PassContext = ServiceContext & { db: BoundDb };
+
+/**
+ * A PASS'S DIAL FOR ONE ROW: the adapter of `mailboxId`, opened on `db`, the handle of the row the
+ * pass is working on ({@link passContext}). What the opening reads of that mailbox (its credential,
+ * its Sent folder, its connection slot) it reads there, under the row's account, and never on the
+ * walk. A host with one store and one account may ignore `db`.
+ */
+export type OpenPassSendAdapter = (mailboxId: string, db: BoundDb) => Promise<SendAdapter>;
+
 /** A search's supersede checks: `check` throws once replaced; `turn` lets the loop read the next request first, then checks. */
 export interface SearchSupersede {
   check(): void;
   turn(): Promise<void>;
+}
+
+/**
+ * REFUSE A TRANSACTION ON A HANDLE THAT DOES NOT NAME ITS CONTEXT'S ACCOUNT, before it opens. A
+ * context's handle and its account come by separate ways (a literal, a spread, a service's own
+ * context), and here they must agree: the handle names `accountId`, or nothing where the context
+ * runs for none (`""`). Refused with the binder's own error, fixed words and never an id: a handle
+ * with no binding at all, one that names another account, one that names nothing where an account
+ * is asked, one that names an account where none is.
+ */
+function refuseUnnamed(db: object, accountId: string): void {
+  assertBinding(db, accountId === "" ? null : accountId);
 }
 
 /**
@@ -181,12 +290,22 @@ export interface SearchSupersede {
  * the `txCtx` handed to `fn` reports into a local slot, forwarded only after `transaction()`
  * resolves; a rollback, a throw, or a swallowed commit failure discards it, and the response
  * names nobody. Nesting composes; reporting outside any transaction goes straight through.
+ *
+ * Before it opens, the context's handle must name the context's account ({@link refuseUnnamed}).
  */
 export async function runInTransaction<T>(
   ctx: ServiceContext, fn: (txCtx: ServiceContext) => Promise<T>,
   opts: { readonly fence?: TransactionFence<T> } = {},
 ): Promise<T> {
   const fence = opts.fence;
+  refuseUnnamed(ctx.db, ctx.accountId);
+  // THE FENCE'S ACCOUNT IS NOT HELD TO THE HANDLE'S HERE, and that is owed. A credential's door
+  // fences for the account of the row its credential found. Before sign-in its handle names no
+  // account; and where a browser signed in as one account presents another's credential, the
+  // handle names the first and the fence the second, and the door answers 409 from inside
+  // (`refuseCrossAccountCredential`). A refusal here would answer 500 in its place, and end every
+  // sign-in and renewal. It becomes one when each such door names its account inside its own
+  // transaction and refuses the other's credential before it opens.
   const held = fencedAccountOf(ctx.db);
   if (fence !== undefined && fence.accountId === "") throw new Error("a fenced transaction names no account");
   if (fence !== undefined && held === undefined && inTransactionHandle(ctx.db)) {
@@ -197,9 +316,10 @@ export async function runInTransaction<T>(
     throw new Error("a transaction fenced for one account cannot open one fenced for another");
   }
   let pending: string | null = null;
+  let pendingFamily: string | undefined;
   const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
   const result = await tx.transaction(async (handle) => {
-    const db = carryDialect(ctx.db, handle as object) as unknown as ServiceContext["db"];
+    const db = carryBinding(ctx.db, carryDialect(ctx.db, handle as object));
     if (held !== undefined) markFenced(db, held);
     else if (fence !== undefined) {
       // THE FIRST STATEMENT. A stamp ends the transaction here, before the body takes a row.
@@ -210,9 +330,15 @@ export async function runInTransaction<T>(
       }
       markFenced(db, fence.accountId);
     }
-    return fn({ ...ctx, db, noteCredentialAccount: (accountId: string) => { pending = accountId; } });
+    return fn({
+      ...ctx, db,
+      noteCredentialAccount: (accountId, familyId) => {
+        pending = accountId;
+        pendingFamily = familyId;
+      },
+    });
   });
-  if (pending !== null) ctx.noteCredentialAccount?.(pending);
+  if (pending !== null) ctx.noteCredentialAccount?.(pending, pendingFamily);
   return result;
 }
 
@@ -234,7 +360,8 @@ export interface TransactionFence<T> {
  * that belongs to one; `lock` raises the strength for a body that will take `accounts FOR UPDATE`
  * later; `mailboxLock` raises the mailbox row's alone, for a body that writes it; `db` names the
  * handle for a caller that holds one directly. The census reddens a door
- * that is neither fenced, fenced by construction, nor allow-listed.
+ * that is neither fenced, fenced by construction, nor allow-listed. The handle it opens on, `db`
+ * included, must name the context's account ({@link refuseUnnamed}).
  */
 export async function withAccountTx<T>(
   ctx: ServiceContext, fn: (tx: LedgerTx) => Promise<T>,
@@ -246,6 +373,7 @@ export async function withAccountTx<T>(
   } = {},
 ): Promise<T> {
   const db = opts.db ?? ctx.db;
+  refuseUnnamed(db, ctx.accountId);
   try {
     return await fencedAccountWrite(
       bridgeTx(db),

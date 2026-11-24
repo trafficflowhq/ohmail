@@ -72,6 +72,7 @@ import {
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ROUTE = readFileSync(join(APP, "app/standalone.tsx"), "utf8");
+const PAGE = readFileSync(join(APP, "src/ui/OnboardingPage.tsx"), "utf8");
 const SETTINGS = readFileSync(join(APP, "app/settings.tsx"), "utf8");
 
 beforeEach(() => {
@@ -124,8 +125,9 @@ describe("screen 1: the limitations, before any password field", () => {
 
   it("puts focus on the heading, because the step is a read", () => {
     expect(focusTargetFor("limits")).toBe("title");
-    expect(ROUTE, "the heading is not the a11y header").toContain('accessibilityRole="header"');
-    expect(ROUTE).toContain("Copy.phoneStandaloneTitle");
+    expect(ROUTE).toContain("<OnboardingTitle text={Copy.phoneStandaloneTitle}");
+    const title = PAGE.slice(PAGE.indexOf("export function OnboardingTitle"), PAGE.indexOf("export function OnboardingButton"));
+    expect(title, "the heading is not the a11y header").toContain('accessibilityRole="header"');
   });
 
   it("offers Continue and a way back out, and nothing else", () => {
@@ -137,11 +139,13 @@ describe("screen 1: the limitations, before any password field", () => {
     const element = (key: string): string => {
       const at = ROUTE.indexOf(key);
       expect(at, `${key} is not rendered`).toBeGreaterThan(-1);
-      const open = ROUTE.lastIndexOf("<Button", at);
+      const open = ROUTE.lastIndexOf("<OnboardingButton", at);
       return ROUTE.slice(open, ROUTE.indexOf("/>", at) + 2);
     };
-    expect(element("Copy.phoneStandaloneGo")).toContain('variant="solid"');
-    expect(element("Copy.phoneStandaloneBack")).toContain('variant="quiet"');
+    expect(element("Copy.phoneStandaloneGo")).toContain('<OnboardingButton label={Copy.phoneStandaloneGo}');
+    expect(element("Copy.phoneStandaloneGo")).not.toMatch(/kind=/);
+    expect(PAGE).toMatch(/kind = "ink"[\s\S]+kind === "ink" \? palette.solid/);
+    expect(element("Copy.phoneStandaloneBack")).toContain('kind="quiet"');
   });
 
   /**
@@ -186,6 +190,17 @@ describe("screen 2: the credential form", () => {
     expect(unknown.imapHost, "an empty host is the absence of a value").toBe("");
     expect(unknown.smtpHost).toBe("");
     expect(unknown.imapPort, "the ports are offered anyway").toBe("993");
+  });
+
+  it("leaves server names empty after choosing Other, even when the address names a known provider", () => {
+    const address = personalAt("fixture.lena", "gmx.net");
+    const chosen = withAddress(EMPTY_STANDALONE, address, "imap");
+    expect(chosen.imapHost).toBe("");
+    expect(chosen.smtpHost).toBe("");
+    expect([chosen.imapPort, chosen.smtpPort]).toEqual(["993", "587"]);
+
+    const edited = setTyped(chosen, "imapHost", "incoming.mailbox.example");
+    expect(withAddress(edited, address, "imap").imapHost).toBe("incoming.mailbox.example");
   });
 
   /**
@@ -256,11 +271,14 @@ describe("screen 2: the credential form", () => {
   });
 
   it("states the disclosure's expanded state, in both positions", () => {
-    expect(ROUTE).toContain("accessibilityState={{ expanded: advanced }}");
-    expect(ROUTE).toContain("Copy.phoneStandaloneAdvanced");
-    // It is a button, not a row: a disclosure a reader cannot identify is a disclosure nobody opens.
-    const at = ROUTE.indexOf("accessibilityState={{ expanded: advanced }}");
-    expect(ROUTE.slice(at - 120, at)).toContain('accessibilityRole="button"');
+    const start = ROUTE.indexOf("accessibilityLabel={Copy.phoneStandaloneAdvanced}");
+    const disclosure = ROUTE.slice(ROUTE.lastIndexOf("<OnboardingTag", start), ROUTE.indexOf("/>", start));
+    expect(disclosure).toContain("<OnboardingTag");
+    expect(disclosure).toContain("expanded={advanced}");
+    expect(disclosure).toContain("onPress={() => setAdvanced");
+    const tag = PAGE.slice(PAGE.indexOf("export function OnboardingTag"), PAGE.indexOf("export function OnboardingButton"));
+    expect(tag).toContain('accessibilityRole="button"');
+    expect(tag).toContain("accessibilityState={{ expanded: expanded }}");
   });
 
   it("says the server sentences verbatim, in both languages", () => {

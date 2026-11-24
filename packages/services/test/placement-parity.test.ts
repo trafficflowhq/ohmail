@@ -1,3 +1,4 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -10,7 +11,7 @@ import {
   accounts, folderState, mailboxes, messageStates, messages, rules as rulesTbl, senderIsDecidedSql, threads,
 } from "@trafficflow/db";
 import { effectForDestination, standingRule, type Rule } from "@trafficflow/core/mail";
-import { consentIndex, decidedDestination, ohboxView, type RuleDTO } from "@ohmail/client-engine";
+import { consentIndex, decidedDestination, ohboxView } from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { MessageService, TriageService } from "../src/index.js";
 import type { ServiceContext } from "../src/context.js";
@@ -76,7 +77,7 @@ async function seedFold(c: FoldCase) {
       nativeLocator: { folder: m.folder, ref: `1:${m.id}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: row!.id, desiredFolder: m.folder, observedFolder: m.folder, lastSetBy: "us",
+      messageId: row!.id, accountId: row!.accountId, desiredFolder: m.folder, observedFolder: m.folder, lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false,
     });
     if (m.state) {
@@ -117,7 +118,7 @@ describe("placement census, server leg: New for you folds a resurfaced conversat
 /* ── THE SQL SOURCE CENSUS ──────────────────────────────────────────────────────────────────── */
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
-const ROOTS = ["packages/db/src", "packages/services/src", "apps/worker/src"];
+const ROOTS = ["packages/db/src", "packages/services/src", "apps/worker/src", "packages/organizer/src"];
 /** The schema declares the columns; nothing there is a predicate. */
 const SCHEMA = new Set(["packages/db/src/schema-mail.ts", "packages/db/src/schema-mail-sqlite.ts"]);
 /**

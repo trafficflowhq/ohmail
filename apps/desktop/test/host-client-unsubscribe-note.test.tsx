@@ -1,12 +1,13 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
+import { screen, within } from "@testing-library/react";
 import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 import { setActiveCatalog } from "../../webapp/app/shell/locale.js";
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
@@ -20,7 +21,7 @@ import de from "../../webapp/messages/de.json";
  * posts through `nodeOneClickPost`), so the list's endpoint sees that computer's network address and
  * no server of ours stands between. The gate handed the shell no `imagesFromComputer`, so the note
  * under the Settings switch read the Cloud sentence: from our servers, the address kept out of the
- * sender's log. Rendered as `host-client/main.tsx` renders the gate, at `#/settings/screener`, in
+ * sender's log. Rendered as `apps/paired-page/src/main.tsx` renders the gate, at `#/settings/screener`, in
  * both languages. The sender sheet's confirm reads the same prop in the shell
  * (`test/desktop-unsubscribe-note.test.tsx` holds that wiring), so the switch's note stands for both.
  */
@@ -58,7 +59,7 @@ const CONSENT = {
   blockAutoUnsubscribeAt: null, folderMailboxesOff: {}, signatures: {}, themeFace: null,
 };
 /** `GET /account/screening`, which the same pane reads for its Ohbox words. */
-const SCREENING = { ohboxPolicy: null, ohboxBar: null, defaultBar: "People who write to me themselves.", screenerAutoApply: false };
+const SCREENING = { ohboxPolicy: null, ohboxBar: null, defaultBar: "People who write to me themselves." };
 
 function answer(url: string): unknown {
   const path = url.split("?")[0]!;
@@ -93,7 +94,9 @@ afterEach(async () => {
 });
 
 /** The gate on a live pairing at `hash`, and the Settings row labelled `title` once it is drawn. */
-async function paneRow(hash: string, locale: Locale, title: string): Promise<HTMLElement> {
+async function paneRow(
+  hash: string, locale: Locale, title: string, language?: React.ComponentProps<typeof HostGate>["language"],
+): Promise<HTMLElement> {
   window.localStorage.clear();
   asked = [];
   const bearer = new BearerManager({
@@ -112,16 +115,22 @@ async function paneRow(hash: string, locale: Locale, title: string): Promise<HTM
   await act(async () => {
     root!.render(
       <IntlProvider locale={locale} messages={CATALOGUES[locale] as never} timeZone="UTC">
-        <ThemeProvider storageKey="ohmail.theme"><ToastHost><HostGate bearer={bearer} /></ToastHost></ThemeProvider>
+        <ThemeProvider storageKey="ohmail.theme"><ToastHost><HostGate bearer={bearer} language={language} /></ToastHost></ThemeProvider>
       </IntlProvider>,
     );
   });
-  const row = (): HTMLElement | undefined =>
-    [...el!.querySelectorAll<HTMLElement>(".set-row")].find((r) => r.querySelector("b")?.textContent === title);
+  const words = CATALOGUES[locale].settings;
+  const paneName = hash.endsWith("/general") ? words.general : words.screener;
+  const row = (): HTMLElement | null => {
+    const pane = within(el!).queryByRole("region", { name: paneName });
+    if (!pane) return null;
+    const groups = within(pane).queryAllByRole("group", { name: title });
+    return groups.find((group) => groups.every((other) => group === other || !other.contains(group))) ?? null;
+  };
   const t0 = Date.now();
   while (!row()) {
     if (Date.now() - t0 > 15_000) {
-      throw new Error(`no "${title}" row at ${hash}; asked ${JSON.stringify([...new Set(asked)])}; it read: ${(el.textContent ?? "").slice(0, 300)}`);
+      throw new Error(`No "${title}" group in "${paneName}"; requests: ${JSON.stringify([...new Set(asked)])}`);
     }
     await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
   }
@@ -132,9 +141,11 @@ describe("the browser a desktop host serves says where a screen-out's unsubscrib
   for (const locale of ["en", "de"] as const) {
     it(`the Settings switch's note names your computer, never our servers (${locale})`, { timeout: 30_000 }, async () => {
       const row = await paneRow("#/settings/screener", locale, CATALOGUES[locale].settings.autoUnsub.title);
-      const note = row.nextElementSibling;
-      expect(note?.classList.contains("set-note-inline"), "the switch's note is not under its row").toBe(true);
-      const text = note!.textContent ?? "";
+      expect(within(row).getByRole("switch", { name: CATALOGUES[locale].settings.autoUnsub.title })).toBeTruthy();
+      const about = CATALOGUES[locale].settingsScreener.details.replace("{title}", CATALOGUES[locale].settings.autoUnsub.title);
+      const info = within(row).getByRole("button", { name: about });
+      await act(async () => info.click());
+      const text = screen.getByRole("dialog", { name: about }).textContent ?? "";
       expect(text, `${locale}: the paired browser says the request goes from our servers`).not.toMatch(SERVERS);
       expect(text, `${locale}: the paired browser does not name your computer`).toMatch(YOUR_COMPUTER[locale]);
       expect(text, `${locale}: the paired browser does not say what the sender sees`).toMatch(ADDRESS[locale]);
@@ -145,9 +156,14 @@ describe("the browser a desktop host serves says where a screen-out's unsubscrib
     /* The gate hands the shell no image wire and this page's `api-client` is the refusing stub, so
        `useRemoteImages` hands back nothing and the General pane draws neither picture row. Anchored
        on a row that pane always draws. */
-    await paneRow("#/settings/general", "en", en.settings.textSize);
-    const titles = [...el!.querySelectorAll<HTMLElement>(".set-row b")].map((b) => b.textContent);
-    expect(titles).not.toContain(en.settings.images.title);
-    expect(titles).not.toContain(en.settings.pixels.title);
+    const setLocale = vi.fn(async (_locale: Locale) => {});
+    await paneRow("#/settings/general", "en", en.settings.textSize, {
+      locale: "en", locales: ["en", "de"], scope: "install", busy: false, setLocale, adoptLocale: async () => {},
+    });
+    const pane = within(within(el!).getByRole("region", { name: en.settings.general }));
+    expect(pane.queryByRole("group", { name: en.settings.images.title })).toBeNull();
+    expect(pane.queryByRole("group", { name: en.settings.pixels.title })).toBeNull();
+    await act(async () => { pane.getByRole("button", { name: "Deutsch" }).click(); });
+    expect(setLocale.mock.calls).toEqual([["de"]]);
   });
 });

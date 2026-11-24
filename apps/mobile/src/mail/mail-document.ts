@@ -29,6 +29,7 @@ export interface MailDocumentTheme {
   invert?: { paper: string; canvas: string } | null;
   /** The letter laid out at its own width and zoomed to the frame's (below 1), or as written (1, unset). */
   fit?: number;
+  highlights?: boolean;
 }
 
 const CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'";
@@ -44,7 +45,9 @@ export function buildPhoneMailDocument(bodyHtml: string, t: MailDocumentTheme): 
   // A filtered body's background is not the canvas's, so `:root` carries the sheet's own colour.
   const zoom = t.fit !== undefined && t.fit < 1 ? Math.floor(t.fit * 10_000) / 10_000 : 0;
   // !important: a sender's own `body{zoom}` comes later in the cascade.
-  const fit = zoom > 0 ? `body{zoom:${zoom} !important}` : "";
+  const wash = ["color-mix(in", "srgb,", t.accent, "20%,transparent)"].join(" ");
+  const mark = t.highlights ? `mark{background:${wash};color:inherit}` : "";
+  const fit = (zoom > 0 ? `body{zoom:${zoom} !important}` : "") + mark;
   const dark = t.invert ? `body{background:${t.invert.paper};filter:${FLIP}}:root{background:${t.invert.canvas}}img,video,picture,[style*="url(" i]{filter:${FLIP}}` : "";
   return `<!doctype html><html><head><meta charset="utf-8"/><meta http-equiv="Content-Security-Policy" content="${CSP}"/><meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1"/><style>:root{color-scheme:light}:root,:root>body{height:auto !important}body{margin:0;padding:14px 16px 20px;background:${t.bg};color:${t.ink};font:400 ${px(16.5)}/1.78 -apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;overflow-wrap:break-word;word-break:break-word}a{color:${t.accent}}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}td,th{word-break:normal}blockquote{margin:0 0 0 2px;padding-left:14px;border-left:2px solid ${t.ink2}}pre{white-space:pre-wrap}${fit}${dark}</style></head><body>${bodyHtml}</body></html>`;
 }

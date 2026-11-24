@@ -1,12 +1,13 @@
+import type { WorkflowPattern } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { learningSignals, messages, mailboxes, workflowProposals } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
-import { ProposalsService } from "../src/index.js";
+import { ProposalsService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { ServiceError } from "../src/errors.js";
-import type { ProposalAnswer, WorkflowPattern, WorkflowPort } from "@trafficflow/core";
+import type { ProposalAnswer, WorkflowPort } from "@trafficflow/core";
 
 const NOW = new Date("2026-07-28T12:00:00Z");
 const svc = new ProposalsService();
@@ -16,7 +17,7 @@ type Db = Awaited<ReturnType<typeof makeTestDb>>;
 async function ctxFor(): Promise<{ db: Db; ctx: ServiceContext; accountId: string }> {
   const db = await makeTestDb();
   const accountId = randomUUID();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { db, ctx, accountId };
 }
 
@@ -180,8 +181,9 @@ describe("ProposalsService — list + dismiss", () => {
 
   it("list + dismiss are account-scoped (no cross-account leak)", async () => {
     const { db, accountId } = await ctxFor();
-    const other: ServiceContext = { db, accountId: randomUUID(), userId: null, now: () => NOW, requestId: "r" };
-    const owner: ServiceContext = { db, accountId, userId: null, now: () => NOW, requestId: "r" };
+    const stranger = randomUUID();
+    const other: ServiceContext = { db: dbFor(db, stranger), accountId: stranger, userId: null, now: () => NOW, requestId: "r" };
+    const owner: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
     await seedSignals(db, accountId, "news@acme-com.example", "ohmail/News", 5);
     await svc.generate(owner, { port: spyPort(), threshold: 3 });
     expect(await svc.list(other)).toHaveLength(0);   // other account sees nothing

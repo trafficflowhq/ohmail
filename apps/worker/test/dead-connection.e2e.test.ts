@@ -7,8 +7,8 @@ import { StaticKeyProvider } from "@trafficflow/core";
 import { startWorker, type RunningWorker } from "../src/index.js";
 import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { ORGANIZER_CONSENT } from "./_workerdb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { ORGANIZER_CONSENT } from "../../../packages/organizer/test/_workerdb.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -69,7 +69,7 @@ async function seedMailbox(db: Db): Promise<{ accountId: string; mailboxId: stri
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`, ...ORGANIZER_CONSENT }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };

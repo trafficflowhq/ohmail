@@ -1,0 +1,87 @@
+{
+  "component": "EventChip",
+  "state": "block-to-answer-new",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 24, 220, 56],
+  "clip": [24, 24, 220, 56],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "20px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "1",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.9px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(18, 16, 14) 0px 0px 0px 1.5px inset", "borderRadius": "12px" },
+    { "backgroundColor": "rgb(31, 75, 255)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Tech check, main hall Makersfest, Hall 2, Zürich",
+      "box": [0, 0, 220, 56],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "5px",
+        "paddingRight": "7px",
+        "paddingBottom": "4px",
+        "paddingLeft": "7px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [
+        { "said": "Tech check, main hall", "type": 0 },
+        { "said": "Makersfest, Hall 2, Zürich", "type": 1 }
+      ],
+      "surfaces": [
+        { "box": [0, 0, 220, 56], "paint": 0 },
+        { "box": [205, 11, 8, 8], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

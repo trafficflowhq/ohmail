@@ -1,17 +1,26 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { IntlProvider } from "use-intl";
+import { within } from "@testing-library/react";
+import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "@ohmail/app-logic/session/open-external";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
 import { ACCOUNT_AI_PATH } from "../src/DesktopAiAccount.js";
 import { ACCOUNT_ACCESS_PATH, MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
 import { desktopPaneLabel } from "../src/DesktopSettings.js";
+import { BUILD_VERSION } from "../src/build-id.js";
 import messages from "../../webapp/messages/en.json";
-import { PANE_IDS, type PaneId } from "../../webapp/app/shell/routing";
+import { PANE_IDS, type PaneId } from "../../../packages/app/src/settings/contract.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
+import { CLOUD_URL } from "../src/doors.js";
+
+vi.mock("../src/build-id.js", async () => ({
+  ...await vi.importActual<typeof import("../src/build-id.js")>("../src/build-id.js"),
+  BUILD_VERSION: "0.30.3",
+}));
 
 /**
  * ═══ THE SETTINGS CENSUS — EVERY PANE, EVERY DOOR, WITH A REASON ═══════════════════════════
@@ -629,17 +638,27 @@ async function navFor(status: EngineStatus, signedIn: boolean): Promise<string[]
   document.body.appendChild(mountPoint);
   root = createRoot(mountPoint);
   await act(async () => {
-    root!.render(
-      h(
-        NextIntlClientProvider,
-        { locale: "en", messages: messages as never, timeZone: "UTC" },
-        h(ThemeProvider, { storageKey: "ohmail.theme" }, h(ToastHost, null, h(DesktopGate, null))),
-      ),
-    );
+    root!.render(h(IntlProvider, {
+      locale: "en", messages: messages as never, timeZone: "UTC",
+      children: h(ThemeProvider, {
+        storageKey: "ohmail.theme",
+        children: h(ToastHost, { children: h(DesktopGate) }),
+      }),
+    }));
   });
   await settle();
-  return [...mountPoint.querySelectorAll<HTMLElement>(".set-nav button")]
-    .map((b) => (b.textContent ?? "").trim());
+  const nav = within(mountPoint).queryByRole("navigation", { name: messages.settings.navAria });
+  return nav ? within(nav).queryAllByRole("button").map((button) => button.getAttribute("aria-label") ?? "") : [];
+}
+
+async function openHelp(status: EngineStatus): Promise<HTMLElement> {
+  await navFor(status, true);
+  const pane = within(mountPoint!);
+  const menu = await pane.findByRole("navigation", { name: messages.settings.navAria });
+  const help = within(menu).getByRole("button", { name: messages.settings.help });
+  await act(async () => { help.click(); });
+  const reading = await pane.findByRole("region", { name: messages.settings.help });
+  return reading.closest<HTMLElement>('[data-kind="reading"]')!;
 }
 
 afterEach(async () => {
@@ -674,7 +693,7 @@ const drawnOn = (door: Door): PaneId[] =>
 
 const CLOUD_SERVING: EngineStatus = {
   state: "serving", mode: "cloud", address: "someone@ohmail.app",
-  mailboxId: "mbx-1", credentialState: "ready",
+  mailboxId: "mbx-1", cloudUrl: CLOUD_URL, credentialState: "ready",
 } as EngineStatus;
 
 /**
@@ -682,13 +701,8 @@ const CLOUD_SERVING: EngineStatus = {
  * launched pre-auth carries `credentialState: "absent"` for the life of the process; a window
  * whose engine predates the field carries none at all. Both are signed in.
  */
-const CLOUD_SIGNED_IN_AFTER_LAUNCH: EngineStatus = {
-  state: "serving", mode: "cloud", address: "someone@ohmail.app",
-  mailboxId: "mbx-1", credentialState: "absent",
-} as EngineStatus;
-const CLOUD_ENGINE_TOO_OLD: EngineStatus = {
-  state: "serving", mode: "cloud", address: "someone@ohmail.app", mailboxId: "mbx-1",
-} as EngineStatus;
+const CLOUD_SIGNED_IN_AFTER_LAUNCH: EngineStatus = { ...CLOUD_SERVING, credentialState: "absent" };
+const { credentialState: _notOnLaunchWire, ...CLOUD_ENGINE_TOO_OLD } = CLOUD_SERVING;
 
 const LOCAL_SERVING: EngineStatus = {
   state: "serving", mode: "local", address: "someone@example.com",
@@ -858,12 +872,9 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
   /* A window mailto comes back into this window's composer, which cannot send either. */
   it("Help & contact with no mailbox to send from offers the address to copy, never a mailto", async () => {
     mailboxesBody = JSON.stringify({ items: [] });
-    await navFor(CLOUD_SERVING, true);
-    const help = [...mountPoint!.querySelectorAll<HTMLElement>(".set-nav button")].find((b) => b.textContent?.trim() === label("help"))!;
-    await act(async () => { help.click(); });
-    await settle(5);
-    expect(mountPoint!.querySelector('a[href^="mailto:"]')).toBeNull();
-    expect([...mountPoint!.querySelectorAll("button")].some((b) => b.textContent === "Copy address")).toBe(true);
+    const pane = await openHelp(CLOUD_SERVING);
+    expect(pane.querySelector('a[href^="mailto:"]')).toBeNull();
+    expect(within(pane).getByRole("button", { name: messages.help.copyAddress })).toBeTruthy();
   });
 
   /* Support matches a letter to its account by this line; the cloud door has one, standalone none. */
@@ -877,15 +888,15 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
       Object.defineProperty(navigator, "clipboard", {
         configurable: true, value: { writeText: async (text: string) => { copied = text; } },
       });
-      await navFor(status, true);
-      const help = [...mountPoint!.querySelectorAll<HTMLElement>(".set-nav button")].find((b) => b.textContent?.trim() === label("help"))!;
-      await act(async () => { help.click(); });
-      await settle(5);
-      const copy = [...mountPoint!.querySelectorAll("button")].find((b) => b.textContent === "Copy diagnostics")!;
-      await act(async () => { copy.click(); });
-      await settle(2);
-      expect(copied.split("\n")).toContain(line);
-      expect(enginePaths.includes("/auth/session")).toBe(status === CLOUD_SERVING);
+      try {
+        const pane = await openHelp(status);
+        const copy = within(pane).getByRole("button", { name: messages.help.copyDiag });
+        await act(async () => { copy.click(); });
+        expect(copied.split("\n")).toContain(line);
+        expect(enginePaths.includes("/auth/session")).toBe(status === CLOUD_SERVING);
+      } finally {
+        Reflect.deleteProperty(navigator, "clipboard");
+      }
     });
   }
 
@@ -971,5 +982,62 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
   it("a cloud door whose session is gone draws no settings nav, because it draws no mail client", async () => {
     const nav = await navFor(CLOUD_SERVING, false);
     expect(nav).toEqual([]);
+  });
+});
+
+describe("the Help & contact pane", () => {
+  const supportAddress = ["support", "ohmail.app"].join("@");
+
+  it("on the desktop, with no mailbox to send from, nothing reaches the window's mailto seam: the address and block are copied", async () => {
+    mailboxesBody = JSON.stringify({ items: [] });
+    enableExternalLinks();
+    const off = interceptLinkClicks(document, { trustSameOrigin: true });
+    const sunk: string[] = [];
+    setMailtoSink((raw) => sunk.push(raw));
+    const writeText = vi.fn(async (text: string) => { void text; });
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    try {
+      const pane = await openHelp(CLOUD_SERVING);
+      expect(pane.querySelector('a[href^="mailto:"]')).toBeNull();
+      expect(pane.textContent).not.toContain("opens in your mail app");
+      expect(pane.textContent?.includes(supportAddress)).toBe(true);
+      const copyAddress = within(pane).getByRole("button", { name: messages.help.copyAddress });
+      const copyDiag = within(pane).getByRole("button", { name: messages.help.copyDiag });
+      await act(async () => { copyAddress.click(); copyDiag.click(); });
+      expect(sunk).toEqual([]);
+      expect(writeText.mock.calls.some(([text]) => text === supportAddress)).toBe(true);
+      const block = writeText.mock.calls.map(([text]) => text).find((text) => text.includes("Mailbox: none"));
+      expect(block).toContain(`App: ohmail desktop ${BUILD_VERSION}`);
+      expect(within(pane).getByRole("button", { name: messages.help.copied })).toBeTruthy();
+      expect(enginePaths.some((path) => /^\/drafts\/[^/]+\/send$/.test(path))).toBe(false);
+    } finally {
+      off();
+      setMailtoSink(null);
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it("on the desktop, while this computer's copy refuses its own pull, the address and block are copied, never sent from here", async () => {
+    const { items } = JSON.parse(MAILBOXES);
+    mailboxesBody = JSON.stringify({
+      items: [{ ...items[0], status: "error", errorCode: "storage", errorDetail: "MIRROR_STORE_REFUSED" }],
+    });
+    const pane = await openHelp(CLOUD_SERVING);
+    expect(within(pane).queryByRole("button", { name: messages.help.write })).toBeNull();
+    expect(within(pane).getByRole("button", { name: messages.help.copyAddress })).toBeTruthy();
+    expect(within(pane).getByRole("button", { name: messages.help.copyDiag })).toBeTruthy();
+    expect(pane.textContent?.includes(messages.help.writeWhyCopy)).toBe(true);
+    expect(pane.querySelector('a[href^="mailto:"]')).toBeNull();
+    expect(enginePaths.some((path) => /^\/drafts\/[^/]+\/send$/.test(path))).toBe(false);
+  });
+
+  it("opens an unsent Help draft when the desktop has a mailbox that can send", async () => {
+    const pane = await openHelp(CLOUD_SERVING);
+    const write = await within(pane).findByRole("button", { name: messages.help.write });
+    await act(async () => { write.click(); });
+    const letter = within(await within(mountPoint!).findByRole("region", { name: messages.write.letter }));
+    expect((letter.getByRole<HTMLInputElement>("textbox", { name: messages.write.subject })).value).toBe(messages.help.subject);
+    expect(letter.getByRole("textbox", { name: messages.write.text }).textContent).toContain("Account: acct-hosted-7");
+    expect(enginePaths.some((path) => /^\/drafts\/[^/]+\/send$/.test(path))).toBe(false);
   });
 });

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { DRAFT_REPLY_COST_CREDITS } from "../app/shell/draft-reply";
+import { DRAFT_REPLY_COST_CREDITS } from "@ohmail/app-logic/writing/draft-reply";
 
 /**
  * ═══ AI DRAFTING IS SHIPPED, WIRED AND REACHABLE — pinned, because a claim now rests on it ═══
@@ -41,16 +41,22 @@ import { DRAFT_REPLY_COST_CREDITS } from "../app/shell/draft-reply";
  *    fix.
  */
 
-import { shellSliceOf } from "./source-anchor";
-
 const ROOT = existsSync(resolve("apps/webapp/app")) ? resolve(".") : resolve("../..");
 const read = (rel: string): string => readFileSync(resolve(ROOT, rel), "utf8");
 
 describe("the premise that drafting is disabled, checked in the four places it would have to be", () => {
   it("a reader can ask for a drafted reply — the verb is in the message menu", () => {
-    const pane = read("apps/webapp/app/shell/MessagePane.tsx");
+    /* More uses the reader's draft verb, which drafts for the conversation's current reply target. */
+    const bar = read("packages/app/src/reader/actions/ActionBar.tsx");
+    const verbs = read("packages/app/src/reader/actions/use-verbs.ts");
+    const menu = read("packages/app/src/reader/actions/ActionMenus.tsx");
     expect(
-      /id:\s*"draft"/.test(pane) && /onAction\("draft"\)/.test(pane),
+      /const draft = separate \? null : verbs\.draft;/.test(menu)
+        && /<DraftReplyItem draft=\{draft\} close=\{close\} words=\{words\} \/>/.test(menu)
+        && /<MenuItem[\s\S]{0,180}?\bdraft\(\);[\s\S]{0,35}?\{words\.draftReply\}/.test(menu)
+        && /t\("verb\.draftReply"\)/.test(bar)
+        && /const replyTo = latest \?\? message;/.test(verbs)
+        && /draft:\s*drafter !== null && replyTo !== null \? \(\) => drafter\(replyTo\.id\)/.test(verbs),
       "the ⋯ menu no longer offers Draft reply",
     ).toBe(true);
   });
@@ -60,9 +66,14 @@ describe("the premise that drafting is disabled, checked in the four places it w
     // was planned and not connected. It is connected.
     /* The message verbs moved to `shell-verbs.ts` at ARCH-022; the arm is read inside
        `onMessageAction`'s own declaration, from whichever frame the manifest says holds it. */
-    const arm = shellSliceOf("onMessageAction");
-    expect(/case "draft":[\s\S]{0,1600}?draftReply\.open\(/.test(arm)).toBe(true);
-    expect(read("apps/webapp/app/shell/draft-reply.ts")).toContain("/messages/${id}/draft");
+    /* Re-pointed by path: today's `onMessageAction` arm leaves with the switch. The reader's Draft
+       reply is Write's (`write/entry.tsx`'s `useDraft`, the reader's port), and a list's row answers through
+       `answerThrough` (`app-logic/src/writing/answer.ts`): both open the reply and ask the drafter. */
+    const entry = read("packages/app/src/write/entry.tsx");
+    const useDraft = entry.slice(entry.indexOf("function useDraft()"));
+    expect(/writing\.openReply\([\s\S]{0,200}?writing\.draftReply\.open\(/.test(useDraft)).toBe(true);
+    expect(/composer\.draftReply\.open\(/.test(read("packages/app-logic/src/writing/answer.ts"))).toBe(true);
+    expect(read("apps/webapp/app/(product)/mailbox/draft-reply-wire.ts")).toContain("/messages/${id}/draft");
   });
 
   it("the route exists, is classed as a paid model call, and is metered", () => {
@@ -78,9 +89,9 @@ describe("the premise that drafting is disabled, checked in the four places it w
   });
 
   it("the production API wires a drafter whenever a model key is present — no flag turns it off", () => {
-    const deps = read("apps/api-vercel/src/deps.ts");
+    const deps = read("apps/server/src/deps.ts");
     expect(
-      /if \(anthropicApiKey\) \{[\s\S]{0,400}?lazily\(bag, "drafter"/.test(deps),
+      /if \(cfg\.ai !== null\) put\(bag, "drafter"/.test(deps),
       "the managed host no longer arms a drafter, which would change what a credit buys",
     ).toBe(true);
   });

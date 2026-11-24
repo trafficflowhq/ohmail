@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -41,7 +40,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * READ rather than assumed.
  */
 
-const SRC = readFileSync(fileURLToPath(new URL("../src/engine.ts", import.meta.url)), "utf8");
+const SRC = readEngineAsOneText();
 /**
  * Comments explain the very shapes this forbids, so the negative checks read code only — and
  * through the repo's one scanner, never a pair of regexes. `engine.ts` quotes folder globs in

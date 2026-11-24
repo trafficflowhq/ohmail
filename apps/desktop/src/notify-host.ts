@@ -19,9 +19,13 @@
  * not stubbed: no push subscription, no server to hold one — this shell is woken by its own
  * engine; a do-nothing stub would be a promise the type makes and the surface breaks.
  */
-import type { NotificationHost } from "../../webapp/app/shell/notification-settings";
+import {
+  noticeChoicesVersion, readChannels, storedNoticeChoices, subscriptionWanted, writeChannels,
+} from "@ohmail/app-logic/notices/browser-channels";
+import type { DeviceNotifications } from "@ohmail/app/host";
+import { desktopEmitter } from "./notice-emitter.js";
 
-export const desktopNotificationHost: NotificationHost = {
+export const desktopNotificationHost: DeviceNotifications = {
   permission: () => "granted",
   /**
    * NOTHING TO ASK, so this is not an ask. The page holds no permission to request; the shell
@@ -32,4 +36,11 @@ export const desktopNotificationHost: NotificationHost = {
   request: async () => "granted",
   /** See the header: the OS has the last word and this window cannot read it. */
   osHoldsPermission: true,
+  /** The window hands the shell a kind and its numbers; the shell words and shows it (`notice-emitter.ts`). */
+  emitter: desktopEmitter,
+  /** The switches are the window's own stored ones, read before every notice (the header). */
+  choices: storedNoticeChoices,
+  choicesVersion: noticeChoicesVersion,
 };
+
+export const desktopNotificationPreferences = { readChannels, writeChannels, subscriptionWanted };

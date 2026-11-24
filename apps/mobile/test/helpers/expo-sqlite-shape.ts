@@ -152,6 +152,8 @@ export function expoShapedWorld(): {
 export function engineStoreWorld(): {
   open: (name: string) => Promise<EngineStoreDatabase>;
   drop: (name: string) => Promise<void>;
+  /** Whether a file stands under that name, read without opening it. */
+  exists: (name: string) => Promise<boolean>;
   /** What is on disk under that name right now, read WITHOUT creating it. */
   tables: (name: string) => string[];
   cleanup: () => void;
@@ -188,6 +190,7 @@ export function engineStoreWorld(): {
   return {
     open,
     drop: async (name: string) => { rmSync(pathOf(name), { force: true }); },
+    exists: async (name: string) => existsSync(pathOf(name)),
     tables: (name: string): string[] => {
       if (!existsSync(pathOf(name))) return [];
       const probe = connect(pathOf(name));

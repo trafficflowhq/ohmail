@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { attachments, drafts, messages, outboundSends } from "@trafficflow/db";
 import { eq, sql } from "drizzle-orm";
-import { draftsService, scheduleService, sendService } from "@trafficflow/services/mail";
+import { dbFor, draftsService, scheduleService, sendService } from "@trafficflow/services/mail";
 import type { ServiceContext, AttachmentAdapter, OpenAdapter } from "@trafficflow/services/mail";
 import type { SendAdapter, OutboundMessage } from "@trafficflow/core/mail";
 import { FIXED_NOW, makeDeps, seedMailbox, seedMessage, seedSession, seedBody } from "../../api/test/helpers.js";
@@ -50,7 +50,7 @@ async function world(opts: { noForward?: boolean } = {}) {
     contentType: "application/pdf", sizeBytes: 4, partId: "2", inline: false,
   });
   const other = await seedMessage(db, { accountId: s.accountId, mailboxId, subject: "Another" });
-  const ctx: ServiceContext = { db, accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-fwd-row" };
+  const ctx: ServiceContext = { db: dbFor(db, s.accountId), accountId: s.accountId, userId: s.userId, now: () => FIXED_NOW, requestId: "test-fwd-row" };
   return { db, ctx, mailboxId, originalId: orig.id, otherId: other.id, accountId: s.accountId };
 }
 

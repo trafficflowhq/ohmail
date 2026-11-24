@@ -1,31 +1,13 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, ScreenerWaitingWire } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import {
-  OhmailEngine, MemoryMirrorStore,
-  type EngineMessage, type ScreenerWaitingWire, type SyncChange,
-} from "@ohmail/client-engine";
-import { ThemeProvider } from "@ohmail/ui";
-import messages from "../messages/en.json";
+import { act, cleanup, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
+import { useEffect, useState, type ReactNode } from "react";
+import { OhmailEngine, MemoryMirrorStore, type SyncChange } from "@ohmail/client-engine";
+import { useScreenerState } from "@ohmail/app-logic/screener/screener-state";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
+import { inWords, mountPlace } from "../../../packages/app/test/screener/screener-world.js";
 import { settleFirstPaint } from "./_first-paint.js";
-
-/**
- * THE SCREENER STATES THE STORE'S COUNT, AND SAYS WHEN IT CANNOT. The mirror here holds two of the
- * queue's senders; the store counts 250. The meta and the segment say 250, a press on the tail
- * fetches the next page, and a door that cannot answer is named as this device's own count.
- */
-
-(globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-Element.prototype.scrollTo ??= function scrollTo() {};
-Element.prototype.scrollIntoView ??= function scrollIntoView() {};
-(window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
-  ({ matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
-    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false; } })) as never;
 
 const NOW = new Date("2026-09-26T09:00:00.000Z");
 let seq = 0;
@@ -70,6 +52,7 @@ async function engineWith(door: Door): Promise<OhmailEngine> {
       sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString() }),
       mutate: async () => ({ changes: [], seq: null }),
       fetchBody: async () => null,
+      withdrawSend: async () => ({ outcome: "unsupported" }),
       ...(door === "none" ? {} : {
         screenerWaiting: async (p?: { cursor?: string }) => {
           if (door === "refuses") throw new Error("offline");
@@ -80,93 +63,68 @@ async function engineWith(door: Door): Promise<OhmailEngine> {
           return p?.cursor ? ONWARD : FIRST;
         },
       }),
-    } as never,
+    },
   });
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
-  host = null;
-});
-async function flush(): Promise<void> {
-  for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
-}
+afterEach(cleanup);
 
-async function mount(door: Door): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+async function mount(door: Door) {
   const engine = await engineWith(door);
-  function Probe(): React.ReactElement {
-    const [v, setV] = React.useState(0);
-    React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
-    seen.push(`${state.waitingCount}:${state.waiting.map((w) => w.from.address).join(",")}`);
-    const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
-    return h(ScreenerView, {
-      owed: false, state, segment: "waiting", settled: state.queueSettled, selection: sel as never,
-      onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
-      hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
-    } as never);
-  }
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(ThemeProvider, { storageKey: null, children: h(KeymapProvider, { children: h(Probe) }) }),
-    }));
-  });
-  await flush();
+  const { result } = renderHook(() => {
+    const [version, update] = useState(0);
+    useEffect(() => engine.subscribe(() => update((n) => n + 1)), []);
+    const model = useScreenerState(engine, null, version, () => {}, useScreenerWords());
+    seen.push(`${model.waitingCount}:${model.waiting.map((row) => row.from.address).join(",")}`);
+    return model;
+  }, { wrapper: ({ children }: { children: ReactNode }) => inWords(children) });
   await settleFirstPaint();
-  await flush();
+  if (door !== "empty-later") await waitFor(() => expect(result.current.queueSettled).toBe(true));
+  const world = mountPlace(result.current, { engine });
+  return {
+    model: () => result.current,
+    showCurrent: () => world.again(result.current),
+  };
 }
 
-const text = (): string => host!.textContent ?? "";
-const button = (label: string): HTMLElement => {
-  const hits = [...host!.querySelectorAll<HTMLElement>("button")].filter((b) => (b.textContent ?? "").trim() === label);
-  if (hits.length !== 1) throw new Error(`${hits.length} buttons read "${label}"`);
-  return hits[0]!;
-};
+const count = (name: string) => screen.getByRole("button", { name });
+const far = () => screen.queryByRole("option", { name: /Far.*An old note/ });
 
 describe("the Screener's count is the store's", () => {
   it("states the store's total over a mirror that holds two of its senders, and pages onward", async () => {
-    await mount("answers");
-    expect(text()).toContain("250 first-time senders waiting");
-    expect(text()).not.toContain("counted on this device");
-    expect(text()).not.toContain("far@away.test");
-    await act(async () => { button("Show more senders").click(); });
-    await flush();
-    expect(text(), "the next page's sender is not on screen").toContain("Far");
-    expect(host!.querySelectorAll("button").length).toBeGreaterThan(0);
-    expect([...host!.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Show more senders")).toBe(false);
+    const place = await mount("answers");
+    expect(count("Waiting 250")).toBeTruthy();
+    expect(screen.queryByText(/counted on this device/i)).toBeNull();
+    expect(far()).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show more senders" }));
+    await waitFor(() => expect(place.model().waiting).toHaveLength(3));
+    place.showCurrent();
+    expect(far()).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Show more senders" })).toBeNull();
   });
 
   it("names the count as this device's own while the store has not answered", async () => {
     await mount("refuses");
-    expect(text()).toContain("2 first-time senders waiting, counted on this device");
+    expect(count("Waiting 2")).toBeTruthy();
+    expect(screen.getByText("Counted on this device")).toBeTruthy();
   });
 
   it("never states the device's own senders while the store's first answer is on its way", async () => {
     seen = [];
-    await mount("empty-later");
+    const place = await mount("empty-later");
     expect(seen.length).toBeGreaterThan(0);
-    expect(seen.filter((s) => s !== "0:"), "a count or a row before the store answered").toEqual([]);
-    expect(text()).not.toContain("No one’s waiting.");
+    expect(seen.filter((value) => value !== "0:")).toEqual([]);
+    expect(screen.queryByText("No one’s waiting")).toBeNull();
     await act(async () => { releaseDoor(); });
-    await flush();
-    expect(seen.filter((s) => s !== "0:"), "a count or a row the store does not hold").toEqual([]);
-    expect(text()).toContain("No one’s waiting.");
+    await waitFor(() => expect(place.model().queueSettled).toBe(true));
+    place.showCurrent();
+    expect(seen.filter((value) => value !== "0:")).toEqual([]);
+    expect(screen.getByRole("region", { name: "Messages" }).textContent).toContain("No one’s waiting");
   });
 
   it("a client with no store keeps the plain sentence", async () => {
     await mount("none");
-    expect(text()).toContain("2 first-time senders waiting");
-    expect(text()).not.toContain("counted on this device");
+    expect(count("Waiting 2")).toBeTruthy();
+    expect(screen.queryByText(/counted on this device/i)).toBeNull();
   });
 });

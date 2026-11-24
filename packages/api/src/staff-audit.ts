@@ -1,10 +1,45 @@
 import { createHmac, randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { accounts, doorKeyDb, bindingOf, BindingRefusedError, mailboxes } from "@trafficflow/db";
 import { staffAuditEvents } from "@trafficflow/db/cloud";
 import {
-  checkedDetail, isUuid, StaffAuditDetailError,
-  type StaffAuditAction, type StaffAuditOutcome, type StaffReasonCode, type StaffRole,
+  checkedDetail, isUuid, passContext, StaffAuditDetailError,
+  type PassContext, type StaffAuditAction, type StaffAuditOutcome, type StaffReasonCode, type StaffRole, type UnboundDb,
 } from "@trafficflow/services";
+import { doorDb } from "./context.js";
 import type { ApiDeps } from "./deps.js";
+
+/**
+ * THE STAFF DOOR'S HANDLE: bound to no account, with the door's word as its key. What a staff
+ * route reads and writes the operators' own tables through (their sessions, their roles, the two
+ * audit trails), and the only handle that names the word. It reaches those tables and no other:
+ * a customer's row is never read or written through it, and it never names an account.
+ *
+ * Made over the request's handle as its host minted it ({@link doorDb}): a request that was bound
+ * to an account is refused, so the door's word never rides beside a customer's session.
+ */
+export function staffDb(deps: ApiDeps): UnboundDb {
+  return doorKeyDb(doorDb(deps), "staff");
+}
+
+/**
+ * THE CONTEXT OF A STAFF ACT ON ONE ACCOUNT, or null where the id the operator named finds no row.
+ *
+ * THE ID NAMED SELECTS A ROW, AND ONLY THE ROW BINDS. The operator names a mailbox or an account;
+ * that id is used once, at the staff door, to read the target's row, and the act then runs on a
+ * handle bound to the account THAT ROW carries ({@link passContext}): never to the id as it was
+ * typed. An id no row answers binds nothing, and the act does not begin.
+ */
+export async function staffActOn(
+  deps: ApiDeps, target: { readonly mailboxId: string } | { readonly accountId: string },
+): Promise<PassContext | null> {
+  const door = staffDb(deps);
+  const [row] = "mailboxId" in target
+    ? await door.select({ accountId: mailboxes.accountId }).from(mailboxes).where(eq(mailboxes.id, target.mailboxId)).limit(1)
+    : await door.select({ accountId: accounts.id }).from(accounts).where(eq(accounts.id, target.accountId)).limit(1);
+  if (!row) return null;
+  return passContext(doorDb(deps), row.accountId, { userId: null, now: deps.now, requestId: deps.requestId });
+}
 
 /**
  * THE STAFF AUDIT'S ONE WRITER (cloud 0047). Every staff read and write the API serves inserts
@@ -77,7 +112,6 @@ export function staffEventRow(e: StaffEventInput): typeof staffAuditEvents.$infe
   };
 }
 
-type Inserter = Pick<ApiDeps["db"], "insert">;
 
 /** The one failure a staff route answers `503 audit_failed`: its row could not be written. */
 export class StaffAuditWriteError extends Error {
@@ -87,8 +121,22 @@ export class StaffAuditWriteError extends Error {
   }
 }
 
-/** Insert rows, all or none. Any failure — a refused detail, a database fault — throws {@link StaffAuditWriteError}. */
-export async function recordStaffEvents(db: Inserter, events: readonly StaffEventInput[]): Promise<void> {
+/**
+ * Insert rows, all or none. Any failure — a refused detail, a database fault — throws {@link StaffAuditWriteError}.
+ *
+ * ON THE STAFF DOOR'S HANDLE AND NO OTHER. The operators' trail is written through {@link staffDb}
+ * (bound to no account, carrying the door's word), or inside a transaction that handle itself
+ * opened: a sign-in, a step-up or a role change at the door commits its event with the act, and
+ * that transaction carries the door's binding. Any other handle is refused before a row is
+ * written, with the binder's error and not the audit's: one that names an account, or a
+ * transaction of one (a customer's binding never carries the operators' trail), one that names
+ * nothing without the door's word, and one with no binding at all.
+ */
+export async function recordStaffEvents(db: UnboundDb, events: readonly StaffEventInput[]): Promise<void> {
+  const held = bindingOf(db);
+  if (held === undefined || held.account !== null || !held.keyed) {
+    throw new BindingRefusedError("a staff event was asked on a handle that is not the staff door's");
+  }
   if (events.length === 0) return;
   try {
     await db.insert(staffAuditEvents).values(events.map(staffEventRow));

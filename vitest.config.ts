@@ -127,6 +127,7 @@ export default defineConfig({
       { find: "@trafficflow/core/reader-refusal", replacement: r("./packages/core/src/reader-refusal.ts") },
       { find: "@trafficflow/core/outbound-text", replacement: r("./packages/core/src/outbound-text.ts") },
       { find: "@trafficflow/core/model-name", replacement: r("./packages/core/src/model-name.ts") },
+      { find: "@trafficflow/core/suggestion-consent", replacement: r("./packages/core/src/suggestion-consent.ts") },
       { find: "@trafficflow/core/ai-transports", replacement: r("./packages/core/src/ai/transports/index.ts") },
       { find: "@trafficflow/core/ai-provider-env", replacement: r("./packages/core/src/ai/transports/host.ts") },
       { find: "@trafficflow/core/transport-frame", replacement: r("./packages/core/src/transport-frame.ts") },
@@ -146,7 +147,15 @@ export default defineConfig({
       // standing ordering reason: the table is scanned in order and a string `find` is a prefix
       // match, so "@trafficflow/services" would otherwise swallow it.
       { find: "@trafficflow/services/auth", replacement: r("./packages/services/src/auth.ts") },
+      // The calendar's connect door: an entry of its own, which only a server's routes import.
+      { find: "@trafficflow/services/calendar-connect", replacement: r("./packages/services/src/calendar/connect-door.ts") },
+      { find: "@trafficflow/services/calendar", replacement: r("./packages/services/src/calendar/index.ts") },
+      // An invitation's answer by mail: an entry of its own, in no barrel, for its one route.
+      { find: "@trafficflow/services/invitation-answer", replacement: r("./packages/services/src/invitation-answer-service.ts") },
       { find: "@trafficflow/services", replacement: r("./packages/services/src/index.ts") },
+      // The door a calendar's provider rings: an entry of its own, which only a server mounts.
+      { find: "@trafficflow/api/calendar-notices", replacement: r("./packages/api/src/routes/calendar-notices.ts") },
+      { find: "@trafficflow/api/calendar", replacement: r("./packages/api/src/calendar/index.ts") },
       { find: "@trafficflow/api/local", replacement: r("./packages/api/src/local.ts") },
       { find: "@trafficflow/api/relay-allowlist", replacement: r("./packages/api/src/relay-allowlist.ts") },
       { find: "@trafficflow/api/match-path", replacement: r("./packages/api/src/match-path.ts") },
@@ -165,19 +174,86 @@ export default defineConfig({
       { find: "@ohmail/tokens/tokens.css", replacement: r("./packages/tokens/src/tokens.css") },
       { find: "@ohmail/tokens/faces.css", replacement: r("./packages/tokens/src/faces.css") },
       { find: "@ohmail/tokens/ohmarchy.css", replacement: r("./packages/tokens/src/ohmarchy.css") },
+      // The next design's values. The bare subpath is anchored: as a prefix it would also take its two stylesheets.
+      { find: "@ohmail/tokens/design/motion.css", replacement: r("./packages/tokens/src/design/motion.css") },
+      { find: "@ohmail/tokens/design/fonts.css", replacement: r("./packages/tokens/src/design/fonts.css") },
+      { find: "@ohmail/tokens/design.css", replacement: r("./packages/tokens/src/design/tokens.css") },
+      { find: /^@ohmail\/tokens\/design$/, replacement: r("./packages/tokens/src/design/tokens.ts") },
       { find: "@ohmail/tokens", replacement: r("./packages/tokens/src/index.ts") },
-      { find: "@ohmail/fixtures", replacement: r("./packages/fixtures/src/index.ts") },
+      // Above the bare name, for the prefix reason the tokens entries give.
+      { find: "@ohmail/testing/adapter", replacement: r("./packages/testing/src/adapter.ts") },
+      { find: "@ohmail/testing/calendar-span-twin", replacement: r("./packages/testing/src/calendar-span-twin.ts") },
+      { find: "@ohmail/testing", replacement: r("./packages/testing/src/index.ts") },
+      { find: /^(@ohmail\/cal-core\/.+)$/, replacement: "$1" }, // subpaths resolve by the package exports
+      { find: "@ohmail/cal-core", replacement: r("./packages/cal-core/src/index.ts") },
+      { find: /^@ohmail\/cal-providers$/, replacement: r("./packages/cal-providers/src/index.ts") }, // anchored, for the same reason
+      // Types only, so no run resolves it; listed for the censuses that walk import graphs off this table.
+      { find: "@ohmail/wire", replacement: r("./packages/wire/src/index.ts") },
       // The durable-write door as a leaf, ABOVE the bare name for the ordering reason the core
       // subpaths above give: a string `find` is a prefix match, so the barrel entry would
       // rewrite this specifier to `…/src/index.ts/durable` and resolve nothing.
       { find: "@ohmail/client-engine/durable", replacement: r("./packages/client-engine/src/durable.ts") },
       { find: "@ohmail/client-engine/send-fingerprint", replacement: r("./packages/client-engine/src/send-fingerprint.ts") },
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("./packages/client-engine/src/html-tree-budget.ts") },
+      { find: "@ohmail/client-engine/calendar-span", replacement: r("./packages/client-engine/src/engine/calendar-span.ts") },
+      { find: "@ohmail/client-engine/calendar-acts", replacement: r("./packages/client-engine/src/calendar-acts.ts") },
+      { find: "@ohmail/client-engine/calendar-writes", replacement: r("./packages/client-engine/src/calendar-writes.ts") },
+      { find: "@ohmail/client-engine/providers", replacement: r("./packages/client-engine/src/providers.ts") },
       { find: "@ohmail/client-engine", replacement: r("./packages/client-engine/src/index.ts") },
+      // Behaviour without a screen. A folder's door first, then a file by its own name (the files moved
+      // out of the web app's shell are imported one by one, as they were).
+      // The letter's body: its door and its three leaves, each by its own file, the leaves ABOVE the door.
+      { find: "@ohmail/letter-body/links", replacement: r("./packages/letter-body/src/rendered-links.ts") },
+      { find: "@ohmail/letter-body/cache", replacement: r("./packages/letter-body/src/mail-doc-cache.ts") },
+      { find: "@ohmail/letter-body/words", replacement: r("./packages/letter-body/src/words.ts") },
+      { find: /^@ohmail\/letter-body$/, replacement: r("./packages/letter-body/src/index.ts") },
+      // The calendar's doors that are folders, above the file rule that would read them as files.
+      { find: "@ohmail/app-logic/calendar/alerts", replacement: r("./packages/app-logic/src/calendar/alerts/index.ts") },
+      { find: "@ohmail/app-logic/calendar/beside", replacement: r("./packages/app-logic/src/calendar/beside/index.ts") },
+      { find: "@ohmail/app-logic/calendar/found", replacement: r("./packages/app-logic/src/calendar/found/index.ts") },
+      { find: "@ohmail/app-logic/calendar/invitations", replacement: r("./packages/app-logic/src/calendar/invitations/index.ts") },
+      { find: "@ohmail/app-logic/calendar/setup", replacement: r("./packages/app-logic/src/calendar/setup/index.ts") },
+      { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1/index.ts` },
+      { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1.ts` },
+      // The browser shells' device answers, ABOVE the contract's door (the prefix-match reason above).
+      { find: "@ohmail/app/host/browser", replacement: r("./packages/app/src/host/browser/index.ts") },
+      // The host contract's types and its two small values.
+      { find: "@ohmail/app/host/contract", replacement: r("./packages/app/src/host/contract.ts") },
+      { find: "@ohmail/app/host", replacement: r("./packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/keys/sheet", replacement: r("./packages/app/src/keys/sheet/index.ts") },
+      { find: "@ohmail/app/calendar", replacement: r("./packages/app/src/calendar/index.ts") },
+      { find: "@ohmail/app/mail-state", replacement: r("./packages/app/src/mail-state/index.ts") },
+      // The mail product's entry, BELOW `mail-state`: its name begins that one's.
+      { find: "@ohmail/app/mail", replacement: r("./packages/app/src/mail/index.ts") },
+      { find: "@ohmail/app/ohbox", replacement: r("./packages/app/src/ohbox/index.ts") },
+      { find: "@ohmail/app/screener", replacement: r("./packages/app/src/screener/index.ts") },
+      { find: "@ohmail/app/search", replacement: r("./packages/app/src/search/index.ts") },
+      { find: "@ohmail/app/palette", replacement: r("./packages/app/src/palette/index.ts") },
+      { find: "@ohmail/app/text/fill", replacement: r("./packages/app/src/text/fill.ts") },
+      { find: "@ohmail/app/frame/boot", replacement: r("./packages/app/src/frame/boot-stamp.ts") },
+      { find: "@ohmail/app/settings/travelled-change", replacement: r("./packages/app/src/settings/browser/TravelledChangeLine.tsx") },
+      { find: "@ohmail/app/frame/scope", replacement: r("./packages/app/src/frame/scope.tsx") },
+      { find: "@ohmail/app/text", replacement: r("./packages/app/src/text/index.ts") },
+      // What the letter's body takes of the kit, without its base sheets, ABOVE the bare name too.
+      { find: "@ohmail/ui/body-parts", replacement: r("./packages/ui/src/body-parts.ts") },
       // The body page bound as a leaf, ABOVE the bare name (the prefix-match reason above): the phone links it.
+      { find: "@ohmail/ui/file-size", replacement: r("./packages/ui/src/format/file-size.ts") },
+      { find: "@ohmail/ui/sender-sheet", replacement: r("./packages/ui/src/sender-sheet.ts") },
+      { find: "@ohmail/ui/viewport", replacement: r("./packages/ui/src/ui-zoom.ts") },
+      { find: "@ohmail/ui/text-field", replacement: r("./packages/ui/src/primitives/TextField.tsx") },
+      { find: "@ohmail/ui/date-picker-view", replacement: r("./packages/ui/src/primitives/DatePicker.tsx") },
+      { find: "@ohmail/ui/toast", replacement: r("./packages/ui/src/primitives/toast-context.ts") },
       { find: "@ohmail/ui/long-text", replacement: r("./packages/ui/src/format/long-text.ts") },
       // The squares' window as a leaf, for the same reason: the phone's MarkSquare links it.
       { find: "@ohmail/ui/squares-window", replacement: r("./packages/ui/src/squares-window.ts") },
+      { find: "@ohmail/ui/stream-estimate", replacement: r("./packages/ui/src/composites/stream-estimate.ts") },
+      { find: "@ohmail/ui/portal-renderer", replacement: r("./packages/ui/src/base/Overlays/portal-renderer.ts") },
+      // The next design's components, three entries, above the bare name for the same reason.
+      // The theme provider and its readers as a leaf, for the same reason: a door's device reads the theme and nothing else of today's kit.
+      { find: "@ohmail/ui/theme", replacement: r("./packages/ui/src/theme/ThemeProvider.tsx") },
+      { find: "@ohmail/ui/base", replacement: r("./packages/ui/src/base/index.ts") },
+      { find: "@ohmail/ui/mail", replacement: r("./packages/ui/src/mail/index.ts") },
+      { find: "@ohmail/ui/calendar", replacement: r("./packages/ui/src/calendar/index.ts") },
       { find: "@ohmail/ui", replacement: r("./packages/ui/src/index.ts") },
       // ONE PHYSICAL `next-intl` FOR THE WHOLE SUITE, and it is the same hazard the workspace
       // file pins `drizzle-orm`'s peers for: a React context is identified by the module object
@@ -198,26 +274,26 @@ export default defineConfig({
       // The project's design notes). The package's `exports` map points at source for the same reason
       // the worker deploys from source, but the suite still resolves through this table like
       // every other workspace specifier.
-      { find: "@trafficflow/worker/sync", replacement: r("./apps/worker/src/sync.ts") },
-      { find: "@trafficflow/worker/lease", replacement: r("./apps/worker/src/lease.ts") },
-      { find: "@trafficflow/worker/profile", replacement: r("./apps/worker/src/profile.ts") },
-      { find: "@trafficflow/worker/entry", replacement: r("./apps/worker/src/entry.ts") },
+      { find: "@ohmail/organizer/sync", replacement: r("./packages/organizer/src/sync.ts") },
+      { find: "@ohmail/organizer/lease", replacement: r("./packages/organizer/src/lease.ts") },
+      { find: "@ohmail/organizer/profile", replacement: r("./packages/organizer/src/profile.ts") },
+      { find: "@ohmail/organizer/entry", replacement: r("./packages/organizer/src/entry.ts") },
       // …and the scheduled-resurface flip, for the same reason: the standalone desktop door has no
       // worker behind it, so its own drain runs the worker's pass rather than a second copy of it.
-      { find: "@trafficflow/worker/bubble-up", replacement: r("./apps/worker/src/bubble-up-pass.ts") },
-      { find: "@trafficflow/worker/rule-retro", replacement: r("./apps/worker/src/rule-retro.ts") },
-      { find: "@trafficflow/worker/gap-catchup", replacement: r("./apps/worker/src/gap-catchup.ts") },
-      { find: "@trafficflow/worker/known-set", replacement: r("./apps/worker/src/known-set.ts") },
-      { find: "@trafficflow/worker/dead-letter", replacement: r("./apps/worker/src/dead-letter.ts") },
-      { find: "@trafficflow/worker/screener-auto-act", replacement: r("./apps/worker/src/screener-auto-act.ts") },
-      { find: "@trafficflow/worker/screener-impersonation", replacement: r("./apps/worker/src/screener-impersonation.ts") },
-      { find: "@trafficflow/worker/screener-correspondent-retro", replacement: r("./apps/worker/src/screener-correspondent-retro.ts") },
-      { find: "@trafficflow/worker/thread-join-heal", replacement: r("./apps/worker/src/thread-join-heal.ts") },
-      { find: "@trafficflow/worker/inbound-quiet", replacement: r("./apps/worker/src/inbound-quiet.ts") },
-      { find: "@trafficflow/worker/sender-check-backfill", replacement: r("./apps/worker/src/sender-check-backfill.ts") },
-      { find: "@trafficflow/worker/list-address-backfill", replacement: r("./apps/worker/src/list-address-backfill.ts") },
-      { find: "@trafficflow/worker/act-admission-retire", replacement: r("./apps/worker/src/act-admission-retire.ts") },
-      { find: "@trafficflow/worker/gone-letter-tidy", replacement: r("./apps/worker/src/gone-letter-tidy.ts") },
+      { find: "@ohmail/organizer/bubble-up", replacement: r("./packages/organizer/src/bubble-up-pass.ts") },
+      { find: "@ohmail/organizer/rule-retro", replacement: r("./packages/organizer/src/rule-retro.ts") },
+      { find: "@ohmail/organizer/gap-catchup", replacement: r("./packages/organizer/src/gap-catchup.ts") },
+      { find: "@ohmail/organizer/known-set", replacement: r("./packages/organizer/src/known-set.ts") },
+      { find: "@ohmail/organizer/dead-letter", replacement: r("./packages/organizer/src/dead-letter.ts") },
+      { find: "@ohmail/organizer/screener-auto-act", replacement: r("./packages/organizer/src/screener-auto-act.ts") },
+      { find: "@ohmail/organizer/screener-impersonation", replacement: r("./packages/organizer/src/screener-impersonation.ts") },
+      { find: "@ohmail/organizer/screener-correspondent-retro", replacement: r("./packages/organizer/src/screener-correspondent-retro.ts") },
+      { find: "@ohmail/organizer/thread-join-heal", replacement: r("./packages/organizer/src/thread-join-heal.ts") },
+      { find: "@ohmail/organizer/inbound-quiet", replacement: r("./packages/organizer/src/inbound-quiet.ts") },
+      { find: "@ohmail/organizer/sender-check-backfill", replacement: r("./packages/organizer/src/sender-check-backfill.ts") },
+      { find: "@ohmail/organizer/list-address-backfill", replacement: r("./packages/organizer/src/list-address-backfill.ts") },
+      { find: "@ohmail/organizer/act-admission-retire", replacement: r("./packages/organizer/src/act-admission-retire.ts") },
+      { find: "@ohmail/organizer/gone-letter-tidy", replacement: r("./packages/organizer/src/gone-letter-tidy.ts") },
       { find: "@ohmail/sidecar", replacement: r("./apps/sidecar/src/index.ts") },
       // The shared mail-domain half. Above `@trafficflow/db` for the same reason core's
       // subpaths are above core: the table is scanned in order.
@@ -232,6 +308,7 @@ export default defineConfig({
       { find: "@trafficflow/db/admin", replacement: r("./packages/db/src/admin.ts") },
       { find: "@trafficflow/db/journal", replacement: r("./packages/db/src/journal.ts") },
       { find: "@trafficflow/db/cloud", replacement: r("./packages/db/src/cloud.ts") },
+      { find: "@trafficflow/db/calendar", replacement: r("./packages/db/src/calendar/index.ts") },
       /* The ledger-source VOCABULARY on its own — pure string construction over `node:crypto`, no
          table, no connection. It has its own door because the mail half calls these names from
          inside the desktop engine, and reaching them through `/cloud` (or through the root barrel,

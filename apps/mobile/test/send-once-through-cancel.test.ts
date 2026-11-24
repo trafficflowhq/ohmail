@@ -37,9 +37,10 @@
  * Each was run, watched red by the assertion named beside it, and restored from a pristine copy
  * proved by `cmp`.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
-import { OUTBOX_TYPE, type EngineMutation, type WithdrawOutcome } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, type WithdrawOutcome } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { queuedCaptionKey } from "../src/engine/send-waits";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
@@ -737,12 +738,16 @@ describe("the intent, and the decisions the composer takes", () => {
 
   it("THE WIRING — the sheet takes these decisions on every road out, and renders the sentence", () => {
     expect(COMPOSER).toContain('from "./send-cancel"');
-    // Every close goes through the one function that decides: the button, the scrim behind
-    // the sheet, and the platform back gesture. A bare `onClose` on any of the three is a
-    // way out nothing decides. Three presses: the scrim, Cancel, and the held sheet's Close
-    // (`replyUnverifiedClose`, the message stays in Drafts).
-    expect(COMPOSER).toContain("onRequestClose={closeComposer}");
-    expect(COMPOSER.match(/onPress=\{closeComposer\}/g) ?? [], "a close that does not withdraw").toHaveLength(3);
+    // The frame forwards native Back. The backdrop, full-screen Back, Cancel, and the
+    // held sheet's Close all use the same decision about whether to leave the send queued.
+    expect(COMPOSER).toMatch(/<ComposerFrame\b[^>]*onRequestClose=\{closeComposer\}/);
+    expect(COMPOSER.slice(COMPOSER.indexOf("function ComposerFrame(")))
+      .toMatch(/<Modal\b[^>]*onRequestClose=\{onRequestClose\}/);
+    expect(COMPOSER).toMatch(/<SheetBackdrop label=\{Copy\.replyCancel\} onPress=\{closeComposer\}/);
+    expect(COMPOSER).toMatch(/<Tap\s+onPress=\{closeComposer\}\s+accessibilityRole="button"\s+accessibilityLabel=\{Copy\.back\}/);
+    expect(COMPOSER).toMatch(/<Button label=\{Copy\.replyCancel\}[^>]*onPress=\{closeComposer\}/);
+    expect(COMPOSER).toMatch(/<Button label=\{Copy\.replyUnverifiedClose\}[^>]*onPress=\{closeComposer\}/);
+    expect(COMPOSER.match(/onPress=\{closeComposer\}/g) ?? [], "a close that does not withdraw").toHaveLength(4);
     expect(COMPOSER).toContain('cancelAct({ road: "close", phase, key: queuedKey, alreadySent, cancelOwed: cancelUnreachable })');
     // The verdict rides beside the answer since `send-cancel-says-it-went.test.ts`: a `gone`
     // key that the flush CONFIRMED says the message went rather than closing in silence.

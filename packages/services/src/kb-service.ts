@@ -1,5 +1,6 @@
+import type { KbEntryDTO, Page } from "@ohmail/wire";
 import { and, asc, eq, gt, sql } from "drizzle-orm";
-import { kbEntries } from "@trafficflow/db";
+import { kbEntries, poolKeyOf } from "@trafficflow/db";
 import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext, type Db } from "./context.js";
 import { dialect, pgOnly } from "@trafficflow/db/dialect";
 import { ServiceError } from "./errors.js";
@@ -7,7 +8,6 @@ import { storeProbe } from "./store-probe.js";
 import { clampLimit, decodeListCursor, encodeListCursor } from "./pagination.js";
 import { MAX_TAG_NAME_CHARS } from "./tags-service.js";
 import { SEARCH_QUERY_MAX_CHARS } from "./search-service.js";
-import type { Page, KbEntryDTO } from "./dto/types.js";
 
 /** Default number of KB entries a retrieval returns (RAG top-k). */
 const DEFAULT_K = 5;
@@ -64,7 +64,7 @@ function rowsOf<T>(result: unknown): T[] {
 const trgmProbe = storeProbe();
 function hasTrgm(db: Db): Promise<boolean> {
   if (dialect(db).name !== "pg") return Promise.resolve(false);
-  return trgmProbe(db as unknown as object, () =>
+  return trgmProbe(poolKeyOf(db), () =>
     /* A DECLARED POSTGRES-ONLY ARM, and it is unreachable above: the guard one line up answers
        `false` for any store that is not the server, so this statement is never composed there.
        It stays in the caller by the seam's own contract — the fuzzy member IS the trigram arm,

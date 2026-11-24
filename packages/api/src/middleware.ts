@@ -1,10 +1,11 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
-  ServiceError, IdempotencyRaceLost, resolveSession, sha256, isAllowedOrigin, PRESS_AGE_MAX_MS, pressIsAged,
+  ServiceError, IdempotencyRaceLost, resolveSession, sessionEmailVerifiedAt, sha256, isAllowedOrigin, PRESS_AGE_MAX_MS, pressIsAged,
 } from "@trafficflow/services/mail";
 import { silentLogger } from "@trafficflow/core/mail";
 // The reader refusal, from the package that throws it — see the envelope arm below for why it
 // cannot live beside `ServiceError`.
+import { bindRequest, doorDb } from "./context.js";
 import { jarCookie } from "./cookies.js";
 import { csrfTokenFor } from "./csrf.js";
 import { errorResponse } from "./responses.js";
@@ -22,6 +23,9 @@ import type { Handler, ReplayDisposition, Route } from "./router.js";
 export type Middleware = (next: Handler, route: Route) => Handler;
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+export const EXPECTED_ACCOUNT_HEADER = "X-Ohmail-Expected-Account";
+export const EXPECTED_FAMILY_HEADER = "X-Ohmail-Expected-Family";
 
 /**
  * Read the session token from a Bearer header (native) or the `tf_session` cookie (web). The
@@ -415,7 +419,8 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
      * asserting these strings are the classes' real names.
      */
     if (isOrganizerRefusal(err)) {
-      const e = err as { code: string; httpStatus: number; message: string; details?: unknown };
+      // The two classes' own codes (`packages/db/src/organizer-role.ts`).
+      const e = err as { code: "organized_elsewhere" | "not_found"; httpStatus: number; message: string; details?: unknown };
       return errorResponse(e.code, e.httpStatus, e.message, e.details);
     }
     if (err instanceof ServiceError) {
@@ -473,12 +478,16 @@ export const withSessionAcquireCeiling: Middleware = (next) => async (req, deps,
  * the session and proceeds anonymously — a stale enrollment cookie must not 403 a fresh login,
  * and `GET /oauth/authorize` mints from `ctx.userId`, so dropping the identity yields the 401 it
  * must be instead of a password-only escalation.
+ *
+ * Its last step binds the request's handle to the session's account (`bindRequest`): the only
+ * place `deps.session` is assigned is here, and the only place a request is bound follows it.
  */
 export const withSession: Middleware = (next, route) => async (req, deps, params) => {
   const token = readSessionToken(req, deps.allowCookieAuth !== false);
   if (token) {
     const t0 = performance.now();
-    const core = await resolveSession(deps.db, token.value, deps.now());
+    // On the request's handle as its host minted it (`doorDb`): the look-up runs before any account is bound.
+    const core = await resolveSession(doorDb(deps), token.value, deps.now());
     deps.sessionMs = performance.now() - t0;
     if (core) deps.session = { ...core, via: token.via };
   }
@@ -492,6 +501,17 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
     if (token && await erasedAccountBearer(req, deps, token.value)) return accountErasedResponse();
     return errorResponse("unauthorized", 401, "authentication required");
   }
+  const expectedAccount = req.headers.get(EXPECTED_ACCOUNT_HEADER);
+  const expectedFamily = req.headers.get(EXPECTED_FAMILY_HEADER);
+  if (deps.session && (
+    (expectedAccount !== null && expectedAccount !== deps.session.accountId)
+    || (expectedFamily !== null && expectedFamily !== deps.session.familyId)
+  )) {
+    return errorResponse("session_mismatch", 409, "the browser session changed");
+  }
+  // Last, and here alone: the session is settled (resolved, or dropped above), and the request's
+  // handle comes to name its account before any later step or the handler reads through it.
+  bindRequest(deps, route.options?.credentialLookup);
   return next(req, deps, params);
 };
 
@@ -520,7 +540,7 @@ export async function erasedAccountBearer(req: Request, deps: ApiDeps, token: st
   const auth = deps.services?.auth;
   if (!auth) return null;
   try {
-    const account = await auth.bearerOfErasedAccount(deps.db, token, deps.now());
+    const account = await auth.bearerOfErasedAccount(doorDb(deps), token, deps.now());
     if (account) deps.erasedAccount = account;
     return account;
   } catch {
@@ -544,16 +564,16 @@ export function accountErasedResponse(): Response {
  * every protected step-up route `withSession` still answers first and this branch stays
  * unreachable.
  */
-export const withStepUp: Middleware = (next, route) => async (req, deps, params) => {
-  if (route.options?.stepUp) {
-    const s = deps.session;
-    if (!s) return errorResponse("unauthorized", 401, "authentication required");
-    const withinWindow =
-      s.lastTwofaAt != null && deps.now().getTime() - s.lastTwofaAt.getTime() <= deps.authConfig.stepUpWindowMs;
-    if (!withinWindow) return errorResponse("step_up_required", 403, "recent two-factor authentication required");
-  }
-  return next(req, deps, params);
-};
+export function stepUpRefusal(deps: ApiDeps): ReturnType<typeof errorResponse> | null {
+  const s = deps.session;
+  if (!s) return errorResponse("unauthorized", 401, "authentication required");
+  const withinWindow =
+    s.lastTwofaAt != null && deps.now().getTime() - s.lastTwofaAt.getTime() <= deps.authConfig.stepUpWindowMs;
+  return withinWindow ? null : errorResponse("step_up_required", 403, "recent two-factor authentication required");
+}
+
+export const withStepUp: Middleware = (next, route) => async (req, deps, params) =>
+  (route.options?.stepUp ? stepUpRefusal(deps) : null) ?? next(req, deps, params);
 
 /**
  * An unverified account must not be able to generate meaningful cost. Every route declares a
@@ -566,8 +586,10 @@ export const withStepUp: Middleware = (next, route) => async (req, deps, params)
  * `deps.requireVerifiedForProduct !== false`: only the exact boolean `false` relaxes.
  */
 export const withSpendGate: Middleware = (next, route) => async (req, deps, params) => {
-  if (deps.requireVerifiedForProduct !== false
-    && deps.session && deps.session.emailVerifiedAt == null && !unverifiedMayReach(route.cost)) {
+  const session = deps.session;
+  // withSession has bound the request's handle to the account the session row named.
+  if (deps.requireVerifiedForProduct !== false && session && !unverifiedMayReach(route.cost)
+    && (await sessionEmailVerifiedAt(deps.db, session)) == null) {
     return errorResponse(
       "email_unverified", 403,
       "Confirm your email address first. We sent a link when you signed up — " +
@@ -594,9 +616,11 @@ export const withSpendGate: Middleware = (next, route) => async (req, deps, para
       // on this code, and renaming it silently disables every one of them. `lifecycle` is the
       // program's dated block (what happened, the deadline, the erasure forecast); `exportPath`
       // is the open door out — both ride `details` so the wall can render without a second read.
+      const message = verdict.needsPlan
+        ? route.pattern === "/account/ai" ? "Choose a plan to use AI." : "Choose a plan to use ohmail."
+        : "This account is not active. Your mail and settings are kept — nothing has been deleted.";
       return errorResponse(
-        "subscription_required", 402,
-        "This account is not active. Your mail and settings are kept — nothing has been deleted.",
+        "subscription_required", 402, message,
         {
           reason: verdict.reason,
           ...(verdict.manageUrl ? { manageUrl: verdict.manageUrl } : {}),
@@ -700,9 +724,19 @@ export const withIdempotency: Middleware = (next, route) => async (req, deps, pa
   if (!accountId) return next(req, deps, params); // protected routes are already 401'd by withSession
 
   const url = new URL(req.url);
-  const rawBody = await req.clone().text();
+  let body = await req.clone().text();
+  if (route.method === "POST" && route.pattern === "/screener/:id") {
+    // Retrying a filing uses the same key after dropping the live unsubscribe grant.
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && Object.hasOwn(parsed, "unsubscribeIds")) {
+        delete parsed.unsubscribeIds;
+        body = JSON.stringify(parsed);
+      }
+    } catch { /* The handler validates the body. */ }
+  }
   const requestHash = sha256(
-    `${req.method}\n${url.pathname}\n${canonicalQuery(url)}\n${rawBody}`,
+    `${req.method}\n${url.pathname}\n${canonicalQuery(url)}\n${body}`,
   ).toString("hex");
 
   /* THE FENCE, BEFORE A STORED RESPONSE IS SERVED. The stored response is a verbatim copy of what

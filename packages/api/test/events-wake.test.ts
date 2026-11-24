@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createApp, apiRoutes, type ApiDeps, type ChangeWakeHub, type SseConfig } from "@trafficflow/api";
+import { users } from "@trafficflow/db";
 import { resetSseCounters, sseLiveCounts } from "../src/routes/events.js";
 import { makeDeps, req, FIXED_NOW } from "./helpers.js";
 
@@ -22,7 +23,7 @@ import { makeDeps, req, FIXED_NOW } from "./helpers.js";
  *      the poll loop keeps running underneath a healthy hub (reliability floor, not fallback).
  *
  * Every case presets the session (the subject is the stream machinery, not auth) and stubs
- * the db to the one query the poll makes, exactly as `events-cost.test.ts` does.
+ * the db to admit that user and script the poll, as `events-cost.test.ts` does.
  */
 const app = createApp(apiRoutes);
 
@@ -33,15 +34,23 @@ const PRESET_SESSION: ApiDeps["session"] = {
   lastTwofaAt: null,
   scope: "full",
   via: "bearer",
-  emailVerifiedAt: FIXED_NOW,
 };
 const ACCT = PRESET_SESSION!.accountId;
 
-/** The poll's one query shape, scripted. A row answers `live: true` as production does for a live session. */
-function pollDb(onPoll: () => Promise<Array<{ max: string | null; live: boolean }>>): ApiDeps["db"] {
-  return {
-    select: () => ({ from: () => ({ where: () => onPoll() }) }),
-  } as unknown as ApiDeps["db"];
+/**
+ * The poll's one query shape, scripted. A row answers `live: true` as production does for a live
+ * session. It sits on the pool's own handle, the one the binder knows, so the handle the host mints
+ * for the request (a view of it, bound to the session's account) asks its poll through it.
+ */
+function pollOn(db: object, onPoll: () => Promise<Array<{ max: string | null; live: boolean }>>): void {
+  Object.defineProperty(db, "select", {
+    configurable: true, writable: true,
+    value: () => ({
+      from: (table: unknown) => ({
+        where: () => table === users ? { limit: async () => [{ emailVerifiedAt: FIXED_NOW }] } : onPoll(),
+      }),
+    }),
+  });
 }
 
 /** A hub the test drives by hand, recording its subscription lifecycle. */
@@ -91,13 +100,13 @@ afterEach(() => { resetSseCounters(); });
 
 describe("a pushed wake becomes a frame without a poll", () => {
   it("emits `event: sync` with the PUSHED seq while the poll period has not elapsed", async () => {
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     const { hub, wake } = fakeHub();
     let polls = 0;
-    const db = pollDb(async () => { polls++; return [{ max: "5", live: true }]; });
+    pollOn(db, async () => { polls++; return [{ max: "5", live: true }]; });
 
     // pollMs far beyond the lifetime: any sync frame in this stream is push or nothing.
-    const res = await HS({ ...deps, db }, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 250 }, hub);
+    const res = await HS(deps, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 250 }, hub);
     setTimeout(() => wake(ACCT, 7n), 30);
     const text = await drain(res);
 
@@ -106,11 +115,11 @@ describe("a pushed wake becomes a frame without a poll", () => {
   });
 
   it("another ACCOUNT's wake and a STALE seq both emit nothing", async () => {
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     const { hub, wake } = fakeHub();
-    const db = pollDb(async () => [{ max: "5", live: true }]);
+    pollOn(db, async () => [{ max: "5", live: true }]);
 
-    const res = await HS({ ...deps, db }, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 250 }, hub);
+    const res = await HS(deps, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 250 }, hub);
     setTimeout(() => {
       wake("99999999-9999-9999-9999-999999999999", 50n);  // scoping: not this stream's account
       wake(ACCT, 5n);                                     // stale: the baseline read already covers it
@@ -122,11 +131,11 @@ describe("a pushed wake becomes a frame without a poll", () => {
   });
 
   it("wakes are monotonic: a burst emits each ADVANCE once, replays never", async () => {
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     const { hub, wake } = fakeHub();
-    const db = pollDb(async () => [{ max: "5", live: true }]);
+    pollOn(db, async () => [{ max: "5", live: true }]);
 
-    const res = await HS({ ...deps, db }, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 300 }, hub);
+    const res = await HS(deps, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 300 }, hub);
     setTimeout(() => { wake(ACCT, 7n); wake(ACCT, 7n); wake(ACCT, 6n); wake(ACCT, 9n); }, 30);
     const text = await drain(res);
 
@@ -137,11 +146,11 @@ describe("a pushed wake becomes a frame without a poll", () => {
 
 describe("the subscription is released with the stream", () => {
   it("lifetime close unsubscribes, and the slot count returns to zero with it", async () => {
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     const f = fakeHub();
-    const db = pollDb(async () => [{ max: null, live: true }]);
+    pollOn(db, async () => [{ max: null, live: true }]);
 
-    const res = await HS({ ...deps, db }, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 150 }, f.hub);
+    const res = await HS(deps, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 150 }, f.hub);
     await sleep(50);
     expect(f.live(ACCT), "the stream never subscribed").toBe(1);
     await drain(res);
@@ -152,11 +161,11 @@ describe("the subscription is released with the stream", () => {
   });
 
   it("client CANCEL unsubscribes too — the door the lifetime never reaches", async () => {
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     const f = fakeHub();
-    const db = pollDb(async () => [{ max: null, live: true }]);
+    pollOn(db, async () => [{ max: null, live: true }]);
 
-    const res = await HS({ ...deps, db }, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 60_000 }, f.hub);
+    const res = await HS(deps, { heartbeatMs: 5_000, pollMs: 60_000, lifetimeMs: 60_000 }, f.hub);
     const reader = res.body!.getReader();
     await reader.read();                        // the retry hint — the stream is live
     await sleep(30);
@@ -169,13 +178,13 @@ describe("the subscription is released with the stream", () => {
   });
 
   it("a stream cancelled while its first read is out never holds a wake subscription", async () => {
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     const f = fakeHub();
     let release!: () => void;
     const held = new Promise<void>((r) => { release = r; });
-    const db = pollDb(async () => { await held; return [{ max: null, live: true }]; });
+    pollOn(db, async () => { await held; return [{ max: null, live: true }]; });
 
-    const res = await HS({ ...deps, db }, { heartbeatMs: 60_000, pollMs: 60_000, lifetimeMs: 60_000 }, f.hub);
+    const res = await HS(deps, { heartbeatMs: 60_000, pollMs: 60_000, lifetimeMs: 60_000 }, f.hub);
     await res.body!.cancel();
     release();
     await sleep(20);
@@ -187,17 +196,17 @@ describe("the subscription is released with the stream", () => {
 
 describe("the hub is a hint, never a dependency", () => {
   it("a hub that THROWS on subscribe changes nothing: the stream serves and the poll still wakes it", async () => {
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     const hub: ChangeWakeHub = {
       subscribe: () => { throw new Error("LISTEN is down"); },
     };
     let calls = 0;
-    const db = pollDb(async () => {
+    pollOn(db, async () => {
       calls++;
       return [{ max: calls > 1 ? "9" : "5", live: true }];   // the poll observes an advance on its second read
     });
 
-    const res = await HS({ ...deps, db }, { heartbeatMs: 5_000, pollMs: 20, lifetimeMs: 250 }, hub);
+    const res = await HS(deps, { heartbeatMs: 5_000, pollMs: 20, lifetimeMs: 250 }, hub);
     const text = await drain(res);
 
     expect(text, "a broken hub killed the stream").toContain("retry: 3000");
@@ -206,12 +215,12 @@ describe("the hub is a hint, never a dependency", () => {
   });
 
   it("the poll keeps running UNDER a healthy hub — the floor, not a fallback", async () => {
-    const { deps } = await makeDeps();
+    const { db, deps } = await makeDeps();
     const f = fakeHub();
     let polls = 0;
-    const db = pollDb(async () => { polls++; return [{ max: "5", live: true }]; });
+    pollOn(db, async () => { polls++; return [{ max: "5", live: true }]; });
 
-    const res = await HS({ ...deps, db }, { heartbeatMs: 5_000, pollMs: 30, lifetimeMs: 250 }, f.hub);
+    const res = await HS(deps, { heartbeatMs: 5_000, pollMs: 30, lifetimeMs: 250 }, f.hub);
     await drain(res);
 
     // Baseline read + several poll iterations, with a subscribed hub the whole time. Delete the

@@ -9,7 +9,6 @@ import {
   foldThreads, messageSearchUpsert, newBodyWriteOf, newFolderStateOf, newMoveDeltaOf, newThreadInputOf,
   threadKeyOf, UNMETERED_STORAGE_CAP, type FoldThread, type RepoChangeInput,
 } from "@trafficflow/core/mail";
-import type { EmailAddress } from "@trafficflow/core";
 import {
   attachmentRowsOf, DrizzleRepo, folderStateRowOf, insertMessageRows, insertNewThreads, instanceTupleOf,
   type IngestRunContext, type IngestRunMember, type IngestRunResult, type WorkerRepo,
@@ -68,6 +67,11 @@ export async function persistNewRun(
   db: Tx, d: Dialect, repo: WorkerRepo, members: readonly IngestRunMember[], ctx: IngestRunContext,
 ): Promise<IngestRunResult> {
   if (members.length === 0) return { persisted: 0, messageIds: [] };
+  // The caller never runs a letter carrying an invitation (`sync.ts`, `runnable`): its row is the
+  // per-letter commit's. One that arrives anyway goes back to that commit, whole.
+  if (members.some((m) => m.plan.invitation !== undefined)) {
+    throw new RunConflictError("a letter of the run carries an invitation, which only the per-letter commit writes");
+  }
   const { accountId, mailboxId } = ctx;
   const capBytes = ctx.storageCap === UNMETERED_STORAGE_CAP ? null : ctx.storageCap;
   const writes = members.map((m) => newBodyWriteOf(m.plan, accountId));
@@ -141,6 +145,7 @@ export async function persistNewRun(
       const husk = w.body.withheld ?? (holds[i] ? null : ("storage_cap" as const));
       return {
         messageId: messageIds[i]!,
+        accountId,
         text: husk !== null ? "" : w.body.text,
         html: husk !== null ? null : w.body.html,
         withheldReason: husk,
@@ -247,9 +252,9 @@ export async function persistNewRun(
   return { persisted: members.length, messageIds };
 }
 
-function participantsOf(v: unknown): EmailAddress[] {
+function participantsOf(v: unknown): FoldThread["participants"] {
   const parsed = typeof v === "string" ? JSON.parse(v) as unknown : v;
-  return Array.isArray(parsed) ? parsed as EmailAddress[] : [];
+  return Array.isArray(parsed) ? parsed as FoldThread["participants"] : [];
 }
 
 /** `repo` with {@link persistNewRun} on it, over the handle `repo` speaks: the fence's transaction. */

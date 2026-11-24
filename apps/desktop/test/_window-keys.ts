@@ -1,20 +1,21 @@
 import { expect } from "vitest";
-import { routingIntentsKey } from "@ohmail/client-engine";
+import { TOLD_DEVICES_PREFIX, routingIntentsKey } from "@ohmail/client-engine";
 
-import { imageQualityKeyFor } from "../../webapp/app/components/image-quality";
-import { AFTER_VERB_STORAGE_KEY } from "../../webapp/app/shell/after-verb";
-import { bootCacheKey } from "../../webapp/app/shell/boot-cache";
+import { imageQualityKeyFor } from "@ohmail/app-logic/write/image-quality";
+import { AFTER_VERB_STORAGE_KEY } from "@ohmail/app-logic/press/after-verb";
+import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY, composeDraftKey, composeRowKey, composeSessionKey,
-} from "../../webapp/app/shell/compose";
-import { deleteIntentsKey } from "../../webapp/app/shell/delete-intents";
-import { replyDraftKey, replyMetaKey, sentCopyNotesKey } from "../../webapp/app/shell/mail-send";
-import { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } from "../../webapp/app/shell/persisted-ui";
-import { readingAlongKey } from "../../webapp/app/shell/reading-along";
-import { screenerIntentsKey } from "../../webapp/app/shell/screener-intents";
-import { seedNotNowKey } from "../../webapp/app/shell/seed-offer";
-import { sendLocksKey } from "../../webapp/app/shell/send-lock";
-import { ACCESS_VERDICT_PREFIX } from "../../webapp/app/shell/wall-lift";
+} from "@ohmail/app-logic/writing/compose";
+import { deleteIntentsKey } from "@ohmail/app-logic/press/delete-intents";
+import { replyDraftKey, replyMetaKey, sentCopyNotesKey } from "@ohmail/app-logic/writing/mail-send";
+import { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
+import { readingAlongKey } from "@ohmail/app-logic/reading/reading-along";
+import { unsubscribeSeenKey } from "@ohmail/app-logic/screener";
+import { screenerIntentsKey } from "@ohmail/app-logic/screener/screener-intents";
+import { seedNotNowKey } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
+import { sendLocksKey } from "@ohmail/app-logic/writing/send-lock";
+import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
 import { windowSentFoldersKey } from "../src/window-outbox-store.js";
 
 export interface WindowKeys { gone: string[]; kept: string[] }
@@ -22,7 +23,7 @@ export interface WindowKeys { gone: string[]; kept: string[] }
 /** A mailbox's preferences; the impersonation mark is the Screener's (#777), by name until its builder is on main. */
 const preferences = (scope: string): string[] => [
   searchSortKey(scope), seedNotNowKey(scope), `${AFTER_VERB_STORAGE_KEY}:${scope}`, imageQualityKeyFor(scope),
-  `ohmail.screener.impersonationSeen.${scope}`, foldersOpenedKey(scope), mailOriginalKey(scope),
+  `ohmail.screener.impersonationSeen.${scope}`, foldersOpenedKey(scope), mailOriginalKey(scope), unsubscribeSeenKey(scope),
 ];
 /** A note this tab keeps about a mailbox, in `sessionStorage` (the catch-up note's builder is private). */
 const NOTE = "ohmail.lifecycle.";
@@ -31,7 +32,8 @@ const held = (k: string): boolean => localStorage.getItem(k) !== null || session
 
 /**
  * THE WINDOW'S KEYS, seeded with the shell's own builders — once the shell is up, since it replays its
- * journals at mount. `gone`: mbx-1's, its letters' Sent copy notes, its reply buffers, and the reply buffers
+ * journals at mount. `gone`: mbx-1's (the numbers of its devices this window has told among them), its letters'
+ * Sent copy notes, its reply buffers, and the reply buffers
  * that name no mailbox, which an end of that account sweeps. `kept`: another mailbox's (mbx-10, and mbx-1.x, a
  * dotted id whose keys begin like mbx-1's), their send lanes, Sent copy notes, reply buffers and preferences, the
  * device's own, and mbx-1's send lane, preferences and tab note, which Sign out and a revoke keep for the
@@ -45,6 +47,7 @@ export function seedWindowKeys(end?: "erased"): WindowKeys {
     screenerIntentsKey("mbx-1"), deleteIntentsKey("mbx-1"), routingIntentsKey("mbx-1"),
     composeDraftKey("mbx-1"), composeSessionKey("mbx-1"), composeRowKey("mbx-1"), `${COMPOSE_DRAFT_PREFIX}mbx-1`,
     readingAlongKey("mbx-1"), `${ACCESS_VERDICT_PREFIX}mbx-1`, bootCacheKey("consent", "mbx-1"), windowSentFoldersKey("mbx-1"),
+    `${TOLD_DEVICES_PREFIX}mbx-1`,
     replyDraftKey("msg-1", "mbx-1"), replyMetaKey("lane-1", "mbx-1"), replyDraftKey("msg-1", null), replyMetaKey("lane-1", null),
     LEGACY_COMPOSE_DRAFT_KEY, sentCopyNotesKey("mbx-1"), ...(end === "erased" ? own : []),
   ];
@@ -54,7 +57,7 @@ export function seedWindowKeys(end?: "erased"): WindowKeys {
     sentCopyNotesKey("mbx-10"), sentCopyNotesKey("mbx-1.x"),
     replyDraftKey("msg-1", "mbx-10"), replyMetaKey("lane-1", "mbx-1.x"), "ohmail.theme", "ohmail.layout",
     ...preferences("mbx-10"), ...preferences("mbx-1.x"), note("mbx-10"),
-    windowSentFoldersKey("mbx-10"), windowSentFoldersKey("mbx-1.x"),
+    windowSentFoldersKey("mbx-10"), windowSentFoldersKey("mbx-1.x"), `${TOLD_DEVICES_PREFIX}mbx-10`,
   ];
   for (const k of [...gone, ...kept]) (k.startsWith(NOTE) ? sessionStorage : localStorage).setItem(k, "[]");
   expectKept({ gone, kept }, "seeded");

@@ -9,6 +9,12 @@
  * shows. In `core` because both generated-draft writers live in different packages.
  */
 
+/** A draft-only editor boundary for a quote the sender changed. */
+export const QUOTED_HISTORY_ATTRIBUTE = "data-quoted-history";
+
+export const hasEditedQuotedHistory = (html: unknown): boolean =>
+  typeof html === "string" && html.includes(`<blockquote ${QUOTED_HISTORY_ATTRIBUTE}="edited">`);
+
 /** The two halves of one message, derived together and never separately. */
 export interface PromotedBody {
   /** The markup half. `""` when the source has no words in it — then there is nothing to promote. */

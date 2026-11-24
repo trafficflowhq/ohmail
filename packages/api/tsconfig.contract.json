@@ -1,16 +1,16 @@
 {
   "// why": [
     "`packages/api/tsconfig.json` includes `src` only, so nothing under `test/` is typechecked",
-    "by anything (CLAUDE.md says the same about the root `test/`). A compile-time guard that no",
+    "by anything (AGENTS.md says the same about the root `test/`). A compile-time guard that no",
     "compiler runs is not a guard. This project compiles `test/contract/` — type-level assertions",
     "about the staff callback contract, no runtime code — and the root tsconfig references it, so",
     "`pnpm typecheck` builds it on every push. `test/staff-contract.test.ts` invokes the same",
     "build so the suite reports the same failure under a test name.",
     "Deliberately NOT the whole `test/` tree: this project must fail for one reason only."
   ],
-  "extends": "../../tsconfig.base.json",
+  "extends": "../../tools/tsconfig.base.json",
   "compilerOptions": { "outDir": "test/contract/dist", "rootDir": "test/contract" },
   "include": ["test/contract/**/*.ts"],
   "exclude": ["test/contract/dist"],
-  "references": [{ "path": "./tsconfig.json" }]
+  "references": [{ "path": "./tsconfig.json" }, { "path": "../wire" }, { "path": "../client-engine" }]
 }

@@ -74,7 +74,8 @@ function adapterCases(): Array<{ kind: string; requests: string[]; readsQueued: 
     const from = m.index!;
     const to = i + 1 < starts.length ? starts[i + 1]!.index! : body.length;
     const block = body.slice(from, to);
-    const requests = [...block.matchAll(/this\.request\(\s*"([A-Z]+)"\s*,\s*[`"]([^`"]+)[`"]/g)]
+    // A case asks through `this.call("METHOD /pattern", …)`: the wire's name for the route.
+    const requests = [...block.matchAll(/this\.call\(\s*"([A-Z]+) (\/[^"]*)"/g)]
       .map((r) => `${r[1]} ${shape(r[2]!)}`);
     return { kind: m[1]!, requests, readsQueued: block.includes("this.queuedAnswer(") };
   });

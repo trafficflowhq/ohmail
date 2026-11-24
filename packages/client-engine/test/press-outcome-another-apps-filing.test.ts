@@ -1,6 +1,6 @@
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   consentPartition,
@@ -8,11 +8,9 @@ import {
   presentationReader,
   pressOutcome,
   stayVerdict,
-  type EngineMessage,
-  type Folder,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * THE PRESS SENTENCE OVER MAIL ANOTHER APP FILED. The rule's pass leaves a

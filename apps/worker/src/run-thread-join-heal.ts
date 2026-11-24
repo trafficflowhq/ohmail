@@ -9,26 +9,34 @@
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { type Tx } from "@trafficflow/db";
 import { createLogger } from "@trafficflow/core";
-import { threadJoinHealPass } from "./thread-join-heal.js";
+import { threadJoinHealPass } from "@ohmail/organizer/thread-join-heal";
+import { runnerAccounts } from "./run-cli.js";
+import { bindWorker } from "./start/bind.js";
 
 const apply = process.argv.slice(2).includes("--apply");
 const dbUrl = process.env.TF_DB_URL ?? process.env.DATABASE_URL;
 if (!dbUrl) { console.error("set TF_DB_URL to the production session URL"); process.exit(2); }
 
 const owned = makeOwnedDb(dbUrl);
+// The pool's two views (`run-cli.ts`): the accounts on the one that names none, each account's heal on its own.
+const binding = bindWorker(owned.db);
 const log = createLogger({ service: "thread-join-heal" });
 
 // The pass caps one invocation; loop, RESUMING FROM ITS CURSOR, until the candidate set —
 // not the budget — is what ends the walk. Without the cursor a group whose verdict is "no"
-// would be rescanned by every iteration, and this loop would never terminate.
+// would be rescanned by every iteration, and this loop would never terminate. One walk for
+// each account, under that account: a conversation is never joined across two.
 let merged = 0, moved = 0, groups = 0, skipped = 0, failed = 0;
-let cursor: import("./thread-join-heal.js").ThreadJoinHealCursor | undefined;
-for (;;) {
-  const r = await threadJoinHealPass({ db: owned.db as unknown as Tx, apply, log, cursor });
-  merged += r.merged; moved += r.messagesMoved; groups += r.groupsScanned;
-  skipped += r.skipped; failed += r.failed;
-  if (!r.capped || !r.cursor) break;
-  cursor = r.cursor;
+for (const accountId of await runnerAccounts(binding.roster)) {
+  const db = binding.forAccount(accountId).db as unknown as Tx;
+  let cursor: import("@ohmail/organizer/thread-join-heal").ThreadJoinHealCursor | undefined;
+  for (;;) {
+    const r = await threadJoinHealPass({ db, accountId, apply, log, cursor });
+    merged += r.merged; moved += r.messagesMoved; groups += r.groupsScanned;
+    skipped += r.skipped; failed += r.failed;
+    if (!r.capped || !r.cursor) break;
+    cursor = r.cursor;
+  }
 }
 
 console.log(`${apply ? "merged" : "DRY RUN — would merge"} ${merged} split threads ` +

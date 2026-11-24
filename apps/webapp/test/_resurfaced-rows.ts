@@ -1,8 +1,7 @@
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import {
   resurfacedThreads,
-  type EngineMessage,
   type EntityReader,
-  type MessageStateDTO,
   type ResurfacedThreadRow,
 } from "@ohmail/client-engine";
 

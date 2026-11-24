@@ -96,9 +96,19 @@ on:
   push:
     tags: ["android-v*"]
   pull_request:
+    # The ready mark of a maintainer's batch into next follows build.yml and skips hosted packaging.
+    types: [opened, synchronize, reopened, ready_for_review]
   # Kept beside build.yml's for when `main` takes a merge queue; a merge group builds no APK.
   merge_group:
   workflow_dispatch:
+    inputs:
+      play_version_code:
+        description: Internal Play version code to promote to production (Android tag only)
+        type: string
+      play_rollout_fraction:
+        description: Production rollout fraction (0.05 is 5%)
+        type: string
+        default: "0.05"
   # The nightly APK build of main (00:41 UTC), beside build.yml's platforms.
   schedule:
     - cron: "41 0 * * *"
@@ -117,7 +127,7 @@ jobs:
   # ── which pull requests need the APK ────────────────────────────────────────────────────
   # A maintainer's pull request builds no APK: GitHub's hosted runners are the organisation's one pool
   # (build.yml's `changes` says who counts as a maintainer, and why). On a FULL-BUILD pull request (the
-  # batch `pr/batch-*`, the release bump `pr/release-<NNNN>-bump`, a fork's or a bot's) the APK is built
+  # non-draft batch outside a maintainer's ready mark into next, the release bump, a fork's or a bot's) the APK is built
   # when the pull request changes something the phone's build reads: apps/mobile, the engine it bundles
   # and that engine's packages, the install, the patches, the build scripts, this workflow and the
   # scripts it runs. Which paths those are is `.github/scripts/pr-build-scope.sh`'s to say. The nightly
@@ -126,7 +136,7 @@ jobs:
   # otherwise, and on a pull request builds whenever this job ran and did not succeed.
   changes:
     name: android · changes · does this pull request need the APK
-    if: ${{ github.repository == 'trafficflowhq/ohmail' && github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !startsWith(github.head_ref, 'pr/batch-') && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
+    if: ${{ github.repository == 'trafficflowhq/ohmail' && github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !(startsWith(github.head_ref, 'pr/batch-') && (github.repository != 'trafficflowhq/ohmail' || github.base_ref != 'next' || github.event.action != 'ready_for_review') && github.event.pull_request.draft != true) && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -213,6 +223,10 @@ jobs:
           # censuses run over the result. A difference stops the build instead of shipping an
           # artifact nobody measured.
           node apps/mobile/scripts/verify-phone-engine-repro.mjs
+
+      # The shell's page, which plugins/shell-assets.js copies into the app and refuses to build without.
+      - name: Build the shell's page
+        run: node apps/mobile/scripts/build-shell.mjs
 
       - name: Generate the native Android project
         working-directory: apps/mobile
@@ -391,7 +405,7 @@ jobs:
   # ── the tag build: same native build, secretless, hand the APK to the sign job ──────────
   build:
     name: android · tag build (no secrets)
-    if: github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v')
+    if: github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v') && !(github.event_name == 'workflow_dispatch' && inputs.play_version_code != '')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -463,6 +477,10 @@ jobs:
           # censuses over the result. The APK this job hands to the sign job carries it, so the
           # check belongs here as much as in the build check above.
           node apps/mobile/scripts/verify-phone-engine-repro.mjs
+
+      # The shell's page, which plugins/shell-assets.js copies into the app and refuses to build without.
+      - name: Build the shell's page
+        run: node apps/mobile/scripts/build-shell.mjs
 
       - name: Generate the native Android project
         working-directory: apps/mobile
@@ -671,6 +689,8 @@ jobs:
   sign:
     name: android · re-sign + attach the release APK and App Bundle
     needs: build
+    outputs:
+      aab_sha256: ${{ steps.bundle-digest.outputs.aab_sha256 }}
     if: github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v')
     # The `release` environment admits a run on a release tag and nothing else — a branch, a pull
     # request or a dispatch from one is refused before a step runs — and a keystore kept there is
@@ -1100,3 +1120,87 @@ jobs:
           # that job's compression step, which would have failed if they had not.
           cmp mapping/ohmail-android-mapping.txt.gz uploaded/ohmail-android-mapping.txt.gz
           echo "release mapping verified byte-for-byte"
+
+      - name: Record the signed bundle digest for the Play job
+        id: bundle-digest
+        run: |
+          digest=$(sha256sum ohmail-android.aab)
+          printf 'aab_sha256=%s\n' "${digest%% *}" >> "$GITHUB_OUTPUT"
+
+      - name: Make the verified bundle available to the Play job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ohmail-android-play-bundle
+          path: ohmail-android.aab
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true
+
+  play:
+    name: android · Google Play
+    needs: sign
+    if: >-
+      ${{ !cancelled() && github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v') &&
+          (github.event_name == 'push' && github.event.deleted == false && needs.sign.result == 'success' ||
+           github.event_name == 'workflow_dispatch' && inputs.play_version_code != '' && needs.sign.result == 'skipped') }}
+    environment: play-release
+    permissions:
+      contents: read
+    concurrency:
+      group: android-play-release
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # Environment secrets can only be checked after GitHub admits the job.
+      - name: Check whether Play publishing is configured
+        id: configured
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [[ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]]; then
+            echo '::notice::Google Play skipped because PLAY_SERVICE_ACCOUNT_JSON is unset.'
+          else
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      # Set up Node before checkout so setup-node cannot enable a package-manager cache from the tree.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        if: steps.configured.outputs.enabled == 'true'
+        with:
+          node-version: 22.23.4
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: steps.configured.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
+
+      - name: Fetch the verified bundle from this run
+        if: steps.configured.outputs.enabled == 'true' && github.event_name == 'push'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ohmail-android-play-bundle
+          path: play-bundle
+
+      - name: Check the downloaded bundle against the signing job's digest
+        if: steps.configured.outputs.enabled == 'true' && github.event_name == 'push'
+        shell: bash
+        env:
+          AAB_SHA256: ${{ needs.sign.outputs.aab_sha256 }}
+        run: |
+          [[ "$AAB_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo 'The signing job did not provide a valid bundle digest.' >&2; exit 1; }
+          printf '%s  %s\n' "$AAB_SHA256" play-bundle/ohmail-android.aab | sha256sum --check --strict
+
+      - name: Upload to internal testing
+        if: steps.configured.outputs.enabled == 'true' && github.event_name == 'push'
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node .github/scripts/play-upload.mjs upload play-bundle/ohmail-android.aab
+
+      - name: Start a staged production rollout
+        if: steps.configured.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch'
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PLAY_VERSION_CODE: ${{ inputs.play_version_code }}
+          PLAY_ROLLOUT_FRACTION: ${{ inputs.play_rollout_fraction }}
+        run: node .github/scripts/play-upload.mjs promote "$PLAY_VERSION_CODE" "$PLAY_ROLLOUT_FRACTION"

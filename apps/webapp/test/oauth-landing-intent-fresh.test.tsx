@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import type { SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * EVERY START WRITES ITS OWN LANDING. A sign-in started in /join and abandoned at Microsoft leaves its
@@ -63,7 +63,7 @@ vi.mock("../app/api-client", async () => {
   };
 });
 
-vi.mock("../app/shell/MailStateProvider", () => ({
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
   useMailState: () => ({ state: QUIET, refresh: () => {} }),
 }));
 
@@ -154,7 +154,7 @@ afterEach(async () => {
 
 const landedInSettings = (): void => {
   expect(mockReplacedWith, "a stale wizard landing took the browser to /join").toBeNull();
-  expect(window.location.hash).toBe("#/settings");
+  expect(window.location.hash).toBe("#/settings/mailboxes");
   expect(new URLSearchParams(window.location.search).get("settings")).toBe("mailboxes");
 };
 

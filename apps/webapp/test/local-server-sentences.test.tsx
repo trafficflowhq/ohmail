@@ -6,8 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import { deriveMailState, seedGrowth, type MailState, type MailboxFacts, type StoreRefusals } from "../app/shell/mail-state";
-import { mailboxErrorKey } from "../app/shell/mailbox-error-key";
+import { deriveMailState, seedGrowth, type MailState, type MailboxFacts, type StoreRefusals } from "@ohmail/app-logic/mail-state/mail-state";
+import { mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
 import { setActiveCatalog } from "../app/shell/locale";
 
 /**
@@ -45,7 +45,7 @@ vi.mock("../app/api-client", async () => {
     mailboxes: { list: async () => ({ items: mockListed }), resync: async () => undefined },
   };
 });
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: current, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: current, refresh: () => {} }) }));
 
 const EXACT: StoreRefusals = { count: 612, retrying: 612, exact: true };
 const CAPPED: StoreRefusals = { count: 612, retrying: 500, exact: true };
@@ -63,22 +63,6 @@ afterEach(async () => {
   host = null;
   setActiveCatalog("en", null);
 });
-
-async function stripText(state: MailState, lang: "en" | "de"): Promise<string> {
-  current = state;
-  setActiveCatalog(lang, null);
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    root!.render(h(NextIntlClientProvider, {
-      locale: lang, messages: lang === "en" ? en : de, timeZone: "UTC", now: new Date("2026-09-29T08:00:00.000Z"),
-      children: h(SyncBar, { variant: "rail" }),
-    }));
-  });
-  return host.textContent ?? "";
-}
 
 const M = en.mailboxes as Record<string, string>;
 const DM = de.mailboxes as Record<string, string>;
@@ -105,7 +89,7 @@ describe("the chooser picks the local server's own key beside auth and timeout o
   });
 
   it("the probe key: the two-minute sentence is the incoming leg's only", async () => {
-    const { probeCopyKey } = await import("../app/shell/local-server-host.js");
+    const { probeCopyKey } = await import("@ohmail/app-logic/doors/local-server-host");
     expect(probeCopyKey("timeout", true)).toBe("probe_timeout_local");
     expect(probeCopyKey("timeout", true, "smtp")).toBe("probe_timeout_smtp");
     expect(probeCopyKey("auth", true, "smtp")).toBe("probe_auth_local");
@@ -133,36 +117,8 @@ describe("the chooser picks the local server's own key beside auth and timeout o
     const state = deriveMailState({
       sync: { phase: "idle" } as never, failureStreak: 0, mailboxes: [m], mirrored: 10, pulled: 10,
       growth: seedGrowth(10), freshness: { state: "current", asOf: new Date(now).toISOString() },
-      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false,
+      engineFreshness: { state: "current", asOf: new Date(now).toISOString() }, now, demo: false, scope: null,
     });
     expect(state).toMatchObject({ key: "mailboxError", errorCode: "timeout", errorLocalServer: true, unreachable: true });
-  });
-});
-
-describe("the strip", () => {
-  const failing = (over: Partial<MailState>): MailState => ({
-    ...QUIET, key: "mailboxError", address: "me@gateway.test", ...over,
-  });
-
-  it("a local server that went quiet: its own sentence over the outage line, en and de", async () => {
-    const s = failing({ errorCode: "timeout", errorLocalServer: true, unreachable: true });
-    const enText = await stripText(s, "en");
-    expect(enText).toContain(M.err_timeout_local);
-    expect(enText).not.toContain(SYNC.unreachable);
-    await act(async () => { root?.unmount(); });
-    root = null;
-    expect(await stripText(s, "de")).toContain(DM.err_timeout_local);
-  });
-
-  it("a local server that refused: its own sentence, not the password one", async () => {
-    const text = await stripText(failing({ errorCode: "auth", errorLocalServer: true }), "en");
-    expect(text).toContain(M.err_auth_local);
-    expect(text).not.toContain(M.err_auth);
-  });
-
-  it("CONTROL (ruled): a remote host that timed out still reads the generic unreachable line", async () => {
-    const text = await stripText(failing({ errorCode: "connect", unreachable: true }), "en");
-    expect(text).toContain(SYNC.unreachable);
-    expect(text).not.toContain(M.err_timeout_local);
   });
 });

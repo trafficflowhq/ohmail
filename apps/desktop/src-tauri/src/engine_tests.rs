@@ -2933,6 +2933,58 @@ fn the_older_coordinates_are_the_ones_the_earlier_version_wrote() {
     assert_ne!(LEGACY_KEYSTORE_SERVICE, KEYSTORE_SERVICE);
 }
 
+/// A preview runs beside a released install, so it keeps its key under a name of its own and
+/// never asks for an earlier version's. The released app's name is a name a device already
+/// carries and stays what it was.
+#[test]
+fn a_preview_keeps_its_own_key_and_never_reads_an_installs() {
+    assert_eq!(keystore_service(false), "ohmail");
+    assert_eq!(keystore_service(true), "ohmail-preview");
+    assert_eq!(KEYSTORE_SERVICE, keystore_service(cfg!(feature = "preview")));
+    let installed = a_key('c');
+    assert_eq!(older_key(false, || Stored::Key(installed.clone())), Stored::Key(installed));
+    assert_eq!(
+        older_key(true, || panic!("a preview asked for the released install's key")),
+        Stored::Empty
+    );
+}
+
+/// With no stored door the data directory may come from the environment, and a shell that still
+/// names the released install's folder there must not hand it to a preview.
+#[test]
+fn a_preview_opens_its_own_data_directory_whatever_the_environment_names() {
+    let installed = "/home/someone/.local/share/io.ohmail.desktop";
+    let shell = |name: &str| -> Option<String> {
+        match name {
+            DATA_DIR_VAR => Some(installed.to_string()),
+            "OHMAIL_MODE" => Some("local".to_string()),
+            _ => None,
+        }
+    };
+    assert_eq!(launch_env(DATA_DIR_VAR, true, &shell), None);
+    assert_eq!(launch_env("OHMAIL_MODE", true, &shell), Some("local".to_string()));
+    // The released app keeps the development path: the environment names the directory.
+    assert_eq!(launch_env(DATA_DIR_VAR, false, &shell), Some(installed.to_string()));
+
+    // And the plan a preview's reading leads to opens the app's own folder.
+    let own = PathBuf::from("/home/someone/.local/share/io.ohmail.preview");
+    let read = |name: &str| -> Option<String> {
+        match name {
+            ENGINE_PATH_VAR => Some("/opt/ohmail/engine.mjs".to_string()),
+            NODE_PATH_VAR => Some("/opt/ohmail/node".to_string()),
+            other => launch_env(other, true, &shell),
+        }
+    };
+    let look = |_: &Path| Found::Runnable;
+    match plan_with(&read, None, Some(&own), &[], None, &look) {
+        Plan::Spawn(launch) => assert_eq!(
+            launch.env,
+            vec![(OsString::from(DATA_DIR_VAR), own.into_os_string())],
+        ),
+        other => panic!("the preview's plan did not start an engine: {other:?}"),
+    }
+}
+
 // ── The key file ────────────────────────────────────────────────────────────────────────────
 //
 // Driven against a real directory rather than through closures, because the things that can go
@@ -3538,6 +3590,7 @@ fn a_pending_local_door_that_gave_up_is_retried_onto_no_door() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(Some(Mode::Local)),
     };
@@ -4027,40 +4080,54 @@ fn sign_up_and_setup_are_fixed_pages() {
     assert_eq!(link_for("setup"), Some("https://ohmail.app/login?next=join"));
     const GOOD: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
     const ID: &str = "4f9a3c1e-2b7d-4e8f-9a01-23456789abcd";
-    for key in ["join", "setup"] {
+    for key in ["join", "setup", "forgot-password"] {
         assert_eq!(open_target(key, None, None).unwrap(), link_for(key).unwrap());
         assert!(open_target(key, Some(GOOD), None).is_err(), "{key} took a sign-in commitment");
         assert!(open_target(key, None, Some(ID)).is_err(), "{key} took a request id");
     }
 }
 
-/// THE SELF-HOSTED DOOR'S MAILBOXES PAGE IS ITS OWN SERVER'S, AND NO OTHER DOOR HAS ONE.
-///
-/// A desktop signed in to a server the person runs was sent to ohmail.app, where it has no account.
-/// The key opens `<its origin>/mailbox?settings=mailboxes#/settings`, composed from the door this
-/// shell configured; the managed, paired and local doors and no door at all are refusals.
 #[test]
-fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
-    let self_hosted = |url: &str| Config::Cloud(crate::config::CloudDoor {
-        cloud_url: url.to_string(),
-        address: Some("someone@example.org".to_string()),
+fn password_recovery_opens_on_the_server_that_owns_the_sign_in() {
+    let base = "https://mail.example.invalid:8443/api";
+    let door = Config::Cloud(crate::config::CloudDoor {
+        cloud_url: base.to_string(),
+        address: None,
         flavor: None,
         host_pin: None,
         identity_pending: false,
     });
-    assert_eq!(
-        server_link_for(Some(&self_hosted("https://mail.example.org/api"))).unwrap(),
-        "https://mail.example.org/mailbox?settings=mailboxes#/settings",
-    );
-    assert_eq!(
-        server_link_for(Some(&self_hosted("http://localhost:28611/api"))).unwrap(),
-        "http://localhost:28611/mailbox?settings=mailboxes#/settings",
-        "a loopback server with its port",
-    );
-    assert!(server_link_for(Some(&self_hosted("https://api.ohmail.app"))).is_err(), "the managed service");
-    assert!(server_link_for(Some(&paired_door(Some(FIXTURE_PIN)))).is_err(), "a paired computer");
+    assert_eq!(open_target("forgot-password", None, None).unwrap(), "https://ohmail.app/forgot-password");
+    assert_eq!(server_password_reset_target(Some(&door), Some(base)).unwrap(), "https://mail.example.invalid:8443/forgot-password");
+    assert!(server_password_reset_target(Some(&door), Some("https://elsewhere.example.invalid/api")).is_err());
+    assert!(server_password_reset_target(Some(&door), None).is_err());
+    assert!(server_password_reset_target(None, Some(base)).is_err());
+}
+
+/// The configured server supplies the reference. Its answer must name the account shown by the window.
+#[test]
+fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
+    let self_hosted = |url: &str| Config::Cloud(crate::config::CloudDoor {
+        cloud_url: url.to_string(),
+        address: None,
+        flavor: None,
+        host_pin: None,
+        identity_pending: false,
+    });
+    let server = "https://server.example.invalid/api";
+    let door = self_hosted(server);
+    let origin = server_settings_origin(Some(&door), server, "mailboxes").unwrap();
+    assert_eq!(origin, "https://server.example.invalid");
+    assert!(server_settings_origin(Some(&door), "https://other.example.invalid/api", "mailboxes").is_none());
+    assert!(server_settings_origin(Some(&paired_door(Some(FIXTURE_PIN))), server, "mailboxes").is_none());
+    assert!(server_settings_origin(None, server, "mailboxes").is_none());
+
+    let loopback = "http://localhost:28611/api";
+    assert_eq!(server_settings_origin(Some(&self_hosted(loopback)), loopback, "mailboxes").as_deref(), Some("http://localhost:28611"));
+    let managed = "https://api.ohmail.app";
+    assert!(server_settings_origin(Some(&self_hosted(managed)), managed, "mailboxes").is_none());
     let local = Config::Local(crate::config::LocalDoor {
-        imap_host: "imap.example.org".to_string(),
+        imap_host: "imap.example.invalid".to_string(),
         imap_user: "someone".to_string(),
         imap_port: 993,
         imap_secure: true,
@@ -4068,26 +4135,50 @@ fn the_server_mailboxes_key_opens_the_configured_server_and_nothing_else() {
         address: None,
         pending: false,
     });
-    assert!(server_link_for(Some(&local)).is_err(), "the local door");
-    assert!(server_link_for(None).is_err(), "no door");
-    // The key is not a row of the ohmail.app table, so the table's own resolver refuses it.
-    assert!(link_for(SERVER_MAILBOXES_KEY).is_none());
-
-    /* THE KEY TAKES NO VALUE: what `open_link` runs for it. A value
-       offered beside it is refused even on the self-hosted door, and blank is no value. */
-    let door = self_hosted("https://mail.example.org/api");
-    assert_eq!(
-        server_open_target(None, None, Some(&door)).unwrap(),
-        "https://mail.example.org/mailbox?settings=mailboxes#/settings",
-    );
-    assert!(server_open_target(Some("  "), Some(""), Some(&door)).is_ok(), "blank is no value");
+    assert!(server_settings_origin(Some(&local), server, "mailboxes").is_none());
+    assert!(link_for("server-mailboxes").is_none());
     const GOOD: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
-    assert!(server_open_target(Some(GOOD), None, Some(&door)).is_err(), "a challenge rode along");
-    assert!(
-        server_open_target(None, Some("00000000-0000-0000-0000-000000000000"), Some(&door)).is_err(),
-        "a request rode along",
+    assert!(server_settings_request("mailboxes", Some(GOOD), None).is_err());
+    assert!(server_settings_request("mailboxes", None, Some("request")).is_err());
+    let request = server_settings_request("mailboxes", Some("  "), Some("")).unwrap();
+    assert_eq!(request.method, "GET");
+    assert_eq!(request.url, "/auth/session?settingsPane=mailboxes");
+
+    for name in ["account", "security", "devices", "storage", "mailboxes"] {
+        assert_eq!(server_settings_pane(&format!("server-{name}")), Some(name));
+    }
+    assert_eq!(server_settings_pane("server-other"), None);
+
+    for pane in ["calendar-google", "calendar-microsoft"] {
+        assert!(link_for(pane).is_none());
+        assert_eq!(server_settings_pane(&format!("server-{pane}")), Some(pane));
+        assert_eq!(
+            server_settings_origin(Some(&self_hosted(managed)), managed, pane).as_deref(),
+            Some("https://ohmail.app"),
+        );
+        assert!(server_settings_origin(Some(&door), managed, pane).is_none());
+        assert!(server_settings_origin(Some(&door), server, pane).is_none());
+        assert_eq!(
+            server_settings_request(pane, None, None).unwrap().url,
+            format!("/auth/session?settingsPane={pane}"),
+        );
+    }
+
+    let reference = "a".repeat(96);
+    let answer = |account: &str, reference: &str| EngineResponse {
+        status: 200,
+        status_text: String::new(),
+        headers: Vec::new(),
+        body: serde_json::json!({ "account": account, "reference": reference }).to_string().into_bytes(),
+    };
+    assert_eq!(
+        server_settings_target(&origin, "first", answer("first", &reference)).unwrap(),
+        format!("{origin}/login?settingsHandoff={reference}"),
     );
-    assert!(server_open_target(None, None, None).is_err(), "no door");
+    assert!(server_settings_target(&origin, "first", answer("second", &reference)).is_err());
+    assert!(server_settings_target(&origin, "first", answer("first", "/other")).is_err());
+    let unavailable = EngineResponse { status: 404, ..answer("first", &reference) };
+    assert!(server_settings_target(&origin, "first", unavailable).is_err());
 }
 
 /// THE ONE PLACE A VALUE FROM THE WINDOW REACHES AN ADDRESS, AND THE GATE ON IT.
@@ -4434,6 +4525,146 @@ fn every_granted_permission_is_declared_by_the_build() {
     for command in ["update_set_auto", "update_hold", "leave_saved"] {
         assert!(DECLARED_WINDOW_COMMANDS.split(',').any(|c| c == command), "{command} is not declared");
     }
+}
+
+/// THE CALENDAR'S ALERTS ARE GRANTED AS ONE COMMAND OF THE SHELL'S OWN, AND NOTHING COMES WITH IT.
+///
+/// Read against the app's other grants. The window's runtime grant names the alerts once, as
+/// `allow-alerts-set`: the one command sets a set, clears with an empty one and answers the ids
+/// held. No plugin's own permission stands beside it (the notification plugin's least of all: the
+/// window may hand over one closed set, it may not drive the notification API), and no file,
+/// shell, process or network permission. The two capability files compiled into every build
+/// grant the main window nothing and the update window one listen. Grant the plugin's
+/// `notification:default`, or a second alerts command, and this goes red.
+#[test]
+fn the_alerts_grant_is_one_command_and_brings_no_plugin_file_shell_or_network_permission() {
+    let grant: serde_json::Value = serde_json::from_str(LOCAL_ENGINE_CAPABILITY).expect("the window's grant is JSON");
+    let permissions: Vec<&str> =
+        grant["permissions"].as_array().expect("permissions").iter().map(|p| p.as_str().expect("a name")).collect();
+    let alerts: Vec<&str> = permissions.iter().copied().filter(|p| p.contains("alert")).collect();
+    assert_eq!(alerts, ["allow-alerts-set"]);
+    assert!(DECLARED_WINDOW_COMMANDS.split(',').any(|c| c == "alerts_set"), "alerts_set is not declared");
+    assert_eq!(DECLARED_WINDOW_COMMANDS.split(',').filter(|c| c.contains("alert")).count(), 1);
+    // Every permission but the one listen is this shell's own command: none is a plugin's or the core's.
+    let namespaced: Vec<&str> = permissions.iter().copied().filter(|p| p.contains(':')).collect();
+    assert_eq!(namespaced, ["core:event:allow-listen"]);
+    for permission in &permissions {
+        for family in ["notification", "fs", "shell", "http", "process", "dialog", "path", "opener"] {
+            assert!(!permission.starts_with(&format!("{family}:")), "{permission} is {family}'s own permission");
+        }
+    }
+    assert_eq!(grant["windows"], serde_json::json!(["main"]));
+    // The grants every build carries: the main window's is empty, the update window's is one listen.
+    let file = |name: &str| -> serde_json::Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities").join(name);
+        serde_json::from_str(&fs::read_to_string(&path).unwrap_or_else(|e| panic!("could not read {}: {e}", path.display())))
+            .expect("a capability file is JSON")
+    };
+    assert_eq!(file("main.json")["permissions"], serde_json::json!([]));
+    assert_eq!(file("updater.json")["permissions"], serde_json::json!(["core:event:allow-listen"]));
+    assert_eq!(file("updater.json")["windows"], serde_json::json!(["updater"]));
+}
+
+#[test]
+fn mail_notices_require_current_document_and_sign_in_before_os_submission() {
+    let root = signed_in_root("mail-notice-session", "https://cloud.test");
+    let shell = Shell::rooted_for_tests(&root);
+    let engine = shell.engine();
+    let frame = |bytes: &[u8]| { accept_header(bytes, &engine.inner).expect("engine frame"); };
+    frame(br#"{"v":1,"t":"ready","baseUrl":"http://sidecar","accountId":"account","userId":"user","mailboxId":"mb-1","sessionToken":"test"}"#);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
+    let crate::alerts::Live::Mailbox(_, retired) = shell.live_mailbox() else { panic!("expected a sign-in"); };
+    let alerts = crate::alerts::Alerts::default();
+    let retired_document = alerts.document();
+    alerts.start_document();
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":false}"#);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
+    let crate::alerts::Live::Mailbox(_, session) = shell.live_mailbox() else { panic!("expected a replacement sign-in"); };
+    let document = alerts.document();
+
+    let mut submissions = 0;
+    for refused in [
+        None,
+        Some(serde_json::json!({"document": document})),
+        Some(serde_json::json!({"session": session})),
+        Some(serde_json::json!({"document": retired_document, "session": session})),
+        Some(serde_json::json!({"document": document, "session": retired})),
+    ] {
+        let result = submit_mail_notice(&shell, &alerts, refused.as_ref(), |_, _| submissions += 1);
+        assert!(matches!(result, Err(crate::alerts::Refused::Superseded)));
+    }
+    assert_eq!(submissions, 0);
+    let current = serde_json::json!({"document": document, "session": session});
+    submit_mail_notice(&shell, &alerts, Some(&current), |_, current_document| {
+        assert_eq!(current_document, document);
+        assert!(shell.engine.try_lock().is_err());
+        assert!(engine.inner.shared.try_lock().is_err());
+        submissions += 1;
+    }).expect("current submission");
+    assert_eq!(submissions, 1);
+}
+
+#[test]
+fn calendar_alerts_follow_the_serving_engines_hosted_sign_in() {
+    use crate::alerts::Live;
+    let root = signed_in_root("calendar-session", "https://cloud.test");
+    let shell = Shell::rooted_for_tests(&root);
+    let engine = shell.engine();
+    let frame = |bytes: &[u8]| { accept_header(bytes, &engine.inner).expect("engine frame"); };
+    frame(br#"{"v":1,"t":"ready","baseUrl":"http://sidecar","accountId":"account","userId":"user","mailboxId":"mb-1","sessionToken":"test"}"#);
+    assert_eq!(shell.live_mailbox(), Live::Unknown);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
+    let first = shell.live_mailbox();
+    let Live::Mailbox(_, first_session) = first else { panic!("expected the first sign-in"); };
+    assert!(shell.calendar_engine(first_session).is_some_and(|serving| Arc::ptr_eq(&serving, &engine)));
+    shell.with_live_mailbox(|current| {
+        assert_eq!(current, first);
+        assert!(shell.engine.try_lock().is_err(), "the serving engine could be replaced during handoff");
+        assert!(engine.inner.shared.try_lock().is_err(), "the hosted session could be revoked during handoff");
+    });
+    let alerts = crate::alerts::Alerts::default();
+    let set = serde_json::json!({"scope":"mb-1","alerts":[{"id":"sample.600000.0","eventId":"sample",
+        "startMs":600000,"atMs":600000,"leadMin":0,"allDay":false,"label":{"as":"title","text":"Earlier event"},"acts":[]}]});
+    alerts.receive(&set, || shell.live_mailbox(), 600000).expect("first session");
+
+    assert_ne!(first, Live::Unknown);
+    assert_ne!(first, Live::Nobody);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":false}"#);
+    assert_eq!(shell.live_mailbox(), Live::Nobody);
+    frame(br#"{"v":1,"t":"hosted-session","signedIn":true}"#);
+    assert_ne!(shell.live_mailbox(), first, "the new sign-in must not inherit an earlier schedule");
+    assert!(shell.calendar_engine(first_session).is_none(), "a retired calendar request must never reach the new session");
+    let mut shown = 0;
+    alerts.dispatch(|| shell.live_mailbox(), || 600000, || true, |_, _, _| shown += 1);
+    assert_eq!(shown, 0);
+    alerts.receive(&set, || shell.live_mailbox(), 600000).expect("current session");
+    alerts.dispatch(|| shell.live_mailbox(), || 600000, || true, |_, _, _| shown += 1);
+    assert_eq!(shown, 1);
+    engine.inner.set_state(EngineState::Stopped);
+    assert_eq!(shell.live_mailbox(), Live::Unknown);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn calendar_alerts_stop_when_the_serving_run_is_asked_to_leave() {
+    let root = local_door_root("calendar-quit");
+    let shell = Shell::rooted_for_tests(&root);
+    let engine = shell.engine();
+    engine.inner.set_state(EngineState::Serving { mailbox_id: "mb-1".into() });
+    assert_ne!(shell.live_mailbox(), crate::alerts::Live::Unknown);
+    engine.stop(Leaving::Quit);
+    assert_eq!(shell.live_mailbox(), crate::alerts::Live::Unknown);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn calendar_alerts_submit_to_the_platform_before_releasing_the_schedule() {
+    let source = include_str!("engine.rs");
+    let function = source.split("fn show_alert<").nth(1).unwrap().split("fn ring_alerts<").next().unwrap();
+    assert!(function.contains("notify_rust::Notification"), "the plugin detaches another task before submitting to the OS");
+    assert!(function.contains("platform::current_exe()"), "Windows must use the installed executable identity");
+    assert!(!function.contains("{err}"), "a platform's error can repeat the event title");
+    assert!(!function.contains("spawn("));
 }
 
 /// A GRANT THE MANIFEST CANNOT RESOLVE LOSES THAT PERMISSION AND NOTHING ELSE — named to the
@@ -5291,6 +5522,7 @@ fn given_up_with_lock(name: &str, record: &str) -> (Shell, PathBuf, PathBuf) {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -5775,6 +6007,7 @@ fn the_start_over_press_sets_the_store_aside_and_starts_the_engine_again() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -5851,6 +6084,7 @@ fn the_retry_press_starts_the_engine_again_and_removes_nothing() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -5888,6 +6122,7 @@ fn the_retry_press_refuses_an_install_with_no_engine_to_start() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -5931,6 +6166,7 @@ fn the_retry_press_re_plans_a_no_key_engine_through_the_keystore() {
         }))),
         host_plan: Mutex::new(None),
         door: Mutex::new(()),
+        observed_local: Mutex::new(ObservedLocalDoor::default()),
         leaving: Shutdown::new(),
         pending_door: Mutex::new(None),
     };
@@ -5986,6 +6222,44 @@ fn signed_in_root(name: &str, cloud_url: &str) -> PathBuf {
 /// The door a root was made with, as `logout_of` takes it.
 fn door_of(root: &Path) -> Option<crate::config::Config> {
     crate::config::read(&root.join(crate::config::CONFIG_FILE_NAME))
+}
+
+#[test]
+fn stale_mailbox_removal_cannot_sign_out_a_replaced_engine_with_the_same_config() {
+    let root = local_door_root("remove-same-config");
+    let shell = Shell::rooted_for_tests(&root);
+    let first = shell.status()["localDoorVersion"].as_u64().unwrap() as u32;
+    assert_eq!(shell.status()["localDoorVersion"], first);
+
+    *shell.engine.lock().unwrap() = Arc::new(Engine::inert(EngineState::Stopped));
+    let current = door_of(&root);
+    let refusal = shell
+        .logout_matching(current.clone(), Some(first))
+        .expect_err("the window saw the previous engine");
+    assert!(refusal.contains(LOGOUT_UNCHANGED) && refusal.contains("changed"));
+    assert_eq!(door_of(&root), current);
+    assert_ne!(shell.status()["localDoorVersion"], first);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn stale_mailbox_removal_cannot_sign_out_a_door_changed_before_the_window_polls() {
+    let root = local_door_root("remove-changed-door");
+    let shell = Shell::rooted_for_tests(&root);
+    let first = shell.status()["localDoorVersion"].as_u64().unwrap() as u32;
+    let mut changed = door_of(&root).unwrap();
+    let Config::Local(ref mut local) = changed else {
+        panic!("standalone fixture")
+    };
+    local.imap_port += 1;
+    config::write(&root.join(config::CONFIG_FILE_NAME), &changed).unwrap();
+
+    let refusal = shell
+        .logout_matching(Some(changed.clone()), Some(first))
+        .expect_err("the window saw the previous config");
+    assert!(refusal.contains(LOGOUT_UNCHANGED) && refusal.contains("changed"));
+    assert_eq!(door_of(&root), Some(changed));
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

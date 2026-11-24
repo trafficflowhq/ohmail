@@ -290,10 +290,10 @@ describe("the dormancy window and the screening preference", () => {
     await setScreeningPreference(w.ctx, { ohboxBar: "only people I know" });
     const [only] = await requests(w);
     expect(only!.payload).toEqual({ screeningPreference: { ohboxBar: "only people I know" } });
-    // `ohboxPolicy` and `screenerAutoApply` are ABSENT, not null.
+    // `ohboxPolicy` and `impersonationFiling` are ABSENT, not null.
     const sp = (only!.payload as { screeningPreference: Record<string, unknown> }).screeningPreference;
     expect("ohboxPolicy" in sp).toBe(false);
-    expect("screenerAutoApply" in sp).toBe(false);
+    expect("impersonationFiling" in sp).toBe(false);
   });
 
   it("a screening edit naming no setting sends nothing — the holder refuses an empty object", async () => {

@@ -1,5 +1,6 @@
 import { eq, sql, type SQL } from "drizzle-orm";
 import type { PgDatabase, PgTransaction } from "drizzle-orm/pg-core";
+import type { Assert, CalendarRecordKind, ChangeOp, Complete, RecordKind } from "@ohmail/wire";
 /* THE MAIL HALF DIRECTLY, never `./schema.js`. `schema.ts` re-exports both halves, so naming it
  * here would put every Cloud table into the root barrel's closure — and the root barrel is what
  * the desktop engine's bundle follows. Both tables below are mail-domain. */
@@ -7,7 +8,7 @@ import { accountSettings, accountSyncState, changeLog, mailboxes } from "./schem
 import { dialect } from "./dialect/index.js";
 /* The seam owns the erasure class, and its own import of this file is TYPE-ONLY, so this edge
  * is one-way at runtime. */
-import { MailboxErasedError, fenceErased } from "./erasure-fence.js";
+import { MailboxErasedError, fenceErased, fencedAccountOf } from "./erasure-fence.js";
 
 /**
  * A Drizzle query runner: either a top-level db handle (postgres-js in prod, PGlite in tests) or
@@ -59,60 +60,12 @@ export function assertLedgerTx(tx: LedgerTx, fn: string): void {
   }
 }
 
-// The client-visible entity kinds that flow through `/sync`. Growing this union is not free: a
-// type here without a matching case in `materialize` is worse than none — the materializer falls
-// through to `null`, `SyncService` reads a null entity as a TOMBSTONE, and every row of the new
-// kind drains to the client as a `delete`. Add a kind together with its materializer
-// (`packages/services/src/dto/materialize.ts`) in the same change. Tag ASSIGNMENTS are not a type
-// here: they ride the existing `message` entity — one change per toggle; a separate `message_tag`
-// entity would mean two changes at two seqs, with a window where the client has the assignment
-// but not the tag it names.
-export type EntityType =
-  | "message" | "thread" | "routing_decision" | "approval"
-  | "draft" | "rule" | "message_state" | "folder"
-  // Tag identity (name + hue). The assignment rides `message`; see above.
-  | "tag"
-  /**
-   * The account's own settings row — added together with `materializeSettings`
-   * (`packages/services/src/dto/materialize.ts`), the condition the rule above imposes. One row
-   * per account, so `entity_id` is the ACCOUNT id and the op is always `"update"` (created lazily
-   * by whichever knob writes first, never deleted). The change exists so a settings write rings
-   * the wake channel and travels the delta feed: without it, a consent flip made on one surface
-   * reached other signed-in surfaces only at their next full boot. The entity carries the row's
-   * scalars, but the AUTHORITY stays `GET /consent` — clients treat the change as "re-ask now",
-   * not a second consent read, so the two doors cannot drift.
-   */
-  | "settings"
-  /**
-   * A MAILBOX THIS ACCOUNT NO LONGER HOLDS — emitted with op `"delete"` and nothing else, so it
-   * needs no materializer (`getChanges` short-circuits a delete into the tombstone bucket). The
-   * entity id is the MAILBOX's id and the row is the whole receipt; a client cascades its own
-   * dependents from it. ONE ROW FOR A WHOLE MAILBOX: a mirror learns only from this log, so a
-   * removal that appends nothing here leaves every client rendering the mailbox it removed. NOT
-   * written by an ordinary disconnect — a soft `MailboxService.delete` keeps the mail; only the
-   * two acts that take a mailbox's mail off the store emit it (`wipeLocalMirror`,
-   * `sweepMailboxData`).
-   */
-  | "mailbox"
-  /**
-   * A BOUGHT SCREENER SUGGESTION — the narrow verdict entity (owner decision 2026-09-18,
-   * reversing "no model output in /sync": the entity carries the chip's fields, never the
-   * model's text — see `storeScreenerSuggestion`). The entity id is the `routing_decisions`
-   * ROW id; a re-buy emits a delete for the replaced row and a create for the new one in the
-   * same transaction, so a mirror never holds two live rows for one purchase. Materialized by
-   * `materializeScreenerSuggestion` (`packages/services/src/dto/materialize.ts`), which is
-   * provenance-scoped: a pipeline decision's id materializes null under this type.
-   */
-  | "screener_suggestion"
-  /**
-   * THE ORGANIZER'S ARRANGEMENT OF A MAILBOX THIS INSTALL ONLY READS — a projection of the cached
-   * document (`mailbox_profile_mirror`), never a second rule store. The entity id is the MAILBOX
-   * id and the op is always `"update"`; it materializes only while `organizer_role` is not
-   * `organizer`, so a promotion drains it as a tombstone. Rung by {@link recordMailboxProfileChange}.
-   */
-  | "mailbox_profile";
-
-export type ChangeOp = "create" | "update" | "move" | "delete";
+/**
+ * The client-visible entity kinds that flow through `/sync`, and the four things a change can be:
+ * declared once, with the wire's vocabulary (`@ohmail/wire`, `records.ts`), where the rule for
+ * growing the set stands. This package names them as its column does.
+ */
+export type EntityType = RecordKind;
 
 export interface ChangeInput {
   accountId: string;
@@ -376,6 +329,70 @@ export async function recordRuleDelta(
   return recordChanges(tx, ruleIds.map((entityId) => ({
     accountId, entityType: "rule" as const, entityId, op, meta: null,
   })));
+}
+
+/**
+ * THE CALENDAR'S KINDS AS A VALUE, proven against the wire's union: a kind added there does not
+ * compile here until it is listed, and a word listed here that the union lacks does not either.
+ */
+export const CALENDAR_RECORD_KINDS = [
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
+] as const satisfies readonly CalendarRecordKind[];
+type _CalendarKindsComplete = Assert<Complete<CalendarRecordKind, typeof CALENDAR_RECORD_KINDS>>;
+
+const CALENDAR_KIND_SET: ReadonlySet<string> = new Set(CALENDAR_RECORD_KINDS);
+
+/** Is `kind` one of the calendar's? What the feed's reader asks of every row it is about to build. */
+export function isCalendarRecordKind(kind: string): kind is CalendarRecordKind {
+  return CALENDAR_KIND_SET.has(kind);
+}
+
+/**
+ * How many calendar changes one transaction may record. A calendar's first read is written in
+ * pages, each its own transaction, because every change holds the account's counter row until
+ * commit and the person's mail waits on that row meanwhile. A first value: the sync's own readings
+ * settle it.
+ */
+export const CALENDAR_CHANGES_PER_TRANSACTION = 200;
+
+/** One calendar change, as a writer names it. */
+export interface CalendarChange {
+  readonly kind: CalendarRecordKind;
+  readonly id: string;
+  readonly op: ChangeOp;
+}
+
+/** Why {@link recordCalendarChanges} refused: no change was recorded and nothing of the caller's commits. */
+export class CalendarChangeRefused extends Error {
+  constructor(readonly reason: "too_many" | "not_fenced") {
+    super(reason === "too_many"
+      ? `recordCalendarChanges: more than ${CALENDAR_CHANGES_PER_TRANSACTION} changes in one transaction; write the read in pages`
+      : "recordCalendarChanges: the transaction did not take the account's erasure fence first");
+    this.name = "CalendarChangeRefused";
+  }
+}
+
+/** The same delta as a ROW, for a writer that appends one ordered batch across kinds itself. */
+export function calendarDelta(accountId: string, kind: CalendarRecordKind, id: string, op: ChangeOp): ChangeInput {
+  return { accountId, entityType: kind, entityId: id, op, meta: null };
+}
+
+/**
+ * THE ONE DOOR FOR A CALENDAR ROW THAT MOVED.
+ *
+ * Inside the write's own transaction, which took the account's erasure fence first (`withAccountTx`
+ * or `fencedAccountWrite`): a page that started before an erasure must not bring rows back after
+ * it. The last statement of that transaction, so the counter row is held for the shortest time. A
+ * removal records a delete for EVERY record it removes, children first (events, then calendars,
+ * then the connection): a device that applies pages twice or out of order converges by each
+ * record's own tombstone, and its cascade under a connection or a calendar is a second net only.
+ */
+export async function recordCalendarChanges(
+  tx: LedgerTx, accountId: string, changes: readonly CalendarChange[],
+): Promise<bigint[]> {
+  if (changes.length > CALENDAR_CHANGES_PER_TRANSACTION) throw new CalendarChangeRefused("too_many");
+  if (fencedAccountOf(tx) !== accountId) throw new CalendarChangeRefused("not_fenced");
+  return recordChanges(tx, changes.map((c) => calendarDelta(accountId, c.kind, c.id, c.op)));
 }
 
 /**

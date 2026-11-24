@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { engineUnitFiles } from "../../../test/support/engine-unit.js";
 
 /**
  * NO MODULE THE ENGINE BUNDLES MAY RUN A COMMAND WHEN IT IS MERELY IMPORTED.
@@ -84,7 +85,7 @@ describe("the engine's import closure runs no command", () => {
     expect(SIDECAR_SOURCES.length).toBeGreaterThan(25);
     const names = SIDECAR_SOURCES.map((p) => relative(SRC, p));
     expect(names).toContain("main.ts");
-    expect(names).toContain("engine.ts");
+    for (const unit of engineUnitFiles()) expect(names).toContain(relative(SRC, unit));
     expect(names).toContain("organize-here.ts");
     expect(names).toContain("organize-here-cli.ts");
   });

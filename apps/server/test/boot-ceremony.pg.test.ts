@@ -1,3 +1,4 @@
+import { dbFor } from "@trafficflow/services";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Server } from "node:http";
 import { readFileSync } from "node:fs";
@@ -13,6 +14,7 @@ import {
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { createLogger } from "@trafficflow/core";
 import { totpNow, makeMailboxService, MailboxAllowanceError, ServiceError, type ServiceContext } from "@trafficflow/services";
+import { processDoor } from "../src/build-release.js";
 import { loadServerConfig } from "../src/config.js";
 import { buildServerServices, oauthProviderFor, type ServerRuntime } from "../src/deps.js";
 import { handleServerRequest } from "../src/handler.js";
@@ -62,7 +64,7 @@ const midlifeMints: string[] = [];
 
 const at = (path: string): string => `http://127.0.0.1:${port}${path}`;
 
-interface Jar { cookie: string; csrf: string }
+interface Jar { cookie: string; csrf: string; familyId?: string }
 
 /** Parse a response's Set-Cookie lines into a request jar (tf_* values only). */
 function jarOf(res: Response): Jar {
@@ -75,6 +77,7 @@ function jarOf(res: Response): Jar {
   return {
     cookie: Object.entries(values).map(([k, v]) => `${k}=${v}`).join("; "),
     csrf: values["tf_csrf"] ?? "",
+    familyId: values["tf_family"],
   };
 }
 
@@ -144,7 +147,8 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
       [KEY_RING_V1]: KEK,
       TF_PROBE_ALLOW_PRIVATE: "1",
       TF_BUILD_VERSION: "ceremony-test",
-    } as NodeJS.ProcessEnv);
+      // The process door's own input, the one `index.ts` loads the settings with: the release is its build's.
+    } as NodeJS.ProcessEnv, processDoor(() => ""));
 
     // The library half: BOTH journals under the migration advisory lock, pg_trgm + trigram
     // indexes, then the five-property verification — a throw here is a failed boot, correctly,
@@ -298,7 +302,7 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
     } as NodeJS.ProcessEnv).keyProvider });
     const [{ accountId }] = await owned.db.select({ accountId: users.accountId }).from(users).limit(1);
     const ctx: ServiceContext = {
-      db: owned.db as unknown as ServiceContext["db"],
+      db: dbFor(owned.db, accountId),
       accountId, userId: null, now: () => new Date(), requestId: "f6-revert",
     };
     // THE REFUSAL MOVED CLASS WITH THE ENTITLEMENTS SEAM AND THE SUBJECT DID NOT: a mailbox
@@ -368,19 +372,29 @@ describe.skipIf(!PG_UP)("the self-host server: boot → setup token → sign-in 
     expect((await fetch(at("/auth/session"), { headers: { cookie: firstJar.cookie } })).status).toBe(200);
   });
 
-  it("signed out: the door's 204 and the refused refresh clear the jar with no cache clear; the purge answers alone", async () => {
+  it("signed out: explicit cleanup and refused refresh clear the jar; the cache purge answers alone", async () => {
     // Last, because it ends the first account's session. Chrome holds an answer carrying
     // Clear-Site-Data, cookie clears included, for a walk of its whole disk cache.
     const cleared = (res: Response): string[] =>
       res.headers.getSetCookie().filter((c) => /Max-Age=0/.test(c)).map((c) => c.split("=")[0]!).sort();
-    const signedOut = await post("/auth/refresh/logout", {}, firstJar);
+    expect(firstJar.familyId).toBeTruthy();
+    const family = { "x-ohmail-expected-family": firstJar.familyId! };
+    const pending = {
+      ...firstJar,
+      cookie: firstJar.cookie.replace(/(?:^|; )tf_owner=[^;]*/, "") + "; tf_owner=signed_out_pending",
+    };
+    const revoked = await post("/auth/refresh/logout", {}, pending, family);
+    expect(revoked.status).toBe(204);
+    expect(revoked.headers.getSetCookie()).toEqual([]);
+    expect(revoked.headers.get("clear-site-data")).toBeNull();
+    const signedOut = await post("/auth/refresh/logout", {}, pending, { ...family, "x-ohmail-clear-logout": "1" });
     expect(signedOut.status).toBe(204);
-    expect(cleared(signedOut)).toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+    expect(cleared(signedOut)).toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
     expect(signedOut.headers.get("clear-site-data"), "the sign-out is held for a cache walk").toBeNull();
     const refused = await post("/auth/refresh", {}, firstJar);
     expect(refused.status).toBe(401);
     expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("refresh_revoked");
-    expect(cleared(refused)).toEqual(["tf_csrf", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
+    expect(cleared(refused)).toEqual(["tf_csrf", "tf_family", "tf_owner", "tf_refresh", "tf_resume", "tf_session"]);
     expect(refused.headers.get("clear-site-data"), "the refusal is held for a cache walk").toBeNull();
 
     const purge = await fetch(at("/auth/refresh"), { method: "POST", headers: { "x-ohmail-clear": "cache" } });

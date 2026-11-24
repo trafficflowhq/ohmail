@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { mailboxes, messages, folderState, changeLog, learningSignals, rules } from "@trafficflow/db";
+import { searchIndexBackfillPass } from "@trafficflow/core/mail";
+import { accountSettings, mailboxes, messages, folderState, changeLog, learningSignals, rules } from "@trafficflow/db";
 import { and, asc, eq } from "drizzle-orm";
 import type { AdapterPort, NativeLocator } from "@trafficflow/core";
 import type {
   AlreadyGoneResult, MoveRequestResult, MoveResult, RuleCreation, RuleMutation, RuleRequestResult, ServiceContext,
 } from "../src/index.js";
+import { dbFor } from "../src/index.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -64,8 +66,15 @@ export async function makeCtx(now = new Date("2026-07-28T12:00:00Z")): Promise<{
   const db = await makeTestDb();
   const accountId = randomUUID();
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "mila@lichtgrat.example" }).returning();
-  const ctx: ServiceContext = { db, accountId, userId: null, now: () => now, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(db, accountId), accountId, userId: null, now: () => now, requestId: "r" };
   return { db, accountId, mailboxId: mb.id, ctx };
+}
+
+/** A suggestion fixture starts with the account's own affirmative grant. */
+export async function makeSuggestionCtx(now?: Date) {
+  const world = await makeCtx(now);
+  await world.db.insert(accountSettings).values({ accountId: world.accountId, autoSuggestAt: world.ctx.now() });
+  return world;
 }
 
 /**
@@ -98,6 +107,21 @@ export interface SeedMessageOpts {
   authVerdict?: string | null;
 }
 
+/**
+ * The search documents of an account's seeded letters, and the mark that they are all built: what
+ * ingest leaves behind, which writes a letter's document with the letter. A server's store finds a
+ * letter by its document alone, so a test that searches what it seeded calls this after its last seed.
+ */
+export async function seedSearchDocuments(db: Awaited<ReturnType<typeof makeTestDb>>, accountId: string): Promise<void> {
+  await searchIndexBackfillPass({ db: db as never, accountId });
+}
+
+/**
+ * Is a letter with no search document found on this store? On the device, whose own tables cover
+ * every row. Not on a server's store, where the columns that read such a letter left with mail 0200.
+ */
+export const FOUND_WITHOUT_DOCUMENT = process.env.OHMAIL_TEST_DIALECT === "sqlite";
+
 export async function seedMessage(
   db: Awaited<ReturnType<typeof makeTestDb>>,
   accountId: string,
@@ -117,7 +141,7 @@ export async function seedMessage(
     snippet, unread,
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: desired, observedFolder: folder,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: desired, observedFolder: folder,
     lastSetBy: "us", reconcileStatus: desired === folder ? "reconciled" : "pending", conflict: false,
   });
   return m!.id;

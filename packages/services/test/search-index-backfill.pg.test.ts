@@ -5,7 +5,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { brandDialect, dialect } from "@trafficflow/db/dialect";
-import { accounts, accountSettings, attachments, mailboxes, messageBodies, messages } from "@trafficflow/db";
+import { accounts, accountSettings, attachments, mailboxes, messageBodies, messages, accountPass, updatePassProgress, writePassProgress } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
@@ -64,7 +64,7 @@ describe("the search index backfill (real Postgres)", () => {
       ids.push(m!.id);
       const body = i === 7 ? { text: "", html: "<p>marzipan only in html</p>" }
         : i === 2 ? { text: "", html: null } : { text: `plain words ${i}`, html: null };
-      await db.insert(messageBodies).values({ messageId: m!.id, ...body });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, ...body });
       if (i === 5) await db.insert(attachments).values({ accountId: A, messageId: m!.id, filename: "quince-invoice.pdf", contentType: "application/pdf" });
     }
   }, MIGRATED_DB_SETUP_BUDGET_MS);
@@ -77,6 +77,15 @@ describe("the search index backfill (real Postgres)", () => {
     await db.execute(sql`delete from mailboxes where account_id = ${A}`);
     await db.execute(sql`delete from account_settings where account_id = ${A}`);
     await client.end({ timeout: 5 });
+  });
+
+  it("the pass's read answers its letters in the order they were asked, whatever order the store reads them in", async () => {
+    // The pass asks newest first and writes its documents as this read answers them.
+    const newestFirst = [...ids].reverse();
+    const another = [ids[3]!, ids[8]!, ids[0]!, ids[5]!];
+    for (const asked of [newestFirst, another]) {
+      expect((await searchInputsFromStore(db as never, A, asked)).map((r) => r.messageId)).toEqual(asked);
+    }
   });
 
   it("fills newest first in bounded rounds, then writes the marker once, and only once", async () => {
@@ -129,7 +138,7 @@ describe("the search index backfill (real Postgres)", () => {
   };
   const termsOf = async (id: string): Promise<string> =>
     ((await db.execute(sql`select terms from message_search where message_id = ${id}`)) as unknown as Array<{ terms: string }>)[0]!.terms;
-  const markerAt = (at: Date) => db.execute(sql`update account_settings set search_index_built_at = ${at.toISOString()}::timestamptz where account_id = ${A}`);
+  const markerAt = (at: Date) => updatePassProgress(db, accountPass("search_index_backfill", A), { doneAt: at });
   const exact = async (q: string): Promise<string[]> => {
     const ctx: ServiceContext = { db, accountId: A, userId: null, now: () => new Date(), requestId: "bf" } as never;
     const r = await new SearchService().search(ctx, { q, parts: "page" });
@@ -226,10 +235,10 @@ describe("the accounts the backfill owes (real Postgres)", () => {
         ...(id === gone ? { deletedAt: new Date() } : {}),
       }).returning();
       if (id === owedA) longId = m!.id;
-      await own.insert(messageBodies).values({ messageId: m!.id, text: id === owedA ? `lead ${"w".repeat(SEARCH_BODY_MAX_CHARS * 2)}` : "short", html: null });
+      await own.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: id === owedA ? `lead ${"w".repeat(SEARCH_BODY_MAX_CHARS * 2)}` : "short", html: null });
     }
-    await own.insert(accountSettings).values({ accountId: done, searchIndexBuiltAt: SEARCH_DOCUMENT_SHAPE_AT });
-    await own.insert(accountSettings).values({ accountId: older, searchIndexBuiltAt: new Date("2026-10-01T00:00:00Z") });
+    await writePassProgress(own, accountPass("search_index_backfill", done), { doneAt: SEARCH_DOCUMENT_SHAPE_AT });
+    await writePassProgress(own, accountPass("search_index_backfill", older), { doneAt: new Date("2026-10-01T00:00:00Z") });
   });
 
   afterAll(async () => {

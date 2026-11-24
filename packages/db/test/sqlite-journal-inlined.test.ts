@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { SQLITE_MIGRATIONS_DIR, SQLITE_JOURNAL } from "@ohmail/db-mail";
 
 /**
@@ -46,7 +46,8 @@ describe("the inlined SQLite journal", () => {
         "so this comparison is the only thing standing between the two. Build the workspace's packages.",
       );
     }
-    const fromDist = (await import(pathToFileURL(built).href)) as {
+    // Vitest resolves the absolute path directly, including spaces in the volume name.
+    const fromDist = (await import(built)) as {
       SQLITE_JOURNAL: readonly { name: string; statements: readonly string[] }[];
     };
     expect(fromDist.SQLITE_JOURNAL.map((e) => e.name)).toEqual(files);

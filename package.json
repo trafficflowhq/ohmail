@@ -8,11 +8,15 @@
   },
   "scripts": {
     "test": "vitest run",
-    "test:sqlite": "vitest run --config vitest.sqlite.config.ts",
-    "typecheck:mobile": "tsc --noEmit -p apps/mobile/tsconfig.json && tsc --noEmit -p apps/mobile/tsconfig.test.json",
-    "test:mobile": "node scripts/apply-patches.mjs apply && vitest run apps/mobile/test packages/client-engine/test && vitest run --config vitest.sqlite.config.ts apps/mobile/test",
+    "test:sqlite": "vitest run --config test/vitest.sqlite.config.ts",
+    "typecheck:mobile": "tsc --noEmit -p apps/mobile/tsconfig.json && tsc --noEmit -p apps/mobile/tsconfig.test.json && tsc --noEmit -p apps/mobile/web/tsconfig.json",
+    "test:mobile": "node scripts/apply-patches.mjs apply && vitest run apps/mobile/test packages/client-engine/test && vitest run --config test/vitest.sqlite.config.ts apps/mobile/test",
     "build": "tsc -b",
-    "db:setup:prod": "tsx --conditions=ohmail-source packages/db/src/setup-prod-cli.ts"
+    "lint": "node tools/check.mjs --list",
+    "format": "node tools/check.mjs --format",
+    "check:tools": "node tools/check.mjs --base origin/next && node tools/check.mjs --controls",
+    "db:setup:prod": "tsx --conditions=ohmail-source packages/db/src/setup-prod-cli.ts",
+    "db:setup:server": "tsx --conditions=ohmail-source apps/server/src/index.ts migrate"
   },
   "workspaces": [
     "apps/api-vercel",
@@ -22,14 +26,21 @@
     "apps/webapp",
     "apps/worker",
     "packages/api",
+    "packages/app",
+    "packages/app-logic",
     "packages/client-engine",
+    "packages/letter-body",
     "packages/core",
     "packages/db",
     "packages/db-mail",
-    "packages/fixtures",
+    "packages/organizer",
+    "packages/testing",
     "packages/services",
+    "packages/cal-core",
+    "packages/cal-providers",
     "packages/tokens",
-    "packages/ui"
+    "packages/ui",
+    "packages/wire"
   ],
   "overrides": {
     "@tiptap/core": "3.31.3",
@@ -75,6 +86,8 @@
     }
   },
   "devDependencies": {
+    "react": "19.2.3",
+    "@ohmail/wire": "*",
     "esbuild": "0.24.0",
     "acorn": "8.18.0",
     "vitest": "2.1.9",
@@ -89,6 +102,13 @@
     "@testing-library/react": "16.3.2",
     "@types/nodemailer": "6.4.24",
     "@types/mailparser": "3.4.6",
-    "@types/sanitize-html": "2.16.1"
+    "@types/sanitize-html": "2.16.1",
+    "pixelmatch": "7.1.0",
+    "pngjs": "7.0.0",
+    "eslint": "9.39.5",
+    "typescript-eslint": "8.72.2",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "stylelint": "16.26.1",
+    "prettier": "3.10.1"
   }
 }

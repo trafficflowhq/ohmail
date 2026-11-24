@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NOT_DERIVED_FROM } from "../app/shell/engine";
-import { shellFramePaths } from "./source-anchor.js";
+import { NOT_DERIVED_FROM } from "@ohmail/app-logic/engine";
 
 /**
  * THE TWO CLAIMS THE PER-PUBLISH SPLIT RESTS ON, CHECKED RATHER THAN TRUSTED.
@@ -40,7 +39,9 @@ function typesListedIn(src: string): string[] {
 
 /**
  * WHERE THE WINDOW'S WHOLE-MIRROR DERIVATIONS LIVE. The two client-engine modules the shell's
- * memos call into, and the shell's own inline reads.
+ * memos call into, and the shell's own inline reads: re-pointed from today's `AppShell.tsx` and
+ * `shell-derivations.ts`, which the switch deletes, to the new composition's reads of the mirror
+ * keyed on the derived stamp (the Ohbox's live mirror, the composer's lists; RULING-NEW-SHELL-FIRST D (3)).
  *
  * `search.ts` USED to be the census's one exclusion: the search index read `message_body`, so the
  * one view built on it had to take the GLOBAL version through its own wrapper. A later fix took the
@@ -53,10 +54,14 @@ const DERIVATION_SOURCES = [
   "../../../packages/client-engine/src/selectors.ts",
   "../../../packages/client-engine/src/consent-cutline.ts",
   "../../../packages/client-engine/src/search.ts",
-  "../app/shell/AppShell.tsx",
-  /* The shell's whole-mirror memos left `AppShell.tsx` for this frame (ARCH-022). Both are asked:
-     the file that computes the derivations, and the file that still reads the mirror inline. */
-  "../app/shell/shell-derivations.ts",
+  /* The new shell's own reads of the mirror on the derived stamp: the Ohbox's live mirror (its tags) and the one
+     composer's lists (the mailboxes). */
+  "../../../packages/app-logic/src/ohbox/live-mirror.ts",
+  "../../../packages/app-logic/src/writing/composer-lists.ts",
+  /* And two reads cut out of the shell for the mail ground: the settings stamp the consent row re-asks on, and
+     the count of mirrored letters the mail state's mount samples. Both are keyed on the derived stamp. */
+  "../../../packages/app-logic/src/consent/consent-row.ts",
+  "../../../packages/app/src/mail/ground/MailStateMount.tsx",
 ];
 
 describe("the derived stamp ignores only what nothing derives from", () => {
@@ -92,15 +97,16 @@ describe("the derived stamp ignores only what nothing derives from", () => {
     expect(search, "search.ts lists types — the census must have a subject").not.toHaveLength(0);
     expect(search, "search.ts reads bodies again — the instant index is back on the whole mail")
       .not.toContain("message_body");
-    const shell = code(read("../app/shell/AppShell.tsx"));
-    expect(shell, "the search view took the global version back — every body publish is a rebuild")
-      .not.toContain("useEngineVersion()");
-    expect(shell, "the search view is not on the derived stamp")
-      .toContain("useDerivedVersion()");
-    expect(shell, "the search view lost the index revision — a settled build will not reach it")
-      .toContain("useSearchIndexRevision()");
-    expect(shell, "the search mount stopped going through the wrapper that supplies it")
-      .toContain("<SearchViewLive");
+    /* The list's own pass keys on the stamps of the engine it is handed (`local-pass.ts`), the shell's formula. */
+    const pass = code(read("../../../packages/app-logic/src/search/local-pass.ts"));
+    expect(pass, "the search view took the global version back — every body publish is a rebuild")
+      .not.toMatch(/useEngineVersion\(\)|\.read\(\)\.version\(\)/);
+    expect(pass, "the search view is not on the derived stamp")
+      .toContain("stampExcept(NOT_DERIVED_FROM)");
+    expect(pass, "the search view lost the index revision — a settled build will not reach it")
+      .toContain("searchIndexRevision()");
+    expect(pass, "the local pass stopped keying on the stamps that supply it")
+      .toMatch(/useMemo\([\s\S]*engine\.search\(trimmed\)[\s\S]*\[engine, trimmed, key\]\)/);
   });
 });
 
@@ -114,9 +120,9 @@ describe("a derivation that reads a body by id rides the placement stamp", () =>
   it("the partition's body read, the window's stamp and the engine's three body doors agree", () => {
     const cutline = code(read("../../../packages/client-engine/src/consent-cutline.ts"));
     expect(cutline, "the census lost its subject: the partition no longer reads a body").toMatch(/\.get<[^>]*>\("message_body"/);
-    expect(code(read("../app/shell/engine.tsx")), "the window's stamp ignores the bodies that place mail")
+    expect(code(read("../../../packages/app-logic/src/engine/context.ts")), "the window's stamp ignores the bodies that place mail")
       .toMatch(/stampExcept\(NOT_DERIVED_FROM\),\s*engine\.placementStamp\(\)/);
-    const engine = code(read("../../../packages/client-engine/src/engine.ts"));
+    const engine = code(read("../../../packages/client-engine/src/engine/bodies.ts"));
     const noted = [...engine.matchAll(/this\.notePlacementBodies\(/g)].length;
     expect(noted, "putBody, putBodies and the trim each move the stamp").toBe(3);
   });
@@ -124,39 +130,73 @@ describe("a derivation that reads a body by id rides the placement stamp", () =>
 
 describe("every surface that draws a body subscribes to one", () => {
   /**
-   * The files that call `bodyOf` at draw time. Derived from the source rather than listed, so a
-   * fifth surface added later is asked the same question instead of being forgotten.
+   * The new tree's surfaces, WALKED rather than listed: the reader's views and its behaviour. A file there that
+   * calls `bodyOf` takes the body's arrival through the one door (`@ohmail/app-logic/reading`'s body-arrival),
+   * never a store of its own, so the old reader and the new one re-draw a landed body by the same rule.
    */
-  const CANDIDATES = [
-    "../app/shell/MessagePane.tsx",
-    "../app/shell/MessageCard.tsx",
-    "../app/views/ReadsView.tsx",
-    "../app/views/ReceiptsView.tsx",
-    "../app/views/ScreenerView.tsx",
-    "../app/views/OhboxView.tsx",
-    "../app/views/HistoryView.tsx",
-    "../app/shell/StreamCardMemo.tsx",
-    "../app/shell/InlineReply.tsx",
-    "../app/shell/Conversation.tsx",
-  ];
-
-  it("pairs every bodyOf draw with a body-slice hook", () => {
-    const draws: string[] = [];
-    for (const rel of CANDIDATES) {
-      const src = code(read(rel));
-      // `useDrawnBody` is the door and its subscription in one call (`body-slice.ts`).
-      if (/useDrawnBody\s*\(/.test(src)) draws.push(rel);
-      // A CALL, not a mention: `bodyOf: bodyOfMessage` and a prop type are neither.
-      if (!/(?:^|[^\w.])bodyOf\s*\(|\.bodyOf\s*\(/m.test(src)) continue;
-      if (!draws.includes(rel)) draws.push(rel);
-      expect(src, `${rel} draws a body and never subscribes to one — it will show the snippet`)
-        .toMatch(/useBodyArrival\s*\(|useBodyStamp\s*\(/);
+  it("pairs every bodyOf call of the new tree with the body's arrival", () => {
+    const roots = ["../../../packages/app/src", "../../../packages/app-logic/src"]
+      .map((rel) => fileURLToPath(new URL(rel, import.meta.url)));
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [join(dir, e.name)] : []);
+    const callers: string[] = [];
+    const unsubscribed: string[] = [];
+    for (const file of roots.flatMap(walk)) {
+      const src = code(readFileSync(file, "utf8"));
+      const selectorCall = /(?:^|[^\w.])bodyOf\s*\(/m.test(src);
+      const memberCall = /\.bodyOf\s*\(/.test(src);
+      const localSelector = /\bfunction\s+bodyOf\s*\(/.test(src);
+      // A pane's own helper can have the same name as the engine's body selector.
+      if (!memberCall && (!selectorCall || localSelector)) continue;
+      const where = relative(process.cwd(), file).split("\\").join("/");
+      callers.push(where);
+      if (!/useBodyArrival\s*\(|useBodyStamp\s*\(/.test(src)) unsubscribed.push(where);
     }
-    // The census must have a subject: four surfaces draw bodies today.
-    expect(draws.length, "no file was found drawing a body — the census matched nothing")
-      .toBeGreaterThanOrEqual(4);
+    expect(callers.length, "no file of the new tree was found calling bodyOf — the census matched nothing")
+      .toBeGreaterThanOrEqual(1);
+    expect(unsubscribed, "a surface of the new tree draws a body without the body's arrival").toEqual([]);
   });
 });
+
+/**
+ * THE ONE FORM A NAMED RECORD MAY TAKE: a shell hook's record passed through
+ * `useRecordWhileSame` (held while no member moved) and handed WHOLE to its ONE context in the same component, every
+ * other use a member read. A record named without the hold, or held and handed whole twice, is a finding.
+ */
+function recordFindings(where: string, src: string, hooks: readonly string[]): { calls: string[]; named: string[] } {
+  const named: string[] = [];
+  const calls: string[] = [];
+  for (const hook of hooks) {
+    /* The binding is read BACKWARDS from the call, because the shell destructures across a
+       dozen lines and a one-line pattern would match neither shape. Everything between the
+       nearest `const ` and the `=` is the binding: `{` opens a destructure, anything else is
+       a name. A call that is not a binding at all (an argument, a re-export) is not one of
+       these and is skipped rather than guessed at. */
+    const re = new RegExp(`=\\s*${hook}\\(`, "g");
+    for (let m = re.exec(src); m !== null; m = re.exec(src)) {
+      const before = src.slice(0, m.index);
+      const at = before.lastIndexOf("const ");
+      if (at === -1) continue;
+      const binding = before.slice(at + "const ".length).trim();
+      calls.push(`${where}: ${hook}`);
+      if (!binding.startsWith("{")) named.push(`${where}: const ${binding}= ${hook}(…)`);
+    }
+    /* The held form: its whole uses are counted to the end of the component that binds it. */
+    const held = new RegExp(`const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*useRecordWhileSame\\(\\s*${hook}\\(`, "g");
+    for (let m = held.exec(src); m !== null; m = held.exec(src)) {
+      const name = m[1]!;
+      calls.push(`${where}: ${hook}`);
+      const rest = src.slice(m.index + m[0].length);
+      const next = rest.search(/\n(?:export\s+)?(?:async\s+)?function\s|\n(?:export\s+)?const\s/);
+      const component = next === -1 ? rest : rest.slice(0, next);
+      const whole = [...component.matchAll(new RegExp(`(?<![\\w$.])${name}\\b(?!\\s*(?:\\?\\.|\\.|\\[))`, "g"))];
+      if (whole.length !== 1) {
+        named.push(`${where}: const ${name} = useRecordWhileSame(${hook}(…)) is handed whole ${whole.length} times, not to one context`);
+      }
+    }
+  }
+  return { calls, named };
+}
 
 /**
  * NO SHELL FRAME NAMES ANOTHER FRAME'S RECORD.
@@ -166,39 +206,62 @@ describe("every surface that draws a body subscribes to one", () => {
  * cost no assertion in this repo can see and the perf harness can. Destructuring at the call site
  * makes the record unnameable, so a dependency can only ever be a FIELD. The hooks are read off
  * the manifest, so the next module the split creates is asked the same question.
+ *
+ * Re-pointed by path (RULING-NEW-SHELL-FIRST D (3)): today's manifest of `shell-*` frames leaves with
+ * today's shell. The `useShell…` hooks are read where they live now (`packages/app-logic/src`), and the
+ * frames asked are every file of the new shell (`packages/app/src`) that calls one.
  */
 describe("no shell frame binds another frame's record to a name", () => {
   it("every manifest hook call is destructured where it is called", () => {
-    const frames = shellFramePaths(process.cwd());
-    const sources = frames.map((f) => [f, code(readFileSync(f, "utf8"))] as const);
-    const hooks = sources.flatMap(([, src]) =>
-      [...src.matchAll(/export function (useShell[A-Za-z]*)\(/g)].map((m) => m[1]!));
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [join(dir, e.name)] : []);
+    const here = (rel: string): string => fileURLToPath(new URL(rel, import.meta.url));
+    const hooks = walk(here("../../../packages/app-logic/src")).flatMap((f) =>
+      [...code(readFileSync(f, "utf8")).matchAll(/export function (useShell[A-Za-z]*)\(/g)].map((m) => m[1]!));
     expect(hooks.length, "the manifest exports no shell hook — the census has lost its subject")
       .toBeGreaterThan(0);
+    const sources = walk(here("../../../packages/app/src"))
+      .map((f) => [f, code(readFileSync(f, "utf8"))] as const)
+      .filter(([, src]) => hooks.some((hook) => src.includes(`${hook}(`)));
     const named: string[] = [];
     const calls: string[] = [];
     for (const [file, src] of sources) {
-      const where = relative(process.cwd(), file);
-      for (const hook of hooks) {
-        /* The binding is read BACKWARDS from the call, because the shell destructures across a
-           dozen lines and a one-line pattern would match neither shape. Everything between the
-           nearest `const ` and the `=` is the binding: `{` opens a destructure, anything else is
-           a name. A call that is not a binding at all (an argument, a re-export) is not one of
-           these and is skipped rather than guessed at. */
-        const re = new RegExp(`=\\s*${hook}\\(`, "g");
-        for (let m = re.exec(src); m !== null; m = re.exec(src)) {
-          const before = src.slice(0, m.index);
-          const at = before.lastIndexOf("const ");
-          if (at === -1) continue;
-          const binding = before.slice(at + "const ".length).trim();
-          calls.push(`${where}: ${hook}`);
-          if (!binding.startsWith("{")) named.push(`${where}: const ${binding}= ${hook}(…)`);
-        }
-      }
+      const found = recordFindings(relative(process.cwd(), file), src, hooks);
+      calls.push(...found.calls);
+      named.push(...found.named);
     }
     expect(calls.length, "no frame calls a shell hook — the census measured nothing")
       .toBeGreaterThan(0);
     expect(named, `a named record invites a memo keyed on it — destructure instead:\n${named.join("\n")}`)
       .toEqual([]);
+  });
+
+  it("PLANTED: a named record that is not held is found", () => {
+    const src = code(`export function Mount() {
+  const compose = useShellCompose(input);
+  return <ComposerContext.Provider value={compose}>{children}</ComposerContext.Provider>;
+}`);
+    expect(recordFindings("planted.tsx", src, ["useShellCompose"]).named).toHaveLength(1);
+  });
+
+  it("PLANTED: a held record handed whole to a second reader is found; handed to its one context, it is not", () => {
+    const twice = code(`export function Mount() {
+  const compose = useRecordWhileSame(useShellCompose(input));
+  const writing = writingOf(compose, inputs);
+  return <ComposerContext.Provider value={compose}>{writing.letter}{compose.replyDone}</ComposerContext.Provider>;
+}`);
+    expect(recordFindings("planted.tsx", twice, ["useShellCompose"]).named).toHaveLength(1);
+    const once = code(`export function Mount() {
+  const compose = useRecordWhileSame(useShellCompose(input));
+  return <ComposerContext.Provider value={compose}>{compose.replyDone}</ComposerContext.Provider>;
+}
+function Over() {
+  const compose = useComposer();
+  return writingOf(compose, inputs);
+}`);
+    expect(recordFindings("planted.tsx", once, ["useShellCompose"])).toEqual({
+      calls: ["planted.tsx: useShellCompose"],
+      named: [],
+    });
   });
 });

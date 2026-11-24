@@ -1,7 +1,13 @@
-import { describe, it, expect } from "vitest";
+/** @vitest-environment jsdom */
+import { afterEach, describe, expect, it } from "vitest";
+import { fireEvent, within } from "@testing-library/react";
+import {
+  act, installConfirmEnv, mountCloudShell, refresh204, rememberOwner, scriptRefresh,
+  scriptSession, sessionFull, teardownConfirmEnv, tick,
+} from "./fixtures/cloud-confirm-shell";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { filerKey } from "../app/shell/mail-state";
+import { fileURLToPath, URL as FileURL } from "node:url";
+import { filerKey } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * TWO DEFECTS A REAL USER HIT ON ohmail.app, PINNED.
@@ -29,118 +35,164 @@ import { filerKey } from "../app/shell/mail-state";
  * be unreachable when the shell is live, and the live panel must show the facts (i) exists
  * for.
  */
-const HERE = fileURLToPath(new URL(".", import.meta.url));
+const HERE = fileURLToPath(new FileURL(".", import.meta.url));
 const read = (p: string): string => readFileSync(`${HERE}${p}`, "utf8");
 const messages = JSON.parse(read("../messages/en.json")) as Record<string, Record<string, string>>;
 
+const WEB = "../app/(product)/mailbox";
+const MAIL = "../../../packages/app/src/mail";
+const PANE = "../../../packages/app/src/mailboxes/pane";
+const ABOUT = "../../../packages/app/src/settings/about/AboutPane.tsx";
+const ADDRESS = "mailbox@example.test";
+const PASSWORD = "fixture-mailbox-password";
+const ROW = {
+  id: "mb1",
+  provider: "imap",
+  address: "existing@example.test",
+  displayName: "Existing mailbox",
+  status: "connected",
+  lastSyncAt: "2026-09-04T12:40:00.000Z",
+  createdAt: "2026-09-04T12:40:00.000Z",
+};
+
+let mounted = false;
+afterEach(async () => {
+  if (!mounted) return;
+  await teardownConfirmEnv();
+  (await import("../app/api-client")).bindApiOwner(null);
+  window.history.replaceState(null, "", "/");
+  mounted = false;
+});
+
+async function mount(url: string, closed = false) {
+  installConfirmEnv();
+  mounted = true;
+  rememberOwner();
+  scriptRefresh(refresh204);
+  scriptSession(sessionFull);
+  (await import("../app/api-client")).bindApiOwner(null);
+  const writes: unknown[] = [];
+  const authWrites: string[] = [];
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const path = new URL(String(input), window.location.origin).pathname;
+    const method = init?.method ?? "GET";
+    if (path === "/api/account/access") return Response.json({ metered: false });
+    if (path === "/api/mailboxes" && method === "GET") return Response.json({ items: [ROW] });
+    if (path === "/api/mailboxes" && method === "POST") {
+      writes.push(JSON.parse(String(init?.body)));
+      if (closed && writes.length === 1) {
+        return Response.json({ error: { code: "step_up_required", message: "Confirm it is you." } }, { status: 403 });
+      }
+      return Response.json({ ...ROW, id: "mb2", address: ADDRESS });
+    }
+    if (path.startsWith("/api/auth/") && method === "POST" && !path.startsWith("/api/auth/refresh")) {
+      authWrites.push(path);
+      if (path === "/api/auth/step-up/totp") return Response.json({ ok: true });
+    }
+    return fetch(input, init);
+  };
+  window.history.replaceState(null, "", url);
+  const el = await mountCloudShell();
+  await tick(3000);
+  return { el, view: within(el), writes, authWrites };
+}
+
+async function click(button: HTMLElement) {
+  await act(async () => { fireEvent.click(button); });
+  await tick(250);
+}
+
+const type = (field: HTMLElement, value: string) => fireEvent.change(field, { target: { value } });
+
+async function fillConnect(closed = false) {
+  const state = await mount("/mailbox#/settings/mailboxes", closed);
+  const { view } = state;
+  const copy = messages.onboarding!;
+  const pane = within(view.getByRole("region", { name: messages.settings!.mailboxes }));
+  expect(pane.getByRole("group", { name: messages.mailboxes!.modeCloud })).toBeTruthy();
+  await click(pane.getByRole("button", { name: messages.mailboxes!.connect }));
+  type(view.getByLabelText(copy.address!), ADDRESS);
+  await click(view.getByRole("button", { name: messages.providerPicker!.otherShort }));
+  type(view.getByLabelText(copy.imapHost!), "imap.example.test");
+  type(view.getByLabelText(copy.smtpHost!), "smtp.example.test");
+  type(view.getByLabelText(copy.password!), PASSWORD);
+  return { ...state, submit: () => click(view.getByRole("button", { name: copy.connect })) };
+}
+
+const factor = (el: HTMLElement) =>
+  within(el).queryByRole("dialog", { name: messages.stepUp!.titleCode!.replace(/\.$/, "") });
+
 describe("a signed-in account can connect a mailbox without leaving the shell", () => {
-  it("THE REGRESSION: POST /mailboxes has a caller outside the onboarding wizard", () => {
-    // The single fact whose absence caused the outage. If this is ever true only of
-    // the wizard's mailbox step again, the dead end is back.
-    const callers = ["../app/(product)/join/MailboxStep.tsx", "../app/(product)/mailbox/MailboxSection.tsx"]
-      .filter((p) => /mailboxApi\.create\(|mailboxes\.create\(/.test(read(p)));
-    expect(callers).toHaveLength(2);
+  it("THE REGRESSION: POST /mailboxes has a caller outside the onboarding wizard", async () => {
+    // Settings is the entry even for an account that already has a mailbox.
+    const { submit, writes } = await fillConnect();
+    await submit();
+    expect(writes).toEqual([expect.objectContaining({ address: ADDRESS, provider: "imap" })]);
+    expect(window.location.pathname).toBe("/mailbox");
   });
 
-  it("the shell's pane runs the step-up ITSELF rather than sending the user to /login", () => {
-    const src = read("../app/(product)/mailbox/MailboxSection.tsx");
-    // The inline factor prompt, on the session the browser holds — never a second sign-in, which
-    // was one more web session per confirmation (`confirm-is-step-up.test.tsx` drives it).
-    expect(src).toMatch(/import \{ StepUpPrompt \} from "\.\/StepUpPrompt"/);
-    expect(src).toMatch(/<StepUpPrompt\b/);
-    expect(src).not.toMatch(/auth\.login\(/);
-    // And it must NOT punt to the wizard: `bootstrap()` would bounce the user straight back.
-    expect(src).not.toMatch(/href="\/join"/);
-    expect(src).not.toMatch(/"\/login"/);
+  it("the shell's pane runs the step-up ITSELF rather than sending the user to /login", async () => {
+    const { el, submit, writes, authWrites } = await fillConnect(true);
+    await submit();
+    const dialog = within(factor(el)!);
+    const copy = messages.stepUp!;
+    type(dialog.getByLabelText(copy.codeLabel!), "123456");
+    await click(dialog.getByRole("button", { name: copy.verify }));
+    expect(authWrites).toEqual(["/api/auth/step-up/totp"]);
+    expect(writes).toHaveLength(2);
+    expect(writes[1]).toEqual(writes[0]);
+    expect(window.location.pathname).toBe("/mailbox");
   });
 
-  it("the step-up runs AFTER the credentials are typed, not before", () => {
-    // The whole point. Asking for the second factor first would spend the five minutes on
-    // the trip to the provider — which is the bug, rebuilt. The form submits the write itself;
-    // only its refusal for a closed window enters `stepup`, through `park`.
-    const src = read("../app/(product)/mailbox/MailboxSection.tsx");
-    expect(src.search(/type Stage =[^\n]*"stepup"/)).toBeGreaterThanOrEqual(0);
-    expect([...src.matchAll(/setStage\("stepup"\)/g)], "one door into the prompt").toHaveLength(1);
-    const park = src.slice(src.indexOf("const park ="), src.indexOf("const fail ="));
-    expect(park).toMatch(/setStage\("stepup"\)/);
-    expect(src).toMatch(/if \(microsoftOauth\) \{ startOutlook\(\); return; \}\s*void connect\(\);/);
+  it("the step-up runs AFTER the credentials are typed, not before", async () => {
+    const { el, submit, writes } = await fillConnect(true);
+    expect(factor(el)).toBeNull();
+    expect(writes).toHaveLength(0);
+    await submit();
+    expect(writes).toHaveLength(1);
+    expect(factor(el)).not.toBeNull();
   });
 
-  it("a step-up refusal keeps the typed mailbox form instead of discarding it", () => {
-    const src = read("../app/(product)/mailbox/MailboxSection.tsx");
-    // The refused write is parked and the refusal said; nothing in either resets `typed`.
-    const window = src.slice(src.indexOf("const park ="), src.indexOf("const connect ="));
-    expect(window).toMatch(/gatedRefusal\(/);
-    expect(window).not.toMatch(/setTyped/);
+  it("a step-up refusal keeps the typed mailbox form instead of discarding it", async () => {
+    const { el, view, submit, writes } = await fillConnect(true);
+    await submit();
+    await click(within(factor(el)!).getByRole("button", { name: messages.stepUp!.cancel }));
+    const copy = messages.onboarding!;
+    expect(view.getByLabelText(copy.address!)).toHaveProperty("value", ADDRESS);
+    expect(view.getByLabelText(copy.imapHost!)).toHaveProperty("value", "imap.example.test");
+    expect(view.getByLabelText(copy.smtpHost!)).toHaveProperty("value", "smtp.example.test");
+    expect(view.getByLabelText(copy.password!)).toHaveProperty("value", PASSWORD);
+    expect(writes).toHaveLength(1);
   });
 
-  it("the pane reads the REAL mailbox list, not the mirror that is always empty", () => {
-    // `"mailbox"` is not an `EntityType` in the change log, so `/sync` never emits one and
-    // the shared pane's list is empty for every live account. Asserted at the source: if
-    // `"mailbox"` is ever added there, this test should be revisited, not deleted.
+  it("the pane reads the REAL mailbox list, not the mirror that is always empty", async () => {
     const entityTypes = read("../../../packages/db/src/change-log.ts");
     const decl = entityTypes.slice(entityTypes.indexOf("export type EntityType"));
     expect(decl.slice(0, decl.indexOf(";"))).not.toMatch(/"mailbox"/);
-    /**
-     * ── THE CALL, NOT ITS ARGUMENT LIST ──────────────────────────────────────────────────
-     *
-     * This read `/mailboxApi\.list\(\)/` — the empty parentheses included — and went red the
-     * day the pane started asking for message counts (`list({ counts: true })` on open). The
-     * empty-argument spelling was never the invariant: what this case is about is WHERE the
-     * list comes from, and passing an option to the same API client does not move it.
-     *
-     * So the regex is retargeted at the call rather than widened into a substring match, and
-     * the half that was implicit before is now written down: the pane must NOT read the sync
-     * mirror. That is the actual defect this test was created for — the mirror's mailbox list
-     * returned `[]` for every live account — and asserting its absence is a stronger statement
-     * than the one that was here, not a weaker one.
-     *
-     * THE NEGATIVE IS TAKEN OVER CODE ONLY, and that is not a technicality. The pane's own
-     * header explains the defect by NAMING the mirror call it replaced, so a match over the
-     * raw file fails on the paragraph that documents the fix — a guard that forbids describing
-     * the bug it exists to prevent. Comments are stripped first, which is also what makes the
-     * assertion mean what it says: this is about what the pane RUNS.
-     */
-    const pane = read("../app/(product)/mailbox/MailboxSection.tsx");
-    const code = pane.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-    expect(code, "the pane no longer calls the API's mailbox list").toMatch(/mailboxApi\.list\(/);
-    expect(code, "the pane is reading the sync mirror again — it is empty for every live account")
-      .not.toMatch(/reader\.list|MailboxEntity/);
-  });
+    expect(read(`${WEB}/mailboxes-wire.ts`)).toMatch(/mailboxApi\.list\(/);
 
-  it("the Cloud client injects the pane and Desktop does not get one", () => {
-    // The GPL/standalone seam: `scripts/publish-desktop.mjs` DENYs `(product)`, so the
-    // shared view must keep working with the prop absent.
-    // The pane leads the Settings → Mailboxes node; the self-check sits beside it, a second consumer.
-    expect(read("../app/(product)/mailbox/CloudShell.tsx"))
-      .toMatch(/mailboxSection=\{<><MailboxSection subscriptionPane=\{manageOffered\} \/><MailboxFilings api=\{filingsApi\} \/><MailboxSelfCheck check=\{mailboxApi\.selfCheck\} \/><\/>\}/);
-    // Withheld in demo mode, like `accountSection` — `?demo=1` has no session to post with.
-    expect(read("../app/shell/AppShell.tsx")).toMatch(/mailboxSection=\{demo \? undefined : mailboxSection\}/);
+    // The fixture's mirror never contains this row. The account's list endpoint does.
+    const { view } = await mount("/mailbox#/settings/mailboxes");
+    const pane = within(view.getByRole("region", { name: messages.settings!.mailboxes }));
+    expect(pane.getByRole("button", { name: new RegExp(ROW.address.replace(".", "\\.")) })).toBeTruthy();
   });
 
   it("THE FALLBACK IS DELETED — the pane renders the host node and nothing else", () => {
-    // The mirror fallback (`mailboxSection ?? (…reader.list("mailbox")…)`) drew an entity type
-    // `/sync` never emits, so it was empty for every real account — built, tested, unreachable.
-    // Deleted, not layered over: restoring it (a `??` fallback, or a `mailboxes.map(` list) turns
-    // this red. The pane is now the host node verbatim, and the nav entry is gated on it.
-    const settings = read("../app/views/SettingsView.tsx");
-    expect(settings).not.toMatch(/mailboxSection \?\?/);
-    expect(settings).not.toMatch(/mailboxes\.map\(/);
-    expect(settings).toMatch(/shown === "mailboxes" \? mailboxSection : null/);
-    // The tab list lives in `settings-panes.ts` since that change; the view answers from node presence —
-    // the host's mailbox node, or the declined settings rows a host hands in while one stands
-    // (HOST-CLIENT-DECLINED-SETTINGS-HAS-NO-ROW). Both are nodes; neither is a mirror read.
-    expect(settings).toMatch(/mailboxes: Boolean\(mailboxSection\) \|\| Boolean\(savedSettingsSection\),/);
-    // And the prop it used to fall back on is gone from the component's inputs entirely.
-    expect(settings).not.toMatch(/\n\s*mailboxes: MailboxEntity\[\];/);
+    // Settings registers a Mailboxes pane only when the host supplies its parts. There is no
+    // alternate registration that builds a mailbox list from the mirror.
+    const settings = read(`${MAIL}/panes.ts`);
+    expect(settings).toMatch(
+      /mailboxes:\s*parts\.mailboxes === NONE\s*\? NONE\s*:\s*paneOf\("mailboxes", mailboxesPane\(\{ \.\.\.parts\.mailboxes, mailState: useMailState \}\)\)/,
+    );
+    const pane = read(`${PANE}/MailboxesPane.tsx`);
+    expect(pane).toMatch(/const rows = model\.list\.rows/);
+    expect(pane).not.toMatch(/reader\.list|MailboxEntity/);
   });
 
   it("each pane NAMES ITS MODE — Cloud here, local on the desktop", () => {
-    // One mode per install, never both in parallel (the project's design notes: per-install, not
-    // per-mailbox). Both panes head themselves from the catalogue and from the SAME key on the
-    // hosted door — `mailboxes.modeCloud` — so a desktop install on that door and a browser tab
-    // cannot end up calling the same thing by two names. The desktop's local heading is its own
-    // key because the state has no counterpart on a hosted account.
+    // Both panes name the same hosted mode from the catalogue. The web settings column
+    // shows the Mailboxes heading and names the mode on the accessible group.
     //
     // This used to assert the desktop's English LITERAL, which is what the pane was made of: a
     // dozen hardcoded sentences the catalogue could not reach, so a German install read the one
@@ -154,10 +206,10 @@ describe("a signed-in account can connect a mailbox without leaving the shell", 
        byte-for-byte what it was; both halves are pinned here because a heading and its key drift
        apart the moment only one of them is asserted. */
     expect(messages.mailboxes!.modeSelfhost).toBe("Mailboxes on this server");
-    // Both panes take the heading from the filer table's `heading` row, by the build or the door.
+    // Both panes name the mode from the filer table's `heading` row, by the build or the door.
     expect([filerKey("heading", "cloud"), filerKey("heading", "server"), filerKey("heading", "computer")])
       .toEqual(["modeCloud", "modeSelfhost", "desktopModeLocal"]);
-    expect(read("../app/(product)/mailbox/MailboxSection.tsx")).toMatch(/t\(filerKey\("heading", filer\)\)/);
+    expect(read(`${PANE}/MailboxesPane.tsx`)).toMatch(/aria-label=\{say\(\{ key: filerKey\("heading", filer\) \}\)\}/);
     const desktop = read("../../desktop/src/DesktopMailboxes.tsx");
     expect(desktop).toMatch(/filerSentence\("heading", filer\)/);
     expect(desktop).not.toContain("Local mailboxes on this computer");
@@ -180,7 +232,7 @@ describe("a signed-in account can connect a mailbox without leaving the shell", 
    * 403 for the life of the install. So the pane offers the browser instead of a control that
    * would refuse.
    */
-  it("the desktop's hosted pane says where mailboxes are managed and opens the browser there", () => {
+  it("the desktop's hosted pane says where mailboxes are managed and opens the browser there", async () => {
     const desktop = read("../../desktop/src/DesktopMailboxes.tsx");
     // The list is rendered on BOTH doors — the read is what the pane is for. Since that change a
     // reconnected address folds into one row first, so the render maps the folded list; a removed
@@ -203,11 +255,11 @@ describe("a signed-in account can connect a mailbox without leaving the shell", 
     // And the place resolves: the window's closed set names it, and the shell's table gives it
     // an address that opens the Mailboxes pane rather than merely the Settings view.
     expect(read("../../desktop/src/native.ts")).toMatch(/"mailboxes",/);
-    expect(read("../../desktop/src-tauri/src/engine.rs")).toContain(
-      '("mailboxes", "https://ohmail.app/mailbox?settings=mailboxes#/settings")',
-    );
-    // …and that query is the one `SettingsView` reads at mount.
-    expect(read("../app/views/SettingsView.tsx")).toMatch(/\.get\("settings"\)/);
+    const engine = read("../../desktop/src-tauri/src/engine.rs");
+    const target = engine.match(/\("mailboxes", "https:\/\/ohmail\.app(\/mailbox[^"]+)"\)/)?.[1];
+    expect(target).toBeDefined();
+    const { view } = await mount(target!);
+    expect(view.getByRole("region", { name: messages.settings!.mailboxes })).toBeTruthy();
   });
 
   /**
@@ -298,52 +350,25 @@ describe("a signed-in account can connect a mailbox without leaving the shell", 
 });
 
 describe("About tells a live account the truth, wherever it is rendered", () => {
-  const shell = read("../app/shell/AppShell.tsx");
-
   it("THE REGRESSION: the demo body is gated on the mode", () => {
-    // The original defect: the panel rendered `about.p1`/`p2` unconditionally, so every
-    // signed-in customer read a description of a fixture mailbox as a statement about
-    // their own. The panel is a Settings pane now (see below) and the gate travels with
-    // it — a live account gets the INJECTED body and can never reach this copy.
     expect(messages.about!.p1).toMatch(/demo mailbox/i);
-    expect(shell).toMatch(/aboutSection=\{\s*demo \? \(/);
-    expect(shell).toMatch(/\{t\("about\.p1"\)\}/);
-    // …and the live arm is the injected node, never the demo copy.
-    expect(shell).toMatch(/\) : \(\s*aboutSection\s*\)/);
-  });
-
-  it("the (i) affordance is gone from the dock, and About is a Settings pane", () => {
-    // Owner-reported: the floating (i) button was an overlay over the mail holding three
-    // facts that are settings. The dock keeps only the two controls that ACT on what is on
-    // screen; the facts moved to Settings → About ohmail, which is where they can be found
-    // and linked to. This is the guard that the button does not come back.
-    expect(shell).not.toMatch(/icon="info"/);
-    expect(shell).not.toMatch(/aboutOpen/);
-    expect(messages.dock!.about).toBeUndefined();
-    // The pane exists, is conditional on the injected node, and is named. The tab list lives in
-    // `settings-panes.ts` since that change; the view answers from node presence, the list carries the name.
-    const settings = read("../app/views/SettingsView.tsx");
-    expect(settings).toMatch(/about: Boolean\(aboutSection\),/);
-    const panes = read("../app/views/settings-panes.ts");
-    expect(panes).toMatch(/w\.about \? \[\["about", t\("about"\)\]/);
-    expect(settings).toMatch(/shown === "about" \? aboutSection : null/);
-    expect(messages.settings!.about).toBe("About ohmail");
-  });
-
-  it("the live body is the injected one, and it reports mailbox + sync + build", () => {
-    const src = read("../app/(product)/mailbox/AboutSection.tsx");
-    expect(src).toMatch(/mailboxApi\.list\(\)/);
-    expect(src).toMatch(/lastSyncAt/);
-    expect(src).toMatch(/NEXT_PUBLIC_BUILD/);
-    expect(read("../app/(product)/mailbox/CloudShell.tsx")).toMatch(/aboutSection=\{<AboutSection \/>\}/);
+    expect(read(`${WEB}/CloudShell.tsx`)).toMatch(/if \(resolvedDemo\) return <DemoShell\b/);
+    expect(read("../app/(product)/demo/DemoSettings.tsx")).toMatch(/return <AboutPane demo \/>/);
+    expect(read(`${WEB}/pane-parts.tsx`)).toMatch(/about: WebAboutPane/);
+    expect(read(`${WEB}/AboutSection.tsx`)).toMatch(/<AboutPane model=\{model\} \/>/);
+    const pane = read(ABOUT);
+    const demo = pane.slice(pane.indexOf('if ("demo" in props)'), pane.indexOf("const { model }"));
+    expect(demo).toMatch(/t\("p1"\)/);
+    expect(demo).toMatch(/t\("p2"\)/);
+    expect(pane.slice(pane.indexOf("const { model }"))).not.toMatch(/t\("p[12]"\)/);
   });
 
   it("`not synced yet` is a real state, not rendered as a time", () => {
     // A mailbox connected seconds ago genuinely has not synced — the worker runs on its own
     // cycle. Saying "just now" there would be the same class of lie this panel was fixed for.
     expect(messages.about!.neverSynced).toBeTruthy();
-    expect(read("../app/(product)/mailbox/AboutSection.tsx"))
-      .toMatch(/first\.lastSyncAt \? absolute\(first\.lastSyncAt\) : null/);
+    expect(read(ABOUT))
+      .toMatch(/mailboxes\.lastSyncAt \? absolute\(mailboxes\.lastSyncAt\) : null/);
   });
 
   it("NO AI SLOP, and no developer vocabulary, in any of the new copy", () => {
@@ -371,14 +396,16 @@ describe("About tells a live account the truth, wherever it is rendered", () => 
   it("every key the two new surfaces ask for exists", () => {
     // A missing next-intl key throws at render, which for the (i) panel means the dock's
     // info button crashes the shell.
-    const used = (src: string, ns: string): string[] =>
-      [...src.matchAll(/\bt\("([a-zA-Z_][\w.]*)"/g)].map((m) => m[1]!)
+    const used = (src: string, ns: string, call: RegExp): string[] =>
+      [...src.matchAll(call)].map((m) => m[1]!)
         .filter((k) => !k.includes("."))
         .map((k) => `${ns}.${k}`);
 
     const keys = [
-      ...used(read("../app/(product)/mailbox/AboutSection.tsx"), "about"),
-      ...used(read("../app/(product)/mailbox/MailboxSection.tsx"), "mailboxes"),
+      ...used(read(ABOUT), "about", /\bt\("([a-zA-Z_][\w.]*)"/g),
+      ...["MailboxesPane", "Lines", "Organizer", "Removal", "RowLines"].flatMap((file) =>
+        used(read(`${PANE}/${file}.tsx`), "mailboxes", /\bsay\(\{ key: "([a-zA-Z_][\w.]*)"/g)),
+      ...used(read(`${PANE}/Checks.tsx`).split("function Filings")[0]!, "mailboxes", /\bt\("([a-zA-Z_][\w.]*)"/g),
     ];
     expect(keys.length).toBeGreaterThan(15);
     for (const k of keys) {
@@ -388,7 +415,7 @@ describe("About tells a live account the truth, wherever it is rendered", () => 
     }
     // The three status labels are interpolated (`status_${m.status}`), so the loop above
     // cannot see them. They are the values `mailboxes.status` takes in the schema.
-    for (const s of ["connected", "error", "disabled"]) {
+    for (const s of ["connected", "connecting", "error", "disabled"]) {
       expect(messages.mailboxes![`status_${s}`], `missing mailboxes.status_${s}`).toBeTruthy();
     }
   });

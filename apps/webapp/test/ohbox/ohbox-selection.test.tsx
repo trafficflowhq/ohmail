@@ -1,0 +1,1107 @@
+/** @vitest-environment jsdom */
+import type { EngineMutation } from "@ohmail/wire";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
+import * as React from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { NextIntlClientProvider } from "next-intl";
+import { readdirSync, readFileSync } from "node:fs";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import en from "../../messages/en.json";
+import de from "../../messages/de.json";
+import { createDeleteUndo, UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
+import { readerMoveRefusal, rosterStateOf } from "@ohmail/app-logic/mail-state/mail-state";
+import { chordMatches, groupedBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
+import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
+/* The source censuses below anchor on the DECLARED NAME. The rule, and what a hook spelling
+   costs, are written out in the helper; `anchor-census.test.ts` refuses the hook spelling
+   across every test source under this directory. */
+import { sliceOfDeclaration } from "../source-anchor.js";
+import { ohboxRows, openLetter, reportSays, seatedList } from "./_finders.js";
+import { admitting, mountSeat, unmountSeat } from "../_ohbox-1-seat.js";
+import { fakeMail, letter } from "../../../../packages/app/test/reader/support/fake-mail.js";
+
+/**
+ * ═══ THE SELECTION'S VERBS ARE THE MESSAGE PILL ═══════════════════════════════════════════
+ *
+ * 0.15.0 item 11. The Ohbox already had a selection — `x`, ⇧-click ranges, ⇧U, Escape, tinted
+ * and railed rows — and a BAR that was a third control shape: an accent-soft wash strip in the
+ * list head, with the message pill's verbs, its own English-only container rungs, and a row
+ * that overflowed its own box in German. This file holds what replaced it.
+ *
+ * ── WHAT EACH DESCRIBE IS FOR, AND THE MUTATION THAT MAKES IT RED ───────────────────────────
+ *
+ *   · "the shape" — the pill IS `.msg-actions > .abar`, in the list column's foot, in place of
+ *     the hints strip. Mutation: mount it anywhere else, or bring `.pick-bar` back → red.
+ *   · "the count capsule" — one control that states the number and clears the selection.
+ *     Mutation: split it into a count and a separate Clear → the `aria-label` case goes red.
+ *   · "no reply verbs" — Reply, Reply all and Forward never appear over a set, at one OR at
+ *     seven. Mutation: add Reply to the pill's row → red at both counts.
+ *   · "the keys" — the extend chords, and the letters acting on the selection. Mutation:
+ *     implement ⇧↑ as a shrink → red; drop the `!e.repeat` guard on ⌫ → red.
+ *   · "a reader" — Move over a selection is refused AT THE PRESS, once, with nothing on the
+ *     wire, and the pick survives. Mutation: delete the `readerMoveRefusal` call in
+ *     `onBulkAction` → red, with three `move`s on the wire. The verdict is the SHIPPED
+ *     `screenerMode` → `readerMoveRefusal` path over a real roster row; nothing is stubbed.
+ *   · "the window over a set" — one window, one toast, one Undo for N ids. Mutation: key the
+ *     open map by message id again → red (N toasts, N Undos).
+ *   · "the stylesheets" — the retirement and the two rules the pill depends on, read as text.
+ *   · "the ? sheet" — the selection's labels are listed while a selection exists and NOT
+ *     without one. Mutation: declare the verb bindings unconditionally → red.
+ */
+
+// See `sync-liveness-shell.test.ts` for why React is published as a global.
+(globalThis as unknown as { React: unknown }).React = React;
+process.env.NEXT_PUBLIC_API_BASE = "/api";
+(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
+  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
+};
+
+/**
+ * THE NEW SHELL's PRESS, read by path (section D (3) of the new-shell ruling: re-pointed, expectations untouched).
+ * Today's shell declared the move arms inline (`onBulkAction`, `onBulkScreen`, `onMessageAction`); the new shell's
+ * verbs are functions of `VerbContext` under `packages/app-logic/src/press/` (`runBulkAction` in `selection-verbs.ts`,
+ * `screenBulk` in `selection-screening.ts`, `pressMove` and `moveToPlace` in `message-verbs.ts`), and the refusal's
+ * words are the press seam's (`refusalCopy` in `shell-dispatch.ts`, which the frame's room mounts once).
+ */
+const PRESS = "packages/app-logic/src/press";
+const pressText = (file: string): string => readFileSync(`${PRESS}/${file}`, "utf8");
+const pressSliceOf = (file: string, name: string): string => sliceOfDeclaration(pressText(file), name);
+const pressFolderText = (): string =>
+  readdirSync(PRESS).filter((f) => /\.tsx?$/.test(f)).map(pressText).join("\n");
+
+const h = React.createElement;
+const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let root: Root | null = null;
+let host: HTMLElement | null = null;
+let sent: EngineMutation[] = [];
+
+async function unmount(): Promise<void> {
+  if (root) await act(async () => { root!.unmount(); });
+  host?.remove();
+  root = null;
+  host = null;
+}
+
+/** The demo shell, with the desktop cursor on the first row or the phone list showing. */
+async function mountShell(room: "desktop" | "phone" = "desktop"): Promise<void> {
+  await unmount();
+  if (room === "phone") setPhone();
+  const { MailShell: AppShell } = await import("../_mail-shell.js");
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(
+      h(NextIntlClientProvider, {
+        locale: "en", messages: en, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
+        children: h(ThemeProvider, {
+          storageKey: null,
+          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+        }),
+      }),
+    );
+  });
+  await vi.waitFor(() => expect(ohboxRows(host!).length).toBeGreaterThan(0));
+  if (room === "desktop") await key("j");
+}
+
+/**
+ * THE ADDRESS AS A BROWSER ANNOUNCES IT. At the seated Ohbox the selection is the address, and the frame hears a move
+ * of it by its `hashchange`; jsdom queues that event on a task this file's fake clock never runs (the reason this file
+ * already announces a link by hand). A press that moved the address announces it here, as the browser does a frame
+ * later.
+ */
+let heardHash = "";
+const hearAddress = async (): Promise<void> => {
+  if (window.location.hash === heardHash) return;
+  heardHash = window.location.hash;
+  await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
+};
+
+const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+  });
+  await hearAddress();
+};
+
+const click = async (el: Element | null | undefined, init: MouseEventInit = {}): Promise<void> => {
+  expect(el, "nothing to click").toBeTruthy();
+  await act(async () => {
+    el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
+  });
+  await hearAddress();
+};
+
+const rows = (): HTMLElement[] => ohboxRows(host!);
+const pickedRows = (): HTMLElement[] => rows().filter((r) => r.hasAttribute("data-picked"));
+/** The selection's bar: a toolbar named for the selection. */
+const pill = (): HTMLElement | null => seatedList(host!)?.querySelector<HTMLElement>('[role="toolbar"][aria-label="Selection"]') ?? null;
+const barButtons = (): HTMLButtonElement[] => [...(pill()?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+const labelOf = (b: Element): string => (b.textContent ?? "").trim();
+/** The bar's count: the button that names how many are picked and lets them go. */
+const countCapsule = (): HTMLButtonElement | null =>
+  barButtons().find((b) => /selected/.test(b.getAttribute("aria-label") ?? "")) ?? null;
+const pickCount = (): string | null => /^(\d+) selected/.exec(countCapsule()?.getAttribute("aria-label") ?? "")?.[1] ?? null;
+/** The ask a destructive verb over the pick opens: a dialog named by its question. */
+const deleteAsk = (): HTMLElement | null =>
+  [...document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"]')].find((d) => /^(?:Move to Trash|[\d,]+ to Trash)\.$/.test(d.getAttribute("aria-label") ?? "")) ?? null;
+/**
+ * The toasts that are SAYING something.
+ *
+ * `ToastHost` keeps a `.toast` element mounted at rest with no text in it, so a bare
+ * `querySelectorAll(".toast").length` is 1 before anything has happened — which reads as "a
+ * toast is up" and makes a "nothing was raised" assertion pass on a press that raised nothing
+ * AND on one that raised something. Filtering on the text is what makes the count mean what
+ * the assertions below say it means.
+ */
+const toasts = (): string[] => {
+  /* At the seated Ohbox a verb's answer is said in the frame's report at the foot (declared), which says
+     one report at a time: what it says now, or nothing. The set's count in its words is what "one for the set" reads. */
+  const said = reportSays();
+  return said.length > 0 ? [said] : [];
+};
+
+/** Set the phone viewport before the frame reads its layout. */
+function setPhone(): void {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
+  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
+    ({
+      matches: query.includes("max-width"), media: query, onchange: null,
+      addListener() {}, removeListener() {},
+      addEventListener() {}, removeEventListener() {},
+      dispatchEvent() { return false; },
+    }) as unknown as MediaQueryList;
+}
+
+/** One pointer event on a row, with the fields the gesture actually reads. */
+const pointer = async (
+  el: Element,
+  type: string,
+  init: { pointerType?: string; clientX?: number; clientY?: number } = {},
+): Promise<void> => {
+  await act(async () => {
+    const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: init.clientX ?? 10, clientY: init.clientY ?? 10 });
+    Object.defineProperty(e, "pointerType", { value: init.pointerType ?? "touch" });
+    el.dispatchEvent(e);
+  });
+  await hearAddress();
+};
+
+/**
+ * A COMPLETE TOUCH GESTURE, because the halves are not interchangeable.
+ *
+ * `hold` is pointerdown → 450ms → pointerup → click, and that last click is the hold's OWN and
+ * must be swallowed: without it the reader would open over the selection that has just
+ * appeared. `tap` is pointerdown → pointerup → click. Firing a bare `click` for a tap is what
+ * these tests did first, and it was correctly eaten by the swallow — the gesture had never
+ * started, so nothing cleared the flag the hold had set. A test that skips half a gesture is
+ * testing a sequence the device cannot produce.
+ */
+const hold = async (row: Element): Promise<void> => {
+  await pointer(row, "pointerdown", { pointerType: "touch" });
+  await act(async () => { vi.advanceTimersByTime(500); });
+  await pointer(row, "pointerup", { pointerType: "touch" });
+  await click(row);
+};
+const tap = async (row: Element): Promise<void> => {
+  await pointer(row, "pointerdown", { pointerType: "touch" });
+  await pointer(row, "pointerup", { pointerType: "touch" });
+  await click(row);
+};
+
+/** Pick `n` rows from the cursor with the keys that make a pick. */
+const pick = async (n: number): Promise<void> => {
+  for (let i = 0; i < n; i++) {
+    await key("x");
+    if (i < n - 1) await key("j");
+  }
+};
+
+beforeEach(() => {
+  window.location.hash = "";
+  heardHash = "";
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
+  (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
+    ({
+      matches: false, media: query, onchange: null,
+      addListener() {}, removeListener() {},
+      addEventListener() {}, removeEventListener() {},
+      dispatchEvent() { return false; },
+    }) as unknown as MediaQueryList;
+  const el = Element.prototype as unknown as Record<string, () => void>;
+  el.scrollIntoView = () => {};
+  el.scrollTo = () => {};
+  (globalThis as Record<string, unknown>).IntersectionObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): [] { return []; }
+  };
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  sent = [];
+  // Every verb the demo adapter is asked to perform, with the real one still running under it
+  // — see `shell-screening-bulk.test.ts` for why the arguments must all be forwarded.
+  const real = FixturesAdapter.prototype.mutate;
+  vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(async function (
+    this: FixturesAdapter,
+    ...args: Parameters<FixturesAdapter["mutate"]>
+  ) {
+    sent.push(args[0] as EngineMutation);
+    return real.apply(this, args);
+  } as never);
+});
+
+afterEach(async () => {
+  await unmount();
+  delete (globalThis as Record<string, unknown>).IntersectionObserver;
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
+
+/* ══ the count capsule ═══════════════════════════════════════════════════════════════════ */
+
+describe("the count is the leading capsule, and it is the way out", () => {
+  it("states the number, names the act, and CLEARS when pressed", async () => {
+    await mountShell();
+    await pick(3);
+    expect(pickCount()).toBe("3");
+
+    const capsule = countCapsule()!;
+    /* ONE CONTROL, NOT TWO. A separate Clear verb would be a second exit for one act — and in
+       German "Auswahl aufheben" is 110px for something the count itself can say. So the
+       button's NAME has to carry both halves: how many, and what pressing it does. */
+    const label = capsule.getAttribute("aria-label") ?? "";
+    expect(label, "the capsule does not say how many are selected").toContain("3");
+    expect(label.toLowerCase(), "the capsule does not say that it clears").toContain("clear the selection");
+
+    await click(capsule);
+    expect(pickedRows(), "pressing the count did not clear the selection").toHaveLength(0);
+    expect(pill(), "the bar stands over no selection").toBeNull();
+  });
+});
+
+/* ══ what never appears over a set ═══════════════════════════════════════════════════════ */
+
+describe("a set has no reply verbs — at one, and at seven", () => {
+  for (const n of [1, 7]) {
+    it(`${n} selected: no Reply, no Reply all, no Forward, and no accent capsule`, async () => {
+      await mountShell();
+      await pick(n);
+      expect(pickCount()).toBe(String(n));
+      const labels = barButtons().map(labelOf).join(" · ");
+      /* THERE IS NO SUCH ACT OVER A SET — and a pick of ONE is still a pick, which is the case
+         this loop exists for: switching to the single-message vocabulary at count 1 would be
+         the app changing its mind about what you selected. */
+      expect(labels, "Reply appeared on the selection pill").not.toContain("Reply");
+      expect(labels, "Forward appeared on the selection pill").not.toContain("Forward");
+    });
+  }
+
+  it("Delete is in the MENU with no group — never a row button", async () => {
+    await mountShell();
+    await pick(2);
+    // A destructive verb over a set does not belong where a stray click can land, so it carries
+    // no density group and no admission rule can surface it in the row.
+    expect(barButtons().map(labelOf), "Delete stands on the bar where a stray click lands").not.toContain(en.ohbox.actionDelete);
+    await click(barButtons().find((b) => b.getAttribute("aria-label") === en.ohbox.actionMore));
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')];
+    const del = items.find((i) => labelOf(i).startsWith(en.ohbox.actionDelete));
+    expect(del, "Delete is not in the More menu").toBeTruthy();
+  });
+});
+
+/* ══ the keys ════════════════════════════════════════════════════════════════════════════ */
+
+describe("the selection's keys", () => {
+  it("⇧↓ from an unpicked cursor picks the cursor's row AND the one it lands on", async () => {
+    await mountShell();
+    expect(pickedRows()).toHaveLength(0);
+    await key("ArrowDown", { shiftKey: true });
+    /* WITH NO ANCHOR THE CURSOR'S OWN ROW BECOMES ONE. Anything else leaves the origin row
+       unpicked and the selection does not match the movement the gesture made. */
+    expect(pickedRows(), "⇧↓ did not span the pair it moved over").toHaveLength(2);
+  });
+
+  it("⇧↑ after ⇧↓ ADDS — a range never removes what it walks back over", async () => {
+    await mountShell();
+    await key("ArrowDown", { shiftKey: true });
+    const grown = pickedRows().length;
+    expect(grown).toBe(2);
+    await key("ArrowUp", { shiftKey: true });
+    /* SHRINK-ON-REVERSE IS THE REJECTED DESIGN. It needs a live range with a direction beside
+       the set, and it would remove rows picked by other means — ⌘-click four, then ⇧↓ ⇧↑, and
+       two are gone. Implement the shrink and this goes red. */
+    expect(pickedRows().length, "⇧↑ removed rows instead of adding").toBeGreaterThanOrEqual(grown);
+  });
+
+  it("the verb letters act on the SELECTION while there is one", async () => {
+    await mountShell();
+    await pick(3);
+    const ids = pickedRows().map((r) => r.dataset.id!);
+    expect(ids).toHaveLength(3);
+
+    sent = [];
+    await key("e"); // Park
+    const triage = sent.filter((m) => m.kind === "triage_set") as Array<{ messageId: string; state: string }>;
+    expect(triage.map((m) => m.messageId).sort(), "`e` did not park the selection").toEqual([...ids].sort());
+    expect(triage.every((m) => m.state === "set_aside")).toBe(true);
+    // ONE dispatch per message, and none twice.
+    expect(new Set(triage.map((m) => m.messageId)).size).toBe(triage.length);
+    // The verb ran, so the pick is spent.
+    expect(pickedRows()).toHaveLength(0);
+  });
+
+  it("`d` ASKS first, and Escape closes the ask before it clears the selection", async () => {
+    await mountShell();
+    await pick(3);
+    sent = [];
+    await key("d");
+
+    const ask = deleteAsk();
+    expect(ask, "`d` did not open the ask").toBeTruthy();
+    // The count is stated in the question — the last place it is said before the rows go.
+    expect(ask!.getAttribute("aria-label"), "the ask does not count the selection").toContain("3");
+    expect(within(ask!).getAllByRole("menuitem").map((answer) => answer.textContent)).toEqual(["Move", "Cancel"]);
+    expect(ask!.textContent).not.toContain("your own mail server");
+    expect(sent, "the ask dispatched something").toEqual([]);
+
+    /* ESCAPE CANCELS THE OPEN SUB-ROW BEFORE IT CLEARS. It matters most here: an Escape that
+       blew past a destructive question to clear the set would leave the person with neither. */
+    await key("Escape");
+    expect(deleteAsk(), "Escape blew past the ask").toBeNull();
+    expect(pickedRows(), "Escape cleared the selection as well as the ask").toHaveLength(3);
+    await key("Escape");
+    expect(pickedRows()).toHaveLength(0);
+  });
+
+  it("Escape over the selection's More closes More, once: the pick stays until the next Escape", async () => {
+    await mountShell();
+    await pick(3);
+    await click(barButtons().find((b) => b.getAttribute("aria-label") === en.ohbox.actionMore));
+    const menu = document.querySelector<HTMLElement>('[role="menu"]');
+    expect(menu, "More opened no menu").toBeTruthy();
+    /* From where the keyboard is (the menu, or the page when nothing in it holds the keys). */
+    const at = menu!.contains(document.activeElement) ? document.activeElement! : document.body;
+    await act(async () => {
+      at.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    expect(document.querySelector('[role="menu"]'), "Escape left More open").toBeNull();
+    expect(pickedRows(), "one Escape closed More and cleared the selection too").toHaveLength(3);
+    await key("Escape");
+    expect(pickedRows()).toHaveLength(0);
+  });
+
+  it("⌫ opens the window DIRECTLY — one toast for the set, and nothing on the wire yet", async () => {
+    vi.useFakeTimers();
+    await mountShell();
+    await pick(3);
+    const ids = pickedRows().map((r) => r.dataset.id!);
+    sent = [];
+
+    await key("Backspace");
+    // No ask: a keycap that deletes on a single press is item 10's own distinction, and the
+    // toast's Undo is the protection.
+    expect(deleteAsk()).toBeNull();
+    /* ONE window and ONE toast for the whole press — not three. The toast counts the set, out
+       of the plural catalogue. */
+    const up = toasts();
+    expect(up, "a press over three raised more than one toast").toHaveLength(1);
+    expect(up[0], "the toast does not count the set").toContain("3");
+    expect(sent, "a delete reached the wire inside the window").toEqual([]);
+    // The rows left every pile on the press.
+    expect(rows().filter((r) => ids.includes(r.dataset.id!))).toHaveLength(0);
+
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS * 2); });
+    const deletes = sent.filter((m) => m.kind === "message_delete") as Array<{ messageId: string }>;
+    expect(deletes.map((m) => m.messageId).sort(), "the window closed on the wrong set")
+      .toEqual([...ids].sort());
+  });
+
+  it("a REPEATED ⌫ opens nothing — the guard is on the event, so the repeat itself is refused", async () => {
+    /**
+     * WHAT THIS ASSERTS, AND WHY IT IS NOT THE OBVIOUS SHAPE. The obvious test — press ⌫, then
+     * press it twice more with `repeat` — passes with the guard DELETED, because the first
+     * press clears the pick and the binding is then absent. It was written that way first and
+     * watched pass under the mutation, which is exactly the blind guard AGENTS.md warns about.
+     *
+     * The guard's real contract is on the EVENT: a keydown carrying `repeat` is not a press.
+     * So the repeat is dispatched FIRST, over a live selection, where the binding is present
+     * and enabled and the only thing standing between it and the window is `when`. Delete
+     * `when: (e) => !e.repeat` from the two delete chords and this goes red with a window open
+     * over the set. The ordinary press after it proves the fixture could have fired.
+     */
+    vi.useFakeTimers();
+    await mountShell();
+    await pick(2);
+    const ids = pickedRows().map((r) => r.dataset.id!);
+    sent = [];
+
+    await key("Backspace", { repeat: true } as KeyboardEventInit);
+    expect(toasts(), "a key repeat opened a delete window").toHaveLength(0);
+    expect(pickedRows(), "a key repeat spent the selection").toHaveLength(2);
+    expect(rows().filter((r) => ids.includes(r.dataset.id!)), "a key repeat hid the rows")
+      .toHaveLength(2);
+
+    // …and the same key, pressed rather than repeated, does open one.
+    await key("Backspace");
+    expect(toasts(), "the fixture could not fire at all").toHaveLength(1);
+  });
+});
+
+/* ══ a reader ════════════════════════════════════════════════════════════════════════════ */
+
+describe("a reader is refused AT THE PRESS, once, with the selection kept", () => {
+  /**
+   * THE REAL PATH, NOT A MOCKED VERDICT. `screenerMode` derives the role from a roster row
+   * shaped like the one the API returns, and `readerMoveRefusal` chooses the sentence out of
+   * the shipped catalogue. Both are the functions `AppShell.onBulkAction` calls.
+   */
+  const HERE = {
+    id: "mb-here", status: "connected", disabledReason: null, organizerRole: "organizer" as const,
+    organizedBy: null, organizeConsentedAt: "2026-09-02T09:00:00.000Z",
+  };
+  const THERE = {
+    id: "mb-there", status: "connected", disabledReason: null, organizerRole: "reader" as const,
+    organizedBy: { kind: "cloud", name: "ohmail Cloud", since: "2026-09-02T09:00:00.000Z" },
+    organizeConsentedAt: "2026-09-02T09:00:00.000Z",
+  };
+  const say = {
+    named: (name: string) => en.screener.readerMoveRefused.replace("{name}", name),
+    unknown: () => en.screener.readerMoveRefusedUnknown,
+    nobody: () => en.screener.readerMoveRefusedNobody,
+  };
+
+  it("NO PROBE (desktop, demo) PERMITS — the wire stays the authority where no roster exists", () => {
+    expect(rosterStateOf(false, null).kind).toBe("absent");
+    expect(readerMoveRefusal(rosterStateOf(false, null), ["mb-here"], say)).toBeNull();
+    expect(readerMoveRefusal(rosterStateOf(false, null), ["anything", ""], say)).toBeNull();
+  });
+
+  it("A PENDING probe REFUSES — the answer is coming and the verb is destructive", () => {
+    expect(rosterStateOf(true, null).kind).toBe("pending");
+    expect(readerMoveRefusal(rosterStateOf(true, null), ["mb-here"], say))
+      .toBe(en.screener.readerMoveRefusedUnknown);
+  });
+
+  it("A KNOWN roster answers PER MAILBOX: organizer permits, reader refuses by name", () => {
+    const known = rosterStateOf(true, [HERE, THERE] as never);
+    expect(readerMoveRefusal(known, ["mb-here"], say)).toBeNull();
+    expect(readerMoveRefusal(known, ["mb-there"], say)).toBe(say.named("ohmail Cloud"));
+  });
+
+  it("a MIXED selection refuses on the reader mailbox — the whole press, not the refusable part", () => {
+    const known = rosterStateOf(true, [HERE, THERE] as never);
+    expect(readerMoveRefusal(known, ["mb-here", "mb-there"], say)).toBe(say.named("ohmail Cloud"));
+  });
+
+  it("an UNKNOWN id in a known roster refuses, and so does an empty set", () => {
+    const known = rosterStateOf(true, [HERE] as never);
+    expect(readerMoveRefusal(known, ["mb-nope"], say)).toBe(en.screener.readerMoveRefusedUnknown);
+    expect(readerMoveRefusal(known, [], say)).toBe(en.screener.readerMoveRefusedUnknown);
+  });
+
+  it("`AppShell.onBulkAction` refuses move and screen BEFORE dispatching, and keeps the pick", () => {
+    // Follow the bulk action into the move arm and require the refusal before it dispatches.
+    const bulk = pressSliceOf("selection-verbs.ts", "runBulkAction");
+    expect(bulk).toContain('return pressMoveSet(cx, action.slice("move:".length)');
+    const move = pressSliceOf("selection-verbs.ts", "pressMoveSet");
+    const dispatchAt = move.indexOf("return moveSet(cx, view, ids,");
+    expect(dispatchAt, "fixture: the bulk move's dispatch is not in pressMoveSet").toBeGreaterThan(-1);
+    const moveArm = move.slice(0, dispatchAt);
+    expect(moveArm, "the bulk move arm no longer asks for the refusal before it dispatches")
+      .toMatch(/readerMoveRefusal\(\s*cx\.press\.rosterRef\.current/);
+    expect(moveArm).toMatch(/if \(refused !== null\) \{\s*cx\.toast\(refused\);\s*return false;/);
+
+    const screen = pressSliceOf("selection-screening.ts", "screenBulk");
+    const planAt = screen.indexOf("const plan = planBulkScreening");
+    expect(planAt, "fixture: screenBulk no longer plans").toBeGreaterThan(-1);
+    const beforePlan = screen.slice(0, planAt);
+    expect(beforePlan, "bulk screening no longer refuses a reader before it plans")
+      .toMatch(/readerMoveRefusal\(\s*cx\.press\.rosterRef\.current/);
+    expect(beforePlan).toMatch(/return false;/);
+  });
+
+  it("the SINGLE-message move refuses at the press too — the other half of the same rule", () => {
+    /**
+     * the single half, closed in the same slice as the bulk one because it is the same defect
+     * and the same fix. The arm used to dispatch and let the SERVER refuse: the row left the
+     * list, the request was declined, the engine rolled the overlay back, and the message
+     * reappeared a beat later with no sentence saying why.
+     *
+     * Read as source for the reason the bulk arms are: these arms are inline in a very long
+     * shell, and the claim is the ORDER — the refusal is resolved and the arm BREAKS before the
+     * dispatch, so nothing reaches the wire. Delete the gate and the dispatch below it becomes
+     * reachable for a reader, which is exactly the state this closes.
+     *
+     * The dispatch the arm makes is `moveToPlace`, and it used to be a bare `engine.mutate` here.
+     * The ORDER claim is untouched by that; what the anchor has to follow is the call that reaches
+     * the wire, so the second half below reads `moveToPlace`'s own declaration and refuses one that
+     * dispatches nothing — an anchor naming a call that no longer writes would pass on air.
+     *
+     * The behavioural half of the verdict — that `readerMoveRefusal` says no for a reader and
+     * yes for an organizer, out of the shipped catalogue over a real roster row — is asserted
+     * above and is the same function this arm calls.
+     */
+    /* The new shell's single move is `pressMove` (the `move:<view>` arm of `runMessageAction` calls it); a refusal
+       there RETURNS before the wire, as today's arm broke out of its switch. */
+    const arm = pressSliceOf("message-verbs.ts", "pressMove");
+    const gate = arm.indexOf("readerMoveRefusal(");
+    const wire = arm.indexOf("moveToPlace(cx, m, view, subject)");
+    expect(gate, "the single-message move arm no longer asks for the refusal").toBeGreaterThan(-1);
+    expect(wire).toBeGreaterThan(-1);
+    // ORDER IS THE CLAIM: the gate stands before the wire, and it breaks rather than falling through.
+    expect(gate, "the refusal is asked AFTER the move is dispatched").toBeLessThan(wire);
+    expect(arm.slice(gate, wire)).toMatch(/if \(refusedMove !== null\) \{\s*cx\.toast\(refusedMove\);\s*return;\s*\}/);
+    // The same two sentences as every other caller — a second spelling is the drift the helper ends.
+    expect(arm.slice(gate, wire)).toMatch(/refusalCopy/);
+    /* AND THE CALL PAST THE GATE REALLY WRITES. Without this the anchor above could name a
+       function that does nothing and the order claim would be about nothing. */
+    expect(
+      pressSliceOf("message-verbs.ts", "moveToPlace"),
+      "the call past the refusal dispatches nothing — the order claim is over air",
+    ).toContain("dispatchScreeningChange(");
+    /* WHAT THIS CASE MEANS, CHOSEN RATHER THAN INHERITED: **the declaration names the key.**
+       `sliceOfDeclaration` returns `refusalCopy`'s own declaration and nothing after it — 199
+       bytes over 8 lines — so the claim is that the memo both arms read resolves its sentence out
+       of the catalogue under that key.
+       It replaces `slice(shell.indexOf("const refusalCopy = " + hook)).slice(0, 400)`: a window
+       that ran some 200 bytes past the declaration into whatever happened to follow it. Both
+       windows contain the key, so the ASSERTION is unchanged — what changed is that the window is
+       now the declaration, a bound the code defines, instead of a byte count nobody chose.
+       The stale anchor was also the last hook spelling in this file, and it would have failed the
+       way the three above it did: `indexOf` returning -1 and `slice(-1)` handing back the file's
+       final newline, which fails this positive `toMatch` with the sentence for "the shell stopped
+       using `refusalCopy`" rather than for a stale anchor. */
+    /* THE MEMO LEFT THIS FILE with the dispatch spine (`shell-dispatch.ts`), so the anchor asks
+       the MANIFEST which frame declares it rather than this one — `shellFrameOf` throws on zero
+       hits and on two, which is what keeps a re-home from landing on a same-named declaration
+       somewhere else. The re-typing count is asked over both frames for the same reason. */
+    expect(
+      pressSliceOf("shell-dispatch.ts", "refusalCopy"),
+      "the refusal memo no longer resolves the catalogue key — both move arms toast something else",
+    ).toMatch(/screener\.readerMoveRefused/);
+    expect(
+      (pressFolderText().match(/t\("screener\.readerMoveRefused"/g) ?? []).length,
+      "a caller re-typed the refusal sentence instead of using refusalCopy",
+    ).toBe(1);
+  });
+
+  it("the source census REFUSES an anchor that finds nothing", () => {
+    /**
+     * THE CONTROL for `sliceOfDeclaration`, and for the defect it makes unrepresentable: the
+     * two cases above located their arm by the hook it was declared with, a codemod renamed
+     * that hook, and an empty slice made every `toContain` over it pass on nothing. A name the
+     * shell does not declare has to throw, not hand back something to assert nothing against.
+     */
+    const shell = pressText("selection-verbs.ts");
+    expect(() => sliceOfDeclaration(shell, "noSuchName")).toThrow("anchor not found: noSuchName");
+    /* The positive half — the names these cases DO use resolve to a slice with the arm in it. */
+    expect(pressSliceOf("selection-verbs.ts", "pressMoveSet")).toContain("readerMoveRefusal(");
+    expect(pressSliceOf("message-verbs.ts", "pressMove")).toContain("moveToPlace(cx, m, view, subject)");
+    expect(pressSliceOf("message-verbs.ts", "moveToPlace")).toContain("dispatchScreeningChange(");
+    /* `refusalCopy`'s own positive arm. Its case above was the last site in this file located by
+       a hook spelling; a refusal arm alone would prove the helper says no to a name that is not
+       there, and nothing about it saying yes to this one. */
+    expect(pressSliceOf("shell-dispatch.ts", "refusalCopy")).toContain("screener.readerMoveRefused");
+  });
+
+  it("`runBulk` KEEPS the selection when the verb reports it was refused", () => {
+    // The other half of the contract, and the reason `BulkVerbs.run` returns a boolean at all:
+    // a set thrown away by a press that did nothing has to be rebuilt before the person can try
+    // the verb that would have worked.
+    const view = readFileSync("packages/app-logic/src/ohbox/picks.ts", "utf8");
+    expect(view).toMatch(/if \(bulk\.run\(action, pickedIds, \{ conversationIds \}\)\) clearPicked\(\);/);
+    expect(view, "runBulk clears unconditionally again").not.toMatch(
+      /bulk\.run\(action, pickedIds, \{ conversationIds \}\);\s*\n\s*clearPicked\(\);/,
+    );
+  });
+});
+
+/* ══ the window over a set ═══════════════════════════════════════════════════════════════ */
+
+describe("the delete window holds a whole press, not a message", () => {
+  interface Sent { kind: string; messageId: string }
+
+  function queueOver(opts: { refuse?: boolean; rollback?: number } = {}) {
+    const sentHere: Sent[] = [];
+    const said: string[] = [];
+    let actions: Array<() => void> = [];
+    let n = 0;
+    const queue = createDeleteUndo({
+      scope: null,
+      mutate: async (messageId) => {
+        sentHere.push({ kind: "message_delete", messageId });
+        return { status: n++ < (opts.rollback ?? 0) ? "rolled_back" : "confirmed" };
+      },
+      toast: (msg, o) => { said.push(msg); if (o?.onAction) actions.push(o.onAction); },
+      copy: {
+        deleted: en.ohbox.toastDeleted, undo: en.screener.toastUndo,
+        undone: en.ohbox.deleteUndone, failed: en.ohbox.deleteFailed,
+        noUndo: en.session.noUndoHere,
+        deletedMany: (count: number) => `${count} moved`,
+        undoneMany: (count: number) => `${count} undone`,
+        failedMany: (count: number) => `${count} failed`,
+      },
+      onHeld: () => {},
+      refusal: () => (opts.refuse ? "refused" : null),
+    });
+    return { queue, sent: sentHere, said, pressUndo: () => { const a = actions; actions = []; a.forEach((f) => f()); } };
+  }
+
+  it("three ids are ONE window, ONE toast and ONE Undo", async () => {
+    vi.useFakeTimers();
+    const { queue, sent: out, said } = queueOver();
+    queue.remove([{ id: "a" }, { id: "b" }, { id: "c" }]);
+    /* KEYED BY PRESS, NOT BY MESSAGE. Keyed by message this is three timers, three toasts
+       stacked over each other and three Undos for one decision. */
+    expect(said, "a press over three said it three times").toHaveLength(1);
+    expect(said[0]).toBe("3 moved");
+    expect([...queue.held()].sort()).toEqual(["a", "b", "c"]);
+    expect(out, "something reached the wire inside the window").toEqual([]);
+
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS); });
+    expect(out.map((m) => m.messageId).sort()).toEqual(["a", "b", "c"]);
+    expect(out.every((m) => m.kind === "message_delete")).toBe(true);
+    expect([...queue.held()]).toEqual([]);
+  });
+
+  it("Undo forgets ALL of them, and says how many", async () => {
+    vi.useFakeTimers();
+    const { queue, sent: out, said, pressUndo } = queueOver();
+    queue.remove([{ id: "a" }, { id: "b" }, { id: "c" }]);
+    pressUndo();
+    expect(said[1]).toBe("3 undone");
+    expect([...queue.held()]).toEqual([]);
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS * 4); });
+    expect(out, "the timer was ignored rather than disarmed").toEqual([]);
+  });
+
+  it("a PARTIAL failure counts the refusals — once, not per row", async () => {
+    vi.useFakeTimers();
+    const { queue, said } = queueOver({ rollback: 2 });
+    queue.remove([{ id: "a" }, { id: "b" }, { id: "c" }]);
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    /* THE NUMBER THAT MATTERS IS HOW MANY CAME BACK. Said per row this is "that delete could
+       not be saved" twice, which tells the reader nothing about the state of the pile. */
+    expect(said.filter((s) => s.endsWith("failed"))).toEqual(["2 failed"]);
+  });
+
+  it("an id already inside an open window is not pressed again", async () => {
+    vi.useFakeTimers();
+    const { queue, sent: out, said } = queueOver();
+    queue.remove([{ id: "a" }, { id: "b" }]);
+    queue.remove([{ id: "b" }, { id: "c" }]);
+    expect(said).toHaveLength(2);
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS * 2); });
+    // `b` is deleted ONCE — two windows holding it would dispatch it twice when both closed.
+    expect(out.map((m) => m.messageId).sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("a READER is refused before anything is held", () => {
+    const { queue, sent: out, said } = queueOver({ refuse: true });
+    queue.remove([{ id: "a" }, { id: "b" }, { id: "c" }]);
+    expect(said).toEqual(["refused"]);
+    expect(out).toEqual([]);
+    expect([...queue.held()], "rows were hidden behind a refusal").toEqual([]);
+  });
+
+  it("the four plural sentences exist in both catalogues and are not each other", () => {
+    for (const k of ["bulkDeleteAsk", "toastDeletedMany", "deleteUndoneMany", "deleteFailedMany"] as const) {
+      expect(en.ohbox[k], `en.ohbox.${k}`).toBeTruthy();
+      expect(de.ohbox[k], `de.ohbox.${k}`).toBeTruthy();
+      expect(de.ohbox[k], `de.ohbox.${k} is the English one`).not.toBe(en.ohbox[k]);
+      // ICU plurals, so one message and seven read correctly in both languages.
+      expect(en.ohbox[k]).toContain("plural");
+      expect(de.ohbox[k]).toContain("plural");
+    }
+    // item 10's singular keys are NOT touched — the confirm strip and the mobile reader pin them.
+    expect(en.ohbox.toastDeleted).toBe("Moved to Trash.");
+  });
+});
+
+/* ══ the stylesheets ═════════════════════════════════════════════════════════════════════ */
+
+describe("what the stylesheets say", () => {
+  const actionBar = readFileSync("apps/webapp/app/shell/action-bar.css", "utf8");
+  const listPane = readFileSync("packages/ui/src/composites/list-pane.css", "utf8");
+
+  /* The retired strip's census, today's selection pill's stylesheet rules (the count capsule, the compact floor, the
+     measure row) and the picked row's tint over `.view-ohbox` left with today's Ohbox view (the new-shell ruling,
+     section D: their rows in share ohbox-1's rows file name the new part's cases that hold the behaviour behind
+     them). The two left read today's sheets for a promise the new part does not state yet: their rows are GAPs. */
+
+  it("the foot is in flow and carries the safe area under 640", () => {
+    const foot = listPane.slice(listPane.indexOf(".list-foot{"));
+    expect(foot).toMatch(/\.list-foot\{[^}]*flex:none/);
+    // NOT sticky and NOT positioned — the toast-band argument depends on it.
+    expect(foot.slice(0, foot.indexOf("}"))).not.toContain("position:");
+    expect(listPane).toMatch(
+      /@media \(max-width:640px\)\{\s*\.list-foot\{padding-bottom:calc\(12px \+ env\(safe-area-inset-bottom, 0px\)\)\}/,
+    );
+    // Nothing anywhere makes the foot or the pill inside it sticky.
+    expect(actionBar).not.toMatch(/\.list-foot[^{]*\{[^}]*position:\s*sticky/);
+  });
+
+  it("keycaps are hidden where there is no keyboard AND where there is no room", () => {
+    /* The gap `touch-keys.css` left: it hides the top bar's ⌘K, the reader hint and the
+       decision capsules' caps, and never `.abar kbd` — so ⇧U, esc, r and ⇧f drew on phones.
+       BOTH arms are pinned. The width arm is not decoration: a 390px-wide desktop window is a
+       FINE pointer, so the coarse arm alone leaves the caps drawn there, and `fit-render`
+       measured the German selection row 9px past its box on paper and 15px on ohmarchy with
+       the compact floor already spent. Drop either arm and that overflow comes back. */
+    expect(actionBar).toMatch(
+      /@media \(pointer: coarse\), \(max-width: 640px\) \{\s*\.abar kbd \{ display: none; \}/,
+    );
+  });
+});
+
+/* ══ the ? sheet ═════════════════════════════════════════════════════════════════════════ */
+
+describe("the shortcut sheet teaches the state the reader is actually in", () => {
+  const view = readFileSync("packages/app-logic/src/ohbox/keys.ts", "utf8");
+
+  it("every selection label in the catalogue is declared by the view", () => {
+    // The sheet is generated from the registry, so a label with no binding cannot appear and a
+    // binding with no label cannot be documented. This pins the pairing.
+    for (const k of [
+      "keySelLater", "keySelPark", "keySelResurface", "keySelTag", "keySelScreen",
+      "keySelMove", "keySelUnread", "keySelDeleteAsk", "keySelDelete",
+      "keyExtendDown", "keyExtendUp",
+    ] as const) {
+      expect(view, `${k} is in the catalogue with no binding`).toContain(`t("${k}")`);
+      expect(en.ohbox[k], `en.ohbox.${k}`).toBeTruthy();
+      expect(de.ohbox[k], `de.ohbox.${k}`).toBeTruthy();
+      expect(de.ohbox[k], `de.ohbox.${k} is the English one`).not.toBe(en.ohbox[k]);
+    }
+  });
+
+  it("the verb chords are DECLARED ONLY WITH A SELECTION — the sheet must not teach the wrong one", () => {
+    /**
+     * NOT `disabled`, ABSENT. `groupedBindings` keeps ONE row per chord and prefers an enabled
+     * declaration; the view's layer is walked before the shell's, so a disabled selection
+     * binding sitting ahead of a disabled message binding WON the row. Measured before this
+     * gate: with nothing picked and no cursor, `a` read "Queue the selection for the Reply
+     * Run". Make the spread unconditional and the sheet teaches the selection's verbs to
+     * somebody who has selected nothing.
+     */
+    expect(view).toMatch(/\.\.\.\(picked\.size > 0\s*\n?\s*\?\s*\(\[/);
+    // The four extend chords are OUTSIDE that spread: they are how a selection starts, so a
+    // key that creates the state cannot be gated on the state.
+    const spreadAt = view.indexOf("...(picked.size > 0");
+    expect(view.indexOf('chord: "shift+ArrowDown"'), "the extend chords were gated on a selection")
+      .toBeLessThan(spreadAt);
+    expect(view.indexOf('chord: "shift+ArrowUp"')).toBeLessThan(spreadAt);
+  });
+
+  it("one row per chord — so ⌫ is never listed twice", () => {
+    /**
+     * THE CORRECTION. The ruling's risk list expected TWO ⌫ rows in the sheet while a selection
+     * stands — the shell's "Move it to Trash" beside the view's "Move the selection to Trash" —
+     * on the premise that the sheet folds by LABEL. It folds by CHORD (`groupedBindings`), so
+     * there is exactly one row for ⌫ at any moment and it carries the label of whichever
+     * binding would actually fire. There is nothing to disambiguate; what has to be true is
+     * that the surviving row is the LIVE one, which is what this asserts.
+     */
+    const shellRow: KeyBinding = {
+      chord: "Backspace", group: "message", label: en.ohbox.keySelDelete, run: () => {},
+    };
+    const viewRow: KeyBinding = {
+      chord: "Backspace", group: "message", label: "Move it to Trash", disabled: true, run: () => {},
+    };
+    const rowsFor = (bindings: KeyBinding[]): KeyBinding[] =>
+      groupedBindings(bindings).flatMap((g) => g.items).filter((b) => b.chord === "Backspace");
+
+    // A disabled declaration never shadows an enabled one below it…
+    expect(rowsFor([viewRow, shellRow])).toHaveLength(1);
+    expect(rowsFor([viewRow, shellRow])[0]!.label).toBe(en.ohbox.keySelDelete);
+    // …and two enabled ones still collapse to the FIRST, which is the one the dispatcher runs.
+    expect(rowsFor([{ ...viewRow, disabled: false }, shellRow])).toHaveLength(1);
+    expect(rowsFor([{ ...viewRow, disabled: false }, shellRow])[0]!.label).toBe("Move it to Trash");
+  });
+});
+
+/* ══ the phone's way in ══════════════════════════════════════════════════════════════════ */
+
+describe("a long press starts a selection on a phone", () => {
+  /**
+   * WITHOUT THIS THE PILL NEVER MOUNTS ON A PHONE — `x` needs a keyboard and ⇧-click needs a
+   * modifier, so every verb the selection bar offers was desktop-only. That is why this lands
+   * as its own commit: the bar itself is width-agnostic and ships with the desktop path, and
+   * if this gesture had slipped, a phone would simply never have seen the bar rather than
+   * seeing a dead one.
+   */
+  it("450ms of touch on a row picks it and mounts the pill", async () => {
+    vi.useFakeTimers();
+    await mountShell("phone");
+    const row = rows()[1]!;
+    await pointer(row, "pointerdown", { pointerType: "touch" });
+    expect(pickedRows(), "the hold picked before its timer ran").toHaveLength(0);
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(pickedRows(), "a 450ms touch hold did not pick the row").toHaveLength(1);
+    // …and the click closing the hold's own press does NOT then open the reader.
+    await pointer(row, "pointerup", { pointerType: "touch" });
+    await click(row);
+    expect(pickedRows(), "the hold's own click was read as a tap").toHaveLength(1);
+    expect(pill(), "the hold did not bring the selection's bar").toBeTruthy();
+  });
+
+  it("a MOUSE hold does nothing — the desktop has `x` and ⌘-click", async () => {
+    /* Drop the `pointerType` guard and this goes red: a click somebody takes their time over
+       would start selecting rows on a machine that never asked for the gesture. */
+    vi.useFakeTimers();
+    await mountShell("phone");
+    await pointer(rows()[1]!, "pointerdown", { pointerType: "mouse" });
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(pickedRows()).toHaveLength(0);
+    expect(pill()).toBeNull();
+  });
+
+  it("a finger that MOVES is scrolling, not selecting", async () => {
+    vi.useFakeTimers();
+    await mountShell("phone");
+    const row = rows()[1]!;
+    await pointer(row, "pointerdown", { pointerType: "touch", clientX: 10, clientY: 10 });
+    // Past `DRAG_SLOP_PX` — a selection appearing mid-scroll is the worst kind of surprise.
+    await pointer(row, "pointermove", { pointerType: "touch", clientX: 10, clientY: 40 });
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(pickedRows()).toHaveLength(0);
+  });
+
+  it("a press that ENDS before the timer is a tap", async () => {
+    vi.useFakeTimers();
+    await mountShell("phone");
+    const row = rows()[1]!;
+    await pointer(row, "pointerdown", { pointerType: "touch" });
+    await act(async () => { vi.advanceTimersByTime(200); });
+    await pointer(row, "pointerup", { pointerType: "touch" });
+    await act(async () => { vi.advanceTimersByTime(500); });
+    expect(pickedRows(), "a short tap started a selection").toHaveLength(0);
+  });
+
+  it("a row that leaves under a resting finger leaves no empty bar behind", async () => {
+    /* Simulate Park arriving from another device while the finger is still down. */
+    vi.useFakeTimers();
+    const message = letter("leaving", { unread: true });
+    const mail = fakeMail([message], [], {}, admitting([message.from.address]));
+    host = mountSeat(mail.engine, { room: "phone" }).container;
+    try {
+      const row = rows()[0]!;
+      expect(row?.dataset.id).toBe(message.id);
+      await pointer(row, "pointerdown", { pointerType: "touch" });
+      await act(async () => { vi.advanceTimersByTime(100); });
+      await act(async () => {
+        mail.patch(message.id, {
+          triage: {
+            messageId: message.id,
+            state: "set_aside",
+            bubbleUpAt: null,
+            setAt: message.updatedAt,
+            updatedAt: message.updatedAt,
+          },
+        });
+      });
+      expect(rows().some((r) => r.dataset.id === message.id), "fixture: Park left the row in the list").toBe(false);
+      await act(async () => { vi.advanceTimersByTime(500); });
+      expect(pickCount(), "the hold's stale pick drew a count").toBeNull();
+      expect(pill(), "a bar stood over a selection of nothing").toBeNull();
+    } finally {
+      unmountSeat();
+      host = null;
+    }
+  });
+
+  it("while a selection stands, a tap TOGGLES a row instead of opening it", async () => {
+    vi.useFakeTimers();
+    await mountShell("phone");
+    await hold(rows()[1]!);
+    expect(pickedRows()).toHaveLength(1);
+
+    /* THE LIST-SELECTION CONTRACT. Without it the only way to build a set on a phone is one
+       long press per row, and the first tap after entering the mode leaves it — opening the
+       reader over the selection that has just appeared. */
+    /* The letter on screen and the address that names it: a tap that opened the row would change both. */
+    const shown = (): [string | null, string] => [openLetter(host!)?.getAttribute("aria-label") ?? null, window.location.hash];
+    const before = shown();
+    await tap(rows()[2]!);
+    expect(pickedRows(), "the tap did not add the second row").toHaveLength(2);
+    expect(shown(), "the tap opened the reader").toEqual(before);
+
+    // …and a tap on a picked row takes it back out.
+    await tap(rows()[2]!);
+    expect(pickedRows()).toHaveLength(1);
+  });
+
+  it("the count capsule is the way OUT of the mode", async () => {
+    vi.useFakeTimers();
+    await mountShell("phone");
+    await hold(rows()[1]!);
+    await click(countCapsule());
+    expect(pickedRows()).toHaveLength(0);
+    expect(pill()).toBeNull();
+  });
+
+  it("the row suppresses the platform's own hold menu", () => {
+    /* iOS Safari raises the callout over a held button at about the moment the selection
+       appears under it. The row is a `<button>`, so there is no text selection to suppress
+       and this is the only half that bites. */
+    /* The new shell's Ohbox list stands its rows inside `ListTouch` (`packages/app/src/touch/`), whose sheet holds
+       the rule for every row of a list under a finger. Re-pointed by path from today's `.row` rule. */
+    const rowCss = readFileSync("packages/app/src/touch/touch.css", "utf8");
+    expect(rowCss).toMatch(/\[data-touch-list\]\s*\{[^}]*-webkit-touch-callout:\s*none/);
+  });
+
+  it("neither the hold nor the drag can arm on the other's pointer", () => {
+    const view = readFileSync("packages/app-logic/src/ohbox/pointer.ts", "utf8");
+    /* The drag to the rail is the frame's now (`rail-drag.ts`, moved from today's web shell's drag-file.ts). */
+    const drag = readFileSync("packages/app/src/frame/rail-drag.ts", "utf8");
+    // Both handlers run on the same press, and each returns early for the other's pointer.
+    expect(view).toMatch(/if \(e\.pointerType !== "touch"\) return;/);
+    expect(drag, "drag-to-file stopped excluding touch — the two gestures would both arm")
+      .toMatch(/if \([^)]*e\.pointerType === "touch"\) return null;/);
+  });
+});
+
+/* ══ a shifted press is a different gesture ══════════════════════════════════════════════ */
+
+describe("⇧⌫ is not ⌫", () => {
+  /**
+   * MEASURED, NOT SUPPOSED. `chordMatches` held only LETTERS to the no-shift rule, on the
+   * (correct) argument that `?` is typed with Shift. `Backspace` is not a letter, so a bare
+   * `Backspace` binding matched ⇧⌫ — and over a selection that ran the ordinary delete and
+   * spent the pick. ⇧⌫ is "delete permanently" on Windows and a line-kill in several editors;
+   * somebody pressing it is not asking for this app's undoable delete.
+   */
+  it("the predicate: a shifted NAMED key does not match its bare chord", () => {
+    const ev = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
+    for (const k of ["Backspace", "Delete", "Enter", "Escape", "ArrowDown", "ArrowUp"]) {
+      expect(chordMatches(k, ev({ key: k, shiftKey: true })), `shifted ${k} matched bare ${k}`).toBe(false);
+      // …and the unshifted press still does, or the fix has taken the key away entirely.
+      expect(chordMatches(k, ev({ key: k })), `plain ${k} stopped matching`).toBe(true);
+    }
+  });
+
+  it("…and a chord that ASKS for shift is unaffected", () => {
+    const ev = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
+    expect(chordMatches("shift+ArrowDown", ev({ key: "ArrowDown", shiftKey: true }))).toBe(true);
+    expect(chordMatches("shift+u", ev({ key: "U", shiftKey: true }))).toBe(true);
+  });
+
+  it("…and PUNCTUATION typed with Shift still works — `?` opens the sheet on every layout", () => {
+    /* The half the original rule got right, and the reason it may not simply become "no shift
+       ever": `?` IS Shift+/ on most layouts. Widen the refusal to all non-letters and the
+       shortcut sheet becomes unopenable. */
+    const ev = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
+    expect(chordMatches("?", ev({ key: "?", shiftKey: true }))).toBe(true);
+  });
+
+  it("through the shell: ⇧⌫ over a selection does nothing and the pick survives", async () => {
+    vi.useFakeTimers();
+    await mountShell();
+    await pick(2);
+    const ids = pickedRows().map((r) => r.dataset.id!);
+    sent = [];
+
+    await key("Backspace", { shiftKey: true });
+    expect(toasts(), "⇧⌫ opened a delete window").toHaveLength(0);
+    expect(pickedRows(), "⇧⌫ spent the selection").toHaveLength(2);
+    expect(rows().filter((r) => ids.includes(r.dataset.id!)), "⇧⌫ hid the rows").toHaveLength(2);
+    expect(sent, "⇧⌫ reached the wire").toEqual([]);
+
+    // The fixture could have fired: the same key unshifted does open the window.
+    await key("Backspace");
+    expect(toasts(), "the fixture could not fire at all").toHaveLength(1);
+  });
+
+  it("through the shell: ⇧⌦ likewise", async () => {
+    vi.useFakeTimers();
+    await mountShell();
+    await pick(2);
+    await key("Delete", { shiftKey: true });
+    expect(toasts()).toHaveLength(0);
+    expect(pickedRows()).toHaveLength(2);
+  });
+});
+
+/* ══ nothing may stand over the deck ═════════════════════════════════════════════════════ */
+
+describe("the selection's delete keys are gated on the DOM, not on a list", () => {
+  /**
+   * MEASURED BEFORE THE GATE EXISTED: three rows picked, the `?` sheet OPEN, one press of ⌫ —
+   * and all three were filed with a toast up, through a sheet the person was reading. The
+   * shell's own delete keys had a gate; the selection's chords were not on that list and could
+   * not have been, because the list enumerated the overlays the SHELL owns and the message More
+   * menu's open state lives below it.
+   *
+   * The gate asks the DOM (`modal-gate.ts#isModalOpen`) and is a binding's `when` rather than a
+   * `disabled`: `disabled` is computed while React renders, and a menu opens without the shell
+   * re-rendering at all.
+   */
+  it("with the ? sheet open over a selection, ⌫ does nothing and the pick survives", async () => {
+    vi.useFakeTimers();
+    await mountShell();
+    await pick(3);
+    const ids = pickedRows().map((r) => r.dataset.id!);
+    sent = [];
+
+    await key("?", { shiftKey: true });
+    expect(screen.getByRole("dialog", { name: en.shortcuts.title })).toBeTruthy();
+
+    await key("Backspace");
+    expect(toasts(), "⌫ opened a delete window through an open sheet").toHaveLength(0);
+    expect(pickedRows(), "⌫ spent the selection through an open sheet").toHaveLength(3);
+    expect(rows().filter((r) => ids.includes(r.dataset.id!)), "the rows were hidden").toHaveLength(3);
+    expect(sent, "a delete reached the wire through an open sheet").toEqual([]);
+  });
+
+  it("…and once the sheet closes the same key works — the gate is a gate, not a removal", async () => {
+    /* The half that makes the case above mean something: a `when` that answered false always
+       would satisfy it and would have taken the verb away entirely. */
+    vi.useFakeTimers();
+    await mountShell();
+    await pick(3);
+    await key("?", { shiftKey: true });
+    expect(screen.getByRole("dialog", { name: en.shortcuts.title })).toBeTruthy();
+    await key("Escape");
+    expect(screen.queryByRole("dialog", { name: en.shortcuts.title })).toBeNull();
+    expect(pickedRows(), "Escape cleared the selection instead of the sheet").toHaveLength(3);
+
+    await key("Backspace");
+    expect(toasts(), "the verb did not come back when the sheet closed").toHaveLength(1);
+  });
+
+  it("the predicate, over the cases THIS lane depends on", () => {
+    /**
+     * `isModalOpen` is ITEM-10's, and what is asserted here is only what the selection's chords
+     * rely on: an empty deck permits, an open menu or popover over the deck gates, and the
+     * READING SHEET does not — the sheet is the reading surface, and a delete pressed on the
+     * message being read is the verb somebody meant.
+     *
+     * DELIBERATELY NOT ASSERTED: a dialog NESTED inside the sheet. That case is ITEM-10's
+     * contract and it currently contradicts itself — the file's header says "a real dialog
+     * nested inside the sheet still gates", and `el.closest(READING_SURFACE)` skips exactly
+     * those, so it does not. Reported to them rather than pinned here: writing `toBe(false)`
+     * for it would make this file a second guard holding the defect in place.
+     */
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    try {
+      expect(isModalOpen(document), "an empty deck gated").toBe(false);
+      host.innerHTML = '<div class="reader" role="dialog" aria-modal="true">reading</div>';
+      expect(isModalOpen(document), "the reading sheet was treated as a question").toBe(false);
+      host.innerHTML = '<div role="menu">More</div>';
+      expect(isModalOpen(document), "an open menu did not gate").toBe(true);
+      host.innerHTML = '<div class="senderm" role="dialog">screening</div>';
+      expect(isModalOpen(document), "a sender popover over the deck did not gate").toBe(true);
+      host.innerHTML = '<div role="dialog" hidden></div>';
+      expect(isModalOpen(document), "a hidden dialog gated").toBe(false);
+    } finally {
+      host.remove();
+    }
+  });
+});

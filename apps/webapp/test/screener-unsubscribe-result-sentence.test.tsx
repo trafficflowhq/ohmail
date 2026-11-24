@@ -1,12 +1,13 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import type { UnsubscribeResult } from "@ohmail/client-engine";
+import { within } from "@testing-library/react";
+import type { UnsubscribeResult } from "@ohmail/wire";
+import { MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import en from "../messages/en.json";
-import { HeldUnsubscribe } from "../app/views/ScreenerView";
-import { settleFirstPaint } from "./_first-paint.js";
+import { message } from "./_draft-shell.js";
+import {
+  ISO, act, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
+} from "./fixtures/live-walk-shell.js";
 
 /**
  * THE SENTENCE A PERSON READS AFTER PRESSING UNSUBSCRIBE (a high review finding).
@@ -21,40 +22,60 @@ import { settleFirstPaint } from "./_first-paint.js";
  * is not null rendering `unsubAlready`): the first case then reads the completed sentence for a
  * send that never happened.
  */
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-let host: HTMLDivElement | null = null;
-let root: Root | null = null;
-
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null; host = null;
+beforeEach(() => {
+  installShellEnv();
+  window.localStorage.clear();
 });
+afterEach(teardownShellEnv);
 
 async function press(res: UnsubscribeResult): Promise<string> {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  await act(async () => {
-    // `children` in the props object, never a third argument: the provider's overload requires it
-    // in the type, and `apps/webapp` typechecks its tests — the form every sibling test uses.
-    root!.render(
-      React.createElement(NextIntlClientProvider, {
-        locale: "en", messages: en,
-        children: React.createElement(HeldUnsubscribe, {
-          state: "one_click", url: "https://sender.example/u",
-          onUnsubscribe: async () => res,
-        }),
-      }),
-    );
+  const letter = message("m", {
+    accountId: "acct_live_1", mailboxId: "mb_1", folder: "ohmail/Screened", subject: "Weekly list",
   });
-  const button = host.querySelector("button");
-  expect(button, "the one-click control must render a press").not.toBeNull();
-  await act(async () => { button!.click(); });
-  await settleFirstPaint();
-  return host.textContent ?? "";
+  const store = new MemoryMirrorStore();
+  await store.load();
+  await store.applyChanges([
+    { type: "message", op: "create", id: letter.id, seq: 1, updatedAt: ISO, entity: letter },
+    {
+      type: "message_body", op: "create", id: letter.id, seq: 2, updatedAt: ISO,
+      entity: {
+        messageId: letter.id, state: "ready", text: "The list's message", html: null, loadedRemoteContent: false,
+        unsubscribe: "one_click", unsubscribeUrl: null, withheld: null,
+      },
+    },
+  ]);
+  const pressed: string[] = [];
+  const engine = new OhmailEngine({
+    store,
+    adapter: {
+      sync: async () => ({
+        changes: { creates: [], updates: [], moves: [], deletes: [] },
+        cursor: store.getCursor(), hasMore: false, serverTime: ISO,
+      }),
+      mutate: async () => ({ changes: [], seq: null }),
+      withdrawSend: async () => ({ outcome: "unsupported" }),
+      fetchBody: async () => null,
+      unsubscribe: async (id) => {
+        pressed.push(id);
+        return res;
+      },
+    },
+  });
+  window.location.hash = "#/screener/screened";
+  const host = await mountShell([mailbox({
+    id: "mb_1", lastSyncAt: ISO, organizerRole: "organizer", organizeConsentedAt: ISO,
+  })], { engine, suggestWire: "none", junkWire: "none" });
+  await tick(50);
+  const row = within(host).getByRole("option", { name: /Weekly list/ });
+  await act(async () => { row.click(); });
+  await tick(50);
+  const held = within(within(host).getByRole("region", { name: "Reading" }));
+  const button = held.getByRole("button", { name: en.screener.unsubscribe });
+  await act(async () => { button.click(); });
+  await tick(0);
+
+  expect(pressed).toEqual([letter.id]);
+  return held.getByRole("status").textContent ?? "";
 }
 
 const ALREADY = en.screener.unsubAlready;

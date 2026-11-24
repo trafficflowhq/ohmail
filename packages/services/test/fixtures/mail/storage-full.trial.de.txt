@@ -1,0 +1,19 @@
+Subject: Dein ohmail-Speicher ist voll
+
+ohmail.
+
+Dein Speicher ist voll.
+
+4 GB von 4 GB belegt, der Speicher deiner Testphase. Deine Mails brauchen etwa 12,5 GB.
+
+ohmail Cloud behält jetzt den Text deiner neuesten Mails, 4 GB, alles ab Juni 2021. Die älteren Mails behält dein Mailserver vollständig, und ohmail listet und findet sie weiterhin.
+
+Plus + 10 GB Speicher behält alle deine Mails: 15 GB für 25 $ im Monat. Danach holt ohmail den älteren Text von deinem Mailserver zurück.
+
+Speicher wählen:
+https://app.ohmail.app/#/settings/storage
+
+--
+Es zählt nur der Text deiner Mails, Anhänge nie.
+Das ist die letzte Speicher-Mail, bis sich etwas ändert. Abschalten kannst du Speicher-Mails unter Einstellungen › Speicher.
+TrafficFlow GmbH, Zürich, Schweiz

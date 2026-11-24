@@ -1,0 +1,155 @@
+/* The open fold: a line that looks for a folder, then each mailbox's tree, scrolling inside its own region. */
+@layer oh {
+  .oh-folderfold {
+    --oh-folderfold-step: var(--s3);
+    --oh-folderfold-gap: 2px;
+    --oh-folderfold-lead: 14px;
+    --oh-folderfold-branch: 20px;
+    --oh-folderfold-back: -20px;
+    --oh-folderfold-at: var(--s3);
+    --oh-folderfold-none: calc(var(--s3) + 30px);
+    --oh-folderfold-layer: 1;
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--s1);
+    min-height: 0;
+  }
+
+  .oh-folderfold[data-narrow] {
+    --oh-folderfold-step: var(--s4);
+  }
+
+  .oh-folderfold-find {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    height: var(--h-s);
+    margin: var(--s1) 0;
+    padding: 0 var(--s1) 0 var(--oh-folderfold-lead);
+    border-radius: var(--r-pill);
+    background: var(--soft);
+    box-shadow: var(--oh-ring-btn);
+    color: var(--ink2);
+    cursor: text;
+  }
+
+  .oh-folderfold-find:focus-within {
+    box-shadow: var(--oh-ring-focus);
+  }
+
+  .oh-folderfold-line {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    color: var(--ink);
+    font-weight: var(--w-mid);
+    text-overflow: ellipsis;
+  }
+
+  .oh-folderfold-line::placeholder {
+    color: var(--ink2);
+    font-weight: var(--w-text);
+    opacity: 1;
+  }
+
+  .oh-folderfold-line:focus-visible {
+    outline: none;
+  }
+
+  .oh-folderfold-scroll,
+  .oh-folderfold-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--oh-folderfold-gap);
+  }
+
+  .oh-folderfold-scroll {
+    position: relative;
+    min-height: 0;
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+
+  .oh-folderfold-scroll > *,
+  .oh-folderfold-group > * {
+    flex: none;
+  }
+
+  .oh-folderfold-mailbox {
+    padding: 0 var(--s3);
+    overflow: hidden;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-folderfold-group + .oh-folderfold-group > .oh-folderfold-mailbox {
+    margin-top: var(--s2);
+  }
+
+  /* A row stands on the rail's own columns: the branch's chevron where a line has its sign, each level further in. */
+  .oh-folderfold-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    --oh-folderfold-in: calc(var(--oh-folderfold-depth, 0) * var(--oh-folderfold-step));
+
+    padding-left: var(--oh-folderfold-in);
+  }
+
+  .oh-folderfold-row > .oh-railentry {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+  }
+
+  .oh-folderfold-row > .oh-railentry > .oh-railentry-sign {
+    visibility: hidden;
+  }
+
+  .oh-folderfold-branch {
+    flex: none;
+    position: relative;
+    left: var(--oh-folderfold-at);
+    z-index: var(--oh-folderfold-layer);
+    display: grid;
+    place-items: center;
+    width: var(--oh-folderfold-branch);
+    height: var(--h-s);
+    margin-right: var(--oh-folderfold-back);
+    border-radius: var(--r-row);
+    color: var(--ink2);
+  }
+
+  .oh-folderfold-branch:hover {
+    color: var(--ink);
+  }
+
+  .oh-folderfold-branch > .oh-icon {
+    transition: transform var(--d-pop) var(--e-std);
+  }
+
+  .oh-folderfold-branch[aria-expanded="false"] > .oh-icon {
+    transform: rotate(-90deg);
+  }
+
+  .oh-folderfold-none {
+    padding-left: var(--oh-folderfold-none);
+    color: var(--ink2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-folderfold {
+    --oh-folderfold-lead: var(--s3);
+    --oh-folderfold-at: calc(var(--s4) + var(--s2));
+    --oh-folderfold-none: calc(var(--s4) + var(--s2) + 28px);
+  }
+
+  :root[data-face="ohmarchy"] .oh-folderfold-find {
+    gap: var(--s2);
+  }
+}

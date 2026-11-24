@@ -1,0 +1,81 @@
+{
+  "component": "Empty",
+  "state": "mark",
+  "look": "paper-dark-desktop",
+  "place": "cell",
+  "target": [69.5938, 36, 328.8125, 276],
+  "clip": [69, 36, 330, 276],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "200px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "172px",
+      "letterSpacing": "-10px",
+      "fontVariationSettings": "\"opsz\" 96",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "20px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "24px",
+      "letterSpacing": "-0.44px",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "backgroundColor": "rgb(246, 241, 233)", "borderRadius": "999px" }],
+  "nodes": [
+    {
+      "role": "generic",
+      "name": "oh.",
+      "box": [32, 32, 264.8, 172],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "200px",
+        "fontWeight": "800",
+        "lineHeight": "172px",
+        "letterSpacing": "-10px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "oh", "type": 0 }],
+      "surfaces": [{ "box": [246.8, 134, 50, 50], "paint": 0 }]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "6 decided", "type": 1 }],
+    "surfaces": [{ "box": [208, 231.2, 6.8, 6.8], "paint": 0 }]
+  }
+}

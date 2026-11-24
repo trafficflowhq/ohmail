@@ -1,24 +1,22 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { fireEvent, within } from "@testing-library/react";
+import { enterSearchRoute, RegisteredSearch, typeSearch } from "./search-registered-fixture";
 import {
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
-  type EngineMessage,
-  type MutationOutcome,
   type ServerSearchOpts,
   type SyncChange,
   type SyncResponse,
   STORE_SEARCH_FOLLOWUP_HOLD_MS,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
-import { searchSortKey } from "../app/shell/persisted-ui";
-import { ESTIMATED_ROW_PX } from "../app/shell/list-window";
+import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
+import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**
  * SEARCH IS ONE LIST OVER THE STORE (ARCHIVE-024): the store's first page replaces the device's
@@ -27,7 +25,6 @@ import { ESTIMATED_ROW_PX } from "../app/shell/list-window";
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -60,8 +57,10 @@ async function engineWith(rows: EngineMessage[], searchServer: (q: string, o: Se
 
 let host: HTMLDivElement;
 let root: Root;
+let leaveSearch: () => void;
 beforeEach(() => {
   window.localStorage.clear();
+  leaveSearch = enterSearchRoute();
   vi.spyOn(console, "warn").mockImplementation(() => {});
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -70,23 +69,35 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  leaveSearch();
   vi.restoreAllMocks();
 });
 
+/** The scope of the shell the view is drawn in. */
+const SEARCH_SCOPE = "acc-search";
+
 async function render(engine: OhmailEngine, query: string): Promise<void> {
   await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", now: NOW,
-      children: h(KeymapProvider, { children: h(SearchView, { engine, version: 1, now: NOW, query, onQuery: () => {}, onOpen: () => {} }) }),
-    }));
+    root.render(<RegisteredSearch engine={engine} now={NOW} scope={SEARCH_SCOPE} />);
   });
+  await act(async () => { typeSearch(host, query); });
 }
+
+/** The senders the answer counted, in the menu the From chip opens. */
+function senderFacets(): HTMLElement[] {
+  const button = within(host).queryByRole("button", { name: messages.search.facetFrom });
+  if (button?.getAttribute("aria-expanded") === "false") fireEvent.click(button);
+  const menu = within(document.body).queryByRole("menu", { name: messages.search.facetFrom });
+  return menu ? within(menu).queryAllByRole("menuitem") : [];
+}
+
 // A typed question settles when its count is asked: the page at the debounce, the count at the hold.
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, STORE_SEARCH_FOLLOWUP_HOLD_MS + 70)); });
 const text = (): string => host.textContent ?? "";
-const hits = (): string[] => [...host.querySelectorAll(".hit .subj")].map((n) => n.textContent ?? "");
+const hits = (): string[] => within(host).queryAllByRole("listitem")
+  .map((item) => item.textContent?.match(/AXA (?:letter \d+|old|new|on the device)/)?.[0] ?? "");
 const scrollEnd = () => act(async () => {
-  host.querySelector(".view-search .scroller")!.dispatchEvent(new Event("scroll"));
+  host.querySelector(".sr-scroll")!.dispatchEvent(new Event("scroll"));
   await new Promise((r) => setTimeout(r, 20));
 });
 
@@ -94,7 +105,7 @@ const page = (from: number, n: number) => Array.from({ length: n }, (_, i) => ms
 const subjects = (from: number, n: number) => page(from, n).map((m) => m.subject);
 /** Every subject the window shows on its way from the top to `rows` rows down, and any repeat on one screen. */
 const walkHits = async (rows: number): Promise<{ seen: Set<string>; repeated: boolean }> => {
-  const scroller = host.querySelector(".view-search .scroller") as HTMLElement;
+  const scroller = host.querySelector(".sr-scroll") as HTMLElement;
   const seen = new Set<string>();
   let repeated = false;
   for (let top = 0; top <= rows * ESTIMATED_ROW_PX; top += 10 * ESTIMATED_ROW_PX) {
@@ -149,13 +160,13 @@ describe("Search pages the store", () => {
     });
     await render(engine, "axa");
     // Before the store answers, the device's own facets — its one sender.
-    expect(text()).toContain("local@device.example");
+    expect(senderFacets().map((item) => item.textContent).join(" ")).toContain("local@device.example");
     await settle();
     // The store's counts, not the page's five rows.
-    expect(text()).toContain("news@axa.example");
-    expect(text()).toContain("×28");
-    expect(text()).not.toContain("local@device.example");
-    const facet = [...host.querySelectorAll(".facets button")].find((b) => (b.textContent ?? "").includes("news@axa.example")) as HTMLElement;
+    expect(senderFacets().map((item) => item.textContent).join(" ")).toContain("news@axa.example");
+    expect(senderFacets().find((item) => item.textContent?.includes("news@axa.example"))?.textContent).toContain("28");
+    expect(senderFacets().map((item) => item.textContent).join(" ")).not.toContain("local@device.example");
+    const facet = senderFacets().find((item) => item.textContent?.includes("news@axa.example")) as HTMLElement;
     await act(async () => { facet.click(); });
     await settle();
     expect(asked.filter((o) => o.parts === "page").map((o) => o.filters?.sender ?? null)).toEqual([null, "news@axa.example"]);
@@ -185,11 +196,11 @@ describe("Search pages the store", () => {
         [["news@axa.example", 28], ["portal@insure.example", 12], ["claims@axa.example", 5]], { INBOX: 30, "ohmail/News": 10 },
       ) });
     });
-    const chips = () => [...host.querySelectorAll(".facets li")] as HTMLElement[];
+    const chips = () => senderFacets();
     const drawn = chips();
     const read = () => chips().map((li) => li.textContent);
     expect(asked).toEqual(["page", "estimate", "summary"]);
-    expect(text()).toContain("Searched your whole mailbox — about 690 matched");
+    expect(text()).toContain(messages.search.saidAbout.replace("{total}", "690"));
     const before = read();
     // The candidates' counts are no count of the match set: the chips stand without them.
     expect(before.slice(0, 3)).toEqual(["news@axa.example", "portal@insure.example", "claims@axa.example"]);
@@ -199,9 +210,9 @@ describe("Search pages the store", () => {
         [["portal@insure.example", 400], ["news@axa.example", 300], ["claims@axa.example", 12]], { "ohmail/News": 350, INBOX: 362 },
       ) });
     });
-    expect(text()).toContain("Searched your whole mailbox — 712 matched");
+    expect(within(host).getByRole("heading", { name: "Results 712" })).toBeTruthy();
     expect(read().slice(0, 3), "same order, the exact counts").toEqual(
-      ["news@axa.example×300", "portal@insure.example×400", "claims@axa.example×12"],
+      ["news@axa.example300", "portal@insure.example400", "claims@axa.example12"],
     );
     expect(read().length).toBe(before.length);
     expect(chips().every((li, i) => li === drawn[i]), "the same chips, replaced in place").toBe(true);
@@ -218,8 +229,8 @@ describe("Search pages the store", () => {
       : { items: page(0, 50), total: 200, totalExact: false, nextCursor: "c2", ms: 7 }));
     await render(engine, "axa");
     await settle();
-    expect(text()).toMatch(/Searched your whole mailbox — at least 2[,’ ]?000 matched/);
-    const chips = [...host.querySelectorAll(".facets li")].map((li) => li.textContent);
+    expect(text()).toMatch(/At least 2[,’ ]?000 matched in your whole mailbox\./);
+    const chips = senderFacets().map((item) => item.textContent);
     expect(chips).toContain("news@axa.example");
     expect(chips.join(" ")).not.toContain("×");
   });
@@ -230,8 +241,8 @@ describe("Search pages the store", () => {
       : { items: page(0, 9), total: 9, nextCursor: null, bounded: true, ms: 11 }));
     await render(engine, "axa");
     await settle();
-    expect(text()).toContain("Older mail is still being indexed — 25 % done.");
-    expect(text()).toContain("Showing the 9 best matches — sort by date to walk them all.");
+    expect(text()).toContain("Older mail is still being indexed, 25% done.");
+    expect(text()).toContain("These are the 9 best matches. Sort by date to walk them all.");
   });
 
   it("a cut exact page with no row whose count lands as 0 says nothing matched, and no best matches", async () => {
@@ -245,8 +256,8 @@ describe("Search pages the store", () => {
     });
     await render(engine, "kai survey -samples");
     await settle();
-    expect(text()).toContain("Searched your whole mailbox — nothing matched");
-    expect(host.querySelector('[data-testid="search-bounded"]'), "no best matches to show").toBeNull();
+    expect(within(host).getByText((_, node) => node?.textContent === "Nothing matched", { selector: ".oh-empty-label" })).toBeTruthy();
+    expect(within(host).queryByText(/These are the .* best matches/), "no best matches to show").toBeNull();
     expect(asked).toEqual(["page", "estimate"]);
   });
 
@@ -256,37 +267,33 @@ describe("Search pages the store", () => {
       : { items: page(0, 9), total: 9, nextCursor: null, ms: 11 }));
     await render(engine, "axa");
     await settle();
-    expect(host.querySelector('[data-testid="search-indexing"]')).toBeNull();
-    expect(host.querySelector('[data-testid="search-bounded"]')).toBeNull();
+    expect(within(host).queryByText(/Older mail is still being indexed/)).toBeNull();
+    expect(within(host).queryByText(/These are the .* best matches/)).toBeNull();
   });
 
   it("the verdict carries the measured wait once it answered, and says the numbers once", async () => {
-    /* DESIGN-FOLD-WIDTHS "1 result · 62 ms" above "Searched your whole mailbox — 1 matched · 62 ms"
-       was the same numbers twice. The verdict stays (the scope and the time are the claim); the bare
-       line goes while the verdict carries a count. Mutation: render the bare line unconditionally —
-       `.results-head.num` reads "1 result · 62 ms" again. */
     const engine = await engineWith([msg("d1", "AXA on the device")], async (_q, o) => (o.parts === "summary"
       ? { items: [], total: 1, totalExact: true }
       : { items: [msg("d1", "AXA on the device")], total: 1, nextCursor: null, ms: 62 }));
     await render(engine, "axa");
     await settle();
-    expect(host.querySelector(".results-head.num"), "the count is said twice").toBeNull();
-    expect(text()).toMatch(/Searched your whole mailbox — 1 matched · \d+ ms/);
+    expect(within(host).getByRole("heading", { name: "Results 1" }).querySelector(".oh-groupheading-count")?.textContent, "the exact count beside Results, with no time").toBe("1");
+    expect(text()).not.toContain("Searched your whole mailbox");
     // The store's own 62 ms is never the time said: the line states the wait.
-    expect(text()).not.toMatch(/\b62 ms/);
-    expect(text().match(/ · \d+ ms/g)).toHaveLength(1);
-    /* The count with its word and the time with its unit are one unbreakable span (`.nobr`). */
-    expect(host.querySelector(".view-search .nobr")?.textContent).toMatch(/^1 matched · \d+ ms$/);
+    expect(text()).not.toMatch(/62 ms/);
+    expect(text().match(/\d+ ms/g)).toHaveLength(1);
+    const verdict = within(within(host).getByRole("textbox", { name: messages.search.aria }).parentElement!).getByText(/^\d+ ms$/);
+    expect(verdict.textContent).toMatch(/^\d+ ms$/);
   });
 
   it("the bare count line stands where the verdict has no count — the archive did not answer", async () => {
     const engine = await engineWith([msg("d1", "AXA on the device")], async () => { throw new Error("unreachable"); });
     await render(engine, "axa");
     await settle();
-    const line = host.querySelector(".results-head.num")?.textContent ?? "";
-    expect(line, "with no count in the verdict the result count must stay").toMatch(/^1 result · \d+ ms$/);
-    /* The count with its word and the time with its unit hold together on this line too. */
-    expect(host.querySelector(".results-head.num .nobr")?.textContent).toMatch(/^1 result · \d+ ms$/);
+    const head = within(host).getByRole("heading", { name: "Results 1" });
+    expect(within(head).getByText("1", { exact: true })).toBeTruthy();
+    expect(within(head).queryByText(/ms/)).toBeNull();
+    expect(text().match(/\d+ ms/g)).toHaveLength(1);
   });
 
   it("a store that answered with no time still leaves a time on screen — the device's own", async () => {
@@ -298,8 +305,9 @@ describe("Search pages the store", () => {
       : { items: [msg("d1", "AXA on the device")], total: 1, nextCursor: null, ms: null }));
     await render(engine, "axa");
     await settle();
-    expect(host.querySelector(".results-head.num"), "the count is said twice").toBeNull();
-    expect(host.querySelector(".view-search .nobr")?.textContent).toMatch(/^1 matched · \d+ ms$/);
+    expect(within(host).getByRole("heading", { name: "Results 1" }).querySelector(".oh-groupheading-count")?.textContent, "the exact count beside Results, with no time").toBe("1");
+    const verdict = within(within(host).getByRole("textbox", { name: messages.search.aria }).parentElement!).getByText(/^\d+ ms$/);
+    expect(verdict.textContent).toMatch(/^\d+ ms$/);
   });
 
   it("the store's order is the order: a date sort's page is rendered as the store sent it", async () => {
@@ -308,7 +316,7 @@ describe("Search pages the store", () => {
     const engine = await engineWith([newer, older], async (_q, o) => (o.parts === "summary"
       ? { items: [], total: 2, totalExact: true }
       : { items: o.sort === "date_asc" ? [older, newer] : [newer, older], total: 2, nextCursor: null, ms: 3 }));
-    window.localStorage.setItem(searchSortKey(null), "date_asc");
+    window.localStorage.setItem(searchSortKey(SEARCH_SCOPE), "date_asc");
     await render(engine, "axa");
     await settle();
     expect(hits()).toEqual(["AXA old", "AXA new"]);

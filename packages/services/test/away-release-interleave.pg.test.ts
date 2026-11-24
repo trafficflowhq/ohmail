@@ -1,9 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
+import { bindDb } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, inArray } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
 import {
   accounts, awayReplies, awayResponders, awaySenderState, folderState, mailboxes, messageBodies,
   messages,
@@ -28,19 +27,19 @@ const TB = new Date("2026-09-02T12:00:05.000Z");
 const ENABLED_AT = new Date("2026-09-02T11:00:00.000Z");
 const THEM = "colleague@them.test";
 
-let clientA: ReturnType<typeof postgres>;
-let clientB: ReturnType<typeof postgres>;
-let dbA: ReturnType<typeof drizzle>;
-let dbB: ReturnType<typeof drizzle>;
+let ownedA: OwnedDb;
+let ownedB: OwnedDb;
+let dbA: OwnedDb["db"];
+let dbB: OwnedDb["db"];
 const seeded: string[] = [];
 
 beforeAll(async () => {
   if (!PG_UP) return;
   await runMigrations(PG_TEST_URL);
-  clientA = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-  clientB = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-  dbA = brandDialect(drizzle(clientA), "pg");
-  dbB = brandDialect(drizzle(clientB), "pg");
+  ownedA = makeOwnedDb(PG_TEST_URL);
+  ownedB = makeOwnedDb(PG_TEST_URL);
+  dbA = ownedA.db;
+  dbB = ownedB.db;
 });
 
 afterEach(async () => {
@@ -58,8 +57,8 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await clientA?.end({ timeout: 5 });
-  await clientB?.end({ timeout: 5 });
+  await ownedA?.close();
+  await ownedB?.close();
 });
 
 interface World { accountId: string; x: string; y: string }
@@ -86,9 +85,9 @@ async function world(throttle: "always" | "per_day"): Promise<World> {
       bodyHash: randomUUID(), dedupKey: randomUUID(), subject: "the roof",
       fromAddress: THEM, date: at, createdAt: at,
     }).returning();
-    await dbA.insert(messageBodies).values({ messageId: m!.id, text: "hello", headers: {} });
+    await dbA.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hello", headers: {} });
     await dbA.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
   }
   return { accountId, x, y };
@@ -133,7 +132,7 @@ async function interleave(w: World, atDial: {
   const ta = transport();
   const tb = transport();
   const held: { passB?: Promise<unknown> } = {};
-  const passA = runAwayResponderPass(dbA as never, {
+  const passA = runAwayResponderPass(bindDb(dbA, { account: null }), {
     openSendAdapter: ta.factory, now: () => TA, mailboxIds: [w.x],
     stillOrganizing: async () => {
       if (++asks.a === 1) return true;
@@ -143,7 +142,7 @@ async function interleave(w: World, atDial: {
   });
   const passB = held.passB = (async () => {
     await aReserved.opened;
-    return runAwayResponderPass(dbB as never, {
+    return runAwayResponderPass(bindDb(dbB, { account: null }), {
       openSendAdapter: tb.factory, now: () => TB, mailboxIds: [w.y],
       stillOrganizing: async () => {
         if (++asks.b === 1) return true;

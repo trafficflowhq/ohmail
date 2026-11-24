@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -76,7 +77,7 @@ describe.skipIf(!PG_UP)("upsertDesiredSeen — the read-state intent's one spell
     const id = await seedMessage();
     // The worker has observed \Seen on the real mailbox.
     await db.insert(flagState).values({
-      messageId: id, desiredSeen: true, observedSeen: true,
+      messageId: id, accountId: accountOfMessage(id), desiredSeen: true, observedSeen: true,
       lastSetBy: "them", reconcileStatus: "reconciled", conflict: false,
     });
 
@@ -100,7 +101,7 @@ describe.skipIf(!PG_UP)("upsertDesiredSeen — the read-state intent's one spell
   it("CONFLICT on a doubted row (a STORE of ours unanswered): a press stays pending and keeps the doubt", async () => {
     const id = await seedMessage();
     await db.insert(flagState).values({
-      messageId: id, desiredSeen: true, observedSeen: false,
+      messageId: id, accountId: accountOfMessage(id), desiredSeen: true, observedSeen: false,
       lastSetBy: "us", reconcileStatus: "pending", conflict: true,
     });
     // The read may have landed, so the unread is owed although it equals the observation.
@@ -113,7 +114,7 @@ describe.skipIf(!PG_UP)("upsertDesiredSeen — the read-state intent's one spell
   it("CONFLICT with no doubt: a read taken back before its STORE left reconciles", async () => {
     const id = await seedMessage();
     await db.insert(flagState).values({
-      messageId: id, desiredSeen: true, observedSeen: false,
+      messageId: id, accountId: accountOfMessage(id), desiredSeen: true, observedSeen: false,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
     await upsertDesiredSeen(db as unknown as Tx, id, true, false, new Date());

@@ -1,6 +1,23 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { shellFramePaths, shellSliceOf } from "./source-anchor";
+import { sliceOfDeclaration } from "./source-anchor";
+
+const PRESENTED = "packages/app-logic/src/reading/presented-mirror.ts";
+const MOUNT = "packages/app/src/mail/ground/PresentedMount.tsx";
+const PRESS = "packages/app-logic/src/press/move-to-place.ts";
+
+const fileThroughRouting = () => sliceOfDeclaration(readFileSync(PRESS, "utf8"), "fileThroughRouting");
+
+function productSource() {
+  return ["apps/webapp/app", "packages/app/src", "packages/app-logic/src"].flatMap((root) =>
+    readdirSync(root, { recursive: true, encoding: "utf8" })
+      .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
+      .map((file) => {
+        const path = `${root}/${file.replaceAll("\\", "/")}`;
+        return { path, text: readFileSync(path, "utf8") };
+      }),
+  );
+}
 
 /**
  * THE HELD ROUTING PRESS IS WIRED INTO THE SHELL, and this file exists because the alternative is
@@ -19,23 +36,21 @@ describe("the held press reaches the presentation", () => {
    * that has nothing to do with the window.
    */
   it("the presentation is built through presentAt over the window's own places", () => {
-    /* Over the MANIFEST of shell frames, not one file: the projection moved to
-       `shell-derivations.ts` (ARCH-022), and the once-only count is only an answer when it is
-       taken over every frame the shell composes. */
-    const frames = shellFramePaths(process.cwd()).map((f) => readFileSync(f, "utf8"));
-    const carrying = frames.filter(
-      (src) => /presentAt\(\s*\n\s*hideMessages\([\s\S]{0,240}?routing\.places,/.test(src));
-    expect(carrying, "the presentation no longer carries a held routing press").toHaveLength(1);
-    /* ONCE. A second composition somewhere else would be a second answer about where a held row
-       is shown, and the two would drift. */
-    const composed = frames.reduce((n, src) => n + src.split("presentAt(").length - 1, 0);
-    expect(composed, "presentAt is composed more than once").toBe(1);
+    const product = productSource();
+    const mount = product.find(({ path }) => path === MOUNT)?.text ?? "";
+    const presented = product.find(({ path }) => path === PRESENTED)?.text ?? "";
+    expect(mount).toMatch(/const \{ held, places \} = useRoomHolds\(\)/);
+    expect(mount).toMatch(/presentedOver\(reader, consentView, held, places\)/);
+    expect(presented, "the composition no longer overlays a held routing press on held deletes")
+      .toMatch(/presentAt\(hideMessages\([\s\S]{0,240}?, places\)/);
+    const count = (needle: string, declaration?: string) => product
+      .reduce((total, { path, text }) => total + text.split(needle).length - 1 - (path === declaration ? 1 : 0), 0);
+    expect(count("presentAt("), "presentAt is composed more than once").toBe(1);
+    expect(count("presentedOver(", PRESENTED), "the composition is called more than once").toBe(1);
   });
 
   it("the press opens a window rather than dispatching the routing itself", () => {
-    /* The door moved to `shell-verbs.ts` with the press half (ARCH-022); `shellSliceOf` asks
-       the manifest for the frame that declares it and refuses zero hits and two. */
-    const slice = shellSliceOf("fileThroughRouting");
+    const slice = fileThroughRouting();
     expect(slice, "the press does not open a window").toMatch(/routing\.hold\(/);
     /* AND THE HELD HALF IS NOT ALSO SENT: the mail's own dispatch is there, the rules' is not. */
     expect(slice, "the press dispatched the rules it is supposed to be holding")
@@ -46,7 +61,7 @@ describe("the held press reaches the presentation", () => {
     /* `UNDO_CLASS.routing_plan` is what says a routing press is undoable at all; the shell reads
        the window's own answer about THIS press and nothing else. A boolean argument here would be
        a second opinion that could disagree with the table. */
-    const slice = shellSliceOf("fileThroughRouting");
+    const slice = fileThroughRouting();
     expect(slice).toMatch(/opened\.held/);
     expect(slice, "the press carries its own undoable flag").not.toMatch(/undoable\s*[:=]/);
   });

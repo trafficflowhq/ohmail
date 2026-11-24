@@ -1,3 +1,4 @@
+import type { RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
@@ -5,7 +6,6 @@ import {
   planScreenCommit,
   pressRules,
   ruleFingerprint,
-  type RuleDTO,
   type ScreenIntent,
   type SyncChange,
 } from "@ohmail/client-engine";

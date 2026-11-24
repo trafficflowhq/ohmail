@@ -78,7 +78,7 @@ afterEach(async () => {
 
 describe("the managed build's invite gate", () => {
   it("useUserInvites answers false and never asks /hello — even a pairing-capable server cannot summon the pane", async () => {
-    const { useUserInvites } = await import("../app/(product)/mailbox/InvitesSection.js");
+    const { useUserInvites } = await import("../app/(product)/mailbox/use-user-invites.js");
     function Probe() {
       return h("output", null, useUserInvites(false) ? "invites:on" : "invites:off");
     }

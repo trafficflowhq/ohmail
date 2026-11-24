@@ -5,6 +5,12 @@ Zürich. This repository is the free desktop client — one application on macOS
 Windows and Linux. Contributions are welcome, and so is a plain "this is wrong" —
 the client is early enough that direction still moves.
 
+## Using coding assistants
+
+Contributions made with automated coding assistants are welcome and encouraged. If you submit a
+pull request or issue, you must understand and personally test what you submit, take responsibility
+for it, and review any generated material before submitting.
+
 ## What is most useful right now
 
 Every build now connects to a real mailbox
@@ -39,8 +45,9 @@ happened, what you expected. If it is visual, a screenshot beats a description.
 ## Pull requests
 
 - Fork, branch, open a PR against `main`, one change per pull request. PRs are
-  reviewed by a human.
-- Every change reaches `main` as a pull request, ours included.
+  reviewed by a human. Work for the next major version goes against `next`
+  instead ([below](#the-next-major-version-next)).
+- Every change reaches `main` or `next` as a pull request, ours included.
 - CI runs four jobs — macOS, Windows, Linux and the engine. Each platform job
   runs `tsc`, builds the UI bundle, smokes it, runs `cargo test` in both
   configurations, builds the engine and its runtime, packages the app, and then
@@ -71,6 +78,10 @@ happened, what you expected. If it is visual, a screenshot beats a description.
   **guard** check fails a pull request from a fork that changes them. If you
   need a change there, describe it in an issue or in your pull request and we
   will carry it.
+- Add no font file. The guard check fails any pull request, ours too, that
+  carries a file of a font kind which `.github/scripts/admitted-fonts.tsv` on
+  the base branch does not name by path and SHA-256. A maintainer adds the row
+  first, in a pull request of its own; the file follows, with its licence text.
 - Keep the existing invariants: colours and shadows come from `packages/tokens`,
   never hand-written in a view; no message is ever replaced by a "N more"
   placeholder. The test suite enforces both, and it is meant to.
@@ -94,6 +105,52 @@ the merged journal applies one of them out of order. Before you cut a migration,
 `node scripts/migration-numbers.mjs --open-prs` (it reads the open pull requests with `gh`): it
 prints the next number no open pull request holds, and any number two of them already share.
 `test/migration-number-census.test.ts` refuses two entries with one number on a journal.
+
+### The next major version (`next`)
+
+`main` is the released version; `next` is where the next major version is built. A pull request
+for the next major version targets `next`, and a fix for the released version targets `main`. We
+merge `main` into `next` whenever `main` moves, so a fix is made once, on `main`. Releases come
+from `main`. `next` takes pull requests only, under the same required checks as `main`.
+
+A change on `next` keeps the rules below. Code that came over from `main` does not meet all of
+them yet: a change never adds to what breaks one.
+
+- **Borders.** A package's `src` imports only the packages its row names, each declared in its
+  `package.json`:
+
+  | Package | Its `src` may import |
+  |---|---|
+  | `packages/tokens` | nothing |
+  | `packages/ui` | `tokens` |
+  | `packages/wire` | nothing; it exports types only |
+  | `packages/db-mail` | nothing |
+  | `packages/db` | `db-mail`, `wire` |
+  | `packages/core` | `db`, `wire` |
+  | `packages/client-engine` | `core`, `wire` |
+  | `packages/testing` | `client-engine`; tests import it, and the web's demo until that is removed |
+  | `packages/app-logic` | `client-engine`, `core` |
+  | `packages/app` | `ui`, `tokens`, `app-logic`; of `client-engine`, types only |
+  | `packages/services` | `core`, `db`, `wire` |
+  | `packages/api` | `services`, `core`, `db`, `wire` |
+
+  A row only loses entries; it gains one in a pull request that says why, and a new package
+  brings its row. No change adds an import from one app (`apps/*`) into another, or from a
+  package into an app.
+- **Tests.** A new test asserts behaviour through what the code exports or what a person can do:
+  it renders or calls, and checks the outcome. It does not read product source (`apps/`,
+  `packages/`) as text, assert a class name, or pin the wording of an English sentence unless the
+  wording is what it guards. It finds a control by its role and accessible name, never by class,
+  position or test id.
+- **Values.** Every colour, shadow, size, weight, gap, radius and duration in a view comes from
+  `packages/tokens`. A value missing there is added there, not written into the view.
+- **Words.** Every sentence a person sees is a key in `apps/webapp/messages/en.json` and
+  `de.json` (the phone app: `apps/mobile/src/copy.en.ts` and `copy.de.ts`), English and German in
+  the same change. A sentence stands whole in the catalogue and is never glued from parts in code.
+- **Never changed.** The shape of a record a device already stores; a name a device or a mailbox
+  already carries (the app identifier, credential and keychain names, mailbox folder names); a
+  setting name an operator's file already reads. Another install, a device or a mailbox still
+  reads them; what is new gets a new name.
 
 ## Running the tests
 
@@ -158,7 +215,7 @@ npx playwright install chromium        # the layout tests render in it
   --alone` lists them) fail over state they did not write. So it runs as CI's
   whole run runs it (nightly, on a batch branch and on a fork's pull request;
   a maintainer's other pull requests run only the files their change can
-  reach, `.github/scripts/ci-select.mjs`), in sixteen shards, each on a
+  reach, into `next` the floor and the nearest of those, held to one pass of the test machines, and the rest on `next` at night, `.github/scripts/ci-select.mjs`), in sixteen shards, each on a
   database of its own, and each of those files on a database made from empty. That is the run on Linux, in parts as
   above: part k of n runs every n-th shard from shard k-1, and the last part
   also runs the files that run alone:
@@ -216,8 +273,10 @@ npx playwright install chromium        # the layout tests render in it
 - **The phone app** (`apps/mobile`, Android and iOS from one tree) has its own
   two commands:
   - `npm run typecheck:mobile` typechecks the app as the phone runs it
-    (`apps/mobile/tsconfig.json`) and its tests as Node runs them
-    (`apps/mobile/tsconfig.test.json`).
+    (`apps/mobile/tsconfig.json`), its tests as Node runs them
+    (`apps/mobile/tsconfig.test.json`), and the shell's page as the web view
+    runs it (`apps/mobile/web/tsconfig.json`). A native build of the app needs
+    that page built first: `node apps/mobile/scripts/build-shell.mjs`.
   - `npm run test:mobile` applies the patches, then runs the phone app's tests
     and the engine package they drive (`apps/mobile/test`,
     `packages/client-engine/test`), and the phone's file on the device
@@ -316,13 +375,13 @@ client and exists nowhere else.
 There is one real exception, and you should know about it before you spend a
 weekend on a patch. These trees are **shared with the Cloud web client**:
 
-- `packages/tokens`, `packages/ui`, `packages/fixtures`
+- `packages/tokens`, `packages/ui`, `packages/testing`
 - `packages/client-engine`
 - `apps/webapp/app/{shell,views}`
 
 They are published here under AGPL-3.0 and used in the hosted Cloud client,
 which TrafficFlow can do because it holds the copyright on all of it
-([COPYRIGHT](COPYRIGHT)). A contribution from you into one of those files would
+([COPYRIGHT](docs/legal/COPYRIGHT)). A contribution from you into one of those files would
 break that arrangement — we could only ship it on the Cloud side by publishing
 that client's source, or with your separate permission.
 
@@ -345,8 +404,7 @@ first — that is true for the whole repository, and doubly so here.
 
 ## Conduct
 
-Be direct, be technical, be decent. Harassment or discrimination gets you
-removed from the repository, and there is no appeal process.
+Be direct, be technical.
 
 ## Contact
 

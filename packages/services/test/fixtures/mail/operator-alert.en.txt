@@ -1,0 +1,16 @@
+Subject: [production] ohmail: 2 alerts firing
+
+[production] ohmail: 2 alerts firing
+
+Observed by the api alert pass.
+
+[critical] Sync worker (shard 0) is not running
+  Last leader heartbeat from wkr-7c41 was 6m ago (threshold 2m). No mailbox is syncing.
+
+[critical] 2 Stripe webhook events failed to apply
+  the oldest arrived 19h ago; a paid invoice whose apply failed grants no credits
+
+Admin console: https://admin.ohmail.app/
+
+—
+Sent when an alert starts. Another mail about the same kind of alert waits at least 6 h unless its severity rises. Nothing is mailed when an alert clears, and lesser alerts wait for the daily summary.

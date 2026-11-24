@@ -1,5 +1,4 @@
 import {
-  FixturesAdapter,
   HttpAdapter,
   IndexedDbMirrorStore,
   OhmailEngine,
@@ -9,13 +8,20 @@ import {
   SYNC_BODY_TIMEOUT_MS,
   type StorePolicy,
 } from "@ohmail/client-engine";
-import { ERASED_DECLARATION, erasedAwareFetch } from "./account-erased";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
+import { ERASED_DECLARATION, erasedAwareFetch } from "@ohmail/app-logic/session/account-erased";
 import { clientDeclaration } from "./client-declaration";
 import { RELOAD_REMEDY, updateAwareFetch } from "./update-answer";
-import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
-import { sessionFetch, sessionMayAsk } from "./session-truth";
-import { webLane, type ResumeLane } from "./resume-lane";
+import { createSyncGate, registerSyncGate, type WakeStreamLike } from "@ohmail/app-logic/session/sync-scheduler";
+import { retiredSignOutStorageHeld } from "@ohmail/app-logic/storage/storage-owner";
+import { sessionFetch, sessionMayAsk } from "@ohmail/app-logic/session/session-truth";
+import { webLane, type ResumeLane } from "@ohmail/app-logic/session/resume-lane";
+import type { CalendarSettingsWire } from "@ohmail/wire";
+import { api, boundApiFamily } from "../api-client";
 import { stagingAdmits, stagingUploadSource } from "../../staging-origin.mjs";
+
+/** The demo's frozen day: the fixtures' world is dated around it, and the demo's host says it is today. */
+export const DEMO_DAY: Date = DEMO_NOW;
 
 /**
  * The engine decision, extracted so it can be TESTED rather than described. Inside `engine.tsx` (a `"use client"`
@@ -49,6 +55,12 @@ const BUILD_ENV: EngineEnv = {
   NEXT_PUBLIC_STAGING_ORIGIN: process.env.NEXT_PUBLIC_STAGING_ORIGIN,
 };
 
+const isolatedScopes = new WeakMap<OhmailEngine, string>();
+
+export function isolatedScopeOf(engine: OhmailEngine): string | undefined {
+  return isolatedScopes.get(engine);
+}
+
 let saidNoWebLocks = false;
 /**
  * A BROWSER WITHOUT WEB LOCKS gives no waiting send an owner, so every window replays every one
@@ -77,7 +89,8 @@ export function syncsWhileHidden(env: EngineEnv = BUILD_ENV): boolean {
 
 /**
  * The wake stream decision — which builds hold an `EventSource` on `/events`, decided here so it
- * can be tested rather than described. A factory, or `null` for "this build polls". Three
+ * can be tested rather than described. A factory, or `null` for polling. No stream when the
+ * server disables SSE. Other
  * refusals: the desktop build ({@link syncsWhileHidden}) — its API base is the local engine
  * process, which serves no `/events`; no API base — nothing to connect to; no `EventSource` in the
  * environment (SSR, jsdom) — a null is honest where a throw is an event. The demo never reaches
@@ -87,8 +100,9 @@ export function syncsWhileHidden(env: EngineEnv = BUILD_ENV): boolean {
  */
 export function cloudWakeStream(
   env: EngineEnv = BUILD_ENV,
+  sse?: boolean,
 ): (() => WakeStreamLike) | null {
-  if (syncsWhileHidden(env)) return null;
+  if (sse === false || syncsWhileHidden(env)) return null;
   // Deliberately NOT spelled the way `createEngine` reads the same variable (a local named
   // `apiBase`): `test/api-rewrite.test.ts` pins the ORDER of that exact line against the demo gate
   // by `indexOf`, so an identical occurrence above the gate — even in a comment — would
@@ -185,8 +199,8 @@ export class EngineUnarmedError extends Error {
  * without conveying this module's sync-scheduler import into the paired-device bundle. Re-exported
  * here because this is where every consumer and its pin already look for it.
  */
-import { BROWSER_WINDOW } from "./store-windows";
-export { BROWSER_WINDOW, DESKTOP_WINDOW } from "./store-windows";
+import { BROWSER_WINDOW } from "@ohmail/app-logic/session/store-windows";
+export { BROWSER_WINDOW, DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 
 /**
  * Build the engine for a resolved mode. `demo` WINS over everything: checked first, and no
@@ -210,6 +224,7 @@ export function createEngine(
   demo: boolean,
   env: EngineEnv = BUILD_ENV,
   owner: string | null = null,
+  isolatedScope?: string,
 ): OhmailEngine {
   // `demo` FIRST, and it returns — so there is no configuration, no environment variable
   // and no argument that can make a `demo: true` call yield an `HttpAdapter`. Unchanged in
@@ -228,9 +243,9 @@ export function createEngine(
   const apiBase = env.NEXT_PUBLIC_API_BASE;
   if (!apiBase) throw new EngineUnarmedError();
 
-  const persist = owner !== null && typeof indexedDB !== "undefined";
+  const persist = isolatedScope === undefined && owner !== null && typeof indexedDB !== "undefined";
   if (persist) sayNoWebLocks();
-  if (persist) {
+  if (persist && !retiredSignOutStorageHeld()) {
     // Fire-and-forget, once per engine: the pre-repair database is not ours to read and
     // is not something to leave lying on the origin. It is never opened, only deleted.
     void purgeLegacyMirror().catch(() => {
@@ -264,7 +279,7 @@ export function createEngine(
    */
   const gate = createSyncGate(owner ?? null);
   const uploadSource = stagingUploadSource(env.NEXT_PUBLIC_STAGING_ORIGIN);
-  return registerSyncGate(
+  const engine = registerSyncGate(
     new OhmailEngine({
       /**
        * `stageAttachments: true` — A send whose attachment bytes exceed what the inline transport can carry mints an
@@ -301,9 +316,16 @@ export function createEngine(
       adapter: gate.guard(
         new HttpAdapter({
           baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk,
+          ...(owner ? {
+            saveCalendarSettings: (body) => api<CalendarSettingsWire>("/calendar/settings", {
+              method: "PATCH", body, expectedOwner: owner, expectedFamily: boundApiFamily(owner) ?? undefined,
+            }),
+          } : {}),
           uploadAdmits: (url) => stagingAdmits(url, uploadSource, globalThis.location?.origin ?? ""),
           headers: () => ({ ...ERASED_DECLARATION, ...clientDeclaration() }),
-          fetch: updateAwareFetch(erasedAwareFetch(sessionFetch, sessionEndedResponse), RELOAD_REMEDY),
+          fetch: updateAwareFetch(erasedAwareFetch(
+            (url, init) => sessionFetch(url, init, owner), sessionEndedResponse,
+          ), RELOAD_REMEDY),
           syncDeadlines: { answerMs: SYNC_ANSWER_TIMEOUT_MS, bodyMs: SYNC_BODY_TIMEOUT_MS },
           // A forward naming its kept files asks /hello first: an older server would send them all.
           forwardPartsCheck: true,
@@ -331,4 +353,6 @@ export function createEngine(
     }),
     gate,
   );
+  if (isolatedScope !== undefined) isolatedScopes.set(engine, isolatedScope);
+  return engine;
 }

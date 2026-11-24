@@ -83,7 +83,7 @@ async function seed(
   const from = opts.from ?? "news@sender.example";
   const folder = opts.desired ?? "ohmail/Screened";
   const messageId = await seedMessage(db, accountId, mailboxId, { from, folder });
-  await db.insert(messageBodies).values({ messageId, text: "", headers: { ...CONFIRMED, ...headers } });
+  await db.insert(messageBodies).values({ messageId, accountId, text: "", headers: { ...CONFIRMED, ...headers } });
   // A person screened the sender out — the only licence the automatic arm acts on (UD-R4-03).
   if (folder === "ohmail/Screened" || folder === "ohmail/Quarantine") {
     await personScreenedOut(db, accountId, from, { destination: folder });
@@ -474,16 +474,19 @@ describe("onScreenOut — the automatic pass wants an author its provider vouche
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     const id = await seed(db, accountId, mailboxId, AR_INCONCLUSIVE);
 
-    // Driven through the private automatic path's only public door, then re-checked at the seam:
-    // the refusal CODE is what an operator reads, and `unsubscribe_already_recorded` vs
-    // `unsubscribe_sender_identity_unverified` are very different stories about one silent list.
-    await expect(
-      makeUnsubscribeService({
-        post: FORBIDDEN_POST, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => TRUSTED,
-      }).sweepScreenedOut(ctx, { since: new Date("2026-01-01T00:00:00Z"), limit: 10 }),
-    ).resolves.toEqual({ considered: 1, posted: 0, skipped: 1, failed: 0, remaining: 0 });
+    const service = makeUnsubscribeService({
+      post: FORBIDDEN_POST, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => TRUSTED,
+    });
+    expect(await service.onScreenOut(ctx, [id])).toEqual({
+      considered: 1, posted: 0, skipped: 1, failed: 0, remaining: 0,
+    });
+    const arm = service as unknown as {
+      run(context: typeof ctx, messageId: string, mode: "automatic"): Promise<unknown>;
+    };
+    await expect(arm.run(ctx, id, "automatic")).rejects.toMatchObject({
+      code: "unsubscribe_sender_identity_unverified", httpStatus: 409,
+    });
     expect(await recordsOf(db, accountId)).toHaveLength(0);
-    expect(id).toBeTruthy();
   });
 });
 
@@ -556,7 +559,7 @@ describe("sweepScreenedOut — the drain will not touch the backlog by default",
       .rejects.toBeInstanceOf(ServiceError);
   });
 
-  it("only considers screen-outs after the cutoff — the pre-existing backlog is untouched", async () => {
+  it("a newly confirmed letter sends while the pre-existing backlog is untouched", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     const old = await seed(db, accountId, mailboxId, ONE_CLICK, { from: "old@sender.example" });
     await db.update(folderState).set({ updatedAt: new Date("2020-01-01T00:00:00Z") })
@@ -564,9 +567,11 @@ describe("sweepScreenedOut — the drain will not touch the backlog by default",
     const fresh = await seed(db, accountId, mailboxId, ONE_CLICK, { from: "fresh@sender.example" });
     const post = spyPost();
 
-    const sweep = await svcWith(post).sweepScreenedOut(ctx, {
-      since: new Date("2026-01-01T00:00:00Z"), limit: 100,
-    });
+    const service = svcWith(post);
+    const tick = await service.sweepScreenedOut(ctx, { since: new Date("2026-01-01T00:00:00Z"), limit: 100 });
+    expect(tick.considered).toBe(0);
+    expect(post.calls).toEqual([]);
+    const sweep = await service.onScreenOut(ctx, [fresh]);
 
     expect(post.calls).toHaveLength(1);
     expect(sweep.considered).toBe(1);
@@ -576,16 +581,17 @@ describe("sweepScreenedOut — the drain will not touch the backlog by default",
     expect(rows[0]!.messageId).toBe(fresh);
   });
 
-  it("finds a screen-out nobody enqueued — the STATE is the queue", async () => {
-    // Nothing called `onScreenOut` for this message; it is simply sitting in a reject
-    // destination. That is what makes every reject path covered, including ones added later.
+  it("a confirmed quarantined letter needs no scheduled job", async () => {
+    // Quarantine keeps the letter eligible for a later confirmation without enqueueing it.
     const { db, ctx, accountId, mailboxId } = await makeCtx();
-    await seed(db, accountId, mailboxId, ONE_CLICK, { desired: "ohmail/Quarantine" });
+    const id = await seed(db, accountId, mailboxId, ONE_CLICK, { desired: "ohmail/Quarantine" });
     const post = spyPost();
 
-    const sweep = await svcWith(post).sweepScreenedOut(ctx, {
-      since: new Date("2026-01-01T00:00:00Z"), limit: 100,
-    });
+    const service = svcWith(post);
+    const tick = await service.sweepScreenedOut(ctx, { since: new Date("2026-01-01T00:00:00Z"), limit: 100 });
+    expect(tick.considered).toBe(0);
+    expect(post.calls).toEqual([]);
+    const sweep = await service.onScreenOut(ctx, [id]);
 
     expect(sweep).toEqual({ considered: 1, posted: 1, skipped: 0, failed: 0, remaining: 0 });
     expect(post.calls).toHaveLength(1);
@@ -604,19 +610,20 @@ describe("sweepScreenedOut — the drain will not touch the backlog by default",
     expect(sweep).toEqual({ considered: 0, posted: 0, skipped: 0, failed: 0, remaining: 0 });
   });
 
-  it("honours the limit — the blast radius is what the caller typed", async () => {
+  it("only the two named targets can send in a five-letter batch", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
+    const ids: string[] = [];
     for (let i = 0; i < 5; i += 1) {
-      await seed(db, accountId, mailboxId, ONE_CLICK, { from: `s${i}@sender.example` });
+      ids.push(await seed(db, accountId, mailboxId, ONE_CLICK, { from: `s${i}@sender.example` }));
     }
     const post = spyPost();
 
-    const sweep = await svcWith(post).sweepScreenedOut(ctx, {
-      since: new Date("2026-01-01T00:00:00Z"), limit: 2,
-    });
+    const named = ids.slice(0, 2);
+    const sweep = await svcWith(post).onScreenOut(ctx, named);
 
     expect(sweep.considered).toBe(2);
     expect(post.calls).toHaveLength(2);
+    expect((await recordsOf(db, accountId)).map((row) => row.messageId).sort()).toEqual(named.sort());
   });
 });
 

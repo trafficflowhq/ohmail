@@ -1,15 +1,17 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage, EngineMutation, Folder } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { TextProvider } from "@ohmail/app/text";
+import { useScreenerWords } from "../../../packages/app/src/screener/words.js";
 import {
   OhmailEngine, MemoryMirrorStore, mutationEffects,
-  type EngineMessage, type EngineMutation, type Folder, type MirrorStore, type SyncChange,
+  type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
-import { screenerIntentsKey } from "../app/shell/screener-intents";
-import { createIntentWindows, intentWindowsChannel } from "../app/shell/intent-windows";
+import { screenerIntentsKey } from "@ohmail/app-logic/screener/screener-intents";
+import { createIntentWindows, intentWindowsChannel } from "@ohmail/app-logic/press/intent-windows";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**
@@ -108,7 +110,7 @@ const roots: Root[] = [];
 
 /** A TAB: its own mount, its own toast log, its own Undo button. */
 async function mountTab(engine: OhmailEngine): Promise<Tab> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const said: string[] = [];
   const undos: Array<() => void> = [];
   let latest: StateLike | null = null;
@@ -117,10 +119,10 @@ async function mountTab(engine: OhmailEngine): Promise<Tab> {
     const [v, setV] = React.useState(0);
     force = () => setV((x) => x + 1);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    latest = useScreenerState(engine, v, ((m: string, opts?: { onAction?: () => void }) => {
+    latest = useScreenerState(engine, null, v, ((m: string, opts?: { onAction?: () => void }) => {
       said.push(m);
       if (opts?.onAction) undos.push(opts.onAction);
-    }) as never) as unknown as StateLike;
+    }) as never, useScreenerWords()) as unknown as StateLike;
     return null;
   }
   const host = document.createElement("div");
@@ -128,8 +130,8 @@ async function mountTab(engine: OhmailEngine): Promise<Tab> {
   const root = createRoot(host);
   roots.push(root);
   await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en as never, timeZone: "UTC", now: NOW, children: h(Probe),
+    root.render(h(TextProvider, {
+      locale: "en", messages: en as never, timeZone: "UTC", children: h(Probe),
     }));
   });
   return {
@@ -185,7 +187,7 @@ describe("the Screener's undo window belongs to one tab", () => {
       tabA.get().decide(tabA.get().waiting[0], "screened", { read: false, scope: "sender" });
     });
     expect(decides(), "nothing may reach the wire inside the window").toHaveLength(0);
-    expect(window.localStorage.getItem(screenerIntentsKey())).toContain("h1");
+    expect(window.localStorage.getItem(screenerIntentsKey(null))).toContain("h1");
 
     // TAB B opens while that window is still counting down.
     const tabB = await mountTab(engineOver(store));
@@ -194,7 +196,7 @@ describe("the Screener's undo window belongs to one tab", () => {
     expect(decides(), "the second tab committed a decision the first tab still held")
       .toHaveLength(0);
     expect(
-      window.localStorage.getItem(screenerIntentsKey()),
+      window.localStorage.getItem(screenerIntentsKey(null)),
       "the second tab consumed the first tab's journal entry",
     ).toContain("h1");
     /* AND IT IS NOT OFFERED THERE EITHER: the sender is being decided in another window, so
@@ -209,7 +211,7 @@ describe("the Screener's undo window belongs to one tab", () => {
       "{count, plural, one {Undone — 1 waiting again.} other {Undone — # waiting again.}}",
       "Undone — 1 waiting again.",
     ));
-    expect(window.localStorage.getItem(screenerIntentsKey()),
+    expect(window.localStorage.getItem(screenerIntentsKey(null)),
       "the undo left the decision armed on disk").toBeNull();
   });
 
@@ -257,7 +259,7 @@ describe("the Screener's undo window belongs to one tab", () => {
     /* The other direction, and the one that would be silently broken by a handshake that failed
        closed: an intent left by a killed tab has no owner, so the boot replay must take it. */
     const store = await freshStore();
-    window.localStorage.setItem(screenerIntentsKey(), JSON.stringify([{
+    window.localStorage.setItem(screenerIntentsKey(null), JSON.stringify([{
       v: 1, id: "h1", dest: "screened", read: false, scope: "sender", quiet: false,
       at: NOW.getTime() - 1000, derived: true, heldIds: ["h1"],
       from: { name: null, address: "news@bulk.example" },
@@ -265,7 +267,7 @@ describe("the Screener's undo window belongs to one tab", () => {
     const tab = await mountTab(engineOver(store));
     await tab.settle();
     expect(decides(), "a stranded decision was not replayed").toHaveLength(1);
-    expect(window.localStorage.getItem(screenerIntentsKey())).toBeNull();
+    expect(window.localStorage.getItem(screenerIntentsKey(null))).toBeNull();
   });
 });
 
@@ -346,14 +348,14 @@ describe("the coordinator itself", () => {
        precisely so one account's pending decision is never offered to the next. The channel takes
        the same partition, or a row id would be withheld across a sign-out. */
     const { setStorageOwner, resetStorageOwnerForTest } =
-      await import("../app/shell/storage-owner.js");
+      await import("@ohmail/app-logic/storage/storage-owner");
     try {
       setStorageOwner("acct-a");
-      const a = createIntentWindows({ askMs: 1 });
+      const a = createIntentWindows({ askMs: 1, channel: intentWindowsChannel("acct-a") });
       a.serve(() => [{ id: "shared-id", at: 1_000 }]);
       a.claim([{ id: "shared-id", at: 1_000 }]);
       setStorageOwner("acct-b");
-      const b = createIntentWindows({ askMs: 1 });
+      const b = createIntentWindows({ askMs: 1, channel: intentWindowsChannel("acct-b") });
       try {
         const settled = b.ask();
         await vi.advanceTimersByTimeAsync(400);

@@ -18,12 +18,13 @@
  * an ended write's request not stopped, or stopped after it is queued again → cases 3 and 7 red;
  * a create behind the hold left out of the take-back, or its row left unmarked → case 8 red.
  */
+import type { EngineDraft, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_HOLD_CEILING_MS, OUTBOX_REPLAY_DEADLINE_MS,
-  OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, OUTBOX_TYPE, type EngineDraft, type EngineMutation,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_HOLD_CEILING_MS, OUTBOX_MUTATE_DEADLINE_MS,
+  OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, OUTBOX_TYPE,
 } from "@ohmail/client-engine";
 
 const NOW = "2026-10-23T09:00:00.000Z";
@@ -103,13 +104,13 @@ describe("the hold behind a hung write ends at its ceiling", () => {
     expect(maxDuration, "the API's maxDuration could not be read").toBeGreaterThan(0);
     expect(OUTBOX_HOLD_CEILING_MS, "the ceiling ends a request the server may still be working on")
       .toBeGreaterThan(maxDuration * 1000);
-    expect(OUTBOX_HOLD_CEILING_MS).toBeGreaterThan(OUTBOX_REPLAY_DEADLINE_MS);
+    expect(OUTBOX_HOLD_CEILING_MS).toBeGreaterThan(OUTBOX_MUTATE_DEADLINE_MS);
   });
 
   it("1 — a hung decide, then a decide and a discard: past the ceiling all three leave in order, the first under its own key", async () => {
     const { engine, sent } = await scene((_m, n) => (n === 1 ? "hang" : "ok"));
     const first = engine.mutate(decide("s1"));
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
     const a = await first;
     expect(a.status, "the hung decide did not answer at its deadline").toBe("queued");
     const b = await engine.mutate(decide("s2"));
@@ -119,7 +120,7 @@ describe("the hold behind a hung write ends at its ceiling", () => {
 
     // A drive inside the ceiling still replays nothing: the barrier stands.
     await engine.syncOnce();
-    await vi.advanceTimersByTimeAsync(OUTBOX_HOLD_CEILING_MS - OUTBOX_REPLAY_DEADLINE_MS - 1_000);
+    await vi.advanceTimersByTimeAsync(OUTBOX_HOLD_CEILING_MS - OUTBOX_MUTATE_DEADLINE_MS - 1_000);
     expect(keys(sent), "the barrier gave way before its ceiling").toEqual([a.key]);
 
     await vi.advanceTimersByTimeAsync(2_000);
@@ -144,10 +145,24 @@ describe("the hold behind a hung write ends at its ceiling", () => {
     expect(keys(sent)).toEqual([a.key, a.key]);
   });
 
-  it("2 — CONTROL: an answer at 30 s, inside the ceiling, is sent once and never replayed", async () => {
-    const { engine, sent } = await scene((_m, n) => (n === 1 ? { afterMs: 30_000 } : "ok"));
+  it("keeps a slow mark-read on its first request until the server confirms it", async () => {
+    const { engine, sent } = await scene(() => ({ afterMs: 36_000 }));
+    const first = engine.mutate({ kind: "mark_seen", messageIds: ["m1"], unread: false });
+    const answers: string[] = [];
+    void first.then((r) => answers.push(r.status));
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(answers).toEqual([]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await first).status).toBe("confirmed");
+    expect(sent).toHaveLength(1);
+  });
+
+  it("2 — CONTROL: an answer after the initial wait and inside the ceiling is sent once", async () => {
+    const { engine, sent } = await scene((_m, n) => (n === 1 ? { afterMs: OUTBOX_MUTATE_DEADLINE_MS + 5_000 } : "ok"));
     const first = engine.mutate(decide("s1"));
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
     const a = await first;
     expect(a.status).toBe("queued");
     const b = await engine.mutate(discard("d1"));
@@ -159,7 +174,7 @@ describe("the hold behind a hung write ends at its ceiling", () => {
   it("3 — Try again inside the API's limit waits its turn; past it, it ends the wait at once, the hung change first", async () => {
     const { engine, sent } = await scene((_m, n) => (n === 1 ? "hang" : "ok"));
     const first = engine.mutate(decide("s1"));
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
     const a = await first;
     const b = await engine.mutate(discard("d1"));
     expect(b.status).toBe("queued");
@@ -171,7 +186,7 @@ describe("the hold behind a hung write ends at its ceiling", () => {
     expect((await early)?.status, "Try again sent a press beside a request the server may still apply").toBe("queued");
     expect(keys(sent)).toEqual([a.key]);
 
-    await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_REPLAY_DEADLINE_MS);
+    await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_MUTATE_DEADLINE_MS);
     expect(keys(sent), "the barrier gave way before its ceiling").toEqual([a.key]);
     const pressed = engine.retryQueued(b.id);
     await vi.advanceTimersByTimeAsync(10);
@@ -186,7 +201,7 @@ describe("the hold behind a hung write ends at its ceiling", () => {
     // The host owns the replay here (the phone's shape), so the press alone decides the order.
     const { engine, sent } = await scene((_m, n) => (n === 1 ? "hang" : "ok"), { autoReplay: false });
     const first = engine.mutate({ kind: "mark_seen", messageIds: ["m1"], unread: false } as EngineMutation);
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
     const read = await first;
     const unread = await engine.mutate({ kind: "mark_seen", messageIds: ["m1"], unread: true } as EngineMutation);
     expect([read.status, unread.status]).toEqual(["queued", "queued"]);
@@ -196,7 +211,7 @@ describe("the hold behind a hung write ends at its ceiling", () => {
     expect((await early)?.status, "the unread went out while the read may still land after it").toBe("queued");
     expect(keys(sent)).toEqual([read.key]);
 
-    await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_REPLAY_DEADLINE_MS);
+    await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_MUTATE_DEADLINE_MS);
     const pressed = engine.retryQueued(unread.id);
     await vi.advanceTimersByTimeAsync(10);
     expect((await pressed)?.status).toBe("confirmed");
@@ -214,10 +229,10 @@ describe("the hold behind a hung write ends at its ceiling", () => {
       return n === 1 ? "hang" : "ok";
     }, { autoReplay: false });
     const first = engine.mutate({ kind: "mark_seen", messageIds: ["m1", "s1"], unread: false } as EngineMutation);
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
     const read = await first;
     const unread = await engine.mutate({ kind: "mark_seen", messageIds: ["m1"], unread: true } as EngineMutation);
-    await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_REPLAY_DEADLINE_MS + 10);
+    await vi.advanceTimersByTimeAsync(OUTBOX_TRY_AGAIN_ENDS_HOLD_MS - OUTBOX_MUTATE_DEADLINE_MS + 10);
     const pressed = engine.retryQueued(unread.id);
     await vi.advanceTimersByTimeAsync(10);
     expect((await pressed)?.status).toBe("confirmed");
@@ -248,7 +263,7 @@ describe("the hold behind a hung write ends at its ceiling", () => {
     const create = engine.mutate({
       kind: "draft_save", draftId: null, mailboxId: "mb_1", subject: "Hello", body: "words", to: [], cc: [], bcc: [],
     } as unknown as EngineMutation);
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
     const made = await create;
     expect(made.status, "the hung create did not answer at its deadline").toBe("queued");
     await vi.advanceTimersByTimeAsync(OUTBOX_HOLD_CEILING_MS);
@@ -268,7 +283,7 @@ describe("the hold behind a hung write ends at its ceiling", () => {
       kind: "mail_send", inReplyTo: null, mailboxId: "mb_1", subject: "plans", body: "attached",
       to: [{ name: null, address: "to@example.invalid" }], cc: [], bcc: [],
     } as unknown as EngineMutation);
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
     const s = await press;
     expect(s.status).toBe("queued");
     const b = await engine.mutate(discard("d1"));
@@ -290,13 +305,13 @@ describe("the hold behind a hung write ends at its ceiling", () => {
   it("7 — the write the ceiling ends has its request stopped before the queue owns it again", async () => {
     const { engine, sent } = await scene((_m, n) => (n === 1 ? "hang" : "ok"), { autoReplay: false });
     const first = engine.mutate(decide("s1"));
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
     const a = await first;
     const signal = sent[0]!.signal;
     expect(signal, "the write went out with nothing to stop its request").toBeInstanceOf(AbortSignal);
     let queuedAtStop: boolean | null = null;
     signal!.addEventListener("abort", () => { queuedAtStop = engine.pendingMutations().some((p) => p.key === a.key); });
-    await vi.advanceTimersByTimeAsync(OUTBOX_HOLD_CEILING_MS - OUTBOX_REPLAY_DEADLINE_MS - 2);
+    await vi.advanceTimersByTimeAsync(OUTBOX_HOLD_CEILING_MS - OUTBOX_MUTATE_DEADLINE_MS - 2);
     expect(signal!.aborted, "the request was stopped while the engine still waited on it").toBe(false);
     await vi.advanceTimersByTimeAsync(2);
     expect(queuedAtStop, "the write went back on the queue with its request still free to be sent").toBe(false);
@@ -305,7 +320,7 @@ describe("the hold behind a hung write ends at its ceiling", () => {
   it("8 — a create waiting out the hold is named by its row, and a take-back stops it for this session and the next", async () => {
     const { engine, store, sent } = await scene((m) => (m.kind === "draft_save" && m.draftId === "d1" ? "hang" : "ok"), { autoReplay: false });
     const edit = engine.mutate({ kind: "draft_save", draftId: "d1", mailboxId: "mb_1", subject: "Hi", body: "slow", to: [], cc: [], bcc: [] } as unknown as EngineMutation);
-    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(OUTBOX_MUTATE_DEADLINE_MS + 1);
     expect((await edit).status, "the hung edit did not answer at its deadline").toBe("queued");
     const key = "create-key-1";
     const create = engine.mutate({ kind: "draft_save", draftId: null, mailboxId: "mb_1", subject: "Hi", body: "held", to: [], cc: [], bcc: [] } as unknown as EngineMutation, { key });

@@ -8,18 +8,25 @@
  * setting on this door; `503` = out of reach — a pane vanishing for both loses filled words.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
-import { SettingsNote, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { autoUnsubscribeConfirms } from "@ohmail/client-engine";
+import { useConsent } from "@ohmail/app-logic/consent";
+import { useDemoMode } from "@ohmail/app-logic/engine";
+import { autoUnsubscribeDoor } from "@ohmail/app-logic/press/sender-screening";
+import { useFrame } from "@ohmail/app/frame";
+import { screenerOffers, UnsubscribeSwitch } from "@ohmail/app/settings/screener";
+import { Switch } from "@ohmail/ui/base";
+import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
+import { useTranslations } from "use-intl";
 
 /* THE ONE STAND-DOWN PREDICATE, aggregated over the roster — the same `readerStandDown` Settings
    → Mailboxes renders its banner from, and the same call the Screener pane itself makes. See
    `mail-state.ts#screenerReadOnly`. `useMailboxFacts` is the NON-throwing accessor: a surface
    mounted without the provider reads `null`, which answers "this install organizes" and leaves
    every sentence here exactly as it was. */
-import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
-import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
-import { useManagedService } from "../../webapp/app/shell/managed-service";
+import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import { readerHolder, screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { TravelledChangeNote, useTravelledChange } from "../../webapp/app/shell/travelled-change";
 
 import { DesktopAutoSuggest } from "./DesktopAutoSuggest.js";
@@ -40,6 +47,8 @@ export function DesktopScreening({
 }) {
   /* See `DesktopScreeningWords` for why the namespace has to be on `vite.config.ts`'s list. */
   const t = useTranslations("desktopScreener");
+  const postureNote = useId();
+  const impersonationNote = useId();
   const readOnly = readerHolder(screenerMode(useMailboxFacts()));
   const managed = useManagedService();
   const [read, setRead] = useState<ScreeningRead | null>(null);
@@ -94,11 +103,9 @@ export function DesktopScreening({
 
   if (read.state === "offline") {
     return (
-      <>
-        <SettingsSubhead>{t("offlineHead")}</SettingsSubhead>
-        {/* NAMED, NOT HIDDEN — see the header. */}
-        <SettingsNote>{t(managed ? "offlineNote" : "offlineNoteServer")}</SettingsNote>
-      </>
+      <SettingsSheet title={t("offlineHead")}>
+        <SettingNote>{t(managed ? "offlineNote" : "offlineNoteServer")}</SettingNote>
+      </SettingsSheet>
     );
   }
 
@@ -125,67 +132,62 @@ export function DesktopScreening({
 
   return (
     <>
-      <SettingsSubhead>{t("filedHead")}</SettingsSubhead>
+      <SettingsSheet title={t("filedHead")}>
+        {/* ── A READER'S PANE SAYS SO, ABOVE THE CONTROLS. Measured on the released 0.13.7:
+            the posture and the window were offered as though this install screened, none saying
+            so. A filing change made here is sent to the install that organizes (mail 0094), and
+            the note says that; the change's own answer is the sentence under the switches.
+            `SettingNote`, not an alarm. Withheld where this install organizes. */}
+        {readOnly ? (
+          <SettingNote>
+            {readOnly.nobody
+              ? t("readerNoteNobody")
+              : readOnly.name ? t("readerNote", { name: readOnly.name }) : t("readerNoteUnknown")}
+          </SettingNote>
+        ) : null}
 
-      {/* ── A READER'S PANE SAYS SO, ABOVE THE CONTROLS. Measured on the released 0.13.7:
-          the posture and the window were offered as though this install screened, none saying
-          so. A filing change made here is sent to the install that organizes (mail 0094), and
-          the note says that; the change's own answer is the sentence under the switches.
-          `SettingsNote`, not an alarm. Withheld where this install organizes. */}
-      {readOnly ? (
-        <SettingsNote>
-          {readOnly.nobody
-            ? t("readerNoteNobody")
-            : readOnly.name ? t("readerNote", { name: readOnly.name }) : t("readerNoteUnknown")}
-        </SettingsNote>
-      ) : null}
-
-      {/* THE POSTURE. Framed around RELEVANCE and never "only real people": the mechanism keeps
-          service mail you act on — a receipt still lands in Receipts, an alert can stay in the
-          Ohbox — and files the obvious bulk. */}
-      <SettingsRow
-        label={t("postureLabel")}
-        description={t("postureWhy")}
-        control={
+        {/* THE POSTURE. Framed around RELEVANCE and never "only real people": the mechanism keeps
+            service mail you act on — a receipt still lands in Receipts, an alert can stay in the
+            Ohbox — and files the obvious bulk. */}
+        <SettingLine label={t("postureLabel")} describedBy={postureNote}>
           <Switch
-            checked={pref.ohboxPolicy === "people_only"}
-            ariaLabel={t("postureLabel")}
+            on={pref.ohboxPolicy === "people_only"}
+            label={t("postureLabel")}
             onChange={(on) => apply({ ohboxPolicy: on ? "people_only" : "people_and_replied" })}
           />
-        }
-      />
+        </SettingLine>
+        <SettingNote id={postureNote}>{t("postureWhy")}</SettingNote>
 
-      {/* FILE IMPERSONATIONS TO SPAM — on by default; the organizer files a held letter that claims
-          a company it cannot be from, without AI, each one listed in the Screener with Put back.
-          Absent from an older engine, which files none. On a reader the change travels, as the
-          posture's does. */}
-      {pref.impersonationFiling !== undefined ? (
-        <SettingsRow
-          label={t("impersonationLabel")}
-          description={t("impersonationWhy")}
-          control={
-            <Switch
-              checked={pref.impersonationFiling}
-              ariaLabel={t("impersonationLabel")}
-              onChange={(on) => apply({ impersonationFiling: on })}
-            />
-          }
-        />
-      ) : null}
+        {/* The organizer files an impersonation without AI and offers Put back in the Screener.
+            An older engine does not offer this setting. A reader sends the change to its organizer. */}
+        {pref.impersonationFiling !== undefined ? (
+          <>
+            <SettingLine label={t("impersonationLabel")} describedBy={impersonationNote}>
+              <Switch
+                on={pref.impersonationFiling}
+                label={t("impersonationLabel")}
+                onChange={(on) => apply({ impersonationFiling: on })}
+              />
+            </SettingLine>
+            <SettingNote id={impersonationNote}>{t("impersonationWhy")}</SettingNote>
+          </>
+        ) : null}
 
-      {/* SUGGEST FOR NEW SENDERS AUTOMATICALLY, ON THE STANDALONE DOOR ONLY — genuinely the
-          other door's control, not the same one moved. On the HOSTED door this consent lives
-          on the account (`/consent/settings` writes it, the hosted worker acts on it) and
-          authorises spending an ALLOWANCE, so its control names a price and is the shared
-          shell's (`AutoSuggestRow`, via `consentTransport` in `DesktopGate`); a second switch
-          here would be two over one flag, disagreeing in the direction that costs money. On
-          the STANDALONE door there is no ledger — a person's own model, a pass at the tail of
-          this install's sync: a different control, gated the other way. It renders itself
-          away when the engine answers 404, so the two conditions agree without an authority. */}
-      {door === "local" ? <DesktopAutoSuggest reader={readOnly !== null} /> : null}
+        {/* SUGGEST FOR NEW SENDERS AUTOMATICALLY, ON THE STANDALONE DOOR ONLY — genuinely the
+            other door's control, not the same one moved. On the HOSTED door this consent lives
+            on the account (`/consent/settings` writes it, the hosted worker acts on it) and
+            authorises spending an ALLOWANCE, so its control names a price and is the shared
+            shell's (`AutoSuggestRow`, via `consentTransport` in `DesktopGate`); a second switch
+            here would be two over one flag, disagreeing in the direction that costs money. On
+            the STANDALONE door there is no ledger — a person's own model, a pass at the tail of
+            this install's sync: a different control, gated the other way. It renders itself
+            away when the engine answers 404, so the two conditions agree without an authority. */}
+        {door === "local" ? <DesktopAutoSuggest reader={readOnly !== null} /> : null}
 
-      {failed ? <p className="join-error">{t("saveFailed")}</p> : null}
-      <TravelledChangeNote note={change.note} />
+        {failed ? <SettingNote warn>{t("saveFailed")}</SettingNote> : null}
+        <TravelledChangeNote note={change.note} />
+
+      </SettingsSheet>
 
       {/* THE BAR, still its own component. It carries its own read, its own save and its own
           failure line, and that is worth one extra read of the same row rather than one component
@@ -195,5 +197,26 @@ export function DesktopScreening({
           in here would have moved that marker. */}
       <DesktopScreeningWords door={door} said={(landed) => heard(landed, true)} latest={watched} />
     </>
+  );
+}
+
+export function DesktopUnsubscribeSettings() {
+  const { host } = useFrame();
+  const consent = useConsent();
+  const demo = useDemoMode();
+  const mailboxes = useMailboxFacts();
+  const { unsubscribe: from } = screenerOffers(host);
+  const { control } = autoUnsubscribeDoor({
+    demo,
+    known: consent.known,
+    on: consent.autoUnsubscribe,
+    standalone: consent.standalone,
+    confirms: autoUnsubscribeConfirms(mailboxes),
+  });
+  if (from === null || !control) return null;
+  return (
+    <SettingsSheet>
+      <UnsubscribeSwitch control={{ on: consent.autoUnsubscribe, from, setBlocked: consent.setBlockAutoUnsubscribe }} />
+    </SettingsSheet>
   );
 }

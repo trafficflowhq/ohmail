@@ -1,4 +1,5 @@
 import { ServiceError, type ServiceContext } from "@trafficflow/services/mail";
+import type { AnswerOf } from "@ohmail/wire";
 import { offlineResponse } from "./cloud-auth.js";
 import { runsStorePass } from "./composition-passes.js";
 import type { ReadRoute } from "./cloud-read.js";
@@ -11,7 +12,7 @@ import type { Diagnostic } from "./log.js";
  * mirror answers only when the relay says the account is unreachable (a 502/503/504, the relay's
  * own offline refusal among them) or does not answer within the bound, and that answer carries
  * `answeredFrom: "mirror"` so the window can say so. A walk stays on the store that began it: a
- * mirror page's cursor is tagged, and an account cursor or an address count is refused offline.
+ * mirror page's cursor is tagged, and account pages, address counts and Place counts are refused offline.
  */
 
 /** How long the account may take before the mirror answers instead: twice the slowest relayed page
@@ -65,12 +66,14 @@ async function fromMirror(req: Request, hit: Hit, ctx: ServiceContext): Promise<
   const { indexed, ...rest } = (await res.json()) as Record<string, unknown>;
   const body = MIRROR_INDEX_FILLS && indexed !== undefined ? { ...rest, indexed } : rest;
   const next = typeof body.nextCursor === "string" ? { nextCursor: `${MIRROR_CURSOR_TAG}${body.nextCursor}` } : {};
-  return json({ ...body, ...next, answeredFrom: "mirror" });
+  // The stamp is the wire's own name for it: renamed there alone, or here alone, this line does not compile.
+  return json({ ...body, ...next, answeredFrom: "mirror" } satisfies Pick<AnswerOf<"GET /search">, "answeredFrom">);
 }
 
 /** Which part of a search this request asks for: the timed line's `kind`, never the query. */
 function partOf(url: URL): string {
   if (url.searchParams.has("address")) return "address";
+  if (url.searchParams.get("places") === "1") return "places";
   if (url.searchParams.has("cursor")) return "next";
   const p = url.searchParams.get("parts");
   return p === "page" || p === "estimate" || p === "summary" ? p : "both";
@@ -115,11 +118,11 @@ export async function answerAccountFirst(req: Request, hit: Hit, deps: AccountFi
     });
   }
   void answer?.body?.cancel().catch(() => undefined);
-  const refused = cursor !== null || url.searchParams.has("address");
+  const refused = cursor !== null || kind === "address" || kind === "places";
   deps.log?.("cloud_search_from_mirror", {
     status: answer === null ? null : answer.status,
     reason: refused
-      ? "the account could not be reached; an account page or an address count is refused rather than answered by the mirror"
+      ? "the account could not be reached; an account page or count is unavailable"
       : answer === null
         ? "the account did not answer within the bound; the mirror answered and said so"
         : "the account could not be reached; the mirror answered and said so",

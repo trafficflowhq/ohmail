@@ -1,14 +1,14 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { forwardEnvelopePlan, forwardSend } from "../app/shell/forward-send";
-import { canSend, sendKeyOf, inlineForwardKey, COMPOSE_SEND_KEY } from "../app/shell/mail-send";
+import { forwardEnvelopePlan, forwardSend } from "@ohmail/app-logic/writing/forward-send";
+import { canSend, sendKeyOf, inlineForwardKey, COMPOSE_SEND_KEY } from "@ohmail/app-logic/writing/mail-send";
 import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
-import type { EngineMessage } from "@ohmail/client-engine";
+import { COMPOSER_WORDS } from "../../../packages/app/src/mail/ground/writing-words.js";
 
 /**
  * THE FORWARD'S PLAN AND WIRE — the pure halves of the inline forward, pinned key by key.
  *
- * `InlineReply` judges the Send lock with these functions and `AppShell.sendReply`'s forward
- * arm builds the mutation from them; these tests are what keeps that one derivation honest.
+ * The writing ground uses the same forward plan to judge the Send lock and build the mutation.
  * The lane tests pin `sendKeyOf`'s surface argument: a forward is ONE mutation shape sent
  * from TWO surfaces (the compose form and the thread's dock), and the lane is what keeps the
  * dock's "Sending…", its scratch-clear and its settle off the compose form's — see
@@ -42,9 +42,11 @@ describe("forwardEnvelopePlan — recipients are the user's, never derived", () 
 describe("forwardSend — the wire, key by key", () => {
   it("carries forwardOf and Fwd:, never inReplyTo; optional keys ride only when present", () => {
     const plan = forwardEnvelopePlan({ to: "a@b.test, ", cc: "", bcc: "" }, []);
+    /* The press hands the reader's clock, as the composer's words say it at that moment. */
     setActiveFormatZone("Europe/Zurich");
-    const m = forwardSend(parent, { body: "note", mailboxId: "mb1", plan });
+    const clock = COMPOSER_WORDS.clock();
     setActiveFormatZone(null);
+    const m = forwardSend(parent, { body: "note", mailboxId: "mb1", plan, clock });
     expect(m).toEqual({
       kind: "mail_send",
       inReplyTo: null,
@@ -61,6 +63,8 @@ describe("forwardSend — the wire, key by key", () => {
     // a forward has no parent-derived sender the way `enrich` gives a reply one.
     const bare = forwardSend(parent, { body: "note", plan });
     expect("mailboxId" in bare).toBe(false);
+    // A caller that hands no clock (an editor's lock judging the mutation) puts none on the wire.
+    expect("forwardClock" in bare).toBe(false);
     expect(canSend({ phase: "idle" }, bare)).toBe(false);
   });
 });

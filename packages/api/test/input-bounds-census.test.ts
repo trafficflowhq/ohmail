@@ -3,13 +3,23 @@ import ts from "typescript";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  apiRoutes, createApp, JSON_BODY_MAX_BYTES, LARGE_BODY_ROUTES,
+  apiRoutes, bodyCeilingFor, createApp, JSON_BODY_MAX_BYTES, LARGE_BODY_ROUTES,
   type ApiDeps, type Route,
 } from "@trafficflow/api";
+import { calendarRoutes } from "@trafficflow/api/calendar";
+import {
+  CALENDAR_OAUTH_CODE_MAX_CHARS, CALENDAR_OAUTH_ERROR_DESCRIPTION_MAX_CHARS,
+  CALENDAR_OAUTH_ERROR_MAX_CHARS, CALENDAR_OAUTH_STATE_CHARS,
+} from "../src/calendar/oauth.js";
+import { SEND_KEY_MAX } from "../src/send-deps.js";
+import { CALENDAR_WRITE_LIMITS } from "@trafficflow/db/calendar";
+import { CALDAV_PASSWORD_MAX_CHARS, CALDAV_USER_MAX_CHARS } from "../../services/src/calendar/connect.js";
+import { CALENDAR_NAME_MAX_CHARS } from "../../services/src/calendar/connect-acts.js";
+import { CALENDAR_ZONE_NAME_MAX } from "../../services/src/calendar/settings-service.js";
 import {
   ATTACHMENT_MAX_FETCH_BYTES, BODIES_IDS_MAX, CONTACTS_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT,
   DOWNLOAD_ALL_MAX_BYTES, DOWNLOAD_ALL_MAX_PARTS, DRAFT_MAX_RECIPIENTS, FORWARD_MAX_PARTS,
-  DRAFT_SUBJECT_MAX_CHARS, KB_MAX_TAGS,
+  DRAFT_OWN_TEXT_MAX_CHARS, DRAFT_SUBJECT_MAX_CHARS, KB_MAX_TAGS,
   MAILBOX_SIGNATURE_MAX_CHARS, MARK_SEEN_MAX_IDS, MAX_PAGE_LIMIT, OHBOX_BAR_MAX_BYTES,
   PROFILE_IMPORT_MAX, SCHEDULE_MAX_AHEAD_MS, SEARCH_QUERY_MAX_CHARS,
   SEED_MAX_ADDRESSES, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_ATTACHMENT_MAX_TOTAL_BYTES,
@@ -84,7 +94,7 @@ import { DISCOVER_DOMAIN_MAX_CHARS, DISCOVER_RECORDS_MAX } from "../src/mailbox-
  *
  * ## Three censuses, each EXACT over a stated domain
  *
- *  1. **The route table.** Every route in `apiRoutes` is classified, with no remainder. A new
+ *  1. **The route table.** Every route in the base and calendar route tables is classified, with no remainder. A new
  *     route is red until it is placed.
  *  2. **Query parameters.** Every `searchParams.get("…")` in `packages/api/src`, derived from
  *     the source text. A new query parameter is red until it is dispositioned.
@@ -168,7 +178,8 @@ function readingHelpers(): Set<string> {
 }
 
 /** Every route in the table, as `METHOD /pattern`. */
-const allRoutes = apiRoutes.map(key);
+const composedRoutes = [...apiRoutes, ...calendarRoutes];
+const allRoutes = composedRoutes.map(key);
 
 /**
  * Does this handler's own source read a request body or a query string?
@@ -206,9 +217,17 @@ const readsInputInline = (r: Route): boolean => READS_INPUT.test(String(r.handle
  *
  * The census was not wrong about counts. It was silent about a question it never asked, which is
  * the more dangerous state: a green guard reads as coverage. SECTION 6 now asks it, by DRIVING
- * `createApp(apiRoutes)` rather than by reading source, and this list keeps its original job.
+ * `createApp(composedRoutes)` rather than by reading source, and this list keeps its original job.
  */
 const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
+  "GET /calendar/settings",
+  "GET /calendar/connect",
+  "POST /calendar/oauth/google/start",
+  "POST /calendar/oauth/microsoft/start",
+  "DELETE /calendar/connections/:id",
+  "POST /calendar/connections/:id/check",
+  "POST /calendar/writes/:id/retry",
+  "DELETE /calendar/writes/:id",
   "GET /health",
   "GET /hello",
   "POST /internal/alerts",
@@ -257,7 +276,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // The storage mails (cloud 0057), the same bucket: a scheduler's shared secret and no body, query
   // or path parameter. One run mails at most `STORAGE_MAILS_PER_RUN` accounts (`runStorageMailPass`).
   "GET /internal/storage-mails/run",
-  "GET /auth/session",
   "POST /auth/2fa/webauthn/register/options",
   "POST /auth/2fa/totp/enroll",
   "DELETE /auth/2fa/totp",
@@ -470,6 +488,8 @@ interface Disposition {
  * usually arrives beside a free-text name.
  */
 const CENSUS: Readonly<Record<string, Disposition>> = {
+  // The handoff wrapper accepts one closed-set pane or one size-checked encrypted reference.
+  "GET /auth/session": { scalarsOnly: true },
   // ── the wall's nightly sweep and its erase door (cloud 0040): a scheduler's shared secret and
   // ONE uuid each — `?after=` the keyset position the sweep goes on from, `?account=` the one
   // account the door is asked about; anything but a canonical uuid is a 400. Neither is a count.
@@ -529,6 +549,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // The password change: the new password on the signup rule, the current one on sign-in's
   // maximum only; both refused before the throttle and before scrypt.
   "POST /auth/password": { bounds: [PASSWORD_MAX_LENGTH] },
+  "POST /auth/password/reset": { scalarsOnly: true },
+  "POST /auth/password/reset/complete": { bounds: [PASSWORD_MAX_LENGTH] },
   // OK on the reuse sweeps: at most REUSE_SWEEPS_MAX ids, each refused unless a uuid, before any read.
   "POST /auth/reuse-sweeps/ack": { bounds: [REUSE_SWEEPS_MAX] },
   "POST /auth/verify-email": { scalarsOnly: true },
@@ -580,6 +602,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "POST /pair/redeem": { scalarsOnly: true },
   // A link's state by its hash: one string, refused unless it is sha256's 43 base64url characters.
   "POST /pair/state": { scalarsOnly: true },
+  // A phone app's handoff: a refresh token, an attempt's name, a 43-character challenge and a closed-set target.
+  "POST /pair/handoff": { scalarsOnly: true },
 
   // ── sync ────────────────────────────────────────────────────────────────────────────────
   // `?types=` is validated against a closed set of nine entity names (`VALID_TYPES`), so its
@@ -741,7 +765,7 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // ── search ──────────────────────────────────────────────────────────────────────────────
   "GET /search": {
     bounds: [SEARCH_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT],
-    door: "`folder`/`sender` are equality comparisons, and a ceiling on them refused a facet this service itself emits — see SearchService",
+    door: "`folder`/`sender`/`to`/`party` are equality comparisons, and a ceiling on them refused a facet this service itself emits — see SearchService",
   },
 
   // ── privacy ─────────────────────────────────────────────────────────────────────────────
@@ -810,7 +834,11 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
     bounds: [DRAFT_MAX_RECIPIENTS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
       DRAFT_SUBJECT_MAX_CHARS, DRAFT_HTML_CAP_BYTES, DRAFT_BODY_MAX_BYTES, FORWARD_MAX_PARTS],
   },
+  // A fixed-length content revision or a bounded date for the one draft on the path.
+  "DELETE /drafts/:id/conditional": { scalarsOnly: true },
   "POST /drafts/:id/schedule": { bounds: [SCHEDULE_MAX_AHEAD_MS] },
+  // A draft from the person's own words: the words, and their own subject; the two ids are equalities.
+  "POST /drafts/from-text": { bounds: [DRAFT_OWN_TEXT_MAX_CHARS, DRAFT_SUBJECT_MAX_CHARS] },
   // Send later with files (mail 0180): the send's two transports with their own bounds, the year,
   // a server's seven days and its per-account quota, each refused before any download.
   "POST /drafts/:id/schedule-with-files": {
@@ -824,11 +852,51 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   /* One body field, `draftId`, shape-checked as an id and recorded only when the account holds that
      draft; the key is the `Idempotency-Key` header, one equality predicate on the reservation. */
   "POST /sends/withdraw": { scalarsOnly: true },
+  /* An invitation's answer: two body fields, each one of three words refused by shape, and the key is
+     the send's own `Idempotency-Key`, bounded as the send's. What it sends is written from the
+     stored row, never from the request. */
+  "POST /messages/:id/invitation/answer": { scalarsOnly: true },
   "POST /drafts/:id/resolve": { door: "the only body field is a two-member enum, bounded by shape; the ids it writes are its own path parameter and the ledger rows already attached to it" },
   "POST /drafts/:id/send": {
     // `forwardZone`/`forwardLocale` name how the quoted header dates the original, capped at the parsers.
     bounds: [SEND_MAX_ATTACHMENT_PARTS, SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_MAX_RECIPIENTS,
       SEND_ATTACHMENT_FIELD_MAX_CHARS, READER_ZONE_MAX_CHARS, READER_LOCALE_MAX_CHARS],
+  },
+
+  // ── calendar ──────────────────────────────────────────────────────────────────────────────
+  "PATCH /calendar/settings": { bounds: [CALENDAR_ZONE_NAME_MAX] },
+  // The JSON ceiling caps parsing. Only the boolean reaches the update, keyed by the session's
+  // account and the UUID checked by the router (Section 6).
+  "PATCH /calendar/suggestions/:id": { bounds: [JSON_BODY_MAX_BYTES], scalarsOnly: true },
+  // The hosts cap JSON, and the send key has its own ceiling. The service checks both ids as
+  // UUIDs and matches the base to the stored timestamp. It caps the occurrence, time values
+  // and zoned time names at 256, 16 and 128 characters respectively.
+  "POST /calendar/proposals": { bounds: [JSON_BODY_MAX_BYTES, SEND_KEY_MAX, 256, 16, 128] },
+  "POST /calendar/writes": { bounds: [
+    CALENDAR_WRITE_LIMITS.keyChars, CALENDAR_WRITE_LIMITS.payloadBytes,
+    CALENDAR_WRITE_LIMITS.invitees, CALENDAR_WRITE_LIMITS.alarms,
+  ] },
+  // readPlaceQuestion bounds the normalized text, language tag, and result count at the parser.
+  "POST /calendar/places/suggest": { bounds: [200, 35, 8] },
+  "POST /calendar/connections": {
+    // The subscription address is capped at MAX_URL_CHARS in the credential parser.
+    bounds: [CALENDAR_WRITE_LIMITS.keyChars, CALDAV_USER_MAX_CHARS, CALDAV_PASSWORD_MAX_CHARS, 8192],
+  },
+  "POST /calendar/connections/:id/sign-in": { bounds: [CALDAV_USER_MAX_CHARS, CALDAV_PASSWORD_MAX_CHARS] },
+  "PATCH /calendar/calendars/:id": { bounds: [CALENDAR_NAME_MAX_CHARS] },
+  "GET /calendar/oauth/google/callback": {
+    bounds: [CALENDAR_OAUTH_STATE_CHARS, CALENDAR_OAUTH_CODE_MAX_CHARS, CALENDAR_OAUTH_ERROR_MAX_CHARS],
+  },
+  "GET /calendar/oauth/microsoft/callback": {
+    bounds: [CALENDAR_OAUTH_STATE_CHARS, CALENDAR_OAUTH_CODE_MAX_CHARS,
+      CALENDAR_OAUTH_ERROR_MAX_CHARS, CALENDAR_OAUTH_ERROR_DESCRIPTION_MAX_CHARS],
+  },
+  // State has a fixed shape, the code has a length cap and the refusal comes from a closed set.
+  "POST /calendar/oauth/google/complete": {
+    bounds: [JSON_BODY_MAX_BYTES, CALENDAR_OAUTH_STATE_CHARS, CALENDAR_OAUTH_CODE_MAX_CHARS],
+  },
+  "POST /calendar/oauth/microsoft/complete": {
+    bounds: [JSON_BODY_MAX_BYTES, CALENDAR_OAUTH_STATE_CHARS, CALENDAR_OAUTH_CODE_MAX_CHARS],
   },
 
   // ── workflows ───────────────────────────────────────────────────────────────────────────
@@ -955,7 +1023,7 @@ describe("SECTION 1 — every route is classified for caller-chosen counts and s
   });
 
   it("PATH_PARAMS_ONLY is true of the handlers, not merely asserted about them", () => {
-    const lying = apiRoutes
+    const lying = composedRoutes
       .filter((r) => PATH_PARAMS_ONLY.includes(key(r)) && readsInputInline(r))
       .map(key);
     // A route parked here that has since started reading a body or a query string.
@@ -963,7 +1031,7 @@ describe("SECTION 1 — every route is classified for caller-chosen counts and s
   });
 
   it("every CENSUS route really does read caller input inline", () => {
-    const notReading = apiRoutes
+    const notReading = composedRoutes
       .filter((r) => CENSUS[key(r)] !== undefined && !readsInputInline(r))
       .map(key);
     // Either the route stopped reading input (move it to PATH_PARAMS_ONLY) or it started
@@ -994,7 +1062,7 @@ describe("SECTION 1 — every route is classified for caller-chosen counts and s
     }
 
     const viaHelper = new Set(Object.keys(INPUT_VIA_HELPER));
-    const hidden = apiRoutes
+    const hidden = composedRoutes
       .filter((r) => PATH_PARAMS_ONLY.includes(key(r)) && !viaHelper.has(key(r)))
       .filter((r) => {
         const src = String(r.handler);
@@ -1011,7 +1079,7 @@ describe("SECTION 1 — every route is classified for caller-chosen counts and s
       .toEqual(helperKeys);
     // The blind spot is closed only while these routes genuinely read nothing inline: one that
     // started reading directly would be covered by the derived signal and must move.
-    const readsInline = apiRoutes
+    const readsInline = composedRoutes
       .filter((r) => INPUT_VIA_HELPER[key(r)] !== undefined && readsInputInline(r))
       .map(key);
     expect(readsInline, "listed as reading via a helper, but reads inline now").toEqual([]);
@@ -1209,6 +1277,8 @@ const QUERY_PARAM_READS: Readonly<Record<string, number>> = {
   "routes/search.ts#limit": 2,
   "routes/snippets.ts#limit": 1,
   "routes/sync.ts#limit": 2,
+  // The delta filters by the kinds named; the snapshot reads them for the calendar's gate alone.
+  "routes/sync.ts#types": 2,
   "routes/triage.ts#cursor": 2,
   // Read twice in a ternary: once to test for presence, once to use.
   "routes/devices.ts#cursor": 2,
@@ -1230,8 +1300,13 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // route's accepted shape in a slice about bounds.
   "routes/attachments.ts#q": "request-line",
   "routes/attachments.ts#type": "closed-set",
+  // Microsoft's validation call, read only where the door echoes one: echoed at 1 to
+  // `VALIDATION_TOKEN_MAX_CHARS` (1024) printable characters, else the one answer every call gets.
+  "routes/calendar-notices.ts#validationToken": "length-capped",
   "routes/consent.ts#counts": "closed-set",
   "routes/events.ts#stream": "identifier",
+  "routes/drafts.ts#ifContentRevision": "length-capped",
+  "routes/drafts.ts#ifUpdatedAt": "length-capped",
   // The lifecycle sweep's keyset position and the erase door's account: canonical uuids or a 400.
   "routes/internal.ts#after": "identifier",
   // A drill's ack token (cloud 0051): 43 base64url characters or the fixed 404, read by the page
@@ -1329,11 +1404,17 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/search.ts#limit": "clamped",
   // Narrowed by `isSearchParts` against `SEARCH_PARTS`; an unknown value is a 400, never `both`.
   "routes/search.ts#parts": "closed-set",
+  // Only the literal "1" selects the inventory arm. Other values follow regular Search.
+  "routes/search.ts#places": "closed-set",
   "routes/search.ts#q": "length-capped",
   // An opaque page cursor this service wrote, refused past `SEARCH_CURSOR_MAX_CHARS` and on any
   // shape it does not decode to.
   "routes/search.ts#cursor": "length-capped",
   "routes/search.ts#sender": "request-line",
+  // `sender`'s twins on the other side: `to` is an equality on the recipients' keys, `party` that
+  // or `sender`'s, each one comparison a letter whatever its length.
+  "routes/search.ts#to": "request-line",
+  "routes/search.ts#party": "request-line",
   "routes/search.ts#sort": "closed-set",
   "routes/search.ts#unread": "closed-set",
   // ── The ADMIN console's four, invisible until the query extractor resolved local aliases ──
@@ -1384,15 +1465,30 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // `approveAuthorize`/`peekAuthorizeRequest` before `hashToken` runs over it, then matched by
   // equality against a stored hash — it reaches no `LIKE`, no ordering and no allocation.
   "routes/oauth.ts#request": "identifier",
+  "calendar/oauth.ts#state": "identifier",
+  "calendar/oauth.ts#code": "length-capped",
+  "calendar/oauth.ts#error": "length-capped",
+  "calendar/oauth.ts#error_description": "length-capped",
+  "calendar/oauth.ts#error_subcode": "length-capped",
+  // routes/settings-handoff.ts: the host's Settings or Calendar pane list is checked before minting.
+  "routes/settings-handoff.ts#settingsPane": "closed-set",
+  // routes/settings-handoff.ts: check matches 1–10 digits, an underscore and 40–700
+  // base64url characters, at most 711 characters altogether, before decrypting.
+  "routes/settings-handoff.ts#settingsHandoff": "identifier",
   "routes/snippets.ts#cursor": "identifier",
   "routes/snippets.ts#limit": "clamped",
   "routes/sync.ts#cursor": "length-capped",
   "routes/sync.ts#limit": "clamped",
-  // `=== "tail"` at the read is the whole comparison: one word opens the labeled tail, anything
-  // else is the ordinary bootstrap walk. Never parsed, never reaches a query.
+  // `=== "tail"` or `=== "calendar"` at the read is the whole comparison: one word opens the
+  // labeled tail, the other the calendar's phase, anything else is the ordinary bootstrap walk.
+  // Never parsed, never reaches a query.
   "routes/sync.ts#phase": "closed-set",
   "routes/sync.ts#since": "length-capped",
   "routes/sync.ts#types": "closed-set",
+  // The span the calendar's phase alone loads: two instants of at most 40 characters, each in the
+  // years 0001 to 9999 and at most a year apart (`namedCalendarSpan`), before any query.
+  "routes/sync.ts#from": "length-capped",
+  "routes/sync.ts#to": "length-capped",
   "routes/triage.ts#cursor": "identifier",
   "routes/triage.ts#limit": "clamped",
   "routes/triage.ts#state": "closed-set",
@@ -1480,6 +1576,27 @@ describe("SECTION 2 — every query parameter this API reads has a stated bound"
       .sort();
     expect(drift, "the number of reads moved without the census moving").toEqual([]);
     expect(total).toBeGreaterThan(55);
+
+    // These reads share the session route. Pin the actual guard, including its placement before
+    // the key provider, so a census entry alone cannot pass over an unbounded reader.
+    const handoff = readFileSync(resolve(API_SRC, "routes/settings-handoff.ts"), "utf8");
+    expect(handoff, "the Settings pane vocabulary").toContain(
+      'const SETTINGS_PANES = ["account", "security", "devices", "storage", "mailboxes"];',
+    );
+    expect(handoff, "the Calendar pane vocabulary").toContain(
+      'const CALENDAR_PANES = ["calendar-google", "calendar-microsoft"];',
+    );
+    expect(handoff, "the Settings wrapper hands in its own vocabulary").toContain("return withHandoff(route, SETTINGS_PANES);");
+    expect(handoff, "the Calendar wrapper hands in its own vocabulary").toContain("return withHandoff(route, CALENDAR_PANES);");
+    expect(handoff, "mint receives the selected vocabulary").toContain("if (pane !== null) return mint(pane, deps, panes);");
+    expect(handoff, "the pane is refused before minting").toMatch(
+      /if \(!panes\.includes\(pane\)\) return answer\(400, \{\}\);\s*const account = session\.accountId;\s*const \{ ciphertext, keyVersion \} = await deps\.keyProvider\.encrypt\(/,
+    );
+    expect(handoff, "the handoff reference is bounded before decrypting").toContain(String.raw`const match = /^(\d{1,10})_([A-Za-z0-9_-]{40,700})$/.exec(reference);
+  if (!match) return answer(410, {});`);
+    expect(handoff, "only validated reference captures reach the key provider").toContain(
+      'deps.keyProvider.decrypt(match[2]!, Number(match[1]))',
+    );
   });
 
   it("every `?limit=` in the table is CLAMPED, because that is the one this class started with", () => {
@@ -1556,6 +1673,45 @@ type ArrayOrigin =
  * its expression is one the file already uses.
  */
 const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>> = {
+  "screener-rule-release.ts :: release.messageIds": {
+    origin: { caller: "the request's message ids, validated and capped at SCREENER_RELEASE_MOVE_MAX (500) by readRelease" },
+    count: 2,
+  },
+  // The calendar's builders for the sync feed: the ids of one feed page's changes of one kind.
+  "calendar/feed.ts :: [...ids]": {
+    origin: { bounded: "one feed page's changes of one calendar kind — at most the page's own row limit (`MAX_LIMIT`, 2 000)" },
+    count: 5,
+  },
+  "calendar/feed.ts :: found": {
+    origin: { bounded: "the events the same page's select found, never more than the ids it was asked for" },
+    count: 1,
+  },
+  "calendar/feed.ts :: candidates": {
+    origin: { bounded: "editable recurring event rows among the account's selected ids: MAX_LIMIT for sync and snapshot pages, or one write and its followers under CALENDAR_WRITE_LIMITS.openPerAccount" },
+    count: 1,
+  },
+  // The export's addresses: the mailboxes the account's own calendar connections ride.
+  "calendar/export.ts :: mailboxIds": {
+    origin: { bounded: "one per calendar connection of the account, each a sign-in the person made by hand" },
+    count: 1,
+  },
+  // The switch's check of the calendar new events go to: the two access words that take them.
+  "calendar/settings-service.ts :: [\"owner\", \"writer\"]": { origin: "constant", count: 1 },
+  // The calendar's write door: the two states a write still shows in, and the writes that wait on one write.
+  "calendar/write-marks.ts :: [\"pending\", \"refused\"]": { origin: "constant", count: 1 },
+  "calendar/write-marks.ts :: [...eventIds]": {
+    origin: { bounded: "the events one feed page's builder found, never more than the ids it was asked for" },
+    count: 1,
+  },
+  "calendar/writes.ts :: [\"pending\", \"refused\"]": { origin: "constant", count: 3 },
+  "calendar/writes.ts :: followers": {
+    origin: { bounded: "the open writes that wait on one write (of its event, and a press's second part), at most the account's open writes, `CALENDAR_WRITE_LIMITS.openPerAccount` (200)" },
+    count: 1,
+  },
+  "calendar/writes.ts :: going": {
+    origin: { bounded: "one write and the open writes that wait on it, at most one more than the account's open writes (`openPerAccount`, 200)" },
+    count: 2,
+  },
   // ── CLOSED 2026-09-01. All four were `unbounded` and are now subqueries. ────────────────────
   // The messageIds entry was the critical one and its old disposition is worth keeping in view:
   // "EVERY message uuid the account holds, selected into memory and reused in three deletes. Past
@@ -1579,7 +1735,9 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   "mailbox-erasure.ts :: ids": {
     origin: { bounded: "one step's page — at most `ERASE_BATCH` (2 000) message or draft ids, read by a `limit` on the step's own select" },
     // 20 → 21 for `message_search` (mail 0125), deleted with the bodies on the same page; 21 → 22
-    // for the drafts that FORWARD a deleted message, unanchored beside the replies.
+    // for the drafts that FORWARD a deleted message, unanchored beside the replies; 22 → 21 for
+    // `away_responder_sent`, which mail 0202 dropped; 21 → 22 for `message_invitations` (mail
+    // 0204), deleted with the letters of the same page.
     count: 22,
   },
   // The response cache at a mailbox erasure: the account's live keys (a 24-hour window) and the
@@ -1615,6 +1773,12 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   "account-deletion-service.ts :: ownUserIds": {
     origin: { subquery: "a `select users.id where account_id = …` inside the predicate — no id is materialized" },
     count: 9,
+  },
+  // The settings record's three device numbers (`device-numbers.ts`): both counts go through the
+  // per-user indexes by way of the account's users.
+  "device-numbers.ts :: own": {
+    origin: { subquery: "a `select users.id where account_id = …` inside the predicate — no id is materialized" },
+    count: 2,
   },
   "account-deletion-service.ts :: ownEmails": {
     origin: { subquery: "`select users.email where account_id = …` — the signup funnel is keyed by address, and the addresses stay in PostgreSQL: no parameter is bound per user and none is materialized here" },
@@ -1662,8 +1826,19 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // the swept sessions of the at most REUSE_SWEEPS_MAX it keeps.
   "auth/auth-service.ts :: ackDevices": { origin: { bounded: "one per sweep row the listing read, `limit`ed by REUSE_SWEEPS_SCAN" }, count: 1 },
   "auth/auth-service.ts :: sweptSessions": { origin: { bounded: "the swept sessions of the at most REUSE_SWEEPS_MAX sweeps the listing keeps" }, count: 1 },
-  "auth/session-lifecycle.ts :: families.slice(i, i + 500)": { origin: { bounded: "sliced into 500-family chunks by the caller, explicitly" }, count: 1 },
+  // The sign-out's unused mailbox grants (`pruneDeviceGrants`): the ended families in 500-family
+  // chunks, the accounts of one chunk's ended sessions, and the matched grants in 500-row slices.
+  "auth/auth-service.ts :: chunk": { origin: { bounded: "GRANT_PRUNE_BATCH (500) of the families a sign-out ended, sliced before the chunk's session read" }, count: 1 },
+  "auth/auth-service.ts :: [...new Set(accountsBySession.values())]": { origin: { bounded: "the accounts of one chunk's ended sessions; a family keeps the account it was minted in, so at most GRANT_PRUNE_BATCH (500)" }, count: 1 },
+  "auth/auth-service.ts :: toDelete.slice(j, j + GRANT_PRUNE_BATCH)": { origin: { bounded: "one GRANT_PRUNE_BATCH (500) slice of the matched unused mailbox grants" }, count: 1 },
+  "auth/session-lifecycle.ts :: families.slice(i, i + 500)": { origin: { bounded: "sliced into 500-family chunks by the caller, explicitly" }, count: 2 },
   "auth/session-lifecycle.ts :: live.map((r) => r.familyId)": { origin: { bounded: "the live families of ONE session's chain, which the refresh ladder bounds" }, count: 1 },
+  // The handoff's lineage (`revokeHandedOff`): each step's devices and the families it ended, in 500-row slices.
+  "auth/session-lifecycle.ts :: frontier.slice(i, i + 500)": { origin: { bounded: "sliced into 500-device chunks by the caller, explicitly" }, count: 2 },
+  // The two grants that mint a session, voided together: a literal pair.
+  "auth/session-lifecycle.ts :: [\"device-pair\", \"app-handoff\"]": { origin: "constant", count: 1 },
+  // The pairings a person lists: the two public grants, a literal pair.
+  "pairing.ts :: [\"invite\", \"device-pair\"]": { origin: "constant", count: 1 },
   "auth/session-reaper.ts :: [...new Set(rows.map((c) => c.familyId))]": { origin: { bounded: "the reaper's own claim batch, `limit`ed by its pass size" }, count: 1 },
   "auth/session-reaper.ts :: ids": { origin: { bounded: "the reaper's own claim batch, `limit`ed by its pass size" }, count: 1 },
   "push-service.ts :: chunk": { origin: { bounded: "PRUNE_FAMILIES (500) of the families a revoke ended, sliced before the two reads of each chunk" }, count: 2 },
@@ -1725,7 +1900,6 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   "held-release-service.ts :: [\"create\", \"update\"]": { origin: "constant", count: 1 },
   "resurfaced-fold.ts :: threads": { origin: { bounded: "the distinct thread ids of ONE `new_for_you` page (a `clampLimit`ed page) or of Power Through's one current row" }, count: 1 },
   "folders.ts :: ids as string[]": { origin: { bounded: "one `/sync` change page's folder ids — the sole caller filters them out of a `slice(0, limit)`ed change-log page, the same provenance the materialize prefetches carry" }, count: 1 },
-  "junk-window.ts :: targets": { origin: { bounded: "one junk window page, bounded by the window's own read caps" }, count: 1 },
   "junk-window.ts :: wanted": { origin: { bounded: "the message-ids of one junk page, so bounded by that page" }, count: 1 },
   // The standing-command attribution's three keys, all of them derived from ONE junk page: the
   // mailboxes it spans (the account's connected mailboxes with a junk folder), and the distinct
@@ -1915,11 +2089,6 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
     origin: { caller: "THREAD_MERGE_MAX_IDS and a uuid shape test, before the transaction opens" },
     count: 1,
   },
-  // ONE again, and the drop is the fix for the drain's timeout: the two reads that each carried
-  // this predicate — `sweepScreenedOut`'s per-account candidates and `drainScreenedOut`'s
-  // account census — now join ONE page-fenced subquery that holds it, so there is a single place
-  // the closed `Destination` constant reaches SQL. Nothing a caller supplies reaches it.
-  "unsubscribe-service.ts :: REJECT_DESTINATIONS as string[]": { origin: "constant", count: 1 },
   // The 0.22 rename: the News pile is asked for under BOTH spellings, because a rule stored
   // before it still points at the legacy folder. Two module constants, so the predicate is
   // two elements wide whatever the account holds.
@@ -1937,6 +2106,13 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
     count: 1,
   },
 };
+
+const RETIRED_IN_SINKS = [
+  // The confirmed sweep records each mailbox under its own lock.
+  "junk-window.ts :: targets",
+  // Stored rules can no longer send an unsubscribe request from the background drain.
+  "unsubscribe-service.ts :: REJECT_DESTINATIONS as string[]",
+] as const;
 
 describe("SECTION 3 — every SQL `IN` predicate says where its array came from", () => {
   /**
@@ -2010,6 +2186,7 @@ describe("SECTION 3 — every SQL `IN` predicate says where its array came from"
     const declared = new Set(Object.keys(IN_SINKS));
     const undeclared = [...found.keys()].filter((k) => !declared.has(k)).sort();
     const stale = [...declared].filter((k) => !found.has(k)).sort();
+    expect(RETIRED_IN_SINKS.filter((k) => found.has(k) || declared.has(k)), "retired SQL predicates").toEqual([]);
     expect(undeclared, "SQL `IN` predicate(s) whose array origin is not declared").toEqual([]);
     expect(stale, "declared origin(s) for an `inArray` that no longer exists").toEqual([]);
 
@@ -2092,8 +2269,14 @@ describe("SECTION 3 — every SQL `IN` predicate says where its array came from"
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
 describe("SECTION 4 — the door's large-body exemption is derived, not asserted", () => {
+  it("uses the regular JSON body ceiling for a calendar suggestion change", () => {
+    const id = crypto.randomUUID();
+    expect(bodyCeilingFor(composedRoutes, "PATCH", `/calendar/suggestions/${id}`, 50 * 1024 * 1024))
+      .toBe(JSON_BODY_MAX_BYTES);
+  });
+
   it("LARGE_BODY_ROUTES is exactly the routes whose handler decodes inline bytes", () => {
-    const decodesBytes = apiRoutes
+    const decodesBytes = composedRoutes
       .filter((r) => /contentBase64|decodeSendAttachments/.test(String(r.handler)))
       .map(key)
       .sort();
@@ -2362,7 +2545,7 @@ const paramNamesOf = (pattern: string): string[] =>
 /** Every `METHOD /pattern#name` in the shipped table. */
 function allParamKeys(): string[] {
   const out: string[] = [];
-  for (const r of apiRoutes) for (const p of paramNamesOf(r.pattern)) out.push(`${key(r)}#${p}`);
+  for (const r of composedRoutes) for (const p of paramNamesOf(r.pattern)) out.push(`${key(r)}#${p}`);
   return out;
 }
 
@@ -2378,6 +2561,7 @@ describe("SECTION 6 — every path parameter is bounded by shape or declared opa
       "GET /drafts/:id#id",
       "GET /attachments/:id#id",
       "GET /admin/accounts/:id#id",
+      "PATCH /calendar/suggestions/:id#id",
     ]) {
       expect(keys).toContain(k);
     }
@@ -2397,7 +2581,7 @@ describe("SECTION 6 — every path parameter is bounded by shape or declared opa
 
   it("OPAQUE_PATH_PARAMS and the routes' own `opaqueParams` say the same thing, both ways", () => {
     const fromRoutes: string[] = [];
-    for (const r of apiRoutes) {
+    for (const r of composedRoutes) {
       for (const p of r.options?.opaqueParams ?? []) fromRoutes.push(`${key(r)}#${p}`);
     }
     // Both directions, because either one alone is a list that can drift: a route can widen its
@@ -2406,7 +2590,7 @@ describe("SECTION 6 — every path parameter is bounded by shape or declared opa
     // And every declared param must actually exist on its pattern — an `opaqueParams: ["mid"]` on a
     // route whose param is `:id` is a typo that silently checks everything, which looks exactly
     // like working correctly.
-    for (const r of apiRoutes) {
+    for (const r of composedRoutes) {
       for (const p of r.options?.opaqueParams ?? []) {
         expect(paramNamesOf(r.pattern), `${key(r)} declares :${p} opaque but has no such param`)
           .toContain(p);
@@ -2418,13 +2602,14 @@ describe("SECTION 6 — every path parameter is bounded by shape or declared opa
     // `deps` is deliberately a bare cast and never populated. If the check were a middleware, or
     // anywhere below `createApp.handle`, these calls would touch the session store or the database
     // and throw on the empty object — so this passing IS the placement proof, not a shortcut.
-    const app = createApp(apiRoutes);
+    const app = createApp(composedRoutes);
     const deps = {} as unknown as ApiDeps;
 
     for (const [method, path] of [
       ["GET", "/drafts/not-a-uuid"],              // FULL_PIPELINE
       ["GET", "/attachments/not-a-uuid"],         // RAW_PIPELINE
       ["GET", "/admin/accounts/not-a-uuid"],      // ANONYMOUS_PIPELINE
+      ["PATCH", "/calendar/suggestions/not-a-uuid"], // composed Calendar route
     ] as const) {
       const res = await app.handle(new Request(`http://localhost${path}`, { method }), deps);
       expect(res.status, `${method} ${path}`).toBe(400);

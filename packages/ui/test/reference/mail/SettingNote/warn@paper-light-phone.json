@@ -1,0 +1,50 @@
+{
+  "component": "SettingNote",
+  "state": "warn",
+  "look": "paper-light-phone",
+  "place": "block",
+  "target": [28, 214.3906, 334, 79.1719],
+  "clip": [28, 214, 334, 80],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 3 93b4b80b8950" }],
+  "nodes": [],
+  "loose": {
+    "text": [
+      {
+        "said": "You have no unused recovery codes. Without them, losing your authenticator locks you out.",
+        "type": 0
+      }
+    ],
+    "surfaces": [{ "box": [0, 2, 18, 18], "paint": 0 }]
+  }
+}

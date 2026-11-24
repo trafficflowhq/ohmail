@@ -1,14 +1,15 @@
-/* STEP 1 measurement (L15) row 118, harness copied from move-from-a-pile.test.ts. */
 /** @vitest-environment jsdom */
+import { within } from "@testing-library/react";
+import type { EngineMessage, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, OhmailEngine,
-  type EngineMessage, type Folder, type RuleDTO, type SyncChange,
+  type SyncChange,
 } from "@ohmail/client-engine";
 import {
   ISO, act, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
-import { UNDO_MS } from "../app/shell/screener-state";
+import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * Close the routing window, so the held rule is sent. A Move moves the mail now and holds the
@@ -132,29 +133,26 @@ async function open(engine: OhmailEngine, view: string): Promise<HTMLElement> {
   return c;
 }
 
-const ids = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll("[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
-
-const toasts = (): string[] =>
-  [...document.querySelectorAll("[class*=toast]")].map((n) => (n.textContent ?? "").trim()).filter(Boolean);
-
-/** The reported gesture: expand the card, press Move, press the first destination (Ohbox). */
-async function pressMoveToOhbox(c: HTMLElement): Promise<string[]> {
-  const expand = c.querySelector<HTMLElement>(".sc-x");
-  if (expand) { await act(async () => { expand.click(); }); await tick(10); }
-  const move = c.querySelector<HTMLElement>(".abar-move");
-  expect(move, "the card offers no Move verb").toBeTruthy();
+async function pressMoveToOhbox(root: HTMLElement): Promise<void> {
+  const stream = within(root).getByRole("region", { name: "News stream" });
+  await act(async () => { within(stream).getByRole("button", { name: "Expand" }).click(); });
+  await tick(10);
+  const panel = within(root).getByRole("toolbar", { name: "Actions" });
+  let move = within(panel).queryByRole("button", { name: "Move" });
+  if (!move) {
+    await act(async () => { within(panel).getByRole("button", { name: "More" }).click(); });
+    move = within(root).getByRole("menuitem", { name: "Move" });
+  }
   await act(async () => { move!.click(); });
   await tick(10);
-  const dests = [...c.querySelectorAll(".abar-panel .abar-solo")].map((b) => (b.textContent ?? "").trim());
-  const first = c.querySelector<HTMLElement>(".abar-panel .abar-solo");
-  expect(first, "the Move strip offers no destination").toBeTruthy();
-  await act(async () => { first!.click(); });
+  const picker = within(root).getByRole("menu", { name: "Move" });
+  const first = within(picker).getAllByRole("menuitem")[0]!;
+  expect(first.textContent).toContain("Ohbox");
+  await act(async () => { first.click(); });
   await tick(50);
-  return dests;
 }
 
-describe("row 118 FIX-024-WEB-MOVE-UNDER-A-HIGHER-PRIORITY-DOMAIN-RULE", () => {
+describe("Moving a letter out of News under a domain rule", () => {
   beforeEach(() => { installShellEnv(); process.env.NEXT_PUBLIC_API_BASE = ""; });
   afterEach(async () => { await teardownShellEnv(); process.env.NEXT_PUBLIC_API_BASE = "/api"; DOMAIN_RULE = null; });
 
@@ -162,8 +160,10 @@ describe("row 118 FIX-024-WEB-MOVE-UNDER-A-HIGHER-PRIORITY-DOMAIN-RULE", () => {
     DOMAIN_RULE = { ...rule("example.invalid", READS), id: "rule_domain", kind: "domain", priority: 5 } as RuleDTO;
     const { engine, wire } = await rig(READS, READS);
     const c = await open(engine, "reads");
-    expect(ids(c)).toContain("nl1");
+    const list = within(c).getByRole("region", { name: "News" });
+    expect(within(list).getByRole("option").dataset.id).toBe("nl1");
     await pressMoveToOhbox(c);
+    expect(wire.filter((mutation) => mutation.kind === "rule_create")).toEqual([]);
     await closeTheWindow();
     const made = wire.find((m) => m.kind === "rule_create");
     expect(made, JSON.stringify(wire)).toMatchObject({ ruleKind: "sender", match: NEWS, destination: INBOX });

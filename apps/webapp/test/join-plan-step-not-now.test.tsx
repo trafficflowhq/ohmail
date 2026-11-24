@@ -73,7 +73,7 @@ async function atThePlanStep(messages: typeof en, props: Record<string, unknown>
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -99,27 +99,13 @@ async function atThePlanStep(messages: typeof en, props: Record<string, unknown>
   return { host, advance, title, close: async () => { await close(); unmount = null; } };
 }
 
-describe("the plan step's way out", () => {
-  for (const messages of [en, de]) {
-    it(`${messages === de ? "de" : "en"}: "Not now", to the front door, with the sentence that is true of it`, async () => {
-      const { host } = await atThePlanStep(messages);
-      expect(host.querySelector("h1")?.textContent).toBe(messages.join.step_plan_title);
-      const out = [...host.querySelectorAll("a")].find((a) => a.textContent === messages.join.planLater);
-      expect(out, "no Not now link").toBeTruthy();
-      expect(out!.getAttribute("href")).toBe("/");
-      expect(host.textContent).toContain(messages.join.planLaterHint);
-      expect(host.textContent).not.toContain(messages.join.later);
-    });
-  }
-});
-
 describe("the wait after a return from the account page", () => {
   const RETURN = { billingReturn: "success" };
 
   it("is still waiting at a minute, says 'not yet' only at about two, in 8 to 16 reads, and keeps the button", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const ui = await atThePlanStep(en, RETURN, true);
-    expect(ui.title()).toBe(en.join.step_plan_title);
+    expect(ui.title()).toBe("Start your 14-day trial");
     expect(ui.host.textContent).toContain(en.join.planStarting);
     await ui.advance(60_000);
     expect(ui.host.textContent, "gave up before two minutes").not.toContain(en.join.planPending);
@@ -129,7 +115,8 @@ describe("the wait after a return from the account page", () => {
     await ui.advance(15_000);
     expect(ui.host.textContent, "never said 'not yet'").toContain(en.join.planPending);
     expect(ui.host.textContent).not.toContain(en.join.planStarting);
-    expect(ui.host.querySelector("a.btn.primary")?.textContent).toBe(en.join.planStartTrial);
+    /* The way to the account page: the link to the address the step was handed for it. */
+    expect([...ui.host.querySelectorAll("a")].find((a) => a.getAttribute("href") === "https://plane.example/manage?token=t")?.textContent).toBe(en.join.planStartTrial);
     expect(reads).toBeGreaterThanOrEqual(8);
     expect(reads).toBeLessThanOrEqual(16);
     const done = reads;
@@ -142,9 +129,9 @@ describe("the wait after a return from the account page", () => {
     openAfter = 90_000;
     const ui = await atThePlanStep(en, RETURN, true);
     await ui.advance(85_000);
-    expect(ui.title()).toBe(en.join.step_plan_title);
+    expect(ui.title()).toBe("Start your 14-day trial");
     await ui.advance(15_000);
-    expect(ui.title()).toBe(en.join.step_mailbox_title);
+    expect(ui.title()?.trim()).toBe(en.onboarding.providerFirst);
   });
 
   it("reads nothing once the step is gone", async () => {

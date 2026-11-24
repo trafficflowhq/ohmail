@@ -252,6 +252,17 @@ pub fn serve_arm_args(port: u16) -> [String; 4] {
     ]
 }
 
+/// Why a PREVIEW build does not publish itself to the tailnet, or `None` on the released app.
+///
+/// The registration is one per computer, on the port above: a preview that armed it would take
+/// the route an installed ohmail on the same computer serves its other devices through, and
+/// withdraw it when it stood down.
+pub fn preview_arm_refusal(preview: bool) -> Option<&'static str> {
+    preview.then_some(
+        "A preview build does not serve other devices: this computer's installed ohmail keeps that route.",
+    )
+}
+
 /// Withdraw the registration: `serve --https=443 off` — the CLI's own documented off-switch
 /// ("To disable the proxy, run: tailscale serve --https=443 off").
 pub fn serve_disarm_args() -> [String; 3] {
@@ -1025,14 +1036,20 @@ const TRAY_STATE_ID: &str = "host:state";
 const TRAY_OPEN_ID: &str = "host:open";
 const TRAY_QUIT_ID: &str = "host:quit";
 
-/// The state line's four sentences. Short, because a tray menu is not a place to explain — the
-/// window's own screens carry the guidance, keyed off the typed problem. The same-network line
-/// exists so a LAN-only install (the no-Tailscale path) is not told it "needs attention" for
-/// ever about a tailnet it deliberately does not have — while still not claiming the tailnet.
-const TRAY_LINE_SERVING: &str = "Serving your tailnet";
-const TRAY_LINE_LAN_ONLY: &str = "Serving your network only";
-const TRAY_LINE_DEGRADED: &str = "Host mode needs attention";
-const TRAY_LINE_OFF: &str = "Host mode off";
+/// Which of the state line's four sentences the tri-state says. Short, because a tray menu is not
+/// a place to explain — the window's own screens carry the guidance, keyed off the typed problem.
+/// The same-network line exists so a LAN-only install (the no-Tailscale path) is not told it
+/// "needs attention" for ever about a tailnet it deliberately does not have — while still not
+/// claiming the tailnet. The sentences are `words.rs`'s, in the run's language.
+pub fn tray_line(state: &str, lan_only: bool) -> crate::words::TrayLine {
+    use crate::words::TrayLine;
+    match state {
+        "serving" => TrayLine::Serving,
+        "degraded" if lan_only => TrayLine::LanOnly,
+        "degraded" => TrayLine::Degraded,
+        _ => TrayLine::Off,
+    }
+}
 
 struct TrayHandles<R: tauri::Runtime> {
     icon: tauri::tray::TrayIcon<R>,
@@ -1183,12 +1200,7 @@ impl<R: tauri::Runtime> HostRuntime<R> {
         let lan_only = state == "degraded"
             && self.lan.lock().expect("host lan").is_some()
             && self.lan_listening();
-        let text = match state {
-            "serving" => TRAY_LINE_SERVING,
-            "degraded" if lan_only => TRAY_LINE_LAN_ONLY,
-            "degraded" => TRAY_LINE_DEGRADED,
-            _ => TRAY_LINE_OFF,
-        };
+        let text = crate::shell_language::words().tray_line(tray_line(state, lan_only));
         if let Some(handles) = self.tray.lock().expect("host tray").as_ref() {
             let _ = handles.state_line.set_text(text);
         }
@@ -1268,11 +1280,13 @@ fn stand_up_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, runtime: &Arc<Hos
     if slot.is_some() {
         return;
     }
+    let w = crate::shell_language::words();
     let built: tauri::Result<TrayHandles<R>> = (|| {
         // Disabled: it is a statement, not an action. Its text follows the tri-state.
-        let state_line = MenuItem::with_id(app, TRAY_STATE_ID, TRAY_LINE_DEGRADED, false, None::<&str>)?;
-        let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open ohmail", true, None::<&str>)?;
-        let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit ohmail", true, None::<&str>)?;
+        let degraded = w.tray_line(crate::words::TrayLine::Degraded);
+        let state_line = MenuItem::with_id(app, TRAY_STATE_ID, degraded, false, None::<&str>)?;
+        let open = MenuItem::with_id(app, TRAY_OPEN_ID, w.tray_open, true, None::<&str>)?;
+        let quit = MenuItem::with_id(app, TRAY_QUIT_ID, w.quit_app, true, None::<&str>)?;
         let separator = PredefinedMenuItem::separator(app)?;
         let menu = Menu::with_items(
             app,
@@ -1501,6 +1515,9 @@ pub fn tailscale_serve_arm<R: tauri::Runtime>(
     autostart: bool,
     lan: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    if let Some(why) = preview_arm_refusal(crate::variant::PREVIEW) {
+        return Err(why.to_string());
+    }
     if port == 0 {
         // The frozen contract: 1–65535. Port 0 means "any free port", and the registration
         // this command creates points at ONE.

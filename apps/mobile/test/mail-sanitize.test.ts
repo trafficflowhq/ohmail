@@ -497,3 +497,13 @@ describe("the notice says what happened, in both languages", () => {
     expect(blockedNotice(b(3, 0), [], true, "phone", 1)).toBe(DECKS.en.mailPixelOnly);
   });
 });
+
+it("highlights calendar evidence in the letter's text without adding it to links or styles", () => {
+  const phrase = "Thursday <noon>";
+  const html = '<p title="Thursday &lt;noon&gt;">Thursday &lt;noon&gt;</p><script>Thursday <noon></script>';
+  const cleaned = sanitizeMailHtmlPhone(html, { highlight: phrase });
+  expect(cleaned.html).toContain('<mark>Thursday &lt;noon&gt;</mark>');
+  expect(cleaned.html.match(/<mark>/g)).toHaveLength(1);
+  expect(cleaned.html).not.toMatch(/<script|<noon>/i);
+  expect(cleaned.links).toEqual([]);
+});

@@ -1,0 +1,18 @@
+Subject: Your ohmail password was used and the second step failed
+
+ohmail.
+
+Your password was used, and the second step failed.
+
+Somebody signed in to your ohmail account with your password and then failed the second step several times.
+
+If that was you, there is nothing to do.
+
+If it was not, somebody knows your password, and your second factor stopped them. Open ohmail yourself and check Settings › Devices (https://ohmail.app/settings/devices). Then write to support@ohmail.app, and we help you secure the account.
+
+Time: 26 September 2026, 12:00 UTC
+
+We never ask you for a code, a password or a recovery code by mail.
+
+--
+TrafficFlow GmbH, Zürich, Switzerland

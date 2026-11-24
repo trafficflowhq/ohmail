@@ -1,13 +1,17 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { act } from "react";
-import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { SendStatus, sendLine } from "../app/shell/SendStatus.js";
-import { phaseFor, type SendState } from "../app/shell/mail-send.js";
+import { sendLine } from "@ohmail/app-logic/writing/send-line";
+import { phaseFor, type SendState } from "@ohmail/app-logic/writing/mail-send";
+import { mountWriting, rounds, unmountWritings } from "./_write-1-writing.js";
+
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+void React;
 
 /**
  * WHAT A FAILED SEND SAYS — plain sentences, never the wire (owner report, 2026-08-21).
@@ -27,55 +31,88 @@ import { phaseFor, type SendState } from "../app/shell/mail-send.js";
  *     the server's own code, `mailbox_not_signed_in`, and that one says so.
  *
  * The server's text stays in `SendState.reason` for diagnostics; it just never renders.
+ *
+ * RE-POINTED BY THE OLDER TESTS' SORTING (share write-1), EXPECTATIONS UNTOUCHED: today's `SendStatus` is drawn by
+ * no host. Each state is drawn where a person reads it now: Write's send line, over the reply (the reader's slot,
+ * the state handed where the composition reads it) for the reply's scope, over the new letter for the compose
+ * scope (`_write-1-writing.tsx`), in the language on screen; the text read is the send line's (its role, status or
+ * alert). `sendLine` is the app's one derivation (`@ohmail/app-logic/writing/send-line`; today's re-exported it).
  */
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
-function render(send: SendState, messages: typeof en | typeof de, locale: string, scope: "reply" | "compose" = "reply"): string {
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
-  act(() => {
-    root!.render(
-      <NextIntlClientProvider locale={locale} messages={messages as never} timeZone="UTC">
-        <SendStatus send={send} scope={scope} lane={null} showing={null} />
-      </NextIntlClientProvider>,
-    );
-  });
-  return host.textContent ?? "";
+const NOW = "2026-08-02T09:00:00.000Z";
+/** The letter a reply answers. */
+const message: EngineMessage = {
+  id: "m1",
+  accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
+  subject: "Werkstatt-Besuch?",
+  from: { name: "Lena", address: "lena@atelier.example" },
+  to: [], cc: [],
+  date: NOW,
+  folder: "INBOX",
+  snippet: "…", unread: false, hasAttachments: false, attachmentCount: 0,
+  sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+  triage: null, labels: [], remoteContent: "none",
+  updatedAt: NOW,
+};
+
+/** The send line's text: what the reply or the letter says of its send (its role), nothing else of the sheet. */
+function lineOf(el: HTMLElement): string {
+  const lines = [...el.querySelectorAll<HTMLElement>('[role="status"][data-place]')];
+  expect(lines, "the send status").toHaveLength(1);
+  return (lines[0]!.textContent ?? "").trim();
 }
 
-afterEach(() => {
+async function render(send: SendState, messages: typeof en | typeof de, locale: string, scope: "reply" | "compose" = "reply"): Promise<string> {
+  await unmountWritings();
+  host?.remove();
+  const language = locale === "de" || messages === de ? "de" : "en";
+  if (scope === "reply") {
+    const world = await mountWriting({ messages: [message], hash: "#/ohbox", sheet: ["m1"], replySend: send, locale: language });
+    await act(async () => { world.now().openReply("m1"); });
+    await act(async () => { world.now().onReplyBody({ text: "Donnerstag passt.", html: "" }); });
+    host = world.el;
+  } else {
+    const world = await mountWriting({ view: true, send, locale: language });
+    host = world.el;
+  }
+  await rounds(2);
+  return lineOf(host);
+}
+
+afterEach(async () => {
   act(() => root?.unmount());
+  await unmountWritings();
   host?.remove();
   root = null;
   host = null;
 });
 
 describe("a failed send never relays the wire", () => {
-  it("the API's own 401 envelope text does not reach the user — the plain sentence does", () => {
-    const text = render(
+  it("the API's own 401 envelope text does not reach the user — the plain sentence does", async () => {
+    const text = await render(
       { phase: "failed", reason: "authentication required", code: "unauthorized" },
       en, "en",
     );
     expect(text, "the protocol string was quoted at the user").not.toContain("authentication required");
-    expect(text).toContain("Sending didn't work");
+    expect(text).toContain("Sending did not work");
     expect(text, "the sentence must say the draft survives").toContain("draft is kept");
-    expect(text, "the sentence must point at the retry that exists").toContain("Try again");
+    expect(text, "the sentence must point at the retry that exists").toContain("try again");
   });
 
-  it("an SMTP refusal string does not reach the user either", () => {
-    const text = render(
+  it("an SMTP refusal string does not reach the user either", async () => {
+    const text = await render(
       { phase: "failed", reason: "550 5.7.1 relay access denied" },
       en, "en",
     );
     expect(text).not.toContain("relay access denied");
-    expect(text).toContain("Sending didn't work");
+    expect(text).toContain("Sending did not work");
   });
 
-  it("the German catalog carries the same plain sentence — the incident was seen in German", () => {
-    const text = render(
+  it("the German catalog carries the same plain sentence — the incident was seen in German", async () => {
+    const text = await render(
       { phase: "failed", reason: "authentication required", code: "unauthorized" },
       de, "de",
     );
@@ -83,8 +120,8 @@ describe("a failed send never relays the wire", () => {
     expect(text).toContain("Senden hat nicht geklappt");
   });
 
-  it("mailbox_disabled keeps its own sentence — a state with a control on the same screen", () => {
-    const text = render(
+  it("mailbox_disabled keeps its own sentence — a state with a control on the same screen", async () => {
+    const text = await render(
       { phase: "failed", reason: "mailbox disabled", code: "mailbox_disabled" },
       en, "en",
     );
@@ -92,53 +129,53 @@ describe("a failed send never relays the wire", () => {
     expect(text).not.toContain("mailbox disabled");
   });
 
-  it("forward_original_unavailable names the refusal — the original, not the sending, is what failed", () => {
-    const en1 = render(
+  it("forward_original_unavailable names the refusal — the original, not the sending, is what failed", async () => {
+    const en1 = await render(
       { phase: "failed", reason: "The original could not be loaded, so it was not forwarded.", code: "forward_original_unavailable" },
       en, "en",
     );
     expect(en1).toContain("The original could not be loaded, so it was not forwarded.");
-    expect(en1).not.toContain("Sending didn't work");
-    const de1 = render(
+    expect(en1).not.toContain("Sending did not work");
+    const de1 = await render(
       { phase: "failed", reason: "The original could not be loaded, so it was not forwarded.", code: "forward_original_unavailable" },
       de, "de",
     );
     expect(de1).toContain("Das Original konnte nicht geladen werden");
   });
 
-  it("send_not_secured and send_login_refused name the mail server's refusal, in both languages", () => {
+  it("send_not_secured and send_login_refused name the mail server's refusal, in both languages", async () => {
     const cases = [
       ["send_not_secured", "The connection to your mail server couldn't be secured", "konnte nicht verschlüsselt werden"],
       ["send_login_refused", "Your mail server refused the sign-in", "Dein Mailserver hat die Anmeldung abgelehnt"],
     ] as const;
     for (const [code, enText, deText] of cases) {
       const send: SendState = { phase: "failed", reason: "server words", code };
-      const en1 = render(send, en, "en");
+      const en1 = await render(send, en, "en");
       expect(en1).toContain(enText);
       expect(en1).toContain("draft is kept");
-      expect(en1).not.toContain("Sending didn't work");
+      expect(en1).not.toContain("Sending did not work");
       act(() => root?.unmount());
       host?.remove();
-      const de1 = render(send, de, "de");
+      const de1 = await render(send, de, "de");
       expect(de1).toContain(deText);
       act(() => root?.unmount());
       host?.remove();
     }
   });
 
-  it("send_unreachable says the mail server could not be reached and where the message is, in both scopes and both languages", () => {
+  it("send_unreachable says the mail server could not be reached and where the message is, in both scopes and both languages", async () => {
     // Tester round 22: the send gave up after its retries; the row is an ordinary draft again, and
     // the phone's facts are the true ones — kept in Drafts, sent again by a press.
     const send: SendState = { phase: "failed", reason: "This was not sent — your mail server could not be reached.", code: "send_unreachable" };
     for (const scope of ["reply", "compose"] as const) {
-      const en1 = render(send, en, "en", scope);
+      const en1 = await render(send, en, "en", scope);
       expect(en1).toContain("Your mail server couldn't be reached");
       expect(en1).toContain("kept in Drafts");
-      expect(en1).not.toContain("Try again");
-      expect(en1).not.toContain("Sending didn't work");
+      expect(en1).not.toMatch(/try again/i);
+      expect(en1).not.toContain("Sending did not work");
       act(() => root?.unmount());
       host?.remove();
-      const de1 = render(send, de, "de", scope);
+      const de1 = await render(send, de, "de", scope);
       expect(de1).toContain("Dein Mailserver war nicht erreichbar");
       expect(de1).toContain("in den Entwürfen");
       act(() => root?.unmount());
@@ -146,24 +183,24 @@ describe("a failed send never relays the wire", () => {
     }
   });
 
-  it("send_busy says the mail server would not take it now, in both scopes and both languages", () => {
+  it("send_busy says the mail server would not take it now, in both scopes and both languages", async () => {
     const send: SendState = { phase: "failed", reason: "This was not sent — your mail server is busy.", code: "send_busy" };
     for (const scope of ["reply", "compose"] as const) {
-      const en1 = render(send, en, "en", scope);
+      const en1 = await render(send, en, "en", scope);
       expect(en1).toContain("Your mail server is busy");
       expect(en1).toContain("draft is kept");
-      expect(en1).not.toContain("Sending didn't work");
+      expect(en1).not.toContain("Sending did not work");
       act(() => root?.unmount());
       host?.remove();
-      const de1 = render(send, de, "de", scope);
+      const de1 = await render(send, de, "de", scope);
       expect(de1).toContain("Dein Mailserver ist gerade ausgelastet");
       act(() => root?.unmount());
       host?.remove();
     }
   });
 
-  it("a forward's refusals and a timed-out dial say what happened, in both scopes and both languages", () => {
-    // 2026-10-19: a forward refused `attachment_part_mismatch` showed "Sending didn't work … Try
+  it("a forward's refusals and a timed-out dial say what happened, in both scopes and both languages", async () => {
+    // 2026-10-19: a forward refused `attachment_part_mismatch` showed "Sending did not work … Try
     // again" — the one sentence that says nothing about what failed. Each code below can reach a
     // person from the send route, and each now names its cause and the act that helps.
     const cases = [
@@ -176,14 +213,14 @@ describe("a failed send never relays the wire", () => {
     for (const [code, enText, deText] of cases) {
       const send: SendState = { phase: "failed", reason: "the server's own words", code };
       for (const scope of ["reply", "compose"] as const) {
-        const en1 = render(send, en, "en", scope);
+        const en1 = await render(send, en, "en", scope);
         expect(en1, code).toContain(enText);
         expect(en1, code).toContain("draft is kept");
-        expect(en1, code).not.toContain("Sending didn't work");
+        expect(en1, code).not.toContain("Sending did not work");
         expect(en1, code).not.toContain("the server's own words");
         act(() => root?.unmount());
         host?.remove();
-        const de1 = render(send, de, "de", scope);
+        const de1 = await render(send, de, "de", scope);
         expect(de1, code).toContain(deText);
         expect(de1, code).not.toContain("Senden hat nicht geklappt");
         act(() => root?.unmount());
@@ -192,54 +229,56 @@ describe("a failed send never relays the wire", () => {
     }
   });
 
-  it("mailbox_not_signed_in says the file's sentence after the kept draft, with no Try again, in both scopes and languages", () => {
+  it("mailbox_not_signed_in says the file's sentence after the kept draft, with no Try again, in both scopes and languages", async () => {
     const send = phaseFor({ status: "rolled_back", error: {
       code: "mailbox_not_signed_in", retryable: false,
       message: "this mailbox is not signed in here, so nothing was fetched or sent — sign in again in Settings",
     } } as never);
     expect(send).toMatchObject({ phase: "failed", code: "mailbox_not_signed_in" });
     for (const scope of ["reply", "compose"] as const) {
-      expect(render(send, en, "en", scope))
-        .toBe("Not sent — your draft is kept. This mailbox isn't signed in here — sign in again in Settings.");
+      expect(await render(send, en, "en", scope))
+        .toBe("Not sent. This mailbox isn't signed in here. Your draft is kept, so sign in again in Mailboxes.");
       act(() => root?.unmount());
       host?.remove();
-      expect(render(send, de, "de", scope))
-        .toBe("Nicht gesendet — dein Entwurf ist gesichert. Dieses Postfach ist hier nicht angemeldet — melde es in den Einstellungen neu an.");
+      expect(await render(send, de, "de", scope))
+        .toBe("Nicht gesendet. Dieses Postfach ist hier nicht angemeldet. Dein Entwurf ist gesichert, melde es also unter Postfächer erneut an.");
       act(() => root?.unmount());
       host?.remove();
     }
   });
 
-  it("a send refused past the draft limit names the limit, and claims neither a kept draft nor a retry", () => {
+  it("a send refused past the draft limit names the limit, and claims neither a kept draft nor a retry", async () => {
     // Tester round 22: a 413 on Send said "your draft is kept. Try again." — neither was true.
     for (const code of ["draft_too_large", "payload_too_large"] as const) {
       const send: SendState = { phase: "failed", reason: "the server's own words", code };
       for (const scope of ["reply", "compose"] as const) {
-        const en1 = render(send, en, "en", scope);
+        const en1 = await render(send, en, "en", scope);
         expect(en1, code).toMatch(/^Not sent\. It's too (long|large) to send/);
         if (code === "draft_too_large") expect(en1, code).toMatch(/the limit is 262(\.1)? kB/i);
-        for (const lie of ["kept", "Try again", "Sending didn't work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
+        for (const lie of ["kept", "Sending did not work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
+        expect(en1, `${code} ${scope}`).not.toMatch(/try again/i);
         act(() => root?.unmount());
         host?.remove();
-        const de1 = render(send, de, "de", scope);
+        const de1 = await render(send, de, "de", scope);
         expect(de1, code).toMatch(/^Nicht gesendet\. Die (Nachricht|Antwort) ist zu (lang|groß) zum Senden/);
-        for (const lie of ["gesichert", "Versuch es", "Senden hat nicht geklappt"]) expect(de1, `${code} ${scope}`).not.toContain(lie);
+        for (const lie of ["gesichert", "Senden hat nicht geklappt"]) expect(de1, `${code} ${scope}`).not.toContain(lie);
+        expect(de1, `${code} ${scope}`).not.toMatch(/versuch es/i);
         act(() => root?.unmount());
         host?.remove();
       }
     }
   });
 
-  it("a save refused before the send (validation_failed, from_mailbox_unconfirmed, bcc_unsupported) says not sent and never kept", () => {
+  it("a save refused before the send (validation_failed, from_mailbox_unconfirmed, bcc_unsupported) says not sent and never kept", async () => {
     for (const code of ["validation_failed", "from_mailbox_unconfirmed", "bcc_unsupported"] as const) {
       const send: SendState = { phase: "failed", reason: "the server's own words", code };
       for (const scope of ["reply", "compose"] as const) {
-        const en1 = render(send, en, "en", scope);
+        const en1 = await render(send, en, "en", scope);
         expect(en1, `${code} ${scope}`).toMatch(/^Not sent\. This (message|reply) could not be saved first/);
-        for (const lie of ["kept", "Sending didn't work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
+        for (const lie of ["kept", "Sending did not work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
         act(() => root?.unmount());
         host?.remove();
-        const de1 = render(send, de, "de", scope);
+        const de1 = await render(send, de, "de", scope);
         expect(de1, `${code} ${scope}`).toMatch(/^Nicht gesendet\. Diese (Nachricht|Antwort) konnte vorher nicht gespeichert werden/);
         for (const lie of ["gesichert", "Senden hat nicht geklappt"]) expect(de1, `${code} ${scope}`).not.toContain(lie);
         act(() => root?.unmount());
@@ -248,28 +287,28 @@ describe("a failed send never relays the wire", () => {
     }
   });
 
-  it("a compose send refused over a version changed elsewhere says so, and never that the words are kept before they are", () => {
+  it("a compose send refused over a version changed elsewhere says so, and never that the words are kept before they are", async () => {
     const send: SendState = { phase: "failed", reason: "x", code: "draft_changed" };
-    const en1 = render(send, en, "en", "compose");
+    const en1 = await render(send, en, "en", "compose");
     expect(en1).toMatch(/^Not sent\. This draft was changed in another window or on another device/);
     expect(en1).not.toContain("kept");
     act(() => root?.unmount());
     host?.remove();
-    const de1 = render(send, de, "de", "compose");
+    const de1 = await render(send, de, "de", "compose");
     expect(de1).toMatch(/^Nicht gesendet\. Dieser Entwurf wurde in einem anderen Fenster oder auf einem anderen Gerät geändert/);
     expect(de1).not.toContain("gespeichert");
   });
 
-  it("a page that may not upload files this large says so, keeps the draft and names the remedy, in both scopes and languages", () => {
+  it("a page that may not upload files this large says so, keeps the draft and names the remedy, in both scopes and languages", async () => {
     // Tester round 46: a 5 MB send whose upload this page could not make said "still trying" for ever.
     const send = phaseFor({ status: "rolled_back", error: { code: "staging_refused", retryable: false, message: "x" } } as never);
     for (const scope of ["reply", "compose"] as const) {
-      expect(render(send, en, "en", scope)).toBe(
+      expect(await render(send, en, "en", scope)).toBe(
         "Not sent. Files this large can't be uploaded from this page — your draft is kept. Remove the largest attachments and send again.",
       );
       act(() => root?.unmount());
       host?.remove();
-      expect(render(send, de, "de", scope)).toBe(
+      expect(await render(send, de, "de", scope)).toBe(
         "Nicht gesendet. So große Dateien können von dieser Seite nicht hochgeladen werden — dein Entwurf ist gesichert. Entferne die größten Anhänge und sende sie nochmal.",
       );
       act(() => root?.unmount());
@@ -277,12 +316,12 @@ describe("a failed send never relays the wire", () => {
     }
   });
 
-  it("control: a refusal with no sentence of its own still says the general line", () => {
-    const text = render({ phase: "failed", reason: "x", code: "some_new_code" }, en, "en", "compose");
+  it("control: a refusal with no sentence of its own still says the general line", async () => {
+    const text = await render({ phase: "failed", reason: "x", code: "some_new_code" }, en, "en", "compose");
     expect(text).toBe(en.compose.statusFailed);
   });
 
-  it("sendLine is the one derivation: the toast's key is the line's key", () => {
+  it("sendLine is the one derivation: the toast's key is the line's key", async () => {
     expect(sendLine({ phase: "failed", code: "send_unreachable" }, false)).toEqual({ tone: "error", key: "statusUnreachable" });
     expect(sendLine({ phase: "failed", code: "draft_too_large" }, false)).toEqual({ tone: "error", key: "statusTooLong" });
     expect(sendLine({ phase: "idle" }, false)).toBeNull();

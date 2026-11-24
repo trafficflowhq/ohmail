@@ -1,0 +1,173 @@
+/* The calendar's rows in mail: Today under an empty reading column's count, Coming up on a person's card. */
+@layer oh {
+  .oh-today {
+    /* The calendar's own colour, picked from the values the part is handed. */
+    --oh-today-hot: var(--oh-today-hot-pl);
+    --oh-today-ink: var(--oh-today-ink-pl);
+    --oh-today-gap: 2px;
+    display: grid;
+    gap: var(--oh-today-gap);
+  }
+  :root[data-scheme="dark"] .oh-today {
+    --oh-today-hot: var(--oh-today-hot-pd);
+    --oh-today-ink: var(--oh-today-ink-pd);
+  }
+  :root[data-face="ohmarchy"] .oh-today {
+    --oh-today-hot: var(--oh-today-hot-ol);
+    --oh-today-ink: var(--oh-today-ink-ol);
+  }
+  :root[data-face="ohmarchy"][data-scheme="dark"] .oh-today {
+    --oh-today-hot: var(--oh-today-hot-od);
+    --oh-today-ink: var(--oh-today-ink-od);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-scheme]) .oh-today {
+      --oh-today-hot: var(--oh-today-hot-pd);
+      --oh-today-ink: var(--oh-today-ink-pd);
+    }
+    :root[data-face="ohmarchy"]:not([data-scheme]) .oh-today {
+      --oh-today-hot: var(--oh-today-hot-od);
+      --oh-today-ink: var(--oh-today-ink-od);
+    }
+  }
+
+  .oh-today[data-kind="today"] {
+    --oh-today-out: 0 auto;
+    width: 340px;
+    max-width: 100%;
+    margin: var(--oh-today-out);
+  }
+  .oh-today-head {
+    --oh-today-head-pad: 0 var(--s3) var(--s2);
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    padding: var(--oh-today-head-pad);
+    font-size: var(--t-ui);
+  }
+  /* The heading ends in the calendar's dot, close to its word. */
+  .oh-today-head > .oh-dot {
+    --dot-size: 0.36em;
+    --oh-dot-gap: -0.3em;
+    background: var(--oh-today-hot);
+  }
+  .oh-today-date {
+    color: var(--ink2);
+    font-family: var(--f-text);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+    letter-spacing: 0;
+  }
+  .oh-today-row {
+    --oh-today-row-pad: 0 var(--s3);
+    --oh-today-row-hover: var(--hover-ground);
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    width: 100%;
+    height: var(--h-m);
+    padding: var(--oh-today-row-pad);
+    border-radius: var(--r-row);
+    font-weight: var(--w-mid);
+    text-align: left;
+  }
+  .oh-today-row:hover {
+    background: var(--oh-today-row-hover);
+  }
+  .oh-today-time {
+    width: 44px;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--w-text);
+  }
+  .oh-today-row[data-now] .oh-today-time {
+    color: var(--oh-today-ink);
+    font-weight: var(--w-bold);
+  }
+  .oh-today-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-today-more {
+    --oh-today-more-pad: var(--s1) var(--s3) 0 calc(var(--s3) + 8px + var(--s3));
+    padding: var(--oh-today-more-pad);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+
+  /* Coming up: two lines a row, the title over its day and what it waits for. */
+  .oh-today[data-kind="coming"] {
+    --oh-today-gap: 0;
+    --oh-today-out: 0 0 var(--s1);
+    padding: var(--oh-today-out);
+  }
+  .oh-today[data-kind="coming"] .oh-today-head {
+    justify-content: space-between;
+    padding: var(--s2) var(--s3) var(--s1);
+    color: var(--ink2);
+    font-family: var(--f-text);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    letter-spacing: 0;
+  }
+  .oh-today[data-kind="coming"] > .oh-today-row {
+    --oh-today-row-pad: 6px var(--s3);
+    --oh-today-row-hover: var(--hover);
+    gap: var(--s2);
+    height: auto;
+    min-height: var(--h-m);
+    font-weight: var(--w-text);
+    line-height: 1.25;
+  }
+  .oh-today-mark {
+    --oh-today-mark-top: 6px;
+    display: grid;
+    flex: none;
+    align-self: start;
+    place-items: center;
+    width: 16px;
+    margin-top: var(--oh-today-mark-top);
+  }
+  .oh-today-out {
+    --oh-today-out-ring: inset 0 0 0 var(--ev-line) var(--ink);
+    width: 10px;
+    height: 10px;
+    border-radius: var(--r-sq);
+    box-shadow: var(--oh-today-out-ring);
+  }
+  .oh-today-ico {
+    color: var(--ink2);
+  }
+  .oh-today-lines {
+    --oh-today-lines-gap: 1px;
+    display: grid;
+    flex: 1;
+    gap: var(--oh-today-lines-gap);
+    min-width: 0;
+  }
+  .oh-today[data-kind="coming"] .oh-today-title {
+    font-weight: var(--w-mid);
+  }
+  .oh-today-second {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+  }
+  .oh-today[data-kind="coming"] .oh-today-time {
+    flex: none;
+    width: auto;
+  }
+  .oh-today-tag {
+    --oh-tag-h: 20px;
+  }
+  .oh-today-tag[data-hot] {
+    background: var(--wash);
+    color: var(--hot-ink);
+  }
+}

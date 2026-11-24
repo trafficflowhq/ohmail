@@ -2,7 +2,6 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
-import { SHELL_DIR, SHELL_FRAMES, shellFramePaths } from "./source-anchor.js";
 
 /**
  * ═══ NO MEMOIZED CLOSURE SHARES A SCOPE WITH A WHOLE-MIRROR DERIVATION ══════════════════════
@@ -27,9 +26,12 @@ import { SHELL_DIR, SHELL_FRAMES, shellFramePaths } from "./source-anchor.js";
  *
  * ── WHAT IS AN OFFENCE ──────────────────────────────────────────────────────────────────────
  *
- * Three arms, over the FRAMES `ShellInner` composes (`SHELL_FRAMES` in `source-anchor.ts`) — the
- * shell is being split into `shell-*.ts` hooks, and a census reading `AppShell.tsx` alone would
- * stop seeing whatever moved:
+ * Three arms, over the FRAMES the new shell composes (`SHELL_FRAMES` below): the mail ground's pieces
+ * (`packages/app/src/mail/ground/`, stood by `MailGround.tsx` once per mounted frame) and the hook modules
+ * they call there, the consent row and the partition, each place's `Seat.tsx`, and the places' live hooks
+ * (the `live*.ts` files of `packages/app-logic/src`, at any depth). Re-pointed from today's `ShellInner` and its `shell-*` frames,
+ * which the switch deletes (RULING-NEW-SHELL-FIRST D (3): "render-scope-census (no memo keeps the whole
+ * mirror)"); the arms and their expectations are today's, word for word:
  *
  *  1. No frame holds a memoized closure at all: no `useCallback`, and no `useMemo` whose callback
  *     returns a function. Every frame is a scope that reaches the whole mirror.
@@ -39,9 +41,9 @@ import { SHELL_DIR, SHELL_FRAMES, shellFramePaths } from "./source-anchor.js";
  *     frame BOUND from another frame's hook counts as one of its own: after the split the
  *     partition and the projection reach `useScreenerState` through `useShellDerivations`'s
  *     record, and a `memoNames`-only reading stopped seeing them the moment they moved.
- *  3. No `shell-*` module exporting a hook `AppShell.tsx` calls is MISSING from the manifest.
- *     Without it a frame escapes arms 1 and 2 by not being listed, which is the quietest way for
- *     this census to stop covering the code it is about.
+ *  3. No ground module, no `Seat.tsx` and no live hook module exporting a hook the composition calls
+ *     is MISSING from the manifest. Without it a frame escapes arms 1 and 2 by not being listed, which
+ *     is the quietest way for this census to stop covering the code it is about.
  *
  * Arm 2 admits a scalar: a hook handed a timestamp string pins a timestamp, and the same document
  * records the measurement behind that — the engine context-allocates only what an inner closure
@@ -50,7 +52,67 @@ import { SHELL_DIR, SHELL_FRAMES, shellFramePaths } from "./source-anchor.js";
  */
 
 const ROOT = resolve(process.cwd());
-const SHELL = resolve(ROOT, "apps/webapp/app/shell/AppShell.tsx");
+/** The ground's folder: every piece `MailGround.tsx` stands, and the hook modules the pieces call. */
+const GROUND_DIR = "packages/app/src/mail/ground";
+/** Where a place's seat stands (`<place>/Seat.tsx`). */
+const SEATS_DIR = "packages/app/src";
+/** Where the places' live hooks stand (`live*.ts`, at any depth). */
+const LIVE_DIR = "packages/app-logic/src";
+
+/** The frames, from the repository's root. A module lands here in the same commit that creates it. */
+const SHELL_FRAMES: readonly string[] = [
+  /* The mail ground's pieces, in `MailGround.tsx`'s order. */
+  `${GROUND_DIR}/ManagedMount.tsx`, `${GROUND_DIR}/MailStateMount.tsx`, `${GROUND_DIR}/ConsentMount.tsx`,
+  `${GROUND_DIR}/PresentedMount.tsx`, `${GROUND_DIR}/DoorsMount.tsx`, `${GROUND_DIR}/MailBoot.tsx`,
+  `${GROUND_DIR}/ScreenerMount.tsx`, `${GROUND_DIR}/WritingMount.tsx`, `${GROUND_DIR}/PullMount.tsx`,
+  `${GROUND_DIR}/SendWaitsRelay.tsx`,
+  `${GROUND_DIR}/MailKeys.tsx`, `${GROUND_DIR}/MailNotices.tsx`, `${GROUND_DIR}/MailConnection.ts`,
+  `${GROUND_DIR}/MailRail.ts`, `${GROUND_DIR}/MailBadge.ts`, `${GROUND_DIR}/MailSystemNotices.ts`,
+  /* The hook modules the pieces call. */
+  "packages/app/src/settings/general/boot-face.ts", `${GROUND_DIR}/boot-locale.ts`, `${GROUND_DIR}/boot-marks.ts`,
+  `${GROUND_DIR}/boot-setup.ts`, `${GROUND_DIR}/boot-visit.ts`, `${GROUND_DIR}/boot-wake.ts`,
+  `${GROUND_DIR}/door-inputs.ts`, `${GROUND_DIR}/first-run-owed.ts`, `${GROUND_DIR}/send-notices.ts`,
+  `${GROUND_DIR}/update-notice.ts`, `${GROUND_DIR}/writing-inputs.ts`,
+  /* The list "Show them" opens, which `MailNotices` draws, and its `useQueued`. */
+  `${GROUND_DIR}/UnsavedList.tsx`,
+  /* The consent row's call and the partition's derivation (frames of today's manifest, called by the ground). */
+  "packages/app-logic/src/consent/consent-row.ts", "packages/app-logic/src/consent/partition.ts",
+  /* Each place's seat, and the live hooks it and the ground call. */
+  "packages/app/src/address/Seat.tsx",
+  "packages/app/src/ohbox/Seat.tsx",
+  "packages/app/src/drafts/Seat.tsx",
+  "packages/app/src/folder/Seat.tsx",
+  "packages/app/src/history/Seat.tsx",
+  "packages/app/src/piles/Seat.tsx",
+  "packages/app/src/search/Seat.tsx",
+  "packages/app/src/stream/Seat.tsx",
+  "packages/app/src/tags/Seat.tsx",
+  "packages/app/src/trash/Seat.tsx",
+  `${GROUND_DIR}/desktop-offer.ts`,
+  "packages/app-logic/src/place-list/live.ts",
+  "packages/app-logic/src/address/live.ts",
+  "packages/app-logic/src/folder/live.ts",
+  "packages/app-logic/src/history/live.ts",
+  "packages/app-logic/src/piles/live.ts",
+  "packages/app-logic/src/search/live.ts",
+  "packages/app-logic/src/search/live-open.ts",
+  "packages/app-logic/src/streams/live.ts",
+  "packages/app-logic/src/tags/live.ts",
+  "packages/app-logic/src/trash/live.ts",
+  "packages/app-logic/src/ohbox/live.ts", "packages/app-logic/src/ohbox/live-mirror.ts",
+  "packages/app-logic/src/ohbox/live-open.ts", "packages/app-logic/src/ohbox/live-verbs.ts",
+  "packages/app-logic/src/screener/live.ts",
+];
+
+/** Absolute paths for the manifest, refusing a frame the tree does not have. */
+function shellFramePaths(root: string): string[] {
+  return SHELL_FRAMES.map((name) => {
+    const full = resolve(root, name);
+    if (!existsSync(full)) throw new Error(`shell frame not found: ${name}`);
+    return full;
+  });
+}
+
 const FRAMES = shellFramePaths(ROOT);
 
 /**
@@ -58,8 +120,12 @@ const FRAMES = shellFramePaths(ROOT);
  * split would have walked each of them under its threshold with nothing red. A move carries its
  * memos and its callbacks from one frame to another, so the SUM holds; these may only hold or
  * rise, and a lane that lowers one is refused by name in review.
+ *
+ * Measured afresh over THIS manifest when the census was re-pointed from today's shell (whose sums were
+ * 64, 96 and 51 over its nine frames): the numbers are the new composition's own, read once with every
+ * frame above parsed, and from here they only hold or rise.
  */
-const FLOORS = { memoNames: 64, stableCallbacks: 96, hookCalls: 51 } as const;
+const FLOORS = { memoNames: 36, stableCallbacks: 27, hookCalls: 236 } as const;
 
 /**
  * Hook calls whose module keeps a memoized closure while taking one of the shell's memoized
@@ -78,11 +144,6 @@ const EXCEPTIONS: ReadonlyArray<{ hook: string; argument: string; because: strin
     hook: "useConsentState",
     argument: "windowOwners",
     because: "a `string | null` key of sorted `id:role` pairs, not a derivation — the frame pins a string",
-  },
-  {
-    hook: "useProfileImport",
-    argument: "profileDoorbell",
-    because: "a `number | null` seq (`settingsDoorbell`), not a derivation — the frame pins a number",
   },
 ];
 
@@ -220,30 +281,61 @@ function readFrame(file: string, frameHooks: ReadonlySet<string> = new Set()): S
   return out;
 }
 
-/** The file a hook name was imported from, when it is a relative module of this app. */
+/** A hook declared in this frame or imported from a relative or app-logic module. */
 function moduleOf(frame: string, shell: ShellRead, hook: string): string | null {
   const spec = shell.imports.get(hook);
-  if (spec === undefined || !spec.startsWith(".")) return null;
-  const base = resolve(dirname(frame), spec.replace(/\.js$/, ""));
+  if (spec === undefined) {
+    const local = parse(frame).statements.some((node) => ts.isFunctionDeclaration(node) && node.name?.text === hook);
+    return local ? frame : null;
+  }
+  const logic = /^@ohmail\/app-logic\/(.+)$/.exec(spec);
+  if (logic === null && !spec.startsWith(".")) return null;
+  const base = logic !== null
+    ? resolve(ROOT, "packages/app-logic/src", logic[1]!)
+    : resolve(dirname(frame), spec.replace(/\.js$/, ""));
   return [".ts", ".tsx", "/index.ts", "/index.tsx"].map((e) => base + e).find((f) => existsSync(f)) ?? null;
 }
 
 /**
- * Every `use…` identifier `AppShell.tsx` CALLS. Arm 3 asks which `shell-*` modules those names
- * come from, so a module reached only through a re-export is judged by the call, not the import.
+ * Every `use…` identifier the composition CALLS: each frame of the manifest. Arm 3 asks which ground modules,
+ * seats and live modules those names come from, so a module reached only through a re-export is judged by the
+ * call, not the import.
  */
 function hooksCalledByTheShell(): Set<string> {
-  const sf = parse(SHELL);
   const out = new Set<string>();
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node)) {
-      const name = calleeName(node.expression);
-      if (name !== null && /^use[A-Z]/.test(name)) out.add(name);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
+  for (const frame of FRAMES) {
+    const sf = parse(frame);
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node)) {
+        const name = calleeName(node.expression);
+        if (name !== null && /^use[A-Z]/.test(name)) out.add(name);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
   return out;
+}
+
+/** The files arm 3 walks: the ground's folder, every `Seat.tsx` of a place, every `live*.ts` of app-logic. */
+function walked(): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(resolve(ROOT, GROUND_DIR)).sort()) {
+    if (/\.tsx?$/.test(entry)) out.push(`${GROUND_DIR}/${entry}`);
+  }
+  for (const entry of readdirSync(resolve(ROOT, SEATS_DIR), { withFileTypes: true })) {
+    if (entry.isDirectory() && existsSync(resolve(ROOT, SEATS_DIR, entry.name, "Seat.tsx"))) {
+      out.push(`${SEATS_DIR}/${entry.name}/Seat.tsx`);
+    }
+  }
+  const live = (dir: string): void => {
+    for (const entry of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+      if (entry.isDirectory()) live(`${dir}/${entry.name}`);
+      else if (/^live.*\.tsx?$/.test(entry.name)) out.push(`${dir}/${entry.name}`);
+    }
+  };
+  live(LIVE_DIR);
+  return out.sort();
 }
 
 /** The `use…` hooks a module EXPORTS, by declaration or by an export clause. */
@@ -367,18 +459,18 @@ describe("the shell's render scopes", () => {
     const called = hooksCalledByTheShell();
     const missing: string[] = [];
     const seen: string[] = [];
-    for (const entry of readdirSync(resolve(ROOT, SHELL_DIR)).sort()) {
-      if (!/^shell-.*\.tsx?$/.test(entry)) continue;
-      const exported = hooksExportedBy(resolve(ROOT, SHELL_DIR, entry)).filter((h) => called.has(h));
-      if (exported.length === 0) continue;
-      seen.push(`${entry} (${exported.join(", ")})`);
-      if (!SHELL_FRAMES.includes(entry)) {
-        missing.push(`${SHELL_DIR}/${entry} exports ${exported.join(", ")}, which AppShell.tsx calls, `
+    for (const file of walked()) {
+      const exported = hooksExportedBy(resolve(ROOT, file)).filter((h) => called.has(h));
+      /* A seat is a frame by what it is: the place's composition, called by the frame's registration. */
+      if (exported.length === 0 && !file.endsWith("/Seat.tsx")) continue;
+      seen.push(`${file} (${exported.join(", ") || "a seat"})`);
+      if (!SHELL_FRAMES.includes(file)) {
+        missing.push(`${file} exports ${exported.join(", ") || "a place's seat"}, which the composition calls, `
           + "and is not in SHELL_FRAMES — arms 1 and 2 never read it");
       }
     }
     // eslint-disable-next-line no-console
-    console.log(`arm 3 walked ${SHELL_DIR}: ${seen.length === 0 ? "no shell-* frame yet" : seen.join(", ")}`);
+    console.log(`arm 3 walked ${GROUND_DIR}, the seats and the live hooks: ${seen.length === 0 ? "no frame yet" : seen.join(", ")}`);
     expect(missing, missing.join("\n")).toEqual([]);
   });
 

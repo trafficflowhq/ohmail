@@ -1,7 +1,7 @@
 import type { AnthropicLike } from "./classify.js";
 import type { DraftCallOptions, DraftInput, DraftPort, DraftResult } from "../draft-port.js";
 import {
-  DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, coerceDraftResult, draftUserPayload,
+  DRAFT_RESULT_SCHEMA, coerceDraftResult, draftSystemPrompt, draftUserPayload,
 } from "../draft-prompt.js";
 import { declineOf } from "../model-declined.js";
 import { thinkingOffFor } from "../model-rules.js";
@@ -20,11 +20,11 @@ import { thinkingOffFor } from "../model-rules.js";
 /* Re-exported so that consumers importing the drafting vocabulary from this module — or from the
  * package barrel, which re-exports this file — are unaffected by the port having moved out. */
 export type {
-  DraftIncoming, DraftContext, DraftInput, DraftResult, DraftPort, DraftCallOptions,
+  DraftIncoming, DraftContext, DraftInput, DraftOwnWords, DraftResult, DraftPort, DraftCallOptions,
 } from "../draft-port.js";
 /* The question, re-exported from the leaf that now owns it. */
 export {
-  DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, assertRedacted, coerceDraftResult, draftUserPayload,
+  DRAFT_OWN_PREFIX, DRAFT_PREFIX, DRAFT_RESULT_SCHEMA, NO_LETTER, assertRedacted, coerceDraftResult, draftSystemPrompt, draftUserPayload,
 } from "../draft-prompt.js";
 export type { DraftUserPayload } from "../draft-prompt.js";
 
@@ -40,6 +40,7 @@ export interface SonnetDrafterOpts {
    */
   inferenceGeo?: string;
   maxTokens?: number;
+  stream?: boolean;
 }
 
 const DEFAULT_MODEL = "claude-sonnet-5-5";
@@ -72,7 +73,7 @@ export function buildDraftParams(input: DraftInput, opts: SonnetDrafterOpts = {}
      */
     thinking: thinkingOffFor(model),
     system: [
-      { type: "text", text: DRAFT_PREFIX, cache_control: { type: "ephemeral" } },
+      { type: "text", text: draftSystemPrompt(input, opts.stream), cache_control: { type: "ephemeral" } },
     ],
     messages: [
       { role: "user", content: JSON.stringify(userPayload) },
@@ -100,6 +101,16 @@ function extractJsonText(content: unknown): string {
 }
 
 /**
+ * The ordered schema puts the body first. Decode only its available JSON string prefix,
+ * holding an incomplete escape or surrogate pair until the next chunk.
+ */
+function draftBodyPrefix(json: string): string | undefined {
+  const match = /^\s*\{\s*"body"\s*:\s*("(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*)/.exec(json);
+  if (match === null) return undefined;
+  return (JSON.parse(`${match[1]}"`) as string).replace(/[\uD800-\uDBFF]$/, "");
+}
+
+/**
  * The injected-client Sonnet drafter (mirrors `makeHaikuClassifier`). `client` is a
  * real `new Anthropic()` in prod, a canned-JSON fake in tests. No `@anthropic-ai/sdk`
  * import lives in this module — the SDK is a deployment concern.
@@ -110,10 +121,18 @@ export function makeSonnetDrafter(client: AnthropicLike, opts: SonnetDrafterOpts
   return {
     async draft(input: DraftInput, call?: DraftCallOptions): Promise<DraftResult> {
       const params = buildDraftParams(input, opts);
-      const own = call && (call.signal || call.onUsage)
-        ? { ...(call.signal ? { signal: call.signal } : {}), ...(call.onUsage ? { onUsage: call.onUsage } : {}) }
-        : undefined;
-      const resp = await client.messages.create(params, own);
+      let json = "";
+      let preview = "";
+      const resp = await client.messages.create(params, !opts.stream || call?.onPreview === undefined ? call : {
+        ...call,
+        onText(delta) {
+          json += delta;
+          const body = draftBodyPrefix(json);
+          if (body === undefined || body === preview) return;
+          preview = body;
+          call.onPreview?.(body);
+        },
+      });
       // A refusal or a cut-off draft is said as one, never read as a malformed reply.
       const declined = declineOf(resp.stop_reason, resp.stop_details);
       if (declined) throw declined;

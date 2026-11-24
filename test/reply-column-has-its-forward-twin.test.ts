@@ -35,8 +35,8 @@ const REPLY_ONLY: ReadonlyArray<readonly [string, string, string]> = [
   // the sender, and counting it would hold mail on a note to somebody else (filed LOW).
   ["apps/worker/src/gate-release.ts", "d.in_reply_to_message_id = ${messages.id}", "engagement"],
   ["apps/worker/src/ohbox-tidy.ts", "d.in_reply_to_message_id = ${messages.id}", "engagement"],
-  ["apps/worker/src/rule-retro.ts", "d.in_reply_to_message_id = ${messages.id}", "engagement"],
-  ["apps/worker/src/gap-catchup.ts", "dr.in_reply_to_message_id = ${messages.id}", "engagement"],
+  ["packages/organizer/src/rule-retro.ts", "d.in_reply_to_message_id = ${messages.id}", "engagement"],
+  ["packages/organizer/src/gap-catchup.ts", "dr.in_reply_to_message_id = ${messages.id}", "engagement"],
   ["packages/db/src/own-mail.ts", "dr.in_reply_to_message_id = ${messages.id}", "engagement"],
   ["packages/services/src/held-release-service.ts", "d.in_reply_to_message_id = ${messages.id}", "engagement"],
   ["packages/core/src/unscreened-set.ts", "dr.in_reply_to_message_id = ${messages.id}", "engagement"],
@@ -49,8 +49,15 @@ const REPLY_ONLY: ReadonlyArray<readonly [string, string, string]> = [
   // AN AI DRAFT ANSWERS the message it was asked about; nothing drafts a forward.
   [WORKFLOW_RUNTIME, "inReplyToMessageId: messageId", "an AI reply"],
   ["packages/services/src/drafting-service.ts", "inReplyToMessageId: target.id", "an AI reply"],
+  ["packages/services/src/drafting-service.ts", "optionalId(raw.inReplyToMessageId", "an AI reply"],
+  ["packages/services/src/drafting-service.ts", "inReplyToMessageId: letter.id", "an AI reply"],
+  // A draft from the person's own words may answer a letter; it forwards none.
+  ["packages/wire/src/requests.ts", "inReplyToMessageId?: string;", "an AI reply"],
+  ["packages/app-logic/src/writing/draft-reply.ts", "textWire({ text, inReplyToMessageId: id }", "the from-text request answers the letter the person opened"],
+  ["packages/app-logic/src/writing/shell-compose.ts", "drafts.find((d) => d.inReplyToMessageId === messageId", "an unconfirmed reply belongs to its reply dock"],
+  ["packages/app-logic/src/writing/shell-compose.ts", "const parent = draft.inReplyToMessageId", "a draft opened from the list uses the inline reply editor only when its reply parent is here"],
   // The demo world's one reply draft.
-  ["packages/client-engine/src/adapters/fixtures-adapter.ts", 'inReplyToMessageId: "giulia"', "demo data"],
+  ["packages/testing/src/adapters/fixtures-adapter.ts", 'inReplyToMessageId: "giulia"', "demo data"],
 ];
 
 interface Site { file: string; line: number; text: string }

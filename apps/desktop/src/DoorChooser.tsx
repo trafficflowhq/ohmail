@@ -22,7 +22,7 @@ import {
 } from "../../webapp/app/shell/CertificateTrust";
 import { useAddressFirst } from "../../webapp/app/shell/address-first";
 import { authHintPreset, authHintWantsLinks, hostsFor, providerById, type AuthHint } from "../../webapp/app/shell/providers";
-import { refusalAuthHint } from "../../webapp/app/shell/local-server-host";
+import { refusalAuthHint } from "@ohmail/app-logic/doors/local-server-host";
 import {
   EMPTY_LOCAL,
   NO_CONSENT,
@@ -64,7 +64,7 @@ import { DoorProblem, HostedDoorProblem } from "./DoorProblem.js";
 import { updateAnswerSentence } from "../../webapp/app/shell/update-answer";
 import { linksOutToBilling } from "./distribution.js";
 import { localPlaintextOffer } from "./local-first-run.js";
-import { offLinkCode, onLinkCode, openApprovalPage, openWeb } from "./native.js";
+import { offLinkCode, onLinkCode, openApprovalPage, openServerPasswordReset, openWeb } from "./native.js";
 
 /**
  * Which card is on screen. `doors` is where a fresh install starts.
@@ -1154,6 +1154,7 @@ function ServerDoor({
   const [address, setAddress] = useState(initialAddress);
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
+  const [resetProblem, setResetProblem] = useState(false);
 
   return (
     <form
@@ -1172,6 +1173,7 @@ function ServerDoor({
       {notice ? <div className="join-note" role="status">{notice}</div> : null}
 
       <DoorProblem problem={problem} suggestion={suggestion} />
+      {resetProblem && <p className="join-error" role="alert">{DOOR_COPY.resetBrowserFailed}</p>}
 
       <label className="join-label" htmlFor="server-origin">{DOOR_COPY.serverOrigin}</label>
       {/* `type="text"` WITH `inputMode="url"`, and the pair is deliberate — this was `type="url"`
@@ -1268,6 +1270,14 @@ function ServerDoor({
             ? reached === null ? DOOR_COPY.serverChecking : DOOR_COPY.signingIn
             : reached === null ? DOOR_COPY.serverContinue : DOOR_COPY.signIn}
         </Button>
+        {reached !== null && (
+          <Button variant="ghost" type="button" disabled={busy} onClick={() => {
+            setResetProblem(false);
+            void openServerPasswordReset(reached).catch(() => setResetProblem(true));
+          }}>
+            {DOOR_COPY.forgotPassword}
+          </Button>
+        )}
         <Button variant="ghost" type="button" onClick={onBack} disabled={busy}>
           {DOOR_COPY.back}
         </Button>
@@ -1564,6 +1574,7 @@ function CloudDoor({
     && onApprove !== undefined;
   /* The switch names the path on screen: a wait resumed on the password card is the browser's. */
   const onBrowserPath = byApproval || viaBrowser;
+  const canCreateAccount = !signInOnly && linksOutToBilling();
 
   /**
    * WHAT AN ACTIVATION NEEDS THAT AN ACTIVATION CANNOT CARRY: the address. The deep link
@@ -1623,7 +1634,7 @@ function CloudDoor({
       {notice ? <div className="join-note" role="status">{notice}</div> : null}
 
       <HostedDoorProblem problem={problem} />
-      {joinProblem ? <p className="join-error">{joinProblem}</p> : null}
+      {joinProblem ? <p className="join-error" role="alert">{joinProblem}</p> : null}
 
       {/* THE BROWSER APPROVAL READS NO ADDRESS on a door already chosen or on the first-run door,
           whose claim names the account; the overlay's fresh door still names the mailbox it will
@@ -1774,22 +1785,29 @@ function CloudDoor({
 
       {/* A NEW PERSON'S WAY TO AN ACCOUNT, on a door being chosen and never on a sign-in again.
           The page holds the purchase step, so a store build says where setup happens instead. */}
-      {signInOnly ? null : linksOutToBilling() ? (
+      {!signInOnly && !canCreateAccount && <p className="join-hint">{DOOR_COPY.cloudSetupOnWeb}</p>}
+      {(canCreateAccount || !onBrowserPath) && (
         <p className="join-hint">
-          {DOOR_COPY.cloudNoAccount}{" "}
-          <button
-            type="button"
-            className="join-alt"
-            onClick={() => {
+          {canCreateAccount && (
+            <>
+              {DOOR_COPY.cloudNoAccount}{" "}
+              <button type="button" className="join-alt" onClick={() => {
+                setJoinProblem(null);
+                void openWeb("join").catch(() => setJoinProblem(DOOR_COPY.cloudJoinNoBrowser(machineWord())));
+              }}>
+                {DOOR_COPY.cloudCreateAccount}
+              </button>{" "}
+            </>
+          )}
+          {!onBrowserPath && (
+            <button type="button" className="join-alt" disabled={busy} onClick={() => {
               setJoinProblem(null);
-              void openWeb("join").catch(() => setJoinProblem(DOOR_COPY.cloudJoinNoBrowser(machineWord())));
-            }}
-          >
-            {DOOR_COPY.cloudCreateAccount}
-          </button>
+              void openWeb("forgot-password").catch(() => setJoinProblem(DOOR_COPY.resetBrowserFailed));
+            }}>
+              {DOOR_COPY.forgotPassword}
+            </button>
+          )}
         </p>
-      ) : (
-        <p className="join-hint">{DOOR_COPY.cloudSetupOnWeb}</p>
       )}
     </form>
   );

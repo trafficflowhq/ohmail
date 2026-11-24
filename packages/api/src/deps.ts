@@ -5,7 +5,7 @@
  * billing, the funnel and the operator connection are declared in `deps-cloud.ts`, which augments
  * the two interfaces below and which only a hosted build loads. */
 import type {
-  AuthConfig, Db, KeyProvider, SearchSupersede, ServiceContext, SessionScope,
+  AuthConfig, ContextDb, Db, KeyProvider, SearchSupersede, ServiceContext, SessionScope, UnboundDb,
   SyncService, PushService, MailboxService, RulesService,
   MessageService, ThreadService,
   ScreenerService, ApprovalService, TriageService, SearchService, PrivacyService,
@@ -13,7 +13,7 @@ import type {
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
   AttachmentsService, KbService, TagsService, FolderOpsService, DraftsService, DraftingService, SendService,
   ScheduleService, ScheduledFilesKeeping,
-  WorkflowsService, ProfileImportService, HostResolver, SendDeps,
+  WorkflowsService, ProfileImportService, HostResolver, SendDeps, CalendarConnectPort, CalendarFeedPort,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
  * host, including the shipped local engine, and the root barrel's export surface reaches the model
@@ -22,6 +22,7 @@ import type {
  * every host may compile: no ceremony, no Cloud schema, no barrel side effects. The hosted
  * `AuthService` extends this class, so a hosted bag's member IS one. */
 import type { SessionLifecycle } from "@trafficflow/services/auth";
+import type { PlaceLanguage, PlaceSuggestAnswer, StagedUploadGrantWire } from "@ohmail/wire";
 import type {
   DraftPort, OpenSendAdapter, KekEnvIdentity, Logger, OAuthTokenProvider, StorageCap,
 } from "@trafficflow/core/mail";
@@ -68,18 +69,6 @@ export interface ConnectAttemptFacts {
   imapHost?: string;
   error?: unknown;
   smtpRefused?: string;
-}
-
-/** What a mint hands the browser: a ticket id and the exact way to put bytes at it. */
-export interface StagedUploadGrantWire {
-  /** The ticket id — what a later send references in place of the bytes. */
-  id: string;
-  uploadUrl: string;
-  uploadMethod: string;
-  /** Sent verbatim on the upload. Opaque: the storage wire is the server's business. */
-  uploadHeaders: Record<string, string>;
-  /** ISO-8601. When the staged bytes stop existing. */
-  expiresAt: string;
 }
 
 /**
@@ -132,7 +121,7 @@ export interface AttachmentStagingPort {
  * the retired `aiCredits` factory did over the same handle: the bag is per cold instance and
  * a database handle is not, so the bag holds the factory and the handler holds the port.
  */
-export type AttachmentStagingFactory = (db: Db) => AttachmentStagingPort;
+export type AttachmentStagingFactory = (db: ContextDb) => AttachmentStagingPort;
 
 /**
  * WHAT ONE STORAGE MAIL SAYS (cloud 0057), structural for `customerMail`'s reason: numbers, closed
@@ -160,12 +149,73 @@ export interface StorageNoticeInput {
 }
 
 /**
+ * A PLACE QUESTION as the place route hands it on: judged, its text made plain (NFC, controls as
+ * spaces, trimmed, spaces folded, lower case), its region rounded to one decimal, the person's own
+ * country as two capital letters or null.
+ */
+export interface PlaceQuestion {
+  readonly text: string;
+  readonly lang: PlaceLanguage | null;
+  readonly limit: number;
+  readonly near: { readonly lat: number; readonly lon: number } | null;
+  readonly home: string | null;
+}
+
+/**
+ * THE SERVER'S PLACE SUGGESTER, as a port: `@trafficflow/api/calendar` builds one, beside the
+ * calendar's routes, and no route table here names it. Never throws for the geocoder's troubles.
+ */
+export interface PlaceSuggester {
+  suggest(
+    accountId: string, question: PlaceQuestion, opts?: { readonly signal?: AbortSignal; readonly logger?: Logger },
+  ): Promise<PlaceSuggestAnswer>;
+}
+
+/**
+ * THE DOOR A CALENDAR'S PROVIDER RINGS, as a port: `@trafficflow/api/calendar-notices` builds one
+ * for the program, beside the two notice routes, and no route table here names it. It holds what is
+ * in flight, the minute's counts and Microsoft's validation switch. `ring` never throws, and what
+ * it answers says nothing of what it found.
+ */
+export interface CalendarNoticeDoor {
+  ring(provider: "google" | "microsoft", req: Request, db: Db): Promise<Response>;
+}
+
+/**
  * The typed service bag on `ApiDeps`. The test helper and each host construct these once and
  * expose them here so handlers never new-up a service.
  * `sync` is optional — the handler falls back to the `syncService` singleton.
  */
 export interface ApiServices {
   sync?: SyncService;
+  /**
+   * The calendar's builders for the sync feed, handed in by a composition that keeps a calendar
+   * (`@trafficflow/services/calendar`). ABSENT is a first-class state, and the default: the feed
+   * then sends no calendar record and turns none into a deletion.
+   */
+  calendar?: CalendarFeedPort;
+  /**
+   * Place suggestions for the calendar's place field, built beside the calendar where a geocoder is
+   * set. ABSENT, `POST /calendar/places/suggest` answers `off` and `/hello` does not offer them.
+   */
+  places?: PlaceSuggester;
+  /**
+   * What the calendar's connect door is composed with (`CalendarConnectPort`): the address policy
+   * and the switches of the ways that sign in at their provider. Handed beside `calendar` by a
+   * composition that keeps one. ABSENT refuses: no way is listed and none is taken.
+   */
+  calendarConnect?: CalendarConnectPort;
+  /** Public callback origin and the server-only registration for Google's calendar grant. */
+  calendarOAuth?: {
+    readonly origin: string;
+    readonly google: { readonly clientId: string; readonly clientSecret: string } | null;
+  };
+  /**
+   * The door a calendar's provider rings ({@link CalendarNoticeDoor}), handed beside `calendar` by a
+   * server that mounts the notice routes. ABSENT, those routes answer as they always do and read
+   * nothing: no statement is run and nothing is pulled forward.
+   */
+  calendarNotices?: CalendarNoticeDoor;
   /**
    * The session lifecycle — refresh rotation with reuse detection, logout, the device list
    * and its revoke, and `establishPairedDevice`. Optional in `unsubscribe`'s grammar: absence
@@ -549,6 +599,27 @@ export interface AlertSinkSummary {
  */
 export type BuildIdentitySource = "platform" | "file" | "variable" | "none";
 
+/**
+ * The lock's line on `/health`, as the hosted database package's `lockHealthLine` writes it. Its
+ * shape is stated here because this file names no hosted entry point; `health-lock.test.ts` holds
+ * the two to one shape.
+ */
+export interface LockHealthLine {
+  verdict: "absent" | "locked" | "off" | "stale_marker" | "broken";
+  role: string;
+  listed: number;
+  forced: number;
+  census: "equal" | "drift";
+  policies: "equal" | "differ" | "not-judged";
+  /** The account's views of the row lock standing as listed: 3 where the lock stands whole. */
+  views: number;
+  /** Which relations this instance's index-driven reads go through: the views, the tables, or not asked yet. */
+  reads: "views" | "tables" | "unasked";
+  since?: string;
+  by?: string;
+  why?: string;
+}
+
 export interface HealthConfig {
   /** Build identity — the deployment's commit sha where the platform provides one. */
   version: string;
@@ -628,6 +699,13 @@ export interface HealthConfig {
    * configuration. The fault is named in a body one curl reads.
    */
   staffDbAttestation?: (() => Promise<string | null>) | null;
+  /**
+   * THE LOCK'S LINE: the database's verdict on the account lock (row security on every locked
+   * table and the listed policies), as the host reads it (`readLock` and `lockHealthLine` of the
+   * hosted database package). Published as `lock` beside the staff faults; it never changes the
+   * status, and a reading that throws publishes nothing. Absent on a host that injects none.
+   */
+  lock?: (() => Promise<LockHealthLine | null>) | null;
   /**
    * Run the content-blind attestation and publish its result, non-fatally. A capability, not
    * a value: `/health` calls it and merges a `staffDbFault` string when one returns. It
@@ -771,6 +849,13 @@ export interface HelloConfig {
      * as `features.scheduleFilesDays` instead, which `/hello` derives from `ApiServices.scheduledFiles`.
      */
     scheduleFiles: boolean;
+    /**
+     * This composition keeps a calendar: it hands `ApiServices.calendar` in and mounts the calendar's
+     * routes. Optional, and absent is off: `/hello` then says nothing of a calendar, as it never did.
+     */
+    calendar?: boolean;
+    /** `ApiServices.places` is in the bag: the place field may ask. Absent: not offered. */
+    placeSuggestions?: boolean;
   };
 }
 
@@ -789,17 +874,10 @@ export interface ResolvedSession {
   accountId: string;
   userId: string;
   sessionId: string;
+  familyId?: string;
   lastTwofaAt: Date | null;
   scope: SessionScope;
   via: SessionVia;
-  /**
-   * When this user's address was proven, or `null` for an unproven one. Comes from
-   * `resolveSession`'s `users` JOIN, so it costs no extra query, and it is read by exactly one
-   * thing: `withSpendGate`. A handler on a route whose `cost` is not one of the permissive
-   * classes can assume it is non-null, for the same reason `scope` lets it assume enrollment
-   * was handled.
-   */
-  emailVerifiedAt: Date | null;
   /**
    * The row's `last_synced_at` as `resolveSession` read it. Bookkeeping only: `GET /sync` reads it
    * to skip a stamp that is not due. Absent means unknown, and the stamp runs as before.
@@ -835,16 +913,22 @@ export interface PressContext {
  * PGlite `Db`; a hosted deployment builds one per request around a pooled Postgres `Db`.
  */
 export interface ApiDeps {
-  db: Db;
+  /**
+   * THE REQUEST'S HANDLE, never the pool's own. Its host mints it bound to nothing, the session's
+   * door binds it to the session's account, and a container made over a plain handle does not
+   * compile: no route can reach the database without the binder having named whom it acts for.
+   */
+  db: ContextDb;
   /**
    * The same pool behind the SESSION wait-to-begin ceiling, which `withSessionAcquireCeiling` puts
    * in place of {@link db} on the session doors. A port for {@link ApiFaultLogPort}'s reason:
    * the ceiling's number lives in `@trafficflow/db/cloud`, which this file may not name. Absent ⇒
    * the doors keep `db` — PGlite hosts, the desktop door, every local install.
    */
-  sessionDb?: () => Db;
+  sessionDb?: () => UnboundDb;
   now: () => Date;
   requestId: string;
+  onDraftPreview?: (text: string) => void;
   /**
    * WHICH RUN OF A LOSSY STORE THIS HOST IS SERVING — the desktop sidecar's local PGlite states
    * one; the hosted Postgres and the phone's SQLite state nothing, because neither can lose a row
@@ -860,8 +944,12 @@ export interface ApiDeps {
    * oauth mailbox refuses at {@link buildImapAuth} rather than sending its refresh token as a
    * password. Present (wired from `MS_OAUTH_*` when onboarding lands) ⇒ the IMAP + SMTP dialers mint
    * access tokens through it. A password mailbox never touches it.
+   *
+   * A dial hands it its own handle beside the mailbox (`deps.oauth.forMailbox(mailboxId, deps.db)`):
+   * the handle it read the mailbox's credential on, a request's or a pass's row's. A refresh token
+   * Microsoft replaces during that dial is written there, in a flight that names what the dial names.
    */
-  oauth?: OAuthTokenProvider;
+  oauth?: OAuthTokenProvider<ContextDb>;
   /** Set by `withIdempotency`; consumed by the handler's service. */
   idempotency?: IdempotencyContext | null;
   /** Set by `withPressAge`; threaded onto the service context as `pressFloor`. */
@@ -901,6 +989,7 @@ export interface ApiDeps {
    * header is then omitted. Never read on any other route.
    */
   credentialAccount?: string | null;
+  credentialFamily?: string;
   /**
    * The ERASED account a declared token belonged to — set by `erasedAccountBearer` when it answers
    * `410 account_erased`, read by `createApp.handle` to name that answer. Absent on every other

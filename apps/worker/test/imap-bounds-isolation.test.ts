@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { ImapBoundExceeded, isImapBoundExceeded } from "@trafficflow/core/adapters/imap";
-import { isDatabaseFault, isSharedDatabaseFault, classifyIngestFault } from "../src/dead-letter.js";
+import { isDatabaseFault, isSharedDatabaseFault, classifyIngestFault } from "@ohmail/organizer/dead-letter";
+import { readSource } from "./_start-function.js";
 
 /**
  * ═══ A SERVER-CEILING BREACH IS THIS MAILBOX'S FAULT, AND THE WORKER MUST AGREE ════════════
@@ -53,8 +53,8 @@ const breach = (): ImapBoundExceeded =>
   new ImapBoundExceeded("enumerate_uids", 500_000, 500_001, "INBOX");
 
 /** The worker's quarantine site, read as SOURCE — see the structural case for why. */
-const WORKER_INDEX = readFileSync(
-  new URL("../src/index.ts", import.meta.url), "utf8",
+const WORKER_INDEX = readSource(
+  new URL("../src/index.ts", import.meta.url),
 );
 
 describe("an IMAP ceiling breach is mailbox-local, not a shared-service fault", () => {

@@ -1,3 +1,4 @@
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -6,13 +7,11 @@ import {
   DEFAULT_STORE_POLICY,
   MemoryMirrorStore,
   OhmailEngine,
-  type EngineMessage,
-  type MutationOutcome,
   type StorePolicy,
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 
 /**
  * ═══ THE DESKTOP RENDERER'S MIRROR IS BOUNDED BY A WINDOW, NOT BY THE MAILBOX ════════════════
@@ -149,10 +148,12 @@ describe("the desktop renderer's mirror is bounded by its window", () => {
    * of both defects.
    */
   it("the paired-device gate hands the window to the engine it builds", () => {
-    const src = readFileSync(resolve(HERE, "../src/host-client/host-engine.ts"), "utf8");
+    const src = readFileSync(resolve(HERE, "../../paired-page/src/host-engine.ts"), "utf8");
     const at = src.indexOf("new OhmailEngine(");
     expect(at, "the gate builds an engine").toBeGreaterThan(-1);
-    expect(src.slice(at, at + 600)).toContain("storePolicy: DESKTOP_WINDOW");
+    const end = src.indexOf("\n  });", at);
+    expect(end, "the engine options have an end").toBeGreaterThan(at);
+    expect(src.slice(at, end)).toContain("storePolicy: DESKTOP_WINDOW");
   });
 
   /**

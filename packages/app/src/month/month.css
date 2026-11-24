@@ -1,0 +1,40 @@
+/* The Month's placement inside the calendar's sheet: the notice over the grid, the grid filling the rest. */
+.cal-mo {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.cal-mo-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+}
+.cal-mo-note {
+  padding: var(--s2) var(--s3) 0;
+}
+.cal-mo-day {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+[data-drawer-edge] .cal-mo-day {
+  touch-action: pan-y pinch-zoom;
+}
+.cal-mo-none {
+  margin: 0;
+  padding: var(--s3) var(--s4);
+  color: var(--ink2);
+}
+
+.cal-mo[data-device="phone"] .cal-mo-day {
+  padding-block-end: var(--cal-phone-sheet-foot);
+  background: var(--sheet);
+  border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+  box-shadow: 0 0 0 var(--ringw) var(--ring);
+}
+
+.cal-mo-pick {
+  padding: 0 var(--s2) var(--s2);
+}

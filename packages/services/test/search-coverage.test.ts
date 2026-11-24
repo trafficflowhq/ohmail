@@ -1,10 +1,11 @@
+import type { SearchResult } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { mailboxes, messageBodies } from "@trafficflow/db";
 import { pgDialect } from "@trafficflow/db/dialect";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
-import { SearchService, type SearchParts, type SearchResult } from "../src/index.js";
+import { SearchService, type SearchParts } from "../src/index.js";
 import { IMPORT_OPEN_MAX_MS, importOpen } from "../src/search-coverage.js";
 import { makeCtx, otherAccount, seedMessage } from "./helpers.js";
 
@@ -24,7 +25,7 @@ async function midImport() {
     const id = await seedMessage(db, accountId, mailboxId, {
       subject: `invoice ${74600 + i}`, folder: "INBOX", date: new Date(Date.parse("2026-07-01T09:00:00Z") + i * 3_600_000),
     });
-    await db.insert(messageBodies).values({ messageId: id, text: `the invoice for order ${74600 + i}` });
+    await db.insert(messageBodies).values({ messageId: id, accountId, text: `the invoice for order ${74600 + i}` });
   }
   const r = await searchIndexBackfillPass({ db: db as never, accountId });
   expect(r.marked, "the backfill's marker is written, as on a first sync").toBe(true);

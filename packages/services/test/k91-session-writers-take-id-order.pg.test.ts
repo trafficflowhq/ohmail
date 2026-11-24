@@ -1,16 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { generateSync } from "otplib";
-import { accounts, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { authEvents, schema } from "@trafficflow/db/cloud";
+import { accounts, bindDb, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
+import { authEvents, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  AuthService, deleteAccount, hashToken, makeTestAuthDeps, reapStaleWebSessions, type ServiceContext,
+  AuthService, dbFor, deleteAccount, hashToken, makeTestAuthDeps, reapStaleWebSessions, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -25,16 +23,21 @@ import {
 
 const PG_UP = await realPgAvailable();
 type Sql = ReturnType<typeof postgres>;
-type Db = ReturnType<typeof drizzle<typeof schema>>;
+type Db = OwnedDb["db"];
 type Settled<T> = { ok: true; v: T } | { ok: false; e: unknown };
 
 let client: Sql;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let owned: OwnedDb;
 let db: Db;
 const extra: Sql[] = [];
+const owners: OwnedDb[] = [];
 let ipCell = 0;
 let ip = "10.47.0.1";
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(), requestId: "k91", ip, ...over,
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+  accountId: "", userId: null, now: () => new Date(), requestId: "k91", ip, ...over,
 });
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const settle = <T>(p: Promise<T>): Promise<Settled<T>> =>
@@ -70,10 +73,13 @@ async function signIn(svc: AuthService, p: Person, offsetMs: number): Promise<vo
   });
 }
 
+/** A pool of the factory's named in pg_stat_activity (a parameter of the address is one of the connection). */
 function handle(app: string): Db {
-  const base = postgres(PG_TEST_URL, { max: 2, onnotice: () => {}, connection: { application_name: app } });
-  extra.push(base);
-  return brandDialect(drizzle(base, { schema }), "pg");
+  const address = new URL(PG_TEST_URL);
+  address.searchParams.set("application_name", app);
+  const pool = makeOwnedDb(address.toString());
+  owners.push(pool);
+  return pool.db;
 }
 
 /** Bounded: whether a backend named `app` is waiting on a heavyweight lock. */
@@ -139,7 +145,7 @@ async function race(stale: boolean, writer: (p: Person, caller: string, h: Db) =
   const E = `k91-erasure-${randomUUID().slice(0, 8)}`;
   const W = `k91-writer-${randomUUID().slice(0, 8)}`;
   const erase = () => settle(deleteAccount({
-    db: handle(E) as never, accountId: p.accountId, userId: p.userId, now: () => new Date(), requestId: `erase-${randomUUID()}`,
+    db: dbFor(handle(E), p.accountId), accountId: p.accountId, userId: p.userId, now: () => new Date(), requestId: `erase-${randomUUID()}`,
   }));
   const first = writerFirst ? settle(writer(p, caller, handle(W))) : erase();
   expect(await waitsOnALock(writerFirst ? W : E), "the first party queues on the held row").toBe(true);
@@ -158,10 +164,13 @@ describe.skipIf(!PG_UP)("an erasure against every writer of several session rows
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 6, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 60_000);
   afterAll(async () => {
     for (const c of extra) await c.end({ timeout: 5 }).catch(() => {});
+    for (const o of owners) await o.close().catch(() => {});
+    await owned?.close();
     await client?.end({ timeout: 5 });
   });
 
@@ -177,12 +186,12 @@ describe.skipIf(!PG_UP)("an erasure against every writer of several session rows
 
   it("signing out every other web session", async () => {
     await race(false, (p, caller, h) => new AuthService(makeTestAuthDeps()).revokeWebSessions(
-      ctx({ db: h as never, userId: p.userId, accountId: p.accountId, sessionId: caller, now: () => new Date(p.t.getTime() + 200_000) })));
+      ctx({ db: dbFor(h, p.accountId), userId: p.userId, accountId: p.accountId, sessionId: caller, now: () => new Date(p.t.getTime() + 200_000) })));
   }, 60_000);
 
   it("signing out everywhere", async () => {
     await race(false, (p, caller, h) => new AuthService(makeTestAuthDeps()).logout(
-      ctx({ db: h as never, userId: p.userId, accountId: p.accountId, sessionId: caller, now: () => new Date(p.t.getTime() + 200_000) }),
+      ctx({ db: dbFor(h, p.accountId), userId: p.userId, accountId: p.accountId, sessionId: caller, now: () => new Date(p.t.getTime() + 200_000) }),
       { allDevices: true }));
   }, 60_000);
 });

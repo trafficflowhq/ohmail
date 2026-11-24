@@ -11,9 +11,9 @@ import {
 import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { startWorker } from "../src/index.js";
 import { prepareIsolatedDb, truncateAll } from "./_isolateddb.js";
-import { FakeAdapterFleet, FakeMetaFolder } from "./_fakeadapter.js";
+import { FakeAdapterFleet, FakeMetaFolder } from "../../../packages/organizer/test/_fakeadapter.js";
 import { markMailboxReleased } from "../src/mailboxes.js";
-import { releaseMailboxClaim } from "../src/lease.js";
+import { releaseMailboxClaim } from "@ohmail/organizer/lease";
 
 /**
  * ═══ GIVING UP A CLAIM THIS INSTALL LEFT BEHIND — THROUGH THE REAL SERVICE ══════════════════
@@ -93,7 +93,7 @@ async function seedStranded(
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   if (holder) {
@@ -397,7 +397,7 @@ describe("a claim this install left behind can be given up", () => {
 
   it("ANOTHER CLOUD DEPLOYMENT'S CLAIM IS FOREIGN, though its KIND is ours", async () => {
     /* THE CASE A CATEGORY COMPARISON CANNOT SEE, and the reason this decides on the install id.
-       `apps/worker/src/lease.ts` scopes the hosted organizer's id by environment precisely so that
+       `packages/organizer/src/lease.ts` scopes the hosted organizer's id by environment precisely so that
        a staging deployment pointed at a production mailbox is a DIFFERENT organizer — so a row can
        read `organized_by_kind = 'cloud'` over a claim this deployment did not write and cannot
        remove. The old condition answered "ours", cleared the row, and left the claim standing. */
@@ -489,7 +489,7 @@ describe("a claim this install left behind can be given up", () => {
     }).returning();
     const enc = await KP.encrypt("pw");
     await db.insert(mailboxCredentials).values({
-      mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     fleet.seedClaim(row!.id, formatClaim({

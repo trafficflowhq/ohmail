@@ -1,0 +1,10 @@
+@layer oh {
+  .history-head {
+    display: grid;
+    flex: none;
+  }
+
+  .history-head > * {
+    grid-area: 1 / 1;
+  }
+}

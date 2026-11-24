@@ -1,0 +1,31 @@
+/* The calendar's square: whose it is. 8, 12 or 6; hidden is hollow; no hue is the grey. */
+@layer oh {
+  .oh-csq {
+    --oh-csq-r: var(--r-sq);
+    --oh-csq-fill: var(--oh-cal-mark, var(--cal-grey));
+    --oh-csq-line: inset 0 0 0 var(--ev-line) var(--oh-csq-fill);
+    display: inline-block;
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--oh-csq-r);
+    background: var(--oh-csq-fill);
+  }
+  .oh-csq[data-size="10"] {
+    width: var(--cal-rail-swatch);
+    height: var(--cal-rail-swatch);
+  }
+  .oh-csq[data-size="12"] {
+    --oh-csq-r: calc(var(--r-sq) * 1.5);
+    width: 12px;
+    height: 12px;
+  }
+  .oh-csq[data-size="6"] {
+    width: 6px;
+    height: 6px;
+  }
+  .oh-csq[data-hollow] {
+    background: transparent;
+    box-shadow: var(--oh-csq-line);
+  }
+}

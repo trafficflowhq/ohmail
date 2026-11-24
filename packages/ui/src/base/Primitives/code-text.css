@@ -1,0 +1,17 @@
+@layer oh {
+  .oh-code-text {
+    display: block;
+    font-family: var(--oh-face-mono);
+    overflow-wrap: anywhere;
+    user-select: all;
+  }
+  .oh-code-tile {
+    inline-size: min(100%, var(--oh-code-tile-width));
+    --oh-code-tile-width: calc(var(--s6) * 4);
+  }
+  .oh-code-tile > :first-child {
+    display: block;
+    inline-size: 100%;
+    block-size: auto;
+  }
+}

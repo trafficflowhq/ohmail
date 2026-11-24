@@ -17,6 +17,7 @@ import {
   watchWindowCanvas,
   onMenuCommand,
   onMenuNavigate,
+  openServerPasswordReset,
   openWeb,
   setBadge,
   commandOfMenuPayload,
@@ -150,7 +151,7 @@ describe("the menu's navigation", () => {
   /** Outside the app there is no menu — and no failure either. */
   it("is silent when there is no shell to listen to", async () => {
     await expect(onMenuNavigate(() => undefined)).resolves.toBeUndefined();
-    await expect(postOsNotice("t", "b")).resolves.toBeUndefined();
+    await expect(postOsNotice({ kind: "ohbox", count: 1 })).resolves.toBeUndefined();
     await expect(setBadge(3)).resolves.toBeUndefined();
   });
 });
@@ -170,11 +171,11 @@ describe("the badge and the notification", () => {
     expect(shell.asked).toEqual([{ command: "set_badge", payload: { count: 0 } }]);
   });
 
-  it("hands the notification's words over whole", async () => {
+  it("hands the shell the notice itself, a kind and its count, and no words", async () => {
     const shell = shellAnswering();
-    await postOsNotice("ohmail", "One new message for you.");
+    await postOsNotice({ kind: "ohbox", count: 3 });
     expect(shell.asked).toEqual([
-      { command: "notify", payload: { title: "ohmail", body: "One new message for you." } },
+      { command: "notify", payload: { notice: { kind: "ohbox", count: 3 } } },
     ]);
   });
 });
@@ -257,25 +258,23 @@ describe("Settings → this install", () => {
     expect(text).toContain(`On this ${MACHINE_WORD}`);
     expect(text).not.toContain("On this Mac");
 
-    /* THE CREDENTIAL ROW IS NOT CALLED THE SAME THING ON BOTH DOORS, and this case used to
-       assert that it was. It said "Signed in" here — on a STANDALONE install, where there is no
-       sign-in, no session and no account: the credential is the mailbox password this computer
-       holds for an IMAP server. "Login / Signed in" invited somebody to look for an account they
-       do not have, and its `absent` twin said "Signed out" about a state that has no signing-in
-       to undo. The hosted door keeps both words, because there they are true — pinned in the
-       next case, so the two doors are held apart rather than merely accommodated. */
     expect(text).toContain("Mailbox password");
     expect(text).toContain("Stored");
-    expect(text, "the standalone door named a sign-in it does not have").not.toContain("Signed in");
-
-    /* AND THE ENGINE ROW IS ABSENT WHILE THE ENGINE IS SERVING. "Mail engine: Running" was a
-       permanent row stating the ordinary case on every healthy install, which is a line nobody
-       reads — including on the day it stops saying it. Its states are pinned below. */
-    expect(text, "a healthy install still carries a row that only ever says Running")
-      .not.toContain("Mail engine");
+    expect(text).not.toContain("Account session");
+    expect(text).not.toContain("Signed in");
+    expect(text).toContain("Mail engineRunning");
+    expect([...hostEl.querySelectorAll("button")].map((b) => b.textContent)).toContain("Sign out");
   });
 
-  it("shows the mail engine only when it is the problem", async () => {
+  it("shows the mail engine and explains a startup or failure", async () => {
+    await mount(SERVING);
+    const running = hostEl.textContent ?? "";
+    expect(running).toContain("Mail engineRunning");
+    expect(running).not.toContain("coming up");
+    expect(running).not.toContain("did not come back");
+
+    await act(() => root.unmount());
+    hostEl.remove();
     await mount({ ...SERVING, state: "failed", reason: "the engine exited" });
     const text = hostEl.textContent ?? "";
     expect(text).toContain("Mail engine");
@@ -328,8 +327,9 @@ describe("Settings → this install", () => {
   it("says the session is live when it is, whatever the launch frame said", async () => {
     await mount({ ...SERVING, mode: "cloud", credentialState: "absent" }, () => {}, "live");
     const text = hostEl.textContent ?? "";
-    expect(text).toContain("Signed in");
+    expect(text).not.toContain("Account session");
     expect(text, "a signed-in install was told it had no session").not.toContain("Signed out");
+    expect([...hostEl.querySelectorAll("button")].map((b) => b.textContent)).toContain("Sign out");
     expect(
       [...hostEl.querySelectorAll("button")].map((b) => b.textContent),
       "a signed-in install was offered a sign-in",
@@ -379,7 +379,10 @@ describe("Settings → this install", () => {
     expect(text).not.toContain("does not open it");
     // …and not the "newer engine, carry on" default, which is the one a missing case produces.
     expect(text).not.toContain("Nothing is wrong");
-    expect(text).not.toContain("Unknown");
+    const credential = [...hostEl.querySelectorAll('[role="group"]')]
+      .find((row) => row.textContent?.includes("Mailbox password"));
+    expect(credential?.textContent).toContain("Server changed");
+    expect(credential?.textContent).not.toContain("Unknown");
   });
 
   /**
@@ -484,7 +487,7 @@ describe("the menu's commands", () => {
 
   it("Compose runs the shell's own Compose door, which may keep a waiting letter on screen", async () => {
     const { runMenuCommand } = await import("../src/DesktopGate.js");
-    const { setComposeDoor } = await import("../../webapp/app/shell/compose-door");
+    const { setComposeDoor } = await import("@ohmail/app-logic/writing/compose-door");
     const ran: string[] = [];
     setComposeDoor(() => { ran.push("door"); });
     try { runMenuCommand("compose"); } finally { setComposeDoor(null); }
@@ -531,14 +534,19 @@ describe("the browser handoff, at the window's edge", () => {
 
   it("omits the field entirely when there is no commitment to pass", async () => {
     const shell = shellAnswering();
+    const expectedServer = "https://mail.example.test/api";
     await openWeb("link-desktop");
     await openWeb("account");
+    await openWeb("forgot-password");
+    await openServerPasswordReset(expectedServer);
     /* Absent, not `undefined`. The shell's `Option<String>` and "no such parameter" are the same
        fact, and a caller that always sent the key would make the one page that takes one look like
        every page — which is what `desktop-mailboxes.test.ts` also pins from the other side. */
     expect(shell.asked).toEqual([
       { command: "open_link", payload: { key: "link-desktop" } },
       { command: "open_link", payload: { key: "account" } },
+      { command: "open_link", payload: { key: "forgot-password" } },
+      { command: "open_link", payload: { key: "server-forgot-password", expectedServer } },
     ]);
   });
 

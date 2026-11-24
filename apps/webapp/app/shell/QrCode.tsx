@@ -10,7 +10,7 @@
  * The four-module quiet zone is part of the viewBox, so no consumer can crop it off.
  */
 import { useMemo } from "react";
-import { qrEncode, qrSvgPath } from "./qr";
+import { qrEncode, qrSvgPath } from "@ohmail/app-logic/doors/qr";
 
 const QUIET = 4;
 

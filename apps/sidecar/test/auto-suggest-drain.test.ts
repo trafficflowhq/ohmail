@@ -14,7 +14,7 @@ import {
   accountSettings, folderState, messageInstances, messages, routingDecisions,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
 } from "@trafficflow/db";
-import { AUTO_SUGGEST_BATCH } from "@trafficflow/worker/screener-auto-suggest";
+import { AUTO_SUGGEST_BATCH } from "@ohmail/organizer/screener-auto-suggest";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 
@@ -307,7 +307,7 @@ describe("automatic suggestions at the standalone drain's tail", () => {
       });
     }
     await s.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       observedFolder: folder,
       desiredFolder: SCREENER,
       // `us`, because the gate is OUR decision: the pipeline held this first-contact sender, which

@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { asc, eq } from "drizzle-orm";
-import { accounts, mailboxes, messages, folderState } from "@trafficflow/db";
+import { accountSettings, accounts, mailboxes, messages, folderState } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { screenerAttemptKey } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
@@ -89,6 +89,7 @@ interface World { accountId: string; mailboxId: string }
 async function seed(granted = 50): Promise<World> {
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `m3-${accountId.slice(0, 8)}` });
+  await db.insert(accountSettings).values({ accountId, autoSuggestAt: NOW });
   credits.budget(granted);
   const [mb] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: `m3-${accountId.slice(0, 8)}@ex.test` }).returning();
@@ -105,7 +106,7 @@ async function held(w: World, from: string, nth: number, subject = `message ${nt
     nativeLocator: { folder: "ohmail/Screener", ref: `1:${Math.floor(Math.random() * 1e6)}` },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;

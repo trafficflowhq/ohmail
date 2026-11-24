@@ -132,7 +132,7 @@ describe("the refusal is said in the composer, above its buttons", () => {
   });
 
   it("the sheet binds the row, passes it to every send and to the keep, and renders the line", () => {
-    const send = SHEET.slice(SHEET.indexOf("const send = async ("), SHEET.indexOf("return (\n    <Modal"));
+    const send = SHEET.slice(SHEET.indexOf("const send = async ("), SHEET.indexOf("const noteItems = ["));
     for (const verb of ["sendNew(", "sendForward(", "sendReply("]) {
       const call = send.slice(send.indexOf(verb), send.indexOf(")", send.indexOf(verb)));
       expect(call, `${verb} does not carry the bound row`).toContain("draftId");
@@ -145,6 +145,14 @@ describe("the refusal is said in the composer, above its buttons", () => {
     const line = SHEET.indexOf("failedSendLine(failNote, w.boot.connection, draftId !== null)");
     expect(line).toBeGreaterThan(-1);
     expect(SHEET.slice(SHEET.lastIndexOf("<Txt", line), line)).toContain('accessibilityRole="alert"');
-    expect(line).toBeLessThan(SHEET.indexOf('<Button label={Copy.replyCancel} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />'));
+    const render = SHEET.slice(SHEET.indexOf("<ComposerFrame inline="), SHEET.indexOf("</ComposerFrame>"));
+    const scrollNotes = render.indexOf("{pinNotes ? null : notesBlock}");
+    const pinnedNotes = render.indexOf("{pinNotes ? notesBlock : null}");
+    const buttons = render.indexOf("{sendButton}");
+    expect(SHEET.slice(SHEET.indexOf("const notesBlock ="), SHEET.indexOf("const discardDraft ="))).toContain("{noteItems}");
+    expect(scrollNotes).toBeGreaterThan(-1);
+    expect(pinnedNotes).toBeGreaterThan(scrollNotes);
+    expect(buttons).toBeGreaterThan(pinnedNotes);
+    expect(render.indexOf("{closeButton}")).toBeGreaterThan(pinnedNotes);
   });
 });

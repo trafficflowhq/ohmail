@@ -1,6 +1,6 @@
+import type { MessageDTO, SyncResponse } from "@ohmail/wire";
 import { rmSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { MessageDTO, SyncResponse } from "@trafficflow/services/mail";
 import { HttpAdapter, MemoryMirrorStore, OhmailEngine, StoreSearchWalker, type WindowSearchPhases } from "@ohmail/client-engine";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { createSidecarLog } from "../src/log.js";

@@ -72,7 +72,11 @@ describe("the arms TF_ALERT_SECRET arms, named the way the organizer names its o
   it("an arm whose build THROWS stays composed and refuses as misconfigured, the arms after it kept", async () => {
     // An smtp: scheme the loader admitted, then broken: SmtpMailer's constructor refuses it.
     const loaded = cfgWith({ TF_ALERT_SECRET: SECRET, TF_ALERT_WEBHOOK_URL: WEBHOOK, ...SMTP, TF_ALERT_EMAIL: PAGER });
-    const cfg: ServerConfig = { ...loaded, smtp: { ...loaded.smtp!, url: "http://127.0.0.1:2525" } };
+    const mail = loaded.settings.customerMail!;
+    const cfg: ServerConfig = {
+      ...loaded,
+      settings: { ...loaded.settings, customerMail: { ...mail, transport: { kind: "smtp", url: "http://127.0.0.1:2525" } } },
+    };
     const lines: string[] = [];
     const logger = createLogger({ service: "server", level: "debug", sink: (l) => lines.push(l) });
     const sinks = alertSinksFor(cfg, logger, {} as never);

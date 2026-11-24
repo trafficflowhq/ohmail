@@ -34,6 +34,7 @@ import {
   type SectionListRenderItemInfo,
 } from "react-native";
 import { useTheme } from "../theme";
+import { mailSize } from "../theme/mail";
 import { KeyboardRoom } from "./keyboard-room";
 import { Section, Txt, panelSurface, pullRefreshControl, useListInsets, type PullRefresh } from "./base";
 import {
@@ -298,7 +299,8 @@ export function MailList<T>({
       onMomentumScrollEnd: (e: ScrollEv) => { k.land(viewOf(e)); own.current.onMomentumScrollEnd?.(e); },
     };
   }, [keeping]);
-  const insets = useListInsets(true);
+  const insets = useListInsets(true, t.mail === true && surface && rowLayout === undefined);
+  const flush = insets.minHeight !== undefined;
   const sections = useMemo(() => planSections(groups), [groups]);
   useEffect(() => {
     if (topFor !== undefined) listRef.current?.getScrollResponder()?.scrollTo({ y: 0, animated: false });
@@ -320,7 +322,7 @@ export function MailList<T>({
   const rules = useMemo<CellRules>(() => {
     const k = keeper.current;
     return {
-      rowInset,
+      rowInset: flush ? mailSize.rowInset : rowInset,
       onRowFrame: onRowFrame || k ? (row, frame) => {
         k?.frame(keyOf.current(row as T), frame.y, frame.height);
         onRowFrame?.(row as T, frame);
@@ -330,7 +332,7 @@ export function MailList<T>({
         onRowGone?.(row as T);
       } : null,
     };
-  }, [rowInset, onRowFrame, onRowGone, keeping]);
+  }, [rowInset, onRowFrame, onRowGone, keeping, flush]);
 
   const renderItem = useCallback(
     ({ item }: SectionListRenderItemInfo<T, PlannedSection<T>>) => renderRow(item),
@@ -341,7 +343,15 @@ export function MailList<T>({
       if (section.title !== null) {
         return (
           <>
-            <Section style={section.first ? { paddingTop: FIRST_GROUP_TOP } : undefined}>{section.title}</Section>
+            <Section style={section.first ? { paddingTop: FIRST_GROUP_TOP } : undefined}>
+              {section.title}
+              {flush && section.count !== null ? (
+                <>
+                  <Txt variant="sectionLabel" tone={section.first ? "accent" : "ink"}>.</Txt>{" "}
+                  <Txt variant="caption" tone="ink2" tabular>{section.count}</Txt>
+                </>
+              ) : null}
+            </Section>
             {section.note !== null ? (
               <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
                 {section.note}
@@ -352,7 +362,7 @@ export function MailList<T>({
       }
       return section.padTop > 0 ? <View style={{ height: section.padTop }} /> : null;
     },
-    [],
+    [flush],
   );
 
   /* The panel, once the head has a height to start under. Its foot is where the footer's is: the
@@ -372,7 +382,12 @@ export function MailList<T>({
             top: headH,
             bottom: insets.paddingBottom + tailH,
           },
-          panelSurface(t),
+          flush ? {
+            bottom: tailH,
+            backgroundColor: t.c.panel,
+            borderTopLeftRadius: mailSize.sheetRadius,
+            borderTopRightRadius: mailSize.sheetRadius,
+          } : panelSurface(t),
         ]}
       />
     ) : null;

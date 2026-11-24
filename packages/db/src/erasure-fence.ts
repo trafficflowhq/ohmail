@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import {
   carryDialect, dialect, ERASURE_FENCE_BRAND, IN_TRANSACTION_BRAND, type Dialect, type LockMode,
 } from "./dialect/index.js";
+import { assertBinding } from "./bound.js";
 import { accounts, mailboxes } from "./schema-mail.js";
 import type { MailboxMustBeLive, Tx } from "./change-log.js";
 
@@ -173,10 +174,18 @@ export async function fenceErasedMailbox(
  * The write MUST happen on the `tx` handed in: a write on the outer handle commits on its own
  * connection and the fence's share lock protects nothing. The dialect brand does not travel to a
  * transaction object, so it is carried from the handle this was opened on.
+ *
+ * WHOSE HANDLE. Before it opens, the handle must say whom it acts for, and say this fence's
+ * account (`assertBinding`): a handle that names another account, or nothing, is refused. A handle
+ * with no binding at all passes on a device's own store, where one person's organizer writes and
+ * no role stands behind a statement; on a server pool it is refused, the pool's own handle and a
+ * transaction opened on it alike. The connection's fence (`fencedConnectionWrite`) opens through
+ * here and holds the same.
  */
 export async function fencedAccountWrite<T>(
   db: Tx, scope: FenceScope, fn: (tx: Tx) => Promise<T>,
 ): Promise<T> {
+  assertBinding(db as unknown as object, scope.accountId, "device");
   const d = dialect(db);
   const handle = db as unknown as {
     transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R>;

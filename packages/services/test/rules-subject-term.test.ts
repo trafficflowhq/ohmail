@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -51,7 +52,7 @@ async function world(): Promise<{ db: Db; ctx: ServiceContext }> {
   const db = (await makeTestDb()) as unknown as Db;
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: `subj-${accountId.slice(0, 8)}` });
-  const ctx = { db, accountId, now: () => NOW } as unknown as ServiceContext;
+  const ctx = { db: dbFor(db, accountId), accountId, now: () => NOW } as unknown as ServiceContext;
   return { db, ctx };
 }
 
@@ -132,7 +133,7 @@ describe("creating a rule with a subject term", () => {
 
   it("stamps the retroactive request exactly as a one-term rule does", async () => {
     // The subject rule rides the existing `retro_requested_at` machinery unchanged; the worker pass
-    // over it is proven in `apps/worker/test/rule-retro-subject.pg.test.ts`.
+    // over it is proven in `packages/organizer/test/rule-retro-subject.pg.test.ts`.
     const { db, ctx } = await world();
     const { rule } = await createRule(ctx, { ...BODY, subjectContains: TOKEN });
     const stored = await row(db, rule.id);

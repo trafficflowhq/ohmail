@@ -1,0 +1,4 @@
+.account-authenticator-qr {
+  inline-size: min(var(--sheet-pad) * 6, 100%);
+  margin-block: var(--s2);
+}

@@ -9,7 +9,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { StaticKeyProvider } from "@trafficflow/core";
 import {
-  makeMailboxService, MailboxAllowanceError, decideMailboxAllowance, readMailboxAllowance,
+  makeMailboxService, MailboxAllowanceError, dbFor, decideMailboxAllowance, readMailboxAllowance,
   ServiceError,
   type MailboxAllowance, type ServiceContext,
 } from "@trafficflow/services";
@@ -78,7 +78,7 @@ function seedSub(
 }
 
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
-  ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
+  ({ db: dbFor(db, accountId), accountId, userId: null, now: () => NOW, requestId: "r" });
 
 /**
  * The seam, satisfied rather than exercised.
@@ -325,6 +325,34 @@ describe("MailboxService.create enforces the plan", () => {
     await svc.delete(ctxFor(db, acct), first.id);
     expect((await create(db, acct, "three@x.test")).address).toBe("three@x.test");
     expect(await countEnabled(db, acct)).toBe(2);
+  });
+
+  it.each(["create", "re-enable"] as const)("uses the current plan to %s a mailbox", async (operation) => {
+    const db = await makeTestDb();
+    const accountId = await seedAccount(db);
+    const ctx = ctxFor(db, accountId);
+    const body = { provider: "imap" as const, address: "fresh@allowance.test", imap: IMAP };
+    let current: AccessVerdict = UNMETERED_ACCESS;
+    const service = makeMailboxService({
+      keyProvider: KP,
+      accessOf: async (_id: string, opts?: { fresh?: boolean }) => opts?.fresh ? current : UNMETERED_ACCESS,
+    });
+    const disabled = operation === "re-enable" ? await service.create(ctx, body, PROBE_OK) : null;
+    if (disabled) await service.update(ctx, disabled.id, { status: "disabled" });
+    current = { ok: false, reason: "payment_required" };
+
+    const result = disabled
+      ? service.update(ctx, disabled.id, { status: "connected" })
+      : service.create(ctx, body, PROBE_OK);
+    await expect(result).rejects.toBeInstanceOf(MailboxAllowanceError);
+    expect(await countEnabled(db, accountId)).toBe(0);
+
+    current = UNMETERED_ACCESS;
+    const allowed = disabled
+      ? service.update(ctx, disabled.id, { status: "connected" })
+      : service.create(ctx, body, PROBE_OK);
+    await expect(allowed).resolves.toMatchObject({ status: "connected" });
+    expect(await countEnabled(db, accountId)).toBe(1);
   });
 
   it("RE-ENABLING a disabled mailbox is gated too — otherwise the limit is a revolving door", async () => {

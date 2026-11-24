@@ -90,8 +90,10 @@ describe("every postgres.js pool in apps/*/src and packages/*/src dials through 
 
   it("finds the socketed pools it exists to hold (an empty census would pass everything below)", () => {
     const socketed = census.flatMap((f) => f.calls.filter((c) => c.socketed).map((c) => `${f.file}:${c.line}`));
-    expect(socketed.length, socketed.join("\n")).toBeGreaterThanOrEqual(4);
-    expect(socketed.some((s) => s.startsWith("packages/db/src/client.ts:")), "makeOwnedDb's pool").toBe(true);
+    // Three: every server handle's pool is opened by one builder in client.ts, beside the fresh
+    // connection probe there and the change-wake listener.
+    expect(socketed.length, socketed.join("\n")).toBeGreaterThanOrEqual(3);
+    expect(socketed.some((s) => s.startsWith("packages/db/src/client.ts:")), "the handle builder's pool").toBe(true);
   });
 
   it("reaches the module only through a default import", () => {

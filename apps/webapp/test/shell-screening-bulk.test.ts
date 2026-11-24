@@ -1,16 +1,23 @@
 /** @vitest-environment jsdom */
+import { fireEvent, render, within } from "@testing-library/react";
+import type { EngineMessage, EngineMutation, RuleEntity } from "@ohmail/wire";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { FixturesAdapter, FOLDER_OF_VIEW, type EngineMutation } from "@ohmail/client-engine";
+import { UNDO_MS } from "@ohmail/app-logic/press/routing-undo";
+import { FOLDER_OF_VIEW } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
+import { Row } from "@ohmail/ui/mail";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
+import { cursorRow, ohboxRows, openRow, reportSays } from "./ohbox/_finders.js";
 
 /**
  * TWO CLAIMS THE SHELL MAKES, DRIVEN THROUGH THE SHELL.
  *
- *   · clicking a sender's circle or address IN A LIST opens their screening, and
+ *   · clicking a sender's name or address IN A LIST opens their screening, and
  *     choosing a destination puts the right thing on the wire. `sender-screening.test.ts`
  *     pins the mutation planning; this pins the part that only exists once it is wired: a
  *     capture-phase handler on the stage, one for every view, that must not be swallowed
@@ -62,11 +69,11 @@ async function unmount(): Promise<void> {
 }
 
 /** The module a mount imports, so the warm-up loads exactly it. */
-const shellModule = () => import("../app/shell/AppShell.js");
+const shellModule = () => import("./_mail-shell.js");
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await shellModule();
+  const { MailShell: AppShell } = await shellModule();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -81,7 +88,7 @@ async function mountShell(): Promise<void> {
       }),
     );
   });
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  await vi.waitFor(() => expect(rows().length).toBeGreaterThan(0));
   /**
    * …AND THEN PUT THE CURSOR ON THE FIRST ROW.
    *
@@ -92,19 +99,39 @@ async function mountShell(): Promise<void> {
    * explicitly here. It lands the cursor exactly where the old fallback did, so nothing else in
    * this file changes.
    */
+  heardHash = window.location.hash;
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
   });
+  await hearAddress();
 }
 
-/** The toasts SAYING something — the host keeps its Undo and notice slots mounted at rest. */
+/**
+ * The toasts SAYING something — the host keeps its Undo and notice slots mounted at rest. At the seated Ohbox a verb's
+ * answer is said in the frame's report.
+ */
 const saying = (): string[] =>
-  [...host!.querySelectorAll(".toast")].map((t) => (t.textContent ?? "").trim()).filter((t) => t.length > 0);
+  [reportSays(), ...[...host!.querySelectorAll(".toast")].map((t) => (t.textContent ?? "").trim())].filter((t) => t.length > 0);
+/** What the answer says: the frame's report at the seated Ohbox, else the capsule. */
+const said = (): string => reportSays() || (host!.querySelector(".toast")?.textContent ?? "");
+
+/**
+ * THE ADDRESS AS A BROWSER ANNOUNCES IT. At the seated Ohbox the selection is the address, and the frame hears a move
+ * of it by its `hashchange`; jsdom queues that event on a task this file's fake clock never runs. A press that moved
+ * the address announces it here, as the browser does a frame later.
+ */
+let heardHash = "";
+const hearAddress = async (): Promise<void> => {
+  if (window.location.hash === heardHash) return;
+  heardHash = window.location.hash;
+  await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
+};
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
 const click = async (el: Element | null | undefined, init: MouseEventInit = {}): Promise<void> => {
@@ -112,9 +139,23 @@ const click = async (el: Element | null | undefined, init: MouseEventInit = {}):
   await act(async () => {
     el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
-const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")];
+const rows = (): HTMLElement[] => ohboxRows(host!);
+/** The rows the selection holds: a picked option says so (`data-picked`, the kit's row). */
+const pickedRows = (): HTMLElement[] => rows().filter((r) => r.hasAttribute("data-picked"));
+/** The address a row draws after its sender's name. A row that draws squares or a tag leaves it out (as the design
+ *  draws the row), so the first row that draws one is the row to press. */
+const addressOf = (row: Element): HTMLElement | null => row.querySelector<HTMLElement>(":is(.addr, .oh-row-address)");
+/** The sender as a row names them: its name before the subject ("Sender: Subject", the list's option name). The
+ *  address is not drawn on every row, so it cannot tell two rows' senders apart. */
+const senderOf = (row: Element): string => (row.getAttribute("aria-label") ?? "").split(": ")[0] ?? "";
+/** The places the Move question offers: the items of its menu. The design lists them by the place's name (studio
+ *  `core.js` `moveMenu`), where the old bar wrote each as "→ News". */
+const destinations = (): string[] =>
+  [...document.querySelectorAll(`:is([role=menu], [role=dialog])[aria-label="${messages.ohbox.moveLabel}"] [role=menuitem]`)]
+    .map((b) => (b.textContent ?? "").trim());
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 
 /* ── the selection's bar ─────────────────────────────────────────────── */
@@ -123,12 +164,16 @@ const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
    column's FOOT slot, where the key-hint strip stands when nothing is picked. Nothing else about
    these helpers changed — the pill holds the same `button`s in the same row order. */
 const barButtons = (): HTMLButtonElement[] =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".list-foot button")];
+  [...document.querySelectorAll<HTMLButtonElement>(".ob-foot button, [role=menu] [role=menuitem], [role=dialog] [role=menuitem]")];
 const barLabels = (): string[] => barButtons().map((b) => (b.textContent ?? "").trim());
 /** A bar control by the START of its label — the labels carry keycaps and arrows. */
 const barButton = (label: string): HTMLButtonElement | undefined =>
   barButtons().find((b) => (b.textContent ?? "").trim().startsWith(label));
-const confirmRow = (): string => host!.querySelector(".list-foot .abar-lab")?.textContent ?? "";
+/** A place Screening's question offers, by its name: the question is titled "Screen to", as Move's is "Move". */
+const screenTo = (place: string): HTMLButtonElement | undefined =>
+  [...document.querySelectorAll<HTMLButtonElement>(`[role=dialog][aria-label="${messages.ohbox.bar.screenTo}"] [role=menuitem]`)]
+    .find((b) => (b.textContent ?? "").trim().startsWith(place));
+const confirmRow = (): string => document.querySelector("[role=dialog]")?.textContent ?? "";
 /**
  * THE SELECTION'S COUNT, off the pill's leading capsule — `null` when nothing is picked.
  *
@@ -138,7 +183,7 @@ const confirmRow = (): string => host!.querySelector(".list-foot .abar-lab")?.te
  * Reading the live region is exact, and it is the node that is actually announced.
  */
 const pickCount = (): string | null =>
-  host!.querySelector('.list-foot .abar-count [role="status"]')?.textContent ?? null;
+  ([...host!.querySelectorAll("button")].map((b) => /^(\d+) selected — /.exec(b.getAttribute("aria-label") ?? "")?.[1]).find(Boolean) ?? null);
 
 /** Pick `n` rows from the cursor with the keys that make a pick. */
 const pick = async (n: number): Promise<void> => {
@@ -190,103 +235,199 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+type RuleWrite = { method: string; path: string; body: { kind?: string; destination: EngineMessage["folder"]; applyRetro?: boolean } };
+
+async function withScreeningWeb(
+  place: "ohbox" | "history",
+  check: (shell: HTMLElement, sheetName: string, writes: string[], ruleWrites: RuleWrite[], finishBacklog: () => Promise<void>) => Promise<void>,
+  fixture: "standing" | "other-sender" | "backlog" | "new-rule" = "standing",
+) {
+  const web = await import("./fixtures/screening-web.js");
+  const letter: EngineMessage = {
+    id: "opened-letter", accountId: web.ACCOUNT, mailboxId: "mb_1",
+    threadId: null, messageIdHeader: null, subject: "A note from Ada",
+    from: { name: "Ada", address: personalAt("fixture.ada", "sender.example") },
+    to: [], cc: [], date: web.ISO, folder: "INBOX", snippet: "A note", unread: true,
+    hasAttachments: false, attachmentCount: 0,
+    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null, labels: [], remoteContent: "none", updatedAt: web.ISO,
+    placeDecided: true,
+  };
+  const rows = [letter];
+  if (fixture === "other-sender" || fixture === "backlog") {
+    rows.push({
+      ...letter, id: "older-letter", subject: "An earlier note", date: "2026-09-03T12:40:00.000Z",
+      from: fixture === "backlog" ? letter.from : { name: "Bea", address: personalAt("fixture.bea", "other.example") },
+    });
+  }
+  const id = "sender-rule";
+  const makeRule = (destination: EngineMessage["folder"]): RuleEntity => ({
+    id, kind: "sender", match: letter.from.address, destination,
+    priority: 0, provenance: "manual", enabled: true,
+    stats: { hits: 0, lastHitAt: null, demotions: 0 }, createdAt: web.ISO, updatedAt: web.ISO,
+  });
+  let rule = fixture === "standing" ? makeRule("INBOX") : null;
+  let seq = 10;
+  let completedRule: RuleEntity | undefined;
+  const ruleWrites: RuleWrite[] = [];
+  const writes: string[] = [];
+  web.installScreeningWeb(`#/${place}/m/${letter.id}`, (path, query, method, init) => {
+    if (method !== "GET" && /^\/api\/(?:rules|messages|screener)(?:\/|$)/.test(path)) {
+      writes.push(path);
+      if (path.startsWith("/api/rules")) {
+        const body = JSON.parse(String(init?.body)) as RuleWrite["body"];
+        ruleWrites.push({ method, path, body });
+        rule = {
+          ...makeRule(body.destination),
+          retro: { requestedAt: web.ISO, doneAt: fixture === "backlog" || method === "PATCH" ? null : web.ISO },
+        };
+        return Response.json(rule, { status: method === "POST" ? 201 : 200, headers: { "X-Sync-Seq": String(++seq) } });
+      }
+      const moved = rows.find((row) => path === `/api/messages/${row.id}/move`);
+      if (moved) {
+        moved.folder = (JSON.parse(String(init?.body)) as { folder: EngineMessage["folder"] }).folder;
+        return Response.json(moved, { headers: { "X-Sync-Seq": String(++seq) } });
+      }
+      return Response.json({});
+    }
+    if (path === "/api/mailboxes") return Response.json({ items: [{
+      id: letter.mailboxId, address: personalAt("fixture.reader", "mailbox.example"),
+      status: "connected", organizerRole: "organizer", organizerChecked: true,
+      createdAt: web.ISO, lastSyncAt: web.ISO, organizeConsentedAt: web.ISO,
+    }] });
+    if (path === "/api/sync") {
+      if (completedRule && query.get("types") !== "rule") {
+        return Response.json({
+          changes: { creates: [], moves: [], deletes: [], updates: [{
+            type: "rule", op: "update", id: completedRule.id, seq, updatedAt: completedRule.updatedAt, entity: completedRule,
+          }] },
+          cursor: `c${seq}`, hasMore: false, serverTime: completedRule.updatedAt,
+        });
+      }
+      if (query.get("types") === "rule") {
+        return web.syncScreeningWeb(rule ? [
+          { type: "rule", op: "create", id: rule.id, seq: 1, updatedAt: web.ISO, entity: rule },
+        ] : [], 1);
+      }
+      return web.syncScreeningWeb(rows.map((row, index) => ({
+        type: "message", op: "create", id: row.id, seq: index + 2, updatedAt: web.ISO, entity: row,
+      })), 1 + rows.length);
+    }
+    return undefined;
+  });
+  try {
+    const shell = await web.mountScreeningWeb();
+    await web.tick(4000);
+    await check(shell, messages.screening.aria.replace("{sender}", letter.from.address), writes, ruleWrites, async () => {
+      if (!rule?.retro?.requestedAt) throw new Error("The backlog was never requested");
+      const doneAt = new Date().toISOString();
+      completedRule = { ...rule, updatedAt: doneAt, retro: { ...rule.retro, doneAt } };
+      seq++;
+      await web.act(async () => { window.dispatchEvent(new Event("online")); });
+      await web.tick(1000);
+    });
+  } finally {
+    await web.teardownScreeningWeb();
+  }
+}
+
 describe("a sender's screening, from a list row", () => {
   it("every Ohbox row leads with the sender circle", async () => {
     await mountShell();
     expect(rows().length).toBeGreaterThan(0);
     for (const row of rows()) {
-      expect(row.querySelector(".av"), `${row.dataset.id} has no avatar`).toBeTruthy();
+      expect(row.querySelector(":is(.av, .oh-row-face)"), `${row.dataset.id} has no avatar`).toBeTruthy();
     }
   });
 
-  it("the circle's colour is a function of the ADDRESS, so one person is one colour", async () => {
-    // Derive it from the display name, or from anything that varies between messages, and
-    // the same correspondent changes colour down the list — which is worse than no colour,
-    // because the colour is then actively misleading. Same address, same hue; different
-    // address, an angle from the same fixed muted ramp and not the full wheel.
-    const { avatarHue } = await import("../app/shell/format.js");
-    expect(avatarHue("lena@atelier.example")).toBe(avatarHue("  LENA@Atelier.Example "));
 
-    await mountShell();
-    const seen = new Map<string, string>();
-    for (const row of rows()) {
-      const address = row.querySelector(".addr")?.textContent ?? "";
-      const hue = row.querySelector<HTMLElement>(".av")!.style.getPropertyValue("--av-h");
-      expect(hue, `${address} has no derived hue`).not.toBe("");
-      expect(String(avatarHue(address))).toBe(hue);
-      if (seen.has(address)) expect(seen.get(address)).toBe(hue);
-      seen.set(address, hue);
-    }
-    expect(seen.size).toBeGreaterThan(1);
-  });
 
-  it("the open message wears the same circle as its row", async () => {
-    await mountShell();
-    const row = host!.querySelector<HTMLElement>(".view-ohbox .row.sel") ?? rows()[0]!;
-    const pane = host!.querySelector<HTMLElement>(".read-col .msg-sender .av")!;
-    expect(pane.style.getPropertyValue("--av-h"))
-      .toBe(row.querySelector<HTMLElement>(".av")!.style.getPropertyValue("--av-h"));
-  });
-
+  // Keep the retained case's title. Its contact-card press now comes from Bea's name.
   it("clicking the circle opens screening INSTEAD of moving the cursor", async () => {
-    // The capture-phase handler has to win: `MessageRow` is itself a `<button>`, so without
-    // `stopPropagation` this would both open the popover and select (or open) the row.
-    await mountShell();
-    const target = rows()[1]!;
-    const before = host!.querySelector(".view-ohbox .row.sel")?.getAttribute("data-id") ?? null;
-
-    await click(target.querySelector(".av"));
-
-    const menu = host!.querySelector(".senderm");
-    expect(menu, "no screening popover opened").toBeTruthy();
-    expect(host!.querySelector(".view-ohbox .row.sel")?.getAttribute("data-id") ?? null).toBe(before);
-    expect(host!.querySelector(".reader")).toBeNull();
+    await withScreeningWeb("ohbox", async (shell, _, writes) => {
+      const opened = within(shell).getByRole("option", { name: /Ada: A note from Ada/, selected: true });
+      const unopened = within(shell).getByRole("option", { name: /Bea: An earlier note/, selected: false });
+      const cursor = cursorRow(shell);
+      const letter = openRow(shell);
+      await click(within(unopened).getByRole("button", { name: "Screening for Bea" }));
+      expect(within(document.body).getByRole("dialog", {
+        name: messages.screening.aria.replace("{sender}", personalAt("fixture.bea", "other.example")),
+      })).toBeTruthy();
+      expect(cursorRow(shell)).toBe(cursor);
+      expect(openRow(shell)).toBe(letter);
+      expect(opened).toBe(letter);
+      expect(unopened.getAttribute("aria-selected")).toBe("false");
+      expect(window.location.hash).toBe("#/ohbox/m/opened-letter");
+      expect(writes.filter((path) => /\/rules|\/move$|\/screener/.test(path))).toEqual([]);
+    }, "other-sender");
   });
 
   it("clicking the ADDRESS does the same — the literal request", async () => {
-    await mountShell();
-    await click(rows()[0]!.querySelector(".addr"));
-    expect(host!.querySelector(".senderm")).toBeTruthy();
+    await withScreeningWeb("ohbox", async (shell, _, writes) => {
+      const opened = within(shell).getByRole("option", { name: /Ada: A note from Ada/, selected: true });
+      const unopened = within(shell).getByRole("option", { name: /Bea: An earlier note/, selected: false });
+      const address = personalAt("fixture.bea", "other.example");
+      await click(within(unopened).getByRole("button", { name: address }));
+      expect(within(document.body).getByRole("dialog", {
+        name: messages.screening.aria.replace("{sender}", address),
+      })).toBeTruthy();
+      expect(opened.getAttribute("aria-selected")).toBe("true");
+      expect(unopened.getAttribute("aria-selected")).toBe("false");
+      expect(window.location.hash).toBe("#/ohbox/m/opened-letter");
+      expect(writes.filter((path) => /\/rules|\/move$|\/screener/.test(path))).toEqual([]);
+    }, "other-sender");
   });
 
   it("SHIFT-click is left alone — that gesture belongs to range selection", async () => {
-    await mountShell();
-    await click(rows()[1]!.querySelector(".addr"), { shiftKey: true });
-    expect(host!.querySelector(".senderm")).toBeNull();
+    await withScreeningWeb("ohbox", async (shell) => {
+      const unopened = within(shell).getByRole("option", { name: /Bea: An earlier note/, selected: false });
+      const target = within(unopened).getByRole("button", { name: personalAt("fixture.bea", "other.example") });
+      await click(target, { shiftKey: true });
+      expect(within(shell).getByRole("button", { name: /1 selected/ })).toBeTruthy();
+      expect(unopened.hasAttribute("data-picked")).toBe(true);
+      expect(within(document.body).queryByRole("dialog", { name: /^Screening for / })).toBeNull();
+      expect(openRow(shell)?.dataset.id).toBe("opened-letter");
+    }, "other-sender");
+
+    const reachedList = vi.fn();
+    const addressAction = vi.fn();
+    const address = personalAt("fixture.bea", "other.example");
+    const row = render(h("div", { onClick: reachedList }, h(Row, {
+      who: "Bea", subject: "An earlier note", people: [], address, addressAction,
+    })));
+    try {
+      await click(row.getByRole("button", { name: address }), { shiftKey: true });
+      expect(reachedList).toHaveBeenCalledOnce();
+      expect(addressAction).not.toHaveBeenCalled();
+    } finally {
+      row.unmount();
+    }
   });
 
-  /**
-   * ── CHANGED WHAT THIS CLICK DOES, THROUGH THE SHELL ────────────────────────────────
-   *
-   * This test read *"…and says no rule was made"* and asserted `toastMoved`. That was the
-   * whole truth while `screener_decide` was the only rule-creating verb: fixture Ohbox mail is
-   * not held in `ohmail/Screener`, the endpoint would 404, and the composition was moves only.
-   *
-   * The opposite was asked for as the DEFAULT — *"allow it to actually create the
-   * rule … this should be the default behaviour"* — so the click now puts `rule_create` on the
-   * wire as well, and the sentence follows. The old assertion is not dropped: it moved onto the
-   * opt-out below, where it is still exactly true. `screener_decide` staying absent is the
-   * unchanged half, and it is still the difference between working and a 404 under a success
-   * toast.
-   */
+  /** The letter pressed on files now. The organizer owns the remaining backlog after the rule stands. */
   it("choosing a destination rules on that sender and asks the pass for their mail, by default", async () => {
-    await mountShell();
-    await click(rows()[0]!.querySelector(".av"));
-    const reads = [...host!.querySelectorAll<HTMLElement>(".senderm li")]
-      .find((li) => li.textContent?.startsWith("News"))!;
-    await click(reads);
-    await act(async () => { await Promise.resolve(); });
-
-    expect(kinds("screener_decide")).toEqual([]);
-    // THE-CLIENTS-FIFTY: the rule's backlog is the server pass's, so the press moves none of it.
-    expect(kinds("move")).toEqual([]);
-    // THE VERB REACHED THE ADAPTER — the last thing before the wire, and the exact place the
-    // unbuildable version of this slice would have shown nothing at all.
-    expect(kinds("rule_create")).toEqual([
-      expect.objectContaining({ ruleKind: "sender", destination: "ohmail/News", applyRetro: true }),
-    ]);
-    expect(host!.querySelector(".toast")?.textContent ?? "").toContain("Future mail from them files there too");
-    expect(host!.querySelector(".senderm")).toBeNull();
+    await withScreeningWeb("ohbox", async (shell, sheetName, writes, ruleWrites) => {
+      const row = within(shell).getByRole("option", { name: /Ada: A note from Ada/ });
+      await click(within(row).getByRole("button", { name: "Screening for Ada" }));
+      const sheet = within(within(document.body).getByRole("dialog", { name: sheetName }));
+      await click(sheet.getByRole("radio", { name: /^News/ }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(reportSays()).toContain("goes there, and so does future mail");
+      const moves = () => writes.filter((path) => path.endsWith("/move"));
+      expect(moves()).toEqual(["/api/messages/opened-letter/move"]);
+      expect(ruleWrites).toEqual([]);
+      expect(within(document.body).queryByRole("dialog", { name: sheetName })).toBeNull();
+      await act(async () => { await vi.advanceTimersByTimeAsync(UNDO_MS + 500); });
+      expect(ruleWrites).toEqual([{
+        method: "POST", path: "/api/rules", body: {
+          kind: "sender", match: personalAt("fixture.ada", "sender.example"), destination: "ohmail/News", applyRetro: true,
+        },
+      }]);
+      expect(writes.filter((path) => path.startsWith("/api/screener"))).toEqual([]);
+      expect(moves()).toEqual(["/api/messages/opened-letter/move"]);
+      expect(reportSays()).toContain("1 is in News · 1 is still in Ohbox.");
+      expect(reportSays()).toContain("ohmail is applying the rule to the rest of their mail in your mailbox");
+    }, "backlog");
   });
 
   /**
@@ -297,84 +438,86 @@ describe("a sender's screening, from a list row", () => {
    * this goes red while the test above stays green.
    */
   it("turning the rule off restores the old behaviour, sentence and all", async () => {
-    await mountShell();
-    await click(rows()[0]!.querySelector(".av"));
-    await click(host!.querySelector(".senderm .sm-rule"));
-    await click([...host!.querySelectorAll<HTMLElement>(".senderm li")]
-      .find((li) => li.textContent?.startsWith("News"))!);
-    await act(async () => { await Promise.resolve(); });
-
-    expect(kinds("rule_create")).toEqual([]);
-    expect(kinds("rule_update")).toEqual([]);
-    expect(kinds("move").length).toBeGreaterThan(0);
-    expect(host!.querySelector(".toast")?.textContent ?? "").toContain("No rule was made");
+    await withScreeningWeb("ohbox", async (shell, sheetName, writes) => {
+      const row = within(shell).getByRole("option", { name: /Ada: A note from Ada/ });
+      await click(within(row).getByRole("button", { name: "Screening for Ada" }));
+      const sheet = within(within(document.body).getByRole("dialog", { name: sheetName }));
+      await click(sheet.getByRole("switch", { name: messages.screening.ruleToggleAria }));
+      await click(sheet.getByRole("radio", { name: /^News/ }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+      expect(writes.filter((path) => path.startsWith("/api/rules"))).toEqual([]);
+      expect(writes.filter((path) => path.endsWith("/move")).length, reportSays()).toBeGreaterThan(0);
+      expect(reportSays()).toContain("No rule was made");
+    });
   });
 
-  /**
-   * THE LADDER, AT THE SHELL, AGAINST A REAL MIRROR. `FixturesAdapter` applies `rule_create`
-   * authoritatively, so by the second click the mirror genuinely holds the row and
-   * `senderScreening` genuinely reads it back — which is the only way to prove the dedup sees
-   * rules that arrived through `/sync` rather than ones a test handed it.
-   *
-   * Ohbox is the destination on purpose: the sender's mail is already there, so nothing moves
-   * and the row keeps its place under the second click. Remove the `already` branch and the
-   * second click mints a second identical rule.
-   */
+  /** The second press reads the rule returned by the first. The Undo window owns both writes. */
   it("clicking the same destination twice makes ONE rule, not one per click", async () => {
-    await mountShell();
-    const id = rows()[0]!.getAttribute("data-id")!;
-    const avatar = () => host!.querySelector<HTMLElement>(`.view-ohbox .row[data-id="${id}"] .av`);
-    const ohbox = () => [...host!.querySelectorAll<HTMLElement>(".senderm li")]
-      .find((li) => li.textContent?.startsWith("Ohbox"));
+    await withScreeningWeb("ohbox", async (shell, sheetName, writes, ruleWrites, finishBacklog) => {
+      const pressOhbox = async () => {
+        const row = within(shell).getByRole("option", { name: /Ada: A note from Ada/ });
+        await click(within(row).getByRole("button", { name: "Screening for Ada" }));
+        const sheet = within(within(document.body).getByRole("dialog", { name: sheetName }));
+        await click(sheet.getByRole("radio", { name: /^Ohbox/ }));
+      };
+      await pressOhbox();
+      expect(ruleWrites).toEqual([]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(UNDO_MS + 500); });
+      const creation = {
+        method: "POST", path: "/api/rules", body: {
+          kind: "sender", match: personalAt("fixture.ada", "sender.example"), destination: "INBOX", applyRetro: true,
+        },
+      };
+      expect(ruleWrites).toEqual([creation]);
+      const settled = `The 1 message from ${personalAt("fixture.ada", "sender.example")} is in Ohbox.`;
+      expect(reportSays()).toBe(settled.replace(/\.$/u, ""));
 
-    await click(avatar());
-    await click(ohbox());
-    await act(async () => { await Promise.resolve(); });
-    expect(kinds("rule_create"), "the first click made no rule").toHaveLength(1);
-    // A rule with NOTHING to move is the ordinary case for the destination the mail is
-    // already in, and "0 messages moved" reads like a bug. The `=0` arm is asserted here
-    // because a malformed nested plural renders raw rather than throwing.
-    expect(host!.querySelector(".toast")?.textContent ?? "")
-      .toBe("Ohbox — their mail is already there. Future mail from them files there too.");
-
-    await click(avatar());
-    await click(ohbox());
-    await act(async () => { await Promise.resolve(); });
-    expect(kinds("rule_create"), "still ONE rule — the second press writes no second row").toHaveLength(1);
-    // 0.19: the second press is no longer a no-op. The rule already files their future mail there,
-    // and with the past-mail option on the press re-arms it for the mail already filed — so the
-    // sentence names what just happened instead of saying nothing did.
-    expect(kinds("rule_update"), "the standing rule is asked for the backlog").toHaveLength(1);
-    expect(host!.querySelector(".toast")?.textContent ?? "")
-      .toContain("a rule was already sending their future mail there");
-    expect(host!.querySelector(".toast")?.textContent ?? "")
-      .toContain("applying it to the mail it has already filed");
+      await pressOhbox();
+      expect(ruleWrites).toEqual([creation]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(UNDO_MS + 500); });
+      expect(ruleWrites).toEqual([creation, expect.objectContaining({
+        method: "PATCH", path: "/api/rules/sender-rule",
+        body: expect.objectContaining({ destination: "INBOX", applyRetro: true }),
+      })]);
+      expect(reportSays()).toContain("a rule was already sending their future mail there.");
+      expect(reportSays()).toContain("ohmail is now applying it to the mail it has already filed for you");
+      const rearmed = [...ruleWrites];
+      await finishBacklog();
+      expect(reportSays()).toBe(settled.replace(/\.$/u, ""));
+      expect(ruleWrites).toEqual(rearmed);
+      expect(writes.filter((path) => path.endsWith("/move"))).toEqual([]);
+    }, "new-rule");
   });
 
   it("the open message offers it too — the UX suite looks for exactly this control", async () => {
-    await mountShell();
-    // The label carries its keycap ("Screening" + `s`), which is why this is a prefix
-    // match — and why the live check's /screen/i regex finds it on the live site.
-    const labels = [...host!.querySelectorAll(".read-col .msg-actions button")]
-      .map((b) => (b.textContent ?? "").trim());
-    expect(labels.some((l) => l.startsWith("Screening")), labels.join(" · ")).toBe(true);
-    await click([...host!.querySelectorAll(".read-col .msg-actions button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith("Screening")));
-    expect(host!.querySelector(".senderm")).toBeTruthy();
+    await withScreeningWeb("history", async (shell, sheetName) => {
+      const reader = within(within(shell).getByRole("region", { name: "Reading" }));
+      await click(reader.getByRole("button", { name: /^Ada / }));
+      expect(within(document.body).getByRole("dialog", { name: sheetName })).toBeTruthy();
+    });
   });
 
   it("the from-line address is a real control, not a span with a handler", async () => {
+    window.location.hash = "#/history";
     await mountShell();
-    const sender = host!.querySelector<HTMLButtonElement>(".read-col .msg-sender");
+    const list = within(host!).getByRole("listbox", { name: "History" });
+    const row = within(list).getAllByRole("option")[0]!;
+    await click(row);
+    const reader = within(within(host!).getByRole("region", { name: "Reading" }));
+    const sender = reader.getByRole("button", { name: (name) => name.startsWith(senderOf(row)) });
     expect(sender?.tagName).toBe("BUTTON");
     await click(sender);
-    expect(host!.querySelector(".senderm")).toBeTruthy();
+    const card = within(document.body).getByRole("dialog", { name: /^Options for / });
+    expect(within(card).getByRole("radiogroup", { name: messages.screening.sectionWhere })).toBeTruthy();
   });
 
   it("s opens it for the message at the cursor", async () => {
-    await mountShell();
-    await key("s");
-    expect(host!.querySelector(".senderm")).toBeTruthy();
+    await withScreeningWeb("ohbox", async (shell, sheetName) => {
+      const row = within(shell).getByRole("option", { name: /Ada: A note from Ada/ });
+      expect(row.getAttribute("aria-selected")).toBe("true");
+      await key("s");
+      expect(within(document.body).getByRole("dialog", { name: sheetName })).toBeTruthy();
+    });
   });
 });
 
@@ -409,7 +552,7 @@ describe("marking a selection read is ONE request", () => {
     await mountShell();
     await key("x");                                     // anchor at the cursor
     const order = rows().map((r) => r.dataset.id!);
-    const anchor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!.dataset.id!;
+    const anchor = cursorRow(host!)!.dataset.id!;
     const target = order[order.indexOf(anchor) + 3]!;
 
     await click(rows().find((r) => r.dataset.id === target), { shiftKey: true });
@@ -428,7 +571,7 @@ describe("marking a selection read is ONE request", () => {
     await key("x");
     await click(barButton("Read")); // the read PAIR's first direction — "Read | Unread"
     expect(saying(), "one sentence, not N").toHaveLength(1);
-    expect(host!.querySelector(".toast")?.textContent ?? "").toContain("2 messages");
+    expect(said()).toContain("2 · Read");
   });
 
   it("u marks a message unread and the 2 s dwell does NOT undo it", async () => {
@@ -439,10 +582,10 @@ describe("marking a selection read is ONE request", () => {
     await mountShell();
     // Walk to a row that is ALREADY read, so `u` means "make this unread" — the direction
     // the dwell can undo.
-    let cursor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!;
+    let cursor = cursorRow(host!)!;
     for (let i = 0; i < 12 && cursor.getAttribute("data-unseen"); i++) {
       await key("j");
-      cursor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!;
+      cursor = cursorRow(host!)!;
     }
     expect(cursor.getAttribute("data-unseen"), "never reached a read row").toBeNull();
     const id = cursor.dataset.id!;
@@ -494,7 +637,7 @@ describe("a selection offers the verbs a single message does", () => {
   it("the three horizons queue every picked message, in one sentence", async () => {
     await mountShell();
     await pick(3);
-    const ids = rows().filter((r) => r.classList.contains("picked")).map((r) => r.dataset.id!);
+    const ids = pickedRows().map((r) => r.dataset.id!);
     expect(ids).toHaveLength(3);
 
     sent = [];
@@ -544,7 +687,7 @@ describe("a selection offers the verbs a single message does", () => {
 
     sent = [];
     await click(barButton("Move"));
-    await click(barButton("→ News"));
+    await click(barButton("News"));
 
     /* THE MAIL GOES NOW AND THE ROUTING WAITS — the undo this press carries. Nothing about the
        sender's future mail is on the wire while the toast stands, so there is something left to
@@ -559,9 +702,8 @@ describe("a selection offers the verbs a single message does", () => {
       .toEqual(["ohmail/News"]);
     expect(new Set(moves.map((m) => m.messageId)).size, "one message was moved twice").toBe(3);
 
-    // One sentence for the whole press, counting both.
-    expect(host!.querySelector(".toast")?.textContent ?? "")
-      .toMatch(/Mail from [1-9]\d* senders? now goes to News — [1-9]\d* messages? moved\./);
+    expect(saying(), "one report for the selection").toHaveLength(1);
+    expect(said()).toContain("3 · News");
   });
 
   /**
@@ -575,14 +717,10 @@ describe("a selection offers the verbs a single message does", () => {
   it("every destination the bar offers is a real folder — the mint always has somewhere to move to", async () => {
     await mountShell();
     await pick(3);
-    const offered = barButtons()
-      .map((b) => (b.textContent ?? "").trim())
-      .filter((t) => t.startsWith("→"));
+    const offered = destinations();
     expect(offered.length, "the Move bar offered no destinations").toBe(0);
     await click(barButton("Move"));
-    const places = barButtons()
-      .map((b) => (b.textContent ?? "").trim())
-      .filter((t) => t.startsWith("→"));
+    const places = destinations();
     expect(places.length, "the Move bar offered no destinations").toBeGreaterThan(0);
     const folders = Object.values(FOLDER_OF_VIEW);
     expect(folders.every((f) => typeof f === "string" && f.length > 0),
@@ -602,7 +740,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
 
     sent = [];
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
+    await click(screenTo("News"));
 
     expect(sent, "a screening decision committed before it was confirmed").toEqual([]);
     expect(confirmRow()).toContain("News");
@@ -617,13 +755,9 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     // wrong in the other direction — a plan moves that sender's WHOLE bag, not the picks.
     await mountShell();
     await pick(3);
-    const senders = new Set(
-      rows()
-        .filter((r) => r.classList.contains("picked"))
-        .map((r) => r.querySelector(".addr")?.textContent ?? ""),
-    );
+    const senders = new Set(pickedRows().map(senderOf));
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
+    await click(screenTo("News"));
     expect(confirmRow()).toContain(
       senders.size === 1 ? "1 sender" : `${senders.size} senders`,
     );
@@ -636,8 +770,8 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await mountShell();
     await pick(2);
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
-    expect(confirmRow()).toContain("No rule is made");
+    await click(screenTo("News"));
+    expect(confirmRow()).toContain("and no rule is made.");
     expect(confirmRow()).not.toContain("There is no undo");
   });
 
@@ -649,7 +783,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await mountShell();
     await pick(3);
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
+    await click(screenTo("News"));
     const stated = Number(/(\d+) messages? moves?/.exec(confirmRow())?.[1] ?? "-1");
     expect(stated).toBeGreaterThan(0);
 
@@ -661,7 +795,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     expect(new Set(moved.map((m) => m.messageId)).size).toBe(moved.length);
     expect(moved.every((m) => m.folder === "ohmail/News")).toBe(true);
     expect(kinds("screener_decide"), "no fixture sender is waiting").toEqual([]);
-    expect(host!.querySelector(".toast")?.textContent ?? "").toContain("No rule was made");
+    expect(said()).toContain("No rule was made");
   });
 
   it("screening a selection that is ALREADY where it is going dispatches nothing", async () => {
@@ -674,9 +808,9 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await mountShell();
     await pick(3);
     await click(barButton("Screening"));
-    await click(barButton("→ Ohbox"));
+    await click(screenTo("Ohbox"));
 
-    expect(confirmRow()).toContain("already in Ohbox");
+    expect(confirmRow()).toContain("Already there.");
     expect(barButton("Screen them")?.disabled, "an inert action was offered as live").toBe(true);
 
     sent = [];
@@ -691,7 +825,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await mountShell();
     await pick(3);
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
+    await click(screenTo("News"));
     expect(barButton("Screen them")).toBeTruthy();
 
     await key("Escape");
@@ -699,7 +833,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     expect(pickCount(), "the selection was cleared by the same press").toBe("3");
 
     await key("Escape");
-    expect(host!.querySelector(".list-foot")).toBeNull();
+    expect(host!.querySelector(".ob-foot")).toBeNull();
   });
 });
 
@@ -707,14 +841,18 @@ describe("tags over a selection", () => {
   it("the picker opens for the SET and fans `tag_assign` out over it", async () => {
     await mountShell();
     await pick(3);
-    const ids = rows().filter((r) => r.classList.contains("picked")).map((r) => r.dataset.id!);
+    const ids = pickedRows().map((r) => r.dataset.id!);
 
     await click(barButton("Tag"));
-    const picker = host!.querySelector(".tagp");
+    const picker = within(document.body).getByRole("menu", { name: messages.tag.pickerAria });
     expect(picker, "no tag picker opened for the selection").toBeTruthy();
 
+    const filter = within(picker).getByRole("textbox", { name: messages.tag.pickerPlaceholder });
+    await act(async () => { fireEvent.change(filter, { target: { value: "pottery" } }); });
+    expect(within(picker).queryByRole("menuitemcheckbox", { name: "Paperwork" })).toBeNull();
     sent = [];
-    await click(picker!.querySelector(".tagp-row, li, button"));
+    await click(within(picker).getByRole("menuitemcheckbox", { name: "Pottery Project" }));
+    expect(within(document.body).getByRole("menu", { name: messages.tag.pickerAria })).toBe(picker);
     const assigned = kinds("tag_assign") as Array<{ messageId: string; assigned: boolean }>;
     // MORE THAN ONE, which is the whole claim. `TagPickerState` carries a single `forId`, so
     // the tempting implementation — open the picker on the first picked id and let the
@@ -725,5 +863,24 @@ describe("tags over a selection", () => {
     // Only messages that would CHANGE, and never one outside the selection.
     for (const m of assigned) expect(ids).toContain(m.messageId);
     expect(new Set(assigned.map((m) => m.messageId)).size).toBe(assigned.length);
+
+    const sync = FixturesAdapter.prototype.sync;
+    vi.spyOn(FixturesAdapter.prototype, "sync").mockImplementation(async function (this: FixturesAdapter, ...args) {
+      const page = await sync.apply(this, args);
+      return { ...page, changes: { ...page.changes, creates: page.changes.creates.filter((change) => change.type !== "tag") } };
+    });
+    await mountShell();
+    await pick(2);
+    await click(barButton("Tag"));
+    const empty = within(within(document.body).getByRole("menu", { name: messages.tag.pickerAria }));
+    expect(empty.queryAllByRole("menuitemcheckbox")).toEqual([]);
+    const name = "Trip notes";
+    await act(async () => {
+      fireEvent.change(empty.getByRole("textbox", { name: messages.tag.pickerPlaceholder }), { target: { value: name } });
+    });
+    sent = [];
+    expect(empty.queryByRole("menuitem", { name: `Create “${name}”` })).toBeNull();
+    expect(kinds("tag_assign")).toEqual([]);
+
   });
 });

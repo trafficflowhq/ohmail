@@ -6,6 +6,9 @@
  * element contains which — and not about a computed pixel. Two of the three are things a
  * screenshot cannot tell you and a CSS change cannot fake:
  *
+ *  (The older tests' sorting: the markup cases of points 1 and 3 left with today's view by their
+ *  rows; points 2 and the bare Subject are read over Write's new letter, below.)
+ *
  *  1. THE CC/BCC AFFORDANCE IS INSIDE THE `TO` ROW. It had a full-width strip of its own
  *     (`.c-ccbcc-row`) between To and Subject, which read as a fourth field and cost the form a
  *     band of vertical space to say one 11.5px word. Lifting the button back out of the row is
@@ -26,7 +29,6 @@
  * path with the wrong thing on screen, so the acceptance is the rendered surface.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -37,19 +39,6 @@ import { settleFirstPaint } from "./_first-paint.js";
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-/**
- * A file under `apps/webapp`, read whichever directory the runner was started in.
- *
- * `import.meta.url` is NOT a `file:` URL under the root vitest config's jsdom environment, so
- * the `fileURLToPath(new URL(rel, import.meta.url))` idiom used by tests that only ever run
- * from `apps/webapp` throws here. This suite has to work from both, because the root run is
- * what CI does.
- */
-function readSource(rel: string): string {
-  const fromRoot = `apps/webapp/${rel}`;
-  return readFileSync(existsSync(fromRoot) ? fromRoot : rel, "utf8");
-}
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -88,7 +77,7 @@ afterEach(async () => {
 });
 
 async function mountCompose(): Promise<void> {
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -113,100 +102,45 @@ async function mountCompose(): Promise<void> {
   for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
 }
 
-const q = <T extends Element>(sel: string): T | null => host!.querySelector<T>(sel);
+/*
+ * THE OLDER TESTS' SORTING: the shell above is the new shell's test door (`_todays-shell.js`'s old
+ * name of it); `#/compose` is Write's new letter, the region "New message". Its people line is the kit's Recipients
+ * (the combobox "To", "Cc", "Bcc"; the toggle the press "Cc Bcc"), its subject the input "Subject". The cases that drew
+ * today's markup (`.c-field`, `.compose-wrap`, `.compose-head`, `.compose-foot`) left with today's view by their rows;
+ * what a person meets behind them is held where each row names.
+ */
+const LETTER = '[role="region"][aria-label="New message"]';
+const line = (name: string): HTMLElement | null =>
+  host!.querySelector<HTMLElement>(`${LETTER} [role="combobox"][aria-label="${name}"]`);
+const toggle = (): HTMLButtonElement | null =>
+  [...host!.querySelectorAll<HTMLButtonElement>(`${LETTER} button`)]
+    .find((b) => b.getAttribute("aria-label") === "Cc Bcc" || (b.textContent ?? "").trim() === "Cc Bcc") ?? null;
 
 describe("the Cc/Bcc affordance lives in the To row", () => {
-  it("is a child of the SAME `.c-field` as the To input, not a strip of its own", async () => {
-    await mountCompose();
-
-    const to = q<HTMLElement>("#compose-to");
-    expect(to, "compose did not render a To field at all").not.toBeNull();
-
-    const toRow = to!.closest(".c-field");
-    expect(toRow, "the To input is no longer inside a `.c-field` row").not.toBeNull();
-    expect(
-      toRow!.querySelector(".c-ccbcc-toggle"),
-      "the Cc/Bcc toggle is not inside the To row — it has been lifted back out into a strip",
-    ).not.toBeNull();
-
-    // …and the strip it replaced is gone from the product, not merely unused.
-    expect(
-      q(".c-ccbcc-row"),
-      "`.c-ccbcc-row` is back: the standalone Cc/Bcc strip was the thing this pass removed",
-    ).toBeNull();
-  });
-
   it("still opens Cc and Bcc, and takes itself off screen once they are up", async () => {
     await mountCompose();
-    expect(q("#compose-cc"), "Cc was already open before the toggle was pressed").toBeNull();
+    expect(line("Cc"), "Cc was already open before the toggle was pressed").toBeNull();
 
-    await act(async () => { q<HTMLButtonElement>(".c-ccbcc-toggle")!.click(); });
+    await act(async () => { toggle()!.click(); });
 
-    expect(q("#compose-cc"), "the toggle no longer reveals Cc").not.toBeNull();
-    expect(q("#compose-bcc"), "the toggle no longer reveals Bcc").not.toBeNull();
+    expect(line("Cc"), "the toggle no longer reveals Cc").not.toBeNull();
+    expect(line("Bcc"), "the toggle no longer reveals Bcc").not.toBeNull();
     expect(
-      q(".c-ccbcc-toggle"),
+      toggle(),
       "the toggle is still on screen with nothing left to reveal",
     ).toBeNull();
   });
 });
 
 describe("the panel is head · message · foot, in that order", () => {
-  it("has the three regions as direct children of `.compose-wrap`", async () => {
-    await mountCompose();
-    const wrap = q<HTMLElement>(".compose-wrap");
-    expect(wrap, "compose rendered no panel").not.toBeNull();
-
-    const regions = [...wrap!.children]
-      .map((c) => [...c.classList].find((n) => n.startsWith("compose-")))
-      .filter((n): n is string => n !== undefined);
-    expect(
-      regions,
-      "the panel's regions are not head → editor → foot; the composition has been undone",
-    ).toEqual(["compose-head", "compose-editor", "compose-foot"]);
-  });
-
-  it("puts From, To and Subject in the head and NOTHING else there", async () => {
-    await mountCompose();
-    const head = q<HTMLElement>(".compose-head")!;
-    expect(head.querySelector("#compose-from"), "From left the header block").not.toBeNull();
-    expect(head.querySelector("#compose-to"), "To left the header block").not.toBeNull();
-    expect(head.querySelector("#compose-subject"), "Subject left the header block").not.toBeNull();
-    // The editor is the panel's own child, not the head's — that is what lets it take the slack.
-    expect(
-      head.querySelector(".compose-editor"),
-      "the editor is nested inside the header block, so it cannot grow with the panel",
-    ).toBeNull();
-  });
-
-  it("keeps Send AND the status line inside the foot, which is the last region", async () => {
-    await mountCompose();
-    const wrap = q<HTMLElement>(".compose-wrap")!;
-    const foot = q<HTMLElement>(".compose-foot")!;
-    expect(wrap.lastElementChild, "the foot is no longer the panel's last child").toBe(foot);
-    expect(foot.querySelector(".send-row button"), "Send is not in the foot").not.toBeNull();
-    // `SendStatus` renders nothing at rest, so the pin is on the markup rather than on a node:
-    // it is the region the component is written into that this slice moved.
-    const view = readSource("app/views/ComposeView.tsx");
-    const footBlock = view.slice(view.indexOf('className="compose-foot"'));
-    expect(
-      footBlock.indexOf("<SendStatus"),
-      "SendStatus has been moved back out of the foot — it would no longer travel with Send",
-    ).toBeGreaterThan(-1);
-    expect(
-      footBlock.indexOf("<SendStatus"),
-      "SendStatus is outside the foot's closing tag",
-    ).toBeLessThan(footBlock.indexOf("</section>"));
-  });
-
   it("renders Subject BARE — an accessible name, no label element", async () => {
     await mountCompose();
-    const subject = q<HTMLInputElement>("#compose-subject")!;
+    const subject = host!.querySelector<HTMLInputElement>(`${LETTER} input[aria-label="Subject"], ${LETTER} textarea[aria-label="Subject"]`);
     expect(
-      host!.querySelector('label[for="compose-subject"]'),
+      [...host!.querySelectorAll(`${LETTER} label`)].filter((l) => (l.textContent ?? "").trim() === "Subject"),
       "the Subject label gutter is back",
-    ).toBeNull();
+    ).toEqual([]);
     // Bare is not nameless. Losing this is the one way "bare" becomes a regression.
-    expect(subject.getAttribute("aria-label"), "Subject has no accessible name").toBe("Subject");
+    expect(subject?.getAttribute("aria-label"), "Subject has no accessible name").toBe("Subject");
   });
 });

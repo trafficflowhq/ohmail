@@ -1,0 +1,150 @@
+{
+  "component": "FindField",
+  "state": "person",
+  "look": "ohmarchy-dark-desktop",
+  "place": "block",
+  "target": [262, 72, 396, 38],
+  "clip": [262, 72, 396, 38],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "oklch(0.84 0.075 250)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(169, 177, 214) 0px 0px 0px 1px inset" },
+    {
+      "backgroundColor": "oklch(0.281406 0.036579 276.244)",
+      "boxShadow": "rgb(83, 87, 108) 0px 0px 0px 1px inset"
+    },
+    { "opacity": "0.7", "ink": "stroke rgb(169, 177, 214) 1.6px square miter 4; shapes 1 447c0f4542bb" },
+    { "placeholder": "rgb(141, 150, 188)" },
+    { "backgroundColor": "rgb(32, 33, 45)", "boxShadow": "rgb(83, 87, 108) 0px 0px 0px 1px inset" },
+    { "ink": "stroke rgb(141, 150, 188) 1.6px square miter 4; shapes 2 dc98a7600ba1" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Remove Petra Wyss",
+      "box": [44, 5, 136, 28],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(26, 27, 38)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "6px",
+        "paddingBottom": "0px",
+        "paddingLeft": "4px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "P", "type": 0 },
+        { "said": "Petra Wyss", "type": 1 }
+      ],
+      "surfaces": [
+        { "box": [44, 5, 136, 28], "paint": 0 },
+        { "box": [48, 9, 20, 20], "paint": 1 },
+        { "box": [158, 11, 16, 16], "paint": 2 }
+      ]
+    },
+    {
+      "role": "textbox",
+      "name": "Search",
+      "box": [188, 0, 152, 38],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "state": ["shows its hint"],
+      "text": [{ "said": "In this mail", "type": 2, "shown": true }],
+      "surfaces": [{ "box": [188, 0, 152, 38], "paint": 3 }]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "10 ms", "type": 3 }],
+    "surfaces": [
+      { "box": [0, 0, 396, 38], "paint": 4 },
+      { "box": [16, 9, 20, 20], "paint": 5 }
+    ]
+  }
+}

@@ -70,13 +70,13 @@ describe("the live Trash path issues no mutation", () => {
   });
 
   it("the control type carries no verb, and the hook opens no second fetch door", () => {
-    const src = read("../app/shell/trash-window.ts");
+    const src = read("../../../packages/app-logic/src/trash/live-window.ts");
     /* A SECOND FETCH PATH is the hard stop: every byte this window reads comes through the one
        API door, so this module names no transport of its own. */
     expect(src).not.toMatch(/\bfetch\s*\(/);
     expect(src).not.toMatch(/new XMLHttpRequest/);
     const start = src.indexOf("export interface TrashWindowControl {");
-    const end = src.indexOf("WHAT THE SECTION SAYS");
+    const end = src.indexOf("\n}", start);
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     const iface = src.slice(start, end);

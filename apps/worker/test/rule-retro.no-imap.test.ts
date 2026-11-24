@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
  * The "Organize-in-place" invariant: organization lands in real IMAP folders, and the API never opens a connection to
  * apply it — moves defer to the worker through `folder_state` desired-state. The retro pass runs
  * ON the worker and still must not dial, for a second reason: `reconcileFolders`
- * (`apps/worker/src/sync.ts`) holds the mailbox's adapter and its organizer lease, and a bulk
+ * (`packages/organizer/src/sync.ts`) holds the mailbox's adapter and its organizer lease, and a bulk
  * mover opening its own connection would be a second organizer for one mailbox — the exact thing
  * `ohmail/_meta`'s lease exists to make impossible.
  *
@@ -44,7 +44,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
  * test goes red at that moment and makes the decision explicit rather than emergent.
  */
 
-const PASS = fileURLToPath(new URL("../src/rule-retro.ts", import.meta.url));
+const PASS = fileURLToPath(new URL("../../../packages/organizer/src/rule-retro.ts", import.meta.url));
 /**
  * The one-time gate release sweep is the SECOND bulk mover on this worker and is under both
  * invariants for the same reasons — it arms this pass's release licence and writes
@@ -54,7 +54,7 @@ const PASS = fileURLToPath(new URL("../src/rule-retro.ts", import.meta.url));
  */
 const SWEEP = fileURLToPath(new URL("../src/gate-release.ts", import.meta.url));
 /** The gap catch-up is the THIRD: desired state for gap mail, never a move of its own. */
-const GAP = fileURLToPath(new URL("../src/gap-catchup.ts", import.meta.url));
+const GAP = fileURLToPath(new URL("../../../packages/organizer/src/gap-catchup.ts", import.meta.url));
 const MOVERS: ReadonlyArray<readonly [string, string]> = [
   ["rule-retro.ts", PASS], ["gate-release.ts", SWEEP], ["gap-catchup.ts", GAP],
 ];
@@ -64,6 +64,19 @@ const UNSUBSCRIBE = fileURLToPath(
 const SCREENER = fileURLToPath(
   new URL("../../../packages/services/src/screener-service.ts", import.meta.url),
 );
+
+/** The organizer's package, where the passes the worker shares with the desktop's engine moved (ruling:organizer-cut). */
+const ORGANIZER = new URL("../../../packages/organizer/", import.meta.url);
+const ORGANIZER_EXPORTS = (JSON.parse(readFileSync(new URL("package.json", ORGANIZER), "utf8")) as {
+  exports: Record<string, { "ohmail-source": string }>;
+}).exports;
+
+/** The file an `@ohmail/organizer/<entry>` specifier names, read through the package's own manifest; else undefined. */
+function organizerFile(spec: string): string | undefined {
+  if (!spec.startsWith("@ohmail/organizer/")) return undefined;
+  const entry = ORGANIZER_EXPORTS[`./${spec.slice("@ohmail/organizer/".length)}`];
+  return entry === undefined ? undefined : fileURLToPath(new URL(entry["ohmail-source"], ORGANIZER));
+}
 
 /** Every module specifier a file imports — the import machinery, not the prose. */
 function importsOf(file: string): string[] {
@@ -87,6 +100,7 @@ function packageImportsOf(entry: string): Array<{ file: string; spec: string }> 
     seen.add(file);
     for (const spec of importsOf(file)) {
       if (spec.startsWith(".")) stack.push(resolve(dirname(file), spec.replace(/\.js$/, ".ts")));
+      else if (organizerFile(spec) !== undefined) stack.push(organizerFile(spec)!);
       else out.push({ file: basename(file), spec });
     }
   }
@@ -104,7 +118,7 @@ const ALLOWED = ["drizzle-orm", "@trafficflow/db", "@trafficflow/core"];
 function siblingsOf(file: string, who: string): string[] {
   const out: string[] = [];
   for (const spec of importsOf(file)) {
-    if (spec.startsWith(".")) { out.push(spec); continue; }
+    if (spec.startsWith(".") || organizerFile(spec) !== undefined) { out.push(spec); continue; }
     const ok = ALLOWED.some((a) => spec === a || spec.startsWith(`${a}/`));
     expect(ok, `${who} imports ${spec}, which is outside db + core`).toBe(true);
   }
@@ -115,7 +129,7 @@ function siblingsOf(file: string, who: string): string[] {
  * gate release checks an unchecked row before it releases one, through the backfill's own write. */
 const SIBLINGS: Record<string, string[]> = {
   "rule-retro.ts": ["./rule-pass.js"],
-  "gate-release.ts": ["./sender-check-backfill.js"],
+  "gate-release.ts": ["@ohmail/organizer/sender-check-backfill"],
   // And where a look opens its window (RULING-026 lane A): a leaf of db + drizzle, re-exported.
   "gap-catchup.ts": ["./rule-pass.js", "./gap-window.js"],
 };
@@ -157,7 +171,7 @@ describe("the sibling hop is closed, not waved through", () => {
     // Admitting nothing would make the rule above vacuous, so the list is asserted non-empty.
     expect(named.length).toBeGreaterThan(0);
     for (const [who, rel] of named) {
-      const target = fileURLToPath(new URL(rel.replace(/\.js$/, ".ts"), pathToFileURL(PASS)));
+      const target = organizerFile(rel) ?? fileURLToPath(new URL(rel.replace(/\.js$/, ".ts"), pathToFileURL(PASS)));
       expect(siblingsOf(target, `${who} -> ${rel}`), `${rel} reaches a sibling of its own`).toEqual([]);
     }
   });

@@ -68,7 +68,8 @@ const DIRECTIONAL = ["nach", "zu", "zur", "zum", "ins"];
  * total", "Goes to {host}" — and a quantity or a hostname declines in German no more than it does
  * in English. So the message must ALSO carry a verb of PUTTING SOMETHING SOMEWHERE. That is the
  * construction whose German equivalent takes a case, and it is what "moved to", "files into" and
- * "being renamed to" have in common while "up to" and "goes to" do not.
+ * "being renamed to" have in common while "up to" and "goes to" do not ("goes to" counts only in a numbered
+ * argument's own sentence, below).
  *
  * And it is crossed with the DIRECTIONAL list below rather than used alone, because the defect
  * needs both halves: a German directional preposition AND an argument English treats as somewhere
@@ -77,11 +78,17 @@ const DIRECTIONAL = ["nach", "zu", "zur", "zum", "ins"];
 // A putting word right after a possessive or determiner is a noun ("your own files"), not the verb.
 const PUTTING = /(?<!\b(?:own|your|the|its|their|my|our|these|those)\s)\b(mov(e|es|ed|ing)|fil(e|es|ed|ing)|renam(e|es|ed|ing)|sort(s|ed|ing)?|put|deliver(s|ed)?|releas(e|es|ed))\b/i;
 
-function destinationArgs(catalogue: unknown): Set<string> {
+/**
+ * "Goes to {0}" sends mail to {0} in a POSITIONAL argument's own sentence (below). Catalogue-wide it would not do: a
+ * link that "goes to {host}" and a shortcut "Go to {pile}" name no folder, and their German "zu {host}" is right.
+ */
+const GOING = /\bgo(es)?\s+to\b/i;
+
+function destinationArgs(catalogue: unknown, also?: RegExp): Set<string> {
   const out = new Set<string>();
   const visit = (node: unknown): void => {
     if (typeof node === "string") {
-      if (!PUTTING.test(node)) return;
+      if (!PUTTING.test(node) && !also?.test(node)) return;
       for (const m of node.matchAll(/\b(?:to|into|in)\s+\{(\w+)\}/g)) out.add(m[1]!);
       return;
     }
@@ -91,12 +98,32 @@ function destinationArgs(catalogue: unknown): Set<string> {
   return out;
 }
 
-const FOLDER_ARGS = [...destinationArgs(en)];
+/**
+ * A POSITIONAL argument ({0}, {1}) is a different value in every message, so a destination in one ("Moved to {0}")
+ * says nothing of another ("Up to {1} more"): it is a folder only where its OWN English message puts something
+ * there, the putting verb in the same sentence as the argument. A named argument keeps the catalogue-wide derivation.
+ */
+const POSITIONAL = /^\d+$/;
 
-const DIRECTIONAL_AT_FOLDER = new RegExp(
-  `(^|[\\s(„"’‘>—-])(${DIRECTIONAL.join("|")})\\s+\\{(${FOLDER_ARGS.join("|")})[},]`,
-  "iu",
-);
+/** The arguments of one German message that name a folder: the named ones the catalogue says, its own positional ones. */
+function folderArgsOf(english: unknown, named: readonly string[]): string[] {
+  const sentences = typeof english === "string" ? english.split(/(?<=[.!?])\s+/) : [];
+  return [...named, ...sentences.flatMap((s) => [...destinationArgs(s, GOING)].filter((a) => POSITIONAL.test(a)))];
+}
+
+function directionalAtFolder(german: string, args: readonly string[]): boolean {
+  if (args.length === 0) return false;
+  return new RegExp(`(^|[\\s(„"’‘>—-])(${DIRECTIONAL.join("|")})\\s+\\{(${args.join("|")})[},]`, "iu").test(german);
+}
+
+/** Every German message with a directional preposition in front of a folder, read against its English. */
+function offenders(german: unknown, english: unknown): string[] {
+  const named = [...destinationArgs(english)].filter((a) => !POSITIONAL.test(a));
+  const englishOf = new Map(entries(english));
+  return entries(german)
+    .filter(([k, v]) => directionalAtFolder(v, folderArgsOf(englishOf.get(k), named)))
+    .map(([k, v]) => `${k}: ${v.slice(0, 90)}`);
+}
 
 const t = createTranslator({ locale: "de", messages: de as Record<string, unknown> });
 const tEn = createTranslator({ locale: "en", messages: en as Record<string, unknown> });
@@ -114,24 +141,12 @@ function entries(node: unknown, path = "", out: [string, string][] = []): [strin
 
 const ALL = entries(de);
 
-/**
- * THE SUBJECT IS A KEY WITH A CALLER. This read `ohbox.toastMoved` — the single row's old
- * "Moved to {place}." — which lost its last caller when the press started speaking from the
- * Screener's own answer, and a guard whose subject nothing renders is a guard about a string.
- * `ohbox.toastBulkMovedSenders` is the selection's Move saying the same thing, dispatched from
- * `onBulkAction`; its German names the place first, behind a dash, which governs no case either.
- */
 describe("the moved toast names the folder without declining it", () => {
-  const ARGS = { place: PLACE, senders: 1, count: 1 };
+  const args = { place: PLACE, count: 1 };
 
-  it("names the folder behind a dash — which governs no case", () => {
-    expect(t("ohbox.toastBulkMovedSenders", ARGS))
-      .toBe(`${PLACE} — Mails von 1 Absender landen ab jetzt dort, 1 Nachricht verschoben.`);
-  });
-
-  it("the English string is untouched — only the German had the case problem", () => {
-    expect(tEn("ohbox.toastBulkMovedSenders", ARGS))
-      .toBe(`Mail from 1 sender now goes to ${PLACE} — 1 message moved.`);
+  it("gives the count followed by the folder name in German and English", () => {
+    expect(t("ohbox.toastBulkMovedSenders", args)).toBe(`1 · ${PLACE}`);
+    expect(tEn("ohbox.toastBulkMovedSenders", args)).toBe(`1 · ${PLACE}`);
   });
 });
 
@@ -147,12 +162,26 @@ describe("no German string sends the reader to a folder as though it were a plac
     expect([...destinationArgs({ a: "The rule files it into {folder}" })]).toEqual(["folder"]);
   });
 
+  it("reads a positional argument as a folder only where its own English puts something there", () => {
+    const english = { phoneRefusal: { moved: "Moved to {0}.", more: "Forwarded files: {0}. Up to {1} more from this phone." } };
+    // A planted "nach {0}" whose English moves mail to {0} is refused.
+    expect(offenders({ phoneRefusal: { moved: "Verschoben nach {0}." } }, english))
+      .toEqual(["phoneRefusal.moved: Verschoben nach {0}."]);
+    // A planted "nach {0}" whose English sends the mail on to {0} ("goes to") is refused too.
+    expect(offenders({ phoneRefusal: { queued: "Geht nach {0}." } }, { phoneRefusal: { queued: "Goes to {0}." } }))
+      .toEqual(["phoneRefusal.queued: Geht nach {0}."]);
+    // …and only for a positional argument: a link that goes to {host} names no folder anywhere.
+    expect(offenders({ a: { b: "Führt zu {host}" } }, { a: { b: "Goes to {host}" } })).toEqual([]);
+    // "Bis zu {1}" is a quantity: its own sentence puts nothing anywhere, whatever {1} is in another message.
+    expect(offenders({ phoneRefusal: { more: "Bis zu {1} mehr von diesem Handy." } }, english)).toEqual([]);
+    // A named argument is a folder in every message once the catalogue puts something there.
+    expect(offenders({ a: { b: "Nach {place} gehen." } }, { a: { b: "Goes to {place}." }, c: { d: "Moved to {place}." } }))
+      .toEqual(["a.b: Nach {place} gehen."]);
+  });
+
   it("no directional preposition stands in front of a folder name", () => {
-    const offenders = ALL
-      .filter(([, v]) => DIRECTIONAL_AT_FOLDER.test(v))
-      .map(([k, v]) => `${k}: ${v.slice(0, 90)}`);
     expect(
-      offenders,
+      offenders(de, en),
       "a directional preposition wants a bare place-noun and a folder is not one. Name the folder "
         + "after a colon or a dash instead — that governs no case and is right for every folder.",
     ).toEqual([]);

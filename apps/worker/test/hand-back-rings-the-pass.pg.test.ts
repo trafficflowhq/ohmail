@@ -5,11 +5,11 @@ import { accounts, mailboxCredentials, mailboxes, type Tx } from "@trafficflow/d
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger } from "@trafficflow/core/mail";
 import { formatClaim, isMalformed, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { SYNC_KICK_EVERY_MS, startWorker } from "../src/index.js";
 import { syncKickPass } from "../src/sync-kick.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
 /**
  * "HAND THE MAILBOX BACK" RINGS THE PASS (RULING-026 lane E). The release stamped only
@@ -49,10 +49,10 @@ async function handedBack(db: Db): Promise<ServiceContext & { mailboxId: string 
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
-  return { db, accountId, userId: null, now: () => new Date(), requestId: randomUUID(), mailboxId: row!.id };
+  return { db: dbFor(db, accountId), accountId, userId: null, now: () => new Date(), requestId: randomUUID(), mailboxId: row!.id };
 }
 
 const rowOf = async (db: Db, id: string) =>
@@ -67,6 +67,21 @@ async function waitFor(pred: () => Promise<boolean> | boolean, ms: number, step 
   return false;
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** An idle press leaves the mailbox this long unvisited first: the visit that made it an organizer is over. */
+const IDLE_BEFORE_PRESS_MS = 3_000;
+/**
+ * How long until the poll's interval is `into` old. The worker arms the poll as it starts
+ * (`polledFrom`) and it ticks every `pollIntervalMs` from there. An idle press is placed IN that
+ * interval, not a sleep after the Organize-here press was served: how soon that press is served
+ * decided where the sleep ended, and it ended on the poll's tick, where the poll's own visit renews
+ * once inside the kick's window (the next case measures that window).
+ */
+function untilThePollIs(polledFrom: number, into: number): number {
+  const earliest = Date.now() + IDLE_BEFORE_PRESS_MS;
+  const at = (earliest - polledFrom) % PRODUCTION.pollIntervalMs;
+  return IDLE_BEFORE_PRESS_MS + (into - at + PRODUCTION.pollIntervalMs) % PRODUCTION.pollIntervalMs;
+}
 
 const foreignClaim = (): string => formatClaim({
   authorizedAt: null, capabilities: [], installId: "a-desktop-install", kind: "local",
@@ -125,14 +140,16 @@ describe("Hand the mailbox back rings the pass", () => {
   }, 60_000);
 
   /* THREE PRESSES at production intervals: one landing while the POLL's cycle is in flight (parked
-     inside `changesSince`), two at different points of the idle poll interval. Each: no claim of
-     ours in `_meta` within 10 s, the row released, and nothing renewed or permitted after the press. */
+     inside `changesSince`), two at different points of the idle poll interval (12 s and 37 s after
+     the poll's tick). Each: no claim of ours in `_meta` within 10 s, the row released, and nothing
+     renewed or permitted after the press. */
   it(`three hand-backs at production intervals: no claim of ours within ${RELEASED_WITHIN_MS / 1000} s, no renew after the press`, async () => {
     const db = makeDb(DB);
     const ctx = await handedBack(db);
     const fleet = new FakeAdapterFleet();
     const lines: Line[] = [];
     await boot(fleet, lines);
+    const polledFrom = Date.now();
     expect(await waitFor(() => fleet.syncs > 0, 20_000), "the reader never synced").toBe(true);
     const meta = fleet.metaFor(ctx.mailboxId);
     const ours = () => claimsOf(meta.messages, INSTALL);
@@ -151,7 +168,7 @@ describe("Hand the mailbox back rings the pass", () => {
         fleet.behave(ctx.mailboxId, { syncGate: new Promise<void>((r) => { openGate = r; }) });
         expect(await waitFor(() => fleet.syncInFlight > 0, PRODUCTION.pollIntervalMs + 10_000), "no cycle in flight").toBe(true);
       } else {
-        await sleep(shape === "idle 12 s" ? 12_000 : 37_000);
+        await sleep(untilThePollIs(polledFrom, shape === "idle 12 s" ? 12_000 : 37_000));
       }
 
       const traceMark = fleet.trace.length;
@@ -240,11 +257,25 @@ describe("Hand the mailbox back rings the pass", () => {
     const meta = fleet.metaFor(ctx.mailboxId);
     const ours = () => claimsOf(meta.messages, INSTALL);
     expect((await svc.organizeHere(ctx, ctx.mailboxId, { intent: "takeover" })).outcome).toBe("authorized");
-    expect(await waitFor(() => ours() === 1, 20_000)).toBe(true);
+    expect(await waitFor(async () => ours() === 1
+      && (await rowOf(db, ctx.mailboxId)).organizerRole === "organizer", 20_000)).toBe(true);
+    // One visit of ours parked past its gate: while it is, no other visit of this mailbox can start,
+    // and every pass the Organize-here press set off is this one or behind it.
+    let openGate: () => void = () => undefined;
+    fleet.behave(ctx.mailboxId, { syncGate: new Promise<void>((r) => { openGate = r; }) });
+    expect(await waitFor(() => fleet.signal.has(ctx.mailboxId), 10_000), "no watch to wake").toBe(true);
+    fleet.signal.get(ctx.mailboxId)!();
+    expect(await waitFor(() => fleet.syncInFlight > 0, 10_000), "no visit parked").toBe(true);
 
     fleet.seedClaim(ctx.mailboxId, foreignClaim());
     const traceMark = fleet.trace.length;
     expect((await svc.release(ctx, ctx.mailboxId)).outcome).toBe("requested");
+    // The scan has read the press: it asks the roster before the cycle and clears the stamp last, and
+    // every visit starts behind an owed roster pass. From here the next gate of ours is the release's.
+    expect(await waitFor(async () => (await rowOf(db, ctx.mailboxId)).syncRequestedAt === null, 10_000),
+      "the hand-back's doorbell was never read").toBe(true);
+    fleet.behave(ctx.mailboxId, { syncGate: undefined });
+    openGate();
     expect(await waitFor(() => ours() === 0, RELEASED_WITHIN_MS), "our claim stayed").toBe(true);
     expect(await waitFor(() => lines.some((l) => l.event === "organizer_release_withheld"), 5_000),
       "the release was certified over a live holder").toBe(true);

@@ -9,11 +9,12 @@
  * never a pressable button with nothing behind it. The asking is `local-suggest-run.ts`.
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AskWell, Button, SizeLadder } from "@ohmail/ui";
 
-import { unavailableLine, type LocalAiStatus } from "./local-ai.js";
+import { aiRefusalKey } from "@ohmail/app-logic/screener/ai-refusal-copy";
+import type { LocalAiStatus } from "./local-ai.js";
 import {
   hydrateSuggestions,
   runSuggest,
@@ -28,17 +29,21 @@ export interface LocalSuggestProps {
   senders: string[];
   /** Put answers into the one overlay the rows read their chips from. */
   absorb: (rows: SuggestionRow[]) => void;
+  /** A caller that provides no live consent answer cannot ask the configured model. */
+  permission?: { known: boolean; grant: () => number | null };
   /** What the engine says about this install's model. `null` before the first read has landed. */
   ai: LocalAiStatus | null;
   /** Take the person to the pane where a model is set up. */
   onConfigure: () => void;
 }
 
-export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestProps) {
+export function LocalSuggest({ senders, absorb, ai, onConfigure, permission }: LocalSuggestProps) {
   /* See `DesktopScreeningWords` for why `desktopScreener` has to be on `vite.config.ts`'s
-     namespace list. Only the three sentences this control owns are read here — the refusal
-     sentences below are the ENGINE's own words and are never composed in this file. */
+     namespace list. Refusal codes select catalogue messages. */
   const t = useTranslations("desktopScreener");
+  const shared = useTranslations("screener.suggest");
+  const refusal = useTranslations("aiRefusal");
+  const provider = useTranslations("aiProvider");
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   /**
@@ -51,23 +56,22 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
   /**
    * `run` counts presses and NOTHING ELSE increments it. It is captured when a run starts and
    * compared on every chunk's arrival, so a stop mid-run discards what is still in flight
-   * instead of painting it. Never re-bumped inside the loop: a per-chunk bump makes each chunk
-   * invalidate the next one's check — a run that silently cancels itself and leaves the button
-   * spinning. `hydrated` latches the one stored read. `busy` latches the press, set BEFORE the
+   * instead of painting it. `busy` latches the press before the
    * first await — set after it, two presses that race both read false and both run.
    */
-  const io = useRef({ run: 0, hydrated: false, busy: false });
+  const io = useRef({ run: 0, busy: false });
 
-  /* THE STORED ANSWERS, ONCE. During render rather than in an effect, because this control is
-     mounted and unmounted as the Screener comes and goes, and an effect would re-read on every
-     visit. The latch is what makes it once per window. A failed read answers with nothing and says
-     nothing: the rows are then exactly as they already render, without chips. */
-  if (!io.current.hydrated) {
-    io.current.hydrated = true;
+  useEffect(() => {
+    let current = true;
+    const requests = io.current;
     void hydrateSuggestions().then((rows) => {
-      if (rows.length > 0) absorb(rows);
-    });
-  }
+      if (current && rows.length > 0) absorb(rows);
+    }).catch(() => undefined);
+    return () => {
+      current = false;
+      requests.run++;
+    };
+  }, [absorb]);
 
   if (senders.length === 0) return null;
 
@@ -77,11 +81,15 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
     return <span className="scn-sg-note" role="status">{t("suggestChecking")}</span>;
   }
 
-  const problem = ai.provider === null
-    ? t("suggestNoModel")
-    : ai.available
-      ? null
-      : unavailableLine(ai);
+  const unavailable = ai.unavailableReason;
+  let problem: string | null = null;
+  if (ai.provider === null || unavailable === "not_configured") problem = t("suggestNoModel");
+  else if (!ai.available) {
+    if (unavailable === "key_absent") problem = provider("verdictNoKey");
+    else if (unavailable === "key_unreadable") problem = t("suggestUnreadableKey");
+    else if (unavailable === "unverified") problem = provider("verdictUntested");
+    else problem = refusal("aiUnavailable");
+  }
 
   if (problem) {
     /* The well in its refused state: the engine's sentence where the question would be, and the
@@ -114,13 +122,15 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
   };
 
   const start = (): void => {
-    if (io.current.busy) return;
+    if (io.current.busy || !permission?.known) return;
+    const grant = permission.grant();
+    if (grant === null) return;
     // LATCHED BEFORE THE AWAIT. See the ref's comment.
     io.current.busy = true;
     const run = ++io.current.run;
     const mine = (): boolean => io.current.run === run;
     setRunning(true);
-    setNotice(`0 of ${total}`);
+    setNotice(shared("progress", { done: 0, total }));
     void (async () => {
       try {
         const out = await runSuggest({
@@ -128,27 +138,22 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
           limit: total,
           lanes,
           absorb,
-          alive: mine,
-          onProgress: (done, of) => {
-            if (mine()) setNotice(`${done} of ${of}`);
+          alive: () => mine() && permission.grant() === grant,
+          onProgress: (done, total) => {
+            if (mine()) setNotice(shared("progress", { done, total }));
           },
         });
         if (out.abandoned || !mine()) return;
         if (out.refusal) {
-          // The ENGINE'S OWN SENTENCE, whatever it is — never a class of failure composed here.
-          setNotice(
-            out.refusal.noModel
-              ? `${out.refusal.message} Set one up under Settings, Desktop.`
-              : out.done > 0
-                ? `Stopped after ${out.done} of ${out.total}. ${out.refusal.message}`
-                : out.refusal.message,
-          );
+          const key = aiRefusalKey(out.refusal);
+          const reason = out.refusal.noModel ? t("suggestSetupAfterRefusal", { reason: out.refusal.message }) : key ? refusal(key) : shared("failed");
+          setNotice(out.done > 0 ? t("suggestStoppedEarly", { done: out.done, total: out.total, reason }) : reason);
           return;
         }
-        setNotice(out.done === 0 ? "Nothing to suggest for these senders." : null);
-      } catch (err) {
+        setNotice(out.done === 0 ? t("suggestEmpty") : null);
+      } catch {
         if (!mine()) return;
-        setNotice(err instanceof Error ? err.message : String(err));
+        setNotice(shared("failed"));
       } finally {
         if (mine()) {
           io.current.busy = false;
@@ -176,7 +181,7 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
           <SizeLadder
             sizes={sizes}
             value={total}
-            disabled={running}
+            disabled={running || !permission?.known}
             onChange={setSize}
             labelOf={(n) => (n === senders.length ? t("suggestAll", { count: n }) : n)}
           />
@@ -193,7 +198,7 @@ export function LocalSuggest({ senders, absorb, ai, onConfigure }: LocalSuggestP
             <Button variant="ghost" onClick={stop}>{t("suggestStop")}</Button>
           </>
         ) : (
-          <Button onClick={start}>{t("suggestGo", { count: total })}</Button>
+          <Button disabled={!permission?.known} onClick={start}>{t("suggestGo", { count: total })}</Button>
         )
       }
       note={

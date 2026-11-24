@@ -8,6 +8,7 @@
  * account's mirror, on disk before the Undo is offered, and the next launch finishes a press a
  * kill left inside its window and says so.
  */
+import type { EngineMutation, Folder } from "@ohmail/wire";
 import {
   FOLDER_OF_VIEW,
   createLandingHold,
@@ -16,9 +17,7 @@ import {
   routingIntentsKey,
   routingSubject,
   senderKey,
-  type EngineMutation,
   type EntityReader,
-  type Folder,
   type LandingHoldRow,
   type MutationStatus,
   type AnyRoutingIntent,

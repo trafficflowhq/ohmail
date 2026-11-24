@@ -59,6 +59,20 @@ describe("storageFactsOf", () => {
     expect(storageOfferOf({ ...OFFER, canChange: undefined })?.canChange).toBe(false);
   });
 
+  it("keeps a trial's plan card when there is no current plan or fit", () => {
+    const offer = storageOfferOf({ ...OFFER, current: null, fit: null, canChange: false });
+    expect(offer).toMatchObject({ plans: OFFER.plans, current: null, fit: null, canChange: false });
+    expect(storageFitIsChange(offer!)).toBe(false);
+    expect(storageFitExtraBytes(offer!)).toBeNull();
+  });
+
+  it("keeps the storage figures and hides Plans when the trial has no priced plans", () => {
+    expect(storageFactsOf(block({
+      limitReason: "trial",
+      offer: { ...OFFER, plans: [], current: null, fit: null, addon: null, canChange: false },
+    }))).toMatchObject({ limitReason: "trial", limitBytes: 5_000_000_000, offer: null });
+  });
+
   it("the trial's floor: the plan's lower limit and the instant it applies, or nothing", () => {
     const carry = { limitBytes: 4_000_000_000, planLimitBytes: 2_000_000_000 };
     expect(storageFactsOf(block({ ...carry, limitDropsAt: "2026-11-08T12:00:00.000Z" })))
@@ -102,8 +116,8 @@ describe("the sentences' parts", () => {
     const offer = storageOfferOf(OFFER)!;
     expect(storageFitIsChange(offer)).toBe(true);
     expect(storageFitExtraBytes(offer)).toBe(10_000_000_000);
-    expect(storageFitIsChange({ ...offer, fit: { ...offer.fit, plan: "solo", addonUnits: 0 } })).toBe(false);
-    expect(storageFitExtraBytes({ ...offer, fit: { ...offer.fit, addonUnits: 0 } })).toBeNull();
+    expect(storageFitIsChange({ ...offer, fit: { ...OFFER.fit, plan: "solo", addonUnits: 0 } })).toBe(false);
+    expect(storageFitExtraBytes({ ...offer, fit: { ...OFFER.fit, plan: "plus", addonUnits: 0 } })).toBeNull();
   });
 
   it("names the kept-from month in the reader's language, in any zone", () => {

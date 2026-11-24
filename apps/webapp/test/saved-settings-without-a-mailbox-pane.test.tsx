@@ -2,10 +2,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import type { ProfileImportTransport } from "../app/shell/ProfileImportCard";
+import { useProfileImport, type ProfileImportTransport } from "@ohmail/app/profile-import";
+import { Frame } from "@ohmail/app/frame";
+import { MailGround, mailPlaces, mailSettings, NO_PANE_PARTS } from "@ohmail/app/mail";
+import { TextProvider } from "@ohmail/app/text";
+import { within } from "@testing-library/react";
+import { LIST_WORDS } from "../../../packages/app/test/places/list-seat.js";
+import { fakeMail } from "../../../packages/app/test/reader/support/mail.js";
+import { fakeHost } from "../../../packages/app/test/support/fake-host.js";
+import { fakeAddress } from "../../../packages/app/test/support/fake-window.js";
+import settingsMenu from "../../../packages/app/messages/settings-menu.en.json";
 
 /**
  * A DECLINED SETTINGS DOCUMENT HAS A ROW WHERE THERE IS NO MAILBOX PANE (HOST-CLIENT-DECLINED-
@@ -28,48 +35,63 @@ let root: Root;
 beforeEach(() => { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); });
 afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); });
 
-const wrap = (node: React.ReactNode) => h(NextIntlClientProvider, {
-  locale: "en", messages, timeZone: "UTC", children: h(ThemeProvider, { children: h(ToastHost, { children: node }) }),
-});
+const MB = { id: "mbx-1", address: "sam@example.com", status: "connected" };
+const found = {
+  fingerprint: "f".repeat(64), updatedAt: "2026-08-10T09:00:00.000Z", producer: { kind: "cloud", version: "1" },
+  counts: { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false },
+};
+function transport(state: "declined" | "found" | "none"): { via: ProfileImportTransport; asks: () => number } {
+  let asks = 0;
+  const via = {
+    candidate: async () => { asks += 1; return state === "none" ? { state: "none" } : { state, ...found }; },
+    apply: async () => ({}), decline: async () => ({}), status: async () => ({}), replace: async () => ({}),
+  } as unknown as ProfileImportTransport;
+  return { via, asks: () => asks };
+}
+
+async function mountPaired(via: ProfileImportTransport) {
+  const address = fakeAddress("#/ohbox");
+  const settings = mailSettings({ ...NO_PANE_PARTS, general: () => null });
+  const { host: paired } = fakeHost({
+    address,
+    engine: fakeMail([]).engine,
+    service: "ownComputer",
+    scope: "paired-without-mailboxes",
+    places: { ...mailPlaces(), settings },
+    above: MailGround,
+    wires: { profileImport: via },
+    mailboxes: async () => [{ ...MB, errorCode: null, disabledReason: null, syncBlockedReason: null,
+      syncBlockedSince: null, lastSyncAt: null }],
+  });
+  await act(async () => root.render(
+    <TextProvider locale="en" timeZone="UTC" messages={{ ...messages, ...LIST_WORDS, ...settingsMenu }}>
+      <Frame host={paired} />
+    </TextProvider>,
+  ));
+  return address;
+}
 
 describe("the Mailboxes pane on a surface with no mailbox node", () => {
   it("exists, with the declined row, when the shell hands the section in", async () => {
-    const { SettingsView } = await import("../app/views/SettingsView");
-    await act(async () => {
-      root.render(wrap(h(SettingsView, {
-        notifications: null, tags: [], tagCounts: {}, initialPane: "mailboxes",
-        savedSettingsSection: h("div", { "data-row": "declined" }, "a declined document row"),
-      })));
-    });
-    expect(host.querySelector('[data-row="declined"]'), "the declined row is absent").not.toBeNull();
+    const address = await mountPaired(transport("declined").via);
+    await act(async () => { address.visit("#/settings/mailboxes"); });
+    const page = within(host);
+    expect(await page.findByRole("heading", { name: /^Settings saved on/ })).toBeTruthy();
+    expect(page.getByRole("button", { name: "Import settings" })).toBeTruthy();
+    expect(page.getByRole("button", { name: "Save this ohmail's settings to the mailbox" })).toBeTruthy();
   });
 
   it("CONTROL: neither node is no pane at all", async () => {
-    const { SettingsView } = await import("../app/views/SettingsView");
-    await act(async () => {
-      root.render(wrap(h(SettingsView, { notifications: null, tags: [], tagCounts: {}, initialPane: "mailboxes" })));
-    });
-    expect(host.querySelector('[data-row="declined"]')).toBeNull();
+    const address = await mountPaired(transport("none").via);
+    await act(async () => { address.visit("#/settings"); });
+    const panes = await within(host).findByRole("navigation", { name: "Settings sections" });
+    expect(within(panes).queryByRole("button", { name: "Mailboxes" })).toBeNull();
+    expect(within(host).queryByRole("heading", { name: /^Settings saved on/ })).toBeNull();
   });
 });
 
 describe("the shell's declined rows are the card's own answers", () => {
-  const MB = { id: "mbx-1", address: "sam@example.com", status: "connected" };
-  const found = {
-    fingerprint: "f".repeat(64), updatedAt: "2026-08-10T09:00:00.000Z", producer: { kind: "cloud", version: "1" },
-    counts: { screener: 1, rules: 2, notifyRules: 0, tags: 1, awayResponder: false },
-  };
-  function transport(state: "declined" | "found" | "none"): { via: ProfileImportTransport; asks: () => number } {
-    let asks = 0;
-    const via = {
-      candidate: async () => { asks += 1; return state === "none" ? { state: "none" } : { state, ...found }; },
-      apply: async () => ({}), decline: async () => ({}), status: async () => ({}), replace: async () => ({}),
-    } as unknown as ProfileImportTransport;
-    return { via, asks: () => asks };
-  }
-
   async function mountShellRead(via: ProfileImportTransport) {
-    const { useProfileImport } = await import("../app/shell/ProfileImportCard");
     const seen: { declined: number; notNow: (() => void) | null } = { declined: -1, notNow: null };
     function Probe(): null {
       const state = useProfileImport(true, [MB], via);
@@ -77,7 +99,7 @@ describe("the shell's declined rows are the card's own answers", () => {
       seen.notNow = state.offer ? state.notNow : null;
       return null;
     }
-    await act(async () => { root.render(wrap(h(Probe))); });
+    await act(async () => { root.render(h(Probe)); });
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     return seen;
   }
@@ -91,11 +113,15 @@ describe("the shell's declined rows are the card's own answers", () => {
 
   it("a Not now adds its row at once, with no ask", async () => {
     const t = transport("found");
-    const seen = await mountShellRead(t.via);
-    expect(seen.declined).toBe(0);
-    await act(async () => { seen.notNow!(); });
-    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    expect(seen.declined, "the declined document is not a row until something asks again").toBe(1);
+    const address = await mountPaired(t.via);
+    const page = within(host);
+    const notNow = await page.findByRole("button", { name: "Not now" });
+    await act(async () => { notNow.click(); });
+    await act(async () => { address.visit("#/settings"); });
+    const panes = await page.findByRole("navigation", { name: "Settings sections" });
+    await act(async () => { within(panes).getByRole("button", { name: "Mailboxes" }).click(); });
+    expect(await page.findByRole("heading", { name: /^Settings saved on/ })).toBeTruthy();
+    expect(page.getByRole("button", { name: "Import settings" })).toBeTruthy();
     expect(t.asks()).toBe(1);
   });
 

@@ -8,7 +8,7 @@
  * What this file cannot prove, and `sync-progress.test.ts` exists for: that anything is WIRED.
  * A perfect ladder nobody renders is exactly the defect this guards.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -32,9 +32,11 @@ import {
   OWES_NOTHING_KEYS,
   type MailStateInputs,
   type MailboxFacts,
-} from "../app/shell/mail-state";
-import { forgetOpenVerdict, markOpenVerdict } from "../app/shell/access-window";
-import { storageOwner } from "../app/shell/storage-owner";
+} from "@ohmail/app-logic/mail-state/mail-state";
+import {
+  forgetOpenVerdict, liftedAt, markOpenVerdict, markWallLifted, refusalIsStale,
+} from "@ohmail/app-logic/session/access-window";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import messages from "../messages/en.json";
 import deMessages from "../messages/de.json";
 
@@ -97,6 +99,7 @@ const inputs = (over: Partial<MailStateInputs> = {}): MailStateInputs => ({
   engineFreshness: { state: "current" as const, asOf: new Date(NOW - 30_000).toISOString() },
   now: NOW,
   demo: false,
+  scope: null,
   ...over,
   /* `pulled` follows `mirrored` unless a case names it: that is the shape wherever no producer
      answered a count, which is every test here but the import numerator's own. */
@@ -493,6 +496,74 @@ describe("the precedence ladder", () => {
     }
   });
 
+  describe("the access window is asked for the ladder's own scope, never for the window's storage owner", () => {
+    const A = "acct_window_a";
+    const B = "acct_window_b";
+    const DAYS_AGO = new Date(NOW - 3 * 86_400_000).toISOString();
+    const staleFor = (scope: string | null) => inputs({ scope, freshness: { state: "stale", asOf: DAYS_AGO } });
+    const closedFor = (scope: string | null) => inputs({ scope, mailboxes: [blockedMailbox("account_closed")] });
+    /* The service said open for B twenty seconds ago, over a stored refusal, and this window's storage owner
+       has come to name B. */
+    beforeEach(() => {
+      setStorageOwner(B);
+      markOpenVerdict(B, NOW - 20_000, true);
+    });
+    afterEach(() => {
+      forgetOpenVerdict();
+      resetStorageOwnerForTest();
+    });
+
+    it("another account's reopening withholds no date of this account's copy", () => {
+      const mine = deriveMailState(staleFor(A));
+      expect(mine.key, "B's reopening withheld the date of A's copy").toBe("stale");
+      expect(mine.asOf).toBe(DAYS_AGO);
+      // CONTROL: asked for B, the date from before B's reopening is withheld as before.
+      expect(deriveMailState(staleFor(B)).key).toBe("catchingUp");
+    });
+
+    it("another account's open word silences no block of this account's mailbox", () => {
+      expect(deriveMailState(closedFor(A)).key, "B's open word silenced A's block").toBe("blocked");
+      // CONTROL: asked for B, the wall's own block is not said inside B's minute.
+      expect(deriveMailState(closedFor(B)).key).not.toBe("blocked");
+    });
+
+    it("the three readers answer for the account handed in", () => {
+      expect(refusalIsStale(B, NOW)).toBe(true);
+      expect(refusalIsStale(A, NOW), "B's open word made A's refusal a stale one").toBe(false);
+      expect(liftedAt(B)).toBe(NOW - 20_000);
+      expect(liftedAt(A), "B's reopening was read as A's").toBeNull();
+      // The wall's own lift is recorded for the account its host names, not for the window's storage owner.
+      markWallLifted(A, NOW - 5_000);
+      expect(liftedAt(A)).toBe(NOW - 5_000);
+      expect(liftedAt(B), "A's lift was recorded for the storage owner").toBeNull();
+    });
+
+    it("a window with no account is an owner of its own, as it was", () => {
+      forgetOpenVerdict();
+      markOpenVerdict(null, NOW - 20_000, true);
+      expect(refusalIsStale(null, NOW)).toBe(true);
+      expect(liftedAt(null)).toBe(NOW - 20_000);
+      expect(refusalIsStale(B, NOW)).toBe(false);
+      expect(liftedAt(B)).toBeNull();
+      expect(deriveMailState(staleFor(null)).key).toBe("catchingUp");
+    });
+
+    it("an owner nobody handed in is answered not stale and not lifted, and its lift is recorded for nobody", () => {
+      for (const missing of [undefined, ""] as unknown as Array<string | null>) {
+        forgetOpenVerdict();
+        markOpenVerdict(missing, NOW - 20_000, true);
+        expect(refusalIsStale(missing, NOW)).toBe(false);
+        expect(liftedAt(missing)).toBeNull();
+        markWallLifted(missing, NOW - 5_000);
+        expect(liftedAt(missing)).toBeNull();
+      }
+      // …and it takes no recorded lift away.
+      markOpenVerdict(B, NOW - 20_000, true);
+      markWallLifted(undefined as unknown as string | null, NOW - 5_000);
+      expect(liftedAt(B)).toBe(NOW - 20_000);
+    });
+  });
+
   it("A BLOCKED MAILBOX IS `connected` WITH NO errorCode — mail 0029's whole point", () => {
     // The anti-fix the DTO comment warns about: gate this read on `status === 'error'` and the
     // state becomes structurally unreachable, which is the 32 minutes of 2026-08-03 restored.
@@ -671,7 +742,7 @@ describe("the precedence ladder", () => {
    * rail folds with the SAME function the Mailboxes pane groups with. A future edit to either
    * that reintroduces a private copy reds here, which no example-based case can promise. */
   it("and the rail folds with the Mailboxes pane's own key, not a copy of it", async () => {
-    const shell = await import("../app/shell/address-key");
+    const shell = await import("@ohmail/app-logic/mail-state/address-key");
     const pane = await import("../app/(product)/mailbox/MailboxSection");
     expect(pane.addressKey, "the pane no longer re-exports the shared key").toBe(shell.addressKey);
     expect(shell.addressKey("  A@B.test  ")).toBe("  a@b.test  ");
@@ -687,10 +758,10 @@ describe("the precedence ladder", () => {
   it("and mail-state calls the shared key rather than keeping a private copy", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(
-      new URL("../app/shell/mail-state.ts", import.meta.url), "utf8",
+      new URL("../../../packages/app-logic/src/mail-state/mail-state.ts", import.meta.url), "utf8",
     );
     expect(src, "mail-state no longer imports the shared grouping key")
-      .toContain('import { addressKey } from "./address-key"');
+      .toContain('import { addressKey } from "./address-key.js"');
     expect(src.match(/addressKey\(/g)?.length ?? 0,
       "the stand-down arm should CALL addressKey on both sides of its comparison")
       .toBeGreaterThanOrEqual(2);
@@ -1308,7 +1379,7 @@ describe("the escalation must speak before we page ourselves", () => {
 
   it("and the growth window must outlast a poll period, or a batch gap reads as a stall", () => {
     const src = readFileSync(
-      fileURLToPath(new URL("../app/shell/sync-scheduler.ts", import.meta.url)),
+      fileURLToPath(new URL("../../../packages/app-logic/src/session/sync-scheduler.ts", import.meta.url)),
       "utf8",
     );
     const m = /export const POLL_MS = ([\d_]+);/.exec(src);
@@ -1348,7 +1419,7 @@ describe("the escalation must speak before we page ourselves", () => {
     expect(workerCycleMs).toBeGreaterThan(0);
 
     const src = readFileSync(
-      fileURLToPath(new URL("../app/shell/sync-scheduler.ts", import.meta.url)),
+      fileURLToPath(new URL("../../../packages/app-logic/src/session/sync-scheduler.ts", import.meta.url)),
       "utf8",
     );
     const p = /export const POLL_MS = ([\d_]+);/.exec(src);
@@ -1871,7 +1942,7 @@ describe("owed — a catch-up in flight withholds emptiness (INCIDENT-021)", () 
 });
 
 describe("the gap offers on the shell (mail 0151)", async () => {
-  const { gapOffers } = await import("../app/shell/mail-state");
+  const { gapOffers } = await import("@ohmail/app-logic/mail-state/mail-state");
   it("one per live mailbox this install organizes whose row carries a positive count", () => {
     expect(gapOffers([
       { id: "a", address: "a@x.test", organizerRole: "organizer", status: "connected", gapLetters: 2 },

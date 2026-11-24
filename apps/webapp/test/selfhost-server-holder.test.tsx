@@ -6,9 +6,9 @@ import { NextIntlClientProvider } from "next-intl";
 
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { filingElsewhereKey, holderSentence } from "../app/shell/reader-holder";
-import { ManagedServiceContext } from "../app/shell/managed-service";
-import type { MailState } from "../app/shell/mail-state";
+import { filingElsewhereKey, holderSentence } from "@ohmail/app-logic/reading/reader-holder";
+import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A SERVER HOLDER IS OHMAIL CLOUD ONLY ON A MANAGED HOST. A self-hosted server's worker writes the
@@ -31,8 +31,8 @@ const QUIET: MailState = {
 };
 
 let railState: MailState = QUIET;
-vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: railState, refresh: () => {} }),
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({
+  useMailState: () => ({ state: railState, freshness: { state: "unknown" as const, asOf: null }, refresh: () => {} }),
 }));
 
 const heldByServer = (name: string | null): MailState => ({
@@ -55,37 +55,37 @@ afterEach(async () => {
 
 async function railTitle(state: MailState, locale: "en" | "de", managed?: boolean): Promise<string> {
   railState = state;
-  const { SyncBar } = await import("../app/shell/SyncBar.js");
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   roots.push(root);
-  const bar = h(SyncBar, { variant: "rail" });
+  const bar = h(SyncBar);
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale, messages: CATS[locale] as never, timeZone: "UTC",
       children: managed === undefined ? bar : h(ManagedServiceContext.Provider, { value: managed, children: bar }),
     }));
   });
-  return (container.querySelector(".rs-line b")?.textContent ?? "").trim();
+  return (container.querySelector("[role='status'] b")?.textContent ?? "").trim();
 }
 
 const CLOUD = /\bCloud\b/;
 
 describe("the rail names a server holder by the host it runs on", () => {
   it("CONTROL — a managed host still says ohmail Cloud files the mailbox, and that it claimed it", async () => {
-    expect(await railTitle(heldByServer("ohmail Cloud"), "en")).toBe(CATS.en.sync.filingElsewhereCloudHow);
-    expect(await railTitle(blockedByServer, "en", true)).toBe(CATS.en.sync.blocked_organized_elsewhere_cloud);
+    expect(await railTitle(heldByServer("ohmail Cloud"), "en")).toBe(CATS.en.sync.filingElsewhereCloudHow.replace(/\.$/, ""));
+    expect(await railTitle(blockedByServer, "en", true)).toBe(CATS.en.sync.blocked_organized_elsewhere_cloud.replace(/\.$/, ""));
   });
 
   it.each(["en", "de"] as const)("%s: an unmanaged host names another ohmail server, never Cloud", async (locale) => {
     for (const name of [null, "ohmail Cloud", "mail.example.com"]) {
       const said = await railTitle(heldByServer(name), locale, false);
-      expect(said).toBe(CATS[locale].sync.filingElsewhereServerHow);
+      expect(said).toBe(CATS[locale].sync.filingElsewhereServerHow.replace(/\.$/, ""));
       expect(said).not.toMatch(CLOUD);
     }
     const blocked = await railTitle(blockedByServer, locale, false);
-    expect(blocked).toBe(CATS[locale].sync.blockedClaimedByServer);
+    expect(blocked).toBe(CATS[locale].sync.blockedClaimedByServer.replace(/\.$/, ""));
     expect(blocked).not.toMatch(CLOUD);
   });
 });

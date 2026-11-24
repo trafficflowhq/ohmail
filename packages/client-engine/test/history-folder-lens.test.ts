@@ -1,18 +1,15 @@
+import type { EngineMessage, Folder, FolderEntity, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   consentPartition,
   ohboxView,
   presentationReader,
   physicalFolderOf,
-  type EngineMessage,
-  type Folder,
-  type FolderEntity,
-  type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * HISTORY IS A LENS OVER THE USER'S OWN FOLDERS — spec §16.5, foundation stage.

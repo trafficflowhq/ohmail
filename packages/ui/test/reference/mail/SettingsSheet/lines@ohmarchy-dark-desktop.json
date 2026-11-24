@@ -1,0 +1,190 @@
+{
+  "component": "SettingsSheet",
+  "state": "lines",
+  "look": "ohmarchy-dark-desktop",
+  "place": "block",
+  "target": [684, 172, 744, 216],
+  "clip": [684, 172, 744, 216],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(107, 112, 144) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "rgb(26, 27, 38)" },
+    { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(107, 112, 144) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(66, 66, 69) 0px 0px 0px 2px" }
+  ],
+  "nodes": [
+    {
+      "role": "banner",
+      "name": "",
+      "box": [44, 16, 656, 32],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Notify about", "type": 0 }]
+    },
+    {
+      "role": "switch",
+      "name": "New mail in Ohbox",
+      "box": [656, 54, 44, 26],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgb(192, 202, 245)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "state": ["checked"],
+      "surfaces": [
+        { "box": [656, 54, 44, 26], "paint": 0 },
+        { "box": [678, 58, 18, 18], "paint": 1 }
+      ]
+    },
+    {
+      "role": "switch",
+      "name": "A new sender is waiting",
+      "box": [656, 92, 44, 26],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgb(192, 202, 245)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "state": ["checked"],
+      "surfaces": [
+        { "box": [656, 92, 44, 26], "paint": 0 },
+        { "box": [678, 96, 18, 18], "paint": 1 }
+      ]
+    },
+    {
+      "role": "switch",
+      "name": "A scheduled message was sent",
+      "box": [656, 130, 44, 26],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgb(192, 202, 245)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "state": ["checked"],
+      "surfaces": [
+        { "box": [656, 130, 44, 26], "paint": 0 },
+        { "box": [678, 134, 18, 18], "paint": 1 }
+      ]
+    },
+    {
+      "role": "switch",
+      "name": "A device paired or was signed out",
+      "box": [656, 168, 44, 26],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgb(37, 39, 52)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "surfaces": [
+        { "box": [656, 168, 44, 26], "paint": 0 },
+        { "box": [660, 172, 18, 18], "paint": 2 }
+      ]
+    }
+  ],
+  "loose": {
+    "text": [
+      {
+        "said": "New mail in Ohbox A new sender is waiting A scheduled message was sent A device paired or was signed out",
+        "type": 1
+      }
+    ],
+    "surfaces": [{ "box": [0, 0, 744, 216], "paint": 3 }]
+  }
+}

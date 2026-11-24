@@ -1,7 +1,8 @@
 import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import {
   applyBodyBytesDelta, auditLog, bodyBytesOf, mailboxes, messageBodies, messages, recordChange,
-  type Tx, auditAction,} from "@trafficflow/db";
+  type Tx, auditAction, mailboxPass, markPassDone, passMark,
+} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   classifySensitivity, fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime, runtimeDedupKey,
@@ -70,7 +71,7 @@ export const SENSITIVE_FP_MAX_BYTES = 4 * 1024 * 1024;
  * correctness). Refusals SPLIT: {@link decidedRefusals} (classifier read the original and declined —
  * answers the marker may certify over) vs {@link undecidedRefusals} (original unreadable — a completed
  * walk holding any does NOT stamp). "Never stamp" being unsurvivable too, a blocked walk is counted and
- * after {@link SENSITIVE_FP_MAX_BLOCKED_WALKS} the marker (`mailboxes.sensitive_fp_backfill_at`) stamps
+ * after {@link SENSITIVE_FP_MAX_BLOCKED_WALKS} the marker (this pass's done mark in `pass_progress`) stamps
  * and says what over — process-scoped, so a restart means MORE looking, not a premature certificate. */
 const decidedRefusals = new Map<string, Set<string>>();
 
@@ -272,7 +273,8 @@ export async function sensitiveBackfillPass(
 
   // ── THE MARKER IS THE WHOLE GATE, AND IT IS READ BEFORE ANYTHING ELSE ────────────────────
   const [mailbox] = await db.select({
-    id: mailboxes.id, backfilledAt: mailboxes.sensitiveFpBackfillAt,
+    id: mailboxes.id, accountId: mailboxes.accountId,
+    backfilledAt: passMark("sensitive_fp_backfill", "doneAt", mailboxes.accountId, mailboxes.id),
   }).from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
   if (!mailbox) return EMPTY;
   if (mailbox.backfilledAt) return EMPTY;
@@ -485,7 +487,7 @@ export async function sensitiveBackfillPass(
       maxWalks: SENSITIVE_FP_MAX_BLOCKED_WALKS,
       reason: "every walk re-tried these and none could read the original; the marker is written " +
         "so the pass stops re-reading a mailbox it cannot repair. Clearing " +
-        "`sensitive_fp_backfill_at` re-runs the whole pass, which is the documented recovery",
+        "the pass's done mark re-runs the whole pass, which is the documented recovery",
     });
   }
 
@@ -494,13 +496,10 @@ export async function sensitiveBackfillPass(
   // Claiming it first would make a crash permanent: a mailbox marked repaired with most of its
   // mail still unreadable and nothing that would ever look again. Written last, a crash
   // re-runs, and re-running is safe because a message this pass has cleared no longer carries a
-  // category and drops out of the candidate query. `WHERE … IS NULL` means two drivers finishing
-  // at once produce exactly one stamp — the same construction, for the same reason, as
+  // category and drops out of the candidate query. Claimed once (`markPassDone`), so two drivers
+  // finishing at once produce exactly one stamp — the same construction, for the same reason, as
   // `markKickstarted`.
-  const stamped = await db.update(mailboxes).set({ sensitiveFpBackfillAt: now() })
-    .where(and(eq(mailboxes.id, mailboxId), isNull(mailboxes.sensitiveFpBackfillAt)))
-    .returning({ id: mailboxes.id });
-  result.marked = stamped.length > 0;
+  result.marked = await markPassDone(db as unknown as Tx, mailboxPass("sensitive_fp_backfill", mailbox.accountId, mailboxId), now());
   // The walk is finished, so nothing will ask about this mailbox again unless an operator clears
   // the marker — at which point re-trying everything is exactly what they asked for.
   decidedRefusals.delete(mailboxId);

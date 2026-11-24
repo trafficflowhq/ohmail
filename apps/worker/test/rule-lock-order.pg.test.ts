@@ -13,23 +13,23 @@ import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
+import { applyMetaRequests, driveOutstandingRequests } from "@ohmail/organizer/request-drain";
 import { makeOwnedDb, workerHeartbeats, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { Logger } from "@trafficflow/core/mail";
 import {
-  ApprovalService, LearningService, MailboxService, MessageService, RulesService, ScreenerService, deleteAccount, releaseHeld,
-  resetScreeningState, setDormancyDays, type ServiceContext,
+  ApprovalService, LearningService, MailboxService, MessageService, RulesService, ScreenerService, dbFor, deleteAccount, releaseHeld,
+  resetScreeningState, setDormancyDays, type Db as ServicesDb, type ServiceContext,
 } from "@trafficflow/services";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
-import { runSyncCycle } from "../src/sync.js";
+import { runSyncCycle } from "@ohmail/organizer/sync";
 import { makeSyncWriteFence, stampMailboxSyncNow, type LeaderFence } from "../src/mailboxes.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
-import { screenerAutoActPass, type ScreenerActConsent } from "../src/screener-auto-act.js";
-import { screenerCorrespondentRetroPass } from "../src/screener-correspondent-retro.js";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { screenerAutoActPass, type ScreenerActConsent } from "@ohmail/organizer/screener-auto-act";
+import { screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
 
 /**
  * ONE LOCK ORDER UNDER A SENDER'S KEY, DRIVEN AS TWO TRANSACTIONS ON REAL POSTGRES: accounts fence,
@@ -105,7 +105,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       fromAddress: `held-${tag}@spam.test`, authVerdict: "pass", nativeLocator: { folder: SCREENER, ref: "1:200" },
     }).returning();
     await base.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await base.db.insert(messageInstances).values({
@@ -133,10 +133,10 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const log = capture();
     const actName = `lo-act-${tag}`;
     const eraseName = `lo-erase-${tag}`;
-    const act = screenerAutoActPass(open(actName).db as unknown as Tx, { accountId, consent, log, now: () => NOW });
+    const act = screenerAutoActPass(dbFor(open(actName).db, accountId) as unknown as Tx, { accountId, consent, log, now: () => NOW });
     await isParked;
     const eraseCtx = {
-      db: open(eraseName).db, accountId, userId: null, now: () => NOW, requestId: `lo-erase-${tag}`,
+      db: dbFor(open(eraseName).db, accountId), accountId, userId: null, now: () => NOW, requestId: `lo-erase-${tag}`,
     } as unknown as ServiceContext;
     const erase = deleteAccount(eraseCtx);
     await untilWaiting(eraseName);
@@ -168,7 +168,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
         fromAddress: `held${i}-${tag}@spam.test`, authVerdict: "pass", nativeLocator: { folder: SCREENER, ref: `1:${300 + i}` },
       }).returning();
       await base.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await base.db.insert(messageInstances).values({
         accountId, mailboxId: mb!.id, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid: 300 + i, isPrimary: true,
@@ -180,7 +180,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     }
     await base.db.update(accounts).set({ erasedAt: NOW }).where(eq(accounts.id, accountId));
     const log = capture();
-    const out = await screenerAutoActPass(base.db as unknown as Tx, {
+    const out = await screenerAutoActPass(dbFor(base.db, accountId) as unknown as Tx, {
       accountId, log, now: () => NOW, consent: { stillGiven: async () => true },
     });
     const events = log.lines.map((l) => l.event).filter((e) => e.startsWith("screener_auto_act"));
@@ -213,7 +213,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
         nativeLocator: { folder: SCREENER, ref: `1:${ref}` },
       }).returning();
       await base.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await base.db.insert(messageInstances).values({
@@ -233,7 +233,8 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       .from(rules).where(and(eq(rules.accountId, accountId), eq(rules.match, sender)));
     /** The person's admission, as the press runs it: the settings row stamped, then the rule-key lock. */
     const admit = (name: string) => {
-      const decideDb = open(name).db;
+      // The person's decision, on the account's handle as the Screener's door binds it.
+      const decideDb = dbFor(open(name).db, accountId);
       return decideDb.transaction(async (raw) => applyScreenerDecision(carryDialect(decideDb, raw as object) as unknown as Tx, {
         accountId, scope: "sender", address: sender, appliedFolder: "INBOX", decision: "yes",
         triggeringActionId: `screener:${name}`, now: NOW, overExisting: "converge", decidedBy: "person",
@@ -260,7 +261,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const log = capture();
     const actName = `lo-unc-act-${w.tag}`;
     const admitName = `lo-unc-admit-${w.tag}`;
-    const act = screenerAutoActPass(open(actName).db as unknown as Tx, { accountId: w.accountId, consent, log, now: () => NOW });
+    const act = screenerAutoActPass(dbFor(open(actName).db, w.accountId) as unknown as Tx, { accountId: w.accountId, consent, log, now: () => NOW });
     await isParked;
     const admit = w.admit(admitName);
     await untilWaiting(admitName);
@@ -297,7 +298,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const admit = w.admit(admitName);
     await untilWaiting(admitName);
     const log = capture();
-    const act = screenerAutoActPass(open(actName).db as unknown as Tx, {
+    const act = screenerAutoActPass(dbFor(open(actName).db, w.accountId) as unknown as Tx, {
       accountId: w.accountId, consent: { stillGiven: async () => true }, log, now: () => NOW,
     });
     await untilWaiting(actName);
@@ -322,7 +323,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const [mb] = await base.db.insert(mailboxes).values({
       accountId, provider: "imap", address: me, status: "connected", createdAt: CONNECT,
     }).returning();
-    await base.db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
+    await base.db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
     await base.db.insert(accountSettings).values({ accountId, screeningScope: "all_time" });
     // The account wrote to a list after it connected; the replier answers that copy. Nothing
     // teaches `contacts` the replier: the release checks and moves their citing message, row by row.
@@ -336,17 +337,17 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       accountId, mailboxId: mb!.id, messageId: s!.id, folder: "Sent", uidvalidity: 7n, uid: 1, isPrimary: true,
     });
     await base.db.insert(folderState).values({
-      messageId: s!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: s!.id, accountId: s!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    await base.db.insert(messageBodies).values({ messageId: s!.id, text: "Thursday?", headers: {} });
+    await base.db.insert(messageBodies).values({ messageId: s!.id, accountId: s!.accountId, text: "Thursday?", headers: {} });
     const [h] = await base.db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `held:${tag}`, subject: "Re: the north elevation",
       fromAddress: replier, date: WROTE, nativeLocator: { folder: SCREENER, ref: "9:2" },
     }).returning();
     await base.db.insert(folderState).values({
-      messageId: h!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: h!.id, accountId: h!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    await base.db.insert(messageBodies).values({ messageId: h!.id, text: "Thursday works.", headers: { "in-reply-to": [`<s-${tag}@own.invalid>`] } });
+    await base.db.insert(messageBodies).values({ messageId: h!.id, accountId: h!.accountId, text: "Thursday works.", headers: { "in-reply-to": [`<s-${tag}@own.invalid>`] } });
 
     // The gate holds the held row (and its message) the release locks first.
     const gate = open(`lo-gate-${tag}`);
@@ -365,9 +366,9 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
 
     const retroName = `lo-retro-${tag}`;
     const decideName = `lo-decide-${tag}`;
-    const retro = screenerCorrespondentRetroPass(open(retroName).db as unknown as Tx, { accountId, now: () => NOW });
+    const retro = screenerCorrespondentRetroPass(dbFor(open(retroName).db, accountId) as unknown as Tx, { accountId, now: () => NOW });
     await untilWaiting(retroName);
-    const decideDb = open(decideName).db;
+    const decideDb = dbFor(open(decideName).db, accountId);
     const decide = decideDb.transaction(async (raw) => applyScreenerDecision(
       carryDialect(decideDb, raw as object) as unknown as Tx, {
         accountId, scope: "sender", address: replier, appliedFolder: "INBOX", decision: "yes",
@@ -418,10 +419,10 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       const resetName = `lo-reset-${tag}`;
       const decideName = `lo-rdec-${tag}`;
       const reset = resetScreeningState({
-        db: open(resetName).db, accountId, userId: null, now: () => NOW, requestId: `lo-reset-${tag}`,
+        db: dbFor(open(resetName).db, accountId), accountId, userId: null, now: () => NOW, requestId: `lo-reset-${tag}`,
       } as unknown as ServiceContext);
       await untilWaiting(resetName);
-      const decideDb = open(decideName).db;
+      const decideDb = dbFor(open(decideName).db, accountId);
       const decide = decideDb.transaction(async (raw) => applyScreenerDecision(
         carryDialect(decideDb, raw as object) as unknown as Tx, {
           accountId, scope: "sender", address: sender, appliedFolder: "INBOX", decision: "yes", stampBaseline,
@@ -467,7 +468,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
         subject: "hello", fromAddress: from, senderCheck, nativeLocator: { folder, ref: `1:${ref}` },
       }).returning();
       await base.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;
     };
@@ -486,7 +487,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const leader: LeaderFence = { shardIndex: 600_000 + Math.floor(Math.random() * 100_000), instanceId: `lo-fence-${tag}` };
     await base.db.insert(workerHeartbeats).values({ shardIndex: leader.shardIndex, instanceId: leader.instanceId, leader: true });
     const ctxOn = (name: string, settings?: Record<string, string>) =>
-      ({ db: open(name, settings).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+      ({ db: dbFor(open(name, settings).db, accountId), accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
     const doors = {
       press: (name: string) => new ScreenerService({}).decide(ctxOn(name), held, { decision: "yes" }),
       release: (name: string) => releaseHeld(ctxOn(name), { ruleIds: [group1!.id], senders: [sender] }),
@@ -499,7 +500,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     };
     let verdict: unknown = null;
     const group = (name: string, inside: () => Promise<void> = async () => {}) =>
-      makeSyncWriteFence(open(name).db as never, mb!.id, leader).transaction(async (repo) => {
+      makeSyncWriteFence(dbFor(open(name).db, accountId) as never, mb!.id, leader).transaction(async (repo) => {
         await inside();
         return repo.recordChange({ accountId, entityType: "message", entityId: filed, op: "update" });
       }).then((v) => { verdict = v; });
@@ -639,7 +640,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const leader: LeaderFence = { shardIndex: 600_000 + Math.floor(Math.random() * 100_000), instanceId: `lo-tr-${tag}` };
     await base.db.insert(workerHeartbeats).values({ shardIndex: leader.shardIndex, instanceId: leader.instanceId, leader: true });
     const ctxOn = (name: string) =>
-      ({ db: open(name).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+      ({ db: dbFor(open(name).db, accountId), accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
     const doors = {
       "rule's create": (name: string) => new RulesService().create(ctxOn(name), { kind: "sender", match: `bob-${tag}@shop.example`, destination: NEWS }),
       "rule's pause": (name: string) => new RulesService().update(ctxOn(name), rule!.id, { enabled: false } as never),
@@ -647,7 +648,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       "dormancy window": (name: string) => setDormancyDays(ctxOn(name), 30),
     };
     const group = (name: string, inside: () => Promise<void>) =>
-      makeSyncWriteFence(open(name).db as never, held!.id, leader).transaction(async (repo) => {
+      makeSyncWriteFence(dbFor(open(name).db, accountId) as never, held!.id, leader).transaction(async (repo) => {
         await inside();
         return repo.recordChange({ accountId, entityType: "message", entityId: m!.id, op: "update" });
       });
@@ -712,7 +713,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       fromAddress: sender, nativeLocator: { folder: NEWS, ref: "4:1" },
     }).returning();
     await base.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     const gate = open(`lo-pgate-${tag}`);
     let held!: () => void;
@@ -727,7 +728,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     }).catch(() => undefined);
     await holding;
     const ctxOn = (name: string): ServiceContext =>
-      ({ db: open(name).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+      ({ db: dbFor(open(name).db, accountId), accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
     const moveName = `lo-move-${tag}`;
     const pauseName = `lo-pause-${tag}`;
     const move = new MessageService().move(ctxOn(moveName), m!.id, { folder: "INBOX" });
@@ -780,10 +781,10 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       fromAddress: sender, nativeLocator: { folder: NEWS, ref: "4:1" },
     }).returning();
     await base.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     const ctxOn = (name: string): ServiceContext =>
-      ({ db: open(name).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+      ({ db: dbFor(open(name).db, accountId), accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
     const state = async () => {
       const [g] = await base.db.select().from(graduations)
         .where(and(eq(graduations.accountId, accountId), eq(graduations.patternKey, patternKey)));
@@ -882,7 +883,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       await base.db.delete(rules).where(eq(rules.id, w.ruleId));
       await placed(w.messageId, SCREENER);
       const card = await cardFor(w, NEWS);
-      const ddb = open(`lo-dc-${w.tag}`).db;
+      const ddb = dbFor(open(`lo-dc-${w.tag}`).db, w.accountId);
       const approval: Side = [`lo-ap-${w.tag}`, () => new ApprovalService({}).decide(w.ctxOn(`lo-ap-${w.tag}`), card, { decision: "approve" })];
       const decide: Side = [`lo-dc-${w.tag}`, () => ddb.transaction(async (raw) => applyScreenerDecision(carryDialect(ddb, raw as object) as unknown as Tx, {
         accountId: w.accountId, scope: "sender", address: w.sender, appliedFolder: "INBOX", decision: "yes", stampBaseline: false,
@@ -923,7 +924,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
   for (const first of ["pause", "decision"] as const) {
     it(`a person's pause of a learned rule and a Screener decision on its sender, the ${first} first: both commit`, async () => {
       const w = await learnedRoute({ priorOverride: false, positives: 3, negatives: 0 });
-      const ddb = open(`lo-dc-${w.tag}`).db;
+      const ddb = dbFor(open(`lo-dc-${w.tag}`).db, w.accountId);
       const decide: Side = [`lo-dc-${w.tag}`, () => ddb.transaction(async (raw) => applyScreenerDecision(carryDialect(ddb, raw as object) as unknown as Tx, {
         accountId: w.accountId, scope: "sender", address: w.sender, appliedFolder: NEWS, decision: "yes", stampBaseline: false,
         triggeringActionId: `screener:lo-${w.tag}`, now: NOW, overExisting: "converge", decidedBy: "person",
@@ -944,7 +945,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       { accountId: w.accountId, mailboxId: w.mailboxId, onConnectionError: () => {} },
     );
     return runSyncCycle({
-      writeAuthority: FIXTURE_LEASE, repo: makeDrizzleRepo(open(name).db as never), adapter,
+      writeAuthority: FIXTURE_LEASE, repo: makeDrizzleRepo(dbFor(open(name).db, w.accountId) as never), adapter,
       accountId: w.accountId, mailboxId: w.mailboxId, storageCap: UNMETERED_STORAGE_CAP, role: "organizer",
       trustedAuthservIds: new Set<string>(),
     });
@@ -975,7 +976,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const w = await learnedRoute({ priorOverride: true, positives: 3, negatives: 0 });
     const fleet = await deliveredByTheRoute(w);
     const log = capture();
-    const real = makeDrizzleRepo(open(`lo-c2f-${w.tag}`).db as never);
+    const real = makeDrizzleRepo(dbFor(open(`lo-c2f-${w.tag}`).db, w.accountId) as never);
     const failing = Object.assign(Object.create(real) as object, {
       demoteRoute: async () => { throw new Error("the door is down"); },
     }) as unknown as typeof real;
@@ -1057,9 +1058,10 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
         accountId, kind: "sender", match: `ann-${tag}@shop.example`, destination: NEWS, priority: 0, enabled: true,
         provenance: "manual", updatedAt: WROTE,
       }).returning({ id: rules.id });
+      // Each party on the account's handle over its own pool, as the door and the worker bind theirs.
       const ctxOn = (db: unknown, name: string): ServiceContext =>
-        ({ db, accountId, userId: null, now: () => new Date(), requestId: name }) as unknown as ServiceContext;
-      const readerCycle = (db: unknown, i: number) => driveOutstandingRequests(db as never, {
+        ({ db: dbFor(db as ServicesDb, accountId), accountId, userId: null, now: () => new Date(), requestId: name }) as unknown as ServiceContext;
+      const readerCycle = (db: unknown, i: number) => driveOutstandingRequests(dbFor(db as ServicesDb, accountId) as never, {
         mailboxId: held[i]!.id, accountId, installId: "reader-install",
         adapter: { requestReaderIo: () => held[i]!.meta.reader } as unknown as MailboxAdapter, requestKey: held[i]!.key,
       }, { installId: "reader-install", kind: "local" }, new Date(), () => undefined);
@@ -1081,9 +1083,11 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       let resume!: () => void;
       const resumed = new Promise<void>((r) => { resume = r; });
       const db = o.db as unknown as { transaction: (cb: (tx: unknown) => Promise<unknown>, cfg?: unknown) => Promise<unknown> };
-      const real = db.transaction.bind(db);
+      // On the pool's own handle, and run on the caller: an account's handle bound over the pool opens
+      // its transactions through this, under its own binding.
+      const real = db.transaction;
       let done = false;
-      db.transaction = (cb, cfg) => real(async (tx) => {
+      db.transaction = function (this: unknown, cb, cfg) { return real.call(this, async (tx) => {
         const t = tx as { execute: (q: SQL) => Promise<unknown> };
         const exec = t.execute.bind(t);
         t.execute = async (q: SQL) => {
@@ -1098,7 +1102,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
           return out;
         };
         return cb(tx);
-      }, cfg);
+      }, cfg); };
       return { db: o.db, isParked, resume };
     }
 
@@ -1144,7 +1148,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
         const laptop = await makeTestDb();
         await laptop.insert(mailboxes).values({ id: w.held[0]!.id, accountId: w.accountId, provider: "imap", address: w.held[0]!.address });
         await laptop.insert(rules).values({ accountId: w.accountId, kind: "sender", match: `ann-${w.tag}@shop.example`, destination: NEWS, priority: 0, enabled: true, provenance: "manual" });
-        await applyMetaRequests(laptop, {
+        await applyMetaRequests(dbFor(laptop as unknown as ServicesDb, w.accountId), {
           mailboxId: w.held[0]!.id, accountId: w.accountId, installId: "laptop-a",
           adapter: { requestOrganizerIo: () => w.held[0]!.meta.organizer } as unknown as MailboxAdapter, requestKey: w.held[0]!.key,
         }, new Date(), () => undefined);

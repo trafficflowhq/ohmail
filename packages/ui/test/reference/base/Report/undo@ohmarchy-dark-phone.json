@@ -1,0 +1,99 @@
+{
+  "component": "Report",
+  "state": "undo",
+  "look": "ohmarchy-dark-phone",
+  "place": "cell",
+  "target": [24, 24, 300, 44],
+  "clip": [24, 24, 300, 44],
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(26, 27, 38)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(26, 27, 38)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "14px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [{ "backgroundColor": "rgb(26, 27, 38)" }],
+  "nodes": [
+    {
+      "role": "status",
+      "name": "Parked",
+      "box": [0, 0, 300, 44],
+      "drawn": {
+        "color": "rgb(26, 27, 38)",
+        "backgroundColor": "rgb(192, 202, 245)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "600",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(26, 27, 38)"
+      },
+      "text": [{ "said": "Parked", "type": 0 }],
+      "surfaces": [{ "box": [67.5, 19.6, 5.6, 5.6], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Undo",
+      "box": [242.4, 0, 49.6, 44],
+      "drawn": {
+        "color": "rgb(26, 27, 38)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "14px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(26, 27, 38)"
+      },
+      "text": [{ "said": "Undo", "type": 1 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

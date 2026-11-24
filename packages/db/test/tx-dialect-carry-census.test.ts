@@ -200,8 +200,6 @@ describe("carrying the dialect by hand", () => {
       })
       .sort();
     expect(sites).toEqual([
-      // The gap catch-up's page transaction, rule-retro's shape: its repository is built from the `tx`.
-      "apps/worker/src/gap-catchup.ts",
       "apps/worker/src/mailboxes.ts",
       /* TWICE, and the second is this release's: the erasure fence groups a mailbox's writes in one
          transaction, and a repository built straight from that `tx` refuses on its first locking
@@ -209,11 +207,6 @@ describe("carrying the dialect by hand", () => {
          One entry per OCCURRENCE, which is what this census counts. */
       "apps/worker/src/mailboxes.ts",
       "apps/worker/src/ohbox-tidy.ts",
-      "apps/worker/src/request-drain.ts",
-      // TWICE since the refused request is recorded before it is answered: that record is written in
-      // its own transaction after the apply's rollback, fenced like the apply, from the raw `tx`.
-      "apps/worker/src/request-drain.ts",
-      "apps/worker/src/rule-retro.ts",
       // The organize decision's sweep opens its own transaction (the mailbox row, then the walk), on
       // the phone's store as on the server's, and builds the gate's repo from it.
       "packages/core/src/unscreened-set.ts",
@@ -225,6 +218,13 @@ describe("carrying the dialect by hand", () => {
       // The 0.25.9 press repair opens its own transaction and writes the change log in it, on the
       // phone's store as on the server's.
       "packages/db/src/inferred-press-repair.ts",
+      // The gap catch-up's page transaction, rule-retro's shape: its repository is built from the `tx`.
+      "packages/organizer/src/gap-catchup.ts",
+      "packages/organizer/src/request-drain.ts",
+      // TWICE since the refused request is recorded before it is answered: that record is written in
+      // its own transaction after the apply's rollback, fenced like the apply, from the raw `tx`.
+      "packages/organizer/src/request-drain.ts",
+      "packages/organizer/src/rule-retro.ts",
       // The approval LEFT this list when its decision began opening through `withAccountTx` (the
       // fence and the rule-key lock first), whose seam carries the brand itself.
       // The two the docblock's second paragraph names: the shared transaction helper, and the

@@ -19,6 +19,7 @@
  * path itself: client-engine's calendar-texts suite, whose items the message screen renders
  * verbatim.)
  */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   FOLDER_OF_VIEW,
@@ -26,9 +27,7 @@ import {
   encodeSeqCursor,
   mirrorDbName,
   waterlineIdOf,
-  type EngineMessage,
   type EntityReader,
-  type RuleDTO,
 } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { DE } from "../src/copy.de";
@@ -911,6 +910,8 @@ describe("the actions facade is ONE object delegating per call", () => {
     reachOf: () => (calls.push(`${tag}:reachOf`), { others: [], inboxIds: [] }),
     unsubClaimOf: () => (calls.push(`${tag}:unsubClaimOf`), "none" as const),
     screeningUnsubClaim: () => (calls.push(`${tag}:screeningUnsubClaim`), "none" as const),
+    unsubscribeIdsOf: () => (calls.push(`${tag}:unsubscribeIdsOf`), []),
+    screeningUnsubscribeIds: () => (calls.push(`${tag}:screeningUnsubscribeIds`), []),
     setScope: () => calls.push(`${tag}:setScope`),
     allow: () => calls.push(`${tag}:allow`),
     notSpam: () => calls.push(`${tag}:notSpam`),

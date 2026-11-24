@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -7,6 +6,7 @@ import { UNMETERED, accounts, type EntitlementsPort, type Tx } from "@trafficflo
 import { makeTestDb } from "@trafficflow/db/testing";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeStorageCapResolver } from "../src/storage-cap.js";
+import { readSource } from "./_start-function.js";
 
 const db = await makeTestDb();
 const tx = db as unknown as Tx;
@@ -64,7 +64,7 @@ describe("makeStorageCapResolver", () => {
   it("a metered account resolves to its NUMBER, cached for the TTL", async () => {
     const { port, calls } = portFor([5_000_000_000]);
     let t = 0;
-    const resolve = makeStorageCapResolver(port, tx, silent, { ttlMs: 30_000, now: () => new Date(t) });
+    const resolve = makeStorageCapResolver(port, () => tx, silent, { ttlMs: 30_000, now: () => new Date(t) });
     const a1 = await acct();
     expect(await resolve(a1)).toBe(5_000_000_000);
     t = 29_000;
@@ -77,19 +77,19 @@ describe("makeStorageCapResolver", () => {
 
   it("an UNBOUNDED limit (null) maps to the typed unmetered value", async () => {
     const { port } = portFor([null]);
-    const resolve = makeStorageCapResolver(port, tx, silent);
+    const resolve = makeStorageCapResolver(port, () => tx, silent);
     expect(await resolve("a2")).toBe(UNMETERED_STORAGE_CAP);
   });
 
   it("an UNMETERED host resolves unmetered without dialling anything", async () => {
-    const resolve = makeStorageCapResolver(UNMETERED, tx, silent);
+    const resolve = makeStorageCapResolver(UNMETERED, () => tx, silent);
     expect(await resolve("a2b")).toBe(UNMETERED_STORAGE_CAP);
   });
 
   it("a read FAULT resolves unmetered for THIS resolution only — logged, never cached", async () => {
     const { port } = portFor(["throw", 1_000]);
     const lines: string[] = [];
-    const resolve = makeStorageCapResolver(port, tx, { warn: (e: string) => { lines.push(e); } });
+    const resolve = makeStorageCapResolver(port, () => tx, { warn: (e: string) => { lines.push(e); } });
     const a3 = await acct();
     // The blip must not start withholding a paying customer's bodies…
     expect(await resolve(a3)).toBe(UNMETERED_STORAGE_CAP);
@@ -101,7 +101,7 @@ describe("makeStorageCapResolver", () => {
   it("a lower limit is held: the previous cap for 14 days, the plan's own limit as the refill's mark", async () => {
     const { port } = portFor([10_000_000_000, 2_000_000_000]);
     let t = Date.parse("2026-10-27T15:30:00.000Z");
-    const resolve = makeStorageCapResolver(port, tx, silent, { ttlMs: 30_000, now: () => new Date(t) });
+    const resolve = makeStorageCapResolver(port, () => tx, silent, { ttlMs: 30_000, now: () => new Date(t) });
     const id = await acct();
     expect(await resolve(id)).toBe(10_000_000_000);
     t += 31_000;
@@ -123,7 +123,7 @@ describe("makeStorageCapResolver", () => {
         return Reflect.get(target, key, recv);
       },
     });
-    const resolve = makeStorageCapResolver(port, flaky, { warn: (e: string) => { lines.push(e); } });
+    const resolve = makeStorageCapResolver(port, () => flaky, { warn: (e: string) => { lines.push(e); } });
     const id = await acct();
     expect(await resolve(id)).toBe(UNMETERED_STORAGE_CAP);
     expect(await resolve.planLimit(id)).toBeNull();
@@ -155,7 +155,7 @@ describe("makeStorageCapResolver", () => {
         };
       },
     };
-    const resolve = makeStorageCapResolver(port, tx, silent);
+    const resolve = makeStorageCapResolver(port, () => tx, silent);
     expect(await resolve(solo)).toBe(4_000_000_000);
     expect(await resolve.planLimit(solo)).toBe(2_000_000_000);
     expect(calls, "the plan's limit asked the program again").toBe(1);
@@ -168,7 +168,7 @@ describe("makeStorageCapResolver", () => {
 
 describe("the hosted composition utters the resolver — the wiring pin", () => {
   it("index.ts threads storageCapFor at attach AND refreshes it in the cycle spread", () => {
-    const src = readFileSync(join(HERE, "..", "src", "index.ts"), "utf8");
+    const src = readSource(join(HERE, "..", "src", "index.ts"));
     // Comments are prose, not wiring: the CODE census below must not be satisfiable — or
     // refusable — by a docblock, so they are stripped before the name checks.
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/[^\n]*$/gm, "");
@@ -185,7 +185,7 @@ describe("the hosted composition utters the resolver — the wiring pin", () => 
   });
 
   it("the reconcile-cron backstop is metered through the same resolver", () => {
-    const src = readFileSync(join(HERE, "..", "src", "reconcile-cron.ts"), "utf8");
+    const src = readSource(join(HERE, "..", "src", "reconcile-cron.ts"));
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/[^\n]*$/gm, "");
     expect(code).toContain("makeStorageCapResolver(");
     expect(code).not.toContain("UNMETERED_STORAGE_CAP");

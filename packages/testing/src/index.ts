@@ -1,0 +1,34 @@
+export * from "./types.js";
+export { SLOP } from "./slop.js";
+export {
+  fictionalNames,
+  guardFrom,
+  NAMESPACE_EXEMPTION,
+  parseGuardList,
+  PUBLIC_GUARD,
+  type FictionalName,
+  type GuardLists,
+  type GuardMode,
+  type NameVerdict,
+} from "./privacy.js";
+export {
+  account,
+  mailboxes,
+  tags,
+  tagsOf,
+  ohbox,
+  reads,
+  readsWaterline,
+  receipts,
+  receiptsGroups,
+  waiting,
+  screenedOut,
+  spam,
+  screenerEmptyStates,
+  triage,
+  search,
+  composeDraft,
+  notificationSettings,
+  counts,
+  getFixtures,
+} from "./data.js";

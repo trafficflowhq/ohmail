@@ -1,0 +1,30 @@
+/* One bar of a screen drawn as shape, and how shapes breathe while what they stand for is owed. */
+@layer oh {
+  .oh-shapebar {
+    --oh-shapebar-h: 10px;
+    display: block;
+    flex: none;
+    width: var(--oh-shapebar-part, auto);
+    height: var(--oh-shapebar-h);
+    border-radius: var(--r-pill);
+    background: var(--hover-ground);
+  }
+  .oh-shapebar[data-as="who"],
+  .oh-shapebar[data-as="title"] {
+    --oh-shapebar-h: var(--s3);
+  }
+  .oh-shapebar[data-as="time"] {
+    width: var(--s6);
+  }
+  :root[data-touch="0"] .oh-shapebar[data-as="more"] {
+    display: none;
+  }
+  @keyframes oh-shape-breathe {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0.5;
+    }
+  }
+}

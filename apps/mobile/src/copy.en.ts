@@ -1,3 +1,4 @@
+import { DRAFT_REPLY_COST_CREDITS } from "@ohmail/app-logic/writing/draft-reply";
 /**
  * Every string the chrome says, in one place — the phone's copy deck, in English. Blanc's rule
  * is factual microcopy only: no slogans, no praise, no invented numbers; each line is the
@@ -30,15 +31,9 @@ const PIN_CHANGED =
 const TABLE = {
   /* --------------------------------------------------------------- welcome */
 
-  welcomeTitle: "Which mailbox is this?",
-  welcomeLead:
-    "Whatever organizes your mail has to be running — a computer, a server, or this phone while ohmail is open. Your mail stays on your mail server.",
-  /*
-   * NO `welcomeScan` / `welcomeOther`, AND NO `welcomeHow`. The first two were the buttons this
-   * screen led with, and `welcomeHow` said "No password is ever typed here" — true while all
-   * three doors scanned a code, false the day the standalone door types one. The scan verb still
-   * exists where a scan is genuinely the next step (`scanTitle`, `stepScan`).
-   */
+  welcomeTitle: "Mail from people you said yes to.",
+  welcomeConnect: "Connect a mailbox",
+  welcomeScan: "Scan a code",
 
   /* ------------------------------------------------------------------ doors */
 
@@ -180,6 +175,61 @@ const TABLE = {
 
   /* The credential form. Every label here is the web catalogue's, byte for byte — the same
      mailbox asked for in the same words on whichever surface somebody opens it. */
+  phoneStandaloneProvider: "My mail is with",
+  phoneStandaloneProviderInput: "Provider or email address",
+  phoneStandaloneOther: "Other (IMAP)",
+  phoneStandaloneBridge: (provider: string) => `${provider} reaches other mail apps through its bridge. Connect it on the computer where the bridge runs.`,
+  phoneStandaloneAppPassword: "App password",
+  phonePasswordHelp: "Where to make one",
+  phoneMailboxIAm: "I’m",
+  phoneMailboxProvider: (provider: string) => `My mail is with ${provider}.`,
+  phoneMailboxPrerequisite: "2-Step Verification on",
+  phoneMailboxEmailBlank: "email address",
+  phoneMailboxWith: " with",
+  phoneMailboxPassword: "password",
+  phoneStandaloneAppPasswordClause: "app password",
+  phoneMailboxHostPorts: "Host and ports",
+  phoneServersPaired: "Paired",
+  phoneServersConnectTo: "Connect to",
+  phoneServersForget: "Forgetting deletes the pairing and the mail this phone had copied.",
+  phoneMailboxEntryHint: "type it",
+  phoneMailboxAppCodeHint: "16 letters",
+  phoneMailboxSeenAs: "People see me as",
+  phoneMailboxNameBlank: "name",
+  phoneProviderLater: "Later",
+  phoneProviderPickAnother: "Pick another",
+  phoneServerSentence: "My server is at",
+  phoneServerBlank: "its address",
+  phoneServerHint: "It is the address you open ohmail at in a browser, with nothing after the host.",
+  phoneServerAndroid: "A private name needs a certificate from an authority Android already trusts. A public name or a Tailscale address works.",
+  phoneServerIos: "A private name works once you install its root and turn on trust in Certificate Trust Settings. A public name or a Tailscale address works.",
+  phonePairSentenceJoin: ", and",
+  phonePairTokenSentence: "its pairing token is",
+  phonePairLink: "Pairing link",
+  phonePairLinkSentence: "The link is",
+  phonePairManualSwitch: "Use an address and token",
+  phonePairTokenBlank: "paste it",
+  phonePairLinkHint: "The whole pairing link fits into the token’s blank too.",
+  phonePairNetworkHint: "For a computer on your own network, scan its code instead. The address alone is not enough.",
+  phoneComputerSentence: "Scan the code on my computer.",
+  phoneComputerAndroid: "ohmail on that computer does the organizing. This phone keeps a copy.",
+  phoneComputerNoPin: "ohmail cannot verify a computer reached over your own network here.",
+  phoneComputerIos: "On an iPhone, use the Tailscale address that pane also shows.",
+  phoneCloudBrowser: "Continue in the browser",
+  phoneCloudBrowserHint: "Sign in to ohmail in your browser, then open Settings › Devices and scan its code here.",
+  phoneCloudSignIn: "Sign in in browser",
+  phoneCloudJoin: "Create an account in browser",
+  phoneCloudBrowserRefused: "Your browser did not open. Open ohmail in your browser and try there.",
+  phoneWallStopped: "ohmail has stopped organizing this account, and your mailbox is untouched.",
+  phoneFoldersTitle: "Where your mail lives",
+  phoneFoldersInbox: "Ohbox shows mail from people you said yes to. History shows older mail. Both are views of your inbox.",
+  phoneFoldersScreener: "Mail from people you haven’t decided about waits in Screener.",
+  phoneFoldersNews: "Newsletters and things to read later.",
+  phoneFoldersReceipts: "Receipts, orders and tickets.",
+  phoneFoldersScreened: "Mail you screened out.",
+  phoneFoldersQuarantine: "Mail marked as spam.",
+  phoneFoldersOther: "Sent, Drafts, Trash, Junk and your own folders stay as they are.",
+
   phoneStandaloneFormTitle: "Your own mailbox",
   phoneStandaloneFormLead:
     "This phone connects to your mail server directly. Your password is stored on this phone, encrypted under a key held in its keystore, and is never sent to us.",
@@ -625,7 +675,8 @@ const TABLE = {
   scanBadCode: "Not an ohmail pairing code. The QR is on the Devices screen.",
   scanCameraOff: "Camera access is off, so there is nothing to scan with.",
   scanAllow: "Allow the camera",
-  scanManual: "Enter it by hand instead",
+  scanManual: "Enter it by hand",
+  scanDevices: "Settings › Devices",
   scanAgain: "Scan again",
 
   /* ── THE CONFIRMATION BEFORE A CODE IS SPENT ───────────────────────────────────────────────
@@ -697,6 +748,12 @@ const TABLE = {
      in Settings; `ui/late-lines.ts` chooses among whole sentences. Per who checks the mailboxes:
      ohmail Cloud, or a server somebody runs, which is never called Cloud and whose lateness is not
      "on us". */
+  latePhoneCloud: (since: string) => `ohmail Cloud has not checked since ${since}.`,
+  latePhoneServer: (since: string) => `Your ohmail server has not checked since ${since}.`,
+  quotaTitle: "The sending mailbox is full",
+  quotaWaiting: "Sent copies wait until your mail server has room.",
+  quotaMailboxes: "Mailboxes",
+  quotaNotNow: "Not now",
   lateTitle: "New mail is late.",
   lateTitleDays: (days: number) => (days === 1 ? "New mail is a day late." : `New mail is ${days} days late.`),
   lateLineCloud: (since: string) => `ohmail Cloud has not checked since ${since}. Nothing is lost, and it arrives as soon as checking runs again.`,
@@ -905,6 +962,8 @@ const TABLE = {
   forgetKeystoreRefused: (detail: string) =>
     `This phone would not let go of the pairing (${detail}). `
     + "Revoke this device from the server's Devices list, which ends the session wherever it is held.",
+  calendarCopyRemains:
+    "The calendar this phone copied could not be removed yet. ohmail will try again the next time it starts.",
   forgetMailRemains: (detail: string) =>
     "The pairing is removed, but the mail this phone had copied could not be deleted "
     + `(${detail}). ohmail will try again the next time it starts.`,
@@ -1071,6 +1130,7 @@ const TABLE = {
   readsTail: (shown: number) =>
     `All ${shown} issue${shown === 1 ? "" : "s"} shown. An item turns read once it rests on screen in the stream. A quick scroll past leaves it unread.`,
   receiptsTail: (shown: number) => `All ${shown} receipt${shown === 1 ? "" : "s"} shown.`,
+  mailEmptyTitle: "Nothing here",
   readsEmptyTitle: "No issues yet.",
   readsEmptyHint: "Newsletters and long reads you file here arrive as they sync.",
   receiptsEmptyTitle: "No receipts yet.",
@@ -1108,16 +1168,16 @@ const TABLE = {
     `Ohbox, News and Receipts become a rule — future mail from ${target} files automatically. Screen out and Spam write no rule here. The ✓ half also marks this mail read.`,
   /**
    * WHAT SCREEN OUT AND SPAM SEND, BEFORE EITHER IS PRESSED (`unsubscribeClaim`): the sender-level
-   * condition, now and for later mail, a fact where a held letter offers one-click. `domain`: `@domain`.
+   * condition for waiting mail, a fact where a held letter offers one-click. `domain`: `@domain`.
    */
   decideUnsub: (claim: UnsubSaid, target: string, domain: boolean) =>
     domain
       ? claim === "sends"
-        ? `Screen out and Spam also send the waiting senders at ${target} a one-click unsubscribe request, and ask again for later mail from the domain that offers one.`
-        : `Where senders at ${target} offer one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`
+        ? `Screen out and Spam also send the waiting senders at ${target} a one-click unsubscribe request for the waiting mail. Sent requests cannot be taken back.`
+        : `Where senders at ${target} offer one-click unsubscribe, Screen out and Spam also ask to unsubscribe you for the waiting mail. Sent requests cannot be taken back.`
       : claim === "sends"
-        ? `Screen out and Spam also send ${target} a one-click unsubscribe request, and ask again for their later mail that offers one.`
-        : `Where ${target} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you, now and for their later mail.`,
+        ? `Screen out and Spam also send ${target} a one-click unsubscribe request for the waiting mail. Sent requests cannot be taken back.`
+        : `Where ${target} offers one-click unsubscribe, Screen out and Spam also ask to unsubscribe you for the waiting mail. Sent requests cannot be taken back.`,
   /** phone: the ✓ affordance is a toggle in the bar, not a modifier key. */
   decideReadToggle: "& read",
   decideReadOn: "Filing as read — the count will not move.",
@@ -1167,7 +1227,7 @@ const TABLE = {
 
   /* ---------------------------------------------------------------- triage */
 
-  triage: "Piles",
+  triage: "Triage",
   replyLater: "Answer Later",
   setAside: "Parked",
   /** The message ACTION, not the pile: a verb on a button, a noun on the rail. */
@@ -1236,6 +1296,14 @@ const TABLE = {
         return "this phone's database would not promise to keep a saved change through a power cut, so the mailbox on it was not opened";
       case "engine_store_closed":
         return "the mailbox on this phone had already been closed, so nothing was read or saved";
+      case "store_copy_no_room":
+        return "this phone has too little free space to keep a copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed";
+      case "store_copy_failed":
+        return "this phone could not keep a checked copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed";
+      case "shell_keeper_not_deleted":
+        return "this phone could not delete the unsent letters and queued changes it kept for that mailbox";
+      case "shell_view_not_cleared":
+        return "this phone could not delete the copy of that mailbox's mail its mail view kept";
       /* A code this build does not know is a newer store talking to an older deck. Saying the code
          is better than saying nothing, and it is the one arm that can reach a screen unworded. */
       default: return code;
@@ -1268,7 +1336,7 @@ const TABLE = {
   junkNoteUnnamed:
     "Your mail server's own junk folder is not listed here — ohmail does not mirror it.",
   folderFilter: "Filter folders",
-  folderNoMatch: "No folder matches.",
+  folderNoMatch: "No folder matches",
   folderShowAll: (n: number) => `Show all ${n}…`,
   folderShowFewer: "Show fewer",
   folderExpand: (name: string) => `Expand ${name}`,
@@ -1280,6 +1348,7 @@ const TABLE = {
    * build has no reach-past on any screen. A phone that has not fetched a folder's older
    * mail may not claim the folder is empty — it says what it holds instead.
    */
+  folderOlderSearch: "Older in Search",
   folderTail: (n: number) => `${n} message${n === 1 ? "" : "s"} from this folder on this phone.`,
   folderEmptyTitle: "No mail from this folder is on this phone.",
   folderEmptyHint:
@@ -1299,12 +1368,12 @@ const TABLE = {
   historyExplainerMore:
     "Nothing here has moved: each message is still where your mail server keeps it, and its row names that folder. The months and years on the right jump anywhere in it.",
   historyExplainerMoreLabel: "What History holds, and where it lives",
-  historyEmptyTitle: "Nothing here yet.",
+  historyEmptyTitle: "Nothing here",
   historyEmptyHint: "Your mail appears as it syncs.",
   /* The end of the store's timeline: its own count, the first message you own above it. */
   historyTail: (n: number) => `${n} message${n === 1 ? "" : "s"} in History.`,
   historyLoading: "Loading your mail.",
-  historyStoreUnavailable: "Your server did not answer — showing the recent mail this device holds.",
+  historyStoreUnavailable: "Your server did not answer, so these are from the recent mail this device holds.",
   historyStoreRetry: "Try again",
   /* A placeholder row whose page did not load: said in the row, where the reader is. */
   historyRowsNotLoaded: "These messages did not load. Scroll to try again.",
@@ -1414,7 +1483,83 @@ const TABLE = {
   /* SEARCH — the webapp's `search` namespace, sentence for sentence where the surface is
      the same: the box, the two tiers, the honest coverage sentence, and the address door the
      empty state offers (the web's own empty-state fix, mirrored). */
-  searchPlaceholder: "Search everything",
+  searchFacetFrom: "From",
+  searchFacetPlace: "Place",
+  searchFacetAttachment: "Has attachment",
+  searchFacetUnread: "Unread",
+  searchTo: "To",
+  searchAll: "All",
+  searchNameOrAddress: "Name or address",
+  searchSince: "Since",
+  searchUntil: "Until",
+  searchApply: "Apply",
+  searchDateWord: "Date",
+  searchDateWeek: "This week",
+  searchDateMonth: "This month",
+  searchDateYear: "This year",
+  searchSortLabel: "Sort by",
+  searchSort_relevance: "Best match",
+  searchSort_date_desc: "Newest first",
+  searchSort_date_asc: "Oldest first",
+  searchSort_mailbox: "Mailbox",
+  searchSort_sender: "Sender",
+  draftAiRunning: "Drafting…",
+  draftAiFailed: "The draft could not be written.",
+  draftAiUnavailable: "Drafting needs a connected account.",
+  draftAiLetterLeft: "The draft is in Drafts.",
+  draftAiFailedOpaque: "The draft was written but could not be loaded. Pressing again fetches the same one — it does not buy a second.",
+  draftAiFailedOpaqueEarly: "Something went wrong on the server and no draft was made. Pressing again retries this request, and it is never charged twice.",
+  draftAiCreditsUsed: "The draft stopped. Your credits were used.",
+  draftAiCreditsReturned: "This did not work. Your credits are back.",
+  draftAiCreditsOwed: "This did not work. Your credits will be returned.",
+  draftAiDeclined: "The model declined to draft this reply.",
+  draftAiDeclinedCreditsReturned: "The model declined to draft this reply. Your credits are back.",
+  draftAiDeclinedCreditsOwed: "The model declined to draft this reply. Your credits will be returned.",
+  draftAiInsufficientCredits: "This account has no AI credits left.",
+  draftAiAiDisabled: "AI is switched off for this account.",
+  draftAiAiUnavailable: "AI is unavailable right now. Please try again.",
+  draftAiNoModel: "Connect an AI model to draft from your words.",
+  draftAiFromText: "Draft from text",
+  draftAiAgain: "Draft again",
+  draftAiYourText: "Your text",
+  draftAiGenerated: "Draft",
+  draftAiNeedWords: "Write a few words first.",
+  draftAiConfirm: `Use ${DRAFT_REPLY_COST_CREDITS} credits`,
+  draftAiOffer: `This writes a draft using ${DRAFT_REPLY_COST_CREDITS} credits. You can edit it before sending.`,
+  composeFormat: "Format text",
+  composeBold: "Bold",
+  composeItalic: "Italic",
+  composeUnderline: "Underline",
+  composeFormatSelect: "Select text to format it.",
+  composeEmoji: "Emoji",
+  composeFileTools: "Attach",
+  replyRunSendNext: "Done → next",
+  replyRunStart: "Reply Run",
+  replyRunProgress: (step: number, total: number) => `${step} of ${total}`,
+  replyRunSkip: "Skip",
+  replyRunExit: "Exit",
+  draftToPerson: (person: string) => `To ${person}`,
+  readerRecipientDetails: "Details",
+  readerDetailsShort: "details",
+  readerToLine: (names: string) => `to ${names}`,
+  readerCcLine: (names: string) => `cc ${names}`,
+  mailCalendarInstall: "ohcal is the calendar app for the same account.",
+  mailCalendarStore: "Open store",
+  mailWrite: "Write",
+  searchSinceDate: "Since · YYYY-MM-DD",
+  searchUntilDate: "Until · YYYY-MM-DD",
+  screenSuggestions: "Suggestions",
+  searchCustomDate: "Custom range",
+  screenApplySuggestions: (n: number) => `Apply ${n} ${n === 1 ? "suggestion" : "suggestions"}`,
+  screenBulkUnsubscribe: (n: number) => `Later mail goes too, with ${n} unsubscribe ${n === 1 ? "request" : "requests"} and no undo.`,
+  searchPlaceholder: "Search",
+  searchClear: "Clear search",
+  searchResultsLine: (n: number) => `Results. ${n}`,
+  scheduledCount: (n: number) => `Scheduled. ${n}`,
+  draftListCount: (n: number) => `Drafts. ${n}`,
+  streamToYouDetails: "to you · details",
+  screenApplyShort: (n: number) => `Apply ${n}`,
+  screenHeldShort: (n: number) => `${n} held`,
   searchResultsHead: (n: number) => (n === 1 ? "1 result" : `${n} results`),
   searchSimilarHead: "Similar",
   searchSimilarHint: "Nothing matched exactly, so these are the closest words.",
@@ -1439,8 +1584,8 @@ const TABLE = {
   searchSyncedAbout: (n: number) => `Searched the mail synced so far — about ${n} matched`,
   searchSyncing: "The rest of your mail has not synced yet.",
   searchServerMs: (ms: number) => `${ms} ms`,
-  searchUnanswered: "Your server did not answer — showing the recent mail this device holds.",
-  searchFailed: "Your server could not run this search — showing the recent mail this device holds.",
+  searchUnanswered: "Your server did not answer, so these are from the recent mail this device holds.",
+  searchFailed: "Your server could not run this search, so these are from the recent mail this device holds.",
   searchWholeRetry: "Search your whole mailbox again",
   searchIndexingProgress: (percent: number) => `Older mail is still being indexed — ${percent} % done.`,
   searchBounded: (n: number) => `Showing the ${n} best matches — sort by date to walk them all.`,
@@ -1525,7 +1670,7 @@ const TABLE = {
    */
   face: "Look",
   faceHint: "ohmarchy — a tiling, keyboard-first look inspired by Omarchy.",
-  facePaper: "paper",
+  facePaper: "oh",
   faceOhmarchy: "ohmarchy",
   faceScopeAll: "Applies on all your devices.",
   faceScopeDevice: "Applies on this device only.",
@@ -1644,20 +1789,20 @@ const TABLE = {
    * being organized — dismissing it is how a person ends that. The fourth door promises
    * exactly this: "It organizes while its notification is shown. Dismiss the notification to
    * stop." All three strings are read from this deck when the service starts; Android string
-   * resources would be a second copy in two languages and could not hold the address.
+   * resources would be a second copy in two languages.
    */
 
   /** The channel's name in system notification settings, and nothing else. */
   stateOrganizing: "Organizing",
   /**
-   * The notification's body. The address comes from the mailbox row, and it is the whole point:
-   * a person with two phones needs to know WHICH mailbox this one is holding.
+   * The notification's body. It names no mailbox: a notice is read on a locked screen by whoever
+   * stands there, and the address is the person's own. It says what the phone is doing, and where.
    *
    * It does NOT say "tap to stop". A tap opens the app — the platform's convention for every
    * notification anybody has ever touched — and a body promising otherwise would fire the stop
    * from the open-the-app reflex. The stop is the action button beside it.
    */
-  notifBody: (address: string): string => `Organizing ${address}.`,
+  notifBody: "Organizing your mail on this phone.",
   /** The one action. The words of the desktop's own stop verb, so the two cannot drift. */
   notifStop: "Stop organizing",
   /* THE BODY A STOP THAT COULD NOT COMPLETE LEAVES. The notification stays up because the engine
@@ -1798,12 +1943,19 @@ const TABLE = {
     "Wake notifications are off on this phone. Your server would not remove the registration, so "
     + "it may keep trying the old address for a while — try again, or revoke this device from the "
     + "server's Devices list.",
-  /** The distributor exists and the registration did not land. One sentence per real cause. */
+  /**
+   * The distributor exists and no registration stands. One sentence per real cause. `switched_off` is the
+   * person's own doing and no failure: with notifications or new mail switched off on this phone there is
+   * nothing to start a closed app for, so the registration is taken down until both are on again.
+   */
   wakeOff: (reason: string): string => reason === "endpoint_refused"
     ? "Your distributor's address was refused by the server, so wake notifications are off. Mail "
       + "still arrives when you open the app or pull to refresh."
-    : "Wake notifications could not be set up. Mail still arrives when you open the app or pull to "
-      + "refresh.",
+    : reason === "switched_off"
+      ? "Notifications for new mail are switched off on this phone, so nothing wakes ohmail while it is "
+        + "closed. Mail still arrives when you open the app or pull to refresh."
+      : "Wake notifications could not be set up. Mail still arrives when you open the app or pull to "
+        + "refresh.",
 
   /* ------------------------------------------------- world (phone-specific) */
 
@@ -1832,13 +1984,9 @@ const TABLE = {
    * Undo stops the request; sent at once (`sent`, `maysent`), that it cannot be taken back.
    */
   liveAlsoUnsubscribing: (said: string, how: UnsubToast) =>
-    how === "sends"
-      ? `${said} Undo also stops their one-click unsubscribe request; once Undo is gone it is sent and cannot be taken back, and later mail of theirs that offers one-click is unsubscribed too.`
-      : how === "may"
-        ? `${said} Where they offer one-click unsubscribe, ohmail asks to unsubscribe you once Undo is gone, and again for their later mail; Undo stops it too.`
-        : how === "sent"
-          ? `${said} ohmail is sending them a one-click unsubscribe request, which cannot be taken back, and asks again for their later mail that offers one-click.`
-          : `${said} Where they offer one-click unsubscribe, ohmail asks to unsubscribe you now and for their later mail; a sent request cannot be taken back.`,
+    how === "sends" || how === "sent"
+      ? `${said} ohmail is sending a one-click unsubscribe request for the waiting mail. Sent requests cannot be taken back.`
+      : `${said} Where the waiting mail offers one-click unsubscribe, ohmail asks to unsubscribe you. Sent requests cannot be taken back.`,
   /**
    * THE SAME PRESS ON A MAILBOX THIS PHONE DOES NOT ORGANIZE — and it must not say "files".
    *
@@ -1985,6 +2133,13 @@ const TABLE = {
   /* ------------------------------------------------- the mail body's frame */
 
   /** The blocked-content notice — the web reader's sentences, word for word. */
+  mailEventAdd: "Add",
+  mailEventDismiss: "Dismiss calendar suggestion",
+  mailEventOnCalendar: "On calendar",
+  mailEventQueued: "Waiting to add to calendar",
+  mailEventFailed: "The calendar did not take this change.",
+  mailImagesCaption: "Images blocked",
+  mailTrackerCaption: "Tracker blocked",
   mailImagesBlockedOne: "1 remote image blocked.",
   mailImagesBlockedMany: (n: number) => `${n} remote images blocked.`,
   mailPixelOne: "One of them is a tracking pixel.",
@@ -2058,9 +2213,6 @@ const TABLE = {
   /* -------------------------------------------------------- message actions */
 
   routedBy: "Why it landed here",
-  earlierInThread: (n: number) => `Earlier in this conversation — all ${n} shown`,
-  laterInThread: (n: number) => `Later in this conversation — all ${n} shown`,
-  restOfThread: (n: number) => `The rest of this conversation — all ${n} shown`,
   openMessage: "Open",
   back: "Back",
 
@@ -2100,7 +2252,7 @@ const TABLE = {
    * pill's Undo cancels a delete not yet sent — the only undo this wire can honour.
    */
   actionDelete: "Delete",
-  deleteAsk: "Delete this message?",
+  deleteAsk: "Move to Trash.",
   deleteNote:
     "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
   toastDeleted: "Moved to Trash.",
@@ -2153,9 +2305,10 @@ const TABLE = {
   unscreenedMovedNone: "Nothing left to screen.",
   unscreenedFailed: "Could not screen that mail. Try again.",
   /** THE NOTE ON NEWS AND RECEIPTS — the web's `screener.pileUnscreened*` sentences, word for word. */
-  pileUnscreenedLead: (n: number, atLeast?: boolean) =>
-    atLeast ? `At least ${n} letters here are from senders you never let in.`
-      : n === 1 ? "1 letter here is from a sender you never let in." : `${n} letters here are from senders you never let in.`,
+  pileUnscreenedLead: (n: number, pile: string, atLeast?: boolean) =>
+    `${atLeast ? "At least " : ""}${n === 1 ? `1 letter in ${pile} comes from a sender you haven't screened yet` : `${n} letters in ${pile} come from senders you haven't screened yet`}`,
+  pileUnscreenedLine: "Screen sends them to the Screener, where you decide once per sender. Nothing is deleted.",
+  pileUnscreenedDismiss: "Not now",
   /** The deliberate read/unread, spoken so the pill has a sentence to ride (silent before the undo work). */
   toastRead: "Marked as read.",
   toastReadPartial: (done: number, of: number) => `Marked ${done} of ${of} as read.`,
@@ -2269,10 +2422,11 @@ const TABLE = {
   organizerStillWaiting: (holder: string) => `Still waiting for ${holder}.`,
   organizerStillWaitingUnknown: "Still waiting for the organizer.",
   /** The reply / forward composer (`reply.*`). */
+  replyRecipientLabel: "To",
   replyTo: (name: string) => `Reply to ${name}`,
   replyToAll: (names: string) => `Reply to ${names}`,
   replyCcLine: (names: string) => `Cc ${names}`,
-  replyPlaceholder: "Write your reply…",
+  replyPlaceholder: "Reply",
   replySend: "Send",
   /* SEND + DONE — the second send action, beside Send under the same lock. */
   sendAndDone: "Send + Done",
@@ -2283,7 +2437,7 @@ const TABLE = {
   sendCancelledInDrafts: "Send cancelled. The message is in Drafts.",
   sendCancelledNotKept: "Send cancelled. Nothing was sent, but the words could not be kept as a draft.",
   replySending: "Sending…",
-  replySent: "Reply sent.",
+  replySent: "Sent",
   /* WHEN THE SERVER ANSWERED FROM AN EARLIER PRESS. A second press under a resumed send key
      is answered from the first reservation, so what left is the earlier message — never two
      copies, and never a confirmation that names words nobody sent. Said only when the server
@@ -2387,7 +2541,7 @@ const TABLE = {
   composeAddCopies: "Cc, Bcc",
   forwardToPlaceholder: "name@example.org, …",
   forwardNotePlaceholder: "Add a note (optional)",
-  forwarded: "Forwarded.",
+  forwarded: "Forwarded",
   forwardedTo: (name: string) => `Forwarded to ${name}`,
   forwardEarlierWent: "This forward had already been sent. Your newer text was not sent as a second copy.",
   /* A MAIL THAT ANSWERS NOTHING — the same composer with no parent, so it asks the two
@@ -2398,6 +2552,11 @@ const TABLE = {
   composeNewHead: "New mail",
   composeSubject: "Subject",
   composeSubjectPlaceholder: "What it's about (optional)",
+  composeFromLabel: "From",
+  composeAiDraftLabel: "AI draft",
+  composeDraftLabel: "Draft",
+  composeReplyPaperHint: "Reply, or a few words for Draft reply",
+  composePaperPlaceholder: "Write, or a few words to draft from",
   composeBodyPlaceholder: "Write your message…",
   composeToPlaceholder: "name@example.org, …",
   /** A suggested recipient, read out: what the press adds. */
@@ -2494,7 +2653,7 @@ const TABLE = {
   /** A server that keeps no files for a later send (an older one), and how far ahead one that does keeps them. */
   sendLaterFilesNotHere: "This server can't keep files for a later send, so this message can't be scheduled with them. Send it now, or remove the files to schedule it.",
   sendLaterFilesDays: (days: number) => `A message with files can be scheduled up to ${days} ${days === 1 ? "day" : "days"} ahead.`,
-  scheduledFor: (when: string) => `Scheduled for ${when}.`,
+  scheduledFor: (when: string) => when,
   /** The Scheduled surface — the More tab's row, its screen, and the one verb on a row. */
   scheduled: "Scheduled",
   scheduledWhen: (when: string) => `Sends ${when}`,
@@ -2745,11 +2904,11 @@ const TABLE = {
    * distinct, removable, editable block below the writing area, serialized exactly as shown.
    */
   sigLabel: "Signature",
-  sigRemove: "Remove signature for this message",
-  sigAria: "Signature — part of this message; edit or remove it here",
+  sigRemove: "Remove signature",
+  sigAria: "Signature",
   /** The tag picker (`tag.*`). */
   tagPlaceholder: "Tag this message…",
-  tagNone: "No tags yet. Type a name to create your first.",
+  tagNone: "No tags yet.",
   tagCreate: (name: string) => `Create “${name}”`,
   tagTagged: (name: string) => `Tagged “${name}”.`,
   tagUntagged: (name: string) => `Untagged “${name}”.`,
@@ -2914,7 +3073,7 @@ const TABLE = {
      word for word; its why names the phone, and it tries again each time the account answers. */
   unsavedPendingCount: (n: number) => (n === 1 ? "1 change has not gone through yet" : `${n} changes have not gone through yet`),
   unsavedQueuedWhy: "This phone could not reach your account. It keeps trying.",
-  unsavedShow: "Show them",
+  unsavedShow: "Show",
   unsavedHide: "Hide",
   unsavedRetry: "Try again",
   unsavedDiscard: "Discard",
@@ -3227,7 +3386,7 @@ const TABLE = {
   wallCheckAgain: "Check again",
   wallMoveOut: "Move to self-hosted",
   wallMoveOutHint:
-    "Hands over your rules, Screener decisions and settings as one file, which your own install reads when it takes over this mailbox.",
+    "One file with your rules, Screener decisions and settings, which your own server reads when it takes over this mailbox.",
   wallMoveOutGuide: "Read the self-host guide",
   wallMoveOutFailed: "The file could not be made just now. Try again in a moment.",
   /* The export button's own busy word. It used to borrow the sign-in screen's "Signing in…",
@@ -3238,10 +3397,10 @@ const TABLE = {
      has never asserted one — the server refuses the erasure route to it by design. Saying so is
      the honest control; a button that could only ever be refused is not. */
   wallDeleteElsewhere:
-    "Deleting your account needs your second factor, so it happens on your account page in a browser. Your mailbox is not touched.",
+    "It needs your second factor, so it happens on your account page in a browser. Your mailbox is not touched.",
   /* THE STORE FACE'S DELETE: the deletion-only page, which sells nothing (App Review 3.1.3(f)). */
   wallDeletePage:
-    "Deleting your account happens on ohmail.app/delete-account in a browser. Your mailbox is not touched.",
+    "It happens on ohmail.app/delete-account in a browser. Your mailbox is not touched.",
 
   stripGraceEnds: (date: string) => `Your trial ended. ohmail keeps organizing until ${date}.`,
   stripPaymentFailed: (date: string) =>
@@ -3470,6 +3629,9 @@ const TABLE = {
   previewShareHint: "Share it to open it in another app.",
   previewPdfMore: (n: number) => `The first ${n} pages are shown.`,
   previewFrameLabel: "Attachment preview",
+  shellOpening: "Opening your mail…",
+  shellWebViewMissing: "This phone's web view is missing or too old for ohmail. Update Android System WebView, then open ohmail again.",
+  shellEnded: "ohmail's view stopped several times in a row. Close ohmail and open it again.",
 };
 
 /**

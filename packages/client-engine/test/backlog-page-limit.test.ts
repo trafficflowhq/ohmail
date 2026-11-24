@@ -1,3 +1,4 @@
+import type { MutationOutcome } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
   BACKLOG_PAGE_LIMIT,
@@ -7,7 +8,6 @@ import {
   OhmailEngine,
   STALE_RESUME_MS,
   type EngineAdapter,
-  type MutationOutcome,
   type SyncChange,
   type SyncResponse,
 } from "../src/index.js";

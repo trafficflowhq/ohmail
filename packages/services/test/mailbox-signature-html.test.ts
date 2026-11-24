@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes } from "@trafficflow/db";
 import {
-  MAILBOX_SIGNATURE_MAX_CHARS, mailboxSignatureHtmls, mailboxSignatures,
+  MAILBOX_SIGNATURE_MAX_CHARS, dbFor, mailboxSignatureHtmls, mailboxSignatures,
   setMailboxSignature, type ServiceContext,
 } from "../src/index.js";
 
@@ -39,7 +39,7 @@ async function setup() {
     .values({ accountId, provider: "imap", address: "one@example.com" }).returning();
   let tick = 0;
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date(Date.parse("2026-09-08T00:00:00.000Z") + ++tick * 1_000),
     requestId: "r",
   };
@@ -154,8 +154,8 @@ describe("mailboxSignatureHtmls — only the mailboxes that carry markup", () =>
     await setMailboxSignature(ctx, mb, null, "<p><em>Anna</em></p>");
     await setMailboxSignature(ctx, second!.id, "plain words");
 
-    const html = await mailboxSignatureHtmls(db, accountId);
-    const text = await mailboxSignatures(db, accountId);
+    const html = await mailboxSignatureHtmls(dbFor(db, accountId), accountId);
+    const text = await mailboxSignatures(dbFor(db, accountId), accountId);
     expect(html).toEqual({ [mb]: "<p><em>Anna</em></p>" });
     // BOTH mailboxes have a signature; only one of them has markup. An absent key in the markup
     // map is "no formatting", never "no signature" — the text map is the one that answers that.

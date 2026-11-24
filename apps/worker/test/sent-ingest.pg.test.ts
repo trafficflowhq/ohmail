@@ -6,11 +6,11 @@ import { changeLog, drafts, folderState, mailboxFolders, messages, outboundSends
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
 import { WATCHED_FOLDERS } from "@trafficflow/core/adapters/imap";
-import { SendService, type ServiceContext } from "@trafficflow/services";
+import { dbFor, SendService, type ServiceContext } from "@trafficflow/services";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { buildCursor, runSyncCycle } from "../src/sync.js";
-import { makeHarness, rawClient, DB_URL } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { buildCursor, runSyncCycle } from "@ohmail/organizer/sync";
+import { makeHarness, rawClient, DB_URL } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * THE USER'S OWN MAIL, END TO END — slice against real IMAP and real Postgres.
@@ -42,7 +42,7 @@ const CANONICAL = new Set<string>(WATCHED_FOLDERS);
 type Harness = Awaited<ReturnType<typeof makeHarness>>;
 
 function ctxFor(h: Harness): ServiceContext {
-  return { db: h.db, accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
+  return { db: dbFor(h.db, h.accountId), accountId: h.accountId, userId: null, now: () => new Date(), requestId: "r" };
 }
 
 /**

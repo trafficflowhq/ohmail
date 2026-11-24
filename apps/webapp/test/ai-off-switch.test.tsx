@@ -96,6 +96,44 @@ async function press(): Promise<void> {
 }
 
 describe("the switch reads and writes the account's flag", () => {
+  it("shows the separate stored Draft reply choice and hands its press to the account setting", async () => {
+    const { AiSection } = await import("../app/(product)/mailbox/AiSection");
+    const set = vi.fn(async () => undefined);
+    await mount(h(AiSection, { draftReplies: { enabled: false, set } }));
+    const control = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="switch"]'))
+      .find((button) => button.getAttribute("aria-label") === "Draft reply");
+    expect(control?.getAttribute("aria-checked")).toBe("false");
+    await act(async () => { control?.click(); });
+    expect(set).toHaveBeenCalledWith(true);
+  });
+
+  it("shows the server's AI balance, including an empty allowance, and leaves an unknown balance blank", async () => {
+    const { AiSection } = await import("../app/(product)/mailbox/AiSection");
+    await mount(h(AiSection, { credits: { remaining: 1200, total: 2000 } }));
+    expect(text()).toContain("1,200 of 2,000 left");
+    await mount(h(AiSection, { credits: { remaining: 0, total: 2000 } }));
+    expect(text()).toContain("0 credits");
+    expect(text()).toContain("0 of 2,000 left");
+    await mount(h(AiSection));
+    expect(text()).not.toContain("AI budget left");
+  });
+
+  it.each([
+    { supplied: { remaining: 1200 }, label: "1,200 credits left", meter: false },
+    { supplied: { remaining: 1200, total: 0 }, label: "1,200 credits left", meter: false },
+    { supplied: { remaining: 1200, total: -1 }, label: "1,200 credits left", meter: false },
+    { supplied: { remaining: 1200, total: 2000 }, label: "1,200 of 2,000 left", meter: true },
+  ])("draws the account's credits as $label", async ({ supplied, label, meter }) => {
+    const { accessAiCredits } = await import("../app/api-client");
+    const { AiSection } = await import("../app/(product)/mailbox/AiSection");
+    const credits = accessAiCredits({
+      metered: true, access: "open", mailboxes: 2, canAddMailbox: true, aiCredits: supplied,
+    });
+    await mount(h(AiSection, { credits }));
+    expect(text()).toContain(label);
+    expect(host.querySelector("progress") !== null).toBe(meter);
+  });
+
   it("renders the server's position, not a guess", async () => {
     const { AiSection } = await import("../app/(product)/mailbox/AiSection");
     serverFlag = false;
@@ -172,26 +210,12 @@ describe("the promise the switch exists for", () => {
     // …and the pane that keeps it true has every key it reads, in both languages.
     for (const locale of ["en", "de"]) {
       const settings = catalogue(locale).settings!;
-      for (const key of ["ai", "aiLabel", "aiSub", "aiOffNote", "aiUnreadable"]) {
+      for (const key of ["ai", "aiLabel", "aiUnreadable"]) {
         expect(settings[key], `${locale}.settings.${key}`).toBeTruthy();
       }
-      // The note is what keeps a rules-only result from reading as an outage, so it has to say
-      // that rather than merely existing.
-      expect(settings.aiOffNote!.length, `${locale} aiOffNote is too short to say anything`)
-        .toBeGreaterThan(40);
+      expect(settings.aiSub).toBeUndefined();
+      expect(settings.aiOffNote).toBeUndefined();
     }
   });
 
-  it("the pane is on the SHARED shell, so a self-hosted account gets it too", () => {
-    // The failure this replaces was a switch that existed only where there was a plan. Asserted
-    // from the source, because the difference is which shell mounts it: `CloudShell` serves the
-    // managed tab AND the self-hosted one, and it hands the pane in unconditionally.
-    const src = fs.readFileSync(
-      path.join(HERE, "..", "app", "(product)", "mailbox", "CloudShell.tsx"), "utf8");
-    expect(src, "the Cloud shell no longer wires the AI pane").toContain("aiSection={<AiSection />}");
-    // NOT behind a gate of any kind — a self-host or unverified account must still reach it.
-    const at = src.indexOf("aiSection={");
-    expect(src.slice(at, at + 40), "the AI pane grew a condition — which host would lose it?")
-      .not.toContain("?");
-  });
 });

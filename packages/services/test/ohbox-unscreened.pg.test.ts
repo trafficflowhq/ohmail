@@ -1,16 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbFor } from "../src/context.js";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accounts, approvals, auditLog, contacts, drafts, folderState, mailboxes, messageBodies,
+  accounts, accountSettings, approvals, auditLog, contacts, drafts, folderState, mailboxes, messageBodies,
   messageStates, messages, rules, threads,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import {
   screenUnscreened, unscreenedSummary, OHBOX_UNSCREENED_AUDIT_ACTION,
   type ServiceContext,
@@ -42,12 +41,13 @@ const ARRIVED = new Date("2026-09-17T08:00:00.000Z");
 const OLD = new Date("2024-03-01T08:00:00.000Z");
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 interface World { accountId: string; mailboxId: string; address: string }
 
 const ctxOf = (w: World): ServiceContext => ({
-  db: db as unknown as ServiceContext["db"], accountId: w.accountId, userId: null,
+  db: dbFor(db, w.accountId), accountId: w.accountId, userId: null,
   now: () => NOW, requestId: `ous-${randomUUID().slice(0, 8)}`,
 });
 
@@ -79,10 +79,10 @@ async function seedOhbox(w: World, o: {
     nativeLocator: { folder, ref: `1:${i}` },
   }).returning();
   await db.insert(messageBodies).values({
-    messageId: m!.id, text: o.body ?? "", html: null, headers: o.headers ?? {},
+    messageId: m!.id, accountId: m!.accountId, text: o.body ?? "", html: null, headers: o.headers ?? {},
   });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
     lastSetBy: o.lastSetBy ?? "external", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
@@ -102,9 +102,10 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
     client = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(PG_TEST_URL);
+    db = owned.db;
   }, 120_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await owned?.close(); await client?.end({ timeout: 5 }); });
 
   it("a stranger's read Ohbox mail is offered, and the press sends it to the Screener", async () => {
     const w = await newWorld();
@@ -126,6 +127,22 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     expect(await desiredOf(id)).toEqual({ desired: GATE, status: "pending" });
     // Older than the window: neither counted nor moved.
     expect(await desiredOf(old)).toEqual({ desired: OHBOX, status: "reconciled" });
+  });
+
+  it("counts and screens recent Receipts while keeping older receipts in place", async () => {
+    const w = await newWorld();
+    await db.insert(accountSettings).values({
+      accountId: w.accountId, screeningBaselineAt: new Date("2026-09-16T09:00:00.000Z"),
+      screeningScope: "window", dormancyDays: 1,
+    });
+    const folder = "ohmail/Receipts";
+    const older = await seedOhbox(w, { from: "shop@x.test", folder, lastSetBy: "us", arrivedAt: OLD });
+    const recent = await seedOhbox(w, { from: "shop@x.test", folder, lastSetBy: "us" });
+
+    expect((await unscreenedSummary(db as never, w.accountId, NOW, "receipts")).total).toBe(1);
+    expect((await screenUnscreened(ctxOf(w), { pile: "receipts" })).total).toBe(1);
+    expect(await desiredOf(older)).toEqual({ desired: folder, status: "reconciled" });
+    expect(await desiredOf(recent)).toEqual({ desired: GATE, status: "pending" });
   });
 
   it("the offer is idempotent by the predicate — a second press finds nothing", async () => {

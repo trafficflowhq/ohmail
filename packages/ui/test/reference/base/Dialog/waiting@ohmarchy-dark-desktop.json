@@ -1,0 +1,321 @@
+{
+  "component": "Dialog",
+  "state": "waiting",
+  "look": "ohmarchy-dark-desktop",
+  "place": "window",
+  "target": [440, 211.6094, 560, 476.7813],
+  "clip": [440, 211, 560, 478],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "20px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "-0.2px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "17.55px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "17.55px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "17.55px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(138, 147, 185)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "12px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(122, 162, 247) 0px 0px 0px 2px" },
+    { "backgroundColor": "rgb(122, 162, 247)" },
+    { "borderTop": "1px solid rgb(62, 64, 82)" },
+    { "ink": "stroke rgb(169, 177, 214) 1.6px square miter 4; shapes 3 93b4b80b8950" },
+    { "outline": "2px solid rgb(122, 162, 247) 0px" },
+    { "boxShadow": "rgb(62, 64, 82) 0px 0px 0px 1px inset" }
+  ],
+  "nodes": [
+    {
+      "role": "dialog",
+      "name": "",
+      "box": [440, 211.6, 560, 476.8],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(26, 27, 38)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "32px",
+        "paddingRight": "32px",
+        "paddingBottom": "32px",
+        "paddingLeft": "32px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "Waiting for the other ohmail", "type": 0 },
+        { "said": "The mail stays where it is until then.", "type": 1 }
+      ],
+      "surfaces": [
+        { "box": [440, 211.6, 560, 476.8], "paint": 0 },
+        { "box": [804, 253.2, 8.4, 8.4], "paint": 1 }
+      ]
+    },
+    {
+      "role": "list",
+      "name": "",
+      "box": [472, 308.2, 496, 286.2],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      }
+    },
+    {
+      "role": "listitem",
+      "name": "",
+      "box": [472, 308.2, 496, 80.3],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "12px",
+        "paddingRight": "0px",
+        "paddingBottom": "12px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(62, 64, 82) rgb(169, 177, 214) rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "A message to Answer Later", "type": 2 },
+        { "said": "Giulia Ferrari · Re: Glaze order #2291", "type": 3 },
+        { "said": "Sent to the other ohmail, waiting for it to apply.", "type": 4 }
+      ],
+      "surfaces": [{ "box": [472, 308.2, 496, 80.3], "paint": 2 }]
+    },
+    {
+      "role": "listitem",
+      "name": "",
+      "box": [472, 388.5, 496, 62.1],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "12px",
+        "paddingRight": "0px",
+        "paddingBottom": "12px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(62, 64, 82) rgb(169, 177, 214) rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "Your decision about Lena Kaufmann", "type": 2 },
+        { "said": "Sent to the other ohmail, waiting for it to apply.", "type": 4 }
+      ],
+      "surfaces": [{ "box": [472, 388.5, 496, 62.1], "paint": 2 }]
+    },
+    {
+      "role": "listitem",
+      "name": "",
+      "box": [472, 450.6, 496, 62.1],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "12px",
+        "paddingRight": "0px",
+        "paddingBottom": "12px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(62, 64, 82) rgb(169, 177, 214) rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "Remove the rule for paperbird.example", "type": 2 },
+        { "said": "Sent to the other ohmail, waiting for it to apply.", "type": 4 }
+      ],
+      "surfaces": [{ "box": [472, 450.6, 496, 62.1], "paint": 2 }]
+    },
+    {
+      "role": "listitem",
+      "name": "",
+      "box": [472, 512.7, 496, 81.7],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "12px",
+        "paddingRight": "0px",
+        "paddingBottom": "12px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(62, 64, 82) rgb(169, 177, 214) rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "A message to News", "type": 2 },
+        { "said": "Hostwerk · Domain renewal", "type": 3 },
+        { "said": "Not applied, because it sat unanswered too long.", "type": 5 }
+      ],
+      "surfaces": [
+        { "box": [472, 512.7, 496, 81.7], "paint": 2 },
+        { "box": [472, 566.4, 16, 16], "paint": 3 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Close Esc",
+      "box": [472, 618.4, 108.6, 38],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "13px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "16px",
+        "paddingBottom": "0px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "Close", "type": 6 },
+        { "said": "Esc", "type": 7 }
+      ],
+      "surfaces": [
+        { "box": [472, 618.4, 108.6, 38], "paint": 4 },
+        { "box": [535, 628.4, 29.6, 18], "paint": 5 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

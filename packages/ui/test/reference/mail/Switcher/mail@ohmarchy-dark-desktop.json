@@ -1,0 +1,133 @@
+{
+  "component": "Switcher",
+  "state": "mail",
+  "look": "ohmarchy-dark-desktop",
+  "place": "cell",
+  "target": [34, 36, 212, 32],
+  "clip": [34, 36, 212, 32],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "-0.13px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "-0.13px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(169, 177, 214) 0px 0px 0px 1px inset" },
+    { "ink": "stroke rgb(169, 177, 214) 1.6px square miter 4; shapes 2 bdcbbbfe63dc" },
+    { "backgroundColor": "rgb(122, 162, 247)" },
+    {
+      "ink": "stroke rgb(141, 150, 188) 1.6px square miter 4; stroke rgb(141, 150, 188) 2.6px square miter 4; shapes 4 271051e8948d"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "group",
+      "name": "Mail or Calendar",
+      "box": [0, 0, 212, 32],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(37, 39, 52)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "3px",
+        "paddingRight": "3px",
+        "paddingBottom": "3px",
+        "paddingLeft": "3px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "surfaces": [{ "box": [3, 3, 102, 26], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "ohmail",
+      "box": [3, 3, 102, 26],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "state": ["current"],
+      "text": [{ "said": "ohmail", "type": 0 }],
+      "surfaces": [
+        { "box": [15.8, 7, 18, 18], "paint": 1 },
+        { "box": [86.7, 14.5, 5.5, 5.5], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "ohcal",
+      "box": [107, 3, 102, 26],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "500",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "ohcal", "type": 1 }],
+      "surfaces": [
+        { "box": [123.6, 7, 18, 18], "paint": 3 },
+        { "box": [186.9, 14.5, 5.5, 5.5], "paint": 2 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

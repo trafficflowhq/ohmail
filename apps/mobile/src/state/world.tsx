@@ -8,6 +8,8 @@
  * excluded unless one decides a placement) and shared through context; each list is computed when a screen reads it and kept
  * until what it reads moves. `world.actions` is one object for the app's life.
  */
+import { mailEventPort } from "./mail-event-port";
+import type { FolderEntity, EngineMessage as StoreMessage } from "@ohmail/wire";
 import {
   createContext,
   useCallback,
@@ -24,7 +26,7 @@ import { AppState } from "react-native";
 
 import { Copy } from "../copy";
 import { refuse, type RefusalArg } from "../refusal";
-import { NO_TOASTS, afterDismiss, nextToast, paintGate, type ToastSlots } from "./toast-one";
+import { NO_TOASTS, afterDismiss, nextToast, paintGate, quotaNoticeOf, type CopyQuotaNotice, type ToastSlots } from "./toast-one";
 import { useLocale } from "../i18n/LocaleProvider";
 import { activeLocale } from "../i18n/locale";
 import { useConnection } from "../net/connection";
@@ -116,7 +118,6 @@ import {
   hiddenMessagesReader,
   UNDO_MS,
   type ToastOpts,
-  type FolderEntity,
   type ScreenerRow,
   type AbandonedMutation,
   type QueuedChange,
@@ -159,7 +160,6 @@ import {
   type SessionRenewalDoor,
   type AddressDirection,
   type ServerAddressOutcome,
-  type StoreMessage,
   type StoreSearchWalker,
   type StoreTimelineWalker,
 } from "./live";
@@ -182,8 +182,9 @@ import {
 } from "./held-routing";
 import { worldSeedOf, type WorldSeed } from "./seed-offer";
 
+export type { FolderEntity } from "@ohmail/wire";
 export type {
-  FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
+  MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
   WorldPile, WorldScheduled, WorldScreener, WorldSearch, WorldTag, WorldTagged, WorldDraft, DraftHeldSays,
   DraftSendAgainOutcome, WorldUnscreened,
 } from "./live";
@@ -560,6 +561,7 @@ export interface World {
    * query re-renders into the finished index without polling.
    */
   search: WorldSearch;
+  draftReplies?: boolean;
   /**
    * WHAT BECAME OF A QUEUED SEND — how a locked composer settles. `pending` while the key
    * still stands on the engine's queue; `confirmed`/`rolled_back` once a reconnect flush
@@ -588,6 +590,8 @@ export function useWorld(): World {
  */
 export interface WorldToast {
   slots: ToastSlots;
+  copyQuota?: CopyQuotaNotice;
+  dismissCopyQuota?(): void;
   /** The pill's own id — see `state/toast-one.ts#afterDismiss` for why it is not optional there. */
   dismiss(id?: number): void;
   /** The pill's layout report — releases every door waiting in `LiveDeps.painted` (`toast-one.ts#paintGate`). */
@@ -634,6 +638,8 @@ const NO_ACTIONS: WorldActions = {
   // The fixture world sends nothing, so it promises nothing.
   unsubClaimOf: () => "none" as const,
   screeningUnsubClaim: () => "none" as const,
+  unsubscribeIdsOf: () => [],
+  screeningUnsubscribeIds: () => [],
   setScope: () => undefined,
   allow: () => undefined,
   notSpam: () => undefined,
@@ -821,7 +827,7 @@ export function useEngineQueuesAsk(): () => void {
 const NO_SIGNING: Omit<World["signing"], "write"> = { html: {}, sources: {}, changes: {} };
 
 /** The projection plus the per-render facts, the projection's getters carried over by descriptor. */
-function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement" | "signing">): World {
+function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement" | "signing" | "draftReplies">): World {
   const out = Object.defineProperties({}, Object.getOwnPropertyDescriptors(projected)) as World;
   return Object.assign(out, facts);
 }
@@ -874,6 +880,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
 
   const session = conn.state.k === "live" ? conn.state.session : null;
   const engine = session?.engine ?? null;
+  useEffect(() => mailEventPort(session)?.activate(), [session]);
 
   /* History's walker, one per engine; and the off-mirror reader's row, which re-derives `message`. */
   const walker = useMemo(() => (engine ? storeWalkerFor(engine) : null), [engine]);
@@ -906,19 +913,27 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The toast: the NEWEST sentence in each of two slots, and nowhere for a third to wait — the
      rule and what it costs are in `state/toast-one.ts`. A four-deep queue stood here and dropped
      the fifth sentence with no record. */
+  const sessionKey = session?.ownerKey ?? null;
+  const [quota, setQuota] = useState<{ owner: string; notice: CopyQuotaNotice } | null>(null);
   const [toastShown, setToastShown] = useState<ToastSlots>(NO_TOASTS);
   const toastSeq = useRef(0);
   const showToast = useCallback((say: RefusalArg, opts?: ToastOpts) => {
     toastSeq.current += 1;
     const id = toastSeq.current;
     setToastShown((standing) => nextToast(standing, { id, say, ...(opts ?? {}) }));
-  }, []);
+    const notice = quotaNoticeOf(say);
+    if (sessionKey !== null && notice !== null) setQuota({ owner: sessionKey, notice });
+  }, [sessionKey]);
   const dismissToast = useCallback((id?: number) => setToastShown((standing) => afterDismiss(standing, id)), []);
   /* The sentence-on-screen gate: the pill reports its layout here, the doors await it (below). */
   const gate = useRef(paintGate()).current;
   const worldToast = useMemo<WorldToast>(
-    () => ({ slots: toastShown, dismiss: dismissToast, onScreen: gate.onScreen, say: (arg: RefusalArg) => showToast(arg) }),
-    [toastShown, dismissToast, gate, showToast],
+    () => ({
+      slots: toastShown, dismiss: dismissToast, onScreen: gate.onScreen, say: (arg: RefusalArg) => showToast(arg),
+      copyQuota: quota?.owner === sessionKey ? quota.notice : undefined,
+      dismissCopyQuota: () => setQuota((current) => current === quota ? null : current),
+    }),
+    [toastShown, dismissToast, gate, showToast, quota, sessionKey],
   );
 
   /* Per-sender scope choice (this sender / whole domain) — view state on the session,
@@ -932,9 +947,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * The outgoing session's toast is cleared for the same sessions-don't-leak reason: a
    * sentence must not resurrect when the next session renders.
    */
-  const sessionKey = session?.ownerKey ?? null;
   useEffect(() => {
     setScopes({});
+    setQuota(null);
     setToastShown(NO_TOASTS);
     // Open delete windows commit into the session that armed them (each press captured its own
     // dispatch) — leaving a session is not asking for the deletes back, the webapp's unmount rule.
@@ -1048,6 +1063,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const [accountFaceKnown, setAccountFaceKnown] = useState(false);
   const [facePending, setFacePending] = useState(false);
   /* The act on suggestions, as the account's consent read last said it; `null` = no axis yet. */
+  const [draftConsent, setDraftConsent] = useState<{ owner: string; allowed?: boolean } | null>(null);
   const [autoAct, setAutoAct] = useState<{ on: boolean; suggestOn: boolean } | null>(null);
   const [autoActPending, setAutoActPending] = useState(false);
   /* The sent-mail seed off the same read; unknown until one lands, reset per session. */
@@ -1188,6 +1204,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // freshest-successful-read-wins rule: the machine's epoch guards the FLAG against the
       // user's write, and nothing on this phone writes a capability.
       setFoldersStorable(ans.storable);
+      setDraftConsent({ owner: session.ownerKey, allowed: ans.draftReplies });
       setAutoAct(ans.autoAct === null ? null : { on: ans.autoAct, suggestOn: ans.autoSuggestOn });
       setSeed(worldSeedOf(ans.seed));
     });
@@ -1297,6 +1314,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     setFacePending(false);
     // Account A's act consent says nothing about account B's.
     setAutoAct(null);
+    setDraftConsent(null);
     setAutoActPending(false);
     setSeed({ known: false });
     drainOwed.current = false; // the debt was the old session's; the new one owes nothing
@@ -1742,10 +1760,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           hydrateHeld: (ids) => acts.hydrateHeld(ids),
           holdFiles: (ids) => acts.holdFiles(ids),
           releaseFiles: (ids) => acts.releaseFiles(ids),
-          decide: (row, dest, read, peers) => void acts.decide(row, dest, read, row.scope, peers),
+          decide: (row, dest, read, peers, ids) => void acts.decide(row, dest, read, row.scope, peers, ids),
           reachOf: (row, peers) => acts.reachOf(row, peers, row.scope),
           unsubClaimOf: (row, peers) => acts.unsubClaimOf(row, peers, row.scope),
           screeningUnsubClaim: (id, scope) => acts.screeningUnsubClaim(id, scope),
+          unsubscribeIdsOf: (row, peers) => acts.unsubscribeIdsOf(row, peers, row.scope),
+          screeningUnsubscribeIds: (id, scope) => acts.screeningUnsubscribeIds(id, scope),
           setScope: (row, scope) => setScopes((held) => ({ ...held, [row.routeKey]: scope })),
           allow: (row, dest) => void acts.release(row, dest, "screened"),
           notSpam: (row, dest) => void acts.release(row, dest, "spam"),
@@ -1811,7 +1831,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           sendOutcome: (key) => outcomeOf(key),
           tagToggle: (id, tag, assigned) => void acts.tagToggle(id, tag, assigned),
           tagCreate: (id, name) => void acts.tagCreate(id, name),
-          screenSender: (id, dest, scope, applyRetro, press) => void acts.screenSender(id, dest, scope, applyRetro, press),
+          screenSender: (id, dest, scope, applyRetro, press, ids) => void acts.screenSender(id, dest, scope, applyRetro, press, ids),
           screeningForecast: (id, dest, scope, applyRetro) => acts.screeningForecast(id, dest, scope, applyRetro),
           screeningRules: (id, scope) => acts.screeningRules(id, scope),
           screeningStayed: (id, scope) => acts.screeningStayed(id, scope),
@@ -2003,6 +2023,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         applyAll: applyFaceAllDevices,
         choose: chooseFace,
       },
+      draftReplies: draftConsent?.owner === sessionKey ? draftConsent?.allowed : undefined,
       autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
       signing: { ...sigMore, write: writeSignatureNow },
       seed,
@@ -2012,7 +2033,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
     outcomeOf, settlementOf, shownFace, accountFaceKnown, facePending, applyFaceAllDevices, chooseFace,
-    autoAct, autoActPending, setAutoActOn, seed, sigMore, writeSignatureNow]);
+    autoAct, autoActPending, setAutoActOn, seed, sigMore, writeSignatureNow, draftConsent, sessionKey]);
 
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the

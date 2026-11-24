@@ -6,9 +6,10 @@
  * now retires the queued older one in its own transaction.
  * Mutation: the same-key arm in `supersedeQueued` removed → case 1 red on the row count.
  */
+import type { EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, MutationRejectedError, OhmailEngine, type EngineMutation,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine,
 } from "@ohmail/client-engine";
 
 const NOW = new Date("2026-09-27T09:00:00.000Z");

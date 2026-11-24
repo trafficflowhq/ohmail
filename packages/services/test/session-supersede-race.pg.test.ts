@@ -1,15 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { desc, eq } from "drizzle-orm";
 import { generateSync } from "otplib";
-import { refreshTokens, sessions } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { bindDb, refreshTokens, sessions } from "@trafficflow/db";
+import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { pgTestUrl, realPgAvailable } from "@trafficflow/db/testing";
-import { AuthService, hashToken, makeTestAuthDeps, type ServiceContext } from "@trafficflow/services";
+import { AuthService, dbFor, hashToken, makeTestAuthDeps, type ServiceContext } from "@trafficflow/services";
 import { resolveSession } from "@trafficflow/services/auth";
 
 /**
@@ -25,11 +23,15 @@ const URL = pgTestUrl(import.meta.url);
 const PG_UP = await realPgAvailable(URL);
 
 let client: ReturnType<typeof postgres>;
-let db: ReturnType<typeof drizzle<typeof schema>>;
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+let owned: OwnedDb;
+let db: OwnedDb["db"];
 
 let ipCell = 0;
+// A door before sign-in holds a handle bound to nothing; a call that carries a session, its account's.
 const ctx = (over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db, accountId: "", userId: null, now: () => new Date(),
+  db: over.accountId === undefined ? bindDb(db, { account: null }) : dbFor(db, over.accountId),
+  accountId: "", userId: null, now: () => new Date(),
   requestId: "supersede-race-pg", ip: `10.8.${(ipCell += 1) % 250}.${Math.floor(ipCell / 250) + 1}`, ...over,
 });
 const totp = (secret: string): string => generateSync({ secret, epoch: Math.floor(Date.now() / 1000) });
@@ -38,7 +40,7 @@ const COOKIE = { concurrentGrace: true, surface: "cookie" } as const;
 
 /** Register and enrol TOTP; the answer signs in a fresh browser session on demand. */
 async function person(svc: AuthService, label: string): Promise<{
-  userId: string; first: { access: string; refresh: string };
+  userId: string; accountId: string; first: { access: string; refresh: string };
   signIn: (over?: Partial<ServiceContext>) => Promise<{ access: string; refresh: string }>;
 }> {
   const email = `${label}-${randomUUID()}@lichtgrat.example`;
@@ -51,6 +53,7 @@ async function person(svc: AuthService, label: string): Promise<{
   const { session } = await svc.totpActivate(enrolCtx, { code: totp(secret) });
   return {
     userId: reg.user.userId,
+    accountId: reg.user.accountId,
     // The full session activation exchanged the enrolment for: this browser's first family.
     first: { access: session!.tokens!.accessToken, refresh: session!.tokens!.refreshToken },
     // ONE sign-in per person: activation spent this step, and the window admits the next one at
@@ -80,12 +83,17 @@ async function refused(p: Promise<unknown>): Promise<string> {
   try { await p; return "rotated"; } catch (err) { return (err as { code?: string }).code ?? "threw"; }
 }
 
-const opened: ReturnType<typeof postgres>[] = [];
-/** A handle of its own, named in pg_stat_activity, so a wait of its backend can be READ. */
+const opened: OwnedDb[] = [];
+/**
+ * A handle of its own, named in pg_stat_activity, so a wait of its backend can be READ: a pool of
+ * the factory's, named by its address (a parameter of the address is one of the connection).
+ */
 function named(app: string): typeof db {
-  const base = postgres(URL, { max: 2, onnotice: () => {}, connection: { application_name: app } });
-  opened.push(base);
-  return brandDialect(drizzle(base, { schema }), "pg");
+  const address = new globalThis.URL(URL);
+  address.searchParams.set("application_name", app);
+  const pool = makeOwnedDb(address.toString());
+  opened.push(pool);
+  return pool.db;
 }
 
 /** Poll, bounded, until a backend named `app` in this database waits on a lock: a reading, not a sleep. */
@@ -102,7 +110,7 @@ async function blockedOnALock(app: string, ms = 10_000): Promise<boolean> {
 
 /**
  * A handle whose `update(<table>)` statements wait for `gate` once they are awaited, inside its
- * transactions too. The rotation is one transaction that locks its session row before its claim,
+ * transactions too. It wraps a bound handle, whose statements pass the builder in its flights. The rotation is one transaction that locks its session row before its claim,
  * so pausing its session update holds that row with the claim and the new refresh row written and
  * not committed: a mint that arrives then waits for the rotation.
  */
@@ -135,10 +143,11 @@ function pausingUpdatesOf(target: object, table: object, gate: Promise<void>, re
 
 /**
  * A handle whose TRANSACTIONS stop at their `sessions` insert until `gate` settles (after the supersede).
+ * It wraps a bound handle, as `pausingUpdatesOf` does.
  * A transaction opened inside one stops the same way: the sign-in burns its first step and writes its
  * session in one transaction, and the supersede and the mint open theirs inside it.
  */
-function mintPausedAtSessionInsert(target: typeof db, gate: Promise<void>, reached: () => void): typeof db {
+function mintPausedAtSessionInsert(target: object, gate: Promise<void>, reached: () => void): typeof db {
   const bind = (o: object, p: string | symbol): unknown => {
     const v = Reflect.get(o, p) as unknown;
     return typeof v === "function" ? (v as (...x: unknown[]) => unknown).bind(o) : v;
@@ -171,10 +180,12 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
   beforeAll(async () => {
     await runMigrations(URL);
     client = postgres(URL, { max: 6 });
-    db = brandDialect(drizzle(client, { schema }), "pg");
+    owned = makeOwnedDb(URL);
+    db = owned.db;
   }, 60_000);
   afterAll(async () => {
-    for (const c of opened) await c.end({ timeout: 5 }).catch(() => {});
+    for (const c of opened) await c.close().catch(() => {});
+    await owned?.close();
     await client?.end({ timeout: 5 });
   });
 
@@ -222,12 +233,15 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
     const gate = new Promise<void>((r) => { release = r; });
     const atSessionWrite = new Promise<void>((r) => { arrived = r; });
     const rotation = svc.refresh(
-      ctx({ db: pausingUpdatesOf(db, sessions, gate, arrived) as never }), { refreshToken: jar.refresh }, COOKIE,
+      ctx({
+        accountId: a.accountId, credentialDb: bindDb(db, { account: null }),
+        db: pausingUpdatesOf(dbFor(db, a.accountId), sessions, gate, arrived) as never,
+      }), { refreshToken: jar.refresh }, COOKIE,
     );
     await atSessionWrite;
     let minted = false;
     const minter = `sup-mid-${randomUUID().slice(0, 8)}`;
-    const mint = b.signIn({ supersedes: jar.access, db: named(minter) }).finally(() => { minted = true; });
+    const mint = b.signIn({ supersedes: jar.access, db: bindDb(named(minter), { account: null }) }).finally(() => { minted = true; });
     expect(await blockedOnALock(minter), "the supersede is blocked on a lock").toBe(true);
     expect(minted, "the supersede waits for the rotation that holds A's session row").toBe(false);
     release();
@@ -248,11 +262,14 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
     let arrived!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     const atMint = new Promise<void>((r) => { arrived = r; });
-    const mint = b.signIn({ supersedes: jar.access, db: mintPausedAtSessionInsert(db, gate, arrived) as never });
+    const mint = b.signIn({
+      supersedes: jar.access, accountId: b.accountId, credentialDb: bindDb(db, { account: null }),
+      db: mintPausedAtSessionInsert(dbFor(db, b.accountId), gate, arrived) as never,
+    });
     await atMint;
     let settled = false;
     const rotator = `sup-open-${randomUUID().slice(0, 8)}`;
-    const rotation = refused(svc.refresh(ctx({ db: named(rotator) }), { refreshToken: jar.refresh }, COOKIE))
+    const rotation = refused(svc.refresh(ctx({ db: bindDb(named(rotator), { account: null }) }), { refreshToken: jar.refresh }, COOKIE))
       .finally(() => { settled = true; });
     expect(await blockedOnALock(rotator), "the rotation is blocked on a lock").toBe(true);
     expect(settled, "the rotation did not wait for the mint's transaction").toBe(false);
@@ -270,8 +287,10 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
     const jar = await a.signIn();
     const broken = Promise.reject(new Error("the mint's insert failed"));
     broken.catch(() => {});   // handled here; the mint's own await still rejects
-    const failing = mintPausedAtSessionInsert(db, broken, () => {});
-    await expect(b.signIn({ supersedes: jar.access, db: failing as never })).rejects.toThrow("the mint's insert failed");
+    const failing = mintPausedAtSessionInsert(dbFor(db, b.accountId), broken, () => {});
+    await expect(b.signIn({
+      supersedes: jar.access, accountId: b.accountId, credentialDb: bindDb(db, { account: null }), db: failing as never,
+    })).rejects.toThrow("the mint's insert failed");
     expect(await authenticates(jar.access), "the supersede committed without its mint").toBe(true);
     expect(await refused(svc.refresh(ctx(), { refreshToken: jar.refresh }, COOKIE))).toBe("rotated");
   });
@@ -326,11 +345,14 @@ describe.skipIf(!PG_UP)("a sign-in supersedes the jar's previous session, on rea
     const gate = new Promise<void>((r) => { release = r; });
     const atSessionWrite = new Promise<void>((r) => { arrived = r; });
     const rotation = svc.refresh(
-      ctx({ db: pausingUpdatesOf(db, sessions, gate, arrived) as never }), { refreshToken: a.first.refresh }, COOKIE,
+      ctx({
+        accountId: a.accountId, credentialDb: bindDb(db, { account: null }),
+        db: pausingUpdatesOf(dbFor(db, a.accountId), sessions, gate, arrived) as never,
+      }), { refreshToken: a.first.refresh }, COOKIE,
     );
     await atSessionWrite;
     const minter = `sup-mark-${randomUUID().slice(0, 8)}`;
-    const mint = a.signIn({ supersedesMarker: hashToken(a.first.refresh), db: named(minter) });
+    const mint = a.signIn({ supersedesMarker: hashToken(a.first.refresh), db: bindDb(named(minter), { account: null }) });
     const blocked = await blockedOnALock(minter);
     release();
     expect(blocked, "the supersede waits for the rotation that holds the session row").toBe(true);

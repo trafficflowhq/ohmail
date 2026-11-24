@@ -87,7 +87,11 @@ describe("the About pane's release number", () => {
     // The end-to-end statement, as far as a source test can make it: config reads the root
     // manifest, the pane reads what config inlined, and the copy renders it.
     const src = read("../app/(product)/mailbox/AboutSection.tsx");
-    expect(src).toMatch(/t\("build",\s*\{\s*version:\s*VERSION,\s*build:\s*BUILD\s*\}\)/);
+    expect(src).toMatch(/const VERSION = process\.env\.NEXT_PUBLIC_APP_VERSION;/);
+    expect(src).toMatch(/version: VERSION \?\? null,\s*build: BUILD,/);
+    expect(src).toMatch(/<AboutPane model=\{model\} \/>/);
+    const pane = read("../../../packages/app/src/settings/about/AboutPane.tsx");
+    expect(pane).toMatch(/t\("build", \{ version: model\.version \?\? "", build: model\.build \}\)/);
     expect(HERE).toContain("apps/webapp");
   });
 });

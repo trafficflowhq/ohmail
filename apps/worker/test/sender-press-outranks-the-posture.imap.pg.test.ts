@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
+import { bindDb } from "@trafficflow/db";
 import { and, eq, sql } from "drizzle-orm";
 import { accountSettings, contacts, folderState, mailboxes, messages, rules } from "@trafficflow/db";
 import type { Tx } from "@trafficflow/db";
@@ -6,10 +7,10 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { rulesService, type ServiceContext } from "@trafficflow/services/mail";
-import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { ruleRetroPass } from "../src/rule-retro.js";
-import { makeHarness, rawClient, DB_URL } from "./_workerenv.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { runSyncCycle, type SyncDeps } from "@ohmail/organizer/sync";
+import { ruleRetroPass } from "@ohmail/organizer/rule-retro";
+import { makeHarness, rawClient, DB_URL } from "../../../packages/organizer/test/_workerenv.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
 /**
  * "ALL THEIR MAIL -> OHBOX" HOLDS FOR THE NEXT NEWSLETTER TOO, under "Keep my Ohbox for what matters".
@@ -79,7 +80,7 @@ describe.skipIf(!AVAILABLE)("a sender press outranks the people_only posture for
     const w = await world("ohmail/News", 66);
     try {
       expect((await placement(w.h)).by, "the backlog was not filed to News by the twin").toEqual({ "ohmail/News": 66 });
-      const ctx = { db: w.h.db, accountId: w.h.accountId, now: () => new Date() } as unknown as ServiceContext;
+      const ctx = { db: bindDb(w.h.db, { account: w.h.accountId }), accountId: w.h.accountId, now: () => new Date() } as unknown as ServiceContext;
       await rulesService.update(ctx, w.twin, { destination: "INBOX", applyRetro: true });
       const pass = await ruleRetroPass(w.h.db as unknown as Tx, { accountId: w.h.accountId, trustedAuthservIdsFor: async () => new Set<string>() }, new Date());
       expect(pass.moved).toBe(66);
@@ -97,7 +98,7 @@ describe.skipIf(!AVAILABLE)("a sender press outranks the people_only posture for
       await w.c.append("INBOX", issue(1, w.h.cfg.auth.user));
       await drain(w.deps);
       expect((await placement(w.h)).of("Issue 1"), "the posture did not refile the inference's newsletter").toBe("ohmail/News");
-      const ctx = { db: w.h.db, accountId: w.h.accountId, now: () => new Date() } as unknown as ServiceContext;
+      const ctx = { db: bindDb(w.h.db, { account: w.h.accountId }), accountId: w.h.accountId, now: () => new Date() } as unknown as ServiceContext;
       await rulesService.update(ctx, w.twin, { destination: "INBOX", applyRetro: true });
       await ruleRetroPass(w.h.db as unknown as Tx, { accountId: w.h.accountId, trustedAuthservIdsFor: async () => new Set<string>() }, new Date());
       await w.c.append("INBOX", issue(2, w.h.cfg.auth.user));
@@ -149,7 +150,7 @@ describe.skipIf(!AVAILABLE)("a press over an inferred rule already at the Ohbox,
         provenance: "seeded-from-sent", createdAt: seeded, updatedAt: seeded,
       }).returning({ id: rules.id });
       // The sheet's press over a twin already at the place: the re-arm the client sends.
-      const ctx = { db: h.db, accountId: h.accountId, now: () => new Date() } as unknown as ServiceContext;
+      const ctx = { db: bindDb(h.db, { account: h.accountId }), accountId: h.accountId, now: () => new Date() } as unknown as ServiceContext;
       await rulesService.update(ctx, twin!.id, { destination: "INBOX", applyRetro: true });
       const pass = await ruleRetroPass(h.db as unknown as Tx, { accountId: h.accountId, trustedAuthservIdsFor: async () => new Set<string>() }, new Date());
       const [rule] = await h.db.select().from(rules).where(eq(rules.id, twin!.id));

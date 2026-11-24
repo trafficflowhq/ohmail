@@ -1,0 +1,34 @@
+{
+  "id": "12",
+  "base": "0d0f6b46423262b054cee493bd3c3ab0acbd1a52",
+  "recorded": "2026-11-15",
+  "command": "npx vitest run packages/db/test/transition.pg.test.ts packages/db/test/old-search-retirement.pg.test.ts",
+  "tests": [
+    "packages/db/test/transition.pg.test.ts",
+    "packages/db/test/old-search-retirement.pg.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "packages/db-mail/drizzle/0200_search_one_generation.sql",
+      "line": "ALTER TABLE \"message_bodies\" DROP COLUMN IF EXISTS \"body_tsv\";",
+      "to": "-- ARM: the old search's stored vector stays",
+      "failed": 15
+    },
+    {
+      "file": "packages/db-mail/drizzle/0201_account_on_borrowers.sql",
+      "line": "ALTER TABLE \"folder_state\" DROP COLUMN \"outstanding_account_id\", DROP COLUMN \"screener_floor_version\";",
+      "to": "ALTER TABLE \"folder_state\" DROP COLUMN \"screener_floor_version\"; -- ARM: the trigger-kept account copy stays",
+      "failed": 1
+    },
+    {
+      "file": "packages/db-mail/drizzle/0201_account_on_borrowers.sql",
+      "line": "ALTER TABLE \"flag_state\" DROP COLUMN \"pending_account_id\";",
+      "to": "SELECT 1; -- ARM: the reconcile queue's account copy stays",
+      "failed": 1
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 33
+  }
+}

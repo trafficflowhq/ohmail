@@ -1,25 +1,16 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { COPY, frameCsp, MessageBody, sanitizeMailHtml } from "../../webapp/app/components/MessageBody";
-import { DEFERRED_SRC_ATTR } from "../../webapp/app/components/proxied-images";
-import { autoLoadsImages, imageProxyUrl, useRemoteImages } from "../../webapp/app/shell/remote-images";
+import { COPY, frameCsp, MessageBody, sanitizeMailHtml } from "../../../packages/letter-body/src/MessageBody";
+import { DEFERRED_SRC_ATTR } from "../../../packages/letter-body/src/proxied-images";
+import { autoLoadsImages, imageProxyUrl, useRemoteImages } from "@ohmail/app-logic/reader/remote-images";
 import { localImageWire, localLoadRemote } from "../src/local-images.js";
 
-/* The names the pane's hook reads, as the desktop bundle has them (`vite.config.ts` aliases the
-   module to `src/no-api-client.ts`): no Cloud base, and the Cloud press and its sentence refuse. */
-vi.mock("../../webapp/app/api-client", async () => {
-  const real = await vi.importActual<typeof import("../../webapp/app/api-client")>("../../webapp/app/api-client");
-  const desktop = await import("../src/no-api-client");
-  return {
-    ...real,
-    API_BASE: desktop.API_BASE,
-    apiConfigured: desktop.apiConfigured,
-    messageOf: desktop.messageOf,
-    privacy: desktop.privacy,
-  };
-});
+/* RE-POINTED (share reader-1, the switch's older tests): the picture door is read from its home, the reader's logic
+   (`app/shell/remote-images` only handed it on). That hook reads no server client: what it asks and records goes
+   through the wire its host hands it (below, the desktop's one pipe), so the mock of the web's `api-client` that
+   stood here (the desktop bundle's `no-api-client` names) reaches nothing and is gone. Expectations as they stood. */
 
 /**
  * THE DESKTOP CANNOT SHOW A PICTURE, AND THIS IS THE FRAME SAYING SO.
@@ -208,7 +199,8 @@ describe("a picture the desktop already holds the bytes of", () => {
 /**
  * ── A HELD LETTER'S SHOW IMAGES, DOWN THE PIPE ──────────────────────────────────────────────
  *
- * `MessagePane`'s wiring over the desktop's own api-client and its two image wires, driven through
+ * The shared Reader's (`packages/app/src/reader`) wiring over the desktop's own api-client and
+ * its two image wires, driven through
  * a stand-in shell. A sender not let in loads nothing on open, so the press is the one road to its
  * pictures, on both window origins: `http://tauri.localhost` (WebView2, Windows) and
  * `tauri://localhost` (WebKit, macOS and Linux), where the proxy has no source a frame could name.
@@ -270,15 +262,19 @@ function tauriProxyFor(id: string): (url: string) => string {
   return tauriProxies.get(id)!;
 }
 
-/** `MessagePane`'s lines for one held letter, over the desktop's wires. */
+/** The desktop's two wires as its host hands them: one pipe. */
+const DESKTOP_PIPE = { fetch: localImageWire, record: localLoadRemote };
+
+/** The shared Reader's (`packages/app/src/reader`) lines for one held letter, over the desktop's wires. */
 function Pane({ tauri, failed, notices, html }: { tauri: boolean; failed: string[]; notices: (string | null)[]; html: string }) {
   const real = useRemoteImages({
     onFailed: (sentence) => { failed.push(sentence); }, mode: "auto", loadPixels: false,
-    fetchImage: localImageWire, recordRemote: localLoadRemote,
+    wire: DESKTOP_PIPE,
   });
   const chrome = React.useMemo(() => (real && tauri ? { ...real, proxyFor: tauriProxyFor } : real), [real, tauri]);
   const onRemoteImages = React.useCallback((urls: string[]) => chrome?.needRemote(HELD.id, urls), [chrome]);
   return h(MessageBody, {
+    owner: null,
     messageId: HELD.id, text: "plain", html,
     remoteLoaded: autoLoadsImages(chrome, HELD) || (chrome?.consented(HELD.id) ?? false),
     imageProxy: chrome ? chrome.proxyFor(HELD.id) : null,

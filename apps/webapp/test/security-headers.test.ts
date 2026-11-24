@@ -160,9 +160,9 @@ describe("the demo route is the real client, framable and otherwise baseline", (
     // policy is their intersection. A blanket `frame-ancestors 'none'` plus a `/demo`
     // override of `'self'` would intersect to `'none'` and render the landing's centrepiece
     // as a blank frame, so the blanket rule EXCLUDES /demo by negative lookahead.
-    expect(nextConfig).toContain(`source: "/((?!demo).*)"`);
+    expect(nextConfig).toContain(`source: "/((?!demo)(?!pdf-preview\\\\.html$).*)"`);
     expect(nextConfig).toContain(`source: "/demo"`);
-    expect(nextConfig.indexOf(`source: "/demo"`)).toBeLessThan(nextConfig.indexOf(`"/((?!demo).*)"`));
+    expect(nextConfig.indexOf(`source: "/demo"`)).toBeLessThan(nextConfig.indexOf(`"/((?!demo)(?!pdf-preview\\\\.html$).*)"`));
   });
 });
 
@@ -176,13 +176,24 @@ describe("one policy per route group, with and without the website's measurement
       .flatMap((r) => r.headers.filter((h) => h.key === "Content-Security-Policy").map((h) => h.value));
   }
   const GROUPS = {
-    marketing: ["/", "/de", "/privacy", "/imprint", "/subprocessors", "/support", "/delete-account"],
+    marketing: ["/", "/de", "/privacy", "/imprint", "/subprocessors", "/support", "/delete-account", "/ohcal"],
     product: ["/mailbox", "/resume", "/login", "/join", "/setup", "/link-desktop", "/approve", "/subscribed"],
     other: ["/no-such-page", "/api/session", "/_next/static/x.js", "/version"],
   };
 
   it("no id: every group is the baseline, exactly as before", async () => {
     for (const p of Object.values(GROUPS).flat()) expect(await cspsAt(null, p), p).toEqual([BASELINE_CSP]);
+    for (const [ga, zone, staging] of [
+      [null, null, null], ["G-9SPZX4FS1X", null, null], [null, "https://site.ohmail.app", null],
+      [null, null, S],
+    ] as const) {
+      const policies = await cspsAt(ga, "/pdf-preview.html", zone, staging);
+      expect(policies).toHaveLength(1);
+      expect(policies[0]).toContain("sandbox allow-scripts");
+      expect(policies[0]).toContain("connect-src 'none'");
+      expect(policies[0]).toContain("frame-ancestors 'self'");
+      expect(policies[0]).not.toContain("allow-same-origin");
+    }
   });
 
   it("with an id: marketing gains Google's sources and nothing else", async () => {

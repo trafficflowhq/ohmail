@@ -1,11 +1,16 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
   COPY_CENSUS_ROOTS,
+  filesHandedAReader, checkForwardedReader,
+  HANDED_READERS,
+  handedReaderNamespaces,
   isProse,
+  mountedScreenerReaderBindings,
   scanCopy,
   scanKeyReads,
   type CopyFinding,
@@ -52,7 +57,7 @@ describe("the copy census — the scan itself", () => {
    * it catches a broken walk, not a lane that closed strings.
    */
   it("reads the interface sources, and says so with a number", () => {
-    expect(COPY_CENSUS_ROOTS.length).toBe(5);
+    expect(COPY_CENSUS_ROOTS.length).toBe(7);
     expect(findings.length).toBeGreaterThan(50);
     expect(byFile.size).toBeGreaterThan(5);
   });
@@ -66,6 +71,40 @@ describe("the copy census — the scan itself", () => {
       expect(isProse(no), `${no} should not be prose`).toBe(false);
     }
   });
+
+  it("a string's own method called with a literal on a key is not a handed reader; a namespace's reader in a record is", () => {
+    const tree = fs.mkdtempSync(path.join(os.tmpdir(), "copy-census-"));
+    const write = (rel: string, text: string): void => {
+      fs.mkdirSync(path.dirname(path.join(tree, rel)), { recursive: true });
+      fs.writeFileSync(path.join(tree, rel), text);
+    };
+    write("apps/webapp/messages/en.json", JSON.stringify({ search: { title: "Search" } }));
+    const takes = 'import type { Translator } from "./text.js";\n';
+    write("src/route.ts", `${takes}export const route = (key: string): number => key.indexOf(".");\n`);
+    write("src/record.ts", `${takes}export const say = (text: Record<string, Translator>): string => text.search("title");\n`);
+    try {
+      expect(filesHandedAReader(tree, ["src"])).toEqual(["src/record.ts"]);
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
+    }
+    {
+      const tree = fs.mkdtempSync(path.join(os.tmpdir(), "copy-census-"));
+      const file = "packages/app-logic/src/place-list/verbs.ts";
+      const target = path.join(tree, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.mkdirSync(path.join(tree, "apps/webapp/messages"), { recursive: true });
+      fs.writeFileSync(path.join(tree, "apps/webapp/messages/en.json"), JSON.stringify({ screening: {} }));
+      const bridge = fs.readFileSync(path.join(REPO, file), "utf8");
+      fs.writeFileSync(target, bridge + '\nexport const extra = (t: Translator) => t("missing.message");\n');
+      try {
+        checkForwardedReader(tree);
+        expect(filesHandedAReader(tree, ["packages/app-logic/src"])).toEqual([file]);
+      } finally {
+        fs.rmSync(tree, { recursive: true, force: true });
+      }
+    }
+  });
+
 });
 
 describe("every user-visible string is either in the catalogue or dispositioned", () => {
@@ -121,7 +160,7 @@ describe("every key the code reads is in BOTH catalogues", () => {
    * so a key missing from `de.json` alone renders English rather than a raw key — quieter, and
    * exactly the half-English screen this lane exists to end.
    */
-  const KEY_ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/desktop/src"];
+  const KEY_ROOTS = ["apps/webapp/app/shell", "packages/app/src/stream", "apps/webapp/app/components/sender-menu", "packages/letter-body/src", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src"];
   const cat = (lang: "en" | "de"): Record<string, unknown> =>
     JSON.parse(fs.readFileSync(path.join(REPO, `apps/webapp/messages/${lang}.json`), "utf8"));
   const EN = cat("en");
@@ -136,6 +175,52 @@ describe("every key the code reads is in BOTH catalogues", () => {
 
   it("finds the reads at all", () => {
     expect(reads.length).toBeGreaterThan(500);
+  });
+
+  /**
+   * A HOOK HANDED ITS READER binds no `useTranslations`, so without its row in `HANDED_READERS`
+   * every key it reads is outside this census and the case below stays green over a key no
+   * catalogue has. Three cases keep the table honest: each row's file still resolves reads, each
+   * row says what its glue binds, and a file that takes a `Translator`, binds none and reads a key
+   * through one has a row.
+   */
+  it("reads every file that is handed its reader", () => {
+    const readers = Object.entries(HANDED_READERS);
+    const empty = readers.filter(([file, { forwardsTo }]) => !forwardsTo && !reads.some((r) => r.file === file))
+      .map(([file]) => file);
+    expect(empty, "these files are handed a reader and the scan resolved no key in them").toEqual([]);
+    for (const [file, row] of readers) {
+      if (!row.forwardsTo) continue;
+      expect(reads.filter((r) => r.file === file), `${file} forwards its reader without calling it`).toEqual([]);
+      expect(reads.some((r) => r.file === row.forwardsTo), `${row.forwardsTo} reads the forwarded words`).toBe(true);
+      expect(handedReaderNamespaces(REPO, KEY_ROOTS, row.glue)).toEqual(new Set(Object.values(row.readers).flat()));
+    }
+    const owner = "packages/app-logic/src/keys/keymap.ts";
+    expect(reads.filter((r) => r.file === owner && r.dotted === "cursor.placed")).toHaveLength(1);
+    expect(handedReaderNamespaces(REPO, KEY_ROOTS, HANDED_READERS[owner]!.glue)).toEqual(new Set(["cursor"]));
+  });
+
+  it("each handed reader's namespace is the one its caller binds", () => {
+    expect(mountedScreenerReaderBindings(REPO)).toEqual({
+      state: { t: "screener", ts: "screening", tWhy: "ohbox", tSession: "session" },
+      suggestions: { t: "screener", tAi: "aiRefusal" },
+    });
+
+    const drift: string[] = [];
+    for (const [file, row] of Object.entries(HANDED_READERS)) {
+      const table = [...new Set(Object.values(row.readers).flat())].sort();
+      const glued = [...handedReaderNamespaces(REPO, KEY_ROOTS, row.glue)].map(String).sort();
+      if (JSON.stringify(table) !== JSON.stringify(glued)) {
+        drift.push(`${file}: the table says ${JSON.stringify(table)}, ${JSON.stringify(row.glue)} binds ${JSON.stringify(glued)}`);
+      }
+    }
+    expect(drift).toEqual([]);
+  });
+
+  it("every file that takes a Translator, binds none and reads a key has its readers in the table", () => {
+    checkForwardedReader(REPO);
+    const unlisted = filesHandedAReader(REPO, KEY_ROOTS).filter((file) => !(file in HANDED_READERS));
+    expect(unlisted, "add a row to HANDED_READERS in copy-census.scan.ts").toEqual([]);
   });
 
   /**

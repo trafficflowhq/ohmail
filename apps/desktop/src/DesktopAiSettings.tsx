@@ -16,7 +16,7 @@
  */
 
 import { useTranslations } from "next-intl";
-import { SettingsSubhead } from "@ohmail/ui";
+import { SettingsSheet } from "@ohmail/ui/mail";
 
 import { AiProviderForm } from "./AiProviderForm.js";
 import type { LocalAiStatus } from "./local-ai.js";
@@ -46,9 +46,8 @@ export function DesktopAiSettings({
 function LocalAiPane({ onStatus }: { onStatus?: (status: LocalAiStatus | null) => void }) {
   const t = useTranslations("aiProvider");
   return (
-    <>
-      <SettingsSubhead>{t("subhead")}</SettingsSubhead>
+    <SettingsSheet title={t("subhead")}>
       <AiProviderForm {...(onStatus ? { onStatus } : {})} />
-    </>
+    </SettingsSheet>
   );
 }

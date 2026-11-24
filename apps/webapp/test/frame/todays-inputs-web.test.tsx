@@ -1,0 +1,393 @@
+/** @vitest-environment jsdom */
+/**
+ * THE WEB'S REAL HOST, READ BACK MEMBER BY MEMBER: what the web's host hands on the managed build and the self-hosted
+ * one equals what `CloudShell` handed the old shell, input by input. Each hosted wire is the shared file's own object:
+ * the one the views fell back to when the old door was handed nothing. The old inputs' names are read off the host
+ * contract here (`readBack`), as the old shell's adapter (`app/shell/todays-inputs.ts`, which leaves with the old
+ * shell) read them: no part of today's shell is between the host and what this file asserts.
+ */
+import type { ReactNode } from "react";
+import { act, renderHook } from "@testing-library/react";
+import { NextIntlClientProvider } from "next-intl";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NONE, type FeatureEntry, type FrameSupplies, type HostContract, type None } from "@ohmail/app/host";
+import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
+import type { ServerHello } from "../../app/hello";
+import messages from "../../messages/en.json";
+
+/** The words' provider the page's every entry stands under (`LocaleShell`), as the frame's tests mount it. */
+const Words = ({ children }: { children: ReactNode }) => (
+  <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">{children}</NextIntlClientProvider>
+);
+
+const flavor = vi.hoisted(() => ({
+  selfHost: false,
+  /** What the server's `/hello` answers, in turn, where a case says it (`null`: no answer); else the real ask. */
+  hellos: null as Array<ServerHello | null> | null,
+  asked: 0,
+}));
+vi.mock("../../app/hello", async () => {
+  const real = await vi.importActual<typeof import("../../app/hello")>("../../app/hello");
+  return {
+    ...real,
+    get SELF_HOST_BUILD() { return flavor.selfHost; },
+    serverHello: (...args: Parameters<typeof real.serverHello>) => {
+      if (flavor.hellos === null) return real.serverHello(...args);
+      flavor.asked += 1;
+      return Promise.resolve(flavor.hellos.shift() ?? null);
+    },
+  };
+});
+
+const named = <T,>(name: string) => ({ named: name }) as unknown as T;
+const frame = {
+  places: named("places"), stages: named("stages"), overs: named("overs"), address: named("address"), window: named("window"),
+  appearance: named("appearance"), recover: NONE,
+} as FrameSupplies;
+const engine = named<HostContract["engine"]>("engine");
+
+/** A member the host hands, or undefined where it hands `none`: the old inputs' one word for "not handed". */
+const of = <T,>(member: T | None): T | undefined => (member === NONE ? undefined : (member as T));
+const entry = (feature: FeatureEntry | None) => (feature === NONE ? undefined : feature.render());
+
+/**
+ * THE OLD INPUTS' NAMES, READ OFF THE CONTRACT: each name is the member the old shell's adapter read it from, by the
+ * same rule (a `none` reads undefined; a capability reads the word the old prop said). Nothing of the old shell is run.
+ */
+function readBack(host: HostContract) {
+  const { capabilities: can, features, reads, device, wires } = host;
+  const away = can.awayRunsOn;
+  const ceiling = can.sendCeiling;
+  const build = device.build;
+  return {
+    managedService: can.service === "managed",
+    mailboxFacts: of(reads.mailboxes),
+    mirrorFreshness: of(reads.copyAge),
+    sendSurfaceMaxTotalBytes: ceiling === "strict" ? undefined : ceiling === "mailbox" ? null : ceiling,
+    accountSection: entry(features.account),
+    mailboxSection: entry(features.mailboxes),
+    billingSection: entry(features.subscription),
+    storageSection: entry(features.storage),
+    liveBodyWire: of(wires.liveBody),
+    invitesSection: entry(features.invites),
+    aboutSection: entry(features.about),
+    support: features.help === NONE ? undefined : {
+      surface: build.surface, version: build.version, commit: build.commit, accountId: host.session.account,
+      mailtoLeaves: build.mailtoLeaves,
+    },
+    desktopSection: entry(features.desktop),
+    devicesSection: entry(features.devices),
+    notificationHost: of(device.notifications),
+    screeningSection: entry(features.screener),
+    actRulesUnmarked: !can.rulesMarked,
+    /* Today's own node, which no host hands: the old adapter read it from today's nodes, never from the host. */
+    screenerSuggest: undefined,
+    awayTransport: of(wires.away),
+    awayIsLocal: away === "thisComputer",
+    awayOnHost: typeof away === "object" ? away.host : undefined,
+    profileImportTransport: of(wires.profileImport),
+    /* The consent wire is the shared file's own object, its folders flag with it (the old adapter's reading). */
+    consentTransport: of(wires.consent) as ConsentTransport | undefined,
+    imageWire: of(wires.images),
+    imagesFromComputer: can.unsubscribeFrom === "computer",
+    olderBodyWire: of(wires.olderBody),
+    junkWire: of(wires.junk),
+    trashWire: of(wires.trash),
+    suggestWire: of(wires.suggest),
+    draftReplyWire: of(wires.draftReply),
+    firstRun: of(wires.firstRun),
+    onUnread: of(device.badge),
+  };
+}
+
+async function inputsOf(selfHost: boolean, server = { pairing: true, remoteImages: false, searchPeople: false }) {
+  return (await hostOf(selfHost, server)).read;
+}
+
+const ACCOUNT = "acct-1";
+
+beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_API_BASE", "/api");
+  vi.stubGlobal("fetch", vi.fn(async () =>
+    Response.json({}, { headers: { "X-Ohmail-Account": ACCOUNT } }),
+  ));
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+});
+
+/** The web's host as the page builds it, and what the adapter reads back off it. */
+async function hostOf(selfHost: boolean, server = { pairing: true, remoteImages: false, searchPeople: false }) {
+  flavor.selfHost = selfHost;
+  vi.resetModules();
+  const { createSyncGate, registerSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
+  const { rememberOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
+  const { bindApiOwner } = await import("../../app/api-client");
+  const consent = await import("../../app/(product)/mailbox/consent-over-api");
+  const profile = await import("../../app/profile-import-wire");
+  const older = await import("../../app/shell/older-body");
+  const suggest = await import("../../app/(product)/mailbox/suggest-wire");
+  const away = await import("@ohmail/app/settings/away");
+  const factories = {
+    consent: vi.spyOn(consent, "cloudConsent"),
+    review: vi.spyOn(consent, "cloudSeedReview"),
+    profile: vi.spyOn(profile, "profileImportFor"),
+    older: vi.spyOn(older, "cloudOlderBodyFor"),
+    suggest: vi.spyOn(suggest, "suggestWireFor"),
+    away: vi.spyOn(away, "awayFeedOver"),
+  };
+  const { useCloudMailHost: useWebHost } = await import("../../app/(product)/mailbox/CloudShell");
+  const mailboxFacts = async () => [];
+  rememberOwner(ACCOUNT);
+  bindApiOwner(ACCOUNT);
+  const mirror = registerSyncGate(named<HostContract["engine"]>("engine"), createSyncGate(ACCOUNT));
+  const words = {
+    server, invites: selfHost, subscriptionPage: !selfHost, withdrawManage: () => undefined, storageBlock: !selfHost,
+    account: "acct-1", firstRun: undefined, mailboxFacts, resolve: async () => ({ kind: "none" }) as never, confirmed: () => undefined,
+  };
+  const { result } = renderHook(() => useWebHost(mirror, words, frame), { wrapper: Words });
+  return { host: result.current, read: { inputs: readBack(result.current), mailboxFacts, factories } };
+}
+
+describe("the web's host, read back as today's inputs", () => {
+  it("hands every hosted wire as the shared file's own object, and the managed service's words", async () => {
+    const { host, read: { inputs, mailboxFacts, factories } } = await hostOf(false);
+    const junk = await import("../../app/(product)/mailbox/junk-wire");
+    const trash = await import("../../app/shell/trash-window");
+    const draft = await import("../../app/(product)/mailbox/draft-reply-wire");
+    const { browserNotificationHost } = await import("../../app/shell/notification-settings");
+    const { browserNoticePage, webNoticeEmitter } = await import("../../app/shell/notice-emitter");
+    const { forgetOwner, markSignedOutPending, rememberOwner } =
+      await import("@ohmail/app-logic/storage/owner-cookie");
+    const { liveBodyOverApi } = await import("../../app/(product)/mailbox/web-supplies");
+    const { SEND_SURFACE } = await import("../../app/(product)/mailbox/CloudShell");
+    for (const build of [factories.consent, factories.profile, factories.older, factories.suggest]) {
+      expect(build.mock.calls).toEqual([[ACCOUNT]]);
+    }
+    expect(inputs.consentTransport).toBe(factories.consent.mock.results[0]?.value);
+    expect(inputs.profileImportTransport).toBe(factories.profile.mock.results[0]?.value);
+    expect(inputs.olderBodyWire).toBe(factories.older.mock.results[0]?.value);
+    expect(inputs.junkWire).toBe(junk.cloudWire);
+    expect(inputs.trashWire).toBe(trash.cloudWire);
+    expect(inputs.suggestWire).toBe(factories.suggest.mock.results[0]?.value);
+    expect(inputs.draftReplyWire).toBe(draft.CLOUD_WIRE);
+    expect(factories.away).toHaveBeenCalledTimes(1);
+    expect(inputs.awayTransport).toBe(factories.away.mock.results[0]?.value.wire);
+    // The browser's own notification host, each part the shared file's object; its notices the page's own emitter.
+    const pageEmitter = webNoticeEmitter(browserNoticePage, () => { throw new Error("nothing is drawn here"); }, undefined, true);
+    expect(inputs.notificationHost).toEqual({
+      ...browserNotificationHost,
+      liveNoticeScope: expect.any(Function),
+      emitter: {
+        ...pageEmitter, post: expect.any(Function), takeBack: expect.any(Function), lockSummary: expect.any(Function),
+      },
+    });
+    // This host can announce notices only while the browser still names its account.
+    const liveNoticeScope = inputs.notificationHost?.liveNoticeScope;
+    try {
+      rememberOwner("acct-1");
+      expect(liveNoticeScope?.()).toBe("acct-1");
+      rememberOwner("acct-2");
+      expect(liveNoticeScope?.()).toBeNull();
+      markSignedOutPending();
+      expect(liveNoticeScope?.()).toBeNull();
+    } finally {
+      forgetOwner();
+    }
+    expect(inputs.liveBodyWire).toBe(liveBodyOverApi);
+    expect(inputs.mailboxFacts).toBe(mailboxFacts);
+    // What `CloudShell` passed: the managed service, its ceiling, Help with the confirmed account, no picture fetcher.
+    expect(inputs.managedService).toBe(true);
+    expect(inputs.sendSurfaceMaxTotalBytes).toBe(SEND_SURFACE === undefined ? undefined : SEND_SURFACE);
+    expect(inputs.support).toEqual({ surface: "web", version: null, commit: null, accountId: "acct-1", mailtoLeaves: true });
+    expect(inputs.imageWire).toBeUndefined();
+    expect(inputs.imagesFromComputer).toBe(false);
+    expect(inputs.actRulesUnmarked).toBe(false);
+    expect(inputs.awayIsLocal).toBe(false);
+    expect(inputs.awayOnHost).toBeUndefined();
+    expect(inputs.firstRun).toBeUndefined();
+    expect(inputs.mirrorFreshness).toBeUndefined();
+    expect(inputs.desktopSection).toBeUndefined();
+    expect(inputs.screenerSuggest).toBeUndefined();
+    expect(inputs.onUnread).toBeUndefined();
+    expect(inputs.billingSection).toBeDefined();
+    expect(inputs.storageSection).toBeDefined();
+    expect(inputs.devicesSection).toBeDefined();
+    expect(inputs.invitesSection).toBeUndefined();
+    // Settings' panes the web fills itself: its Mailboxes (with the filings and the self-check) and About.
+    const { WEB_PANE_PARTS } = await import("../../app/(product)/mailbox/pane-parts");
+    expect(inputs.mailboxSection).toBeDefined();
+    expect(host.features.mailboxes).not.toBe(NONE);
+    expect(WEB_PANE_PARTS.mailboxes).not.toBe(NONE);
+    expect(inputs.aboutSection).toBeDefined();
+    expect(inputs.accountSection).toBeDefined();
+    expect(inputs.screeningSection).toBeDefined();
+  });
+
+  it("on a server its operator runs: no Load it now, no Help, no subscription, and invites where the server says", async () => {
+    const { inputs } = await inputsOf(true);
+    expect(inputs.managedService).toBe(false);
+    expect(inputs.liveBodyWire).toBeUndefined();
+    expect(inputs.support).toBeUndefined();
+    expect(inputs.billingSection).toBeUndefined();
+    expect(inputs.storageSection).toBeUndefined();
+    expect(inputs.invitesSection).toBeDefined();
+  });
+
+  it("where the server pairs nothing, Settings has no Devices", async () => {
+    const { inputs } = await inputsOf(false, { pairing: false, remoteImages: false, searchPeople: false });
+    expect(inputs.devicesSection).toBeUndefined();
+  });
+
+  it("hands the review of who you write to where this page has a client, and nowhere else", async () => {
+    const before = process.env.NEXT_PUBLIC_API_BASE;
+    const pageFetch = globalThis.fetch;
+    const sent: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(`${init?.method ?? "GET"} ${String(input)}`);
+      return Response.json({}, { headers: { "X-Ohmail-Account": ACCOUNT } });
+    }) as typeof globalThis.fetch;
+    try {
+      process.env.NEXT_PUBLIC_API_BASE = "/api";
+      const { host, read: { factories } } = await hostOf(false);
+      const review = host.wires.seedReview;
+      expect(review, "a page with its own client offers no review").not.toBe(NONE);
+      if (review === NONE) return;
+      await review.read();
+      await review.confirm(["lena@example.invalid"], { idempotencyKey: "press-1" });
+      expect(sent).toEqual(["GET /api/away-responder", "GET /api/consent/seed", "POST /api/consent/seed"]);
+      expect(factories.review.mock.calls).toEqual([[ACCOUNT]]);
+      expect(review).toBe(factories.review.mock.results[0]?.value);
+
+      process.env.NEXT_PUBLIC_API_BASE = "";
+      expect((await hostOf(false)).host.wires.seedReview, "a page with no client offers a review nothing can run").toBe(NONE);
+    } finally {
+      globalThis.fetch = pageFetch;
+      if (before === undefined) delete process.env.NEXT_PUBLIC_API_BASE;
+      else process.env.NEXT_PUBLIC_API_BASE = before;
+    }
+  });
+
+  it("holds the folders flag to the consent object's own word", async () => {
+    const { inputs, factories } = await inputsOf(false);
+    expect(factories.consent.mock.calls).toEqual([[ACCOUNT]]);
+    expect(inputs.consentTransport?.foldersStorable).toBe(factories.consent.mock.results[0]?.value.foldersStorable);
+    expect(inputs.consentTransport?.foldersStorable).toBe(true);
+  });
+});
+
+/** A server that says it fetches pictures. */
+const FETCHES_PICTURES = {
+  product: "ohmail", flavor: "managed", needsSetup: false,
+  features: { staging: true, ai: true, pairing: true, remoteImages: true },
+} as ServerHello;
+
+/** The page as `CloudShell` builds it: the server's words asked by the page, its host built from them. */
+async function pageAsking(hellos: Array<ServerHello | null>) {
+  flavor.selfHost = false;
+  flavor.hellos = hellos;
+  flavor.asked = 0;
+  process.env.NEXT_PUBLIC_API_BASE = "/api";
+  vi.resetModules();
+  const { useServerWords } = await import("../../app/server-words");
+  const { useCloudMailHost: useWebHost } = await import("../../app/(product)/mailbox/CloudShell");
+  const { WEB_IMAGES } = await import("../../app/(product)/mailbox/image-wire");
+  const words = {
+    invites: false, subscriptionPage: true, withdrawManage: () => undefined, storageBlock: true,
+    account: "acct-1", firstRun: undefined, mailboxFacts: async () => [], resolve: async () => ({ kind: "none" }) as never, confirmed: () => undefined,
+  };
+  const page = renderHook(() => useWebHost(engine, { ...words, server: useServerWords(false) }, frame), { wrapper: Words });
+  return { page, wire: () => readBack(page.result.current).imageWire, WEB_IMAGES };
+}
+
+describe("the server's first word on pictures, when the page's first ask got no answer", () => {
+  const before = process.env.NEXT_PUBLIC_API_BASE;
+  const restore = () => {
+    flavor.hellos = null;
+    vi.useRealTimers();
+    if (before === undefined) delete process.env.NEXT_PUBLIC_API_BASE;
+    else process.env.NEXT_PUBLIC_API_BASE = before;
+  };
+
+  it("a first /hello that fails and a second that says the server fetches pictures hand the old shell the web's wire", async () => {
+    const answered = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
+    try {
+      const { page, wire, WEB_IMAGES } = await pageAsking([null, FETCHES_PICTURES]);
+      await answered();
+      expect(flavor.asked, "the page's first ask").toBe(1);
+      expect(wire(), "a picture wire before the server said it fetches pictures").toBeUndefined();
+      window.dispatchEvent(new Event("online"));
+      await answered();
+      expect(flavor.asked, "the page asked again when the window came back online").toBe(2);
+      expect(wire(), "the web's own wire, once the server said it fetches pictures").toBe(WEB_IMAGES);
+      page.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("with the window online all along it asks again after 30 seconds, and at most three times", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { page, wire } = await pageAsking([null, null, null, null, FETCHES_PICTURES]);
+      const waited = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+      await waited(0);
+      expect(flavor.asked, "the page's first ask").toBe(1);
+      await waited(29_999);
+      expect(flavor.asked, "asked again before 30 seconds had passed").toBe(1);
+      await waited(1);
+      expect(flavor.asked, "not asked again after 30 seconds").toBe(2);
+      await waited(30_000);
+      await waited(30_000);
+      expect(flavor.asked, "the page's ask and three more").toBe(4);
+      await waited(120_000);
+      expect(flavor.asked, "asked a fifth time").toBe(4);
+      expect(wire(), "a picture wire with no word from the server").toBeUndefined();
+      page.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("whichever of the online event and the 30 seconds comes first asks, and the other is let go", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { page } = await pageAsking([null, null, null, null, FETCHES_PICTURES]);
+      const waited = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+      const online = () => act(async () => { window.dispatchEvent(new Event("online")); await vi.advanceTimersByTimeAsync(0); });
+      await waited(0);
+      expect(flavor.asked, "the page's first ask").toBe(1);
+      await online();
+      expect(flavor.asked, "the window came back online").toBe(2);
+      await waited(30_000);
+      expect(flavor.asked, "the first wait's 30 seconds asked as well as the online event").toBe(3);
+      await online();
+      await online();
+      expect(flavor.asked, "the page's ask and three more").toBe(4);
+      await waited(120_000);
+      expect(flavor.asked, "asked a fifth time").toBe(4);
+      page.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("a page that goes while it waits to ask again asks nothing more", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { page } = await pageAsking([null, FETCHES_PICTURES]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(flavor.asked, "the page's first ask").toBe(1);
+      page.unmount();
+      window.dispatchEvent(new Event("online"));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(flavor.asked, "asked after the page went").toBe(1);
+    } finally {
+      restore();
+    }
+  });
+});

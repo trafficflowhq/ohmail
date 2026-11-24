@@ -25,10 +25,12 @@
  * the day the suite happens to run cannot pass. The strings in `data.ts` are an instant spec now,
  * not display copy, and this is what holds the two apart.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter, OhmailEngine, messageDisplayTime, messagesIn, type EngineMessage,
+  OhmailEngine, messageDisplayTime, messagesIn,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** The four bands `messageStamp` can emit, with the names taken from `Intl` and not retyped. */
 const LOCALES = ["en", "de"] as const;

@@ -32,6 +32,8 @@ const refusal = (status: number, code: string): Response => json({ error: { code
 
 /** The one server both tabs talk to, and the browser's one cookie jar. */
 let jar: "none" | "enrollment" | "full";
+const ENROLLMENT_FAMILY = "enroll-fixture";
+const FULL_FAMILY = "full-fixture";
 let codeSets = 0;
 let sessionFault: (() => Response) | null = null;
 /* The server's answer to a jar with no refresh cookie, which is every jar here: an empty one, or an enrollment
@@ -52,7 +54,9 @@ const user = () => ({
 function serve(path: string): Response {
   if (path === "/auth/session") {
     if (sessionFault) return sessionFault();
-    return jar === "none" ? refusal(401, "unauthorized") : json({ user: user(), scope: jar });
+    return jar === "none" ? refusal(401, "unauthorized") : json({
+      user: user(), scope: jar, familyId: jar === "enrollment" ? ENROLLMENT_FAMILY : FULL_FAMILY,
+    });
   }
   if (path === "/auth/refresh") return refreshAnswer();
   if (path === "/auth/register") return json({ status: "ok" }, 202);
@@ -60,7 +64,17 @@ function serve(path: string): Response {
   if (path === "/auth/2fa/totp/enroll") {
     return json({ secret: SEED, otpauthUrl: `otpauth://totp/ohmail:fixture?secret=${SEED}&issuer=ohmail` });
   }
-  if (path === "/auth/2fa/totp/activate") { jar = "full"; return json({ twofaEnrolled: user().twofaEnrolled }); }
+  if (path === "/auth/2fa/totp/activate") {
+    jar = "full";
+    document.cookie = `tf_family=${FULL_FAMILY}; Path=/`;
+    document.cookie = "tf_csrf=full-fixture; Path=/";
+    const response = json({
+      twofaEnrolled: user().twofaEnrolled,
+      session: { status: "authenticated", user: user(), familyId: FULL_FAMILY },
+    });
+    response.headers.set("X-Ohmail-Account", user().accountId);
+    return response;
+  }
   if (path === "/auth/2fa/recovery-codes") { codeSets += 1; return json({ codes: [`set${codeSets}-aaaa`, `set${codeSets}-bbbb`] }); }
   if (path === "/account/access") {
     return json({ metered: true, access: "refused", canAddMailbox: false, mailboxes: 0, lifecycle: NEVER_STARTED });
@@ -72,7 +86,14 @@ function serve(path: string): Response {
 
 const enrolled = (): Response => {
   jar = "enrollment";
-  return json({ status: "enrollment", user: user(), next: "enroll_2fa", enrollmentToken: "x", expiresIn: 300 });
+  document.cookie = `tf_family=${ENROLLMENT_FAMILY}; Path=/`;
+  document.cookie = "tf_owner=a1; Path=/";
+  // A changed CSRF cookie tells the client that the ceremony minted a session.
+  document.cookie = "tf_csrf=enroll-fixture; Path=/";
+  return json({
+    status: "enrollment", user: user(), familyId: ENROLLMENT_FAMILY,
+    next: "enroll_2fa", enrollmentToken: "x", expiresIn: 300,
+  });
 };
 
 beforeEach(async () => {
@@ -120,8 +141,8 @@ async function tab(which: "join" | "verify") {
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
   const screen = which === "join"
-    ? React.createElement((await import("../app/(product)/join/JoinScreen.js")).JoinScreen, { initialCode: "", publicSignup: true })
-    : React.createElement((await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen, { initialToken: "tok" });
+    ? React.createElement((await import("../app/(product)/join/JoinRoute.js")).JoinRoute, { initialCode: "", publicSignup: true })
+    : React.createElement((await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute, { initialToken: "tok" });
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -130,19 +151,28 @@ async function tab(which: "join" | "verify") {
   });
   for (let i = 0; i < 10; i += 1) await tick(0);
   unmounts.push(async () => { await act(async () => root.unmount()); host.remove(); });
-  const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
+  /** A blank by its id (the join's card), or by the name its label gives it (a door's page). */
+  const blank = (key: string | { label: string }): HTMLInputElement | null => {
+    if (typeof key === "string") return host.querySelector<HTMLInputElement>(`#${key}`);
+    const label = [...host.querySelectorAll("label")].find((l) => l.textContent === key.label);
+    return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+  };
+  const type = async (key: string | { label: string }, value: string) => {
+    const input = blank(key);
+    expect(input, `${JSON.stringify(key)} is not on screen`).toBeTruthy();
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
     await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
   };
+  /** A button by its words; a door's ink button carries its key after them. */
   const press = async (label: string) => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+    const buttons = [...host.querySelectorAll("button")];
+    const button = buttons.find((b) => b.textContent === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     for (let i = 0; i < 10; i += 1) await tick(0);
   };
-  const title = () => host.querySelector("h1")?.textContent ?? null;
+  /** The step's title: the join card's heading; a door's page says it as its sentence, the first line of its main. */
+  const title = () => (which === "join" ? host.querySelector("h1") : host.querySelector("main p"))?.textContent ?? null;
   return { host, type, press, title };
 }
 
@@ -152,15 +182,15 @@ async function waiting() {
   await a.type("join-email", "pat@family.example");
   await a.type("join-name", "Pat");
   await a.type("join-pw", "a-long-signup-password");
-  await a.press(en.join.createAccount);
-  expect(a.title()).toBe(en.join.step_sent_title);
+  await a.press(en.join.continue);
+  expect(a.title()).toContain(en.join.openLink.split("<a>")[0]!.trim());
   return a;
 }
 
 /** The confirming page, its password typed and confirmed. */
 async function confirm() {
   const v = await tab("verify");
-  await v.type("verify-pw", "a-long-signup-password");
+  await v.type({ label: en.verify.passwordLabel }, "a-long-signup-password");
   await v.press(en.verify.confirm);
   return v;
 }
@@ -183,8 +213,8 @@ describe("the confirming page hands the setup over, or continues it, never both"
   it("a tab waiting on Check your email takes the setup over; the confirming page opens no /join and offers nothing", async () => {
     const a = await waiting();
     const v = await confirm();
-    await until(() => a.title() !== en.join.step_sent_title);
-    expect(a.title(), "the waiting tab did not carry on into the setup").toBe(en.join.step_factor_title);
+    await until(() => !a.title()?.startsWith(en.join.openLink.split("<a>")[0]!));
+    expect(a.title(), "the waiting tab did not carry on into the setup").toBe(en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord));
     await tick(1_200);
     expect(nav.pushes, "the confirming page opened a second wizard").toEqual([]);
     expect(v.title()).toBe(en.verify.doneTitle);
@@ -241,18 +271,18 @@ describe("the confirming page hands the setup over, or continues it, never both"
     });
     expect(said.filter((m) => (m as { kind?: string }).kind === "granted"), "a claim after the window was granted").toEqual([]);
     expect(nav.pushes).toEqual(["/join"]);
-    expect(a.title(), "a late answer made a second live wizard").toBe(en.join.step_sent_title);
+    expect(a.title(), "a late answer made a second live wizard").toContain(en.join.openLink.split("<a>")[0]!.trim());
   });
 
   it("with two tabs waiting, exactly one of them moves on", async () => {
     const first = await waiting();
     const second = await waiting();
     await confirm();
-    const moved = () => [first, second].filter((t) => t.title() === en.join.step_factor_title).length;
+    const moved = () => [first, second].filter((t) => t.title() === en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord)).length;
     expect(await until(() => moved() > 0)).toBe(true);
     await tick(1_200);
     expect(moved()).toBe(1);
-    expect([first, second].filter((t) => t.title() === en.join.step_sent_title)).toHaveLength(1);
+    expect([first, second].filter((t) => t.title()?.startsWith(en.join.openLink.split("<a>")[0]!))).toHaveLength(1);
     expect(nav.pushes).toEqual([]);
   });
 });
@@ -290,6 +320,9 @@ describe("only an account sent on to its setup is offered", () => {
       verifyAnswer = () => refusal(400, "invalid_token");
       const dead = await confirm();
       expect(dead.host.textContent).toContain(en.verify.refusedLink);
+      // A dead link's code is dropped: Confirm stays off, and the sign-in for a fresh link is the way on.
+      const again = [...dead.host.querySelectorAll("button")].find((b) => b.textContent?.startsWith(en.verify.confirm));
+      expect(again?.disabled, "Confirm pressed again over a dead link").toBe(true);
       verifyAnswer = () => json({ status: "verified" });
       const factor = await confirm();
       expect(factor.title()).toBe(en.verify.doneTitle);
@@ -325,7 +358,7 @@ describe("the tab that took the setup over says when it cannot read it", () => {
     expect(await until(() => a.title() === en.onboarding.resumeUnreachableTitle), "the fault was swallowed").toBe(true);
     sessionFault = null;
     await a.press(en.onboarding.resumeRetry);
-    expect(await until(() => a.title() === en.join.step_factor_title)).toBe(true);
+    expect(await until(() => a.title() === en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord))).toBe(true);
   });
 
   it("a session gone by then is the expired screen, with sign-in carrying on into the setup", async () => {
@@ -344,25 +377,25 @@ describe("one set of recovery codes across the tab that took over and a second /
   it("a factor added in the second tab ends the factor step in the first: its press re-reads, and no second set is made", async () => {
     const a = await waiting();
     await confirm();
-    expect(await until(() => a.title() === en.join.step_factor_title)).toBe(true);
+    expect(await until(() => a.title() === en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord))).toBe(true);
     // A second /join, opened by hand: it adds the authenticator and saves its codes.
     const b = await tab("join");
-    expect(b.title()).toBe(en.join.step_factor_title);
-    await b.press(en.join.useTotp);
+    expect(b.title()).toBe(en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord));
+    await b.press(en.join.factorApp);
     await b.type("join-totp", "123456");
     await b.press(en.join.activate);
-    expect(await until(() => b.host.querySelectorAll(".join-codes li").length > 0)).toBe(true);
+    expect(await until(() => b.host.querySelectorAll("ul li").length > 0)).toBe(true);
     expect(codeSets).toBe(1);
     const enrolments = calls.filter((p) => p === "/auth/2fa/totp/enroll").length;
     // Back in the first tab, the factor step is still on screen; the person does what it asks.
-    await a.press(en.join.useTotp);
+    await a.press(en.join.factorApp);
     if (a.host.querySelector("#join-totp")) {
       await a.type("join-totp", "654321");
       await a.press(en.join.activate);
     }
-    await until(() => a.title() !== en.join.step_factor_title, 2_000);
+    await until(() => a.title() !== en.join.lockWith.replace("<how></how>.", en.join.factorPasskeyWord), 2_000);
     expect(calls.filter((p) => p === "/auth/2fa/totp/enroll").length, "a second factor was started").toBe(enrolments);
     expect(codeSets, "the codes the second tab showed were cancelled").toBe(1);
-    expect(a.title()).toBe(en.join.step_plan_title);
+    expect(a.title()).toBe("Start your 14-day trial");
   });
 });

@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext, type SmtpProbe } from "@trafficflow/services";
+import { dbFor, makeMailboxService, type ServiceContext, type SmtpProbe } from "@trafficflow/services";
 
 /**
  * THE SERVER'S OWN `SIZE` ANNOUNCEMENT SURVIVES THE CONNECT FLOW AND REACHES THE WIRE.
@@ -27,7 +27,7 @@ type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 async function seed(db: Db): Promise<ServiceContext> {
   const [a] = await db.insert(accounts).values({ name: "smtp size" }).returning();
-  return { db, accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
+  return { db: dbFor(db, a!.id), accountId: a!.id, userId: null, now: () => NOW, requestId: randomUUID() };
 }
 
 /** An SMTP probe that proves the endpoint and announces `maxMessageBytes`. */

@@ -52,7 +52,7 @@ describe("the population the gate reads", () => {
     const needing = FILES.filter((f) => BY.get(f)!.needs.length > 0);
     expect(needing.length).toBeGreaterThanOrEqual(550);
     for (const f of FILES.filter((x) => /\.pg\.test\.tsx?$/.test(x))) expect(BY.get(f)!.needs, f).toContain("pg");
-    expect(BY.get("apps/worker/test/sync.e2e.test.ts")).toEqual({ needs: ["greenmail", "pg"], gated: [], gate: ["greenmail", "pg"] });
+    expect(BY.get("packages/organizer/test/sync.e2e.test.ts")).toEqual({ needs: ["greenmail", "pg"], gated: [], gate: ["greenmail", "pg"] });
     expect(BY.get("apps/sidecar/test/send.e2e.test.ts")!.gate).toContain("greenmail");
     expect(BY.get("apps/mobile/test/engine-bundle-first-sync.imap.test.ts")!.gate).toContain("greenmail");
     expect(BY.get("packages/core/test/adapters/imap.changes.fastpath.test.ts")!.gated).toEqual(["dovecot"]);

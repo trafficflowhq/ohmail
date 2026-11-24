@@ -1,0 +1,145 @@
+{
+  "component": "Row",
+  "state": "picked",
+  "look": "ohmarchy-light-desktop",
+  "place": "cell",
+  "target": [24, 24, 420, 88],
+  "clip": [24, 24, 420, 88],
+  "studioCommit": "c1c58adeab0fb0d78adac3180649d642aa82dc21",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(95, 94, 90)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(95, 94, 90)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13.5px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.9px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "rgb(16, 15, 15)" },
+    { "ink": "stroke rgb(255, 252, 240) 1.6px square miter 4; shapes 1 76dc411a4b39" },
+    { "backgroundColor": "rgb(255, 252, 240)", "boxShadow": "rgb(140, 139, 135) 0px 0px 0px 2px" }
+  ],
+  "nodes": [
+    {
+      "role": "list",
+      "name": "",
+      "box": [0, 0, 420, 88],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "10px",
+        "paddingBottom": "4px",
+        "paddingLeft": "10px",
+        "borderColor": "rgb(16, 15, 15)"
+      }
+    },
+    {
+      "role": "button",
+      "name": "Tim Berger tim@gassenblatt.example Sat Got us tickets for the 21st Row 8, right side, close enough to see the drummer sweat. I will forward the details. You owe…",
+      "box": [10, 0, 400, 84],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(246, 243, 231)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "14px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "state": ["selected"],
+      "text": [
+        { "said": "Tim Berger", "type": 0 },
+        { "said": "tim@gassenblatt.example", "type": 1 },
+        { "said": "Sat", "type": 2 },
+        { "said": "Got us tickets for the 21st", "type": 3 },
+        {
+          "said": "Row 8, right side, close enough to see the drummer sweat. I will forward the details. You owe me a beer.",
+          "type": 1
+        }
+      ],
+      "surfaces": [
+        { "box": [26, 13.2, 32, 32], "paint": 0 },
+        { "box": [33, 20.2, 18, 18], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [{ "box": [0, 0, 420, 88], "paint": 2 }] }
+}

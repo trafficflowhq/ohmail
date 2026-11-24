@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql, type SQL } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { mailboxes } from "@trafficflow/db";
+import { mailboxes, accountPass, writePassProgress } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
@@ -106,13 +106,13 @@ describe("the search page looks a message up by key only for the rows it returns
       select ${A}::uuid, ${mb!.id}::uuid, 'h', 'rowsonce:' || g, case when g % 300 = 7 then 'lighthouse notes ' || g else 'harbour notes ' || g end,
         's' || g || '@rowsonce.example', ${NOW.toISOString()}::timestamptz - make_interval(mins => g), false, false, jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g)
       from generate_series(1, ${N}) g`);
-    await base.execute(sql`insert into message_bodies (message_id, text) select id, subject from messages where account_id = ${A}::uuid`);
-    await base.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-      select id, 'INBOX', 'INBOX', 'us' from messages where account_id = ${A}::uuid`);
+    await base.execute(sql`insert into message_bodies (message_id, account_id, text) select id, account_id, subject from messages where account_id = ${A}::uuid`);
+    await base.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+      select id, account_id, 'INBOX', 'INBOX', 'us' from messages where account_id = ${A}::uuid`);
     await base.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
       select m.id, m.account_id, setweight(to_tsvector('english', m.subject), 'A'), to_tsvector('english', m.subject), lower(m.subject), 'text'
       from messages m where m.account_id = ${A}::uuid`);
-    await base.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${A}::uuid, now())`);
+    await writePassProgress(base, accountPass("search_index_backfill", A), { doneAt: new Date() });
     await base.execute(sql`analyze messages`);
     await base.execute(sql`analyze message_search`);
   }, 120_000);

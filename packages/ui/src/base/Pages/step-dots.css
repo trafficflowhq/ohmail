@@ -1,0 +1,23 @@
+/* How far a walk is: small dots a step apart, and before them the numeral of a phase's own screens. */
+@layer oh {
+  .oh-stepdots {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+  .oh-stepdots-sub {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+  }
+  .oh-stepdots-mark {
+    --dot-size: 8px;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+  .oh-stepdots-mark > .oh-dot {
+    --oh-dot-gap: 0;
+  }
+}

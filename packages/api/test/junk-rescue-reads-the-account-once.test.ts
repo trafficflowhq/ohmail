@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { PgSelectQueryBuilderBase } from "drizzle-orm/pg-core";
@@ -5,6 +6,7 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { accountSettings, mailboxCredentials, mailboxes } from "@trafficflow/db";
 import { acquireImapSlot, releaseImapSlot } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
+import { dbFor } from "@trafficflow/services/mail";
 import { rescueJunk } from "../src/junk-window.js";
 import type { ApiDeps } from "../src/deps.js";
 
@@ -26,14 +28,14 @@ async function seed() {
     accountId, provider: "imap", address: `junk-${randomUUID().slice(0, 8)}@example.invalid`, junkFolder: "Junk",
   }).returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
   });
   const deps = {
     db, keyProvider: { decrypt: async () => "not-printed" },
     services: { imapAdmission: { acquire: acquireImapSlot, release: releaseImapSlot } }, now: () => NOW,
   } as unknown as ApiDeps;
-  const ctx = { accountId, now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
+  const ctx = { accountId, db: dbFor(db, accountId), now: () => NOW } as unknown as Parameters<typeof rescueJunk>[1];
   return { deps, ctx, mailboxId: mb!.id };
 }
 

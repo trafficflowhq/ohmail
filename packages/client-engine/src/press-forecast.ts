@@ -1,3 +1,4 @@
+import type { EngineMessage, EngineMutation, Folder, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { canonicalDestination, isOrganizedFolder, retroPassWouldMove, retroWalkWouldMove } from "@trafficflow/core/destinations";
 import { heldMovesOnPress } from "@trafficflow/core/sender-headers";
 import { outrankCoveringDomains } from "./address-rank.js";
@@ -13,7 +14,7 @@ import { oneRowPerKey, pressOverTwins, ruleTwins, twinWinner } from "./rule-twin
 import { pressRuleId } from "./rules-shown.js";
 import { rulesList, senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
-import { FOLDER_OF_VIEW, type EngineMessage, type EngineMutation, type Folder, type RuleDTO } from "./types.js";
+import { FOLDER_OF_VIEW } from "./types.js";
 
 /** What a card press files beyond its own sender, before it is made — {@link cardReach}. */
 export interface CardReach {

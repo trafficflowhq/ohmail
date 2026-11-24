@@ -17,7 +17,7 @@
  */
 import { liveCopy } from "../../webapp/app/shell/locale.js";
 
-import { MACHINE_WORD } from "./platform.js";
+import { BUILD_PLATFORM, MACHINE_WORD } from "./platform.js";
 
 /**
  * THE ENGLISH, AND THE SHAPE OF THE NAMESPACE.
@@ -209,6 +209,8 @@ const EN = {
      says the setup sentence instead (`linksOutToBilling`). */
   cloudNoAccount: "No account yet?",
   cloudCreateAccount: "Create one in your browser",
+  forgotPassword: "Forgot your password?",
+  resetBrowserFailed: "The password reset page could not be opened in your browser.",
   cloudJoinNoBrowser: (machine: string) =>
     `This ${machine} would not open a browser. The page is at ohmail.app/join.`,
   cloudSetupOnWeb: "Mailboxes are connected in ohmail on the web. Sign in here once yours is connected.",
@@ -451,6 +453,16 @@ const EN = {
   /* ── SETTINGS → ABOUT ────────────────────────────────────────────────────────────────────── */
   aboutAppLabel: "ohmail for desktop",
   aboutAppWhy: "The build running in this window.",
+  /* A NIGHTLY PREVIEW SAYS SO, on the mark every screen carries and in the row under the build.
+     Two mark keys, because a build made from a checkout names no commit and a sentence is never
+     glued from parts. */
+  previewMark: (commit: string) => `Preview build ${commit}`,
+  previewMarkUnstamped: "Preview build",
+  aboutPreviewLabel: "Preview build",
+  aboutPreviewWhy:
+    "A nightly build of the next version. It keeps its own data, apart from an installed ohmail, "
+    + "and the next night's build replaces it.",
+  aboutPreviewUnstamped: "Built from a checkout",
   aboutPublisher: "Published by",
   aboutPublisherWhy: "The company that writes this app.",
   aboutLicence: "Licence",
@@ -611,7 +623,15 @@ const EN = {
   engineNoKey: (machine: string) => `This ${machine}'s keystore would not answer`,
   engineNotConfigured: "No mailbox chosen",
   engineUnknown: "Not in this build",
-  installChangingHead: "Changing this install",
+  installChangingHead: "Sign-in",
+  installNameLinux: "ohmail on Linux",
+  installNameMac: "ohmail on Mac",
+  installNameWindows: "ohmail on Windows",
+  installThisComputer: "This computer",
+  installAccount: "Account",
+  installUnreachable: "Unreachable",
+  installConnectionUnknown: "Unknown",
+  installMailboxCount: (count: number, role: "reader" | "organizer"): string => `${count} · ${role === "reader" ? "reader" : "organizes"}`,
   installSignInAgain: "Sign in again",
   installSignInAgainWhy:
     "Your hosted session has gone. Signing in happens in the mail engine on this machine.",
@@ -659,12 +679,12 @@ const EN = {
      The `MailboxProbe` null-versus-empty rule, said on screen. */
   takeoverRosterUnknown: (host: string) =>
     `Could not read which mailboxes ${host} held; enter the server by hand.`,
-  installSwitch: "Switch mailbox",
+  installSwitch: "Mail server or account",
   installSwitchWhy: (machine: string) =>
     `Open a different mail server, or move between this ${machine} and your hosted account. The `
     + "copy of your mail from this one is frozen where it is rather than deleted, so coming back "
     + "does not cost a full re-sync.",
-  installSwitchAction: "Switch…",
+  installSwitchAction: "Switch",
   /* ── THE PAIRED DOOR'S THREE VARIANTS OF ROWS THAT ALREADY EXIST ─────────────────────────
      Each differs from the sentence above it in the one way that matters: the hosted wording says
      "the login — the stored password, or the session for your hosted account", and a paired
@@ -857,10 +877,6 @@ const EN = {
   bootCompacting: "Compacting your local mail store — one-time maintenance…",
   errorUnknown: "Something went wrong and said nothing about what.",
   errorRefused: (status: string) => `The request was refused (${status}).`,
-  /* The OS notification's body. ICU plural, because German's plural rule is English's here and
-     the one-vs-many split is the whole of the sentence. */
-  notifyNewMail: (count: number) =>
-    count === 1 ? "One new message for you." : `${count} new messages for you.`,
 };
 
 /**
@@ -869,8 +885,10 @@ const EN = {
  * answers English before a provider exists and German after one does.
  */
 export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
+  installMailboxCount: ["count", "role"],
   doorLocalName: ["machine"],
   diagnosticWritten: ["path"],
+  previewMark: ["commit"],
   doorHostSay: ["machine"],
   hostReached: ["host"],
   hostReachedTs: ["machine"],
@@ -960,7 +978,6 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   installSignOutConfirmWhy: ["machine"],
   installSignOutWhy: ["machine"],
   errorRefused: ["status"],
-  notifyNewMail: ["count"],
   /* TWO VALUES, in the ARGUMENT order of the formatter above — the same rule as `connStaleWhy`
      and the takeover lines: a translation may put the total first and this list is what keeps
      each number attached to its own hole. */
@@ -993,5 +1010,14 @@ export function keyringSentence(platform: string): string {
     case "darwin": return DOOR_COPY.gateKeychainWhy;
     case "win32": return DOOR_COPY.gateCredentialsWhy;
     default: return DOOR_COPY.gateKeyringWhy;
+  }
+}
+
+export function installName(): string {
+  switch (BUILD_PLATFORM) {
+    case "linux": return DOOR_COPY.installNameLinux;
+    case "darwin": return DOOR_COPY.installNameMac;
+    case "win32": return DOOR_COPY.installNameWindows;
+    default: return "ohmail";
   }
 }

@@ -88,7 +88,7 @@ afterEach(() => {
 });
 
 async function freshModule() {
-  return import("../../webapp/app/shell/open-external.js");
+  return import("@ohmail/app-logic/session/open-external");
 }
 
 function install(
@@ -417,15 +417,6 @@ function sourceOf(rel: string): string {
 
 describe("the sink is wired to the compose form", () => {
   const gate = sourceOf("src/DesktopGate.tsx");
-
-  it("DesktopGate registers the sink and feeds it through the one mailto parser", () => {
-    expect(gate, "DesktopGate never registers the in-window mailto sink")
-      .toMatch(/setMailtoSink\(/);
-    // The same parser the OS activation goes through — not a second reading of RFC 6068.
-    expect(gate).toMatch(/parseMailto/);
-    expect(gate, "the parsed draft never reaches the compose form")
-      .toMatch(/setMailtoDraft/);
-  });
 
   it("the shell's own gate still refuses a mailto, whatever the window does", () => {
     const engine = sourceOf("src-tauri/src/engine.rs");

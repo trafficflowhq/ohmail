@@ -8,8 +8,8 @@
  * (a combined German pattern renders `Sa., 00:07`); the clock is never
  * Intl-formatted — `zonedFields` pins h23; deliberate, as bare `en` is 12-hour.
  */
+import type { EngineMessage } from "@ohmail/wire";
 import { zonedDayNumber, zonedFields } from "./zone.js";
-import type { EngineMessage } from "./types.js";
 
 /**
  * Day and month names from Intl, in the caller's locale and the reader's
@@ -25,13 +25,26 @@ const NAMERS = new Map<string, Intl.DateTimeFormat>();
 export function named(
   locale: string, opts: Intl.DateTimeFormatOptions, d: Date, zone: string,
 ): string {
-  const key = `${locale}|${zone}|${opts.weekday ?? ""}|${opts.month ?? ""}`;
+  const key = `${locale}|${zone}|${opts.weekday ?? ""}|${opts.month ?? ""}|${opts.dateStyle ?? ""}`;
   let fmt = NAMERS.get(key);
   if (!fmt) {
     fmt = new Intl.DateTimeFormat(locale, { ...opts, timeZone: zone });
     NAMERS.set(key, fmt);
   }
   return fmt.format(d);
+}
+
+/** A calendar date in the reader's locale and zone, with the month written in full. */
+export function longDateStamp(instant: Date, zone: string, locale = "en"): string {
+  return named(locale, { dateStyle: "long" }, instant, zone);
+}
+
+/** A date-only value, written without shifting it into the reader's time zone. */
+export function shortCivilDateStamp(day: string, locale = "en"): string {
+  const date = new Date(day);
+  const month = named(locale, { month: "short" }, date, "UTC");
+  const number = date.getUTCDate();
+  return locale.startsWith("de") ? `${number}. ${month}` : `${number} ${month}`;
 }
 
 /**

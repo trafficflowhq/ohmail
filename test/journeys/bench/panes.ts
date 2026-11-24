@@ -1,5 +1,6 @@
 import { expect } from "vitest";
-import { journey, signedIn, type Bench, type Guard, type Person, type Setting } from "./web.js";
+import type { Bench, Person } from "./seam.js";
+import { journey, signedIn, type Guard, type Setting } from "./web.js";
 import { say } from "../vocabulary/catalogue.js";
 import type { ControlId } from "../vocabulary/controls.js";
 import { listsPane, PANES_SEEN, type WebSetting } from "../vocabulary/panes.js";

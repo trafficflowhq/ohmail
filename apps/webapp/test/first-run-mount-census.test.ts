@@ -2,179 +2,150 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
-import { SHELL_DIR } from "./source-anchor.js";
+import { sliceOfDeclaration } from "./source-anchor.js";
 
-/**
- * ═══ THE MOUNT HANDS THE STAGE THIS MAILBOX'S FACTS ════════════════════════════════════════
- *
- * The stage's own cases prove what it does with what it is given: a `subjectVanished` run renders
- * a refusal, per-mailbox counters print per-mailbox numbers, an `accountOrganizer` makes the door
- * say what the connection will be. None of them can see whether the SHELL passes any of it — and
- * the whole class of defect this lane closes lives at that seam, where the values were composed
- * over the install while the screen they reached named one mailbox.
- *
- * So this reads the one `<FirstRun …>` element out of `AppShell.tsx` as an AST and asks four
- * questions of it. Every arm runs over a DOCTORED copy as well as the real source, because a
- * reader that finds nothing answers every question with a pass — the measured failure the
- * `source-anchor` helper documents at length.
+/*
+ * A stage fixture can provide its own mailbox facts. These guards follow the
+ * actual registration through the mail ground so an install-wide count cannot
+ * pass by supplying a more accurate number in a fixture.
  */
+const MODEL = "packages/app-logic/src/mailboxes/first-run";
+const STAGE = "packages/app/src/mailboxes/first-run";
+const read = (file: string): string => readFileSync(resolve(process.cwd(), file), "utf8");
+const registration = read("packages/app/src/mail/stages.ts");
+const seat = read(STAGE + "/Seat.ts");
+const stage = read(STAGE + "/stage.tsx");
+const live = read(MODEL + "/live.ts");
+const actor = read(MODEL + "/use-first-run.ts");
+const subject = read("packages/app-logic/src/mailboxes/connect/subject.ts");
 
-const SHELL = resolve(process.cwd(), SHELL_DIR, "AppShell.tsx");
-
-/** The props the mount owes the stage, and what each one stops being wrong about. */
-const OWED = [
-  /* Without it the stage cannot tell a row that LEFT from an install that never had one, and the
-     re-run falls through to a connect form whose mode reconfigures the install. */
-  "subjectVanished",
-  /* The one state the connect form can read about a mailbox that does not exist yet. */
-  "accountOrganizer",
-  /* The counters and the summary's two rows. */
-  "pull",
-  /* The guided decision's sender. */
-  "decide",
-  /* The pull held open until the store has answered the Screener's queue since the import ended. */
-  "queueSettling",
-  /* The store re-asked while the pull waits for the senders the run's own Agree will move. */
-  "rereadQueue",
-] as const;
-
-function mountProps(source: string): { names: string[]; text: string } {
-  const file = ts.createSourceFile("AppShell.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let found: ts.JsxOpeningLikeElement | undefined;
-  const walk = (node: ts.Node): void => {
-    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node))
-        && ts.isIdentifier(node.tagName) && node.tagName.text === "FirstRun") {
-      if (found) throw new Error("two FirstRun mounts — this census reads one");
-      found = node;
-    }
-    ts.forEachChild(node, walk);
-  };
-  walk(file);
-  if (!found) throw new Error("no <FirstRun> element in AppShell.tsx — stale census, not a pass");
-  const names = found.attributes.properties.flatMap((p) => (
-    ts.isJsxAttribute(p) && ts.isIdentifier(p.name) ? [p.name.text] : []
-  ));
-  return { names, text: found.getText(file) };
+function find<T extends ts.Node>(source: string, kind: (node: ts.Node) => node is T): T[] {
+  const file = ts.createSourceFile("source.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const found: T[] = [];
+  function visit(node: ts.Node): void {
+    if (kind(node)) found.push(node);
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  return found;
 }
 
-/** Does the file CALL this function — a call expression, never a mention. */
-function calls(source: string, fn: string): boolean {
-  const file = ts.createSourceFile("AppShell.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let hit = false;
-  const walk = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === fn) {
-      hit = true;
-    }
-    ts.forEachChild(node, walk);
-  };
-  walk(file);
-  return hit;
+function one<T>(items: T[], label: string): T {
+  if (items.length !== 1) throw new Error("expected one " + label + ", found " + items.length);
+  return items[0]!;
 }
 
-/** How many arguments each call of this function passes, in source order. */
-function argCounts(source: string, fn: string): number[] {
-  const file = ts.createSourceFile("AppShell.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const out: number[] = [];
-  const walk = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === fn) {
-      out.push(node.arguments.length);
-    }
-    ts.forEachChild(node, walk);
-  };
-  walk(file);
-  return out;
+function calls(source: string, name: string): ts.CallExpression[] {
+  return find(source, ts.isCallExpression).filter((call) => call.expression.getText() === name);
 }
 
-/** The `many` property's initializer in the decide subject `firstRunDecide` returns, or null. */
+function callRecord(source: string, name: string): ts.ObjectLiteralExpression {
+  const arg = one(calls(source, name), name + " call").arguments.find(ts.isObjectLiteralExpression);
+  if (!arg) throw new Error(name + " no longer receives a fact record");
+  return arg;
+}
+
+function resultRecord(source: string, name: string): ts.ObjectLiteralExpression {
+  const result = one(find(source, ts.isArrowFunction).filter((fn) => fn.type?.getText() === name), name + " result");
+  if (!ts.isParenthesizedExpression(result.body) || !ts.isObjectLiteralExpression(result.body.expression)) {
+    throw new Error(name + " no longer returns a fact record");
+  }
+  return result.body.expression;
+}
+
+function fields(record: ts.ObjectLiteralExpression): string[] {
+  return record.properties.flatMap((property) => property.name ? [property.name.getText()] : []);
+}
+
+const owed = [
+  { source: actor, record: (source: string) => callRecord(source, "useCursor"), name: "vanished" },
+  { source: live, record: (source: string) => resultRecord(source, "FirstRunGround"), name: "accountOrganizer" },
+  { source: live, record: (source: string) => resultRecord(source, "FirstRunAbout"), name: "pull" },
+  { source: actor, record: (source: string) => callRecord(source, "useDecide"), name: "sender" },
+  { source: live, record: (source: string) => resultRecord(source, "FirstRunAbout"), name: "queueSettling" },
+  { source: actor, record: (source: string) => callRecord(source, "useStageFacts"), name: "rereadQueue" },
+];
+
+function revise(source: string, search: string | RegExp, replacement: string): string {
+  const changed = source.replace(search, replacement);
+  expect(changed, "the control must change the source").not.toBe(source);
+  return changed;
+}
+
 function decideMany(source: string): string | null {
-  const file = ts.createSourceFile("AppShell.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  let decl: ts.VariableDeclaration | undefined;
-  const walk = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "firstRunDecide") decl = node;
-    ts.forEachChild(node, walk);
-  };
-  walk(file);
-  if (!decl) throw new Error("no firstRunDecide in AppShell.tsx — stale census, not a pass");
-  let init: string | null = null;
-  const find = (node: ts.Node): void => {
-    if (ts.isReturnStatement(node) && node.expression && ts.isObjectLiteralExpression(node.expression)) {
-      for (const p of node.expression.properties) {
-        if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === "many") init = p.initializer.getText(file);
-      }
-    }
-    ts.forEachChild(node, find);
-  };
-  find(decl);
-  return init;
+  const sender = sliceOfDeclaration(source, "sender");
+  const handsMany = find(sender, ts.isShorthandPropertyAssignment).some((prop) => prop.name.text === "many");
+  if (!handsMany) return null;
+  return one(find(source, ts.isVariableDeclaration).filter((decl) => decl.name.getText() === "many"), "mailbox count")
+    .initializer?.getText() ?? null;
 }
-
-const real = readFileSync(SHELL, "utf8");
 
 describe("AppShell's first-run mount", () => {
   it("carries every prop the stage needs to be about one mailbox", () => {
-    const { names } = mountProps(real);
-    for (const prop of OWED) expect(names, `the mount does not pass ${prop}`).toContain(prop);
+    expect(callRecord(registration, "firstRunStage").getText()).toContain("ground: useFirstRunSeat");
+    expect(fields(callRecord(seat, "useFirstRunLive"))).toEqual(expect.arrayContaining(["how", "word"]));
+    expect(fields(callRecord(stage, "useFirstRun"))).toEqual(expect.arrayContaining(["ground", "how", "word"]));
+    expect(one(calls(actor, "ground.about"), "subject's ground read").arguments[0]?.getText()).toBe("mailboxId");
+    for (const { source, record, name } of owed) expect(fields(record(source))).toContain(name);
   });
 
   it("DOCTORED CONTROL — a mount missing one of them is read as missing", () => {
-    for (const prop of OWED) {
-      const doctored = real.replace(new RegExp(`\\n\\s*${prop}=\\{`), "\n          xRemoved={");
-      expect(doctored, `${prop} was not doctored — the control measures nothing`).not.toBe(real);
-      expect(mountProps(doctored).names).not.toContain(prop);
+    for (const { source, record, name } of owed) {
+      const property = one(record(source).properties.filter((prop) => prop.name?.getText() === name), name);
+      const key = property.name!;
+      const changed = source.slice(0, key.getStart()) + "removedFact" + source.slice(key.end);
+      expect(fields(record(changed))).not.toContain(name);
     }
   });
 
   it("resolves the subject and the counts through the module that holds their rules", () => {
-    expect(calls(real, "firstRunSubject"), "the shell resolves the run's mailbox inline again").toBe(true);
-    expect(calls(real, "firstRunCounts"), "the counters are composed inline again").toBe(true);
-    expect(calls(real, "screenerForMailbox"), "the guided queue is the install's again").toBe(true);
-    expect(calls(real, "accountOrganizer")).toBe(true);
-    expect(calls(real, "useFirstRunQueueSettle"), "the stage's queue hold is never armed").toBe(true);
+    expect(calls(subject, "firstRunSubject")).toHaveLength(1);
+    expect(calls(actor, "subjectOf")).toHaveLength(1);
+    expect(calls(live, "subjectOf")).toHaveLength(1);
+    expect(calls(live, "firstRunCounts")).toHaveLength(1);
+    expect(calls(live, "screenerForMailbox")).toHaveLength(1);
+    expect(calls(live, "accountOrganizer")).toHaveLength(1);
+    expect(calls(live, "useFirstRunQueueSettle")).toHaveLength(1);
   });
 
   it("DOCTORED CONTROL — a call reduced to a mention is not read as a call", () => {
-    const doctored = real.replace("firstRunSubject(liveFacts,", "firstRunSubject; void (liveFacts,");
-    expect(doctored).not.toBe(real);
-    expect(calls(doctored, "firstRunSubject")).toBe(false);
+    const changed = revise(subject, "firstRunSubject(rows,", "(firstRunSubject, unrelated)(rows,");
+    expect(calls(changed, "firstRunSubject")).toHaveLength(0);
   });
 
   it("the counters are not composed over the whole mirror at the mount", () => {
-    const { text } = mountProps(real);
-    /* `mirroredCount` is the mirror's whole row count and `history.length` the whole History
-       list; both stood in `pull` and both were true about the install rather than about the
-       mailbox the screen names. */
-    expect(text, "the mount composes the counters over the install again").not.toContain("mirroredCount");
-    expect(text).not.toContain("history.length");
+    const about = resultRecord(live, "FirstRunAbout").getText();
+    expect(about).toContain("pull: { ...counts, pulled, whole }");
+    expect(about).not.toContain("mirroredCount");
+    expect(about).not.toContain("history.length");
   });
 
   it("DOCTORED CONTROL — the install-wide composition IS read when it is there", () => {
-    const doctored = real.replace(
-      "            ...firstRunPull,",
-      "            screened: Math.max(0, mirroredCount - history.length),\n            history: history.length,",
-    );
-    expect(doctored, "the pull spread was not doctored").not.toBe(real);
-    expect(mountProps(doctored).text).toContain("mirroredCount");
+    const changed = revise(live, "...counts, pulled, whole", "screened: mirroredCount - history.length, pulled, whole");
+    const about = resultRecord(changed, "FirstRunAbout").getText();
+    expect(about).toContain("mirroredCount");
+    expect(about).toContain("history.length");
   });
 
   it("the two counters are this device's two partitions — no store total in their place", () => {
-    /* A store total as the History figure counts every message the account owns, the screened
-       ones included: the pair added to more mail than the mailbox holds. */
-    expect(argCounts(real, "firstRunCounts"), "the counters take a store total again").toEqual([3]);
+    const { arguments: args } = one(calls(live, "firstRunCounts"), "firstRunCounts call");
+    expect(args).toHaveLength(3);
+    expect(args[1]?.getText()).toBe("history");
+    expect(args[2]?.getText()).toBe("subjectId");
   });
 
   it("DOCTORED CONTROL — a fourth argument is read", () => {
-    const doctored = real.replace("history, firstRunMailbox.id)", "history, firstRunMailbox.id, storeTotal)");
-    expect(doctored, "the counters' call was not doctored").not.toBe(real);
-    expect(argCounts(doctored, "firstRunCounts")).toEqual([4]);
+    const changed = revise(live, "history, subjectId)", "history, subjectId, storeTotal)");
+    expect(one(calls(changed, "firstRunCounts"), "firstRunCounts call").arguments).toHaveLength(4);
   });
 
   it("the decide subject says whether the install has several mailboxes, by `firstRunQueue`'s rule (R20-03)", () => {
-    expect(decideMany(real), "the decide step cannot tell an added mailbox from a single one").toBe("(liveFacts?.length ?? 0) > 1");
+    expect(decideMany(live)).toBe("(facts?.length ?? 0) > 1");
   });
 
   it("DOCTORED CONTROL — a subject without `many` is read as without it", () => {
-    const doctored = real.replace(/ many: \(liveFacts\?\.length \?\? 0\) > 1,/, "");
-    expect(doctored, "`many` was not doctored").not.toBe(real);
-    expect(decideMany(doctored)).toBeNull();
+    const sender = sliceOfDeclaration(live, "sender");
+    const changed = revise(live, sender, revise(sender, /^\s+many,$/m, ""));
+    expect(decideMany(changed)).toBeNull();
   });
 });

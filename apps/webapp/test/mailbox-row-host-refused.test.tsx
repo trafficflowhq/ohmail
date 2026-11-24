@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A MAILBOX WHOSE SERVER THIS DEPLOYMENT WILL NOT DIAL IS SAID AS THAT. The organizer's door refused
@@ -42,7 +42,7 @@ vi.mock("../app/api-client", async () => {
     mailboxes: { list: async () => ({ items: mockListed }), resync: async () => undefined },
   };
 });
-vi.mock("../app/shell/MailStateProvider", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
+vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", () => ({ useMailState: () => ({ state: QUIET, refresh: () => {} }) }));
 
 const dto = (over: Partial<MailboxDTO>): MailboxDTO => ({
   id: "mb1", provider: "imap", address: "person@home.example", displayName: null, status: "error",
@@ -82,7 +82,7 @@ describe("a mailbox row refused by the deployment's dial door", () => {
   });
 
   it("the strip reads the same key", async () => {
-    const { mailboxErrorKey } = await import("../app/shell/mailbox-error-key.js");
+    const { mailboxErrorKey } = await import("@ohmail/app-logic/mail-state/mailbox-error-key");
     expect(mailboxErrorKey("connect", "MAILBOX_HOST_REFUSED").key).toBe("err_host_refused");
     expect(mailboxErrorKey("connect", "MAILBOX_PORT_REFUSED").key).toBe("err_port_refused");
   });

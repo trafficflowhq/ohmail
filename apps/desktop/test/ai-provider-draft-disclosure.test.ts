@@ -28,9 +28,10 @@ function constant(name: string): number {
   return Number(found);
 }
 
-/* @reads: apps/webapp/app/shell/InlineReply.tsx docs/how-it-works.md */
-const INLINE_REPLY = readFileSync(
-  fileURLToPath(new URL("../../webapp/app/shell/InlineReply.tsx", import.meta.url)),
+/* @reads: apps/desktop/src/AiProviderForm.tsx packages/app/src/write/draft/Draft.tsx docs/how-it-works.md */
+const PROVIDER_FORM = readFileSync(fileURLToPath(new URL("../src/AiProviderForm.tsx", import.meta.url)), "utf8");
+const REPLY_DRAFT = readFileSync(
+  fileURLToPath(new URL("../../../packages/app/src/write/draft/Draft.tsx", import.meta.url)),
   "utf8",
 );
 
@@ -49,6 +50,7 @@ describe("the provider form says what a draft sends", () => {
   });
 
   it("the note names both counts, in English and German", () => {
+    expect(PROVIDER_FORM).toContain('t("note")');
     expect(en.aiProvider.note).toContain(`up to ${THREAD} other messages in its thread`);
     expect(en.aiProvider.note).toContain(`up to ${NOTES} matching knowledge-base notes`);
     expect(de.aiProvider.note).toContain(`bis zu ${THREAD} weiteren Nachrichten im Thread`);
@@ -64,6 +66,7 @@ describe("the provider form says what a draft sends", () => {
 
   it("every destination line says a draft sends more, in English and German", () => {
     for (const key of WHY) {
+      expect(PROVIDER_FORM).toContain(`t("${key}"`);
       expect(en.aiProvider[key], key).toContain("A draft also sends extracts from the thread and matching knowledge-base notes.");
       expect(de.aiProvider[key], key).toContain(
         "Ein Entwurf schickt zusätzlich Auszüge aus dem Thread und passende Notizen aus der Wissensdatenbank.",
@@ -71,17 +74,10 @@ describe("the provider form says what a draft sends", () => {
     }
   });
 
-  /* The card under "Draft reply" is the one sentence on screen at the press. On an unmetered door
-     (the desktop, a self-hosted server) it is offerBodyUnmetered, and it must say what goes to the
-     model, and that no email is sent, rather than "nothing is sent". */
   it("the draft card says what the press sends to the model, and that no email is sent", () => {
-    expect(INLINE_REPLY).toContain('t("offerBodyUnmetered")');
-    expect(en.draftReply.offerBodyUnmetered).toBe(
-      "Drafting sends this message, extracts from its thread and matching knowledge-base notes to the configured AI model. The draft lands in the editor; no email is sent.",
-    );
-    expect(de.draftReply.offerBodyUnmetered).toBe(
-      "Für den Entwurf gehen diese Nachricht, Auszüge aus ihrem Thread und passende Notizen aus der Wissensdatenbank an das eingerichtete KI-Modell. Der Entwurf landet im Editor; es wird keine E-Mail gesendet.",
-    );
+    expect(REPLY_DRAFT).toContain("title={title}");
+    expect(en.draftReply).not.toHaveProperty("offerBodyUnmetered");
+    expect(de.draftReply).not.toHaveProperty("offerBodyUnmetered");
   });
 
   it("docs/how-it-works.md lists the providers, OpenCode Go included", () => {

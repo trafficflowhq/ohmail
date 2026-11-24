@@ -167,7 +167,7 @@ describe("the zone decision is taken on the path the router serves, not only the
       ["/a/../subprocessors", "/subprocessors"], ["/landing%2Fa.webp", "/landing/a.webp"],
       ["/privacy/", "/privacy"], ["/privacy/.", "/privacy"], ["/privacy/%2e", "/privacy"], ["/privacy/x/..", "/privacy"],
       ["/de/.", "/de"], ["/%70rivacy/.", "/privacy"], ["/imprint/.", "/imprint"], ["/subprocessors/.", "/subprocessors"],
-      ["/%73upport", "/support"], ["/delete-account/.", "/delete-account"],
+      ["/%73upport", "/support"], ["/delete-account/.", "/delete-account"], ["/%6Fhcal/.", "/ohcal"],
     ]) {
       expect(zonePathOf(spelling!), spelling).toBe(path);
     }
@@ -430,7 +430,7 @@ const UNARMED_RULES = [
     ],
   },
   {
-    source: "/((?!demo).*)",
+    source: "/((?!demo)(?!pdf-preview\\.html$).*)",
     headers: [
       { key: "Content-Security-Policy", value: policy("'none'") },
       { key: "X-Content-Type-Options", value: "nosniff" },
@@ -447,14 +447,30 @@ const headersAt = (rules: Rule[], path: string) =>
 const csps = (rules: Rule[], path: string) =>
   headersAt(rules, path).filter((h) => h.key === "Content-Security-Policy").map((h) => h.value);
 
+/**
+ * The vendored pdf.js worker's path: the product's one constant, which `pdf-worker-version.test.ts`
+ * holds equal to the worker's own content-named file.
+ */
+const workerPath = async (): Promise<string> =>
+  (await import("../app/components/AttachmentPreview")).PDF_WORKER_SRC;
+
 describe("headerRules: unarmed byte for byte, armed with no policy of ours on the zone's paths", () => {
   const rulesOf = async (gaId: string | null, zone: string | null) =>
     (await import("../next.config.mjs")).headerRules(gaId, zone) as Rule[];
   const STATIC = ["X-Content-Type-Options: nosniff", "X-Frame-Options: DENY", "Referrer-Policy: strict-origin-when-cross-origin"];
 
-  it("unarmed equals the fixture", async () => {
+  it("unarmed equals the fixture, and the pdf.js worker's one rule stands beside it with a year's life alone", async () => {
     expect(UNARMED_RULES[1]!.headers[0]!.value).toBe(BASELINE_CSP);
-    expect(JSON.stringify(await rulesOf(null, null))).toBe(JSON.stringify(UNARMED_RULES));
+    const rules = await rulesOf(null, null);
+    const worker = await workerPath();
+    expect(rules).toHaveLength(UNARMED_RULES.length + 2);
+    expect(rules.filter((r) => r.source === worker)).toStrictEqual([
+      { source: worker, headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }] },
+    ]);
+    const frame = "/pdf-preview.html";
+    expect(csps(rules, frame)).toEqual([expect.stringContaining("connect-src 'none'")]);
+    expect(headersAt(rules, frame)).not.toContainEqual({ key: "X-Frame-Options", value: "DENY" });
+    expect(JSON.stringify(rules.filter((r) => r.source !== worker && r.source !== frame))).toBe(JSON.stringify(UNARMED_RULES));
   });
 
   it("armed: every zone path carries the three static headers and no policy", async () => {
@@ -490,6 +506,7 @@ describe("armed: a zone path in other capitals is a 308 to the zone's own spelli
   const VARIANTS: Array<[string, string]> = [
     ["/PRIVACY", "/privacy"], ["/De", "/de"], ["/IMPRINT", "/imprint"], ["/SubProcessors", "/subprocessors"],
     ["/Flathub-Verification", "/flathub-verification"], ["/SUPPORT", "/support"], ["/Delete-Account", "/delete-account"],
+    ["/OHCAL", "/ohcal"],
     ["/.Well-Known/org.flathub.verifiedapps.txt", "/.well-known/org.flathub.VerifiedApps.txt"],
     ["/Landing/x.webp", "/landing/x.webp"], ["/SITE-ASSETS/_next/static/A.js", "/site-assets/_next/static/A.js"],
     ["/API/Waitlist", "/api/waitlist"],
@@ -532,15 +549,18 @@ describe("armed: a zone path in other capitals is a 308 to the zone's own spelli
 
   it("the matcher runs the middleware for every variant and no other path, read in either case", async () => {
     const at = await edgeRuns();
-    const controls = [...CONTROLS, "/api", "/auth/refresh", "/_next/static/x.js", "/a.b"];
+    const apiPaths = ["/api", "/API/sync"];
+    const controls = [...CONTROLS.filter((p) => !apiPaths.includes(p)), "/auth/refresh", "/_next/static/x.js", "/a.b"];
+    for (const p of apiPaths) expect(at(p), p).toBe(true);
     for (const [variant] of VARIANTS) expect(at(variant), variant).toBe(true);
     for (const p of controls) expect(at(p), p).toBe(false);
     const { config } = await import("../middleware.js");
     expect(config.matcher).toContainEqual({ source: ZONE_CASE_SOURCE });
     const [caseArm] = (await nextMatcher()).info.getMiddlewareMatchers([{ source: ZONE_CASE_SOURCE }], {});
-    for (const p of [...VARIANTS.flat(), ...controls]) {
+    for (const p of [...VARIANTS.flat(), ...controls, ...apiPaths]) {
       expect(new RegExp(caseArm!.regexp, "i").test(p), p).toBe(new RegExp(caseArm!.regexp).test(p));
     }
+    for (const p of apiPaths) expect(new RegExp(caseArm!.regexp).test(p), p).toBe(false);
   });
 
   it("THE ROW: every zone path in capitals, or its first letter flipped, gets no policy here and a 308 to it", async () => {

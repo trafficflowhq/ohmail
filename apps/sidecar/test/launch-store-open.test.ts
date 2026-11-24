@@ -9,10 +9,11 @@ import {
   analyzeKnownSetIfNever, analyzeNeverAnalyzed, openLocalDb, OWED_COPY_RECLAIM_FLOOR_BYTES, reclaimBodyBloat, type OpenLocalDb,
 } from "../src/db.js";
 import { makeDrizzleRepo, KNOWN_LOCATOR_PAGE_ROWS } from "@trafficflow/core/adapters/drizzle-repo";
-import { KnownSetCache, watchKnownSet } from "@trafficflow/worker/known-set";
+import { KnownSetCache, watchKnownSet } from "@ohmail/organizer/known-set";
 import { armFirstPageGate, noteFirstPageServed, resetFirstPageGate } from "../src/first-page-gate.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS * 2 });
 
@@ -94,8 +95,8 @@ describe("the store open before it serves", () => {
     await first.db.execute(sql`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, to_addresses, cc_addresses, native_locator)
       select ${accountId}, ${mailboxId}, 'h', 'launch:' || g, 'subject ' || g, 'a@mail.example', now(), '[]'::jsonb, '[]'::jsonb, '{"folder":"INBOX","ref":"1:1"}'::jsonb
       from generate_series(1, 300) g`);
-    await first.db.execute(sql`insert into message_bodies (message_id, text) select id, 'body' from messages`);
-    await first.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by) select id, 'INBOX', 'INBOX', 'us' from messages`);
+    await first.db.execute(sql`insert into message_bodies (message_id, account_id, text) select id, account_id, 'body' from messages`);
+    await first.db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by) select id, account_id, 'INBOX', 'INBOX', 'us' from messages`);
     await first.close();
     const seen: string[] = [];
     for (const name of ["query", "exec"] as const) {
@@ -206,7 +207,7 @@ async function locatorStore(archive: number, inbox: number): Promise<{ o: OpenLo
   dirs.push(dir);
   const o = await openLocalDb(dir);
   opened.push(o);
-  const c = (o.db as unknown as { $client: PGlite }).$client;
+  const c = pgliteOf(o.db);
   const one = async (q: string): Promise<string> => (await c.query<{ id: string }>(q)).rows[0]!.id;
   const acc = await one(`insert into accounts (name) values ('pages') returning id`);
   const mb = async (n: string): Promise<string> => one(`insert into mailboxes (account_id, provider, address) values ('${acc}', 'imap', '${n}@mail.example') returning id`);

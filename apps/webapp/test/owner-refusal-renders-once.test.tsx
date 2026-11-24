@@ -6,6 +6,7 @@
  * on `ownerRefusalCodes()`; the Devices pane is driven into the mismatch for real, and a census
  * holds the other panes to the renderer.
  */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -20,7 +21,8 @@ import de from "../messages/de.json";
    apps/webapp/app/(product)/mailbox/SecuritySection.tsx
    apps/webapp/app/(product)/mailbox/InvitesSection.tsx
    apps/webapp/app/(product)/mailbox/AiSection.tsx
-   apps/webapp/app/(product)/mailbox/AccountSection.tsx
+   apps/webapp/app/(product)/mailbox/account-door.ts
+   apps/webapp/app/(product)/account/delete/use-delete-account-door.ts
    apps/webapp/app/(product)/mailbox/StepUpPrompt.tsx
    Read by a built path, so no landing pass would select this file when they move. */
 
@@ -61,7 +63,7 @@ async function mountDevices(locale: "en" | "de"): Promise<HTMLElement> {
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale, messages: locale === "de" ? de : en, timeZone: "UTC",
-      children: h(ThemeProvider, null, h(ToastHost, null, h(DevicesSection))),
+      children: h(ThemeProvider, null, h(ToastHost, null, h(WithReport, { view: DevicesSection }))),
     }));
     await Promise.resolve();
   });
@@ -138,14 +140,13 @@ describe("the mirror-owner refusals render through one renderer", () => {
   });
 
   it("census: the account panes render a caught error through the renderer, never messageOf", () => {
-    const PANES = ["DevicesSection", "SecuritySection", "InvitesSection", "AiSection", "AccountSection", "StepUpPrompt"];
-    // No exception: every read these panes make, `GET /auth/session` included, is owner-gated.
-    const found = PANES.flatMap((p) => fs.readFileSync(path.join(HERE, `../app/(product)/mailbox/${p}.tsx`), "utf8")
-      .split("\n").filter((l) => /\bmessageOf\b/.test(l)).map((l) => `${p}: ${l.trim()}`));
-    expect(found).toEqual([]);
-    for (const p of PANES) {
-      const src = fs.readFileSync(path.join(HERE, `../app/(product)/mailbox/${p}.tsx`), "utf8");
-      expect(src, `${p} does not use the renderer`).toMatch(/useRefusalSentence\(\)/);
+    const panes = ["DevicesSection", "SecuritySection", "InvitesSection", "AiSection", "StepUpPrompt"]
+      .map((name) => `mailbox/${name}.tsx`);
+    panes.push("mailbox/account-door.ts", "account/delete/use-delete-account-door.ts");
+    for (const pane of panes) {
+      const src = fs.readFileSync(path.join(HERE, "../app/(product)", pane), "utf8");
+      expect(src, `${pane} bypasses the renderer`).not.toMatch(/\bmessageOf\b/);
+      expect(src, `${pane} does not use the renderer`).toMatch(/useRefusalSentence\(\)/);
     }
   });
 });

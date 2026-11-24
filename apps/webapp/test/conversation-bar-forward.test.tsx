@@ -3,6 +3,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
+import { fireEvent, within } from "@testing-library/react";
+import { typeInto } from "./fixtures/rich-editor-driver";
+import { barVerb, letterShown, menuItems, readingColumn, seatedList } from "./ohbox/_finders.js";
 
 /**
  * FORWARD SENDS THE MESSAGE THE CONVERSATION WAS OPENED AT, through the shipped shell and the real
@@ -11,6 +14,9 @@ import {
  * The Ohbox row opens `a1`; the bar's Forward and ⇧F forward `a1` (the dock's `data-reply-for`, which
  * the send carries as `forwardOf`, the message whose parts go with it). A search landing forwards its
  * hit. Recomputing "the newest" over the whole thread forwarded `x2` (HIGH 1, 2).
+ *
+ * The mounted frame exposes the forward's target in the actual send request (`forwardOfMessageId`),
+ * as `conversation-bar-acts-on-the-opened-panel.test.tsx` also checks.
  */
 
 const ME = "walker@example.invalid";
@@ -63,15 +69,40 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await settle();
 };
 const rowOf = (host: HTMLElement, id: string): HTMLElement => {
-  const row = host.querySelector<HTMLElement>(`[role="listbox"] .row[data-id="${id}"]`);
+  const row = host.querySelector<HTMLElement>(`[role="listbox"] :is(.row, [role=option])[data-id="${id}"]`);
   expect(row, `the Ohbox row ${id}`).toBeTruthy();
   return row!;
 };
-/** The message the open forward dock is bound to — what the send forwards. */
-const docked = (host: HTMLElement): string | null =>
-  host.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? null;
+/** The bodies of every send that named a forwarded letter, in order. */
+const forwardsSent = (): Array<string | null> =>
+  (globalThis.fetch as unknown as { mock: { calls: Array<[unknown, RequestInit | undefined]> } }).mock.calls
+    .flatMap(([, init]) => (typeof init?.body === "string" && init.body.includes("forwardOfMessageId") ? [init.body] : []))
+    .map((body) => (JSON.parse(body) as { forwardOfMessageId?: string | null }).forwardOfMessageId ?? null);
+/**
+ * The message the open forward is bound to: what the send forwards. The new shell's forward is `write`'s sheet after
+ * the conversation (a section named Forward), which carries no letter's id of its own: the forward is sent as a person
+ * sends it (a recipient, a line, Send on the panel), and the id is the one its ONE send names on the wire.
+ */
+const docked = async (host: HTMLElement): Promise<string | null> => {
+  const sheet = readingColumn(host)?.querySelector<HTMLElement>('section[aria-label="Forward"]') ?? null;
+  if (sheet === null) return null;
+  const before = forwardsSent().length;
+  /* The To line by its name: a combobox while the account offers people, a plain field once it offers none. */
+  const to = sheet.querySelector<HTMLInputElement>('input[aria-label="To"]');
+  expect(to, "the forward's To line").toBeTruthy();
+  await act(async () => { fireEvent.change(to!, { target: { value: "mila@example.invalid, " } }); });
+  await act(async () => { typeInto(within(sheet).getByRole("textbox", { name: "Forward body" }), "For you"); });
+  /* An open reply's verbs stand in the letter's panel: Send is there. */
+  const send = barVerb(host, "Send");
+  expect(send, "the forward's Send").toBeTruthy();
+  await click(send!);
+  /* The forward leaves: its sheet goes once the send is handed off, so the next forward opens a sheet of its own. */
+  for (let i = 0; i < 40 && readingColumn(host)?.querySelector('section[aria-label="Forward"]'); i++) await tick(50);
+  const sent = forwardsSent().slice(before);
+  return sent.length === 1 ? sent[0]! : null;
+};
 const pressBarForward = async (host: HTMLElement): Promise<void> => {
-  const button = host.querySelector<HTMLElement>(".read-col .abar-fwd button");
+  const button = barVerb(host, "Forward");
   expect(button, "the bar's Forward").toBeTruthy();
   await click(button!);
 };
@@ -84,7 +115,7 @@ const openRow = async (host: HTMLElement, id: string): Promise<void> => {
 /* THE SHELL LOADS ONCE, under its own bound: a cold import inside a case's 5 s strands the mount and
    reddens the cases after it (`thread-inline-forward.test.tsx` has the same fix). */
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 
@@ -103,25 +134,37 @@ describe("the bar's Forward in a conversation opened from its Ohbox row", () => 
       await settle();
       await openRow(host, "a1");
       await pressBarForward(host);
-      expect(docked(host)).toBe("a1");
+      expect(await docked(host)).toBe("a1");
     }, 30_000);
   }
 
   it("the bar agrees with the opened message's own Forward, and our own reply's panel forwards our reply", async () => {
-    answerSyncWith(pageOf([consent(LENA.address), rowA1(), message("x2", NEWER, laterX2["our own reply"]!), thread(["a1", "x2"])]));
-    const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
-    await settle();
-    await openRow(host, "a1");
-    await pressBarForward(host);
-    expect(docked(host)).toBe("a1");
+    /* Each forward is read by its one send, and a send this test's server answers with nothing stays unconfirmed and
+       holds the next: each Forward is pressed over its own mount of the same conversation, opened at a1. */
+    const opened = async (): Promise<HTMLElement> => {
+      await teardownShellEnv();
+      installShellEnv();
+      seq = 0;
+      window.location.hash = "#/ohbox";
+      answerSyncWith(pageOf([consent(LENA.address), rowA1(), message("x2", NEWER, laterX2["our own reply"]!), thread(["a1", "x2"])]));
+      const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
+      await settle();
+      await openRow(host, "a1");
+      return host;
+    };
+    const bar = await opened();
+    await pressBarForward(bar);
+    expect(await docked(bar)).toBe("a1");
     const panelForward = async (id: string): Promise<string | null> => {
-      const panel = host.querySelector<HTMLElement>(`article.pm[data-conv-id="${id}"]`);
+      const host = await opened();
+      const panel = letterShown(host, id);
       expect(panel, `the panel of ${id}`).toBeTruthy();
-      await click(panel!.querySelector<HTMLElement>(".msg-more")!);
-      const item = [...panel!.querySelectorAll<HTMLElement>(".mmenu button")].find((b) => b.textContent?.trim() === "Forward");
+      // The letter's own menu: the button named Message on its head.
+      await click(panel!.querySelector<HTMLElement>('button[aria-label="Message"]')!);
+      const item = menuItems().find((b) => b.textContent?.trim() === "Forward");
       expect(item, `Forward on the panel of ${id}`).toBeTruthy();
       await click(item!);
-      return docked(host);
+      return await docked(host);
     };
     expect(await panelForward("a1")).toBe("a1");
     expect(await panelForward("x2")).toBe("x2");
@@ -132,9 +175,9 @@ describe("the bar's Forward in a conversation opened from its Ohbox row", () => 
     const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
     await settle();
     await key("j");
-    expect(host.querySelector(".reader"), "no reader sheet").toBeNull();
+    expect(seatedList(host), "no reader sheet: the list stands").not.toBeNull();
     await key("F", { shiftKey: true });
-    expect(docked(host)).toBe("a1");
+    expect(await docked(host)).toBe("a1");
   }, 30_000);
 
   it("a Resurfaced conversation ending in our away answer forwards the pinned original", async () => {
@@ -147,7 +190,7 @@ describe("the bar's Forward in a conversation opened from its Ohbox row", () => 
     await settle();
     await openRow(host, "a1");
     await pressBarForward(host);
-    expect(docked(host)).toBe("a1");
+    expect(await docked(host)).toBe("a1");
   }, 30_000);
 });
 
@@ -160,8 +203,8 @@ describe("a message opened any other way forwards itself", () => {
     window.location.hash = "#/ohbox/m/h1";
     const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
     await settle();
-    expect(host.querySelector<HTMLElement>('[role="listbox"] .row[data-id]')?.dataset.id, "the premise: the row's own target is h2").toBe("h2");
+    expect(host.querySelector<HTMLElement>('[role="listbox"] :is(.row, [role=option])[data-id]')?.dataset.id, "the premise: the row's own target is h2").toBe("h2");
     await pressBarForward(host);
-    expect(docked(host)).toBe("h1");
+    expect(await docked(host)).toBe("h1");
   }, 30_000);
 });

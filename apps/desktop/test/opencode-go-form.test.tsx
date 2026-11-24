@@ -143,9 +143,10 @@ async function settle(): Promise<void> {
 }
 
 async function chooseProvider(element: HTMLElement, provider: string): Promise<void> {
-  const radio = element.querySelector<HTMLInputElement>(`input[name="ai-provider"][value="${provider}"]`);
-  if (!radio) throw new Error(`provider radio ${provider} was not rendered`);
-  await act(async () => radio.click());
+  const select = element.querySelector<HTMLSelectElement>("#ai-provider");
+  if (!select || ![...select.options].some((option) => option.value === provider))
+    throw new Error(`provider option ${provider} was not rendered`);
+  await changeValue(select, provider);
   await settle();
 }
 
@@ -172,12 +173,17 @@ function rowLabelled(element: HTMLElement, label: string): Element | undefined {
   });
 }
 
+function describedText(row: Element | undefined): string | null {
+  const description = row?.getAttribute("aria-describedby");
+  return description ? row!.ownerDocument.getElementById(description)?.textContent ?? null : null;
+}
+
 describe("OpenCode Go in the shared onboarding/settings provider form", () => {
   it("offers OpenCode Go as a distinct provider in both shipped locales", async () => {
     const { element: english } = await render("en");
-    const englishGo = english.querySelector<HTMLInputElement>('input[name="ai-provider"][value="opencode-go"]');
+    const englishGo = english.querySelector<HTMLOptionElement>('#ai-provider option[value="opencode-go"]');
     expect(englishGo).toBeTruthy();
-    expect(english.textContent).toContain(en.aiProvider.choiceOpenCodeGo);
+    expect(englishGo?.textContent).toBe(en.aiProvider.choiceOpenCodeGo);
 
     await act(async () => root!.unmount());
     mount?.remove();
@@ -185,9 +191,22 @@ describe("OpenCode Go in the shared onboarding/settings provider form", () => {
     mount = null;
 
     const { element: german } = await render("de");
-    const germanGo = german.querySelector<HTMLInputElement>('input[name="ai-provider"][value="opencode-go"]');
+    const germanGo = german.querySelector<HTMLOptionElement>('#ai-provider option[value="opencode-go"]');
     expect(germanGo).toBeTruthy();
-    expect(german.textContent).toContain(de.aiProvider.choiceOpenCodeGo);
+    expect(germanGo?.textContent).toBe(de.aiProvider.choiceOpenCodeGo);
+  });
+
+  it("keeps the stored provider selected when the engine refuses a choice", async () => {
+    const refusal = "The provider change was refused.";
+    const { element, writes } = await render("en", initialStatus(), () => { throw new Error(refusal); });
+    await chooseProvider(element, "opencode-go");
+    expect(writes).toEqual([{ provider: "opencode-go" }]);
+    const select = element.querySelector<HTMLSelectElement>("#ai-provider");
+    expect(select?.value).toBe("none");
+    expect(select?.disabled).toBe(false);
+    expect([...element.querySelectorAll('[role="status"]')].some((status) =>
+      status.textContent?.includes(refusal),
+    )).toBe(true);
   });
 
   it("keeps Go key writes isolated, lets classification and drafting choose separate bare IDs, and labels the read as non-inference", async () => {
@@ -221,7 +240,7 @@ describe("OpenCode Go in the shared onboarding/settings provider form", () => {
     expect(writes[0]).toEqual({ provider: "opencode-go" });
     expect(element.textContent).toContain(en.aiProvider.verdictNoGoKey);
     const summary = rowLabelled(element, en.aiProvider.summaryLabel);
-    expect(summary?.textContent).toContain(en.aiProvider.choiceOpenCodeGoWhy);
+    expect(describedText(summary)).toBe(en.aiProvider.choiceOpenCodeGoWhy);
 
     const keyInput = element.querySelector<HTMLInputElement>("#ai-key")!;
     await changeValue(keyInput, typedKey);
@@ -319,7 +338,7 @@ describe("OpenCode Go in the shared onboarding/settings provider form", () => {
     expect(element.textContent).toContain(de.aiProvider.goConfigVerified);
     expect(element.textContent).toContain(de.aiProvider.goInferenceNotTested);
     const summary = rowLabelled(element, de.aiProvider.summaryLabel);
-    expect(summary?.textContent).toContain(de.aiProvider.choiceOpenCodeGoWhy);
+    expect(describedText(summary)).toBe(de.aiProvider.choiceOpenCodeGoWhy);
     expect(summary?.textContent).toContain(de.aiProvider.summaryGoVerified);
     expect(summary?.textContent).not.toContain(de.aiProvider.summaryOn);
 

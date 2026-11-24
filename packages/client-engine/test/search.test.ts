@@ -1,5 +1,7 @@
+import type { EngineMessage } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
-import { DEMO_NOW, FixturesAdapter, OhmailEngine, SearchIndex, type EngineMessage } from "@ohmail/client-engine";
+import { OhmailEngine, SearchIndex } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** The instant local search over the mirror — incl. the canonical 'invoce' typo. */
 

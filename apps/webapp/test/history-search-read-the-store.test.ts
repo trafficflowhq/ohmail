@@ -15,16 +15,19 @@ const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, im
 
 /** Every file of the two surfaces, and the door each must use. */
 const SURFACES: Array<{ file: string; door: RegExp }> = [
-  { file: "../app/views/HistoryView.tsx", door: /useStoreTimeline\(/ },
-  { file: "../app/shell/store-timeline.ts", door: /StoreTimelineWalker/ },
+  { file: "../../../packages/app-logic/src/history/live.ts", door: /useStoreTimeline\(/ },
+  { file: "../../../packages/app-logic/src/session/store-timeline.ts", door: /StoreTimelineWalker/ },
   { file: "../../../packages/client-engine/src/store-timeline.ts", door: /engine\.pageStore\("all"[\s\S]*engine\.pageSearch\(/ },
-  { file: "../app/views/SearchView.tsx", door: /new StoreSearchWalker\(/ },
+  { file: "../../../packages/app-logic/src/search/store-pass.ts", door: /new StoreSearchWalker\(/ },
+  { file: "../../../packages/app-logic/src/search/search-list.ts", door: /useStorePass\(/ },
   { file: "../../mobile/app/history.tsx", door: /useStoreHistory\(\)/ },
   { file: "../../mobile/app/search.tsx", door: /useStoreSearch\(/ },
   { file: "../../mobile/src/state/store-views.ts", door: /walker\.(start|want)\(/ },
 ];
 
 /** What reading the window, or the device's partition as a list, looks like in source. */
+/** History gives its view the list window made from the store timeline. */
+const STORE_LIST_WINDOW = /windowed: \{ scroller: own\.scroller, window, total: tl\.length, slots, jump: tl\.jump \}/;
 const WINDOW_READS = /storeWindow\s*\(|windowedMirror|\bwindowed\b|storePolicy|liveHistory\(|consentView\?*\.history|w\.history\b/;
 
 describe("History and Search read the store, never the mirror's window", () => {
@@ -32,15 +35,21 @@ describe("History and Search read the store, never the mirror's window", () => {
     it(`${file.replace(/^(\.\.\/)+/, "")}: uses the store's door, reads no window`, () => {
       const src = read(file);
       expect(src, "the surface is bound to the store's door").toMatch(door);
-      expect(src.match(WINDOW_READS)?.[0] ?? null, "a read of the mirror's window").toBeNull();
+      const checked = file.endsWith("/history/live.ts") ? src.replace(STORE_LIST_WINDOW, "") : src;
+      expect(checked.match(WINDOW_READS)?.[0] ?? null, "a read of the mirror's window").toBeNull();
     });
   }
 
   it("the shell hands History no mirror list and no window flag", () => {
-    const shell = read("../app/shell/AppShell.tsx");
-    const at = shell.indexOf("<HistoryView");
-    const block = shell.slice(at, shell.indexOf("/>", at));
-    expect(block).not.toMatch(/\bmessages=|\bwindowed=/);
+    const seat = read("../../../packages/app/src/history/Seat.tsx");
+    const live = read("../../../packages/app-logic/src/history/live.ts");
+    expect(seat).toContain("const args = usePlaceLiveArgs()");
+    expect(seat).toContain("useHistoryLive(args, { ...usePlaceListOwn(), scroller })");
+    expect(seat).toMatch(/<HistoryAbove model=\{model\}>/);
+    expect(seat).not.toMatch(/\bmessages=|\bwindowed=/);
+    expect(live).toContain("useStoreTimeline(engine, derived, mirrorRows)");
+    expect(live).toContain("useListWindow({ scrollerRef: own.scroller, count: tl.length, inserted: tl.shifted })");
+    expect(live).toMatch(STORE_LIST_WINDOW);
   });
 
   /**
@@ -48,7 +57,7 @@ describe("History and Search read the store, never the mirror's window", () => {
    * walks, so neither Search surface asks the store for a page or keeps a page array of its own.
    */
   const OWN_PAGING = /\.searchServer\(|\bnextCursor\b|\bloadMore\s*=|\.outcome\.items\b/;
-  for (const file of ["../app/views/SearchView.tsx", "../../mobile/src/state/store-views.ts"]) {
+  for (const file of ["../../../packages/app-logic/src/search/search-list.ts", "../../../packages/app-logic/src/search/store-pass.ts", "../../mobile/src/state/store-views.ts"]) {
     it(`${file.replace(/^(\.\.\/)+/, "")}: holds no page array of its own`, () => {
       expect(read(file).match(OWN_PAGING)?.[0] ?? null, "a surface paging the store itself").toBeNull();
     });

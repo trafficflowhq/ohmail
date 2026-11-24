@@ -70,10 +70,10 @@ async function seedOhbox(
     nativeLocator: { folder: OHBOX, ref: `1:${Math.floor(Math.random() * 100000)}` },
   }).returning();
   await (w.db as unknown as Tx).insert(messageBodies).values({
-    messageId: m!.id, text: "", html: null, headers: o.headers ?? {},
+    messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: o.headers ?? {},
   });
   await (w.db as unknown as Tx).insert(folderState).values({
-    messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
@@ -169,7 +169,7 @@ describe("runSensitiveRescreen: the provider's report is read, and only demotes"
   it("the resolver reads the mailbox's own IMAP host and the forged code is screened", async () => {
     const w = await world(["anna@work.example"]);
     await (w.db as unknown as Tx).insert(mailboxCredentials).values({
-      mailboxId: w.mailboxId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+      mailboxId: w.mailboxId, accountId: w.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
       meta: { host: "imap.gmail.com", port: 993, secure: true, user: "u" },
     });
     const id = await seedOhbox(w, {

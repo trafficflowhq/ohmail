@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/db/cloud";
 import type { Db } from "@trafficflow/services";
 import { resetSseCounters } from "../src/routes/events.js";
-import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, req, FIXED_NOW, perRequest } from "./helpers.js";
 
 /**
  * WHAT ASKING THE DOOR AT EVERY READ COSTS, through the REAL entitlements client (its verdict
@@ -116,7 +116,7 @@ async function watch(deps: ApiDeps, token: string, onRead?: () => void): Promise
       return fn.bind(target);
     },
   }) as Db;
-  const res = await H(req("GET", "/events", { bearer: token }), { ...deps, db }, SSE);
+  const res = await H(req("GET", "/events", { bearer: token }), perRequest({ ...deps, db }), SSE);
   expect(res.status).toBe(200);
   const reader = res.body!.getReader();
   const dec = new TextDecoder();

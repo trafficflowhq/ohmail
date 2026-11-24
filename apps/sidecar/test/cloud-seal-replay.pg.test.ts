@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { desc, eq } from "drizzle-orm";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { refreshTokens, sessions } from "@trafficflow/db";
+import { bindDb, refreshTokens, sessions } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { AuthService, ServiceError, makeTestAuthDeps, type ServiceContext } from "@trafficflow/services";
+import { AuthService, ServiceError, dbFor, makeTestAuthDeps, type ServiceContext } from "@trafficflow/services";
 import { createCloudAuth, loadSealedTokens, sealTokens, type CloudAuth } from "../src/cloud-auth.js";
 
 /**
@@ -41,8 +41,12 @@ function totp(secret: string, atMs: number): string {
   return String((mac.readUInt32BE(at) & 0x7fffffff) % 1_000_000).padStart(6, "0");
 }
 
+/**
+ * A request's context: before sign-in its handle is bound to nothing, as the door's; a context that
+ * names an account (the enrolment's) holds that account's handle.
+ */
 const ctx = (ip: string, over: Partial<ServiceContext> = {}): ServiceContext => ({
-  db: owned.db as unknown as ServiceContext["db"], accountId: "", userId: null,
+  db: over.accountId ? dbFor(owned.db, over.accountId) : bindDb(owned.db, { account: null }), accountId: "", userId: null,
   now: () => new Date(), requestId: "cloud-seal-replay", ip, ...over,
 });
 

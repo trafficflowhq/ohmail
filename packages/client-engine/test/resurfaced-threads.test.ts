@@ -1,14 +1,13 @@
+import type { EngineMessage, MessageStateDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   OhmailEngine,
   arrivalMs,
   ohboxView,
   resurfacedThreads,
-  type EngineMessage,
   type EntityReader,
-  type MessageStateDTO,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** The fixture's ids, built from their numbers. */
 const tid = (n: number): string => `T${n}`;

@@ -110,6 +110,50 @@ describe("a confirmed run is bounded by the quote the person confirmed", () => {
     expect(res.stopped).toBe("over_quote");
   });
 
+  it("refuses a changed eligible pair inside a partial quote before dispatch", async () => {
+    const { model, svc, w } = await seeded();
+    const senders = SENDERS.slice(0, 2);
+    await svc.suggest(w.ctx, { senders: [senders[0]] });
+    const quote = await svc.suggest(w.ctx, { senders, dryRun: true });
+    expect(quote.quoted).toBe(1);
+    expect(model.calls).toBe(1);
+
+    await seedMessage(w.db, w.accountId, w.mailboxId, {
+      from: senders[0], date: new Date("2026-07-28T10:00:00Z"),
+    });
+    const grant = quote.quoteGrant;
+    const confirmed = { senders, maxCredits: quote.quotedCredits, quoteGrant: grant?.proof };
+    await expect(svc.suggest(w.ctx, confirmed)).rejects.toMatchObject({ code: "suggest_quote_changed" });
+    expect(model.calls).toBe(1);
+  });
+
+  it("buys the same held pair and serves the cached answer from a stable partial quote", async () => {
+    const { model, svc, w } = await seeded();
+    const senders = SENDERS.slice(0, 2);
+    await svc.suggest(w.ctx, { senders: [senders[0]] });
+    const quote = await svc.suggest(w.ctx, { senders, dryRun: true });
+    expect(quote.quoted).toBe(1);
+    expect(quote.quoteGrant?.pairs.map(({ sender }) => sender)).toEqual([senders[1]]);
+    const result = await svc.suggest(w.ctx, {
+      senders, maxCredits: quote.quotedCredits, quoteGrant: quote.quoteGrant!.proof,
+    });
+    expect(result.charged).toBe(1);
+    expect(result.suggestions.map(({ sender }) => sender)).toEqual(senders);
+    expect(model.calls).toBe(2);
+  });
+
+  it("rejects a grant copied to another account even for the same empty set", async () => {
+    const { model, svc, w } = await seeded();
+    const { ctx: other } = await billable();
+    const senders = ["absent@example.test"];
+    const quote = await svc.suggest(w.ctx, { senders, dryRun: true });
+    expect(quote.quoteGrant?.pairs).toEqual([]);
+    await expect(svc.suggest(other, {
+      senders, maxCredits: quote.quotedCredits, quoteGrant: quote.quoteGrant!.proof,
+    })).rejects.toMatchObject({ code: "suggest_quote_changed" });
+    expect(model.calls).toBe(0);
+  });
+
   it("a malformed ceiling is refused, never ignored", async () => {
     // A money bound that silently disappears is worse than one nobody claimed, so this is a 400
     // rather than a fall back to unbounded.

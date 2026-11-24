@@ -1,0 +1,85 @@
+{
+  "component": "BlockedImages",
+  "state": "said",
+  "look": "ohmarchy-light-desktop",
+  "place": "block",
+  "target": [1045.9844, 181.5781, 258.2031, 42.8438],
+  "clip": [1045, 181, 260, 44],
+  "studioCommit": "73819da01a972966b4d64dea5b656d1dc6f81eee",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.85px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 2px" }],
+  "nodes": [
+    {
+      "role": "dialog",
+      "name": "Tracker blocked",
+      "box": [0, 0, 258.2, 42.8],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "4px",
+        "paddingBottom": "4px",
+        "paddingLeft": "4px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "surfaces": [{ "box": [0, 0, 258.2, 42.8], "paint": 0 }]
+    },
+    {
+      "role": "note",
+      "name": "",
+      "box": [4, 4, 250.2, 34.8],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.85px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "8px",
+        "paddingRight": "12px",
+        "paddingBottom": "8px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "A tracking pixel was blocked.", "type": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

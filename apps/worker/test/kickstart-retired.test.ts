@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
   auditLog, changeLog, contacts, folderState, mailboxes, messageBodies, messages, type Tx,
+  mailboxPass, readPassProgress,
 } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -63,9 +64,9 @@ async function seedHeld(w: World, from: string): Promise<string> {
     dedupKey: `seed:${randomUUID()}`, subject: "hello",
     fromAddress: from, nativeLocator: { folder: SCREENER, ref: "1:1" },
   }).returning();
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
@@ -117,9 +118,8 @@ describe("the connect-time kickstart is retired", () => {
       repo: w.repo, adapter: w.adapter, accountId: w.accountId, mailboxId: w.mailboxId,
     });
 
-    // `mailboxes.kickstart_at` is stamped on every mailbox attached before the retirement and
-    // NULL on every one since. Nothing may gate work on it — see the module header.
-    const [mb] = await w.db.select().from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
-    expect(mb!.kickstartAt).toBeNull();
+    // The pass's done mark stands for every mailbox attached before the retirement and is absent
+    // for every one since. Nothing may gate work on it — see the module header.
+    expect((await readPassProgress(w.db, mailboxPass("kickstart", w.accountId, w.mailboxId))).doneAt).toBeNull();
   });
 });

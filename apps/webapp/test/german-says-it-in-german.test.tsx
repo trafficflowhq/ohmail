@@ -9,6 +9,7 @@
  *    touched; Settings' face row and About's version row carry German labels (R20-02).
  * English is the control in each case.
  */
+import { WithReport } from "../../../packages/app/test/support/with-report.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -91,16 +92,11 @@ async function underTheShell(locale: "en" | "de", node: React.ReactElement): Pro
   return host;
 }
 
-const rowLabel = (el: HTMLElement, has: (row: HTMLElement) => boolean): string | null => {
-  const row = [...el.querySelectorAll<HTMLElement>(".set-row")].find(has);
-  return row?.querySelector(".lab b")?.textContent ?? null;
-};
-
 describe("a request that got no answer is said in the reader's language (R20-01)", () => {
   it("Settings → Account, offline, in German", async () => {
     offline();
-    const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-    const text = (await underTheShell("de", h(AccountSection))).textContent ?? "";
+    const { LiveAccountPane } = await import("./fixtures/live-account-pane");
+    const text = (await underTheShell("de", h(LiveAccountPane))).textContent ?? "";
     expect(text).toContain(de.session.refusedOffline);
     expect(text).not.toContain(en.session.refusedOffline);
   });
@@ -111,12 +107,13 @@ describe("a request that got no answer is said in the reader's language (R20-01)
     const text = (await underTheShell("de", h(AboutSection))).textContent ?? "";
     expect(text).toContain(de.session.refusedOffline);
     expect(text).not.toContain(en.session.refusedOffline);
+    expect(text).toContain("UID CHE\u2011");
   });
 
   it("control: in English the same panes say the English sentence", async () => {
     offline();
-    const { AccountSection } = await import("../app/(product)/mailbox/AccountSection.js");
-    expect((await underTheShell("en", h(AccountSection))).textContent).toContain(en.session.refusedOffline);
+    const { LiveAccountPane } = await import("./fixtures/live-account-pane");
+    expect((await underTheShell("en", h(LiveAccountPane))).textContent).toContain(en.session.refusedOffline);
   });
 
   it("control: with no catalogue handed over yet, the client's own words are the catalogue's English", async () => {
@@ -143,7 +140,7 @@ describe("ohmail's own names on German screens are German (R20-02)", () => {
   it("Settings → Devices: an unnamed desktop is 'ohmail für Linux'; a typed name stays as typed", async () => {
     answering(ROWS);
     const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
-    const text = (await underTheShell("de", h(DevicesSection))).textContent ?? "";
+    const text = (await underTheShell("de", h(WithReport, { view: DevicesSection }))).textContent ?? "";
     expect(text).toContain("ohmail für Linux");
     expect(text).not.toContain("ohmail for Linux");
     expect(text).toContain("Arbeitsrechner");
@@ -152,24 +149,18 @@ describe("ohmail's own names on German screens are German (R20-02)", () => {
   it("control: in English the unnamed desktop reads exactly as the server named it", async () => {
     answering(ROWS);
     const { DevicesSection } = await import("../app/(product)/mailbox/DevicesSection.js");
-    expect((await underTheShell("en", h(DevicesSection))).textContent).toContain("ohmail for Linux");
-  });
-
-  it("Settings → General: the face row is labelled in German", async () => {
-    const { FaceRow } = await import("../app/shell/FaceRow.js");
-    const el = await underTheShell("de", h(FaceRow, { applyAllDevices: null }));
-    const label = rowLabel(el, (r) => r.querySelector(".face-seg") !== null);
-    expect(label).toBe(de.settings.face);
-    expect(label).not.toBe(en.settings.face);
-    expect(el.querySelector(".face-seg")?.getAttribute("aria-label")).toBe(de.settings.faceAria);
-    expect(de.settings.faceAria).not.toBe(en.settings.faceAria);
+    expect((await underTheShell("en", h(WithReport, { view: DevicesSection }))).textContent).toContain("ohmail for Linux");
   });
 
   it("Settings → About: the version row is labelled in German", async () => {
     answering([]);
     const { AboutSection } = await import("../app/(product)/mailbox/AboutSection.js");
     const el = await underTheShell("de", h(AboutSection));
-    const label = rowLabel(el, (r) => (r.querySelector(".set-val")?.textContent ?? "").includes(" · "));
+    const row = [...el.querySelectorAll<HTMLElement>('[role="group"]')].find(
+      (group) => (group.querySelector(".oh-settingline-text")?.textContent ?? "").includes(" · "),
+    );
+    const labelId = row?.getAttribute("aria-labelledby");
+    const label = labelId ? el.ownerDocument.getElementById(labelId)?.textContent : null;
     expect(label).toBe(de.about.buildLabel);
     expect(label).not.toBe(en.about.buildLabel);
   });

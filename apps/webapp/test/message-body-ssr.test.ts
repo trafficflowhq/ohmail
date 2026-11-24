@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MessageBody, sanitizerAvailable } from "../app/components/MessageBody.js";
+import { MessageBody, sanitizerAvailable } from "../../../packages/letter-body/src/MessageBody.js";
 import { OWNER_BILLING_HTML, OWNER_BILLING_TEXT, OWNER_TRACKING_PIXEL } from "./fixtures/owner-billing-email";
 
 /**
@@ -37,6 +37,7 @@ describe("the server render, where there is no sanitizer", () => {
     //   'url8792.mail.wolkenmail.example/wf/open'
     const out = renderToStaticMarkup(
       React.createElement(MessageBody, {
+        owner: null,
         text: OWNER_BILLING_TEXT,
         html: OWNER_BILLING_HTML,
       }),
@@ -57,7 +58,7 @@ describe("the server render, where there is no sanitizer", () => {
     expect(out).not.toContain(`src="${OWNER_TRACKING_PIXEL}"`);
     // The words the reader can have, plus a line saying which rendition this is.
     expect(out).toContain("Your organization has reached its usage credits spend limit");
-    expect(out).toContain("Showing the plain-text version of this message.");
+    expect(out).toContain("You are reading this message&#x27;s plain text.");
     // No frame either: an empty `srcdoc` frame server-rendered and then replaced on hydration
     // is a flash of nothing where the message should be.
     expect(out).not.toContain("<iframe");
@@ -65,9 +66,9 @@ describe("the server render, where there is no sanitizer", () => {
 
   it("does not throw for a message with no html at all", () => {
     const out = renderToStaticMarkup(
-      React.createElement(MessageBody, { text: "First.\n\nSecond.", html: null }),
+      React.createElement(MessageBody, { owner: null, text: "First.\n\nSecond.", html: null }),
     );
     expect(out).toContain('class="msg-p msg-plain"');
-    expect(out).not.toContain("Showing the plain-text version");
+    expect(out).not.toContain("You are reading this message's plain text.");
   });
 });

@@ -14,6 +14,7 @@ import { desktopHostRoutes } from "@trafficflow/api/desktop-host";
  */
 
 const key = (r: Route): string => `${r.method} ${r.pattern}`;
+const CONDITIONAL_DISCARD = "DELETE /drafts/:id/conditional";
 
 /** Every route that CAUSES COST — the spend gate's own `work` and `paid` classes, all tables. */
 const spenders: Route[] = (() => {
@@ -134,17 +135,25 @@ describe("the idempotency census over everything that spends", () => {
     // a replay rewrites the same appointment and its files under a fresh key, one appointment.
     // 86 -> 88 with the storage choices, `state` (a replay records the same dismissal or switch), and
     // the change door, `ephemeral` like the manage link beside it.
-    expect(spenders).toHaveLength(88);
+    // 88 -> 89 with a draft from the person's own words, keyed by the middleware like Draft reply:
+    // the stored draft claims the key in its own transaction, so a replay answers the stored 202.
+    const otherSpenders = (routes: Route[]): Route[] => routes.filter((r) => key(r) !== CONDITIONAL_DISCARD);
+    const conditionalDiscard = spenders.filter((r) => key(r) === CONDITIONAL_DISCARD);
+    expect(conditionalDiscard.map((r) => ({
+      replay: r.replay, cost: r.cost, keyed: r.options?.idempotent === true,
+    }))).toEqual([{ replay: "state", cost: "work", keyed: false }]);
+    expect(otherSpenders(spenders)).toHaveLength(89);
     // 19 -> 25 with the six creates that mint a durable row per call and now claim their key:
     // snippets, kb, notify-rules, the two notes and workflows.
     // 25 -> 26 with the tag create, which claims its key: a retry whose answer was lost met the
     // name rule over the tag it had made.
-    expect(keyedByMiddleware).toHaveLength(26);
-    expect(declared).toHaveLength(88 - 26);
+    // 26 -> 27 with a draft from the person's own words, keyed like Draft reply.
+    expect(keyedByMiddleware).toHaveLength(27);
+    expect(otherSpenders(declared)).toHaveLength(89 - 27);
     // Per disposition, so a route that CHANGES its answer moves two numbers rather than none.
     expect(withDisposition("handler").map(key))
       .toEqual(["DELETE /rules/:id", "POST /attachments/staging"]);
-    expect(withDisposition("state")).toHaveLength(43);
+    expect(otherSpenders(withDisposition("state"))).toHaveLength(43);
     expect(withDisposition("guarded")).toHaveLength(12);
     expect(withDisposition("ephemeral").map(key)).toEqual([
       "POST /account/checkout/confirm",

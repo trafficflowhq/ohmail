@@ -1,0 +1,72 @@
+/* A question, for a yes that cannot be undone: a sentence, at most one line, the buttons. */
+@layer oh {
+  .oh-dialog {
+    display: flex;
+    flex-direction: column;
+    padding: var(--s6);
+  }
+  /* With a list of what waits: wider, and a little further from the window's edge. */
+  .oh-overlay.oh-dialog-listed {
+    --oh-overlay-max: 560px;
+    max-height: calc(100% - 2 * var(--s5));
+  }
+  .oh-dialog-line {
+    margin-top: var(--s2);
+    color: var(--ink2);
+  }
+  /* What the answer needs. A long list scrolls here; the sentence and the answers stay. */
+  .oh-dialog-body {
+    min-height: 0;
+    margin-top: var(--s4);
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  .oh-dialog-body > .oh-text {
+    overflow-wrap: anywhere;
+  }
+  /* What a press inside it came to: one line over the answers, which stays while the body scrolls. */
+  .oh-dialog-said {
+    flex: none;
+    margin-top: var(--s4);
+    color: var(--ink2);
+  }
+  .oh-dialog-said > .oh-refusal[data-start] {
+    --oh-refusal-pad: 0;
+  }
+  .oh-dialog-acts {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    gap: var(--s2);
+    margin-top: var(--s5);
+  }
+  /* Other ways to the answer, under it: each on a line of its own, its word in line with the dialog's text. */
+  .oh-dialog-under {
+    display: grid;
+    flex: none;
+    justify-items: start;
+    margin-top: var(--s3);
+  }
+  .oh-dialog-under > .oh-button {
+    --oh-dialog-under-out: calc(var(--s3) * -1);
+    margin-left: var(--oh-dialog-under-out);
+  }
+  :root[data-touch="1"] .oh-dialog .oh-button {
+    min-height: var(--h-s);
+  }
+
+  .oh-dialog-facts {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    overflow-wrap: anywhere;
+    gap: var(--s2);
+    padding: 0;
+    margin: 0;
+    list-style: none;
+  }
+  .oh-dialog-facts .oh-tag {
+    height: auto;
+    min-height: var(--oh-tag-h);
+    white-space: normal;
+  }
+}

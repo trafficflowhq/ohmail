@@ -25,8 +25,12 @@ const verbs = (...v: string[]): WriteRoute => ({ rows: "sync", verbs: v });
 export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "DELETE /account": none,
   "DELETE /auth/2fa/totp": none,
+  // A calendar's connection removed: its records' deletions drain from `/sync`; a direct call, never a verb.
+  "DELETE /calendar/connections/:id": direct,
+  "DELETE /calendar/writes/:id": direct,
   "DELETE /devices/:id": none,
   "DELETE /drafts/:id": verbs("draft_discard"),
+  "DELETE /drafts/:id/conditional": verbs("draft_discard"),
   "DELETE /drafts/:id/schedule": verbs("draft_schedule_cancel"),
   "DELETE /folders/:id": verbs("folder_delete"),
   "DELETE /folders/:id/op": verbs("folder_op_dismiss"),
@@ -45,6 +49,10 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "PATCH /account/ai": none,
   "PATCH /account/screening": none,
   "PATCH /account/storage": none,
+  "PATCH /calendar/calendars/:id": direct,
+  "PATCH /calendar/settings": direct,
+  // A receipt's calendar suggestion is dismissed or restored by a direct call. Its row drains from /sync.
+  "PATCH /calendar/suggestions/:id": direct,
   "PATCH /consent/settings": direct,
   "PATCH /contacts/:id": none,
   "PATCH /folders/:id": verbs("folder_rename"),
@@ -74,6 +82,18 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /auth/step-up/webauthn/options": none,
   "POST /auth/step-up/webauthn/verify": none,
   "POST /auth/verify-email/resend": none,
+  // The calendar's connect door. DIRECT CALLS, AND NEVER A VERB: a verb is a queued, stored record, and a connect
+  // and a sign-in typed again carry what a person typed (a password, a subscription's whole address) in
+  // their body. The connection's record drains from `/sync`; the echo-await alone covers it.
+  "POST /calendar/connections": direct,
+  "POST /calendar/connections/:id/check": direct,
+  "POST /calendar/connections/:id/sign-in": direct,
+  // A question, not a write: it changes nothing anywhere, and its answer goes back at once.
+  "POST /calendar/places/suggest": none,
+  // The calendar's writes: until the window's engine carries the calendar's acts, the echo-await alone covers them.
+  "POST /calendar/proposals": { rows: "sync+mailboxes", verbs: [] },
+  "POST /calendar/writes": direct,
+  "POST /calendar/writes/:id/retry": direct,
   "POST /consent/reset": direct,
   "POST /consent/seed": direct,
   "POST /contacts/:id/notes": none,
@@ -82,6 +102,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /drafts/:id/resolve": verbs("draft_resolve"),
   "POST /drafts/:id/schedule": direct,
   "POST /drafts/:id/schedule-with-files": direct,
+  "POST /drafts/from-text": direct,
   // The mailbox rows too: a send can record the mailbox's Sent folder (one made after connecting).
   "POST /drafts/:id/send": { rows: "sync+mailboxes", verbs: ["mail_send"] },
   "POST /files/download-all": none,
@@ -106,6 +127,9 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /mailboxes/probe": none,
   "POST /messages/:id/attachments/download-all": none,
   "POST /messages/:id/draft": direct,
+  // An invitation's answer is a send: the letter's field and its answer's draft drain from `/sync`,
+  // and the send can record the mailbox's Sent folder, as `POST /drafts/:id/send` can.
+  "POST /messages/:id/invitation/answer": { rows: "sync+mailboxes", verbs: [] },
   "POST /messages/:id/load-remote": direct,
   "POST /messages/:id/move": verbs("move"),
   "POST /messages/:id/restore": direct,

@@ -1,0 +1,20 @@
+{
+  "id": "stylelint:selector-class-pattern",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a kit class without the prefix",
+      "file": "packages/ui/src/planted/prefix.css",
+      "line": 1,
+      "refused": "Expected \".row\" to match pattern \"^oh-[a-z0-9]+(-[a-z0-9]+)*$\" (selector-class-pattern)"
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean stylesheet of the kit",
+      "file": "packages/ui/src/planted/clean.css"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
-import { HttpAdapter, type ScreenerWaitingWire } from "@ohmail/client-engine";
+import type { ScreenerWaitingWire } from "@ohmail/wire";
+import { HttpAdapter } from "@ohmail/client-engine";
 
 /** One waiting sender as `GET /screener` lists it: the representative, and the route's `checked` where it has one. */
 export interface QueueRow {

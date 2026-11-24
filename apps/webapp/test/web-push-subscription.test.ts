@@ -84,6 +84,7 @@ function installFakeBrowser(): void {
     configurable: true,
     value: {
       register: (u: string) => { registered.push(u); return Promise.resolve({ pushManager }); },
+      getRegistration: () => Promise.resolve(registered.length > 0 || existing !== null ? { pushManager } : undefined),
     },
   });
 }
@@ -224,6 +225,13 @@ describe("syncWebPush — creating one", () => {
 });
 
 describe("syncWebPush — removing one, which is where OFF is enforced", () => {
+  it("does not install a worker just to turn notifications off", async () => {
+    const a = api();
+    expect(await syncWebPush(false, a)).toBe("unchanged");
+    expect(registered).toEqual([]);
+    expect(a.calls).toEqual([]);
+  });
+
   it("unsubscribes the browser AND deletes the server row", async () => {
     existing = makeSub();
     window.localStorage.setItem("ohmail.notifications.subscriptionId", "row-9");
@@ -276,6 +284,21 @@ describe("syncWebPush — removing one, which is where OFF is enforced", () => {
       a.calls,
       "a local failure skipped the server delete, leaving the row dialling a live endpoint",
     ).toEqual(["unsubscribe:row-9"]);
+  });
+
+  it("deletes the saved server row when the browser cannot look up its worker", async () => {
+    const worker = navigator.serviceWorker;
+    const lookup = vi.spyOn(worker, "getRegistration").mockRejectedValue(new Error("browser refused"));
+    window.localStorage.setItem("ohmail.notifications.subscriptionId", "row-9");
+    const a = api();
+    try {
+      expect(await syncWebPush(false, a)).toBe("row_remains");
+      expect(a.calls).toEqual(["unsubscribe:row-9"]);
+      expect(window.localStorage.getItem("ohmail.notifications.subscriptionId")).toBeNull();
+      expect(registered).toEqual([]);
+    } finally {
+      lookup.mockRestore();
+    }
   });
 
   it("with nothing to remove, says so and calls nobody", async () => {
@@ -354,6 +377,16 @@ describe("syncWebPush — refusals", () => {
     // `in` still finds the property, so blank it entirely the way an old browser has it.
     delete (navigator as unknown as Record<string, unknown>).serviceWorker;
     expect(await syncWebPush(true, api())).toBe("unsupported");
+  });
+
+  it("deletes the saved server row when the browser has no service worker API", async () => {
+    Reflect.deleteProperty(navigator, "serviceWorker");
+    window.localStorage.setItem("ohmail.notifications.subscriptionId", "row-9");
+    const a = api();
+
+    expect(await syncWebPush(false, a)).toBe("row_remains");
+    expect(a.calls).toEqual(["unsubscribe:row-9"]);
+    expect(window.localStorage.getItem("ohmail.notifications.subscriptionId")).toBeNull();
   });
 
   it("a subscription with no keys is UNDONE rather than left for a sender that cannot seal", async () => {

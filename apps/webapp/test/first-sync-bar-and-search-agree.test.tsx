@@ -2,11 +2,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The fixture first: it pins the API base before any shell module reads it.
 import {
-  act, answerSyncWith, goTo, installShellEnv, ISO, mailbox, mountShell, page, teardownShellEnv, textOf, tick,
+  act, answerSyncWith, goTo, installShellEnv, ISO, liveAccountResponse, mailbox, mountShell, page, teardownShellEnv, textOf, tick,
 } from "./fixtures/live-walk-shell";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import { IMPORT_END_IDLE_MS } from "../app/shell/mail-state";
-import { FACTS_POLL_MS } from "../app/shell/MailStateProvider";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { IMPORT_END_IDLE_MS } from "@ohmail/app-logic/mail-state/mail-state";
+import { FACTS_POLL_MS } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import messages from "../messages/en.json";
+import { typeSearch } from "./search-registered-fixture";
+
+/** The rail's importing sentence, as the frame's notice says the same state. */
+const SYNCING = messages.frame.connection.firstSync.title;
+/** The awaiting state's line ("connected … ago"): First sync alone is said by the waiting and the counting state alike. */
+const AWAITING_LINE = /connected (moments ago|1 minute ago|\d+ minutes ago)/;
 
 /**
  * THE SYNC LINE AND SEARCH READ ONE FACT: the mailbox's first-import stamp. Unwritten,
@@ -27,13 +34,7 @@ function searchAnswer(): Response {
 }
 
 async function typeQuery(el: HTMLElement, value: string): Promise<void> {
-  const input = el.querySelector<HTMLInputElement>(".view-search input");
-  expect(input, "the search box").not.toBeNull();
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setter.call(input!, value);
-    input!.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  await act(async () => { typeSearch(el, value); });
   await tick(1_000);
 }
 
@@ -43,7 +44,7 @@ describe("the sync line and search agree about the first import", () => {
     stamped = false;
     const inner = globalThis.fetch;
     globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) =>
-      (String(input).includes("/search?") ? searchAnswer() : inner(input as RequestInfo, init))) as unknown as typeof globalThis.fetch;
+      (String(input).includes("/search?") ? liveAccountResponse(searchAnswer()) : inner(input as RequestInfo, init))) as unknown as typeof globalThis.fetch;
   });
   afterEach(teardownShellEnv);
 
@@ -51,11 +52,11 @@ describe("the sync line and search agree about the first import", () => {
     answerSyncWith(() => page(3, "INBOX"));
     const el = await mountShell([], { probe: facts });
     await tick(2_000);
-    expect(textOf(el), "the premise: the rail announces the import").toContain("Syncing your mail");
+    expect(textOf(el), "the premise: the rail announces the import").toContain(SYNCING);
 
     await goTo("search");
     await typeQuery(el, "zqxjvwk");
-    expect(textOf(el)).toContain("Searched the mail synced so far — nothing matched");
+    expect(textOf(el)).toContain("Only the mail synced so far was searched. The rest of your mail has not synced yet.");
     expect(textOf(el)).toContain("The rest of your mail has not synced yet.");
 
     /* The import is over: the stamp is written and the server has nothing new, so the count is
@@ -63,9 +64,9 @@ describe("the sync line and search agree about the first import", () => {
     stamped = true;
     answerSyncWith(() => page(0, "INBOX"));
     await tick(FACTS_POLL_MS + IMPORT_END_IDLE_MS + 5_000);
-    expect(textOf(el), "the rail kept the import after the stamp and the idle tail").not.toContain("Syncing your mail");
+    expect(textOf(el), "the rail kept the import after the stamp and the idle tail").not.toContain(SYNCING);
     await typeQuery(el, "zqxjvwkx");
-    expect(textOf(el)).toContain("Searched your whole mailbox — nothing matched");
+    expect(textOf(el)).toContain("Nothing matched");
     expect(textOf(el)).not.toContain("synced so far");
     expect(textOf(el)).not.toContain("The rest of your mail has not synced yet.");
   });
@@ -77,8 +78,9 @@ describe("the sync line and search agree about the first import", () => {
     await goTo("search");
     answerSyncWith(() => page(0, "INBOX"));
     await tick(FACTS_POLL_MS + IMPORT_END_IDLE_MS + 5_000);
-    expect(textOf(el), "the rail let go of an import nobody stamped").toContain("Syncing your mail");
+    expect(textOf(el), "the rail let go of an import nobody stamped").toContain(SYNCING);
+    expect(textOf(el), "the import fell back to the awaiting state").not.toMatch(AWAITING_LINE);
     await typeQuery(el, "zqxjvwkx");
-    expect(textOf(el)).toContain("Searched the mail synced so far — nothing matched");
+    expect(textOf(el)).toContain("Only the mail synced so far was searched. The rest of your mail has not synced yet.");
   });
 });

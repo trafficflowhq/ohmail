@@ -1,11 +1,12 @@
 /** @vitest-environment node */
+import type { EngineMessage, RuleEntity as RuleDTO } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import {
-  HttpAdapter, OhmailEngine, encodeSeqCursor, type EngineMessage, type RuleDTO, type SyncChange,
+  HttpAdapter, OhmailEngine, encodeSeqCursor, type SyncChange,
 } from "@ohmail/client-engine";
-import { BearerManager } from "../src/host-client/bearer";
-import { screeningVerdict } from "../../webapp/app/shell/press-verdict";
-import { dispatchScreeningChange, planScreeningChange, senderScreening } from "../../webapp/app/shell/sender-screening";
+import { BearerManager } from "../../paired-page/src/bearer";
+import { screeningVerdict } from "@ohmail/app-logic/press/press-verdict";
+import { dispatchScreeningChange, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE PAIRED DESKTOP'S SCREENING PRESS, THROUGH THE HOST-CLIENT DOOR. The

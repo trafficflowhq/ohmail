@@ -9,9 +9,10 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { createLogger, UNMETERED_STORAGE_CAP } from "@trafficflow/core";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
-import { MailboxRemovedError, refusalIsRemoval, runSyncCycle } from "../src/sync.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
-import { FIXTURE_LEASE } from "./_door.js";
+import { MailboxRemovedError, refusalIsRemoval, runSyncCycle } from "@ohmail/organizer/sync";
+import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
+import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
+import { readSource } from "./_start-function.js";
 
 /**
  * THE TARGETED RETRY IS FENCED, AND A REMOVAL HAS TWO CLASSES. Neither claim could be made before
@@ -241,6 +242,8 @@ describe("the targeted retry commits through the fence", () => {
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 describe("a removal has ONE question and TWO classes", () => {
   const SRC = join(fileURLToPath(new URL(".", import.meta.url)), "../src");
+  /** `request-drain.ts` moved to the organizer's package (ruling:organizer-cut). */
+  const ORG_SRC = join(fileURLToPath(new URL(".", import.meta.url)), "../../../packages/organizer/src");
 
   it("the predicate answers both doors, and nothing else", () => {
     expect([
@@ -262,8 +265,8 @@ describe("a removal has ONE question and TWO classes", () => {
    */
   it("no arm outside the declarations names one class by hand", () => {
     const offenders: string[] = [];
-    for (const file of ["index.ts", "reconcile-cron.ts", "request-drain.ts", "restart.ts"]) {
-      const src = withoutComments(readFileSync(join(SRC, file), "utf8"));
+    for (const [dir, file] of [[SRC, "index.ts"], [SRC, "reconcile-cron.ts"], [ORG_SRC, "request-drain.ts"], [SRC, "restart.ts"]] as const) {
+      const src = withoutComments(readSource(join(dir, file)));
       for (const m of src.match(/instanceof\s+Mailbox(?:Removed|Erased)Error/g) ?? []) {
         offenders.push(`${file}: ${m}`);
       }

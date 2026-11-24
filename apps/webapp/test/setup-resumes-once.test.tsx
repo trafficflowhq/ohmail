@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ISO, answerConsentWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell";
-import { bootCacheKey } from "../app/shell/boot-cache";
-import { CONSENT_BOOT_SCOPE } from "../app/shell/consent-state";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
+import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 // The first mount pays the shell's cold import.
 vi.setConfig({ testTimeout: 30_000 });
@@ -34,7 +34,20 @@ const door = (over: Partial<FirstRunHost> = {}): FirstRunHost => ({
   ...over,
 });
 
-/** Mount, then let both reads land. */
+/** The Account section's doors as doubles, one of each for the file's life: who is signed in, and a way out never pressed here. */
+const SESSION_DOOR = {
+  who: async () => ({ ok: true, value: { address: "walker@example.invalid" } }) as const,
+  signOut: async () => "left" as const,
+  toErase: () => undefined,
+  toSignIn: () => undefined,
+};
+const PASSWORD_DOOR = { change: async () => ({ ok: true, value: { ended: 0 } }) as const };
+const ACCOUNT_DOORS = {
+  useDoor: () => SESSION_DOOR,
+  password: { useDoor: () => PASSWORD_DOOR, factor: () => null },
+} as unknown as NonNullable<Parameters<typeof mountShell>[1]>["accountDoors"];
+
+/** Mount the shell's door (the resume is a duty of the mail ground's boot), then let both reads land. */
 async function shell(facts: MailboxFacts[], opts: Parameters<typeof mountShell>[1] = {}): Promise<HTMLElement> {
   const c = await mountShell(facts, { firstRun: door(), ...opts });
   await tick(100);
@@ -123,9 +136,24 @@ describe("stays where the account or the URL says so", () => {
   });
 
   it.each([
-    ["/#/settings"], ["/#/screener"], ["/#/first-run"], ["/?settings=mailboxes"], ["/?oauth=error&reason=consent_declined"],
+    ["/#/first-run"], ["/?settings=mailboxes"], ["/?oauth=error&reason=consent_declined"],
   ])("a deep link: %s", async (url) => {
     window.history.replaceState(null, "", url);
+    await shell([]);
+    expect(resumes).toBe(0);
+  });
+
+  /* Settings stands where the host hands a section's doors, as the web's entry hands its Account section's. */
+  it("a deep link: /#/settings", async () => {
+    window.history.replaceState(null, "", "/#/settings");
+    await shell([], { accountDoors: ACCOUNT_DOORS });
+    expect(resumes).toBe(0);
+  });
+
+  /* The Screener is a place of this shell from its own mount on: until then its address lands on the Ohbox (the
+     frame's rule for a place that is not there), which is the default view. */
+  it("a deep link: /#/screener", async () => {
+    window.history.replaceState(null, "", "/#/screener");
     await shell([]);
     expect(resumes).toBe(0);
   });

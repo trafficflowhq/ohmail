@@ -4,7 +4,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   mailboxes, messages, folderState, recordChange, type EntityType,
 } from "@trafficflow/db";
-import { SyncService, ServiceError, type ServiceContext } from "../src/index.js";
+import { SyncService, ServiceError, dbFor, type ServiceContext } from "../src/index.js";
 
 /**
  * ══ A CURSOR FROM A RUN OF THE STORE THAT IS OVER IS REFUSED ══════════════════════════════════
@@ -45,7 +45,7 @@ async function setup(storeGeneration: number | null) {
     accountId, provider: "imap", address: "a@x.example",
   }).returning();
   const ctx: ServiceContext = {
-    db, accountId, userId: null,
+    db: dbFor(db, accountId), accountId, userId: null,
     now: () => new Date("2026-09-17T00:00:00.000Z"), requestId: "r",
     ...(storeGeneration === null ? {} : { storeGeneration }),
   };
@@ -61,7 +61,7 @@ async function addMessage(db: Db, accountId: string, mailboxId: string): Promise
     subject: "s", fromAddress: "f@x.example",
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   return m!.id;
 }

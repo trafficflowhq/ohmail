@@ -35,7 +35,13 @@ const NAMES =
 
 function exportsOf(rel: string): Set<string> {
   const src = readFileSync(new URL(rel, import.meta.url), "utf8");
-  return new Set([...src.matchAll(NAMES)].map((m) => m[1]!));
+  const names = new Set([...src.matchAll(NAMES)].map((m) => m[1]!));
+  const file = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true);
+  for (const statement of file.statements) {
+    if (!ts.isExportDeclaration(statement) || !statement.exportClause || !ts.isNamedExports(statement.exportClause)) continue;
+    for (const specifier of statement.exportClause.elements) names.add(specifier.name.text);
+  }
+  return names;
 }
 
 describe("the desktop's refusing api-client stub", () => {

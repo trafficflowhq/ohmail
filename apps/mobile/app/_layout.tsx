@@ -31,13 +31,21 @@ import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { LocaleProvider, useLocale } from "../src/i18n/LocaleProvider";
 import { secureKV } from "../src/state/servers-native";
 import { registerBundledPhoneEngine } from "../src/engine/engine-bundle-native";
+import Constants from "expo-constants";
+import { assertEmbeddedApp } from "../src/variant";
+import { APP } from "../src/variant-native";
 import { installNativeEngineLogWriter } from "../src/engine/engine-log-native";
 import { setPadDevice } from "../src/i18n/device";
 
+/* ONE APP PER BUILD: the identifier the system installed this app under must be the one its embedded configuration
+   was resolved for, or the native project and the JavaScript were made for different apps. Before anything else. */
+assertEmbeddedApp(APP, Platform.OS === "ios" ? Constants.expoConfig?.ios?.bundleIdentifier : Constants.expoConfig?.android?.package);
+
 /* Before the first render, for the reason in the header. The answer is the registry's — `false`
    would mean a second engine, which one artifact cannot produce — and it is read by nothing, so
-   the call stands alone rather than pretending to a decision. */
-registerBundledPhoneEngine();
+   the call stands alone rather than pretending to a decision. Only an app that organizes a
+   mailbox on its own registers it: the calendar's app has no engine to choose. */
+if (APP.carries.organizes) registerBundledPhoneEngine();
 
 /* THE ENGINE'S LOG GETS ITS PLATFORM SINK before anything can write a line. Module scope, not an
    effect: a Release iOS build drops `console` entirely, so a line written before this install is a
@@ -125,6 +133,9 @@ function Screens() {
           }}
         >
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="shell" options={{ animation: "none", gestureEnabled: false }} />
+          {/* The door's page: the ways in and the list of servers under the shell. It leaves by its own acts. */}
+          <Stack.Screen name="door" options={{ animation: "none", gestureEnabled: false }} />
           {/* New mail is a sheet over the screen it was opened from, never a page of its own. */}
           <Stack.Screen
             name="compose"
@@ -138,7 +149,7 @@ function Screens() {
       {/* LAST, so it draws over every screen, the rail and the dock: absolute, outside the shell
           boundary that holds the navigator and the rail, outside every sheet's modal subtree.
           `toast-pill-placement.test.ts` holds it. */}
-      <Toast />
+      <Toast mail={navDrawn} />
     </BottomChromeProvider>
     </NavDrawnContext.Provider>
   );

@@ -1,16 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
 import { and, eq } from "drizzle-orm";
 import { mailboxes, drafts, outboundSends, changeLog } from "@trafficflow/db";
 import { materializeDraft } from "../src/dto/materialize.js";
-import { schema } from "@trafficflow/db/cloud";
+import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { DraftsService } from "../src/index.js";
+import { DraftsService, dbFor } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
-import { brandDialect } from "@trafficflow/db/dialect";
 
 /**
  * A HELD SEND HAS A WAY OUT, AND A FINISHED ONE STOPS HOLDING THE DRAFT.
@@ -60,8 +57,9 @@ import { brandDialect } from "@trafficflow/db/dialect";
  */
 const PG_UP = await realPgAvailable();
 
-const sqlA = postgres(PG_TEST_URL, { max: 10, onnotice: () => {} });
-const dbA = brandDialect(drizzle(sqlA, { schema }), "pg");
+// The factory's handle: the binder takes a server handle only from the factory that registered its door.
+const owned = makeOwnedDb(PG_TEST_URL);
+const dbA = owned.db;
 
 const NOW = new Date("2026-09-08T12:00:00.000Z");
 const draftsSvc = new DraftsService();
@@ -122,7 +120,7 @@ async function seeded(
     sendId = s!.id;
   }
 
-  const ctx: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "r" };
+  const ctx: ServiceContext = { db: dbFor(dbA, accountId), accountId, userId: null, now: () => NOW, requestId: "r" };
   return { ctx, draftId: d!.id, accountId, sendId };
 }
 
@@ -145,7 +143,7 @@ async function refusalOf(p: Promise<unknown>): Promise<{ httpStatus?: number; co
 }
 
 beforeAll(async () => { if (PG_UP) await runMigrations(PG_TEST_URL); }, 120_000);
-afterAll(async () => { await sqlA.end({ timeout: 5 }); });
+afterAll(async () => { await owned.close(); });
 
 describe.skipIf(!PG_UP)("a held send can be resolved, and a finished one stops holding the draft", () => {
   it("THE POSITIVE CONTROL — an ordinary draft with nothing on record is discarded", async () => {

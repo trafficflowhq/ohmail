@@ -6,7 +6,9 @@ import {
   htmlByteLength,
   htmlToPlainText,
   prepareOutboundBody,
+  prepareOutboundDelivery,
   sanitizeOutboundHtml,
+  sanitizeQuotedHtml,
 } from "../src/outbound-html.js";
 
 /**
@@ -121,13 +123,58 @@ describe("nothing outside the grammar survives", () => {
     expect(out).not.toContain("base64");
   });
 
-  it("drops tables, headings and iframes but keeps the words in them", () => {
+  it("drops tables, unsupported headings and iframes but keeps the words in them", () => {
     const out = sanitizeOutboundHtml(
-      "<h1>Title</h1><table><tr><td>cell</td></tr></table><iframe src=\"https://a.example\"></iframe>",
+      "<h4>Title</h4><table><tr><td>cell</td></tr></table><iframe src=\"https://a.example\"></iframe>",
     );
-    expect(out).not.toMatch(/<(h1|table|tr|td|iframe)/);
+    expect(out).not.toMatch(/<(h4|table|tr|td|iframe)/);
     expect(out).toContain("Title");
     expect(out).toContain("cell");
+  });
+
+  it("keeps headings and a divider in HTML and separates them in plain text", () => {
+    const { html, text } = prepareOutboundBody(
+      '<h1 style="color:red">Release</h1><h2>Install</h2><h3>Notes</h3><hr><p>Next</p>',
+    );
+    expect(html).toBe("<h1>Release</h1><h2>Install</h2><h3>Notes</h3><hr /><p>Next</p>");
+    expect(text).toBe("Release\nInstall\nNotes\n--------\nNext");
+  });
+
+  it("styles the recipient's formats and indents the plain-text code", () => {
+    const draft = prepareOutboundBody(
+      '<h1>Release</h1><h2>Install</h2><h3>Notes</h3><hr><pre data-ohmail-code="1" style="color:red"><code>one\n  two</code></pre>',
+    );
+    const { html, text } = prepareOutboundDelivery(draft.html, draft.text);
+    expect(html).toMatch(/<h1 style="font-size:28px;[^"]*">Release<\/h1>/);
+    expect(html).toMatch(/<h2 style="font-size:20px;[^"]*">Install<\/h2>/);
+    expect(html).toMatch(/<h3 style="font-size:17px;[^"]*">Notes<\/h3>/);
+    expect(html).toMatch(/<hr style="border:0;border-top:[^"]*" \/>/);
+    expect(html).toContain("background-color:#f0ebe3;white-space:pre-wrap");
+    expect(html).toContain("overflow-wrap:anywhere");
+    expect(html).toContain("<code>one\n  two</code>");
+    expect(html).not.toContain("color:red");
+    expect(text).toBe("Release\nInstall\nNotes\n--------\n    one\n      two");
+  });
+
+  it("keeps only the fixed code flag on draft code blocks and removes it on delivery", () => {
+    const draft = prepareOutboundBody(
+      '<p data-ohmail-code="1">Before</p><pre data-ohmail-code="2"><code>old</code></pre>' +
+      '<pre data-ohmail-code="1"><code>new</code></pre>',
+    );
+    expect(draft.html).toBe(
+      '<p>Before</p><pre><code>old</code></pre><pre data-ohmail-code="1"><code>new</code></pre>',
+    );
+    expect(sanitizeOutboundHtml(draft.html)).toBe(draft.html);
+    const sent = prepareOutboundDelivery(draft.html, draft.text);
+    expect(sent.html).toContain("<pre><code>old</code></pre><pre style=");
+    expect(sent.html).not.toContain("data-ohmail-code");
+    expect(sent.text).toBe("Before\nold\n    new");
+  });
+
+  it("consumes only a direct initial newline in marked pre", () => {
+    const draft = prepareOutboundBody('<pre data-ohmail-code="1">\n<code>\nbody\n\n</code></pre>');
+    expect(draft.text).toBe("\nbody\n\n");
+    expect(prepareOutboundDelivery(draft.html, draft.text).text).toBe("\n    body\n\n");
   });
 
   it("is IDEMPOTENT — the send-time pass is a no-op on anything the store-time pass produced", () => {
@@ -155,6 +202,17 @@ describe("everything inside the grammar survives, into both parts", () => {
     // silently unformat text the user can see is formatted.
     const out = sanitizeOutboundHtml("<b>b</b><i>i</i><strike>s</strike><del>d</del>");
     for (const tag of ["b", "i", "strike", "del"]) expect(out).toContain(`<${tag}>`);
+  });
+
+  it("keeps underline, bare, as markup, and its words in the text part", () => {
+    const out = sanitizeOutboundHtml('<p><u style="color:red" class="x" onclick="x()">under</u> line</p>');
+    expect(out).toBe("<p><u>under</u> line</p>");
+    expect(sanitizeOutboundHtml(out)).toBe(out);
+    expect(prepareOutboundBody(out)).toEqual({ html: out, text: "under line" });
+  });
+
+  it("keeps underline in a forward's quoted original too", () => {
+    expect(sanitizeQuotedHtml("<div><u>x</u></div>", new Set())).toContain("<u>x</u>");
   });
 
   it("renders emphasis as its text and nothing else — no invented markers", () => {

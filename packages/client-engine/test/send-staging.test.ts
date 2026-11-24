@@ -1,9 +1,10 @@
+import type { ComposeAttachment, EngineMutation } from "@ohmail/wire";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import {
   HttpAdapter, MutationRejectedError, SEND_INLINE_MAX_TOTAL_BYTES,
-  type ComposeAttachment, type EngineMutation, type FetchLike,
+  type FetchLike,
 } from "../src/index.js";
 import { sendFingerprint } from "../src/send-fingerprint.js";
 

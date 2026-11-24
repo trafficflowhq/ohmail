@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-lease";
 import { memoryImapServer, type MemoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
 import { claimRaw } from "../../../packages/core/test/adapters/_lease-fixtures.js";
-import { applyMetaRequests, shrinkMetaOnRefusal } from "../src/request-drain.js";
+import { applyMetaRequests, shrinkMetaOnRefusal } from "@ohmail/organizer/request-drain";
 
 /**
  * WHAT AN IDLE KEYLESS PASS COSTS (REVIEW-02514 LOW 1): the reviewer's probe — the real

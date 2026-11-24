@@ -106,7 +106,7 @@ services:
       # `docker compose up -d` recreates a service only when its definition changes, so this
       # digest of ./proxy is what makes an update that edits the directory restart the proxy.
       # test/selfhost-proxy-reload.test.ts fails on a stale value and prints the new one.
-      ohmail.proxy-config: sha256:ad1de451b629eeb3cb291c1e0968a74f8df7f29acdcecc6351c16945a68eb2ef
+      ohmail.proxy-config: sha256:7a5aa997545e89f6fec7fa2f475d5d8273629bc2b6c673265390e58a1d07a95e
     volumes:
       # Both front doors, the route table they import and the entrypoint. The entrypoint picks the
       # door: proxy/Caddyfile, which owns TLS, or proxy/Caddyfile.external-tls when
@@ -200,6 +200,10 @@ services:
       TF_AI_ALLOW_PRIVATE: ${TF_AI_ALLOW_PRIVATE:-}
       TF_AI_TIMEOUT_MS: ${TF_AI_TIMEOUT_MS:-}
       TF_PROBE_ALLOW_PRIVATE: ${TF_PROBE_ALLOW_PRIVATE:-}
+      OHMAIL_CALENDAR: ${OHMAIL_CALENDAR:-1}
+      OHCAL_ALLOW_PRIVATE: ${OHCAL_ALLOW_PRIVATE:-}
+      PLACES_SUGGEST_URL: ${PLACES_SUGGEST_URL:-}
+      PLACES_SUGGEST_TOKEN: ${PLACES_SUGGEST_TOKEN:-}
       # A UnifiedPush distributor on your own LAN (an `ntfy` beside this server). Empty means
       # the endpoint a phone registers must be https and must resolve to a public address —
       # the organizer POSTs a content-free wake to it unattended, so the default refuses
@@ -347,6 +351,8 @@ services:
       # the organizer checks it again every time it DIALS, so a value on only one of them is a
       # mailbox the api accepted and the organizer refuses on every cycle.
       TF_PROBE_ALLOW_PRIVATE: ${TF_PROBE_ALLOW_PRIVATE:-}
+      OHMAIL_CALENDAR: ${OHMAIL_CALENDAR:-1}
+      OHCAL_ALLOW_PRIVATE: ${OHCAL_ALLOW_PRIVATE:-}
       # THE SAME VALUE THE api GETS, and for the same reason the storage block above is
       # duplicated rather than shared: this process is the one that actually POSTs the wake, so a
       # value set on only one service produces a registration the api accepted and the organizer
