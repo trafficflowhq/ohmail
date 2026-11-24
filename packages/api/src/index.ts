@@ -57,7 +57,7 @@ export {
 export { apiAlertSinkSummary, runApiAlertPass, resetApiLastResortForTests } from "./routes/internal.js";
 
 // On-demand attachment adapter factory (decrypt mailbox creds → connected ImapAdapter).
-export { makeOpenAdapter } from "./attachments-adapter.js";
+export { makeOpenAdapter, closeKeptImap } from "./attachments-adapter.js";
 
 // Send adapter factory — decrypt BOTH imap+smtp creds → connected ImapAdapter.
 export { makeSendAdapter } from "./send-adapter.js";

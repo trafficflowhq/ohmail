@@ -461,6 +461,8 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
     sendSurfaceMaxTotalBytes: door.sendSurfaceMaxTotalBytes,
     // A long-lived process: a send's Sent copy is retried in memory after the answer.
     ...(door.invocationBudgetMs === null ? { sendCopyOutlivesAnswer: true } : {}),
+    // And the picture door keeps a sign-in for the next picture: only where the process lives on.
+    ...(door.invocationBudgetMs === null ? { keepImap: true } : {}),
     // A delivered letter's Sent copy is kept until filed. The managed service keeps it for letters
     // WITHOUT files only: the published promise is that attachment bytes are never written down there.
     sendKeepOwedCopy: chosen.owedCopy,

@@ -275,7 +275,7 @@ describe("the name a suggestion carries onto the chip", () => {
   const mirror = (): EngineMessage[] => [
     message("m1", {
       folder: "INBOX", date: at(3), updatedAt: at(3), to: [], cc: [],
-      from: who("andi@bergerweb.invalid", "Andreas Ingold"),
+      from: who("andi@bergerweb.invalid", "Andreas Ingold"), authVerdict: "pass",
     } as never),
     message("m2", {
       folder: "INBOX", date: at(1), updatedAt: at(1), cc: [],

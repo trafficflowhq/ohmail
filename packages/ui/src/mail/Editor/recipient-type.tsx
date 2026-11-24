@@ -44,8 +44,21 @@ export interface RecipientTypeProps {
 const SEVERAL = /[\n\t,;]/;
 
 /**
+ * Whether typed words (lower-cased, with an "@") complete to this address: it begins with them, and it does not run
+ * on past a domain that already reads whole ("anna@example.com" is not "anna@example.com.elsewhere.example").
+ */
+function completes(address: string, typed: string): boolean {
+  const whole = address.toLowerCase();
+  return (
+    whole.startsWith(typed) && !(whole[typed.length] === "." && typed.slice(typed.indexOf("@")).includes("."))
+  );
+}
+
+/**
  * The place to type the next person of a line. Where people are offered it is a combobox: they stand under the
- * line, the name over the address, the first one on, and Enter, Tab or a press takes the one the keys are on.
+ * line, the name over the address, the first one on, and Enter, Tab or a press takes the one the keys are on. Words
+ * with an "@" put on only a row whose address they begin, and an offered address typed out whole puts no one on:
+ * Enter or Tab keeps it as typed.
  */
 export function RecipientType({
   line,
@@ -59,13 +72,21 @@ export function RecipientType({
   onPaste,
 }: RecipientTypeProps) {
   const offers = suggest && !locked ? suggest : undefined;
+  const typed = line.typed.trim().toLowerCase();
+  /* Asked here only where the words could be an address; elsewhere the list asks when it opens. */
+  const asked = offers && typed.includes("@") ? offers.people(line.typed, line.id) : undefined;
+  /* The rows the typed words complete to stand first: a row can wear an address as its name. */
+  const offered = asked && [
+    ...asked.filter((person) => completes(person.address, typed)),
+    ...asked.filter((person) => !completes(person.address, typed)),
+  ];
   const suggestions = useSuggestions<Offered>({
     id: useId(),
     text: line.typed,
     onText: (text) => onType?.(line.id, text),
-    own: (typed) => [
+    own: (text) => [
       {
-        rows: (offers?.people(typed, line.id) ?? []).map((person) => ({
+        rows: (offered ?? offers?.people(text, line.id) ?? []).map((person) => ({
           id: person.id,
           mark: <Avatar name={person.name} address={person.address} size="xs" />,
           primary: person.name,
@@ -75,8 +96,12 @@ export function RecipientType({
         })),
       },
     ],
-    /* A line has no free text to protect: the first person is on. */
-    free: false,
+    /* The first person is on, unless the words are an address: then a row is on only where they complete to its
+       address, and the words whole are the person. A row's name for an address can be one somebody else gave it. */
+    free: offered
+      ? offered.some((person) => person.address.toLowerCase() === typed) ||
+        !offered.some((person) => completes(person.address, typed))
+      : false,
     onTake: (row) => offers?.onTake?.(line.id, row.person),
   });
   const keys = (event: KeyboardEvent<HTMLInputElement>) => {

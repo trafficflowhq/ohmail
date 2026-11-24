@@ -47,7 +47,7 @@ import {
 } from "@trafficflow/services/mail";
 import {
   createApp, localRoutes,
-  makeSmtpProbe, matchRoute, sendConnections,
+  closeKeptImap, makeSmtpProbe, matchRoute, sendConnections,
   type App,
 } from "@trafficflow/api/local";
 // THE DESKTOP-HOST DOOR's route table (Phase 3): the single-user product set plus the carved
@@ -798,6 +798,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /* A quarter second at least, for a pass cut at `passBy` to unwind its last statement, or a
          request cut at `requestsBy` its own. */
       const closing = Promise.resolve(opened.close({ waitMs: Math.max(250, began + plan.storeWaitMs - monotonic()) }));
+      // The picture door's waiting sign-ins are dropped at once: nothing of the goodbye budget waits on them.
+      closeKeptImap();
       /* The requests still running stay a goodbye: a send past its SMTP start keeps the process
          (and its leased connection, see `closeAll`) until it ends or `goodbyeBy`. */
       const goodbyes = Promise.all([
@@ -1053,6 +1055,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         await Promise.allSettled(runtimes.all().map((r) => r.detach(leaving, { leaveSettings: leaving === "quit" })));
         // The send door's kept connections go with the install: nothing outlives the stop.
         await sendConnections.closeAll();
+        // And the picture door's waiting sign-ins, dropped at once.
+        closeKeptImap();
         await opened.close();
       }) as Sidecar["stop"],
       leaving(reason: unknown) {

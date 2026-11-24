@@ -204,7 +204,9 @@ function InviteePicker({
         if (event.key === "Home" || event.key === "End") return true;
         if (event.key !== "Enter") return false;
         event.preventDefault();
-        const person = address ? (known ?? offered) : typed.trim() ? found[0] : undefined;
+        /* A typed address takes a name only one its owner or the account gave it; a pick takes the row as shown. */
+        const typedKnown = known && { address: known.address, name: known.nameUnchecked ? null : known.name };
+        const person = address ? (typedKnown ?? offered) : typed.trim() ? found[0] : undefined;
         if (person) add(person);
         return true;
       }}

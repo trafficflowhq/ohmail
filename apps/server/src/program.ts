@@ -1,6 +1,6 @@
 import type { Tx } from "@trafficflow/db";
 import { makeOwnedDb, makeChangeWakeHub, type OwnedDb } from "@trafficflow/db/cloud";
-import { sendConnections, type ApiDeps, type ApiServices, type ChangeWakeHub } from "@trafficflow/api";
+import { closeKeptImap, sendConnections, type ApiDeps, type ApiServices, type ChangeWakeHub } from "@trafficflow/api";
 import { calendarRoutes } from "@trafficflow/api/calendar";
 import { calendarNoticeRoutes } from "@trafficflow/api/calendar-notices";
 import type { MailService } from "@trafficflow/services";
@@ -118,6 +118,8 @@ export function buildProgram(settings: Settings, door: DoorInput): Program {
     async close() {
       // The send door's kept IMAP connections: closed here, never left to their idle clock.
       await sendConnections.closeAll();
+      // The picture door's waiting sign-ins likewise (dropped at once, no wait).
+      closeKeptImap();
       // Streams die before the hub so no wake fires into a torn-down fan-out; the pool goes last.
       if (hub) await hub.end();
       if (ownPool) await ownPool.close();

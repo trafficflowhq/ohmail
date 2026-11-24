@@ -117,7 +117,7 @@ describe("every change reaches the rows through one kept projector", () => {
 describe("the composer's address book is the web's, over this phone's mirror", () => {
   it("names who wrote, never the account's own address, and an arrival reaches it", async () => {
     const r = rig([
-      msg("p1", Date.now() - DAY, { from: { name: "Persephone Lind", address: "Persephone@example.test" } }),
+      msg("p1", Date.now() - DAY, { from: { name: "Persephone Lind", address: "Persephone@example.test" }, authVerdict: "pass" }),
       msg("o1", Date.now() - DAY, { from: { name: "Me", address: "me@example.test" }, to: [{ name: null, address: "k@example.test" }] }),
     ]);
     await r.engine.start();
