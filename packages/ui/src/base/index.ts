@@ -10,8 +10,6 @@ import "./base.css";
 
 export { Icon, icons, ICON_SIZES } from "../icons/Icon.js";
 export type { IconName, IconProps, IconSize } from "../icons/Icon.js";
-export { Spinner } from "../primitives/Spinner.js";
-export type { SpinnerProps } from "../primitives/Spinner.js";
 export {
   animate,
   flipPlay,
@@ -77,6 +75,8 @@ export { HintLine } from "./Primitives/HintLine.js";
 export type { HintLineProps } from "./Primitives/HintLine.js";
 export { JumpBack } from "./Primitives/JumpBack.js";
 export type { JumpBackProps } from "./Primitives/JumpBack.js";
+export { Spinner } from "./Primitives/Spinner.js";
+export type { SpinnerProps } from "./Primitives/Spinner.js";
 
 export { Menu } from "./Overlays/Menu.js";
 export type { MenuProps } from "./Overlays/Menu.js";

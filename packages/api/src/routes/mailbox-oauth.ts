@@ -390,9 +390,7 @@ export const mailboxOAuthRoutes: Route[] = [
 
       // The standalone admin link has no mailbox ceremony to complete.
       if (!state && !code && adminConsent && (error === "access_denied" || (!error && adminConsent === "True"))) {
-        const result = new URL("/microsoft-approval", appOrigin(deps));
-        result.searchParams.set("oauth", error ? "declined" : "approved");
-        return seeOther(result.toString());
+        return seeOther(new URL(`/microsoft-approval?oauth=${error ? "declined" : "approved"}`, appOrigin(deps)).toString());
       }
 
       // THE PROVIDER'S OWN REFUSAL, classified. Checked before the shape tests below, because an

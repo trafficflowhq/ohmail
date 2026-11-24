@@ -18,14 +18,23 @@ import type { LayoutPlan, RailModel } from "../../src/frame/contract.js";
 import { createFeed } from "../../src/frame/feeds.js";
 import { ListMenu } from "../../src/place-list/index.js";
 import { Blank } from "../../src/reader/blank/Blank.js";
-import { at, draw, inWords, msg, NO_HIT, pane, PHONE, stamp, walkAt } from "./lists-world.js";
+import { at, DESKTOP, draw, inWords, msg, NO_HIT, pane, PHONE, stamp, walkAt } from "./lists-world.js";
 import { wideWindow } from "../ohbox/setup.js";
 import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
 
-function ListFrame({ children, route }: { children: ReactNode; route: ReturnType<typeof pane>["route"] }) {
+/** The frame as the app's own frame stands it: the route and the plan the place is drawn under. */
+function ListFrame({
+  children,
+  route,
+  plan = DESKTOP,
+}: {
+  children: ReactNode;
+  route: ReturnType<typeof pane>["route"];
+  plan?: LayoutPlan;
+}) {
   const { host } = fakeHost({ engine: NO_ENGINE, service: "self", scope: "a" });
   const inner = {
-    api: { host, route, commands: { go: () => undefined } },
+    api: { host, route, plan, commands: { go: () => undefined } },
   } as unknown as FrameInner;
   return <FrameContext.Provider value={inner}>{children}</FrameContext.Provider>;
 }
@@ -256,7 +265,7 @@ describe("History", () => {
 
     it("under a finger, the years alone; on the unfolded phone the years stand in the head", () => {
       draw(
-        <ListFrame route={pane("history").route}>
+        <ListFrame route={pane("history").route} plan={PHONE}>
           <Months plan={PHONE} />
         </ListFrame>,
       );
@@ -268,7 +277,7 @@ describe("History", () => {
       cleanup();
       went = [];
       draw(
-        <ListFrame route={pane("history").route}>
+        <ListFrame route={pane("history").route} plan={{ ...PHONE, device: "fold", size: "medium" }}>
           <Months plan={{ ...PHONE, device: "fold", size: "medium" }} />
         </ListFrame>,
       );

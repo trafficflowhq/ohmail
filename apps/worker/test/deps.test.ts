@@ -502,6 +502,10 @@ describe("worker dependency boundary", () => {
       "answer-later-expunge.imap.pg.test.ts",
       "api-move-handoff.e2e.test.ts", "attachments.e2e.test.ts",
       "bubble-up-now.race.pg.test.ts",
+      // A shared calendar gaining or losing write access is read where a client reads it, the
+      // services' own `/sync` builder for a calendar event: the claim is that the cached series is
+      // served again with the new delete scopes, and a re-typed builder would test a copy. The import boundary still holds.
+      "calendar-series-writes.pg.test.ts",
       // A letter deleted while the app was closed, read through the same three surfaces as the
       // sent-expunge twins below and for their reason. The import boundary still holds.
       "deleted-while-closed.e2e.test.ts",
