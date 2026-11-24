@@ -109,6 +109,7 @@ import {
  * the same compose file as the database credential, which is the self-host trust model exactly.
  */
 const SELF_HOST_BUILD = process.env.NEXT_PUBLIC_OHMAIL_FLAVOR === "selfhost";
+const VERCEL_BUILD = process.env.OHMAIL_WEB_PLATFORM === "vercel";
 
 const API_ORIGIN = SELF_HOST_BUILD
   ? resolveInternalApiOrigin(process.env.OHMAIL_INTERNAL_API_ORIGIN)
@@ -198,6 +199,7 @@ function clientKey(request: NextRequest): string {
 }
 
 const WEB_CLIENT_IP = "x-ohmail-client-ip";
+let warnedUnsignedApi = false;
 const HOP_BY_HOP_HEADERS = [
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection",
   "te", "trailer", "transfer-encoding", "upgrade",
@@ -210,13 +212,22 @@ function isApiPath(pathname: string): boolean {
 
 /** Send the proof and the external destination in the same middleware rewrite. */
 async function forwardApi(request: NextRequest, routed: string): Promise<NextResponse> {
-  const secret = !SELF_HOST_BUILD && process.env.VERCEL === "1"
-    ? process.env.TF_WEB_CLIENT_IP_SECRET?.trim()
-    : undefined;
-  const ip = request.headers.get("x-vercel-forwarded-for");
-  if (!API_ORIGIN || !secret || !ip || !/^[0-9a-fA-F:.]{1,45}$/.test(ip)) {
+  if (SELF_HOST_BUILD || !VERCEL_BUILD) return nextWithScrubbedHeaders(request);
+
+  const secret = process.env.TF_WEB_CLIENT_IP_SECRET?.trim();
+  // Vercel sets x-real-ip at its edge to the connecting address; its own ipAddress() helper reads the same header.
+  const address = request.headers.get("x-real-ip");
+  const firstAddress = address?.split(",", 1)[0]?.trim();
+  const ip = firstAddress && /^[0-9a-fA-F:.]{1,45}$/.test(firstAddress) ? firstAddress : undefined;
+  if (!secret || !ip) {
+    if (!warnedUnsignedApi) {
+      warnedUnsignedApi = true;
+      const missing = [!secret && "secret", !ip && "address header"].filter(Boolean).join(", ");
+      console.warn(`Web client address proof missing input: ${missing}`);
+    }
     return nextWithScrubbedHeaders(request);
   }
+  if (!API_ORIGIN) return nextWithScrubbedHeaders(request);
 
   const bytes = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", bytes.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);

@@ -228,7 +228,7 @@ function likeRegex(pattern: string): string {
 }
 
 export function pgDialect(): Dialect {
-  return {
+  const d: Dialect = {
     name: "pg",
 
     now: () => sql`now()`,
@@ -394,7 +394,6 @@ export function pgDialect(): Dialect {
     },
 
     screenerActivityCandidates: async (tx, query) => {
-      const d = pgDialect();
       await d.exec(tx, sql`set local jit = off`);
       const keys = await d.exec(tx, query);
       if (keys.length === 0) return sql`select null where false`;
@@ -624,4 +623,5 @@ export function pgDialect(): Dialect {
       }),
     },
   };
+  return d;
 }

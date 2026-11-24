@@ -105,18 +105,43 @@ describe("the ways drawn", () => {
     },
   );
 
-  it("narrows to nothing while the typed words fit no way that is drawn", async () => {
-    mountFrame(
-      "#/cal/cal-setup",
-      mirror(),
-      setupPort(async () => ["icloud", "ics"]),
-    );
-    await act(async () => undefined);
-    fireEvent.change(screen.getByLabelText("Where your calendar is"), { target: { value: "goo" } });
-    expect(capsules()).toEqual([]);
-    fireEvent.change(screen.getByLabelText("Where your calendar is"), { target: { value: "icl" } });
-    expect(capsules()).toEqual(["iCloud"]);
-  });
+  it.each([
+    [
+      "en",
+      "My calendar is with",
+      "Ways to connect a calendar",
+      "Not now",
+      ["iCloud", "Another CalDAV server", "A subscription", "Google Calendar", "Microsoft Outlook"],
+    ],
+    [
+      "de",
+      "Mein Kalender ist bei",
+      "Wege, einen Kalender zu verbinden",
+      "Nicht jetzt",
+      ["iCloud", "Ein anderer CalDAV-Server", "Ein Abo", "Google Kalender", "Microsoft Outlook"],
+    ],
+  ] as const)(
+    "shows a plain heading and the offered buttons in %s",
+    async (locale, title, group, leave, labels) => {
+      mountFrame(
+        "#/cal/cal-setup",
+        mirror(),
+        setupPort(async () => ["icloud", "caldav", "ics", "google", "microsoft"], {
+          startOAuth: async () => undefined,
+        }),
+        { locale },
+      );
+      await act(async () => undefined);
+      expect(screen.getByRole("heading", { name: title })).toBeTruthy();
+      expect(screen.queryByRole("textbox")).toBeNull();
+      expect(
+        within(screen.getByRole("group", { name: group }))
+          .getAllByRole("button")
+          .map((button) => button.textContent),
+      ).toEqual(labels);
+      expect(screen.getByRole("button", { name: leave })).toBeTruthy();
+    },
+  );
 
   it("folds an address that names a way not offered to the first step", async () => {
     for (const ways of [["google", "icloud"], ["icloud"]] as CalendarWay[][]) {

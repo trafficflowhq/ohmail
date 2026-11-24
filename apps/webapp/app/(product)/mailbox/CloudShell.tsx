@@ -272,7 +272,10 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
    */
   const firstHello = useMemo(() => {
     let first: ReturnType<typeof serverHello> | undefined;
-    return () => first ??= serverHello();
+    return () => first ??= serverHello().then((answer) => {
+      if (answer === null) first = undefined;
+      return answer;
+    });
   }, [resolvedDemo]);
   const server = useServerWords(resolvedDemo, firstHello);
   const devicePairing = server.pairing;

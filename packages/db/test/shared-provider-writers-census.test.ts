@@ -135,16 +135,35 @@ describe("every rules writer asks whether the rule would let everyone at a share
   });
 });
 
-/** Every CALL of the SQL twin in a source text, by `file:line`, and whether it hands over the destination. */
+const SQL_TWINS = new Set(["ruleNamesSenderSql", "ruleSetNamesSenderSql"]);
+
+/** Every CALL of either SQL twin in a source text, by `file:line`, and whether it hands over the destination. */
 export function twinCalls(file: string, text: string): Array<{ at: string; destination: boolean }> {
   const kind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(file, withoutComments(text), ts.ScriptTarget.Latest, true, kind);
   const out: Array<{ at: string; destination: boolean }> = [];
+  let checker: ts.TypeChecker | undefined;
+  function ruleObject(rule: ts.Expression | undefined): ts.ObjectLiteralExpression | undefined {
+    if (rule === undefined) return;
+    if (ts.isObjectLiteralExpression(rule)) return rule;
+    if (!ts.isIdentifier(rule)) return;
+    if (!checker) {
+      const options = { noLib: true, noResolve: true };
+      const host = ts.createCompilerHost(options);
+      host.getSourceFile = (name) => name === file ? sf : undefined;
+      checker = ts.createProgram([file], options, host).getTypeChecker();
+    }
+    const declaration = checker.getSymbolAtLocation(rule)?.valueDeclaration;
+    if (declaration && ts.isVariableDeclaration(declaration)
+      && (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      && declaration.initializer && ts.isObjectLiteralExpression(declaration.initializer)) {
+      return declaration.initializer;
+    }
+  }
   const visit = (n: ts.Node) => {
-    if (ts.isCallExpression(n) && calleeName(n) === "ruleNamesSenderSql") {
-      const rule = n.arguments[1];
-      const destination = rule !== undefined && ts.isObjectLiteralExpression(rule)
-        && rule.properties.some((p) => p.name !== undefined && p.name.getText() === "destination");
+    if (ts.isCallExpression(n) && SQL_TWINS.has(calleeName(n))) {
+      const rule = ruleObject(n.arguments[1]);
+      const destination = rule?.properties.some((p) => p.name !== undefined && p.name.getText() === "destination") ?? false;
       out.push({ at: `${file}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`, destination });
     }
     ts.forEachChild(n, visit);
@@ -156,12 +175,24 @@ export function twinCalls(file: string, text: string): Array<{ at: string; desti
 describe("every SQL reader of a rule's sender asks with the rule's destination", () => {
   const found = sourceFiles().flatMap((f) => {
     const text = readFileSync(resolve(ROOT, f), "utf8");
-    return text.includes("ruleNamesSenderSql(") ? twinCalls(f, text) : [];
+    return /\brule(?:Set)?NamesSenderSql\s*\(/.test(text) ? twinCalls(f, text) : [];
   });
 
-  it("ten callers, each destination-aware — a new caller is a reading this census is told about", () => {
+  it("twelve callers, each destination-aware — a new caller is a reading this census is told about", () => {
     expect(found.filter((c) => !c.destination).map((c) => c.at)).toEqual([]);
-    expect(found.length, found.map((c) => c.at).join("\n")).toBe(10);
+    expect(found.length, found.map((c) => c.at).join("\n")).toBe(12);
+  });
+
+  it("reads a rule set passed through a local object and refuses a shadowed object without a destination", () => {
+    const source = [
+      'const rule = { kind, match, destination };',
+      'ruleSetNamesSenderSql(d, rule, sender, source);',
+      '{ const rule = { kind, match }; ruleSetNamesSenderSql(d, rule, sender, source); }',
+    ].join("\n");
+    expect(twinCalls("p.ts", source)).toEqual([
+      { at: "p.ts:2", destination: true },
+      { at: "p.ts:3", destination: false },
+    ]);
   });
 
   it("CONTROL: a call without the destination reads red, the definition is no call", () => {

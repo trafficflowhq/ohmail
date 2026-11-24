@@ -108,10 +108,10 @@ export function useThreadPosition(
   );
   const wasClamped = useCallback((): boolean => {
     const previous = readingAnchor.current?.scroll;
-    if (!scroller || previous === undefined) return false;
+    if (!manual || !scroller || previous === undefined) return false;
     const max = scrollMax(scroller);
     return previous > max && Math.abs(scroller.scrollTop - max) <= 1;
-  }, [scroller]);
+  }, [scroller, manual]);
   const moved = useCallback(
     (hand: boolean): boolean => {
       if (!scroller) return false;

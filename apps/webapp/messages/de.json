@@ -6663,8 +6663,7 @@
     "continue": "Weiter",
     "unread": "Der Kalender kann auf diesem Gerät nicht gelesen werden",
     "way": {
-      "sentence": "Mein Kalender ist bei <way></way>",
-      "label": "Wo dein Kalender ist",
+      "sentence": "Mein Kalender ist bei",
       "inBrowser": "{provider} (öffnet im Browser)",
       "group": "Wege, einen Kalender zu verbinden",
       "none": "Von hier kann kein Kalender verbunden werden",

@@ -35,6 +35,7 @@
  * NOTE: the root `test/` directory is in no tsconfig project, so `pnpm typecheck` says nothing
  * about this file (AGENTS.md). It was checked with an explicit `tsc --noEmit` when it landed.
  */
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,9 +96,9 @@ function engineTableUrls(): string[] {
  * the nearest preceding top-level `jobs:` key, so a failure below names the job whose list is
  * wrong rather than a line number in a file thousands of lines long.
  */
-function workflowAllowLists(): Map<string, { url: string; wildcard: boolean }[]> {
+function workflowAllowLists() {
   const lines = readFileSync(WORKFLOW, "utf8").split("\n");
-  const found = new Map<string, { url: string; wildcard: boolean }[]>();
+  const found = new Map<string, { arms: { url: string; wildcard: boolean }[]; cloudArm: string }>();
   let job: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
@@ -116,7 +117,9 @@ function workflowAllowLists(): Map<string, { url: string; wildcard: boolean }[]>
       return arm ? [{ url: arm[1], wildcard: arm[2] === "*" }] : [];
     });
     if (found.has(job)) throw new Error(`build.yml: job ${job} carries two first-party allow-lists`);
-    found.set(job, arms);
+    const cloudArm = block.find((line) => line.trimStart().startsWith('"$CLOUD_URL"'));
+    if (cloudArm === undefined) throw new Error(`build.yml: job ${job} has no Cloud API arm`);
+    found.set(job, { arms, cloudArm });
   }
   return found;
 }
@@ -164,12 +167,27 @@ describe("the desktop's first-party addresses are written down identically in fo
   // ── The comparison, one case per job so a red names the job ─────────────────────────────────
   for (const job of jobs) {
     it(`the ${job} job's allow-list is exactly the Rust link table`, () => {
-      const urls = allowLists.get(job)?.map(({ url }) => url).filter((url) => url.startsWith(HOST_PREFIX));
+      const urls = allowLists.get(job)?.arms.map(({ url }) => url).filter((url) => url.startsWith(HOST_PREFIX));
       expect(urls, `build.yml has no first-party allow-list in the ${job} job`).toBeDefined();
       expect([...(urls ?? [])].sort(), `the ${job} job's allow-list has drifted from engine.rs`) //
         .toEqual([...engine].sort());
     });
   }
+
+  it.skipIf(process.platform === "win32").each(jobs)("the %s audit accepts only the Cloud API origin and binary glue", (job) => {
+    const origin = "https://api.ohmail.app";
+    const arm = allowLists.get(job)!.cloudArm;
+    for (const [url, expected] of [
+      [origin, 0], [`${origin}mailbox`, 0], [`${origin}.other.example`, 1], [`${origin}/unexpected`, 1],
+      [`${origin}x.other.example`, 1], [`${origin}x/unexpected`, 1],
+    ] as const) {
+      const result = spawnSync("bash", ["-O", "extglob", "-c", `CLOUD_URL=$1; case "$2" in
+        ${arm}
+        *) exit 1 ;;
+        esac`, "audit", origin, url]);
+      expect(result.status, url).toBe(expected);
+    }
+  });
 
   // Order too, and only here: the README says it lists them "in the order that table lists them",
   // which makes the order a claim in published prose rather than an incidental. The workflow arms
@@ -181,7 +199,7 @@ describe("the desktop's first-party addresses are written down identically in fo
   it("lists the hosted origin used for calendar settings exactly in each job and the README", () => {
     const usedInEngine = readFileSync(ENGINE_RS, "utf8").includes(`"${HOST_ORIGIN}"`);
     for (const job of jobs) {
-      const arms = allowLists.get(job)?.filter(({ url }) => url === HOST_ORIGIN);
+      const arms = allowLists.get(job)?.arms.filter(({ url }) => url === HOST_ORIGIN);
       expect(arms, `build.yml hosted origin in the ${job} job`).toEqual(
         usedInEngine ? [{ url: HOST_ORIGIN, wildcard: false }] : [],
       );
