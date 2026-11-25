@@ -84,6 +84,17 @@ describe.skipIf(!AVAILABLE)("the wall's marker and its resume, fenced", () => {
     expect((await rowOf(stopped)).organizerParkedAt, "a person's stop clears any marker").toBeNull();
   });
 
+  it("reopening keeps a mailbox waiting for a new sign-in", async () => {
+    const failedAt = new Date(PARKED.getTime() - 48 * 60 * 60_000);
+    const id = await seed({
+      organizerRole: "organizer", status: "error", errorCode: "auth", failedAt, retryCount: 12,
+    });
+
+    expect(await markMailboxReleased(db, id, { fence: A, now: PARKED, cause: "account_parked" })).toBe(true);
+    expect(await resumeParkedMailbox(db, id, { fence: A, now: PAID })).toBe(true);
+    expect(await rowOf(id)).toMatchObject({ status: "error", errorCode: "auth", failedAt, retryCount: 12 });
+  });
+
   it("the resume writes one JOIN under the fence, and none over a stamp, a stop, no consent or another leader", async () => {
     const id = await seed({ organizerRole: "reader", organizerParkedAt: PARKED });
     expect(await resumeParkedMailbox(db, id, { fence: A, now: PAID })).toBe(true);

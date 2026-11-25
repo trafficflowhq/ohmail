@@ -10,65 +10,39 @@ import type { WorkerScope } from "./scope.js";
 /** The worker's start function, one section: a failing mailbox set aside and taken back, and what a dropped connection means. */
 export function quarantineSection(scope: WorkerScope): void {
     async function quarantineMailbox(
-      mailboxId: string, accountId: string, reason: unknown, phase: MailboxErrorPhase,
+      mailboxId: string, accountId: string, reason: unknown, phase: MailboxErrorPhase, kickAsRead?: string | null,
     ): Promise<void> {
       const prev = scope.quarantine.get(mailboxId);
       const attempts = (prev?.attempts ?? 0) + 1;
-      // Prefer the server's own backoff hint, bounded by our ceiling. imapflow parses MS365's
-      // throttle reply — "Suggested Backoff Time: 92415 milliseconds" — onto the error as
-      // `err.throttleReset` (imapflow@1.5.0). It is MILLISECONDS, raw; reading it as seconds sleeps
-      // for a day. This worker parsed it and threw it away, so a provider that told us exactly when to
-      // come back was retried on our own ladder regardless — which earns the next throttle. `Math.max`
-      // then `Math.min` is the contract: the hint may only LENGTHEN the wait (never shorter than the
-      // ladder) and may never escape `retryMaxMs` (a hostile hint cannot park a mailbox for ever).
-      // `Number.isFinite` rather than `typeof === "number"`: `Math.max(x, NaN)` is NaN, `retryAt`
-      // becomes NaN, and every `Date.now() >= NaN` is false — the mailbox would never leave quarantine.
+      const code = classifyMailboxError(reason, phase);
+      const bounded = isImapBoundExceeded(reason);
+      const soft = bounded ? "read_limited" as const
+        : isProviderRefusal(reason) ? "provider_unavailable" as const : null;
+      // A server's hint can lengthen its wait. Throttled connections and read limits keep
+      // their shorter ladder. Outages without a hint can back off to the full cap.
       const raw = (reason as { throttleReset?: unknown } | null | undefined)?.throttleReset;
       const hint = Number.isFinite(raw) ? (raw as number) : 0;
-      const wait = Math.min(Math.max(scope.backoffFor(attempts), hint), scope.retryMaxMs);
+      const limit = bounded || hint > 0
+        ? Math.min(scope.retryBaseMs * 16, scope.retryMaxMs) : scope.retryMaxMs;
+      const wait = Math.min(Math.max(scope.backoffFor(attempts), hint), limit);
       const retryAt = Date.now() + wait;
       scope.quarantine.set(mailboxId, {
         attempts, retryAt,
         reason: reason instanceof Error ? reason.message : String(reason),
-        // Optimistic-false: the entry exists from this statement onwards, and the write below is
-        // awaited. Until it returns true the in-memory instant governs, which is the pre-0039
-        // behaviour and the correct fallback.
         persisted: false,
       });
-      // The row now records WHY, not merely THAT. See `markMailboxFailed` for why the detail is
-      // an allowlisted token and never the error's message. Still best-effort: a worker
-      // deployed ahead of mail migration 0023 fails this write and logs it, rather than crashing on a
-      // column that does not exist yet — a mailbox must never be un-quarantined by a
-      // bookkeeping failure.
-      const code = classifyMailboxError(reason, phase);
-      /**
-       * A ceiling we set is not a broken mailbox — the one arm that does not write `error`.
-       * `ImapBoundExceeded` is raised by this codebase, never by the server: the mailbox
-       * authenticated, answered, and sent more than one pass takes. `classifyMailboxError` reads
-       * response codes, errnos and a flag, none of which a bound breach carries, so it answers `sync`
-       * and the row used to say the mailbox failed. The backoff is UNCHANGED (the ladder runs, the
-       * in-memory entry is written, `retry_after` persists it) — only the row's verdict moves. Keyed
-       * on the CLASS, not a bound code, so a ceiling added later is covered without being enumerated.
-       */
-      const bounded = isImapBoundExceeded(reason);
-      /* …and the second soft arm (mail 0130): the SERVER said "not now" — a throttle, or
-         `UNAVAILABLE`/`LIMIT`. Same row shape as a ceiling of ours, a different reason, and the
-         wait above already honours its hint. Asked only when the ceiling did not answer. */
-      const soft = bounded ? "read_limited" as const
-        : isProviderRefusal(reason) ? "provider_unavailable" as const : null;
-      if (soft) scope.noteBlock(scope.readLimited, mailboxId, soft);
       try {
         // Mail migration 0039: the same statement now also records WHEN. That is what makes this backoff
         // survive a restart and — the point of the column — releasable by an operator, because
         // until now the only exits from quarantine were the ladder expiring and a redeploy.
-        const softOpts = { fence: scope.fence, retryAfter: new Date(retryAt) };
+        const opts = { fence: scope.fence, retryAfter: new Date(retryAt), kickAsRead };
         const written = soft === "read_limited"
-          ? await markMailboxReadLimited(scope.forAccount(accountId).db, mailboxId, softOpts)
+          ? await markMailboxReadLimited(scope.forAccount(accountId).db, mailboxId, opts)
           : soft === "provider_unavailable"
-          ? await markMailboxProviderUnavailable(scope.forAccount(accountId).db, mailboxId, softOpts)
+          ? await markMailboxProviderUnavailable(scope.forAccount(accountId).db, mailboxId, opts)
           : await markMailboxFailed(
             scope.forAccount(accountId).db, mailboxId, { code, detail: mailboxErrorDetail(reason) },
-            { fence: scope.fence, retryAfter: new Date(retryAt) },
+            opts,
           );
         // Only a write that LANDED lets the column govern this mailbox. Re-read from the map
         // rather than closed over: the entry could have been dropped by a roster pass while this
@@ -78,14 +52,13 @@ export function quarantineSection(scope: WorkerScope): void {
           const held = scope.quarantine.get(mailboxId);
           if (held) held.persisted = true;
         }
+        if (written && soft) scope.noteBlock(scope.readLimited, mailboxId, soft);
         if (!written) {
-          // FENCED, not failed. Either the user disconnected this mailbox while the attempt was
-          // in flight, or another instance now leads this shard — in both cases the row we would
-          // have written is a stale claim, and refusing it IS the correct outcome. Logged at
-          // info because it is a normal handover, not an incident.
+          scope.quarantine.delete(mailboxId);
+          // A newer sign-in, a disconnect or a leader change supersedes this attempt.
           scope.log.info("mailbox_failure_write_fenced", {
             mailboxId, accountId, errorCode: code,
-            reason: "the mailbox is disabled or this instance no longer leads the shard",
+            reason: "the mailbox changed or this instance no longer leads the shard",
           });
         }
       } catch (err) {
@@ -108,15 +81,17 @@ export function quarantineSection(scope: WorkerScope): void {
     /**
      * Persist a VERIFIED recovery, and never let its failure tear down a working mailbox.
      *
-     * Called from two places, which is the fix for a bug this file used to carry: the attach
-     * path wrote it once and the comment claimed "the next roster pass writes it" if that
-     * failed. It did not — `reconcileRoster` skips anything already in `runtimes`, so a mailbox
-     * whose recovery write failed served correctly while its row said `error` FOREVER, which is
-     * indistinguishable from the outage this slice is about. The roster pass now calls this too.
+     * A successful sync clears any failure. During attach, passing the kick stamp clears an
+     * authentication failure once the login succeeds. A later sync can still report its own failure.
+     * If the database write fails, a serving mailbox's roster pass retries it.
      */
-    async function markRecovered(mb: { mailboxId: string; accountId: string }): Promise<void> {
+    async function markRecovered(
+      mb: { mailboxId: string; accountId: string }, authKickAsRead?: string | null,
+    ): Promise<void> {
       try {
-        const written = await markMailboxConnected(scope.forAccount(mb.accountId).db, mb.mailboxId, { fence: scope.fence });
+        const written = await markMailboxConnected(
+          scope.forAccount(mb.accountId).db, mb.mailboxId, { fence: scope.fence, authKickAsRead },
+        );
         if (!written) {
           // The disconnect case is the one that matters here: a recovery that began from an
           // `error` snapshot must not resurrect a mailbox the user has since disconnected, and
@@ -128,6 +103,7 @@ export function quarantineSection(scope: WorkerScope): void {
           });
           return;
         }
+        if (authKickAsRead !== undefined) scope.quarantine.delete(mb.mailboxId);
         scope.log.info("mailbox_recovered", {
           mailboxId: mb.mailboxId, accountId: mb.accountId, status: "connected",
         });
