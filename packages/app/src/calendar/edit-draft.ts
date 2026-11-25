@@ -54,6 +54,15 @@ export function patchOnScope(
   };
 }
 
+/** A locally created record has no provider UID. A queued creation is still waiting for its invitation. */
+export function sentInvitees(confirmed: CalendarEventRecord | undefined) {
+  return !confirmed?.uid ||
+    confirmed.uid.startsWith("pending:") ||
+    confirmed.writes.some(({ act }) => act?.kind === "calendar_event_create")
+    ? []
+    : confirmed.invitees;
+}
+
 export function draftOfRecord(record: CalendarEventRecord, viewerZone?: string) {
   const { start, end } = record;
   const day = dayOf(start);
@@ -79,6 +88,7 @@ export function draftOfRecord(record: CalendarEventRecord, viewerZone?: string) 
     allDay,
     zone:
       start.kind === "instant" ? "UTC" : (start.zone ?? (start.kind === "floating" ? viewerZone : undefined)),
+    repeat: record.repeat?.rules[0] ?? null,
     invitees: record.invitees.filter(
       (person) => person.address.toLowerCase() !== record.organizer?.address.toLowerCase(),
     ),
@@ -111,6 +121,7 @@ export function draftForDuplicate(
   );
   return {
     ...draft,
+    repeat: null,
     callLink: null,
     invitees: draft.invitees
       ?.filter(({ role }) => role === "required" || role === "optional")
@@ -153,6 +164,7 @@ export function eventChanges(
     if (!canWriteCall || link === undefined) return null;
     if (link !== first.callLink) patch.callLink = link;
   }
+  if (draft.repeat !== undefined && draft.repeat !== first.repeat) patch.repeat = draft.repeat;
   if (draft.busy !== first.busy) patch.busy = draft.busy;
   if (draft.private !== first.private) patch.private = draft.private;
   if (JSON.stringify(draft.alarms) !== JSON.stringify(first.alarms)) patch.alarms = [...(draft.alarms ?? [])];
@@ -177,4 +189,10 @@ export function eventChanges(
     }
   }
   return patch;
+}
+
+export function draftDiffers(draft: EventDraft, baseline: EventDraft): boolean {
+  return (Object.keys(draft) as (keyof EventDraft)[]).some(
+    (key) => JSON.stringify(draft[key]) !== JSON.stringify(baseline[key]),
+  );
 }

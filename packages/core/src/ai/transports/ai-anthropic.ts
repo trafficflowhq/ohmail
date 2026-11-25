@@ -189,6 +189,15 @@ export function anthropicTransport(opts: AnthropicTransportOptions): AiTransport
       return coerceScreeningResult(raw);
     },
 
+    async rewriteScreener(request, options) {
+      return call({
+        model: opts.classifyModel, max_tokens: request.maxTokens,
+        system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
+        messages: [{ role: "user", content: JSON.stringify(request.input) }],
+        ...shaped(thinkingOffShape(opts.classifyModel, {}), { type: "json_schema", schema: request.schema }),
+      }, "screener", options);
+    },
+
     async draft(input: DraftInput, options?: AiCallOptions): Promise<DraftResult> {
       // Asserts the redaction allow-list and THROWS before a payload exists. Also shared.
       const userPayload = draftUserPayload(input);

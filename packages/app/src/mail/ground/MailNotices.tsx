@@ -12,13 +12,12 @@
  * `sending`), and each letter that went out without its copy in Sent (`sentCopy`, until its Dismiss), read off the
  * composer's one record, so this piece stands inside the composer's mount.
  *
- * The web's desktop download offer follows the send notices. The slot's ranks decide what is drawn first.
+ * The slot's ranks decide what is drawn first.
  */
 import { dismissDurabilityLost } from "@ohmail/app-logic/storage/durable";
 import { useDurabilityLost } from "@ohmail/app-logic/storage/durability-lost";
 import { useNotice, type FrameNotice } from "../../frame/index.js";
 import { useText } from "../../text/index.js";
-import { useDesktopOffer } from "./desktop-offer.js";
 import { useSendingNotices, useUnsavedNotice } from "./send-notices.js";
 import { updateNotice, useRestartHold, useUpdateOffer } from "./update-notice.js";
 
@@ -46,13 +45,9 @@ function useUpdateNotice(): FrameNotice | null {
 }
 
 export function MailNotices(): null {
-  const notices = [
-    useNotKeptNotice(),
-    useUpdateNotice(),
-    useUnsavedNotice(),
-    ...useSendingNotices(),
-    useDesktopOffer(),
-  ].filter((notice): notice is FrameNotice => notice !== null);
+  const notices = [useNotKeptNotice(), useUpdateNotice(), useUnsavedNotice(), ...useSendingNotices()].filter(
+    (notice): notice is FrameNotice => notice !== null,
+  );
   useNotice(notices);
   return null;
 }

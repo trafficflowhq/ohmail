@@ -21,16 +21,26 @@ export interface Heard {
 
 export function sentenceOf(act: CalendarAct, verdict: CalendarVerdict | null): CalendarSentenceKey | null {
   if (verdict === null) return null;
+  if (
+    verdict.kind === "refused" &&
+    verdict.word === "validation_failed" &&
+    typeof verdict.details === "object" &&
+    verdict.details !== null &&
+    "reason" in verdict.details &&
+    verdict.details.reason === "repeat_unsupported"
+  )
+    return calendarRefusalSentence("repeat_unsupported");
   return verdict.kind === "taken" ? TAKEN_KEYS[act.kind] : calendarRefusalSentence(verdict.word);
 }
 
 export async function pressAndHear(
   port: Pick<CalendarPort, "press" | "flush" | "verdict" | "watchLateRefusal">,
   act: CalendarAct,
+  reportLate = true,
 ): Promise<Heard> {
   const { key } = await port.press(act);
   await port.flush();
   const verdict = port.verdict(key);
-  if (verdict === null) port.watchLateRefusal?.(key);
+  if (verdict === null && reportLate) port.watchLateRefusal?.(key);
   return { key, verdict, say: sentenceOf(act, verdict) };
 }

@@ -859,5 +859,14 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"account_settings\" ADD COLUMN \"screener_acknowledgements\" integer NOT NULL DEFAULT 0;"
     ]
+  },
+  {
+    "name": "0222_screener_learning.sql",
+    "statements": [
+      "CREATE UNIQUE INDEX \"mailboxes_id_account_uq\" ON \"mailboxes\" (\"id\", \"account_id\");",
+      "CREATE TABLE \"screener_learning\" (\n  \"mailbox_id\" text PRIMARY KEY NOT NULL,\n  \"account_id\" text NOT NULL,\n  \"data\" text NOT NULL,\n  CONSTRAINT \"screener_learning_mailbox_account_fk\"\n    FOREIGN KEY (\"mailbox_id\", \"account_id\") REFERENCES \"mailboxes\" (\"id\", \"account_id\") ON DELETE CASCADE\n);",
+      "CREATE INDEX \"screener_learning_account_idx\" ON \"screener_learning\" (\"account_id\");",
+      "ALTER TABLE \"routing_decisions\" ADD COLUMN \"screener_topic\" text;"
+    ]
   }
 ] as const;

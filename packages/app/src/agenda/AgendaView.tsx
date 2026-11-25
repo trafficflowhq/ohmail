@@ -9,6 +9,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type RefObject, type UIEven
 import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { Button, RefusalLine } from "@ohmail/ui/base";
 import { GroupHeading, ListHead, Row as MailRow } from "@ohmail/ui/mail";
+import { useCalendarMenu } from "../calendar/event-menu-trigger.js";
 import { AgendaRow, MiniMonth, SidePanel } from "@ohmail/ui/calendar";
 import {
   addDays,
@@ -127,6 +128,7 @@ export function AgendaView({
         label={t("landmark")}
         head={
           <ListHead
+            heading="h2"
             title={t("landmark")}
             hot={first === input.today}
             aside={<Button kind="quiet" size="s" icon="x" label={t("close")} onPress={onClose} />}
@@ -301,12 +303,15 @@ function Row({
             ? clockTime(time.from, locale)
             : t("span", { from: clockTime(time.from, locale), to: clockTime(time.to, locale) });
   const e = row.item;
+  const context = useCalendarMenu();
   const open = row.first && e.id === input.open;
   return (
     <AgendaRow
       ref={open ? openRow : undefined}
       mark={{ kind: "calendar", tone: e.tone }}
       title={e.title}
+      recordId={e.ref.event}
+      saving={!!e.status && !e.status.failed}
       time={words}
       second={[e.second, ...e.people].filter(Boolean).join(" · ") || undefined}
       now={now}
@@ -315,6 +320,7 @@ function Row({
       waits={e.waits}
       open={open}
       onOpen={onOpen}
+      {...context.eventProps<HTMLDivElement>(e, day)}
     />
   );
 }

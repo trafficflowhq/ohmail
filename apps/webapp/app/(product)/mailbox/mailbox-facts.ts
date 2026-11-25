@@ -27,6 +27,7 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     status: m.status,
     errorCode: m.errorCode ?? null,
     errorDetail: m.errorDetail ?? null,
+    ...(m.failedAt !== undefined ? { failedAt: m.failedAt } : {}),
     // Forwarded only as `true`: the desktop door's reading that the failure is a local server's own.
     ...(m.errorLocalServer === true ? { errorLocalServer: true } : {}),
     // Forwarded untouched: absent is "not stated", and only the Cloud-paired desktop states it.

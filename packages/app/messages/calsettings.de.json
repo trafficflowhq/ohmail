@@ -13,6 +13,18 @@
       "microsoft": "Microsoft 365"
     },
     "accounts": {
+      "noticeSignIn": "{name}: Erneut anmelden",
+      "noticeConnection": "{name}: Kalender nicht erreichbar",
+      "noticeOverdue": "{name}: Kalenderprüfung überfällig",
+      "overdueDetail": "Die geplante Kalenderprüfung ist überfällig",
+      "scheduledCheck": "Geplante Prüfung",
+      "openCalendars": "Kalender öffnen",
+      "errorSince": "Seit",
+      "checkState": {
+        "checking": "Wird geprüft…",
+        "current": "Geprüft",
+        "failed": "Prüfung fehlgeschlagen"
+      },
       "useCalendar": "ohcal verwenden",
       "add": "Kalender-Account hinzufügen",
       "addAccount": "Account hinzufügen",
@@ -21,6 +33,7 @@
       "signInAgain": "Neu anmelden",
       "state": {
         "inStep": "Aktuell",
+        "overdue": "Überfällig",
         "signedOut": "Abgemeldet",
         "failing": "Nicht geprüft",
         "removing": "Wird entfernt"
@@ -29,6 +42,28 @@
       "checkedAt": "Geprüft {when}",
       "calendars": "Kalender",
       "show": "{name} zeigen",
+      "hideCalendar": "Ausblenden",
+      "showCalendar": "Einblenden",
+      "showOnlyCalendar": "Nur diesen Kalender anzeigen",
+      "calendarSettings": "Kalendereinstellungen",
+      "disconnect": "Konto trennen",
+      "disconnectAsk": "{name} trennen?",
+      "unsubscribeAsk": "{name} abbestellen?",
+      "unsubscribe": "Abbestellen",
+      "colour": "Farbe",
+      "providerColour": "Anbieterfarbe verwenden",
+      "palette": {
+        "rose": "Koralle",
+        "amber": "Bernstein",
+        "lime": "Limette",
+        "green": "Grün",
+        "teal": "Türkis",
+        "blue": "Blau",
+        "violet": "Violett",
+        "plum": "Pflaume",
+        "grey": "Grau"
+      },
+      "useForNewEvents": "Für neue Termine verwenden",
       "newEventsHere": "Neue Termine kommen hierhin",
       "viewOnly": "Nur ansehen",
       "checked": "Geprüft",

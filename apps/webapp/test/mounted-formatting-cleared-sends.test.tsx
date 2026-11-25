@@ -315,7 +315,7 @@ describe("a message whose formatting was removed, through the shell over the rea
     // Never flattened, never overwritten: the other device's formatting stands on its row, and what
     // was typed here is a draft of its own beside it, said on screen.
     const all = await w.rows();
-    expect(all.find((r) => r.id === id)!.html).toBe("<p><strong>theirs</strong></p>");
+    expect(all.find((r) => r.id === id)!.html).toBe('<p style="margin:0"><strong>theirs</strong></p>');
     expect(all.filter((r) => r.id !== id).map((r) => r.body)).toEqual(["mine, more"]);
     expect(container.textContent ?? "").toContain(compose.changedElsewhere);
   }, 40_000);

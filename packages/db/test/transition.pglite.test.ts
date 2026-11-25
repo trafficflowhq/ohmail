@@ -53,8 +53,8 @@ describe("a desktop's own store in 1.0.11's shape", () => {
     expect(error).toBeUndefined();
     expect(report!.verdicts.filter((v) => !v.ok)).toEqual([]);
     expect(report!.entries.map((e) => `${e.journal} ${e.tag}`)).toEqual(readWindow("mail").map((e) => `mail ${e.tag}`));
-    expect(await s.tables()).toEqual(tablesOf("desktop"));
-    for (const table of tablesOf("desktop")) {
+    expect(await s.tables()).toEqual(tablesOf("desktop", "window"));
+    for (const table of tablesOf("desktop", "window")) {
       if (before[table] !== undefined && table !== "pass_progress") expect(await s.count(table), table).toBe(before[table]);
     }
     expect(await s.count("local_store_flush")).toBe(1);

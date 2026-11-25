@@ -41,6 +41,7 @@ export interface HeldConnection {
   readonly mailboxId: string | null;
   readonly serverUrl: string | null;
   readonly principal: string | null;
+  readonly organizerAddresses: readonly string[] | null;
   readonly listToken: string | null;
   readonly lastSyncedAt: Date | null;
   readonly nextPollAt: Date | null;
@@ -99,7 +100,7 @@ export async function inConnection<T>(
     return await fencedConnectionWrite(db[BOUND], { accountId: key.accountId, connectionId: key.id }, async (tx) => {
       const read = tx.select({
         provider: calConnections.provider, status: calConnections.status, errorCode: calConnections.errorCode,
-        mailboxId: calConnections.mailboxId, serverUrl: calConnections.serverUrl, principal: calConnections.principal,
+        mailboxId: calConnections.mailboxId, serverUrl: calConnections.serverUrl, principal: calConnections.principal, organizerAddresses: calConnections.organizerAddresses,
         listToken: calConnections.listToken, lastSyncedAt: calConnections.lastSyncedAt, nextPollAt: calConnections.nextPollAt,
       }).from(calConnections).where(and(eq(calConnections.id, key.id), eq(calConnections.accountId, key.accountId))).limit(1);
       const [row] = opts.lock === "no key update" ? await dialect(tx).forUpdate(read, { mode: "no key update" }) : await read;

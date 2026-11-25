@@ -49,7 +49,7 @@ export interface CalendarConnectTransport {
    */
   removeCalendarConnection(connectionId: string): Promise<{ readonly removed: boolean; readonly seq: number | null }>;
   /** `POST /calendar/connections/:id/check`. Refused `rate_limited` inside a minute of the last one, or of a sign-in typed again. */
-  checkCalendarConnection(connectionId: string): Promise<{ readonly connection: CalendarConnectionRecord; readonly seq: number | null }>;
+  checkCalendarConnection(connectionId: string, calendarId?: string): Promise<{ readonly connection: CalendarConnectionRecord; readonly seq: number | null }>;
   /**
    * `POST /calendar/connections/:id/sign-in`: the sign-in typed again, whole. Tried at once, or within a minute where a check or
    * a sign-in came inside the last one. A password refused with `details.fault` `sign_in_incomplete` can not be typed again for

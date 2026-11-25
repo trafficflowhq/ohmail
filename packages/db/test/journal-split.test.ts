@@ -225,6 +225,8 @@ const MAIL_TABLES = [
   // The identity of an invitation a letter carried (mail 0204) — MAIL: a child of `messages`,
   // written by the ingest every install runs over its own store.
   "message_invitations",
+  // The mailbox’s private note and decision log, present on each organizer.
+  "screener_learning",
   // The calendar's ten tables (mail 0205) — MAIL, by where they are made and by who holds them:
   // the mail journal creates them, and a desktop's engine, which runs that journal alone, keeps a
   // calendar. Their keys run inside the family and to `accounts`; none names a private table.
@@ -4413,10 +4415,11 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 125 → 126 for `account_counters` (cloud 0101) — the counters that name a row, CLOUD.
     // 126 → 127 for `account_closures` (cloud 0104) — an account closed by staff, CLOUD.
     // 127 → 128 for `cal_push_channels` (cloud 0105) — a calendar's notice channels, CLOUD.
-    expect(SIDE.size).toBe(128);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
+    // The mailbox learning data is kept in the mail journal.
+    expect(SIDE.size).toBe(129);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
     // 44 → 45 and 27 → 26 for `refresh_tokens` (mail 0060) — the first MOVE in the partition's
     // history rather than an addition, so the total stayed 71 while both halves changed together.
-    expect(MAIL_TABLES).toHaveLength(72);   // 62 → 72: the calendar's ten (mail 0205)   // 61 → 62: message_invitations (mail 0204)   // 60 → 61: pass_progress (mail 0203)   // 59 → 60: scheduled_send_files (mail 0179)   // 58 → 59: rule_removals (mail 0178)   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
+    expect(MAIL_TABLES).toHaveLength(73);   // 62 → 72: the calendar's ten (mail 0205)   // 61 → 62: message_invitations (mail 0204)   // 60 → 61: pass_progress (mail 0203)   // 59 → 60: scheduled_send_files (mail 0179)   // 58 → 59: rule_removals (mail 0178)   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
     // 30 → 33: credit_usage_daily + credit_usage_totals + credit_rollup_runs (cloud 0028)
     // 33 → 36: billing_invoices + platform_costs + ai_usage_daily (cloud 0029)
     // 36 → 38: alert_pass_runs + platform_signals (cloud 0030)

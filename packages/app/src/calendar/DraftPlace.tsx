@@ -6,12 +6,17 @@ import { useText } from "../text/index.js";
 import { PLACE_CREDIT, useMaps, usePlaceSuggestions } from "./use-place-suggestions.js";
 import "./draft-place.css";
 
-export function useDraftPlace(value: string | null, onText: (value: string) => void, exclude?: string) {
+export function useDraftPlace(
+  value: string | null,
+  onText: (value: string) => void,
+  exclude?: string,
+  zone?: string | null,
+) {
   const t = useText("calendar");
   const phone = useFrame().plan.device === "phone";
   const [sheet, setSheet] = useState(false);
   const opener = useRef<HTMLButtonElement>(null);
-  const places = usePlaceSuggestions(value, onText, { phone, exclude, onTake: () => setSheet(false) });
+  const places = usePlaceSuggestions(value, onText, { phone, exclude, zone, onTake: () => setSheet(false) });
   const maps = useMaps(value);
   const label = t("create.place");
   const placeholder = t("location.placeholder");

@@ -3,10 +3,10 @@ import { shelfKeyOf } from "@ohmail/app-logic/folder";
 import type { FolderAct, FolderEntity } from "@ohmail/wire";
 import { folderCommands } from "@ohmail/app-logic/folder";
 import { folderLeafOf, folderParentOf } from "@ohmail/app-logic/lists/folders";
-import { Button, cssRect, Dialog, Menu, MenuItem, RefusalLine } from "@ohmail/ui/base";
+import { Button, cssRect, Dialog, Menu, MenuItem, MenuRule, RefusalLine } from "@ohmail/ui/base";
 import { TextField } from "@ohmail/ui/text-field";
 import type { FolderSummaryWire } from "../host/index.js";
-import type { Text } from "../text/index.js";
+import { useText, type Text } from "../text/index.js";
 import type { FolderRailShelf, FolderRailEdits, NameEdit } from "./FolderRail.js";
 
 export interface FolderCommands {
@@ -19,6 +19,20 @@ export interface FolderMenu {
   key: string;
   at: { x: number; y: number };
   fromShelf?: true;
+  opener?: HTMLElement;
+}
+
+interface FolderRailPromptsProps {
+  menu: FolderMenu | null;
+  target: FolderEntity | undefined;
+  pinned: boolean;
+  shelf: FolderRailShelf;
+  t: Text;
+  rail: Text;
+  dismiss: () => void;
+  edits: FolderRailEdits;
+  writable?: FolderCommands;
+  onOpen: (key: string) => void;
 }
 
 export function FolderRailPrompts({
@@ -31,17 +45,9 @@ export function FolderRailPrompts({
   dismiss,
   edits,
   writable,
-}: {
-  menu: FolderMenu | null;
-  target: FolderEntity | undefined;
-  pinned: boolean;
-  shelf: FolderRailShelf;
-  t: Text;
-  rail: Text;
-  dismiss: () => void;
-  edits: FolderRailEdits;
-  writable?: FolderCommands;
-}) {
+  onOpen,
+}: FolderRailPromptsProps) {
+  const open = useText("ohbox")("row.open");
   const { mayEdit, beginName, askDelete, closeAsk, asking, isCurrent } = edits;
   return (
     <>
@@ -49,9 +55,24 @@ export function FolderRailPrompts({
         open={menu !== null}
         onClose={() => dismiss()}
         anchor={menu?.at}
+        returnFocus={menu?.opener}
         kind="context"
         label={menu === null ? "" : t("rail.menu", { name: folderLeafOf(target?.name ?? "") })}
       >
+        {menu && target ? (
+          <>
+            <MenuItem
+              icon="folder"
+              onPress={() => {
+                dismiss();
+                onOpen(menu.key);
+              }}
+            >
+              {open}
+            </MenuItem>
+            <MenuRule />
+          </>
+        ) : null}
         <MenuItem
           icon="pin"
           onPress={() => {

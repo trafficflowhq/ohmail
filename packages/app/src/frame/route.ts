@@ -300,10 +300,14 @@ function calendarRouteOf(whole: string): Route | null {
           : null;
   const open = openPart === undefined || openPart === "" ? null : decoded(openPart);
   const words: Record<string, string> = {};
+  const account = query.get("account");
+  if (place === "calsettings" && sub === "calaccounts" && account && account.length < 100)
+    words.account = account;
   const panel = query.get("panel");
   if (panel !== null && CALENDAR_PANELS.has(panel)) words.panel = panel;
   const slot = query.get("slot");
-  if (panel === "new" && slot !== null && /^\d{1,4}-\d{1,4}$/.test(slot)) words.slot = slot;
+  if (panel === "new" && slot !== null && /^(?:\d{1,4}-\d{1,10}|date-\d{4}-\d{2}-\d{2})$/.test(slot))
+    words.slot = slot;
   const invitation = query.get("invitation");
   if (place === "day" && invitation && invitation.length < 100) words.invitation = invitation;
   const q = query.get("q");
@@ -318,7 +322,11 @@ function queryOf(words: Readonly<Record<string, string>>): string {
 
 function calendarFragmentOf(place: CalendarPlaceId, to: Route): string {
   const head = `#/${CALENDAR_PRODUCT_HEAD}/${CALENDAR_ADDRESS[place]}`;
-  if (place === "calsettings") return to.sub === null ? head : `${head}/${encodeURIComponent(to.sub)}`;
+  if (place === "calsettings") {
+    const account = to.sub === "calaccounts" ? to.words.account : undefined;
+    const query = account ? queryOf({ account }) : "";
+    return to.sub === null ? head : `${head}/${encodeURIComponent(to.sub)}${query}`;
+  }
   const day = to.sub !== null && isRealDay(to.sub) ? `/${to.sub}` : "";
   const open = to.open !== null && to.open !== "" ? `/${EVENT_MARK}/${encodeURIComponent(to.open)}` : "";
   const words: Record<string, string> = {};

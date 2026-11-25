@@ -45,8 +45,9 @@ const WHY = [
 
 describe("the provider form says what a draft sends", () => {
   it("the service still grounds a draft in the thread and the knowledge base", () => {
-    expect(SERVICE).toContain('label: "thread"');
-    expect(SERVICE).toContain('label: "kb"');
+    expect(SERVICE).toMatch(/const threadMessages = target\.threadId\s+\? await this\.retrieveThreadContext\(ctx, target\.threadId, target\.id\)/);
+    expect(SERVICE).toMatch(/const kbHits = await this\.kb\.retrieve\(ctx, query, deps\.k \?\? DEFAULT_KB_K\)/);
+    expect(SERVICE).toMatch(/context: \{\s+kbEntries: kbHits\.map\(\(e\) => \(\{ title: e\.title, content: e\.content \}\)\),\s+threadMessages,\s+\}/);
   });
 
   it("the note names both counts, in English and German", () => {

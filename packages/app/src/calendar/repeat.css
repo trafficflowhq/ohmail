@@ -1,0 +1,71 @@
+[id="calendar-custom-repeat"] {
+  --oh-menu-width: 396px;
+}
+.cal-custom-repeat {
+  display: grid;
+  gap: var(--s3);
+}
+.cal-repeat-preview {
+  color: var(--ink2);
+  margin: 0;
+}
+.cal-repeat-done {
+  justify-self: end;
+}
+.cal-repeat-controls,
+.cal-repeat-segment,
+.cal-repeat-month {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.cal-repeat-controls {
+  flex-wrap: wrap;
+}
+.cal-repeat-label {
+  display: inline-flex;
+  gap: var(--s2);
+  align-items: center;
+}
+.cal-repeat-segment {
+  flex: 1;
+  gap: 0;
+  border-radius: var(--r-pill);
+  background: var(--soft-sheet);
+}
+.cal-repeat-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--s1);
+}
+.cal-repeat-month {
+  flex-wrap: wrap;
+}
+.cal-repeat-input,
+.cal-custom-repeat [aria-pressed] {
+  background: var(--soft-sheet);
+  border: 0;
+  border-radius: var(--r-row);
+  padding: 0 var(--s2);
+  min-height: var(--h-s);
+  color: var(--ink);
+  font: inherit;
+  font-weight: var(--w-mid);
+}
+.cal-custom-repeat [aria-pressed] {
+  border-radius: var(--r-pill);
+}
+.cal-repeat-segment [aria-pressed] {
+  flex: 1;
+}
+.cal-repeat-input[type="number"] {
+  width: 3.25em;
+  text-align: center;
+}
+.cal-custom-repeat [aria-pressed="true"] {
+  background: var(--solid);
+  color: var(--on-solid);
+}
+:root[data-touch="1"] .cal-custom-repeat :is(.cal-repeat-input, [aria-pressed]) {
+  min-height: 44px;
+}

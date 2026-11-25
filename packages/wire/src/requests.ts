@@ -121,6 +121,8 @@ export interface ScreenerRuleRelease {
 }
 
 export interface CreateRuleBody {
+  screenerMessageId?: string;
+  shownSuggestionId?: string;
   release?: ScreenerRuleRelease;
   kind: string;
   match: string;
@@ -198,6 +200,8 @@ export interface ScreenBody {
   /** Required with a confirmed scope. An older server refuses that scope. */
   confirmedIds?: readonly string[];
   unsubscribeIds?: readonly string[];
+  /** The opaque revision of an offer shown with this choice. */
+  shownSuggestionId?: string;
   /**
    * Also apply the PROMOTED rule to this sender's mail that has already left the gate. Absent is
    * `true`, the contract `POST /rules` already carries; a non-boolean is a 400 rather than a

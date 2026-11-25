@@ -145,7 +145,8 @@ describe("the schema split matches the journal split", () => {
     // 59 → 60 for mail 0203's `pass_progress` — where each one-time pass stands, MAIL.
     // 60 → 61 for mail 0204's `message_invitations` — an invitation's identity, MAIL.
     // 61 → 71 for mail 0205's ten calendar tables, MAIL.
-    expect(declaredTables("schema-mail.ts").size).toBe(71);
+    // The mailbox learning note and log live in every organizer’s store.
+    expect(declaredTables("schema-mail.ts").size).toBe(72);
     // 25 since cloud 0009 put `mailbox_oauth_ceremonies` and `oauth_provider_config` on the
     // private half — the OAuth ceremony store and the one Entra registration this deployment
     // signs with. Both are Cloud-only by construction: the ceremony is a ninety-second row in

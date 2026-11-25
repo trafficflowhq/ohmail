@@ -373,7 +373,7 @@ it("takes a place suggested by the account service and keeps its attribution wit
   expect(list.closest("[role=dialog]")).toBeNull();
   expect(list.closest(".oh-suggest-layer")?.parentElement).toBe(document.body);
   expect(ask).toHaveBeenCalledWith(
-    { text: "Lib", lang: "en" },
+    { text: "Lib", lang: "en", home: "CH", near: { lat: 47.4, lon: 8.5 } },
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
   expect(screen.getByText("© OpenStreetMap contributors")).toBeTruthy();
@@ -404,8 +404,14 @@ it.each(["off", "down"] as const)(
       await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
     });
     expect(screen.queryByRole("listbox", { name: "Place suggestions" })).toBeNull();
-    if (state === "off") expect(form.queryByText("Place suggestions are unavailable")).toBeNull();
-    else expect(await form.findByText("Place suggestions are unavailable")).toBeTruthy();
+    if (state === "off")
+      expect(
+        form.queryByText("Place suggestions are unavailable. You can keep the place you typed."),
+      ).toBeNull();
+    else
+      expect(
+        await form.findByText("Place suggestions are unavailable. You can keep the place you typed."),
+      ).toBeTruthy();
     expect(place).toHaveProperty("value", "The rooftop");
   },
 );
@@ -680,10 +686,18 @@ it.each([
   const pointer = (target: EventTarget, type: string, y: number) =>
     fireEvent(
       target,
-      Object.assign(new MouseEvent(type, { bubbles: true, clientX: 30, clientY: y }), { pointerId: 1 }),
+      Object.assign(new MouseEvent(type, { bubbles: true, clientX: 30, clientY: y }), {
+        pointerId: 1,
+        isPrimary: true,
+      }),
     );
-  pointer(column, "pointerdown", down);
-  pointer(document, "pointerup", up);
+  Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [column] });
+  try {
+    pointer(column, "pointerdown", down);
+    pointer(document, "pointerup", up);
+  } finally {
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  }
   const form = within(await screen.findByRole("dialog", { name: "New event" }));
   expect(form.getByDisplayValue(from)).toBeTruthy();
   expect(form.getByDisplayValue(to)).toBeTruthy();
@@ -817,3 +831,197 @@ it.each([
   expect(form.getByText(message)).toBeTruthy();
   expect(form.getByRole<HTMLButtonElement>("button", { name: "Add" }).disabled).toBe(disabled);
 });
+
+it("shows full addresses while choosing guests and leaves unsent guests without an answer", () => {
+  const w = world();
+  const address = ["fern", "example.com"].join("@");
+  w.put("message", "guest", letter("guest", { from: { name: "Fern Pike", address }, authVerdict: "pass" }));
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  fireEvent.click(form.getByRole("button", { name: "Invitees" }));
+  const suggestion = screen.getByRole("menuitem", { name: /Fern Pike/ });
+  expect.soft(suggestion.textContent).toContain(address);
+  fireEvent.click(suggestion);
+  const chip = form.getByRole("button", { name: /^Fern Pike/ });
+  expect.soft(chip.textContent).toContain(address);
+  expect(chip.textContent).not.toContain("no answer");
+});
+
+it("saves the custom repeat shown in the event card", async () => {
+  const w = world();
+  w.put(
+    "calendar_connection",
+    "conn-1",
+    connectionRecord({ repeatShapes: ["weekly/never", "weeks_on_days/never"] }),
+  );
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  fireEvent.change(form.getByRole("textbox", { name: "New event" }), { target: { value: "Sketch group" } });
+  fireEvent.click(form.getByRole("button", { name: "Repeat" }));
+  fireEvent.click(screen.getByText("Custom…"));
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Every" }), { target: { value: "2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Thursday" }));
+  expect(screen.getByText("Every 2 weeks on Monday and Thursday")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  await vi.waitFor(() =>
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repeatSelected: true,
+        event: expect.objectContaining({ repeat: "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,TH" }),
+      }),
+    ),
+  );
+});
+
+it.each(["google", "microsoft", "caldav"] as const)("offers custom Repeat on %s", (provider) => {
+  const w = world();
+  w.put(
+    "calendar_connection",
+    "conn-1",
+    connectionRecord({ provider, repeatShapes: ["weeks_on_days/never"] }),
+  );
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  fireEvent.click(form.getByRole("button", { name: "Repeat" }));
+  fireEvent.click(screen.getByText("Custom…"));
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Every" }), { target: { value: "3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Thursday" }));
+  expect(screen.getByText("Every 3 weeks on Monday and Thursday")).toBeTruthy();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Done" }).disabled).toBe(false);
+});
+
+it("keeps the event draft open when Microsoft cannot keep a monthly date", () => {
+  const w = world();
+  w.put(
+    "calendar_connection",
+    "conn-1",
+    connectionRecord({ provider: "microsoft", repeatShapes: ["monthly_by_date/never"] }),
+  );
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  mountFrame("#/cal/week/2026-12-31?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  fireEvent.click(form.getByRole("button", { name: "Repeat" }));
+  fireEvent.click(screen.getByText("Every month on the 31st"));
+  expect(screen.getByText("This calendar cannot keep this repeat rule.")).toBeTruthy();
+  expect(form.getByRole("button", { name: "Repeat", exact: true })).toBeTruthy();
+  expect(press).not.toHaveBeenCalled();
+});
+
+it("explains an unproven calendar when Repeat is opened", async () => {
+  const w = world();
+  w.put("calendar_connection", "conn-1", connectionRecord({ provider: "microsoft" }));
+  mountFrame("#/cal/week/2026-11-16", w, NONE);
+  fireEvent.click(screen.getByRole("button", { name: "New event" }));
+  fireEvent.click(screen.getByRole("button", { name: "Repeat", exact: true }));
+  expect(screen.queryByText("This calendar cannot repeat events yet.")).toBeTruthy();
+  expect(screen.queryByText("Every day")).toBeNull();
+});
+
+it("keeps the last place rows while a newer prefix is answered and takes a foreign address with its country", async () => {
+  const w = world();
+  const rows = {
+    state: "ok",
+    credit: "osm",
+    places: [
+      { kind: "address", first: "Cedar Road 12", second: "8000 Cedar", country: "CH", lat: 0, lon: 0 },
+      { kind: "address", first: "Cedar Road 12", second: "79000 Cedar", country: "DE", lat: 0, lon: 0 },
+    ],
+  };
+  let superseded!: (answer: { state: string; places: []; credit: null }) => void;
+  const ask = vi
+    .fn()
+    .mockResolvedValueOnce(rows)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          superseded = resolve;
+        }),
+    )
+    .mockResolvedValueOnce({ state: "busy", places: [], credit: null })
+    .mockResolvedValue(rows);
+  Object.assign(w.engine, { suggestPlaces: ask });
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  fireEvent.click(form.getByRole("button", { name: "Place" }));
+  const place = form.getByLabelText("Place");
+  fireEvent.change(place, { target: { value: "Ced" } });
+  const list = await screen.findByRole("listbox", { name: "Place suggestions" });
+  const [local, foreign] = within(list).getAllByRole("option");
+  expect(local!.textContent).toContain("8000 Cedar");
+  expect(local!.textContent).not.toContain("Switzerland");
+  expect(foreign!.textContent).toContain("79000 Cedar, Germany");
+  fireEvent.change(place, { target: { value: "Ceda" } });
+  await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(list.getAttribute("aria-busy")).toBe("true"));
+  expect(within(list).getAllByRole("option")).toHaveLength(2);
+  fireEvent.change(place, { target: { value: "Cedar" } });
+  await act(async () => superseded({ state: "down", places: [], credit: null }));
+  expect(screen.queryByText(/Place suggestions are unavailable/)).toBeNull();
+  await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(3));
+  fireEvent.change(place, { target: { value: "Cedar Road" } });
+  await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(4));
+  await vi.waitFor(() => {
+    const results = within(screen.getByRole("listbox", { name: "Place suggestions" }));
+    expect(results.getAllByRole("option")[1]?.textContent).toContain("79000 Cedar, Germany");
+  });
+  fireEvent.keyDown(place, { key: "ArrowUp" });
+  fireEvent.keyDown(place, { key: "Enter" });
+  expect(place).toHaveProperty("value", "Cedar Road 12, 79000 Cedar, Germany");
+});
+
+it("keeps one retry budget when the first lookup returns busy", async () => {
+  const w = world();
+  let photonCalls = 0;
+  const ask = vi.fn(async () => {
+    photonCalls += 1;
+    if (photonCalls === 1) return { state: "busy", places: [], credit: null };
+    // The next request would encounter a transient error and exhaust the server's retry budget.
+    photonCalls += 1;
+    return { state: "ok", places: [], credit: null };
+  });
+  Object.assign(w.engine, { suggestPlaces: ask });
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  fireEvent.click(form.getByRole("button", { name: "Place" }));
+  fireEvent.change(form.getByLabelText("Place"), { target: { value: "Cedar" } });
+  await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 1150)));
+  expect(photonCalls).toBeLessThanOrEqual(2);
+  expect(ask).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  [
+    "#/cal/week/2026-10-24?panel=new&slot=1350-3480",
+    { kind: "zoned", value: "20261024T223000", zone: "Europe/Zurich" },
+    { kind: "zoned", value: "20261026T100000", zone: "Europe/Zurich" },
+  ],
+  [
+    "#/cal/month/2026-10-24?panel=new&slot=date-2026-10-26",
+    { kind: "date", value: "20261024" },
+    { kind: "date", value: "20261027" },
+  ],
+])(
+  "writes both endpoints of a selected range across the October clock change",
+  async (address, start, end) => {
+    const w = world();
+    const press = vi.fn(async () => ({ key: "create" }));
+    w.port.press = press;
+    mountFrame(address, w, NONE);
+    const form = within(screen.getByRole("dialog", { name: "New event" }));
+    await form.findByText("Personal");
+    fireEvent.change(form.getByRole("textbox", { name: "New event" }), { target: { value: "Away" } });
+    fireEvent.click(form.getByRole("button", { name: "Add" }));
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "calendar_event_create",
+        event: expect.objectContaining({ start, end }),
+      }),
+    );
+    await act(async () => {});
+  },
+);

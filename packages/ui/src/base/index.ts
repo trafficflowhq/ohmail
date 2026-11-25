@@ -90,7 +90,13 @@ export { GLASS } from "./glass.js";
 export { closeTopOverlay } from "./Overlays/overlay-escape.js";
 export { Overlay } from "./Overlays/Overlay.js";
 export type { OverlayProps } from "./Overlays/Overlay.js";
-export { contextTrigger, placeMenu } from "./Overlays/menu-place.js";
+export {
+  contextTrigger,
+  isContextMenuKey,
+  keepsNativeContextMenu,
+  mailContextTrigger,
+  placeMenu,
+} from "./Overlays/menu-place.js";
 export type { Edges, Point, Size } from "./Overlays/menu-place.js";
 export { SuggestionCredit, SuggestionList, suggestionId } from "./Overlays/SuggestionList.js";
 export type {

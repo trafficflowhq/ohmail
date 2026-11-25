@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import type {
   CSSProperties,
   HTMLAttributes,
@@ -61,7 +62,7 @@ export interface TimeGridProps {
   hourHeight: number;
   /** Now, in minutes of the day, and its time as it is written. Drawn on today, inside the hours. */
   now?: { minutes: number; label: string };
-  dragPreview?: { day: string; chip: ReactNode };
+  dragPreview?: (day: string, hourHeight: number) => ReactNode;
   /** A narrow window: titles and marks at the small size. */
   dense?: boolean;
   /** The unfolded phone: the index of the first day after the hinge. */
@@ -69,6 +70,7 @@ export interface TimeGridProps {
   onDayPress?: (id: string) => void;
   /** A press on a day's empty time: the start of a draft. */
   onDayPointerDown?: (id: string, event: PointerEvent<HTMLDivElement>) => void;
+  onDayMenuKey?: (day: string, minute: number, event: import("react").KeyboardEvent<HTMLDivElement>) => void;
   onDayContextMenu?: (id: string, event: React.MouseEvent<HTMLDivElement>) => void;
   /** The hours' scroller: the app opens it on the hours it set. */
   scrollRef?: Ref<HTMLDivElement>;
@@ -149,8 +151,15 @@ function Column({
   frame: Frame;
   props: TimeGridProps;
 }) {
+  const column = useRef<HTMLDivElement>(null);
+  const hasCursor = !!day.cursor && !!props.onDayMenuKey;
+  useLayoutEffect(() => {
+    const canvas = column.current;
+    const owner = canvas?.ownerDocument;
+    if (hasCursor && owner?.activeElement === owner?.body) canvas?.focus({ preventScroll: true });
+  }, [hasCursor]);
   const at = (minutes: number): number => minuteTop(minutes, frame.firstHour, frame.hourHeight);
-  const { onDayPointerDown, onDayContextMenu } = props;
+  const { onDayPointerDown, onDayContextMenu, onDayMenuKey } = props;
   return (
     <div
       className="oh-tg-col"
@@ -158,16 +167,21 @@ function Column({
       data-today={day.today ? "" : undefined}
     >
       <div
+        ref={column}
         className="oh-tg-in"
         data-cal-drop-day={day.id}
         data-cal-drop-kind="time"
         role="group"
         aria-label={day.label}
+        tabIndex={onDayContextMenu ? (day.cursor ? 0 : -1) : undefined}
+        onKeyDown={
+          day.cursor && onDayMenuKey ? (e) => onDayMenuKey(day.id, day.cursor!.minutes, e) : undefined
+        }
         onPointerDown={onDayPointerDown ? (e) => onDayPointerDown(day.id, e) : undefined}
         onContextMenu={onDayContextMenu ? (e) => onDayContextMenu(day.id, e) : undefined}
       >
+        {props.dragPreview?.(day.id, frame.hourHeight)}
         {day.children}
-        {props.dragPreview?.day === day.id ? props.dragPreview.chip : null}
         {day.marks?.map((m) => (
           <button
             key={m.id}

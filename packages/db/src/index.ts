@@ -482,6 +482,7 @@ export {
   screenerSuggestionExhausted, screenerSuggestionRetryDue,
   recordScreenerSuggestionRetry, clearScreenerSuggestionRetries,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, SCREENER_SUGGESTION_FAILED,
+  SCREENER_LEARNED_SUGGESTION_STATUS,
   type ScreenerSuggestionRow, type StoredSenderSuggestion,
 } from "./screener-suggestion.js";
 
@@ -563,3 +564,13 @@ export {
   aiUsageLineOf, AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE,
   type AiUsageLine, type AiUsageHost, type AiUsageCounts,
 } from "./entitlements-port.js";
+
+export {
+  readScreenerLearning, changeScreenerLearning, resetAccountScreenerLearning, updateScreenerLearning, screenerLearningContext, screenerLearningEnabled, learningSnapshotIsCurrent,
+  type ScreenerLearningChange, type ScreenerLearningScope, type ScreenerLearningState, type ScreenerLesson,
+} from "./screener-learning.js";
+export {
+  recordScreenerChoice, reviseScreenerDecision, reviseScreenerMessage, screenerMessageRef,
+} from "./screener-learning-choice.js";
+export { SCREENER_LESSON_LIFETIME_MS } from "./screener-learning-state.js";
+export { isScreenerTopic, screenerTopic } from "./screener-topics.js";

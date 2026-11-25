@@ -118,29 +118,36 @@ function useLetterActions(props: LetterCardProps, view: LetterView) {
       request.current = false;
     }
   };
-  const open = face
-    ? () => {
-        if (placed) {
-          commands.go({ place: "day", sub: face.ref.day, open: placed.id, words: { invitation: placed.id } });
-        } else {
-          pending.current = { ...face, invitation: { ...props, chosenCalendarId: target?.id } };
-          commands.go({ place: "day", sub: face.ref.day, open: face.id, words: { invitation: face.id } });
+  const open =
+    face && !view.hidden
+      ? () => {
+          if (placed) {
+            commands.go({
+              place: "day",
+              sub: face.ref.day,
+              open: placed.id,
+              words: { invitation: placed.id },
+            });
+          } else {
+            pending.current = { ...face, invitation: { ...props, chosenCalendarId: target?.id } };
+            commands.go({ place: "day", sub: face.ref.day, open: face.id, words: { invitation: face.id } });
+          }
         }
-      }
-    : undefined;
+      : undefined;
+  const removeRecord = view.hidden ? undefined : view.cancelled ? record : view.declinedCopy;
   const remove =
-    view.cancelled && record && !gone && port !== NONE
+    removeRecord && !gone && port !== NONE
       ? async () => {
           try {
             await commitAction(
               port,
               {
                 kind: "calendar_event_delete",
-                eventId: record.id,
-                base: record.updatedAt,
+                eventId: removeRecord.id,
+                base: removeRecord.updatedAt,
                 localOnly: true,
-                scope: record.recurrenceId
-                  ? { kind: "occurrence", at: record.recurrenceId }
+                scope: removeRecord.recurrenceId
+                  ? { kind: "occurrence", at: removeRecord.recurrenceId }
                   : { kind: "record" },
                 ...(invitation.method === "CANCEL" && { cancelledBy: message.id }),
               },
@@ -190,7 +197,7 @@ function LetterCard(props: LetterCardProps) {
       answers={
         remove ? (
           <Button kind="two" size="s" onPress={() => void remove()}>
-            {calendarText("actions.removeFromCalendar")}
+            {calendarText(cancelled ? "actions.removeFromCalendar" : "actions.removeDeclined")}
           </Button>
         ) : !cancelled && mailAnswer ? (
           <>

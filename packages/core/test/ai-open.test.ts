@@ -175,6 +175,6 @@ describe("the Screened/Quarantine boundary — the relationship ruling of 2026-0
     // value.
     expect(SCREENING_PREFIX).toMatch(/If the user turn carries an "ohboxBar" field/);
     expect(SCREENING_PREFIX).not.toMatch(/Keep my Ohbox/);
-    expect(SCREENING_PREFIX).not.toMatch(/mila|trafficflow/i);
+    expect(SCREENING_PREFIX).not.toMatch(/\bmila\b|trafficflow/i);
   });
 });

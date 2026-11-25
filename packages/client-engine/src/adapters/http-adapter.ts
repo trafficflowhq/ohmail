@@ -1061,8 +1061,11 @@ export class HttpAdapter implements EngineAdapter {
     return { removed: (await this.readAnswer<"DELETE /calendar/connections/:id">(res)).removed === true, seq: this.noteSeq(res) };
   }
 
-  async checkCalendarConnection(connectionId: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
-    const res = await this.call("POST /calendar/connections/:id/check", { params: { id: connectionId } });
+  async checkCalendarConnection(connectionId: string, calendarId?: string): Promise<{ connection: CalendarConnectionRecord; seq: number | null }> {
+    const res = await this.call("POST /calendar/connections/:id/check", {
+      params: { id: connectionId },
+      ...(calendarId === undefined ? {} : { query: new URLSearchParams({ calendarId }) }),
+    });
     if (!res.ok) throw await this.rejectionOf(res);
     return { connection: await this.readAnswer<"POST /calendar/connections/:id/check">(res), seq: this.noteSeq(res) };
   }
@@ -2008,6 +2011,7 @@ export class HttpAdapter implements EngineAdapter {
           params: { id: m.senderId },
           body: {
             decision: m.decision,
+            ...(m.shownSuggestionId ? { shownSuggestionId: m.shownSuggestionId } : {}),
             // THE DESTINATION, TRANSLATED TO THE SERVER'S VOCABULARY: `dest` is a VIEW on this side (`reads`) and a
             // FOLDER on the wire (`ohmail/Reads`), because every other endpoint that names a place already takes a
             // folder: `POST /messages/:id/move` takes `{folder}` and `POST /rules` takes `{destination}`. A second
@@ -2437,6 +2441,8 @@ export class HttpAdapter implements EngineAdapter {
           body: {
             kind: m.ruleKind, match: m.match, destination: m.destination,
             ...(m.release ? { release: m.release } : {}),
+            ...(m.screenerMessageId ? { screenerMessageId: m.screenerMessageId } : {}),
+            ...(m.shownSuggestionId ? { shownSuggestionId: m.shownSuggestionId } : {}),
             // Omitted unless an address rule is lifted over its domain's (`address-rank.ts`).
             ...(m.priority === undefined ? {} : { priority: m.priority }),
             // The second term, and OMITTED rather than sent as `null` when there is none — unlike

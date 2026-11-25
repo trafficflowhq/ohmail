@@ -3,8 +3,8 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   assertAccountOrganizes,
   accountSettings, contacts, folderState, forgetListConsents, learningSignals, lockAccountRuleKeys, messages,
-  recordChanges, recordRuleDelta, routingDecisions, ruleRemovals, rules, type Tx,
-  clearScreenerSuggestionRetries, SCREENER_SUGGESTION_FAILED, SCREENER_SUGGESTION_STATUS,
+  recordChanges, recordRuleDelta, resetAccountScreenerLearning, routingDecisions, ruleRemovals, rules, type Tx,
+  clearScreenerSuggestionRetries, SCREENER_SUGGESTION_FAILED, SCREENER_SUGGESTION_STATUS, SCREENER_LEARNED_SUGGESTION_STATUS,
 } from "@trafficflow/db";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -24,6 +24,10 @@ const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
  */
 
 /** Mail that a past decision physically moved, and that this reset is deliberately leaving. */
+const RESETTABLE_SUGGESTION_STATUSES = [
+  SCREENER_SUGGESTION_STATUS, SCREENER_LEARNED_SUGGESTION_STATUS, SCREENER_SUGGESTION_FAILED,
+];
+
 export interface UnmovedPile {
   /** The folder as it exists on the mail server. */
   folder: string;
@@ -150,7 +154,7 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
     // message is where it is — and since the reset moves nothing, that record is still true.
     const suggestionRows = await tx.delete(routingDecisions)
       .where(and(eq(routingDecisions.accountId, ctx.accountId),
-        inArray(routingDecisions.status, [SCREENER_SUGGESTION_STATUS, SCREENER_SUGGESTION_FAILED])))
+        inArray(routingDecisions.status, RESETTABLE_SUGGESTION_STATUSES)))
       .returning({ id: routingDecisions.id, status: routingDecisions.status });
     // Suggestions ride `/sync` (the narrow verdict entity), so their reset must too — without
     // these tombstones every mirror keeps rendering advice this account just discarded.
@@ -164,6 +168,7 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
     const learningRows = await tx.delete(learningSignals)
       .where(and(eq(learningSignals.accountId, ctx.accountId), eq(learningSignals.kind, "screener")))
       .returning({ id: learningSignals.id });
+    await resetAccountScreenerLearning(bridgeTx(tx), ctx.accountId, ctx.now());
 
     /**
      * And the screening baseline goes back to NULL (mail 0056) — without this the reset is a
@@ -197,7 +202,7 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
     return {
       rulesDeleted: doomed.length,
       contactsDeleted: contactRows.length,
-      screenerSuggestionsDeleted: suggestionRows.filter((r) => r.status === SCREENER_SUGGESTION_STATUS).length,
+      screenerSuggestionsDeleted: suggestionRows.filter((r) => r.status !== SCREENER_SUGGESTION_FAILED).length,
       learningSignalsDeleted: learningRows.length,
       unmoved,
       lastSeq: lastSeq === null ? null : Number(lastSeq),

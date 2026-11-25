@@ -1,4 +1,5 @@
-import type { MouseEventHandler } from "react";
+import { useRef, type MouseEventHandler } from "react";
+import { contextTrigger, type Point } from "../../base/Overlays/menu-place.js";
 import { Dot } from "../../base/Primitives/Dot.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { CalendarSquare } from "../Grids/CalendarSquare.js";
@@ -23,6 +24,7 @@ export interface CalendarRowProps {
   /** Whether the name's menu stands open. */
   menuOpen?: boolean;
   onMenu?: MouseEventHandler<HTMLButtonElement>;
+  onContext?: (at: Point | Element, opener: HTMLButtonElement) => void;
   /** A kind of mail that draws on the calendar (dated mail, events found in mail): its glyph. The whole row is then the switch. */
   layerIcon?: IconName;
 }
@@ -32,6 +34,7 @@ export interface CalendarRowProps {
  * the calendar is a row of the same kind, with a grey square, and is one switch as a whole.
  */
 export function CalendarRow(p: CalendarRowProps) {
+  const menuButton = useRef<HTMLButtonElement>(null);
   const square = <CalendarSquare tone={p.tone} hollow={!p.shown} />;
   if (p.layerIcon) {
     return (
@@ -67,8 +70,19 @@ export function CalendarRow(p: CalendarRowProps) {
       ) : null}
     </>
   );
+  const context =
+    p.onContext &&
+    contextTrigger((at) => {
+      const opener = menuButton.current;
+      if (opener) p.onContext?.(at, opener);
+    });
   return (
-    <div className="oh-calrow" data-hidden={p.shown ? undefined : ""} data-quiet={p.quiet ? "" : undefined}>
+    <div
+      className="oh-calrow"
+      data-hidden={p.shown ? undefined : ""}
+      data-quiet={p.quiet ? "" : undefined}
+      {...context}
+    >
       <button
         type="button"
         disabled={p.onToggle === undefined}
@@ -83,6 +97,7 @@ export function CalendarRow(p: CalendarRowProps) {
       {p.onMenu ? (
         <button
           type="button"
+          ref={menuButton}
           className="oh-control oh-calrow-name"
           title={p.name}
           aria-haspopup="menu"

@@ -114,6 +114,7 @@ const SURVIVES_SIGN_OUT = new Set([
   "ohmail.junkSweepDismissedAt", // a dismissal timestamp, no mail in it
   "ohmail.ui.seed.notNow.", // "Not now" on the sent-mail review, owner-keyed, no mail in it
   "ohmail.ui.mail.original.", // "show original" toggle, per account: an erasure takes it
+  "ohmail.ui.calendar.dayAgendaClosed", // device-wide disclosure, no account or calendar content
   "ohmail.ui.rail.foldersOpen", // rail disclosure state
   "ohmail.ui.rail.foldersOpened.", // the opened folder branches, per account: an erasure takes them
   "ohmail.ui.rail.tagsOpen",
@@ -352,12 +353,14 @@ describe("sign-out clears the durable decision stores", () => {
     const { forgetThisBrowser } = await import("../app/sign-out");
     localStorage.setItem("ohmail.face", "ohmarchy");
     localStorage.setItem("ohmail.face.scope", "device");
+    localStorage.setItem("ohmail.ui.calendar.dayAgendaClosed", "1");
 
     const result = await forgetThisBrowser(undefined, { revokeWake: false });
 
     expect(result.inventoryComplete).toBe(true);
     expect(localStorage.getItem("ohmail.face.scope")).toBeNull();
     expect(localStorage.getItem("ohmail.face")).toBe("ohmarchy");
+    expect(localStorage.getItem("ohmail.ui.calendar.dayAgendaClosed")).toBe("1");
   });
 
   it("is wired into signOut itself, not merely available", () => {

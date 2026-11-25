@@ -852,6 +852,7 @@
     "newSince": "{count, plural, =0 {Nichts Neues} one {# neue} other {# neue}} seit deinem letzten Besuch"
   },
   "screener": {
+    "learnedWebinar": "Webinar-Einladungen sortierst du meistens aus",
     "pendingHolderUnknown": "die Stelle, die dieses Postfach organisiert",
     "autoDetected": "Automatisch erkannt",
     "handedBackWhy": "Das Postfach wird nicht organisiert. Neue Absender landen direkt in der Ohbox.",
@@ -1042,7 +1043,7 @@
       "aria": "Für wie viele wartende Absender vorgeschlagen wird",
       "autoTitle": "Für neue Absender automatisch vorschlagen",
       "autoWhat": "Solange das an ist, holt ohmail für neue Absender einen Vorschlag, sobald ihre Mails ankommen, und zeigt, was es denkt und warum. Höchstens {count, plural, one {ein Absender} other {# Absender}} auf einmal. Der Vorschlag ist in Sekunden auf jedem Gerät, auf dem du angemeldet bist. Absender, die schon warten, kommen in Paketen derselben Größe dran, wenn du den Screener öffnest.",
-      "autoCost": "Jeder Absender kostet einen Punkt deines KI-Budgets. Ist das Budget aufgebraucht, hört es auf, und sonst ändert sich nichts.",
+      "autoCost": "Vorschläge belasten dein KI-Budget. Ist es aufgebraucht, pausieren die Vorschläge.",
       "autoQuoteDisclosure": "Für die Preisabfrage sendet ohmail die E-Mail-Adressen der wartenden Absender in diesem Paket an deinen Server. Dabei wird kein KI-Modell gefragt und kein Guthaben verbraucht.",
       "autoQuoteApprove": "Preis abfragen",
       "autoDecides": "Entschieden wird nichts. Jeder Absender wartet weiter auf dich, und keine Mail wird verschoben, bis du es sagst.",
@@ -2345,6 +2346,7 @@
       "to": "an",
       "cc": "cc",
       "you": "dich",
+      "youAt": "dich ({address})",
       "youSender": "Du",
       "yesterday": "gestern {time}",
       "menu": "Nachricht",
@@ -4113,8 +4115,14 @@
     "filingMailboxes": "{count, plural, one {1 Postfach} other {# Postfächer}}",
     "filingReasonsDiffer": "die Gründe sind je Postfach verschieden",
     "pull": "Neue Mails abrufen",
-    "pulling": "Mailserver wird geprüft…",
+    "pulling": "Wird geprüft…",
     "pullAria": "Neue Mails abrufen — den Mailserver jetzt prüfen",
+    "checkingDelayedCloud": "ohmail Cloud hat seit {since} keine Mail geprüft",
+    "checkingDelayedServer": "Dein Server hat seit {since} keine Mail geprüft",
+    "pullPaused": "Gerade nicht, die Prüfung läuft automatisch weiter",
+    "pullCurrent": "Auf dem neuesten Stand",
+    "pullPending": "Die Prüfung läuft weiter",
+    "pullMailboxFailed": "Prüfung fehlgeschlagen · Postfächer öffnen",
     "pullQuiet": "Geprüft — nichts Neues.",
     "pullSlow": "Wird noch geprüft. Neue Mails kommen von selbst an.",
     "pullBehind": "Nicht geprüft. ohmail Cloud prüft gerade nicht, und neue Mails kommen von selbst an, sobald es wieder prüft.",
@@ -6243,11 +6251,15 @@
     },
     "connection": {
       "act": {
+        "billing": "Abrechnung öffnen",
         "signIn": "Anmelden",
         "reload": "Neu laden",
         "connect": "Postfach verbinden",
-        "mailboxes": "Postfächer",
+        "mailboxes": "Postfächer öffnen",
         "writeToUs": "Schreib uns"
+      },
+      "payment": {
+        "title": "Zahlung fehlgeschlagen"
       },
       "signedOut": {
         "title": "Abgemeldet",
@@ -6285,7 +6297,8 @@
         "title": "Verbindung wird wiederhergestellt"
       },
       "late": {
-        "title": "Neue Mails haben Verspätung"
+        "title": "Neue Mails haben Verspätung",
+        "since": "ohmail Cloud hat seit {time, date, ::HHmm} keine Mail geprüft"
       },
       "behind": {
         "title": "Wird nachgeholt",
@@ -6744,7 +6757,7 @@
       "events": "{count, plural, one {# Termin} other {# Termine}}",
       "slow": "Das dauert einen Moment. Du kannst weitermachen; ohmail sagt dir Bescheid, sobald deine Kalender bereit sind.",
       "keepGoing": "Weitermachen",
-      "none": "Keine Kalender in diesem Konto",
+      "none": "Keine Kalender für diese Verbindung",
       "closeNone": "Schließen",
       "ready": "{provider}: {count, plural, one {# Kalender bereit} other {# Kalender bereit}}",
       "readyShow": "Zeigen",
@@ -6792,6 +6805,18 @@
       "microsoft": "Microsoft 365"
     },
     "accounts": {
+      "noticeSignIn": "{name}: Erneut anmelden",
+      "noticeConnection": "{name}: Kalender nicht erreichbar",
+      "noticeOverdue": "{name}: Kalenderprüfung überfällig",
+      "overdueDetail": "Die geplante Kalenderprüfung ist überfällig",
+      "scheduledCheck": "Geplante Prüfung",
+      "openCalendars": "Kalender öffnen",
+      "errorSince": "Seit",
+      "checkState": {
+        "checking": "Wird geprüft…",
+        "current": "Geprüft",
+        "failed": "Prüfung fehlgeschlagen"
+      },
       "useCalendar": "ohcal verwenden",
       "add": "Kalender-Account hinzufügen",
       "addAccount": "Account hinzufügen",
@@ -6800,6 +6825,7 @@
       "signInAgain": "Neu anmelden",
       "state": {
         "inStep": "Aktuell",
+        "overdue": "Überfällig",
         "signedOut": "Abgemeldet",
         "failing": "Nicht geprüft",
         "removing": "Wird entfernt"
@@ -6808,6 +6834,28 @@
       "checkedAt": "Geprüft {when}",
       "calendars": "Kalender",
       "show": "{name} zeigen",
+      "hideCalendar": "Ausblenden",
+      "showCalendar": "Einblenden",
+      "showOnlyCalendar": "Nur diesen Kalender anzeigen",
+      "calendarSettings": "Kalendereinstellungen",
+      "disconnect": "Konto trennen",
+      "disconnectAsk": "{name} trennen?",
+      "unsubscribeAsk": "{name} abbestellen?",
+      "unsubscribe": "Abbestellen",
+      "colour": "Farbe",
+      "providerColour": "Anbieterfarbe verwenden",
+      "palette": {
+        "rose": "Koralle",
+        "amber": "Bernstein",
+        "lime": "Limette",
+        "green": "Grün",
+        "teal": "Türkis",
+        "blue": "Blau",
+        "violet": "Violett",
+        "plum": "Pflaume",
+        "grey": "Grau"
+      },
+      "useForNewEvents": "Für neue Termine verwenden",
       "newEventsHere": "Neue Termine kommen hierhin",
       "viewOnly": "Nur ansehen",
       "checked": "Geprüft",
@@ -6890,6 +6938,25 @@
   },
   "calendar": {
     "connect": "Einen Kalender verbinden",
+    "repeat": {
+      "unavailable": "In diesem Kalender lassen sich Termine noch nicht wiederholen.",
+      "everyDay": "Jeden Tag",
+      "none": "Wiederholt sich nicht",
+      "custom": "Eigene Regel…",
+      "every": "Alle",
+      "DAILY": "{count, plural, one {Tag} other {Tage}}",
+      "WEEKLY": "{count, plural, one {Woche} other {Wochen}}",
+      "MONTHLY": "{count, plural, one {Monat} other {Monate}}",
+      "YEARLY": "{count, plural, one {Jahr} other {Jahre}}",
+      "ends": "Endet",
+      "never": "Nie",
+      "onDate": "Am Datum",
+      "after": "Nach",
+      "times": "Termine",
+      "done": "Fertig",
+      "unsupported": "Dieser Kalender unterstützt diese Wiederholungsregel nicht.",
+      "startDay": "Wähle eine Regel, die den Starttag des Termins einschließt."
+    },
     "actions": {
       "openLetter": "Brief öffnen",
       "resizeTimeStart": "Beginn verschieben",
@@ -6897,16 +6964,22 @@
       "resizeStart": "Ersten Tag ändern",
       "resizePreview": "{first} – {last} · {title}",
       "resizeEnd": "Letzten Tag ändern",
+      "deleteEvent": "Termin löschen",
+      "cancelMeeting": "Besprechung absagen",
       "cancelEvent": "Termin absagen",
       "writeGuests": "Eingeladenen schreiben",
       "emailOrganizer": "Organisator kontaktieren",
       "removeCancelled": "Entfernen",
+      "hideInOhcal": "In ohcal ausblenden",
+      "hideEffect": "Der Termin wird in ohcal ausgeblendet und deine Antwort bleibt unverändert",
+      "declineNotify": "Absagen und den Organisator benachrichtigen",
+      "declineEffect": "Der Organisator erfährt, dass du nicht kommst",
+      "removeDeclined": "Abgesagten Termin entfernen",
       "removeFromCalendar": "Aus meinem Kalender entfernen",
       "removeScope": "{title} entfernen",
       "answerScope": "Auf {title} antworten",
-      "changeAnswer": "Deine Antwort auf {answer} ändern",
       "delete": "Löschen",
-      "moveTo": "Verschieben nach",
+      "moveTo": "In anderen Kalender verschieben",
       "hideCalendar": "Diesen Kalender ausblenden",
       "tellsDelete": "{title} ist abgesagt",
       "cancellationMessage": "Der Termin wurde abgesagt",
@@ -6925,16 +6998,18 @@
         "count": "{frequency}, {count, plural, one {einmal} other {# Mal}}",
         "until": "{frequency}, bis {date}",
         "rule": "Wiederholungsregel {rule}",
-        "weekdays": "Jeden Werktag",
+        "weekdays": "Jeden Wochentag (Mo–Fr)",
         "ordinal": "{order, select, first {ersten} second {zweiten} third {dritten} fourth {vierten} last {letzten} fromEnd {{count}. von hinten gezählten} other {{count}.}}",
         "monthlyDate": "{count, plural, one {Jeden Monat} other {Alle # Monate}} am {day}.",
         "monthlyWeekday": "{count, plural, one {Jeden Monat} other {Alle # Monate}} am {ordinal} {weekday}",
-        "yearlyDate": "Jedes Jahr am {date}",
-        "yearlyWeekday": "Jedes Jahr am {ordinal} {weekday} im {month}"
+        "yearlyDate": "{count, plural, one {Jedes Jahr} other {Alle # Jahre}} am {date}",
+        "yearlyWeekday": "{count, plural, one {Jedes Jahr} other {Alle # Jahre}} am {ordinal} {weekday} im {month}"
       },
-      "moveWhen": "Auf {when} verschieben"
+      "moveWhen": "Auf {when} verschieben",
+      "changeAnswer": "Deine Antwort auf {answer} ändern"
     },
     "draft": {
+      "reopen": "Entwurf öffnen",
       "discarded": "Verworfen",
       "undo": "Rückgängig"
     },
@@ -6973,6 +7048,8 @@
       "anotherAlert": "und noch eine",
       "noAlert": "Keine",
       "alertMinutes": "{minutes, select, 0 {Zum Termin} 60 {1 Stunde vorher} 120 {2 Stunden vorher} 1440 {1 Tag vorher} 2880 {2 Tage vorher} 10080 {1 Woche vorher} other {{minutes} Minuten vorher}}",
+      "guestOrganizer": "Organisation",
+      "guestPending": "Ausstehend",
       "guestAnswer": "{answer, select, accepted {ja} declined {nein} tentative {vielleicht} delegated {delegiert} other {keine Antwort}}",
       "duplicate": "Duplizieren",
       "save": "Speichern",
@@ -7022,7 +7099,7 @@
     },
     "location": {
       "placeholder": "Ein Ort",
-      "unavailable": "Ortsvorschläge sind nicht verfügbar",
+      "unavailable": "Ortsvorschläge sind nicht verfügbar. Dein eingegebener Ort bleibt erhalten.",
       "back": "Zurück",
       "clear": "Ort löschen",
       "own": "Deine Orte",
@@ -7062,6 +7139,8 @@
     "fromMail": "Aus E-Mails",
     "more": "Mehr",
     "letters": "{count, plural, one {Brief} other {Briefe}}",
+    "lettersMore": "{count} weitere",
+    "lettersLess": "Weniger anzeigen",
     "atTime": "{day}, {time}",
     "interval": "{first} – {last}",
     "unreadable": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
@@ -7100,6 +7179,7 @@
     "previousHour": "Vorherige Stunde",
     "nextHour": "Nächste Stunde",
     "clearHour": "Stundenauswahl aufheben",
+    "goToDay": "Zu diesem Tag",
     "openEvent": "Termin öffnen",
     "nextEvent": "Nächster Termin",
     "previousEvent": "Vorheriger Termin",
@@ -7112,10 +7192,10 @@
     },
     "closeAgenda": "Terminliste schließen",
     "toAnswer": "zu beantworten",
-    "said": "{answer, select, accepted {du hast zugesagt} tentative {du hast vielleicht gesagt} other {du hast abgesagt}}",
-    "saidOne": "{answer, select, accepted {du hast für diesen Termin zugesagt} tentative {du hast für diesen Termin vielleicht gesagt} other {du hast für diesen Termin abgesagt}}",
     "stepBefore": "{unit, select, month {Der vorige Monat} year {Das vorige Jahr} week {Die vorige Woche} other {Der vorige Tag}}",
-    "stepAfter": "{unit, select, month {Der nächste Monat} year {Das nächste Jahr} week {Die nächste Woche} other {Der nächste Tag}}"
+    "stepAfter": "{unit, select, month {Der nächste Monat} year {Das nächste Jahr} week {Die nächste Woche} other {Der nächste Tag}}",
+    "said": "{answer, select, accepted {du hast zugesagt} tentative {du hast vielleicht gesagt} other {du hast abgesagt}}",
+    "saidOne": "{answer, select, accepted {du hast für diesen Termin zugesagt} tentative {du hast für diesen Termin vielleicht gesagt} other {du hast für diesen Termin abgesagt}}"
   },
   "event": {
     "movePending": "Termin wird verschoben",
@@ -7157,6 +7237,7 @@
       "unknown": "Die Änderung wurde nicht gespeichert."
     },
     "taken": {
+      "hide": "Termin ausgeblendet",
       "deleteAudience": "Absage an {guests} gesendet",
       "create": "Termin hinzugefügt",
       "update": "Geändert",
@@ -7260,11 +7341,61 @@
     "summaryTime": "Uhrzeit der Tagesübersicht"
   },
   "settingsScreener": {
+    "learning": {
+      "mailbox": "Postfach",
+      "switch": "Aus meinen Entscheidungen lernen",
+      "description": "Der Screener lernt aus deinen Entscheidungen.",
+      "price": "Sobald der Screener für dieses Postfach etwas gelernt hat, kostet ein Vorschlag 1,5 Credits.",
+      "notice": "Der Screener lernt für dieses Postfach",
+      "ok": "OK",
+      "settings": "Einstellungen",
+      "title": "Was der Screener gelernt hat",
+      "empty": "Nach deinen ersten Entscheidungen",
+      "updated": "Aus deinen letzten Entscheidungen aktualisiert",
+      "recent": "Zuletzt gelernt",
+      "forget": "Vergessen",
+      "reset": "Neu anfangen",
+      "cancel": "Abbrechen",
+      "resetSummary": "Dadurch vergisst der Screener, was er für dieses Postfach gelernt hat.",
+      "failed": "Die Lerndaten konnten nicht geladen oder geändert werden.",
+      "moved": "{topic}: {from} → {to}",
+      "chosen": "{topic} → {to}",
+      "topics": {
+        "webinar": "Webinar-Einladung",
+        "receipt": "Kaufbeleg",
+        "order": "Bestellbestätigung",
+        "delivery": "Versandmeldung",
+        "newsletter": "Newsletter",
+        "event": "Veranstaltungseinladung",
+        "promotion": "Sonderangebot",
+        "invoice": "Rechnung",
+        "travel": "Buchung oder Reise",
+        "social": "Soziale Benachrichtigung",
+        "job": "Stellenangebot",
+        "survey": "Umfrage",
+        "security": "Zugangs- oder Sicherheitshinweis",
+        "family": "Schule oder Familie",
+        "banking": "Bankmitteilung",
+        "health": "Gesundheitsmitteilung",
+        "government": "Behördenmitteilung",
+        "subscription": "Abonnement",
+        "community": "Gemeinschaft oder Verein",
+        "personal": "Persönliche Nachricht",
+        "work": "Berufliches Gespräch",
+        "other": "Andere E-Mail"
+      },
+      "places": {
+        "INBOX": "Ohbox",
+        "ohmail/News": "News",
+        "ohmail/Receipts": "Belege",
+        "ohmail/Screened": "Aussortiert",
+        "ohmail/Quarantine": "Spam"
+      }
+    },
     "notApplied": "Nicht übernommen",
     "suggestions": "Vorschläge",
     "details": "Über {title}",
-    "confidence": "Nur Aussortieren und Spam, ab 90 % Sicherheit.",
-    "creditPerSender": "1 Credit pro Absender"
+    "confidence": "Nur Aussortieren und Spam, ab 90 % Sicherheit."
   },
   "settingsAi": {
     "notRead": "Nicht gelesen",
@@ -7516,6 +7647,7 @@
     "cancelled": "Abgesagt",
     "from": "Von {organizer}",
     "overlaps": "Überschneidung",
+    "busyOverlap": "Belegt",
     "show": "Im Kalender zeigen",
     "notOn": "Nicht in deinem Kalender",
     "goes": "{title} kommt in <calendar></calendar>",

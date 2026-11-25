@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AnthropicCallReport, ClassifierInput, DraftInput } from "../../../src/mail.js";
 import { ollamaTransport, openaiTransport, type AiTransport } from "../../../src/ai/transports/index.js";
+import { askScreenerRewrite } from "../../../src/screener-learning-rewrite.js";
 import { aiProviderEnv, portsOf, transportFor } from "../../../src/ai/transports/host.js";
 import { openAiKey } from "../../../../../test/support/fixture-credentials.js";
 
@@ -29,6 +30,7 @@ describe("portsOf", () => {
       classify: async () => { asked.push("classify"); return VERDICT; },
       screen: async () => { asked.push("screen"); return VERDICT; },
       draft: async () => { asked.push("draft"); return DRAFT; },
+      rewriteScreener: async () => { asked.push("rewrite"); return { text: "A note." }; },
       probe: async () => ({ ok: true, reason: null, detail: null, models: [] }),
     };
     const { classifier, drafter } = portsOf(t);
@@ -36,7 +38,10 @@ describe("portsOf", () => {
     await classifier.classify(input());
     await classifier.screen(input());
     await drafter.draft(draftInput());
-    expect(asked).toEqual(["classify", "screen", "draft"]);
+    await expect(askScreenerRewrite(
+      classifier.rewriteScreener, { language: "en", previous: "", choices: [] }, async () => {},
+    )).resolves.toBe("A note.");
+    expect(asked).toEqual(["classify", "screen", "draft", "rewrite"]);
   });
 });
 

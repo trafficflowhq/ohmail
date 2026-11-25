@@ -7,13 +7,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import {
-  type CalendarEventRecord,
-  type CalendarPort,
-  type CalendarRecord,
-  type ZoneSource,
-} from "@ohmail/app-logic/calendar";
-import { Button, Icon } from "@ohmail/ui/base";
+import { type CalendarEventRecord, type CalendarPort, type ZoneSource } from "@ohmail/app-logic/calendar";
 import {
   AnswerSwitch,
   EventCard,
@@ -31,17 +25,24 @@ import { useDraftRestore } from "./draft-undo.js";
 import type { EventDraft } from "./event-draft.js";
 import { EditEvent } from "./EditEvent.js";
 import {
-  eventDetails,
   eventTags,
   eventTimeRestriction,
   renderCardFoot,
   useOpenEventPlacement,
 } from "./event-card-details.js";
-import { editableEvent, eventOwned, eventMoveOptions, removableEvent } from "./editable-event.js";
+import {
+  editableEvent,
+  eventOwned,
+  eventMoveOptions,
+  removableEvent,
+  type EditableEvent,
+} from "./editable-event.js";
 import { useEventCall } from "./event-call.js";
 import type { CalendarEventFace } from "./faces.js";
 import type { EventActions } from "./use-event-actions.js";
 import { useMaps } from "./use-place-suggestions.js";
+import { useEventCardMenu } from "./event-card-menu.js";
+import { useEventCardRows } from "./event-card-rows.js";
 import { useEventCardActions } from "./use-event-card-actions.js";
 import { useEventLetters } from "./use-event-letters.js";
 import { useReadCardActions } from "./read-card-actions.js";
@@ -49,55 +50,6 @@ import { overlapTags } from "./overlap-tags.js";
 import { proposalDetails } from "./proposal-card.js";
 import { calendarInterval } from "./event-words.js";
 import { PendingInvitationControls, type PendingInvitationDetails } from "../reader/InvitationLetterCard.js";
-function useEventCardRows(
-  event: CalendarEventFace,
-  host: HostContract,
-  t: Text,
-  letters: ReturnType<typeof useEventLetters>["links"],
-): EventCardRow[] {
-  const locale = useLocale();
-  const own = useCalendarOwnAddresses();
-  const rows = rowsOf(event, host, t, locale, own);
-  if (letters.length) {
-    rows.push({
-      label: t("letters", { count: letters.length }),
-      children: letters.map((letter) => (
-        <Button key={letter.id} kind="quiet" size="s" onPress={letter.open}>
-          {letter.subject || t("actions.openLetter")}
-        </Button>
-      )),
-    });
-  }
-  return rows;
-}
-
-function rowsOf(
-  event: CalendarEventFace,
-  host: HostContract,
-  t: Text,
-  locale: string,
-  own: readonly string[] | null,
-): EventCardRow[] {
-  const port = host.wires.calendar;
-  const stored = port === NONE ? undefined : port.events().find(({ record }) => record.id === event.recordId);
-  const calendar =
-    stored &&
-    host.engine.store
-      .entries<CalendarRecord | null>("calendar")
-      .find(({ entity }) => entity?.id === stored.record.calendarId)?.entity;
-  const rows: EventCardRow[] = [];
-  if (calendar) {
-    rows.push({
-      label: t("create.calendar"),
-      tone: event.tone,
-      text: calendar.name,
-      children: event.viewOnly ? <Icon name="lock" size={16} className="oh-ecard-lock" /> : null,
-    });
-  }
-  if (calendar?.access === "busy" || !stored) return rows;
-  rows.push(...eventDetails(stored.record, own, t, locale));
-  return rows;
-}
 interface OpenEventProps {
   readonly event: CalendarEventFace;
   readonly events?: readonly CalendarEventFace[];
@@ -133,35 +85,21 @@ function OpenEventCard({
   const port = host.wires.calendar;
   const t = useText("calendar");
   const { known, allowed, current } = useStoredEdit(event);
-  const { removal, removalQuestion, ...readActions } = useReadCardActions(
-    port,
-    event,
-    current,
-    events !== undefined,
-  );
-  const invited = !!pending || invitationOf(port, event, known);
-  const call = useEventCall(event);
-  const { letters, links } = useEventLetters(event);
-  const rows = useEventCardRows(event, host, t, links);
-  const proposal = proposalDetails(actions, event, letters, today, current !== null, t);
-  if (proposal.row) rows.push(proposal.row);
-  if (call) rows.push({ label: call.label, call });
-  if (pending) rows.push(...pending.rows);
-  const restriction = !current && !pending && eventTimeRestriction(event, invited, t);
-  if (restriction) rows.push(restriction);
-  const maps = useMaps(event.second ?? null);
+  const { removal, removalQuestion, readActions, invited, call, rows, proposal, maps, otherActions } =
+    useReadEventContent({ event, events, today, actions, reply, pending, host, current, known, t });
   const { editing, begin, end, beforeRestore } = useEventEditor(event, port, allowed, editNext);
   const locale = useLocale();
   const zone = useTimeZone();
   const { card, seat, bridge, finish } = useOpenEventPlacement(
     event,
     plan.device === "phone",
-    invited,
+    !!pending,
     editing?.revision,
     end,
   );
   const when = calendarInterval(event, zone, zones, today, locale, t);
   const edit = current ? { label: t("edit.action"), onPress: begin } : null;
+  const removable = port !== NONE ? removableEvent(host, port, event, known, zones) : null;
   const { blocked, onKeyDown, panel, toolbar, menu, items } = useEventCardActions({
     event,
     actions,
@@ -170,8 +108,11 @@ function OpenEventCard({
     invited,
     ...readActions,
     join: call?.join,
-    removable: port !== NONE ? removableEvent(host, port, event, known, zones) : null,
+    removable,
     ...eventMoveOptions(host, current),
+  });
+  const readMenu = useEventCardMenu({
+    ...{ event, port, actions, zones, reply, edit, removal, removable, blocked, otherActions },
   });
   if (editing && editing.port === port && editing.engine === host.engine && current) {
     return (
@@ -184,7 +125,7 @@ function OpenEventCard({
           beforeRestore={beforeRestore}
           port={editing.port}
           actionItems={items}
-          provider={current.connection?.provider}
+          connection={current.connection}
           original={editing.record}
           exception={editing.exception}
           allowed={allowed}
@@ -218,8 +159,9 @@ function OpenEventCard({
           proposal.answers ??
           renderEventAnswers(port, event, t, removal, reply, proposal.propose)
         }
-        {...(edit && !blocked ? { edit } : {})}
-        foot={renderCardFoot(edit, panel, blocked)}
+        headActions={readMenu.head}
+        {...(edit && !blocked && !reply ? { edit } : {})}
+        foot={reply ? null : renderCardFoot(edit, panel, blocked)}
         {...readCardDetails(event, { when, rows, maps, invited, canEdit: current !== null }, t)}
         tags={[...proposal.tags, ...eventTags(event, t), ...overlapTags(event, events ?? [], zone, zones, t)]}
         close={{ label: t("closeEvent"), onPress: () => commands.event(null) }}
@@ -232,8 +174,51 @@ function OpenEventCard({
       {bridge}
       {menu}
       {removalQuestion}
+      {readMenu.overlay}
     </>
   );
+}
+
+function useReadEventContent({
+  event,
+  events,
+  today,
+  actions,
+  reply,
+  pending,
+  host,
+  current,
+  known,
+  t,
+}: Omit<OpenEventProps, "zones"> & {
+  pending?: PendingInvitationDetails;
+  host: HostContract;
+  current: EditableEvent | null;
+  known: readonly string[] | null;
+  t: Text;
+}) {
+  const port = host.wires.calendar;
+  const { removal, removalQuestion, ...readActions } = useReadCardActions(
+    port,
+    event,
+    current,
+    events !== undefined,
+    reply,
+  );
+  const invited = !!pending || invitationOf(port, event, known);
+  const call = useEventCall(event);
+  const { letters, links } = useEventLetters(event);
+  const rows = useEventCardRows(event, host, t, links);
+  const proposal = proposalDetails(actions, event, letters, today, current !== null, t);
+  if (proposal.row) rows.push(proposal.row);
+  if (call) rows.push({ label: call.label, call });
+  if (pending) rows.push(...pending.rows);
+  const restriction = !current && !pending && eventTimeRestriction(event, invited, t);
+  if (restriction) rows.push(restriction);
+  const maps = useMaps(event.second ?? null);
+  const { duplicate, hide, mail, retry } = readActions;
+  const otherActions = !!(call || links.length || duplicate || hide || mail || retry);
+  return { removal, removalQuestion, readActions, invited, call, rows, proposal, maps, otherActions };
 }
 
 function useStoredEdit(event: CalendarEventFace) {

@@ -13,10 +13,9 @@
     --oh-messagehead-touch: 44px;
     --oh-messagehead-row-gap: 2px;
     --oh-messagehead-beside: 84px;
-    --oh-messagehead-beside-note: 148px;
+    --oh-messagehead-beside-shield: 40px;
     --oh-messagehead-pull: calc(var(--s2) * -1);
     --oh-messagehead-reach-stamp: -12px -4px;
-    --oh-messagehead-layer-note: 2;
     --oh-messagehead-layer: 1;
 
     display: grid;
@@ -196,6 +195,11 @@
     flex-shrink: 0;
   }
 
+  .oh-messagehead-person[data-own] {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .oh-messagehead-person {
     display: inline;
     border-radius: var(--r-sq);
@@ -341,40 +345,36 @@
     display: none;
   }
 
-  /* Under a finger a head that carries a note gives it the second line's end, and the time a column of its own. */
-  :root[data-touch="1"] .oh-messagehead[data-noted] {
+  /* The phone's narrow reader keeps the sender and time clear of the shield. */
+  :root[data-device="phone"] .oh-messagehead[data-noted] {
     grid-template-columns: var(--av) minmax(0, 1fr) auto auto;
   }
 
-  :root[data-touch="1"] .oh-messagehead[data-noted] > .oh-messagehead-tools {
+  :root[data-device="phone"] .oh-messagehead[data-noted] .oh-messagehead-tools {
     display: contents;
   }
 
-  :root[data-touch="1"] .oh-messagehead[data-noted] .oh-messagehead-tools > .oh-button {
+  :root[data-device="phone"] .oh-messagehead[data-noted] .oh-messagehead-tools > .oh-button {
     grid-column: 3;
     grid-row: 1;
-    margin-right: var(--oh-messagehead-pull);
   }
 
-  :root[data-touch="1"] .oh-messagehead[data-noted] .oh-messagehead-stamp {
+  :root[data-device="phone"] .oh-messagehead[data-noted] .oh-messagehead-stamp {
     grid-column: 4;
     grid-row: 1;
   }
 
-  :root[data-touch="1"] .oh-messagehead[data-noted] .oh-messagehead-noted > .oh-blocked {
+  :root[data-device="phone"] .oh-messagehead-noted > .oh-blocked {
     grid-column: 2 / -1;
     grid-row: 2;
-    position: relative;
-    z-index: var(--oh-messagehead-layer-note);
     justify-self: end;
-    align-self: center;
   }
 
-  :root[data-touch="1"] .oh-messagehead[data-noted] > .oh-messagehead-to {
-    max-width: calc(100% - var(--oh-messagehead-beside-note));
+  :root[data-device="phone"] .oh-messagehead[data-noted] > .oh-messagehead-to {
+    max-width: calc(100% - var(--oh-messagehead-beside-shield));
   }
 
-  /* The unfolded phone, upright: the time ends the recipients' line, and a note takes a line of its own. */
+  /* The unfolded phone, upright: the time ends the recipients’ line. */
   :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead-tools {
     display: contents;
   }
@@ -386,13 +386,20 @@
     margin-right: var(--oh-messagehead-pull);
   }
 
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead[data-noted] {
+    grid-template-columns: var(--av) minmax(0, 1fr) auto auto;
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead-noted > .oh-blocked {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
   :root[data-device="fold"]:not([data-pose="land"])
     .oh-messagehead[data-noted]
-    .oh-messagehead-noted
-    > .oh-blocked {
-    grid-row: 3;
-    justify-self: start;
-    margin-top: var(--s1);
+    .oh-messagehead-tools
+    > .oh-button {
+    grid-column: 4;
   }
 
   :root[data-device="fold"]:not([data-pose="land"]) :where(.oh-control).oh-messagehead-stamp::after {
@@ -597,18 +604,40 @@
   }
 
   [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead > .oh-messagehead-to {
-    max-width: calc(100% - var(--oh-messagehead-beside-note));
+    max-width: calc(100% - var(--oh-messagehead-beside));
+  }
+
+  [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead[data-noted] {
+    grid-template-columns: var(--av) minmax(0, 1fr) auto;
+  }
+
+  /* A mailbox address needs the whole recipients line. The shield and date share the next line. */
+  [data-stream-phone-list]
+    [data-stream-window]:not([data-receipts])
+    .oh-messagehead:is([data-noted], :has(.oh-messagehead-person[data-own]))
+    > .oh-messagehead-to {
+    max-width: 100%;
   }
 
   [data-stream-phone-list]
     [data-stream-window]:not([data-receipts])
-    .oh-messagehead[data-noted]
-    .oh-messagehead-noted
-    > .oh-blocked {
-    grid-column: 2 / -1;
+    .oh-messagehead:is([data-noted], :has(.oh-messagehead-person[data-own]))
+    .oh-messagehead-stamp {
+    grid-row: 3;
+    align-self: center;
+  }
+
+  [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead-noted > .oh-blocked {
+    grid-column: 2;
     grid-row: 3;
     justify-self: start;
-    margin-top: var(--s1);
+  }
+
+  [data-stream-phone-list]
+    [data-stream-window]:not([data-receipts])
+    .oh-messagehead:is([data-noted], :has(.oh-messagehead-person[data-own]))
+    > .oh-messagehead-lines {
+    grid-row: auto;
   }
 }
 

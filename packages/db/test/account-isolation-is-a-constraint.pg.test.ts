@@ -186,6 +186,8 @@ const CASES: readonly Case[] = [
   { id: "pairing_tokens~users", table: "pairing_tokens", foreign: "userId",
     row: (p, o) => ({ account_id: o.accountId, created_by_user_id: p("userId"), grant: "invite",
       token_hash: hex64(), expires_at: future() }) },
+  { id: "screener_learning~mailboxes", table: "screener_learning", foreign: "mailboxId",
+    row: (p, o) => ({ account_id: o.accountId, mailbox_id: p("mailboxId"), data: JSON.stringify({}) }) },
   { id: "junk_rescues~mailboxes", table: "junk_rescues", foreign: "mailboxId",
     row: (p, o, n) => ({ account_id: o.accountId, mailbox_id: p("mailboxId"), folder: "Junk",
       uidvalidity: 1, uid: n }) },
@@ -318,8 +320,9 @@ describe.skipIf(!HAVE_PG)("account isolation is a database constraint (real Post
     // mail 0201's nine, less `away_responder_sent~messages` (mail 0202 dropped the table), plus
     // the invitation's key (mail 0204), plus the seven sign-in tables (cloud 0100). A case removed
     // silently is a pair nobody measures, so the number is asserted rather than counted by eye.
-    expect(CASES.length).toBe(57);
-    expect(new Set(CASES.map((c) => c.id)).size).toBe(57);
+    // The learning row names its mailbox and account through the same composite key.
+    expect(CASES.length).toBe(58);
+    expect(new Set(CASES.map((c) => c.id)).size).toBe(58);
   });
 
   it("REFUSES a challenge or a login token naming a user who is not there, or half of the pair", async () => {

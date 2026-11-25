@@ -213,6 +213,14 @@ export function openaiTransport(opts: OpenAiTransportOptions): AiTransport {
       return coerceScreeningResult(raw);
     },
 
+    async rewriteScreener(request, options) {
+      return call({
+        model: opts.classifyModel, max_tokens: request.maxTokens, temperature: 0,
+        messages: turns(request.system, request.input),
+        response_format: responseFormat("screening_note", request.schema),
+      }, "screener", options);
+    },
+
     async draft(input: DraftInput, options?: AiCallOptions): Promise<DraftResult> {
       // Asserts the redaction allow-list and THROWS before a payload exists. Also shared.
       const userPayload = draftUserPayload(input);

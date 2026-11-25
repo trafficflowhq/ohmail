@@ -13,6 +13,7 @@ import {
 import { accountWritesHere } from "./organizer-role.js";
 import { clampPressInstant, placementDecidedAfter, pressIsAged } from "./press-floor.js";
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
+import { reviseScreenerDecision, reviseScreenerMessage } from "./screener-learning-choice.js";
 import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
 import { convergeRuleKey, endOwedWalk, findRulesByKey, owesWholeWalk, pendingRefileFrom, type FoundRule, type RuleKey } from "./rule-key.js";
@@ -184,6 +185,7 @@ export function validateMovePayload(payload: unknown): ValidatedMovePayload | nu
 export type MoveRefusal = "no_such_message" | "no_trash_folder" | "stale_press";
 
 interface ApplyMoveBase {
+  learnFromPress?: true;
   accountId: string;
   /** The mailbox the record named — already checked against the folder it was read FROM. */
   mailboxId: string;
@@ -288,7 +290,9 @@ export async function applyMessageMove(
   /* WHERE IT IS NOW — the worker's truth, or the message's own locator when no `folder_state` row
      exists yet. `MessageService.observedFolder`'s exact fallback, deliberately: two answers to
      "where is this message" would show up as a `change_log` `from` that disagrees with the row. */
-  const [fs] = await tx.select({ observedFolder: folderState.observedFolder }).from(folderState)
+  const [fs] = await tx.select({
+    observedFolder: folderState.observedFolder, desiredFolder: folderState.desiredFolder,
+  }).from(folderState)
     .where(eq(folderState.messageId, msg.id)).limit(1);
   const loc = (msg.nativeLocator as { folder?: string } | null) ?? null;
   const from = fs?.observedFolder ?? loc?.folder ?? "INBOX";
@@ -321,6 +325,11 @@ export async function applyMessageMove(
     meta: { from, to },
   });
 
+  const previous = fs?.desiredFolder ?? from;
+  if (input.learnFromPress && !toTrash && previous !== to) {
+    await reviseScreenerMessage(tx, { accountId, mailboxId }, msg.id, now,
+      to === "ohmail/Screener" ? undefined : { previous, chosen: to, actionId: String(lastSeq) });
+  }
   return { applied: true, messageId: msg.id, from, to, lastSeq };
 }
 
@@ -974,6 +983,7 @@ export function validateRulePayload(kind: string, payload: unknown): ValidatedRu
 }
 
 export interface ApplyRuleRequestInput {
+  learnFromPress?: true;
   accountId: string;
   payload: ValidatedRuleRequest;
   now: Date;
@@ -1176,6 +1186,7 @@ export async function applyRuleRequest(
     // A person's removal, travelled here: recorded at the press's instant, so the settings copy says so.
     await recordRuleRemovals(tx, accountId, [key], now);
     await endsLearning();
+    if (input.learnFromPress) for (const id of ids) await reviseScreenerDecision(tx, accountId, id, now);
     return { applied: true, op: "delete", ruleId: found.id, lastSeq: seqs[seqs.length - 1]! };
   }
 
@@ -1247,6 +1258,12 @@ export async function applyRuleRequest(
     .where(and(eq(rulesTbl.id, found.id), eq(rulesTbl.accountId, accountId)));
   const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [found.id], "update"))[0]!;
   if (paused) await endsLearning();
+  if (input.learnFromPress) {
+    if (paused || payload.keepProvenance === true) await reviseScreenerDecision(tx, accountId, found.id, now);
+    else if (retargeted && set.destination) await reviseScreenerDecision(tx, accountId, found.id, now, {
+      previous: found.destination, chosen: set.destination, actionId: String(lastSeq),
+    });
+  }
   return { applied: true, op: "update", ruleId: found.id, lastSeq };
 }
 

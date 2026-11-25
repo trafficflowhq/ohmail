@@ -117,14 +117,15 @@ const BASE: Sections = {};
 /** The responder's control, as the shell injects it: one node, opaque to this view. */
 const AWAY = h("p", { className: "away-probe" }, "Away responder controls");
 
-const buttonNav = () => within(within(host).getByRole("navigation", {
+// The Settings menu is a lazy frame view and may still be loading after the first render.
+const buttonNav = async () => within(await within(host).findByRole("navigation", {
   name: (name) => [messages.settings.navAria, de.settings.navAria].includes(name),
 }));
-const navLabels = () => buttonNav().getAllByRole("button")
+const navLabels = async () => (await buttonNav()).getAllByRole("button")
   .map((b) => b.getAttribute("aria-label") ?? b.textContent?.trim());
 
 const choose = async (label: string): Promise<void> => {
-  const entry = buttonNav().getByRole("button", { name: label });
+  const entry = (await buttonNav()).getByRole("button", { name: label });
   if (!entry) throw new Error(`no settings nav entry labelled ${label}`);
   await act(async () => { entry.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 };
@@ -138,7 +139,7 @@ afterEach(async () => {
 describe("Settings → Away responder, as its own section", () => {
   it("is a nav entry of its own, and choosing it renders the injected control", async () => {
     await mount({ ...BASE, awaySection: AWAY });
-    expect(navLabels()).toContain("Away responder");
+    expect(await navLabels()).toContain("Away responder");
     // Not the pane on screen until it is chosen — General still is.
     expect(host.querySelector(".away-probe")).toBeNull();
     await choose("Away responder");
@@ -158,9 +159,9 @@ describe("Settings → Away responder, as its own section", () => {
 
   it("no longer summons the Screener pane: the responder alone is ONE entry, not two", async () => {
     await mount({ ...BASE, awaySection: AWAY });
-    expect(navLabels()).toContain("Away responder");
+    expect(await navLabels()).toContain("Away responder");
     // The Screener pane's own four nodes are absent, so an entry here would open a blank pane.
-    expect(navLabels()).not.toContain("Screener");
+    expect(await navLabels()).not.toContain("Screener");
   });
 
   it("sits beside the Screener, before Rules — it is about the mail a mailbox brings", async () => {
@@ -170,21 +171,21 @@ describe("Settings → Away responder, as its own section", () => {
       screeningSection: h("p", null, "posture"),
       rules: { items: [], onRevoke: async () => "ok" as never, onRetarget: async () => "ok" as never, pastMail: () => null },
     });
-    const labels = navLabels();
+    const labels = await navLabels();
     expect(labels.indexOf("Away responder")).toBeGreaterThan(labels.indexOf("Screener"));
     expect(labels.indexOf("Away responder")).toBeLessThan(labels.indexOf("Rules"));
   });
 
   it("no node ⇒ no entry, and the words are nowhere — a standalone install draws nothing", async () => {
     await mount({ ...BASE, screeningSection: h("p", null, "posture") });
-    expect(navLabels()).not.toContain("Away responder");
+    expect(await navLabels()).not.toContain("Away responder");
     expect(host.querySelector(".away-probe")).toBeNull();
     expect(host.textContent).not.toMatch(/Away responder/);
   });
 
   it("carries a German label — the nav is the one surface a shim could not reach", async () => {
     await mount({ ...BASE, awaySection: AWAY }, "de");
-    expect(navLabels()).toContain("Abwesenheitsantwort");
+    expect(await navLabels()).toContain("Abwesenheitsantwort");
   });
 });
 

@@ -1,5 +1,6 @@
 {
   "screener": {
+    "learnedWebinar": "Webinar-Einladungen sortierst du meistens aus",
     "pendingHolderUnknown": "die Stelle, die dieses Postfach organisiert",
     "autoDetected": "Automatisch erkannt",
     "handedBackWhy": "Das Postfach wird nicht organisiert. Neue Absender landen direkt in der Ohbox.",
@@ -190,7 +191,7 @@
       "aria": "Für wie viele wartende Absender vorgeschlagen wird",
       "autoTitle": "Für neue Absender automatisch vorschlagen",
       "autoWhat": "Solange das an ist, holt ohmail für neue Absender einen Vorschlag, sobald ihre Mails ankommen, und zeigt, was es denkt und warum. Höchstens {count, plural, one {ein Absender} other {# Absender}} auf einmal. Der Vorschlag ist in Sekunden auf jedem Gerät, auf dem du angemeldet bist. Absender, die schon warten, kommen in Paketen derselben Größe dran, wenn du den Screener öffnest.",
-      "autoCost": "Jeder Absender kostet einen Punkt deines KI-Budgets. Ist das Budget aufgebraucht, hört es auf, und sonst ändert sich nichts.",
+      "autoCost": "Vorschläge belasten dein KI-Budget. Ist es aufgebraucht, pausieren die Vorschläge.",
       "autoQuoteDisclosure": "Für die Preisabfrage sendet ohmail die E-Mail-Adressen der wartenden Absender in diesem Paket an deinen Server. Dabei wird kein KI-Modell gefragt und kein Guthaben verbraucht.",
       "autoQuoteApprove": "Preis abfragen",
       "autoDecides": "Entschieden wird nichts. Jeder Absender wartet weiter auf dich, und keine Mail wird verschoben, bis du es sagst.",

@@ -21,6 +21,70 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.5] — 2026-11-25
+
+### Day shows the Agenda when there is room
+
+The calendar opens the Agenda beside Day in a wide window. Closing it remembers your choice on this device. In a smaller window, opening the Agenda leaves more space for the calendar.
+
+### Calendar drags cross days
+
+Drag across days to create or resize a timed event in Week, or drag across dates in Month to create an all-day event. A band’s edges change its first or last date.
+
+### Open mail actions with right-click or the menu key
+
+Right-click or press the menu key on mail rows, message headers, sidebar entries and attachments to open their available actions.
+
+### Mailboxes wait for a new sign-in after a day of rejections
+
+On ohmail Cloud and self-hosted servers, the worker pauses automatic retries after a mailbox has rejected sign-in for 24 hours. Settings → Mailboxes shows the sign-in action. Signing in again or editing the mailbox restarts attempts right away. Timeouts and server outages keep retrying with longer waits, up to three hours.
+
+### Newsletter artwork loads with tracker blocking on
+
+When remote pictures are allowed, the image proxy displays newsletter artwork from the email provider's shared image library. Tracking pixels remain blocked.
+
+### Calendar notices follow each account’s check schedule
+
+Calendar shows an overdue notice only after the account’s scheduled check is more than 30 minutes late. The notice opens that account’s settings. Successful checks refresh the last-checked time even when no events changed.
+
+### Quieter connection notices
+
+Brief mail-checking interruptions stay quiet. Persistent connection problems and sign-in refusals open the affected account in Settings. Pull new mail shows its result on the control.
+
+### More room for the sender in message headers
+
+A compact shield explains blocked pictures, trackers and stylesheets on hover or press. The recipient line shows your mailbox address and leaves more room for the sender.
+
+### The reader heading becomes compact as you scroll
+
+On desktop and web, the subject stays in view and smoothly takes up less space as you scroll through a letter or conversation. Long participant names fade at the edge. With reduced motion, the heading uses a short crossfade.
+
+### The reader keeps your place with larger text
+
+On the web, a picture loading in a message keeps the line you were reading in place when you use a larger text size.
+
+### Choose how a calendar event repeats
+
+The event editor on web, desktop and phone offers daily, weekday, weekly, fortnightly, monthly and yearly repeats. Custom rules can use several weekdays and end on a date or after a number of occurrences.
+
+Invitee suggestions and chips show full addresses. Guests’ replies appear after their invitation has been sent.
+
+### The Screener learns from your choices
+
+The Screener uses your recent choices to improve future suggestions for each mailbox. See what it learned in Settings, forget a lesson or start over. On ohmail Cloud, suggestions use 1.5 credits once the Screener has learned something for that mailbox.
+
+### Fixed
+
+- Designed mail sits centered with even margins and keeps its paper through the edges of the reader. News previews follow dark mode. Links and column resizing keep the letter steady, and pictures on the first screen start sooner.
+
+### Saved drafts keep their formatting when sent
+
+Sending an older draft keeps its saved formatting. New drafts save the paragraph and list spacing that recipients will see. The phone can reopen saved drafts that use its supported formatting.
+
+### Compact Screener lists keep the keyboard cursor
+
+In compact Screener lists, the keyboard cursor keeps its selected row and tab stop.
+
 ## [2.0.4] — 2026-11-24
 
 ### Check both iCloud sign-in details when connecting a calendar
@@ -19170,7 +19234,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.4...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.5...HEAD
+[2.0.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.5
 [2.0.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.4
 [2.0.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.3
 [2.0.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.2

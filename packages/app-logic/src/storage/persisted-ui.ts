@@ -155,6 +155,7 @@ export function usePersistedChoice<T extends string>(
  * this app stores is greppable from a single prefix.
  */
 export const UI_KEYS = {
+  dayAgendaClosed: "ohmail.ui.calendar.dayAgendaClosed",
   tagsOpen: "ohmail.ui.rail.tagsOpen",
   /** The browser remembers dismissing the desktop download offer across sign-ins. */
   desktopCtaDismissed: "ohmail.desktopCtaDismissed",

@@ -55,7 +55,6 @@
     background: var(--oh-ecard-ground);
   }
   .oh-ecard[data-neutral-head] {
-    --oh-ecard-edge: var(--ink);
     --oh-ecard-ground: var(--oh-cal-open-plain);
   }
   .oh-ecard[data-editing] > .oh-ecard-head {
@@ -74,6 +73,16 @@
     color: var(--ink2);
   }
   /* Edit, and where there is nothing to edit the same place says why. */
+  .oh-ecard-head-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--s1);
+    padding-inline-end: var(--oh-ecard-beside);
+    margin-block-end: var(--s1);
+  }
+  .oh-ecard-head:has(.oh-ecard-head-actions) .oh-ecard-why {
+    position: static;
+  }
   .oh-ecard .oh-ecard-edit {
     --oh-button-pad: 0 12px 0 10px;
   }
@@ -210,7 +219,7 @@
     --oh-ecard-term: 72px;
     display: grid;
     grid-template-columns: var(--oh-ecard-term) minmax(0, 1fr);
-    align-items: center;
+    align-items: start;
     gap: var(--oh-ecard-rows-gap);
     margin: var(--oh-ecard-rows-out);
   }
@@ -230,6 +239,8 @@
     display: contents;
   }
   .oh-ecard-term {
+    line-height: 22px;
+    overflow-wrap: anywhere;
     color: var(--ink2);
     font-size: var(--t-meta);
   }
@@ -242,6 +253,10 @@
     min-height: 22px;
     margin: 0;
     overflow-wrap: anywhere;
+  }
+  .oh-ecard-value > * {
+    min-inline-size: 0;
+    max-inline-size: 100%;
   }
   .oh-ecard-value[data-stacked] {
     flex-direction: column;
@@ -322,6 +337,7 @@
     font-size: var(--t-meta);
     line-height: 1.45;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   /* Set into a list, it has no frame: the row above it is its head, so the title, the time and the close are that row's. */

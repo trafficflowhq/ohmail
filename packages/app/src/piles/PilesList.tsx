@@ -1,3 +1,4 @@
+import { MailRow } from "../place-list/MailRowMenu.js";
 /**
  * THE PILES' LIST: one view, Triage, three piles. The switch with its counts heads each (the rail keeps all three); Answer
  * Later carries the Reply Run (`f`); a Resurface row says when it is back and carries Done. An empty pile says so
@@ -8,7 +9,7 @@ import { useListWindow } from "@ohmail/app-logic/lists";
 import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { usePilesModel, type PileId, type PileRow, type PilesModel } from "@ohmail/app-logic/piles";
 import { Button, Empty, Seg } from "@ohmail/ui/base";
-import { ListHead, Row, Rows } from "@ohmail/ui/mail";
+import { ListHead, Rows } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
 import { useFrame } from "../frame/index.js";
 import { ListColumn, ListMenu } from "../place-list/index.js";
@@ -47,7 +48,7 @@ function PileItem({
   const open = m !== null && model.cursor === m.id;
   const pick = selection.rowProps(row.key);
   return (
-    <Row
+    <MailRow
       {...pick}
       {...(m ? contact.rowProps(m.from, m.id) : {})}
       who={name}
@@ -61,6 +62,12 @@ function PileItem({
       own={
         model.pile === "resurface" && m
           ? { label: tl("row.done"), icon: "check", onPress: () => model.done(row) }
+          : undefined
+      }
+      actions={m ? { message: m, verbs: model.verbs, screen: contact.screen(m) } : undefined}
+      menuItems={
+        m && model.pile === "resurface"
+          ? () => [{ label: tl("row.done"), icon: "check", onPress: () => model.done(row) }]
           : undefined
       }
       onOpen={m ? () => model.open(row) : undefined}

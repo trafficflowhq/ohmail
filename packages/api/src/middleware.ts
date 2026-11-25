@@ -611,7 +611,8 @@ export const withSpendGate: Middleware = (next, route) => async (req, deps, para
     const read = accessRouteClassOf(route) === "read";
     const verdict = await accessFor(
       deps, deps.session.accountId, read ? { staleAllow: true } : undefined);
-    if (verdict && !verdict.ok) {
+    if (verdict && !verdict.ok && !(verdict.reason === "payment_required"
+      && route.options?.allowLapsedAccess && await route.options.allowLapsedAccess(req))) {
       // KEEP status 402 and code `subscription_required`: three shipped clients key their lock
       // on this code, and renaming it silently disables every one of them. `lifecycle` is the
       // program's dated block (what happened, the deadline, the erasure forecast); `exportPath`

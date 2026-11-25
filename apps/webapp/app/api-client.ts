@@ -2740,6 +2740,12 @@ export const screeningSettings = {
   get: (expectedOwner?: string) => api<ScreeningPreferenceWire>("/account/screening", { expectedOwner }),
   set: (body: import("@ohmail/app/host").Payloads.ScreeningChange, expectedOwner?: string) =>
     api<ScreeningPreferenceWire>("/account/screening", { method: "PATCH", body, expectedOwner }),
+  readLearning: (mailboxId: string, expectedOwner: string) =>
+    api<import("@ohmail/wire").ScreenerLearningView>(`/account/screening?learningMailbox=${encodeURIComponent(mailboxId)}`, { expectedOwner }),
+  changeLearning: (mailboxId: string, learningEdit: import("@ohmail/wire").ScreenerLearningEdit, expectedOwner: string) =>
+    api<import("@ohmail/wire").ScreenerLearningView>("/account/screening", {
+      method: "PATCH", body: { learningMailbox: mailboxId, learningEdit }, expectedOwner,
+    }),
 };
 
 /** One message the Screener filed on its own, still where it put it (`GET /screener/auto-filed`). */

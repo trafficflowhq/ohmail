@@ -1,3 +1,4 @@
+import { gardenGuests, guestOrganizer } from "../calendar/guest-fixture.js";
 /**
  * THE WORLD OF THE CALENDAR'S REST, for its states page: Mila's three calendar accounts, her November with the
  * invitations it holds, the events found in her letters, and the settings, as the store's own records. All invented,
@@ -97,6 +98,7 @@ interface Plain {
   readonly day: string;
   readonly from: string;
   readonly to: string;
+  readonly endDay?: string;
   readonly place?: string;
   readonly by?: { readonly address: string; readonly name: string };
   readonly answer?: CalendarEventRecord["myAnswer"];
@@ -126,7 +128,7 @@ function event(e: Plain): CalendarEventRecord {
     place: e.place ?? null,
     callLink: null,
     start: e.allDay ? { kind: "date", value: e.day } : zoned(e.day, e.from),
-    end: e.allDay ? { kind: "date", value: nextDay(e.day) } : zoned(e.day, e.to),
+    end: e.allDay ? { kind: "date", value: nextDay(e.day) } : zoned(e.endDay ?? e.day, e.to),
     duration: null,
     startsAt: UPDATED,
     endsAt: UPDATED,
@@ -343,6 +345,18 @@ function addedOf(state: string | null): readonly Plain[] {
     to: "20:30",
   };
   if (state === "added") return [winternacht];
+  if (state === "range")
+    return [
+      {
+        id: "ev-night-watch",
+        cal: "mila",
+        title: "Night watch",
+        day: "20261112",
+        endDay: "20261113",
+        from: "21:15",
+        to: "08:45",
+      },
+    ];
   if (state !== "all") return [];
   return [
     winternacht,
@@ -404,6 +418,23 @@ export function worldOf(at: WorldState): World {
     connections.push(connection(id, "caldav", `Workshop calendar ${i}`, null));
   }
   const events = [...OWN, ...invitations(at.state), ...addedOf(at.state)].map(event);
+  if (at.state === "long-title") {
+    events.push(
+      event({
+        ...OWN[0]!,
+        id: "garden-orientation",
+        title: "Autumn field work planning and volunteer orientation for the north garden",
+      }),
+    );
+  }
+  if (at.state === "garden-guests") {
+    events.push({
+      ...event({ ...OWN[0]!, id: "garden-workshop", title: "Garden workshop" }),
+      organizer: guestOrganizer,
+      ownOrganizer: true,
+      invitees: [...gardenGuests, { ...gardenGuests[0]!, ...guestOrganizer }],
+    });
+  }
   const kinds: Record<string, readonly { readonly id: string }[]> = {
     calendar_connection: connections,
     calendar: readingCalendars(reading),
@@ -413,7 +444,7 @@ export function worldOf(at: WorldState): World {
   const entries = (type: string) => (kinds[type] ?? []).map((entity) => ({ entity }));
   const subscribe = () => () => undefined;
   const engine = {
-    store: { entries },
+    store: { entries, get: (type: string, id: string) => kinds[type]?.find((entity) => entity.id === id) },
     subscribe,
     read: () => ({ version: () => 1 }),
   } as unknown as OhmailEngine;

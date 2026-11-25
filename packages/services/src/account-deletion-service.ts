@@ -31,7 +31,7 @@ import {
   mailboxCredentials,
   mailboxProfileMirror,
   folderOps,
-  junkRescues,
+  junkRescues, screenerLearning,
   mailboxFolders,
   mailboxes,
   messageBodies, messageSearch,
@@ -441,6 +441,7 @@ export async function deleteAccount(
     // cache has to outlive the mailbox row it names), so nothing cascades it and this line is the
     // only thing that removes it.
     await drop("mailbox_profile_mirror", tx.delete(mailboxProfileMirror).where(eq(mailboxProfileMirror.accountId, accountId)));
+    await drop("screener_learning", tx.delete(screenerLearning).where(eq(screenerLearning.accountId, accountId)));
     await drop("mailboxes", tx.delete(mailboxes).where(eq(mailboxes.accountId, accountId)));
     // Where the account's one-time passes stood (mail 0203): its mailboxes' rows and its own.
     // AFTER `mailboxes` and `account_settings`, on purpose: the table has no key into either, and

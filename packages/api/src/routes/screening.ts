@@ -1,5 +1,5 @@
 import {
-  readScreeningPane, setScreeningPreference,
+  readScreeningPane, screenerLearningSettings, setScreeningPreference,
   DEFAULT_OHBOX_BAR, type ScreeningPreferenceUpdate,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
@@ -25,7 +25,10 @@ export const screeningRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       // On a reader, the values its holders last applied and where the last change went.
-      const pref = await readScreeningPane(serviceContext(deps, req));
+      const ctx = serviceContext(deps, req);
+      const mailboxId = new URL(req.url).searchParams.get("learningMailbox");
+      if (mailboxId !== null) return jsonResponse(await screenerLearningSettings(ctx, mailboxId));
+      const pref = await readScreeningPane(ctx);
       // `defaultBar` travels with the read so the client shows the product default as the textarea
       // PLACEHOLDER when `ohboxBar` is null, rather than hardcoding the copy and drifting from it.
       return jsonResponse({ ...pref, defaultBar: DEFAULT_OHBOX_BAR });
@@ -43,10 +46,23 @@ export const screeningRoutes: Route[] = [
     relay: true,
     cost: "work",
     replay: "state",
+    options: {
+      allowLapsedAccess: async (req) => {
+        const edit = (await req.clone().json().catch(() => null))?.learningEdit;
+        return edit?.kind === "forget" || edit?.kind === "reset"
+          || (edit?.kind === "enable" && edit.enabled === false);
+      },
+    },
     handler: async (req, deps) => {
       // (`screenerAutoApply`, which a client one release older still sends, is read by nothing: the
       // pass it switched was retired and its column went with mail 0202.)
-      const body = await readBody<{ ohboxPolicy?: unknown; ohboxBar?: unknown; impersonationFiling?: unknown }>(req);
+      const body = await readBody<{
+        ohboxPolicy?: unknown; ohboxBar?: unknown; impersonationFiling?: unknown;
+        learningMailbox?: unknown; learningEdit?: unknown;
+      }>(req);
+      if ("learningMailbox" in body || "learningEdit" in body) {
+        return jsonResponse(await screenerLearningSettings(serviceContext(deps, req), body.learningMailbox, body.learningEdit));
+      }
       // Only the axes the caller ACTUALLY sent are forwarded: a body that names just `ohboxBar` must
       // not reset `ohboxPolicy` to its default. Presence is `in`, never a truthiness or `!==
       // undefined` test — the whole point is that an explicit `null` (revert to default) is a real,

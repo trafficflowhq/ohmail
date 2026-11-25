@@ -1,6 +1,7 @@
 import { useId, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { Avatar, Sign } from "../../base/index.js";
-import { cssPoint } from "../../base/ui-zoom.js";
+import { isContextMenuKey, keepsNativeContextMenu } from "../../base/Overlays/menu-place.js";
+import { cssPoint, cssRect } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./row.css";
 import { SelectionCircle, SelectionMark, type CircleSelection } from "./SelectionCircle.js";
@@ -153,6 +154,25 @@ export interface RowProps {
 
 const stop = (event: { stopPropagation(): void }) => event.stopPropagation();
 
+function rowContextMenu(onMenu: RowProps["onMenu"]) {
+  const menu = onMenu
+    ? (event: MouseEvent<HTMLDivElement>) => {
+        if (event.defaultPrevented || keepsNativeContextMenu(event.target)) return;
+        event.preventDefault();
+        onMenu(cssPoint(event), event.currentTarget);
+      }
+    : undefined;
+  const openKeyMenu = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!onMenu || event.defaultPrevented || !isContextMenuKey(event) || keepsNativeContextMenu(event.target))
+      return;
+    event.preventDefault();
+    const target = event.target instanceof HTMLElement ? event.target : event.currentTarget;
+    const rect = cssRect(target);
+    onMenu({ x: rect.left, y: rect.bottom }, event.currentTarget);
+  };
+  return { menu, openKeyMenu };
+}
+
 /** One conversation: who, what about, how far read. */
 export function Row(props: RowProps) {
   const { subject, preview, unread, open, picked, entry, quick, own, leaving, onOpen, onContact, onMenu } =
@@ -172,17 +192,16 @@ export function Row(props: RowProps) {
   const hasSecond = !section || subject !== "" || Boolean(preview) || Boolean(place);
   const secondId = useId();
 
+  const { menu, openKeyMenu } = rowContextMenu(onMenu);
   const key = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (onMenu && isContextMenuKey(event)) {
+      openKeyMenu(event);
+      return;
+    }
     if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
     event.preventDefault();
     if (press) (props.onKeyboardOpen ?? press)();
   };
-  const menu = onMenu
-    ? (event: MouseEvent<HTMLDivElement>) => {
-        event.preventDefault();
-        onMenu(cssPoint(event), event.currentTarget);
-      }
-    : undefined;
   const contact =
     onContact || props.contactHref
       ? (event: MouseEvent<HTMLElement>) => {
@@ -253,6 +272,7 @@ export function Row(props: RowProps) {
       data-leaving={leaving}
       inert={leaving !== undefined}
       onContextMenu={menu}
+      onKeyDown={openKeyMenu}
     >
       {swipe.back}
       {row}
@@ -340,7 +360,9 @@ function RowVerbs({ quick, own, travel }: Pick<RowProps, "quick" | "own"> & { tr
             type="button"
             className="oh-control oh-row-verb"
             onClick={(event) => (stop(event), quick.onPress?.())}
-            onKeyDown={stop}
+            onKeyDown={(event) => {
+              if (!isContextMenuKey(event)) stop(event);
+            }}
           >
             <Icon name={quick.icon} size={16} />
             <span>{quick.label}</span>
@@ -354,7 +376,9 @@ function RowVerbs({ quick, own, travel }: Pick<RowProps, "quick" | "own"> & { tr
           data-own=""
           style={travel}
           onClick={(event) => (stop(event), own.onPress?.())}
-          onKeyDown={stop}
+          onKeyDown={(event) => {
+            if (!isContextMenuKey(event)) stop(event);
+          }}
         >
           {own.icon ? <Icon name={own.icon} size={16} /> : null}
           <span>{own.label}</span>

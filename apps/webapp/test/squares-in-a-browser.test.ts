@@ -65,15 +65,36 @@ const squaresOf = (page: Page) => page.getByRole("group", { name: /^\d+ messages
  * The squares as drawn: each one's slot and face, whether it stands (a slot outside the run is folded to nothing) and
  * whether it is the reader's; the two counts; the capsule; the letters; the reading column's scroller.
  */
-async function showLetter(page: Page, index: number) {
-  const layout = await page.evaluate(() => {
+function walkGeometry(page: Page) {
+  return page.evaluate(() => {
     const scroller = document.querySelector<HTMLElement>("[data-reading-scroll]")!;
     const top = scroller.getBoundingClientRect().top;
     const tops = [...scroller.querySelectorAll("[data-conv-id]")].map(
       (letter) => letter.getBoundingClientRect().top - top + scroller.scrollTop,
     );
-    return { tops, max: scroller.scrollHeight - scroller.clientHeight, view: scroller.clientHeight };
+    const stops = [...scroller.closest("[data-read-column]")!.querySelectorAll("[data-read-stop]")]
+      .map((stop) => stop.getBoundingClientRect())
+      .filter((box) => box.height > 0 && box.top > top);
+    const bottom = Math.min(top + scroller.clientHeight, ...stops.map((box) => box.top));
+    return { tops, max: scroller.scrollHeight - scroller.clientHeight, view: bottom - top };
   });
+}
+
+/** The first hand scroll releases the extra room that holds an opening while bodies load. */
+async function releaseOpeningAtTop(page: Page): Promise<void> {
+  const scroller = page.locator("[data-reading-scroll]");
+  await scroller.evaluate((el) => {
+    el.dispatchEvent(new WheelEvent("wheel"));
+    el.scrollTop = 0;
+  });
+  await expect.poll(() => scroller.evaluate((el: HTMLElement) =>
+    el.scrollTop === 0 && el.style.getPropertyValue("--oh-thread-landing-room") === "",
+  )).toBe(true);
+}
+
+async function showLetter(page: Page, index: number) {
+  await releaseOpeningAtTop(page);
+  const layout = await walkGeometry(page);
   const last = layout.tops.length - 1;
   const walk = threadWalk({ ...layout, opened: last });
   const offset = index === 0 ? 0 : index === last ? layout.max
@@ -444,15 +465,8 @@ describe("the walk over a laid-out thread", () => {
       await page.addStyleTag({
         content: `[data-conv-id="w0"],[data-conv-id="w8"]{max-height:64px;overflow:hidden}[data-conv-id="w4"]{min-height:900px}`,
       });
-      await page.waitForTimeout(300);
-      const geo = await page.evaluate(() => {
-        const sc = document.querySelector<HTMLElement>("[data-reading-scroll]")!;
-        const top0 = sc.getBoundingClientRect().top;
-        const tops = [...sc.querySelectorAll<HTMLElement>("[data-conv-id]")].map(
-          (p) => p.getBoundingClientRect().top - top0 + sc.scrollTop,
-        );
-        return { tops, max: sc.scrollHeight - sc.clientHeight, view: sc.clientHeight };
-      });
+      await releaseOpeningAtTop(page);
+      const geo = await walkGeometry(page);
       expect(geo.tops.length, "the column holds the nine letters").toBe(9);
       expect(geo.max, "the thread does not scroll: this proves nothing").toBeGreaterThan(geo.view);
       const walk = threadWalk({ ...geo, opened: 8 });

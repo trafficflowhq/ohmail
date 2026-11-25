@@ -62,6 +62,18 @@ export interface CalendarPort {
   verdict(key: string): CalendarVerdict | null;
   /** Report a refusal still owed when the initial press returned. */
   watchLateRefusal?(key: string): void;
+  /** Follow a locally saved draft until its provider confirms or refuses it. */
+  watchCreate?(
+    eventId: string,
+    key: string,
+    refuse: (verdict: CalendarVerdict, writeId?: string) => void,
+  ): void;
+  /** Follow an edit's write on the record that holds its receipt, including a generated occurrence. */
+  watchEdit?(
+    eventId: string,
+    key: string,
+    refuse: (verdict: CalendarVerdict, writeId?: string) => void,
+  ): void;
   subscribeLateRefusals?(
     report: (word: CalendarRefusalWord | CalendarWriteFault) => void,
     retire?: () => void,

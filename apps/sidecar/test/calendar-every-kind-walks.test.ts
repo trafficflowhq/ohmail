@@ -209,6 +209,9 @@ describe("every calendar kind walks from a row to two devices", () => {
     for (const secret of ["never-sent", "/principals/", "/cal/me/", "BEGIN:VEVENT"]) expect(wire).not.toContain(secret);
 
     const desk = await desktopCopy(srv.route, srv.mailboxId);
+    expect(held(desk.second, "calendar_connection")[0]).toMatchObject({
+      serverHost: "dav.example.test", repeatShapes: expect.arrayContaining(["weekly/never"]),
+    });
     for (const kind of CALENDAR_RECORD_KINDS) {
       expect(held(desk.second, kind), `${kind} through the desktop's copy`).toEqual(held(store, kind));
     }

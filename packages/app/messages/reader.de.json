@@ -77,6 +77,7 @@
       "to": "an",
       "cc": "cc",
       "you": "dich",
+      "youAt": "dich ({address})",
       "youSender": "Du",
       "yesterday": "gestern {time}",
       "menu": "Nachricht",

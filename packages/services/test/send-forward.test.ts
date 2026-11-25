@@ -181,11 +181,16 @@ describe("forward is assembled server-side", () => {
     await expect(sendService.send(w.ctx, reopened.id, "unconfirmed", adapters)).rejects.toMatchObject({ httpStatus: 403 });
     await sendService.send(w.ctx, reopened.id, "confirmed", adapters, { forwardConfirmed: true });
 
-    expect(reopened.html).toBe(html);
+    expect(reopened.html).toBe(
+      '<p style="margin:0">Passing this along.</p><blockquote data-quoted-history="edited">' +
+        '<blockquote><p style="margin:0">Only the summary.</p></blockquote></blockquote>',
+    );
     expect(reopened.body).not.toContain("Local fallback");
     expect(send.delivered).toHaveLength(1);
     const delivered = send.delivered[0]!;
-    expect(delivered.html).toBe("<p>Passing this along.</p><blockquote><p>Only the summary.</p></blockquote>");
+    expect(delivered.html).toBe(
+      '<p style="margin:0">Passing this along.</p><blockquote><p style="margin:0">Only the summary.</p></blockquote>',
+    );
     expect(delivered.text).toBe(htmlToPlainText(delivered.html!));
     expect(delivered.text).toContain("Only the summary.");
     expect(delivered.text).not.toContain("Here is the plan.");

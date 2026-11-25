@@ -50,16 +50,23 @@ const COLUMNS = new Map<string, Set<string>>(
 const bare = (arm: string): string => arm.replace(/::text$/, "");
 
 describe("every table of a server is in exactly one class, and the classes agree with the map", () => {
-  it("a server holds 111 tables: 82 of the account, 14 read before sign-in, 5 of the staff, 10 of operations", () => {
+  it("a server holds 112 tables: 83 of the account, 14 read before sign-in, 5 of the staff, 10 of operations", () => {
     const counts: Record<string, number> = {};
     for (const t of serverTables()) {
       const c = tableClass(t);
       expect(c, `${t} is in no class`).not.toBeNull();
       counts[c!] = (counts[c!] ?? 0) + 1;
     }
-    expect(serverTables()).toHaveLength(111);
-    expect(counts).toEqual({ account: 82, keyed: 14, staff: 5, operations: 10 });
-    expect(lockedTables()).toHaveLength(101);
+    expect(serverTables()).toHaveLength(112);
+    expect(counts).toEqual({ account: 83, keyed: 14, staff: 5, operations: 10 });
+    expect(lockedTables()).toHaveLength(102);
+  });
+
+  it("keeps the mailbox learning note and log inside the account", () => {
+    const table = "screener_learning";
+    expect(tableClass(table)).toBe("account");
+    expect(adminReadTables()).not.toContain(table);
+    expect(WORKER_WIDE_READ).not.toContain(table);
   });
 
   it("a table with the account's column is the account's or read before sign-in; one without is not", () => {
@@ -109,9 +116,9 @@ describe("each locked table's policies", () => {
     }
   });
 
-  it("the account's policy on the 94 tables that name an account, for both logins and every verb", () => {
+  it("the account's policy on the 95 tables that name an account, for both logins and every verb", () => {
     const own = rows.filter((r) => r.name === "lock_account");
-    expect(own).toHaveLength(94);
+    expect(own).toHaveLength(95);
     for (const r of own) {
       expect(r.verb).toBe("ALL");
       expect([...r.roles]).toEqual([API_ROLE, WORKER_ROLE]);
@@ -242,7 +249,7 @@ describe("each locked table's policies", () => {
     const present = new Set([API_ROLE, WORKER_ROLE]);
     expect(policiesFor(rows, present).some((r) => r.roles.includes(STAFF_ROLE) || r.roles.includes(PLANE_ROLE))).toBe(false);
     const worker = policiesNaming(WORKER_ROLE);
-    expect(worker).toHaveLength(146);
+    expect(worker).toHaveLength(147);
     expect(worker[0]).toBe("public.account_closures.lock_account");
     expect([...worker].sort()).toEqual(worker);
   });
@@ -641,7 +648,7 @@ describe("the check's verdict over the catalog's facts", () => {
     ];
     for (const role of [API_ROLE, WORKER_ROLE]) {
       expect(lockVerdict({ ...parted, connected: { ...parted.connected, name: role } }, { role }))
-        .toMatchObject({ verdict: "broken", why: lines, listed: 101, role: { policies: "equal" } });
+        .toMatchObject({ verdict: "broken", why: lines, listed: 102, role: { policies: "equal" } });
     }
     expect(lockVerdict(parted)).toMatchObject({ verdict: "broken", why: lines });
     expect(lockDrift(parted)).toEqual([
@@ -678,7 +685,7 @@ describe("the check's verdict over the catalog's facts", () => {
     const why = what.map(([table, w]) => `on ${table}, ${w}`);
     for (const role of [API_ROLE, WORKER_ROLE]) {
       expect(lockVerdict({ ...withCode, connected: { ...withCode.connected, name: role } }, { role }))
-        .toMatchObject({ verdict: "broken", why, listed: 101, role: { policies: "equal" } });
+        .toMatchObject({ verdict: "broken", why, listed: 102, role: { policies: "equal" } });
     }
     expect(lockVerdict(withCode)).toMatchObject({ verdict: "broken", why, role: { policies: "not-judged" } });
     expect(lockDrift(withCode)).toEqual(what.map(([table, w]) => `LOCK_DRIFT tables.code ${table}: ${w}`));

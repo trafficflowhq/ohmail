@@ -47,13 +47,16 @@ export function ColumnHandle({
     from.current = { x: cssPoint(event).x, width: target ? cssRect(target).width : value };
     event.currentTarget.setPointerCapture?.(event.pointerId);
     setDragging(true);
+    event.currentTarget.dispatchEvent(new CustomEvent("oh-column-drag", { bubbles: true, detail: true }));
   };
   const move = (event: PointerEvent<HTMLDivElement>) => {
     if (from.current) set(from.current.width + cssPoint(event).x - from.current.x);
   };
-  const up = () => {
+  const up = (event: PointerEvent<HTMLDivElement>) => {
+    if (!from.current) return;
     from.current = null;
     setDragging(false);
+    event.currentTarget.dispatchEvent(new CustomEvent("oh-column-drag", { bubbles: true, detail: false }));
   };
 
   return (
@@ -73,6 +76,7 @@ export function ColumnHandle({
       onPointerMove={move}
       onPointerUp={up}
       onPointerCancel={up}
+      onLostPointerCapture={up}
       onDoubleClick={onReset}
     />
   );

@@ -121,8 +121,12 @@ export interface CalendarConnectionRecord {
   grantMailboxId: string | null;
   /** The host a CalDAV server or a subscription is read from; `null` for the other two. */
   serverHost: string | null;
+  /** Rule shapes the server has verified for creating events on this connection. */
+  repeatShapes?: readonly string[];
   consentedAt: ISODateTime | null;
   lastSyncedAt: ISODateTime | null;
+  /** Scheduled check time. Older servers and saved device records may omit it. */
+  nextPollAt?: ISODateTime | null;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }
@@ -197,10 +201,18 @@ export interface CalendarEventRecord {
   busy: boolean;
   private: boolean;
   organizer: { address: string; name: string | null } | null;
+  /** Whether CalDAV evidence verifies organizer authority. True also identifies a verified cloud organizer. */
+  ownOrganizer?: boolean;
+  /** A shared CalDAV copy with guests whose stored object has no organizer. */
+  sharedWithoutOrganizer?: true;
   /** The account's own answer, where it is invited. */
   myAnswer: CalendarAnswer | null;
   /** Cancelled or declined occurrences removed from this account’s calendar. The empty key covers the record or series. */
   removedOccurrences?: readonly string[];
+  /** A verified copy where this account can hide an invitation. */
+  hideAttendee?: string;
+  /** Occurrences explicitly hidden without answering. The empty key covers the record or series. */
+  hiddenOccurrences?: readonly string[];
   /** An invitation not yet shown on the calendar. */
   heldBack: boolean;
   invitees: CalendarInvitee[];
@@ -459,6 +471,12 @@ export interface CalendarEventBase {
  * store's rows (`eventId` of a new event, and `newEventId`, are uuids the device makes and the
  * server adopts); no act names a provider's id, an address or a version.
  */
+/** The attendee and calendar of the invitation the person reviewed. */
+export interface CalendarAttendeeCopy {
+  readonly calendarId: string;
+  readonly attendee: string;
+}
+
 export type CalendarEventAct =
   | {
       kind: "calendar_event_create";
@@ -466,6 +484,8 @@ export type CalendarEventAct =
       calendarId: string;
       event: CalendarEventFields;
       invitationMessageId?: string;
+      /** The rule was selected in the new event editor. */
+      repeatSelected?: true;
     }
   | (CalendarEventBase & {
       kind: "calendar_event_update";
@@ -480,6 +500,9 @@ export type CalendarEventAct =
       kind: "calendar_event_delete";
       /** Remove a cancelled or declined event from this account’s calendar without writing to the provider. */
       localOnly?: true;
+      /** Hide an active own attendee copy in ohcal without changing its RSVP. */
+      hide?: true;
+      copy?: CalendarAttendeeCopy;
       /** A cancellation letter to verify when the provider still shows an active event. */
       cancelledBy?: string;
       scope: CalendarRemoveScope;
@@ -498,6 +521,7 @@ export type CalendarEventAct =
       kind: "calendar_event_answer";
       scope: { kind: "record" } | { kind: "occurrence"; at: string };
       answer: "accepted" | "tentative" | "declined";
+      copy?: CalendarAttendeeCopy;
     });
 
 export type CalendarProposalAct = {

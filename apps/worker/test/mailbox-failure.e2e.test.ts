@@ -539,6 +539,184 @@ describe("a quarantine outlives the process that set it (mail 0039)", () => {
     expect((await rowOf(db, mb.mailboxId)).retryAfter).toBeNull();
   }, 30000);
 
+  it("stops dialing after a day of rejected sign-ins and resumes when the person signs in again", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const mb = await seedMailbox(db);
+    const dayMs = 24 * 60 * 60_000;
+    await db.update(mailboxes).set({
+      status: "error", errorCode: "auth", failedAt: new Date(Date.now() - dayMs),
+      retryCount: 12, retryAfter: null,
+    }).where(eq(mailboxes.id, mb.mailboxId));
+    fleet.behave(mb.mailboxId, {
+      connectError: Object.assign(new Error("sign-in rejected"), { serverResponseCode: "AUTHENTICATIONFAILED" }),
+    });
+
+    const worker = await startWorker(cfgFor(fleet));
+    closers.push(() => worker.stop());
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(fleet.created, "no adapter opened over multiple roster passes").toBe(0);
+    expect(worker.stats().quarantined).toBe(1);
+    expect(await rowOf(db, mb.mailboxId)).toMatchObject({ status: "error", errorCode: "auth", retryCount: 12 });
+
+    fleet.behave(mb.mailboxId, { connectError: undefined });
+    await db.update(mailboxes).set({
+      status: "connected", errorCode: null, failedAt: null, retryCount: 0, retryAfter: null,
+    }).where(eq(mailboxes.id, mb.mailboxId));
+    await waitFor(() => fleet.openFor(mb.mailboxId) === 1, 3000, "the next roster pass to reconnect");
+    expect(fleet.created).toBe(1);
+  }, 30_000);
+
+  it("starts the sign-in rejection clock when a previous timeout changes to a rejection", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const mb = await seedMailbox(db);
+    const now = Date.now();
+    await db.update(mailboxes).set({
+      status: "error", errorCode: "timeout", failedAt: new Date(now - 48 * 60 * 60_000),
+      retryCount: 12, retryAfter: null,
+    }).where(eq(mailboxes.id, mb.mailboxId));
+    fleet.behave(mb.mailboxId, {
+      connectError: Object.assign(new Error("sign-in rejected"), { serverResponseCode: "AUTHENTICATIONFAILED" }),
+    });
+
+    const worker = await startWorker(cfgFor(fleet));
+    closers.push(() => worker.stop());
+    await waitFor(async () => (await rowOf(db, mb.mailboxId)).errorCode === "auth", 5000, "the rejection");
+    expect((await rowOf(db, mb.mailboxId)).failedAt!.getTime()).toBeGreaterThanOrEqual(now);
+    await waitFor(() => fleet.created >= 2, 5000, "another try inside the first day");
+  }, 30_000);
+
+  it("dates a new timeout from when the sign-in rejections end", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const mb = await seedMailbox(db);
+    const now = Date.now();
+    await db.update(mailboxes).set({
+      status: "error", errorCode: "auth", failedAt: new Date(now - 23 * 60 * 60_000),
+      retryCount: 12, retryAfter: null,
+    }).where(eq(mailboxes.id, mb.mailboxId));
+    fleet.behave(mb.mailboxId, {
+      connectError: Object.assign(new Error("login timed out"), { code: "ETIMEDOUT", authenticationFailed: true }),
+    });
+
+    const worker = await startWorker(cfgFor(fleet));
+    closers.push(() => worker.stop());
+    await waitFor(async () => (await rowOf(db, mb.mailboxId)).errorCode === "timeout", 5000, "the timeout");
+    expect((await rowOf(db, mb.mailboxId)).failedAt!.getTime()).toBeGreaterThanOrEqual(now);
+  }, 30_000);
+
+  it("clears the rejection on a successful login even before the first sync can finish", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const mb = await seedMailbox(db);
+    await db.update(mailboxes).set({
+      status: "error", errorCode: "auth", failedAt: new Date(Date.now() - 23 * 60 * 60_000),
+      retryCount: 12, retryAfter: null,
+    }).where(eq(mailboxes.id, mb.mailboxId));
+    fleet.behave(mb.mailboxId, { failSync: true });
+
+    const worker = await startWorker(cfgFor(fleet, { maxSyncFailures: 50 }));
+    closers.push(() => worker.stop());
+    await waitFor(() => worker.stats().mailboxes === 1, 5000, "the authenticated connection to attach");
+    expect(await rowOf(db, mb.mailboxId)).toMatchObject({
+      status: "connected", errorCode: null, failedAt: null, retryCount: 0, retryAfter: null, lastSyncAt: null,
+    });
+  }, 30_000);
+
+  it("does not carry a rejection from an in-flight login over a new sign-in", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    let rejectOldLogin!: () => void;
+    const oldLogin = new Promise<never>((_resolve, reject) => {
+      rejectOldLogin = () => reject(Object.assign(new Error("old sign-in rejected"), {
+        serverResponseCode: "AUTHENTICATIONFAILED",
+      }));
+    });
+    const worker = await startWorker(cfgFor(fleet, {
+      rosterIntervalMs: 300,
+      mailboxRetryMs: 60_000,
+      adapterFactory: (config, ctx) => {
+        const adapter = fleet.factory(config, ctx);
+        if (fleet.created === 1) adapter.connect = () => oldLogin;
+        return adapter;
+      },
+    }));
+    closers.push(() => worker.stop());
+    const mb = await seedMailbox(db);
+    await db.update(mailboxes).set({
+      status: "error", errorCode: "auth", failedAt: new Date(), retryCount: 1,
+    }).where(eq(mailboxes.id, mb.mailboxId));
+
+    await waitFor(() => fleet.created === 1, 3000, "the old login to start");
+    await db.update(mailboxes).set({
+      status: "connected", errorCode: null, failedAt: null, retryCount: 0, retryAfter: null,
+      syncRequestedAt: new Date(),
+    }).where(eq(mailboxes.id, mb.mailboxId));
+    rejectOldLogin();
+
+    await waitFor(() => fleet.openFor(mb.mailboxId) === 1, 3000, "a fresh login without the old backoff");
+    expect(fleet.created).toBe(2);
+    expect(await rowOf(db, mb.mailboxId)).toMatchObject({ status: "connected", retryAfter: null });
+  }, 30_000);
+
+  it("keeps retrying when the provider becomes unavailable after rejecting sign-in", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const mb = await seedMailbox(db);
+    const now = Date.now();
+    await db.update(mailboxes).set({
+      status: "error", errorCode: "auth", failedAt: new Date(now - 23 * 60 * 60_000),
+      retryCount: 12, retryAfter: null,
+    }).where(eq(mailboxes.id, mb.mailboxId));
+    fleet.behave(mb.mailboxId, {
+      connectError: Object.assign(new Error("provider unavailable"), { serverResponseCode: "UNAVAILABLE" }),
+    });
+
+    const worker = await startWorker(cfgFor(fleet, { mailboxRetryMs: 40 }));
+    closers.push(() => worker.stop());
+    await waitFor(async () => (await rowOf(db, mb.mailboxId)).syncBlockedReason === "provider_unavailable",
+      5000, "the provider outage");
+    expect((await rowOf(db, mb.mailboxId)).errorCode).toBeNull();
+    await waitFor(() => fleet.created >= 2, 5000, "another try while the provider is unavailable");
+  }, 30_000);
+
+  it("keeps trying an old timeout even when the failure happened during sign-in", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const mb = await seedMailbox(db);
+    await db.update(mailboxes).set({
+      status: "error", errorCode: "timeout", failedAt: new Date(Date.now() - 48 * 60 * 60_000),
+      retryCount: 8, retryAfter: new Date(Date.now() - 1000),
+    }).where(eq(mailboxes.id, mb.mailboxId));
+    fleet.behave(mb.mailboxId, {
+      connectError: Object.assign(new Error("login timed out"), { code: "ETIMEDOUT", authenticationFailed: true }),
+    });
+
+    const worker = await startWorker(cfgFor(fleet, { mailboxRetryMs: 1 }));
+    closers.push(() => worker.stop());
+    await waitFor(async () => (await rowOf(db, mb.mailboxId)).retryCount >= 10, 5000, "two further timeout attempts");
+    expect(fleet.created).toBeGreaterThanOrEqual(2);
+    expect((await rowOf(db, mb.mailboxId)).errorCode).toBe("timeout");
+  }, 30_000);
+
+  it("caps a configured timeout retry delay at three hours", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const mb = await seedMailbox(db);
+    fleet.behave(mb.mailboxId, {
+      connectError: Object.assign(new Error("login timed out"), { code: "ETIMEDOUT", authenticationFailed: true }),
+    });
+
+    const capMs = 3 * 60 * 60_000;
+    const worker = await startWorker(cfgFor(fleet, { mailboxRetryMs: capMs * 2 }));
+    closers.push(() => worker.stop());
+    await waitFor(async () => (await rowOf(db, mb.mailboxId)).retryAfter !== null, 5000, "the recorded retry");
+    const row = await rowOf(db, mb.mailboxId);
+    expect(row.errorCode).toBe("timeout");
+    expect(row.retryAfter!.getTime() - Date.now()).toBeLessThanOrEqual(capMs);
+  }, 30_000);
+
   it("A NEW PROCESS HONOURS A BACKOFF IT NEVER SET — and an operator's release ends it", async () => {
     // The whole gap, in one test. Before the column, a fresh leader had an empty map: it
     // re-attached the mailbox immediately, which is why "restart the worker" WAS the release

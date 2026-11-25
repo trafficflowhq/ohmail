@@ -109,7 +109,7 @@ describe.skipIf(!PG_UP)("a store in 1.0.11's shape, moved as a server", () => {
     // The map's tables, less what the window makes, plus what it drops: exactly this catalog.
     const made = new Set(["pass_progress", "message_invitations", "account_counters", "account_closures", "cal_push_channels",
       ...Object.keys(MAP_2_0).filter((t) => t.startsWith("cal_"))]);
-    const known = [...tablesOf("server").filter((t) => !made.has(t)), "away_responder_sent"].sort();
+    const known = [...tablesOf("server", "window").filter((t) => !made.has(t)), "away_responder_sent"].sort();
     const standing = (await sql<{ name: string }[]>`select c.relname::text as name from pg_class c join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and c.relkind in ('r', 'p') order by 1`).map((r) => r.name);
     expect(standing).toEqual(known);
@@ -133,8 +133,8 @@ describe.skipIf(!PG_UP)("a store in 1.0.11's shape, moved as a server", () => {
 
     // The counts, table by table: the 111 of a server, each as the map says of the store before.
     const after = await fingerprintOf(sql);
-    expect(Object.keys(after.counts).sort()).toEqual(tablesOf("server"));
-    for (const table of tablesOf("server")) {
+    expect(Object.keys(after.counts).sort()).toEqual(tablesOf("server", "window"));
+    for (const table of tablesOf("server", "window")) {
       const rows = MAP_2_0[table]!.rows;
       if (rows === "same") expect(after.counts[table], table).toBe(before.counts[table]);
       if (rows === "empty") expect(after.counts[table], table).toBe(0);
@@ -169,7 +169,7 @@ describe.skipIf(!PG_UP)("a store in 1.0.11's shape, moved as a server", () => {
     }
     expect(await transitionState(brandDialect(drizzle(sql), "pg"), { cloud: true })).toBe("moved");
     // The tables that carry the account, read from the moved store's own catalog, are the map's.
-    expect(await accountTablesFromCatalog(brandDialect(drizzle(sql), "pg"))).toEqual(accountTablesOf("server"));
+    expect(await accountTablesFromCatalog(brandDialect(drizzle(sql), "pg"))).toEqual(accountTablesOf("server", "window"));
 
     // Every sealed value was opened, and what it said is counts and the map's names.
     expect(Object.fromEntries(report!.sealed.filter((s) => s.rows > 0).map((s) => [s.site, s.opened]))).toEqual(planted.sealed);

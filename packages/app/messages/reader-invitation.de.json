@@ -5,6 +5,7 @@
     "cancelled": "Abgesagt",
     "from": "Von {organizer}",
     "overlaps": "Überschneidung",
+    "busyOverlap": "Belegt",
     "show": "Im Kalender zeigen",
     "notOn": "Nicht in deinem Kalender",
     "goes": "{title} kommt in <calendar></calendar>",

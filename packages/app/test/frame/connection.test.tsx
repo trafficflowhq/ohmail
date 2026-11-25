@@ -130,58 +130,38 @@ describe("the connection states: one closed set", () => {
       "No mailbox connectedConnect a mailbox",
       "Kein Postfach verbundenPostfach verbinden",
     ],
-    ["offline", input(ladder("stale", { asOf: AT }), { online: false }), "Offline", "Offline"],
-    [
-      "hostQuiet",
-      input(ladder("quiet"), { host: quietHost }),
-      "The computer went quiet Mail arrives once it answers.Pair again",
-      "The computer went quiet Mail arrives once it answers.Pair again",
-    ],
+    ["offline", input(ladder("stale", { asOf: AT }), { online: false }), "", ""],
+    ["hostQuiet", input(ladder("quiet"), { host: quietHost }), "", ""],
     [
       "mailServerDown",
-      input(ladder("mailboxError", { errorCode: "connect", address: "lena@example.com" })),
-      "lena@example.com failed to sync The mail server could not be reached.Mailboxes",
-      "lena@example.com konnte nicht synchronisiert werden Der Mailserver war nicht erreichbar.Postfächer",
+      input(ladder("mailboxError", { errorCode: "connect", minutes: 31, address: "box" })),
+      "box: Mail server unreachableOpen Mailboxes",
+      "box nicht erreichtPostfächer öffnen",
     ],
     [
       "mailboxPassword",
       input(ladder("mailboxError", { errorCode: "auth" })),
-      "A mailbox failed to sync The mail server refused the password.Mailboxes",
-      "Ein Postfach konnte nicht synchronisiert werden Der Mailserver hat das Passwort abgelehnt.Postfächer",
+      "Mailbox sign-in neededOpen Mailboxes",
+      "Das Passwort wurde abgelehntPostfächer öffnen",
     ],
     [
       "mailboxSync",
-      input(ladder("blocked", { address: "lena@example.com" })),
-      "lena@example.com is not syncingMailboxes",
-      "lena@example.com synchronisiert nichtPostfächer",
+      input(ladder("blocked", { minutes: 31, address: "box", minutes: 31 })),
+      "box is not syncingOpen Mailboxes",
+      "box synchronisiert nichtPostfächer öffnen",
     ],
-    ["reconnecting", input(ladder("failing")), "Reconnecting", "Verbindung wird wiederhergestellt"],
-    [
-      "behind",
-      input(ladder("stale", { asOf: AT })),
-      "As of 09:10, catching up",
-      "Stand 09:10, wird nachgeholt",
-    ],
-    [
-      "firstSync",
-      input(ladder("importing", { count: 412, total: 9120 })),
-      "First sync 412 of 9,120",
-      "Erste Synchronisierung 412 von 9.120",
-    ],
-    [
-      "filing",
-      input(ladder("filing", { pending: 3 })),
-      "Filing 3 on your mail server",
-      "3 werden auf deinem Mailserver einsortiert",
-    ],
+    ["reconnecting", input(ladder("failing")), "", ""],
+    ["behind", input(ladder("stale", { asOf: AT })), "", ""],
+    ["firstSync", input(ladder("importing", { count: 412, total: 9120 })), "", ""],
+    ["filing", input(ladder("filing", { pending: 3 })), "", ""],
   ];
 
   it.each(TABLE)("%s says its sentence in English and in German", (_, given, en, de) => {
     said(given);
-    expect(status()).toEqual([en]);
+    expect(status()).toEqual(en ? [en] : []);
     cleanup();
     said(given, "de");
-    expect(status()).toEqual([de]);
+    expect(status()).toEqual(de ? [de] : []);
   });
 
   /* The simulation's words: since when, read off the copy's last completed sync (the host's copy-age read), in the
@@ -199,15 +179,15 @@ describe("the connection states: one closed set", () => {
       ["before today", "2026-11-12T20:00:00Z", "Offline since Nov 12", "Offline seit 12. Nov"],
       ["never known", null, "Offline", "Offline"],
     ];
-    it.each(AGES)("%s", (_, copyAsOf, en, de) => {
+    it.each(AGES)("%s stays out of the notice slot", (_, copyAsOf) => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(NOW);
       const given = input(ladder("failing"), { online: false, copyAsOf });
       said(given);
-      expect(status()).toEqual([en]);
+      expect(status()).toEqual([]);
       cleanup();
       said(given, "de");
-      expect(status()).toEqual([de]);
+      expect(status()).toEqual([]);
     });
   });
 
@@ -248,33 +228,31 @@ describe("the connection states: one closed set", () => {
 
   it("takes a mailbox's refusal to the mailboxes, and the host's link where it gives one", () => {
     const { acts } = said(input(ladder("mailboxError", { errorCode: "auth" })));
-    fireEvent.click(screen.getByRole("button", { name: "Mailboxes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Mailboxes" }));
     expect(acts.mailboxes).toHaveBeenCalledOnce();
     cleanup();
-    const host = said(input(ladder("quiet"), { host: quietHost }));
+    const host = said(input(ladder("quiet"), { host: quietHost, copyAsOf: AT }));
     fireEvent.click(screen.getByRole("button", { name: "Pair again" }));
     expect(host.acts.follow).toHaveBeenCalledWith("/pair");
   });
 
-  it("shows the count on its own and clears the notice as soon as mail is caught up", () => {
+  it("keeps first-sync counts in their view throughout import", () => {
     const { again } = said(input(ladder("importing", { count: 3935 })));
-    const notice = screen.getByRole("status");
-    expect(notice.contains(screen.getByText("3,935 so far", { exact: true }))).toBe(true);
+    expect(screen.queryByRole("status")).toBeNull();
     act(() => again(input(ladder("quiet"))));
-    expect(notice.isConnected).toBe(false);
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("speaks the first sync's count once a poll and once a twentieth of the way, not at every step", () => {
+  it("changing first-sync counts do not announce from the notice slot", () => {
     expect(ANNOUNCE_MS).toBe(POLL_MS);
     vi.useFakeTimers();
     const { again } = said(input(ladder("importing", { count: 100, total: 1000 })));
-    expect(status()).toEqual(["First sync 100 of 1,000"]);
+    expect(status()).toEqual([]);
     act(() => again(input(ladder("importing", { count: 120, total: 1000 }))));
     act(() => again(input(ladder("importing", { count: 160, total: 1000 }))));
-    expect(status()).toEqual(["First sync 100 of 1,000"]);
+    expect(status()).toEqual([]);
     act(() => vi.advanceTimersByTime(ANNOUNCE_MS));
-    expect(status()).toEqual(["First sync 160 of 1,000"]);
+    expect(status()).toEqual([]);
   });
 });
 
@@ -374,16 +352,15 @@ describe("a filing's arm, and the shell's own why", () => {
 
   it("says a blocked mailbox's reason and a stuck filing's why in the shell's words, and its act leads where they say", () => {
     window.location.hash = "";
-    reasoned.mail = ladder("blocked", { address: "lena@example.com" });
+    reasoned.mail = ladder("blocked", { minutes: 31, address: "lena@example.com" });
     reasoned.reason = {
       line: "Another app organizes this mailbox · since 5 minutes",
       href: "#/settings/mailboxes?mailbox=mb1",
     };
     mount();
-    expect(status()).toEqual([
-      "lena@example.com is not syncing Another app organizes this mailbox · since 5 minutesMailboxes",
-    ]);
-    fireEvent.click(screen.getByRole("button", { name: "Mailboxes" }));
+    expect(status()[0]).toContain("is not syncing");
+    expect(status()[0]).not.toContain("Another app organizes this mailbox");
+    fireEvent.click(screen.getByRole("button", { name: "Open Mailboxes" }));
     expect(window.location.hash).toBe("#/settings/mailboxes?mailbox=mb1");
     cleanup();
     reasoned.mail = filing("stuck");
@@ -392,21 +369,19 @@ describe("a filing's arm, and the shell's own why", () => {
       line: "lena@example.com · the server refused",
     };
     mount();
-    expect(status()).toEqual([
-      "2 messages have not been filed for 75 minutes lena@example.com · the server refusedMailboxes",
-    ]);
+    expect(status()).toEqual([]);
   });
 
   it("leads through the fed follow: a press on the notice's link calls it with its address", () => {
     const followed: string[] = [];
-    reasoned.mail = ladder("blocked", { address: "lena@example.com" });
+    reasoned.mail = ladder("blocked", { minutes: 31, address: "lena@example.com" });
     reasoned.reason = {
       line: "Another app organizes this mailbox",
       href: "#/settings/mailboxes?mailbox=mb2",
     };
     reasoned.follow = (href) => followed.push(href);
     mount();
-    fireEvent.click(screen.getByRole("button", { name: "Mailboxes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Mailboxes" }));
     expect(followed).toEqual(["#/settings/mailboxes?mailbox=mb2"]);
     reasoned.follow = assign;
   });
@@ -415,11 +390,11 @@ describe("a filing's arm, and the shell's own why", () => {
     reasoned.mail = ladder("stopped");
     reasoned.reason = { title: "something else", line: "a line" };
     mount();
-    expect(status()).toEqual(["Signed out Start ohmail again to sign in."]);
+    expect(status()).toEqual(["Signed out Start ohmail again to sign in.Hide"]);
   });
 
   it("keeps a calm connection notice hidden across places that do not feed it", () => {
-    reasoned.mail = ladder("behind");
+    reasoned.mail = ladder("behind", { asOf: "2026-11-14T08:10:00Z" });
     reasoned.reason = null;
     const made = mount();
     fireEvent.click(screen.getByRole("button", { name: "Hide" }));
@@ -430,33 +405,61 @@ describe("a filing's arm, and the shell's own why", () => {
   });
 
   it("keeps late mail hidden through a clear and return, then shows a different connection kind", () => {
-    reasoned.mail = ladder("behind");
+    reasoned.mail = ladder("behind", { asOf: "2026-11-14T08:10:00Z" });
     reasoned.reason = null;
     const made = mount();
-    expect(status()[0]).toContain("New mail is late");
+    expect(status()[0]).toContain("hasn’t checked mail since");
     fireEvent.click(screen.getByRole("button", { name: "Hide" }));
     made.refresh(ladder("quiet"));
     expect(status()).toEqual([]);
-    made.refresh(ladder("behind"));
+    made.refresh(ladder("behind", { asOf: "2026-11-14T08:10:00Z" }));
     expect(status()).toEqual([]);
 
-    made.refresh(filing("stuck"));
-    expect(status()[0]).toContain("Filing is stuck");
-    expect(screen.getByRole("button", { name: "Mailboxes" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
+    made.refresh(ladder("mailboxError", { errorCode: "auth", mailboxId: "mb2" }));
+    expect(status()[0]).toContain("Mailbox sign-in needed");
+    expect(screen.getByRole("button", { name: "Open Mailboxes" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy();
 
-    made.refresh(ladder("behind"));
-    expect(status()[0]).toContain("New mail is late");
+    made.refresh(ladder("behind", { asOf: "2026-11-14T08:10:00Z" }));
+    expect(status()[0]).toContain("hasn’t checked mail since");
     expect(screen.getByRole("button", { name: "Hide" })).toBeTruthy();
   });
 
   it("lets go of the reading when the part that fed it goes", () => {
-    reasoned.mail = ladder("blocked", { address: "lena@example.com" });
+    reasoned.mail = ladder("blocked", { minutes: 31, address: "lena@example.com" });
     reasoned.reason = null;
     const made = mount();
     expect(status()).toHaveLength(1);
     act(() => made.address.visit("#/receipts"));
     expect(screen.getByText("elsewhere")).toBeTruthy();
     expect(status()).toEqual([]);
+  });
+});
+
+describe("quiet connection notices", () => {
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+  it("leaves a five-minute pause quiet and names a 31-minute pause with an action", () => {
+    const view = said(input(ladder("behind", { asOf: ago(5) })));
+    expect(screen.queryByRole("status")).toBeNull();
+    view.again(input(ladder("behind", { asOf: ago(31) })));
+    expect(screen.getByRole("status").textContent).toMatch(/hasn’t checked mail since/);
+    fireEvent.click(screen.getByRole("button", { name: "Open Mailboxes" }));
+    expect(view.acts.mailboxes).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a ten-minute server failure quiet and shows a 31-minute failure", () => {
+    const failed = (minutes: number) => input(ladder("mailboxError", { errorCode: "connect", minutes }));
+    const view = said(failed(10));
+    expect(screen.queryByRole("status")).toBeNull();
+    view.again(failed(31));
+    fireEvent.click(screen.getByRole("button", { name: "Open Mailboxes" }));
+    expect(view.acts.mailboxes).toHaveBeenCalledOnce();
+  });
+
+  it("offers a mailbox sign-in immediately with an action", () => {
+    const view = said(input(ladder("mailboxError", { errorCode: "auth", minutes: 0 })));
+    fireEvent.click(screen.getByRole("button", { name: "Open Mailboxes" }));
+    expect(view.acts.mailboxes).toHaveBeenCalledOnce();
   });
 });

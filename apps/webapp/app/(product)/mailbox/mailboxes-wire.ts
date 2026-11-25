@@ -56,7 +56,6 @@ export function toMailboxRow(m: MailboxDTO): MailboxRow | null {
     provider: m.provider,
     ...(typeof m.messageCount === "number" ? { messageCount: m.messageCount } : {}),
     ...(m.erasure ? { erasure: { remaining: m.erasure.remaining } } : {}),
-    ...("failedAt" in m ? { failedAt: m.failedAt ?? null } : {}),
     ...(typeof m.retryCount === "number" ? { retryCount: m.retryCount } : {}),
     ...(typeof m.setAside === "number" ? { setAside: m.setAside } : {}),
   };

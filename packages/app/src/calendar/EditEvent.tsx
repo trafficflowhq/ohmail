@@ -16,7 +16,15 @@ import { useEditLeave } from "./use-edit-leave.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { DraftFields } from "./DraftFields.js";
 import { useDiscardReport, useDuplicateDraft } from "./draft-undo.js";
-import { draftForDuplicate, draftOfRecord, draftTimeChanged, editCopy, eventChanges } from "./edit-draft.js";
+import {
+  draftDiffers,
+  draftForDuplicate,
+  draftOfRecord,
+  draftTimeChanged,
+  editCopy,
+  eventChanges,
+  sentInvitees,
+} from "./edit-draft.js";
 import { draftTimes, type EventDraft } from "./event-draft.js";
 import { DraftTimeNotice } from "./DraftTimeNotice.js";
 import { draftWhen, eventWhen, guestNames } from "./event-words.js";
@@ -27,7 +35,7 @@ import type { CalendarEventFace } from "./faces.js";
 interface Props {
   readonly port: CalendarPort;
   readonly actionItems: readonly PanelVerb[];
-  readonly provider: CalendarConnectionRecord["provider"] | undefined;
+  readonly connection: CalendarConnectionRecord | undefined;
   readonly scopeAnchor?: HTMLElement;
   readonly original: CalendarEventRecord;
   readonly exception: CalendarEventRecord | null;
@@ -46,7 +54,7 @@ interface Props {
 export function EditEvent({
   port,
   actionItems,
-  provider,
+  connection,
   original,
   exception,
   allowed,
@@ -61,10 +69,12 @@ export function EditEvent({
   scopeAnchor,
   finish,
 }: Props) {
+  const provider = connection?.provider;
+  const ordinaryOnly = allowed()?.sharedCopy === true;
   const { commands, plan } = useFrame();
   const t = useText("calendar");
   const zone = useTimeZone();
-  const [shown] = useState(() => editCopy(exception ?? original, face));
+  const [shown] = useState(() => ({ ...editCopy(exception ?? original, face), repeat: original.repeat }));
   const [initial] = useState(() => draftOfRecord(shown, zone));
   const [draft, setDraft] = useState(recovered ?? initial.draft);
   const discardReport = useDiscardReport(port);
@@ -74,17 +84,11 @@ export function EditEvent({
   const onLeave = dirty ? reportDraft : () => undefined;
   usePreserveEdit(beforeRestore, draftDiffers(draft, recovered ?? initial.draft), reportDraft);
   const patch = eventChanges(shown, draft, calendar, zone, provider === "caldav");
-  const saving = useEditLeave(
-    port,
-    original,
-    shown,
-    allowed,
-    patch,
-    face.ref.occurrence,
+  const saving = useEditLeave(port, original, shown, draft, allowed, patch, face.ref.occurrence, {
     dirty,
     finish,
     onLeave,
-  );
+  });
   const { busy, conflict, clear, discard, question, scopeAsked, submit } = saving;
   const blocked = busy || scopeAsked || question !== null;
   const ready = !blocked && !conflict && patch !== null && Object.keys(patch).length > 0;
@@ -104,6 +108,7 @@ export function EditEvent({
       close={() => commands.event(null)}
       duplicate={() => duplicate(draftForDuplicate(shown, face, zone), calendar.id)}
       blocked={blocked}
+      ordinaryOnly={ordinaryOnly}
       timeZone={
         initial.timeEditable && !original.repeat && !draft.allDay
           ? (draft.zone ?? sourceZone ?? zone)
@@ -139,7 +144,8 @@ export function EditEvent({
               calendar,
               tone: face.tone,
               original,
-              provider,
+              shown,
+              connection,
               change,
               cancelEdit,
               ready,
@@ -147,6 +153,7 @@ export function EditEvent({
               blocked,
               saving,
               allowed,
+              ordinaryOnly,
             }}
             zone={draft.zone ?? sourceZone ?? zone}
             timeEditable={initial.timeEditable}
@@ -168,18 +175,20 @@ function EditorContents({
   calendar,
   tone,
   original,
-  provider,
+  connection,
   change,
   cancelEdit,
   ready,
   when,
   blocked,
   saving,
+  shown,
   allowed,
+  ordinaryOnly,
   zone,
   timeEditable,
   issue,
-}: Pick<Props, "today" | "calendar" | "original" | "provider" | "when"> & {
+}: Pick<Props, "today" | "calendar" | "original" | "connection" | "when"> & {
   draft: EventDraft;
   tone: CalendarEventFace["tone"];
   change: (edit: Partial<EventDraft>) => void;
@@ -187,13 +196,17 @@ function EditorContents({
   ready: boolean;
   blocked: boolean;
   saving: ReturnType<typeof useEditLeave>;
+  shown: CalendarEventRecord;
   allowed: Props["allowed"];
+  ordinaryOnly: boolean;
   zone: string;
   timeEditable: boolean;
   issue: ReturnType<typeof draftTimes>["issue"];
 }) {
   const t = useText("calendar");
+  const provider = connection?.provider;
   const { failure, conflict, busy, mine, discard, submit } = saving;
+  const { host } = useFrame();
   const locale = useLocale();
   const current = conflict ? allowed() : null;
   const latest = current?.exception ?? current?.record;
@@ -204,13 +217,17 @@ function EditorContents({
         <DraftFields
           {...{ draft, today, calendar, tone, change }}
           choices={[]}
+          ordinaryOnly={ordinaryOnly}
+          repeatShapes={connection?.repeatShapes}
           placeSource={original.id}
           cancel={{ label: t("edit.cancel"), onPress: cancelEdit }}
           submit={{ label: t("edit.save"), keyHint: "↵", disabled: !ready, onPress: submit }}
           fixedTime={timeEditable ? undefined : when}
           timeZone={zone}
           edit={{
+            sentGuests: sentInvitees(host.engine.store.get<CalendarEventRecord>("calendar_event", shown.id)),
             canInvite:
+              !ordinaryOnly &&
               !original.repeat &&
               original.invitees.every(
                 ({ address, role }) =>
@@ -218,9 +235,9 @@ function EditorContents({
                   role === "optional" ||
                   role === "required",
               ),
-            canAddAlert: original.alarms.every(({ method }) => method === "notice"),
-            canAddSecondAlert: provider !== "microsoft" && !draft.allDay,
-            showCall: provider === "caldav",
+            canAddAlert: !ordinaryOnly && original.alarms.every(({ method }) => method === "notice"),
+            canAddSecondAlert: !ordinaryOnly && provider !== "microsoft" && !draft.allDay,
+            showCall: !ordinaryOnly && provider === "caldav",
           }}
         />
       </div>
@@ -310,6 +327,12 @@ function EditQuestions({
   const names = inviting ? invited : question?.names;
   const whom = guestNames(names ?? [], locale, t);
   const title = draft.title.trim();
+  const scope = (id: Parameters<typeof chooseScope>[0], label: string, keyHint: string) => ({
+    id,
+    label: t(`edit.${label}`),
+    keyHint,
+    onPress: () => chooseScope(id),
+  });
   return (
     <>
       {scopeAsked && (
@@ -326,19 +349,12 @@ function EditQuestions({
           )}
           cancel={t("edit.cancel")}
           scopes={[
-            {
-              id: "occurrence",
-              label: t("edit.thisEvent"),
-              keyHint: "1",
-              onPress: () => chooseScope("occurrence"),
-            },
-            {
-              id: "following",
-              label: t("edit.following"),
-              keyHint: "2",
-              onPress: () => chooseScope("following"),
-            },
-            { id: "record", label: t("edit.allEvents"), keyHint: "3", onPress: () => chooseScope("record") },
+            // A changed rule cannot be one occurrence's; a removed rule leaves no following part.
+            ...(draft.repeat === (original.repeat?.rules[0] ?? null)
+              ? [scope("occurrence", "thisEvent", "1")]
+              : []),
+            ...(draft.repeat !== null ? [scope("following", "following", "2")] : []),
+            scope("record", "allEvents", "3"),
           ]}
         />
       )}
@@ -361,12 +377,6 @@ function EditQuestions({
         />
       )}
     </>
-  );
-}
-
-function draftDiffers(draft: EventDraft, baseline: EventDraft): boolean {
-  return (Object.keys(draft) as (keyof EventDraft)[]).some(
-    (key) => JSON.stringify(draft[key]) !== JSON.stringify(baseline[key]),
   );
 }
 

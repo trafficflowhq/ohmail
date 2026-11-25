@@ -101,6 +101,7 @@ export function HistoryList({ plan }: PaneProps) {
         {model.list.rows.length > 0 || windowed?.slots.length ? (
           <SquaresRoomContext.Provider value={squareRoom}>
             <LetterRows
+              verbs={model.list.verbs}
               selection={selection}
               contact={contact}
               label={t("title")}

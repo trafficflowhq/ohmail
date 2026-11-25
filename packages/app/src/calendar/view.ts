@@ -4,7 +4,7 @@
  * body for the span it shows, so the body expands the repeats over that span and no other.
  */
 import type { ComponentType, KeyboardEvent, PointerEvent, ReactNode } from "react";
-import type { GridEvent, HeldEdge, PlainDate, ZoneSource } from "@ohmail/app-logic/calendar";
+import type { GridEvent, GridItem, HeldEdge, PlainDate, ZoneSource } from "@ohmail/app-logic/calendar";
 import type { EventRef, LayoutPlan } from "../frame/contract.js";
 
 export type { EventRef };
@@ -40,6 +40,7 @@ export interface CalendarViewProps {
   readonly anchor: PlainDate;
   /** The occurrences in the span the view asked for, of the calendars that are shown. */
   readonly events: readonly CalendarEventView[];
+  readonly hiddenBusy?: readonly GridItem[];
   /** The expansion stopped at a ceiling: there may be more than it returned. */
   readonly capped: boolean;
   /** The edges of what this device holds: days beyond them are said, never drawn as empty. */
@@ -60,8 +61,9 @@ export interface CalendarViewProps {
   /** Opens an event: the frame's named command. */
   readonly onDrag?: CalendarEventDrag;
   readonly onResizeTime?: (id: string, edge: DayEdge, minutes: number, anchor: HTMLElement) => void;
-  readonly onSlot?: (day: string, event: PointerEvent<HTMLDivElement>) => void;
-  readonly dragPreview?: { day: string; chip: ReactNode };
+  readonly onSlot?: (day: string, event: PointerEvent<HTMLElement>) => void;
+  readonly monthSelection?: { first: string; last: string; tone: CalendarEventView["tone"] };
+  readonly dragPreview?: (day: string, hourHeight: number) => ReactNode;
   readonly onOpen: (ref: EventRef) => void;
   /** Goes to a day, in the Day view. */
   readonly onDay: (day: PlainDate) => void;

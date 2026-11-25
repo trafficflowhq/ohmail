@@ -1,5 +1,4 @@
 import { readdirSync, existsSync, statSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -585,7 +584,7 @@ describe("the worker pass registry", () => {
   it("every registered entry is a REAL runtime export — imported, not parsed", async () => {
     for (const r of rows) {
       if (r.module === "apps/worker/src/index.ts") continue;
-      const mod = (await import(pathToFileURL(join(REPO, r.module)).href)) as Record<string, unknown>;
+      const mod = (await import(join(REPO, r.module))) as Record<string, unknown>;
       const value = mod[r.entry];
       expect(typeof value, `${r.module} does not export a callable '${r.entry}' (row '${r.name}')`)
         .toBe("function");

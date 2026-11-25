@@ -7,7 +7,7 @@ import {
   messageBodies, messageFailures, messageInstances, messageInvitations, messageSearch, messageStates, messageTags,
   messages,
   organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends, passProgress, routingDecisions,
-  scheduledSendFiles,
+  scheduledSendFiles, screenerLearning,
   threadNotes, threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "./schema-mail.js";
 import { recordChanges, recordMailboxRemoved, type LedgerTx, type Tx } from "./change-log.js";
@@ -78,6 +78,9 @@ export async function stampMailboxErasure(
     .where(and(
       eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.erasedAt),
     ));
+  await tx.delete(screenerLearning).where(and(
+    eq(screenerLearning.accountId, accountId), eq(screenerLearning.mailboxId, mailboxId),
+  ));
   // …and every hash of its settings or its signature that its audit rows hold.
   await forgetSettingsHashes(tx, accountId, mailboxId);
   const [row] = await tx.select({ done: mailboxes.erasureDoneAt }).from(mailboxes)

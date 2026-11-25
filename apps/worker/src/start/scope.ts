@@ -258,8 +258,8 @@ export interface WorkerScope {
   ) => Promise<number | null>;
 
   /* ── start/quarantine.ts ── */
-  quarantineMailbox: (mailboxId: string, accountId: string, reason: unknown, phase: MailboxErrorPhase) => Promise<void>;
-  markRecovered: (mb: { mailboxId: string; accountId: string }) => Promise<void>;
+  quarantineMailbox: (mailboxId: string, accountId: string, reason: unknown, phase: MailboxErrorPhase, kickAsRead?: string | null) => Promise<void>;
+  markRecovered: (mb: { mailboxId: string; accountId: string }, authKickAsRead?: string | null) => Promise<void>;
   setAsideBreaches: WeakSet<object>;
   closedOwed: Map<string, MailboxRuntime>;
   CLOSED_DETACH_REASON: string;

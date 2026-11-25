@@ -73,6 +73,8 @@ export type RuleAct = (
    */
   | {
       kind: "rule_create";
+      screenerMessageId?: string;
+      shownSuggestionId?: string;
       /** The rules row's `kind`. `domain` widens it to everyone after the `@`. */
       ruleKind: "sender" | "domain";
       /** Absent is the server's 0; set only to lift an address rule over its domain's. */

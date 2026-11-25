@@ -62,7 +62,7 @@ async function proposalEvent(ctx: ServiceContext, act: CalendarProposalAct) {
     act.occurrence.length > 256 || !await hasProposalOccurrence(ctx, event, act.occurrence)) {
     throw new ServiceError("conflict", 409, "The event changed. Open it again.");
   }
-  const own = await ownOrganizerAddresses(db, ctx.accountId, connection.principal);
+  const own = await ownOrganizerAddresses(db, ctx.accountId, connection.principal, connection.organizerAddresses);
   const attendees = await db.select({ address: calAttendees.address, answer: calAttendees.answer }).from(calAttendees)
     .where(and(eq(calAttendees.eventId, event.id), eq(calAttendees.accountId, ctx.accountId)));
   return { event, connection, organizer: event.organizer, owned: own.has(event.organizer.toLowerCase()), attendees };

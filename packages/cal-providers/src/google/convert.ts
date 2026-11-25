@@ -94,6 +94,14 @@ function inviteesOf(v: unknown): NonNullable<NewEvent["attendees"]> {
   return out;
 }
 
+/** Google's own attendee line, or null when its self flags are ambiguous or unreadable. */
+export function googleSelfAttendee(people: unknown): string | null | undefined {
+  if (!Array.isArray(people)) return undefined;
+  const selves = people.filter((person) => isRecord(person) && person.self === true);
+  if (selves.length === 0) return undefined;
+  return selves.length === 1 ? addressOf(selves[0].email) ?? null : null;
+}
+
 /* ── the repeat ─────────────────────────────────────────────────────────────────────────────────── */
 
 /** The lines Google keeps a repeat in ("RRULE, EXRULE, RDATE and EXDATE lines"). A line of another name is no part of it and is not taken. */
@@ -209,5 +217,6 @@ export function convertEvent(raw: unknown, zones: ZoneSource, nowMs: number): Co
   const event: CalEvent = eventOf({ ...made, properties: [...made.properties, ...more] });
   // The entity tag is what a change is made against. A record without one (a recorded exchange keeps none) is told apart by its last change.
   const version = text(raw.etag) ?? text(raw.updated) ?? "";
-  return { kind: "item", item: { kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null, ...(portableGoogle(raw) && { portableCopy: true as const }), ...(incompleteAudience(raw, event) && { audienceIncomplete: true }) } };
+  const selfAttendee = googleSelfAttendee(raw.attendees);
+  return { kind: "item", item: { kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null, ...(selfAttendee !== undefined && { selfAttendee }), ...(portableGoogle(raw) && { portableCopy: true as const }), ...(incompleteAudience(raw, event) && { audienceIncomplete: true }) } };
 }

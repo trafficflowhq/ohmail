@@ -13,6 +13,7 @@ import { placeDays, type GridItem, type Segment } from "./place.js";
 
 export interface TimeGridInput<T extends GridItem> {
   readonly events: readonly T[];
+  readonly hiddenBusy?: readonly GridItem[];
   readonly days: readonly PlainDate[];
   /** The reader's zone, and where zone rules come from. */
   readonly zone: string;
@@ -65,6 +66,10 @@ export function timeGridModel<T extends GridItem>(input: TimeGridInput<T>): Time
   const { days, hourPx } = input;
   const limits = laneLimits(hourPx);
   const placed = placeDays(input.events, days, input.zone, input.zones);
+  const hidden =
+    input.free && input.hiddenBusy?.length
+      ? placeDays(input.hiddenBusy, days, input.zone, input.zones).timed
+      : null;
   const now = nowIn(input.nowMs, input.zone, input.zones);
   const todayAt = now === null ? -1 : days.findIndex((d) => sameDay(d, now.day));
   const out = days.map((day, i): TimeGridDay<T> => {
@@ -85,7 +90,7 @@ export function timeGridModel<T extends GridItem>(input: TimeGridInput<T>): Time
       today: i === todayAt,
       picked: input.picked !== null && sameDay(day, input.picked) && i !== todayAt,
       blocks,
-      free: input.free ? freeStretches(segments) : [],
+      free: input.free ? freeStretches(hidden ? [...segments, ...hidden[i]!] : segments) : [],
       above: sight.above,
       below: sight.below,
     };
@@ -101,13 +106,14 @@ export function timeGridModel<T extends GridItem>(input: TimeGridInput<T>): Time
 
 /** The model for a view, worked out again only when one of its inputs is another value. */
 export function useTimeGrid<T extends GridItem>(input: TimeGridInput<T>): TimeGridModel<T> {
-  const { events, days, zone, zones, nowMs, hourPx, inView, picked, free } = input;
+  const { events, hiddenBusy, days, zone, zones, nowMs, hourPx, inView, picked, free } = input;
   const from = inView?.from ?? null;
   const to = inView?.to ?? null;
   return useMemo(
     () =>
       timeGridModel({
         events,
+        hiddenBusy,
         days,
         zone,
         zones,
@@ -117,6 +123,6 @@ export function useTimeGrid<T extends GridItem>(input: TimeGridInput<T>): TimeGr
         picked,
         free,
       }),
-    [events, days, zone, zones, nowMs, hourPx, from, to, picked, free],
+    [events, hiddenBusy, days, zone, zones, nowMs, hourPx, from, to, picked, free],
   );
 }

@@ -221,9 +221,9 @@ export interface AccessLimits {
  */
 export type SpendOutcome =
   /** Proceed; this attempt moved money. KEEP `attempt` — it is what a reversal names. */
-  | { verdict: "ok"; charged: true; attempt: string }
+  | { verdict: "ok"; charged: true; attempt: string; chargedCredits?: number }
   /** Proceed, free: an attempt for this work is already open and paid for. */
-  | { verdict: "duplicate"; charged: false; attempt: string }
+  | { verdict: "duplicate"; charged: false; attempt: string; chargedCredits?: 0 }
   /** The plan could spend and the balance is empty. A payment demand. */
   | { verdict: "insufficient"; reason: AiRefusalReason }
   /** The subscription or the account's own switch may not spend. NOT a payment demand. */
@@ -570,6 +570,7 @@ export interface EntitlementsPort {
    * and be charged twice. Build keys with `ledger-source.ts`. Never answers a money verdict by
    * throwing — see {@link SpendOutcome}; a malformed key is the caller-bug class and raises.
    */
+  quoteScreenerLearning?(accountId: string, count: number): Promise<number | null>;
   spend(
     accountId: string, action: SpendAction, attemptKey: string, meta?: SpendMeta,
   ): Promise<SpendOutcome>;
@@ -649,7 +650,7 @@ export type SpendPort = Pick<EntitlementsPort, "spend" | "release">;
  * Narrow for {@link SpendPort}'s reason and one of its own: the sites that read it are refusal
  * paths, and a refusal path holding `spend` could charge while explaining why it will not.
  */
-export type AccessPort = Pick<EntitlementsPort, "access"> & Partial<Pick<EntitlementsPort, "accessOrFault">>;
+export type AccessPort = Pick<EntitlementsPort, "access"> & Partial<Pick<EntitlementsPort, "accessOrFault" | "quoteScreenerLearning">>;
 
 /** A call site either reaches an entitlements program or is told this host meters nothing. */
 export type SpendComposition = SpendPort | typeof UNMETERED;
@@ -815,6 +816,7 @@ export function parkedAccountsOf(
  * and a metered one with no card withholds the quote and sells nothing.
  */
 export interface ActionPricing {
+  quoteScreenerLearning?(accountId: string, count: number): Promise<number | null>;
   priceOf(accountId: string, action: SpendAction): Promise<number | null>;
 }
 
@@ -825,6 +827,7 @@ export const UNPRICED: ActionPricing = { priceOf: async () => null };
 export function pricingOf(entitlements: AccessPort | typeof UNMETERED): ActionPricing {
   if (entitlements === UNMETERED) return UNPRICED;
   return {
+    ...(entitlements.quoteScreenerLearning ? { quoteScreenerLearning: entitlements.quoteScreenerLearning.bind(entitlements) } : {}),
     async priceOf(accountId, action) {
       const verdict = await entitlements.access(accountId);
       return verdict.ok ? verdict.prices?.[action] ?? null : null;

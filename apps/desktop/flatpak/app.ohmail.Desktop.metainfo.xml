@@ -78,6 +78,27 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.5" date="2026-11-25">
+      <description>
+        <ul>
+          <li>Day shows the Agenda when there is room</li>
+          <li>Calendar drags cross days</li>
+          <li>Open mail actions with right-click or the menu key</li>
+          <li>Mailboxes wait for a new sign-in after a day of rejections</li>
+          <li>Newsletter artwork loads with tracker blocking on</li>
+          <li>Calendar notices follow each account’s check schedule</li>
+          <li>Quieter connection notices</li>
+          <li>More room for the sender in message headers</li>
+          <li>The reader heading becomes compact as you scroll</li>
+          <li>The reader keeps your place with larger text</li>
+          <li>Choose how a calendar event repeats</li>
+          <li>The Screener learns from your choices</li>
+          <li>Fixed</li>
+          <li>Saved drafts keep their formatting when sent</li>
+          <li>Compact Screener lists keep the keyboard cursor</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.4" date="2026-11-24">
       <description>
         <ul>
@@ -120,298 +141,6 @@
           <li>Screener suggests for the whole waiting queue</li>
           <li>Events on writable shared calendars can be edited</li>
           <li>Trial dates, account notices and Microsoft approval</li>
-        </ul>
-      </description>
-    </release>
-    <release version="2.0.0" date="2026-11-24">
-      <description>
-        <ul>
-          <li>Search within a person's mail</li>
-          <li>New app icons for ohmail and ohcal</li>
-          <li>Saved appearance and list resizing on the web</li>
-          <li>Attachment list retries keep their place</li>
-          <li>Embedded pictures and sender reviews explain what happens next</li>
-          <li>Automatic Screener suggestions and live draft progress on Cloud</li>
-          <li>Reader shows when the Away responder answered</li>
-          <li>Away names the piles it answers</li>
-          <li>Away’s reply-pile help follows the current theme</li>
-          <li>Ohbox shows when the Away responder is on</li>
-          <li>Away settings use the app's time zone and language</li>
-          <li>Away Settings reads independently of the notice</li>
-          <li>Keep notification changes in order across browser tabs</li>
-          <li>Notification removal still works when the browser's own check fails</li>
-          <li>Web tabs close private views when the browser session changes</li>
-          <li>Large CalDAV calendars resume syncing across pages</li>
-          <li>Calendar alerts on the web and desktop</li>
-          <li>Easier calendar search and mailbox setup</li>
-          <li>Calendar events are easier to tell apart</li>
-          <li>Calendar availability</li>
-          <li>Calendar recognizes a cancellation after a lost reply</li>
-          <li>Calendar cards and pickers are clearer</li>
-          <li>Calendar and Away date pickers follow the current theme</li>
-          <li>Edit an event in Calendar</li>
-          <li>Edit your ohmail Cloud calendar on desktop</li>
-          <li>Move and delete events in the calendar</li>
-          <li>See the calendar an event belongs to</li>
-          <li>Create and resize calendar events</li>
-          <li>Save, cancel and resize calendar events</li>
-          <li>Large calendars finish their first sync</li>
-          <li>Confirm an update to Calendar guests</li>
-          <li>Answer an invitation from its event card</li>
-          <li>Answer calendar invitations from the reader</li>
-          <li>Calendar navigation and settings</li>
-          <li>Create an event in Calendar</li>
-          <li>Open calendar events from browser notifications</li>
-          <li>Choose which calendar notifications appear on this device</li>
-          <li>Open your calendar in ohcal on the phone</li>
-          <li>Private calendar widgets and reminders on the phone</li>
-          <li>The web sidebar offers Calendar before setup</li>
-          <li>Calendar changes resume on reconnect and Quarantine moves ask again after upgrade</li>
-          <li>Calendar reminders open the right occurrence</li>
-          <li>Calendar sign-in errors match the connection</li>
-          <li>Propose a new time in Calendar</li>
-          <li>Calendar view and From mail refinements</li>
-          <li>Calendar Year stays readable at larger text sizes</li>
-          <li>Your Ohbox opens in your saved appearance</li>
-          <li>The certificate trust note shows its fingerprint on its own line</li>
-          <li>Select mail with one press on its circle</li>
-          <li>Clearer sync notices</li>
-          <li>Cloud opens the Screener and mail faster during imports</li>
-          <li>Cloud sign-up and device sign-in work with row security enabled</li>
-          <li>Cloud sign-in and signup use each client's connection</li>
-          <li>Clearer Cloud setup and a visible Undo for Park</li>
-          <li>Storage offers are visible again in Cloud Settings</li>
-          <li>Web sign-in uses each person's network address</li>
-          <li>Clearer subjects in short windows</li>
-          <li>Format your letters with paragraph styles, code blocks and dividers</li>
-          <li>Bulk filing follows the letters you confirmed</li>
-          <li>Sender cards bring mail and calendar actions together</li>
-          <li>Unselected messages keep their contact circles</li>
-          <li>Conversation squares align with the message list</li>
-          <li>Conversation squares show their details on a readable card</li>
-          <li>Settings and the editor load when opened</li>
-          <li>Account settings open from the desktop</li>
-          <li>Desktop settings and Storage use the new controls</li>
-          <li>Configure the Away responder on desktop</li>
-          <li>Connect a calendar from desktop Settings</li>
-          <li>Calendar reminders reach the desktop notification center</li>
-          <li>Open Devices from desktop Settings</li>
-          <li>The web app remembers dismissing its desktop download notice</li>
-          <li>The refused-account page fills the desktop window</li>
-          <li>Desktop Screener settings use the current controls</li>
-          <li>Open Security from desktop Settings</li>
-          <li>Mail settings are back in the desktop app</li>
-          <li>Desktop Settings shows the sections available for your connection</li>
-          <li>Connect a mailbox during desktop setup</li>
-          <li>The desktop's menu bar, tray and update dialogs follow the app's language</li>
-          <li>Clearer notices for drafts edited on another device</li>
-          <li>Write shows when a draft is kept</li>
-          <li>Drafts opens beside the letter you are writing</li>
-          <li>Edit an occurrence that changed separately</li>
-          <li>Edit quoted history while writing</li>
-          <li>Clearer Cloud AI consent and account notices</li>
-          <li>First sync progress is easier to read</li>
-          <li>Floating cards keep their surface and type</li>
-          <li>Refine mail controls on phones and foldables</li>
-          <li>All folders remembers the branches you open</li>
-          <li>Folder headings count each email address once</li>
-          <li>General settings follow the oh look</li>
-          <li>Clearer German folder confirmations in the Screener</li>
-          <li>Held letters can show their original colours</li>
-          <li>A held letter shows its send status</li>
-          <li>Held sends use the same answer across mail views</li>
-          <li>Clearer answer for an uncertain send</li>
-          <li>Uncertain sends offer the same two answers in Drafts, Write, and Reply</li>
-          <li>Adjust the reader in General Settings</li>
-          <li>Open Screener settings from the mail frame</li>
-          <li>Invalid links show the correct address</li>
-          <li>Junk draws the prepared page on the first press</li>
-          <li>Drafts keeps edits saved during Discard's Undo window</li>
-          <li>The web app keeps your saved appearance while opening</li>
-          <li>Mail changes keep moving in large Cloud mailboxes</li>
-          <li>Conversations open on the latest message</li>
-          <li>The Link dialog starts in the address field</li>
-          <li>Hear your position in more mail lists</li>
-          <li>See your new event as you drag</li>
-          <li>Open Calendar from Mail</li>
-          <li>Mailbox names follow the current Reader style</li>
-          <li>Mail uses the same entry motion as Calendar</li>
-          <li>Mail keeps your layout, conversation circles and reply feedback</li>
-          <li>Mail views follow the Studio layout</li>
-          <li>More actions in mail list menus</li>
-          <li>Read and restore mail from the new lists</li>
-          <li>Mail moves into place</li>
-          <li>Drag mail onto a sidebar pile</li>
-          <li>Today's events in Ohbox</li>
-          <li>Mailbox connection results clear when you edit the form</li>
-          <li>Clearer mailbox sync notices</li>
-          <li>Mail stays available while ohmail opens</li>
-          <li>Menus keep keyboard focus as the window widens</li>
-          <li>Signing out ends unfinished Microsoft mailbox sign-ins</li>
-          <li>Open News and Receipts from the mail rail</li>
-          <li>The News filing suggestion uses the current controls</li>
-          <li>Calmer notices and Calendar matches in Search</li>
-          <li>Select mail rows from their avatars</li>
-          <li>Open a calendar event from its desktop reminder</li>
-          <li>Open new mail from its notification</li>
-          <li>Calendar setup is optional</li>
-          <li>Dismissal errors stay with the organizer change they describe</li>
-          <li>Open Mailboxes from a grouped organizer notice</li>
-          <li>Connect Outlook from Mailboxes Settings on the web</li>
-          <li>Outlook device sign-in ends when you sign out</li>
-          <li>Paired browsers show all their Settings sections</li>
-          <li>Reset your password by mail</li>
-          <li>Choose which events to edit</li>
-          <li>Mail opens in the phone web app</li>
-          <li>Phone wake settings follow the active pairing</li>
-          <li>Paper mail views on iOS and Android</li>
-          <li>A Servers page on the phone</li>
-          <li>Mailboxes and About on the phone</li>
-          <li>Phone search and setup follow your display settings</li>
-          <li>News and History keep sender details readable</li>
-          <li>Account security notices stay private</li>
-          <li>The mails ohmail sends have a new look, light and dark</li>
-          <li>A calendar's connection can be removed while the calendar is off, and its stored sign-in opens for that connection alone</li>
-          <li>A calendar can be connected, on a server that keeps one</li>
-          <li>An invitation can be answered by mail</li>
-          <li>A calendar server's password goes to that server, and to a host the server itself names</li>
-          <li>A calendar's store, behind a switch that is off by default</li>
-          <li>The calendar's sync, built behind the switch that is still off</li>
-          <li>Repeating events written, still behind the switch that is off</li>
-          <li>The calendar's writes, built behind the switch that is still off</li>
-          <li>A transaction that loses its database connection writes nothing more</li>
-          <li>Your own server waits less on its database</li>
-          <li>The database moves to its 2.0 shape in one step, or not at all</li>
-          <li>The desktop keeps a copy of your mail store when it updates to 2.0</li>
-          <li>The pages before the app, the account wall and deleting the account in the new design</li>
-          <li>Pasted text keeps its lines and can be edited like typed text</li>
-          <li>A reply draft is no longer charged in a mailbox that cannot hold it</li>
-          <li>Underlined text stays underlined when a letter is sent</li>
-          <li>The new design's typefaces load with it</li>
-          <li>The app stands in a new frame: one rail, one notice at a time</li>
-          <li>A list in a letter you write stands on the text's own lines</li>
-          <li>Switching mailboxes on the desktop keeps each mailbox's drafts and Screener decisions to itself</li>
-          <li>On the web, a letter's pictures wait for the server's first word</li>
-          <li>Connecting a mailbox during sign-up, in the new design</li>
-          <li>A letter can be moved into any of your own folders</li>
-          <li>Notifications for waiting senders, with no sender and no subject</li>
-          <li>Mail notices on Android, a notice when a device joins your account, never with a sender or a subject</li>
-          <li>A calendar's provider can tell a server that a calendar changed</li>
-          <li>The Ohbox in the new design</li>
-          <li>A phone that organizes its own mailbox keeps a copy of it before the update changes it</li>
-          <li>Swipe a row and pull the Ohbox down on a touch screen</li>
-          <li>Requests made for a letter or a device go only to the address they were checked against</li>
-          <li>A remote picture or an unsubscribe no longer hangs on a server that switches protocols</li>
-          <li>A preview build of the desktop app runs beside an installed ohmail</li>
-          <li>The page that asks before a link opens has a new look</li>
-          <li>A search by recipient reads a key each letter carries</li>
-          <li>The Screener is drawn in the new design</li>
-          <li>Search no longer stops at an empty page while older mail still matches</li>
-          <li>Your own server and ohmail Cloud run one API program</li>
-          <li>A send or a folder change is picked up at once on ohmail Cloud and your own server</li>
-          <li>Underline in the editor</li>
-          <li>Reliable Reader actions and web navigation</li>
-          <li>Conversation controls and sender warnings work again</li>
-          <li>Clearer recipient lines and sender filing notices</li>
-          <li>Preview attachments and act on contacts in the reader</li>
-          <li>Meeting invitations show the event above the letter</li>
-          <li>Steadier conversation openings and clearer German setup labels</li>
-          <li>Reader shortcuts and stream cards follow the active letter</li>
-          <li>Paper lets the open letter scroll to the window edge</li>
-          <li>Show images uses the current mailbox account</li>
-          <li>The Reader names the tag it put on or took off</li>
-          <li>Opening a whole thread starts at the first unread message</li>
-          <li>News and Receipts reopen at the top when switching between them</li>
-          <li>Dismiss calendar suggestions on receipts</li>
-          <li>Narrow receipt previews keep the sender and amount legible</li>
-          <li>Composer recipient chips keep addresses readable</li>
-          <li>Drafts can recover a later unconfirmed send of the same letter</li>
-          <li>You can reply again as soon as the previous reply is confirmed</li>
-          <li>Closing a new message returns the keyboard to its row</li>
-          <li>Find a declined settings copy in Web Settings</li>
-          <li>Saved mailbox settings use the current controls</li>
-          <li>Scheduled replies keep their recipient and label in view</li>
-          <li>Scheduled send dates stay visible at larger text sizes</li>
-          <li>Keep Screener progress visible through the last sender</li>
-          <li>The Screener says when unsubscribe depends on the sender</li>
-          <li>Quieter Screener prompts</li>
-          <li>Screener reports the confirmed unsubscribe request</li>
-          <li>Screener waits for its copy before counting mail</li>
-          <li>The Screener shows when a decision fails</li>
-          <li>The Screener restores controls for held mail</li>
-          <li>Screener sender rows announce whether mail has been read</li>
-          <li>The Screener keeps the keyboard cursor in view</li>
-          <li>Screener progress follows the current theme</li>
-          <li>The Screener announces each sender’s place in the queue</li>
-          <li>Screener releases take effect for the next letter</li>
-          <li>The Screener checks permission before asking AI</li>
-          <li>A simpler Screener</li>
-          <li>The Screener tooltip names what is waiting</li>
-          <li>Screening a selection counts every letter it will move</li>
-          <li>News and Receipts respect your screening window</li>
-          <li>The Screening result restores follow-up actions</li>
-          <li>The Screener explains when it shows the whole folder</li>
-          <li>Search says how much mail it covered</li>
-          <li>Search starts with people and filters</li>
-          <li>Search shows the confirmed count beside Results</li>
-          <li>Search shows folder counts across your mailboxes</li>
-          <li>Find tags from the message menu</li>
-          <li>Search highlights the letter it opens in the Ohbox</li>
-          <li>Preview messages directly in Search</li>
-          <li>Calendar on your own server</li>
-          <li>Undo partial filing after Send + Done</li>
-          <li>Clearer send failure</li>
-          <li>Open Mailboxes when sending needs sign-in</li>
-          <li>Clearer mail server retry</li>
-          <li>Sender and subject rule sheets follow the active theme</li>
-          <li>Simpler Settings and mailbox setup</li>
-          <li>Desktop AI and mailbox checks use the new settings design</li>
-          <li>Walk through Settings with the arrow keys</li>
-          <li>Fix Settings handoff, mail booking and desktop sign-out</li>
-          <li>See more in the Settings menu</li>
-          <li>Settings for mail previews, Calendar summaries and draft replies</li>
-          <li>Verification opens above Settings</li>
-          <li>Setup actions fit the page at larger text sizes</li>
-          <li>Use the keyboard through mailbox setup</li>
-          <li>Setup shows your progress within each phase</li>
-          <li>Mail lists and Settings behave more consistently</li>
-          <li>The sidebar account line stays clear</li>
-          <li>Sidebar counts stay clear after clicking a place</li>
-          <li>Account explains when sign-out leaves mail on this browser</li>
-          <li>An interrupted web sign-out can finish cleaning the browser</li>
-          <li>Removing a signature can be undone</li>
-          <li>Sign-up continues to recovery codes after the first factor</li>
-          <li>Mail keeps your place when you return from Calendar</li>
-          <li>Conversation reader stays in place as pictures arrive</li>
-          <li>Scrolled letters stay behind the subject header</li>
-          <li>Keep scrolled mail below the subject</li>
-          <li>Stream actions stay with the addressed letter</li>
-          <li>Reply in place and keep your place in the Screener</li>
-          <li>News and Receipts keep their actions in view</li>
-          <li>News shows which mailbox received a message</li>
-          <li>The stream stops explaining itself</li>
-          <li>Links open News and Receipts letters in place</li>
-          <li>News and Receipts keep previews responsive</li>
-          <li>News and Receipts keep reading progress when you leave</li>
-          <li>Streams announce their reply shortcuts</li>
-          <li>Screen readers announce unread letters in News and Receipts</li>
-          <li>Choose where message subjects appear</li>
-          <li>See what an existing subject rule moved</li>
-          <li>Open a subject rule from a letter’s sender card</li>
-          <li>Support drafts use the composer’s controls for diagnostics</li>
-          <li>Choose whether to include diagnostics in a support draft</li>
-          <li>The tag picker uses the same filter field as other menus</li>
-          <li>Tags says when no letter is open</li>
-          <li>Choose where the latest message appears</li>
-          <li>Distinguish sent replies and unread mail in thread squares</li>
-          <li>Resize timed events from their top and bottom edges</li>
-          <li>Today highlights its date in Calendar</li>
-          <li>Touch navigation on phones and foldables</li>
-          <li>Open Answer Later, Parked and Resurface from the mail rail</li>
-          <li>Unsaved changes show which action is under way</li>
-          <li>The web sign-in page explains why your previous sign-in ended</li>
-          <li>Web sign-out shows progress while the browser forgets the account</li>
-          <li>Faster live updates and smoother first sync on the web</li>
         </ul>
       </description>
     </release>

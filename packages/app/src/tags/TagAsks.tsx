@@ -13,7 +13,15 @@ import { useText } from "../text/index.js";
 /**
  * Rename takes the second line of the list head. The field takes focus and Enter saves.
  */
-export function TagRename({ tag, model, close }: { tag: TagDTO; model: TagsModel; close: () => void }) {
+export function TagRename({
+  tag,
+  model,
+  close,
+}: {
+  tag: TagDTO;
+  model: Pick<TagsModel, "judge" | "rename">;
+  close: () => void;
+}) {
   const t = useText("tags");
   const [draft, setDraft] = useState(tag.name);
   const answer = model.judge(tag.id, draft);
@@ -55,13 +63,24 @@ export function TagRename({ tag, model, close }: { tag: TagDTO; model: TagsModel
   );
 }
 
-export function TagDelete({ tag, model, close }: { tag: TagDTO; model: TagsModel; close: () => void }) {
+export function TagDelete({
+  tag,
+  model,
+  close,
+  returnFocus,
+}: {
+  tag: TagDTO;
+  model: Pick<TagsModel, "countOf" | "remove">;
+  close: () => void;
+  returnFocus?: () => HTMLElement | null;
+}) {
   const t = useText("tags");
   const count = model.countOf(tag.id);
   return (
     <Dialog
       open
       kind="delete"
+      returnFocus={returnFocus}
       onClose={close}
       title={t("delete.title", { name: tag.name })}
       line={count === 0 ? t("delete.nothing") : t("delete.stay", { count })}

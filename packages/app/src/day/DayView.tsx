@@ -25,6 +25,7 @@ import {
   type Segment,
   type TimeGridDay,
 } from "@ohmail/app-logic/calendar";
+import { useCalendarMenu } from "../calendar/event-menu-trigger.js";
 import { timedResizeProps } from "../calendar/view.js";
 import type { CalendarEventView, CalendarView, CalendarViewProps } from "../calendar/view.js";
 import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
@@ -54,6 +55,7 @@ export function DayView(props: CalendarViewProps) {
   });
   const model = useTimeGrid({
     events: props.events,
+    hiddenBusy: props.hiddenBusy,
     days,
     zone: clock.zone,
     zones: clock.zones,
@@ -68,11 +70,18 @@ export function DayView(props: CalendarViewProps) {
   const freeText = (minutes: number) => freeHours(t, minutes);
 
   const calendar = useText("calendar");
+  const context = useCalendarMenu();
+  const slot = context.slot;
   const kitDays: KitDay[] = model.days.map((d) => ({
     ...dayHead(d.day, locale),
     id: d.id,
     today: d.today,
-    cursor: props.cursor != null ? { minutes: props.cursor, length: 60 } : undefined,
+    cursor:
+      slot?.day === d.id
+        ? { minutes: slot.from, length: slot.to - slot.from }
+        : props.cursor != null
+          ? { minutes: props.cursor, length: 60 }
+          : undefined,
     above: outOfSight(d, "above", t, said, hours.show),
     below: outOfSight(d, "below", t, said, hours.show),
     free: d.free.map((f) => ({ minutes: f.at, text: freeText(f.minutes) })),
@@ -83,6 +92,7 @@ export function DayView(props: CalendarViewProps) {
         {...blockChip(b, b.item.id === openId)}
         label={t("chip", { title: b.item.title, from: clockOf(b.from), to: clockOf(b.to) })}
         onPress={() => open(b.item)}
+        {...context.eventProps<HTMLButtonElement>(b.item)}
         {...timedResizeProps(props, b, {
           start: calendar("actions.resizeTimeStart"),
           end: calendar("actions.resizeTimeEnd"),
@@ -91,25 +101,7 @@ export function DayView(props: CalendarViewProps) {
     )),
   }));
 
-  const lane = model.lane.pills.map((p) => (
-    <EventChip
-      key={p.item.id}
-      size="pill"
-      {...pillChip(p, p.item.id === openId)}
-      dayEdges={
-        props.onDrag && (openId === null || openId === p.item.id) && !p.item.viewOnly
-          ? {
-              start: p.before ? undefined : calendar("actions.resizeStart"),
-              end: p.after ? undefined : calendar("actions.resizeEnd"),
-            }
-          : undefined
-      }
-      label={t("chipAllDay", { title: p.item.title })}
-      style={{ gridColumn: "2 / 3", gridRow: p.row + 1 }}
-      onPress={() => open(p.item)}
-      onPointerDown={props.onDrag ? (event) => props.onDrag?.(p.item.id, event) : undefined}
-    />
-  ));
+  const lane = dayPills(model.lane.pills, props, t, calendar, context.eventProps);
 
   return (
     <section className="cd-day" aria-label={t("hours")}>
@@ -141,6 +133,8 @@ export function DayView(props: CalendarViewProps) {
           model.now === null ? undefined : { minutes: model.now.minutes, label: clockOf(model.now.minutes) }
         }
         onDayPointerDown={props.onSlot}
+        onDayContextMenu={context.time}
+        onDayMenuKey={context.timeKey}
         scrollRoomForSheet={props.revealOpen && plan.device === "phone"}
         scrollRef={hours.ref}
         scrollGestures={swipe}
@@ -148,6 +142,36 @@ export function DayView(props: CalendarViewProps) {
       />
     </section>
   );
+}
+
+function dayPills(
+  pills: ReturnType<typeof useTimeGrid<CalendarEventView>>["lane"]["pills"],
+  props: CalendarViewProps,
+  t: ReturnType<typeof useText>,
+  calendar: ReturnType<typeof useText>,
+  eventProps: ReturnType<typeof useCalendarMenu>["eventProps"],
+) {
+  const { openId } = props;
+  return pills.map((p) => (
+    <EventChip
+      key={p.item.id}
+      size="pill"
+      {...pillChip(p, p.item.id === openId)}
+      dayEdges={
+        props.onDrag && (openId === null || openId === p.item.id) && !p.item.viewOnly
+          ? {
+              start: p.before ? undefined : calendar("actions.resizeStart"),
+              end: p.after ? undefined : calendar("actions.resizeEnd"),
+            }
+          : undefined
+      }
+      label={t("chipAllDay", { title: p.item.title })}
+      style={{ gridColumn: "2 / 3", gridRow: p.row + 1 }}
+      onPress={() => props.onOpen(p.item.ref)}
+      {...eventProps<HTMLButtonElement>(p.item)}
+      onPointerDown={props.onDrag ? (event) => props.onDrag?.(p.item.id, event) : undefined}
+    />
+  ));
 }
 
 export const dayView: CalendarView = { View: DayView, span: (anchor) => daySpan(anchor) };

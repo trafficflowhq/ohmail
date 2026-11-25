@@ -2,8 +2,8 @@
  * ONE ACCOUNT'S LINES, opened in place: its calendars, when it was last checked, and the acts the port has a door
  * for (Check now, Remove). A calendar's menu offers only what can be done here: its name here, where new events go.
  */
-import { useRef, useState, type RefObject } from "react";
-import { Button, Field, Menu, MenuItem } from "@ohmail/ui/base";
+import { useRef, useState, type ReactNode, type RefObject } from "react";
+import { Button, Field, Menu, MenuItem, type Point } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import type { CalendarRecord } from "@ohmail/app-logic/calendar";
 import {
@@ -14,6 +14,7 @@ import {
 import { useReport } from "../../frame/commands.js";
 import { useText } from "../../text/index.js";
 import type { CalendarTones } from "../../calendar/tones.js";
+import { calendarCheckDeadline } from "../../calendar/connection-notice.js";
 import { CalendarLine } from "../../calsetup/index.js";
 import { useWhen } from "../when.js";
 
@@ -33,6 +34,27 @@ export interface AccountLinesProps {
 /** A calendar's menu and its rename, one open at a time. */
 type Open = { readonly id: string; readonly as: "menu" | "rename" } | null;
 
+function AccountCheck({ check }: { check: () => Promise<unknown> }) {
+  const t = useText("calsettings");
+  const [state, setState] = useState<"checking" | "current" | "failed">();
+  return (
+    <Button
+      kind="quiet"
+      size="s"
+      disabled={state === "checking"}
+      onPress={() => {
+        setState("checking");
+        void check().then(
+          () => setState("current"),
+          () => setState("failed"),
+        );
+      }}
+    >
+      {t(state ? `accounts.checkState.${state}` : "accounts.checkNow")}
+    </Button>
+  );
+}
+
 export function AccountLines({
   account,
   tones,
@@ -51,13 +73,28 @@ export function AccountLines({
   const anchor = useRef<HTMLButtonElement | null>(null);
   const removeAnchor = useRef<HTMLButtonElement>(null);
   const { connection } = account;
+  const overdue = calendarCheckDeadline(connection) <= Date.now();
   const { setCalendar, check, remove } = port;
   const said = (done: Promise<unknown>, failed: string) => done.catch(() => report(t(failed)));
   const opened = open === null ? null : (account.calendars.find((k) => k.id === open.id) ?? null);
 
   return (
     <>
-      {account.fault ? <SettingNote warn>{faults(connectFaultKeyOf(account.fault))}</SettingNote> : null}
+      {account.fault ? (
+        <>
+          <SettingNote warn>{faults(connectFaultKeyOf(account.fault))}</SettingNote>
+          <SettingLine label={t("accounts.errorSince")} value={when(connection.updatedAt) ?? undefined} />
+        </>
+      ) : null}
+      {overdue ? (
+        <>
+          <SettingNote warn>{t("accounts.overdueDetail")}</SettingNote>
+          <SettingLine
+            label={t("accounts.scheduledCheck")}
+            value={when(connection.nextPollAt ?? null) ?? undefined}
+          />
+        </>
+      ) : null}
       <div role="group" aria-label={t("accounts.calendars")}>
         {account.calendars.map((k) => (
           <CalendarLine
@@ -85,11 +122,7 @@ export function AccountLines({
         ))}
       </div>
       <SettingLine label={t("accounts.checked")} value={when(connection.lastSyncedAt) ?? t("accounts.never")}>
-        {check === "none" ? null : (
-          <Button kind="quiet" size="s" onPress={() => void said(check(connection.id), "notChecked")}>
-            {t("accounts.checkNow")}
-          </Button>
-        )}
+        {check === "none" ? null : <AccountCheck check={() => check(connection.id)} />}
       </SettingLine>
       <SettingLine label={t("accounts.connectedWith")} value={wayWord}>
         {remove === "none" ? null : (
@@ -106,23 +139,14 @@ export function AccountLines({
         )}
       </SettingLine>
       {remove === "none" ? null : (
-        <Menu
+        <RemoveCalendarAccountQuestion
           open={asking}
-          onClose={() => setAsking(false)}
           anchor={removeAnchor}
-          kind="ask"
-          label={t("accounts.removeAsk", { name: connection.label })}
-          title={t("accounts.removeAsk", { name: connection.label })}
-        >
-          <MenuItem
-            onPress={() => {
-              setAsking(false);
-              void said(remove(connection.id), "notRemoved");
-            }}
-          >
-            {t("accounts.remove")}
-          </MenuItem>
-        </Menu>
+          question={t("accounts.removeAsk", { name: connection.label })}
+          label={t("accounts.remove")}
+          onClose={() => setAsking(false)}
+          onConfirm={() => void said(remove(connection.id), "notRemoved")}
+        />
       )}
       {opened && setCalendar !== "none" ? (
         <CalendarMenu
@@ -143,21 +167,54 @@ export function AccountLines({
   );
 }
 
+export function RemoveCalendarAccountQuestion({
+  open,
+  anchor,
+  question,
+  label,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean;
+  anchor: RefObject<HTMLButtonElement | null>;
+  question: string;
+  label: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Menu open={open} onClose={onClose} anchor={anchor} kind="ask" label={question} title={question}>
+      <MenuItem
+        onPress={() => {
+          onClose();
+          onConfirm();
+        }}
+      >
+        {label}
+      </MenuItem>
+    </Menu>
+  );
+}
+
 interface CalendarMenuProps {
   readonly calendar: CalendarRecord;
   readonly anchor: RefObject<HTMLButtonElement | null>;
+  readonly at?: Point | Element;
+  readonly children?: ReactNode;
   readonly renaming: boolean;
   readonly rename?: () => void;
   readonly close: () => void;
   readonly setName: (name: string) => void;
   /** Where new events go; null where it cannot be set here. */
-  readonly newEventsHere: { readonly on: boolean; readonly set: () => void } | null;
+  readonly newEventsHere: { readonly on: boolean; readonly label?: string; readonly set: () => void } | null;
 }
 
 /** A calendar's menu: its name here, where new events go; and its rename as a card in the same place. */
 export function CalendarMenu({
   calendar,
   anchor,
+  at,
+  children,
   renaming,
   rename,
   close,
@@ -170,10 +227,12 @@ export function CalendarMenu({
     <Menu
       open
       onClose={close}
-      anchor={anchor}
+      anchor={at ?? anchor}
+      returnFocus={anchor.current ?? undefined}
       label={calendar.name}
       title={calendar.name}
-      kind={renaming ? "card" : undefined}
+      fit="whole"
+      kind={renaming ? "card" : at ? "context" : undefined}
     >
       {renaming ? (
         <>
@@ -192,16 +251,23 @@ export function CalendarMenu({
         </>
       ) : (
         <>
-          {rename ? <MenuItem onPress={rename}>{t("accounts.rename")}</MenuItem> : null}
+          {children}
+          {rename ? (
+            <MenuItem icon="write" onPress={rename}>
+              {t("accounts.rename")}
+            </MenuItem>
+          ) : null}
           {newEventsHere === null ? null : (
             <MenuItem
+              icon="plus"
+              checkmark
               checked={newEventsHere.on}
               onPress={() => {
                 close();
                 newEventsHere.set();
               }}
             >
-              {t("accounts.newEventsHere")}
+              {newEventsHere.label ?? t("accounts.newEventsHere")}
             </MenuItem>
           )}
         </>

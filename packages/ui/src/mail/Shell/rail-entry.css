@@ -225,6 +225,10 @@
   }
 
   /* A quiet act at the foot. */
+  .oh-railentry[data-kind="tool"] .oh-railentry-name {
+    white-space: normal;
+  }
+
   .oh-railentry[data-kind="tool"] {
     flex: 1;
     min-width: 0;

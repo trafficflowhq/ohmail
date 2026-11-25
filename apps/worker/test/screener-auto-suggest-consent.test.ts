@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { expect, it, vi } from "vitest";
 import { makeAnthropicClient, makeHaikuClassifier } from "@trafficflow/core";
-import { accounts, accountSettings, screenerAttemptKey, UNMETERED_ACCESS, type AccessPort } from "@trafficflow/db";
+import { accounts, accountSettings, messages, changeScreenerLearning, updateScreenerLearning, screenerAttemptKey, UNMETERED_ACCESS, type AccessPort } from "@trafficflow/db";
 import { makeDeclineMemory, screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { NOW, gateInto, held, obligationsInto, world } from "./_auto-suggest-world.js";
 
@@ -107,4 +107,37 @@ it("refunds a managed background suggestion when account AI turns Off after the 
   });
   expect(ask).toHaveBeenCalledTimes(0);
   expect(events).toEqual(["owe", "refund", "settle"]);
+});
+
+it.each([false, true])("charges learning only when it supplied context (%s)", async (learned) => {
+  const scope = await world();
+  await changeScreenerLearning(scope.db, scope, { kind: "notice" }, NOW);
+  if (learned) await updateScreenerLearning(scope.db, scope, state => ({ ...state, text: "Keep receipts." }));
+  const messageId = await held(scope, "held@fixture.test", 1);
+  const credits = gateInto([]);
+  credits.answer({ verdict: "ok", charged: true, attempt: "2", chargedCredits: learned ? 2 : 1 });
+  const ask = vi.fn(async (_input: import("@trafficflow/core").ClassifierInput) => advice);
+  const result = await screenerAutoSuggestPass(scope.db, {
+    accountId: scope.accountId, credits, classifier: { screen: ask, classify: ask }, now: () => NOW,
+  });
+  expect(result.bought).toBe(1);
+  expect(credits.spends[0]?.meta).toEqual({ messageId, ...(learned ? { learning: true } : {}) });
+  expect(ask).toHaveBeenCalledWith(expect.objectContaining({ ...(learned ? { learnedWords: "Keep receipts." } : {}) }), expect.anything());
+  if (!learned) expect(ask.mock.calls[0]?.[0]).not.toHaveProperty("learnedWords");
+});
+
+it("buys ordinary automatic advice once when the learned prompt would exceed the budget", async () => {
+  const scope = await world();
+  await updateScreenerLearning(scope.db, scope, state => ({ ...state, notice: false, text: "界".repeat(680) }));
+  const messageId = await held(scope, "long@fixture.test", 1);
+  await scope.db.update(messages).set({ subject: "界".repeat(1_750) }).where(eq(messages.id, messageId));
+  const credits = gateInto([]);
+  const ask = vi.fn(async (_input: import("@trafficflow/core").ClassifierInput) => advice);
+  const result = await screenerAutoSuggestPass(scope.db, {
+    accountId: scope.accountId, credits, classifier: { screen: ask, classify: ask }, now: () => NOW,
+  });
+  expect(credits.spends.map(spend => spend.meta)).toEqual([{ messageId }]);
+  expect(result.bought).toBe(1);
+  expect(ask.mock.calls[0]?.[0]).not.toHaveProperty("learnedWords");
+  expect(credits.releases.some(release => release.refund)).toBe(false);
 });

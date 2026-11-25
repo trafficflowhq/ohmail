@@ -82,6 +82,49 @@ describe("the tracking-host census", () => {
   });
 });
 
+describe("consented pictures served under a tracker domain", () => {
+  const artwork = "https://cdn.klaviyomail.com/company/example/images/hero.png";
+
+  it.each([false, true])("relays shared artwork with tracking blocked (redirect: %s)", async (redirect) => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
+    const source = "https://images.shop.example/mail/hero.png";
+    const requests: string[] = [];
+    const svc = makePrivacyService({
+      resolver: PUBLIC_DNS,
+      remote: {
+        async fetch(url) {
+          requests.push(url);
+          if (url === source) return { status: 302, contentType: null, location: artwork, body: new Uint8Array() };
+          return { status: 200, contentType: "image/png", body: PICTURE };
+        },
+      },
+    });
+
+    const drawn = await svc.proxyImage(ctx, { messageId, url: redirect ? source : artwork });
+    expect(drawn.body).toEqual(PICTURE);
+    expect(requests).toEqual(redirect ? [source, artwork] : [artwork]);
+    expect(await db.select().from(trackerEvents).where(eq(trackerEvents.messageId, messageId))).toEqual([]);
+  });
+
+  it("still refuses the provider's tracking URLs before fetching", async () => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
+    const r = remote();
+    const svc = makePrivacyService({ remote: r, resolver: PUBLIC_DNS });
+    for (const url of [
+      "https://trk.klaviyomail.com/u/example.gif",
+      "https://cdn.klaviyomail.com/open/example.gif",
+      "https://cdn.klaviyomail.com/u/example.gif",
+      artwork + "?recipient=example",
+    ]) {
+      const blocked = await svc.proxyImage(ctx, { messageId, url });
+      expect(blocked.contentType).toBe("image/gif");
+    }
+    expect(r.urls).toEqual([]);
+  });
+});
+
 describe("the two readings the ruling named", () => {
   it("a Mailchimp logo on a default account: fetched once, drawn, and no tracker event", async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();

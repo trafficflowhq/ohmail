@@ -138,7 +138,7 @@ function mirror(
     return () => void heard.delete(listener);
   };
   const engine = {
-    store: { entries },
+    store: { entries, get: (type: string, id: string) => kinds.get(type)?.get(id) },
     subscribe,
     read: () => ({ version: () => version }),
   } as unknown as OhmailEngine;

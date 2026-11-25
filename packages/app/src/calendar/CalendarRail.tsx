@@ -1,35 +1,23 @@
-import { useRef, useState, type MouseEvent } from "react";
+import { useRef } from "react";
 import { CalendarRail as Rail, type CalendarRailProps as KitRailProps } from "@ohmail/ui/calendar";
 import { Dock, RailEntry, RailFoot, type DockPlace } from "@ohmail/ui/mail";
-import { accountsOf, newEventsCalendarOf, writableOf } from "@ohmail/app-logic/calendar/setup";
-import {
-  dayOfIso,
-  isoOfDay,
-  nowIn,
-  readerZones,
-  viewOnlyOf,
-  type CalendarPort,
-} from "@ohmail/app-logic/calendar";
-import { useFrame, useReport } from "../frame/commands.js";
+import { dayOfIso, isoOfDay, nowIn, readerZones, type CalendarPort } from "@ohmail/app-logic/calendar";
+import { useFrame } from "../frame/commands.js";
 import type { CalendarPlaceId, CalendarRailProps } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { useFound } from "../frommail/index.js";
 import { useInvitations } from "../invitations/index.js";
-import { useCalendarMirror, useSetupPort } from "../calsetup/index.js";
 import { useMonthViewport } from "../month/MonthRunScope.js";
-import { useCalendarSettings } from "../calsettings/settings-read.js";
-import { CalendarMenu } from "../calsettings/accounts/AccountLines.js";
 import { useCalendarCheck } from "./check.js";
 import { invitationsRoute } from "./CalendarKeys.js";
 import { CalendarMiniMonth } from "./CalendarMiniMonth.js";
 import { useNewEvent } from "./use-new-event.js";
 import { isView, useNow } from "./where.js";
+import { useRailCalendars } from "./use-rail-calendars.js";
 import { CalendarSwatches } from "./CalendarSwatches.js";
 
 const PHONE_VIEWS = ["agenda", "day", "week", "month"] as const;
-type RailCalendar = KitRailProps["calendars"]["accounts"][number]["calendars"][number];
-
 export function CalendarRail(props: CalendarRailProps) {
   const port = useFrame().host.wires.calendar;
   return port === NONE ? <Navigation {...props} /> : <CountedNavigation {...props} port={port} />;
@@ -248,81 +236,6 @@ function CalendarRailContents({
       {menu}
     </>
   );
-}
-
-function useRailCalendars() {
-  const ts = useText("calsettings");
-  const report = useReport();
-  const mirror = useCalendarMirror();
-  const setup = useSetupPort();
-  const { said, save } = useCalendarSettings(mirror?.port ?? null, setup);
-  const [expanded, setExpanded] = useState(false);
-  const [opened, setOpened] = useState<string | null>(null);
-  const [renaming, setRenaming] = useState(false);
-  const menuAnchor = useRef<HTMLButtonElement | null>(null);
-  const accounts = accountsOf(mirror?.connections ?? [], mirror?.calendars ?? []);
-  const writable = writableOf(mirror?.calendars ?? [], mirror?.connections ?? []);
-  const preferred = newEventsCalendarOf(said?.newEventsCalendarId ?? null, writable);
-  const setCalendar = setup === NONE || setup.setCalendar === NONE ? undefined : setup.setCalendar;
-  const check = useCalendarCheck();
-  const calendar = mirror?.calendars.find((item) => item.id === opened);
-  const closeMenu = () => {
-    setOpened(null);
-    setRenaming(false);
-  };
-  const saveCalendar = (id: string, change: { shown?: boolean; name?: string }) =>
-    void setCalendar?.(id, change).catch(() => report(ts("notSaved")));
-  const rows = accounts.map(({ connection, way, calendars }) => ({
-    id: connection.id,
-    name: ts(`way.${way}`),
-    calendars: calendars.map((item): RailCalendar => ({
-      id: item.id,
-      name: item.name,
-      shown: item.shown,
-      tone: mirror?.tones.get(item.id) ?? "neutral",
-      switchLabel: ts("accounts.show", { name: item.name }),
-      onToggle: setCalendar && ((shown) => saveCalendar(item.id, { shown })),
-      defaultLabel: item.id === preferred?.id ? ts("accounts.newEventsHere") : undefined,
-      viewOnlyLabel: viewOnlyOf(item, connection) ? ts("accounts.viewOnly") : undefined,
-      menuOpen: opened === item.id,
-      onMenu:
-        (setCalendar && connection.provider === "ics") || (save !== NONE && writable.includes(item))
-          ? (e: MouseEvent<HTMLButtonElement>) => {
-              menuAnchor.current = e.currentTarget;
-              setOpened(item.id);
-            }
-          : undefined,
-    })),
-  }));
-  const all = mirror?.calendars.length ?? 0;
-  const shown = mirror?.calendars.filter((item) => item.shown).length ?? 0;
-  const menu = calendar ? (
-    <CalendarMenu
-      key={calendar.id}
-      calendar={calendar}
-      anchor={menuAnchor}
-      close={closeMenu}
-      renaming={renaming}
-      rename={
-        mirror?.connections.some((item) => item.id === calendar.connectionId && item.provider === "ics")
-          ? () => setRenaming(true)
-          : undefined
-      }
-      setName={(name) => saveCalendar(calendar.id, { name })}
-      newEventsHere={
-        save !== NONE && writable.includes(calendar)
-          ? {
-              on: calendar.id === preferred?.id,
-              set: () =>
-                void save({ newEventsCalendarId: calendar.id }).then(
-                  (done) => done || report(ts("notSaved")),
-                ),
-            }
-          : null
-      }
-    />
-  ) : null;
-  return { said, expanded, setExpanded, rows, shown, all, check, menu };
 }
 
 function useRailMiniMonth(

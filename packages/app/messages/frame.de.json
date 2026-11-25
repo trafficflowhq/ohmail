@@ -176,8 +176,14 @@
     "filingMailboxes": "{count, plural, one {1 Postfach} other {# Postfächer}}",
     "filingReasonsDiffer": "die Gründe sind je Postfach verschieden",
     "pull": "Neue Mails abrufen",
-    "pulling": "Mailserver wird geprüft…",
+    "pulling": "Wird geprüft…",
     "pullAria": "Neue Mails abrufen — den Mailserver jetzt prüfen",
+    "checkingDelayedCloud": "ohmail Cloud hat seit {since} keine Mail geprüft",
+    "checkingDelayedServer": "Dein Server hat seit {since} keine Mail geprüft",
+    "pullPaused": "Gerade nicht, die Prüfung läuft automatisch weiter",
+    "pullCurrent": "Auf dem neuesten Stand",
+    "pullPending": "Die Prüfung läuft weiter",
+    "pullMailboxFailed": "Prüfung fehlgeschlagen · Postfächer öffnen",
     "pullQuiet": "Geprüft — nichts Neues.",
     "pullSlow": "Wird noch geprüft. Neue Mails kommen von selbst an.",
     "pullBehind": "Nicht geprüft. ohmail Cloud prüft gerade nicht, und neue Mails kommen von selbst an, sobald es wieder prüft.",
@@ -391,11 +397,15 @@
     },
     "connection": {
       "act": {
+        "billing": "Abrechnung öffnen",
         "signIn": "Anmelden",
         "reload": "Neu laden",
         "connect": "Postfach verbinden",
-        "mailboxes": "Postfächer",
+        "mailboxes": "Postfächer öffnen",
         "writeToUs": "Schreib uns"
+      },
+      "payment": {
+        "title": "Zahlung fehlgeschlagen"
       },
       "signedOut": {
         "title": "Abgemeldet",
@@ -433,7 +443,8 @@
         "title": "Verbindung wird wiederhergestellt"
       },
       "late": {
-        "title": "Neue Mails haben Verspätung"
+        "title": "Neue Mails haben Verspätung",
+        "since": "ohmail Cloud hat seit {time, date, ::HHmm} keine Mail geprüft"
       },
       "behind": {
         "title": "Wird nachgeholt",

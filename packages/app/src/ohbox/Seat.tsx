@@ -271,7 +271,7 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
       doorbell: { count: doorbell.count, settled: doorbell.settled },
       notOrganizing,
       first: storageCard === NONE ? null : storageCard.render(),
-      pull: pull === null ? NONE : { busy: pull.pulling, run: pull.pull },
+      pull: pull === null ? NONE : { busy: pull.pulling, result: pull.result, run: pull.pull },
       keysShown: plan.pointer !== "coarse",
       askRow: setRowAsk,
       canDelete: (id) => host.engine.verbRead()?.get<EngineMessage>("message", id) != null,

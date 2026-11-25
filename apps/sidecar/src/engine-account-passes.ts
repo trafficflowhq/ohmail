@@ -268,7 +268,7 @@ export function accountPassesSection(scope: EngineScope, config: SidecarConfig):
       // pays nothing and reads nothing. `classifierForCycle` and not `classifier`: this is
       // background work with nobody waiting, so it must take the seam that withholds a model which
       // has been failing rather than the one the Screener button uses.
-      const classifier = scope.ai.classifierForCycle();
+      const classifier = scope.ai.classifierForCycle("screening");
       if (!classifier) return;
       try {
         const { bought, examined, capped } = await screenerAutoSuggestPass(scope.db as unknown as Tx, {

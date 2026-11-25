@@ -835,7 +835,7 @@ export async function startWorkerWithLock(
     const rosterIntervalMs = config.rosterIntervalMs ?? DEFAULT_ROSTER_INTERVAL_MS;
     const heartbeatMs = config.lockHeartbeatMs ?? DEFAULT_LOCK_HEARTBEAT_MS;
     const retryBaseMs = config.mailboxRetryMs ?? DEFAULT_MAILBOX_RETRY_MS;
-    const retryMaxMs = retryBaseMs * 16;
+    const retryMaxMs = 3 * 60 * 60_000;
     const maxSyncFailures = Math.max(1, config.maxSyncFailures ?? DEFAULT_MAX_SYNC_FAILURES);
     // Mail 0029. A DURATION and not a pass count, so it cannot silently retune itself when
     // `rosterIntervalMs` moves — and bounded below `DEFAULT_ALERT_THRESHOLDS.syncLagMs`, so the row

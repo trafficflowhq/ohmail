@@ -9,6 +9,11 @@ import {
   dayNumber,
   expandAll,
   localDay,
+  eventTimeOf,
+  keyTimeOf,
+  momentOrUtc,
+  occurrenceOf,
+  storedTimeOf,
   recurrenceKeyString,
   MS_PER_DAY,
   type ExpansionStop,
@@ -16,9 +21,10 @@ import {
   type PlainDate,
   type ZoneSource,
 } from "@ohmail/cal-core";
-import type { EventWithWrites } from "@ohmail/client-engine/calendar-acts";
+import { withCalendarFields, type EventWithWrites } from "@ohmail/client-engine/calendar-acts";
 import type { CalendarEventRecord, CalendarRecord, CalendarWindow } from "@ohmail/wire";
 import type { HeldSpan } from "./port.js";
+import type { GridItem } from "./grid/place.js";
 import { seriesOfRecords } from "./records.js";
 
 export interface SpanQuery {
@@ -45,6 +51,7 @@ export interface ShownOccurrence {
 
 export interface SpanOccurrences {
   readonly shown: readonly ShownOccurrence[];
+  readonly hiddenBusy: readonly GridItem[];
   readonly capped: boolean;
   readonly stoppedBy: readonly ExpansionStop[];
 }
@@ -69,17 +76,40 @@ export function windowOf(query: SpanQuery): { startMs: number; endMs: number } {
   };
 }
 
+/** Explicit Hide belongs to one attendee copy, including its replaced occurrence. */
+export function explicitlyHidden(
+  record: CalendarEventRecord,
+  series: CalendarEventRecord | null | undefined,
+  key: string | null,
+  access: CalendarRecord["access"] | undefined,
+): boolean {
+  if (access !== "owner" || !record.hideAttendee) return false;
+  const hiddenAt = (source: CalendarEventRecord) =>
+    source.hiddenOccurrences?.some((at) => at === "" || at === key) === true;
+  return (
+    hiddenAt(record) ||
+    (!!series &&
+      series.calendarId === record.calendarId &&
+      series.uid === record.uid &&
+      series.hideAttendee === record.hideAttendee &&
+      series.organizer?.address === record.organizer?.address &&
+      hiddenAt(series))
+  );
+}
+
 export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
   const calendars = new Map(input.calendars.filter((c) => c.shown).map((c) => [c.id, c] as const));
   const held = input.events.filter((e) => !e.record.heldBack && calendars.has(e.record.calendarId));
-  const byRecord = new Map(held.map((e) => [e.record.id, e] as const));
-  const made = seriesOfRecords(held.map((e) => e.record));
+  const drawn = withOccurrenceEdits(held, input.zones);
+  const byRecord = new Map(drawn.map((e) => [e.record, e] as const));
+  const made = seriesOfRecords(drawn.map((e) => e.record));
   const { startMs, endMs } = windowOf(input.query);
   const expansion = expandAll(made.series, { startMs, endMs, viewerZone: input.zone }, input.zones);
   const shown: ShownOccurrence[] = [];
+  const hiddenBusy: GridItem[] = [];
   for (const occurrence of expansion.occurrences) {
     const record = made.recordOf(occurrence.event);
-    const writes = record === undefined ? undefined : byRecord.get(record.id);
+    const writes = record === undefined ? undefined : byRecord.get(record);
     const calendar = record === undefined ? undefined : calendars.get(record.calendarId);
     if (record === undefined || writes === undefined || calendar === undefined) continue;
     /* A time in a zone this device does not know keeps the day its own clock writes: a view cannot place it in the
@@ -100,6 +130,10 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
         : occurrence.source === "override" && !record.thisAndFuture
           ? record.recurrenceId
           : recurrenceKeyString(occurrence.key);
+    if (explicitlyHidden(record, series, key, calendar.access)) {
+      if (record.busy) hiddenBusy.push({ id: record.id, start, end: occurrence.end });
+      continue;
+    }
     if (
       (record.status === "cancelled" || record.myAnswer === "declined") &&
       [record, series].some((source) => source?.removedOccurrences?.some((at) => at === "" || at === key))
@@ -109,7 +143,7 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
       series &&
       key !== null &&
       byRecord
-        .get(series.id)
+        .get(series)
         ?.removals?.some(
           (scope) =>
             scope.kind === "record" ||
@@ -132,7 +166,61 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
       calendar,
     });
   }
-  return { shown, capped: expansion.capped, stoppedBy: expansion.stoppedBy };
+  return { shown, hiddenBusy, capped: expansion.capped, stoppedBy: expansion.stoppedBy };
+}
+
+/** Lay queued edits over the same recurrence keys the provider uses for its confirmed overrides. */
+function withOccurrenceEdits(held: EventWithWrites[], zones: ZoneSource): EventWithWrites[] {
+  const changes: EventWithWrites[] = [];
+  const replaced = new Set<CalendarEventRecord>();
+  for (const master of held) {
+    if (!master.occurrenceEdits?.length) continue;
+    const { record } = master;
+    const members = held.filter(
+      ({ record: member }) =>
+        member.calendarId === record.calendarId &&
+        (record.uid === "" ? member.id === record.id : member.uid === record.uid),
+    );
+    const made = seriesOfRecords(members.map((member) => member.record));
+    // Prefer the newest part of a split series that contains the original occurrence.
+    const seriesByStart = made.series
+      .map((series) => {
+        const start = series.master?.start ?? null;
+        return { series, start, at: start === null ? -Infinity : momentOrUtc(start, zones) };
+      })
+      .sort((a, b) => b.at - a.at);
+    if (seriesByStart.length === 0) continue;
+    const first = eventTimeOf(record.start);
+    const byKey = new Map<string, EventWithWrites>();
+    for (const edit of master.occurrenceEdits) {
+      let day: Occurrence | null = null;
+      for (const { series, start } of seriesByStart) {
+        const key = keyTimeOf(edit.at, start ?? first);
+        if (key !== null) day = occurrenceOf(series, key, zones);
+        if (day !== null) break;
+      }
+      const source = day && made.recordOf(day.event);
+      if (!day || !source) continue;
+      if (source.recurrenceId === edit.at && !source.thisAndFuture) replaced.add(source);
+      const prior = byKey.get(edit.at)?.record ?? {
+        ...source,
+        recurrenceId: edit.at,
+        thisAndFuture: false,
+        start: storedTimeOf(day.start),
+        end: storedTimeOf(day.end),
+        duration: null,
+        repeat: null,
+      };
+      byKey.set(edit.at, {
+        record: withCalendarFields(prior, edit.change),
+        waiting: edit.waiting,
+        refusal: null,
+        refusedWriteId: null,
+      });
+    }
+    changes.push(...byKey.values());
+  }
+  return changes.length ? [...held.filter(({ record }) => !replaced.has(record)), ...changes] : held;
 }
 
 /** The days before which, and after which, the device holds nothing: where a view offers Load earlier, and says so. */

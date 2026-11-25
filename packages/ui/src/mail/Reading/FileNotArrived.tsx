@@ -1,4 +1,4 @@
-import { Button } from "../../base/index.js";
+import { Button, mailContextTrigger, type Point } from "../../base/index.js";
 import "./file-not-arrived.css";
 import "./file-tile.css";
 import { WarnRow } from "./WarnRow.js";
@@ -15,6 +15,7 @@ export type FileNotArrivedProps =
   | (Tile & { state: "fetching" })
   | (Tile & {
       state: "failed";
+      onMenu?: (at: Point | Element, opener: HTMLElement) => void;
       /** The way on, where asking again or signing in can help. `full` says it with the file's name. */
       way?: { label: string; full?: string; onPress?: () => void };
     })
@@ -43,7 +44,11 @@ export function FileNotArrived(props: FileNotArrivedProps) {
     </>
   );
   return (
-    <span className="oh-file" data-state={state}>
+    <span
+      className="oh-file"
+      data-state={state}
+      {...mailContextTrigger(state === "failed" ? props.onMenu : undefined)}
+    >
       {state === "fetching" ? (
         <button type="button" className="oh-control oh-file-main" aria-busy="true">
           {inside}

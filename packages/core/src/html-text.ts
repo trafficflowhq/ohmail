@@ -1,4 +1,5 @@
 import { Parser } from "htmlparser2";
+import { AUTHORED_CODE_STYLE } from "./outbound-text.js";
 
 /**
  * HTML AS PLAIN TEXT — {@link htmlToPlainText}, the text/plain alternative of a composed message,
@@ -204,7 +205,7 @@ export function htmlToPlainText(html: string, options?: { indentCode?: boolean }
           if (preDepth === 0) {
             flush();
             preText = "";
-            authoredCode = attribs["data-ohmail-code"] === "1";
+            authoredCode = attribs["data-ohmail-code"] === "1" || attribs.style === AUTHORED_CODE_STYLE;
             firstPreChild = true;
           } else firstPreChild = false;
           preDepth += 1;

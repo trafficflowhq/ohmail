@@ -26,6 +26,7 @@ export interface EventDraft {
   readonly place: string | null;
   readonly notes: string | null;
   readonly callLink?: string | null;
+  readonly repeat?: string | null;
   readonly invitees?: readonly CalendarInvitee[];
   readonly alarms?: readonly number[];
 }
@@ -60,17 +61,21 @@ export function draftCallLink(value: EventDraft["callLink"]): string | null | un
 const hour = (h: number) => `${String(h % 24).padStart(2, "0")}:00`;
 
 export function startDraft(anchor: string, minute: number, slot?: string): EventDraft {
+  const last = slot?.startsWith("date-") ? slot.slice(5) : null;
+  const allDay =
+    last !== null && last >= anchor && dayOfIso(last) !== null && dayOfIso(addDays(last, 1)) !== null;
   const [start, end] = slot?.split("-").map(Number) ?? [];
-  const hasSlot = start !== undefined && end !== undefined && start >= 0 && end <= 1440 && start < end;
+  const endDay = end >= 1440 ? addDays(anchor, Math.floor(end / 1440)) : null;
+  const hasSlot = start >= 0 && start < 1440 && start < end && (endDay === null || dayOfIso(endDay) !== null);
   // Midnight starts a different civil day. Keep the last start hour on the chosen date.
   const next = Math.min(23, Math.floor(minute / 60) + 1);
   return {
     title: "",
     day: anchor,
-    endDay: hasSlot && end === 1440 ? addDays(anchor, 1) : null,
+    endDay: allDay ? last : hasSlot ? endDay : null,
     from: hasSlot ? clockOf(start) : hour(next),
     to: hasSlot ? clockOf(end % 1440) : hour(next + 1),
-    allDay: false,
+    allDay,
     busy: true,
     private: false,
     place: null,
@@ -145,7 +150,7 @@ export function fieldsOfDraft(
     place: draft.place?.trim() || null,
     notes: draft.notes?.trim() || null,
     callLink,
-    repeat: null,
+    repeat: draft.repeat ?? null,
     invitees: [],
     alarms: [...new Set(draft.alarms ?? calendar.defaultAlarms.map((alarm) => alarm.minutesBefore))],
   };

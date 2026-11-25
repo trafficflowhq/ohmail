@@ -1,9 +1,59 @@
 {
   "settingsScreener": {
+    "learning": {
+      "mailbox": "Postfach",
+      "switch": "Aus meinen Entscheidungen lernen",
+      "description": "Der Screener lernt aus deinen Entscheidungen.",
+      "price": "Sobald der Screener für dieses Postfach etwas gelernt hat, kostet ein Vorschlag 1,5 Credits.",
+      "notice": "Der Screener lernt für dieses Postfach",
+      "ok": "OK",
+      "settings": "Einstellungen",
+      "title": "Was der Screener gelernt hat",
+      "empty": "Nach deinen ersten Entscheidungen",
+      "updated": "Aus deinen letzten Entscheidungen aktualisiert",
+      "recent": "Zuletzt gelernt",
+      "forget": "Vergessen",
+      "reset": "Neu anfangen",
+      "cancel": "Abbrechen",
+      "resetSummary": "Dadurch vergisst der Screener, was er für dieses Postfach gelernt hat.",
+      "failed": "Die Lerndaten konnten nicht geladen oder geändert werden.",
+      "moved": "{topic}: {from} → {to}",
+      "chosen": "{topic} → {to}",
+      "topics": {
+        "webinar": "Webinar-Einladung",
+        "receipt": "Kaufbeleg",
+        "order": "Bestellbestätigung",
+        "delivery": "Versandmeldung",
+        "newsletter": "Newsletter",
+        "event": "Veranstaltungseinladung",
+        "promotion": "Sonderangebot",
+        "invoice": "Rechnung",
+        "travel": "Buchung oder Reise",
+        "social": "Soziale Benachrichtigung",
+        "job": "Stellenangebot",
+        "survey": "Umfrage",
+        "security": "Zugangs- oder Sicherheitshinweis",
+        "family": "Schule oder Familie",
+        "banking": "Bankmitteilung",
+        "health": "Gesundheitsmitteilung",
+        "government": "Behördenmitteilung",
+        "subscription": "Abonnement",
+        "community": "Gemeinschaft oder Verein",
+        "personal": "Persönliche Nachricht",
+        "work": "Berufliches Gespräch",
+        "other": "Andere E-Mail"
+      },
+      "places": {
+        "INBOX": "Ohbox",
+        "ohmail/News": "News",
+        "ohmail/Receipts": "Belege",
+        "ohmail/Screened": "Aussortiert",
+        "ohmail/Quarantine": "Spam"
+      }
+    },
     "notApplied": "Nicht übernommen",
     "suggestions": "Vorschläge",
     "details": "Über {title}",
-    "confidence": "Nur Aussortieren und Spam, ab 90 % Sicherheit.",
-    "creditPerSender": "1 Credit pro Absender"
+    "confidence": "Nur Aussortieren und Spam, ab 90 % Sicherheit."
   }
 }

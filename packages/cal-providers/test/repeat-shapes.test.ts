@@ -16,11 +16,14 @@ import {
   type ZoneSource,
 } from "@ohmail/cal-core";
 import { describe, expect, it } from "vitest";
+import { seriesEditShape } from "../src/repeat-shapes.js";
+import { ruleOfRecurrence } from "../src/microsoft/convert.js";
 import {
   BENCH_CALDAV_PLACE,
   PROVEN_REPEATS,
   proofPlaceOf,
   repeatProven,
+  recurrenceFor,
   repeatShapeAt,
   repeatShapeOf,
   seriesProven,
@@ -612,4 +615,31 @@ describe("a series at a clock time its zone skips on one of its nights (the seco
         ?.until,
     ).toEqual(instant(Date.UTC(2027, 2, 27, 8)));
   });
+});
+
+describe("rules the calendar editor can send without moving an occurrence", () => {
+  const first = plainDate(2027, 3, 31);
+  it.each([
+    ["FREQ=WEEKLY;INTERVAL=3;BYDAY=WE,TH", "weekly"],
+    ["FREQ=MONTHLY;INTERVAL=2;BYDAY=-1WE", "relativeMonthly"],
+    ["FREQ=YEARLY;INTERVAL=3;BYMONTH=3;BYMONTHDAY=31", "absoluteYearly"],
+    ["FREQ=YEARLY;INTERVAL=2;BYMONTH=3;BYDAY=-1WE", "relativeYearly"],
+  ])("maps %s to Graph and back", (text, pattern) => {
+    const rule = parseRRule(text)!;
+    const graph = recurrenceFor(rule, first, ZONES);
+    expect(graph).toMatchObject({ pattern: { type: pattern } });
+    const back = ruleOfRecurrence(graph)!;
+    expect(recurrenceFor(back, first, ZONES)).toEqual(graph);
+  });
+  it("refuses a monthly 31st where the provider would move it into shorter months", () => {
+    const rule = parseRRule("FREQ=MONTHLY;BYMONTHDAY=31")!;
+    expect(recurrenceFor(rule, first, ZONES)).toBeNull();
+    expect(seriesProven("microsoft", rule, first, ZONES, TODAY)).toBe(false);
+  });
+});
+
+it("refuses a Friday pattern when the Microsoft series still starts Tuesday", () => {
+  const start = plainDate(2026, 11, 17);
+  const rule = parseRRule("FREQ=WEEKLY;BYDAY=FR")!;
+  expect(seriesEditShape("microsoft", rule, start, intlZones(), Date.UTC(2026, 10, 16))).toBe(false);
 });

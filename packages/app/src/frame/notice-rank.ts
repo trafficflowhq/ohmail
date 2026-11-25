@@ -12,6 +12,8 @@ export const NOTICE_RANK = {
   reconnecting: 14,
   late: 15, // *
   mailboxPassword: 20,
+  calendarSignIn: 21,
+  calendarConnection: 21,
   mailboxSync: 22,
   notSent: 28,
   sentCopy: 29,

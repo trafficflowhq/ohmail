@@ -130,7 +130,8 @@ export const calendarConnectRoutes: Route[] = [
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
-      const { record, seq } = await checkCalendarConnection(serviceContext(deps, req), params.id!);
+      const calendarId = new URL(req.url).searchParams.get("calendarId") ?? undefined;
+      const { record, seq } = await checkCalendarConnection(serviceContext(deps, req), params.id!, calendarId);
       return answer<"POST /calendar/connections/:id/check">()(record, { status: 202, seq });
     },
   },

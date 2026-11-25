@@ -7,7 +7,7 @@
  */
 import type { CalendarPort } from "@ohmail/app-logic/calendar";
 import {
-  CANNOT, NONE,
+  CANNOT, NONE, screeningVia,
   type DeviceNotifications, type FrameSupplies, type HostContract, type HostSignals,
 } from "@ohmail/app/host";
 import { consentVia } from "@ohmail/app-logic/consent/consent-wire";
@@ -87,7 +87,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: has.accountFetch ? phoneAwayWire(has.accountFetch) : NONE, profileImport: NONE,
       consent: mailFetch ? consentVia(mailFetch) : NONE,
       images: NONE, olderBody: NONE, junk: NONE, trash: NONE, suggest: NONE, draftReply: NONE, firstRun: NONE,
-      screening: NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE,
+      screening: mailFetch ? screeningVia(mailFetch) : NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE,
       connect: has.mailboxWires?.connect ?? NONE, mailboxes: has.mailboxWires?.mailboxes ?? NONE,
       calendar: has.calendar ?? NONE,
     },

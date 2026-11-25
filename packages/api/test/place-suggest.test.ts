@@ -186,7 +186,7 @@ describe("(2) nothing of the person goes out", () => {
     expect(asked!.method).toBe("GET");
     expect(asked!.path).toBe("/api");
     // The limit asked is the field's and six more: the folding of equal rows and the town typed choose from them.
-    expect(asked!.query).toEqual({ q: "café sprüngli zürich", lang: "de", limit: "12", lat: "47.4", lon: "8.5" });
+    expect(asked!.query).toEqual({ q: "café sprüngli zürich", lang: "de", limit: "12", lat: "47.4", lon: "8.5", zoom: "10", location_bias_scale: "0.2" });
     expect(Object.keys(asked!.headers).sort()).toEqual(["accept", "accept-encoding", "authorization", "connection", "host", "user-agent"]);
     expect(asked!.headers).toMatchObject({
       authorization: "Bearer box-bearer", "user-agent": "ohmail-Places/1.0", accept: "application/json",
@@ -563,5 +563,19 @@ describe("(7) the cache", () => {
     r.box.answer(() => ({ status: 200, body: collection(ZURICH) }));
     expect((await r.ask("bahnhofstrasse")).places).toHaveLength(1);
     expect(r.box.asked).toHaveLength(2);
+  });
+});
+
+it("retries a transient upstream error once and keeps the successful answer for the same prefix", async () => {
+  const r = await rig();
+  r.box.answer(() =>
+    r.box.asked.length === 1 ? { status: 500 } : { status: 200, body: collection(ZURICH) },
+  );
+  const question = { lang: "de", home: "CH", near: { lat: 47.38, lon: 8.54 } };
+  expect((await r.ask("café spr", question)).state).toBe("ok");
+  expect((await r.ask("  CAFÉ SPR ", question)).state).toBe("ok");
+  expect(r.box.asked).toHaveLength(2);
+  expect(r.box.asked[1]!.query).toMatchObject({
+    lang: "de", lat: "47.4", lon: "8.5", zoom: "10", location_bias_scale: "0.2",
   });
 });

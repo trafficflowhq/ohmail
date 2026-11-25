@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useState } from "react";
-import { Menu } from "../../base/index.js";
+import { Menu, MenuItem } from "../../base/index.js";
 import { Icon } from "../../icons/Icon.js";
 import "./blocked-images.css";
 
@@ -9,13 +9,22 @@ export interface BlockedImagesProps {
   /** The one sentence a press opens. */
   sentence: string;
   describe?: boolean;
+  pictures?: { label: string; onPress: () => void };
   open: boolean;
   onOpen: () => void;
   onClose: () => void;
 }
 
-/** What was kept out of a letter, said as one chip in the message's head; the sentence only when asked. */
-export function BlockedImages({ caption, sentence, describe, open, onOpen, onClose }: BlockedImagesProps) {
+/** What was kept out of a letter, shown as one shield in the message's head; the sentence only when asked. */
+export function BlockedImages({
+  caption,
+  sentence,
+  describe,
+  pictures,
+  open,
+  onOpen,
+  onClose,
+}: BlockedImagesProps) {
   const description = useId();
   const [chip, setChip] = useState<HTMLButtonElement | null>(null);
   useLayoutEffect(() => {
@@ -36,13 +45,14 @@ export function BlockedImages({ caption, sentence, describe, open, onOpen, onClo
         ref={setChip}
         type="button"
         className="oh-control oh-blocked"
+        aria-label={caption}
+        title={open ? undefined : sentence}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-describedby={describe && chip ? description : undefined}
         onClick={onOpen}
       >
         <Icon name="shield" size={16} />
-        <span>{caption}</span>
       </button>
       <Menu
         open={open && chip !== null}
@@ -51,10 +61,22 @@ export function BlockedImages({ caption, sentence, describe, open, onOpen, onClo
         label={caption}
         kind="card"
         right
+        anchored
       >
         <p className="oh-text oh-blocked-said" role="note">
           {sentence}
         </p>
+        {pictures ? (
+          <MenuItem
+            icon="image"
+            onPress={() => {
+              onClose();
+              pictures.onPress();
+            }}
+          >
+            {pictures.label}
+          </MenuItem>
+        ) : null}
       </Menu>
     </>
   );

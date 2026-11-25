@@ -9,6 +9,7 @@ import type { GridItem } from "./place.js";
 /** An event as the views show it: its times, and the face its record, calendar and marks give it. */
 export interface GridEvent extends GridItem {
   readonly title: string;
+  readonly recordId?: string;
   /** The calendar's hue, `"neutral"` for one without, `null` for an event on no calendar yet. */
   readonly tone: number | "neutral" | null;
   readonly state: "plain" | "to-answer" | "from-mail" | "draft" | "maybe" | "off";
@@ -24,6 +25,8 @@ export interface GridEvent extends GridItem {
 
 interface FaceOf {
   readonly title: string;
+  readonly recordId?: string;
+  readonly saving?: true;
   readonly tone: number | "neutral" | null;
   readonly state: GridEvent["state"];
   readonly open: boolean;
@@ -34,6 +37,8 @@ interface FaceOf {
 
 const faceOf = (e: GridEvent, open: boolean): FaceOf => ({
   title: e.title,
+  ...(e.recordId && { recordId: e.recordId }),
+  ...(e.status && !e.status.failed && { saving: true as const }),
   tone: e.tone,
   state: e.state,
   open,

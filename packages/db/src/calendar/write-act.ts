@@ -249,6 +249,13 @@ function based(v: Obj, own: readonly string[], optional: readonly string[] = [],
   return { eventId: v.eventId, base: v.base, ...(Object.hasOwn(v, "after") ? { after: v.after as string } : {}) };
 }
 
+function attendeeCopyOf(value: unknown) {
+  if (!isObject(value) || !closed(value, ["calendarId", "attendee"]) ||
+    !isWriteUuid(value.calendarId) || !text(value.attendee, CALENDAR_ADDRESS_MAX_BYTES) ||
+    !fitsCalendarBytes(value.attendee, CALENDAR_ADDRESS_MAX_BYTES) || !value.attendee) return null;
+  return { calendarId: value.calendarId, attendee: value.attendee };
+}
+
 function audienceOf(a: unknown) {
   const address = (s: unknown): s is string => typeof s === "string" && s !== "" &&
     text(s, CALENDAR_ADDRESS_MAX_BYTES) && fitsCalendarBytes(s, CALENDAR_ADDRESS_MAX_BYTES);
@@ -269,12 +276,14 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
   if (!isObject(v) || typeof v.kind !== "string") return null;
   switch (v.kind) {
     case "calendar_event_create": {
-      if (!closed(v, ["kind", "eventId", "calendarId", "event"], ["invitationMessageId"]) || !isWriteUuid(v.eventId) || !isWriteUuid(v.calendarId)) return null;
+      if (!closed(v, ["kind", "eventId", "calendarId", "event"], ["invitationMessageId", "repeatSelected"]) || !isWriteUuid(v.eventId) || !isWriteUuid(v.calendarId)) return null;
       const event = fieldsOf(v.event, true);
       const invitation = v.invitationMessageId;
       if (invitation !== undefined && (!isWriteUuid(invitation) || event?.invitees.length)) return null;
+      if (v.repeatSelected !== undefined && (v.repeatSelected !== true || invitation !== undefined || !event?.repeat)) return null;
       return event === null ? null : { kind: v.kind, eventId: v.eventId, calendarId: v.calendarId, event,
-        ...(typeof invitation === "string" && { invitationMessageId: invitation }) };
+        ...(typeof invitation === "string" && { invitationMessageId: invitation }),
+        ...(v.repeatSelected === true && { repeatSelected: true }) };
     }
     case "calendar_event_update": {
       const scope = changeScopeOf(v.scope);
@@ -293,13 +302,18 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
         : { kind: v.kind, ...b, scope, change, audience };
     }
     case "calendar_event_delete": {
-      const b = based(v, ["scope"], ["audience", "localOnly", "cancellationMessage", "cancelledBy"]);
       const scope = removeScopeOf(v.scope);
+      const hide = v.hide === true;
+      if (Object.hasOwn(v, "hide") && (!hide || v.localOnly !== true || Object.hasOwn(v, "cancelledBy"))) return null;
+      const b = based(v, ["scope"], ["audience", "localOnly", "cancellationMessage", "cancelledBy", "hide", "copy"],
+        hide && scope?.kind === "occurrence");
       if (b === null || scope === null) return null;
+      const copy = attendeeCopyOf(v.copy);
+      if (hide ? copy === null : Object.hasOwn(v, "copy")) return null;
       const cancelledBy = v.cancelledBy;
       if (cancelledBy !== undefined && (v.localOnly !== true || !isWriteUuid(cancelledBy))) return null;
       if (Object.hasOwn(v, "localOnly")) return v.localOnly === true && scope.kind !== "following" && b.after === undefined && !Object.hasOwn(v, "audience") && !Object.hasOwn(v, "cancellationMessage")
-        ? { kind: v.kind, ...b, scope, localOnly: true, ...(typeof cancelledBy === "string" && { cancelledBy }) } : null;
+        ? { kind: v.kind, ...b, scope, localOnly: true, ...(copy && { hide: true, copy }), ...(typeof cancelledBy === "string" && { cancelledBy }) } : null;
       const message = v.cancellationMessage;
       if (Object.hasOwn(v, "cancellationMessage") &&
         (scope.kind !== "record" || typeof message !== "string" || !message.trim() || message.length > CALENDAR_WRITE_LIMITS.titleChars ||
@@ -319,11 +333,13 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
       return audience ? { ...move, audience } : null;
     }
     case "calendar_event_answer": {
-      const b = based(v, ["scope", "answer"], [], !Object.hasOwn(v, "after") && changeScopeOf(v.scope)?.kind === "occurrence");
+      const b = based(v, ["scope", "answer"], ["copy"], !Object.hasOwn(v, "after") && changeScopeOf(v.scope)?.kind === "occurrence");
       const scope = changeScopeOf(v.scope);
       if (b === null || scope === null || scope.kind === "following") return null;
       if (v.answer !== "accepted" && v.answer !== "tentative" && v.answer !== "declined") return null;
-      return { kind: v.kind, ...b, scope, answer: v.answer };
+      const copy = attendeeCopyOf(v.copy);
+      if (Object.hasOwn(v, "copy") && copy === null) return null;
+      return { kind: v.kind, ...b, scope, answer: v.answer, ...(copy && { copy }) };
     }
     default:
       return null;
@@ -414,13 +430,26 @@ const sameStart = (t: CalendarTime, row: CalendarWriteRowFacts): boolean =>
 /** An address as an event names it, to compare with the account's own: lower case, without `mailto:`. */
 const addressOf = (a: string): string => a.trim().toLowerCase().replace(/^mailto:/, "");
 
+/** Positive organizer authority is independent of the calendar's write access. */
+export function verifiedOrganizer(
+  organizer: string | null, own: ReadonlySet<string>,
+): boolean {
+  const address = organizer === null ? "" : addressOf(organizer);
+  return address !== "" && own.has(address);
+}
+
+export function sharedCopyNeedsProtection(
+  row: Pick<CalendarWriteRowFacts, "organizer">, own: ReadonlySet<string>, access: string,
+): boolean {
+  return access === "writer" && !verifiedOrganizer(row.organizer, own);
+}
+
 /** An invitation on an owned calendar can name the account by an attendee address we do not know. */
 export function isAttendeeCopy(
   row: Pick<CalendarWriteRowFacts, "organizer" | "myAnswer">, own: ReadonlySet<string>, access: string,
 ): boolean {
-  const org = row.organizer === null ? null : addressOf(row.organizer);
-  if (org !== null && org !== "" && own.has(org)) return false;
-  if (access === "owner") return org !== null || row.myAnswer !== null;
+  if (verifiedOrganizer(row.organizer, own)) return false;
+  if (access === "owner") return row.organizer !== null || row.myAnswer !== null;
   return row.myAnswer !== null;
 }
 
@@ -460,6 +489,15 @@ export function writeActRefusal(
     if (row.myAnswer === null) return readOnly("the account is not invited to this event");
   } else if (act.kind === "calendar_event_answer") return readOnly("the account is not invited to this event");
   const kind = writeRowOf(row);
+  if (sharedCopyNeedsProtection(row, own, access)) {
+    if (act.kind === "calendar_event_update" &&
+      (row.organizer === "" || kind !== "single" || reviewedException || act.scope.kind !== "record" ||
+        Object.keys(act.change).some((key) => !["title", "start", "end", "place", "notes"].includes(key)))) {
+      return readOnly("this shared copy only takes changes to its own event details");
+    }
+    if (act.kind === "calendar_event_move" && row.organizer !== null)
+      return readOnly("this shared copy cannot be moved to another calendar");
+  }
   if (kind === "listed") return shape("a series with days listed, or with more than one rule, is not written");
   if (kind === "day") return shape("one day of a series is written through its series");
   if (kind === "series" && act.kind === "calendar_event_update" && act.change.invitees !== undefined)
