@@ -227,6 +227,14 @@ describe("the keep itself", () => {
     expect(cache.read(inputs({ frameWidth: 560 }))?.value).toBe("wide");
     expect(cache.read(inputs({ frameWidth: 900 }))?.value).toBe("wide");
     expect(cache.read(inputs({ frameWidth: 400 })), "a document resolved for a wide frame was served to a narrow one").toBeUndefined();
+    cache.write(inputs({ frameWidth: 400 }), "narrow", 10, { width: 400, breaks: [{ px: 480, strict: false }] });
+    expect(cache.read(inputs({ frameWidth: 410 }))?.value).toBe("narrow");
+    expect(cache.read(inputs({ frameWidth: 560 }))?.value).toBe("wide");
+    expect(cache.read(inputs())?.value).toBe("narrow");
+    cache.write(inputs({ html: "<p>new</p>", frameWidth: 400 }), "new narrow", 10,
+      { width: 400, breaks: [{ px: 480, strict: false }] });
+    expect(cache.read(inputs({ frameWidth: 560 }))).toBeUndefined();
+    expect(cache.read(inputs({ html: "<p>new</p>", frameWidth: 410 }))?.value).toBe("new narrow");
     // A letter with no width threshold is one document at every width.
     cache.write(inputs({ messageId: "flat", frameWidth: 572 }), "flat", 10, { width: 572, breaks: [] });
     expect(cache.read(inputs({ messageId: "flat", frameWidth: 343 }))?.value).toBe("flat");

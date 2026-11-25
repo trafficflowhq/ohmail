@@ -47,6 +47,7 @@ vi.mock("@ohmail/app-logic/mail-state/mail-state-binding", async (importOriginal
 
 /** Today's views through the harness, handed `scope` by their host (absent: the storage owner the test named). */
 async function shellUnder(scope: string | undefined): Promise<HTMLElement> {
+  window.location.hash = "#/settings/mailboxes";
   const { AppShell } = await import("./_todays-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const store = await storeWith([msg("m1")]);
@@ -62,7 +63,7 @@ async function shellUnder(scope: string | undefined): Promise<HTMLElement> {
       locale: "en", messages, timeZone: "UTC", now: NOW,
       children: React.createElement(ThemeProvider, { children: React.createElement(ToastHost, {
         children: React.createElement(AppShell as never, {
-          ...(scope === undefined ? {} : { scope }), demo: false, engine, consentTransport, mailboxFacts: async () => [],
+          ...(scope === undefined ? {} : { scope }), demo: false, engine, consentTransport, mailboxFacts: async () => [], mailboxesNotices: true,
         } as never),
       }) }),
     } as never));
@@ -103,8 +104,11 @@ describe("reading along is kept and read under the scope handed in", () => {
     expect(el.textContent ?? "", "A's shell said the sentence A chose to silence").not.toContain(SAYING);
     /* Another tab signs in as B: the storage owner moves while A's views stand, and they are drawn again. */
     setStorageOwner(B);
-    window.location.hash = "#/history";
-    for (let i = 0; i < 10; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+    for (const route of ["#/history", "#/settings/mailboxes"]) {
+      window.location.hash = route;
+      window.dispatchEvent(new Event("hashchange"));
+      for (let i = 0; i < 10; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+    }
     expect(el.textContent ?? "", "A's shell took B's (empty) record once the storage owner moved").not.toContain(SAYING);
   });
 

@@ -385,19 +385,14 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
        (`main`, today's eye, `onPreview`) where the shell hands a look (`look`, none on a browser host, where the
        press saves too); `fileLookOf` is today's `isPreviewable`: an SVG is `other`, never looked at. */
     const pane = code(read("../../../packages/app/src/reader/files/Files.tsx"));
-    const from = pane.indexOf("<FileTile");
-    expect(from, "LetterFiles no longer renders <FileTile> — re-aim this").toBeGreaterThan(-1);
-    /* The tile's own close, at its own indent: its `look` (a thumbnail's <img />) closes before it. */
-    const indent = pane.slice(pane.lastIndexOf("\n", from) + 1, from);
-    const tile = pane.slice(from, pane.indexOf(`\n${indent}/>`, from));
-    const save = tile.slice(tile.indexOf("save={{"));
-    const main = tile.slice(tile.indexOf("main={{"), tile.indexOf("save={{"));
-
-    expect(save, "a tile press does not reach the download path").toMatch(/onPress: \(\) => files\.open\(/);
-    expect(save, "a tile press opens the viewer instead of saving the file")
-      .not.toMatch(/\blook\b/);
-    expect(main, "nothing on a tile opens the preview any more").toMatch(
-      /onPress: \(\) => \(look \? look\(item\.id\) : files\.open\(messageId, item\.id\)\)/,
+    const tile = pane.match(/<FileTile\b[\s\S]*?save=\{download\}[\s\S]*?onMenu=\{openMenu\}/)?.[0];
+    expect(tile, "the tile keeps an independent save action").toBeDefined();
+    expect(tile).toContain("main={inspect ?? download}");
+    expect(pane, "the download action must save the attachment").toMatch(
+      /const download = \{[\s\S]*?onPress: \(\) => files\.open\(messageId, item\.id\)/s,
+    );
+    expect(pane, "the preview action must look at the attachment").toMatch(
+      /const inspect = look\s*\?[\s\S]*?onPress: \(\) => look\(item\.id\)[\s\S]*?: null;/,
     );
     // The predicate is what keeps an SVG — a document that executes script — from being
     // offered a render. Dropping it makes every attachment previewable.

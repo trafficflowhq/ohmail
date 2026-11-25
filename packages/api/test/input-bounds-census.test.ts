@@ -225,7 +225,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   "POST /calendar/oauth/google/start",
   "POST /calendar/oauth/microsoft/start",
   "DELETE /calendar/connections/:id",
-  "POST /calendar/connections/:id/check",
   "POST /calendar/writes/:id/retry",
   "DELETE /calendar/writes/:id",
   "GET /health",
@@ -883,6 +882,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
     // The subscription address is capped at MAX_URL_CHARS in the credential parser.
     bounds: [CALENDAR_WRITE_LIMITS.keyChars, CALDAV_USER_MAX_CHARS, CALDAV_PASSWORD_MAX_CHARS, 8192],
   },
+  // A single optional calendar UUID, validated before it reaches the service.
+  "POST /calendar/connections/:id/check": { scalarsOnly: true },
   "POST /calendar/connections/:id/sign-in": { bounds: [CALDAV_USER_MAX_CHARS, CALDAV_PASSWORD_MAX_CHARS] },
   "PATCH /calendar/calendars/:id": { bounds: [CALENDAR_NAME_MAX_CHARS] },
   "GET /calendar/oauth/google/callback": {
@@ -1471,6 +1472,7 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   // `approveAuthorize`/`peekAuthorizeRequest` before `hashToken` runs over it, then matched by
   // equality against a stored hash — it reaches no `LIKE`, no ordering and no allocation.
   "routes/oauth.ts#request": "identifier",
+  "calendar/connect.ts#calendarId": "identifier", // requireUuid in the check route
   "calendar/oauth.ts#state": "identifier",
   "calendar/oauth.ts#code": "length-capped",
   "calendar/oauth.ts#error": "length-capped",
@@ -1694,6 +1696,10 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   },
   "calendar/feed.ts :: found": {
     origin: { bounded: "the events the same page's select found, never more than the ids it was asked for" },
+    count: 1,
+  },
+  "calendar/feed.ts :: dav.map(({ id }) => id)": {
+    origin: { bounded: "CalDAV rows drawn from the same bounded event selection as candidates" },
     count: 1,
   },
   "calendar/feed.ts :: candidates": {

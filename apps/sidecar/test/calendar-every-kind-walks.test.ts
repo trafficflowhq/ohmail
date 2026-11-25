@@ -75,13 +75,20 @@ async function server(events = 1, opts: { word?: boolean; marks?: boolean } = {}
   for (let i = 0; i < events; i++) {
     const id = randomUUID();
     ids.events.push(id);
+    const organizer = "boss" + String.fromCharCode(64) + "example.test";
+    const stamp = (hour: number) => new Date(Date.UTC(2026, 6, 28, hour)).toISOString().replace(/[-:]|\.\d{3}/g, "");
+    const original = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Calendar fixture//EN", "BEGIN:VEVENT",
+      `UID:fixture-${i}`, `DTSTAMP:${stamp(12)}`, `DTSTART:${stamp(14)}`,
+      `ORGANIZER;CN=Boss:mailto:${organizer}`, "X-PRIVATE:never-sent", "END:VEVENT", "END:VCALENDAR", "",
+    ].join("\r\n");
     await db.insert(calEvents).values({
       id, accountId: s.accountId, calendarId: ids.calendar, providerId: `/cal/me/work/${i}.ics`, versionTag: "never-sent",
       uid: `uid-${i}@example.test`, title: `Meeting ${i}`, notes: "Agenda", place: "Room 1",
       startKind: "zoned", startLocal: "20260728T140000", startZone: "Europe/Zurich",
       endKind: "zoned", endLocal: "20260728T150000", endZone: "Europe/Zurich",
-      startsAt: at(i), endsAt: at(i + 1), organizer: "boss@example.test", organizerName: "Boss", myAnswer: "accepted",
-      original: "BEGIN:VEVENT never-sent", ...(i === 0 ? { repeatRule: "FREQ=WEEKLY;COUNT=4", excludedDates: [{ kind: "zoned", value: "20260804T140000", zone: "Europe/Zurich" }] } : {}),
+      startsAt: at(i), endsAt: at(i + 1), organizer, organizerName: "Boss", myAnswer: "accepted",
+      original, ...(i === 0 ? { repeatRule: "FREQ=WEEKLY;COUNT=4", excludedDates: [{ kind: "zoned", value: "20260804T140000", zone: "Europe/Zurich" }] } : {}),
     });
     await db.insert(calAttendees).values([
       { accountId: s.accountId, eventId: id, address: "a@example.test", name: "A", role: "chair", answer: "accepted" },

@@ -7,6 +7,9 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import { MailStateContext } from "@ohmail/app-logic/mail-state/mail-state-binding";
+import { MailConnectionDetails } from "../../src/mail/ground/MailConnection.js";
+import { SetupHrefContext } from "../../src/mail/ground/boot-setup.js";
 import { Frame } from "../../src/frame/Frame.js";
 import { useConnectionFeed, useNotice, useRailModel, useReport } from "../../src/frame/commands.js";
 import type { FrameNotice, PaneProps, PlaceEntry, RailModel } from "../../src/frame/contract.js";
@@ -170,6 +173,31 @@ function todayAt(hhmm: string, timeZone: string): string {
 const ZONE = "Europe/Zurich";
 const firstSync = q.get("show") === "firstsync";
 
+/** The first-sync details rendered by Mailboxes settings, over the test's changing mailbox facts. */
+function FirstSyncDetails({ syncing }: { syncing: boolean }) {
+  const state = syncing ? { ...mail("importing"), count: 3846 } : mail("quiet");
+  return (
+    <MailStateContext.Provider
+      value={{
+        state,
+        mailboxes: null,
+        rosterProbed: false,
+        rosterFailed: false,
+        mirrored: 3846,
+        pulled: 3846,
+        importOver: new Map(),
+        freshness: { state: "unknown", asOf: null },
+        refresh: async () => undefined,
+        factsReadAt: () => null,
+      }}
+    >
+      <SetupHrefContext.Provider value={null}>
+        <MailConnectionDetails />
+      </SetupHrefContext.Provider>
+    </MailStateContext.Provider>
+  );
+}
+
 /** The stand-in body: it feeds the frame as today's views do, and draws a plain list and reading sheet. */
 function Body({ route, plan }: PaneProps) {
   const [syncing, setSyncing] = useState(firstSync);
@@ -193,16 +221,21 @@ function Body({ route, plan }: PaneProps) {
     syncing && q.has("controls") ? (
       <button onClick={() => setSyncing(false)}>Finish first sync</button>
     ) : null;
+  const details = firstSync ? <FirstSyncDetails syncing={syncing} /> : null;
   /* Beside a rail the list lies on the frame's sheet; on a phone's width it draws its own, under the catalogue's head, as
      the reference's does, and scrolls as the product's list does: a scroller of its own under the dock. */
   if (plan.device === "phone")
     return (
       <div className="st-phone" data-place={route.place}>
-        <div className="st-rows">{finish}</div>
+        <div className="st-rows">
+          {details}
+          {finish}
+        </div>
       </div>
     );
   return (
     <div className="st-fill" data-place={route.place}>
+      {details}
       {finish}
     </div>
   );

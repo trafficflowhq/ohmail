@@ -444,7 +444,6 @@ export function readerLayoutCases() {
             const older = page.locator('[data-conv-id="w4"]');
             const opened = page.locator('[data-conv-id="w5"][aria-current="true"]');
             const gap = () => opened.evaluate(readingGap);
-            const first = await gap();
             const placeholder = older.locator(".msg-img-placeholder");
             const box = (el: Element) => ({
               width: el.getBoundingClientRect().width,
@@ -452,6 +451,7 @@ export function readerLayoutCases() {
             });
             await expect.poll(() => placeholder.count()).toBe(3);
             expect(await placeholder.first().evaluate(box)).toEqual({ width: 90, height: 70 });
+            const first = await gap();
             await page.evaluate(
               ([sketch, logo]) => {
                 const fixture = window as Window & {

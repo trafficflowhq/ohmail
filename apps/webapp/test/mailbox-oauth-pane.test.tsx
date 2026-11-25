@@ -423,14 +423,16 @@ describe("coming back from Microsoft", () => {
   it("asks for approval in Microsoft Entra when the approval link read fails", async () => {
     mockApprovalFailure = true;
     const el = await mount([], "?oauth=error&reason=admin_consent_required");
-    expect(pane(el).getByRole("status").textContent).toBe("Ask your administrator to approve ohmail in Microsoft Entra");
+    expect(pane(el).getAllByRole("status").map((status) => status.textContent))
+      .toContain("Ask your administrator to approve ohmail in Microsoft Entra");
     expect(pane(el).queryByRole("button", { name: "Copy" })).toBeNull();
   });
 
   it("a DECLINED consent is a status, not an alert — the person said no", async () => {
     const el = await mount([], "?oauth=error&reason=consent_declined");
     expect(pane(el).queryByRole("alert"), "somebody's own decision is not an error").toBeNull();
-    expect(pane(el).getByRole("status").textContent).toContain("cancelled");
+    const cancelled = pane(el).getByText(/cancelled/);
+    expect(cancelled.closest('[role="status"]')).not.toBeNull();
   });
 
   it("a reason this build does not know still gets a sentence", async () => {

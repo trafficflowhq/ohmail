@@ -45,7 +45,7 @@ export function lateStripSaid(
   if (issue?.error) {
     const { row, error } = issue;
     return {
-      title: `${row.address}: ${error.words}`,
+      title: Copy.mailboxIssueTitle(row.address, error.words),
       mailboxId: row.id,
       since: error.since ?? `error:${row.errorCode}`,
       hot: true,

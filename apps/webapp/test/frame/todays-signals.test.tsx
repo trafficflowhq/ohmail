@@ -69,6 +69,10 @@ async function hostWith(o: {
 }): Promise<FrameHost> {
   const sent: EngineMutation[] = [];
   const engine = engineOver(await storeWith([message("m1")], []), sent, { on: false }, { wait: null });
+  if (o.hostConnection !== undefined) {
+    const stale = { state: "stale" as const, asOf: new Date(Date.now() - 31 * 60_000).toISOString() };
+    engine.freshness = () => stale;
+  }
   const places: Partial<FramePlaces> = {
     ohbox: { id: "ohbox", body: "ohbox", rail: null, panes: { kind: "wide", Wide: o.probe ? Probe : Empty } },
   };
@@ -118,8 +122,12 @@ describe("today's signal-fed inputs", () => {
     expect(slotSays()).not.toContain("kestrel");
     const quiet = { state: "stale" as const, words: { title: "Can't reach kestrel", detail: "", link: null } };
     await act(async () => feed.set(quiet));
+    expect(slotSays()).not.toContain("kestrel");
+    const link = { label: "Open Mailboxes", href: "#/settings/mailboxes" };
+    await act(async () => feed.set({ ...quiet, words: { ...quiet.words, link } }));
     await waitFor(() => slotSays().includes("Can't reach kestrel"), "the host's silence said in the frame's slot");
     expect(slotSays()).toContain("Can't reach kestrel");
+    expect(screen.getByRole("button", { name: link.label })).toBeTruthy();
     await act(async () => feed.set(null));
     await rounds(4);
     expect(slotSays()).not.toContain("kestrel");

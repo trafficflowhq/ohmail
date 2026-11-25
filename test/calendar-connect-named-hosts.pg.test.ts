@@ -303,14 +303,17 @@ describe.skipIf(!AVAILABLE)("where a CalDAV password goes, turn after turn, on P
       expect(heard(typed, atTyped)).toEqual([`PROPFIND ${TYPED} /dav/ WITH THE PASSWORD`, `PROPFIND ${TYPED} /dav/principals/mila/ WITH THE PASSWORD`]);
       expect(heard(store, atStore)).toEqual([`REPORT ${BESIDE} /dav/calendars/mila/work/ WITH THE PASSWORD`, `REPORT ${BESIDE} /dav/calendars/mila/work/ WITH THE PASSWORD`]);
 
-      // A change of an event there is written there, in a turn whose first request is the write's.
+      // The shared copy is checked at the same host before the guarded write.
       await recordWrite(w, {
         accountId: c.accountId, key: `retitle-${randomUUID()}`,
         act: { kind: "calendar_event_update", ...(await c.event("Kiln check")), scope: { kind: "record" }, change: { title: "Kiln check, early" } },
       });
       const before = store.seen.length;
       expect([await c.turn(), await c.titles()]).toEqual(["synced", ["Glaze firing", "Kiln check, early"]]);
-      expect(heard(store, before)[0]).toBe(`PUT ${BESIDE} /dav/calendars/mila/work/one.ics WITH THE PASSWORD`);
+      expect(heard(store, before).slice(0, 2)).toEqual([
+        `REPORT ${BESIDE} /dav/calendars/mila/work/ WITH THE PASSWORD`,
+        `PUT ${BESIDE} /dav/calendars/mila/work/one.ics WITH THE PASSWORD`,
+      ]);
     }, 120_000);
 
     it("and when the server moves the calendars to another host beside the typed one, the stored calendar is read and written there, and the host it was stored at hears nothing", async () => {

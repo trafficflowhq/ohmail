@@ -660,7 +660,7 @@ describe("the precedence ladder", () => {
       ],
     }));
     expect(refused.errorCode).toBe("auth");
-    expect(refused.unreachable).toBeUndefined();
+    expect(refused.unreachable).toBe(false);
     // The control: no outage clock, no sentence.
     expect(deriveMailState(inputs({ mailboxes: [mailbox()] })).key).not.toBe("mailboxError");
   });
@@ -2075,12 +2075,12 @@ describe("new mail is late: the server says it is not fetching", () => {
     })).key).toBe("stale");
   });
 
-  it("…and before a mailbox's own trouble, our filing, an import and a first sync", () => {
+  it("a refused sign-in ranks above late fetching, which ranks above filing, import and first sync", () => {
     const behind = { fetching: { behind: true, since: SINCE } };
     expect(deriveMailState(inputs({ mailboxes: [blockedMailbox("at_capacity", behind)] })).key).toBe("behind");
     expect(deriveMailState(inputs({
       mailboxes: [late(), synced({ id: "mb2", status: "error", errorCode: "auth" })],
-    })).key).toBe("behind");
+    }))).toMatchObject({ key: "mailboxError", mailboxId: "mb2", errorCode: "auth" });
     expect(deriveMailState(inputs({ mailboxes: [late({ pendingMoves: 3 })] })).key).toBe("behind");
     expect(deriveMailState(inputs({ mailboxes: [late()], mirrored: 400, growth: importingFromEmpty(400) })).key)
       .toBe("behind");

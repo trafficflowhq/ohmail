@@ -549,7 +549,7 @@ describe("stage 2 — the … menu", () => {
     }
     expect(mail.mutations).toEqual([]);
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent?.trim())).toEqual([
-      "Pin", "New subfolder", "Rename", "Delete…",
+      "Open", "Pin", "New subfolder", "Rename", "Delete…",
     ]);
   });
 

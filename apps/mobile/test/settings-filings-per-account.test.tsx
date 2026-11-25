@@ -23,7 +23,7 @@ vi.mock("react-native", async () => ({
   Linking: { openURL: async (url: string) => { scene.opened.push(url); } },
 }));
 vi.mock("expo-constants", () => ({ default: { expoConfig: {} } }));
-vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
+vi.mock("expo-router", () => ({ router: { push: () => undefined }, useLocalSearchParams: () => ({}) }));
 vi.mock("../src/theme", async () => {
   const { accountGovernsFace, accountWideOffered } = await import("../src/theme/face");
   return { accountGovernsFace, accountWideOffered };
