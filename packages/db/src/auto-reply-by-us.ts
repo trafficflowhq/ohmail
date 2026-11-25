@@ -21,21 +21,30 @@ export function autoReplyByUsWhere(d: Dialect, row: {
   fromAddress: SQL;
   /** The row's `message_id_header`. NULL never correlates, which is correct: no id, no identity. */
   messageIdHeader: SQL;
+  /** A positive WHERE filter that can drive a Postgres scan from the sender index. */
+  indexSender?: true;
 }): SQL {
-  return sql`case when lower(${row.fromAddress}) in (
-      select lower(mx.address) from ${mailboxes} mx where mx.account_id = ${row.accountId}
-    ) then (
-      exists (
-        select 1 from ${awayReplies} ar
-         where ar.account_id = ${row.accountId}
-           and ar.minted_message_id is not null
-           and trim(ar.minted_message_id, '<>') = ${row.messageIdHeader}
-      )
-      or coalesce((
-        select (${machineSentHeadersWhere(d, sql`mb.headers`)})
-          from ${messageBodies} mb where mb.message_id = ${row.id}
-      ), false)
-    ) else false end`;
+  const sender = sql`lower(${row.fromAddress})`;
+  const ownAddresses = sql`
+    select lower(mx.address) from ${mailboxes} mx where mx.account_id = ${row.accountId}`;
+  const evidence = sql`(
+    exists (
+      select 1 from ${awayReplies} ar
+       where ar.account_id = ${row.accountId}
+         and ar.minted_message_id is not null
+         and trim(ar.minted_message_id, '<>') = ${row.messageIdHeader}
+    )
+    or coalesce((
+      select (${machineSentHeadersWhere(d, sql`mb.headers`)})
+        from ${messageBodies} mb where mb.message_id = ${row.id}
+    ), false)
+  )`;
+  if (row.indexSender && d.name === "pg") {
+    // The account's addresses are an initplan. Postgres can probe the sender index for each
+    // address before looking at the ledger and bodies of the resulting messages.
+    return sql`(${sender} = any(array(${ownAddresses})) and ${evidence})`;
+  }
+  return sql`case when ${sender} in (${ownAddresses}) then ${evidence} else false end`;
 }
 
 /**

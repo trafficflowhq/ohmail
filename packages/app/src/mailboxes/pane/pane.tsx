@@ -9,7 +9,7 @@ import { NONE, panesOf, type None } from "../../host/index.js";
 import type { PaneBodyProps, PaneSummary, SettingsPane } from "../../settings/contract.js";
 import { useLocale, useText } from "../../text/index.js";
 import type { CalendarHalfSlot, FactorSlot } from "../connect/contract.js";
-import { MailConnectionDetails } from "../../mail/ground/MailConnection.js";
+import { MailConnectionDetails } from "../connection.js";
 import { MailboxesPane } from "./MailboxesPane.js";
 
 /**

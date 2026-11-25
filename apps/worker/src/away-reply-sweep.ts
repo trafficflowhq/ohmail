@@ -1,5 +1,5 @@
 import { awayReplyFlagRedeliverPass } from "./away-reply-flag-redeliver.js";
-import type { Tx } from "@trafficflow/db";
+import type { AccountRelations, Tx } from "@trafficflow/db";
 import type { Logger } from "@trafficflow/core/mail";
 
 /**
@@ -36,8 +36,13 @@ export interface AwayReplySweep {
    */
   runOnce(
     handleOf: (accountId: string) => Tx, accountIds: readonly string[],
-    opts?: { log?: Logger; batch?: number; maxPages?: number;
-             onError?: (accountId: string, err: unknown) => void },
+    opts?: {
+      log?: Logger;
+      batch?: number;
+      maxPages?: number;
+      readRelations?: (db: Tx) => Promise<AccountRelations>;
+      onError?: (accountId: string, err: unknown) => void;
+    },
   ): Promise<AwayReplySweepRun>;
 }
 
@@ -69,8 +74,11 @@ export function makeAwayReplySweep(): AwayReplySweep {
       for (const accountId of accountIds) {
         // ONE ACCOUNT'S FAILURE MUST NOT SKIP THE REST, and must not close the gate either.
         try {
-          const r = await awayReplyFlagRedeliverPass(handleOf(accountId), {
+          const db = handleOf(accountId);
+          const relations = await opts.readRelations?.(db);
+          const r = await awayReplyFlagRedeliverPass(db, {
             accountId,
+            ...(relations === undefined ? {} : { relations }),
             afterId: cursors.get(accountId) ?? null,
             ...(opts.log === undefined ? {} : { log: opts.log }),
             ...(opts.batch === undefined ? {} : { batch: opts.batch }),

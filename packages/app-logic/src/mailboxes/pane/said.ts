@@ -62,7 +62,7 @@ export function notCheckedOf(m: MailboxRow, ctx: Pick<RowContext, "now" | "stamp
   return { on, values: { hasSince: since === "" ? "no" : "yes", since } };
 }
 
-/** How long, how often and the diagnostic token: the tooltip of a failing mailbox, never its label. */
+/** The time and attempt count for a failing mailbox, separate from its human-readable reason. */
 function errorTitle(m: MailboxRow, ctx: RowContext): string | undefined {
   const parts: string[] = [];
   const since = m.failedAt ?? m.unreachableSince ?? m.syncBlockedSince;
