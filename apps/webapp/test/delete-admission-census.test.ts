@@ -57,7 +57,8 @@ describe("the delete admission reads the verb reader, and nothing about Use fold
   const reader = (file: string) => read(`packages/app/src/reader/${file}`);
   const cursor = sliceOfDeclaration(logic("ohbox/cursor-verbs.ts"), "cursorRowKeys");
   const menu = sliceOfDeclaration(reader("actions/ActionMenus.tsx"), "ActionMenus");
-  const panel = sliceOfDeclaration(reader("actions/ActionBar.tsx"), "file");
+  // More, its first-use confirmation and the reader shortcut share this action owner.
+  const panel = sliceOfDeclaration(reader("actions/ActionMenus.tsx"), "useActionMenu");
   const runner = sliceOfDeclaration(logic("reader/verbs.ts"), "runOwnVerb");
   const tray = sliceOfDeclaration(logic("press/shell-dispatch.ts"), "deleting");
 
@@ -78,12 +79,13 @@ describe("the delete admission reads the verb reader, and nothing about Use fold
       must: ['canDelete: row !== null && deletable', 'run: (m) => act("delete", m)'],
     },
     {
-      name: "the reader's More entry and confirmation send Delete through the mailbox refusal",
+    name: "the reader's More entry and confirmation send Delete through the mailbox refusal",
       body: [menu, panel, runner, tray].join("\n"),
       must: [
         'onPress={confirm ? () => setMenu("confirmDelete") : trash}',
-        'confirm={{ label: words.move, onPress: trash, keyHint: "↵" }}',
-        'verbs.act("delete")',
+        'confirm={{ label: words.move, onPress: confirmTrash, keyHint: "↵" }}',
+        'const trash = () => {\n    close();\n    verbs.act("delete");',
+        'acknowledgements.remember?.("moveToTrash");\n    trash();',
         'return press.deleting.remove({ id: m.id, mailboxId: m.mailboxId })',
         'refusal: (mailboxIds) => readerMoveRefusal(',
         'mailboxIds.map((id) => id ?? "")',

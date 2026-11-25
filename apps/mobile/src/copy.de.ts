@@ -526,6 +526,7 @@ export const DE: Deck = {
   lateMailboxTimeout: "Der Mailserver hat nicht rechtzeitig geantwortet",
   lateMailboxDown: "Mailserver nicht erreichbar",
   lateMailboxOther: "Mail konnte nicht synchronisiert werden",
+  lateMailboxTitle: (mailbox: string, reason: string) => `${mailbox}: ${reason}`,
   lateSince: (time: string) => `seit ${time}`,
   lateHide: "Ausblenden",
   lateTitle: "Neue Mails haben Verspätung.",
