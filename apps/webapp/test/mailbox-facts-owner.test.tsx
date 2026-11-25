@@ -29,8 +29,13 @@ import { FACTS_POLL_MS } from "@ohmail/app-logic/mail-state/mail-state-binding";
 const MINE = "walker@example.invalid";
 const THEIRS = "someone-else@example.invalid";
 
+// A refused provider sign-in is announced immediately, which makes a published row
+// observable without crossing the quiet notice delay.
+const failedMailbox = (options: Parameters<typeof mailbox>[0] = {}) =>
+  mailbox({ status: "error", errorCode: "auth", ...options });
+
 let asks = 0;
-let answer = (): Promise<ReturnType<typeof mailbox>[]> => Promise.resolve([mailbox()]);
+let answer = (): Promise<ReturnType<typeof mailbox>[]> => Promise.resolve([failedMailbox()]);
 
 const probe = async (): Promise<ReturnType<typeof mailbox>[]> => {
   asks += 1;
@@ -41,7 +46,7 @@ beforeEach(() => {
   installShellEnv();
   window.localStorage.clear();
   asks = 0;
-  answer = () => Promise.resolve([mailbox()]);
+  answer = () => Promise.resolve([failedMailbox()]);
 });
 
 afterEach(async () => {
@@ -69,7 +74,7 @@ describe("the mailbox facts poll", () => {
     // Somebody signs in as another account in a second tab. The jar is rewritten; this tree
     // re-renders nothing, holds the very same engine, and the very same probe function.
     document.cookie = "tf_owner=acct_someone_else; Path=/";
-    answer = () => Promise.resolve([mailbox({ address: THEIRS })]);
+    answer = () => Promise.resolve([failedMailbox({ address: THEIRS })]);
 
     await tick(FACTS_POLL_MS * 3);
     expect(asks, "the poll kept asking under another account's session").toBe(polled);
@@ -95,7 +100,7 @@ describe("the mailbox facts poll", () => {
     answer = () => new Promise((resolve) => { release = resolve; });
     await tick(FACTS_POLL_MS);
     expect(release, "the poll never issued the request this case is about").toBeTruthy();
-    release!([mailbox({ address: OTHER })]);
+    release!([failedMailbox({ address: OTHER })]);
     await tick(1_000);
     expect(textOf(el), "a deferred answer never reaches the strip at all").toContain(OTHER);
 
@@ -106,7 +111,7 @@ describe("the mailbox facts poll", () => {
     await tick(FACTS_POLL_MS);
     expect(release, "the second request never left").toBeTruthy();
     document.cookie = "tf_owner=acct_someone_else; Path=/";
-    release!([mailbox({ address: THEIRS })]);
+    release!([failedMailbox({ address: THEIRS })]);
     await tick(1_000);
 
     expect(textOf(el), "an in-flight answer was published after the jar changed hands")

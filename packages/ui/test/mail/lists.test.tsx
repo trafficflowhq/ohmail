@@ -514,7 +514,7 @@ describe("FolderShelf", () => {
     const asked = fireEvent.contextMenu(rosa, { clientX: 40, clientY: 90 });
     /* The browser's own menu does not open over it. */
     expect(asked).toBe(false);
-    expect(onMenu).toHaveBeenCalledWith("rosa", { x: 40, y: 90 });
+    expect(onMenu).toHaveBeenCalledWith("rosa", { x: 40, y: 90 }, rosa);
     expect(onOpen).not.toHaveBeenCalled();
     /* The lines that are no folder have no menu of their own. */
     expect(fireEvent.contextMenu(screen.getByRole("button", { name: "Folders" }))).toBe(true);
@@ -621,13 +621,9 @@ describe("FolderFold", () => {
   it("hands on a folder's own menu, asked for with the pointer's other button, and leaves the line that adds one alone", () => {
     const onMenu = vi.fn();
     render(<FolderFold label="All folders" groups={groups} onMenu={onMenu} />);
-    expect(
-      fireEvent.contextMenu(screen.getByRole("button", { name: "Gartenlokal Rosa" }), {
-        clientX: 12,
-        clientY: 30,
-      }),
-    ).toBe(false);
-    expect(onMenu).toHaveBeenCalledWith("rosa", { x: 12, y: 30 });
+    const rosa = screen.getByRole("button", { name: "Gartenlokal Rosa" });
+    expect(fireEvent.contextMenu(rosa, { clientX: 12, clientY: 30 })).toBe(false);
+    expect(onMenu).toHaveBeenCalledWith("rosa", { x: 12, y: 30 }, rosa);
     expect(fireEvent.contextMenu(screen.getByRole("button", { name: "New folder" }))).toBe(true);
   });
 

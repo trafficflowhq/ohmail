@@ -6,6 +6,7 @@ export const SCREENER_ACKNOWLEDGEMENTS = {
   bulkSpamUnsubscribe: 8,
   bulkScreenOutUnsubscribe: 16,
   moveToJunk: 32,
+  moveToTrash: 64,
 } as const;
 
 export type ScreenerAcknowledgement = keyof typeof SCREENER_ACKNOWLEDGEMENTS;

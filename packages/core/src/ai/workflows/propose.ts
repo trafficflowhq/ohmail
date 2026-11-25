@@ -1,3 +1,4 @@
+import { redactAiPayload } from "../../ai-credential-redaction.js";
 import type { ToolName, WorkflowPattern, WorkflowStep, WorkflowTrigger } from "@ohmail/wire";
 import type { AnthropicLike } from "../classify.js";
 import type { AiCallOptions } from "../../ai-call-report.js";
@@ -201,7 +202,7 @@ function assertRedacted(patterns: WorkflowPattern[]): void {
  */
 export function buildProposeParams(patterns: WorkflowPattern[], opts: OpusProposerOpts = {}): Record<string, unknown> {
   assertRedacted(patterns);
-  const userPayload = { patterns };
+  const userPayload = redactAiPayload({ patterns });
   const model = opts.model ?? DEFAULT_MODEL;
   const rules = requestRulesFor(model);
   const params: Record<string, unknown> = {

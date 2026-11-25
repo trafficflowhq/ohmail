@@ -545,27 +545,33 @@ describe("the Option B offer (Linux device)", () => {
     const { container } = await mountMailPage();
     // the detection default, device-only
     expect(document.documentElement.dataset.face).toBe("ohmarchy");
-    expect(container.textContent).toContain("All devices");
+    expect(container.textContent).not.toContain("ohmarchy on this computer");
+    await goTo("settings/general");
+    await tickMailPage(0);
+    expect(scopeButton(container, "This device").getAttribute("aria-pressed")).toBe("true");
 
-    await click(within(container).getByRole("button", { name: "All devices" }));
+    await click(scopeButton(container, "All devices"));
     await tickMailPage(0);
     expect(server.on("PATCH /api/consent/settings").map((entry) => entry.body)).toEqual([{ themeFace: "ohmarchy" }]);
     expect(window.localStorage.getItem("ohmail.face.account")).toBe("ohmarchy");
-    expect(window.localStorage.getItem("ohmail.faceOffer")).toBe("done");
-    expect(container.textContent).not.toContain("All devices");
+    expect(scopeButton(container, "All devices").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("dismissal keeps the device default, is remembered, and the next mount stays quiet", async () => {
     stubPlatform("Linux x86_64", LINUX_UA);
     await prepareMailPage();
     const { container, unmount } = await mountMailPage();
-    await click(within(container).getByRole("button", { name: "Not now" }));
+    expect(within(container).queryByRole("button", { name: "Not now" })).toBeNull();
+    await goTo("settings/general");
+    await tickMailPage(0);
+    await click(scopeButton(container, "This device"));
     expect(container.textContent).not.toContain("ohmarchy on this computer");
     // the dismissal answers the OFFER, not the detection — this device stays ohmarchy
     expect(document.documentElement.dataset.face).toBe("ohmarchy");
-    expect(window.localStorage.getItem("ohmail.faceOffer")).toBe("done");
+    expect(scopeButton(container, "This device").getAttribute("aria-pressed")).toBe("true");
 
     unmount();
+    window.location.hash = "#/ohbox";
     const { container: second } = await mountMailPage();
     expect(second.textContent).not.toContain("ohmarchy on this computer");
   });

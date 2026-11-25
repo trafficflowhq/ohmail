@@ -101,7 +101,7 @@ describe.skipIf(!AVAILABLE)("the calendar's sync through the real providers", ()
   it("a series and one changed day of it, read from the server, are never written: acts recorded on them are refused and the server is sent nothing", async () => {
     const own: StandIn = await startCalDavStandIn();
     try {
-      own.addCalendar("studio", { name: "Studio" });
+      own.addCalendar("studio", { name: "Studio", owner: own.paths.principal });
       own.put("studio", "weekly.ics", [
         "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ohmail//calendar sync test//EN",
         "BEGIN:VEVENT", "UID:weekly@studio.example.test", "DTSTAMP:20261113T120000Z", "DTSTART:20261118T090000Z", "DTEND:20261118T100000Z",
@@ -248,12 +248,14 @@ describe.skipIf(!AVAILABLE)("the calendar's sync through the real providers", ()
       expect((await calendarsOf(w, t.accountId)).map((c) => `${c.name} ${c.timeZone}`).sort()).toEqual(["First null", "Third Europe/Zurich"]);
       expect((await eventsOf(w, t.accountId)).map((e) => e.title).sort()).toEqual(["Event ok1", "Event ok3"]);
       expect(await connectionOf(w, t.accountId, t.connectionId)).toMatchObject({ status: "active", errorCode: null });
-      // Listed again, the name is the one the row keeps: nothing is written for it a second time.
+      // A successful recheck publishes the connection check time, with no calendar or event changes.
       const before = await changesOf(w, t.accountId);
       deps.memory.listedAt.clear();
       await makeDue(t.accountId);
       expect(await calendarSyncPass(deps, t.due, never)).toMatchObject({ kind: "synced", changed: 0 });
-      expect(await changesOf(w, t.accountId)).toEqual(before);
+      expect(await changesOf(w, t.accountId)).toEqual({
+        ...before, "calendar_connection:update": before["calendar_connection:update"]! + 1,
+      });
     } finally {
       await own.close();
     }

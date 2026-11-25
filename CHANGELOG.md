@@ -21,6 +21,28 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.6] — 2026-11-25
+
+### Keep sign-in credentials out of AI requests
+
+AI can still help with sign-in and password-reset mail. Detected codes, sign-in links and reset credentials are removed from the copy sent to the AI provider. The original mail stays intact.
+
+### Cloud calendars appear while desktop mail catches up
+
+Desktop loads your Cloud calendar accounts, calendars and events while the mail copy is still syncing. Mailboxes Settings uses Cloud's own mailbox connection state.
+
+### Sync details in desktop Mailboxes settings
+
+Mailboxes settings shows first-sync progress and tells you when the desktop app is retrying a sync.
+
+### Move to Trash asks once per account
+
+After you confirm Move to Trash, later moves go straight to Trash with Undo. Your account remembers the confirmation across devices.
+
+### Faster returns to News and Receipts
+
+News and Receipts reuse the letter layouts they have already prepared, including when the two columns use different widths.
+
 ## [2.0.5] — 2026-11-25
 
 ### Day shows the Agenda when there is room
@@ -19234,7 +19256,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.5...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.6...HEAD
+[2.0.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.6
 [2.0.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.5
 [2.0.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.4
 [2.0.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.3

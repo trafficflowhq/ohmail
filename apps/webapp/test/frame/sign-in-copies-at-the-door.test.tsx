@@ -6,6 +6,7 @@
  * sign-in by its client and its date, and closes again; OK sends one acknowledgement with the ids, and the notice
  * leaves.
  */
+import { createElement } from "react";
 import { randomUUID } from "node:crypto";
 import { createTranslator } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +16,9 @@ vi.hoisted(() => {
 });
 
 import en from "../../messages/en.json";
+import { SubscriptionPane, useSubscription } from "@ohmail/app/account";
+import { bindApiOwner } from "../../app/api-client";
+import { useSubscriptionDoor } from "../../app/(product)/mailbox/subscription-door";
 import { dayStamp } from "@ohmail/app-logic/text/format";
 import { act, message, mountShell, stubDom, unmountAll, waitFor } from "../_draft-shell.js";
 
@@ -25,6 +29,7 @@ const json = (body: unknown, status = 200): Response =>
 
 let sweeps: { id: string; at: string; client: string }[] = [];
 let acks: unknown[] = [];
+let manageCalls = 0;
 let lifecycle: { state: "grace" | "past_due"; graceUntil: string } | null = null;
 
 const button = (name: string, within: ParentNode = document): HTMLButtonElement | null =>
@@ -50,6 +55,7 @@ beforeEach(async () => {
     { id: randomUUID(), at: "2026-09-25T07:10:00.000Z", client: "web" },
   ];
   acks = [];
+  manageCalls = 0;
   lifecycle = null;
   document.cookie = "tf_owner=acct_A; Path=/";
   vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
@@ -58,6 +64,7 @@ beforeEach(async () => {
       return json({ metered: true, canAddMailbox: true, mailboxes: 1, lifecycle });
     }
     if (u.includes("/account/manage-link")) {
+      manageCalls += 1;
       return json({ error: { code: "unavailable" } }, 503);
     }
     if (u.includes("/auth/reuse-sweeps/ack")) {
@@ -76,6 +83,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await unmountAll();
+  bindApiOwner(null);
   vi.unstubAllGlobals();
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
 });
@@ -124,19 +132,33 @@ describe("the sign-ins ohmail signed out, in the new shell's notice slot", () =>
 });
 
 
+function TestBilling() {
+  const model = useSubscription(useSubscriptionDoor("acct_A", () => undefined));
+  return createElement(SubscriptionPane, { model, toStorage: null });
+}
+
 it.each([
-  ["grace", en.accountLifecycle.subscribe],
-  ["past_due", en.accountLifecycle.fixPayment],
+  ["grace", en.accountSubscription.subscribe],
+  ["past_due", en.accountSubscription.fixPayment],
 ] as const)("the frame keeps the %s deadline when the account page fails to open", async (state, label) => {
-  const deadline = "2026-09-27T12:00:00.000Z";
+  const deadline = new Date(Date.UTC(2026, 8, 27, 12)).toISOString();
   lifecycle = { state, graceUntil: deadline };
   sweeps = [];
   await read();
-  await mountShell("#/ohbox", [message("m1")], [], { accountNotices: true });
-  const line = en.accountLifecycle.organizingUntil.replace("{date}", dayStamp(deadline));
-  await waitFor(() => slot().includes(line), "the organizing deadline");
-
-  await act(async () => { button(label)!.click(); });
-  await waitFor(() => slot().includes(en.accessLock.mintFailed), "the account page refusal");
-  expect(slot()).toContain(line);
+  const { el } = await mountShell("#/ohbox", [message("m1")], [], {
+    accountNotices: true,
+    billingSection: createElement(TestBilling),
+  });
+  const open = en.frame.connection.act.billing;
+  await waitFor(() => button(open) !== null, "the compact billing notice");
+  expect(manageCalls).toBe(0);
+  await act(async () => { button(open)!.click(); });
+  expect(window.location.hash).toBe("#/settings/billing");
+  const line = en.accountSubscription.organizingUntil.replace("{date}", dayStamp(deadline));
+  await waitFor(() => el.textContent?.includes(line) === true, "the organizing deadline in Billing");
+  bindApiOwner("acct_A");
+  await act(async () => { button(label, el)!.click(); });
+  await waitFor(() => el.textContent?.includes(en.settings.subscriptionManageFailed) === true, "the account page refusal");
+  expect(manageCalls).toBe(1);
+  expect(el.textContent).toContain(line);
 }, 30_000);

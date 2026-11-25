@@ -58,10 +58,8 @@ import { readScreening, saveOhboxBar } from "../../desktop/src/local-screening.j
  *    That closes the half of this feature that was never true on this tier — the words steering a
  *    model the user pays for were readable and unwritable — and it makes the two claims one
  *    sequence: the words were saved over the bridge, and then a model was asked using them.
- *  · **Redaction happened BEFORE the port.** The credential value is absent from the bytes and the
- *    subject matter survives them. `ScreenerService` redacts at the caller precisely because these
- *    two providers receive the input object directly, so a redaction applied inside the bundled
- *    Anthropic builder would protect one implementation of three.
+ *  · **Redaction happens while assembling the provider payload.** The credential value is
+ *    absent from the request and the subject matter reaches the model. Storage keeps the original.
  *
  * ── THE MODEL ANSWERS THE QUESTION IT WAS ASKED, WHICH IS WHY A FALLBACK IS VISIBLE ──────────
  *
@@ -80,19 +78,7 @@ it("the fixture key has the vendor key's shape", () => {
   expect(KEY).toMatch(FIXTURE_SHAPES.anthropic);
 });
 
-/**
- * The one-time code that must never reach a model, and the words that must.
- *
- * **IT IS IN THE SUBJECT, and that is the whole point of the fixture rather than a detail.** The
- * ingest pipeline stores the BODY and the snippet of this class of mail already redacted, so a code
- * that lived only in the body would be gone from the stored row before the Screener ever read it —
- * and a test built that way passes with the caller's redaction deleted. Measured: it did.
- *
- * `messages.subject` is stored RAW even for rows whose body was stored redacted, deliberately —
- * "Your code is 482913" is the single most useful subject line in a mailbox and the message list has
- * to show it. So the subject is the one field where `redactForModel` at the caller is the only thing
- * standing between a credential and a model, which makes it the only field that can prove it is.
- */
+/** The same code appears in both the stored subject and the message preview. */
 const CODE = "482913";
 const CREDENTIAL_SUBJECT = `Your sign-in code is ${CODE}`;
 const CREDENTIAL_BODY = `Use ${CODE} to sign in. The code expires in ten minutes.`;
@@ -501,13 +487,11 @@ describe("a standalone install asks the SCREENING question, under a key its owne
     // The instruction ABOUT the field is in the prefix; the field's value is not.
     expect(prefixOf(call.body)).toContain("binding criteria");
 
-    /* ── 5 · REDACTED BEFORE THE PORT — the value gone, the subject matter kept ────────────────
-       The SUBJECT is the assertion that bites: it is stored raw, so `redactForModel` at the caller
-       is the only thing that cleans it, and deleting that call puts the code on the wire. The
-       snippet was already redacted at rest by the ingest pipeline, so it would stay clean either
-       way — asserting on it alone is a guard that passes with the redaction removed. */
-    expect(call.body, "the one-time code reached the model").toContain(CODE);
-    expect(String(turn.subject), "the subject reached the model unredacted").toContain("482913");
+    expect(call.body, "the one-time code reached the model").not.toContain(CODE);
+    expect(turn.subject).toBe("Your sign-in code is [code]");
+    expect(turn.snippet).toContain("Use [code] to sign in.");
+    const [stored] = await l.sidecar.db.select().from(messages).where(eq(messages.fromAddress, CREDENTIAL_SENDER));
+    expect(stored).toMatchObject({ subject: CREDENTIAL_SUBJECT, snippet: CREDENTIAL_BODY });
     expect(
       String(turn.subject),
       "the redaction took the subject matter with the value",
@@ -566,10 +550,11 @@ describe("a standalone install asks the SAME question of a model on its own mach
 
     const turn = userTurnOf(call.body);
     expect(turn.ohboxBar).toBe(THE_BAR);
-    // Same reasoning as the Anthropic case: the SUBJECT is the field stored raw, so it is the one
-    // that proves the caller redacted before handing the input to this port.
-    expect(call.body, "the one-time code reached the model on this machine").toContain(CODE);
-    expect(String(turn.subject)).toContain(CODE);
+    expect(call.body, "the one-time code reached the model on this machine").not.toContain(CODE);
+    expect(turn.subject).toBe("Your sign-in code is [code]");
+    expect(turn.snippet).toContain("Use [code] to sign in.");
+    const [stored] = await l.sidecar.db.select().from(messages).where(eq(messages.fromAddress, CREDENTIAL_SENDER));
+    expect(stored).toMatchObject({ subject: CREDENTIAL_SUBJECT, snippet: CREDENTIAL_BODY });
   }, 120_000);
 });
 

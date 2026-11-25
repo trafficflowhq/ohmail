@@ -183,21 +183,18 @@ describe("screenerSegments derives the queue from the message mirror", () => {
     expect(row.ai).toBeNull();
   });
 
-  it("A `no_ai` REPRESENTATIVE IS MARKED, so the row can say why nothing arrived by itself", async () => {
-    /* `core/src/pipeline.ts` keeps `no_ai` mail out of the automatic classification on every door,
-       so such a row is not waiting for a pass to reach it — it was never going to be reached. The
-       flag rides the row because the surface has no other way to tell that apart from "nobody has
-       asked yet", and the two want opposite sentences. Only ever `true`: absent means "not that".
-       MUTATION: drop the derivation in `screenerSegments` and this reds. */
+  it("a legacy AI flag leaves the held sender in the ordinary waiting queue", async () => {
     const store = await mirrorOf([
-      msg({ id: "s1", from: "bank@example.test", folder: "ohmail/Screener", noAi: true }),
-      msg({ id: "s2", from: "ordinary@example.test", folder: "ohmail/Screener" }),
+      msg({ id: "legacy", from: "bank@example.test", folder: "ohmail/Screener", noAi: true }),
+      msg({ id: "ordinary", from: "ordinary@example.test", folder: "ohmail/Screener" }),
     ]);
     const rows = screenerSegments(store, NOW).waiting;
-    const quiet = rows.find((r) => r.from.address === "bank@example.test")!;
-    const plain = rows.find((r) => r.from.address === "ordinary@example.test")!;
-    expect(quiet.noAi).toBe(true);
-    expect(plain.noAi, "absent, never `false` — the field has one state and its absence").toBeUndefined();
+    expect(rows).toHaveLength(2);
+    for (const id of ["legacy", "ordinary"]) {
+      const row = rows.find((candidate) => candidate.id === id);
+      expect(row).toMatchObject({ id, held: [{ id }], ai: null });
+      expect(row).not.toHaveProperty("noAi");
+    }
   });
 
   it("THE BODY IS NO LONGER A DEGRADATION — it is a snippet that SAYS it is one", async () => {

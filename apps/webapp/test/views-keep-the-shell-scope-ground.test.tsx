@@ -76,7 +76,7 @@ async function shellIn(scope?: string, reads: Record<string, unknown> = {}): Pro
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = await engineWithLetter();
   S.engine = engine;
-  window.location.hash = "#/ohbox";
+  window.location.hash = "#/settings/mailboxes";
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -89,7 +89,7 @@ async function shellIn(scope?: string, reads: Record<string, unknown> = {}): Pro
         children: React.createElement(ToastHost, {
           children: React.createElement(AppShell as never, {
             ...(scope === undefined ? {} : { scope }), demo: false, engine, consentTransport,
-            mailboxFacts: async () => [], ...reads,
+            mailboxFacts: async () => [], mailboxesNotices: true, ...reads,
           } as never),
         }),
       }),

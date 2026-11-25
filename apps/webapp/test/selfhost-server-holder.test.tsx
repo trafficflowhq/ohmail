@@ -55,12 +55,12 @@ afterEach(async () => {
 
 async function railTitle(state: MailState, locale: "en" | "de", managed?: boolean): Promise<string> {
   railState = state;
-  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the connection details in Mailboxes settings
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
   roots.push(root);
-  const bar = h(SyncBar);
+  const bar = h(SyncBar, { details: true });
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale, messages: CATS[locale] as never, timeZone: "UTC",

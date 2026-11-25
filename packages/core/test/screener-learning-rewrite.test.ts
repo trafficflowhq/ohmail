@@ -50,3 +50,18 @@ it.each(["Example Co", "Zentrix"])("still refuses the identifying name %s", asyn
     { language: "en", previous: "", choices: evidence }, async () => {}, undefined,
     [{ senderName, subject: "" }])).rejects.toThrow(/note/i);
 });
+
+it("rewrites a prior note with a credential while keeping the saved input and mail evidence intact", async () => {
+  const input = { language: "de" as const, previous: "Dein Anmeldecode lautet HW9SP. Bestellungen in Belege.", choices: evidence };
+  const references = [{ senderName: null, subject: "Anmeldecode HW9SP für das Konto" }];
+  const original = structuredClone({ input, references });
+  const rewrite = vi.fn<NonNullable<ClassifierPort["rewriteScreener"]>>().mockResolvedValue({ text: "Belege ablegen." });
+  const beforeDispatch = vi.fn(async () => {});
+  await expect(askScreenerRewrite(rewrite, input, beforeDispatch, undefined, references)).resolves.toBe("Belege ablegen.");
+  expect(beforeDispatch).toHaveBeenCalledTimes(1);
+  expect(rewrite).toHaveBeenCalledTimes(1);
+  const request = rewrite.mock.calls[0]![0];
+  expect(request.input.previous).toBe("Dein Anmeldecode lautet [code]. Bestellungen in Belege.");
+  expect(JSON.stringify(request)).not.toContain("HW9SP");
+  expect({ input, references }).toEqual(original);
+});

@@ -97,6 +97,8 @@ export function mountStreamFrame(o: {
   mailboxes?: Parameters<typeof fakeHost>[0]["mailboxes"];
   letters?: readonly EngineMessage[];
   bodies?: Readonly<Record<string, unknown>>;
+  consent?: NonNullable<Parameters<typeof fakeHost>[0]["wires"]>["consent"];
+  scope?: string;
   overs?: Parameters<typeof fakeHost>[0]["overs"];
   catalogue?: Messages;
   hit?: PlaceEntry;
@@ -120,7 +122,8 @@ export function mountStreamFrame(o: {
   const { host } = fakeHost({
     engine: mail.engine,
     service: "self",
-    scope: "acct-1",
+    scope: o.scope ?? "acct-1",
+    wires: o.consent ? { consent: o.consent } : undefined,
     places: { ...mailPlaces(), ...(o.hit ? { search: o.hit } : {}) },
     above: MailGround,
     overs: o.overs,

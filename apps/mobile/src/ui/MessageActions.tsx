@@ -9,6 +9,7 @@
  * three faces. The composer offers drafting through its paired server when the account allows it.
  */
 import type { StayedWhy, RuleEntity as WorldRule } from "@ohmail/wire";
+import { SCREENER_ACKNOWLEDGEMENTS } from "@ohmail/app-logic/consent/screener-acknowledgements";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ThreadRead } from "./reader-seen";
 import {
@@ -243,6 +244,16 @@ export function MessageActions({
   const shownId = useRef(m.id);
   shownId.current = m.id;
 
+  const trash = () => {
+    close();
+    a.deleteMessage(m.id, { onCommitted: () => { if (mounted.current) onDeleted?.(); } });
+  };
+  const requestTrash = () => {
+    const acknowledged = w.screenerConfirmation?.acknowledged ?? 0;
+    if ((acknowledged & SCREENER_ACKNOWLEDGEMENTS.moveToTrash) !== 0) trash();
+    else setOpen("delete");
+  };
+
   /** Every Reply and Reply all press: a kept reply is resumed, or said to be in Drafts (`replyOpen`). */
   const availableReply = useRef(replyTo);
   availableReply.current = replyTo;
@@ -457,7 +468,7 @@ export function MessageActions({
       case "tag": return { id, icon: "tag", label: Copy.actionTag, onPress: () => setOpen("tag") };
       case "screening": return { id, icon: "door", label: Copy.actionScreening, seg: "file", onPress: () => setOpen("screening") };
       case "move": return { id, icon: "ohbox", label: Copy.actionMove, seg: "file", onPress: () => setOpen("move") };
-      case "delete": return { id, icon: "trash", label: Copy.actionDelete, onPress: () => setOpen("delete") };
+      case "delete": return { id, icon: "trash", label: Copy.actionDelete, onPress: requestTrash };
       // reply and read ride their own slots on the bar; they never reach this map.
       default: return { id, label: Copy.actionReply, onPress: () => openReply(false) };
     }
@@ -663,19 +674,11 @@ export function MessageActions({
         ) : (
           <SheetRow icon="x" label={Copy.actionMarkUnread} onPress={() => { close(); markUnread(); }} />
         )}
-        {/* Delete stands LAST and opens its own confirm — a destructive verb never fires off a
-            scrolled thumb, and the desktop keeps the ask on its button press too. Move-to-Trash
-            on the server, never an expunge (mail 0065); there is no un-delete on the wire, so
-            the confirmed press opens a WINDOW (`world.tsx`'s delete arm over
-            `state/held-delete.ts`) — the pill's Undo cancels a delete not yet sent.
-            GATED ON THE FOUNDATION FLAG with the confirm sheet below:
-            the reader Delete verb ships behind "Use folders" (FOLDERS-SPEC.md §16.3/§16.7 —
-            flag-off is the pre-feature reader, "no Delete verb", byte for byte), so with the
-            flag off neither the row nor a stale confirm can dispatch. */}
+        {/* Delete asks once per account, then opens the same Undo window directly. */}
         {moreHas("delete") ? (
           <>
             <Rule inset={14} />
-            <SheetRow icon="trash" label={Copy.actionDelete} onPress={() => setOpen("delete")} />
+            <SheetRow icon="trash" label={Copy.actionDelete} onPress={requestTrash} />
           </>
         ) : null}
       </Sheet>
@@ -693,7 +696,7 @@ export function MessageActions({
         </Sheet>
       ) : null}
 
-      {/* ── Delete: the one destructive verb, behind its own stated confirm ─────────────── */}
+      {/* ── The account’s first Move to Trash ── */}
       <Sheet open={open === "delete"} onClose={close} label={Copy.deleteAsk}>
         <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
           {Copy.deleteAsk}
@@ -705,11 +708,8 @@ export function MessageActions({
           icon="trash"
           label={Copy.actionDelete}
           onPress={() => {
-            // Close the confirm sheet and open the window — but DO NOT navigate now: the reader
-            // stays over the pill for the whole window (the review's device fix), leaving only when the
-            // delete commits (`onCommitted`, guarded so a person who backed out is not over-popped).
-            close();
-            a.deleteMessage(m.id, { onCommitted: () => { if (mounted.current) onDeleted?.(); } });
+            w.screenerConfirmation?.remember("moveToTrash");
+            trash();
           }}
         />
       </Sheet>

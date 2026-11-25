@@ -125,11 +125,18 @@ function keyOf(i: CacheInputs): string {
   ].join("\u0000");
 }
 
+/** A document can be reused anywhere its recorded media conditions have the same results. */
+function fitsWidth(media: MailDocMedia | undefined, width: number | undefined): boolean {
+  return media === undefined || width === undefined ||
+    letterBand(width, media.breaks) === letterBand(media.width, media.breaks);
+}
+
 /** Bumped by {@link forgetMailDocs}; a cache from an older generation empties itself on use. */
 let generation = 0;
 
 class Cache<T> implements MailDocCache<T> {
-  private entries = new Map<string, Entry<T>>();
+  private entries = new Map<Entry<T>, string>();
+  private byKey = new Map<string, Set<Entry<T>>>();
   private fits = new Map<string, MailDocFit>();
   private chars = 0;
   private gen = generation;
@@ -151,12 +158,13 @@ class Cache<T> implements MailDocCache<T> {
     this.fresh();
     if (inputs.proxied && !syncMayRead(this.engine)) return undefined;
     const key = keyOf(inputs);
-    const hit = this.entries.get(key);
-    if (!hit || hit.html !== inputs.html) return undefined;
-    const m = hit.media;
-    if (m !== undefined && "frameWidth" in inputs && inputs.frameWidth !== undefined && letterBand(inputs.frameWidth, m.breaks) !== letterBand(m.width, m.breaks)) return undefined;
-    this.entries.delete(key);
-    this.entries.set(key, hit);
+    let hit: Entry<T> | undefined;
+    for (const entry of this.byKey.get(key) ?? []) {
+      if (entry.html === inputs.html && fitsWidth(entry.media, inputs.frameWidth)) hit = entry;
+    }
+    if (hit === undefined) return undefined;
+    this.entries.delete(hit);
+    this.entries.set(hit, key);
     return { value: hit.value };
   }
 
@@ -164,19 +172,28 @@ class Cache<T> implements MailDocCache<T> {
     this.fresh();
     if (inputs.proxied && !syncMayRead(this.engine)) return;
     const key = keyOf(inputs);
-    const old = this.entries.get(key);
-    if (old) {
-      this.entries.delete(key);
-      this.chars -= old.chars;
+    const variants = this.byKey.get(key) ?? new Set<Entry<T>>();
+    for (const entry of variants) {
+      if (entry.html !== inputs.html || fitsWidth(entry.media, media?.width)) this.remove(entry, key);
     }
     if (chars > MAIL_DOC_CHARS_MAX) return;
-    this.entries.set(key, { html: inputs.html, value, chars, media });
+    const entry = { html: inputs.html, value, chars, media };
+    variants.add(entry);
+    this.byKey.set(key, variants);
+    this.entries.set(entry, key);
     this.chars += chars;
-    for (const [k, e] of this.entries) {
+    for (const [old, oldKey] of this.entries) {
       if (this.entries.size <= MAIL_DOC_ENTRIES_MAX && this.chars <= MAIL_DOC_CHARS_MAX) break;
-      this.entries.delete(k);
-      this.chars -= e.chars;
+      this.remove(old, oldKey);
     }
+  }
+
+  private remove(entry: Entry<T>, key: string): void {
+    this.entries.delete(entry);
+    this.chars -= entry.chars;
+    const variants = this.byKey.get(key)!;
+    variants.delete(entry);
+    if (variants.size === 0) this.byKey.delete(key);
   }
 
   fitOf(frameKey: string): MailDocFit | undefined {
@@ -196,6 +213,7 @@ class Cache<T> implements MailDocCache<T> {
 
   clear(): void {
     this.entries.clear();
+    this.byKey.clear();
     this.fits.clear();
     this.chars = 0;
   }

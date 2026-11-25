@@ -10,5 +10,8 @@ it("serializes authentication mail and related grounding in the ordinary draft s
       threadMessages: [{ from: "sender@example.test", snippet: "Your previous sign-in link expired." }],
     },
   };
-  expect(draftUserPayload(input)).toEqual(input);
+  expect(draftUserPayload(input)).toEqual({
+    ...input,
+    incoming: { ...input.incoming, snippet: "It is [code], on the label." },
+  });
 });

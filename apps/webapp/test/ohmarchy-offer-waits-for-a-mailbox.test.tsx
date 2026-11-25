@@ -27,7 +27,7 @@ describe("the ohmarchy offer", () => {
     expect(await offer(false)).toBeNull();
   }, 30_000);
 
-  it("is shown once one is", async () => {
-    expect(await offer(true)).not.toBeNull();
+  it("keeps the mail list quiet once one is connected", async () => {
+    expect(await offer(true)).toBeNull();
   }, 30_000);
 });

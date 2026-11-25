@@ -105,7 +105,7 @@ export { firstContactTime } from "./first-contact.js";
 // Where the Ohbox's mail went: the visit mark, the filed counts and the last check.
 export {
   CHECKED_FACTS_MAX_AGE_MS, FILED_PILES, FILED_SINCE_SCAN_MAX, OHBOX_VISIT_ID, filedSinceVisit, lastCheckedAt,
-  ohboxVisitMark,
+  mailboxCheckedAt, ohboxVisitMark,
 } from "./ohbox-where.js";
 export type { CheckedRow, FiledPile, FiledSince, OhboxVisitMeta } from "./ohbox-where.js";
 export type { ListSurface, ListSurfaceInput, MirrorCountFacts, WaitingSurfaceFacts, WaitingWhy } from "./list-surface.js";

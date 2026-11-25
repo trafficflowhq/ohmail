@@ -33,6 +33,14 @@ async function press(button: HTMLElement): Promise<void> {
   await tick(0);
 }
 
+async function openGeneral(): Promise<void> {
+  await act(async () => {
+    window.location.hash = "#/settings/general";
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  });
+  await tick(0);
+}
+
 const patches = () => server.on("PATCH /api/consent/settings").map((entry) => entry.body);
 
 describe("the mounted appearance offer", () => {
@@ -40,22 +48,26 @@ describe("the mounted appearance offer", () => {
     linux();
     const page = await mountMailPage();
     expect(document.documentElement.dataset.face).toBe("ohmarchy");
-    await press(page.getByRole("button", { name: en.ohmarchy.offerAction }));
+    expect(page.queryByRole("button", { name: en.ohmarchy.offerAction })).toBeNull();
+    await openGeneral();
+    await press(page.getByRole("button", { name: en.ohmarchy.offerAction, pressed: false }));
     expect(patches()).toEqual([{ themeFace: "ohmarchy" }]);
     expect(localStorage.getItem("ohmail.face.account")).toBe("ohmarchy");
-    expect(localStorage.getItem("ohmail.faceOffer")).toBe("done");
-    expect(page.queryByRole("button", { name: en.ohmarchy.offerAction })).toBeNull();
+    expect(page.getByRole("button", { name: en.ohmarchy.offerAction, pressed: true })).toBeTruthy();
   }, 30_000);
 
   it("keeps the default when dismissed and stays quiet on the next mount", async () => {
     linux();
     const page = await mountMailPage();
-    await press(page.getByRole("button", { name: en.ohmarchy.offerDismissShort }));
+    expect(page.queryByRole("button", { name: en.ohmarchy.offerDismissShort })).toBeNull();
+    await openGeneral();
+    const local = page.getByRole("button", { name: "This device", pressed: true });
+    await press(local);
     expect(patches()).toEqual([]);
     expect(document.documentElement.dataset.face).toBe("ohmarchy");
-    expect(localStorage.getItem("ohmail.faceOffer")).toBe("done");
-    expect(page.queryByRole("button", { name: en.ohmarchy.offerAction })).toBeNull();
+    expect(page.getByRole("button", { name: "This device", pressed: true })).toBeTruthy();
     page.unmount();
+    window.location.hash = "#/ohbox";
     const next = await mountMailPage();
     expect(next.queryByRole("button", { name: en.ohmarchy.offerAction })).toBeNull();
   }, 30_000);
@@ -84,11 +96,7 @@ it("General applies appearance to all devices when private storage is isolated",
   expect(owner).not.toBeNull();
   isolateAccountScope(owner!, readSessionFamily());
   const page = await mountMailPage();
-  await act(async () => {
-    window.location.hash = "#/settings/general";
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
-  });
-  await tick(0);
+  await openGeneral();
   await press(page.getByRole("button", { name: "All devices", pressed: false }));
   expect(patches()).toEqual([{ themeFace: "ohmarchy" }]);
 }, 30_000);

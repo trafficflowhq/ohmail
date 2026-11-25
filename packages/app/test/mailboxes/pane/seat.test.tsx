@@ -310,6 +310,31 @@ describe("the section reads the account's mailboxes over the ground", () => {
     expect(pane.of("list").map((c) => c.args[0])).toEqual([{ counts: true }]);
   });
 
+  it("shows a Cloud mailbox as connected while its desktop copy is still catching up", async () => {
+    const check = {
+      lastSyncAt: null,
+      initialImportCompletedAt: null,
+      hostedLastSyncAt: FACTS[0]!.lastSyncAt,
+    };
+    const pane = fakePane({ list: [ok([row("mbx-a", A, check)])], allowance: [ALLOWED] });
+    await seated({
+      managed: true,
+      pane: () => pane.wire,
+      facts: () => [fact("mbx-a", A, { status: "connected", ...check })],
+    });
+    await answered();
+    const nav = within(screen.getByRole("navigation", { name: settingsEn.settings.navAria }));
+    expect(nav.getByText(menuEn.settingsMenu.mailboxConnected)).toBeTruthy();
+    fireEvent.click(nav.getByRole("button", { name: settingsEn.settings.mailboxes }));
+    await answered();
+    const mailbox = rowOf(A);
+    expect(within(mailbox).getByText(words(`${M.status_connected} ·`))).toBeTruthy();
+    expect(within(mailbox).getByText(words(M.syncedAgo.split("{")[0]!))).toBeTruthy();
+    expect(within(mailbox).queryByText(words(M.syncFirstPending.split("{")[0]!))).toBeNull();
+    fireEvent.click(mailbox);
+    expect(within(section().getByRole("group", { name: M.lineSynced })).getByText(/\d/)).toBeTruthy();
+  });
+
   it("draws nothing where the host answers the section's wire with none, and asks nothing of any wire", async () => {
     const door = fakeDoor();
     const firstRun = verbs();

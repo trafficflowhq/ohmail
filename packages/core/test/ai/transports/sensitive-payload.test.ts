@@ -115,6 +115,44 @@ function capturing(): { bodies: string[]; fetchImpl: typeof fetch } {
 const inBody = (body: string, text: string): boolean => body.includes(JSON.stringify(text).slice(1, -1))
   || body.includes(JSON.stringify(JSON.stringify(text).slice(1, -1)).slice(1, -1));
 
+describe.each(TRANSPORTS)("%s provider credential redaction", (_name, make) => {
+  it.each(["classify", "screen", "draft"] as const)("%s sends useful mail without its credentials", async (feature) => {
+    const { bodies, fetchImpl } = capturing();
+    const provider = make(fetchImpl);
+    const login = "https://account.example.test/magic-login?token=orchid-garnet";
+    const reset = "https://account.example.test/password/reset?reset_token=cedar-amber";
+    const article = "https://news.example.test/articles/784561";
+    const unsubscribe = "https://news.example.test/unsubscribe?token=receipt-ABC12345";
+    const mail = {
+      ...credential(),
+      snippet: `Use ${login} to sign in. Reset via ${reset}. Order 768145 on 2026-11-25 for €19,95. ${article} ${unsubscribe}`,
+    };
+    const draft: DraftInput = {
+      incoming: { from: mail.from.address, subject: mail.subject, snippet: mail.snippet },
+      context: {
+        threadMessages: [{ from: mail.from.address, snippet: "Dein Anmeldecode lautet HG7QW." }],
+        kbEntries: [{ title: "Bestätigungscode", content: "GZ8RP" }],
+      },
+    };
+    const original = structuredClone({ mail, draft });
+    await expect(feature === "draft" ? provider.draft(draft) : provider[feature](mail)).rejects.toThrow();
+    expect({ mail, draft }).toEqual(original);
+    expect(bodies).toHaveLength(1);
+    const body = bodies[0]!;
+    expect(body).toContain("Your one-time verification code is [code]");
+    expect(body).toContain("Use https://account.example.test/[link] to sign in. Reset via https://account.example.test/[link].");
+    expect(body).toContain("Order [code] on [code] for €19,95.");
+    expect(body).toContain("https://news.example.test/[link] https://news.example.test/[link]");
+    for (const value of [login, reset, article, unsubscribe, "402913", "768145", "HG" + "7QW", "GZ" + "8RP"]) {
+      expect(body).not.toContain(value);
+    }
+    if (feature === "draft") {
+      expect(body).toContain("Dein Anmeldecode lautet [code].");
+      expect(body).toContain("Bestätigungscode");
+    }
+  });
+});
+
 describe("a draft from the person's own words, whichever drafter writes it", () => {
   const words = "tell Ann the budget review moves to Friday at nine";
   const fromWords = (): DraftInput => ({ incoming: { ...NO_LETTER }, context: { kbEntries: [], threadMessages: [] }, own: { text: words, replying: false } });

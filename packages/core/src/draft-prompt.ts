@@ -1,3 +1,4 @@
+import { redactAiDraftWords, redactAiMail, redactAiPayload } from "./ai-credential-redaction.js";
 import type { DraftIncoming, DraftInput, DraftResult } from "./draft-port.js";
 
 /**
@@ -101,12 +102,12 @@ export const DRAFT_RESULT_SCHEMA = {
 /**
  * The COMPLETE set of keys each half of a {@link DraftInput} may carry — the redaction
  * allowlist that keeps a raw body out of the request. `incoming` and each thread message are
- * message previews (subject/sender/snippet only); a KB entry is content
+ * message previews. Thread subjects are local context and omitted from the request. A KB entry is content
  * the account holder wrote for grounding. A raw `body`, `html`, or any other field is not on any
  * of these lists.
  */
-const ALLOWED_INCOMING_KEYS: ReadonlySet<string> = new Set(["subject", "from", "snippet"]);
-const ALLOWED_THREAD_MESSAGE_KEYS: ReadonlySet<string> = new Set(["from", "snippet"]);
+const ALLOWED_INCOMING_KEYS: ReadonlySet<string> = new Set(["subject", "from", "fromName", "snippet"]);
+const ALLOWED_THREAD_MESSAGE_KEYS: ReadonlySet<string> = new Set(["from", "fromName", "snippet", "subject"]);
 const ALLOWED_KB_ENTRY_KEYS: ReadonlySet<string> = new Set(["title", "content"]);
 const ALLOWED_OWN_KEYS: ReadonlySet<string> = new Set(["text", "replying", "subject"]);
 
@@ -157,23 +158,23 @@ export interface DraftUserPayload {
  */
 export function draftUserPayload(input: DraftInput): DraftUserPayload {
   assertRedacted(input);
+  const { from, fromName, subject, snippet } = input.incoming;
   const payload: DraftUserPayload = {
-    incoming: {
-      from: input.incoming.from,
-      subject: input.incoming.subject,
-      snippet: input.incoming.snippet,
-    },
+    incoming: redactAiMail({ from, subject, snippet }, { fromName }),
     context: {
-      kbEntries: input.context.kbEntries,
-      threadMessages: input.context.threadMessages,
+      kbEntries: redactAiPayload(input.context.kbEntries),
+      threadMessages: input.context.threadMessages.map(({ from, fromName, subject, snippet }) => {
+        const cleaned = redactAiMail({ from, subject, snippet }, { fromName });
+        return { from: cleaned.from, snippet: cleaned.snippet };
+      }),
     },
   };
-  const own = input.own;
-  if (own === undefined) return payload;
-  const words = { text: own.text, ...(own.subject !== undefined ? { subject: own.subject } : {}) };
+  if (input.own === undefined) return payload;
+  const { replying, ...originalWords } = input.own;
+  const words = redactAiDraftWords(originalWords, replying ? subject : "");
   // A letter that is not answered is no part of the request.
   const { incoming: _none, ...unanswered } = payload;
-  return own.replying ? { ...payload, own: words } : { ...unanswered, own: words };
+  return replying ? { ...payload, own: words } : { ...unanswered, own: words };
 }
 
 export function coerceDraftResult(raw: unknown): DraftResult {

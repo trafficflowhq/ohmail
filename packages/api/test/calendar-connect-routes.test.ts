@@ -575,6 +575,9 @@ describe("the routes that name a connection or a calendar", () => {
     const [other] = await r.db.insert(calCalendars).values({
       accountId: r.s.accountId, connectionId: connection.id, providerId: "other-calendar", nextPollAt: future,
     }).returning({ id: calCalendars.id });
+    const malformed = await r.ask("POST", `/calendar/connections/${connection.id}/check?calendarId=invalid`);
+    expect(malformed.status).toBe(400);
+    expect(await malformed.text()).toContain("calendarId must be an id");
     const checked = await r.ask("POST", `/calendar/connections/${connection.id}/check?calendarId=${calendar}`);
     expect(checked.status).toBe(202);
     const rows = await r.db.select({ id: calCalendars.id, next: calCalendars.nextPollAt }).from(calCalendars)

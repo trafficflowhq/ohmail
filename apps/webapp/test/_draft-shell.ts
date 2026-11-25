@@ -631,6 +631,7 @@ export async function mountShell(
     mailboxNotices?: { organizerNotice?: OrganizerNoticeWire; gapLetters?: GapLettersWire };
     /** The account's strip says its notices as the web's entry does (the session's sweeps among them). */
     accountNotices?: boolean;
+    billingSection?: React.ReactNode;
     demo?: boolean;
     desktopOffer?: TodaysShellProps["desktopOffer"];
   } = {},
@@ -682,7 +683,11 @@ export async function mountShell(
     ...(options.reader !== undefined ? { reader: options.reader } : {}),
     ...(options.places !== undefined ? { places: options.places } : {}),
     ...(options.accountNotices === true ? { accountNotices: true } : {}),
-    ...(options.desktopOffer ? { desktopOffer: options.desktopOffer } : {}),
+    ...(options.billingSection !== undefined ? { billingSection: options.billingSection } : {}),
+    ...(options.desktopOffer ? {
+      desktopOffer: options.desktopOffer,
+      general: (await import("../app/(product)/mailbox/pane-parts.js")).WEB_PANE_PARTS.general,
+    } : {}),
     ...(options.mailboxNotices !== undefined
       ? {
           mailboxesNotices: true,

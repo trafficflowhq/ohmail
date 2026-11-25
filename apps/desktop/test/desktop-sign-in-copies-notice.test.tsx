@@ -8,6 +8,7 @@ import { createElement as h } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { FrameContext, type FrameInner } from "../../../packages/app/src/frame/commands.js";
 import settings from "../../../packages/app/messages/settings.en.json";
 
 interface Said {
@@ -78,8 +79,9 @@ describe("the desktop's sign-ins signed out, as the frame's notice", () => {
       throw new Error("the window's accountStrip entry says no notice");
     const notice = entry.notice;
     root = createRoot(document.createElement("div"));
+    const context = { api: { commands: { go: vi.fn() } } } as FrameInner;
     await act(async () =>
-      root!.render(h(DesktopLocale, null, h(Says, { notice }))),
+      root!.render(h(DesktopLocale, null, h(FrameContext.Provider, { value: context }, h(Says, { notice })))),
     );
     expect(said).toHaveLength(1);
     const [n] = said;

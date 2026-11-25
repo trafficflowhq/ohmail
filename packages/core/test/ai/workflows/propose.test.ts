@@ -161,6 +161,17 @@ describe("a declined proposal pass is thrown, never an empty list", () => {
 });
 
 describe("makeOpusProposer — response parsing", () => {
+  it("redacts allowed metadata on the provider request and preserves the source patterns", async () => {
+    const destination = "Your verification code: 638194.";
+    const patterns = [{ ...PATTERNS[0]!, destination }];
+    const client = fakeClient('{"proposals":[]}');
+    await expect(makeOpusProposer(client).propose(patterns)).resolves.toEqual([]);
+    expect(client.calls).toBe(1);
+    expect(JSON.stringify(client.lastParams)).toContain("Your verification code: [code].");
+    expect(JSON.stringify(client.lastParams)).not.toContain("638194");
+    expect(patterns).toEqual([{ ...PATTERNS[0], destination }]);
+  });
+
   it("hands the answers on unread and issues exactly one create", async () => {
     const answer = { pattern: 0, name: "File acme newsletters", rationale: "acme-com.example, 7 times", steps: [{ tool: "file_message" }] };
     const client = fakeClient(JSON.stringify({ proposals: [answer] }));

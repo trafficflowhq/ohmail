@@ -7,6 +7,7 @@
  * hand a stage or a section). No place's folder and no file of the frame imports it.
  */
 export { MailGround } from "./MailGround.js";
+export { MailConnectionDetails } from "./ground/MailConnection.js";
 export { MailStateMount } from "./ground/MailStateMount.js";
 export { mailPanes, mailSettings, NO_PANE_PARTS, type MailPaneParts } from "./panes.js";
 export { mailPlaces, type MailPlaces } from "./places.js";

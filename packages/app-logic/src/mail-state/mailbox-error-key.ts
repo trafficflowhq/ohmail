@@ -33,7 +33,7 @@ export interface ErrorSentence {
 }
 
 export function mailboxErrorKey(
-  errorCode: string | null,
+  storedCode: string | null,
   errorDetail?: string | null,
   refusals?: StoreRefusals,
   figure?: (r: StoreRefusals) => string,
@@ -47,6 +47,7 @@ export function mailboxErrorKey(
 ): ErrorSentence {
   const detail = errorDetail ? DETAIL_KEYS.get(errorDetail) : undefined;
   if (detail) return { key: detail };
+  const errorCode = storedCode === "imap_auth" ? "auth" : storedCode;
   if (localServer === true && (errorCode === "auth" || errorCode === "timeout")) return { key: `err_${errorCode}_local` };
   if (errorCode === "auth" && opts.appPassword === true) return { key: "err_auth_gmail" };
   if (errorCode === "storage" && refusals && refusals.count > 0 && figure) {

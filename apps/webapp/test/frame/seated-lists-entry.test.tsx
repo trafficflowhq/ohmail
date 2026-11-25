@@ -170,6 +170,8 @@ describe("a folder over the web's real entry", () => {
     await act(async () => {
       fireEvent.contextMenu(row("New glaze")!);
     });
+    const actions = within(screen.getByRole("menu", { name: "Message actions" }));
+    await act(async () => { fireEvent.click(actions.getByRole("menuitem", { name: "Move" })); });
     const menu = screen.getByRole("menu", { name: "Move" });
     /* The folder it is in is not offered. */
     expect(within(menu).queryByRole("menuitem", { name: /Clay/ })).toBeNull();

@@ -1,7 +1,7 @@
 import { type Tx, accounts, pruneIdempotencyKeys, pruneSendFingerprints } from "@trafficflow/db";
 import {
   owedSuggestAccounts, clearScreenerSuggestOwed, pruneErasedBearers, pruneErasedNotices, pruneAuthThrottle,
-  sweepExpiredStagingFor, reconcileStagingOrphansFor, StagingListingUnsupportedError,
+  sweepExpiredStagingFor, reconcileStagingOrphansFor, StagingListingUnsupportedError, accountRows,
 } from "@trafficflow/db/cloud";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
 import { resolveTailTurn, TAIL_SLICE_BUDGET_MS } from "../config.js";
@@ -576,6 +576,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           const r = await asDatabaseFault("cycle.awayReplySweep",
             // The sweep walks the accounts itself: it is handed the way to each one's handle, never one handle for all.
             () => scope.awayReplySweep.runOnce((accountId) => scope.forAccount(accountId).db as unknown as Tx, [...walk.accounts], {
+              readRelations: accountRows,
               log: scope.log,
               onError: (accountId, err) => {
                 awayReplyFault(err);

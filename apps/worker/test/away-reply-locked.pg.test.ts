@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { bindDb, type Tx } from "@trafficflow/db";
-import { makeOwnedDb } from "@trafficflow/db/cloud";
+import { accountRows, makeOwnedDb } from "@trafficflow/db/cloud";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   lockedQueryGroundAvailable, startLockedQueryGround, type LockedQueryGround,
@@ -74,16 +74,24 @@ describe.skipIf(!available)("away replies in a large mailbox with forced row sec
   it("re-delivers the responder's reply within the read budget", async () => {
     const db = bindDb(workerDb.db, { account }) as unknown as Tx;
     const started = performance.now();
-    const result = await awayReplyFlagRedeliverPass(db, { accountId: account });
+    const relations = await accountRows(db);
+    const result = await awayReplyFlagRedeliverPass(db, { accountId: account, relations });
     const elapsed = performance.now() - started;
     expect(result).toEqual({ examined: 1, redelivered: 1, exhausted: true, cursor: null });
     const changes = await owner`select account_id, entity_id from change_log`;
     expect(changes).toEqual([{ account_id: account, entity_id: replyId }]);
 
     const d = dialect(db);
+    const throughView = relations.through === "views";
+    expect(throughView).toBe(Boolean(ground.docker));
     const plan = await d.exec(db, sql`explain (analyze, buffers, format json)
-      ${awayReplyCandidatesSql(d, account, null)}`);
-    type PlanNode = { "Relation Name"?: string; "Actual Loops": number; Plans?: PlanNode[] };
+      ${awayReplyCandidatesSql(d, account, null, throughView)}`);
+    type PlanNode = {
+      "Relation Name"?: string;
+      "Index Cond"?: string;
+      "Actual Loops": number;
+      Plans?: PlanNode[];
+    };
     const visit = (node: PlanNode): PlanNode[] => [node, ...(node.Plans ?? []).flatMap(visit)];
     const nodes = visit((plan[0]?.[0] as [{ Plan: PlanNode }])[0].Plan);
     const bodyReads = nodes.filter((node) => node["Relation Name"] === "message_bodies");
@@ -95,6 +103,10 @@ describe.skipIf(!available)("away replies in a large mailbox with forced row sec
       console.info(`away reply benchmark: ${elapsed.toFixed(1)} ms through the pass`);
       writeFileSync(resolve(dir, "away-reply-worker.json"),
         JSON.stringify(plan, null, 2).replace(/[\w.+-]+@[\w.-]+/g, "[fixture]"));
+    }
+    if (throughView) {
+      expect(nodes.some((node) => node["Relation Name"] === "messages"
+        && node["Index Cond"]?.includes("lower(")), "the message scan uses the sender key").toBe(true);
     }
     expect(elapsed, "away reply duration in milliseconds").toBeLessThan(500);
   }, 180_000);

@@ -342,7 +342,7 @@ it("judges a scroll from an isolated letter by what stays on screen", () => {
 
 it("a heading press reads the displayed first lines after the dwell", () => {
   const visitAt = visit();
-  fireEvent.pointerDown(visitAt.heading("r0"));
+  fireEvent(visitAt.heading("r0"), new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
   visitAt.rest(30);
   expect(observedGlances).toEqual([]);
   visitAt.rest(10);
@@ -413,7 +413,7 @@ it("does not read first lines covered by the action panel", () => {
   fireEvent.click(v.heading("r0"));
   const stop = screen.getByRole("toolbar", { name: "Actions" }).closest("[data-read-stop]");
   expect(stop?.getBoundingClientRect().top).toBe(486);
-  fireEvent.pointerDown(v.heading("r0"));
+  fireEvent(v.heading("r0"), new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
   v.rest(125);
   expect(observedGlances).toContain("r1");
   expect(observedGlances).not.toContain("r2");
