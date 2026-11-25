@@ -1,4 +1,4 @@
-import { redactAiMail, redactAiPayload } from "./ai-credential-redaction.js";
+import { redactAiDraftWords, redactAiMail, redactAiPayload } from "./ai-credential-redaction.js";
 import type { DraftIncoming, DraftInput, DraftResult } from "./draft-port.js";
 
 /**
@@ -171,7 +171,7 @@ export function draftUserPayload(input: DraftInput): DraftUserPayload {
   };
   if (input.own === undefined) return payload;
   const { replying, ...originalWords } = input.own;
-  const words = redactAiPayload(originalWords, replying ? subject : "");
+  const words = redactAiDraftWords(originalWords, replying ? subject : "");
   // A letter that is not answered is no part of the request.
   const { incoming: _none, ...unanswered } = payload;
   return replying ? { ...payload, own: words } : { ...unanswered, own: words };

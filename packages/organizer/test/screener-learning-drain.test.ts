@@ -99,11 +99,38 @@ it("leases one rewrite and only saves while the choices are unchanged", async ()
   expect(await w.before()).toMatchObject({ text: "Keep receipts.", revision: 2, rewrittenRevision: 0 });
 });
 
-it.each(["", " \n", " Keep invoices with receipts."])(
-  "keeps the saved note, timestamp and topics on a placeholder echo with suffix %j",
-  async (suffix) => {
-    const w = await fixture();
-    const text = "Keep receipts. Your verification code: 638194.";
+const linkFixture = ["abc", "123", "def", "456"].join("");
+
+it.each([
+  ["[code]", "", "638194", "Your verification code: "],
+  ["[code]", " \n", "638194", "Your verification code: "],
+  ["[code]", " Keep invoices with receipts.", "638194", "Your verification code: "],
+  ["[ code ]", " Keep invoices with receipts.", "638194", "Your verification code: "],
+  ["code", " Keep invoices with receipts.", "638194", "Your verification code: "],
+  [
+    "[ reset link ]",
+    " Keep invoices with receipts.",
+    `https://shop.example.test/account/reset/${linkFixture}`,
+    "Old reference: ",
+  ],
+  [
+    "[ sign-in link ]",
+    " Keep invoices with receipts.",
+    `https://shop.example.test/login/${linkFixture}`,
+    "Old reference: ",
+  ],
+  ["[ link ]", " Keep invoices with receipts.", "638194", "Your verification code: "],
+])(
+  "keeps the saved note and lesson pending after a placeholder echo %j with suffix %j",
+  async (echo, suffix, value, prefix) => {
+    let time = now;
+    const w = await fixture(() => time);
+    const text = `Keep receipts. ${prefix}${value}.`;
+    const placeholder = value.includes("/reset/")
+      ? "[reset link]"
+      : value.includes("/login/")
+        ? "[sign-in link]"
+        : "[code]";
     const updatedAt = now.getTime() - 60_000;
     const noteTopics = ["receipt", "security"];
     await updateScreenerLearning(w.db, w.scope, (state) => ({ ...state, text, updatedAt, noteTopics }));
@@ -118,16 +145,32 @@ it.each(["", " \n", " Keep invoices with receipts."])(
               messages: [user],
             } = request as { messages: [{ content: string }] };
             const { previous } = JSON.parse(user.content) as { previous: string };
-            return { content: [{ type: "text", text: JSON.stringify({ text: previous + suffix }) }] };
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ text: previous.replace(placeholder, echo) + suffix }),
+                },
+              ],
+            };
           },
         },
       },
     });
     await w.drain(classifier.rewriteScreener!);
     expect(wire).toHaveLength(1);
-    expect(wire[0]).toContain("Your verification code: [code].");
-    expect(wire[0]).not.toContain("638194");
-    expect(await w.before()).toEqual({ ...original, rewrittenRevision: 1 });
+    expect(wire[0]).toContain(prefix + placeholder + ".");
+    expect(wire[0]).not.toContain(value);
+    const { rewrite, ...saved } = await w.before();
+    expect(saved).toEqual(original);
+    expect(rewrite?.failures).toBe(1);
+    time = new Date(now.getTime() + 60 * 60 * 1000);
+    const retry = vi.fn<NonNullable<ClassifierPort["rewriteScreener"]>>(async () => ({
+      text: "Keep invoices with receipts.",
+    }));
+    await w.drain(retry);
+    expect(retry.mock.calls[0]?.[0].input.choices).toMatchObject([{ kind: "correction", topic: "invoice" }]);
+    expect(await w.before()).toMatchObject({ text: "Keep invoices with receipts.", rewrittenRevision: 1 });
   },
 );
 
