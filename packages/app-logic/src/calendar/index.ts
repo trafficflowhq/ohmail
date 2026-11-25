@@ -25,6 +25,7 @@ export { calendarInviteeSuggestions } from "./invitee-suggestions.js";
 export { calEventOf, keyTimeOf, recordAtOccurrence, seriesOfRecords, type RecordSeries } from "./records.js";
 export {
   edgeOf,
+  explicitlyHidden,
   occurrencesIn,
   windowOf,
   type OccurrenceInput,

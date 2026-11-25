@@ -110,6 +110,28 @@ describe.skipIf(!PG_UP)("baseline adoption", () => {
     return brandDialect(drizzle(client), "pg") as Db;
   }
 
+  it("adds calendar preferences to a database that already applied Screener learning", async () => {
+    const learning = readJournalOf(MAIL_JOURNAL).find(({ tag }) => tag.endsWith("_screener_learning"));
+    if (!learning) throw new Error("Missing Screener learning migration");
+    const beforePreferences = journalThrough(MAIL_JOURNAL, learning.when);
+    const db = await blank();
+    const config = { migrationsSchema: MAIL_JOURNAL.migrationsSchema };
+    try {
+      await migrate(db, { ...config, migrationsFolder: beforePreferences.spec.dir });
+    } finally {
+      beforePreferences.dispose();
+    }
+    const preferences = () => db.execute(sql`
+      select column_name from information_schema.columns where table_schema = 'public'
+      and (table_name, column_name) in (('cal_calendars', 'local_color'), ('cal_connections', 'organizer_addresses'))
+      order by column_name`);
+    expect([...await preferences()]).toEqual([]);
+    await migrate(db, { ...config, migrationsFolder: MAIL_JOURNAL.dir });
+    expect([...await preferences()]).toEqual([{ column_name: "local_color" }, { column_name: "organizer_addresses" }]);
+    expect([...await db.execute(sql`select to_regclass('public.screener_learning') is not null as present`)])
+      .toEqual([{ present: true }]);
+  }, 60_000);
+
   it("makes stored CalDAV host backoffs due on upgrade", async () => {
     const repair = readJournalOf(MAIL_JOURNAL).find(({ tag }) => tag.endsWith("_caldav_host_retry"));
     if (repair === undefined) throw new Error("Missing CalDAV host retry migration");

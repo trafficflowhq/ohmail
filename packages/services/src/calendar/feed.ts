@@ -1,3 +1,4 @@
+import { calendarOriginalOf, connectedAttendee, organizerPrincipalAddress, verifiedOrganizer } from "@trafficflow/db/calendar";
 /**
  * THE CALENDAR'S BUILDERS FOR THE SYNC FEED, one per record kind (`port.ts` hands them to the
  * feed's reader). `BUILDERS` is a mapped type over `CalendarRecordKind`: a kind without its
@@ -6,6 +7,7 @@
  */
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calSuggestions } from "@trafficflow/db/mail";
+import { readOwnAddresses } from "@trafficflow/db";
 import { asCalendarSyncFault, isCalendarConnectionStatus } from "@trafficflow/db/calendar";
 import type {
   CalendarAccess, CalendarAlarm, CalendarAlarmMethod, CalendarAnswer, CalendarConnectionRecord, CalendarEventRecord,
@@ -124,7 +126,7 @@ async function alarmsBy(db: Db, accountId: string, column: "eventId" | "calendar
 async function buildCalendars(db: Db, accountId: string, ids: readonly string[]): Promise<Map<string, CalendarRecord>> {
   if (ids.length === 0) return new Map();
   const rows = await db.select({
-    id: calCalendars.id, connectionId: calCalendars.connectionId, name: calCalendars.name, color: calCalendars.color,
+    id: calCalendars.id, connectionId: calCalendars.connectionId, name: calCalendars.name, color: calCalendars.color, localColor: calCalendars.localColor,
     access: calCalendars.access, nativeMove: calCalendars.nativeMove, shown: calCalendars.shown, timeZone: calCalendars.timeZone, availabilityKey: calCalendars.availabilityKey,
     windowStart: calCalendars.windowStart, windowEnd: calCalendars.windowEnd, lastSyncedAt: calCalendars.lastSyncedAt,
     errorCode: calCalendars.errorCode, updatedAt: calCalendars.updatedAt,
@@ -134,7 +136,7 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
     id: r.id,
     connectionId: r.connectionId,
     name: r.name,
-    color: r.color,
+    color: r.localColor ?? r.color,
     access: accessOf(r.access),
     ...(r.nativeMove && { nativeMove: true as const }),
     shown: r.shown,
@@ -160,13 +162,33 @@ export function cutToFit(record: CalendarEventRecord): CalendarEventRecord {
     (record.deleteMembers !== undefined || record.deleteScopes !== undefined) &&
     Buffer.byteLength(JSON.stringify(details), "utf8") <= CALENDAR_EVENT_MAX_BYTES
   ) return details;
-  return { ...details, notes: null, invitees: [], writes: details.writes.map((w) => ({ ...w, act: null })), cut: true };
+  return { ...details, hideAttendee: undefined, notes: null, invitees: [], writes: details.writes.map((w) => ({ ...w, act: null })), cut: true };
+}
+
+const addressKey = (address: string | null) => address?.trim().toLowerCase().replace(/^mailto:/, "") ?? "";
+
+/** Bind a local preference to the attendee the connection actually reads, or one unambiguous account address. */
+export function hideIdentityOf(
+  row: { access: string; provider: string; organizer: string | null; myAnswer: string | null; heldBack: boolean; partial: boolean; organizerAddresses?: readonly string[] | null },
+  principal: string | null,
+  own: ReadonlySet<string>,
+  invitees: readonly { address: string; role: string | null }[],
+): { attendee: string; organizer: string } | null {
+  const organizer = addressKey(row.organizer);
+  const connected = addressKey(principal);
+  const named = connected.includes("@") && !connected.includes("/");
+  if (row.access !== "owner" || row.provider === "ics" || row.heldBack || row.partial || row.myAnswer === null ||
+      !organizer || own.has(organizer) || row.organizerAddresses?.includes(organizer) || (named && organizer === connected)) return null;
+  const attendee = connectedAttendee(invitees
+    .filter(({ role }) => role === "required" || role === "optional")
+    .map(({ address }) => addressKey(address)), principal, own);
+  return attendee === null ? null : { attendee, organizer };
 }
 
 async function buildEvents(db: Db, accountId: string, ids: readonly string[]): Promise<Map<string, CalendarEventRecord>> {
   if (ids.length === 0) return new Map();
   const rows = await db.select({
-    access: calCalendars.access, availabilityKey: calCalendars.availabilityKey, id: calEvents.id, calendarId: calEvents.calendarId, uid: calEvents.uid, recurrenceId: calEvents.recurrenceId,
+    access: calCalendars.access, provider: calConnections.provider, versionTag: calEvents.versionTag, principal: calConnections.principal, organizerAddresses: calConnections.organizerAddresses, partial: calEvents.partial, availabilityKey: calCalendars.availabilityKey, id: calEvents.id, calendarId: calEvents.calendarId, uid: calEvents.uid, recurrenceId: calEvents.recurrenceId,
     thisAndFuture: calEvents.thisAndFuture, sequence: calEvents.sequence, status: calEvents.status, title: calEvents.title,
     notes: calEvents.notes, place: calEvents.place, callLink: calEvents.callLink,
     startKind: calEvents.startKind, startLocal: calEvents.startLocal, startZone: calEvents.startZone,
@@ -177,6 +199,7 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     myAnswer: calEvents.myAnswer, portableCopy: calEvents.portableCopy, removedOccurrences: calEvents.removedOccurrences, heldBack: calEvents.heldBack, updatedAt: calEvents.updatedAt,
   }).from(calEvents)
     .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
+    .innerJoin(calConnections, and(eq(calConnections.id, calCalendars.connectionId), eq(calConnections.accountId, accountId)))
     .where(and(eq(calEvents.accountId, accountId), inArray(calEvents.id, [...ids])));
   const detailed = rows.filter((r) => r.access !== "busy");
   const candidates = detailed.filter((r) => (r.access === "owner" || r.access === "writer") && !r.heldBack && r.recurrenceId === "" && r.repeatRule).map((r) => r.id);
@@ -222,6 +245,13 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       invitees.set(p.eventId, list);
     }
   }
+  const dav = detailed.filter((row) => row.provider === "caldav" &&
+    (row.organizer !== null || row.myAnswer !== null || invitees.has(row.id)));
+  const originals = dav.length === 0 ? [] : await db.select({
+    id: calEvents.id, original: calendarOriginalOf(),
+  }).from(calEvents)
+    .where(and(eq(calEvents.accountId, accountId), inArray(calEvents.id, dav.map(({ id }) => id))));
+  const textById = new Map(originals.map(({ id, original }) => [id, original] as const));
   const sourcesById = new Map(sources.map((item) => [item.id, item] as const));
   const records = new Map<string, CalendarEventRecord>();
   const changed = new Map<string, Awaited<ReturnType<typeof changedSeriesAudience>>>();
@@ -231,6 +261,8 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       changed.set(row.id, await changedSeriesAudience(db, accountId, row));
     }
   }
+  const own = detailed.some((r) => r.organizer !== null)
+    || dav.length > 0 ? await readOwnAddresses(db, accountId) : new Set<string>();
   for (const r of rows) {
     const rules = r.repeatRule === null ? [] : r.repeatRule.split("\n").map((l) => l.trim()).filter((l) => l !== "");
     const excluded = times(r.excludedDates);
@@ -255,6 +287,24 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     const rule = rules.length === 1 && !added.length ? parseRRule(rules[0]!) : null;
     const deleteScopes = source && rule && first
       ? repeatDeleteScopes(source.place, rule, first, ZONES, Date.now()).filter((scope) => !changedDays || scope === "record") : [];
+    const guests = invitees.get(r.id) ?? [];
+    const text = textById.get(r.id);
+    const projected = text == null
+      ? (r.provider === "caldav" && r.recurrenceId !== "" && r.organizer !== null ? "" : r.organizer)
+      : storedObjectFacts(text, null).organizer;
+    const organizer = addressKey(projected);
+    const connectionAddress = organizerPrincipalAddress(r.principal);
+    const ownOrganizer = r.access !== "busy" && !!organizer && !r.partial &&
+      (verifiedOrganizer(organizer, own) || connectionAddress === organizer || r.organizerAddresses?.includes(organizer) === true);
+    const sharedWithoutOrganizer = r.provider === "caldav" && r.access === "writer" && r.myAnswer === null &&
+      !r.partial && !!r.versionTag && text != null && projected === null && !r.repeatRule && !r.recurrenceId;
+    const identity = ownOrganizer ? null : hideIdentityOf({ ...r, organizer: projected }, r.principal, own, guests);
+    const confirmed = identity && guests.find(({ address }) => addressKey(address) === identity.attendee);
+    const removedOccurrences = r.removedOccurrences?.filter((value) => typeof value === "string");
+    const hiddenOccurrences = identity && r.removedOccurrences?.flatMap((value) =>
+      typeof value === "object" && value !== null && value.attendee === identity.attendee &&
+        value.organizer === identity.organizer && value.uid === r.uid && value.calendarId === r.calendarId &&
+        typeof value.hide === "string" ? [value.hide] : []);
     const record: CalendarEventRecord = {
       id: r.id,
       calendarId: r.calendarId,
@@ -279,11 +329,15 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       ...(source && { deleteMembers: source.members, ...(deleteScopes.length > 0 && { deleteScopes }) }),
       busy: r.busy,
       private: r.private,
-      organizer: r.organizer === null ? null : { address: r.organizer, name: r.organizerName },
-      myAnswer: r.myAnswer === null ? null : answerOf(r.myAnswer),
-      ...(r.removedOccurrences?.length && { removedOccurrences: r.removedOccurrences }),
+      organizer: organizer ? { address: projected!, name: organizer === addressKey(r.organizer) ? r.organizerName : null } : null,
+      ...(ownOrganizer ? { ownOrganizer: true } : projected === "" || (r.provider === "caldav" && r.partial) ? { ownOrganizer: false } : {}),
+      ...(sharedWithoutOrganizer && { sharedWithoutOrganizer: true as const }),
+      myAnswer: r.myAnswer === null ? null : answerOf(confirmed?.answer ?? r.myAnswer),
+      ...(removedOccurrences?.length && { removedOccurrences }),
+      ...(hiddenOccurrences?.length && { hiddenOccurrences }),
+      ...(identity && { hideAttendee: identity.attendee }),
       heldBack: r.heldBack,
-      invitees: invitees.get(r.id) ?? [],
+      invitees: guests,
       alarms: alarms.get(r.id) ?? [],
       cut: false,
       ...(r.portableCopy && { portableCopy: true as const }),

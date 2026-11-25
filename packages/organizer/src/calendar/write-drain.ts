@@ -22,11 +22,10 @@ import {
 import type { Logger } from "@trafficflow/core";
 import { calAttendees, calCalendars, calEvents, calWrites, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  appliedPayloadOf, changedDaysOf, endedDayOf, exceptionBaseOf, ownOrganizerAddresses, parseWritePayload, isAttendeeCopy, writeRowOf, type CalendarWritePayload, type CalendarTransferProgress,
+  appliedPayloadOf, calendarOriginalOf, connectedAttendee, changedDaysOf, endedDayOf, exceptionBaseOf, ownOrganizerAddresses, parseWritePayload, isAttendeeCopy, sharedCopyNeedsProtection, writeRowOf, type CalendarWritePayload, type CalendarTransferProgress,
 } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { inConnection } from "./connection.js";
-import { ownAddressesOf } from "./reading.js";
 import { timeOfKey } from "./map.js";
 import { calendarEnabledAt } from "./state.js";
 import type { CalendarWriteDrain, CalendarWriteDrainInput, CalendarWriteWait } from "./types.js";
@@ -83,7 +82,7 @@ interface Second {
 type Claim =
   | {
       readonly kind: "claimed"; readonly write: ClaimedWrite & { readonly calendarAccess: string }; readonly payload: CalendarWritePayload; readonly event: StoredEvent | null; readonly to: string | null;
-      readonly organizer: string | null; readonly own: ReadonlySet<string>;
+      readonly organizer: string | null; readonly principal: string | null;
       /** Whose an event is: the account's mailboxes by the one own set, and the connection's principal; the door asks the same. */
       readonly owners: ReadonlySet<string>;
       /** Where the connection's series are proven: its provider's word, a CalDAV server's own host. */
@@ -149,7 +148,7 @@ async function drain(deps: WriteDrainDeps, input: CalendarWriteDrainInput): Retu
     }
     if (claim.kind !== "claimed") break;
     const answer = await carryOut(deps, input, word, claim);
-    const ctx: SettleContext = { db: input.db, key: input.key, word, map: { zones: deps.zones, ownAddresses: new Set(claim.own) } };
+    const ctx: SettleContext = { db: input.db, key: input.key, word, map: { zones: deps.zones, ownAddresses: claim.owners, principal: claim.principal } };
     const step = await settle(ctx, claim, answer, tally, input.signal.aborted);
     if (step === "stop") break;
     if (typeof step === "number") {
@@ -180,7 +179,7 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
     for (let i = 0; i < EXPIRED_PER_CLAIM; i++) {
       const [head] = await tx.select({
         id: calWrites.id, key: calWrites.idempotencyKey, attempts: calWrites.attempts, op: calWrites.op, calendarId: calWrites.calendarId,
-        calendarProviderId: calCalendars.providerId, calendarAccess: calCalendars.access,
+        calendarProviderId: calCalendars.providerId, calendarAccess: calCalendars.access, calendarNativeMove: calCalendars.nativeMove,
         eventId: calWrites.eventId, baseVersionTag: calWrites.baseVersionTag,
         payload: calWrites.payload, nextAttemptAt: calWrites.nextAttemptAt, createdAt: calWrites.createdAt,
         waiting: sql<boolean>`coalesce(${calWrites.nextAttemptAt} > now(), false)`,
@@ -285,26 +284,34 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
       }).where(and(eq(calWrites.id, head.id), eq(calWrites.accountId, key.accountId), eq(calWrites.attempts, head.attempts), eq(calWrites.state, "pending")))
         .returning({ attempts: calWrites.attempts });
       if (claimedRow === undefined) return { kind: "busy" };
-      const own = await ownAddressesOf(tx, key.accountId, held.principal);
-      const owners = await ownOrganizerAddresses(tx, key.accountId, held.principal);
+      const attendeeAddresses = await ownOrganizerAddresses(tx, key.accountId, held.principal);
+      const owners = new Set([...attendeeAddresses, ...(held.organizerAddresses ?? [])]);
       const exception = payload.exception === undefined ? undefined : await reviewedExceptionOf(
         tx, key.accountId, head.calendarId, payload, event, owners, head.calendarAccess, head.attempts === 0 && !payload.exception.masterReceipt,
       );
       let ownInvitee: string | null = null;
-      if (event !== undefined && head.op === "answer") {
-        const people = await tx.select({ address: calAttendees.address }).from(calAttendees)
+      if (event !== undefined && payload.act.kind === "calendar_event_answer") {
+        const people = await tx.select({ address: calAttendees.address, role: calAttendees.role }).from(calAttendees)
           .where(and(eq(calAttendees.accountId, key.accountId), eq(calAttendees.eventId, head.eventId!)));
-        ownInvitee = people.map((p) => p.address.toLowerCase()).find((a) => own.has(a)) ?? null;
+        const attendee = connectedAttendee(people.filter(({ role }) => role === "required" || role === "optional")
+          .map(({ address }) => address), held.principal, attendeeAddresses);
+        const copy = payload.act.copy;
+        ownInvitee = copy && (copy.calendarId !== head.calendarId || head.calendarAccess !== "owner" ||
+          copy.attendee !== attendee) ? null : attendee;
       }
       let to: string | null = null;
-      if (write.toCalendarId !== null) {
-        const [dest] = await tx.select({ providerId: calCalendars.providerId }).from(calCalendars).where(and(
+      if (write.toCalendarId !== null && payload.act.kind === "calendar_event_move" &&
+          payload.act.toCalendarId === write.toCalendarId && !payload.transfer) {
+        const [dest] = await tx.select({ providerId: calCalendars.providerId, access: calCalendars.access, nativeMove: calCalendars.nativeMove }).from(calCalendars).where(and(
           eq(calCalendars.id, write.toCalendarId), eq(calCalendars.accountId, key.accountId), eq(calCalendars.connectionId, key.id),
         )).limit(1);
-        to = dest?.providerId ?? null;
+        if (dest?.access === "owner" && (input.provider.writer?.provider === "google" ||
+          (input.provider.writer?.provider === "caldav" && head.calendarNativeMove && dest.nativeMove))) {
+          to = dest.providerId;
+        }
       }
       const principal = held.principal?.trim().toLowerCase().replace(/^mailto:/, "") ?? "";
-      const organizer = principal.includes("@") && !principal.includes("/") ? principal : ([...own][0] ?? null);
+      const organizer = principal.includes("@") && !principal.includes("/") ? principal : ([...attendeeAddresses][0] ?? null);
       // The first of a press's two parts is sent only where its second could be sent after it: else neither is.
       let second: Second | "unreadable" | null = null;
       if (payload.part?.n === 1) {
@@ -328,7 +335,7 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         write: { ...write, attempts: claimedRow.attempts, calendarAccess: head.calendarAccess, createdAt: head.createdAt,
           provisional: event !== undefined && event.providerId === `pending:${head.id}`,
           series: event !== undefined && writeRowOf(event) === "series" },
-        payload, to, organizer, own, owners, second, source, exception, mayBeDone, late, finalMove, key: head.key, firstKey: first?.key ?? null,
+        payload, to, organizer, principal: held.principal, owners, second, source, exception, mayBeDone, late, finalMove, key: head.key, firstKey: first?.key ?? null,
         firstEnded: first !== undefined && first.state === "applied" ? endedDayOf(first.payload) : null,
         place: proofPlaceOf(input.provider.reader.provider, held.serverUrl),
         event: event === undefined ? null : { ...event, ownInvitee },
@@ -404,7 +411,7 @@ async function storedEventOf(
   tx: Tx, accountId: string, calendarId: string, eventId: string, readDeleteGuests = false,
 ): Promise<StoredEvent | undefined> {
   const query = tx.select({
-    providerId: calEvents.providerId, original: calEvents.original, portableCopy: calEvents.portableCopy, partial: calEvents.partial, uid: calEvents.uid, versionTag: calEvents.versionTag,
+    providerId: calEvents.providerId, original: calendarOriginalOf(), portableCopy: calEvents.portableCopy, partial: calEvents.partial, uid: calEvents.uid, versionTag: calEvents.versionTag,
     updatedAt: calEvents.updatedAt, status: calEvents.status, thisAndFuture: calEvents.thisAndFuture,
     organizer: calEvents.organizer, myAnswer: calEvents.myAnswer,
     repeatRule: calEvents.repeatRule, recurrenceId: calEvents.recurrenceId, addedDates: calEvents.addedDates, excludedDates: calEvents.excludedDates,
@@ -585,7 +592,8 @@ async function carryTransfer(
   if (!write.toCalendarId || !write.baseVersionTag || !input.provider.writer) return moveRefusal("move_unresolved");
   if (!transfer.progress && (!claim.event || payload.act.kind !== "calendar_event_move" || payload.act.eventId !== write.eventId ||
       claim.event.versionTag !== write.baseVersionTag ||
-      claim.event.partial || claim.event.providerId !== transfer.source || isAttendeeCopy(claim.event, claim.owners, write.calendarAccess))) {
+      claim.event.partial || claim.event.providerId !== transfer.source ||
+      (sharedCopyNeedsProtection(claim.event, claim.owners, write.calendarAccess) && claim.event.organizer !== null) || isAttendeeCopy(claim.event, claim.owners, write.calendarAccess))) {
     return { ok: false, reason: "version_stale", retryAfterMs: null };
   }
   const destination = await input.moveDestination?.(write.toCalendarId) ?? null;

@@ -113,7 +113,7 @@ function addressOf(): string {
   if (screen === "mail-settings") return "#/settings/calaccounts";
   if (screen === "calsettings") return "#/cal/calendars";
   if (screen === "calsetup") return setupAddress();
-  if (screen === "day" || screen === "week") return `#/cal/${screen}/2026-11-10`;
+  if (screen === "day" || screen === "week" || screen === "month") return `#/cal/${screen}/2026-11-10`;
   const view = q.get("over") === "day" ? "day" : q.get("over") === "month" ? "month" : "week";
   if (open) return `#/cal/${view}/${DAY_OF[open] ?? "2026-11-10"}/e/${open}?panel=invitations`;
   return `#/cal/${view}/2026-11-10?panel=invitations`;
@@ -149,6 +149,22 @@ const world = worldOf({
   refused: state === "error",
   extraAccounts: screen === "mail-settings" ? 20 : 0,
 });
+if (q.has("record-times")) {
+  Object.assign(world.engine.store, {
+    get: (kind: string, id: string) =>
+      world.engine.store.entries<{ id: string }>(kind).find(({ entity }) => entity.id === id)?.entity,
+  });
+  world.port.press = async (act) => {
+    const fields =
+      act.kind === "calendar_event_update"
+        ? act.change
+        : act.kind === "calendar_event_create"
+          ? act.event
+          : null;
+    if (fields) document.body.dataset.writtenTimes = JSON.stringify({ start: fields.start, end: fields.end });
+    return { key: "write" };
+  };
+}
 const entry: CalendarEntry = { ...calendar, places: { ...calendar.places, calsettings: paneAlone() } };
 const look = {
   face: q.get("face") === "ohmarchy" ? "ohmarchy" : "paper",

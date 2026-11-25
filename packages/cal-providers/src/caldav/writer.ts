@@ -45,8 +45,8 @@ import {
   type HttpResponse,
   type Precondition,
 } from "../request/index.js";
-import { personalSeriesOf, seriesDeleteMembers, spelledAs } from "../series.js";
-import { alreadyHolds, sameAudience } from "../write-compare.js";
+import { personalSeriesOf, seriesDeleteMembers, spelledAs, storedObjectFacts } from "../series.js";
+import { alreadyHolds, ordinarySharedChange, sameAudience } from "../write-compare.js";
 import { addressOf, allowsMove, isUnder, leave, propfindOf, scopeOf, type Session } from "./ask.js";
 import {
   answerHolds,
@@ -134,7 +134,7 @@ function sameSchedule(wanted: string, found: string): boolean {
 /** Only a definitive rejection can permit cleanup. A transport or server failure may follow a committed PUT. */
 const canRollBack = (status: number): boolean =>
   [400, 401, 403, 405, 409, 412, 413, 415, 422].includes(status);
-const rollbackTag = (tag: string | null): string | null =>
+const strongTag = (tag: string | null): string | null =>
   tag !== null && sendableTag(tag) && !tag.startsWith("W/") ? tag : null;
 const canRetryCleanup = (reason: Refusal["reason"]): boolean =>
   ["unavailable", "throttled", "timeout", "connection_failed"].includes(reason);
@@ -282,7 +282,11 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
   }
 
   /** Does the server send invitations itself? Read off the `DAV` line of its answer about the collection. */
-  async function sendsInvitations(s: Session, collection: string): Promise<boolean | Refusal> {
+  async function sendsInvitations(
+    s: Session,
+    collection: string,
+    requireCalendarAccess = false,
+  ): Promise<boolean | Refusal> {
     const answer = await leave(s, collection, {
       method: "PROPFIND",
       headers: {
@@ -294,10 +298,9 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     });
     if (!answer.arrived) return refused(answer.reason);
     if (answer.status !== 207) return refusalOf(answer, "not_found");
-    return (answer.header("dav") ?? "")
-      .split(",")
-      .map((w) => w.trim().toLowerCase())
-      .includes("calendar-auto-schedule");
+    const capabilities = (answer.header("dav") ?? "").split(",").map((w) => w.trim().toLowerCase());
+    if (requireCalendarAccess && !capabilities.includes("calendar-access")) return refused("read_only");
+    return capabilities.includes("calendar-auto-schedule");
   }
 
   /**
@@ -422,9 +425,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         ? {
             answer: answered(itemsOf(member, found)),
             rollbackTag:
-              options.recoverRollback && sameCalendarContent(text, found.text)
-                ? rollbackTag(found.tag)
-                : null,
+              options.recoverRollback && sameCalendarContent(text, found.text) ? strongTag(found.tag) : null,
           }
         : refused("version_stale");
     if (options.requireExisting) return refused("version_stale");
@@ -450,7 +451,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     const items = itemsOf(member, now);
     return {
       answer: res.status !== 412 && (tag === null || tag === now.tag) ? wrote(items) : answered(items),
-      rollbackTag: rollbackTag(tag ?? readBackTag),
+      rollbackTag: strongTag(tag ?? readBackTag),
     };
   }
 
@@ -505,6 +506,62 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
         ? dayAbsent(now.text, was, deps.zones, requireExclusion)
         : dayHolds(now.text, was, change, deps.zones);
     return done ? answered(itemsOf(member, now)) : refused("version_stale");
+  }
+
+  async function changeSharedCopy(
+    s: Session,
+    place: { collection: string; member: string },
+    target: WriteTarget,
+    change: EventChange,
+  ): Promise<WriteAnswer> {
+    if (
+      !ordinarySharedChange(change) ||
+      target.occurrence ||
+      target.recurringSeries ||
+      target.exception ||
+      (target.text !== null && storedObjectFacts(target.text, null).organizer === "")
+    )
+      return refused("read_only");
+    const version = strongTag(target.version);
+    if (!version) return refused("version_unknown");
+    const current = await readMember(s, place.collection, place.member);
+    if (current === "gone") return refused("event_gone");
+    if (failedRead(current)) return current;
+    if (current.tag !== version || (target.text !== null && !sameCalendarText(current.text, target.text)))
+      return refused("version_stale");
+
+    const read = readCalendar(current.text, DEFAULT_LIMITS);
+    if (
+      !read.ok ||
+      read.dropped.length ||
+      read.calendar.events.length !== 1 ||
+      read.calendar.tree.properties.some((property) => spelledAs(property, "METHOD")) ||
+      read.calendar.tree.components.some(({ name }) => name !== "VEVENT" && name !== "VTIMEZONE")
+    )
+      return refused("read_only");
+    const event = read.calendar.events[0]!;
+    const organizer = storedObjectFacts(current.text, null).organizer;
+    if (
+      event.recurrenceId ||
+      event.rules.length ||
+      event.added.length ||
+      organizer === "" ||
+      (target.text === null && (organizer !== null || event.attendees.length))
+    )
+      return refused("read_only");
+    // A scheduling object needs an organizer (RFC 6638 §3.1). Where one is
+    // present, use a PUT only on a server advertising CalDAV without auto-scheduling.
+    if (organizer !== null) {
+      const scheduling = await sendsInvitations(s, place.collection, true);
+      if (scheduling !== false) return scheduling === true ? refused("read_only") : scheduling;
+    }
+    const text = changedObjectText(current.text, change, deps.clock.now(), deps.zones);
+    if (!text.ok) return refused(text.reason === "not_found" ? "event_gone" : text.reason);
+    const res = await send(s, "PUT", place.member, text.text, { kind: "unchanged", tag: version });
+    if ("ok" in res) return res;
+    if (res.status === 412) return refused("version_stale");
+    if (res.status !== 200 && res.status !== 201 && res.status !== 204) return refusalOf(res, "event_gone");
+    return afterWrite(s, place.collection, place.member, res, text.text);
   }
 
   return {
@@ -572,6 +629,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       const s = opened.session;
       const place = placeOf(cal, target.id);
       if (place === null) return refused("address_not_allowed");
+      if (target.sharedCopy) return changeSharedCopy(s, place, target, change);
       const live = target.recurringSeries ? await readMember(s, place.collection, place.member) : null;
       if (live === "gone") return refused("event_gone");
       if (live !== null && failedRead(live)) return live;

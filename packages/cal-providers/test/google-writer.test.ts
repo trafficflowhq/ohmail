@@ -1759,6 +1759,32 @@ describe("Google's writer", () => {
       [`${BASE}/meeting-tomorrow?sendUpdates=all`, instance.etag],
     ]);
   });
+  it.each([false, true])(
+    "refuses a verified attendee that disagrees with Google's self row (reversed: %s)",
+    async (reverse) => {
+      const g = google();
+      const verified = ["connected", "example.test"].join("@");
+      const providerSelf = ["other", "example.test"].join("@");
+      const people = [
+        { email: verified, responseStatus: "accepted" },
+        { email: providerSelf, self: true, responseStatus: "accepted" },
+      ];
+      const invited = g.plant("invitation", { attendees: reverse ? people.reverse() : people });
+      expect(
+        word(
+          await g.writer.answer(
+            connection,
+            { id: "cal-1" },
+            target(invited),
+            { as: verified, reply: "DECLINED" },
+            never,
+          ),
+        ),
+      ).toBe("version_stale");
+      expect(g.sent.filter(({ method }) => method === "PATCH")).toHaveLength(0);
+    },
+  );
+
   it("refuses to use a Google event with attachments for a portable move", async () => {
     const g = google();
     const reminders = { useDefault: false };
@@ -2155,4 +2181,14 @@ it.each(DRAFT_PROOF_CASES)("round-trips Google RRULE: $name", async ({ draft: ev
   expect(g.sent[0]?.body?.recurrence).toEqual(["RRULE:" + formatRRule(event.rule!)]);
   const item = made.ok && made.items[0];
   expect(item && item.kind === "upsert" && item.event.rules[0]?.rule).toEqual(event.rule);
+});
+
+it("sends a multi-day selection with an exclusive all-day end", async () => {
+  const g = google();
+  const event = draft({ start: plainDate(2026, 10, 24), end: plainDate(2026, 10, 27) });
+  expect(word(await g.writer.create(connection, calendar, { key: { hex: KEY }, event }, never))).toBe("ok");
+  expect(g.sent.find(({ method }) => method === "POST")?.body).toMatchObject({
+    start: { date: "2026-10-24" },
+    end: { date: "2026-10-27" },
+  });
 });

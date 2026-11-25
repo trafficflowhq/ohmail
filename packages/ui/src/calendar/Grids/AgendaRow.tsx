@@ -49,6 +49,8 @@ export interface AgendaRowProps {
   onOpen?: () => void;
   /** A right click, the menu key or Shift F10: the row's menu, where the pointer is. */
   onMenu?: (at: { x: number; y: number }) => void;
+  onContextMenu?: (event: MouseEvent<HTMLDivElement>) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
   ref?: Ref<HTMLDivElement>;
 }
 
@@ -74,7 +76,13 @@ export function AgendaRow(p: AgendaRowProps) {
   const tone = p.mark.kind === "draft" || (p.tinted && p.mark.kind === "calendar") ? p.mark.tone : null;
   const own = toneOf(tone);
   const key = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+    p.onKeyDown?.(event);
+    if (
+      event.defaultPrevented ||
+      event.target !== event.currentTarget ||
+      (event.key !== "Enter" && event.key !== " ")
+    )
+      return;
     event.preventDefault();
     p.onOpen?.();
   };
@@ -93,7 +101,7 @@ export function AgendaRow(p: AgendaRowProps) {
         "aria-label": p.label,
         onClick: p.onOpen,
         onKeyDown: key,
-        onContextMenu: menu,
+        onContextMenu: p.onContextMenu ?? menu,
       };
   return (
     <div

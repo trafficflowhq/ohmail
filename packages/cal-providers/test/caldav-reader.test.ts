@@ -104,6 +104,66 @@ function recorded(row: ServerRow) {
 const said = (e: CalEvent) => ({ summary: e.summary, description: e.description, start: e.start, end: e.end, was: e.recurrenceId, rules: e.rules.map((r) => r.text), url: e.url });
 const zurich = (month: number, day: number, hour: number, minute = 0) => ({ kind: "zoned", tzid: "Europe/Zurich", wall: { year: 2026, month, day, hour, minute, second: 0 } });
 
+it.each(["unrelated", "conflicting principals", "conflicting addresses"] as const)(
+  "does not certify a CalDAV principal from %s",
+  async (fault) => {
+    const start = "https://dav.example.test/";
+    const response = (path: string, property: string) =>
+      `<response><href>${path}</href><propstat><prop>${property}</prop><status>HTTP/1.1 200 OK</status></propstat></response>`;
+    const principal = (path: string) => `<current-user-principal><href>${path}</href></current-user-principal>`;
+    const home = "<C:calendar-home-set><href>/calendars/</href></C:calendar-home-set>";
+    const identities = (name: string) =>
+      `<C:calendar-user-address-set><href>mailto:${name}@example.test</href></C:calendar-user-address-set>`;
+    const http: HttpPort = { async request(url, req) {
+      const path = new URL(url).pathname;
+      const replies = req.body?.includes("current-user-principal")
+        ? fault === "unrelated" ? response("/elsewhere/", principal("/principal/"))
+          : response(path, principal("/principal/")) +
+            (fault === "conflicting principals" ? response(path, principal("/different/")) : "")
+        : path === "/principal/"
+          ? response(path, home + identities("first")) + response(path, home + identities("second"))
+          : "";
+      return { arrived: true, status: 207, header: () => null, location: null, url, hops: 0,
+        body: bytes(`<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">${replies}</multistatus>`) };
+    } };
+    const reader = makeReader({ http, clock: CLOCK, zones: ZONES });
+    const result = await reader.listCalendars({ provider: "caldav", start, credential: anyone }, signal());
+    expect(result.ok).toBe(false);
+  },
+);
+
+it.each(["matching queries", "different start query", "different principal query"] as const)(
+  "binds CalDAV identity discovery to the full resource with %s",
+  async (scenario) => {
+    const origin = "https://dav.example.test";
+    const start = "/dav/?account=studio";
+    const principal = "/principal/?account=studio";
+    const response = (href: string, properties: string) =>
+      `<response><href>${href}</href><propstat><prop>${properties}</prop><status>HTTP/1.1 200 OK</status></propstat></response>`;
+    const home = "<C:calendar-home-set><href>/calendars/</href></C:calendar-home-set>";
+    const address = "studio@example.test";
+    const addresses = `<C:calendar-user-address-set><href>mailto:${address}</href></C:calendar-user-address-set>`;
+    const http: HttpPort = { async request(url) {
+      const resource = url.slice(origin.length);
+      const replies = resource === start
+        ? response(scenario === "different start query" ? "/dav/?account=elsewhere" : start,
+          `<current-user-principal><href>${principal}</href></current-user-principal>`)
+        : resource === principal
+          ? scenario === "different principal query"
+            ? response(principal, home) + response("/principal/?account=elsewhere", addresses)
+            : response(principal, home + addresses)
+          : "";
+      return { arrived: true, status: 207, header: () => null, location: null, url, hops: 0,
+        body: bytes(`<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">${replies}</multistatus>`) };
+    } };
+    const reader = makeReader({ http, clock: CLOCK, zones: ZONES });
+    const result = await reader.checkSignIn({ provider: "caldav", start: origin + start, credential: anyone }, signal());
+    if (scenario === "different start query") expect(result).toMatchObject({ ok: false, reason: "no_service" });
+    else expect(result).toEqual({ ok: true, value: { principal: origin + principal,
+      addresses: scenario === "matching queries" ? [address] : [] } });
+  },
+);
+
 describe.each(CALDAV_READER_ROWS)("the recorded answers of $name", (row) => {
   it("lists the home's one calendar, with its name and that it keeps a token", async () => {
     const { reader, connection, collection } = recorded(row);

@@ -23,7 +23,7 @@ import type { Typed } from "../address.js";
 import { MAX_PAGES_PER_CALL } from "../limits.js";
 import type { ProviderRefusal } from "../refusals.js";
 import { addressOf, ask, propfindOf, refuse, tlsAlone, type Refused, type Session } from "./ask.js";
-import { CALDAV, DAV, childOf, childrenOf, propOf, type Multistatus } from "./multistatus.js";
+import { CALDAV, DAV, childrenOf, propOf, type Multistatus } from "./multistatus.js";
 
 /* What a person typed, read, is the package's one reading of a typed address (`../address.ts`): the door that takes it asks the same. */
 export { typedAddress, type Typed } from "../address.js";
@@ -35,18 +35,36 @@ export const MAX_HOMES = MAX_PAGES_PER_CALL;
 export const MAX_OWN_ADDRESSES = 32;
 
 const NOBODY = Symbol("unauthenticated");
+const CONFLICT = Symbol("ambiguous principal");
 
-/** The principal an answer names for the request's sign-in; `NOBODY` when it says the sign-in was not taken (RFC 5397 section 3). */
-function principalIn(answer: Multistatus, base: string): string | typeof NOBODY | null {
-  for (const response of answer.responses) {
-    const who = propOf(response, DAV, "current-user-principal");
-    if (who === null) continue;
-    if (childOf(who, DAV, "unauthenticated") !== null) return NOBODY;
-    const href = childOf(who, DAV, "href");
-    const address = href === null ? null : addressOf(href.text.trim(), base);
-    if (address !== null) return address;
+function responsesFor(answer: Multistatus, resource: string) {
+  const queried = addressOf(resource);
+  return answer.responses.filter(({ href, status }) => {
+    const address = addressOf(href, resource);
+    return address !== null && address === queried && (status === null || status === 200);
+  });
+}
+
+function propertyValues(answer: Multistatus, resource: string, namespace: string, name: string) {
+  return responsesFor(answer, resource).flatMap(({ propstats }) =>
+    propstats.filter(({ status }) => status === 200).flatMap(({ props }) =>
+      props.filter(({ ns, local }) => ns === namespace && local === name)));
+}
+
+/** The principal named by the resource actually queried. Every successful value must agree. */
+function principalIn(answer: Multistatus, base: string): string | typeof NOBODY | typeof CONFLICT | null {
+  const values = new Set<string | typeof NOBODY>();
+  for (const who of propertyValues(answer, base, DAV, "current-user-principal")) {
+    const [node] = who.children;
+    if (who.children.length !== 1 || node?.ns !== DAV) return CONFLICT;
+    if (node.local === "unauthenticated") values.add(NOBODY);
+    else {
+      const address = node.local === "href" ? addressOf(node.text.trim(), base) : null;
+      if (!address) return CONFLICT;
+      values.add(address);
+    }
   }
-  return null;
+  return values.size > 1 ? CONFLICT : ([...values][0] ?? null);
 }
 
 /**
@@ -68,6 +86,7 @@ async function searchFrom(s: Session, starts: readonly string[]): Promise<Princi
     const asked = await ask(s, "PROPFIND", start, "0", propfindOf("<D:current-user-principal/>"));
     if (asked.ok) {
       const who = principalIn(asked.answer, asked.url);
+      if (who === CONFLICT) return refuse("unreadable");
       if (who === NOBODY) return refuse("sign_in_refused");
       if (who !== null) {
         s.hosts.names(who, asked.url);
@@ -100,22 +119,31 @@ export async function findHomes(s: Session, principal: string): Promise<{ readon
   const asked = await ask(s, "PROPFIND", principal, "0", propfindOf("<C:calendar-home-set/><C:calendar-user-address-set/>"));
   if (!asked.ok) return refuse(asked.reason, asked.retryAfterMs);
   const homes = new Set<string>();
-  const addresses = new Set<string>();
-  for (const response of asked.answer.responses) {
+  for (const response of responsesFor(asked.answer, asked.url)) {
     const set = propOf(response, CALDAV, "calendar-home-set");
     for (const href of set === null ? [] : childrenOf(set, DAV, "href")) {
       const home = addressOf(href.text.trim(), asked.url);
       if (home !== null) homes.add(home);
     }
-    const own = propOf(response, CALDAV, "calendar-user-address-set");
-    for (const href of own === null ? [] : childrenOf(own, DAV, "href")) {
-      const address = mailAddressOf(href.text);
-      if (address !== null && addresses.size < MAX_OWN_ADDRESSES) addresses.add(address);
-    }
   }
+  let seen: readonly string[] | undefined;
+  let addresses: readonly string[] = [];
+  for (const set of propertyValues(asked.answer, asked.url, CALDAV, "calendar-user-address-set")) {
+    const values = [...new Set(childrenOf(set, DAV, "href").map(({ text }) =>
+      /^mailto:/i.test(text.trim()) ? text.trim().toLowerCase() : text.trim()))].sort();
+    if (seen && (seen.length !== values.length || seen.some((value, i) => value !== values[i]))) {
+      return refuse("unreadable");
+    }
+    seen = values;
+    addresses = [...new Set(values.flatMap((value) => {
+      const address = mailAddressOf(value);
+      return address && !/[:/\s<>?,]/.test(address) ? [address] : [];
+    }))];
+  }
+  if (addresses.length > MAX_OWN_ADDRESSES) return refuse("too_large");
   // A principal that names no home is signed in to something that keeps no calendars.
   if (homes.size === 0) return refuse("no_service");
   if (homes.size > MAX_HOMES) return refuse("too_large");
   for (const home of homes) s.hosts.names(home, asked.url);
-  return { ok: true, homes: [...homes], addresses: [...addresses] };
+  return { ok: true, homes: [...homes], addresses };
 }

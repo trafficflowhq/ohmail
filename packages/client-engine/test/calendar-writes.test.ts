@@ -38,6 +38,15 @@ const mark = (act: CalendarEventAct, over: Partial<CalendarWriteMark> = {}): Cal
   ({ id: "w-1", key: "k-1", state: "pending", reason: null, act, part: null, at: BASE, ...over });
 
 describe("the one overlay", () => {
+  it("projects an explicit Hide without deleting the busy record or changing its RSVP", () => {
+    const event = { ...record("invitation", { myAnswer: "accepted" }), hideAttendee: ["guest", "example.test"].join("@") };
+    const act = { kind: "calendar_event_delete" as const, eventId: event.id, base: BASE,
+      scope: { kind: "record" as const }, localOnly: true as const, hide: true as const, copy: { calendarId: event.calendarId, attendee: event.hideAttendee } };
+    const [shown] = eventsWithWrites([event], [{ key: "hide", act }]);
+    expect(shown?.record).toMatchObject({ id: event.id, myAnswer: "accepted", busy: true, hiddenOccurrences: [""] });
+    expect(eventsWithWrites([event], [])[0]?.record).toEqual(event);
+  });
+
   it("lays acts over records in order: a new event appears, a change is written, a removal takes it out, a move and an answer are the account's", () => {
     const shown = applyCalendarActs([record("e1"), record("e2")], [
       create("e3"), update("e1", "Kiln check, moved"), { kind: "calendar_event_delete", eventId: "e2", base: BASE, scope: { kind: "record" } },
@@ -284,6 +293,47 @@ it("keeps the delete durable and offline until the Undo window closes", async ()
   }
 });
 
+
+it("keeps explicit Hide in the mirror when the first held write reply is lost", async () => {
+  vi.useFakeTimers();
+  try {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const event = record("invitation", { hideAttendee: ["guest", "example.test"].join("@"), myAnswer: "tentative" });
+    await store.applyChanges([{ type: "calendar_event", op: "create", id: event.id, entity: event, seq: 1, updatedAt: BASE }]);
+    const hidden = { ...event, hiddenOccurrences: [""] };
+    let persisted = false;
+    const { t, asked } = transport(async (_act, key) => {
+      if (!persisted) {
+        persisted = true;
+        throw new MutationRejectedError("offline", { status: null, code: "network", retryable: true });
+      }
+      const replay = echo(hidden, key);
+      return { ...replay, answer: { ...replay.answer, write: { ...replay.answer.write!, state: "applied" } } };
+    });
+    const queue = new CalendarWriteQueue(store, t, { uuid: () => "hide-held", now: Date.now });
+    const act = { kind: "calendar_event_delete", eventId: event.id, base: BASE,
+      scope: { kind: "record" }, localOnly: true, hide: true, copy: { calendarId: event.calendarId, attendee: event.hideAttendee! } } as const;
+    const stop = queue.activate();
+    const held = await queue.holdDelete(act, 8000);
+    expect(queue.events()[0]?.record).toEqual(hidden);
+    expect(asked).toEqual([]);
+    await vi.advanceTimersByTimeAsync(8000);
+    await queue.flush();
+    expect(asked).toHaveLength(1);
+    expect(persisted).toBe(true);
+    expect(queue.events()[0]?.record).toEqual(hidden);
+    expect(store.get("calendar_event", event.id)).toEqual(event);
+    await vi.advanceTimersByTimeAsync(1000);
+    await queue.flush();
+    expect(asked.map(({ key }) => key)).toEqual([held.key, held.key]);
+    expect(queue.owed()).toEqual([]);
+    stop();
+    expect(queue.events()[0]?.record).toEqual(hidden);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("honors Undo on disk even when another tab already loaded the deletion", async () => {
   const factory = new IDBFactory();

@@ -61,6 +61,7 @@ export interface EventCardProps {
   status?: { text: string; failed: boolean };
   /** An event of your own: Edit. In a sheet from the foot the verbs at the foot carry it. */
   edit?: Way;
+  headActions?: ReactNode;
   /** Nothing to edit: the same place says why. */
   why?: { text: string; locked?: boolean };
   close: Way;
@@ -139,12 +140,14 @@ export function EventCard(p: EventCardProps) {
       {frame === "sheet" ? <i className="oh-ecard-grab" aria-hidden /> : null}
       <div
         className="oh-ecard-head"
-        data-act={frame !== "card" ? undefined : p.edit ? "edit" : p.why ? "why" : undefined}
+        data-act={frame !== "card" || p.headActions ? undefined : p.edit ? "edit" : p.why ? "why" : undefined}
       >
         <span className="oh-ecard-close">
           <Button kind="quiet" size="s" icon="x" label={p.close.label} onPress={p.close.onPress} />
         </span>
-        {frame !== "card" ? null : p.edit ? (
+        {p.headActions ? (
+          <div className="oh-ecard-head-actions">{p.headActions}</div>
+        ) : frame !== "card" ? null : p.edit ? (
           <button
             type="button"
             className="oh-control oh-button oh-ecard-edit"
@@ -191,7 +194,7 @@ export function EventCard(p: EventCardProps) {
             ) : null}
           </p>
         ))}
-        {p.tags?.length || (frame === "sheet" && why) ? (
+        {p.tags?.length || ((frame === "sheet" || p.headActions) && why) ? (
           <div className="oh-ecard-tags">
             {p.tags?.map((t, i) => (
               <span key={i} className="oh-tag oh-ecard-tag" data-hot={t.hot ? "" : undefined}>
@@ -199,7 +202,7 @@ export function EventCard(p: EventCardProps) {
                 {t.text}
               </span>
             ))}
-            {frame === "sheet" ? why : null}
+            {frame === "sheet" || p.headActions ? why : null}
           </div>
         ) : null}
         {p.answers}

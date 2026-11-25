@@ -35,7 +35,7 @@ export function useNewEvent(seed?: CalendarDraftSeed, accountsFallback = false) 
     if (!accountsFallback || port === NONE) return null;
     return () => commands.go({ place: "calsettings" });
   }
-  return (day?: string, from?: number, to?: number) => {
+  return (day?: string, from?: number | string, to?: number) => {
     const here = isCalendarPlace(route.place) && route.place !== "calsettings" && route.place !== "frommail";
     const place = here ? route.place : "week";
     const target = {
@@ -45,7 +45,9 @@ export function useNewEvent(seed?: CalendarDraftSeed, accountsFallback = false) 
       stage: null,
       words: {
         panel: "new",
-        ...(from !== undefined && to !== undefined && { slot: `${from}-${to}` }),
+        ...(typeof from === "string"
+          ? { slot: `date-${from}` }
+          : from !== undefined && to !== undefined && { slot: `${from}-${to}` }),
       },
     };
     if (draftSeed) draftSeed.current = seed ?? null;

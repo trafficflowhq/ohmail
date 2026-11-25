@@ -686,10 +686,18 @@ it.each([
   const pointer = (target: EventTarget, type: string, y: number) =>
     fireEvent(
       target,
-      Object.assign(new MouseEvent(type, { bubbles: true, clientX: 30, clientY: y }), { pointerId: 1 }),
+      Object.assign(new MouseEvent(type, { bubbles: true, clientX: 30, clientY: y }), {
+        pointerId: 1,
+        isPrimary: true,
+      }),
     );
-  pointer(column, "pointerdown", down);
-  pointer(document, "pointerup", up);
+  Object.defineProperty(document, "elementsFromPoint", { configurable: true, value: () => [column] });
+  try {
+    pointer(column, "pointerdown", down);
+    pointer(document, "pointerup", up);
+  } finally {
+    Reflect.deleteProperty(document, "elementsFromPoint");
+  }
   const form = within(await screen.findByRole("dialog", { name: "New event" }));
   expect(form.getByDisplayValue(from)).toBeTruthy();
   expect(form.getByDisplayValue(to)).toBeTruthy();
@@ -985,3 +993,35 @@ it("keeps one retry budget when the first lookup returns busy", async () => {
   expect(photonCalls).toBeLessThanOrEqual(2);
   expect(ask).toHaveBeenCalledTimes(1);
 });
+
+it.each([
+  [
+    "#/cal/week/2026-10-24?panel=new&slot=1350-3480",
+    { kind: "zoned", value: "20261024T223000", zone: "Europe/Zurich" },
+    { kind: "zoned", value: "20261026T100000", zone: "Europe/Zurich" },
+  ],
+  [
+    "#/cal/month/2026-10-24?panel=new&slot=date-2026-10-26",
+    { kind: "date", value: "20261024" },
+    { kind: "date", value: "20261027" },
+  ],
+])(
+  "writes both endpoints of a selected range across the October clock change",
+  async (address, start, end) => {
+    const w = world();
+    const press = vi.fn(async () => ({ key: "create" }));
+    w.port.press = press;
+    mountFrame(address, w, NONE);
+    const form = within(screen.getByRole("dialog", { name: "New event" }));
+    await form.findByText("Personal");
+    fireEvent.change(form.getByRole("textbox", { name: "New event" }), { target: { value: "Away" } });
+    fireEvent.click(form.getByRole("button", { name: "Add" }));
+    expect(press).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "calendar_event_create",
+        event: expect.objectContaining({ start, end }),
+      }),
+    );
+    await act(async () => {});
+  },
+);

@@ -356,3 +356,16 @@ it("reads a timed last Friday with an indexed weekday and UTC ending", async () 
     range: { type: "endDate", endDate: "2027-04-30" },
   });
 });
+
+it("sends a multi-day selection with an exclusive midnight end in Graph", async () => {
+  const event = draft({
+    start: { kind: "date", year: 2026, month: 10, day: 24 },
+    end: { kind: "date", year: 2026, month: 10, day: 27 },
+  });
+  expect(word(await writer.create(signedIn(), studio, { key: { hex: KEY }, event }, never))).toBe("ok");
+  expect(sent.find(({ method }) => method === "POST")?.body).toMatchObject({
+    isAllDay: true,
+    start: { dateTime: "2026-10-24T00:00:00", timeZone: "UTC" },
+    end: { dateTime: "2026-10-27T00:00:00", timeZone: "UTC" },
+  });
+});

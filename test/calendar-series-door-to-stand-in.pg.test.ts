@@ -20,7 +20,7 @@ import type { HostResolver } from "@trafficflow/core/net";
 import { calCalendars, calConnections, calEvents, calWrites, changeLog, mailboxes } from "@trafficflow/db";
 import { CALENDAR_WRITE_FAULTS, type CalendarWritePayload } from "@trafficflow/db/calendar";
 import { ServiceError, dbFor, type Db as ServicesDb, type ServiceContext } from "@trafficflow/services";
-import { dismissCalendarWrite, recordCalendarWrite, retryCalendarWrite } from "@trafficflow/services/calendar";
+import { CALENDAR_BUILDERS, dismissCalendarWrite, recordCalendarWrite, retryCalendarWrite } from "@trafficflow/services/calendar";
 import { calendarSyncPass } from "../packages/organizer/src/calendar/sync-pass.js";
 import { CalendarTurnOverdue, WORD_PLAN } from "../packages/organizer/src/calendar/words.js";
 import { calendarWriteDrain } from "../packages/organizer/src/calendar/write-drain.js";
@@ -55,7 +55,7 @@ interface Member {
   /** More lines of the series' own component. */
   readonly more?: readonly string[];
   /** Its changed days, each a component of its own (`status`: its STATUS line, where it has one: a day cancelled by its own component). */
-  readonly days?: readonly { readonly was: string; readonly start: string; readonly end: string; readonly summary: string; readonly status?: string }[];
+  readonly days?: readonly { readonly was: string; readonly start: string; readonly end: string; readonly summary: string; readonly status?: string; readonly more?: readonly string[] }[];
 }
 
 /** A member's text as another program wrote it. */
@@ -68,7 +68,7 @@ function memberText(m: Member): string {
     "END:VEVENT",
     ...(m.days ?? []).flatMap((d) => [
       "BEGIN:VEVENT", `UID:${m.uid}`, "DTSTAMP:20261113T120000Z", t("RECURRENCE-ID", d.was), t("DTSTART", d.start), t("DTEND", d.end),
-      `SUMMARY:${d.summary}`, ...(d.status === undefined ? [] : [`STATUS:${d.status}`]), "SEQUENCE:0", "END:VEVENT",
+      `SUMMARY:${d.summary}`, ...(d.status === undefined ? [] : [`STATUS:${d.status}`]), "SEQUENCE:0", ...(d.more ?? []), "END:VEVENT",
     ]),
     "END:VCALENDAR",
   ].map((line) => `${fold(line)}\r\n`).join("");
@@ -197,7 +197,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     servers.push(dav);
     // The account's own calendar, as its server says by naming the sign-in its owner: where a server names no owner, a calendar
     // is taken for one shared with the account, whose events by others its write access lets it change.
-    const held = dav.addCalendar("studio", { name: "Studio", owner: dav.paths.principal }) as unknown as { members: Map<string, { ics: string; etag: string }> };
+    const held = dav.addCalendar("studio", { name: "Studio", owner: dav.paths.principal });
     for (const [name, text] of Object.entries(members)) dav.put("studio", name, text, `"${name}-1"`);
     const serverUrl = `http://127.0.0.1:${dav.port}${dav.paths.start}`;
     const boxes = o.mailboxes ?? [];
@@ -225,6 +225,12 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     const ctx = (): ServiceContext => ({ db: dbFor(w.db as unknown as ServicesDb, t.accountId), accountId: t.accountId, userId: null, now: () => new Date(), requestId: `sd-${randomUUID().slice(0, 8)}` });
     return {
       dav, t,
+      access: async (owned: boolean) => {
+        held.owner = owned ? dav.paths.principal : null;
+        readingOnly.memory.listedAt.clear();
+        await due();
+        return (await calendarSyncPass(readingOnly, t.due, never)).kind;
+      },
       /** One whole turn: the drain, then the reading. */
       turn: async () => { await due(); return (await calendarSyncPass(withDrain, t.due, never)).kind; },
       /** One whole turn on a signal of the caller's: the worker's stop, or the turn's own time run out. */
@@ -296,6 +302,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       })),
       /** The members the server holds now, by name. */
       held: () => new Map([...held.members].map(([name, m]) => [name, m.ics] as const)),
+      feed: (ids: readonly string[]) => CALENDAR_BUILDERS.calendar_event(ctx().db, t.accountId, ids),
       calendarId: async () => (await w.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, t.accountId)))[0]!.id,
     };
   }
@@ -860,6 +867,107 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       expect([await b.door("split", all.split), await b.door("cancel-a-day", all["cancel-a-day"])]).toEqual(["409 calendar_read_only", "409 calendar_read_only"]);
       expect(await b.door("answer", { kind: "calendar_event_answer", ...on(series!), scope: { kind: "record" }, answer: "accepted" })).toBe("pending");
       expect(await b.writes()).toEqual(["answer pending"]);
+    });
+
+    it.each([false, true])("declines one ordinary day without changing the other mailbox or neighboring day (reversed: %s)", async (reverse) => {
+      const seats = [
+        `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${MILA}`,
+        `ATTENDEE;PARTSTAT=TENTATIVE:mailto:${MILA_DAV}`,
+      ];
+      const text = memberText({
+        uid: "assembly", tz: ZH, start: "20261123T090000", end: "20261123T100000",
+        rule: "FREQ=WEEKLY;COUNT=5", summary: "Assembly",
+        more: [`ORGANIZER:mailto:${ANNA}`, ...(reverse ? seats.reverse() : seats)],
+      });
+      const b = await bench({ "assembly.ics": text }, { autoSchedule: true, mailboxes: [MILA, MILA_DAV], principal: MILA_DAV });
+      const [series] = await b.rows("assembly.ics");
+      const copy = { calendarId: await b.calendarId(), attendee: MILA_DAV };
+      const press = { kind: "calendar_event_answer", ...on(series!), scope: { kind: "occurrence", at: DEC_7 }, answer: "declined", copy };
+      const first = b.dav.seen.length;
+      expect((await b.feed([series!.id])).get(series!.id)?.myAnswer).toBe("tentative");
+      expect(await b.door("decline-one", press)).toBe("pending");
+      expect(await b.turn()).toBe("synced");
+      expect(await b.door("decline-one", press)).toBe("applied");
+      expect(await b.turn()).toBe("synced");
+      const sent = b.sent(first, "assembly.ics");
+      expect(sent.map(({ method, member }) => [method, member])).toEqual([["PUT", "assembly.ics"]]);
+      const written = partsOf(sent[0]!.body!).components.filter(({ name }) => name === "VEVENT");
+      expect(written).toHaveLength(2);
+      expect(written[0]!.lines).toEqual(masterOf(text));
+      expect(written[1]!.lines.some((line) => line.includes(`PARTSTAT=DECLINED:mailto:${MILA_DAV}`))).toBe(true);
+      expect(written[1]!.lines.some((line) => line.includes(`PARTSTAT=ACCEPTED:mailto:${MILA}`))).toBe(true);
+      const rows = await b.rows("assembly.ics");
+      const feed = await b.feed(rows.map(({ id }) => id));
+      expect(rows.map(({ recurrenceId, id }) => [recurrenceId, feed.get(id)?.myAnswer]))
+        .toEqual([["", "tentative"], [DEC_7, "declined"]]);
+    });
+
+    it("keeps a moved occurrence hidden after the provider restores its original time", async () => {
+      const more = [`ORGANIZER:mailto:${ANNA}`, `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${MILA_DAV}`];
+      const seriesOf = { uid: "assembly", tz: ZH, start: "20261123T090000", end: "20261123T100000",
+        rule: "FREQ=WEEKLY;COUNT=5", summary: "Assembly", more };
+      const moved = memberText({ ...seriesOf, days: [{
+        was: "20261207T090000", start: "20261207T130000", end: "20261207T140000", summary: "Moved assembly", more,
+      }] });
+      const b = await bench({ "assembly.ics": moved }, { mailboxes: [MILA_DAV], principal: MILA_DAV });
+      const [series, child] = await b.rows("assembly.ics");
+      expect(child?.recurrenceId).toBe(DEC_7);
+      const from = b.dav.seen.length;
+      expect(await b.door("hide-one", { kind: "calendar_event_delete", eventId: child!.id, localOnly: true, hide: true,
+        base: `${child!.updatedAt.toISOString()}/${series!.updatedAt.toISOString()}`, scope: { kind: "occurrence", at: DEC_7 },
+        copy: { calendarId: await b.calendarId(), attendee: MILA_DAV },
+      })).toBe("applied");
+      b.dav.put("studio", "assembly.ics", memberText(seriesOf), '"restored"');
+      expect(await b.read()).toBe("synced");
+      const restored = await b.rows("assembly.ics");
+      expect(restored.map(({ id, recurrenceId }) => [id, recurrenceId])).toEqual([[series!.id, ""]]);
+      const record = (await b.feed([series!.id])).get(series!.id);
+      expect(record).toMatchObject({ hiddenOccurrences: [DEC_7], myAnswer: "accepted", busy: true });
+      expect(b.sent(from, "assembly.ics")).toEqual([]);
+    });
+
+    it("converges a continuously synced device and one first loaded while access was shared", async () => {
+      const more = [`ORGANIZER:mailto:${ANNA}`, `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${MILA_DAV}`];
+      const config = { uid: "assembly", tz: ZH, start: "20261123T090000", end: "20261123T100000",
+        rule: "FREQ=WEEKLY;COUNT=5", summary: "Assembly", more };
+      const masterAndDay = memberText({ ...config, days: [{
+        was: "20261207T090000", start: "20261207T130000", end: "20261207T140000", summary: "Moved assembly", more,
+      }] });
+      const single = memberText({ ...config, uid: "single" }).replace(/^RRULE:.*\r\n/m, "");
+      const dateList = memberText({ ...config, uid: "date-list" })
+        .replace(/^RRULE:.*\r\n/m, "RDATE;TZID=Europe/Zurich:20261207T090000\r\n");
+      const b = await bench({ "series.ics": masterAndDay, "single.ics": single, "dates.ics": dateList },
+        { mailboxes: [MILA_DAV], principal: MILA_DAV });
+      const [master, child] = await b.rows("series.ics");
+      const [standalone] = await b.rows("single.ics");
+      const [dates] = await b.rows("dates.ics");
+      const ids = [master!.id, child!.id, standalone!.id, dates!.id];
+      for (const event of [master!, standalone!, dates!]) {
+        expect(await b.door(`hide-${event.id}`, { kind: "calendar_event_delete", ...on(event),
+          localOnly: true, hide: true, scope: { kind: "record" },
+          copy: { calendarId: await b.calendarId(), attendee: MILA_DAV },
+        })).toBe("applied");
+      }
+      const continuous = await b.feed(ids);
+      const owned = [...continuous.values()].filter((record) => record.hiddenOccurrences?.includes("")).map(({ id }) => id).sort();
+      expect(owned).toEqual([master!.id, standalone!.id, dates!.id].sort());
+      const transition = async (owner: boolean, devices: Awaited<ReturnType<typeof b.feed>>[]) => {
+        const account = eq(changeLog.accountId, b.t.accountId);
+        const [before] = await w.db.select({ seq: sql<bigint>`max(${changeLog.seq})` }).from(changeLog).where(account);
+        expect(await b.access(owner)).toBe("synced");
+        const delta = await w.db.select({ id: changeLog.entityId }).from(changeLog)
+          .where(and(account, sql`${changeLog.seq} > ${before!.seq}`, eq(changeLog.entityType, "calendar_event")));
+        const records = await b.feed([...new Set(delta.map(({ id }) => id))]);
+        expect([...records.keys()].sort()).toEqual([...ids].sort());
+        for (const device of devices) for (const [id, record] of records) device.set(id, record);
+      };
+      await transition(false, [continuous]);
+      const fresh = await b.feed(ids);
+      expect([...fresh.values()].every(({ hiddenOccurrences }) => hiddenOccurrences === undefined)).toBe(true);
+      expect(continuous).toEqual(fresh);
+      await transition(true, [continuous, fresh]);
+      expect(continuous).toEqual(fresh);
+      expect([...fresh.values()].filter((record) => record.hiddenOccurrences?.includes("")).map(({ id }) => id).sort()).toEqual(owned);
     });
 
     it("holds a series organized under a mailbox the account has removed for someone else's: the door takes none of its writes, the drain sends none", async () => {
@@ -3637,6 +3745,36 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
           : "k refused invitees_unsupported | nothing written"])));
       });
     }
+  });
+
+  it("moves an organizerless shared event without changing guests or another calendar's copy", async () => {
+    const guest = "ATTENDEE;CN=Guest;PARTSTAT=ACCEPTED:mailto:guest@example.test";
+    const text = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT", "UID:shared-workshop",
+      "DTSTAMP:20261101T000000Z", "DTSTART:20261123T100000Z", "DTEND:20261123T110000Z",
+      "SUMMARY:Workshop", guest, "END:VEVENT", "END:VCALENDAR", "",
+    ].join("\r\n");
+    const b = await bench({ "shared.ics": text }, { autoSchedule: true });
+    b.dav.addCalendar("neighbour");
+    b.dav.put("neighbour", "shared.ics", text, '"untouched"');
+    expect(await b.access(false)).toBe("synced");
+    const [selected] = await b.rows("shared.ics");
+    const update = { kind: "calendar_event_update", ...on(selected!), scope: { kind: "record" } };
+    const from = b.dav.seen.length;
+    expect(await b.door("guests", { ...update, change: { invitees: [] } })).toBe("409 calendar_read_only");
+    expect(b.dav.seen).toHaveLength(from);
+    expect(await b.door("time", { ...update, change: {
+      start: { kind: "instant", value: "20261123T120000Z" },
+      end: { kind: "instant", value: "20261123T130000Z" },
+    } })).toBe("pending");
+    expect(await b.turn()).toBe("synced");
+    expect(await b.writes()).toEqual(["time applied"]);
+    const mutations = b.dav.seen.slice(from).filter(({ method }) => ["PUT", "DELETE", "MOVE", "POST"].includes(method));
+    expect(mutations.map(({ method, path }) => [method, path])).toEqual([["PUT", b.dav.paths.member("studio", "shared.ics")]]);
+    const [put] = mutations;
+    expect(put?.headers["if-match"]).toBe('"shared.ics-1"');
+    expect(put?.body).toContain("DTSTART:20261123T120000Z");
+    expect(put?.body.split("\r\n").filter((line) => /^(ATTENDEE|ORGANIZER)/.test(line))).toEqual([guest]);
   });
 
   describe("an event with an invitee is written only where the server tells them (ruling ii: one rule for every write)", () => {

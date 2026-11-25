@@ -33,6 +33,15 @@
     display: inline-flex;
     margin-left: auto;
   }
+  .oh-ask .oh-menu-item-description {
+    display: block;
+    margin-block-start: var(--s1);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+    white-space: normal;
+  }
+
   .oh-ask-note {
     --oh-ask-note-out: var(--s1) 0 var(--s2);
     --oh-ask-note-pad: 8px 10px;

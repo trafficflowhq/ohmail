@@ -26,7 +26,9 @@ import {
   type RangeInput,
   type ViewEvent,
 } from "@ohmail/app-logic/calendar";
-import type { CalendarEventDrag } from "../calendar/view.js";
+import type { CalendarEventDrag, CalendarViewProps } from "../calendar/view.js";
+import { useCalendarMenu } from "../calendar/event-menu-trigger.js";
+import { monthSelection } from "./month-selection.js";
 import { useCalendarSwipe } from "../calendar/use-calendar-swipe.js";
 import { HeldNotice } from "../calendar/HeldNotice.js";
 import { useLocale, useText } from "../text/index.js";
@@ -38,6 +40,8 @@ export interface MonthViewProps {
   readonly acts: RangeActs;
   readonly edge: HeldEdge;
   readonly onDrag?: CalendarEventDrag;
+  readonly onSlot?: CalendarViewProps["onSlot"];
+  readonly selection?: CalendarViewProps["monthSelection"];
   /** The week the run was scrolled to, where it was. */
   readonly top?: string | null;
   readonly run?: MonthRun | null;
@@ -45,7 +49,7 @@ export interface MonthViewProps {
 
 const keyOf = (e: ViewEvent): string => e.id;
 
-export function MonthView({ input, acts, edge, run, top: at, onDrag }: MonthViewProps) {
+export function MonthView({ input, acts, edge, run, top: at, onDrag, onSlot, selection }: MonthViewProps) {
   const t = useText("month");
   const month = monthOfDay(input.anchor);
   const visibleMonth = run?.month ?? month;
@@ -99,7 +103,7 @@ export function MonthView({ input, acts, edge, run, top: at, onDrag }: MonthView
       <div className="cal-mo" data-device="phone">
         {notice}
         <div className="cal-mo-pick" {...swipe}>
-          <PhoneMonth input={input} acts={acts} grid={grid} />
+          <PhoneMonth {...{ input, acts, grid, onSlot, selection }} />
         </div>
         <PickedDay input={input} acts={acts} />
       </div>
@@ -108,7 +112,7 @@ export function MonthView({ input, acts, edge, run, top: at, onDrag }: MonthView
     <div className="cal-mo" data-device={input.device}>
       {notice}
       <div className="cal-mo-grid">
-        <GridMonth input={input} acts={acts} grid={grid} run={run} onDrag={onDrag} />
+        <GridMonth {...{ input, acts, grid, run, onDrag, onSlot, selection }} />
       </div>
     </div>
   );
@@ -183,7 +187,19 @@ function PickedDay({ input, acts }: { input: RangeInput; acts: RangeActs }) {
 type Grid = ReturnType<typeof monthWeeks<ViewEvent>>;
 
 /** The phone's month: small, a day with something bold. */
-function PhoneMonth({ input, acts, grid }: { input: RangeInput; acts: RangeActs; grid: Grid }) {
+function PhoneMonth({
+  input,
+  acts,
+  grid,
+  onSlot,
+  selection,
+}: {
+  input: RangeInput;
+  acts: RangeActs;
+  grid: Grid;
+  onSlot: CalendarViewProps["onSlot"];
+  selection: CalendarViewProps["monthSelection"];
+}) {
   const t = useText("month");
   const locale = useLocale();
   const thisYear = yearOf(input.today);
@@ -191,6 +207,7 @@ function PhoneMonth({ input, acts, grid }: { input: RangeInput; acts: RangeActs;
     <MiniMonth
       size="phone"
       compactDays
+      onDayPointerDown={onSlot}
       weekdays={weekdayNames(locale, input.weekStart, "narrow")}
       days={grid.weeks.flatMap((week) =>
         week.days.map((d, index) => ({
@@ -200,6 +217,14 @@ function PhoneMonth({ input, acts, grid }: { input: RangeInput; acts: RangeActs;
           today: d.today,
           picked: d.picked,
           outside: d.outside,
+          run:
+            selection && d.id >= selection.first && d.id <= selection.last
+              ? {
+                  tone: selection.tone ?? "neutral",
+                  first: d.id === selection.first || index === 0,
+                  last: d.id === selection.last || index === 6,
+                }
+              : undefined,
           busy: week.pieces.some((piece) => piece.from <= index && index <= piece.to) || d.more > 0,
           marks: [
             ...new Set(
@@ -230,13 +255,18 @@ function GridMonth({
   grid,
   run,
   onDrag,
+  onSlot,
+  selection,
 }: {
   input: RangeInput;
   acts: RangeActs;
   grid: Grid;
   run?: MonthRun | null;
   onDrag: CalendarEventDrag | undefined;
+  onSlot: CalendarViewProps["onSlot"];
+  selection: CalendarViewProps["monthSelection"];
 }) {
+  const context = useCalendarMenu();
   const t = useText("month");
   const calendar = useText("calendar");
   const locale = useLocale();
@@ -247,6 +277,7 @@ function GridMonth({
     weekNumber: w.number
       ? { number: w.number.week, label: t("weekLabel", { number: w.number.week }) }
       : undefined,
+    preview: selection && monthSelection(w, selection, locale, thisYear),
     children: w.pieces
       .filter((p) => p.run)
       .map((p) => (
@@ -265,7 +296,7 @@ function GridMonth({
           dayEdges={
             onDrag &&
             (input.open === null || input.open === p.item.id) &&
-            p.item.start.kind === "date" &&
+            (p.item.start.kind === "date" || ("timeEditable" in p.item && p.item.timeEditable === true)) &&
             !p.item.viewOnly
               ? {
                   start: p.goesOnBefore ? undefined : calendar("actions.resizeStart"),
@@ -275,6 +306,7 @@ function GridMonth({
           }
           style={{ gridColumn: `${p.from + 1} / ${p.to + 2}`, gridRow: p.row + 2 }}
           onPress={() => acts.event(p.item)}
+          {...context.eventProps<HTMLButtonElement>(p.item)}
           onPointerDown={onDrag ? (event) => onDrag(p.item.id, event) : undefined}
         />
       )),
@@ -304,6 +336,7 @@ function GridMonth({
               viewOnly={p.item.viewOnly}
               style={{ gridColumn: i + 1, gridRow: p.row + 2 }}
               onPress={() => acts.event(p.item)}
+              {...context.eventProps<HTMLButtonElement>(p.item)}
               onPointerDown={onDrag ? (event) => onDrag(p.item.id, event) : undefined}
             />
           );
@@ -325,7 +358,9 @@ function GridMonth({
       scrollLabel={run ? t("title") : undefined}
       scrollRef={run?.scrollRef}
       onScroll={run?.onScroll}
+      onDateMenu={context.date}
       onDayPress={(id) => acts.view("day", id)}
+      onCellPointerDown={onSlot}
       onCellPress={(id) => (id === input.anchor ? acts.view("day", id) : acts.pick(id))}
       onMorePress={(id) => acts.view("day", id)}
       onWeekPress={(id) => acts.view("week", id)}

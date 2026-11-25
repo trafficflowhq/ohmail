@@ -13,7 +13,13 @@ export interface QuestionBeforeActProps {
   /** What follows from it: the series' rule, what the invitees will read. */
   follows?: string;
   /** A series: which of its events the act is for. Each line with its key. */
-  scopes?: readonly { id: string; label: string; keyHint?: string; onPress?: () => void }[];
+  scopes?: readonly {
+    id: string;
+    label: string;
+    description?: string;
+    keyHint?: string;
+    onPress?: () => void;
+  }[];
   /** An act that writes to invitees: a note to them, which may stay empty. */
   note?: { label: string; placeholder: string; value: string; onChange?: (value: string) => void };
   /** Whether to tell them. The first is the one the keys go to. Where a provider always tells, there is only one. */
@@ -64,7 +70,7 @@ export function QuestionBeforeAct({
         </p>
         {follows ? <p className="oh-text oh-ask-follows">{follows}</p> : null}
         {scopes?.map((s) => (
-          <MenuItem key={s.id} keyHint={s.keyHint} onPress={s.onPress}>
+          <MenuItem key={s.id} description={s.description} keyHint={s.keyHint} onPress={s.onPress}>
             {s.label}
           </MenuItem>
         ))}

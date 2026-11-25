@@ -35,7 +35,12 @@ const ANSWERED = new Set(["accepted", "tentative", "declined"]);
 
 export function invitedByOthers(record: CalendarEventRecord, own: ReadonlySet<string>): boolean {
   const { myAnswer, organizer } = record;
-  return myAnswer !== null && organizer !== null && !own.has(organizer.address.trim().toLowerCase());
+  return (
+    !record.ownOrganizer &&
+    myAnswer !== null &&
+    organizer !== null &&
+    !own.has(organizer.address.trim().toLowerCase())
+  );
 }
 
 function rowOf(o: ShownOccurrence, input: InvitationsInput): InvitationRow {

@@ -7,6 +7,7 @@
  * words inside its own box, and every box inside the sheet: nothing spills over its neighbour or out of the view.
  */
 import { execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import { act, cleanup, fireEvent } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -125,7 +126,7 @@ describe("German at text size 1.5", () => {
 
 const calendarHtml = new Map<boolean, string>();
 
-async function dayHours(page: Page, view: string, name = /Tuesday.*10/, legacy = true) {
+async function dayHours(page: Page, view: string, name = /Tuesday.*10/, legacy = true, query = "") {
   // Bundle in Node because the layout cases in this file draw their markup in jsdom.
   const html =
     calendarHtml.get(legacy) ??
@@ -139,10 +140,10 @@ async function dayHours(page: Page, view: string, name = /Tuesday.*10/, legacy =
       { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
     );
   calendarHtml.set(legacy, html);
-  const url = `http://calrest.test/?screen=${view}`;
+  const url = `http://calrest.test/?screen=${view}${query}`;
   await page.route(url, (route) => route.fulfill({ contentType: "text/html", body: html }));
   await page.goto(url);
-  const day = page.getByRole("group", { name });
+  const day = view === "month" ? page.locator(".cal-mo") : page.getByRole("group", { name });
   const box = await day.boundingBox();
   if (!box) throw new Error("The selected day has no hours");
   return {
@@ -272,7 +273,7 @@ function hoursViewport(day: ReturnType<Page["getByRole"]>) {
   return day.locator("xpath=ancestor::*[@data-today-scroll]");
 }
 
-it.each(["header", "all-day lane", "below the grid", "another column"])(
+it.each(["header", "all-day lane", "below the grid"])(
   "clears the draft and cancels an outside release (%s)",
   async (where) => {
     const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
@@ -287,7 +288,6 @@ it.each(["header", "all-day lane", "below the grid", "another column"])(
         header: { x, y: header.y + header.height / 2 },
         "all-day lane": { x, y: allDay.y + allDay.height / 2 },
         "below the grid": { x, y: hours.y + hours.height + 2 },
-        "another column": { x: (await day.boundingBox())!.x - 2, y: y(617) },
       };
       const outside = exits[where as keyof typeof exits];
 
@@ -534,3 +534,195 @@ async function expectDraftStill(chip: ReturnType<Page["getByRole"]>) {
   );
   expect(arrival).toBe(false);
 }
+
+it.each([false, true])(
+  "creates a three-day Week range in either direction (backwards=%s)",
+  async (backwards) => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      const { x, y, editor } = await dayHours(page, "week", undefined, true, backwards ? "&scheme=dark" : "");
+      const thursday = await page.getByRole("group", { name: /Thursday.*12/ }).boundingBox();
+      const end = thursday!.x + thursday!.width / 2;
+      await page.mouse.move(backwards ? end : x, y(backwards ? 645 : 570));
+      await page.mouse.down();
+      await page.mouse.move(backwards ? x : end, y(backwards ? 570 : 645));
+      await expect.poll(() => page.locator(".oh-tg-in [data-drag=copy]").count()).toBe(3);
+      await captureRange(page, "week", backwards ? "dark" : "light");
+      await page.mouse.up();
+      await editor.waitFor();
+      expect(await editor.getByLabel("Start time").inputValue()).toBe("09:30");
+      expect(await editor.getByLabel("End time").inputValue()).toBe("10:45");
+      expect(await editor.getByRole("button", { name: "End date" }).textContent()).toContain("12");
+    } finally {
+      await page.close();
+    }
+  },
+  60_000,
+);
+
+it.each(["start", "end"] as const)(
+  "resizes the Week %s into another day",
+  async (edge) => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      const { x, y } = await dayHours(page, "week", undefined, true, "&record-times");
+      const event = page.getByRole("button", { name: /Dentist.*09:30/ });
+      const handle = event.locator(`[data-cal-resize=${edge}]`);
+      const grip = (await handle.boundingBox())!;
+      const friday = (await page.getByRole("group", { name: /Friday.*13/ }).boundingBox())!;
+      await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(edge === "start" ? x : friday.x + friday.width / 2, y(660));
+      await expect
+        .poll(() => page.locator(".oh-tg-in [data-drag=copy]").count())
+        .toBe(edge === "start" ? 3 : 2);
+      await page.mouse.up();
+      await expect
+        .poll(() => writtenTimes(page))
+        .toEqual({
+          start: {
+            kind: "zoned",
+            value: edge === "start" ? "20261110T110000" : "20261112T093000",
+            zone: "Europe/Zurich",
+          },
+          end: {
+            kind: "zoned",
+            value: edge === "end" ? "20261113T110000" : "20261112T103000",
+            zone: "Europe/Zurich",
+          },
+        });
+    } finally {
+      await page.close();
+    }
+  },
+  60_000,
+);
+
+it.each(["light", "dark"])(
+  "creates an inclusive Month range across a week row in %s",
+  async (scheme) => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      const { editor } = await dayHours(page, "month", undefined, true, `&state=all&scheme=${scheme}`);
+      const from = (await page.locator(".oh-mo-cell[data-cal-drop-day='2026-11-13']").boundingBox())!;
+      const to = (await page.locator(".oh-mo-cell[data-cal-drop-day='2026-11-17']").boundingBox())!;
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height - 8);
+      await page.mouse.down();
+      await page.mouse.move(to.x + to.width / 2, to.y + to.height - 8);
+      await expect.poll(() => page.locator(".oh-mo-week [data-drag=copy]").count()).toBe(2);
+      await captureRange(page, "month", scheme);
+      await page.mouse.up();
+      await editor.waitFor();
+      expect(await editor.getByRole("switch", { name: "All day" }).getAttribute("aria-checked")).toBe("true");
+      expect(await editor.getByRole("button", { name: "End date" }).textContent()).toContain("17");
+    } finally {
+      await page.close();
+    }
+  },
+  60_000,
+);
+
+it("moves a Month band's last edge into the next week", async () => {
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  try {
+    await dayHours(page, "month", undefined, true, "&state=all&record-times");
+    const event = page.getByRole("button", { name: /Glaze order/ });
+    const grip = (await event.locator("[data-cal-resize=end]").boundingBox())!;
+    const to = (await page.locator(".oh-mo-cell[data-cal-drop-day='2026-11-17']").boundingBox())!;
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height - 8);
+    await expect.poll(() => page.locator(".cal-day-range-preview").count()).toBe(2);
+    await page.mouse.up();
+    await expect
+      .poll(() => writtenTimes(page))
+      .toEqual({
+        start: { kind: "date", value: "20261112" },
+        end: { kind: "date", value: "20261118" },
+      });
+  } finally {
+    await page.close();
+  }
+}, 60_000);
+
+async function writtenTimes(page: Page) {
+  const data = await page.locator("body").getAttribute("data-written-times");
+  return data && JSON.parse(data);
+}
+
+async function captureRange(page: Page, view: string, scheme: string) {
+  const folder = process.env.OHMAIL_CALENDAR_RANGE_SHOTS;
+  if (!folder) return;
+  mkdirSync(folder, { recursive: true });
+  await page.screenshot({ path: `${folder}/${view}-${scheme}.png` });
+}
+
+it("keeps the pressed day when a held Week range steps past the right edge", async () => {
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  try {
+    const { x, y, editor } = await dayHours(page, "week");
+    const sunday = (await page
+      .locator("[data-cal-drop-day='2026-11-15'][data-cal-drop-kind=time]")
+      .boundingBox())!;
+    await page.mouse.move(x, y(573));
+    await page.mouse.down();
+    await page.mouse.move(sunday.x + sunday.width - 7, y(645));
+    const monday = page.locator("[data-cal-drop-day='2026-11-16'][data-cal-drop-kind=time]");
+    await monday.waitFor({ state: "visible", timeout: 3000 });
+    const box = (await monday.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + (box.height * 645) / 1440);
+    await page.mouse.up();
+    await editor.waitFor();
+    expect(await editor.getByRole("button", { name: "Event date" }).textContent()).toContain("10");
+    expect(await editor.getByRole("button", { name: "End date" }).textContent()).toContain("16");
+  } finally {
+    await page.close();
+  }
+}, 60_000);
+
+it("holds and extends a Month selection across dates on a phone", async () => {
+  const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  try {
+    await dayHours(page, "month", undefined, true, "&device=phone");
+    const cdp = await page.context().newCDPSession(page);
+    const center = async (day: string) => {
+      const box = (await page.locator(`.cal-mo-pick [data-cal-drop-day="${day}"]`).boundingBox())!;
+      return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+    };
+    const first = await center("2026-11-10");
+    const last = await center("2026-11-12");
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [first] });
+    await page.locator(".cal-mo-pick [data-band=only]").waitFor();
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [last] });
+    await expect.poll(() => page.locator(".cal-mo-pick [data-band]").count()).toBe(3);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    const editor = page.getByRole("dialog", { name: "New event" });
+    await editor.waitFor();
+    expect(await editor.getByRole("button", { name: "End date" }).textContent()).toContain("12");
+  } finally {
+    await page.close();
+  }
+}, 60_000);
+
+it("changes the date of a timed Month band's end and keeps its clock time", async () => {
+  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  try {
+    await dayHours(page, "month", undefined, true, "&state=range&record-times");
+    const band = page.getByRole("button", { name: /Night watch/ });
+    const grip = (await band.locator("[data-cal-resize=end]").boundingBox())!;
+    const day = (await page.locator(".oh-mo-cell[data-cal-drop-day='2026-11-17']").boundingBox())!;
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(day.x + day.width / 2, day.y + day.height - 8);
+    await expect.poll(() => page.locator(".cal-day-range-preview").count()).toBe(2);
+    await page.mouse.up();
+    await expect
+      .poll(() => writtenTimes(page))
+      .toEqual({
+        start: { kind: "zoned", value: "20261112T211500", zone: "Europe/Zurich" },
+        end: { kind: "zoned", value: "20261117T084500", zone: "Europe/Zurich" },
+      });
+  } finally {
+    await page.close();
+  }
+}, 60_000);

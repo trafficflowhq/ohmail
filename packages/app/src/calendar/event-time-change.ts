@@ -1,7 +1,7 @@
 import { addDays, isoOfDay, reschedule, resizeTime, type ZoneSource } from "@ohmail/app-logic/calendar";
 import type { InvitationProposalTimes } from "@ohmail/wire";
 import type { CalendarEventFace } from "./faces.js";
-import type { DayEdge } from "./view.js";
+import type { DayEdge, TimedSegment } from "./view.js";
 
 export type EventChange =
   | ({ kind: "accept-time" } & InvitationProposalTimes)
@@ -54,4 +54,34 @@ export function changedTimes(change: EventChange, face: CalendarEventFace, zone:
       end: { kind: "date" as const, value: addDays(range.last, 1).replaceAll("-", "") },
     }
   );
+}
+
+export function resizeTimedRange(
+  day: string,
+  span: { from: number; to: number },
+  edge: DayEdge,
+  segment: TimedSegment,
+  delta: number,
+  days: number,
+) {
+  const dayMinutes = 24 * 60;
+  const from = ((span.from % dayMinutes) + dayMinutes) % dayMinutes;
+  const to = from + span.to - span.from;
+  const step = 15;
+  const start = edge === "start";
+  const old = start ? from : to;
+  const grip = start ? segment.from : segment.to;
+  const next = old - grip + Math.round((grip + delta) / step) * step + days * dayMinutes;
+  const bounded = start
+    ? Math.min(next, Math.ceil(to / step) * step - step)
+    : Math.max(next, Math.floor(from / step) * step + step);
+  const first = start ? bounded : from;
+  const last = start ? to : bounded;
+  const offset = Math.floor(first / dayMinutes);
+  return {
+    day: addDays(day, offset),
+    minute: first - offset * dayMinutes,
+    minutes: bounded - old,
+    length: last - first,
+  };
 }

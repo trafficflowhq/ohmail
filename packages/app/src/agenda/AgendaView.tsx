@@ -9,6 +9,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type RefObject, type UIEven
 import { useKeyBindings } from "@ohmail/app-logic/keys";
 import { Button, RefusalLine } from "@ohmail/ui/base";
 import { GroupHeading, ListHead, Row as MailRow } from "@ohmail/ui/mail";
+import { useCalendarMenu } from "../calendar/event-menu-trigger.js";
 import { AgendaRow, MiniMonth, SidePanel } from "@ohmail/ui/calendar";
 import {
   addDays,
@@ -301,6 +302,7 @@ function Row({
             ? clockTime(time.from, locale)
             : t("span", { from: clockTime(time.from, locale), to: clockTime(time.to, locale) });
   const e = row.item;
+  const context = useCalendarMenu();
   const open = row.first && e.id === input.open;
   return (
     <AgendaRow
@@ -317,6 +319,7 @@ function Row({
       waits={e.waits}
       open={open}
       onOpen={onOpen}
+      {...context.eventProps<HTMLDivElement>(e, day)}
     />
   );
 }

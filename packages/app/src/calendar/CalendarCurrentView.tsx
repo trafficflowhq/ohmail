@@ -50,6 +50,8 @@ export function CurrentView({
         acts={acts}
         edge={edge}
         run={monthRun}
+        onSlot={timeProps.onSlot}
+        selection={timeProps.monthSelection}
         {...(timeProps.onDrag ? { onDrag: timeProps.onDrag } : {})}
       />
     ) : place === "year" ? (

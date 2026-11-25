@@ -54,10 +54,17 @@ export function guestUpdate(
 }
 
 export function editGuestUpdate(
-  { record, exception, connection }: EditableEvent,
+  { record, exception, connection, sharedCopy }: EditableEvent,
   change: Partial<CalendarEventFields>,
   scope?: CalendarChangeScope | CalendarRemoveScope,
 ): GuestUpdate {
+  if (sharedCopy)
+    return {
+      names: [],
+      audience: { organizer: null, guests: [] },
+      invited: [],
+      proposal: JSON.stringify(change),
+    };
   if (
     exception &&
     scope?.kind === "occurrence" &&

@@ -39,6 +39,7 @@
       "unknown": "Die Änderung wurde nicht gespeichert."
     },
     "taken": {
+      "hide": "Termin ausgeblendet",
       "deleteAudience": "Absage an {guests} gesendet",
       "create": "Termin hinzugefügt",
       "update": "Geändert",

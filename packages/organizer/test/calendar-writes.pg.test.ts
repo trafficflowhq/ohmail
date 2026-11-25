@@ -11,7 +11,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import {
   BENCH_CALDAV_PLACE, PROVEN_REPEATS, proofPlaceOf, type CalendarProvider, type Connection, type ProvenRepeats, type WriteAnswer,
 } from "@ohmail/cal-providers";
-import { calCalendars, calConnections, calEvents, calSettings, calWrites } from "@trafficflow/db";
+import { calAttendees, calCalendars, calConnections, calEvents, calSettings, calWrites, mailboxes } from "@trafficflow/db";
 import { calendarPool, passDb, type ConnectionKey } from "../src/calendar/index.js";
 import { calendarSyncPass } from "../src/calendar/sync-pass.js";
 import type { CalendarWriteDrainInput } from "../src/calendar/types.js";
@@ -107,6 +107,63 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
   }
   const retitle = (e: { id: string; updatedAt: Date }, title: string) =>
     ({ kind: "calendar_event_update", eventId: e.id, base: e.updatedAt.toISOString(), scope: { kind: "record" }, change: { title } });
+
+  it.each(["reader", "capability lost", "capability kept", "organizer unverified"] as const)(
+    "checks a queued native move before contacting the provider (%s)",
+    async (condition) => {
+      const word = condition.startsWith("capability") ? "caldav" : "google";
+      const a = await account(word);
+      if (condition === "reader") {
+        const principal = "connected@example.test";
+        await w.db.update(calConnections).set({ principal }).where(eq(calConnections.id, a.connectionId));
+        await w.db.update(calEvents).set({ organizer: principal }).where(eq(calEvents.id, a.eventId));
+      }
+      if (condition === "organizer unverified") {
+        await w.db.update(calCalendars).set({ access: "writer" }).where(eq(calCalendars.id, a.calendarId));
+      }
+      if (word === "caldav") {
+        await w.db.update(calEvents).set({ original: [
+          "BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT", "UID:uid-1", "DTSTAMP:20261101T000000Z",
+          "DTSTART:20261118T090000Z", "DTEND:20261118T100000Z", "END:VEVENT", "END:VCALENDAR", "",
+        ].join("\r\n") }).where(eq(calEvents.id, a.eventId));
+      }
+      await w.db.update(calCalendars).set({ nativeMove: true }).where(eq(calCalendars.id, a.calendarId));
+      const [destination] = await w.db.insert(calCalendars).values({
+        accountId: a.accountId, connectionId: a.connectionId, providerId: "destination",
+        name: "Workshop", access: "owner", nativeMove: true,
+      }).returning({ id: calCalendars.id });
+      const act = { kind: "calendar_event_move", eventId: a.eventId, base: a.base, toCalendarId: destination!.id };
+      await press(a.accountId, "move", act);
+      if (condition === "reader" || condition === "capability lost") {
+        await w.db.update(calCalendars).set(condition === "reader" ? { access: "reader" } : { nativeMove: false })
+          .where(eq(calCalendars.id, destination!.id));
+      }
+      const moved: string[] = [];
+      const writer = { ...scriptedWriter(word), moveEvent: async (_connection: Connection, _source: { id: string }, target: { id: string }): Promise<WriteAnswer> => {
+        moved.push(target.id);
+        return { ok: true, items: [] };
+      } };
+      await run(a, writer, { word });
+      if (condition === "capability kept") {
+        expect(moved).toEqual(["destination"]);
+        expect(await rows(a)).toMatchObject([{ state: "applied" }]);
+      } else {
+        expect(moved).toEqual([]);
+        expect(await rows(a)).toMatchObject([{ state: "refused" }]);
+      }
+    },
+  );
+
+  it("refuses queued guest replacement on a shared calendar before calling the provider", async () => {
+    const a = await account("caldav");
+    await w.db.update(calCalendars).set({ access: "writer" }).where(eq(calCalendars.id, a.calendarId));
+    const act = { ...update(a, "Changed"), change: { invitees: [{ address: "guest@example.test", name: null, role: "required" }] } };
+    await press(a.accountId, "change-guests", act);
+    const writer = scriptedWriter("caldav");
+    await run(a, writer, { word: "caldav" });
+    expect(writer.calls).toHaveLength(0);
+    expect(await rows(a)).toMatchObject([{ state: "refused" }]);
+  });
 
   it("settles a personal move after a lost original-removal response without making a second copy", async () => {
     const a = await account();
@@ -240,6 +297,66 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
       ["applied", null, '"v1"'], ["applied", null, version],
     ]);
     expect(seen).toEqual([version]);
+  });
+
+  it.each([false, true])("answers only the connected attendee on an ordinary occurrence (reversed: %s)", async (reverse) => {
+    const a = await account();
+    const attendee = ["second", "example.test"].join("@");
+    const other = ["first", "example.test"].join("@");
+    const organizer = ["host", "example.test"].join("@");
+    await w.db.update(calConnections).set({ principal: attendee }).where(eq(calConnections.id, a.connectionId));
+    await w.db.insert(mailboxes).values([attendee, other].map((address) => ({
+      accountId: a.accountId, provider: "imap", address, status: "connected",
+    })));
+    await w.db.update(calEvents).set({ repeatRule: "FREQ=DAILY;COUNT=5", organizer, myAnswer: "accepted" })
+      .where(eq(calEvents.id, a.eventId));
+    const people = [other, attendee];
+    await w.db.insert(calAttendees).values((reverse ? people.reverse() : people).map((address) => ({
+      eventId: a.eventId, accountId: a.accountId, address, role: "required", answer: "accepted",
+    })));
+    const start = Date.UTC(2026, 10, 20, 9);
+    await press(a.accountId, "answer-one", { kind: "calendar_event_answer", eventId: a.eventId, base: a.base,
+      scope: { kind: "occurrence", at: String(start) }, answer: "declined" });
+    const calls: unknown[] = [];
+    const writer = { ...scriptedWriter("google"), answer: async (_c, _cal, target, request) => {
+      calls.push({ sameAttendee: request.as === attendee, reply: request.reply, occurrence: target.occurrence });
+      return { ok: true as const, items: [] };
+    } } satisfies NonNullable<CalendarProvider["writer"]>;
+    await run(a, writer);
+    await run(a, writer);
+    expect(calls).toEqual([{ sameAttendee: true, reply: "DECLINED", occurrence: { kind: "instant", epochMs: start } }]);
+    expect(await rows(a)).toMatchObject([{ state: "applied", attempts: 1 }]);
+  });
+
+  it("refuses a changed-occurrence decline without calling the provider", async () => {
+    const a = await account();
+    const attendee = ["guest", "example.test"].join("@");
+    const organizer = ["host", "example.test"].join("@");
+    await w.db.update(calConnections).set({ principal: attendee }).where(eq(calConnections.id, a.connectionId));
+    const [master] = await w.db.update(calEvents).set({ repeatRule: "FREQ=DAILY;COUNT=5", organizer, myAnswer: "accepted" })
+      .where(eq(calEvents.id, a.eventId)).returning({ updatedAt: calEvents.updatedAt });
+    const at = String(Date.UTC(2026, 10, 20, 9));
+    const [child] = await w.db.insert(calEvents).values({
+      accountId: a.accountId, calendarId: a.calendarId, providerId: "changed", versionTag: '"v2"',
+      uid: "uid-1", recurrenceId: at, occurrenceAt: new Date(Number(at)), title: "Moved lesson", organizer, myAnswer: "accepted",
+      startKind: "instant", startLocal: "20261120T110000Z", endKind: "instant", endLocal: "20261120T120000Z",
+      startsAt: new Date("2026-11-20T11:00:00Z"), endsAt: new Date("2026-11-20T12:00:00Z"),
+    }).returning({ id: calEvents.id, updatedAt: calEvents.updatedAt });
+    await w.db.insert(calAttendees).values([a.eventId, child!.id].map((eventId) => ({
+      eventId, accountId: a.accountId, address: attendee, role: "required", answer: "accepted",
+    })));
+    const act = { kind: "calendar_event_answer", eventId: child!.id,
+      base: `${child!.updatedAt.toISOString()}/${master!.updatedAt.toISOString()}`,
+      scope: { kind: "occurrence", at }, answer: "declined" };
+    const row = await recordWrite(w, { accountId: a.accountId, key: "decline", act });
+    const exception = { id: child!.id, providerId: "changed", version: '"v2"', occurrence: at };
+    await w.db.update(calWrites).set({ eventId: a.eventId, baseVersionTag: '"v1"',
+      payload: sql`${calWrites.payload} || ${JSON.stringify({ exception })}::jsonb`,
+    }).where(eq(calWrites.id, row.id));
+    const writer = scriptedWriter("google");
+    await run(a, writer);
+    expect(writer.calls).toEqual([]);
+    expect(await rows(a)).toMatchObject([{ key: "decline", state: "refused", refusal: "content_refused" }]);
   });
 
   it.each(["google", "microsoft", "caldav"] as const)("drains the exact reviewed exception on %s and refuses a copy changed in the queue", async (word) => {

@@ -97,6 +97,7 @@ interface Plain {
   readonly day: string;
   readonly from: string;
   readonly to: string;
+  readonly endDay?: string;
   readonly place?: string;
   readonly by?: { readonly address: string; readonly name: string };
   readonly answer?: CalendarEventRecord["myAnswer"];
@@ -126,7 +127,7 @@ function event(e: Plain): CalendarEventRecord {
     place: e.place ?? null,
     callLink: null,
     start: e.allDay ? { kind: "date", value: e.day } : zoned(e.day, e.from),
-    end: e.allDay ? { kind: "date", value: nextDay(e.day) } : zoned(e.day, e.to),
+    end: e.allDay ? { kind: "date", value: nextDay(e.day) } : zoned(e.endDay ?? e.day, e.to),
     duration: null,
     startsAt: UPDATED,
     endsAt: UPDATED,
@@ -343,6 +344,18 @@ function addedOf(state: string | null): readonly Plain[] {
     to: "20:30",
   };
   if (state === "added") return [winternacht];
+  if (state === "range")
+    return [
+      {
+        id: "ev-night-watch",
+        cal: "mila",
+        title: "Night watch",
+        day: "20261112",
+        endDay: "20261113",
+        from: "21:15",
+        to: "08:45",
+      },
+    ];
   if (state !== "all") return [];
   return [
     winternacht,
