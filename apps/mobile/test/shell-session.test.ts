@@ -11,7 +11,7 @@ import { MemoryMirrorStore, OUTBOX_TYPE, SqlMirrorStore, mirrorDbName } from "@o
 import { mirrorExists, mirrorOwnerKey, type MobileEngineDeps } from "../src/engine/boot";
 import { OldCopyRefused, PAGE_ROWS, launchVerdict, settleLaunchVerdict, type OldCopyDoor } from "../src/shell/old-copy";
 import type { BearerManagerRN } from "../src/net/bearer";
-import { connectShellById, pairForShell, probePairing, shellSessionOf, type PairingEnv } from "../src/net/pairing";
+import { clearUnscopedCalendarCredentials, connectShellById, drainPendingWipes, forgetProfile, pairForShell, probePairing, shellSessionOf, type PairingEnv } from "../src/net/pairing";
 import { ServerProfileStore, type SecureKV } from "../src/state/servers";
 import type { BackupExclusionNative } from "../src/engine/backup-exclusion";
 import type { NotificationPermissionHost } from "../src/engine/notification-permission";
@@ -39,10 +39,11 @@ function shellEnv(clientRelease?: string) {
     deleteDatabase: world.drop,
     uuid: () => "00000000-0000-4000-8000-000000000000",
   };
+  const kv = memoryKV();
   const env: PairingEnv = {
-    profiles: new ServerProfileStore(memoryKV()), engineDeps: deps, ...(clientRelease ? { clientRelease } : {}),
+    profiles: new ServerProfileStore(kv), engineDeps: deps, ...(clientRelease ? { clientRelease } : {}),
   };
-  return { env, opened: () => opened };
+  return { env, kv, opened: () => opened };
 }
 
 /** The page's bridge joined to the native end over `door`, the platform's message channel the one double. */
@@ -102,6 +103,190 @@ describe("the shell's session", () => {
     } finally {
       fake.server.close();
     }
+  });
+
+  it("recognizes a stored computer without a calendar when it answers with a web page", async () => {
+    const { env } = shellEnv();
+    const origin = new URL("https:" + "//computer.example.invalid").origin;
+    const profile = await env.profiles.add({
+      origin, flavor: "desktop-host", accountId: "account", refreshToken: "fixture-refresh", pin: null,
+    });
+    const paths: string[] = [];
+    const result = await connectShellById({
+      ...env, calendarOnly: true,
+      fetchImpl: async (url, init) => {
+        paths.push(new URL(url).pathname);
+        expect((init as RequestInit | undefined)?.credentials).toBe("omit");
+        return new Response("<html></html>", { headers: { "content-type": "text/html" } });
+      },
+    }, profile.id);
+    expect(result).toMatchObject({ kind: "refused", reason: { say: "calendarServerUnavailable" } });
+    expect(paths).toEqual(["/calendar/sync", "/api/calendar/sync"]);
+  });
+
+  it("clears unscoped credentials and leaves the old pairing available to re-pair", async () => {
+    const { env } = shellEnv();
+    const origin = "https://calendar.example.invalid";
+    const old = await env.profiles.add({ origin, flavor: "managed", accountId: "old", refreshToken: "fixture-refresh" });
+    const current = await env.profiles.add({ origin, flavor: "managed", accountId: "new", refreshToken: "cal.fixture-refresh" });
+    const calendar = { ...env, calendarOnly: true, fetchImpl: async () => { throw new Error("unexpected network request"); } };
+    await clearUnscopedCalendarCredentials(calendar);
+    expect(await env.profiles.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: old.id, refreshToken: null }),
+      expect.objectContaining({ id: current.id, refreshToken: current.refreshToken }),
+    ]));
+    expect(await connectShellById(calendar, old.id)).toMatchObject({ kind: "refused", needsRepair: true });
+  });
+
+  it("keeps an offline profile and reopens a legacy forget when the keeper still has edits", async () => {
+    const { env } = shellEnv();
+    const origin = "https://calendar.example.invalid";
+    const profile = await env.profiles.add({ origin, flavor: "managed", accountId: "account", refreshToken: "cal.fixture-refresh" });
+    const owner = mirrorOwnerKey(origin, profile.accountId);
+    const touches: string[] = [];
+    const calendar: PairingEnv = {
+      ...env, calendarOnly: true,
+      fetchImpl: async () => { touches.push("network"); throw new Error("offline"); },
+      shell: {
+        calendarCopiesPrepared: () => true,
+        scopeOf: async (key) => key,
+        keeperScopes: async () => [owner],
+        fenceCalendarWipe: async () => "pending",
+        releaseCalendarWipe: async () => { touches.push("release"); },
+        forgetKeeper: async () => { touches.push("forget"); return true; },
+        clearViewCopies: async () => { touches.push("clear"); return { listed: false, usage: 0 }; },
+      },
+    };
+    expect(await forgetProfile(calendar, profile.id, { beforeForget: async () => { touches.push("leave"); } }))
+      .toMatchObject({ kind: "partial", reason: { say: "calendarQueuePending" } });
+    expect(await env.profiles.pendingWipes()).toEqual([]);
+    await env.profiles.markPendingWipe(profile.id, owner);
+    expect(await drainPendingWipes(calendar)).toEqual([]);
+    expect(await env.profiles.pendingWipes()).toEqual([]);
+    expect(await env.profiles.list()).toContainEqual(profile);
+    expect(touches).toEqual([]);
+  });
+
+  it.each(["live", "restart"] as const)("erases only the confirmed keeper after %s even when another queue cannot transfer", async (when) => {
+    const { env } = shellEnv();
+    const profile = await env.profiles.add({
+      origin: "https://calendar.example.invalid", flavor: "managed", accountId: "erased", refreshToken: "cal.fixture-refresh",
+    });
+    const owner = mirrorOwnerKey(profile.origin, profile.accountId);
+    const keepers = new Map([[owner, "pending edit"], ["other", "independent edit"]]);
+    const fences = new Set<string>();
+    const calls: string[] = [];
+    let prepared = false;
+    const shell = {
+      scopeOf: async (key: string) => key,
+      keeperScopes: async () => [...keepers.keys()],
+      eraseKeeper: async (scope: string) => { fences.add(scope); keepers.delete(scope); return true; },
+      releaseCalendarErasure: async (scope: string) => { fences.delete(scope); },
+      forgetKeeper: async () => false,
+      waitForCalendarCopies: async () => { calls.push("prepare"); return prepared; },
+      clearViewCopies: async () => { calls.push("clear"); return { listed: false, usage: 0 }; },
+    };
+    const calendar = { ...env, shell, calendarOnly: true };
+    await env.profiles.markPendingWipe(profile.id, owner, true);
+    if (when === "live") {
+      expect(await forgetProfile(calendar, profile.id, { erased: true })).toMatchObject({ kind: "partial" });
+    } else {
+      expect(await drainPendingWipes(calendar)).toEqual([owner]);
+    }
+    expect(calls).toEqual(["prepare"]);
+    expect(await env.profiles.pendingWipes()).toEqual([{ id: profile.id, owner, erased: true }]);
+    expect(keepers).toEqual(new Map([["other", "independent edit"]]));
+    expect(fences).toEqual(new Set([owner]));
+
+    prepared = true;
+    expect(await drainPendingWipes(calendar)).toEqual([]);
+    expect(calls).toEqual(["prepare", "prepare", "clear"]);
+    expect(fences.size).toBe(0);
+    expect(await env.profiles.pendingWipes()).toEqual([]);
+  });
+
+  it.each(["live", "restart"] as const)("erases only the confirmed account's pending calendar after %s", async (when) => {
+    const { env, kv } = shellEnv();
+    const keepers = new Map([["other", ["independent edit"]]]);
+    const clears: string[] = [];
+    let viewAvailable = when === "live";
+    const shell = {
+      calendarCopiesPrepared: () => true,
+      scopeOf: async (key: string) => key,
+      keeperScopes: async () => [...keepers.keys()],
+      fenceCalendarWipe: async () => "pending" as const,
+      releaseCalendarErasure: async () => {},
+      forgetKeeper: async () => false,
+      eraseKeeper: async (scope: string) => { keepers.delete(scope); return true; },
+      clearViewCopies: async () => {
+        clears.push("web");
+        return { listed: !viewAvailable, usage: viewAvailable ? 0 : 1 };
+      },
+    };
+    const calendar = { ...env, shell, calendarOnly: true };
+    const { fake, outcome } = await pairedForShell(calendar, { calendarSync: true, accountId: "account" });
+    try {
+      if (outcome.kind !== "shell") throw new Error("calendar pairing refused");
+      const { session } = outcome;
+      const { profile, ownerKey } = session;
+      keepers.set(ownerKey, ["pending edit"]);
+      expect((await session.verifyIdentity()).kind).toBe("verified");
+      fake.erase();
+      await session.send("/calendar/sync", { method: "GET" });
+      expect(await session.bearer?.deathSettled()).toBe("erased");
+      expect(await calendar.profiles.list()).toContainEqual(expect.objectContaining({ id: profile.id, refreshToken: null }));
+      await calendar.profiles.markPendingWipe(profile.id, ownerKey);
+      expect(await calendar.profiles.pendingWipes()).toEqual([{ id: profile.id, owner: ownerKey, erased: true }]);
+      session.leave();
+
+      if (when === "live") {
+        expect(await forgetProfile(calendar, profile.id, { erased: true, revoke: async () => true }))
+          .toEqual({ kind: "forgotten" });
+      } else {
+        const restarted = { ...calendar, profiles: new ServerProfileStore(kv) };
+        expect(await drainPendingWipes(restarted)).toEqual([ownerKey]);
+        expect(await restarted.profiles.pendingWipes()).toEqual([{ id: profile.id, owner: ownerKey, erased: true }]);
+        expect(keepers.has(ownerKey)).toBe(false);
+        viewAvailable = true;
+        expect(await drainPendingWipes(restarted)).toEqual([]);
+      }
+      expect(keepers.has(ownerKey)).toBe(false);
+      expect(keepers.get("other")).toEqual(["independent edit"]);
+      expect(clears).toContain("web");
+      expect(await calendar.profiles.list()).toEqual([]);
+      expect(await calendar.profiles.pendingWipes()).toEqual([]);
+    } finally { fake.server.close(); }
+  });
+
+  it("settles a confirmed calendar erasure before adopting a new pairing for the same account", async () => {
+    const { env } = shellEnv();
+    const erased: string[] = [];
+    let clears = 0;
+    const calendar = { ...env, calendarOnly: true, shell: {
+      calendarCopiesPrepared: () => true,
+      scopeOf: async (key: string) => key,
+      keeperScopes: async () => [],
+      forgetKeeper: async () => false,
+      eraseKeeper: async (scope: string) => { erased.push(scope); return true; },
+      releaseCalendarErasure: async () => {},
+      clearViewCopies: async () => { clears++; return { listed: false, usage: 0 }; },
+    } };
+    const { fake, origin, outcome } = await pairedForShell(calendar, { calendarSync: true, accountId: "account" });
+    try {
+      if (outcome.kind !== "shell") throw new Error("calendar pairing refused");
+      const { profile, ownerKey } = outcome.session;
+      outcome.session.leave();
+      await env.profiles.markPendingWipe(profile.id, ownerKey, true);
+      fake.mintPairToken("replacement-code");
+      const probed = await probePairing(calendar, { origin, pin: null });
+      if (probed.kind === "refused") throw new Error("calendar probe refused");
+      const again = await pairForShell(calendar, { admission: probed.admission, token: "replacement-code" });
+      expect(again.kind).toBe("shell");
+      expect(erased).toEqual([ownerKey]);
+      expect(clears).toBe(1);
+      expect(await env.profiles.pendingWipes()).toEqual([]);
+      if (again.kind === "shell") again.session.leave();
+    } finally { fake.server.close(); }
   });
 
   it("refuses what the screens' way in refuses: a profile this phone does not hold", async () => {

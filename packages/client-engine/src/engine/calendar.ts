@@ -56,7 +56,9 @@ export abstract class EngineCalendar extends EngineLifecycle {
       writeCalendar: adapter.writeCalendar.bind(adapter),
       retryCalendarWrite: adapter.retryCalendarWrite.bind(adapter),
       dismissCalendarWrite: adapter.dismissCalendarWrite.bind(adapter),
-      ...(adapter.mailProposal ? { mailProposal: adapter.mailProposal.bind(adapter) } : {}),
+      ...(adapter.mailProposal ? this.calendarOnly
+        ? { recoverProposal: adapter.mailProposal.bind(adapter) }
+        : { mailProposal: adapter.mailProposal.bind(adapter) } : {}),
       ...(adapter.setSuggestionDismissed ? {
         setSuggestionDismissed: async (id: string, dismissed: boolean) => {
           await adapter.setSuggestionDismissed!(id, dismissed);
@@ -160,10 +162,13 @@ export abstract class EngineCalendar extends EngineLifecycle {
       try {
         page = await this.readCeiling(snapshot({
           phase: "calendar",
+          ...(this.calendarOnly ? { calendarOnly: true } : {}),
           ...(this.types ? { types: this.types } : {}),
           ...(cursor !== undefined ? { cursor } : (named ?? {})),
         }));
-      } catch {
+        this.checkCalendarChanges(page.changes);
+      } catch (err) {
+        this.noteCalendarAvailability(err);
         if (wrote) this.notify();
         return false;
       }

@@ -202,7 +202,7 @@
     @supports (animation-timeline: view()) {
       :root:not([data-device="phone"], [data-rm="1"])
         .oh-sheet-run
-        > :not([role="feed"], [data-stream-window]),
+        > :not([role="feed"], [data-stream-window], .oh-composer),
       :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > [data-stream-window] .oh-message,
       :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > [role="feed"] > [aria-posinset] {
         transform-origin: 50% 0;
@@ -408,6 +408,7 @@
 }
 
 .oh-sheet[data-writing-keyboard] > .oh-sheet-foot {
+  margin-block: 0;
   position: relative;
   inset: auto;
   flex: none;

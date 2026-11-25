@@ -13,6 +13,7 @@
  * server, pairs a device or ends a session. A secret rides in a body and never in a path or a
  * query, so a relay's line of a forwarded write (the route's pattern, a status, a time) holds none.
  */
+import type { CalendarConnectionRecord, CalendarConnectWire } from "@ohmail/wire";
 import { isWriteKey } from "@trafficflow/db/calendar";
 import {
   calendarConnectState, checkCalendarConnection, connectCalendar, parseConnectAsk, removeCalendarConnection, setCalendar,
@@ -22,11 +23,23 @@ import { IdempotencyRaceLost, ServiceError, requireUuid, sha256 } from "@traffic
 import { serviceContext } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import { lookupIdempotent, replayOf } from "../idempotency.js";
-import { stepUpRefusal } from "../middleware.js";
+import { calendarRestricted, stepUpRefusal } from "../middleware.js";
 import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import { readBody } from "../routes/shared.js";
 import { calendarOAuthClient } from "./oauth.js";
+
+function connectionFor(req: Request, deps: ApiDeps, connection: CalendarConnectionRecord): CalendarConnectionRecord {
+  return calendarRestricted(req, deps)
+    ? { ...connection, grantMailboxId: null }
+    : connection;
+}
+
+function replayConnection(req: Request, deps: ApiDeps, stored: Parameters<typeof replayOf>[0], hash: string) {
+  if (!calendarRestricted(req, deps)) return replayOf(stored, hash);
+  const responseJson = connectionFor(req, deps, stored.responseJson as CalendarConnectionRecord);
+  return replayOf({ ...stored, responseJson }, hash);
+}
 
 const doorOf = (deps: ApiDeps): CalendarConnectDoor => ({ port: deps.services?.calendarConnect, keys: deps.keyProvider });
 
@@ -46,6 +59,14 @@ function connectKeyOf(req: Request): string {
 const connectHashOf = (ask: CalendarConnectAsk): string =>
   sha256(`POST\n/calendar/connections\n${ask.way}\n${ask.connectionId}${"fromMailbox" in ask ? `\n${ask.fromMailbox}` : ""}`).toString("hex");
 
+async function availableWays(deps: ApiDeps, ways: CalendarConnectWire["ways"]): Promise<CalendarConnectWire["ways"]> {
+  const checked = await Promise.all(ways.map(async (way) => {
+    if (way === "google" || way === "microsoft") return (await calendarOAuthClient(deps, way)) ? way : null;
+    return way;
+  }));
+  return checked.filter((way) => way !== null);
+}
+
 export const calendarConnectRoutes: Route[] = [
   {
     /**
@@ -60,11 +81,20 @@ export const calendarConnectRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const state = await calendarConnectState(serviceContext(deps, req), deps.services?.calendarConnect);
-      const ways = await Promise.all(state.ways.map(async (way) => {
-        if (way === "google" || way === "microsoft") return (await calendarOAuthClient(deps, way)) ? way : null;
-        return way;
-      }));
+      const ways = await availableWays(deps, state.ways);
       return answer<"GET /calendar/connect">()({ ...state, ways: ways.filter((way) => way !== null) });
+    },
+  },
+  {
+    method: "GET",
+    pattern: "/calendar/setup",
+    wire: true,
+    relay: true,
+    cost: "read",
+    handler: async (req, deps) => {
+      const state = await calendarConnectState(serviceContext(deps, req), deps.services?.calendarConnect, true);
+      const ways = await availableWays(deps, state.ways);
+      return answer<"GET /calendar/setup">()({ ...state, ways });
     },
   },
   {
@@ -84,16 +114,19 @@ export const calendarConnectRoutes: Route[] = [
       const key = connectKeyOf(req);
       const ask = parseConnectAsk(await readBody<unknown>(req));
       if ("fromMailbox" in ask) {
+        if (calendarRestricted(req, deps)) {
+          throw new ServiceError("validation_failed", 400, "use a calendar sign-in");
+        }
         const refusal = stepUpRefusal(deps);
         if (refusal !== null) return refusal;
       }
       const ctx = serviceContext(deps, req);
       const claim = { key, requestHash: connectHashOf(ask) };
       const found = await lookupIdempotent(deps.db, ctx.accountId, key, deps.now());
-      if (found) return replayOf(found, claim.requestHash);
+      if (found) return replayConnection(req, deps, found, claim.requestHash);
       try {
         const { record, seq } = await connectCalendar(ctx, doorOf(deps), ask, claim);
-        return answer<"POST /calendar/connections">()(record, { status: 202, seq });
+        return answer<"POST /calendar/connections">()(connectionFor(req, deps, record), { status: 202, seq });
       } catch (err) {
         // The same key at the same instant ends in one of two ways for the one that came second: its
         // claim is lost, or it waited on the first's row and found the id taken. Both are answered
@@ -101,7 +134,7 @@ export const calendarConnectRoutes: Route[] = [
         if (!(err instanceof IdempotencyRaceLost) && !(err instanceof CalendarConnectionTaken)) throw err;
         const winner = await lookupIdempotent(deps.db, ctx.accountId, key, deps.now());
         if (!winner) throw err;
-        return replayOf(winner, claim.requestHash);
+        return replayConnection(req, deps, winner, claim.requestHash);
       }
     },
   },
@@ -134,7 +167,7 @@ export const calendarConnectRoutes: Route[] = [
       const { record, seq } = await checkCalendarConnection(
         serviceContext(deps, req), params.id!, calendarId === null ? undefined : requireUuid(calendarId, "calendarId"),
       );
-      return answer<"POST /calendar/connections/:id/check">()(record, { status: 202, seq });
+      return answer<"POST /calendar/connections/:id/check">()(connectionFor(req, deps, record), { status: 202, seq });
     },
   },
   {
@@ -147,7 +180,7 @@ export const calendarConnectRoutes: Route[] = [
     replay: "state",
     handler: async (req, deps, params) => {
       const { record, seq } = await signInCalendarAgain(serviceContext(deps, req), doorOf(deps), params.id!, await readBody<unknown>(req));
-      return answer<"POST /calendar/connections/:id/sign-in">()(record, { status: 202, seq });
+      return answer<"POST /calendar/connections/:id/sign-in">()(connectionFor(req, deps, record), { status: 202, seq });
     },
   },
   {

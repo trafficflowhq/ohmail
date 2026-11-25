@@ -22,7 +22,7 @@ import {
 export type DoorConnection = Pick<
   Connection,
   | "state" | "syncing" | "syncError" | "profiles" | "activeId" | "ask" | "probeBase" | "probePair" | "pairConfirmed"
-  | "openStandalone" | "switchTo" | "forget" | "unsentDraftsHere" | "disconnect" | "syncNow"
+  | "openStandalone" | "switchTo" | "forget" | "erasedCalendarScopes" | "unsentDraftsHere" | "disconnect" | "syncNow"
 >;
 
 /**

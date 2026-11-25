@@ -34,6 +34,26 @@ public final class ShellModule: Module {
       Keeper.shared.run({ Keeper.shared.forget(scope) }) { promise.resolve($0) }
     }
 
+    AsyncFunction("keeperErase") { (scope: String, promise: Promise) in
+      Keeper.shared.run({ Keeper.shared.erase(scope) }) { promise.resolve($0) }
+    }
+
+    AsyncFunction("releaseCalendarErasure") { (scope: String, promise: Promise) in
+      Keeper.shared.run({ Keeper.shared.releaseCalendarErasure(scope) }) { _ in promise.resolve(nil) }
+    }
+
+    AsyncFunction("fenceCalendarWipe") { (scope: String, promise: Promise) in
+      Keeper.shared.run({ Keeper.shared.fenceCalendarWipe(scope) }) { promise.resolve($0) }
+    }
+
+    AsyncFunction("releaseCalendarWipe") { (scope: String, promise: Promise) in
+      Keeper.shared.run({ Keeper.shared.releaseCalendarWipe(scope) }) { _ in promise.resolve(nil) }
+    }
+
+    AsyncFunction("prepareCalendarKeeper") { (promise: Promise) in
+      Keeper.shared.run({ Keeper.shared.prepareCalendar() }) { promise.resolve($0) }
+    }
+
     AsyncFunction("keeperKeep") { (scope: String, key: String, value: String?, promise: Promise) in
       Keeper.shared.run({ Keeper.shared.keep(scope, key, value) }) { promise.resolve($0) }
     }

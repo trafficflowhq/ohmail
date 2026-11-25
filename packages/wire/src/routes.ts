@@ -154,6 +154,8 @@ export interface Routes {
   // ── the feed ────────────────────────────────────────────────────────────────
   "GET /sync": { params: None; body: never; answer: SyncResponse };
   "GET /sync/snapshot": { params: None; body: never; answer: SnapshotResponse };
+  "GET /calendar/sync": { params: None; body: never; answer: SyncResponse };
+  "GET /calendar/sync/snapshot": { params: None; body: never; answer: SnapshotResponse };
 
   // ── the calendar, where a server keeps one (`/hello` says so) ───────────────
   "GET /calendar/settings": { params: None; body: never; answer: CalendarSettingsWire };
@@ -170,6 +172,7 @@ export interface Routes {
   /** Places for an event's place field. 200 for every well-formed question, its state in the answer. */
   "POST /calendar/places/suggest": { params: None; body: PlaceSuggestBody; answer: PlaceSuggestAnswer };
   /** The ways this server offers the account now (none while its calendar is off), and the connections it holds, on or off. */
+  "GET /calendar/setup": { params: None; body: never; answer: CalendarConnectWire };
   "GET /calendar/connect": { params: None; body: never; answer: CalendarConnectWire };
   /**
    * A calendar connected, under the press's `Idempotency-Key` (required). `202`: the sign-in is

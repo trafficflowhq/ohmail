@@ -23,6 +23,8 @@ import { phoneGeneralPane, phoneHelpPane, phoneNewMailPane, PhoneScreenerPane } 
 // The phone's page has no framed PDF preview.
 const reader = mailReader({ body: letterBody, look: NONE });
 
+export const calendarBuild = false;
+
 export default function mounted(
   bridge: Bridge,
   config: Pick<ShellConfig, "scope" | "setting" | "os" | "build"> & Pick<ShellConfig, "serverName" | "accountId">,

@@ -44,6 +44,9 @@ type CalendarOutboxRecord = {
   readonly at: number;
   readonly n: number;
   readonly claimedUntil?: number;
+  /** A counterproposal recovered from an earlier calendar copy. */
+  readonly needsReview?: boolean;
+  readonly reviewRefused?: true;
 } & (
   | { readonly v: typeof CALENDAR_OUTBOX_VERSION; readonly notBefore?: never }
   | { readonly v: typeof DEFERRED_ACT_VERSION; readonly notBefore: number }
@@ -51,6 +54,7 @@ type CalendarOutboxRecord = {
 
 /** How a device reaches our server's three write routes. The engine's HTTP adapter is one. */
 export interface CalendarWriteTransport {
+  recoverProposal?(act: Counterproposal, key: string, signal?: AbortSignal): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
   mailProposal?(act: CalendarProposalAct, key: string, signal?: AbortSignal): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
   /** `POST /calendar/writes` under `key`. Throws `MutationRejectedError` on a refusal. */
   writeCalendar(act: CalendarEventAct, key: string, signal?: AbortSignal): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
@@ -65,6 +69,8 @@ export interface CalendarHostTransport extends CalendarWriteTransport {
   calendarSettings(): Promise<CalendarSettingsWire>;
   setSuggestionDismissed?(id: string, dismissed: boolean): Promise<void>;
 }
+
+export type Counterproposal = Extract<CalendarProposalAct, { kind: "calendar_event_propose" }>;
 
 function isProposal(act: CalendarAct | CalendarProposalAct): act is CalendarProposalAct {
   return act.kind === "calendar_event_propose" || act.kind === "calendar_proposal_keep";
@@ -175,6 +181,25 @@ export class CalendarWriteQueue {
     return this.owed().flatMap(({ key, act }) => isProposal(act) ? [{ key, act }] : []);
   }
 
+  recoveredProposals() {
+    return this.owed().flatMap(({ key, act, needsReview, reviewRefused }) =>
+      act.kind === "calendar_event_propose" && needsReview !== undefined
+        ? [{ key, act, needsReview, reviewRefused }]
+        : []);
+  }
+
+  async reviewProposal(key: string, send: boolean): Promise<boolean> {
+    if (!this.mayRun() || !this.transport.recoverProposal) return false;
+    const changed = await this.store.decideCalendarRow(key, (row) =>
+      this.mayRun() && isRecord(row) && row.needsReview === true && row.act.kind === "calendar_event_propose"
+        ? (send ? { ...row, needsReview: false, reviewRefused: undefined } : null) : undefined);
+    if (changed) {
+      this.opts.onChange?.();
+      this.followDisk();
+    }
+    return changed;
+  }
+
   activate(): () => void {
     this.running = true;
     this.opts.online?.addEventListener("online", this.resume);
@@ -277,7 +302,7 @@ export class CalendarWriteQueue {
     if (!active()) return;
     if (shared && await this.store.refreshCalendarOutbox?.(this.opts.now()) && active()) this.opts.onChange?.();
     while (active()) {
-      const next = this.owed()[0];
+      const next = this.owed().find((row) => row.needsReview !== true);
       if (!next) return;
       const delay = Math.max(next.notBefore ?? 0, this.retryAt) - this.opts.now();
       if (delay > 0) {
@@ -390,7 +415,9 @@ export class CalendarWriteQueue {
     const deadline = setTimeout(() => ctrl.abort(), ATTEMPT_MS);
     let answered: { readonly answer: CalendarWriteAnswer; readonly seq: number | null };
     try {
-      answered = isProposal(r.act) ? await this.mailProposal(r.act, r.key, ctrl.signal)
+      answered = r.needsReview === false && r.act.kind === "calendar_event_propose" && this.transport.recoverProposal
+        ? await this.transport.recoverProposal(r.act, r.key, ctrl.signal)
+        : isProposal(r.act) ? await this.mailProposal(r.act, r.key, ctrl.signal)
         : r.act.kind === "calendar_write_retry" ? await this.transport.retryCalendarWrite(r.act.writeId, r.key, ctrl.signal)
         : r.act.kind === "calendar_write_dismiss" ? await this.transport.dismissCalendarWrite(r.act.writeId, r.key, ctrl.signal)
           : await this.transport.writeCalendar(r.act, r.key, ctrl.signal);
@@ -398,6 +425,13 @@ export class CalendarWriteQueue {
       if (ctrl.signal.aborted || !this.mayRun() || !(err instanceof MutationRejectedError) || calendarWriteMayRetry(err)) {
         await this.settle(r, claim);
         return false;
+      }
+      if (r.needsReview === false) {
+        await this.store.decideCalendarRow(r.key, (row) =>
+          isRecord(row) && row.claimedUntil === claim
+            ? { ...row, needsReview: true, reviewRefused: true, claimedUntil: 0 } : undefined);
+        this.opts.onChange?.();
+        return true;
       }
       const word = refusalWordOf(err.code);
       const eventId = eventOf(r.act);

@@ -109,6 +109,8 @@ function defaultEngineLocks(): EngineLocks | null {
 }
 
 export interface EngineOptions {
+  /** Read only the standalone calendar feed and use its snapshot for boot and cursor recovery. */
+  calendarOnly?: boolean;
   adapter: EngineAdapter;
   /**
    * The first key of a search warms the way to the store ({@link OhmailEngine.warmSearch}): the

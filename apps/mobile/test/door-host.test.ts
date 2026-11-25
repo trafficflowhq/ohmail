@@ -723,7 +723,7 @@ describe("the door's host: the list of servers", () => {
   });
 
   it("explains the copied calendar that remained after disconnect in either language", async () => {
-    const server = pairServer({ flavor: "selfhost", accountId: "account-1", sessionRoute: true });
+    const server = pairServer({ flavor: "selfhost", accountId: "account-1", sessionRoute: true, calendarSync: true });
     const origin = await listen(server.server);
     const rows = new Map<string, string>();
     const profiles = new ServerProfileStore({

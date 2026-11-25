@@ -192,6 +192,7 @@ export function mountFrame(
     words?: Messages;
     /** The host has no calendar: no entry, no port, no switch. */
     noCalendar?: boolean;
+    calendarOnly?: boolean;
   } = {},
 ): Mounted {
   const address = fakeAddress(at);
@@ -200,7 +201,7 @@ export function mountFrame(
     service: "managed",
     scope: "acct-1",
     calendar: extra.noCalendar ? NONE : { ...calendar, stage: calSetupStage, ...extra.entry },
-    products: extra.noCalendar ? undefined : "both",
+    products: extra.noCalendar ? undefined : extra.calendarOnly ? "calendar" : "both",
     wires: { calendar: extra.noCalendar ? NONE : world.port },
     address,
     places: extra.places,

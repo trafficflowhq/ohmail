@@ -88,9 +88,26 @@ class ShellModule : Module() {
 
     AsyncFunction("keeperScopes") { ShellRuntime.keeper(context).let { k -> runOn(k, { k.scopes() }, emptyList()) } }
 
+    AsyncFunction("fenceCalendarWipe") { scope: String ->
+      ShellRuntime.keeper(context).let { k -> runOn(k, { k.fenceCalendarWipe(scope) }, "unknown") }
+    }
+
+    AsyncFunction("releaseCalendarWipe") { scope: String ->
+      ShellRuntime.keeper(context).let { k -> runOn(k, { k.releaseCalendarWipe(scope) }, Unit) }
+    }
+
+    AsyncFunction("prepareCalendarKeeper") {
+      ShellRuntime.keeper(context).let { k -> runOn(k, { k.prepareCalendar() }, false) }
+    }
+
     AsyncFunction("keeperForget") { scope: String -> ShellRuntime.keeper(context).let { k -> runOn(k, { k.forget(scope) }, false) } }
 
-    /** A word written by the native side itself: the old copy's intents, handed across once. */
+    AsyncFunction("keeperErase") { scope: String -> ShellRuntime.keeper(context).let { k -> runOn(k, { k.erase(scope) }, false) } }
+
+    AsyncFunction("releaseCalendarErasure") { scope: String ->
+      ShellRuntime.keeper(context).let { k -> runOn(k, { k.releaseCalendarErasure(scope) }, Unit) }
+    }
+
     AsyncFunction("keeperKeep") { scope: String, key: String, value: String? ->
       ShellRuntime.keeper(context).let { k -> runOn(k, { k.keep(scope, key, value) }, false) }
     }

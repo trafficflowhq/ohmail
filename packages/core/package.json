@@ -4,6 +4,12 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
+    "./calendar-privacy": {
+      "types": "./src/calendar-privacy.ts",
+      "ohmail-source": "./src/calendar-privacy.ts",
+      "node": "./dist/calendar-privacy.js",
+      "default": "./src/calendar-privacy.ts"
+    },
     ".": {
       "types": "./src/index.ts",
       "ohmail-source": "./src/index.ts",

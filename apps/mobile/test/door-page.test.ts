@@ -101,12 +101,14 @@ describe("the door's page, built", () => {
    * page's. Reads are watched too: the door's web view shares the scoped page's origin and storage, so a door page
    * that read them could read the last account's kept words.
    */
-  function nativeDouble({ config }: { config: DoorConfig }) {
+  function nativeDouble({ config, refuseScope }: { config: DoorConfig; refuseScope?: string }) {
     const w = window as unknown as Record<string, unknown>;
     const asked: string[] = [];
     const touched: string[] = [];
     const listeners: ((e: { data: string }) => void)[] = [];
-    w.__native = { asked, touched };
+    const imported: unknown[] = [];
+    const ready: unknown[] = [];
+    w.__native = { asked, touched, ...(config.app === "ohcal" ? { imported, ready } : {}) };
     for (const verb of ["getItem", "key", "setItem", "removeItem", "clear"] as const) {
       const real = Storage.prototype[verb];
       Storage.prototype[verb] = function (this: Storage, ...args: unknown[]) {
@@ -131,9 +133,12 @@ describe("the door's page, built", () => {
     });
     w.ohmailShell = {
       postMessage(text: string) {
-        const m = JSON.parse(text) as { id: number; epoch: string; kind: string };
+        const m = JSON.parse(text) as { id: number; epoch: string; kind: string; ask?: { legacy?: boolean; puts?: unknown[]; scope?: string } };
         asked.push(m.kind);
-        const answer = { id: m.id, epoch: m.epoch, ok: true, answer: m.kind === "config" ? config : {} };
+        if (m.kind === "keepRows" && m.ask?.legacy === true) imported.push(...(m.ask.puts ?? []));
+        if (m.kind === "ready") ready.push(m.ask);
+        const answer = { id: m.id, epoch: m.epoch, ok: true,
+          answer: m.kind === "config" ? config : m.kind === "keepRows" ? { kept: m.ask?.legacy === true && m.ask.scope !== refuseScope } : {} };
         setTimeout(() => { for (const l of listeners) l({ data: JSON.stringify(answer) }); }, 0);
       },
       addEventListener(_t: string, l: (e: { data: string }) => void) { listeners.push(l); },
@@ -206,6 +211,83 @@ describe("the door's page, built", () => {
       await new Promise((done) => server.close(done));
     }
   }, 180_000);
+
+  it.each(["upgrade", "erasure"] as const)("prepares legacy queues through the local chooser during %s", async (kind) => {
+    const calendarOut = join(out, "calendar");
+    const manifest = await buildShell({ app: "ohcal", out: calendarOut });
+    const server = createServer((req, res) => {
+      const name = (req.url ?? "").split("?")[0]?.replace(/^\//, "") ?? "";
+      if (!manifest.files[name]) { res.end("<html></html>"); return; }
+      const type = name.endsWith(".js") ? "text/javascript" : name.endsWith(".css") ? "text/css" : "text/html";
+      res.writeHead(200, { "content-type": type, "content-security-policy": manifest.csp });
+      res.end(readFileSync(join(calendarOut, name)));
+    }).listen(0, "127.0.0.1");
+    await new Promise((done) => server.listening ? done(null) : server.once("listening", done));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(origin);
+      const erased = "p" + "a".repeat(32);
+      const other = "p" + "b".repeat(32);
+      const seed = (owner: string, edit: string) => page.evaluate(async ({ owner, edit }) => {
+        localStorage.setItem("ohmail.ui.reply:" + owner, "Private draft");
+        const database = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("ohmail-mirror:" + owner, 1);
+          request.onupgradeneeded = () => {
+            request.result.createObjectStore("entities");
+            request.result.createObjectStore("meta");
+          };
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        const tx = database.transaction("entities", "readwrite");
+        const rows = tx.objectStore("entities");
+        rows.put({ id: edit, type: "calendar_outbox", seq: 0, entity: { act: { kind: "calendar_event_delete" } } }, "calendar_outbox:" + edit);
+        rows.put({ id: "calendar", type: "calendar", seq: 1, entity: { name: "Old calendar" } }, "calendar:calendar");
+        rows.put({ id: "letter", type: "message", seq: 1, entity: { subject: "Private mail" } }, "message:letter");
+        await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onabort = () => reject(tx.error);
+        });
+        database.close();
+      }, { owner, edit });
+      await seed(erased, "edit");
+      if (kind === "erasure") await seed(other, "other-edit");
+      const config = { ...CONFIG, app: "ohcal" as const, organizes: "withheld" as const,
+        ...(kind === "erasure" ? { erasedCalendarScopes: [erased] } : {}) };
+      await page.addInitScript(nativeDouble, { config, ...(kind === "erasure" ? { refuseScope: other } : {}) });
+      await page.goto(`${origin}/door.html?epoch=calendar-door`);
+      type Seen = { __native: { asked: string[]; imported: { type: string; id: string }[]; ready: unknown[] } };
+      await page.waitForFunction(() => (window as unknown as Seen).__native.asked.includes("ready"));
+      const { asked, imported, ready } = await page.evaluate(() => (window as unknown as Seen).__native);
+      if (kind === "erasure") {
+        expect(await page.evaluate(async () => (await indexedDB.databases()).map(({ name }) => name)))
+          .toEqual(["ohmail-mirror:" + other]);
+        expect(await page.evaluate((owner) => new Promise((resolve, reject) => {
+          const open = indexedDB.open("ohmail-mirror:" + owner);
+          open.onerror = () => reject(open.error);
+          open.onsuccess = () => {
+            const read = open.result.transaction("entities").objectStore("entities").get("calendar_outbox:other-edit");
+            read.onsuccess = () => { open.result.close(); resolve(read.result); };
+            read.onerror = () => { open.result.close(); reject(read.error); };
+          };
+        }), other)).toMatchObject({ id: "other-edit", type: "calendar_outbox" });
+        expect(imported).toMatchObject([{ type: "calendar_outbox", id: "other-edit" }]);
+        expect(imported).toHaveLength(1);
+        expect(ready).toEqual([{ calendarPrepared: false }]);
+        return;
+      }
+      expect(asked).toEqual(["config", "keepRows", "ready"]);
+      expect(imported).toMatchObject([{ type: "calendar_outbox", id: "edit" }]);
+      expect(imported).toHaveLength(1);
+      expect(await page.evaluate(() => Object.values(localStorage).includes("Private draft"))).toBe(false);
+    } finally {
+      await browser.close();
+      await new Promise((done) => server.close(done));
+    }
+  }, 120_000);
+
 });
 
 /** A native double for the page's bridge: reads each request through the door's own guard and answers with `reply`. */

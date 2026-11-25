@@ -6,7 +6,7 @@
  */
 import { bridge, kept } from "./boot";
 import catalogue from "./catalogue";
-import mounted from "./mounted";
+import mounted, { calendarBuild } from "./mounted";
 import { createRoot, type Root } from "react-dom/client";
 import { createPortal } from "react-dom";
 import { calendarPortOf } from "@ohmail/app-logic/calendar";
@@ -17,7 +17,7 @@ import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { mailboxTotalOf, readSearchBy } from "@ohmail/app-logic/search";
 import { startSyncScheduler, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
 import { setComposerScope } from "@ohmail/app-logic/writing/compose";
-import { unsentDraftsOf, type NoticePermission } from "./engine-package";
+import { prepareCalendarCopies, unsentDraftsOf, type NoticePermission } from "./engine-package";
 import { benchDoor, type BenchDoor } from "./bench";
 import { calendarRecordClearer, calendarRecordSender, followWidget } from "./calendar-record";
 import { companionSwitch } from "./companion-switch";
@@ -48,13 +48,22 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
   // native set. The scope is native's word, never the storage's: every mailbox's page writes the same storage.
   const { words, refused } = await bridge.request("kept", {});
   const config = await bridge.request("config", {});
-  await kept.adopt(words, refused, config.scope);
+  if ((config.app === "ohcal") !== calendarBuild) throw new Error("Phone app and page disagree");
+  const calendarOnly = calendarBuild;
+  if (calendarOnly) {
+    await kept.adopt([], []);
+    await prepareCalendarCopies(config.scope, async (scope, rows) => (await bridge.request("keepRows", {
+      scope, legacy: true, deletes: [], puts: rows.map((row) => ({ type: row.type, id: row.id, json: JSON.stringify(row) })),
+    })).kept);
+  } else {
+    await kept.adopt(words, refused, config.scope);
+  }
   ownStorage(config.scope);
   // One composer per phone WebView. Its kept words must survive a restart of the WebView process.
   if (config.app === "ohmail") setComposerScope("phone");
   // The phone's old copy of this mailbox, taken once, before the engine reads its own. One that could not be taken
   // stays, unmarked: the next start takes it again, filling only what this one lacks.
-  if (config.oldCopy === "present") {
+  if (!calendarOnly && config.oldCopy === "present") {
     const store = keptStoreOf(bridge, config.scope);
     try {
       await store.load();
@@ -108,7 +117,7 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
     setSuggestionDismissed: transport.setSuggestionDismissed,
     setup: setup ? {
       ...calendarSetupPortOf(setup, () => engine.syncOnce(), () => crypto.randomUUID()),
-      factor: phoneSettingsFactor(bridge, config, "calendar"),
+      factor: phoneSettingsFactor(bridge, config, "calendar", "calendar"),
     } : undefined,
     held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),
   }) : undefined;
@@ -134,18 +143,21 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
   const facts = { setting: config.setting, serverName: config.serverName, scope: config.scope, accountId: config.accountId, build: config.build };
   const read = bridgeFetch(bridge, config.scope);
   const host = phoneHost(engine, facts, {
+    calendarOnly,
     mailboxWires: mountedPlaces.mailboxWires,
-    mailFetch: read,
-    accountFetch: config.app === "ohmail" ? accountFetch(bridge, config.scope) : undefined,
-    search: {
-      by: config.setting === "standalone" ? "people" : () => readSearchBy(read),
-      mailboxTotal: async () => {
-        const response = await read("/mailboxes?counts=1");
-        if (!response.ok) return null;
-        const answer = await response.json() as { items?: unknown };
-        return Array.isArray(answer?.items) ? mailboxTotalOf(answer.items) : null;
+    ...(!calendarOnly ? {
+      mailFetch: read,
+      accountFetch: accountFetch(bridge, config.scope),
+      search: {
+        by: config.setting === "standalone" ? "people" : () => readSearchBy(read),
+        mailboxTotal: async () => {
+          const response = await read("/mailboxes?counts=1");
+          if (!response.ok) return null;
+          const answer = await response.json() as { items?: unknown };
+          return Array.isArray(answer?.items) ? mailboxTotalOf(answer.items) : null;
+        },
       },
-    },
+    } : {}),
     signOut: async () => { await bridge.request("act", { act: "signOut" }); },
     frame: frame.calendar !== NONE ? {
       ...frame,
@@ -196,6 +208,7 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
         catalogue={catalogue}
         timeZone={timeZone}
         sync={sync}
+        openServers={() => bridge.request("act", { act: "openServers" })}
         drawn={() => bridge.request("ready", { place: frame.address.read() }).catch(() => {})}
         noticeChoices={() => storedNoticeChoices(localStorage, config.app === "ohcal", config.scope)}
         widgets={widgets}

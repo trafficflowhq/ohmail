@@ -970,6 +970,9 @@ const TABLE = {
    */
   pairRedeemUnreachable: "could not reach that server to redeem the pairing",
   pairCodeRejected: "that pairing code was not accepted — mint a fresh one and scan again",
+  calendarQueuePending: "Sync your calendar edits before forgetting this server.",
+  calendarQueueUnknown: "The phone could not check for unsynced calendar edits. Try forgetting this server again.",
+  calendarServerUnavailable: "This server does not support calendar sync for ohcal.",
   pairNoAccountName:
     "paired, but the server could not name the account this pairing opens — once it holds mail, "
     + "mint a fresh code and pair again",
@@ -1325,6 +1328,8 @@ const TABLE = {
         return "this phone has too little free space to keep a copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed";
       case "store_copy_failed":
         return "this phone could not keep a checked copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed";
+      case "calendar_queue_pending":
+        return "this phone still holds unsynced calendar edits";
       case "shell_keeper_not_deleted":
         return "this phone could not delete the unsent letters and queued changes it kept for that mailbox";
       case "shell_view_not_cleared":

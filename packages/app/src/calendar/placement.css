@@ -12,6 +12,19 @@
   align-content: center;
   flex: 1;
 }
+.cal-recovered-proposals {
+  flex: 0 0 auto;
+  max-height: 30%;
+  overflow: auto;
+  padding: var(--s2) var(--s3);
+}
+.cal-recovered-proposal > * {
+  display: block;
+}
+.cal-recovered-proposal-actions {
+  display: flex;
+  gap: var(--s2);
+}
 .cal-body-views {
   display: flex;
   flex: 1;

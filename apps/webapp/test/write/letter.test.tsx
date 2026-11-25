@@ -370,6 +370,25 @@ describe("the new letter", () => {
     expect(w.now().compose.sig).toEqual({ kind: "edited", text: "Lena\nMakers Fest" });
   });
 
+  it("a plain letter with a formatted signature is sent with the signature's formatting and the letter's words", async () => {
+    const w = await mountWriting({
+      view: true,
+      signatures: { mb1: "Lena\nMakers Fest" },
+      signaturesHtml: { mb1: '<p><strong>Lena</strong><br><a href="https://makers.example">Makers Fest</a></p>' },
+    });
+    await typeLetter("lena@example.invalid", "See you <there> & then.");
+    await act(async () => {
+      fireEvent.click(sendButton());
+    });
+    await rounds(10);
+    const sent = w.sent.find((m) => m.kind === "mail_send") as { body?: string; html?: string | null } | undefined;
+    expect(sent?.body).toContain("See you <there> & then.");
+    expect(sent?.body).toContain("Makers Fest");
+    expect(sent?.html).toContain("See you &lt;there&gt; &amp; then.");
+    expect(sent?.html).toContain("<strong>Lena</strong>");
+    expect(sent?.html).toContain('<a href="https://makers.example">Makers Fest</a>');
+  });
+
   it("a signature written down to nothing stays, empty; typed again it keeps the new words, and a send carries none", async () => {
     const w = await mountWriting({ view: true, signatures: { mb1: "Lena\nMakers Fest" } });
     await typeLetter("lena@example.invalid", "See you there.");

@@ -76,6 +76,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
   const switcher = useMemo(() => switchNative(), []);
   const notices = useMemo(() => noticesNative(), []);
   const calendar = useMemo(() => calendarNative(), []);
+  const calendarOnly = APP.app === "ohcal";
   /* The session this screen stands for, while it stands: a notice is drawn only for the one that still does. */
   const standing = useRef<ShellSession | null>(null);
   useEffect(() => {
@@ -106,7 +107,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
      shell keeps mail is marked out of the backups and read back before the view exists, the worst answer recorded. */
   useEffect(() => {
     let live = true;
-    void (native?.setFamilies([...KEPT_FAMILIES]) ?? Promise.resolve(false))
+    void (native?.setFamilies(calendarOnly ? [] : [...KEPT_FAMILIES]) ?? Promise.resolve(false))
       .then(() => scopeOf(session.ownerKey, sha256Hex))
       .then(async (s) => {
         if (native !== null) {
@@ -122,11 +123,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
           logBackupExclusion(state, Platform.OS);
         }
         // Whether the screens' old copy of this mailbox waits to be handed across; a handed one is removed here.
-        oldCopy.current = (await session.oldCopy?.present().catch(() => false)) === true ? "present" : "absent";
+        oldCopy.current = !calendarOnly && (await session.oldCopy?.present().catch(() => false)) === true ? "present" : "absent";
         if (live) setScope(s);
       });
     return () => { live = false; };
-  }, [native, session, calendar]);
+  }, [native, session, calendar, calendarOnly]);
 
   /* The notice permission as the phone reads it, kept current for the page's `config`. */
   const permission = useRef<NoticePermission>("default");
@@ -138,6 +139,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
 
   const host = useMemo(() => {
     const http = new HttpDoor({
+      calendarOnly,
       live: () => (scope !== null && standing.current === session && !session.lifetime.aborted ? { session, scope } : null),
       ready: () => scope !== null,
     });
@@ -203,10 +205,10 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       },
       config,
       app: APP.app,
-      name: (request, signal) => answerPhoneName(request, session, live, signal),
+      name: calendarOnly ? undefined : (request, signal) => answerPhoneName(request, session, live, signal),
       diagnostics: APP.app === "ohmail" ? phoneDiagnosticsOf(live, readRoster) : undefined,
       organize: APP.app === "ohmail" ? phoneOrganizerOf(session, live, readRoster) : undefined,
-      mailbox: (request, signal) => answerPhoneMailbox(request, session, live, signal),
+      mailbox: calendarOnly ? undefined : (request, signal) => answerPhoneMailbox(request, session, live, signal),
       switch: {
         read: async () => ({ other: otherOf(switcher) }),
         open: async (to) => {
@@ -319,7 +321,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     });
     return bridge;
     // The host is one per session and scope: a new scope is a new page.
-  }, [session, scope, notices, calendar, os]);
+  }, [session, scope, notices, calendar, os, calendarOnly]);
 
   useEffect(() => {
     const retire = () => host.begin("");
@@ -409,7 +411,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         onEpoch={(e) => host.begin(e.nativeEvent.epoch)}
         onMessage={(e) => host.receive(e.nativeEvent)}
         onLinkAsk={(e) => host.send({ type: "linkAsk", token: e.nativeEvent.token, url: e.nativeEvent.url })}
-        onMailto={(e) => host.send({ type: "mailto", url: e.nativeEvent.url })}
+        onMailto={(e) => { if (!calendarOnly) host.send({ type: "mailto", url: e.nativeEvent.url }); }}
         onRefused={(e) => setRefused(e.nativeEvent)}
       />
       {drawn ? null : <View style={styles.over}><Txt variant="body">{Copy.shellOpening}</Txt></View>}

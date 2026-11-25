@@ -117,6 +117,16 @@
     }
   }
 
+  @container (max-width: 371px) {
+    .oh-sheet[data-writing-keyboard] .oh-draft {
+      flex-basis: auto;
+    }
+
+    .oh-sheet[data-writing-keyboard] .oh-draft-control > :is(.oh-draft-word, .oh-draft-short) {
+      display: none;
+    }
+  }
+
   /* The two texts: tabs drawn as the marks are, so Send stays the one ink capsule. */
   .oh-drafttabs {
     display: flex;

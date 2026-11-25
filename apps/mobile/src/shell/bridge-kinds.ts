@@ -355,7 +355,7 @@ export interface Requests {
   };
   /** The queue's rows, written natively before the store publishes them. */
   readonly keepRows: {
-    readonly ask: { readonly scope: string; readonly puts: readonly KeptRow[]; readonly deletes: readonly (readonly [string, string])[] };
+    readonly ask: { readonly scope: string; readonly legacy?: true; readonly puts: readonly KeptRow[]; readonly deletes: readonly (readonly [string, string])[] };
     readonly answer: { readonly kept: boolean };
   };
   readonly keptRows: { readonly ask: { readonly scope: string }; readonly answer: { readonly rows: readonly KeptRow[] } };

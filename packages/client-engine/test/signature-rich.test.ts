@@ -74,21 +74,31 @@ describe("withSignature — the markup half rides beside the derived text", () =
     expect(out.html).toBe("<p>hello</p><p><strong>Best regards</strong><br>Anna</p>");
   });
 
-  it("leaves a PLAIN mutation plain — a formatted signature never mints an html half", () => {
-    // `html` absent is what makes the send a single `text/plain` part (`compose.ts`). A
-    // signature must not turn somebody's plain note into a `multipart/alternative`.
-    const out = withSignature({ ...plain }, "Best regards\nAnna", HTML["mb-one"]!);
+  it("a FORMATTED signature turns a plain body into markup — its words escaped, breaks and spaces kept", () => {
+    // The block showed formatting, so the letter goes with it: the plain words become escaped
+    // markup and the stored signature markup follows. The text half is unchanged.
+    const out = withSignature({ body: "a <b>\n  c" }, "Best regards\nAnna", HTML["mb-one"]!);
+    expect(out.body).toBe("a <b>\n  c\n\nBest regards\nAnna");
+    expect(out.html).toBe(`${signatureHtml("a <b>\n  c")}${HTML["mb-one"]!}`);
+  });
+
+  it("a PLAIN signature leaves a plain mutation plain — no html half is minted", () => {
+    // `html` absent is what makes the send a single `text/plain` part (`compose.ts`).
+    const out = withSignature({ ...plain }, "Best regards\nAnna", null);
     expect(out.body).toBe("hello\n\nBest regards\nAnna");
     expect("html" in out).toBe(false);
   });
 
   /* `html: null` is an editor whose formatting was removed. Appending to it gave
      "null<p>…", and the server derives the plain text from the markup, so the words were lost. */
-  it("keeps html: null and an empty html as given — the text signature rides the body", () => {
+  it("html: null or empty with a formatted signature carries the body's words, never \"null\"", () => {
     for (const html of [null, ""]) {
       const out = withSignature({ body: "hello", html }, "Best regards\nAnna", HTML["mb-one"]!);
       expect(out.body).toBe("hello\n\nBest regards\nAnna");
-      expect(out.html).toBe(html);
+      expect(out.html).toBe(`<p>hello</p>${HTML["mb-one"]!}`);
+    }
+    for (const html of [null, ""]) {
+      expect(withSignature({ body: "hello", html }, "Best regards\nAnna", null).html).toBe(html);
     }
   });
 

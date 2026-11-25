@@ -6,4 +6,5 @@ import type { Bridge } from "./bridge";
 import type { ShellConfig } from "../../src/shell/bridge-kinds";
 
 declare function mounted(bridge: Bridge, config: Pick<ShellConfig, "scope" | "setting" | "os" | "build">): Mounted;
+export const calendarBuild: boolean;
 export default mounted;

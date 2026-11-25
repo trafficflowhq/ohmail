@@ -88,7 +88,7 @@ function doorOver(session: ShellSession, options: Partial<ConstructorParameters<
   return new HttpDoor({ live: () => ({ session, scope: SCOPE }), ready: () => true, ...options });
 }
 
-function hostOver(door: HttpDoor, more: Partial<ConstructorParameters<typeof BridgeHost>[0]> = {}) {
+function hostOver(door: HttpDoor, more: Partial<ConstructorParameters<typeof BridgeHost>[0]> = {}, epoch = "e1") {
   const posted: Record<string, unknown>[] = [];
   const host = new BridgeHost({
     post: (_epoch, text) => void posted.push(JSON.parse(text) as Record<string, unknown>),
@@ -102,9 +102,9 @@ function hostOver(door: HttpDoor, more: Partial<ConstructorParameters<typeof Bri
     oldCopy: { page: async () => ({ refused: "notReady" as const }), done: async () => ({ refused: "notReady" as const }) },
     ...more,
   });
-  host.begin("e1");
+  host.begin(epoch);
   const say = (message: object, facts: Partial<{ origin: string; mainFrame: boolean; epoch: string }> = {}) =>
-    host.receive({ epoch: "e1", origin: "https://appassets.androidplatform.net", mainFrame: true, data: JSON.stringify(message), ...facts });
+    host.receive({ epoch, origin: "https://appassets.androidplatform.net", mainFrame: true, data: JSON.stringify(message), ...facts });
   const settled = () => new Promise((r) => setTimeout(r, 0));
   return { host, posted, say, settled };
 }
@@ -113,6 +113,47 @@ describe("the shell's HTTP door", () => {
   it("reads its list from the route copy, and refuses for native only routes the copy holds", () => {
     expect(RELAY_ROUTES).toEqual(routes);
     for (const spec of NATIVE_ONLY) expect(RELAY_ROUTES, spec).toContain(spec);
+  });
+
+  it("keeps the calendar phone away from mail routes during sign-out and account changes", async () => {
+    const t = transport();
+    const first = sessionOver(t.fetch);
+    const next = sessionOver(t.fetch);
+    const nextScope = "pabcdef0123456789abcdef0123456789";
+    let live: { session: ShellSession; scope: string } | null = { session: first, scope: SCOPE };
+    const door = new HttpDoor({ live: () => live, ready: () => true, calendarOnly: true });
+    const signal = new AbortController().signal;
+    for (const path of ["/messages", "/messages/letter/body", "/mailboxes?counts=1", "/search?q=letter",
+      "/sync/snapshot?phase=tail", "/sync?types=message", "/calendar/connect", "/account/export"]) {
+      expect(await door.request(get(path), signal)).toMatchObject({ status: 403 });
+    }
+    for (const path of ["/auth/password", "/auth/2fa/recovery-codes", "/auth/2fa/totp/enroll"]) {
+      expect(await door.request({ ...get(path), method: "POST" }, signal)).toMatchObject({ status: 403 });
+    }
+    expect(await door.account({ scope: SCOPE, do: "pairs" }, signal)).toMatchObject({ result: { status: 403 } });
+    expect(t.calls).toEqual([]);
+    let diagnostics = 0;
+    const epoch = "calendar-page";
+    const bridge = hostOver(door, {
+      app: "ohcal",
+      act: async () => { first.leave(); live = null; return {}; },
+      diagnostics: {
+        beginPage: () => {},
+        answer: async () => { diagnostics++; return { shared: true }; },
+      },
+    }, epoch);
+    bridge.say({ kind: "phone.diagnostics", id: 1, epoch, do: "share" });
+    await bridge.settled();
+    expect(diagnostics).toBe(0);
+    expect(bridge.posted[0]).toMatchObject({ refused: "malformed" });
+    expect(await door.request(get("/calendar/sync/snapshot"), signal)).toMatchObject({ status: 200 });
+    bridge.say({ kind: "act", id: 2, epoch, act: "signOut" });
+    await bridge.settled();
+    expect(await door.request(get("/calendar/sync"), signal)).toEqual({ refused: "foreignScope" });
+    live = { session: next, scope: nextScope };
+    expect(await door.request(get("/calendar/sync"), signal)).toEqual({ refused: "foreignScope" });
+    expect(await door.request(get("/calendar/sync", { scope: nextScope }), signal)).toMatchObject({ status: 200 });
+    expect(t.calls.map(({ url }) => new URL(url).pathname)).toEqual(["/calendar/sync/snapshot", "/calendar/sync"]);
   });
 
   it("refuses a second spelling of a path and the base's own prefix", async () => {

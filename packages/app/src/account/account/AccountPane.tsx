@@ -20,9 +20,9 @@ export type AccountPaneProps =
       /** The whole pane: who is signed in, the password, sign-out, and the way to the page that deletes the account. */
       readonly body: "pane";
       readonly model: AccountModel;
-      readonly password: PasswordModel;
+      readonly password?: PasswordModel;
       /** The factor's dialog, filled by the shell: the password form draws it while its change is parked. */
-      readonly factor: FactorSlot;
+      readonly factor?: FactorSlot;
       /** The page of states only, never handed by a shell: the password form stands open as the pane is drawn. */
       readonly formOpen?: boolean;
       readonly onPhone?: boolean;
@@ -100,7 +100,9 @@ function Whole({
           </>
         ) : null}
         {who.at === "signedIn" ? <SettingLine label={own("signedInLabel")} value={who.address} /> : null}
-        <Password model={password} factor={factor} formOpen={formOpen === true} />
+        {password && factor ? (
+          <Password model={password} factor={factor} formOpen={formOpen === true} />
+        ) : null}
       </SettingsSheet>
       {who.at === "signedIn" ? (
         <SettingsSheet

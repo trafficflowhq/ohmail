@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { EditorContent, type Editor } from "@tiptap/react";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
@@ -28,6 +28,7 @@ export function HistoryEditorContent({
   readonly original: RefObject<ProseMirrorNode | null>;
   readonly historyVisible: RefObject<boolean>;
 }) {
+  useVisibleCaret(editor);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyPending, setHistoryPending] = useState(false);
   const [historyFailed, setHistoryFailed] = useState(false);
@@ -126,4 +127,18 @@ export function HistoryEditorContent({
       )}
     </>
   );
+}
+
+/** A paste can wrap the draft action onto another row after the editor first reveals the caret. */
+function useVisibleCaret(editor: Editor | null) {
+  useEffect(() => {
+    if (!editor || typeof ResizeObserver !== "function") return;
+    const port = editor.view.dom.closest(".oh-composer-scroll");
+    if (!port) return;
+    const watch = new ResizeObserver(() => {
+      if (editor.isFocused && editor.state.selection.empty) editor.commands.scrollIntoView();
+    });
+    watch.observe(port);
+    return () => watch.disconnect();
+  }, [editor]);
 }

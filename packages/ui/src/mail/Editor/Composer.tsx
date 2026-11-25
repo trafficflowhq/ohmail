@@ -10,8 +10,8 @@ import {
 } from "react";
 import { Button } from "../../base/index.js";
 import "./composer.css";
-import { AfterComposerTextSlot } from "./AfterComposerText.js";
-import { ComposerMarks, type ComposerMarksProps } from "./ComposerMarks.js";
+import { ComposerEditor } from "./ComposerEditor.js";
+import type { ComposerMarksProps } from "./ComposerMarks.js";
 
 export interface ComposerProps {
   /**
@@ -161,67 +161,76 @@ export function Composer(props: ComposerProps) {
     >
       {status}
       {head}
-      <div className="oh-composer-editor">
-        {marks ? <ComposerMarks {...marks} /> : null}
-        {tabs}
-        <AfterComposerTextSlot>
-          <div className="oh-composer-text" data-preview={showDraftPreview ? "" : undefined}>
-            {showDraftPreview ? <div className="oh-composer-preview">{props.draftPreview}</div> : null}
-            {props.placeholder ? (
-              <span className="oh-composer-placeholder" aria-hidden="true" data-words={props.placeholder} />
+      <ComposerEditor
+        marks={marks}
+        tabs={tabs}
+        placeholder={props.placeholder}
+        preview={showDraftPreview ? (props.draftPreview ?? "") : undefined}
+        afterText={
+          <>
+            {signature ? <ComposerSignature signature={signature} going={props.going} /> : null}
+            {forwarded || files ? (
+              <div className="oh-composer-files">
+                {forwarded ? <h3 className="oh-text oh-composer-fileshead">{forwarded.heading}</h3> : null}
+                {forwarded?.files}
+                {files}
+              </div>
             ) : null}
-            {children}
-          </div>
-        </AfterComposerTextSlot>
-        {signature ? <ComposerSignature signature={signature} going={props.going} /> : null}
-        {forwarded || files ? (
-          <div className="oh-composer-files">
-            {forwarded ? <h3 className="oh-text oh-composer-fileshead">{forwarded.heading}</h3> : null}
-            {forwarded?.files}
-            {files}
-          </div>
-        ) : null}
-        {note}
-        <div
-          className="oh-composer-foot"
-          role="toolbar"
-          aria-label={foot.label}
-          onMouseDown={(e) => e.preventDefault()}
-        >
-          {foot.attach}
-          {foot.attach && (foot.format || foot.emoji) ? (
-            <i className="oh-composer-hair" aria-hidden="true" />
-          ) : null}
-          {foot.format ? (
-            <span className="oh-composer-format">
-              <Button
-                kind="quiet"
-                size="s"
-                label={foot.format.label}
-                pressed={foot.format.pressed}
-                onPress={foot.format.onPress}
-              >
-                {foot.format.word}
-              </Button>
-            </span>
-          ) : null}
-          {foot.emoji ? (
-            <span className="oh-composer-emoji">
-              <Button
-                kind="quiet"
-                size="s"
-                icon="msmile"
-                label={foot.emoji.label}
-                opens="menu"
-                expanded={foot.emoji.expanded}
-                onPress={(event) => foot.emoji?.onPress?.(event.currentTarget)}
-              />
-            </span>
-          ) : null}
-          {foot.draft}
-        </div>
-      </div>
+          </>
+        }
+        footer={
+          <>
+            {note}
+            <ComposerFoot foot={foot} />
+          </>
+        }
+      >
+        {children}
+      </ComposerEditor>
     </section>
+  );
+}
+
+function ComposerFoot({ foot }: { foot: ComposerProps["foot"] }) {
+  return (
+    <div
+      className="oh-composer-foot"
+      role="toolbar"
+      aria-label={foot.label}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      {foot.attach}
+      {foot.attach && (foot.format || foot.emoji) ? (
+        <i className="oh-composer-hair" aria-hidden="true" />
+      ) : null}
+      {foot.format ? (
+        <span className="oh-composer-format">
+          <Button
+            kind="quiet"
+            size="s"
+            label={foot.format.label}
+            pressed={foot.format.pressed}
+            onPress={foot.format.onPress}
+          >
+            {foot.format.word}
+          </Button>
+        </span>
+      ) : null}
+      {foot.emoji ? (
+        <span className="oh-composer-emoji">
+          <Button
+            kind="quiet"
+            size="s"
+            icon="msmile"
+            label={foot.emoji.label}
+            opens="menu"
+            expanded={foot.emoji.expanded}
+            onPress={(event) => foot.emoji?.onPress?.(event.currentTarget)}
+          />
+        </span>
+      ) : null}
+      {foot.draft}
+    </div>
   );
 }
 

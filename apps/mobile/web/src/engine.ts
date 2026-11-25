@@ -19,8 +19,8 @@ export interface PhoneEngine {
 }
 
 /** The page's copy of one scope, its queue kept natively first. */
-export function keptStoreOf(bridge: Bridge, scope: string): KeptIdbStore {
-  return new KeptIdbStore({ owner: scope }, {
+export function keptStoreOf(bridge: Bridge, scope: string, calendarOnly = false): KeptIdbStore {
+  return new KeptIdbStore({ owner: scope, calendarOnly }, {
     rows: async () => (await bridge.request("keptRows", { scope })).rows,
     write: async (puts, deletes) => (await bridge.request("keepRows", { scope, puts, deletes })).kept,
   });
@@ -30,18 +30,20 @@ export function keptStoreOf(bridge: Bridge, scope: string): KeptIdbStore {
 export function createPhoneEngine(
   config: ShellConfig,
   bridge: Bridge,
-  store: MirrorStore = keptStoreOf(bridge, config.scope),
+  store: MirrorStore = keptStoreOf(bridge, config.scope, config.app === "ohcal"),
 ): PhoneEngine {
   const paired = config.setting !== "standalone";
+  const calendarOnly = config.app === "ohcal";
   const adapter = new HttpAdapter({
     // Root-relative: native composes the server and the base. No cookie is ever read on the page.
     baseUrl: "",
     fetch: bridgeFetch(bridge, config.scope),
     getCookie: () => null,
     // The two `/hello` reads a paired server answers; the phone's own engine is this same build.
-    forwardPartsCheck: paired,
-    scheduleFilesCheck: paired,
-    ...(config.app === "ohcal" ? {
+    forwardPartsCheck: paired && !calendarOnly,
+    scheduleFilesCheck: paired && !calendarOnly,
+    calendarOnly,
+    ...(calendarOnly ? {
       saveCalendarSettings: (body) => accountFetch(bridge, config.scope)("/calendar/settings", "PATCH", body),
     } : {}),
   });
@@ -51,6 +53,7 @@ export function createPhoneEngine(
     // The phone's bound on its copy: 90 days, 5,000 to 10,000 rows, as on the web and the desktop.
     storePolicy: BROWSER_WINDOW,
     types: [...SYNC_ENTITY_TYPES],
+    calendarOnly,
     uuid: () => crypto.randomUUID(),
     inlineImageUrls: "object",
     // One page per scope: every kept row is this engine's. With the web view's own locks on, a row
