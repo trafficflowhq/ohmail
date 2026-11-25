@@ -13,9 +13,8 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { await browser?.close(); });
 
-async function greenAcross(page: Page, y: number): Promise<number> {
-  const width = page.viewportSize()!.width;
-  const b64 = (await page.screenshot({ clip: { x: 0, y, width, height: 1 } })).toString("base64");
+async function greenAcross(page: Page, y: number, x = 0, width = page.viewportSize()!.width): Promise<number> {
+  const b64 = (await page.screenshot({ clip: { x, y, width, height: 1 } })).toString("base64");
   return page.evaluate(async ([b64, width]) => {
     const bmp = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
     const ctx = new OffscreenCanvas(width, 1).getContext("2d")!;
@@ -77,14 +76,14 @@ describe("the mounted stream's paint at the window edge", () => {
   }, 60_000);
 });
 
-for (const width of [390, WIDTH]) for (const face of ["paper", "ohmarchy"]) {
-  it(`covers a scrolled card across the full ${face} action bar at ${width}px`, async () => {
+for (const width of [390, WIDTH]) for (const [face, scheme] of [["paper", "light"], ["ohmarchy", "dark"]]) {
+  it.each([["reads", "News"], ["receipts", "Receipts"]])(`%s scrolls under the ${face} action bar at ${width}px`, async (place, name) => {
     const touch = width === 390;
     const page = await browser.newPage({ viewport: { width, height: 900 }, hasTouch: touch, reducedMotion: "reduce" });
     try {
       await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
-      await page.goto(`${ORIGIN}/?face=${face}&geometry=reads`);
-      const reading = page.getByRole("region", { name: "News stream", exact: true });
+      await page.goto(`${ORIGIN}/?face=${face}&scheme=${scheme}&geometry=${place}`);
+      const reading = page.getByRole("region", { name: `${name} stream`, exact: true });
       if (touch) await reading.getByRole("heading", { name: "Short letter", exact: true }).click();
       const bar = (touch ? page : reading).getByRole("toolbar", { name: "Actions", exact: true });
       await bar.waitFor();
@@ -95,15 +94,27 @@ for (const width of [390, WIDTH]) for (const face of ["paper", "ohmarchy"]) {
           ${card} .oh-message { background: #0f0 !important; }
         `,
       });
-      const scroller = touch
-        ? page.locator(".oh-sheet").filter({ has: bar }).locator(".oh-sheet-scroll")
-        : reading.locator("[data-reading-scroll]");
+      const panel = touch ? page.locator(".oh-sheet").filter({ has: bar }) : reading;
+      const scroller = panel.locator("[data-reading-scroll]");
       await scroller.evaluate((el) => { el.scrollTop = 200; });
       expect(await scroller.evaluate((el) => el.scrollTop)).toBe(200);
-      const barY = Math.ceil((await bar.boundingBox())!.y);
+      const port = (await scroller.boundingBox())!;
+      const bounds = (await panel.boundingBox())!;
+      const pill = (await bar.boundingBox())!;
+      const barY = Math.ceil(pill.y);
+      const panelBottom = bounds.y + bounds.height;
+      expect(port.y + port.height).toBeCloseTo(panelBottom, 0);
+      expect(pill.y + pill.height).toBeLessThan(panelBottom);
       expect(await greenAcross(page, barY - 12)).toBeGreaterThan(300);
-      expect(await greenAcross(page, barY + 2)).toBe(0);
-      expect(await greenAcross(page, barY + 18)).toBe(0);
+      const pillCenter = Math.floor(pill.x + pill.width / 2);
+      expect(await greenAcross(page, barY + 2, pillCenter - 8, 16)).toBe(0);
+      expect(await greenAcross(page, barY + 18, pillCenter - 8, 16)).toBe(0);
+      const belowPill = Math.floor((pill.y + pill.height + panelBottom) / 2);
+      expect(await greenAcross(page, belowPill), "mail paints below the floating pill").toBeGreaterThan(300);
+
+      await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+      const last = (await scroller.locator(card).last().boundingBox())!;
+      expect(last.y + last.height, "the last letter clears the pill").toBeLessThanOrEqual(pill.y);
     } finally {
       await page.close();
     }
