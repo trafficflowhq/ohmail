@@ -37,7 +37,7 @@ import {
 import { richEditor } from "../../src/write/editor/index.js";
 import type { WriteOwnText } from "../../src/write/ports.js";
 import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
-import { fakeAddress, fakeAppearance, fakeWindow, ROOMS } from "../support/fake-window.js";
+import { fakeAddress, fakeAppearance, fakeWindow, movable, ROOMS } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 import {
   DRAFTED,
@@ -596,7 +596,7 @@ if (zoom !== 1) {
   document.documentElement.style.setProperty("zoom", String(zoom));
   document.documentElement.style.setProperty("--ui-zoom", String(zoom));
 }
-const { host } = fakeHost({
+const { host: webHost } = fakeHost({
   engine: NO_ENGINE,
   service: "managed",
   scope: "mila",
@@ -605,6 +605,14 @@ const { host } = fakeHost({
   address: fakeAddress("#/compose"),
   appearance: fakeAppearance(look),
 });
+
+const keyboard = movable({ height: 0 });
+const host = q.has("native") ? { ...webHost, signals: { ...webHost.signals, keyboard } } : webHost;
+if (q.has("native")) {
+  document.addEventListener("test-keyboard", (event) => {
+    keyboard.set({ height: (event as CustomEvent<number>).detail });
+  });
+}
 
 createRoot(document.getElementById("root")!).render(
   <TextProvider locale={lang} messages={words} timeZone={ZONE}>

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
+import frameDe from "../../messages/frame.de.json" with { type: "json" };
 import de from "../../messages/write.de.json" with { type: "json" };
 import en from "../../messages/write.en.json" with { type: "json" };
 import { chromium } from "../support/browser-page.js";
@@ -629,3 +630,299 @@ it.each([390, 1440])(
   },
   30_000,
 );
+
+for (const [width, height, room] of [
+  [320, 667, 367],
+  [375, 667, 367],
+  [390, 844, 510],
+  [430, 932, 570],
+] as const) {
+  for (const [lang, words] of [
+    ["de", de],
+    ["en", en],
+  ] as const) {
+    for (const scheme of ["light", "dark"]) {
+      it.each(["draft", "reply"])(
+        `keeps the %s caret and one action row above the keyboard at ${width}x${height} (${lang}, ${scheme})`,
+        async (mode) => {
+          const page = await browser!.newPage({
+            viewport: { width, height },
+            hasTouch: true,
+            isMobile: true,
+          });
+          try {
+            await page.route(`${ORIGIN}/**`, (route) =>
+              route.fulfill({ contentType: "text/html", body: html }),
+            );
+            const inline = mode === "reply";
+            const params = new URLSearchParams({ state: "draft", device: "phone", lang, scheme });
+            if (inline) params.set("inline", mode);
+            await page.goto(`${ORIGIN}/?${params}`);
+            await page.locator('html[data-ready="1"]').waitFor();
+            const editor = page.getByRole("textbox", {
+              name: inline ? words.write.reply.text : words.write.text,
+              exact: true,
+            });
+            const actions = page.getByRole("toolbar", {
+              name: inline ? "Letter actions" : words.write.verbs,
+              exact: true,
+            });
+            const field = inline
+              ? page.getByRole("button", { name: words.write.reply.change, exact: true })
+              : page.getByRole("textbox", { name: words.write.subject, exact: true });
+            await editor.focus();
+
+            const paste = (text: string) =>
+              editor.evaluate((el, value) => {
+                const data = new DataTransfer();
+                data.setData("text/plain", value);
+                el.dispatchEvent(
+                  new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+                );
+              }, text);
+            await paste(Array.from({ length: 14 }, (_, i) => `Workshop entry ${i + 1}`).join("\n"));
+
+            await page.evaluate((visibleHeight) => {
+              Object.defineProperty(visualViewport!, "height", {
+                configurable: true,
+                get: () => visibleHeight,
+              });
+              visualViewport!.dispatchEvent(new Event("resize"));
+            }, room);
+            await page.evaluate(
+              () =>
+                new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))),
+            );
+
+            const check = async (step: string) => {
+              await page.evaluate(
+                () =>
+                  new Promise<void>((done) =>
+                    requestAnimationFrame(() => requestAnimationFrame(() => done())),
+                  ),
+              );
+              const pill = (await actions.boundingBox())!;
+              const buttons = await actions.getByRole("button").evaluateAll((elements) =>
+                elements.map((el) => {
+                  const r = el.getBoundingClientRect();
+                  return {
+                    top: r.top,
+                    bottom: r.bottom,
+                    left: r.left,
+                    right: r.right,
+                    hit: el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)),
+                  };
+                }),
+              );
+              expect(buttons.length, step).toBeGreaterThan(1);
+              for (const button of buttons) {
+                expect(button.top, step).toBeCloseTo(buttons[0]!.top, 0);
+                expect(button.left, step).toBeGreaterThanOrEqual(0);
+                expect(button.right, step).toBeLessThanOrEqual(width);
+                expect(button.bottom, step).toBeLessThanOrEqual(room);
+                expect(button.hit, step).toBe(true);
+              }
+              expect(pill.y + pill.height, step).toBeGreaterThanOrEqual(room - 8);
+              expect(pill.y + pill.height, step).toBeLessThanOrEqual(room + 1);
+              const header = (await field.boundingBox())!;
+              expect(header.y, step).toBeGreaterThanOrEqual(0);
+              const typing = await editor.evaluate((el) => {
+                const port = el.closest(".oh-composer-scroll")!.getBoundingClientRect();
+                const selection = getSelection()!;
+                const range = document.createRange();
+                const { focusNode, focusOffset } = selection;
+                range.setStart(focusNode!, focusOffset);
+                range.collapse(true);
+                if (!range.getClientRects().length) {
+                  // WebKit can leave the caret just after a text node, where a collapsed range has no box.
+                  const previous = focusNode?.childNodes[focusOffset - 1];
+                  if (previous instanceof Text && previous.length) {
+                    range.setStart(previous, previous.length - 1);
+                  }
+                }
+                // Empty lines have a break node in place of a text range.
+                const breakNode = focusNode?.childNodes[focusOffset];
+                const glyph = range.getBoundingClientRect();
+                const caret =
+                  !glyph.height && breakNode instanceof HTMLBRElement
+                    ? breakNode.getBoundingClientRect()
+                    : glyph;
+                return {
+                  top: caret.top,
+                  bottom: caret.bottom,
+                  height: caret.height,
+                  portTop: port.top,
+                  portBottom: port.bottom,
+                  pageScroll: window.scrollY,
+                  hit: el.contains(
+                    document.elementFromPoint(
+                      Math.min(caret.left + 1, port.right - 1),
+                      caret.top + caret.height / 2,
+                    ),
+                  ),
+                };
+              });
+              expect(typing.portTop, step).toBeGreaterThanOrEqual(header.y + header.height - 1);
+              expect(typing.portBottom, step).toBeLessThanOrEqual(pill.y + 1);
+              expect(typing.height, step).toBeGreaterThan(0);
+              expect(typing.top, step).toBeGreaterThanOrEqual(Math.max(typing.portTop, 0) - 1);
+              expect(typing.bottom, step).toBeLessThanOrEqual(typing.portBottom + 1);
+              expect(typing.hit, step).toBe(true);
+              expect(typing.pageScroll, step).toBe(0);
+              return { header: header.y, pill: pill.y, editorBottom: typing.portBottom };
+            };
+
+            const opening = await check(`${mode}: keyboard opens`);
+            for (let index = 1; index <= 18; index++) {
+              await page.keyboard.press("Enter");
+              await check(`${mode}: Enter before line ${index}`);
+              const line =
+                lang === "de"
+                  ? `Notiz ${index}: Wir treffen uns im Atelier.`
+                  : `Note ${index}: We will meet at the workshop.`;
+              await page.keyboard.insertText(line);
+              expect(await editor.textContent()).toContain(line);
+              expect(await check(`${mode}: typed line ${index}`)).toEqual(opening);
+            }
+            await paste("One more entry\nAnd a final line");
+            expect(await editor.textContent()).toContain("And a final line");
+            expect(await check(`${mode}: multiline paste`)).toEqual(opening);
+          } finally {
+            await page.close();
+          }
+        },
+        45_000,
+      );
+    }
+  }
+}
+
+it.each(["in separate frames", "in the same frame"] as const)(
+  "keeps the draft above the native keyboard before and after the WebView resizes %s",
+  async (resizeOrder) => {
+    const page = await browser!.newPage({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true,
+    });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+      await page.goto(`${ORIGIN}/?state=draft&device=phone&native=1&lang=de&scheme=dark`);
+      await page.locator('html[data-ready="1"]').waitFor();
+      const editor = page.getByRole("textbox", { name: de.write.text, exact: true });
+      const actions = page.getByRole("toolbar", { name: de.write.verbs, exact: true });
+      await editor.focus();
+      await editor.press("End");
+      const settleViewport = () =>
+        page.evaluate(
+          () => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))),
+        );
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent("test-keyboard", { detail: 344 })));
+      await settleViewport();
+      const bottom = async () => {
+        const bounds = (await actions.boundingBox())!;
+        return bounds.y + bounds.height;
+      };
+      await expect.poll(bottom).toBeLessThanOrEqual(501);
+      expect(await bottom()).toBeGreaterThanOrEqual(492);
+      // Android can also resize the layout while reporting the same keyboard through the host.
+      if (resizeOrder === "in separate frames") {
+        await page.setViewportSize({ width: 390, height: 500 });
+        await settleViewport();
+        expect(await bottom()).toBeGreaterThanOrEqual(492);
+        expect(await bottom()).toBeLessThanOrEqual(501);
+      }
+      await page.setViewportSize({ width: 430, height: 500 });
+      await settleViewport();
+      expect(await bottom()).toBeGreaterThanOrEqual(492);
+      expect(await bottom()).toBeLessThanOrEqual(501);
+      await page.keyboard.insertText(" Ein weiterer Satz.");
+      const caret = await editor.evaluate(() => getSelection()!.getRangeAt(0).getBoundingClientRect().bottom);
+      expect(caret).toBeLessThan((await actions.boundingBox())!.y);
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent("test-keyboard", { detail: 0 })));
+      await page.setViewportSize({ width: 430, height: 844 });
+      await expect.poll(bottom).toBeGreaterThan(800);
+      expect(await editor.textContent()).toContain("Ein weiterer Satz.");
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent("test-keyboard", { detail: 344 })));
+      await expect.poll(bottom).toBeLessThanOrEqual(501);
+      expect(await bottom()).toBeGreaterThanOrEqual(492);
+    } finally {
+      await page.close();
+    }
+  },
+  30_000,
+);
+
+it.each([
+  ["de", de],
+  ["en", en],
+] as const)(
+  "keeps the Back button named with a compact keyboard viewport (%s)",
+  async (lang, words) => {
+    const page = await browser!.newPage({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      isMobile: true,
+    });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+      await page.goto(`${ORIGIN}/?state=draft&device=phone&lang=${lang}`);
+      await page.locator('html[data-ready="1"]').waitFor();
+      const back = page.getByRole("button", { name: words.write.back, exact: true });
+      expect(await back.isVisible()).toBe(true);
+      await page.getByRole("textbox", { name: words.write.text, exact: true }).focus();
+      await page.evaluate(() => {
+        Object.defineProperty(visualViewport!, "height", { configurable: true, get: () => 180 });
+        visualViewport!.dispatchEvent(new Event("resize"));
+      });
+      await page.locator("[data-writing-compact]").waitFor();
+      expect(await back.isVisible()).toBe(true);
+    } finally {
+      await page.close();
+    }
+  },
+  30_000,
+);
+
+it("keeps German send actions reachable when large text and the keyboard reduce their room", async () => {
+  const page = await browser!.newPage({
+    viewport: { width: 320, height: 667 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  try {
+    await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto(`${ORIGIN}/?state=draft&device=phone&zoom=1.5&lang=de&scheme=dark`);
+    await page.locator('html[data-ready="1"]').waitFor();
+    await page.getByRole("textbox", { name: de.write.text, exact: true }).focus();
+    const resize = (h: number) =>
+      page.evaluate((height) => {
+        Object.defineProperty(visualViewport!, "height", { configurable: true, get: () => height });
+        visualViewport!.dispatchEvent(new Event("resize"));
+      }, h);
+    await resize(280);
+    const actions = page.getByRole("toolbar", { name: de.write.verbs, exact: true });
+    const send = actions.getByRole("button", { name: de.write.send, exact: true });
+    await expect
+      .poll(async () => {
+        const r = (await send.boundingBox())!;
+        return r.y + r.height;
+      })
+      .toBeLessThanOrEqual(280);
+    await send.click({ trial: true });
+    const more = actions.getByRole("button", { name: frameDe.frame.dock.more, exact: true });
+    const sendBox = (await send.boundingBox())!;
+    const moreBox = (await more.boundingBox())!;
+    expect(moreBox.y).toBeCloseTo(sendBox.y, 0);
+    expect(moreBox.x + moreBox.width).toBeLessThanOrEqual(320);
+    await more.click();
+    // Moving focus to More can dismiss the system keyboard.
+    await resize(667);
+    const menu = page.getByRole("menu", { name: frameDe.frame.dock.more, exact: true });
+    await menu.getByRole("menuitem", { name: de.write.discard, exact: true }).click({ trial: true });
+    await menu.getByRole("menuitem", { name: de.write.later.verb, exact: true }).click();
+    await page.getByRole("dialog", { name: de.write.later.title, exact: true }).waitFor();
+  } finally {
+    await page.close();
+  }
+}, 30_000);

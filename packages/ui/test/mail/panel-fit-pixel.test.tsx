@@ -47,4 +47,9 @@ describe("the action panel at the edge of its room", () => {
     render(<ActionPanel label="Actions" items={verbs} more={{ label: "More", behind: true }} />);
     expect(shown()).toEqual(["Reply", "Later", "Tag", "More"]);
   });
+  it("keeps all the actions when they fit without an overflow menu", () => {
+    room.mockReturnValue(80 * 3);
+    render(<ActionPanel label="Actions" items={verbs} more={{ label: "More", behind: false }} />);
+    expect(shown()).toEqual(["Reply", "Later", "Tag"]);
+  });
 });
