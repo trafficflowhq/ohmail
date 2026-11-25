@@ -43,6 +43,17 @@ export function planHintOf(plan: unknown, interval: unknown): PlanHint {
   };
 }
 
+/** The add-on a person came to see on the hosted page. */
+export function manageAddonOf(value: unknown): "storage" | "mailbox" | undefined {
+  return value === "storage" || value === "mailbox" ? value : undefined;
+}
+
+export interface ManageLinkChange {
+  elevated: true;
+  storageNeed?: StorageNeed;
+  addon?: "storage" | "mailbox";
+}
+
 /**
  * THE LARGEST PLAN'S STORED-TEXT LIMIT on the operator's card (Pro, 10 GB). The program names no plan
  * on `/v1/access`, so the cap decides what adds room: below this a bigger plan, from it on only the
@@ -130,6 +141,16 @@ export interface StorageOfferPlan {
   roomBytes: number;
   /** In the currency's minor unit (cents), per `interval`. */
   amount: number;
+  setupSuggestions?: number;
+}
+
+export interface StorageComparisonPlan {
+  plan: StoragePlanName;
+  mailboxes: number;
+  storageBytes: number;
+  setupSuggestions: number;
+  monthlyCredits: number;
+  pricesMinor: Partial<Record<(typeof PLAN_HINT_INTERVALS)[number], number>>;
 }
 
 /**
@@ -145,6 +166,10 @@ export interface StorageOffer {
   currency: string;
   interval: (typeof PLAN_HINT_INTERVALS)[number];
   plans: StorageOfferPlan[];
+  /** Whether this account can still receive the one-time suggestions. */
+  setupBoostEligible?: boolean;
+  /** Confirmed catalogue prices for comparison. Change quotes use the card's own interval. */
+  comparisonPlans?: StorageComparisonPlan[];
   /** One unit's room and price, with the unit cap. The price is quoted in `interval` when stated, else the plan interval. */
   addon: { unitBytes: number; amount: number; maxUnits: number; interval?: "month" | "year" } | null;
   /** One extra mailbox's price, monthly on either plan interval, with the unit cap; absent where none is offered. */
@@ -598,11 +623,11 @@ export interface EntitlementsPort {
    * is the page's language; absent, the page picks its own. `hint` is the plan the person chose
    * on the site before signing up: it picks the page's preselected choice and nothing else.
    * `change.elevated` asks for a page that may change the plan, which only the step-up door sends;
-   * `change.storageNeed` sizes that page's offer. An older program ignores both.
+   * `change.storageNeed` sizes the offer and `change.addon` names the add-on the person requested.
    */
   manageLink(
     accountId: string, lang?: "de" | "en", hint?: PlanHint,
-    change?: { elevated: true; storageNeed?: StorageNeed },
+    change?: ManageLinkChange,
   ): Promise<{ url: string } | null>;
   /** The person is being erased: stop the money. Bounded and never throwing, because Article 17
    *  may not be withheld because a payment processor is unreachable. */

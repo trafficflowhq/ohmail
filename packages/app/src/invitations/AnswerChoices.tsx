@@ -11,6 +11,7 @@ export function AnswerChoices({
   onAnswer,
   on,
   fill,
+  readOnly,
   propose,
 }: {
   readonly answer: InvitationRow["answer"];
@@ -18,6 +19,7 @@ export function AnswerChoices({
   readonly propose?: AnswerSwitchProps["propose"];
   readonly on?: "sheet";
   readonly fill?: boolean;
+  readonly readOnly?: boolean;
 }) {
   const t = useText("invitations");
   return (
@@ -29,6 +31,7 @@ export function AnswerChoices({
       answers={{
         options: ANSWERS.map((value) => ({ value, label: t(`answer.${value}`) })),
         value: isAnswer(answer) ? answer : null,
+        readOnly,
         onChange: (value, anchor) => isAnswer(value) && value !== answer && onAnswer(value, anchor),
       }}
     />

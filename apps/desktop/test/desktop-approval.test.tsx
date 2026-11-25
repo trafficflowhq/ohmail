@@ -292,9 +292,26 @@ describe("the wait belongs to the engine, not to the chooser", () => {
     await click(buttonSaying(first.el, "Open ohmail.app"));
     await elapse(2000);
     const before = pollsMade();
+    let releaseHealth!: () => void;
+    const healthHeld = new Promise<void>((resolve) => { releaseHealth = resolve; });
+    const invoke = host.__TAURI_INTERNALS__!.invoke;
+    host.__TAURI_INTERNALS__!.invoke = async (command, payload) => {
+      if (command === "engine_request" && payload?.url === "/health") await healthHeld;
+      return invoke(command, payload);
+    };
+
     const second = await remount("signIn");
     expect(stops, "closing the chooser ended the wait at the engine").toBe(0);
+    await click(buttonSaying(second.el, "Sign in with browser"));
+    const disabledWhileReading = buttonSaying(second.el, "Open ohmail.app").disabled;
+    await act(async () => { releaseHealth(); });
+    expect(stops, "selecting browser sign-in cancelled the held approval").toBe(0);
+    expect(disabledWhileReading, "the approval start was enabled before reading the saved wait").toBe(true);
     expect(second.el.textContent, "the reopened chooser did not say it is waiting").toContain("Waiting for your browser…");
+    const resumed = buttonSaying(second.el, "Open ohmail.app");
+    expect(resumed.disabled).toBe(true);
+    await click(resumed);
+    expect(asked.filter((a) => a.command === "open_link")).toHaveLength(1);
     await elapse(2000);
     await elapse(2000);
     await elapse(2000);

@@ -45,7 +45,16 @@ export interface StorageMailbox {
 export interface StorageOffer {
   currency: string;
   interval: "month" | "year";
-  plans: Array<{ plan: StoragePlanName; mailboxes: number; roomBytes: number; amount: number }>;
+  plans: Array<{ plan: StoragePlanName; mailboxes: number; roomBytes: number; amount: number; setupSuggestions?: number }>;
+  setupBoostEligible?: boolean;
+  comparisonPlans?: Array<{
+    plan: StoragePlanName;
+    mailboxes: number;
+    storageBytes: number;
+    setupSuggestions?: number;
+    monthlyCredits: number;
+    pricesMinor: Partial<Record<"month" | "year", number>>;
+  }>;
   /** The interval of the quoted amount, or the plan interval when absent. */
   addon: { unitBytes: number; amount: number; maxUnits: number; interval?: "month" | "year" } | null;
   /** One extra mailbox: its monthly price and the unit cap; absent where none is offered. */
@@ -121,17 +130,43 @@ function mailboxesOf(raw: unknown): StorageMailbox[] {
   return out;
 }
 
+function comparisonPlansOf(raw: unknown): StorageOffer["comparisonPlans"] {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > PLANS.length) return undefined;
+  const plans: NonNullable<StorageOffer["comparisonPlans"]> = [];
+  for (const item of raw) {
+    const plan = rec(item);
+    if (!plan || !isPlan(plan.plan) || plans.some((p) => p.plan === plan.plan) || !isCount(plan.mailboxes)
+      || !isCount(plan.storageBytes) || !isCount(plan.monthlyCredits)) return undefined;
+    const prices = rec(plan.pricesMinor);
+    if (!prices) return undefined;
+    const { month, year } = prices;
+    if ((month === undefined && year === undefined) || (month !== undefined && !isCount(month))
+      || (year !== undefined && !isCount(year))) return undefined;
+    plans.push({
+      plan: plan.plan, mailboxes: plan.mailboxes, storageBytes: plan.storageBytes, monthlyCredits: plan.monthlyCredits,
+      ...(isCount(plan.setupSuggestions) ? { setupSuggestions: plan.setupSuggestions } : {}),
+      pricesMinor: { ...(month === undefined ? {} : { month }), ...(year === undefined ? {} : { year }) },
+    });
+  }
+  return plans;
+}
+
 /** The offer, field by field: one that cannot be read is no offer, so no price is ever drawn from it. */
 export function storageOfferOf(raw: unknown): StorageOffer | null {
   const o = rec(raw);
   if (o === null || typeof o.currency !== "string" || !/^[a-z]{3}$/i.test(o.currency)) return null;
   if (o.interval !== "month" && o.interval !== "year") return null;
-  if (!Array.isArray(o.plans) || o.plans.length === 0) return null;
+  if (!Array.isArray(o.plans)) return null;
+  const comparisonPlans = comparisonPlansOf(o.comparisonPlans);
+  if (o.plans.length === 0 && !comparisonPlans?.length) return null;
   const plans: StorageOffer["plans"] = [];
   for (const item of o.plans) {
     const p = rec(item);
     if (p === null || !isPlan(p.plan) || !isCount(p.mailboxes) || !isCount(p.roomBytes) || !isCount(p.amount)) return null;
-    plans.push({ plan: p.plan, mailboxes: p.mailboxes, roomBytes: p.roomBytes, amount: p.amount });
+    plans.push({
+      plan: p.plan, mailboxes: p.mailboxes, roomBytes: p.roomBytes, amount: p.amount,
+      ...(isCount(p.setupSuggestions) ? { setupSuggestions: p.setupSuggestions } : {}),
+    });
   }
   let addon: StorageOffer["addon"] = null;
   if (o.addon !== undefined && o.addon !== null) {
@@ -168,7 +203,8 @@ export function storageOfferOf(raw: unknown): StorageOffer | null {
   }
   return {
     currency: o.currency.toLowerCase(), interval: o.interval, plans, addon, ...(mailboxAddon ? { mailboxAddon } : {}),
-    current, fit, canChange: o.canChange === true,
+    ...(typeof o.setupBoostEligible === "boolean" ? { setupBoostEligible: o.setupBoostEligible } : {}),
+    current, fit, canChange: o.canChange === true, ...(comparisonPlans === undefined ? {} : { comparisonPlans }),
   };
 }
 

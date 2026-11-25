@@ -91,6 +91,10 @@ function recorded(row: ServerRow) {
       if (req.method === "PROPFIND" && depth === "0" && url === `${row.origin}/.well-known/caldav`) return answer(`${row.origin}/`, written("/", `<current-user-principal><href>${row.principal}</href></current-user-principal>`));
       if (req.method === "PROPFIND" && depth === "0" && url === `${row.origin}${row.principal}`) return answer(url, written(row.principal, `<C:calendar-home-set><href>${row.home}</href></C:calendar-home-set>`));
       if (req.method === "PROPFIND" && depth === "1" && url === home.request.url) return answer(url, home.response.body);
+      // The recording has no OPTIONS exchange. A synthetic response supplies base CalDAV only.
+      if (req.method === "OPTIONS" && url === collection) {
+        return { ...answer(url, ""), status: 200, header: (name) => name === "dav" ? "calendar-access" : null };
+      }
       if (req.method === "REPORT" && url === collection && body.includes("sync-collection") && body.includes("<D:sync-token></D:sync-token>")) return answer(url, sync.response.body);
       const wanted = [...body.matchAll(/<D:href>([^<]*)<\/D:href>/g)].map((m) => m[1]!).sort();
       if (req.method === "REPORT" && url === collection && depth === null && body.includes("calendar-multiget") && JSON.stringify(wanted) === JSON.stringify(members)) return answer(url, data.response.body);
@@ -278,6 +282,34 @@ async function pass(c: Connection, cal: CalendarRef, since: ChangeToken | null, 
 const reports = (s: StandIn): (string | null)[] => s.seen.filter((r) => r.method === "REPORT").map((r) => r.asks);
 
 describe("the calendars of a home", () => {
+  it("reports a timed-out capability probe separately from a successful probe", async () => {
+    const { c, cal } = await studio({ autoSchedule: true, nativeMove: true }, []);
+    const timedReader = makeReader({
+      http: {
+        request: (url, req) => req.method === "OPTIONS" && url === cal.id
+          ? Promise.resolve({ arrived: false, reason: "timeout" })
+          : http.request(url, req),
+      },
+      clock: CLOCK,
+      zones: ZONES,
+    });
+    expect(await reader.listCalendars(c, signal())).toMatchObject({
+      ok: true, value: [{ id: cal.id, nativeMove: true, autoSchedule: true }],
+    });
+    expect(await timedReader.listCalendars(c, signal())).toMatchObject({
+      ok: true, value: [{ id: cal.id, nativeMove: null, autoSchedule: null }],
+    });
+  });
+
+  it("does not offer scheduling when neither OPTIONS nor the collection properties advertise it", async () => {
+    const { s, c, cal } = await studio({ optionsDav: "" }, []);
+    const listed = await reader.listCalendars(c, signal());
+    expect(listed).toMatchObject({ ok: true, value: [{ id: cal.id }] });
+    if (!listed.ok) throw new Error("Expected the calendar listing");
+    expect(listed.value[0]?.autoSchedule).toBeUndefined();
+    expect(s.seen.some(({ depth, body }) => depth === "0" && body.includes("<D:resourcetype/>"))).toBe(true);
+  });
+
   it("lists what is a calendar for events, each with what the server says of it", async () => {
     const s = await startCalDavStandIn();
     servers.push(s);
@@ -301,8 +333,12 @@ describe("the calendars of a home", () => {
         { id: at("both"), name: "both", color: null, writable: true, byToken: true, zone: null },
       ],
     });
-    // One request for the list, after the three that find the home.
-    expect(s.seen.map((r) => [r.path, r.depth])).toEqual([["/.well-known/caldav", "0"], ["/dav/", "0"], ["/dav/principals/mila/", "0"], ["/dav/calendars/mila/", "1"]]);
+    expect(s.seen.slice(0, 4).map((r) => [r.path, r.depth])).toEqual([
+      ["/.well-known/caldav", "0"], ["/dav/", "0"], ["/dav/principals/mila/", "0"], ["/dav/calendars/mila/", "1"],
+    ]);
+    expect(s.seen.slice(4).map(({ method, path }) => [method, path]).sort()).toEqual(
+      ["both", "old", "work"].map((slug) => ["OPTIONS", s.paths.collection(slug)]),
+    );
   });
 
   it("reads the effective write grant of each shared calendar", async () => {

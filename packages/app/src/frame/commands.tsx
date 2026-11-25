@@ -88,6 +88,13 @@ export interface ReaderPosition {
   readonly square: string | null;
 }
 
+export interface SearchPosition {
+  readonly address: string;
+  readonly query: string;
+  readonly sort: string;
+  readonly top: number;
+}
+
 export interface FrameInner {
   readonly api: FrameApi;
   readonly initialPlace?: boolean;
@@ -105,6 +112,7 @@ export interface FrameInner {
   readonly readerOpen?: number;
   readonly readerPosition: { current: ReaderPosition | null };
   readonly searchQuery: { current: string };
+  readonly searchPosition: { current: SearchPosition | null };
   readonly ohboxSearchPosition: { current: { address: string; top: number } | null };
   /** Whether the whole rail stands over the app, and its setter (`commands.rail` is the same setter). */
   readonly railOpen: readonly [boolean, Dispatch<SetStateAction<boolean>>];
@@ -154,6 +162,10 @@ export function useDragFeed(): Feed<Dragging | null> {
 /** Search text kept for the lifetime of this account’s frame. */
 export function useSearchQuery() {
   return useInner().searchQuery;
+}
+
+export function useSearchPosition() {
+  return useInner().searchPosition;
 }
 
 export function useOhboxSearchPosition() {

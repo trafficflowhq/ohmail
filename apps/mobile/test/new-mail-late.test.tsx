@@ -10,21 +10,26 @@
  * the strip ignoring the top line (the offline and outage cases); `heard` never called by the
  * pull (the pull cases).
  */
-import { createElement as h, type ReactNode } from "react";
+import { act, createElement as h, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount as mountDom } from "./_rendered-dom";
 import type { PhoneMailbox } from "../src/net/mailboxes";
 
-const scene = vi.hoisted(() => ({ world: null as unknown, session: null as unknown, push: vi.fn() }));
+const scene = vi.hoisted(() => ({ world: null as unknown, session: null as unknown, push: vi.fn(), quota: false, dismiss: vi.fn() }));
 
 vi.mock("expo-router", () => ({ router: { push: scene.push } }));
 vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
-vi.mock("../src/state/world", () => ({ useWorld: () => scene.world }));
+vi.mock("../src/state/world", () => ({
+  useWorld: () => scene.world,
+  useWorldToast: () => ({ copyQuota: scene.quota ? {} : undefined, dismissCopyQuota: scene.dismiss }),
+}));
+vi.mock("../src/theme", () => ({ useTheme: () => ({ c: { hairSoft: "#cccccc" } }) }));
 vi.mock("../src/net/connection", () => ({ useConnection: () => ({ state: { k: "live", session: scene.session } }) }));
 /* The parts keep what a screen reader is told (the role) and what can be pressed. */
 vi.mock("../src/ui/base", () => ({
   Panel: (p: { children?: ReactNode }) => h("div", { "data-panel": "" }, p.children),
-  Txt: (p: { children?: ReactNode; accessibilityRole?: string }) => h("span", { role: p.accessibilityRole }, p.children),
+  Txt: (p: { children?: ReactNode; accessibilityRole?: string; accessibilityLiveRegion?: string }) =>
+    h("span", { role: p.accessibilityRole, "data-live": p.accessibilityLiveRegion }, p.children),
   Button: (p: { label: string; onPress?: () => void }) => h("button", { onClick: p.onPress }, p.label),
 }));
 
@@ -36,6 +41,7 @@ import type { ConnectedSession } from "../src/net/pairing";
 import { pullRound } from "../src/state/pull-round";
 import { readerZone, setTimeLabel } from "../src/state/live";
 import { LateStrip } from "../src/ui/LateStrip";
+import { FullMailboxNotice } from "../src/ui/FullMailboxNotice";
 import { lateStripSaid, lateWho, notCheckedNoteSaid } from "../src/ui/late-lines";
 
 const NOW = new Date("2026-11-13T12:00:00.000Z");
@@ -94,6 +100,26 @@ afterEach(() => {
   installNetworkReader(null);
   setActiveLocale("en");
   document.body.innerHTML = "";
+});
+
+it("announces the full-mailbox notice and keeps both of its actions", () => {
+  scene.quota = true;
+  scene.dismiss.mockClear();
+  const view = mount(h(FullMailboxNotice));
+  try {
+    const notice = view.el.querySelector('[role="summary"]');
+    expect(notice?.getAttribute("data-live")).toBe("polite");
+    expect(notice?.textContent).toContain(Copy.quotaWaiting);
+    const buttons = [...view.el.querySelectorAll("button")];
+    expect(buttons.map((button) => button.textContent)).toEqual([Copy.quotaMailboxes, Copy.quotaNotNow]);
+    act(() => buttons[0]!.click());
+    expect(scene.push).toHaveBeenCalledWith({ pathname: "/settings", params: { pane: "mailboxes" } });
+    act(() => buttons[1]!.click());
+    expect(scene.dismiss).toHaveBeenCalledOnce();
+  } finally {
+    scene.quota = false;
+    scene.push.mockClear();
+  }
 });
 
 describe("the phone's read of a mailbox row carries the server's word on fetching", () => {

@@ -198,9 +198,9 @@ export function routeOf(fragment: string): Route {
   const query = at === -1 ? "" : whole.slice(at + 1);
   const { path, ...selection } = cutTail(at === -1 ? whole : whole.slice(0, at));
   const found = placeOf(path, query);
-  return selection.open !== null && found.stage === null && LISTS_LETTERS.has(found.place)
-    ? { ...found, ...selection }
-    : found;
+  if (selection.open === null || found.stage !== null || !LISTS_LETTERS.has(found.place)) return found;
+  const fromDrafts = found.place === "ohbox" && new URLSearchParams(query).get("from") === "drafts";
+  return { ...found, ...selection, ...(fromDrafts ? { words: { draftReturnLetter: selection.open } } : {}) };
 }
 
 const named = (mailbox: string | undefined) =>
@@ -217,6 +217,8 @@ export function fragmentOf(to: Route): string {
     hasLetterId(to.open) && LISTS_LETTERS.has(to.place) ? `/${to.wholeThread ? "t" : "m"}/${to.open}` : "";
   const head = ADDRESS[to.place];
   switch (to.place) {
+    case "ohbox":
+      return `#/${head}${tail}${tail && to.open === to.words.draftReturnLetter ? "?from=drafts" : ""}`;
     case "search":
       return `#/${head}${tail}${queryOf(Object.fromEntries(SEARCH_LINK_FIELDS.map((key) => [key, to.words[key] ?? ""])))}`;
     case "tags":

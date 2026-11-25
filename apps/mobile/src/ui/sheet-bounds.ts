@@ -10,7 +10,7 @@ export const SHEET_TOP_ROOM = 12;
  * pane's own x and width, so it never straddles the list nor reaches under a side inset, and ends at the
  * pane's foot (`foot`: the pair's gutter under it, all four corners round). A horizontal hinge
  * (tabletop) keeps the lower segment and wins; a vertical one with no pane keeps the reading half.
- * One pane: the full-width thumb sheet, bounded and centred on a wide window.
+ * One pane: the thumb sheet, with a gutter on the mail surface.
  */
 export function sheetPanelBounds(
   w: number,
@@ -18,7 +18,7 @@ export function sheetPanelBounds(
   top: number,
   pane: { x: number; w: number } | null,
   hinge: { x: number; y: number; w: number; h: number } | null,
-  foot: { gutter: number; radius: number } = { gutter: 0, radius: 0 },
+  foot: { gutter: number; radius: number; inset?: number } = { gutter: 0, radius: 0 },
 ): ViewStyle {
   const tall = Math.max(0, h - top);
   if (hinge !== null && hinge.h < hinge.w) {
@@ -35,6 +35,14 @@ export function sheetPanelBounds(
   /* No pane beside a vertical hinge: the reading side, never a floor that reaches back over the crease. */
   if (hinge !== null) {
     return { alignSelf: "flex-end", width: Math.max(0, w - (hinge.x + hinge.w)), maxHeight: tall };
+  }
+  const inset = foot.inset ?? 0;
+  if (inset > 0) {
+    return {
+      alignSelf: "center", width: Math.max(0, w - 2 * inset), maxWidth: 560,
+      maxHeight: Math.max(0, tall - inset), marginBottom: inset,
+      borderBottomLeftRadius: foot.radius, borderBottomRightRadius: foot.radius,
+    };
   }
   return { alignSelf: "center", width: "100%", maxWidth: 560, maxHeight: tall };
 }

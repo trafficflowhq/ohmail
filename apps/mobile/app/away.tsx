@@ -1,13 +1,5 @@
-/**
- * The away responder — the one thing this product does that sends mail on its own, and going away
- * is a phone moment. A FORM WITH A SAVE, not live controls: the message is prose, so a
- * live-saving field would write half a sentence into mail that goes out in somebody's name (the
- * webapp `AwayResponderRow`'s own rule, and this is the same route pair).
- *
- * This phone edits three fields and STATES the other three — who gets a reply, which piles, how
- * often — because the replace means every save carries them back, and a switch that turns on a
- * standing order without naming who it answers puts the consequence off screen.
- */
+/** Away responder settings over the paired or on-device organizer's session. */
+import { AWAY_ANSWERABLE_PILES, AWAY_PILE_VIEW, AWAY_SCREENER_FOLDER, awayEffectivePiles } from "@ohmail/app-logic/away";
 import { useCallback, useEffect, useState } from "react";
 import { View } from "react-native";
 import { useNavigation } from "expo-router";
@@ -21,9 +13,10 @@ import { useWorld } from "../src/state/world";
 import {
   awayAudienceWide, awayPileWords, awayRefusalLine, awaySaveBlocked, awaySaveBody, awaySay,
   awayFailedLine, awaySavedUntil, awayStatedLine, awayUnsaved, awayUnsavedLine,
-  type AwayRefusal, type AwayRow,
+  type AwayEdits, type AwayRefusal, type AwayRow, type AwayScope,
 } from "../src/ui/away-form";
-import { Button, Panel, Rule, Screen, Scroller, Section, Txt } from "../src/ui/base";
+import { MailAppearance } from "../src/theme/mail";
+import { Button, Chip, Panel, Rule, Screen, Scroller, Section, Tap, Txt, ViewHead } from "../src/ui/base";
 import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { Field } from "../src/ui/Field";
 import { Gated } from "../src/ui/Gated";
@@ -44,7 +37,7 @@ export default function AwayScreen({ inPane = false }: { inPane?: boolean }) {
     <SurfaceBoundary surface="away">
       <Gated>
         <YieldToMore paneKey={inPane ? null : "away"}>
-          <AwayBody inPane={inPane} />
+          <MailAppearance><AwayBody inPane={inPane} /></MailAppearance>
         </YieldToMore>
       </Gated>
     </SurfaceBoundary>
@@ -66,6 +59,8 @@ function AwayBody({ inPane }: { inPane: boolean }) {
   const [enabled, setEnabled] = useState(false);
   const [body, setBody] = useState("");
   const [endsAt, setEndsAt] = useState<string | null>(null);
+  const [scope, setScope] = useState<AwayScope | null>(null);
+  const [pickingRate, setPickingRate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [said, setSaid] = useState<Said>(null);
   const [picking, setPicking] = useState(false);
@@ -83,6 +78,7 @@ function AwayBody({ inPane }: { inPane: boolean }) {
     setEnabled(row.enabled);
     setBody(row.body ?? "");
     setEndsAt(row.endsAt);
+    setScope({ audience: row.audience, piles: row.piles, throttle: row.throttle });
   }, []);
 
   useEffect(() => {
@@ -110,7 +106,13 @@ function AwayBody({ inPane }: { inPane: boolean }) {
   const canSave = read !== null && !saving && !blocked && !incomplete;
   /* THE EDIT AGAINST THE SAVED ROW. While they differ the line under the switch says so, and the
      stack asks before this screen goes — Back, the swipe and the rail alike. */
-  const unsaved = awayUnsaved(read, { enabled, body, endsAt });
+  const edits: AwayEdits = { enabled, body, endsAt, ...(scope ? { scope } : {}) };
+  const unsaved = awayUnsaved(read, edits);
+  const editScope = (patch: Partial<AwayScope>) => {
+    if (!scope || saving) return;
+    setScope({ ...scope, ...patch });
+    setSaid(null);
+  };
   usePreventRemove(unsaved && !saving, ({ data }) => setLeaving({ action: data.action }));
   useUnsavedHold(unsaved && !saving, (go) => setPaneLeave({ go }));
   const keepEditing = () => {
@@ -128,10 +130,7 @@ function AwayBody({ inPane }: { inPane: boolean }) {
   };
 
   const save = async () => {
-    const next = awaySaveBody(read, { enabled, body, endsAt });
-    /* NO READ, NO SAVE. Composing a body without one would send the route's defaults for the
-       three fields this screen does not edit, which narrows the audience and the pile scope on
-       somebody's behalf — silently, and in the direction that stops mail going out. */
+    const next = awaySaveBody(read, edits);
     if (next === null || session === null) { setSaid("unreachable"); return; }
     setSaving(true);
     setSaid(null);
@@ -155,12 +154,9 @@ function AwayBody({ inPane }: { inPane: boolean }) {
 
   return (
     <Screen>
-      {/* The page carries its own heading, so the bar carries only the way back. */}
-      {inPane ? <PaneTop /> : <DetailBar />}
+      {inPane ? <PaneTop /> : <DetailBar backCapsule backLabel={Copy.settings} />}
       <Scroller bounded avoidKeyboard>
-        <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
-          <Txt variant="h1">{Copy.awayTitle}</Txt>
-        </View>
+        <ViewHead title={Copy.awayTitle} />
 
         {/* THE SWITCH AND WHAT IT SAYS. Two segments rather than a toggle, the phone's own idiom
             for a two-way choice; the sentence under it is the state, not the control's label. */}
@@ -245,29 +241,41 @@ function AwayBody({ inPane }: { inPane: boolean }) {
           </View>
         </Panel>
 
-        {/* WHAT THIS PHONE IS NOT OFFERING TO CHANGE, stated. Every save carries these back
-            exactly as they were read, so they are facts about what will be sent and to whom. */}
-        <Panel style={{ paddingBottom: 16, marginBottom: 14 }}>
-          <Section style={{ paddingTop: 16 }}>{Copy.awayAudienceLabel}</Section>
-          <View style={{ paddingHorizontal: 20, gap: 4 }}>
-            <Txt variant="note" tone="ink2">
-              {read === null ? " " : awayAudienceWide(read.audience) ? Copy.awayEveryone : Copy.awayScreenedIn}
-            </Txt>
-          </View>
-          <Rule inset={20} />
-          <Section>{Copy.awayPilesLabel}</Section>
-          <View style={{ paddingHorizontal: 20, gap: 4 }}>
-            <PileLines piles={read === null ? null : read.piles} />
-          </View>
-          <Rule inset={20} />
-          <Section>{Copy.awayThrottleLabel}</Section>
-          <View style={{ paddingHorizontal: 20, gap: 4 }}>
-            <Txt variant="note" tone="ink2">{read === null ? " " : throttleWord(read.throttle)}</Txt>
-            <Txt variant="caption" tone="ink3" style={{ paddingTop: 6 }}>
-              {Copy.awayScopeElsewhere}
-            </Txt>
-          </View>
-        </Panel>
+        {scope !== null ? (
+          <Panel style={{ paddingBottom: 16, marginBottom: 14 }}>
+            <Section style={{ paddingTop: 16 }}>{Copy.awayAudienceLabel}</Section>
+            <View style={{ paddingHorizontal: 20 }}>
+              <Segmented
+                value={scope.audience}
+                disabled={saving}
+                segments={[
+                  { value: "screened_in", label: Copy.awayScreenedIn },
+                  { value: "everyone", label: Copy.awayEveryone },
+                ]}
+                onChange={(audience) => editScope({
+                  audience,
+                  piles: audience !== scope.audience && audience === "screened_in"
+                    ? scope.piles.filter((pile) => pile !== AWAY_SCREENER_FOLDER)
+                    : scope.piles,
+                })}
+              />
+              {scope.audience !== "everyone" && awayAudienceWide(scope.audience) ? (
+                <Txt variant="note" tone="ink2">{Copy.awayEveryone}</Txt>
+              ) : null}
+            </View>
+            <Rule inset={20} />
+            <Section>{Copy.awayPilesLabel}</Section>
+            <ScopePiles audience={scope.audience} piles={scope.piles} saving={saving}
+              onChange={(piles) => editScope({ piles })} />
+            <Rule inset={20} />
+            <Section>{Copy.awayThrottleLabel}</Section>
+            <View style={{ alignItems: "flex-start", paddingHorizontal: 20 }}>
+              <Button label={throttleWord(scope.throttle)} variant="quiet" disabled={saving}
+                accessibilityLabel={Copy.ariaLabelDetail(Copy.awayThrottleLabel, throttleWord(scope.throttle))}
+                onPress={() => setPickingRate(true)} />
+            </View>
+          </Panel>
+        ) : null}
 
         <View style={{ paddingHorizontal: 16, paddingBottom: 20, gap: 10 }}>
           <View style={{ flexDirection: "row" }}>
@@ -305,6 +313,13 @@ function AwayBody({ inPane }: { inPane: boolean }) {
         <SheetRow label={Copy.awayLeaveKeep} onPress={keepEditing} />
       </Sheet>
 
+      <Sheet open={pickingRate} onClose={() => setPickingRate(false)} label={Copy.awayThrottleLabel}>
+        {(["always", "per_message", "per_day", "per_week"] as const).map((throttle) => (
+          <SheetRow key={throttle} label={throttleWord(throttle)} on={scope?.throttle === throttle}
+            onPress={() => { editScope({ throttle }); setPickingRate(false); }} />
+        ))}
+      </Sheet>
+
       <Sheet open={picking} onClose={() => setPicking(false)} label={Copy.awayUntilLabel}>
         <Txt variant="sectionLabel" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
           {Copy.awayUntilLabel}
@@ -327,27 +342,42 @@ function AwayBody({ inPane }: { inPane: boolean }) {
   );
 }
 
-/**
- * WHICH PILES GET A REPLY. A folder this build has no word for is named VERBATIM, never dropped:
- * a filtered list would state a narrower scope than the responder acts on, which reads on screen
- * as a promise that mail is not being answered when it is.
- */
-function PileLines({ piles }: { piles: readonly string[] | null }) {
-  if (piles === null) return <Txt variant="note" tone="ink2"> </Txt>;
-  if (piles.length === 0) return <Txt variant="note" tone="ink">{Copy.awayPilesNone}</Txt>;
-  const { known, verbatim } = awayPileWords(piles);
-  const words = known.map((k) =>
-    k === "ohbox" ? Copy.awayPileOhbox
-      : k === "reads" ? Copy.awayPileReads
-        : k === "receipts" ? Copy.awayPileReceipts
-          : Copy.awayPileScreener);
+function ScopePiles({ audience, piles, saving, onChange }: {
+  audience: string;
+  piles: string[];
+  saving: boolean;
+  onChange: (next: string[]) => void;
+}) {
+  const effective = awayEffectivePiles(piles, awayAudienceWide(audience) ? "everyone" : "screened_in");
+  const { verbatim } = awayPileWords(effective);
+  const labels = {
+    ohbox: Copy.awayPileOhbox, reads: Copy.awayPileReads,
+    receipts: Copy.awayPileReceipts, screener: Copy.awayPileScreener,
+  };
   return (
-    <>
-      {words.length > 0 ? <Txt variant="note" tone="ink2">{words.join(", ")}</Txt> : null}
+    <View style={{ paddingHorizontal: 20 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+        {AWAY_ANSWERABLE_PILES.map((pile) => {
+          const word = AWAY_PILE_VIEW[pile];
+          const selected = effective.includes(pile);
+          const disabled = saving || (word === "ohbox" && selected) || (word === "screener" && audience !== "everyone");
+          return (
+            <Tap key={pile} accessibilityRole="checkbox" accessibilityLabel={labels[word]}
+              accessibilityState={{ checked: selected, disabled }} disabled={disabled}
+              onPress={() => onChange(selected ? effective.filter((entry) => entry !== pile) : [...effective, pile])}
+              style={{ minHeight: 44, justifyContent: "center" }}>
+              <Chip variant={selected ? "neutral" : "outline"} {...(selected ? { icon: "check" } : {})}>
+                {labels[word]}
+              </Chip>
+            </Tap>
+          );
+        })}
+      </View>
+      {effective.length === 0 ? <Txt variant="note" tone="ink">{Copy.awayPilesNone}</Txt> : null}
       {verbatim.map((folder) => (
         <Txt key={folder} variant="note" tone="ink2">{Copy.awayPileOther(folder)}</Txt>
       ))}
-    </>
+    </View>
   );
 }
 

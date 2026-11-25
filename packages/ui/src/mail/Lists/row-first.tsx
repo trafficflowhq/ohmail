@@ -110,7 +110,7 @@ export function RowFirst(
   const addressStyle = {
     className: "oh-row-address",
     "data-press": contact || addressAction ? "" : undefined,
-    "data-whole": props.labels?.length && !keepAddressDomain ? "" : undefined,
+    "data-whole": props.labels?.length && keepAddressDomain === undefined ? "" : undefined,
     "data-domain": keepAddressDomain ? "" : undefined,
     onClick: contact,
   };

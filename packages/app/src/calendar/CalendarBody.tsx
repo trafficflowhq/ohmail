@@ -17,7 +17,7 @@ import { useMonthViewport } from "../month/MonthRunScope.js";
 import type { MonthRun } from "../month/use-month-run.js";
 import { useFaces, useSettings, useSources, useWhere, type Where } from "./where.js";
 import { useSharedCalendarSettings } from "../calsettings/settings-read.js";
-import { CalendarFirstStep, useCalendarFirstStep } from "./CalendarFirstStep.js";
+import { CalendarFirstStep, CalendarLanding, useCalendarFirstStep } from "./CalendarFirstStep.js";
 import { useNewEvent, useNewEventKey } from "./use-new-event.js";
 import { NewEvent } from "./NewEvent.js";
 import { OpenEvent } from "./OpenEvent.js";
@@ -43,8 +43,13 @@ export function CalendarBody(pane: PaneProps) {
     create,
     !firstStep && pane.keysHere && pane.route.open === null && pane.route.words.panel !== "new",
   );
-  if (port === NONE) return <RefusalLine>{t("unreadable")}</RefusalLine>;
-  if (firstStep) return <CalendarFirstStep />;
+  if (port === NONE)
+    return (
+      <CalendarLanding plan={pane.plan}>
+        <RefusalLine>{t("unreadable")}</RefusalLine>
+      </CalendarLanding>
+    );
+  if (firstStep) return <CalendarFirstStep plan={pane.plan} />;
   return <CalendarOn port={port} sources={sources} create={create} {...pane} />;
 }
 function CalendarOn({
@@ -97,7 +102,12 @@ function CalendarOn({
     zones,
     open: commands.event,
   });
-  if (where === null || found === null) return <RefusalLine>{t("noZone")}</RefusalLine>;
+  if (where === null || found === null)
+    return (
+      <CalendarLanding plan={plan}>
+        <RefusalLine>{t("noZone")}</RefusalLine>
+      </CalendarLanding>
+    );
 
   return (
     <CalendarSurface

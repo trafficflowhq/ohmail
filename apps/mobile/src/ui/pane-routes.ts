@@ -43,10 +43,12 @@ const MORE_PLAIN = new Set(["settings", "history", "search", "drafts", "trash", 
 export function morePaneKeyOf(to: MoreHref): string | null {
   const [path, query] = typeof to === "string" ? to.split("?", 2) as [string, string | undefined] : [to.pathname, undefined];
   const pile = typeof to === "string" ? new URLSearchParams(query ?? "").get("pile") : to.params?.pile;
+  const section = typeof to === "string" ? new URLSearchParams(query ?? "").get("pane") : to.params?.pane;
   const [, head, rest, extra] = path.split("/");
   if (head === undefined || extra !== undefined) return null;
   if (rest === undefined) {
     if (head === "triage") return pile ? `triage:${pile}` : "triage";
+    if (head === "settings" && section) return `settings:${section}`;
     return MORE_PLAIN.has(head) ? head : null;
   }
   if ((head === "tag" || head === "folder") && rest !== "") return `${head}:${decodeURIComponent(rest)}`;
@@ -60,6 +62,7 @@ export function morePathOf(key: string): string | null {
   if (arg === null) return MORE_PLAIN.has(head) || head === "triage" ? `/${head}` : null;
   if (arg === "") return null;
   if (head === "triage") return `/triage?pile=${encodeURIComponent(arg)}`;
+  if (head === "settings") return `/settings?pane=${encodeURIComponent(arg)}`;
   if (head === "tag" || head === "folder") return `/${head}/${encodeURIComponent(arg)}`;
   return null;
 }

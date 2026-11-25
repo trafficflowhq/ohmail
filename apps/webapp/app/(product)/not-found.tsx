@@ -1,6 +1,6 @@
 import { getTranslations } from "next-intl/server";
 import { DEFAULT_LOCALE } from "../shell/locale";
-import { NoPageRoute } from "./NoPageRoute";
+import { NoPageEntry } from "./NoPageEntry";
 
 /**
  * The 404 boundary every build carries. The `[...missing]` catch-all beside it calls `notFound()`
@@ -11,5 +11,5 @@ import { NoPageRoute } from "./NoPageRoute";
  */
 export default async function NotFound() {
   const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "gate" });
-  return <NoPageRoute at="missing" words={{ title: t("missingTitle"), note: t("missingNote"), home: t("missingHome") }} />;
+  return <NoPageEntry at="missing" words={{ title: t("missingTitle"), note: t("missingNote"), home: t("missingHome") }} />;
 }

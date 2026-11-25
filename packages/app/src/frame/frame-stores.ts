@@ -6,6 +6,7 @@ import {
   type ConnectionFeed,
   type EnteredTarget,
   type ReaderPosition,
+  type SearchPosition,
 } from "./commands.js";
 import { type FrameHost, type RailFootModel, type RailModel } from "./contract.js";
 import { createFeed } from "./feeds.js";
@@ -35,6 +36,7 @@ export function useFrameStores(address: FrameHost["device"]["address"]) {
     entered: createFeed<EnteredTarget | null>(null),
     readerPosition: { current: null as ReaderPosition | null },
     searchQuery: { current: "" },
+    searchPosition: { current: null as SearchPosition | null },
     ohboxSearchPosition: { current: null as { address: string; top: number } | null },
     bars: createFeed<readonly string[]>([]),
     owed: owedFeed(),

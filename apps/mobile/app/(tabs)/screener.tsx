@@ -9,7 +9,7 @@
  * none. The shelf's rows go through `MailList`, which mounts a window of them.
  */
 import { SCREENER_ACKNOWLEDGEMENTS } from "@ohmail/app-logic/consent/screener-acknowledgements";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
@@ -23,6 +23,7 @@ import { Badge, Button, Empty, Panel, Screen, Tail, Tap, TapRow, Txt, ViewHead }
 import { Icon } from "../../src/ui/Icon";
 import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
 import { MailAvatar } from "../../src/ui/MailAvatar";
+import { MailRowByline } from "../../src/ui/MailRowByline";
 import { mailSize } from "../../src/theme/mail";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
@@ -98,7 +99,8 @@ function ScreenerBody() {
   /* The Ohbox's knock slot says the same sentence (`notOrganizingSay`), so the two cannot differ. */
   const say = notYet === null ? null : notOrganizingSay(notYet);
   const empty = say !== null
-    ? { title: say.title, hint: say.hint, action: { label: say.press, onPress: () => router.push("/settings") } }
+    ? { title: say.title, hint: say.hint, action: { label: say.press,
+      onPress: () => router.push({ pathname: "/settings", params: { pane: "mailboxes" } }) } }
     : t.mail ? { title: Copy.mailEmptyTitle } : emptyFor(seg);
   const { waiting, screened, spam, meta, waitingPending } = w.screener;
   const [suggestedOnly, setSuggestedOnly] = useState(false);
@@ -187,36 +189,15 @@ function ScreenerBody() {
         </View>
       );
     }
-    if (seg === "screened") {
-      return (
-        <TapRow
-          onPress={() => openRow(row.routeKey)}
-          accessibilityRole="button"
-          style={{ paddingHorizontal: 12, paddingVertical: 12 }}
-        >
-          <Txt variant="rowSubject" numberOfLines={1}>
-            {row.address}
-          </Txt>
-          <Txt variant="hint" tone="ink3" style={{ marginTop: 4 }}>
-            {Copy.screenedNote(row.screenedOn, row.held.length)}
-          </Txt>
-        </TapRow>
-      );
-    }
     return (
-      <TapRow
+      <ScreenerCard
+        row={row}
+        seen
+        accessibilityLabel={Copy.senderRowAria(row.name, row.address, row.held.length, row.detection)}
         onPress={() => openRow(row.routeKey)}
-        accessibilityRole="button"
-        style={{ paddingHorizontal: 12, paddingVertical: 12 }}
       >
-        <Txt variant="rowSubjectSeen" tone="ink2" numberOfLines={1}>
-          {row.address}
-        </Txt>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
-          {row.detection ? <Badge icon="shield">{row.detection}</Badge> : null}
-          <Badge>{Copy.heldCaption(row.held.length)}</Badge>
-        </View>
-      </TapRow>
+        {seg === "spam" && row.detection ? <Badge icon="shield">{row.detection}</Badge> : null}
+      </ScreenerCard>
     );
   };
 
@@ -346,10 +327,41 @@ function WaitingRow({ row, mark, onPress }: { row: ScreenerRow; mark: RelayMark 
   const claim = row.checked ? Copy.senderCheckChip(row.checked.brand) : null;
   const aria = Copy.senderRowAria(row.name, row.address, row.held.length, claim ?? "");
   return (
+    <ScreenerCard row={row} seen={row.dull} onPress={onPress}
+      accessibilityLabel={mark ? `${aria} ${mark.text}` : aria}
+      suggestion={t.mail === true && row.ai !== null}
+    >
+      {claim ? <Badge icon="shield">{claim}</Badge> : null}
+      {row.ai && !t.mail ? (
+        <Badge icon="spark" tone="accent">
+          {Copy.aiSuggests(destDone(row.ai.dest), row.ai.confidence)}
+        </Badge>
+      ) : null}
+      {mark ? (
+        <Txt variant="caption" tone={mark.kind === "refused" ? "ink" : "ink3"}>
+          {mark.text}
+        </Txt>
+      ) : null}
+    </ScreenerCard>
+  );
+}
+
+function ScreenerCard({ row, seen, onPress, accessibilityLabel, suggestion, children }: {
+  row: ScreenerRow;
+  seen: boolean;
+  onPress: () => void;
+  accessibilityLabel: string;
+  suggestion?: boolean;
+  children?: ReactNode;
+}) {
+  const preview = row.newestPreview ?? row.held.at(-1)?.body.slice(0, 160).trim().replace(/\s+/g, " ");
+  const label = [accessibilityLabel, row.newestSubject, row.time,
+    row.mailboxLabel ? Copy.deliveredTo(row.mailboxLabel) : undefined].filter(Boolean).join(". ");
+  return (
     <TapRow
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={mark ? `${aria} ${mark.text}` : aria}
+      accessibilityLabel={label}
       style={{
         paddingHorizontal: mailSize.edge - mailSize.rowInset,
         paddingVertical: mailSize.inset,
@@ -359,45 +371,22 @@ function WaitingRow({ row, mark, onPress }: { row: ScreenerRow; mark: RelayMark 
         gap: mailSize.inset,
       }}
     >
-      <MailAvatar person={{ name: row.name, address: row.address }} unread />
+      <MailAvatar person={{ name: row.name, address: row.address }} unread={!seen} mailbox={row.mailbox} />
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <View style={{ flexDirection: "row", alignItems: "baseline", gap: mailSize.inset }}>
-          <Txt
-            variant={row.dull ? "rowSenderSeen" : "rowSender"}
-            tone={row.dull ? "ink2" : "ink"}
-            numberOfLines={1}
-            style={{ flexShrink: 0, maxWidth: "55%" }}
-          >
-            {row.name}
-          </Txt>
-          {row.held.length > 1 ? <Badge>{t.mail ? Copy.screenHeldShort(row.held.length) : Copy.heldCaption(row.held.length)}</Badge> : (
-            <Txt variant="caption" tone="ink2" numberOfLines={1} style={{ flexShrink: 1, minWidth: 0 }}>
-              {row.address}
-            </Txt>
-          )}
-          <View style={{ flex: 1 }} />
-          <Txt variant="caption" tone="ink2" tabular>{row.time}</Txt>
-        </View>
-        <Txt variant={row.dull ? "rowSubjectSeen" : "rowSubject"} tone={row.dull ? "ink2" : "ink"} numberOfLines={1}>
-          {row.newestSubject}
-        </Txt>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: mailSize.inset, paddingRight: t.mail && row.ai ? 90 : 0 }}>
-          <Txt variant="body" tone="ink2" numberOfLines={1} style={{ flex: 1 }}>
-            {row.held.at(-1)?.body.slice(0, 160).trim().replace(/\s+/g, " ")}
-          </Txt>
-          {claim ? <Badge icon="shield">{claim}</Badge> : null}
-          {row.ai && !t.mail ? (
-            <Badge icon="spark" tone="accent">
-              {Copy.aiSuggests(destDone(row.ai.dest), row.ai.confidence)}
-            </Badge>
-          ) : null}
-        </View>
-        {/* THE DECISION THIS PHONE SENT, until the organizer answers it (`state/relay.ts`). */}
-        {mark ? (
-          <Txt variant="caption" tone={mark.kind === "refused" ? "ink" : "ink3"} style={{ marginTop: 6 }}>
-            {mark.text}
+        <MailRowByline name={row.name} address={row.address} time={row.time} seen={seen} mailbox={row.mailboxLabel}>
+          {row.held.length > 1 ? <Badge>{Copy.screenHeldShort(row.held.length)}</Badge> : null}
+        </MailRowByline>
+        {row.newestSubject ? (
+          <Txt variant={seen ? "rowSubjectSeen" : "rowSubject"} tone={seen ? "ink2" : "ink"} numberOfLines={1}>
+            {row.newestSubject}
           </Txt>
         ) : null}
+        <View style={{ paddingRight: suggestion ? "36%" : undefined }}>
+          {preview ? <Txt variant="body" tone="ink2" numberOfLines={1}>{preview}</Txt> : null}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: mailSize.inset }}>
+            {children}
+          </View>
+        </View>
       </View>
     </TapRow>
   );

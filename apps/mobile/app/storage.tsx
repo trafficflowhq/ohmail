@@ -14,7 +14,8 @@ import {
 import { useConnection } from "../src/net/connection";
 import type { ConnectedSession } from "../src/net/pairing";
 import { useWorld } from "../src/state/world";
-import { Button, Panel, Screen, Scroller, Section, Txt } from "../src/ui/base";
+import { MailAppearance } from "../src/theme/mail";
+import { Button, Panel, Screen, Scroller, Section, Txt, ViewHead } from "../src/ui/base";
 import { DetailBar } from "../src/ui/chrome";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { Gated } from "../src/ui/Gated";
@@ -26,7 +27,7 @@ export default function StorageScreen() {
   return (
     <SurfaceBoundary surface="storage">
       <Gated>
-        <StorageBody />
+        <MailAppearance><StorageBody /></MailAppearance>
       </Gated>
     </SurfaceBoundary>
   );
@@ -49,11 +50,9 @@ function StorageBody() {
 
   return (
     <Screen>
-      <DetailBar />
+      <DetailBar backCapsule backLabel={Copy.settings} />
       <Scroller bounded>
-        <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
-          <Txt variant="h1">{Copy.storageTitle}</Txt>
-        </View>
+        <ViewHead title={Copy.storageTitle} />
         {facts === undefined || session === null ? (
           <Panel style={{ padding: 20 }}>
             <Txt variant="note" tone="ink2">{Copy.storageNone}</Txt>

@@ -80,6 +80,7 @@ export function reportOf(
       id,
       message,
       kind: "undo",
+      ...(options.line === undefined ? {} : { line: options.line }),
       press: { label: options.action, keyHint: options.actionKey, onPress: onAction },
       stands: options.actionUntilPressed ? null : UNDO_MS,
       ...(options.actionDeadline !== undefined ? { actionDeadline: options.actionDeadline } : {}),

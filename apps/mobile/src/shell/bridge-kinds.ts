@@ -152,7 +152,7 @@ export interface ShellConfig {
   readonly setting: ShellSetting;
   /** The server's host name, for display only. Nothing dials it from the page. */
   readonly serverName: string;
-  readonly build: { readonly version: string | null; readonly commit: string | null };
+  readonly build: { readonly version: string | null; readonly commit: string | null; readonly number?: string | null };
   readonly language: "en" | "de";
   readonly languageChoice?: "en" | "de" | null;
   /** Where to return to after the web view's process ended, or null for the first place. */
@@ -184,7 +184,7 @@ export type ShellAct =
   | { readonly act: "notifications.permission" }
   | { readonly act: "notifications.request" }
   | { readonly act: "backup.read" }
-  | { readonly act: "about.page"; readonly page: "privacy" | "subprocessors" | "imprint" }
+  | { readonly act: "about.page"; readonly page: "privacy" | "subprocessors" | "imprint" | "support" | "deleteAccount" }
   /** Draw one mail notice. Native writes its words; what was done with it comes back as `notice`. */
   | { readonly act: "notices.post"; readonly notice: BridgeNotice; readonly details?: MailNoticeDetails }
   | { readonly act: "calendar.guests"; readonly to: readonly string[]; readonly subject: string }
@@ -700,7 +700,8 @@ const FIELDS: { readonly [K in Kind]: (m: Record<string, unknown>, app: ShellApp
   act: (m, app) => member(ACTS, m.act) && (m.act !== "chrome" || m.scheme === "light" || m.scheme === "dark") &&
     (m.act !== "language.set" || isLanguageChoice(m)) &&
     (m.act !== "about.page" || (
-      (m.page === "privacy" || m.page === "subprocessors" || m.page === "imprint") &&
+      (m.page === "privacy" || m.page === "subprocessors" || m.page === "imprint" ||
+        (app === "ohcal" && (m.page === "support" || m.page === "deleteAccount"))) &&
       Object.keys(m).every((key) => key === "page" || ACT_REQUEST_KEYS.has(key))
     )) &&
     (m.act !== "calendar.guests" || (app === "ohcal" && calendarGuestRequest(m))) &&

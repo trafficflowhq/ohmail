@@ -5,10 +5,20 @@ import { avatarColors, mailSize } from "../theme/mail";
 import { Copy } from "../copy";
 import { Txt } from "./base";
 
-export function MailAvatar({ person, unread, surface, additionalPeople }: { person: Address; unread?: boolean; surface?: string; additionalPeople?: number }) {
+function initialOf(person: Address) {
+  return Array.from(person.name.trim() || person.address.trim())[0]?.toLocaleUpperCase();
+}
+
+export function MailAvatar({ person, unread, surface, additionalPeople, mailbox }: {
+  person: Address;
+  unread?: boolean;
+  surface?: string;
+  additionalPeople?: number;
+  mailbox?: Address;
+}) {
   const t = useTheme();
   const { background, ink } = avatarColors(person.address, t);
-  const initial = Array.from(person.name.trim() || person.address.trim())[0]?.toLocaleUpperCase();
+  const accountColors = mailbox ? avatarColors(mailbox.address, t) : null;
   return (
     <View
       accessibilityElementsHidden
@@ -18,9 +28,19 @@ export function MailAvatar({ person, unread, surface, additionalPeople }: { pers
         alignItems: "center", justifyContent: "center", backgroundColor: background,
       }}
     >
-      <Txt variant="sectionLabel" numberOfLines={1} style={{ color: ink }}>{initial}</Txt>
+      <Txt variant="sectionLabel" numberOfLines={1} style={{ color: ink }}>{initialOf(person)}</Txt>
+      {mailbox && accountColors ? (
+        <View testID="mailbox-avatar-badge" style={{
+          position: "absolute", right: -5, bottom: -5,
+          width: mailSize.avatarBadge, height: mailSize.avatarBadge, borderRadius: t.radius.pill,
+          alignItems: "center", justifyContent: "center", backgroundColor: accountColors.background,
+          borderWidth: 2, borderColor: surface ?? t.c.panel,
+        }}>
+          <Txt variant="caption" numberOfLines={1} style={{ color: accountColors.ink }}>{initialOf(mailbox)}</Txt>
+        </View>
+      ) : null}
       {additionalPeople ? (
-        <View style={{ position: "absolute", right: -4, bottom: -3, borderRadius: t.radius.pill,
+        <View style={{ position: "absolute", right: -4, ...(mailbox ? { top: -3 } : { bottom: -3 }), borderRadius: t.radius.pill,
           backgroundColor: t.c.tint2, paddingHorizontal: 3, borderWidth: 1, borderColor: surface ?? t.c.panel }}>
           <Txt variant="caption" tone="ink2">{Copy.rowMarksMore(additionalPeople)}</Txt>
         </View>

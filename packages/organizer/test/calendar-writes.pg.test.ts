@@ -108,6 +108,61 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
   const retitle = (e: { id: string; updatedAt: Date }, title: string) =>
     ({ kind: "calendar_event_update", eventId: e.id, base: e.updatedAt.toISOString(), scope: { kind: "record" }, change: { title } });
 
+  it.each(["different mailbox", "matching mailbox", "no verified address"])(
+    "creates a CalDAV invitation only with a verified scheduling organizer (%s)", async (identity) => {
+      const a = await account("caldav");
+      const first = ["calendar", "example.test"].join("@");
+      const mailbox = ["mail", "example.test"].join("@");
+      const guest = ["guest", "example.test"].join("@");
+      const expected = identity === "matching mailbox" ? mailbox : first;
+      const addresses = identity === "no verified address" ? [] : identity === "matching mailbox" ? [first, mailbox] : [first];
+      await w.db.update(calConnections).set({ principal: "/dav/principal/", organizerAddresses: addresses })
+        .where(eq(calConnections.id, a.connectionId));
+      await w.db.insert(mailboxes).values({ accountId: a.accountId, provider: "imap", address: mailbox, status: "connected" });
+      const act = create(a);
+      await press(a.accountId, "make-invitation", {
+        ...act, event: { ...act.event, invitees: [{ address: guest, name: null, role: "required" }] },
+      });
+      const writer = scriptedWriter("caldav", {
+        answer: ({ draft }) => draft?.organizer === expected ? "default" : { ok: false, reason: "read_only" },
+      });
+      await run(a, writer, { word: "caldav" });
+      if (addresses.length === 0) {
+        expect(await rows(a)).toMatchObject([{ state: "refused", refusal: "invitees_unsupported" }]);
+        expect(writer.calls).toHaveLength(0);
+      } else {
+        expect(await rows(a)).toMatchObject([{ state: "applied" }]);
+        expect(writer.calls).toMatchObject([{ draft: { organizer: expected, attendees: [{ email: guest }] } }]);
+      }
+    },
+  );
+
+  it.each(["new organizer", "verified organizer", "unverified organizer"])(
+    "checks the scheduling organizer before changing CalDAV guests (%s)", async (identity) => {
+      const a = await account("caldav");
+      const calendar = ["calendar", "example.test"].join("@");
+      const mailbox = ["mail", "example.test"].join("@");
+      const guest = ["guest", "example.test"].join("@");
+      await w.db.update(calConnections).set({ organizerAddresses: [calendar] }).where(eq(calConnections.id, a.connectionId));
+      await w.db.insert(mailboxes).values({ accountId: a.accountId, provider: "imap", address: mailbox, status: "connected" });
+      const organizer = identity === "verified organizer" ? calendar : identity === "unverified organizer" ? mailbox : null;
+      await w.db.update(calEvents).set({ organizer }).where(eq(calEvents.id, a.eventId));
+      await press(a.accountId, "invite-guest", {
+        kind: "calendar_event_update", eventId: a.eventId, base: a.base, scope: { kind: "record" },
+        change: { invitees: [{ address: guest, name: null, role: "required" }] },
+      });
+      const writer = scriptedWriter("caldav");
+      await run(a, writer, { word: "caldav" });
+      if (identity === "unverified organizer") {
+        expect(await rows(a)).toMatchObject([{ state: "refused", refusal: "invitees_unsupported" }]);
+        expect(writer.calls).toHaveLength(0);
+      } else {
+        expect(await rows(a)).toMatchObject([{ state: "applied" }]);
+        expect(writer.calls).toMatchObject([{ change: { organizer: calendar, attendees: [{ email: guest }] } }]);
+      }
+    },
+  );
+
   it.each(["reader", "capability lost", "capability kept", "organizer unverified"] as const)(
     "checks a queued native move before contacting the provider (%s)",
     async (condition) => {
@@ -437,6 +492,27 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     await run(a, writer);
     expect(writer.calls.length).toBe(1);
   });
+
+  it.each(["accepted", "tentative", "declined"] as const)(
+    "keeps the mailed %s answer when CalDAV confirms the personal copy",
+    async (mailAnswer) => {
+      const a = await account("caldav");
+      const act = create(a);
+      act.event.busy = mailAnswer !== "declined";
+      await press(a.accountId, "file-invitation", act);
+      await w.db.update(calEvents).set({ mailAnswer }).where(eq(calEvents.id, act.eventId));
+
+      const writer = scriptedWriter("caldav");
+      await run(a, writer, { word: "caldav" });
+      expect((await rows(a)).at(-1)).toMatchObject({ state: "applied" });
+      expect(writer.calls.map(({ kind }) => kind)).toEqual(["create"]);
+      expect(writer.calls[0]!.draft).toMatchObject({ attendees: [], organizer: null, busy: act.event.busy });
+
+      const [copy] = await w.db.select({ mailAnswer: calEvents.mailAnswer, myAnswer: calEvents.myAnswer, version: calEvents.versionTag })
+        .from(calEvents).where(eq(calEvents.id, act.eventId));
+      expect(copy).toEqual({ mailAnswer, myAnswer: null, version: '"v1"' });
+    },
+  );
 
   it("leaves ONE event when the drain is cut after the provider took the write and before it was settled, and is run again", async () => {
     const a = await account();

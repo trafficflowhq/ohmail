@@ -59,12 +59,13 @@ const host = (name: string) =>
       else fire();
     }, []);
     /* What a screen reader is told, and the press, so a test can read and operate a control. */
-    const state = accessibilityState as { expanded?: boolean } | undefined;
+    const state = accessibilityState as { expanded?: boolean; selected?: boolean } | undefined;
     return createElement("div", {
       ref: node,
       "data-rn": name, "data-testid": testID, "data-style": JSON.stringify(s),
       "data-role": accessibilityRole, "data-label": accessibilityLabel,
       "data-expanded": state && "expanded" in state ? String(state.expanded) : undefined,
+      "data-selected": state && "selected" in state ? String(state.selected) : undefined,
       "data-ax-hidden": accessibilityElementsHidden === true ? "" : undefined,
       onClick: typeof onPress === "function" ? () => (onPress as () => void)() : undefined,
     }, children);
@@ -97,4 +98,11 @@ export function mount(node: ReactNode): { el: HTMLElement; render(node: ReactNod
       el.remove();
     },
   };
+}
+
+export function buttonByName(root: ParentNode, name: string): HTMLButtonElement {
+  const button = [...root.querySelectorAll<HTMLButtonElement>("button")]
+    .find((candidate) => (candidate.getAttribute("aria-label") ?? candidate.textContent) === name);
+  if (button === undefined) throw new Error("Missing button " + name);
+  return button;
 }

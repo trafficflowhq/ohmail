@@ -12,11 +12,13 @@ import {
 } from "@ohmail/app-logic/calendar";
 import { newEventsCalendarOf } from "@ohmail/app-logic/calendar/setup";
 import { senderCheckFact } from "@ohmail/app-logic/screener";
-import type { CalendarTime } from "@ohmail/wire";
+import type { EntityReader } from "@ohmail/client-engine";
+import type { CalendarTime, InvitationAnswer } from "@ohmail/wire";
 import { useFrame } from "../frame/commands.js";
 import type { NONE } from "../host/index.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { useFaces, useSettings, useSources } from "../calendar/where.js";
+import { isAnswer } from "../invitations/AnswerChoices.js";
 import { draftCalendars } from "../calendar/event-draft.js";
 import { calendarInterval, eventWhen } from "../calendar/event-words.js";
 import type { CalendarEventFace } from "../calendar/faces.js";
@@ -26,6 +28,36 @@ const zones = readerZones();
 const folded = (address: string | undefined | null) => address?.trim().toLowerCase() ?? "";
 export const sameTime = (a: CalendarTime, b: CalendarTime) =>
   a.kind === b.kind && a.value === b.value && a.zone === b.zone;
+
+function attendeeInvitation(record: CalendarEventRecord, invitation: InvitationLetterProps["invitation"]) {
+  return (
+    !!invitation.organizer &&
+    record.uid === invitation.uid &&
+    record.recurrenceId === invitation.recurrenceId &&
+    folded(record.organizer?.address) === folded(invitation.organizer) &&
+    record.myAnswer !== null
+  );
+}
+
+function wasInvited(record: CalendarEventRecord, address: string | null) {
+  return !!address && record.invitees.some((invitee) => folded(invitee.address) === folded(address));
+}
+
+function hasStoredAttendeeCopy(
+  props: InvitationLetterProps,
+  sources: ReturnType<typeof useSources>,
+  store: EntityReader,
+) {
+  const { invitedAddress } = props.invitation;
+  if (!invitedAddress) return false;
+  // The server's duplicate guard sees stored copies even when the calendar hides them.
+  return store.entries<CalendarEventRecord | null>("calendar_event").some(({ entity: record }) => {
+    if (!record || !attendeeInvitation(record, props.invitation)) return false;
+    const calendar = sources.calendars.find(({ id }) => id === record.calendarId);
+    const mailbox = calendar && sources.connections.get(calendar.connectionId)?.grantMailboxId;
+    return mailbox === props.message.mailboxId || (mailbox === null && wasInvited(record, invitedAddress));
+  });
+}
 
 function mirrorInvitation(props: InvitationLetterProps, sources: ReturnType<typeof useSources>) {
   const i = props.invitation;
@@ -44,17 +76,10 @@ function mirrorInvitation(props: InvitationLetterProps, sources: ReturnType<type
         return false;
       if (record.id === i.calendarEventId) return true;
       const mailbox = sources.connections.get(calendar.connectionId)?.grantMailboxId;
-      if (
-        (mailbox && mailbox !== props.message.mailboxId) ||
-        !record.invitees.some(({ address }) => folded(address) === folded(i.invitedAddress))
-      )
-        return false;
       return (
-        i.organizer &&
-        record.uid === i.uid &&
-        record.recurrenceId === i.recurrenceId &&
-        folded(i.organizer) === folded(record.organizer?.address) &&
-        record.myAnswer !== null
+        (!mailbox || mailbox === props.message.mailboxId) &&
+        attendeeInvitation(record, i) &&
+        wasInvited(record, i.invitedAddress)
       );
     })
     .sort(
@@ -130,9 +155,16 @@ export function useLetterView(props: InvitationLetterProps & { port: CalendarPor
       ? !!start && sameTime(record.start, start) && !!record.end && !!end && sameTime(record.end, end)
       : record.sequence === invitation.sequence);
   const calendar = sources.calendars.find(({ id }) => id === record?.calendarId);
-  const target =
-    calendars.find(({ id }) => id === choice) ??
-    newEventsCalendarOf(settings.newEventsCalendarId ?? null, calendars);
+  const copy = invitation.calendarEventId
+    ? host.engine.store.get<CalendarEventRecord>("calendar_event", invitation.calendarEventId)
+    : undefined;
+  const alreadyOnCalendar = !copy && hasStoredAttendeeCopy(props, sources, host.engine.store);
+  const target = copy
+    ? calendars.find(({ id }) => id === copy.calendarId)
+    : alreadyOnCalendar
+      ? undefined
+      : (calendars.find(({ id }) => id === choice) ??
+        newEventsCalendarOf(settings.newEventsCalendarId ?? null, calendars));
   const startTime = start && eventTimeOf(start);
   const endTime = end && eventTimeOf(end);
   const span = startTime && daySpanOf({ start: startTime, end: endTime || startTime }, zone, zones);
@@ -148,6 +180,7 @@ export function useLetterView(props: InvitationLetterProps & { port: CalendarPor
   const faces = availability?.events ?? [];
   const placed =
     current &&
+    !copy?.uid.startsWith("pending:") &&
     faces.find(
       (face) =>
         face.recordId === record.id &&
@@ -183,8 +216,9 @@ export function useLetterView(props: InvitationLetterProps & { port: CalendarPor
   const previousText = prior && eventWhen({ start: prior }, zone, zones, locale);
   const previous =
     previousText && previousText !== eventWhen({ start }, zone, zones, locale) ? previousText : null;
+  const providerAnswer = !personal && current ? received?.myAnswer : null;
   const answer =
-    (!personal && current && record.myAnswer !== "none" ? record.myAnswer : null) ?? invitation.answer;
+    providerAnswer && isAnswer(providerAnswer) ? providerAnswer : (copy?.mailAnswer ?? invitation.answer);
   const mailAnswer =
     senderCheckFact(props.message)?.reason !== "failed" &&
     !!invitation.organizer &&
@@ -200,6 +234,8 @@ export function useLetterView(props: InvitationLetterProps & { port: CalendarPor
     sources,
     current,
     personal,
+    copy,
+    alreadyOnCalendar,
     record,
     calendar,
     target,
@@ -218,6 +254,19 @@ export function useLetterView(props: InvitationLetterProps & { port: CalendarPor
 }
 
 export type LetterView = ReturnType<typeof useLetterView>;
+
+export function withLetterAnswer(
+  face: CalendarEventFace,
+  answer: InvitationAnswer | null,
+): CalendarEventFace {
+  if (answer === null || face.state === "off") return face;
+  return {
+    ...face,
+    state: answer === "tentative" ? "maybe" : "plain",
+    waits: false,
+    said: { answer, apart: false },
+  };
+}
 
 function pendingFace(
   props: InvitationLetterProps,

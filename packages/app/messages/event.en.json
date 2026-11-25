@@ -18,6 +18,7 @@
       "gone": "The event is no longer in that calendar.",
       "unreachable": "The calendar could not be reached.",
       "notKept": "The calendar would not keep this change as written.",
+      "inviteesUnsupported": "This calendar cannot send invitations.",
       "stale": "Changed elsewhere",
       "versionUnknown": "The calendar's copy could not be read, so nothing was sent.",
       "earlier": "An earlier change to this event was not saved, so this one was not sent.",

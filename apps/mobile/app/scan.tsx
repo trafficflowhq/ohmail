@@ -20,8 +20,9 @@ import { discardAdmission, parsePairLink, type PairAdmission } from "../src/net/
 import { Txt } from "../src/ui/base";
 import { requestPairingLink } from "../src/ui/manual-pair-mode";
 import { PairConfirm } from "../src/ui/PairConfirm";
-import { OnboardingButton, OnboardingPage, useOnboardingLook } from "../src/ui/OnboardingPage";
+import { OnboardingButton, OnboardingPage, OnboardingTag, useOnboardingLook } from "../src/ui/OnboardingPage";
 import { useLocale } from "../src/i18n/LocaleProvider";
+import { onboardingLook } from "../src/theme/onboarding";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 type Phase =
@@ -51,7 +52,8 @@ function ScanBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const conn = useConnection();
-  const { palette } = useOnboardingLook();
+  const { palette, type } = useOnboardingLook();
+  const { palette: cameraColors } = onboardingLook({ face: "paper", scheme: "light" });
   const [permission, requestPermission] = useCameraPermissions();
   const [phase, setPhase] = useState<Phase>({ k: "scanning", badCode: false });
   /** Armed = the next decoded frame may act. Disarmed while parsing/redeeming/failed. */
@@ -173,7 +175,7 @@ function ScanBody() {
         <>
           {failed ? <OnboardingButton label={Copy.scanAgain} grow onPress={retry} /> : null}
           {denied && !failed ? <OnboardingButton label={Copy.scanAllow} grow onPress={allow} /> : null}
-          <OnboardingButton label={Copy.scanManual} kind="soft" grow onPress={manual} />
+          <OnboardingButton label={Copy.scanManual} kind="sheet" grow onPress={manual} />
         </>
       }
     >
@@ -182,7 +184,7 @@ function ScanBody() {
       ) : (
         <>
           <View
-            style={[styles.camera, { backgroundColor: palette.line }]}
+            style={[styles.camera, { backgroundColor: cameraColors.solid, borderRadius: Number.parseFloat(type["r-sheet"]) }]}
             accessibilityLabel={denied ? Copy.scanCameraOff : Copy.scanHint}
             accessible
           >
@@ -194,13 +196,14 @@ function ScanBody() {
                 onBarcodeScanned={phase.k === "scanning" ? onScanned : undefined}
               />
             ) : null}
+            {granted ? <View pointerEvents="none" style={[styles.live, { backgroundColor: cameraColors.hot }]} /> : null}
             <View pointerEvents="none" style={styles.guide}>
               {corners.map((corner, index) => (
-                <View key={index} style={[styles.corner, corner, { borderColor: granted ? palette.sheet : palette.ink2 }]} />
+                <View key={index} style={[styles.corner, corner, { borderColor: cameraColors["on-solid"] }]} />
               ))}
             </View>
           </View>
-          <Txt style={[styles.tag, { backgroundColor: palette.soft, color: palette.ink2 }]}>{Copy.scanDevices}</Txt>
+          <View style={styles.tag}><OnboardingTag label={Copy.scanDevices} /></View>
           {feedback !== null ? (
             <Txt accessibilityLiveRegion="polite" style={{ color: palette.ink, marginTop: 8 }}>{feedback}</Txt>
           ) : null}
@@ -211,10 +214,11 @@ function ScanBody() {
 }
 
 const styles = StyleSheet.create({
-  camera: { width: "100%", aspectRatio: 1, borderRadius: 20, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  camera: { width: "100%", aspectRatio: 1, overflow: "hidden", alignItems: "center", justifyContent: "center" },
   guide: { width: "56%", height: "56%" },
   corner: { position: "absolute", width: 32, height: 32 },
-  tag: { alignSelf: "flex-start", marginTop: 24, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: "hidden" },
+  live: { position: "absolute", top: 16, right: 16, width: 10, height: 10, borderRadius: 5 },
+  tag: { marginTop: 24 },
 });
 
 const corners = [

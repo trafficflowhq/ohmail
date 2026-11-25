@@ -298,6 +298,20 @@ const TABLE = {
    * a person who reads "Organizing" on a laptop must not meet a second word for it here.
    */
   phoneThisPhone: "This phone",
+  settingsAppearance: "Appearance",
+  settingsAi: "AI",
+  settingsDevices: "Devices",
+  settingsManageDevices: "Manage account devices",
+  settingsDevicesBrowser: "Opens in your browser",
+  settingsDevicesFailed: "Could not open account devices. Try again.",
+  settingsGeneral: "General",
+  settingsNotifications: "Notifications",
+  settingsMailboxes: "Mailboxes",
+  settingsFolders: "Folders",
+  settingsSignatures: "Signatures",
+  settingsAccount: "Account",
+  settingsAbout: "About ohmail",
+  settingsHelp: "Help & contact",
   phoneStateOrganizing: "Organizing",
   phoneStateStopping: "Stopping",
   /* THE STOP THE MAIL SERVER HAS NOT HONOURED, which is neither of the two above. The person
@@ -2249,6 +2263,7 @@ const TABLE = {
   actionMarkUnread: "Mark unread",
   actionDone: "Done",
   actionMore: "More",
+  mailBackToTop: "Back to top",
   /** The fifth tab. Its own key rather than {@link actionMore}'s: a destination, not a verb. */
   tabMore: "More",
   /** What a standalone phone calls itself on its own screens. The claim keeps its constant. */
@@ -2607,13 +2622,13 @@ const TABLE = {
   composeKeptQueued: "Kept as a draft. It reaches Drafts once this phone is back online.",
   composeKeptQueuedWithoutFiles:
     "Kept as a draft, without the attachments. It reaches Drafts once this phone is back online.",
-  composeKeepFailed: "This could not be kept as a draft. Close again to discard it.",
+  composeKeepFailed: "This draft couldn’t be saved. It’s still open here.",
   /* PAST THE DRAFT LIMIT — said while typing (the web's `compose.bodyTooLong`), and on a close. */
   composeTooLong: (size: string) => `Too long to save — the limit is ${size}. Shorten the message and it saves again.`,
   composeKeepTooLong: (size: string) =>
-    `This can't be kept as a draft — it's past the ${size} limit. Shorten it, or close again to discard it.`,
+    `This can't be kept as a draft — it's past the ${size} limit. Shorten it to save it.`,
   composeKeepTooLongBound: (size: string) =>
-    `These changes can't be kept — they're past the ${size} limit, so Drafts still holds the earlier version. Shorten it, or close again to discard the changes.`,
+    `These changes can't be kept — they're past the ${size} limit, so Drafts still holds the earlier version. Shorten it to save your changes.`,
   composeKeepFiles: (names: string, size: string) =>
     `Not kept with the draft: ${names}. This phone keeps up to ${size} of attachments with drafts. Close again to keep it without them.`,
   /* A DRAFT ROW HOLDS NO BYTES: the attachments stay on this phone, and the sentence says where. */
@@ -2793,7 +2808,6 @@ const TABLE = {
    * switch that turns on a standing order without naming who it answers is a control with its
    * consequence off screen, and the webapp's own audience note calls that a disclosure.
    */
-  awayScopeElsewhere: "Set these on a computer or in ohmail Cloud. This phone sends them back unchanged.",
   /**
    * PHONE-ONLY (3/6): a pile this build has no word for. Named verbatim rather than dropped:
    * filtering it would state a NARROWER scope than the responder acts on, which on a screen

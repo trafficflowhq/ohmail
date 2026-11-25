@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { checkSettingsHandoff } from "../../settings-handoff-client";
 import { settingsDestination, settingsLogin } from "../../settings-handoff";
-import { CloudShell } from "./CloudShell";
+import { CloudMailbox } from "./MailboxEntry";
 
 export function SettingsHandoffGate({ reference }: { reference: string }) {
   const router = useRouter();
@@ -29,6 +29,6 @@ export function SettingsHandoffGate({ reference }: { reference: string }) {
     return () => abort.abort();
   }, [reference, router]);
 
-  if (account) return <CloudShell demo={false} drawMail="wait" edgeOwner={null} settingsAccount={account} />;
+  if (account) return <CloudMailbox demo={false} drawMail="wait" edgeOwner={null} settingsAccount={account} />;
   return invalid ? <p role="alert">{t("settingsHandoffInvalid")}</p> : null;
 }

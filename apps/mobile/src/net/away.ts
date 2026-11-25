@@ -39,9 +39,7 @@ function rowOf(body: ReadAway): AwayRow {
     body: typeof body.body === "string" ? body.body : null,
     startsAt: typeof body.startsAt === "string" ? body.startsAt : null,
     endsAt: typeof body.endsAt === "string" ? body.endsAt : null,
-    /* The three the phone does not edit are read as WHATEVER THE SERVER SENT, not narrowed to a
-       member this build knows: they are carried back verbatim on the next save, and a value this
-       build filtered would be a value this phone silently took away from the account. */
+    // Preserve unfamiliar settings on unrelated edits.
     audience: typeof body.audience === "string" ? body.audience : "screened_in",
     throttle: typeof body.throttle === "string" ? body.throttle : "per_day",
     piles: Array.isArray(body.piles) ? body.piles.filter((p): p is string => typeof p === "string") : [],

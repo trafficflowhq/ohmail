@@ -67,7 +67,10 @@ export interface CalendarPort {
     eventId: string,
     key: string,
     refuse: (verdict: CalendarVerdict, writeId?: string) => void,
+    recorded?: () => void,
   ): void;
+  /** Release the local copy of a create that was refused before reaching the provider queue. */
+  forgetUnsentCreate?(eventId: string): void;
   /** Follow an edit's write on the record that holds its receipt, including a generated occurrence. */
   watchEdit?(
     eventId: string,

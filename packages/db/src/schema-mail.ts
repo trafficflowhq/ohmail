@@ -2908,6 +2908,7 @@ export const calCalendars = pgTable("cal_calendars", {
   localColor: text("local_color"),
   access: text("access").notNull().default("reader"),
   nativeMove: boolean("native_move").notNull().default(false),
+  autoSchedule: boolean("auto_schedule").notNull().default(false),
   shown: boolean("shown").notNull().default(true),
   timeZone: text("time_zone"),
   syncToken: text("sync_token"),
@@ -2973,6 +2974,8 @@ export const calEvents = pgTable("cal_events", {
   organizer: text("organizer"),
   organizerName: text("organizer_name"),
   myAnswer: text("my_answer"),
+  /** The iMIP answer on a personal calendar copy made from a letter. */
+  mailAnswer: text("mail_answer"),
   removedOccurrences: jsonb("removed_occurrences").$type<(string | { hide: string; attendee: string; organizer: string; uid: string; calendarId: string })[]>(),
   heldBack: boolean("held_back").notNull().default(false),
   /** A desktop's copy received this event cut to fit the feed: no notes, no invitees. */

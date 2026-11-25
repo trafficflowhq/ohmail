@@ -1565,6 +1565,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // captured `locale` would stamp Trash rows in the mount-time language for ever.
         locale: () => activeLocale(),
         ownAddresses: () => addressesNow.current,
+        mailboxes: () => mailboxesNow.current ?? undefined,
         /* A READER ROW ON THIS ROSTER: piles and tags there wait for the server's answer. */
         rulesTravel: () => phoneRulesTravel(mailboxesNow.current ?? []),
         readsOnly: (mailboxId) => {
@@ -1715,12 +1716,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            kept as a new draft now, and said once that is known. */
         if (restoreDeps && loose.length > 0) {
           void restoreLetters({ ...restoreDeps, owned: ownedLetters(), only: new Set(loose.map((x) => x.letter)) })
-            .then((r) => { if (backendEngineRef.current === flushed) showToast(refuse(r.kept > 0 ? "replyChangedElsewhere" : "replyChangedElsewhereLater")); })
+            .then((r) => {
+              if (backendEngineRef.current !== flushed) return;
+              const changed = loose.some(({ key }) => settled.get(key)?.changed);
+              const say = changed ? refuse(r.kept > 0 ? "replyChangedElsewhere" : "replyChangedElsewhereLater") : sayLetterRestore(r);
+              if (say !== null) showToast(say);
+            })
             .catch(() => undefined);
         }
         for (const [key, o] of settled) {
           outcomes.current.set(key, o.status);
-          settlements.current.set(key, { accepted: false, rearmed: false, draftId: o.draftId ?? null, failure: o.failure ?? null });
+          settlements.current.set(key, { accepted: false, rearmed: false, draftId: o.draftId ?? o.createdDraftId ?? null, failure: o.failure ?? null });
           // The one visible sentence per terminal outcome — a background send confirming
           // announces itself (the queued toast promised it would keep trying), an
           // unverified one says check-Sent, and any other rollback says it plainly.

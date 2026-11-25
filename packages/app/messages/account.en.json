@@ -100,6 +100,7 @@
   },
   "account": {
     "title": "Delete your account",
+    "sharedCalendarLead": "This deletes the account you use in both ohcal and ohmail, including the stored copies of your calendar data and mail.",
     "lead": "This cannot be undone.",
     "signedInAs": "Signed in as {email}.",
     "signOutTitle": "Sign out",

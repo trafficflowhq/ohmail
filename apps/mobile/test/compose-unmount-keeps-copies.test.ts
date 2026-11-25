@@ -20,24 +20,20 @@ import { sqlWorld } from "./helpers/pair-server";
 const actions = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/MessageActions.tsx", import.meta.url)), "utf8"));
 const sheet = actions.slice(actions.indexOf("export function ComposeSheet("), actions.indexOf("\nfunction ", actions.indexOf("export function ComposeSheet(")));
 
-/** The object literal handed to the `draftKeep(` call that follows `anchor`, whitespace folded. */
-const keepArgs = (anchor: string): string => {
-  const at = sheet.indexOf(anchor);
-  expect(at, `no ${anchor} in ComposeSheet`).toBeGreaterThan(0);
-  const open = sheet.indexOf("draftKeep({", at) + "draftKeep({".length;
-  return sheet.slice(open, sheet.indexOf("});", open)).replace(/\s+/g, " ").trim();
-};
-/** `quiet` is the one field the two keeps may disagree on: an unmount is never announced. */
-const withoutQuiet = (args: string): string =>
-  args.replace("...(draft !== undefined ? { quiet: true } : {}),", "").replace("quiet: true,", "").replace(/\s+/g, " ").trim();
-
 describe("the unmount keep builds the close keep's request", () => {
   it("every field the close keeps, the unmount keeps (Cc and Bcc of a new mail included)", () => {
-    const close = keepArgs("const kept = await w.actions.");
-    const unmount = keepArgs("atUnmount.current = () => {");
-    expect(close, "the close keep no longer carries a new mail's copies").toContain("...(fresh ? copiesToKeep(copies) : {})");
-    expect(withoutQuiet(unmount), "the unmount keep drops a field the close keeps").toBe(withoutQuiet(close));
-    expect(unmount, "an unmount keep is announced").toContain("quiet: true");
+    const request = sheet.slice(sheet.indexOf("const keepRequest ="), sheet.indexOf("const latestClose ="));
+    const close = sheet.slice(sheet.indexOf("const closeComposer ="), sheet.indexOf("atUnmount.current = () => {"));
+    const unmount = sheet.slice(sheet.indexOf("atUnmount.current = () => {"), sheet.indexOf("const send = async ("));
+    expect(request).toContain("const target = latestDraft.current;");
+    expect(request).toContain("draftId: target");
+    expect(request).toContain("...(fresh ? copiesToKeep(copies) : {})");
+    expect(request).toContain("quiet: target !== null");
+    expect(request).toContain("rebase(r);");
+    expect(request).toContain("keeper?.keepAnswered(r, onScreen);");
+    expect(request).toContain("latestDraft.current = r.draftId;");
+    expect(close).toMatch(/w\.actions\.draftKeep\(\{\s*\.\.\.keepRequest\(files, dropped\),\s*\}\)/);
+    expect(unmount).toContain("w.actions.draftKeep({ ...keepRequest(files, 0), quiet: true })");
   });
 });
 

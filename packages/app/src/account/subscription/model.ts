@@ -42,6 +42,7 @@ export interface PlanLine {
   readonly plan: PlanName;
   readonly mailboxes: number;
   readonly credits?: number;
+  readonly setupSuggestions?: number;
   /** Its room, as the reader says it. */
   readonly storage: string;
   readonly price: Readonly<Record<PlanInterval, string | null>>;
@@ -138,9 +139,15 @@ export function subscriptionStart(readsPlans: boolean): SubscriptionState {
   return { plans: { at: readsPlans ? "loading" : "none" }, opening: false, failed: false };
 }
 
-/** The interval a read is first drawn in: the account's own, else the month. */
+/** Start on the account's interval when it has a price, or the interval the catalogue offers. */
 function firstInterval(answer: PlansAnswer): PlanInterval {
-  return answer.kind === "plans" && answer.current !== null ? answer.current.interval : "month";
+  if (answer.kind !== "plans") return "month";
+  const preferred = answer.current?.interval ?? "month";
+  const other = preferred === "month" ? "year" : "month";
+  return !answer.plans.some((line) => line.price[preferred] !== null) &&
+    answer.plans.some((line) => line.price[other] !== null)
+    ? other
+    : preferred;
 }
 
 /** One event, applied. A press while the address is being made is not taken. */

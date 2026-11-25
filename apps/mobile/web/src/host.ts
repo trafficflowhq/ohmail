@@ -122,7 +122,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       storage: managesAccount ? { name: "storage", render: () => null } : NONE, storageCard: NONE, accountStrip: NONE,
       invites: managesAccount ? { name: "invites", render: () => null } : NONE,
       security: managesAccount ? { name: "security", render: () => null } : NONE,
-      about: has.mailboxWires ? { name: "about", render: () => null } : NONE,
+      about: settings ? { name: "about", render: () => null } : NONE,
       desktop: NONE, devices: settings ? { name: "devices", render: () => null } : NONE,
       defaultMail: NONE, stageCard: NONE,
       screener: has.mailboxWires ? { name: "screener", render: () => null } : NONE,

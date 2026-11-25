@@ -25,7 +25,7 @@ const scene = await vi.hoisted(async () => {
     announce: () => {},
   };
   const native = {
-    appId: "app.ohcal",
+    appId: "app.ohcal.preview",
     otherState: () => "here",
     open: async () => true,
     openStore: async () => false,
@@ -57,6 +57,10 @@ vi.mock("react-native", async () => ({
 }));
 vi.mock("expo", () => ({ requireOptionalNativeModule: (name: string) => (name === "OhmailSwitch" ? scene.native : null) }));
 vi.mock("expo-crypto", () => ({}));
+vi.mock("../src/variant-native", async () => {
+  const { appOfNative } = await import("../src/variant");
+  return { get APP() { return appOfNative(scene.native.appId); } };
+});
 vi.mock("../src/state/servers-native", () => ({
   nativeServerProfiles: () => scene.state.store,
   nativeFamilyDigest: async (text: string) => scene.hash(text),
@@ -138,11 +142,36 @@ async function until(done: () => boolean, ms = 5_000): Promise<void> {
 }
 
 afterEach(() => {
+  scene.native.appId = "app.ohcal.preview";
   scene.state.arrival = null;
   scene.state.pending = null;
 });
 
 describe("the switch's receiving side in the connection layer", () => {
+  it("opens store ohcal without advertising pairings or redeeming an arriving code", async () => {
+    scene.native.appId = "app.ohcal";
+    const fake = pairServer({ flavor: "desktop-host", accountId: "acct-1" });
+    const origin = await listen(fake.server);
+    phone();
+    fake.mintHandoffToken("code-1", CHALLENGE);
+    scene.state.arrival = {
+      v: "1", k: "open", p: `event:${ID}`, d: scene.hash(`${origin}\nacct-1`), c: CHALLENGE, l: pairLink(origin, "code-1", null),
+    };
+    scene.state.pending = { challenge: CHALLENGE, verifier: VERIFIER };
+    const { seen, view } = launch();
+    try {
+      await until(() => scene.state.takes > 0);
+      expect(scene.state.takes).toBe(1);
+      expect(seen.at(-1)?.k).toBe("idle");
+      expect(scene.state.notes).toEqual([]);
+      expect(scene.state.pending?.challenge).toBe(CHALLENGE);
+      expect(fake.seen.some((r) => r.url === "/pair/redeem")).toBe(false);
+    } finally {
+      view.unmount();
+      fake.server.close();
+    }
+  });
+
   it("takes the arrival up after the launch order, signs the signed-out app in on the shell, and notes the pairing", async () => {
     const fake = pairServer({ flavor: "desktop-host", accountId: "acct-1" });
     const origin = await listen(fake.server);

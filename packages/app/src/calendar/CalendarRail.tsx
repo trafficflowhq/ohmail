@@ -170,7 +170,7 @@ function CalendarRailContents({
     <>
       <Rail
         label={t("places")}
-        switcher={plan.rail === "words" ? switcher : undefined}
+        switcher={switcher}
         newEvent={create}
         mini={mini}
         places={

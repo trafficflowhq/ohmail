@@ -137,9 +137,10 @@ export function PaneTop() {
  * disconnected phone there), where there is no history to pop — the back
  * affordance hides rather than offering a press that goes nowhere.
  */
-export function DetailBar({ title, right, back, backCapsule = false }: {
+export function DetailBar({ title, right, back, backLabel, backCapsule = false }: {
   title?: string; right?: React.ReactNode;
   backCapsule?: boolean;
+  backLabel?: string;
   /** The screen's own way out, drawn whatever the stack holds (the Servers pane: a pop can land back on it). */
   back?: () => void;
 }) {
@@ -188,7 +189,7 @@ export function DetailBar({ title, right, back, backCapsule = false }: {
             <Icon name="chev" size={15} color={t.c.ink2} />
           </View>
           <Txt variant="button" tone={backCapsule ? "ink" : "ink2"} numberOfLines={1} style={{ flexShrink: 1 }}>
-            {backCapsule ? title ?? Copy.back : Copy.back}
+            {backLabel ?? (backCapsule ? title ?? Copy.back : Copy.back)}
           </Txt>
         </Tap>
       ) : null}
@@ -332,7 +333,7 @@ export function StateKnock({ say }: { say: { title: string; hint: string; press:
   const t = useTheme();
   return (
     <Tap
-      onPress={() => router.push("/settings")}
+      onPress={() => router.push({ pathname: "/settings", params: { pane: "mailboxes" } })}
       accessibilityRole="button"
       accessibilityLabel={`${say.title} ${say.hint}`}
       style={{

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { mailboxCredentials } from "@trafficflow/db";
-import { ImapAdapter, buildImapAuth, storedTlsPin, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, RawMessageTooLargeError, buildImapAuth, storedTlsPin, type CredMetaAuth } from "@trafficflow/core/adapters/imap";
 import { ServiceError, type OpenAdapter, type AttachmentAdapter } from "@trafficflow/services/mail";
 import { isMessageGone } from "@trafficflow/core/mail";
 import type { ApiDeps } from "./deps.js";
@@ -342,13 +342,15 @@ export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): O
     /* A GONE MESSAGE IS AN ANSWER, NOT A DEAD SOCKET. The adapter refuses with `MessageGoneError`
      * before any command or after the server answered an empty FETCH, the lock released either way,
      * so the socket is idle and clean: the caller's one re-resolved retry (the forward's read, the
-     * repair's tree read, the next part of a walk) runs on it. Every other throw latches and
-     * destroys, as a breach always has. `isMessageGone` is the predicate the retry keys on. */
-    const guarded = async <T>(read: () => Promise<T>): Promise<T> => {
+     * repair's tree read, the next part of a walk) runs on it. An optional attachment recovery
+     * read can also continue when the declared message size exceeds the source read's cap. */
+    const guarded = async <T>(read: () => Promise<T>, keepOpenOnLimit = false): Promise<T> => {
       try {
         return await raced(read(), operationMs);
       } catch (err) {
-        if (!isMessageGone(err)) {
+        const sourceOverLimit =
+          keepOpenOnLimit && err instanceof RawMessageTooLargeError && err.sizeBytes > err.limitBytes;
+        if (!isMessageGone(err) && !sourceOverLimit) {
           dead = true;
           await opened.forceClose().catch(() => { /* already down; the slots are released */ });
         }
@@ -364,8 +366,8 @@ export function makeOpenAdapter(deps: ApiDeps, opts: OpenAdapterOptions = {}): O
       fetchPart: (locator, partId, o) => guarded(() => opened.adapter.fetchPart(locator, partId, o)),
       // The streamed read (the desktop's save): the same clock, ceiling and teardown.
       fetchPartTo: (locator, partId, sink, o) => guarded(() => opened.adapter.fetchPartTo(locator, partId, sink, o)),
-      // The same clock and the same teardown; `o` carries the service's ceiling to the stream.
-      fetchRaw: (locator, o) => guarded(() => opened.adapter.fetchRaw(locator, o)),
+      // The same clock and teardown, with an optional size-refusal exception for recovery.
+      fetchRaw: (locator, o) => guarded(() => opened.adapter.fetchRaw(locator, o), o?.keepOpenOnLimit),
       // The repair's one tree read: the same clock, and a breach destroys the socket the same way.
       fetchStructure: (locator) => guarded(() => opened.adapter.fetchStructure(locator)),
       close: async () => { if (!dead) await opened.close(); },

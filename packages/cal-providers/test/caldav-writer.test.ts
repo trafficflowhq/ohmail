@@ -21,7 +21,7 @@ import {
 } from "@ohmail/cal-core";
 import { pinnedHttpRequest, type HostResolver } from "@trafficflow/core/net";
 import { afterEach, describe, expect, it } from "vitest";
-import { makeWriter } from "../src/caldav/index.js";
+import { makeReader, makeWriter } from "../src/caldav/index.js";
 import { ANSWER_TIMEOUT_MS, CONNECT_TIMEOUT_MS, FETCH_BODY_MAX_BYTES, MAX_REDIRECTS } from "../src/limits.js";
 import type { CalendarWriter, Connection, EventDraft, WriteAnswer } from "../src/port.js";
 import { guardedRequest } from "../src/request/guarded.js";
@@ -1363,6 +1363,105 @@ describe("CalDAV's writer", () => {
     },
   );
 
+  it("discovers automatic scheduling advertised on OPTIONS and stores an invitation with its guest", async () => {
+    const b = await bench({ autoSchedule: true, scheduleOnOptionsOnly: true });
+    const reader = makeReader({
+      http: namedHostRequest({ writes: false, resolver, policy: { kind: "own-network" } }),
+      clock: { now: () => NOW },
+      zones: ZONES,
+    });
+    const organizer = ["organizer", "example.test"].join("@");
+    const guest = ["guest", "example.test"].join("@");
+    const event = draft({ organizer, attendees: [{ email: guest, name: "Guest", optional: false }] });
+    const listed = await reader.listCalendars(b.connection, never);
+    const result = await b.writer.create(b.connection, b.cal, { key: { hex: KEY }, event }, never);
+    expect.soft(listed).toMatchObject({ ok: true, value: [{ id: b.cal.id, autoSchedule: true }] });
+    expect(result).toMatchObject({
+      ok: true,
+      items: [{ event: { organizer: { email: organizer }, attendees: [{ email: guest, rsvp: true }] } }],
+    });
+    expect(b.writes()).toHaveLength(1);
+    expect(b.dav.seen.some(({ method }) => method === "POST")).toBe(false);
+  });
+
+  it.each([{ optionsStatus: 403 }, { optionsStatus: 405 }, { optionsStatus: 501 }, { optionsDav: "" }])(
+    "creates and edits invitations using the collection properties when OPTIONS lacks CalDAV (%j)",
+    async (options) => {
+      const b = await bench({ ...options, autoSchedule: true });
+      const organizer = ["organizer", "example.test"].join("@");
+      const guest = ["guest", "example.test"].join("@");
+      const attendees = [{ email: guest, name: "Guest", optional: false }];
+      const made = await b.writer.create(
+        b.connection,
+        b.cal,
+        { key: { hex: KEY }, event: draft({ organizer, attendees }) },
+        never,
+      );
+      const item = made.ok && made.items[0];
+      expect(item).toMatchObject({ kind: "upsert", event: { attendees: [{ email: guest }] } });
+      if (!item || item.kind !== "upsert") throw new Error("Expected the invitation to be stored");
+      const changed = await b.writer.change(
+        b.connection,
+        b.cal,
+        { id: item.id, version: item.version, text: item.text, occurrence: null },
+        { organizer, attendees: [{ ...attendees[0]!, optional: true }] },
+        never,
+      );
+      expect(changed).toMatchObject({
+        ok: true,
+        items: [{ event: { attendees: [{ email: guest, role: "OPT-PARTICIPANT" }] } }],
+      });
+      expect(
+        b.dav.seen.filter(({ depth, body }) => depth === "0" && body.includes("<D:resourcetype/>")),
+      ).toHaveLength(2);
+      expect(b.writes()).toHaveLength(2);
+    },
+  );
+
+  it.each([false, true])(
+    "checks an organizer object's scheduling before editing it after OPTIONS is refused (%s)",
+    async (autoSchedule) => {
+      const b = await bench({ autoSchedule, optionsStatus: 403 });
+      const organizer = ["organizer", "example.test"].join("@");
+      const text = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "BEGIN:VEVENT",
+        "UID:shared-event",
+        "DTSTAMP:20261101T000000Z",
+        "DTSTART:20261118T090000Z",
+        "DTEND:20261118T100000Z",
+        `ORGANIZER:mailto:${organizer}`,
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+      ].join("\r\n");
+      b.dav.put("studio", "shared.ics", text, '"reviewed"');
+      const result = await b.writer.change(
+        b.connection,
+        b.cal,
+        { id: b.member("shared.ics"), version: '"reviewed"', text, occurrence: null, sharedCopy: true },
+        { summary: "New title" },
+        never,
+      );
+      expect(word(result)).toBe(autoSchedule ? "read_only" : "ok");
+      expect(b.writes()).toHaveLength(autoSchedule ? 0 : 1);
+    },
+  );
+
+  it("reports the failed invitation write and can store the event without its guest", async () => {
+    const b = await bench({ autoSchedule: true });
+    const organizer = ["organizer", "example.test"].join("@");
+    const guest = ["guest", "example.test"].join("@");
+    const event = draft({ organizer, attendees: [{ email: guest, name: null, optional: false }] });
+    b.dav.refuseNextWriteOf(`${UID}.ics`, 403);
+    const result = await b.writer.create(b.connection, b.cal, { key: { hex: KEY }, event }, never);
+    expect(result).toMatchObject({ ok: false, reason: "read_only" });
+    expect(
+      await b.writer.create(b.connection, b.cal, { key: { hex: KEY }, event: draft() }, never),
+    ).toMatchObject({ ok: true, items: [{ event: { attendees: [] } }] });
+  });
+
   it("writes invitees only where the server sends invitations itself", async () => {
     const people = [{ email: "giulia@example.test", name: "Giulia", optional: false }];
     const plain = await bench();
@@ -1398,62 +1497,67 @@ describe("CalDAV's writer", () => {
     ).toEqual([["mila@example.test", [["giulia@example.test", "REQ-PARTICIPANT", "NEEDS-ACTION", true]]]]);
   });
 
-  it("takes an answer whose first attempt landed as done when it is sent again, and writes nothing more; one on a copy someone else moved is refused", async () => {
-    const b = await bench({ autoSchedule: true });
-    const invitation = (summary: string): string =>
-      [
-        "BEGIN:VCALENDAR",
-        "VERSION:2.0",
-        "PRODID:-//x//EN",
-        "BEGIN:VEVENT",
-        "UID:invite@x.test",
-        "DTSTAMP:20261101T000000Z",
-        "DTSTART:20261118T090000Z",
-        "DTEND:20261118T100000Z",
-        `SUMMARY:${summary}`,
-        "ORGANIZER:mailto:anna@example.test",
-        "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:mila@example.test",
-        "END:VEVENT",
-        "END:VCALENDAR",
-        "",
-      ].join("\r\n");
-    b.dav.put("studio", "invite.ics", invitation("Kiln check"));
-    const asStored = {
-      id: b.member("invite.ics"),
-      version: '"studio-invite.ics-1"',
-      text: invitation("Kiln check"),
-      occurrence: null,
-    };
-    const answer = { as: "mila@example.test", reply: "ACCEPTED" } as const;
-    expect(word(await b.writer.answer(b.connection, b.cal, asStored, answer, never))).toBe("ok");
-    // Its answer lost, the same write is sent again on the copy it was recorded on: refused 412, and the line already says it.
-    const again = await b.writer.answer(b.connection, b.cal, asStored, answer, never);
-    expect(word(again)).toBe("ok");
-    expect(
-      again.ok &&
-        again.items.map((i) => i.kind === "upsert" && [i.version, i.event.attendees.map((p) => p.partstat)]),
-    ).toEqual([['"studio-invite.ics-2"', ["ACCEPTED"]]]);
-    expect(b.writes().map((s) => [s.method, s.headers["if-match"]])).toEqual([
-      ["PUT", '"studio-invite.ics-1"'],
-      ["PUT", '"studio-invite.ics-1"'],
-    ]);
-    // Someone else's change, the line not answered: refused 412, nothing written over theirs.
-    b.dav.put("studio", "invite.ics", invitation("Theirs"));
-    expect(word(await b.writer.answer(b.connection, b.cal, asStored, answer, never))).toBe("version_stale");
-    const read = await b.writer.change(
-      b.connection,
-      b.cal,
-      { ...asStored, version: '"studio-invite.ics-3"', text: null },
-      { summary: "Theirs" },
-      never,
-    );
-    expect(
-      read.ok &&
-        read.items.map(
-          (i) => i.kind === "upsert" && [i.event.summary, i.event.attendees.map((p) => p.partstat)],
-        ),
-    ).toEqual([["Theirs", ["NEEDS-ACTION"]]]);
-  });
+  it.each([{}, { optionsStatus: 403 }, { scheduleOnOptionsOnly: true }])(
+    "takes an answer whose first attempt landed as done when it is sent again, and writes nothing more; one on a copy someone else moved is refused (%j)",
+    async (options) => {
+      const b = await bench({ autoSchedule: true, ...options });
+      const invitation = (summary: string): string =>
+        [
+          "BEGIN:VCALENDAR",
+          "VERSION:2.0",
+          "PRODID:-//x//EN",
+          "BEGIN:VEVENT",
+          "UID:invite@x.test",
+          "DTSTAMP:20261101T000000Z",
+          "DTSTART:20261118T090000Z",
+          "DTEND:20261118T100000Z",
+          `SUMMARY:${summary}`,
+          "ORGANIZER:mailto:anna@example.test",
+          "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:mila@example.test",
+          "END:VEVENT",
+          "END:VCALENDAR",
+          "",
+        ].join("\r\n");
+      b.dav.put("studio", "invite.ics", invitation("Kiln check"));
+      const asStored = {
+        id: b.member("invite.ics"),
+        version: '"studio-invite.ics-1"',
+        text: invitation("Kiln check"),
+        occurrence: null,
+      };
+      const answer = { as: "mila@example.test", reply: "ACCEPTED" } as const;
+      expect(word(await b.writer.answer(b.connection, b.cal, asStored, answer, never))).toBe("ok");
+      // Its answer lost, the same write is sent again on the copy it was recorded on: refused 412, and the line already says it.
+      const again = await b.writer.answer(b.connection, b.cal, asStored, answer, never);
+      expect(word(again)).toBe("ok");
+      expect(
+        again.ok &&
+          again.items.map(
+            (i) => i.kind === "upsert" && [i.version, i.event.attendees.map((p) => p.partstat)],
+          ),
+      ).toEqual([['"studio-invite.ics-2"', ["ACCEPTED"]]]);
+      expect(b.writes().map((s) => [s.method, s.headers["if-match"]])).toEqual([
+        ["PUT", '"studio-invite.ics-1"'],
+        ["PUT", '"studio-invite.ics-1"'],
+      ]);
+      // Someone else's change, the line not answered: refused 412, nothing written over theirs.
+      b.dav.put("studio", "invite.ics", invitation("Theirs"));
+      expect(word(await b.writer.answer(b.connection, b.cal, asStored, answer, never))).toBe("version_stale");
+      const read = await b.writer.change(
+        b.connection,
+        b.cal,
+        { ...asStored, version: '"studio-invite.ics-3"', text: null },
+        { summary: "Theirs" },
+        never,
+      );
+      expect(
+        read.ok &&
+          read.items.map(
+            (i) => i.kind === "upsert" && [i.event.summary, i.event.attendees.map((p) => p.partstat)],
+          ),
+      ).toEqual([["Theirs", ["NEEDS-ACTION"]]]);
+    },
+  );
 
   it("asks nothing for an address outside the collection, and says view only where the server refuses the write", async () => {
     const b = await bench();

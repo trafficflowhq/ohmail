@@ -15,6 +15,7 @@ import { signOutAndSettle } from "../../sign-out";
 import { signOutTrouble, type SignOutTrouble } from "../../sign-out-trouble";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { saveBlob } from "../../shell/attachments";
+import { activeFormatZone } from "../../shell/locale";
 import { ApiError, account, type AccessRefusedFacts, type AccountLifecycle } from "../../api-client";
 import { leaveForManagePage } from "./manage-navigation";
 import { useWallLift } from "@ohmail/app-logic/doors/wall-lift";
@@ -112,7 +113,7 @@ export function useWallDoor({ facts, onLifted }: { facts: AccessRefusedFacts; on
       if (typeof url === "string" && url.length > 0) {
         // The return is a poll: in this document if it survives the hand-off, in the next one if not.
         armPoll();
-        leaveForManagePage(url);
+        leaveForManagePage(url, activeFormatZone());
         return;
       }
       setMintRefusal("failed");

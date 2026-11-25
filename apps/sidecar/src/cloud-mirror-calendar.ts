@@ -128,6 +128,7 @@ const calendar: KindStore<"calendar"> = {
     if (!await held(tx, calConnections, world, r.connectionId)) return false;
     const body = {
       connectionId: r.connectionId, providerId: r.id, name: r.name, color: r.color, access: r.access,
+      autoSchedule: r.autoSchedule === true,
       shown: r.shown, timeZone: r.timeZone,
       windowStart: r.window?.from ?? null, windowEnd: r.window?.to ?? null,
       lastSyncedAt: asDate(r.lastSyncedAt), errorCode: r.errorCode, updatedAt: asDate(r.updatedAt) ?? now,
@@ -171,7 +172,7 @@ const event: KindStore<"calendar_event"> = {
       addedDates: r.repeat !== null && r.repeat.added.length > 0 ? r.repeat.added : null,
       busy: r.busy, private: r.private,
       organizer: r.organizer?.address ?? null, organizerName: r.organizer?.name ?? null,
-      myAnswer: r.myAnswer, heldBack: r.heldBack, partial: r.cut, updatedAt: asDate(r.updatedAt) ?? now,
+      myAnswer: r.myAnswer, mailAnswer: r.mailAnswer ?? null, heldBack: r.heldBack, partial: r.cut, updatedAt: asDate(r.updatedAt) ?? now,
     };
     await tx.insert(calEvents).values({ id: r.id, accountId: world.accountId, ...body })
       .onConflictDoUpdate({ target: calEvents.id, set: body });

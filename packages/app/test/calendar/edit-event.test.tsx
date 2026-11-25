@@ -142,6 +142,45 @@ it.each(["version_stale", "expired", "read_only"] as const)(
   },
 );
 
+it("reopens a refused CalDAV create from its unsaved event after reload", async () => {
+  const address = ["mara", "example.test"].join("@");
+  const invitee = { address, name: "Mara", role: "required" as const };
+  const record = meeting({ uid: "pending:write", invitees: [{ ...invitee, answer: "none" }] });
+  record.writes = [
+    {
+      id: "write",
+      key: "create",
+      state: "refused",
+      part: null,
+      reason: "invitees_unsupported",
+      at: UPDATED,
+      act: {
+        kind: "calendar_event_create",
+        eventId: record.id,
+        calendarId: record.calendarId,
+        event: { ...record, end: record.end!, repeat: null, invitees: [invitee], alarms: [] },
+      },
+    },
+  ];
+  const world = eventWorld(record);
+  const events = world.port.events();
+  world.port.events = () =>
+    events.map((event) => ({
+      ...event,
+      refusal: "invitees_unsupported",
+      refusedWriteId: "write",
+    }));
+  mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: invitationsEn });
+  const card = within(screen.getByRole("dialog", { name: "Kiln check" }));
+  expect(card.getByText("Not saved")).toBeTruthy();
+  expect(card.getByText("This calendar cannot send invitations.")).toBeTruthy();
+  expect(card.queryByRole("button", { name: "Try again" })).toBeNull();
+  fireEvent.click(card.getByRole("button", { name: "Reopen draft" }));
+  const form = within(await screen.findByRole("dialog", { name: "New event" }));
+  expect(form.getByRole("textbox", { name: "New event" })).toHaveProperty("value", record.title);
+  expect(form.getByRole("button", { name: "Save without guests" })).toBeTruthy();
+});
+
 it("offers Duplicate and moves Hide this calendar under More for a read-only event", async () => {
   const world = eventWorld(meeting());
   world.put("calendar", "cal-1", calendarRecord({ access: "reader" }));

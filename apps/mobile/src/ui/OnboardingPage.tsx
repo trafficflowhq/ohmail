@@ -127,7 +127,7 @@ export function OnboardingTag({ label, accessibilityLabel, onPress, expanded, la
 export function OnboardingButton({ label, onPress, kind = "ink", short = false, grow = false }: {
   label: string;
   onPress: () => void;
-  kind?: "ink" | "quiet" | "soft";
+  kind?: "ink" | "quiet" | "soft" | "sheet";
   short?: boolean;
   grow?: boolean;
 }) {
@@ -137,13 +137,14 @@ export function OnboardingButton({ label, onPress, kind = "ink", short = false, 
   );
 }
 
-export function useOnboardingButton(kind: "ink" | "quiet" | "soft" = "ink", short = false) {
+export function useOnboardingButton(kind: "ink" | "quiet" | "soft" | "sheet" = "ink", short = false) {
   const { palette, type } = useOnboardingLook();
   return {
     color: kind === "ink" ? palette["on-solid"] : palette.ink,
     surface: {
       ...styles.button,
-      backgroundColor: kind === "ink" ? palette.solid : kind === "soft" ? palette.soft : "transparent",
+      backgroundColor: kind === "ink" ? palette.solid :
+        kind === "soft" ? palette.soft : kind === "sheet" ? palette.sheet : "transparent",
       minHeight: points(type[short ? "h-s" : "h-xl"]),
     },
     text: styles.buttonText,

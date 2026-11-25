@@ -66,7 +66,7 @@ export function StoragePlanActions({ model, add }: { readonly model: StorageMode
           label: t("storageChangePlan"),
           kind: "ink",
           disabled: model.changing,
-          onPress: model.change,
+          onPress: () => model.change(),
         },
         ...(add
           ? [
@@ -77,7 +77,7 @@ export function StoragePlanActions({ model, add }: { readonly model: StorageMode
                 label: t("storageAddStorage"),
                 kind: "soft",
                 disabled: model.changing,
-                onPress: model.change,
+                onPress: () => model.change("storage"),
               } as const,
             ]
           : []),

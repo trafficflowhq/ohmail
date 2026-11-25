@@ -78,7 +78,7 @@ import { mailSurfaceOf } from "../shell/mail-surface";
 import { pairingDigest } from "../switch/digest";
 import { notePairings, switchIntake, switchPlaces, takeUpArrival, type ReceiveDeps } from "../switch/receive";
 import { switchNative } from "../switch/switch-native";
-import { siblingOf } from "../variant";
+import { launchOnlySwitch, siblingOf } from "../variant";
 import { APP } from "../variant-native";
 import { settleLaunchVerdict } from "../shell/old-copy";
 import { nativeShellStores } from "../shell/shell-stores-native";
@@ -394,7 +394,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setActiveId((await env.profiles.active())?.id ?? null);
     /* EVERY CHANGE OF THE PAIRINGS PASSES HERE, so the switch's provider answers the sibling from today's: this
        app's live pairings by their digests, never an address or an account. */
-    void notePairings(switcher, env, nativeFamilyDigest);
+    if (!launchOnlySwitch(APP)) void notePairings(switcher, env, nativeFamilyDigest);
   }, [env, switcher]);
 
   /**
@@ -755,6 +755,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const takeArrival = useRef<() => Promise<unknown>>(async () => undefined);
   takeArrival.current = () => {
     if (switcher === null) return Promise.resolve();
+    if (launchOnlySwitch(APP)) {
+      return switcher.takeArrival().catch(() => null);
+    }
     const deps: ReceiveDeps = {
       env,
       native: switcher,

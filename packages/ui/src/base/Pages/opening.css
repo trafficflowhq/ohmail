@@ -8,6 +8,8 @@
   }
   .oh-opening[data-kind="web"] {
     min-height: calc(100dvh / var(--ui-zoom, 1));
+    box-sizing: border-box;
+    color: var(--ink);
     display: grid;
     place-items: center;
     padding: var(--s4);
@@ -22,7 +24,8 @@
     margin: 0;
     font-size: var(--t-title);
   }
-  .oh-opening-web[data-late] {
+  .oh-opening-web[data-late]:not([data-immediate]),
+  .oh-opening-web[data-late] > .oh-button {
     visibility: hidden;
     animation-name: oh-opening-reveal;
     animation-delay: var(--d-opening-reload);

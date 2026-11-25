@@ -26,6 +26,7 @@ export type AccountPaneProps =
       /** The page of states only, never handed by a shell: the password form stands open as the pane is drawn. */
       readonly formOpen?: boolean;
       readonly onPhone?: boolean;
+      readonly sharedCalendarAccount?: boolean;
       readonly service?: HostCapabilities["service"];
       readonly sheet?: PaneSheet;
     }
@@ -63,6 +64,7 @@ function Whole({
   factor,
   formOpen,
   onPhone,
+  sharedCalendarAccount,
   service,
   sheet,
 }: Extract<AccountPaneProps, { body: "pane" }>) {
@@ -104,7 +106,7 @@ function Whole({
         <SettingsSheet
           title={t("title")}
           note={{
-            line: t("lead"),
+            line: sharedCalendarAccount ? `${t("sharedCalendarLead")} ${t("lead")}` : t("lead"),
             acts: (
               <Button kind="quiet" size="s" onPress={model.toErase}>
                 {t("begin")}

@@ -47,6 +47,7 @@ export function useGuestConfirmation(
   selected: readonly CalendarGuest[],
   canAdd: () => boolean,
   create: (draft: EventDraft) => void,
+  iCloud: boolean,
 ) {
   const t = useText("calendar");
   const mail = useText("calmail");
@@ -73,7 +74,7 @@ export function useGuestConfirmation(
     else create(draft);
   };
   const close = () => setConfirm(undefined);
-  const confirmation = confirm && (
+  const confirmation = confirm && guests.length > 0 && (
     <QuestionBeforeAct
       open
       anchor={anchor}
@@ -83,9 +84,11 @@ export function useGuestConfirmation(
           : t("edit.confirmInvite", { guests: names })
       }
       follows={
-        fromLetter
-          ? undefined
-          : t("edit.inviteFollows", { title: draft.title.trim(), when: draftWhen(draft, locale) })
+        iCloud
+          ? t("edit.iCloudSends")
+          : fromLetter
+            ? undefined
+            : t("edit.inviteFollows", { title: draft.title.trim(), when: draftWhen(draft, locale) })
       }
       focusCancel
       onClose={close}
@@ -93,13 +96,15 @@ export function useGuestConfirmation(
       answers={[
         {
           id: "send",
-          label: fromLetter
-            ? mail(confirm.length > 1 ? "sendGuests" : "sendGuest")
-            : t("edit.sendInvitation", { count: confirm.length }),
+          label: iCloud
+            ? t("edit.saveAndInvite")
+            : fromLetter
+              ? mail(confirm.length > 1 ? "sendGuests" : "sendGuest")
+              : t("edit.sendInvitation", { count: confirm.length }),
           keyHint: "↵",
           onPress: () => {
             close();
-            create({ ...draft, invitees: confirm });
+            if (canAdd()) create({ ...draft, invitees: confirm });
           },
         },
       ]}

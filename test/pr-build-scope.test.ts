@@ -48,7 +48,7 @@ const NO_DOOR: IfContext = {
   "github.event.pull_request.head.repo.full_name": null, "github.head_ref": null, "github.event.pull_request.user.type": null,
   "github.event.pull_request.author_association": null, "github.actor": null, "github.triggering_actor": null,
   "github.event.pull_request.draft": null, "github.base_ref": null, "github.event.action": null,
-  "inputs.play_version_code": "", "github.event.deleted": false,
+  "inputs.play_version_code": "", "vars.OHCAL_PLAY_UPLOAD": "", "github.event.release.tag_name": "", "github.event.deleted": false,
 };
 /** A maintainer's own pull request from a branch of this repository, ready unless `draft`. */
 const LANE = (head = "pr/lane-x", draft = false): IfContext => ({
@@ -188,7 +188,7 @@ describe("the platform builds are gated on a pull request and nowhere else", () 
     expect(evalIf(ifOf(j), nightly!)).toBe(true);
     expect(evalIf(ifOf(j), tag!)).toBe(false);
     expect(evalIf(ifOf(j), { ...nightly!, "github.repository": "someone/ohmail" }), "a fork's own nightly").toBe(false);
-    expect(load(ANDROID).on?.push, "a push to main starts no android run").toEqual({ tags: ["android-v*"] });
+    expect(load(ANDROID).on?.push, "a push to main starts no android run").toEqual({ tags: ["android-v*", "ohcal-android-v*"] });
   });
 
   it("android's tag jobs do not ask `changes`", () => {

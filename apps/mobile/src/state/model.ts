@@ -98,6 +98,9 @@ export interface Mail {
   toYou?: true;
   imagesBlocked?: true;
   additionalPeople?: number;
+  /** The delivery mailbox's label, shown when the account has more than one mailbox. */
+  mailboxLabel?: string;
+  mailbox?: Address;
   unread: boolean;
   rationale?: string;
   trackerNote?: string;
@@ -169,6 +172,7 @@ export interface MailTag {
 
 export interface PileItem {
   id: string;
+  mailbox?: Address;
   messageId?: string;
   /** Every message the row covers, newest first: a conversation in Answer later or Parked. */
   memberIds?: readonly string[];

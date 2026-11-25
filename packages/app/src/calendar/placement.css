@@ -8,7 +8,9 @@
   min-width: 0;
 }
 .cal-first-step {
-  justify-content: center;
+  display: grid;
+  align-content: center;
+  flex: 1;
 }
 .cal-body-views {
   display: flex;

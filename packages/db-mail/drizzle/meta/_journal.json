@@ -1436,6 +1436,20 @@
       "when": 1795547863159,
       "tag": "0223_calendar_preferences",
       "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "7",
+      "when": 1795611114509,
+      "tag": "0224_calendar_auto_schedule",
+      "breakpoints": true
+    },
+    {
+      "idx": 206,
+      "version": "7",
+      "when": 1795613356314,
+      "tag": "0225_calendar_mail_answer",
+      "breakpoints": true
     }
   ]
 }

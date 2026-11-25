@@ -169,7 +169,13 @@ function useWays(): Ways {
     }
     /* It walks to where a letter is read: the reply rides the walk, past the change of place that closes it. */
     rides.current = letter.id;
-    commands.go({ place: MAIL_HOME, open: letter.id });
+    commands.go({
+      place: MAIL_HOME,
+      open: letter.id,
+      ...(at.place === "drafts" && columnsNow.current === 1
+        ? { words: { draftReturnLetter: letter.id } }
+        : {}),
+    });
   });
   return { replyTo, setReplyTo, go, showLetter, openWithReply, atWrite: route.place === "write" };
 }
