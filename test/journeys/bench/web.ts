@@ -288,7 +288,8 @@ async function waitFor(url: string, log: () => string): Promise<void> {
 export async function calendarDayMenu(person: Person, title: string, compact: boolean) {
   if (!(person instanceof PlaywrightPerson)) throw new Error("the calendar menu journey uses a web window");
   const page = person.page;
-  const chip = page.getByRole("button", { name: new RegExp(title) });
+  const day = page.getByRole("region", { name: say("day.hours", {}, person.lang) });
+  const chip = day.getByRole("button", { name: new RegExp(title) });
   if (compact) {
     await chip.click();
     await browserExpect(page.getByRole("dialog", { name: title })).toBeVisible();

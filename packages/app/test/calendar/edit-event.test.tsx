@@ -1,6 +1,8 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
+import { MailStateContext, type MailStateBinding } from "@ohmail/app-logic/mail-state";
 import { dayShort, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
 import calendarDe from "../../messages/calendar.de.json" with { type: "json" };
 import readerInvitationEn from "../../messages/reader-invitation.en.json" with { type: "json" };
@@ -8,6 +10,7 @@ import dayEn from "../../messages/day.en.json" with { type: "json" };
 import calmail from "../../messages/calmail.en.json" with { type: "json" };
 import invitationsEn from "../../messages/invitations.en.json" with { type: "json" };
 import { calendar } from "../../src/calendar/entry.js";
+import { gardenGuests, guestOrganizer } from "./guest-fixture.js";
 import { InvitationLetterCard } from "../../src/reader/InvitationLetterCard.js";
 import { fakeMail, mountReader, WORDS as readerWords } from "../reader/support/mail.js";
 import type { EngineMessage, MessageDTO } from "@ohmail/wire";
@@ -25,6 +28,14 @@ import {
   ZURICH,
   WORDS as calendarWords,
 } from "../calsetup/world.js";
+
+const dayGrid = () => within(screen.getByRole("region", { name: dayEn.day.hours }));
+
+const mailState = { state: { settled: true, owed: false } } as MailStateBinding;
+
+function WithMailState({ children }: { children: ReactNode }) {
+  return <MailStateContext.Provider value={mailState}>{children}</MailStateContext.Provider>;
+}
 
 function meeting(over: Partial<CalendarEventRecord> = {}): CalendarEventRecord {
   return {
@@ -158,7 +169,7 @@ it("opens the selected event from the Day context menu without writing", () => {
   const press = vi.fn();
   world.port.press = press;
   mountFrame("#/cal/day/2026-11-16", world, NONE);
-  const event = screen.getByRole("button", { name: /Kiln check/ });
+  const event = dayGrid().getByRole("button", { name: /Kiln check/ });
   fireEvent.contextMenu(event, { clientX: 200, clientY: 180 });
   const menu = within(screen.getByRole("menu", { name: "Event actions" }));
   fireEvent.click(menu.getByRole("menuitem", { name: "Open event" }));
@@ -232,7 +243,7 @@ it.each(["owner", "reader"] as const)("honors focused Day chip Delete on %s acce
   }));
   world.port.holdDelete = hold;
   mountFrame("#/cal/day/2026-11-16", world, NONE);
-  const chip = screen.getByRole("button", { name: /Kiln check/ });
+  const chip = dayGrid().getByRole("button", { name: /Kiln check/ });
   chip.focus();
   fireEvent.keyDown(chip, { key: "Delete" });
   expect(hold).toHaveBeenCalledTimes(access === "owner" ? 1 : 0);
@@ -242,7 +253,7 @@ it("offers the focused Day event's editor and verified call link, then drops the
   const link = "https://meet.google.com/abc-defg-hij";
   const world = eventWorld(meeting({ callLink: link }));
   const { address } = mountFrame("#/cal/day/2026-11-16", world, NONE);
-  const chip = screen.getByRole("button", { name: /Kiln check/ });
+  const chip = dayGrid().getByRole("button", { name: /Kiln check/ });
   fireEvent.contextMenu(chip);
   const menu = within(screen.getByRole("menu", { name: "Event actions" }));
   expect(menu.getByRole("menuitem", { name: "Edit" })).toBeTruthy();
@@ -258,17 +269,18 @@ it("clears an open calendar menu when the engine changes on the same route", () 
     letters: [],
     open: null,
     host: {
-      engine: { ...fakeMail([]).engine, ...world.engine },
+      engine: Object.assign(fakeMail([]).engine, { store: world.engine.store }),
       products: "both",
       calendar,
       wires: { calendar: world.port },
       address: fakeAddress("#/cal/day/2026-11-16"),
     },
     words: calendarWords.en,
+    wrapper: WithMailState,
   });
-  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  fireEvent.contextMenu(dayGrid().getByRole("button", { name: /Kiln check/ }));
   expect(screen.getByRole("menu", { name: "Event actions" })).toBeTruthy();
-  act(() => mounted.replaceEngine({ ...fakeMail([]).engine, ...other.engine }));
+  act(() => mounted.replaceEngine(Object.assign(fakeMail([]).engine, { store: other.engine.store })));
   expect(screen.queryByRole("menu", { name: "Event actions" })).toBeNull();
 });
 
@@ -291,7 +303,7 @@ it("opens the Day menu for an all-day event", () => {
     }),
   );
   mountFrame("#/cal/day/2026-11-16", world, NONE);
-  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  fireEvent.contextMenu(dayGrid().getByRole("button", { name: /Kiln check/ }));
   expect(screen.getByRole("menuitem", { name: "Open event" })).toBeTruthy();
 });
 
@@ -381,6 +393,7 @@ function openWithMailboxes(
       address: fakeAddress(route),
     },
     words: { ...readerWords.en, ...calendarWords.en, ...calmail, ...invitationsEn },
+    wrapper: WithMailState,
   });
   return world;
 }
@@ -1276,7 +1289,7 @@ it.each(["week", "day", "guest confirmation", "invitee", "escape", "changed occu
       world.put("calendar_event", target.id, target);
     });
     await act(async () => {});
-    const event = screen.getByRole("button", { name: /^Workshop/ });
+    const event = (view === "day" ? dayGrid() : screen).getByRole("button", { name: /^Workshop/ });
     const column = event.closest<HTMLElement>('[data-cal-drop-kind="time"]')!;
     vi.spyOn(column, "getBoundingClientRect").mockReturnValue(DOMRect.fromRect({ width: 140, height: 1440 }));
     vi.spyOn(column, "clientHeight", "get").mockReturnValue(1440);
@@ -2134,7 +2147,7 @@ it.each(["week", "day"])("resizes a timed event's end by dragging in %s", async 
   const press = vi.fn(async () => ({ key: "resize" }));
   world.port.press = press;
   mountFrame(`#/cal/${view}/2026-11-16`, world, NONE, { words: calmail });
-  const chip = screen.getByRole("button", { name: /Kiln check/ });
+  const chip = (view === "day" ? dayGrid() : screen).getByRole("button", { name: /Kiln check/ });
   const handle = within(chip).getByTitle("Resize end");
   const column = chip.parentElement!;
   vi.spyOn(column, "getBoundingClientRect").mockReturnValue(DOMRect.fromRect({ width: 120, height: 1440 }));
@@ -2721,7 +2734,7 @@ it("offers scoped answers and marks the current response in the context menu of 
   const world = openWithMailboxes(record, async () => [mailbox(guest.address)], "#/cal/day/2026-11-16");
   const press = vi.fn(async () => ({ key: "answer" }));
   world.port.press = press;
-  const event = await screen.findByRole("button", { name: /Kiln check/ });
+  const event = await dayGrid().findByRole("button", { name: /Kiln check/ });
   fireEvent.contextMenu(event, { clientX: 240, clientY: 300 });
   expect((await screen.findByRole("menuitemradio", { name: "Yes" })).getAttribute("aria-checked")).toBe(
     "true",
@@ -2784,7 +2797,7 @@ it("keeps the same free stretches in Day after hiding a busy invitation", () => 
   }
   mountFrame("#/cal/day/2026-11-16", world, NONE, { words: dayEn });
   expect(screen.getAllByText("2 h")).toHaveLength(2);
-  expect(screen.getByRole("button", { name: /Kiln check/ })).toBeTruthy();
+  expect(dayGrid().getByRole("button", { name: /Kiln check/ })).toBeTruthy();
   act(() => world.put("calendar_event", busy.id, { ...busy, hiddenOccurrences: [""] }));
   expect(screen.queryByRole("button", { name: /Kiln check/ })).toBeNull();
   expect(screen.getAllByText("2 h")).toHaveLength(2);
@@ -2891,7 +2904,7 @@ it("hides an active invitation from the Day menu and offers Undo", async () => {
   world.port.holdDelete = hold;
   const press = vi.fn();
   world.port.press = press;
-  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  fireEvent.contextMenu(dayGrid().getByRole("button", { name: /Kiln check/ }));
   fireEvent.click(await screen.findByRole("menuitem", { name: "Remove from my calendar" }));
   const question = within(screen.getByRole("dialog", { name: "Remove from my calendar" }));
   expect(
@@ -2940,7 +2953,7 @@ it.each(["This event", "All events"] as const)("holds Hide for %s from the Day e
     undo: async () => true,
   }));
   world.port.holdDelete = hold;
-  fireEvent.contextMenu(screen.getByRole("button", { name: /Kiln check/ }));
+  fireEvent.contextMenu(dayGrid().getByRole("button", { name: /Kiln check/ }));
   fireEvent.click(await screen.findByRole("menuitem", { name: "Remove from my calendar" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Hide in ohcal" }));
   fireEvent.click(screen.getByRole("menuitem", { name: label }));
@@ -3200,6 +3213,45 @@ it("shows a pending portable move and withholds actions that would change the so
   expect(screen.queryByRole("button", { name: "Move to another calendar", exact: true })).toBeNull();
 });
 
+it("shows all guests, marks the organizer and groups confirmed answers", async () => {
+  const record = meeting({
+    organizer: guestOrganizer,
+    invitees: [...gardenGuests, { ...gardenGuests[0]!, ...guestOrganizer }],
+  });
+  open(record);
+  const card = within(await screen.findByRole("dialog", { name: record.title }));
+  const trigger = card.getByRole("button", { name: "Invitees" });
+  expect(trigger.querySelectorAll("[data-answer]")).toHaveLength(5);
+  expect(
+    Array.from(trigger.querySelectorAll("[data-answer]"), (mark) => mark.getAttribute("data-answer")),
+  ).toEqual(["accepted", "tentative", "none", "declined", "accepted"]);
+  expect(trigger.textContent).toContain("4 yes · 4 maybe · 4 no answer · 3 no");
+  fireEvent.click(trigger);
+  const list = within(screen.getByRole("dialog", { name: "Invitees" }));
+  expect(
+    list
+      .getAllByRole("heading", { level: 2 })
+      .slice(1)
+      .map((heading) => heading.textContent),
+  ).toEqual(["yes5", "maybe4", "no answer4", "no3"]);
+  expect(list.getAllByRole("listitem")).toHaveLength(gardenGuests.length + 1);
+  const labels = {
+    accepted: "yes",
+    tentative: "maybe",
+    none: "no answer",
+    declined: "no",
+    delegated: "delegated",
+  };
+  for (const person of gardenGuests) {
+    const row = list.getByText(person.name!).closest("li")!;
+    expect(within(row).getByText(person.address)).toBeTruthy();
+    expect(within(row).getByText(labels[person.answer], { exact: true })).toBeTruthy();
+  }
+  const organizer = list.getByText(guestOrganizer.name).closest("li")!;
+  expect(within(organizer).getByText("Organizer")).toBeTruthy();
+  expect(within(organizer).getByText(guestOrganizer.address)).toBeTruthy();
+});
+
 it("shows each invited person's full address and counts only guests' replies", async () => {
   const host = { name: "Finch Hall", address: ["host", "example.com"].join("@") };
   const visitor = { ...guest, name: "Ivy Beck", address: ["ivy", "example.com"].join("@") };
@@ -3208,8 +3260,12 @@ it("shows each invited person's full address and counts only guests' replies", a
     async () => [mailbox(host.address)],
   );
   const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
-  expect.soft(card.queryByText(visitor.address)).toBeTruthy();
+  const trigger = card.getByRole("button", { name: "Invitees" });
   expect(card.queryByText(/no answer/)).toBeNull();
+  fireEvent.click(trigger);
+  const list = within(screen.getByRole("dialog", { name: "Invitees" }));
+  expect(list.getByText(visitor.address)).toBeTruthy();
+  fireEvent.click(list.getByRole("button", { name: "Close" }));
   fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
   const chip = screen.getByRole("button", { name: /^Ivy Beck/ });
   expect(chip.textContent).toContain(visitor.address);
@@ -3303,9 +3359,15 @@ it("shows the confirmed acceptance and no reply for an invitee being added", asy
   ];
   mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: calmail });
   const form = within(await screen.findByRole("dialog", { name: record.title }));
-  expect(form.getByText("yes", { exact: true })).toBeTruthy();
-  expect(form.getByText(newGuest.name)).toBeTruthy();
-  expect(form.queryByText(/no answer/i)).toBeNull();
+  const trigger = form.getByRole("button", { name: "Invitees" });
+  expect(within(trigger).getByText("1 yes", { exact: true })).toBeTruthy();
+  fireEvent.click(trigger);
+  const list = within(screen.getByRole("dialog", { name: "Invitees" }));
+  const accepted = list.getByText(guest.name!).closest("li")!;
+  expect(within(accepted).getByText("yes", { exact: true })).toBeTruthy();
+  const pending = list.getByText(newGuest.name).closest("li")!;
+  expect(within(pending).getByText("Pending", { exact: true })).toBeTruthy();
+  expect(list.queryByText(/no answer/i)).toBeNull();
 });
 
 it("reopens the refused edit of a generated occurrence with the changed words and times", async () => {
@@ -3342,8 +3404,12 @@ it("shows each invited person's full address and counts only guests' replies", a
     async () => [mailbox(host.address)],
   );
   const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
-  expect.soft(card.queryByText(visitor.address)).toBeTruthy();
+  const trigger = card.getByRole("button", { name: "Invitees" });
   expect(card.queryByText(/no answer/)).toBeNull();
+  fireEvent.click(trigger);
+  const list = within(screen.getByRole("dialog", { name: "Invitees" }));
+  expect(list.getByText(visitor.address)).toBeTruthy();
+  fireEvent.click(list.getByRole("button", { name: "Close" }));
   fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
   const chip = screen.getByRole("button", { name: /^Ivy Beck/ });
   expect(chip.textContent).toContain(visitor.address);
@@ -3437,9 +3503,15 @@ it("shows the confirmed acceptance and no reply for an invitee being added", asy
   ];
   mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { words: calmail });
   const form = within(await screen.findByRole("dialog", { name: record.title }));
-  expect(form.getByText("yes", { exact: true })).toBeTruthy();
-  expect(form.getByText(newGuest.name)).toBeTruthy();
-  expect(form.queryByText(/no answer/i)).toBeNull();
+  const trigger = form.getByRole("button", { name: "Invitees" });
+  expect(within(trigger).getByText("1 yes", { exact: true })).toBeTruthy();
+  fireEvent.click(trigger);
+  const list = within(screen.getByRole("dialog", { name: "Invitees" }));
+  const accepted = list.getByText(guest.name!).closest("li")!;
+  expect(within(accepted).getByText("yes", { exact: true })).toBeTruthy();
+  const pending = list.getByText(newGuest.name).closest("li")!;
+  expect(within(pending).getByText("Pending", { exact: true })).toBeTruthy();
+  expect(list.queryByText(/no answer/i)).toBeNull();
 });
 
 it("reopens the refused edit of a generated occurrence with the changed words and times", async () => {

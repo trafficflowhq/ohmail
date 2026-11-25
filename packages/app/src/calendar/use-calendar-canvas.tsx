@@ -37,7 +37,7 @@ export function useCalendarCanvas(
   const { host } = useFrame();
   const locale = useLocale();
   const { route, port, zones, where, found, zone } = props;
-  const { settings, plan, panelOn, cursor, create, sources } = props;
+  const { settings, plan, agendaPanel, cursor, create, sources } = props;
   const { current: invitation } = useCalendarInvitation();
   const actions = useEventActions(port, zones);
   const stepWeek = weekEdgeStep(props, commands);
@@ -117,7 +117,7 @@ export function useCalendarCanvas(
     settings,
     plan,
     fixedHourHeight: host.device.build.surface === "phone" && plan.device === "phone",
-    panel: panelOn,
+    panel: agendaPanel.visible,
     cursor,
     stepDay:
       plan.device === "phone" && route.words.panel !== "new"

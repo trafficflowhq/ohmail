@@ -4,7 +4,7 @@
  * shell's three parts as doubles that record what they were handed. Every address is invented.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { render, renderHook } from "@testing-library/react";
+import { render, renderHook, type RenderOptions } from "@testing-library/react";
 import type { ReactNode } from "react";
 import type { EntityReader, OhmailEngine } from "@ohmail/client-engine";
 import {
@@ -131,6 +131,7 @@ export interface MountReader {
   readonly size?: Parameters<typeof fakeWindow>[0];
   readonly host?: Partial<FakeHostInput>;
   readonly children?: ReactNode;
+  readonly wrapper?: RenderOptions["wrapper"];
   /**
    * The presented mirror the shell hands, built over the raw one; null hands none. The default presents the raw
    * mirror as it stands (no hold).
@@ -193,7 +194,7 @@ export function mountReader(o: MountReader) {
       </TextProvider>
     );
   };
-  const view = render(draw(made.host.engine, mail.engine));
+  const view = render(draw(made.host.engine, mail.engine), { wrapper: o.wrapper });
   return {
     ...made,
     mail,

@@ -1,3 +1,4 @@
+import { gardenGuests, guestOrganizer } from "../calendar/guest-fixture.js";
 /**
  * THE WORLD OF THE CALENDAR'S REST, for its states page: Mila's three calendar accounts, her November with the
  * invitations it holds, the events found in her letters, and the settings, as the store's own records. All invented,
@@ -417,6 +418,23 @@ export function worldOf(at: WorldState): World {
     connections.push(connection(id, "caldav", `Workshop calendar ${i}`, null));
   }
   const events = [...OWN, ...invitations(at.state), ...addedOf(at.state)].map(event);
+  if (at.state === "long-title") {
+    events.push(
+      event({
+        ...OWN[0]!,
+        id: "garden-orientation",
+        title: "Autumn field work planning and volunteer orientation for the north garden",
+      }),
+    );
+  }
+  if (at.state === "garden-guests") {
+    events.push({
+      ...event({ ...OWN[0]!, id: "garden-workshop", title: "Garden workshop" }),
+      organizer: guestOrganizer,
+      ownOrganizer: true,
+      invitees: [...gardenGuests, { ...gardenGuests[0]!, ...guestOrganizer }],
+    });
+  }
   const kinds: Record<string, readonly { readonly id: string }[]> = {
     calendar_connection: connections,
     calendar: readingCalendars(reading),

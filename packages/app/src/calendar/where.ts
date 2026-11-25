@@ -148,6 +148,7 @@ export function useWhere(
   settings: CalendarViewSettings,
   zone: string,
   zones: ZoneSource,
+  panelOn = false,
 ): Where | null {
   const { host, plan } = useFrame();
   const nowMs = useNow();
@@ -161,8 +162,7 @@ export function useWhere(
   const place: CalendarPlaceId = isCalendarPlace(route.place) ? route.place : "week";
   const now = nowIn(nowMs, zone, zones);
   const currentDay = route.sub ?? (now && isoOfDay(now.day));
-  const keepAgenda =
-    route.words.panel === "agenda" && heldAgenda?.place === place && heldAgenda.day === currentDay;
+  const keepAgenda = panelOn && heldAgenda?.place === place && heldAgenda.day === currentDay;
   useEffect(() => {
     if (!keepAgenda) setHeldAgenda(null);
   }, [keepAgenda]);
