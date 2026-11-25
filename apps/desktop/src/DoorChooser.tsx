@@ -310,10 +310,9 @@ export function DoorChooser({
   };
 
   /**
-   * THE ONE-CONFIRM SIGN-IN'S WAIT. `null` is no request in flight; a value is "the browser is
-   * open, the engine is polling", with why the last poll could not tell (a busy server or no
-   * network — both a wait, never a refusal). `approvalRun` is its generation: Type a code
-   * instead, Back, a new request and unmount each bump it, and a loop from an older one stops.
+   * The guard covers browser launch, polling, and cancellation. The wait carries the
+   * last poll's reason when the server is busy or unreachable. A generation stops stale
+   * loops and browser launches from updating a chooser after it leaves the flow.
    */
   const [approvalWait, setApprovalWait] = useState<{ note: "busy" | "unreachable" | null } | null>(null);
   /** False once the hosted service answered that it has no approval door: the code path shows. */
@@ -323,8 +322,13 @@ export function DoorChooser({
   /** The first-run door with no address — until a refusal asks for one (`mustSwitch`). */
   const noAddress = addressless && cloudAction === "configure" && !mustSwitch;
   const approvalRun = useRef(0);
+  const approvalHeld = useRef(false);
+  const [approvalActive, setApprovalActive] = useState(false);
+  const holdApproval = (active: boolean): void => {
+    approvalHeld.current = active;
+    setApprovalActive(active);
+  };
   const unmounted = useRef(false);
-  /** A stopping press since the last start: the request a press is still making ends at the engine. */
   const stopAsked = useRef(false);
   useEffect(() => {
     unmounted.current = false;
@@ -335,10 +339,13 @@ export function DoorChooser({
      engine forgets the request too, so a reopened window does not resume it. An unmount or a
      re-route only stops this window's loop; the engine keeps the wait for the next chooser. */
   const stopApproval = (): void => {
-    approvalRun.current += 1;
+    if (!approvalHeld.current) return;
+    const run = ++approvalRun.current;
     stopAsked.current = true;
-    if (approvalWait) void stopBrowserApproval();
     setApprovalWait(null);
+    void stopBrowserApproval().finally(() => {
+      if (run === approvalRun.current) holdApproval(false);
+    });
   };
 
   /**
@@ -366,46 +373,52 @@ export function DoorChooser({
    * cadence until the claim answers, and stops at the request's own lifetime.
    */
   const startApproval = async (address: string): Promise<void> => {
-    if (busy) return;
+    if (busy || adopting || approvalHeld.current) return;
     const run = ++approvalRun.current;
     stopAsked.current = false;
+    holdApproval(true);
     setBusy(true);
     setProblem(null);
     setSuggestion(null);
-    let begun;
     try {
-      begun = await beginBrowserApproval(address, cloudAction === "signIn" && !mustSwitch, noAddress);
-    } finally {
-      setBusy(false);
-    }
-    if (run !== approvalRun.current) {
-      /* THE PRESS OUTLIVED ITS RUN while the engine was asked. Re-routed away (the door's configure
-         re-keys the gate): the page still opens and the chooser now on screen resumes the wait. A
-         stopping press made meanwhile ends it at the engine, as it would have on screen. */
-      if (begun.approvalId) {
-        if (stopAsked.current) void stopBrowserApproval();
-        else if (unmounted.current) void openApprovalPage(begun.approvalId).catch(() => undefined);
+      const begun = await beginBrowserApproval(address, cloudAction === "signIn" && !mustSwitch, noAddress)
+        .finally(() => { if (!unmounted.current) setBusy(false); });
+      if (run !== approvalRun.current) {
+        /* A re-route leaves the request for the chooser taking over. A stopping
+           press queues cancellation instead, so it must not open the page. */
+        if (begun.approvalId && unmounted.current && !stopAsked.current) {
+          void openApprovalPage(begun.approvalId).catch(() => undefined);
+        }
+        return;
       }
-      return;
+      if (begun.adoptedAddress) {
+        await finishAdoption(begun.adoptedAddress);
+        return;
+      }
+      // A code typed afterwards must keep using the engine holding this request.
+      if ((begun.approvalId || begun.resume) && address.trim()) setHandedOff(address.trim());
+      if (begun.resume) {
+        setApprovalWait({ note: begun.resume.note });
+        await awaitApproval(run, begun.resume.expiresAt);
+        return;
+      }
+      if (!begun.approvalId) {
+        if (begun.notOffered) setApprovalOffered(false);
+        setProblem(begun.problem ?? DOOR_COPY.browserSignInFailed);
+        return;
+      }
+      const ends = Date.now() + begun.expiresIn * 1000;
+      try {
+        await openApprovalPage(begun.approvalId);
+      } catch {
+        if (run === approvalRun.current) setProblem(DOOR_COPY.noBrowser(machineWord()));
+      }
+      if (run !== approvalRun.current) return;
+      setApprovalWait({ note: null });
+      await awaitApproval(run, ends);
+    } finally {
+      if (run === approvalRun.current) holdApproval(false);
     }
-    if (begun.adoptedAddress) {
-      await finishAdoption(begun.adoptedAddress);
-      return;
-    }
-    if (!begun.approvalId) {
-      if (begun.notOffered) setApprovalOffered(false);
-      setProblem(begun.problem ?? DOOR_COPY.browserSignInFailed);
-      return;
-    }
-    // The engine is configured and holding the request: a code typed afterwards must not restart it.
-    if (address.trim()) setHandedOff(address.trim());
-    try {
-      await openApprovalPage(begun.approvalId);
-    } catch {
-      setProblem(DOOR_COPY.noBrowser(machineWord()));
-    }
-    setApprovalWait({ note: null });
-    await awaitApproval(run, Date.now() + begun.expiresIn * 1000);
   };
 
   /**
@@ -452,17 +465,22 @@ export function DoorChooser({
   useEffect(() => {
     if (!cloudDoor) return;
     const run = ++approvalRun.current;
+    holdApproval(true);
     void (async () => {
-      const verdict = await readApprovalVerdict();
-      if (run !== approvalRun.current || verdict === null) return;
-      setStep("cloud");
-      if (verdict.state === "ended") {
-        setProblem(approvalRefusal(verdict.code, null) ?? DOOR_COPY.browserSignInFailed);
-        void stopBrowserApproval();
-        return;
+      try {
+        const verdict = await readApprovalVerdict();
+        if (run !== approvalRun.current || verdict === null) return;
+        setStep("cloud");
+        if (verdict.state === "ended") {
+          setProblem(approvalRefusal(verdict.code, null) ?? DOOR_COPY.browserSignInFailed);
+          await stopBrowserApproval();
+          return;
+        }
+        setApprovalWait({ note: verdict.note });
+        await awaitApproval(run, verdict.expiresAt);
+      } finally {
+        if (run === approvalRun.current) holdApproval(false);
       }
-      setApprovalWait({ note: verdict.note });
-      await awaitApproval(run, verdict.expiresAt);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, at mount: the verdict is the engine's.
   }, []);
@@ -704,6 +722,7 @@ export function DoorChooser({
             needsAddress={!(cloudAction === "signIn" && !mustSwitch)}
             addressless={noAddress}
             adopting={adopting}
+            approvalActive={approvalActive}
             approvalWait={approvalWait}
             approvalOffered={approvalOffered}
             onApprove={(address) => void startApproval(address)}
@@ -1520,6 +1539,7 @@ function CloudDoor({
   needsAddress = true,
   addressless = false,
   adopting = false,
+  approvalActive = false,
   approvalWait = null,
   approvalOffered = true,
   onBack,
@@ -1547,6 +1567,8 @@ function CloudDoor({
   addressless?: boolean;
   /** The claim was adopted and the engine is being relaunched behind it. */
   adopting?: boolean;
+  /** A browser approval is starting, waiting, or being cancelled. */
+  approvalActive?: boolean;
   /** The approval's wait, or null when none is in flight. */
   approvalWait?: { note: "busy" | "unreachable" | null } | null;
   /** False once the hosted service has no approval door: the browser path is the code path. */
@@ -1624,7 +1646,9 @@ function CloudDoor({
       ref={form}
       onSubmit={(e) => {
         e.preventDefault();
-        if (byApproval) onApprove?.(address);
+        if (byApproval) {
+          if (!busy && !adopting && !approvalActive) onApprove?.(address);
+        }
         else if (viaBrowser) onSubmitCode(address, handoff);
         else onSubmit(address, password, totp);
       }}
@@ -1677,7 +1701,7 @@ function CloudDoor({
               variant="primary"
               type="button"
               onClick={() => onApprove?.(address)}
-              disabled={busy || adopting}
+              disabled={busy || adopting || approvalActive}
             >
               {addressless ? DOOR_COPY.cloudUseBrowser : DOOR_COPY.cloudOpenBrowser}
             </Button>
@@ -1767,7 +1791,7 @@ function CloudDoor({
             setPassword("");
             setTotp("");
             setHandoff("");
-            onStopApproval?.();
+            if (onBrowserPath) onStopApproval?.();
             setViaBrowser(!onBrowserPath);
           }}
         >

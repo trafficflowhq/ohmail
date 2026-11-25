@@ -24,7 +24,7 @@
 import { useWindowReport } from "@ohmail/app/frame";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
-import { Button, Spinner } from "@ohmail/ui";
+import { Button } from "@ohmail/ui";
 
 import { createFeed, NONE, type HostConnectionState } from "@ohmail/app/host";
 import { EngineProvider } from "../../webapp/app/shell/engine";
@@ -32,7 +32,6 @@ import { DesktopFrame } from "./DesktopFrame.js";
 import { linkSlot } from "./link-in.js";
 import { setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { setComposerScope } from "@ohmail/app-logic/writing/compose";
-import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { writingReady } from "../../webapp/app/shell/browser-mail";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
 import { goCompose } from "@ohmail/app-logic/writing/compose-door";
@@ -42,6 +41,7 @@ import {
   unknownSpeaks, type HostConnection,
 } from "@ohmail/app-logic/doors/host-connection";
 import { BootStatus } from "./BootStatus.js";
+import { WindowOpening } from "../../webapp/app/shell/BootSkeleton";
 import {
   bridgeAvailable,
   bridgeFetch,
@@ -967,10 +967,7 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
        because no phase has been read. In the packaged app this frame lasts one status call; on a
        dev server it is replaced by the chooser before either grace elapses. */
     return (
-      <div className="gate gate-boot">
-        <BootSkeleton active rail />
-        <BootStatus sentence={DOOR_COPY.gateOpening} />
-      </div>
+      <WindowOpening><BootStatus sentence={DOOR_COPY.gateOpening} /></WindowOpening>
     );
   }
 
@@ -1147,22 +1144,13 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
      sentence, and offer the way back — never a mailbox that silently stopped moving. The
      mirrored mail is kept on disk (sign-out freezes the directory) and returns with the
      sign-in. */
-  /* THE CLOUD DOOR'S AUTH STATE IS PENDING: the CURRENT engine's first answer has not landed —
-     withhold the mail app (React would commit it once over an engine whose mail routes
-     refuse) and draw THE SAME whole-window frame every other boot branch draws. THE FULL
-     GEOMETRY, NOT ROWS ALONE: on a cold start this branch covers the engine's whole climb,
-     and a bare `<BootSkeleton active />` was the 0.12.0 boot frame — full-width rows with no
-     rail and no wrapper, matching no window this app has shown. The rail's EXISTENCE is
-     certain at boot, so every boot branch carries the three-column silhouette, JSX-identical
-     to its neighbours so React reconciles them as one element and the grace runs once. A
-     healthy relaunch resolves inside the grace and nothing is drawn. */
+  /* The Cloud door withholds the mail frame until the current engine answers auth. */
   if (authKey !== null && !hostedAuthKnown) {
     return (
       <>
-        <div className="gate gate-boot">
-          <BootSkeleton active rail />
+        <WindowOpening>
           <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} />
-        </div>
+        </WindowOpening>
         {/* AND THE DOOR SOMEBODY IS STANDING IN, KEPT. This branch is reached DURING a door
             attempt — the attempt replaces the engine, the delivered lifecycle move re-keys the
             auth answer, and the withheld app is this frame. The overlay's key is what keeps React
@@ -1359,47 +1347,25 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
   }
 
   if (engine === null) {
-    /* A door is chosen and no engine has served yet — a first launch migrating a database,
-       or an engine on its way back up. No mail: the only alternative is a guess about
-       somebody's own mailbox. `BootSkeleton` is `mailMount`'s answer drawn out, never a
-       second opinion: it carries no text and nothing derived from any mailbox — a shape is
-       not invented mail for exactly as long as there is nothing in it — and it is delayed
-       behind its own grace, so the ordinary launch stays a quiet frame; the wait it exists
-       for is the one-off recovery launch (`SETTLE_MS` in `doors.ts`). The words sit at the
-       foot of the rail where the sync line will sit: `BootStatus` renders the engine's own
-       `status.bootPhase` ("Replaying recent changes…"); the settling poll refreshes it. An account
-       door whose engine names no mailbox and answers offline says its server is not answering. */
+    /* The store is still opening. The phase comes from the engine's settling poll. */
     const outage = unnamed === "unreachable"
       ? { sentence: isManagedDoor(status) ? DOOR_COPY.cloudUnreachableTitle : DOOR_COPY.serverUnreachableTitle }
       : {};
     return (
-      <div className="gate gate-boot">
-        <BootSkeleton active rail />
+      <WindowOpening>
         <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} {...outage} />
-      </div>
+      </WindowOpening>
     );
   }
 
-  /* The Cloud door's account has not been read on this mailbox yet: the wordmark, and nothing
-     that could be somebody's mail, until the answer or its bound. */
-  if (firstPaint === "asking") {
-    return (
-      <div className="gate" aria-busy="true">
-        <div className="gate-card">
-          <span className="wordmark"><b>ohmail</b><em>.</em></span>
-          <Spinner className="mbx-spin" />
-        </div>
-      </div>
-    );
-  }
+  /* The Cloud door withholds mail until the account verdict or its bound. */
+  if (firstPaint === "asking") return <WindowOpening />;
 
   return (
     <>
       <ConnectionValue feed={connectionFeed} value={railConnection ?? null} />
       {status === null ? (
-        <div className="gate gate-boot">
-          <BootSkeleton active rail />
-        </div>
+        <WindowOpening />
       ) : (
         /**
          * KEYED BY THE MAILBOX, so a mailbox change REMOUNTS the engine's provider and everything under it.

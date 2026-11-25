@@ -7,6 +7,8 @@
 import { createContext, useContext, useLayoutEffect, type ReactNode, type RefObject } from "react";
 import { design } from "@ohmail/ui/base";
 import { useGlass } from "./glass.js";
+import "./placement.css";
+import "./seam.generated.css";
 import { ROOT_ATTRIBUTES, type RootAttribute } from "./root-attributes.js";
 
 const FrameElement = createContext<RefObject<HTMLDivElement | null> | null>(null);
@@ -16,19 +18,20 @@ export function useFrameElement() {
   return useContext(FrameElement);
 }
 
-export function FrameRoot({
-  drawn,
-  attributes,
-  held,
-  children,
-}: {
+type FrameRootProps = {
   /** The root element, held by the frame: a part that needs its window reads it here and draws no node to find it. */
   drawn: RefObject<HTMLDivElement | null>;
   attributes: Record<RootAttribute, string | null>;
-  held: boolean;
+  held?: boolean;
   children: ReactNode;
-}) {
-  useGlass(drawn);
+};
+
+export function FrameRoot(props: FrameRootProps) {
+  useGlass(props.drawn);
+  return <FrameSurface {...props} />;
+}
+
+export function FrameSurface({ drawn, attributes, held, children }: FrameRootProps) {
   useLayoutEffect(() => {
     const root = drawn.current!.ownerDocument.documentElement;
     if (root.hasAttribute("data-face")) return;

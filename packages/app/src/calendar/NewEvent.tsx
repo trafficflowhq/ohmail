@@ -18,14 +18,14 @@ import {
   type CalendarRecord,
   type PlainDate,
 } from "@ohmail/app-logic/calendar";
-import { newEventsCalendarOf } from "@ohmail/app-logic/calendar/setup";
+import { newEventsCalendarOf, wayOfConnection } from "@ohmail/app-logic/calendar/setup";
 import { QuickAdd } from "@ohmail/ui/calendar";
 import { RefusalLine } from "@ohmail/ui/base";
 import { useCalendarDraftSeed, useFrame, type CalendarGuest } from "../frame/commands.js";
 import { useOwnAddresses } from "../frame/room.js";
 import { fragmentOf, routeOf } from "../frame/route.js";
 import { useText, useTimeZone, type Text } from "../text/index.js";
-import { useDiscardReport, useDraftRestore } from "./draft-undo.js";
+import { useDiscardReport, useDraftRestore, type DraftWriteFailure } from "./draft-undo.js";
 import { useCreateEvent } from "./use-create-event.js";
 import { repeatRefusal } from "./repeat.js";
 import { DraftTimeNotice } from "./DraftTimeNotice.js";
@@ -63,19 +63,14 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
   const t = useText("calendar");
   const e = useText("event");
   const zone = useTimeZone();
-  const { seed, written, setDraft } = useInitialDraft(now, zone);
+  const { seed, written, setDraft, chosen, choose, recovered } = useNewDraft(port, now, zone);
   const invitation = useDraftInvitation(seed.current?.guests ?? []);
   const today = isoOfDay(now.day);
   const parsed = useMemo(() => readDraftEntry(written, today), [written, today]);
   const draft = parsed?.draft ?? written;
   const choices = draftCalendars(calendars, connections);
   const proposed = newEventsCalendarOf(preferred ?? null, choices);
-  const [chosen, choose] = useState<string | null>(null);
   const discardReport = useDiscardReport(port);
-  useDraftRestore("new", port, ({ draft, calendar }) => {
-    setDraft(draft);
-    choose(calendar);
-  });
   const target = chosen === null ? (proposed ?? undefined) : choices.find((c) => c.id === chosen);
   const tone = target ? (tones.get(target.id) ?? "neutral") : null;
   const readOnly = draftCalendarIsReadOnly(calendars, connections, chosen ?? preferred, !choices.length);
@@ -97,9 +92,15 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
     setDraft({ ...(override ? { ...draft, typed: undefined } : written), ...edit });
     setFailure(null);
   };
-  const proposedGuest = useQuickGuest(parsed?.guest, draft, invitation.selected, change);
   const connection = target && connections.get(target.connectionId);
   const provider = connection?.provider;
+  const iCloud = connection !== undefined && wayOfConnection(connection) === "icloud";
+  const inviteesRefused = recovered?.calendar === target?.id && recovered?.inviteesRefused;
+  const canInvite = !!target && (provider !== "caldav" || target.autoSchedule === true) && !inviteesRefused;
+  const selected = canInvite ? invitation.selected : [];
+  const hasGuests = Boolean(draft.invitees?.length || invitation.selected.length);
+  const saveWithoutGuests = !canInvite && hasGuests;
+  const proposedGuest = useQuickGuest(canInvite ? parsed?.guest : undefined, draft, selected, change);
   const { formDraft, extraAlert, callNotSupported, ready, refused } = draftLimits(
     draft,
     target,
@@ -110,13 +111,16 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
   );
   const { add, confirmation } = useGuestConfirmation(
     card,
-    draft,
-    invitation.selected,
+    saveWithoutGuests ? { ...draft, invitees: [] } : draft,
+    selected,
     () => ready && !request.current,
-    (confirmedDraft) => void create(confirmedDraft, target),
+    (confirmedDraft) => void create(confirmedDraft, target, recovered?.writeId),
+    iCloud && canInvite,
   );
-  const refusal = failure ?? refused;
-  useNewDraftDeparture(written, chosen ?? target?.id ?? null, discardReport, busy, request, committed);
+  const refusal = failure ?? (recovered?.calendar === target?.id ? recovered?.reason : undefined) ?? refused;
+  const noInvitations = target && provider === "caldav" && !canInvite && !inviteesRefused;
+  const draftCalendar = chosen ?? target?.id ?? null;
+  useNewDraftDeparture(written, draftCalendar, recovered, discardReport, busy, request, committed);
   return (
     <>
       <QuickAdd
@@ -135,14 +139,14 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
         close={{ label: t("closeEvent"), onPress: close }}
         onAdd={add}
       >
-        <DraftInvitation invitation={invitation} />
+        {canInvite && <DraftInvitation invitation={invitation} />}
         <DraftTimeNotice issue={draftTimes(draft, draft.zone ?? zone).issue} />
         <DraftFields
-          draft={formDraft}
+          draft={canInvite ? formDraft : { ...formDraft, invitees: [] }}
           repeatShapes={connection?.repeatShapes}
           proposedGuest={proposedGuest}
           edit={{
-            canInvite: true,
+            canInvite,
             canAddAlert: target !== undefined,
             canAddSecondAlert: extraAlert || (provider !== "microsoft" && !draft.allDay),
             showCall: provider === "caldav" || callNotSupported,
@@ -151,26 +155,30 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
           today={today}
           calendar={target}
           tone={tone}
-          choices={choices}
-          choose={selectCalendar}
+          chooser={{ choices, choose: selectCalendar }}
           timeZone={draft.zone}
           change={change}
           cancel={{ label: t("edit.cancel"), onPress: close }}
           submit={{
-            label: t("create.add"),
+            label: t(saveWithoutGuests ? "draft.saveWithoutGuests" : "create.add"),
             keyHint: "↵",
             disabled: busy || !ready,
             onPress: add,
           }}
         />
-        {(refusal || readOnly) && <RefusalLine>{refusal ?? e("refusal.readOnly")}</RefusalLine>}
+        {noInvitations && <RefusalLine start>{t("edit.noInvitations")}</RefusalLine>}
+        {(refusal || readOnly) && (
+          <RefusalLine start alert={!!failure || !!recovered}>
+            {refusal ?? e("refusal.readOnly")}
+          </RefusalLine>
+        )}
       </QuickAdd>
       {confirmation}
     </>
   );
 }
 
-function useInitialDraft(now: Props["now"], zone: string) {
+function useNewDraft(port: CalendarPort, now: Props["now"], zone: string) {
   const { route } = useFrame();
   const seed = useCalendarDraftSeed();
   const [written, setDraft] = useState<NewEventDraft>(() => {
@@ -181,7 +189,14 @@ function useInitialDraft(now: Props["now"], zone: string) {
       title: seed.current?.title ?? "",
     };
   });
-  return { seed, written, setDraft };
+  const [chosen, choose] = useState<string | null>(null);
+  const [recovered, recover] = useState<DraftWriteFailure | undefined>();
+  useDraftRestore("new", port, ({ draft, calendar, failure }) => {
+    setDraft(draft);
+    choose(calendar);
+    recover(failure);
+  });
+  return { seed, written, setDraft, chosen, choose, recovered };
 }
 
 const QUICK_FIELDS = new Set(["day", "endDay", "from", "to", "allDay", "place", "zone", "alarms"]);
@@ -291,6 +306,7 @@ function draftLimits(
 function useNewDraftDeparture(
   draft: EventDraft,
   calendar: string | null,
+  failure: DraftWriteFailure | undefined,
   report: ReturnType<typeof useDiscardReport>,
   busy: boolean,
   request: RefObject<symbol | null>,
@@ -309,7 +325,7 @@ function useNewDraftDeparture(
   );
   const departure = useRef(() => {});
   departure.current = () => {
-    if (hasWords && !committed.current) report({ kind: "new", draft, calendar });
+    if (hasWords && !committed.current) report({ kind: "new", draft, calendar, failure });
   };
   useLayoutEffect(() => {
     if (!hasWords && !busy) return;

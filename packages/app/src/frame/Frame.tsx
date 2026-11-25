@@ -66,8 +66,6 @@ import { fragmentOf, hasLetterTail, routeOf } from "./route.js";
 import { Scoped } from "./scope.js";
 import { useStageEntry } from "./stage-entry.js";
 import "./touch-keys.css";
-import "./placement.css";
-import "./seam.generated.css";
 
 /** A place under its own word: what a kept letter is remembered by (a letter open under one tag is not another's). */
 const spot = (at: Pick<Route, "place" | "sub">): string => `${at.place}/${at.sub ?? ""}`;

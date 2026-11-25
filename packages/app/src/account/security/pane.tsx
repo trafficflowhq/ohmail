@@ -19,8 +19,8 @@ import { useSecurity } from "./use-security.js";
 interface SecurityFormParts {
   /** The security door on this host. The same door at every draw. */
   readonly useDoor: () => SecurityDoor;
-  /** The second factor's dialog, drawn while an act waits for it. */
-  readonly factor: FactorSlot;
+  /** The second factor's dialog, where this host can manage enrollment. */
+  readonly factor?: FactorSlot;
   readonly qr?: QrSlot;
 }
 

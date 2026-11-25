@@ -6,6 +6,7 @@ import { selfHostRoutes } from "../src/routes/self-host.js";
 
 it.each([
   { routes: selfHostRoutes, pane: "devices" },
+  { routes: apiRoutes, pane: "devices" },
   { routes: apiRoutes, pane: "calendar-google" },
   { routes: apiRoutes, pane: "calendar-microsoft" },
 ])("binds the $pane routing reference to the issuing account until expiry", async ({ routes, pane }) => {

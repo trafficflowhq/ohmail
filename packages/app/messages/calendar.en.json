@@ -43,12 +43,17 @@
       "answerScope": "Answer {title}",
       "delete": "Delete",
       "moveTo": "Move to another calendar",
+      "moveAllTo": "Move all events to {calendar}",
+      "moveWithGuests": "With {guests}",
+      "moveConfirm": "Move",
       "hideCalendar": "Hide this calendar",
       "tellsDelete": "{title} is cancelled",
       "cancellationMessage": "The event has been cancelled",
       "moveRestriction": {
-        "guests": "Events with guests stay in their account’s calendars",
-        "fields": "This event has details that another calendar can’t keep"
+        "account": "Only writable calendars in the same account can receive this event",
+        "provider": "This provider cannot move the event to another calendar",
+        "event": "This event cannot move to another calendar",
+        "saveFirst": "Save your changes before moving the event"
       },
       "moving": "Moving event",
       "sendCancellation": "Send cancellation",
@@ -73,10 +78,14 @@
     },
     "draft": {
       "reopen": "Reopen draft",
+      "saveWithoutGuests": "Save without guests",
       "discarded": "Discarded",
       "undo": "Undo"
     },
     "proposal": {
+      "recovered": "Unsent time proposals",
+      "sendRecovered": "Send proposal",
+      "discardRecovered": "Discard proposal",
       "keepQuestion": "Tell {name} the time stays?",
       "keepConfirm": "Confirm",
       "action": "Propose a new time",
@@ -142,6 +151,9 @@
       "remove": "Remove",
       "now": "now {when}",
       "sendInvitation": "{count, plural, one {Send invitation} other {Send invitations}}",
+      "noInvitations": "This calendar does not support invitations.",
+      "iCloudSends": "iCloud sends the invitation.",
+      "saveAndInvite": "Save and invite",
       "from": "From",
       "cancelled": "cancelled",
       "maybe": "maybe",

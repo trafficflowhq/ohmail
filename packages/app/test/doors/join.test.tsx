@@ -69,6 +69,7 @@ const ACTS = [
 type Acts = Record<(typeof ACTS)[number], ReturnType<typeof vi.fn>>;
 
 interface Over {
+  note?: JoinDoor["note"];
   stations?: readonly JoinStation[];
   invited?: boolean;
   busy?: boolean;
@@ -84,7 +85,7 @@ function Harness({ state, acts, o }: { state: JoinState; acts: Acts; o: Over }) 
   const door: JoinDoor = {
     state,
     stations: o.stations ?? MANAGED,
-    note: "managed-open",
+    note: o.note ?? "managed-open",
     invited: o.invited ?? false,
     busy: o.busy ?? false,
     refusal: o.refusal ?? null,
@@ -245,6 +246,32 @@ describe("the stages", () => {
 });
 
 describe("the invite code and the account", () => {
+  it.each([
+    { locale: "en", words: en, terms: "Terms of Service", privacy: "Privacy Policy" },
+    { locale: "de", words: de, terms: "Nutzungsbedingungen", privacy: "Datenschutzerklärung" },
+  ] as const)(
+    "account: shows the Cloud legal links before Continue in $locale",
+    ({ locale, words, terms, privacy }) => {
+      draw({ at: "account" }, {}, words, locale);
+      const submit = button(words.join.continue);
+      for (const [name, path] of [
+        [terms, "/terms"],
+        [privacy, "/privacy"],
+      ] as const) {
+        const legal = link(name);
+        expect(legal.getAttribute("href")).toBe(path);
+        expect(legal.closest("form")).toBe(submit.form);
+        expect(legal.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
+    },
+  );
+
+  it("account: self-hosted signup omits the Cloud legal links", () => {
+    draw({ at: "account" }, { note: "selfhost" });
+    expect(screen.queryByRole("link", { name: "Terms of Service" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Privacy Policy" })).toBeNull();
+  });
+
   it("invite: says which sentence about codes is true here, and Continue hands the code on", () => {
     const { acts } = draw({ at: "invite" }, { invited: true });
     expect(heading()).toBe(J.myInvite.replace("<blank></blank>.", J.inviteLabel));
@@ -366,6 +393,7 @@ describe("the address", () => {
     expect([acts.recheck.mock.calls.length, acts.resend.mock.calls.length]).toEqual([1, 1]);
     cleanup();
     draw({ at: "verify", resent: true });
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
     expect(button(J.verifyResent).disabled).toBe(true);
   });
 });
@@ -574,6 +602,7 @@ describe("the pages around the steps", () => {
     expect(heading()).toBe(J.capacityTitle.replace(/\.$/, ""));
     expect(document.body.textContent).toContain(J.refusedFull);
     expect(link(J.capacityCta).getAttribute("href")).toBe("/#pricing");
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
   });
 
   it("unreachable: says nothing was changed; Try again asks again, and the way back to ohmail", () => {
@@ -584,6 +613,7 @@ describe("the pages around the steps", () => {
     expect(acts.retry).toHaveBeenCalledTimes(1);
     /* The way back is a link, as the card's: the address the host handed. */
     expect(link(O.resumeLeave).getAttribute("href")).toBe("/");
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
   });
 
   it("resolving: says where the setup stands is being found; wordless, and with nothing to press, until its words arrive", () => {
@@ -592,6 +622,7 @@ describe("the pages around the steps", () => {
     expect(heading()).toBe(O.resumeCheckingTitle);
     expect(screen.getByRole("status").textContent).toBe(O.resumeChecking);
     expect(view.container.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
     cleanup();
     const { onboarding: _held, ...cut } = en;
     const later = draw({ at: "resolving" }, {}, cut, "en", true);
@@ -628,7 +659,8 @@ describe("the pages around the steps", () => {
         <JoinPage door={{ ...doorWith({ at: "full", said: J.refusedFull }), waitlist: { press } }} />
       </TextProvider>,
     );
-    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getAllByRole("link")).toEqual([link(J.signIn)]);
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
     fireEvent.click(button(J.capacityCta));
     expect(press).toHaveBeenCalledTimes(1);
   });

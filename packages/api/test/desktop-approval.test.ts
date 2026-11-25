@@ -5,6 +5,7 @@ import { createApp, apiRoutes, csrfTokenFor, type ApiDeps } from "@trafficflow/a
 import { sessions, devices, refreshTokens } from "@trafficflow/db";
 import { loginTokens, authEvents } from "@trafficflow/db/cloud";
 import { DESKTOP_APPROVAL_PURPOSE, hashToken } from "@trafficflow/services";
+import { calendarFeed } from "@trafficflow/services/calendar";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
 /**
@@ -384,5 +385,82 @@ describe("a desktop signed in from the browser keeps the browser's factor time",
     // The control: a factor asserted now, approved and claimed inside its window, pairs.
     const fresh = await seedSession(db, { now: clock.now(), lastTwofaAt: clock.now() });
     expect((await pairFrom(await approvalHop(fresh.token))).status).toBe(200);
+  });
+});
+
+describe("a phone signs in through the same approval", () => {
+  it("asks as a phone, the page reads its platform, and the claim makes the phone's device row", async () => {
+    const { db, deps } = await makeDeps();
+    const { verifier, challenge } = pkce();
+    const asked = await ask(deps, { challenge, kind: "mobile-ios", label: "iPhone" });
+    expect(asked.status, await asked.clone().text()).toBe(200);
+    const { approvalId: id } = (await asked.json()) as { approvalId: string };
+    const me = await signedIn({ db });
+    const read = (await (await H(req("GET", `/auth/desktop-approval/${id}`, { bearer: me.token }), deps)).json()) as {
+      label: string; platform: string;
+    };
+    expect([read.label, read.platform]).toEqual(["iPhone", "iOS"]);
+    expect((await confirm(deps, id, me.token)).status).toBe(200);
+    const res = await claim(deps, { approvalId: id, verifier, kind: "mobile-ios" });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const devs = await db.select().from(devices).where(eq(devices.userId, me.userId));
+    expect(devs.map((d) => [d.kind, d.label])).toEqual([["mobile-ios", "iPhone"]]);
+  });
+
+  it("a phone's request is claimed only as the platform the page showed", async () => {
+    const { db, deps } = await makeDeps();
+    const { verifier, challenge } = pkce();
+    const asked = await ask(deps, { challenge, kind: "mobile-android", label: "Android" });
+    const { approvalId: id } = (await asked.json()) as { approvalId: string };
+    const me = await signedIn({ db });
+    expect((await confirm(deps, id, me.token)).status).toBe(200);
+    for (const kind of ["mobile-ios", "desktop-linux"]) {
+      const wrong = await claim(deps, { approvalId: id, verifier, kind });
+      expect(await code(wrong)).toBe("invalid_approval");
+    }
+    expect(await db.select().from(devices).where(eq(devices.userId, me.userId))).toHaveLength(0);
+    expect((await claim(deps, { approvalId: id, verifier, kind: "mobile-android" })).status).toBe(200);
+  });
+
+  it("keeps a calendar phone approval scoped to calendar through confirmation and refresh", async () => {
+    const { db, deps: base } = await makeDeps();
+    const deps = { ...base, services: { ...base.services, calendar: calendarFeed } };
+    const { verifier, challenge } = pkce();
+    const kind = "mobile-ios";
+    const asked = await ask(deps, { challenge, kind, scope: "calendar" });
+    expect(asked.status).toBe(200);
+    const { approvalId } = await asked.json();
+    const me = await signedIn({ db });
+    expect((await confirm(deps, approvalId, me.token)).status).toBe(200);
+    // Claim only presents the verifier and kind. The scope is the one the browser approved.
+    const claimed = await claim(deps, { approvalId, verifier, kind });
+    expect(claimed.status).toBe(200);
+    expect(claimed.headers.getSetCookie()).toEqual([]);
+    const { scope, tokens } = await claimed.json();
+    expect(scope).toBe("calendar");
+    expect(tokens.accessToken.startsWith("cal.")).toBe(true);
+    expect(tokens.refreshToken.startsWith("cal.")).toBe(true);
+    expect((await H(req("GET", "/mailboxes", { bearer: tokens.accessToken }), deps)).status).toBe(403);
+
+    const renewed = await H(req("POST", "/auth/refresh", { body: JSON.stringify({ refreshToken: tokens.refreshToken }) }), deps);
+    expect(renewed.status).toBe(200);
+    const refreshed = (await renewed.json()).tokens;
+    expect(refreshed.accessToken.startsWith("cal.")).toBe(true);
+    expect(refreshed.refreshToken.startsWith("cal.")).toBe(true);
+    expect((await H(req("GET", "/mailboxes", { bearer: refreshed.accessToken }), deps)).status).toBe(403);
+  });
+
+  it("refuses a calendar phone approval when the server has no calendar service", async () => {
+    const { db, deps } = await makeDeps();
+    expect((await ask(deps, { challenge: pkce().challenge, kind: "mobile-ios", scope: "calendar" })).status).toBe(404);
+    expect(await db.select().from(loginTokens)).toHaveLength(0);
+  });
+
+  it("a desktop's request is never claimed as a phone", async () => {
+    const { db, deps } = await makeDeps();
+    const { id, verifier } = await request(deps);
+    const me = await signedIn({ db });
+    expect((await confirm(deps, id, me.token)).status).toBe(200);
+    expect(await code(await claim(deps, { approvalId: id, verifier, kind: "mobile-ios" }))).toBe("invalid_approval");
   });
 });

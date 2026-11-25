@@ -65,6 +65,7 @@ function Ask({
 }): ReactNode {
   const { asked } = state;
   const waiting = state.retryIn !== null;
+  const phone = asked.platform === "iOS" || asked.platform === "Android";
   return (
     <>
       <Page
@@ -83,11 +84,11 @@ function Ask({
         }
       >
         {asked.label === null ? (
-          <Said text={t("title")} />
+          <Said text={t(phone ? "phoneTitle" : "title")} />
         ) : (
           /* The computer's name stands whole, as the computer gave it: drawn as text, never as markup. */
           <SaidWith
-            parts={t.rich("titleOn", {
+            parts={t.rich(phone ? "phoneTitleOn" : "titleOn", {
               computer: asked.label,
               name: (chunks: ReactNode) => <span className="way-nb">{chunks}</span>,
             })}
@@ -155,11 +156,17 @@ export function ApprovePage({ door }: { door: ApproveDoor | None }): ReactNode {
       );
     case "gone":
       return (
-        <Page back={back} refusal={[state.said ?? t("expired")]} acts={null}>
-          {title}
+        <Page back={back} refusal={[state.said ?? t(state.phone ? "expiredPhone" : "expired")]} acts={null}>
+          {state.phone ? <Said text={t("phoneTitle")} /> : title}
         </Page>
       );
     case "done":
+      if (state.phone)
+        return (
+          <Page back={back} line={t("phoneReturn")} acts={null}>
+            <Said text={t("phoneApproved")} dot="ink" />
+          </Page>
+        );
       return (
         <Page back={back} line={t("doneBody")} note={t("doneNote")} acts={null}>
           <Said text={t("doneTitle")} dot="ink" />
@@ -167,7 +174,7 @@ export function ApprovePage({ door }: { door: ApproveDoor | None }): ReactNode {
       );
     case "denied":
       return (
-        <Page back={back} line={t("deniedBody")} acts={null}>
+        <Page back={back} line={t(state.phone ? "phoneReturn" : "deniedBody")} acts={null}>
           <Said text={t("deniedTitle")} dot="ink" />
         </Page>
       );

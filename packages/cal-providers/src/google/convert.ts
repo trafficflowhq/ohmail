@@ -148,6 +148,11 @@ function linkOf(e: Json): string | undefined {
   return undefined;
 }
 
+/** Google lists only ordinary events as eligible for a native move. */
+export function isDefaultGoogleEvent(raw: Readonly<Record<string, unknown>>): boolean {
+  return raw.eventType === undefined || raw.eventType === "default";
+}
+
 /**
  * One record of an event list. `nowMs` stands in for a stamp the record does not carry.
  *
@@ -218,5 +223,5 @@ export function convertEvent(raw: unknown, zones: ZoneSource, nowMs: number): Co
   // The entity tag is what a change is made against. A record without one (a recorded exchange keeps none) is told apart by its last change.
   const version = text(raw.etag) ?? text(raw.updated) ?? "";
   const selfAttendee = googleSelfAttendee(raw.attendees);
-  return { kind: "item", item: { kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null, ...(selfAttendee !== undefined && { selfAttendee }), ...(portableGoogle(raw) && { portableCopy: true as const }), ...(incompleteAudience(raw, event) && { audienceIncomplete: true }) } };
+  return { kind: "item", item: { kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null, ...(isDefaultGoogleEvent(raw) && { googleDefaultEvent: true as const }), ...(selfAttendee !== undefined && { selfAttendee }), ...(portableGoogle(raw) && { portableCopy: true as const }), ...(incompleteAudience(raw, event) && { audienceIncomplete: true }) } };
 }

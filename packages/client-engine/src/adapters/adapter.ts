@@ -52,6 +52,7 @@ export interface SyncParams {
   /** The cursor of record ("0" ⇒ bootstrap). */
   since: string;
   limit?: number;
+  calendarOnly?: boolean;
   /** Optional `?types=` filter (contract §3.1). */
   types?: string[];
 }
@@ -109,6 +110,8 @@ export interface PullRing {
 export interface DraftBodyRead {
   body: string;
   html: string | null;
+  /** The generated draft's rationale. Absent when the fetch did not report it. */
+  rationale?: string | null;
 }
 
 export interface EngineAdapter {

@@ -16,6 +16,7 @@ import { NONE } from "../host/index.js";
 import { useLocale, useText } from "../text/index.js";
 import { whenOf } from "../invitations/index.js";
 import { DraftCalendarMenu } from "../calendar/DraftCalendarMenu.js";
+import { useNewEvent } from "../calendar/use-new-event.js";
 import { useAdd, useFound } from "./use-found.js";
 import "./from-mail-list.css";
 
@@ -33,6 +34,7 @@ function ListOn({ port, route, plan }: PaneProps & { readonly port: CalendarPort
   const locale = useLocale();
   const found = useFound(port);
   const { add, busy } = useAdd(port, found);
+  const create = useNewEvent();
   const [selected, setSelected] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [menu, setMenu] = useState<{ row: string; anchor: HTMLButtonElement } | null>(null);
   if (found === null) return <RefusalLine>{t("noZone")}</RefusalLine>;
@@ -104,7 +106,10 @@ function ListOn({ port, route, plan }: PaneProps & { readonly port: CalendarPort
   };
   const list =
     rows.length === 0 ? (
-      <Empty label={t("empty")} />
+      <Empty
+        label={t("empty")}
+        act={create ? { label: t("addManually"), onPress: () => create() } : undefined}
+      />
     ) : (
       <div role="list" aria-label={t("title")}>
         {rows.map((row) => (

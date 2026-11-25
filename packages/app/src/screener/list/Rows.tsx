@@ -122,7 +122,7 @@ export function SenderRow({
       {...contact?.rowProps(sender.from, newest?.id ?? sender.id)}
       who={who}
       address={name ? sender.from.address : undefined}
-      keepAddressDomain
+      keepAddressDomain={plan.device !== "phone" || sender.segment !== "screened_out"}
       people={[{ name: who, address: sender.from.address }]}
       subject={subject}
       preview={newest?.snippet}

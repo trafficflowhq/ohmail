@@ -10,6 +10,7 @@ import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { StorageChange } from "../../shell/StorageNotice";
 import type { StorageFacts } from "../../shell/storage-state";
 import { StepUp } from "./StepUp";
+import { activeFormatZone } from "../../shell/locale";
 import { leaveForManagePage } from "./manage-navigation";
 
 /** The account's storage block from the access feed the shell already asks; nothing on a self-host build. */
@@ -31,7 +32,7 @@ export function useStorageChange(): StorageChange {
   const lang = useLocale() === "de" ? "de" : "en";
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<"failed" | "unverified" | null>(null);
-  const [stepUp, setStepUp] = useState(false);
+  const [stepUp, setStepUp] = useState<false | { addon: "storage" | undefined }>(false);
   const [discarded, setDiscarded] = useState(false);
   const opener = useRef<HTMLButtonElement | null>(null);
   const alive = useRef(true);
@@ -40,14 +41,14 @@ export function useStorageChange(): StorageChange {
     return () => { alive.current = false; };
   }, []);
 
-  const run = useCallback(async (verified: boolean) => {
+  const run = useCallback(async (verified: boolean, addon?: "storage") => {
     setBusy(true);
     setRefusal(null);
     setDiscarded(false);
     try {
-      const url = (await account.manageLinkChange({ lang }))?.url;
+      const url = (await account.manageLinkChange({ lang, ...(addon ? { addon } : {}) }))?.url;
       if (typeof url === "string" && url.length > 0) {
-        leaveForManagePage(url);
+        leaveForManagePage(url, activeFormatZone());
         return;
       }
       if (alive.current) setRefusal("failed");
@@ -55,7 +56,7 @@ export function useStorageChange(): StorageChange {
       if (!alive.current) return;
       const code = err instanceof ApiError && err.status === 403 ? err.code : null;
       if (code === "step_up_required" && !verified) {
-        setStepUp(true);
+        setStepUp({ addon });
         return;
       }
       setRefusal(code === "email_unverified" ? "unverified" : "failed");
@@ -78,7 +79,7 @@ export function useStorageChange(): StorageChange {
           returnFocus={() => opener.current}
           onVerified={() => {
             setStepUp(false);
-            void run(true);
+            void run(true, stepUp.addon);
           }}
           onCancel={() => setStepUp(false)}
           onDiscarded={() => setDiscarded(true)}
@@ -87,11 +88,11 @@ export function useStorageChange(): StorageChange {
     </>
   );
   return {
-    press: (event) => {
+    press: (event, addon) => {
       opener.current = event.currentTarget;
-      void run(false);
+      void run(false, addon);
     },
-    busy: busy || stepUp,
+    busy: busy || stepUp !== false,
     note,
   };
 }

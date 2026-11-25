@@ -40,7 +40,7 @@ export type StoreFaultCode =
   /* The copy taken before the store crosses into 2.0 — see `engine/store-copy.ts`. */
   | "store_copy_no_room" | "store_copy_failed"
   /* The shell's two stores of a mailbox, taken back with its mirror — see `shell/take-back.ts`. */
-  | "shell_keeper_not_deleted" | "shell_view_not_cleared";
+  | "shell_keeper_not_deleted" | "shell_view_not_cleared" | "calendar_queue_pending";
 
 export class StoreFault extends Error {
   constructor(readonly code: StoreFaultCode, message: string) {
@@ -140,6 +140,8 @@ export interface PendingWipe {
   id: string;
   /** `mirrorOwnerKey(origin, accountId)` — the database to delete and read back. */
   owner: string;
+  /** The server confirmed account erasure. Ordinary Forget never sets this. */
+  erased?: true;
 }
 
 const PREFIX = "ohmail.servers.v1";
@@ -211,6 +213,8 @@ export interface PendingSignOut {
   /** The key the pairing enforced for that origin, or `null` where the trust store verifies it. */
   pin: string | null;
   refreshToken: string;
+  /** A browser-issued family must use the transport that refuses redirects. */
+  browser?: true;
   /** When the sign-out could not be told, epoch milliseconds. */
   owedSince: number;
 }
@@ -230,7 +234,7 @@ function readWipe(raw: unknown): PendingWipe[] {
   if (typeof raw !== "object" || raw === null) return [];
   const w = raw as Partial<PendingWipe>;
   if (typeof w.owner !== "string" || w.owner === "") return [];
-  return [{ id: typeof w.id === "string" ? w.id : "", owner: w.owner }];
+  return [{ id: typeof w.id === "string" ? w.id : "", owner: w.owner, ...(w.erased === true && { erased: true }) }];
 }
 
 /**
@@ -647,21 +651,20 @@ export class ServerProfileStore {
    * the queue rather than jumping it, but DOES adopt a profile id it did not have (a second
    * forget of a re-paired server must remove the new row too).
    */
-  markPendingWipe(profileId: string, ownerKey: string): Promise<void> {
+  markPendingWipe(profileId: string, ownerKey: string, erased = false): Promise<void> {
     return this.enqueue(async () => {
       const idx = await this.readIndex();
       const owed = idx.wipes ?? [];
       const held = owed.find((w) => w.owner === ownerKey);
       if (!held && owed.length >= MAX_PENDING_WIPES) throw new StoreFault("wipe_queue_full", WIPE_QUEUE_FULL);
-      if (held) {
-        if (held.id === profileId || profileId === "") return;
-        await this.writeIndex({
-          ...idx,
-          wipes: owed.map((w) => (w.owner === ownerKey ? { id: profileId, owner: ownerKey } : w)),
-        });
-      } else {
-        await this.writeIndex({ ...idx, wipes: [...owed, { id: profileId, owner: ownerKey }] });
-      }
+      const entry: PendingWipe = {
+        id: profileId || held?.id || "",
+        owner: ownerKey,
+        ...((erased || held?.erased === true) && { erased: true }),
+      };
+      if (held?.id === entry.id && held?.erased === entry.erased) return;
+      const wipes = held ? owed.map((w) => w === held ? entry : w) : [...owed, entry];
+      await this.writeIndex({ ...idx, wipes });
       // ── AND THE INTENT IS READ BACK, BEFORE ANYTHING IS DESTROYED ──────────────────────
       //
       // "Persist the decision first" is only worth anything if the persistence is checked. A
@@ -671,7 +674,7 @@ export class ServerProfileStore {
       // mirror was never there. The caller refuses the whole forget on this throw, with the
       // credential still in place, which is the recoverable state.
       const back = (await this.readIndex()).wipes ?? [];
-      if (!back.some((w) => w.owner === ownerKey && (profileId === "" || w.id === profileId))) {
+      if (!back.some((w) => w.owner === ownerKey && w.id === entry.id && w.erased === entry.erased)) {
         throw new StoreFault("wipe_not_recorded", `this phone could not record that "${ownerKey}" is owed a deletion`);
       }
     });
@@ -777,7 +780,10 @@ export class ServerProfileStore {
       const p = JSON.parse((await this.kv.get(signOutKey(id))) ?? "null") as Partial<PendingSignOut> | null;
       if (p === null || typeof p.origin !== "string" || typeof p.refreshToken !== "string" || p.refreshToken === ""
         || typeof p.owedSince !== "number") return null;
-      return { id, origin: p.origin, pin: typeof p.pin === "string" ? p.pin : null, refreshToken: p.refreshToken, owedSince: p.owedSince };
+      return {
+        id, origin: p.origin, pin: typeof p.pin === "string" ? p.pin : null, refreshToken: p.refreshToken,
+        owedSince: p.owedSince, ...(p.browser === true ? { browser: true as const } : {}),
+      };
     } catch {
       return null;
     }
@@ -794,7 +800,7 @@ export class ServerProfileStore {
    * is written ({@link add}'s order: a name with no value is skipped, a token nothing names is not
    * reachable). A full list refuses and records nothing; so does a token already owed.
    */
-  markPendingSignOut(input: { origin: string; pin: string | null; refreshToken: string }): Promise<PendingSignOut> {
+  markPendingSignOut(input: Pick<PendingSignOut, "origin" | "pin" | "refreshToken" | "browser">): Promise<PendingSignOut> {
     return this.enqueue(async () => {
       const ids = await this.signOutIds();
       const held = (await Promise.all(ids.map((id) => this.readSignOut(id))))

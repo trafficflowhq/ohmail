@@ -180,6 +180,7 @@ export interface DeleteReplay {
   refused: number;
   /** Named by a press and not found in the mirror at the launch — a History or Search row. */
   gone?: number;
+  waiting?: number;
 }
 
 /**
@@ -189,6 +190,7 @@ export interface DeleteReplay {
 export function deleteReplaySay(r: DeleteReplay): Refusal[] {
   const out: Refusal[] = [];
   if (r.moved > 0) out.push(refuse("routingReplayedTo", r.moved, refuse("trashTitle")));
+  if ((r.waiting ?? 0) > 0) out.push(refuse("toastMovingToTrash"));
   if (r.expired > 0) out.push(refuse("deleteReplayExpired", r.expired));
   if ((r.gone ?? 0) > 0) out.push(refuse("deleteReplayGone", r.gone!));
   return out;
@@ -206,10 +208,10 @@ export interface DeleteSessionDeps {
   journal: HeldJournal;
   /**
    * The quiet commit a stranded press is sent through — re-read against the mirror at the
-   * commit: `"nothing"` where the message is no longer there, `false` for a refusal the
-   * dispatch has already said.
+   * commit: `"nothing"` where the message is no longer there, `"pending"` when the outbox
+   * already carries the move, and `false` when no move was confirmed.
    */
-  dispatch: (messageId: string) => Promise<boolean | void | "nothing">;
+  dispatch: (messageId: string) => Promise<boolean | void | "nothing" | "pending">;
   /** Called once per launch that finished or dropped presses a killed session left. */
   onReplayed?: (replay: DeleteReplay) => void;
   now?: () => number;
@@ -239,12 +241,13 @@ export function openDeleteSession(deps: DeleteSessionDeps): void {
   });
   void Promise.all(answers).then((all) => {
     const flat = all.flat();
-    const moved = flat.filter((ok) => ok !== false && ok !== "nothing").length;
+    const moved = flat.filter((ok) => ok === true || ok === undefined).length;
+    const waiting = flat.filter((ok) => ok === "pending").length;
     const refused = flat.filter((ok) => ok === false).length;
     /* NOT FOUND IS SAID, never dropped: the press is lost, and the person is told it was. */
     const gone = flat.filter((ok) => ok === "nothing").length;
-    if (moved > 0 || expired > 0 || refused > 0 || gone > 0) {
-      deps.onReplayed?.({ moved, expired, refused, ...(gone > 0 ? { gone } : {}) });
+    if (moved > 0 || expired > 0 || refused > 0 || gone > 0 || waiting > 0) {
+      deps.onReplayed?.({ moved, expired, refused, ...(gone > 0 ? { gone } : {}), ...(waiting > 0 ? { waiting } : {}) });
     }
   });
 }
@@ -275,7 +278,7 @@ export interface DeleteCeremony {
   undone: RefusalArg;
   /** Said when the undo could not be saved and the delete went ahead. */
   undoLost: RefusalArg;
-  /** The QUIET wire dispatch at the window's close — the pill already spoke "Moved to Trash." */
+  /** Dispatch the move when the Undo window closes. */
   dispatchQuiet: () => unknown;
   /** Leave the reader when the delete COMMITS (window closed), never at the press, never on Undo. */
   onCommitted?: () => void;
@@ -301,12 +304,12 @@ export async function runDeleteCeremony(d: DeleteCeremony): Promise<void> {
       clearTimeout(press.timer);
       held.delete(d.id);
       publish();
+      d.toast(d.deleted);
       settle(d.id, press);
     }
-    d.toast(d.deleted);
     return;
   }
-  if (!held.has(d.id)) { d.toast(d.deleted); return; }
+  if (!held.has(d.id)) return;
   d.toast(d.deleted, {
     holdMs: d.windowMs,
     // Nothing restored is not an undo; the sentence waits for the disk's answer.

@@ -3,7 +3,7 @@ import { act, type ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import type { WorldMail } from "../src/state/live";
 import { SCREENER_ACKNOWLEDGEMENTS, type ScreenerAcknowledgement } from "@ohmail/app-logic/consent/screener-acknowledgements";
-import { mount, rnDom } from "./_rendered-dom";
+import { mount, rnDom, styleOf } from "./_rendered-dom";
 
 const world = vi.hoisted(() => ({
   resurfaceTime: null,
@@ -25,7 +25,7 @@ vi.mock("../src/ui/posture", async () => {
     useAppWindow: () => window,
   };
 });
-vi.mock("../src/theme", () => ({ useTheme: () => ({ mail: false, c: {}, radius: { panel: 12 } }) }));
+vi.mock("../src/theme", () => ({ useTheme: () => ({ mail: false, c: {}, radius: { panel: 12 }, zLayer: { tabBar: 5 } }) }));
 vi.mock("../src/ui/base", () => ({ Tap: rnDom.Pressable, Txt: rnDom.Text, Button: () => null, Rule: () => null }));
 vi.mock("../src/ui/glass", () => ({
   GlassPill: ({ children }: { children: ReactNode }) => children,
@@ -56,13 +56,25 @@ vi.mock("../src/state/world", () => ({ useWorld: () => world }));
 const { MessageActions } = await import("../src/ui/MessageActions");
 const { Copy } = await import("../src/copy");
 
+const letter: WorldMail = {
+  id: "letter", subject: "A letter", from: { name: "A sender", address: "" },
+  place: "ohbox", time: "", body: "", unread: false, earlier: [],
+  folder: "INBOX", presentedFolder: "INBOX", mailboxId: "mailbox", pile: null,
+  canReplyAll: false, replyAllHead: null, noForward: false, forwardAsk: null, labels: [],
+};
+
+it.each(["ohbox", "reads", "receipts"] as const)("the %s reader floats its actions over the letter", (place) => {
+  const view = mount(<MessageActions m={{ ...letter, place }} />);
+  try {
+    const more = view.el.querySelector(`[data-label="${Copy.actionMore}"]`)!;
+    const bar = more.closest('[data-rn="View"]');
+    expect(styleOf(bar)).toMatchObject({ position: "absolute", bottom: 0 });
+  } finally {
+    view.unmount();
+  }
+});
+
 it("the phone sheet asks before the first move and later presses use the same Undo action directly", () => {
-  const letter: WorldMail = {
-    id: "letter", subject: "A letter", from: { name: "A sender", address: "" },
-    place: "ohbox", time: "", body: "", unread: false, earlier: [],
-    folder: "INBOX", presentedFolder: "INBOX", mailboxId: "mailbox", pile: null,
-    canReplyAll: false, replyAllHead: null, noForward: false, forwardAsk: null, labels: [],
-  };
   world.screenerConfirmation.remember.mockImplementation(() => {
     world.screenerConfirmation.acknowledged |= SCREENER_ACKNOWLEDGEMENTS.moveToTrash;
   });

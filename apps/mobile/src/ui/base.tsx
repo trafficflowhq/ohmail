@@ -323,7 +323,7 @@ export function ViewHead({
     ]}>
       <View style={{ flexDirection: "row", alignItems: oneLine ? "baseline" : "center", flexWrap: oneLine ? "nowrap" : "wrap", columnGap: 10 }}>
         {leading}
-        <Txt variant="h1" style={{ flexShrink: 1 }}>
+        <Txt variant="h1" accessibilityRole="header" accessibilityLabel={title} style={{ flexShrink: 1 }}>
           {title}{t.mail ? <Txt variant="h1" style={{ color: attention ? t.c.accent : t.c.ink }}>.</Txt> : null}
         </Txt>
         {oneLine ? (

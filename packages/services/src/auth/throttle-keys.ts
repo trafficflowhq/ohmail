@@ -29,6 +29,7 @@ export interface ThrottleKeys {
    * not linkable. No throttle row carries it.
    */
   approvalNetwork(requestId: string, unit: string): string;
+  approvalLaunch(requestId: string, origin: string, expiresAt: string): string;
 }
 
 export function throttleKeys(keyProvider: KeyProvider): ThrottleKeys {
@@ -40,6 +41,7 @@ export function throttleKeys(keyProvider: KeyProvider): ThrottleKeys {
   return {
     address: (email) => mac("address", email), client: (ip) => mac("client", ip),
     approvalNetwork: (requestId, unit) => mac("approval-network", `${requestId} ${unit}`),
+    approvalLaunch: (requestId, origin, expiresAt) => mac("approval-launch", `${requestId} ${origin} ${expiresAt}`),
   };
 }
 

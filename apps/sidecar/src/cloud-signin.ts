@@ -658,7 +658,8 @@ export async function requestDesktopApproval(
     const expiresIn = Number((answer as { expiresIn?: unknown } | null)?.expiresIn);
     if (!res.ok || !APPROVAL_ID.test(approvalId) || !Number.isFinite(expiresIn) || expiresIn <= 0) {
       opts.log?.("cloud_signin_refused", { status: res.status, reason: "the hosted service refused the approval request" });
-      throw new CloudSignInError("hosted_refused", 502, `the hosted service answered HTTP ${res.status} to the approval request`);
+      const code = res.status >= 500 ? "approval_start_unavailable" : "hosted_refused";
+      throw new CloudSignInError(code, 502, `the hosted service answered HTTP ${res.status} to the approval request`);
     }
     return { approvalId, expiresIn };
   }

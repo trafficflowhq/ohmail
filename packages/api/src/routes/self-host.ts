@@ -13,6 +13,7 @@ import { localRoutes } from "./local.js";
 // tokens, and the device list (`GET /devices` / `DELETE /devices/:id`). One import; see
 // `auth.ts` for why it lives in its own module.
 import { authRoutes } from "./auth.js";
+import { selfHostApprovalRoutes } from "./desktop-approval.js";
 // Exchange Online / Microsoft 365 onboarding (start / bounce / complete / availability). The
 // callback's shape is dictated by the `SameSite=Strict` session cookie; see `mailbox-oauth.ts`.
 import { mailboxOAuthRoutes } from "./mailbox-oauth.js";
@@ -56,6 +57,7 @@ import { pairRoutes } from "./pair.js";
 export const selfHostRoutes: Route[] = [
   ...localRoutes,
   ...authRoutes.map(withSettingsHandoff),
+  ...selfHostApprovalRoutes,
   ...mailboxOAuthRoutes,
   /*
    * The device-code door, mounted ONLY here. Both routes are `cost: "work"` — they end in a stored

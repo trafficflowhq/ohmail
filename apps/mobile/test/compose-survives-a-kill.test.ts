@@ -209,6 +209,27 @@ describe("a letter being written survives a hard stop", () => {
     } finally { fake.server.close(); }
   }, 60_000);
 
+  it("a queued keep settling after the editor goes saves its later edits on the same row", async () => {
+    const { fake, origin } = await server();
+    const disk = deviceDisk();
+    try {
+      const live = await launch(disk, origin, { offline: true });
+      const letter = live.compose();
+      letter.markKeep();
+      expect(await live.actions.draftKeep({
+        mode: "new", messageId: null, mailboxId: WORDS.mailboxId, to: TO, subject: WORDS.subject,
+        body: WORDS.body, files: 0, row: (r) => letter.keepAnswered(r, wordsOf(WORDS)),
+      })).toBe("kept");
+      letter.edit({ ...WORDS, body: "Half a thought finished later" });
+      letter.release();
+      expect(await live.letters.landed()).toBe("stored");
+
+      live.net.offline = false;
+      await live.flush();
+      expect(drafts(fake).map((draft) => draft.body)).toEqual(["Half a thought finished later"]);
+    } finally { fake.server.close(); }
+  }, 60_000);
+
   it("an offline Send, a kill: no draft, the restored send goes once, the files go once it confirms", async () => {
     const { fake, origin } = await server();
     const disk = deviceDisk();

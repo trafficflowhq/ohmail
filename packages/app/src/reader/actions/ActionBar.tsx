@@ -108,7 +108,10 @@ export function ActionBar({
   );
   const items = all.filter((v) => !v.behind);
   const replyItems = reply && card ? [...reply, ...all.filter((v) => v.id === "later")] : reply;
-  const behind = behindMore(all, folded, reply !== null, card !== undefined);
+  const behind = [
+    ...(replyItems?.filter((verb) => folded.includes(verb.id)) ?? []),
+    ...behindMore(all, folded, reply !== null, card !== undefined),
+  ];
   const more = {
     label: words.more,
     behind: true,
@@ -132,7 +135,7 @@ export function ActionBar({
   return (
     <div className="rd-stop" data-read-stop={showPanel ? "" : undefined} ref={stop}>
       {!showPanel ? null : run !== null || reply !== null ? (
-        <ReplyPanel run={run} reply={replyItems} more={more} />
+        <ReplyPanel run={run} reply={replyItems} more={more} folded={folded} onFold={setFolded} />
       ) : (
         <ActionPanel
           label={t("panel")}

@@ -9,12 +9,8 @@ import { thinkingOffFor } from "../model-rules.js";
 /**
  * The drafter implementation — the model half of the seam in `../draft-port.ts`, mirroring the
  * classifier: the PORT lives outside this directory, the implementation takes an INJECTED client,
- * no model SDK at load time. The sensitivity guarantee is stated at the port, being a property of
- * the input SHAPE: the caller refuses to draft against AI-excluded messages and excludes them
- * from context, so no field here can carry a raw body. The voice, policy, schema and redaction
- * allow-list live in `../draft-prompt.ts` — a second copy of the reply policy is how two
- * deployments write in two voices from one mailbox; the redaction sink is shared rather than
- * reimplemented. Old names re-exported.
+ * no model SDK at load time. The shared prompt builder in `../draft-prompt.ts` applies the
+ * input allow-list and credential redaction before preparing the provider request.
  */
 
 /* Re-exported so that consumers importing the drafting vocabulary from this module — or from the
@@ -51,8 +47,7 @@ const DEFAULT_MODEL = "claude-sonnet-5-5";
  * `output_config.format` json_schema. Exported so a test can assert the request
  * shape — and that NO content beyond the passed (redacted-safe) input is serialized.
  *
- * Calls {@link assertRedacted} first, so the request can never carry a leaked body — a raw field
- * on the input is a thrown error here, not a silent inclusion.
+ * The prompt builder asserts the input allow-list and redacts credentials before serialization.
  */
 export function buildDraftParams(input: DraftInput, opts: SonnetDrafterOpts = {}): Record<string, unknown> {
   // Asserts the redaction allow-list FIRST and throws — see `draftUserPayload`. Nothing below

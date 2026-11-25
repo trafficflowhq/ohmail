@@ -539,8 +539,7 @@ describe("s in the Screener opens the shown sender's menu, as the row's own butt
 /* ── the sheet's own table, in News, Receipts, Trash and Spam ──────────────────
    Every row the `?` sheet prints is read back and pressed, never a hand list: a live row must do
    something, a greyed row's sentence must be true, and a key with a button beside it must send
-   what the button sends. Trash needs a transport the demo has not got, so the fixtures adapter
-   gains its two routes for this block. */
+   what the button sends. These Trash cases supply fixed rows and record the restore requests. */
 
 const TRASHED = ["t1", "t2"].map((id, i) => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `tt-${id}`, folder: "Trash", subject: `Deleted ${id}`,
@@ -550,6 +549,7 @@ const TRASHED = ["t1", "t2"].map((id, i) => ({
 }));
 let restored: string[] = [];
 const adapterProto = FixturesAdapter.prototype as unknown as Record<string, unknown>;
+const { listTrash, restoreFromTrash } = adapterProto;
 
 interface SheetRow { label: string; live: boolean; reason: string | null; chords: string[][] }
 /** The sheet as printed: each row's sentence, whether it is greyed, its reason, its keycaps. */
@@ -656,8 +656,8 @@ describe("the sheet's own table in News, Receipts, Trash and Spam", () => {
     adapterProto.restoreFromTrash = async (id: string) => { restored.push(id); return { restoreTo: "INBOX", pending: true }; };
   });
   afterEach(() => {
-    delete adapterProto.listTrash;
-    delete adapterProto.restoreFromTrash;
+    adapterProto.listTrash = listTrash;
+    adapterProto.restoreFromTrash = restoreFromTrash;
   });
 
   for (const v of SHEET_VIEWS) {
@@ -810,8 +810,8 @@ describe("the key sends what its button sends", () => {
       await tick(30_000);
       expect(restored).toEqual(byButton);
     } finally {
-      delete adapterProto.listTrash;
-      delete adapterProto.restoreFromTrash;
+      adapterProto.listTrash = listTrash;
+      adapterProto.restoreFromTrash = restoreFromTrash;
     }
   });
 });
@@ -848,8 +848,8 @@ describe("the palette's Move is the m key", () => {
       await key("k", { ctrlKey: true });
       expect(paletteRow(messages.shortcuts.move)).toHaveProperty("disabled", true);
     } finally {
-      delete adapterProto.listTrash;
-      delete adapterProto.restoreFromTrash;
+      adapterProto.listTrash = listTrash;
+      adapterProto.restoreFromTrash = restoreFromTrash;
     }
   });
 });

@@ -20,6 +20,7 @@ export interface ServerWaitingSender {
   receivedAt: string;
   subject: string;
   snippet: string;
+  mailboxId?: string | null;
   /** The route's `checked.claimsOnly`: a screen-out of this sender files its claims alone (mail 0150). */
   claimsOnly?: true;
 }
@@ -72,7 +73,7 @@ export async function readScreenerQueue(session: ConnectedSession): Promise<Scre
       for (const s of got.senders) {
         out.push({
           messageId: s.messageId, address: s.address, name: s.name,
-          receivedAt: s.receivedAt, subject: s.subject, snippet: s.snippet,
+          receivedAt: s.receivedAt, subject: s.subject, snippet: s.snippet, mailboxId: s.mailboxId,
           ...(s.claimsOnly ? { claimsOnly: true as const } : {}),
         });
       }

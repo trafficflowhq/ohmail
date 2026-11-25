@@ -338,8 +338,8 @@ describe("the ring walks the conversation from first to last", () => {
 });
 
 describe("the read zone is what the person sees", () => {
-  it("only chrome standing OVER the scroll view shortens it: the compact bar stands below it", () => {
-    expect(readerChromeOverlap("compact", 210), "the compact bar is in the column, under the scroll view").toBe(0);
+  it("both floating action bars shorten the visible read zone", () => {
+    expect(readerChromeOverlap("compact", 210), "the compact bar floats over the scroll").toBe(210);
     expect(readerChromeOverlap("rail", 210), "the rail is at the side").toBe(0);
     expect(readerChromeOverlap("bar", 120), "the pinned bar floats over the scroll").toBe(120);
   });

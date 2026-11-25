@@ -5,6 +5,7 @@ import { addressShaped } from "../state/live";
 import type { SearchFilters, SearchOrder } from "../state/search-facets";
 import { useWorld } from "../state/world";
 import { useTheme } from "../theme";
+import { mailSize } from "../theme/mail";
 import { Tap, Txt } from "./base";
 import { Icon } from "./Icon";
 import { Sheet, SheetRow } from "./Sheet";
@@ -107,8 +108,14 @@ export function SearchFacets({ filters, order, onFilters, onOrder, results }: {
         {results === undefined ? chip(labels.sort, () => open("sort"), order !== "relevance", true, orders[order]) : null}
       </View>
       {results === undefined ? null : (
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14, gap: 8 }}>
-          <Txt variant="rowSender">{Copy.searchResultsLine(results)}</Txt>
+        <View style={{
+          flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14, gap: mailSize.inset,
+          backgroundColor: t.c.panel, borderRadius: t.radius.card,
+          paddingHorizontal: mailSize.edge, paddingVertical: mailSize.inset,
+        }}>
+          <Txt variant="sectionLabel" accessibilityRole="header" accessibilityLabel={Copy.searchResultsHead(results)}>
+            {Copy.searchResultsLine(results)}
+          </Txt>
           {chip(labels.sort, () => open("sort"), order !== "relevance", true, orders[order])}
         </View>
       )}

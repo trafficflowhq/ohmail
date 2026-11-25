@@ -46,14 +46,18 @@ export function Verbs({
 }) {
   const t = useText("write");
   const mod = useModGlyph();
-  const send = { ...sendVerb(t("send"), canSend, going, onSend, resting, said), rank: 0 };
+  const more = useText("frame")("dock.more");
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; ids: readonly string[] } | null>(null);
+  const [folded, setFolded] = useState<readonly string[]>([]);
+  const close = () => setMenu(null);
+  const send = sendVerb(t("send"), canSend, going, onSend, resting, said);
   const items: PanelVerb[] = [
     keysHere ? { ...send, keyHint: chordKeys("mod+Enter", mod).join(" ") } : send,
     {
       id: "later",
       label: t("later.verb"),
       icon: "clock",
-      rank: 0,
+      wordFirst: true,
       pressed: later.open,
       /* A letter that may not be sent now may not be scheduled either: Later is off while Send rests. */
       disabled: !canSend || going || forward,
@@ -61,47 +65,42 @@ export function Verbs({
     },
     { ...discardVerb(t("discard"), discardHeld, onDiscard, discardReason), rank: 0 },
   ];
+  const overflow = compact ? items.slice(1).map(({ id }) => id) : folded;
   return (
     <div className="write-verbs">
       {discardReason && !compact ? <p className="oh-text write-discard-reason">{discardReason}</p> : null}
-      {compact ? (
-        <CompactSendPanel label={t("verbs")} items={items} />
-      ) : (
-        <ActionPanel label={t("verbs")} items={items} />
-      )}
-    </div>
-  );
-}
-
-function CompactSendPanel({ label, items }: { label: string; items: readonly PanelVerb[] }) {
-  const more = useText("frame")("dock.more");
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const close = () => setAnchor(null);
-  return (
-    <>
       <ActionPanel
-        label={label}
-        items={items.slice(0, 1)}
-        more={{ label: more, behind: true, expanded: anchor !== null, onPress: setAnchor }}
+        label={t("verbs")}
+        items={compact ? items.slice(0, 1) : items}
+        folded={folded}
+        onFold={setFolded}
+        more={{
+          label: more,
+          behind: compact || menu !== null,
+          expanded: menu !== null,
+          onPress: (anchor) => setMenu({ anchor, ids: overflow }),
+        }}
       />
-      {anchor ? (
-        <Menu open anchor={anchor} label={more} onClose={close} anchored up right>
-          {items.slice(1).map((item) => (
-            <MenuItem
-              key={item.id}
-              icon={item.icon}
-              disabled={item.disabled}
-              onPress={() => {
-                close();
-                item.onPress?.(anchor);
-              }}
-            >
-              {item.name ?? item.label}
-            </MenuItem>
-          ))}
+      {menu ? (
+        <Menu open portal anchor={menu.anchor} label={more} onClose={close} anchored up right>
+          {items
+            .filter(({ id }) => menu.ids.includes(id))
+            .map((item) => (
+              <MenuItem
+                key={item.id}
+                icon={item.icon}
+                disabled={item.disabled}
+                onPress={() => {
+                  close();
+                  item.onPress?.(menu.anchor);
+                }}
+              >
+                {item.name ?? item.label}
+              </MenuItem>
+            ))}
         </Menu>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -129,7 +128,15 @@ export function sendVerb(
   resting = false,
   said: SendSaid = NOTHING_SAID,
 ): PanelVerb {
-  return { id: "send", label, icon: "send", kind: "ink", ...gate(canSend, going, resting, said), onPress };
+  return {
+    id: "send",
+    label,
+    icon: "send",
+    kind: "ink",
+    rank: 0,
+    ...gate(canSend, going, resting, said),
+    onPress,
+  };
 }
 
 function gate(

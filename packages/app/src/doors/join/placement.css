@@ -24,6 +24,17 @@
   gap: var(--s2);
 }
 
+.way-join-legal {
+  margin-top: var(--s2);
+  font-size: var(--t-meta);
+  color: var(--ink2);
+}
+
+.way-join-legal-link {
+  color: inherit;
+  text-decoration: underline;
+}
+
 /* The authenticator's picture, on the sheet's ground, and its key read off under it. */
 .way-join-qr {
   max-width: 232px;

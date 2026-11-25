@@ -53,16 +53,23 @@ import {
   drainPendingSignOuts,
   drainPendingWakeDrops,
   drainPendingWipes,
+  clearUnscopedCalendarCredentials,
+  discardAdmission,
+  erasePendingCalendarCopies,
+  familyReplacedAt,
   forgetProfile,
   handoffMinter,
   listHeldStandalone,
   mobileDeviceKind,
   negotiate,
   pairingFetch,
+  pairApproved,
   pairForShell,
   pairWithServer,
   probePairing,
+  revokeBrowserPair,
   type PairAdmission,
+  type PairOutcome,
   type ProbeOutcome,
   type ConnectedSession,
   type Negotiation,
@@ -70,6 +77,8 @@ import {
   type ShellOutcome,
   type ShellSession,
 } from "./pairing";
+import { awaitBrowserApproval, browserSignInOrigin, probeBrowserSignIn } from "./approval";
+import { approvalBrowser, approvalFetch } from "./approval-native";
 import { resolveApiBase, type BaseVerdict } from "./server-base.js";
 import { TransitionGate } from "./transitions";
 import { buildCommit } from "../build-info";
@@ -78,7 +87,7 @@ import { mailSurfaceOf } from "../shell/mail-surface";
 import { pairingDigest } from "../switch/digest";
 import { notePairings, switchIntake, switchPlaces, takeUpArrival, type ReceiveDeps } from "../switch/receive";
 import { switchNative } from "../switch/switch-native";
-import { siblingOf } from "../variant";
+import { launchOnlySwitch, siblingOf } from "../variant";
 import { APP } from "../variant-native";
 import { settleLaunchVerdict } from "../shell/old-copy";
 import { nativeShellStores } from "../shell/shell-stores-native";
@@ -142,6 +151,7 @@ export interface Connection {
    * from a scanned string: the person in between is part of the type.
    */
   pairConfirmed(admission: PairAdmission, token: string): Promise<Attempt>;
+  signIn(address: string | null, signal: AbortSignal): Promise<Attempt>;
   /**
    * ADOPT THE MAILBOX THIS PHONE JUST OPENED — the fourth door's second half.
    *
@@ -170,6 +180,8 @@ export interface Connection {
    * (`settingsKept`); `anyway` is the person's answer to that, and removes it all the same.
    */
   forget(profileId: string, opts?: { anyway?: boolean }): Promise<ForgetAttempt>;
+  /** Confirmed erasures the chooser must skip when transferring legacy queues. */
+  erasedCalendarScopes?(): Promise<readonly string[]>;
   /**
    * How many unsent drafts the live session on this profile holds, or `null` when no live session
    * is on it. Forgetting this phone's own mailbox deletes its store, and those drafts are on no
@@ -263,9 +275,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       installNetworkReader(nativeNetworkReader());
       logNetwork(networkNow());
       onNetworkChange(logNetwork);
+      const calendarOnly = APP.app === "ohcal";
       return {
         profiles: nativeServerProfiles(),
-        calendar: APP.app === "ohcal" ? calendarLifecycle() : undefined,
+        approvalFetchImpl: approvalFetch,
+        calendar: calendarOnly ? calendarLifecycle() : undefined,
+        calendarOnly,
         engineDeps: nativeEngineDeps(),
         deviceKind: mobileDeviceKind(Platform.OS),
         // Named to every server in `x-ohmail-client`: the release `app.json` states (`net/app-release.ts`).
@@ -274,7 +289,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         familyDigest: nativeFamilyDigest,
         /* THE SHELL'S STORES (its keeper and the web view's copy), paid with every mirror's wipe. Only where the
            shell shows the mail: a build on its own screens never wrote either. */
-        ...(MAIL_SURFACE === "shell" ? { shell: nativeShellStores() } : {}),
+        ...(MAIL_SURFACE === "shell" ? { shell: nativeShellStores(calendarOnly) } : {}),
         /* THE CONNECTOR, so a forget takes down the wake registration of the pairing it is
            forgetting. Registrations became per-pairing in this slice, so an orphan is now a real
            thing to leave behind — `wake.tsx` sweeps only when the LAST pairing goes, because the
@@ -394,7 +409,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setActiveId((await env.profiles.active())?.id ?? null);
     /* EVERY CHANGE OF THE PAIRINGS PASSES HERE, so the switch's provider answers the sibling from today's: this
        app's live pairings by their digests, never an address or an account. */
-    void notePairings(switcher, env, nativeFamilyDigest);
+    if (!launchOnlySwitch(APP)) void notePairings(switcher, env, nativeFamilyDigest);
   }, [env, switcher]);
 
   /**
@@ -578,12 +593,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   /**
    * Retire the binding before React removes the WebView, so a pending answer cannot reach the leaving page.
    */
-  const leaveShell = useCallback(async () => {
+  const leaveShell = useCallback(async (revokeCalendar = true) => {
     const at = live.now();
     if (at.k === "shell") at.session.leave();
     offDead.current?.();
     offDead.current = null;
-    return at.k !== "shell" || !env.calendar ||
+    return at.k !== "shell" || !revokeCalendar || !env.calendar ||
       await env.calendar.revoke(at.session.profile.id).catch(() => false);
   }, [env, live]);
 
@@ -610,7 +625,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         void gate.run(async () => {
           const at = live.now();
           if (at.k !== "shell" || at.session !== session) return;
-          await leaveShell();
+          await leaveShell(why !== "erased");
           enter({ k: "ended", reason: deathRefusal(why) });
           if (session.bearer?.removesCopy === true) {
             await forgetProfile(env, session.profile.id, { revoke: async () => true, erased: why === "erased" })
@@ -624,6 +639,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       const identity = reviewIdentity();
       if (env.calendar?.open) {
         const verdict = await identity;
+        if (verdict.kind === "calendarUnavailable" && stillCurrent()) {
+          session.leave();
+          unsubscribe();
+          if (offDead.current === unsubscribe) offDead.current = null;
+          await env.calendar.close?.().catch(() => false);
+          if (stillCurrent()) enter({ k: "refused", reason: refuse("calendarServerUnavailable") });
+          return false;
+        }
         const mayRecover = stillCurrent() && verdict.kind === "verified" &&
           await calendarProfileMayRecover(env.profiles, session.profile.id);
         if (stillCurrent()) {
@@ -701,7 +724,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         if (outcome.kind === "connected") outcome.session.store.close();
         return { ok: false, reason: SUPERSEDED() };
       }
-      if (outcome.kind === "refused" && env.calendar) {
+      if (outcome.kind === "refused" && outcome.died !== "erased" && env.calendar) {
         await env.calendar.revoke(id).catch(() => false);
         if (!stillCurrent()) return { ok: false, reason: SUPERSEDED() };
       }
@@ -755,6 +778,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const takeArrival = useRef<() => Promise<unknown>>(async () => undefined);
   takeArrival.current = () => {
     if (switcher === null) return Promise.resolve();
+    if (launchOnlySwitch(APP)) {
+      return switcher.takeArrival().catch(() => null);
+    }
     const deps: ReceiveDeps = {
       env,
       native: switcher,
@@ -863,6 +889,27 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         // 2. FINISH THE FORGETS THAT DID NOT FINISH. A forget writes its intent before it
         //    touches either store, so a kill mid-way leaves the mail owed rather than
         //    stranded — this is where the debt is paid. A refusal keeps the debt.
+        const hasErasure = await erasePendingCalendarCopies(env);
+        await clearUnscopedCalendarCredentials(env);
+        const keepersPrepared = !env.calendarOnly || !env.shell ||
+          await env.shell.prepareCalendarKeeper?.().catch(() => false) === true;
+        if (env.calendarOnly && (keepersPrepared || hasErasure) && env.shell?.calendarCopiesPrepared?.() === false &&
+            (await env.profiles.pendingWipes()).length > 0) {
+          if (!stillCurrent()) return;
+          // The chooser removes erased mirrors and moves the remaining legacy queues to their keepers.
+          enter({ k: "idle" });
+          const prepared = await env.shell.waitForCalendarCopies?.();
+          if (!stillCurrent()) return;
+          if (!prepared) {
+            enter({ k: "refused", reason: refuse("calendarCopyRemains") });
+            return;
+          }
+          enter({ k: "starting" });
+        }
+        if (!keepersPrepared) {
+          if (stillCurrent()) enter({ k: "refused", reason: refuse("calendarCopyRemains") });
+          return;
+        }
         await drainPendingWipes(env);
         //    And the sign-outs a server was not told — a forget's, or one the drain above just
         //    made. Only those that must swap a live pairing's key in go before any session holds
@@ -913,6 +960,88 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const finishPair = useCallback(async (
+    admission: PairAdmission, pair: (persisting: () => void) => Promise<PairOutcome | ShellOutcome>,
+    stillCurrent: () => boolean, browser = false,
+  ): Promise<Attempt> => {
+    let leaving: Promise<boolean> | undefined;
+    let committed = false;
+    const startLeaving = () => {
+      const at = live.now();
+      if (at.k === "live") void teardown(at.session);
+      if (at.k === "shell") leaving = leaveEntered();
+    };
+    const entering = () => {
+      committed = true;
+      if (stillCurrent()) enter({ k: "connecting", origin: admission.origin });
+    };
+    if (!browser) {
+      startLeaving();
+      if (leaving) await leaving;
+      entering();
+    }
+    const outcome = await pair(() => {
+      startLeaving();
+      entering();
+    });
+    if (!committed && outcome.kind === "refused") return { ok: false, reason: outcome.reason };
+    if (browser && leaving) await leaving;
+    await refreshProfiles();
+    if (!stillCurrent()) {
+      if (outcome.kind === "paired") outcome.session.store.close();
+      return { ok: false, reason: SUPERSEDED() };
+    }
+    if (outcome.kind === "refused") {
+      enter({ k: "refused", reason: outcome.reason });
+      return { ok: false, reason: outcome.reason };
+    }
+    if (outcome.kind === "shell") {
+      if (!await adoptShell(outcome.session, stillCurrent)) return { ok: false, reason: SUPERSEDED() };
+    } else adopt(outcome.session);
+    return { ok: true };
+  }, [adopt, adoptShell, enter, leaveEntered, refreshProfiles, teardown]);
+
+  const signIn = useCallback((address: string | null, signal: AbortSignal): Promise<Attempt> => {
+    const target = browserSignInOrigin(address);
+    if ("reason" in target) return Promise.resolve({ ok: false, reason: target.reason });
+    return gate.run(async (current) => {
+      const stillCurrent = () => current() && !signal.aborted;
+      const superseded = (): Attempt => ({ ok: false, reason: SUPERSEDED() });
+      if (!stillCurrent()) return superseded();
+      const probe = await probeBrowserSignIn(env, target.origin, signal);
+      if (probe.kind === "refused") return { ok: false, reason: probe.reason };
+      const { admission } = probe;
+      if (!stillCurrent()) {
+        discardAdmission(admission);
+        return superseded();
+      }
+
+      const fetchImpl = pairingFetch({ ...env, fetchImpl: approvalFetch });
+      const selfHosted = address !== null;
+      const kind = mobileDeviceKind(Platform.OS);
+      const approved = await awaitBrowserApproval({
+        ...approvalBrowser(selfHosted), fetchImpl,
+        kind, label: kind === "mobile-ios" ? "iPhone" : "Android",
+        calendarOnly: env.calendarOnly,
+        previousSession: await familyReplacedAt(env, admission.origin),
+      }, { origin: admission.origin, selfHosted }, signal);
+      if (!approved.ok) {
+        if (approved.issued) await revokeBrowserPair(env, admission, approved.issued, fetchImpl);
+        discardAdmission(admission);
+        return { ok: false, reason: approved.reason };
+      }
+      if (!stillCurrent()) {
+        await revokeBrowserPair(env, admission, approved.approved, fetchImpl);
+        discardAdmission(admission);
+        return superseded();
+      }
+      return finishPair(admission, (persisting) => pairApproved(
+        env, { admission, approved: approved.approved, scope: approved.scope },
+        MAIL_SURFACE, { signal, current, persisting, fetchImpl },
+      ), current, true);
+    });
+  }, [env, finishPair, gate]);
+
   const api = useMemo<Connection>(
     () => ({
       state,
@@ -920,35 +1049,29 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       syncError,
       profiles,
       activeId,
+      erasedCalendarScopes: async () => {
+        const stores = env.shell;
+        if (!env.calendarOnly || !stores) return [];
+        const wipes = await env.profiles.pendingWipes();
+        return Promise.all(wipes.filter((owed) => owed.erased).map((owed) => stores.scopeOf(owed.owner)));
+      },
       ask: (origin) => negotiate(pairingFetch(env), origin),
-      probeBase: (origin) => resolveApiBase(pairingFetch(env), origin),
+      probeBase: async (origin) => {
+        const result = await resolveApiBase(pairingFetch(env), origin, { calendarOnly: env.calendarOnly });
+        return env.calendarOnly && result.kind === "refused" && result.reason.say === "baseApiNotFound"
+          ? { kind: "refused", reason: refuse("calendarServerUnavailable") }
+          : result;
+      },
       /* The probe takes no gate turn and tears nothing down: it spends nothing, and the one
          thing it must install to dial — the code's key — is a lease the screens hand back
          (`discardAdmission`). A person who looks at the confirmation and presses Back is left
          exactly where they were, still paired with whatever they were paired with. */
       probePair: (origin, pin) => probePairing(env, { origin, pin: pin ?? null }),
       pairConfirmed: (admission, token) =>
-        gate.run(async (stillCurrent) => {
-          { const at = live.now(); if (at.k === "live") teardown(at.session); }
-          if (live.now().k === "shell") await leaveEntered();
-          if (stillCurrent()) enter({ k: "connecting", origin: admission.origin });
-          const outcome = MAIL_SURFACE === "shell"
-            ? await pairForShell(env, { admission, token })
-            : await pairWithServer(env, { admission, token });
-          await refreshProfiles();
-          if (!stillCurrent()) {
-            if (outcome.kind === "paired") outcome.session.store.close();
-            return { ok: false, reason: SUPERSEDED() };
-          }
-          if (outcome.kind === "refused") {
-            enter({ k: "refused", reason: outcome.reason });
-            return { ok: false, reason: outcome.reason };
-          }
-          if (outcome.kind === "shell") {
-            if (!await adoptShell(outcome.session, stillCurrent)) return { ok: false, reason: SUPERSEDED() };
-          } else adopt(outcome.session);
-          return { ok: true };
-        }),
+        gate.run((stillCurrent) => finishPair(admission, () => MAIL_SURFACE === "shell"
+          ? pairForShell(env, { admission, token })
+          : pairWithServer(env, { admission, token }), stillCurrent)),
+      signIn,
       openStandalone: (door) =>
         gate.run(async (stillCurrent) => {
           // The calendar's app organizes no mailbox: its only ways in are a server and a paired computer.
@@ -1012,6 +1135,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           // a take-back is therefore assertable without rendering a component.
           let revokeLive: (() => Promise<SignOutOutcome>) | null = null;
           let closed: Promise<void> = Promise.resolve();
+          let beforeForget: (() => Promise<void>) | undefined;
           /* ── FORGETTING THIS PHONE'S OWN MAILBOX IS ONE VERB WITH THREE EFFECTS ─────────────
              The claim goes back, the session and its notification stop, and the ENGINE stops —
              `endStandaloneHere`, before the row goes, because every one of them needs the engine
@@ -1031,9 +1155,16 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             /* NO LOGOUT WITHOUT A MANAGER — the standalone door's session has none, and the seam
                answers `told` for it on its own (`pairing.ts#forgetProfile`). */
             revokeLive = bearer === null ? null : () => bearer.signOut();
-            if (atForget.k === "live") closed = teardown(atForget.session);
-            else await leaveShell();
-            enter({ k: "idle" });
+            if (env.calendarOnly && atForget.k === "shell") {
+              beforeForget = async () => {
+                await leaveShell();
+                enter({ k: "idle" });
+              };
+            } else {
+              if (atForget.k === "live") closed = teardown(atForget.session);
+              else await leaveShell();
+              enter({ k: "idle" });
+            }
           } else if (atForget.k === "connecting") {
             // SETTLE a state no later transition will. Every other transition ends by setting
             // its own state; forget was the one that could leave a SUPERSEDED boot's
@@ -1047,7 +1178,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           }
           /* What the hand-back left only in the store keeps it, until the person answers (`anyway`). */
           const outcome = await forgetProfile(env, profileId, {
-            closed, revoke: revokeLive, settingsKept: ended?.settingsKept ?? null, anyway: opts?.anyway === true,
+            closed, beforeForget, revoke: revokeLive, settingsKept: ended?.settingsKept ?? null, anyway: opts?.anyway === true,
           });
           await refreshProfiles();
           if (outcome.kind === "kept") {
@@ -1125,7 +1256,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     }),
     [
       state, syncing, syncError, profiles, activeId, adopt, adoptShell, drain, env, gate, leaveEntered, leaveShell,
-      refreshProfiles, runConnect, runner, teardown,
+      finishPair, refreshProfiles, runConnect, runner, signIn, teardown,
     ],
   );
 

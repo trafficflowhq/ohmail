@@ -10,6 +10,7 @@ import type { PhoneDoor, PhoneDoorConfig, PhoneDoorState, PhonePairFacts, SaidRe
 /** The steps of the ways in, in the order a person meets them. In memory only: never the route, never storage. */
 export const WAY_IN_STEPS = [
   "welcome",
+  "signIn",
   "server",
   "computer",
   "terms",

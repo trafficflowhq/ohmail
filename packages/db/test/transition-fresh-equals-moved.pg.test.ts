@@ -78,6 +78,8 @@ const WIDENED: Record<string, readonly string[]> = {
   organizer_requests_refused_reason_closed: ["no_such_folder"],
   // mail 0209
   pairing_tokens_grant_check: ["app-handoff"],
+  // mail 0227
+  sessions_scope_check: ["calendar"],
 };
 /** A list constraint's definition with `add` appended to its one array of members. */
 const widenedDef = (def: string, add: readonly string[]): string =>

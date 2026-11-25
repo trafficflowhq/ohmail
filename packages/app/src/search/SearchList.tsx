@@ -11,6 +11,7 @@
 import { useLayoutEffect, useMemo, useRef, type UIEvent } from "react";
 import type { AddressBookEntry } from "@ohmail/client-engine";
 import { useFocusFollows } from "@ohmail/app-logic/keys";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import {
   justFinished,
   onePersonMeant,
@@ -25,7 +26,10 @@ import {
   type TypedOperator,
 } from "@ohmail/app-logic/search";
 import { ListLine, ListHead, Sheet } from "@ohmail/ui/mail";
+import { useFrame, useSearchPosition } from "../frame/commands.js";
 import type { PaneProps } from "../frame/contract.js";
+import { isCalendarPlace } from "../frame/product.js";
+import { fragmentOf, routeOf } from "../frame/route.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText } from "../text/index.js";
 import { useSearchBeside, type SearchBeside } from "./beside.js";
@@ -172,6 +176,48 @@ function useSearchResultFocus(
   }, [openId, beside, scrollerRef, boxRef]);
 }
 
+function useReturningSearchPosition(model: SearchListModel, route: PaneProps["route"]): () => void {
+  const { host, previousProduct } = useFrame();
+  const deviceAddress = host.device.address;
+  const memory = useSearchPosition();
+  const pending = useRef(previousProduct === "cal" ? memory.current : null);
+  const { scrollerRef, query, sort, length, found, listing } = model;
+  const verdict = model.verdict.kind;
+  const address = fragmentOf(route);
+  const here = useRef({ address, query, sort });
+  here.current = { address, query, sort };
+  const nearEnd = useStableCallback(model.nearEnd);
+
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    return () => {
+      memory.current =
+        scroller && isCalendarPlace(routeOf(deviceAddress.read()).place)
+          ? (pending.current ?? { ...here.current, top: scroller.scrollTop })
+          : null;
+    };
+  }, [deviceAddress, memory, scrollerRef]);
+
+  useLayoutEffect(() => {
+    const saved = pending.current;
+    if (!saved) return;
+    if (saved.address !== address || saved.query !== query || saved.sort !== sort) {
+      pending.current = null;
+      return;
+    }
+    const scroller = scrollerRef.current;
+    if (!scroller || found === 0 || verdict === "searching" || verdict === "unfinished") return;
+    scroller.scrollTop = saved.top;
+    // A position beyond the first page needs more results before the browser can reach it.
+    if (listing === "store" && scroller.scrollTop < saved.top - 1) nearEnd();
+    else pending.current = null;
+  }, [address, query, sort, length, found, listing, verdict, scrollerRef, nearEnd]);
+
+  return () => {
+    pending.current = null;
+  };
+}
+
 export function SearchList({ route, plan }: PaneProps) {
   const model = useSearchModel();
   const beside = useSearchBeside();
@@ -183,6 +229,7 @@ export function SearchList({ route, plan }: PaneProps) {
   const root = useRef<HTMLDivElement>(null);
   useFocusFollows(root, { enter: false });
   useSearchResultFocus(route.open, plan.columns === 2, scrollerRef, model.boxRef);
+  const cancelScrollRestore = useReturningSearchPosition(model, route);
   const people = model.searchBy === "people";
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
     const el = event.currentTarget;
@@ -263,6 +310,9 @@ export function SearchList({ route, plan }: PaneProps) {
         }}
         tabIndex={-1}
         onScroll={onScroll}
+        onWheel={cancelScrollRestore}
+        onPointerDown={cancelScrollRestore}
+        onKeyDown={cancelScrollRestore}
       >
         {plan.device === "phone" ? <Sheet kind="plain">{body}</Sheet> : body}
       </div>

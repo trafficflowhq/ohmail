@@ -160,6 +160,28 @@ const ringed = (id: string): string[] =>
   squares(id).filter((s) => s.__props?.accessibilityState?.selected === true).map((s) => s.getAttribute("data-test")!.slice(6));
 const marksShown = (id: string): boolean => rowEl(id).querySelector("[data-test='row-marks']") !== null;
 
+it("keeps the mailbox visible and spoken beside a long sender address", () => {
+  const address = "correspondence@very-long-sender-domain.example";
+  const mailboxLabel = "Operations and customer support";
+  const mailbox = { name: mailboxLabel, address: "support@example.test" };
+  const mail = { ...A, place: "ohbox" as const, body: "", from: { name: "Ada Lovelace", address }, marks: undefined, mailboxLabel, mailbox };
+  screen = mount(h(MailRow, { m: mail, onPress: () => undefined }));
+  const button = screen.el.querySelector<El>("[data-rn='TapRow']")!;
+  const text = (value: string) => [...button.querySelectorAll<El>("span")].find((el) => el.textContent === value);
+  expect(button.__props?.accessibilityLabel).toContain(`Delivered to ${mailboxLabel}`);
+  const badge = button.querySelector<El>("[data-test='mailbox-avatar-badge']");
+  expect(badge?.textContent).toBe("O");
+  expect((badge?.parentElement as El).__props?.accessibilityElementsHidden).toBe(true);
+  expect(text(address)?.__props?.numberOfLines).toBe(1);
+  expect(text(mailboxLabel)?.__props?.numberOfLines).toBe(1);
+  expect((text(mailboxLabel)?.parentElement as El).__props?.style).toMatchObject({ maxWidth: "30%", flexShrink: 0 });
+});
+
+it("leaves the sender avatar alone when the row has no mailbox attribution", () => {
+  screen = mount(h(MailRow, { m: { ...A, place: "ohbox", body: "" }, onPress: () => undefined }));
+  expect(screen.el.querySelector("[data-test='mailbox-avatar-badge']")).toBeNull();
+});
+
 describe("the open conversation's row carries the reader's squares", () => {
   it("back from the reader, the row shows the strip ringed where the person stopped; the others keep their marks", () => {
     place.publishThreadPlace([...itemsA], "a2");

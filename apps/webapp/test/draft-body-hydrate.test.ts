@@ -132,6 +132,29 @@ describe("openDraftDecision over a withheld row", () => {
     await openDraftDecision(draft({ id: "other", html: null }), io);
     await openDraftDecision(withheld, io);
     expect(opened).toEqual([html, null, html]);
+
+    const legacy = '<p style="margin:0">Hello,</p><p style="margin:0"></p><p style="margin:0">Friday works.</p>';
+    const repaired = '<p style="margin:0">Hello,<br /><br />Friday works.</p>';
+    const body = "Hello,\n\nFriday works.";
+    const layouts: Array<Pick<EngineDraft, "html" | "rationale">> = [];
+    for (const rationale of [null, "Drafted from the conversation"]) {
+      const draftBody = new HttpAdapter({ baseUrl: "http://localhost", fetch: async () =>
+        Response.json({ body, html: legacy, rationale }),
+      });
+      const read = {
+        readDraftBody: (id: string) => draftBody.fetchDraftBody(id),
+        openWithBody: (row: EngineDraft) => { layouts.push({ html: row.html, rationale: row.rationale }); },
+        unavailable: () => {},
+      };
+      await openDraftDecision(draft({ body, html: legacy, rationale }), read);
+      await openDraftDecision(withheld, read);
+    }
+    expect(layouts).toEqual([
+      { html: legacy, rationale: null },
+      { html: legacy, rationale: null },
+      { html: repaired, rationale: "Drafted from the conversation" },
+      { html: repaired, rationale: "Drafted from the conversation" },
+    ]);
   });
 
   it("opens nothing when a withheld row cannot be fetched either", async () => {

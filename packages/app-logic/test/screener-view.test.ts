@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { act, renderHook } from "@testing-library/react";
-import { createElement, type PropsWithChildren } from "react";
+import { createElement, useState, type PropsWithChildren } from "react";
 import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { describe, expect, it } from "vitest";
 import { SHARED_PROVIDER_DOMAINS } from "@trafficflow/core/rule-order";
@@ -98,8 +98,9 @@ function view(state: ScreenerState, over: Partial<ScreenerViewInput> = {}) {
   const said = { went: [] as KeySegment[], undone: 0 };
   let selected: string | null = over.selected ?? null;
   const hook = renderHook(
-    (props: { state: ScreenerState; selected: string | null }) =>
-      useScreenerView({
+    (props: { state: ScreenerState; selected: string | null }) => {
+      const [open, setOpen] = useState(false);
+      return useScreenerView({
         state: props.state,
         segment: "waiting",
         select: (id) => {
@@ -112,9 +113,11 @@ function view(state: ScreenerState, over: Partial<ScreenerViewInput> = {}) {
         },
         words: WORDS,
         oneColumn: false,
+        reader: { open, setOpen },
         ...over,
         selected: props.selected,
-      }),
+      });
+    },
     { initialProps: { state, selected }, wrapper: ConsentFixture },
   );
   const again = () => hook.rerender({ state: current!, selected });

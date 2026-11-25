@@ -37,6 +37,31 @@ const create = (eventId: string, title = "Glaze firing"): CalendarEventAct => ({
 const mark = (act: CalendarEventAct, over: Partial<CalendarWriteMark> = {}): CalendarWriteMark =>
   ({ id: "w-1", key: "k-1", state: "pending", reason: null, act, part: null, at: BASE, ...over });
 
+it("waits for review, sends a recovered proposal under its original key, and keeps a refused draft", async () => {
+  const store = new MemoryMirrorStore();
+  const act = {
+    kind: "calendar_event_propose" as const, recordId: "old-event", base: BASE, occurrence: "",
+    start: { kind: "date" as const, value: "20261124" }, end: { kind: "date" as const, value: "20261125" },
+  };
+  await store.commitLocal([{ type: CALENDAR_OUTBOX_TYPE, id: "original",
+    entity: { key: "original", v: 1, act, at: 0, n: 0, needsReview: true } }], []);
+  const recover = vi.fn<NonNullable<CalendarWriteTransport["recoverProposal"]>>()
+    .mockRejectedValueOnce(new MutationRejectedError("event changed", { status: 409 }))
+    .mockResolvedValueOnce({ answer: { write: null, events: [] }, seq: null });
+  const queue = new CalendarWriteQueue(store, {
+    recoverProposal: recover, writeCalendar: vi.fn(), retryCalendarWrite: vi.fn(), dismissCalendarWrite: vi.fn(),
+  }, { uuid: () => "new-key", now: () => 1000 });
+  await queue.flush();
+  expect(recover).not.toHaveBeenCalled();
+  expect(await queue.reviewProposal("original", true)).toBe(true);
+  await queue.flush();
+  expect(queue.recoveredProposals()).toEqual([{ key: "original", act, needsReview: true, reviewRefused: true }]);
+  expect(await queue.reviewProposal("original", true)).toBe(true);
+  await queue.flush();
+  expect(queue.recoveredProposals()).toEqual([]);
+  expect(recover.mock.calls.map(([intent, key]) => [intent, key])).toEqual([[act, "original"], [act, "original"]]);
+});
+
 describe("the one overlay", () => {
   it("projects an explicit Hide without deleting the busy record or changing its RSVP", () => {
     const event = { ...record("invitation", { myAnswer: "accepted" }), hideAttendee: ["guest", "example.test"].join("@") };

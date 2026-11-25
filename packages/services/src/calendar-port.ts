@@ -9,6 +9,7 @@
  */
 import type { CalendarRecordKind, CalendarRecords, CalendarWindow } from "@ohmail/wire";
 import type { Db } from "./context.js";
+import type { RecordCalendarMailAnswer } from "./invitation-answer-service.js";
 
 /** A span of time as epoch milliseconds, `fromMs` before `toMs`. */
 export interface CalendarSpanMs {
@@ -54,6 +55,7 @@ export interface CalendarSnapshotQuery {
   /** `null` on the first page, which leads with the connections, calendars and suggestions. */
   readonly after: CalendarKeyset | null;
   readonly limit: number;
+  readonly excludeSuggestions?: boolean;
 }
 
 export interface CalendarFeedPort {
@@ -73,6 +75,8 @@ export interface CalendarFeedPort {
   readonly window: CalendarWindow;
   /** One page of the first load's calendar phase, built by the same builders as the feed. */
   snapshotPage(db: Db, accountId: string, q: CalendarSnapshotQuery): Promise<CalendarSnapshotSlice>;
+  /** Updates the personal calendar copy after mailing an answer and returns its sync change. */
+  recordMailAnswer?: RecordCalendarMailAnswer;
 }
 
 /**

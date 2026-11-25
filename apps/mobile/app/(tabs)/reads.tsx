@@ -115,6 +115,7 @@ function ReadsBody() {
     <Screen>
       <TopBar />
       <MailList
+        jumpToTop
         groups={[{ key: "issues", rows: items }]}
         rowKey={(m) => m.id}
         renderRow={(m) => (
@@ -252,7 +253,7 @@ function StreamCard({
       >
         <View style={{ padding: 20, paddingTop: 24 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <MailAvatar person={m.from} unread={m.unread} />
+            <MailAvatar person={m.from} unread={m.unread} mailbox={m.mailbox} />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt variant="rowSender" numberOfLines={1}>{m.from.name}</Txt>
               <Txt variant="caption" tone="ink2" numberOfLines={1}>{m.from.address}</Txt>

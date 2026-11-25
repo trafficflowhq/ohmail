@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  DRAFT_BODY_MAX_BYTES, draftBodyOverCeiling, draftOverCeiling, utf8ByteLength,
+  DRAFT_BODY_MAX_BYTES, draftBodyOverCeiling, draftOverCeiling, repairLegacyDraftHtml, utf8ByteLength,
 } from "../src/outbound-text.js";
 
 /**
@@ -114,5 +114,21 @@ describe("draftOverCeiling", () => {
     const accented = "\u00e4".repeat(DRAFT_BODY_MAX_BYTES / 2 + 1);
     expect(accented.length).toBeLessThan(DRAFT_BODY_MAX_BYTES);
     expect(draftOverCeiling("short", accented)).toBe(true);
+  });
+});
+
+
+describe("legacy generated draft HTML", () => {
+  const bare = "<p>Plans &amp; notes</p><p></p><p>Friday works.</p>";
+  const text = "Plans & notes\n\nFriday works.";
+
+  it("repairs an exact match without changing the words", () => {
+    expect(repairLegacyDraftHtml(bare, text)).toBe("<p>Plans &amp; notes<br /><br />Friday works.</p>");
+  });
+
+  it("keeps markup with formatting or different text", () => {
+    const formatted = bare.replace("Friday", "<strong>Friday</strong>");
+    expect(repairLegacyDraftHtml(formatted, text)).toBe(formatted);
+    expect(repairLegacyDraftHtml(bare, text.replace("Friday", "Monday"))).toBe(bare);
   });
 });

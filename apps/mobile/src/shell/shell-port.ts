@@ -32,8 +32,13 @@ export interface ShellNative {
   stats(): Record<string, number>;
   setFamilies(prefixes: readonly string[]): Promise<boolean>;
   keeperScopes(): Promise<string[]>;
+  prepareCalendarKeeper(): Promise<boolean>;
+  fenceCalendarWipe(scope: string): Promise<"empty" | "pending" | "unknown">;
+  releaseCalendarWipe(scope: string): Promise<void>;
   /** Removes one scope's keeper; true when a read-back finds none of its files. */
   keeperForget(scope: string): Promise<boolean>;
+  keeperErase(scope: string): Promise<boolean>;
+  releaseCalendarErasure(scope: string): Promise<void>;
   keeperKeep(scope: string, key: string, value: string | null): Promise<boolean>;
   keeperKeptWords(scope: string): Promise<[string, string][] | null>;
   keeperKeepRows(scope: string, rows: readonly NativeKeptRow[]): Promise<boolean>;

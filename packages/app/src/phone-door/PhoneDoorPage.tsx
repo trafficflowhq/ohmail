@@ -18,10 +18,12 @@ import { Scan } from "./Scan.js";
 import { ServerStep } from "./ServerStep.js";
 import type { StepProps, WayInSeed, WayInStep } from "./states.js";
 import { Terms } from "./Terms.js";
+import { SignInStep } from "./SignInStep.js";
 import { Welcome } from "./Welcome.js";
 
 const STEPS: { readonly [S in WayInStep]: (props: StepProps) => ReactNode } = {
   welcome: Welcome,
+  signIn: SignInStep,
   server: ServerStep,
   computer: ComputerStep,
   terms: Terms,
@@ -41,6 +43,7 @@ export function PhoneDoorPage({ door, from }: { door: PhoneDoor; from?: WayInSee
     setTrail((was) => (how?.replace ? [...was.slice(0, -1), next] : [...was, next]));
   }, []);
   const back = useCallback(() => {
+    if (now.current.at(-1)?.step === "signIn" && door.state.read().session === "opening") return;
     if (now.current.length > 1) setTrail((was) => was.slice(0, -1));
     else door.go("servers");
   }, [door]);

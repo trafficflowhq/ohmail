@@ -5,7 +5,7 @@
  * Dismiss is the server's to keep; Load it now shows an emptied letter's text for this view and
  * writes nothing anywhere: one GET, and nothing else asked of the server or the device.
  */
-import { act, createElement } from "react";
+import { act, createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { derivePosture } from "../src/ui/posture/derive";
 import { mount } from "./_rendered-dom";
@@ -35,7 +35,22 @@ vi.mock("../src/theme", () => ({
 }));
 vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
-vi.mock("../src/state/world", () => ({ useLiveSession: () => live.session }));
+vi.mock("../src/state/world", () => ({
+  useLiveSession: () => live.session,
+  useWorld: () => ({ mailboxes: { all: [{ id: "mb-1", displayName: "Office" }] } }),
+}));
+vi.mock("../src/net/connection", () => ({ useConnection: () => ({ state: { k: "live", session: live.session } }) }));
+vi.mock("../src/ui/chrome", () => ({
+  DetailBar: ({ title, backLabel, backCapsule }: { title?: string; backLabel?: string; backCapsule?: boolean }) =>
+    createElement("button", { "data-capsule": backCapsule }, backLabel ?? title),
+}));
+vi.mock("../src/ui/Gated", () => ({ Gated: ({ children }: { children: ReactNode }) => children }));
+vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: ({ children }: { children: ReactNode }) => children }));
+vi.mock("../src/theme/mail", async (useOriginal) => ({
+  ...await useOriginal<typeof import("../src/theme/mail")>(),
+  MailAppearance: ({ children }: { children: ReactNode }) =>
+    createElement("div", { "data-mail-appearance": "" }, children),
+}));
 /* The device store's one SQL door: the emptied letter must never reach it. */
 vi.mock("../src/engine/sql-queue", () => ({ serialSqlExecutor: live.sql }));
 
@@ -43,6 +58,7 @@ const { readAccess, resetAccessFeedForTests } = await import("../src/net/account
 const { resetAccessLockForTests } = await import("../src/net/access-lock");
 const { StorageNotice } = await import("../src/ui/StorageNotice");
 const { StoragePane } = await import("../src/ui/StoragePane");
+const { default: StorageScreen } = await import("../app/storage");
 const { EmptiedLetter } = await import("../src/ui/EmptiedLetter");
 const { accessOf } = await import("../src/net/account");
 
@@ -92,7 +108,7 @@ beforeEach(() => {
   resetAccessFeedForTests();
   live.openURL.mockClear();
 });
-afterEach(() => { open?.unmount(); open = null; });
+afterEach(() => { open?.unmount(); open = null; live.session = null; });
 
 describe("the card atop the Ohbox, store face", () => {
   it("draws the numbers, no plan to move to, no amount, no press but Dismiss, no link", async () => {
@@ -147,6 +163,17 @@ describe("the card atop the Ohbox, store face", () => {
     open = mount(createElement(StorageNotice, { session: none.s }));
     expect(open.el.textContent).toBe("");
   });
+});
+
+it("shows a Storage heading and the Settings back capsule above the current mailbox totals", async () => {
+  const { s } = door({ "GET /account/access": json(ANSWER) });
+  live.session = s;
+  open = mount(createElement(StorageScreen));
+  await settle();
+  const contents = open.el.querySelector("[data-mail-appearance]");
+  expect(contents?.querySelector('[data-role="header"]')?.getAttribute("data-label")).toBe("Storage");
+  expect(contents?.querySelector('[data-capsule="true"]')?.textContent).toBe("Settings");
+  expect(contents?.textContent).toContain("Office");
 });
 
 describe("the Storage screen's body, store face", () => {

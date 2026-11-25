@@ -1,7 +1,8 @@
 /* A letter being written: a sheet with the ink ring, and in it the editor as one box: the marks on a quiet strip at its
    top, the text under them, the signature, the files, and the foot. The box's line darkens while it has the keys. */
 @layer oh {
-  .oh-composer {
+  .oh-composer,
+  .oh-composer-editor[data-signature] {
     --oh-composer-ring: inset 0 0 0 2px var(--ink);
     --oh-composer-line: var(--oh-ring-ctl);
     --oh-composer-line-on: inset 0 0 0 var(--oh-hair) var(--ink);
@@ -14,7 +15,11 @@
     --oh-composer-run: 2px;
     --oh-composer-layer: 1;
     --oh-soft: var(--soft-sheet);
+  }
 
+  .oh-composer {
+    display: flex;
+    flex-direction: column;
     box-sizing: border-box;
     margin-top: var(--gap);
     padding: var(--s5) var(--sheet-pad);
@@ -35,8 +40,24 @@
 
   .oh-composer-editor {
     position: relative;
-    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    max-block-size: var(--oh-editor-height, min(calc(55dvh / var(--ui-zoom, 1)), 100cqh));
+    overflow: clip;
     border-radius: var(--r-row);
+  }
+
+  .oh-composer-editor[data-signature] {
+    --oh-editor-height: min(calc(85dvh / var(--ui-zoom, 1)), 100cqh);
+  }
+
+  .oh-composer-editor > :not(.oh-composer-scroll) {
+    flex: none;
+  }
+
+  .oh-composer-scroll {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
   }
 
   .oh-composer-editor::after {
@@ -372,7 +393,7 @@
   }
 
   /* ohmarchy: hairlines inside, rings outside. The editor is a box of one line with its marks inside. */
-  :root[data-face="ohmarchy"] .oh-composer {
+  :root[data-face="ohmarchy"] :is(.oh-composer, .oh-composer-editor[data-signature]) {
     --oh-composer-ring: 0 0 0 2px var(--focus);
     --oh-composer-line: var(--oh-ring-btn);
     --oh-composer-line-on: inset 0 0 0 var(--oh-hair) var(--hot);
@@ -410,12 +431,14 @@
      column it stands in lays its sheets out as a column. */
   :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] {
     flex: 1 0 auto;
-    display: flex;
-    flex-direction: column;
   }
 
   :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] > .oh-composer-editor {
-    flex: 1 0 auto;
+    flex: 1 1 auto;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] .oh-composer-scroll {
+    flex: 1 1 auto;
     display: flex;
     flex-direction: column;
   }
@@ -449,11 +472,48 @@
   }
 }
 
-.oh-sheet[data-writing-keyboard] .oh-composer-editor {
-  --oh-composer-text-min: 3lh;
+.oh-sheet-scroll:has(.oh-composer-editor) {
+  container-type: size;
 }
 
-.oh-sheet[data-writing-keyboard] .oh-lettertext-plain {
-  max-block-size: max(3lh, calc(var(--write-room) / 2));
-  overflow-y: auto;
+.oh-sheet-scroll:has(.oh-composer) {
+  scroll-padding-block-end: var(--oh-sheet-foot-room);
+}
+
+.oh-sheet[data-writing-keyboard] {
+  --oh-sheet-foot-room: 0px;
+}
+
+.oh-sheet[data-writing-keyboard] .oh-composer-editor {
+  --oh-editor-height: calc(100cqh - 2 * var(--oh-hair));
+  --oh-composer-text-min: 3lh;
+  scroll-margin-block: var(--oh-hair);
+}
+
+/* A whole line of the letter, whatever the scroller's own font. */
+.oh-sheet[data-writing-keyboard] .oh-composer-scroll {
+  min-block-size: calc(var(--t-read) * var(--lh-read));
+  overflow-anchor: none;
+  max-block-size: var(--write-text-room, none);
+}
+
+.oh-sheet[data-writing-keyboard] .oh-composer-marks {
+  padding-block: 0;
+}
+
+/* Above a keyboard the room goes first to a line of the letter, a note under the text (a refusal) and the controls;
+   the formatting strip gives way when it would take that room. The marks still answer their keys, and the foot keeps
+   its formatting control. The heights: the strip 44, a line 27, the foot 56, a two-line note 37. */
+@container (max-height: 130px) {
+  .oh-sheet[data-writing-keyboard] .oh-composer-editor > .oh-composer-marks {
+    display: none;
+  }
+}
+
+@container (max-height: 170px) {
+  .oh-sheet[data-writing-keyboard]
+    .oh-composer-editor:has(> .oh-composer-scroll ~ :not(.oh-composer-foot))
+    > .oh-composer-marks {
+    display: none;
+  }
 }

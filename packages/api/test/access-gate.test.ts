@@ -647,6 +647,22 @@ describe("POST /account/manage-link/change — the page that may change the plan
     }]]);
   });
 
+  it.each([{ addon: "storage" }, { addon: "mailbox" }, { addon: ["mailbox"] }])("forwards a known add-on from the authenticated request ($addon)", async ({ addon }) => {
+    const mints: unknown[][] = [];
+    const { db, deps } = await depsWith(stubPort({
+      manageLink: async (...a) => { mints.push(a); return { url: "https://manage.example/manage?token=x" }; },
+    }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const res = await H(req("POST", "/account/manage-link/change", {
+      bearer: s.token, body: JSON.stringify({ lang: "de", accountId: randomUUID(), addon }),
+    }), deps);
+    expect(res.status).toBe(200);
+    expect(mints).toEqual([[s.accountId, "de", undefined, {
+      elevated: true, storageNeed: { expectedBytes: 0, expectedLetters: 0, importing: false },
+      ...(typeof addon === "string" ? { addon } : {}),
+    }]]);
+  });
+
   it("404 on a host with no program", async () => {
     const { db, deps } = await depsWith(undefined);
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });

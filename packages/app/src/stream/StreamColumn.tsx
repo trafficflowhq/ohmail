@@ -78,7 +78,6 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
       manualScrollAnchor={shown.length > 0}
       extendTop={!phone}
       foot={panel}
-      coverFoot
       jump={
         <StreamBackToTop scroller={model.scroller} keysHere={keysHere} onPress={() => backToTop(model)} />
       }

@@ -58,7 +58,10 @@ export interface CalendarInfo {
   readonly color: string | null;
   readonly writable: boolean;
   readonly owned?: true;
-  readonly nativeMove?: true;
+  /** A failed capability probe reports null. An absent flag means the calendar lacks the capability. */
+  readonly nativeMove?: true | null;
+  /** Whether CalDAV schedules invitations. A failed probe reports null. */
+  readonly autoSchedule?: true | null;
   /** Whether changes can be asked by token. Where not, `readChanges` answers the whole set each time. */
   readonly byToken: boolean;
   /** The zone the calendar is meant to be read in, where the provider names one. */
@@ -89,7 +92,7 @@ export type ChangeItem =
    * and a subscription; `null` for Google and Microsoft, which store no calendar text.
    * `audienceIncomplete` marks a reading with omitted or unrepresentable participants.
    */
-  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true; readonly portableCopy?: true; readonly selfAttendee?: string | null }
+  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true; readonly portableCopy?: true; readonly googleDefaultEvent?: true; readonly selfAttendee?: string | null }
   /** The stored object of this id is no longer there. */
   | { readonly kind: "gone"; readonly id: string }
   /** One day of a series was cancelled, and the provider says so by a record of its own. */

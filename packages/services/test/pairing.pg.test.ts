@@ -102,14 +102,17 @@ describe.skipIf(!PG_UP)("on real Postgres — a pairing token is spent exactly o
   }, 60_000);
   afterAll(async () => { await owned?.close(); });
 
-  it("TWELVE simultaneous device-pair redeems of one token: ONE session, ONE device, eleven refusals", async () => {
+  it.each([
+    { calendarOnly: false, scope: "full" },
+    { calendarOnly: true, scope: "calendar" },
+  ])("twelve simultaneous $scope redeems use one token and create one session and device", async ({ calendarOnly, scope }) => {
     const { userId } = await seedUser();
     const minted = await mintPairingToken(ctxFor(userId), {
       grant: "device-pair", label: "Kitchen iPad",
     });
 
     const { fire, results } = volley(FANOUT, () =>
-      redeemDevicePair(ctxFor(null), auth, { token: minted.token }));
+      redeemDevicePair(ctxFor(null), auth, { token: minted.token, calendarOnly }));
     fire();
     const settled = await results;
 
@@ -136,8 +139,8 @@ describe.skipIf(!PG_UP)("on real Postgres — a pairing token is spent exactly o
     // …and the bearer pair the winner holds resolves to a session with NO step-up standing:
     // `lastTwofaAt` NULL, by `establishPairedDevice`'s design, so a freshly paired device fails
     // step-up closed until its holder asserts a factor of their own.
-    expect((await db.select().from(sessions).where(eq(sessions.userId, userId)))[0]!.lastTwofaAt)
-      .toBeNull();
+    expect((await db.select().from(sessions).where(eq(sessions.userId, userId)))[0])
+      .toMatchObject({ lastTwofaAt: null, scope });
   }, 60_000);
 
   it("TEN simultaneous invite-grant redeems of one token mint exactly ONE invite", async () => {

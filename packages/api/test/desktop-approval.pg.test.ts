@@ -2,11 +2,12 @@ import { perRequest } from "./helpers.js";
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { eq, inArray, sql } from "drizzle-orm";
-import { accounts, users, sessions, devices, refreshTokens } from "@trafficflow/db";
+import { accounts, users, sessions, devices, refreshTokens, type Tx } from "@trafficflow/db";
 import { loginTokens, authEvents, makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
+import { selfHostRoutes } from "@trafficflow/api/self-host";
 import {
   hashToken, generateToken, makeTestAuthDeps, makeAuthService, type Db,
 } from "@trafficflow/services";
@@ -24,14 +25,15 @@ import {
 const PG_UP = await realPgAvailable();
 const FIXED_NOW = new Date("2026-08-09T12:00:00.000Z");
 const app = createApp(apiRoutes);
+const selfHost = createApp(selfHostRoutes);
 
 /** Only the auth service is reached; the rest of `ApiDeps.services` is never read here. */
-function depsOn(db: Db): ApiDeps {
+function depsOn(db: Db, now = () => FIXED_NOW): ApiDeps {
   const authDeps = makeTestAuthDeps({});
   // A request's container on `db`'s pool, its handle as a host mints a request's.
   return perRequest({
     ...({
-      now: () => FIXED_NOW, requestId: `pg-${randomUUID()}`, session: null,
+      now, requestId: `pg-${randomUUID()}`, session: null,
       authConfig: authDeps.config, keyProvider: authDeps.keyProvider,
       services: { auth: makeAuthService(authDeps) },
     } as unknown as Omit<ApiDeps, "db">),
@@ -47,15 +49,15 @@ const pkce = (): { verifier: string; challenge: string } => {
 /** A fresh client address per call: the fixed clock never rolls the limiter's window. */
 const freshIp = (): string => `198.18.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`;
 
-const post = (db: Db, path: string, body: unknown, bearer?: string): Promise<Response> =>
-  app.handle(new Request(`http://localhost${path}`, {
+const post = (db: Db, path: string, body: unknown, bearer?: string, server = app, now?: () => Date): Promise<Response> =>
+  server.handle(new Request(`http://localhost${path}`, {
     method: "POST",
     headers: {
       "content-type": "application/json", "x-forwarded-for": freshIp(),
       ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
     },
     body: JSON.stringify(body),
-  }), depsOn(db));
+  }), depsOn(db, now));
 
 describe.skipIf(!PG_UP)("the desktop approval against real Postgres", () => {
   const FANOUT = 12;
@@ -91,8 +93,11 @@ describe.skipIf(!PG_UP)("the desktop approval against real Postgres", () => {
     await Promise.all(owned.map((o) => o.close()));
   });
 
-  /** A signed-in, stepped-up browser and a desktop's request it has confirmed. */
-  async function confirmed(): Promise<{ userId: string; id: string; verifier: string }> {
+  const desktop = { server: app, kind: "desktop-linux", label: "pg-box" };
+  const phone = { server: selfHost, kind: "mobile-android", label: "Android" };
+
+  /** A signed-in, stepped-up browser and an unconfirmed app request. */
+  async function requested({ server, kind, label } = desktop) {
     const token = generateToken();
     const [acct] = await fixture.insert(accounts).values({ name: `approval-${randomUUID()}` }).returning();
     const [user] = await fixture.insert(users).values({
@@ -105,19 +110,27 @@ describe.skipIf(!PG_UP)("the desktop approval against real Postgres", () => {
       refreshExpiresAt: new Date(FIXED_NOW.getTime() + 7_200_000), lastTwofaAt: FIXED_NOW,
     });
     const { verifier, challenge } = pkce();
-    const asked = await post(fixture, "/auth/desktop-approval", { challenge, kind: "desktop-linux", label: "pg-box" });
+    const asked = await post(fixture, "/auth/desktop-approval", { challenge, kind, label }, undefined, server);
     expect(asked.status, await asked.clone().text()).toBe(200);
     const { approvalId } = (await asked.json()) as { approvalId: string };
     made.approvalIds.push(approvalId);
-    const ok = await post(fixture, `/auth/desktop-approval/${approvalId}/confirm`, {}, token);
-    expect(ok.status, await ok.clone().text()).toBe(200);
-    return { userId: user!.id, id: approvalId, verifier };
+    return { userId: user!.id, accountId: acct!.id, id: approvalId, verifier, token };
   }
 
-  it("TWELVE simultaneous claims of one confirmed request produce exactly ONE session", async () => {
-    const { userId, id, verifier } = await confirmed();
+  async function confirmed(spec = desktop) {
+    const request = await requested(spec);
+    const ok = await post(fixture, `/auth/desktop-approval/${request.id}/confirm`, {}, request.token, spec.server);
+    expect(ok.status, await ok.clone().text()).toBe(200);
+    return request;
+  }
+
+  it.each([
+    { name: "Cloud desktop", server: app, kind: "desktop-linux", label: "pg-box" },
+    { name: "self-hosted phone", server: selfHost, kind: "mobile-android", label: "Android" },
+  ])("twelve concurrent claims for a $name mint one session", async (spec) => {
+    const { userId, id, verifier } = await confirmed(spec);
     const results = await Promise.all(dbs.slice(0, FANOUT).map((db) =>
-      post(db, "/auth/desktop-approval/claim", { approvalId: id, verifier, kind: "desktop-linux" })));
+      post(db, "/auth/desktop-approval/claim", { approvalId: id, verifier, kind: spec.kind }, undefined, spec.server)));
     const statuses = results.map((r) => r.status);
     expect(statuses.filter((s) => s === 200), `statuses: ${statuses.join(",")}`).toHaveLength(1);
     const losers = results.filter((r) => r.status !== 200);
@@ -126,8 +139,53 @@ describe.skipIf(!PG_UP)("the desktop approval against real Postgres", () => {
     // The database's count: the seeded browser session plus ONE desktop, and ONE named device.
     expect(await fixture.select().from(sessions).where(eq(sessions.userId, userId))).toHaveLength(2);
     const devs = await fixture.select().from(devices).where(eq(devices.userId, userId));
-    expect(devs.map((d) => d.label)).toEqual(["pg-box"]);
+    expect(devs.map((d) => [d.kind, d.label])).toEqual([[spec.kind, spec.label]]);
   }, 60_000);
+
+  async function tickWhileBlocked(
+    lock: (tx: Tx) => PromiseLike<unknown>,
+    send: (now: () => Date) => Promise<Response>,
+  ) {
+    let clock = FIXED_NOW;
+    let response!: Promise<Response>;
+    await fixture.transaction(async (tx) => {
+      const [holder] = await tx.execute(sql`select pg_backend_pid() as pid`);
+      await lock(tx);
+      response = send(() => clock);
+      await expect.poll(async () => {
+        const [blocked] = await dbs[1]!.execute(sql`select exists (
+          select 1 from pg_stat_activity where datname = current_database()
+            and ${holder!.pid}::int = any(pg_blocking_pids(pid))
+        ) as waiting`);
+        return blocked?.waiting;
+      }, { timeout: 4_000 }).toBe(true);
+      clock = new Date(FIXED_NOW.getTime() + 300_000);
+    });
+    const reply = await response;
+    expect(reply.status).toBe(410);
+    expect(await reply.json()).toMatchObject({ error: { code: "approval_expired" } });
+  }
+
+  it.each(["account", "approval"] as const)("a claim checks its deadline after the %s row becomes available", async (lock) => {
+    const { userId, accountId, id, verifier } = await confirmed(phone);
+    await tickWhileBlocked((tx) => lock === "account"
+      ? tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, accountId)).for("update")
+      : tx.select({ id: loginTokens.id }).from(loginTokens).where(eq(loginTokens.id, id)).for("update"),
+    (now) => post(dbs[0]!, "/auth/desktop-approval/claim", { approvalId: id, verifier, kind: phone.kind },
+      undefined, phone.server, now));
+    expect(await fixture.select().from(sessions).where(eq(sessions.userId, userId))).toHaveLength(1);
+    expect(await fixture.select().from(devices).where(eq(devices.userId, userId))).toHaveLength(0);
+  }, 30_000);
+
+  it("confirmation checks its deadline after the user row becomes available", async () => {
+    const { userId, id, token } = await requested(phone);
+    await tickWhileBlocked(
+      (tx) => tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for("update"),
+      (now) => post(dbs[0]!, `/auth/desktop-approval/${id}/confirm`, {}, token, phone.server, now),
+    );
+    const [row] = await fixture.select().from(loginTokens).where(eq(loginTokens.id, id));
+    expect(row).toMatchObject({ userId: null, approvedAt: null, consumedAt: null });
+  }, 30_000);
 
   it("TWELVE simultaneous wrong verifiers stop at five, revoke once, audit once", async () => {
     const { userId, id, verifier } = await confirmed();

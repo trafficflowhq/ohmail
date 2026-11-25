@@ -1,10 +1,10 @@
 import {
   AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, PLAN_HINT_PLANS, UNMETERED_ACCESS,
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type AccessTrial, type ActionPrices,
-  type TrialStorageCarry, type StorageNeed, type StorageOffer, type StorageOfferPlan, type StorageTold,
+  type TrialStorageCarry, type StorageNeed, type StorageOffer, type StorageOfferPlan, type StorageComparisonPlan, type StorageTold,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type UsageReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
-  type SpendRelease, type ReturnConfirmOutcome, type PlanHint, planHintOf, type PlaneOpsReading,
+  type SpendRelease, type ReturnConfirmOutcome, type PlanHint, planHintOf, manageAddonOf, type ManageLinkChange, type PlaneOpsReading,
 } from "./entitlements-port.js";
 import { isAiRefusalReason } from "./ai-gate-port.js";
 import { SPEND_ACTIONS, assertAttemptKey } from "./ledger-source.js";
@@ -392,6 +392,28 @@ const isPlan = (v: unknown): v is StorageOfferPlan["plan"] => (PLAN_HINT_PLANS a
 /** A reason the program names in one lower-case word; free text never reaches a screen. */
 const REASON_WORD = /^[a-z][a-z_]{0,31}$/;
 
+/** An older or unreadable comparison leaves the account's change quote available. */
+function storageComparisonOf(raw: unknown): StorageComparisonPlan[] | undefined {
+  if (!Array.isArray(raw) || raw.length > PLAN_HINT_PLANS.length) return undefined;
+  const plans: StorageComparisonPlan[] = [];
+  for (const item of raw) {
+    const plan = obj(item);
+    if (!plan || !isPlan(plan.plan) || plans.some((p) => p.plan === plan.plan) || !isCount(plan.mailboxes)
+      || !isCount(plan.storageBytes) || !isCount(plan.setupSuggestions) || !isCount(plan.monthlyCredits)) return undefined;
+    const prices = obj(plan.pricesMinor);
+    if (!prices) return undefined;
+    const { month, year } = prices;
+    if ((month === undefined && year === undefined) || (month !== undefined && !isCount(month))
+      || (year !== undefined && !isCount(year))) return undefined;
+    plans.push({
+      plan: plan.plan, mailboxes: plan.mailboxes, storageBytes: plan.storageBytes,
+      setupSuggestions: plan.setupSuggestions, monthlyCredits: plan.monthlyCredits,
+      pricesMinor: { ...(month === undefined ? {} : { month }), ...(year === undefined ? {} : { year }) },
+    });
+  }
+  return plans;
+}
+
 /** The setup pool while it holds credits; spent, expired, absent or unreadable is none. */
 function setupPoolOf(raw: unknown): { remaining: number; expiresAt: string | null } | null {
   const o = obj(raw);
@@ -422,7 +444,10 @@ function storageOfferOf(raw: unknown): StorageOffer | null | { bad: string } {
     const p = obj(item);
     if (!p || !isPlan(p.plan) || plans.some((q) => q.plan === p.plan) || !isCount(p.mailboxes)
       || !isCount(p.storageBytes) || !isCount(p.priceMinor)) return { bad: "storageOffer.card.plans" };
-    plans.push({ plan: p.plan, mailboxes: p.mailboxes, roomBytes: p.storageBytes, amount: p.priceMinor });
+    plans.push({
+      plan: p.plan, mailboxes: p.mailboxes, roomBytes: p.storageBytes, amount: p.priceMinor,
+      ...(isCount(p.setupSuggestions) ? { setupSuggestions: p.setupSuggestions } : {}),
+    });
   }
   let addon: StorageOffer["addon"] = null;
   if (card.storageUnit !== null) {
@@ -468,9 +493,11 @@ function storageOfferOf(raw: unknown): StorageOffer | null | { bad: string } {
   if (typeof o.canChange !== "boolean") return { bad: "storageOffer.canChange" };
   const reason = o.reason ?? null;
   if (reason !== null && (typeof reason !== "string" || !REASON_WORD.test(reason))) return { bad: "storageOffer.reason" };
+  const comparisonPlans = storageComparisonOf(o.comparisonPlans);
   return {
     currency: card.currency, interval: card.interval, plans, addon, ...(mailboxAddon ? { mailboxAddon } : {}), current, fit,
-    canChange: o.canChange, reason,
+    ...(typeof o.setupBoostEligible === "boolean" ? { setupBoostEligible: o.setupBoostEligible } : {}),
+    canChange: o.canChange, reason, ...(comparisonPlans === undefined ? {} : { comparisonPlans }),
   };
 }
 
@@ -932,15 +959,17 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
 
     async manageLink(
       accountId: string, lang?: "de" | "en", hint?: PlanHint,
-      change?: { elevated: true; storageNeed?: StorageNeed },
+      change?: ManageLinkChange,
     ): Promise<{ url: string } | null> {
       // Named only when the caller chose one: an older program reads `accountId` alone, and one that
       // predates the hint ignores `plan` and `interval` (the body is read field by field).
       const { plan, interval } = planHintOf(hint?.plan, hint?.interval);
+      const addon = change?.elevated === true ? manageAddonOf(change.addon) : undefined;
       const res = await post("/v1/manage-link", {
         accountId, ...(lang ? { lang } : {}), ...(plan ? { plan } : {}), ...(interval ? { interval } : {}),
         ...(change?.elevated === true ? { elevated: true } : {}),
         ...(change?.elevated === true && change.storageNeed ? { storageNeed: change.storageNeed } : {}),
+        ...(addon ? { addon } : {}),
       });
       if (!res || res.status !== 200 || !res.bodyIsJson) return null;
       const b = obj(res.body);

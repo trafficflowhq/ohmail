@@ -1,6 +1,6 @@
 {
-  "release": "2.0.6",
-  "tag": "466426ff3f637ca4a00bcaccb3f19e4257f726df",
+  "release": "2.0.7",
+  "tag": "63ce051ad505ca4ce90e183a466121db35bea753",
   "note": "Every migration file the three journals (mail, Cloud, device store) named at this commit, with the sha256 drizzle records when it applies one. A released migration is immutable: edit it and released-migrations-are-frozen.test.ts reddens. Write a new migration instead. A device store knows an applied entry by its file name alone, so a device-store file is also never renamed or removed, no allowance admits an edit of one, and no new entry sorts below the highest one pinned here. scripts/pin-released-migrations.mjs writes this file.",
   "files": {
     "packages/db-mail/drizzle-sqlite/0001_baseline.sql": "cfb0daa1bf793284760283078d736564bb5fcdca3472a2ef3df03bde2be7d53d",
@@ -298,6 +298,10 @@
     "packages/db-mail/drizzle/0221_screener_acknowledgements.sql": "30c992a687b95585324412d757b7fb7ed3b0d01d35d84215866525efc69fe81e",
     "packages/db-mail/drizzle/0222_screener_learning.sql": "a8677413a7836f39b95cfa88be5405c1bd168e31a9fefb7800816d0b3f3859a4",
     "packages/db-mail/drizzle/0223_calendar_preferences.sql": "776f6bf2e23c6d115ba20b8a06bf9b5284b6841513bc1743e9d59bc5089f60da",
+    "packages/db-mail/drizzle/0224_calendar_auto_schedule.sql": "3add7118e92068efe8edaae5cf3f91209d8b3465d28142a3b02105765b8b447c",
+    "packages/db-mail/drizzle/0225_calendar_mail_answer.sql": "675b8fc666193a437a484c281509f62a71fbf20a82f41ca29b8d99ae18b94426",
+    "packages/db-mail/drizzle/0226_google_default_calendar_event.sql": "e6ed6386fa84cb9a23e4f0731214daa3db147b40a3a74ddab98991640324e381",
+    "packages/db-mail/drizzle/0227_calendar_session_scope.sql": "ffc8021939a5e7e060a54661bb7ff91d55fe02ee61a59101e19e00b7a0d5df0d",
     "packages/db/drizzle-cloud/0000_auth_ceremony.sql": "9ae287196e7c98bf9f65636ff5170870e0909031de2554b6c83102b2dcc9bbff",
     "packages/db/drizzle-cloud/0001_push_subscriptions.sql": "c0b8c6d0eea109d92ac77933166c45a63f91e9770fcbbe9c8ef4cd2d3b9a2fdb",
     "packages/db/drizzle-cloud/0003_observability.sql": "6089221de92c7452b69a0178cf74ba43838575fd07760263ec1cc70d1e0dda5b",

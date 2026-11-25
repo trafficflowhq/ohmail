@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, like, ne } from "drizzle-orm";
 import {
   drafts, invitationStanding, mailboxes, messageInvitations, messages, outboundSends, recordChanges, recordInvitationAnswer,
-  sameAddress, type Tx,
+  sameAddress, type ChangeInput, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { createLogger, invitationReplyText, type Logger } from "@trafficflow/core/mail";
@@ -48,9 +48,15 @@ export type InvitationRow = typeof messageInvitations.$inferSelect;
  */
 export type AnswerViaProvider = (ctx: ServiceContext, row: InvitationRow) => Promise<InvitationAnswerResult | null>;
 
+export type RecordCalendarMailAnswer = (
+  tx: Tx, row: InvitationRow, answer: InvitationAnswer,
+) => Promise<ChangeInput | undefined>;
+
 export interface InvitationAnswerDeps {
   /** The send's own deps, as the send route builds them (`sendDepsOf`). */
   send: SendDeps;
+  /** Hosts that store calendar copies may update one in the reply transaction. */
+  recordCalendarMailAnswer?: RecordCalendarMailAnswer;
   /** Absent: every answer goes by mail. Injected at the composition root by the calendar's own entry. */
   viaProvider?: AnswerViaProvider;
   /** Test seams; the process's singletons by default. */
@@ -161,12 +167,16 @@ async function nextStamp(ctx: ServiceContext, tx: Tx, messageId: string): Promis
  */
 async function recorded(
   ctx: ServiceContext, row: InvitationRow, answer: InvitationAnswer, draft: { id: string; createdAt: Date }, sent: SendResult | null,
+  recordCalendarMailAnswer: RecordCalendarMailAnswer | undefined,
 ): Promise<InvitationAnswerOutcome> {
   const seq = await withAccountTx(ctx, async (tx) => {
     const touched = await recordInvitationAnswer(bridgeTx(tx), {
       accountId: ctx.accountId, mailboxId: row.mailboxId, uid: row.uid, recurrenceId: row.recurrenceId,
       sequence: row.sequence, organizer: row.organizer, answer, at: draft.createdAt,
     });
+    const calendarChange = touched.length > 0
+      ? await recordCalendarMailAnswer?.(bridgeTx(tx), row, answer)
+      : undefined;
     // Only this letter's other answers: replies that forward nothing, under the answer's mark.
     const stale = await tx.delete(drafts).where(and(
       eq(drafts.accountId, ctx.accountId), eq(drafts.inReplyToMessageId, row.messageId), isNull(drafts.forwardOfMessageId),
@@ -174,6 +184,7 @@ async function recorded(
     )).returning({ id: drafts.id });
     const seqs = await recordChanges(tx, [
       ...touched.map((id) => ({ accountId: ctx.accountId, entityType: "message" as const, entityId: id, op: "update" as const, meta: null })),
+      ...(calendarChange ? [calendarChange] : []),
       ...stale.map((d) => ({ accountId: ctx.accountId, entityType: "draft" as const, entityId: d.id, op: "delete" as const, meta: null })),
     ]);
     return seqs.length === 0 ? null : Number(seqs[seqs.length - 1]);
@@ -198,10 +209,11 @@ export async function refuseWithdrawnKey(ctx: ServiceContext, key: string): Prom
 /** A draft some other press holds: what became of it. */
 async function heldElsewhere(
   ctx: ServiceContext, row: InvitationRow, answer: InvitationAnswer, draft: { id: string; createdAt: Date },
+  recordCalendarMailAnswer: RecordCalendarMailAnswer | undefined,
 ): Promise<InvitationAnswerOutcome> {
   const [d] = await bridgeTx(ctx.db).select({ status: drafts.status }).from(drafts)
     .where(and(eq(drafts.id, draft.id), eq(drafts.accountId, ctx.accountId))).limit(1);
-  if (d?.status === "sent") return recorded(ctx, row, answer, draft, null);
+  if (d?.status === "sent") return recorded(ctx, row, answer, draft, null, recordCalendarMailAnswer);
   return { result: { status: d?.status === "unverified" ? "unverified" : "in_flight", answer }, seq: null };
 }
 
@@ -233,7 +245,7 @@ async function answerOnce(
     body: `${mailbox!.address} ${SAID[answer]} this invitation.`, to: [{ name: null, address: row.organizer! }],
   }, invitationAnswerKey(ctx.accountId, messageId, answer, row.answeredAt), { createdAt: (tx) => nextStamp(ctx, tx, messageId) });
   if (draft.status === "sent" || draft.status === "sending" || draft.status === "unverified") {
-    return heldElsewhere(ctx, row, answer, draft);
+    return heldElsewhere(ctx, row, answer, draft, deps.recordCalendarMailAnswer);
   }
   const text = replyText(row, answer, draft.createdAt);
   if (text === null) throw notAnswerable("This invitation's occurrence cannot be answered by mail.");
@@ -245,7 +257,7 @@ async function answerOnce(
     });
   } catch (err) {
     // Another press took the draft between this one's read and its reservation.
-    if (err instanceof ServiceError && err.code === "conflict") return heldElsewhere(ctx, row, answer, draft);
+    if (err instanceof ServiceError && err.code === "conflict") return heldElsewhere(ctx, row, answer, draft, deps.recordCalendarMailAnswer);
     // The draft went with another answer recorded meanwhile.
     if (err instanceof ServiceError && err.code === "not_found") {
       const now = await readInvitation(ctx, messageId);
@@ -257,7 +269,7 @@ async function answerOnce(
   if (sent.draftId !== draft.id) {
     throw new ServiceError("conflict", 409, "This key belongs to another letter's send; nothing was sent for this answer.");
   }
-  if (sent.status === "sent") return recorded(ctx, row, answer, draft, sent);
+  if (sent.status === "sent") return recorded(ctx, row, answer, draft, sent, deps.recordCalendarMailAnswer);
   return { result: { status: sent.status, answer }, seq: sent.status === "queued" || sent.status === "unverified" ? sent.seq : null };
 }
 

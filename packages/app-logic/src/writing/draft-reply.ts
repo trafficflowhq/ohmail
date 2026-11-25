@@ -11,6 +11,7 @@
 /** Read the saved draft directly after the purchase receipt. Progress is provisional. */
 import { useCallback, useRef, useState } from "react";
 import type { AnswerOf, ParamsOf, RequestOf } from "@ohmail/wire";
+import { repairLegacyDraftHtml } from "@trafficflow/core/outbound-text";
 import { isRichEmpty, type RichValue } from "./rich-text.js";
 import type { Translator } from "../text/translator.js";
 import { aiRefusalKey, draftFailureKey } from "../text/ai-refusal-copy.js";
@@ -48,7 +49,7 @@ export interface DraftReplyWire {
    * reused on a retry of that press, so a lost answer is replayed instead of bought twice.
    */
   create: (
-    messageId: ParamsOf<"POST /messages/:id/draft">["id"], idempotencyKey: string, onPreview?: DraftPreview,
+    messageId: ParamsOf<"POST /messages/:id/draft">["id"], idempotencyKey: string, onPreview?: DraftPreview, fullConversation?: boolean,
   ) => Promise<AnswerOf<"POST /messages/:id/draft">>;
   /** `GET /drafts/:id`, the draft that purchase wrote. A read; it spends nothing. */
   read: (draftId: string) => Promise<DraftReplyRead>;
@@ -202,7 +203,12 @@ export function useDraftReply(opts: {
           return;
         }
         setNotice(null);
-        const landed = { text: draft.body ?? "", html: draft.html ?? "" };
+        const text = draft.body ?? "";
+        const landed: DraftedReply = {
+          text,
+          html: repairLegacyDraftHtml(draft.html ?? "", text),
+          ...(lands === "letter" ? { aiDraft: true } : {}),
+        };
         /*
          * This letter's entry alone. Over the person's own words: they stay one tab away. Over none (or words let go
          * with their reply since the press): the draft is kept with no text of theirs, so it is drafted again as a
@@ -247,18 +253,20 @@ export function useDraftReply(opts: {
     spend(messageId, messageId, (key, progress) => wire.create(messageId, key, progress), null, "reply");
   }, [messageId, phase, spend, wire]);
 
-  const press = useCallback((id: string, typed: RichValue) => {
+  const press = useCallback((id: string, typed: RichValue, fullConversation = false) => {
     if (wire === "none" || phase === "running" || io.current.busy) return;
     setMessageId(id);
-    spend(id, id, (key, progress) => wire.create(id, key, progress), typed, "reply");
+    spend(id, fullConversation ? `${id}\nfull` : id, (key, progress) => fullConversation
+      ? wire.create(id, key, progress, true) : wire.create(id, key, progress), typed, "reply");
   }, [phase, spend, wire]);
 
   /* The door for a draft made of the person's own words: the host's, or `none` (also where the host has no drafter). */
   const textWire = wire === "none" ? "none" : wire.fromText;
-  const pressText = useCallback((id: string, text: string, typed: RichValue) => {
+  const pressText = useCallback((id: string, text: string, typed: RichValue, fullConversation = false) => {
     if (textWire === "none" || io.current.busy) return;
     setMessageId(id);
-    spend(id, `${id}\n${text}`, (key, progress) => textWire({ text, inReplyToMessageId: id }, key, progress), typed, "reply");
+    const body = { text, inReplyToMessageId: id, ...(fullConversation ? { fullConversation: true } : {}) };
+    spend(id, JSON.stringify(body), (key, progress) => textWire(body, key, progress), typed, "reply");
   }, [spend, textWire]);
 
   const pressLetter = useCallback((

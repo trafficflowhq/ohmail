@@ -227,6 +227,29 @@ describe("every calendar kind walks from a row to two devices", () => {
     }
   }, 120_000);
 
+  it("keeps a CalDAV calendar's native move capability through the desktop copy", async () => {
+    const srv = await server();
+    await srv.db.update(calCalendars).set({ nativeMove: true }).where(eq(calCalendars.id, srv.ids.calendar));
+    const desk = await desktopCopy(srv.route, srv.mailboxId);
+    expect(held(desk.second, "calendar")[0]).toMatchObject({ nativeMove: true });
+  }, 120_000);
+
+  it("keeps the Google event type restriction in the feed and desktop copy", async () => {
+    const srv = await server(2);
+    const [ordinary, restricted] = srv.ids.events;
+    await srv.db.update(calConnections).set({ provider: "google" }).where(eq(calConnections.id, srv.ids.connection));
+    await srv.db.update(calEvents).set({ googleDefaultEvent: true }).where(eq(calEvents.id, ordinary!));
+    const { store } = await drain(srv.route);
+    const desk = await desktopCopy(srv.route, srv.mailboxId);
+    for (const copy of [store, desk.second]) {
+      const events = held(copy, "calendar_event");
+      expect(events.find(({ id }) => id === ordinary)).toHaveProperty("googleDefaultEvent", true);
+      const restrictedEvent = events.find(({ id }) => id === restricted);
+      expect(restrictedEvent).toBeDefined();
+      expect(restrictedEvent).not.toHaveProperty("googleDefaultEvent");
+    }
+  }, 120_000);
+
   it("an event's writes, owed and refused, ride its record through the desktop's copy and are served again as they left", async () => {
     const srv = await server(1, { marks: true });
     const { store } = await drain(srv.route);

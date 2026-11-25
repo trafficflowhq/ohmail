@@ -59,7 +59,7 @@ export interface RowProps {
   address?: string;
   /** The sender identity chip between the name and address. */
   senderCheck?: { label: string; title: string };
-  /** The address is identity evidence on this row: let the name yield before its domain. */
+  /** True lets the name yield before its domain. Explicit false lets the address ellipsize beside labels. */
   keepAddressDomain?: boolean;
   /** The circles: who the row leads with, then one other voice. Empty: the row is no person and shows its `sign`. */
   people: readonly RowPerson[];

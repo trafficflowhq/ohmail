@@ -13,7 +13,7 @@ import {
 } from "@ohmail/app-logic/calendar";
 import { newEventsCalendarOf } from "@ohmail/app-logic/calendar/setup";
 import { EventChip } from "@ohmail/ui/calendar";
-import { useCalendarInvitation, useFrame } from "../frame/commands.js";
+import { useFrame } from "../frame/commands.js";
 import type { CalendarPlaceId, FrameCommands, Route } from "../frame/contract.js";
 import type { CalendarSurfaceProps } from "./CalendarBody.js";
 import { slotOnDay, useSlotDraft } from "./use-slot-draft.js";
@@ -38,7 +38,6 @@ export function useCalendarCanvas(
   const locale = useLocale();
   const { route, port, zones, where, found, zone } = props;
   const { settings, plan, agendaPanel, cursor, create, sources } = props;
-  const { current: invitation } = useCalendarInvitation();
   const actions = useEventActions(port, zones);
   const stepWeek = weekEdgeStep(props, commands);
   const { startSlot, preview: slot } = useSlotDraft(
@@ -75,8 +74,11 @@ export function useCalendarCanvas(
   const extra =
     actions.proposal.preview(opened, useEventLetters(opened).letters) ??
     (route.words.panel === "new" ? preview?.face : null);
-  const events = extra || invitation ? [...found.events, ...(extra ? [extra] : [])] : found.events;
-  if (invitation?.id === route.words.invitation && invitation) events.push(invitation);
+  const previewInvitation = opened?.invitation && opened.id === route.words.invitation ? opened : null;
+  const events =
+    extra || previewInvitation
+      ? [...found.events, ...(extra ? [extra] : []), ...(previewInvitation ? [previewInvitation] : [])]
+      : found.events;
   const open: FrameCommands["event"] = (ref) => {
     if (ref && [DRAFT_EVENT, PROPOSAL_DRAFT].includes(ref.event)) return;
     commands.event(ref);
@@ -90,7 +92,7 @@ export function useCalendarCanvas(
     zones,
     weekStart: settings.weekStart,
     weekNumbers: settings.weekNumbers,
-    open: route.open,
+    open: opened?.id ?? route.open,
     device: plan.device,
   };
   const acts: RangeActs = {
@@ -108,7 +110,7 @@ export function useCalendarCanvas(
     hiddenBusy: found.hiddenBusy,
     capped: found.capped,
     edge,
-    openId: route.open,
+    openId: opened?.id ?? route.open,
     revealOpen:
       route.open !== null &&
       (route.open === route.words.invitation ||

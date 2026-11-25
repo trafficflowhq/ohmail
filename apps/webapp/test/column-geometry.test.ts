@@ -7,15 +7,12 @@ import {
   COLUMNS_VERSION,
   LIST,
   RAIL,
-  RAIL_TRACK,
   RAIL_VAR,
-  SPLIT_SK_VAR,
   SPLIT_VAR,
   applyColumnVars,
   columnsBootScript,
   normalizeColumns,
   readColumns,
-  splitSkeletonValue,
   splitUserValue,
   writeColumns,
 } from "@ohmail/app-logic/lists/column-store";
@@ -43,38 +40,30 @@ import {
  * the geometry LOOKS like — `scripts/columns-render.mjs` is the rendered assertion, in real
  * Chromium at three widths and both faces. This is the text and the arithmetic.
  *
+ * The startup frame shares the live frame's columns, measured in `boot-sync-line-frames.test.ts`.
  * Mutations watched: the boot script's `Math.min` ceiling changed to 400 → the agreement table
- * red at 720. Today's deck, split and list column rules left this file with today's views: the
- * new frame's columns are held by its own cases (`packages/app/test/frame/rooms-in-a-browser`,
- * the kit's column handle in `packages/ui/test/mail/shell.test.tsx`); the boot frame's two rules
- * stay here while the desktop's boot frame draws them.
+ * red at 720.
  */
-
-const read = (rel: string) => readFileSync(resolve(process.cwd(), rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-const APP = read("apps/webapp/app/app.css");
-
-/** The declarations of the rule whose selector list starts a line with exactly `selector`. */
-function blockOf(css: string, selector: string): string {
-  const at = new RegExp(`(^|\\n)\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{`).exec(css);
-  expect(at, `no rule for ${selector}`).toBeTruthy();
-  const open = css.indexOf("{", at!.index + at![0].length - 1);
-  return css.slice(open + 1, css.indexOf("}", open)).replace(/\s+/g, " ").trim();
-}
 
 describe("app.css — the two properties the columns hang on, and the numbers they clamp to", () => {
   it("the boot silhouette stands in the SAME two properties, so nothing jumps when it fills in", () => {
-    const sk = blockOf(APP, ".boot-sk-window");
-    expect(sk).toContain(RAIL_TRACK);
-    // …and its OWN track list, not the shell's: a percentage inside these means the element the
-    // property is used on, and this box still contains the rail.
-    expect(sk).toContain(`var(${SPLIT_SK_VAR}, minmax(${LIST.min}px, ${LIST.dflt}px) 1fr)`);
-    expect(sk).not.toContain(`var(${SPLIT_VAR},`);
+    const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8");
+    const opening = read("packages/app/src/frame/OpeningFrame.tsx");
+    const live = read("packages/app/src/frame/FrameParts.tsx");
+    const placement = read("packages/app/src/frame/placement.css");
+    for (const frame of [opening, live]) {
+      expect(frame).toContain('from "./Columns.js"');
+      expect(frame).toContain("<Columns");
+    }
+    expect(placement).toContain(`clamp(${RAIL.min}px, var(${RAIL_VAR}, var(--rail)), ${RAIL.max}px)`);
+    expect(placement).toContain(`grid-template-columns: var(${SPLIT_VAR}, var(--fr-listw) minmax(0, 1fr))`);
   });
 
   it("the desktop's boot line takes its box from the same rail track, so it stays inside the rail", () => {
-    const foot = blockOf(APP, ".gate-boot > .boot-foot");
-    expect(foot).toContain(`width: ${RAIL_TRACK};`);
-    expect(foot).toContain("left: var(--gap-edge);");
+    const opening = readFileSync(resolve(process.cwd(), "packages/app/src/frame/OpeningFrame.tsx"), "utf8");
+    const placement = readFileSync(resolve(process.cwd(), "packages/app/src/frame/placement.css"), "utf8");
+    expect(opening).toMatch(/rail=\{[\s\S]*?className="fr-opening-rail"[\s\S]*?<Rail[\s\S]*?foot=\{status\}/);
+    expect(placement).toMatch(/\.fr-columns\s*\{[^}]*grid-template-columns: var\(--fr-rail\) minmax\(0, 1fr\)/);
   });
 });
 
@@ -159,7 +148,6 @@ describe("the pre-paint stamp writes what the shell writes", () => {
       const stamped = {
         rail: document.documentElement.style.getPropertyValue(RAIL_VAR),
         split: document.documentElement.style.getPropertyValue(SPLIT_VAR),
-        skeleton: document.documentElement.style.getPropertyValue(SPLIT_SK_VAR),
       };
 
       run();
@@ -167,7 +155,6 @@ describe("the pre-paint stamp writes what the shell writes", () => {
       const live = {
         rail: document.documentElement.style.getPropertyValue(RAIL_VAR),
         split: document.documentElement.style.getPropertyValue(SPLIT_VAR),
-        skeleton: document.documentElement.style.getPropertyValue(SPLIT_SK_VAR),
       };
 
       expect(stamped).toEqual(live);
@@ -178,13 +165,9 @@ describe("the pre-paint stamp writes what the shell writes", () => {
     window.localStorage.setItem(COLUMNS_KEY, JSON.stringify({ v: 1, list: 560 }));
     (0, eval)(columnsBootScript());
     expect(document.documentElement.style.getPropertyValue(SPLIT_VAR)).toBe(splitUserValue(560));
-    expect(document.documentElement.style.getPropertyValue(SPLIT_SK_VAR)).toBe(splitSkeletonValue(560));
     // The viewer's floor is handed to the browser as an expression rather than measured,
     // because the stamp runs before the tile-gap token is guaranteed to be resolvable.
     expect(splitUserValue(560)).toContain(`calc(100% - ${LIST.viewerMin}px - var(--gap-tile))`);
-    // …and the silhouette's subtracts the rail as well, because its full-width percentage still contains one.
-    expect(splitSkeletonValue(560)).toContain(RAIL_TRACK);
-    expect(splitSkeletonValue(560)).not.toBe(splitUserValue(560));
   });
 
   it("a jar that throws on read leaves the defaults standing, in BOTH writers", () => {

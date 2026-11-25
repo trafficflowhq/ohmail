@@ -48,6 +48,8 @@ export interface ComposeFields {
    * so a buffer written before this field existed still restores as a plain draft.
    */
   html: string;
+  /** Whether the body came from the drafter. Absent in older buffers. */
+  aiDraft?: boolean;
   /**
    * The sender the user picked, as a mailbox id; `null` = they did not pick one. A field on the
    * FORM rather than a derivation, because a default re-derived on every render would silently
@@ -449,6 +451,7 @@ export function readComposeDraft(scope: StorageScope): ComposeFields {
       // Same field-wise guard as `fromMailboxId` below, and it is what makes a draft written
       // by the plain textarea restore as a plain draft rather than as an empty one.
       html: typeof parsed.html === "string" ? parsed.html : "",
+      ...(typeof parsed.aiDraft === "boolean" ? { aiDraft: parsed.aiDraft } : {}),
       // Guarded field-wise, so a buffer written before this field existed reads back as "no
       // pick" and one
       // written after it is still readable by a bundle that predates the field. Nothing here

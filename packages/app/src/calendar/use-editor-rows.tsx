@@ -125,17 +125,20 @@ export function useEditorRows(draft: EventDraft, change: Change, editor?: Editor
     adds.push({ id: "alert", word: t("edit.alert"), icon: "bell", onPress: () => showAlerts(true) });
   }
 
+  const activePicker = picker && (editor.canInvite || picker.kind === "alert") ? picker : null;
   const menu =
-    picker?.kind === "invitees" ? (
+    activePicker?.kind === "invitees" ? (
       <InviteePicker
-        anchor={picker.anchor}
+        anchor={activePicker.anchor}
         guests={guests}
         change={change}
         close={close}
         above={editor.inviteesAbove}
       />
     ) : (
-      picker && <EditorPicker picker={picker} guests={guests} alarms={alarms} change={change} close={close} />
+      activePicker && (
+        <EditorPicker picker={activePicker} guests={guests} alarms={alarms} change={change} close={close} />
+      )
     );
   return { beforePlace, afterPlace, adds, menu };
 }

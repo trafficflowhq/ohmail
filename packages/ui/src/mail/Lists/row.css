@@ -937,10 +937,12 @@
     border-radius: var(--r-row);
   }
 
-  :root[data-touch="1"]:not([data-rm="1"]) .oh-row {
-    transition:
-      background-color var(--d-key-focus) var(--e-std),
-      transform var(--d-move) var(--e-out);
+  @media (prefers-reduced-motion: no-preference) {
+    :root[data-touch="1"]:not([data-rm="1"]) .oh-row {
+      transition:
+        background-color var(--d-key-focus) var(--e-std),
+        transform var(--d-move) var(--e-out);
+    }
   }
 
   .oh-row[data-swiping] {

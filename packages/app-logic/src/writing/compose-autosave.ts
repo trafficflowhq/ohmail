@@ -1204,6 +1204,8 @@ export function useComposeAutosave(opts: {
         // The row and its holds stand beside the letter, or not at all — see `unitStands`.
         const unit = unitStands();
         if (row === null && result.entityId) {
+          // A close awaiting this create can save again before React commits the id.
+          draftIdRef.current = result.entityId;
           setDraftId(result.entityId);
           // Beside the state, for the reload — see the adoption effect above.
           if (unit) writeComposeRow(result.entityId, owner.current);
@@ -1334,6 +1336,30 @@ export function useComposeAutosave(opts: {
     // `elsewhereAt`: a row let go of at mount changes no other input, and its words wait on this.
   }, [engine, fields, mailboxId, keepRowMailbox, active, draftId, sendInFlight, writeNow, elsewhereAt]);
 
+  const flushing = useRef<Promise<ComposeFlush> | null>(null);
+  const flush = useCallback((): Promise<ComposeFlush> => {
+    if (flushing.current !== null) return flushing.current;
+    const keepLatest = async (): Promise<ComposeFlush> => {
+      let keptCopy = false;
+      for (;;) {
+        // The save on the wire carries its earlier snapshot. Finish it before taking the next one.
+        while (inFlightP.current !== null) await inFlightP.current;
+        const snapshot = fieldsRef.current;
+        // Reconnect adopts this create and saves the buffer on its row.
+        if (draftIdRef.current === null && !draftOverCeiling(snapshot.body, snapshot.html)
+          && [...claims.current].some(([key, claim]) => claim.binding === epoch.current && createLive(engine, key))) {
+          return { kind: "nothing" };
+        }
+        const result = await writeNow();
+        if (result.kind === "failed" || result.kind === "tooLong") return result;
+        keptCopy ||= result.kind === "forked";
+        if (fieldsRef.current === snapshot) return keptCopy ? { kind: "forked" } : result;
+      }
+    };
+    flushing.current = keepLatest().finally(() => { flushing.current = null; });
+    return flushing.current;
+  }, [engine, writeNow]);
+
   /* Declared ABOVE the belt: at unmount the cleanups run in this order, so the composer is gone before it leaves. */
   useEffect(() => {
     composerGone.current = false;
@@ -1344,15 +1370,15 @@ export function useComposeAutosave(opts: {
   /**
    * THE BELT ON EVERY CLOSE PATH NO DOOR CAN INTERCEPT — the rail, a `g` jump, the browser's
    * Back, the shell unmounting. Routing is hash-driven, so none of them passes through a function
-   * the composer owns; `active` falling IS "the composer is going away", and the pending save
-   * runs here rather than being dropped with its timer. The doors (Escape, the close control)
+   * the composer owns. When `active` falls, the same flush waits out the wire and saves the latest
+   * words with the engine and scope of this mount. The doors (Escape, the close control)
    * await {@link ComposeAutosave.flush} themselves, so they can refuse to leave on a failure —
    * this cannot, and it is the same write either way.
    */
   useEffect(() => {
     if (!active) return;
-    return () => { void writeNow(); };
-  }, [active, writeNow]);
+    return () => { void flush(); };
+  }, [active, flush]);
   useEffect(() => {
     const o = owedAway.current;
     // Opened on screen first: the note shows, and the close below puts the letter away.
@@ -1492,14 +1518,6 @@ export function useComposeAutosave(opts: {
     kept: elsewhereAt.kept === true,
   };
 
-  const flush = useCallback(async (): Promise<ComposeFlush> => {
-    /* A save already on the wire carries OLDER text: waited out rather than deduped against, or
-       the keystrokes typed during its round trip would be the ones that never landed. */
-    const pending = inFlightP.current;
-    if (pending) await pending;
-    return writeNow(false);
-  }, [writeNow]);
-
   const notSent = useCallback(() => {
     // Refused or withdrawn: a create the press held is this message's again, as if no Send went.
     if (pressedAt.current === epoch.current) pressedAt.current = null;
@@ -1561,11 +1579,13 @@ export function useComposeAutosave(opts: {
       if (at === "take") {
         setDraftId(made.id);
         draftIdRef.current = made.id;
-        writeComposeRow(made.id, owner.current);
         saved.current = c.sig === "" ? null : c.sig;
         savedHash.current = c.hash === "" ? null : c.hash;
         base.current = made.revision;
-        if (c.hash !== "") markComposeRowHolds({ row: made.id, sig: c.hash, ...(made.revision ? { rev: made.revision } : {}) }, owner.current);
+        if (unitStands()) {
+          writeComposeRow(made.id, owner.current);
+          if (c.hash !== "") markComposeRowHolds({ row: made.id, sig: c.hash, ...(made.revision ? { rev: made.revision } : {}) }, owner.current);
+        }
         if (c.mailbox) savedMailbox.current = c.mailbox;
         openWrite.current = false;
         reached.current = c.seq;

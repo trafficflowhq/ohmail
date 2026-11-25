@@ -10,12 +10,17 @@
  *
  * The list beside the letter is a stand-in: the Drafts list is the places' (the comparison cuts the letter's parts).
  */
+import { SignaturesPane, SignatureEditor, signaturesState } from "../../src/settings/signatures/index.js";
+import settingsEn from "../../messages/settings.en.json" with { type: "json" };
+import sigEn from "../../messages/settings-signatures.en.json" with { type: "json" };
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ListHead } from "@ohmail/ui/mail";
+import { ActionPanel, ListHead, Sheet } from "@ohmail/ui/mail";
 import { composePlan, type ComposeFields } from "@ohmail/app-logic/writing/compose";
 import type { ImageQualityLevel, PicturesPort, SendSurface } from "@ohmail/app-logic/write/files";
 import type { ScheduleFiles } from "@ohmail/app-logic/write/later";
+import { InlineReply } from "../../src/reader/parts.js";
+import "../../src/reader/column.css";
 import { Frame } from "../../src/frame/Frame.js";
 import { useRailModel } from "../../src/frame/commands.js";
 import type { PaneProps, RailModel } from "../../src/frame/contract.js";
@@ -32,7 +37,7 @@ import {
 import { richEditor } from "../../src/write/editor/index.js";
 import type { WriteOwnText } from "../../src/write/ports.js";
 import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
-import { fakeAddress, fakeAppearance, fakeWindow, ROOMS } from "../support/fake-window.js";
+import { fakeAddress, fakeAppearance, fakeWindow, movable, ROOMS } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 import {
   DRAFTED,
@@ -74,6 +79,7 @@ const device = (q.get("device") ?? "desktop") as "desktop" | "phone" | "fold" | 
 const room = device === "foldl" ? ROOMS.land : (ROOMS[device as keyof typeof ROOMS] ?? ROOMS.desktop);
 const size = { width: window.innerWidth || room.width, height: window.innerHeight || room.height };
 const state = q.get("state") ?? "blank";
+const inline = q.get("inline");
 const note = q.get("note");
 const line = q.get("line");
 const said = saidOf(q);
@@ -247,10 +253,12 @@ function forwardFiles(compose: ComposeFields): WriteForwardFiles | null {
 }
 
 function useWritingDouble(): Writing {
+  const savedHtml = sessionStorage.getItem("signature-html");
   const [compose, setCompose] = useState<ComposeFields>(() => {
     const first = letterOf(q);
     return note === "laterforward" ? { ...first, forwardOf: "ridge-photos" } : first;
   });
+  const [replyBody, onReplyBody] = useState({ text: "", html: "" });
   const own = useMemo(ownOf, []);
   const mailboxId = compose.fromMailboxId ?? MILA;
   const plan = composePlan(compose, mailboxId);
@@ -272,19 +280,20 @@ function useWritingDouble(): Writing {
   };
   const address = FROM_OPTIONS.find((o) => o.id === mailboxId)!.address;
   const nothing = () => undefined;
+  const composeFrom = {
+    mailboxId,
+    address,
+    choices: FROM_OPTIONS,
+    substituted: q.get("fromnote") === "substituted",
+    substitutedFrom: q.get("fromnote") === "substituted" ? "hello@milabrunner.example" : null,
+    maxMessageBytes: note === "servermore" ? 52_428_800 : null,
+    domainMatched: q.get("fromnote") === "matched",
+  };
   return {
     compose,
     onComposeFields: setCompose,
     plan,
-    composeFrom: {
-      mailboxId,
-      address,
-      choices: FROM_OPTIONS,
-      substituted: q.get("fromnote") === "substituted",
-      substitutedFrom: q.get("fromnote") === "substituted" ? "hello@milabrunner.example" : null,
-      maxMessageBytes: note === "servermore" ? 52_428_800 : null,
-      domainMatched: q.get("fromnote") === "matched",
-    },
+    composeFrom,
     composeElsewhere:
       q.get("discard") === "sent-elsewhere"
         ? { why: "sent", typedSince: true, earlier: false, kept: false }
@@ -297,11 +306,11 @@ function useWritingDouble(): Writing {
     sendCompose: nothing,
     closeCompose: nothing,
     discardKeepsCompose: () => null,
-    replyTo: null,
-    replyMode: "reply",
-    replyAll: false,
-    replyBody: { text: "", html: "" },
-    onReplyBody: nothing,
+    replyTo: inline ? LETTER : null,
+    replyMode: inline === "forward" ? "forward" : "reply",
+    replyAll: inline === "reply-all",
+    replyBody,
+    onReplyBody,
     replyEnvelope: null,
     setReplyEnvelope: nothing,
     replyFromId: null,
@@ -335,13 +344,33 @@ function useWritingDouble(): Writing {
     },
     openDraft: nothing,
     writeTo: nothing,
-    reply: null,
+    reply: inline
+      ? {
+          messageId: LETTER,
+          mode: inline === "forward" ? "forward" : "reply",
+          audience:
+            inline === "forward"
+              ? "forward"
+              : { to: [BOOK[0]!], cc: inline === "reply-all" ? [BOOK[1]!] : [] },
+          seed: { to: BOOK[0]!.address, cc: "", bcc: "" },
+          invalid: { to: [], cc: [], bcc: [] },
+          from: composeFrom,
+          subject: { value: "Workshop notes", editable: false },
+          send: { phase: "idle" },
+          refusal: q.has("overlimit") ? "too_long" : null,
+          held: null,
+        }
+      : null,
+    loadQuotedHistory: async () => ["Can you send the workshop notes?"],
     composeSend: said.send,
     composeReopenedSending: false,
     composeLocked: said.locked ? { sentence: SHELL[lang].lastSession } : null,
     composeHeld: said.held === null ? null : { draftId: said.held },
     composeFilesNotKept: null,
-    signatures: { text: { [MILA]: SIGNATURE, [HELLO]: SIGNATURE }, html: {} },
+    signatures: {
+      text: { [MILA]: sessionStorage.getItem("signature-text") ?? SIGNATURE, [HELLO]: SIGNATURE },
+      html: savedHtml ? { [MILA]: savedHtml } : {},
+    },
     discardCompose: nothing,
     discardReply: nothing,
     removeComposeSig: nothing,
@@ -411,7 +440,14 @@ async function steps(): Promise<void> {
 /* ------------------------------------------------------------------ the frame */
 
 const words: Messages = fillOver(
-  { ...FRAME_WORDS.en, ...(draftsEn as Messages), ...(writeEn as Messages), ...(sharedEn as Messages) },
+  {
+    ...settingsEn,
+    ...sigEn,
+    ...FRAME_WORDS.en,
+    ...(draftsEn as Messages),
+    ...(writeEn as Messages),
+    ...(sharedEn as Messages),
+  },
   lang === "de"
     ? { ...FRAME_WORDS.de, ...(draftsDe as Messages), ...(writeDe as Messages), ...(sharedDe as Messages) }
     : {},
@@ -478,7 +514,60 @@ const editor = richEditor({
   href: (raw) => (/^https?:\/\//.test(raw) ? raw : null),
   useRendered: () => undefined,
 });
-const write = writePlace(writeEntry({ editor }), List);
+const entryParts = writeEntry({ editor });
+function Conversation({ keysHere, plan }: PaneProps) {
+  const verbs = entryParts.reply.useVerbs();
+  return (
+    <div className="rd-column" data-read-column="">
+      <Sheet
+        kind="reading"
+        flushFoot
+        back={plan.device === "phone" ? { word: "Back", onPress: () => undefined } : undefined}
+        label="Conversation"
+        foot={
+          <ActionPanel label="Letter actions" items={verbs ?? []} more={{ label: "More", behind: true }} />
+        }
+      >
+        <article style={{ minHeight: "100dvh" }}>Can you send the workshop notes?</article>
+        <InlineReply reply={entryParts.reply} letters={[LETTER]} keysHere={keysHere} />
+      </Sheet>
+    </div>
+  );
+}
+function SignatureSettings() {
+  const model = signaturesState();
+  const mailbox = model.mailboxes[0]!;
+  const [stored, setStored] = useState(() => ({
+    text: sessionStorage.getItem("signature-text") ?? mailbox.stored.text,
+    html: sessionStorage.getItem("signature-html") ?? "",
+  }));
+  return (
+    <Sheet kind="reading" label="Signatures" back={device === "phone" ? { word: "Settings" } : undefined}>
+      <SignaturesPane
+        model={{
+          ...model,
+          mailboxes: [{ ...mailbox, stored }],
+          editor: (props) => <SignatureEditor {...props} editor={editor} />,
+          write: async (id, text, html) => {
+            const plain =
+              text ?? new DOMParser().parseFromString(html ?? "", "text/html").body.textContent ?? "";
+            sessionStorage.setItem("signature-text", plain);
+            sessionStorage.setItem("signature-html", html ?? "");
+            setStored({ text: plain, html: html ?? "" });
+            return model.write(id, plain, html);
+          },
+        }}
+      />
+    </Sheet>
+  );
+}
+const write = writePlace(
+  {
+    ...entryParts,
+    Letter: q.has("signature") ? SignatureSettings : inline ? Conversation : entryParts.Letter,
+  },
+  List,
+);
 
 function Page() {
   const writing = useWritingDouble();
@@ -507,7 +596,7 @@ if (zoom !== 1) {
   document.documentElement.style.setProperty("zoom", String(zoom));
   document.documentElement.style.setProperty("--ui-zoom", String(zoom));
 }
-const { host } = fakeHost({
+const { host: webHost } = fakeHost({
   engine: NO_ENGINE,
   service: "managed",
   scope: "mila",
@@ -516,6 +605,14 @@ const { host } = fakeHost({
   address: fakeAddress("#/compose"),
   appearance: fakeAppearance(look),
 });
+
+const keyboard = movable({ height: 0 });
+const host = q.has("native") ? { ...webHost, signals: { ...webHost.signals, keyboard } } : webHost;
+if (q.has("native")) {
+  document.addEventListener("test-keyboard", (event) => {
+    keyboard.set({ height: (event as CustomEvent<number>).detail });
+  });
+}
 
 createRoot(document.getElementById("root")!).render(
   <TextProvider locale={lang} messages={words} timeZone={ZONE}>

@@ -21,6 +21,140 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.7] — 2026-11-25
+
+### Billing remembers the add-on you chose
+
+On the web, Add storage and Add an extra mailbox carry your choice to the billing page, including after you confirm with a second factor.
+
+Subscription compares confirmed monthly and yearly plan prices and shows each plan’s monthly AI credit allowance.
+During a trial, you can subscribe at the trial’s billing interval. After the trial, you can choose either quoted interval.
+
+### Sign in on a phone through the browser
+
+ohmail and ohcal can sign in to ohmail Cloud or a self-hosted server from their welcome screens on iOS and Android. QR scanning and pasted pairing links are still available through Scan QR.
+
+### Calendar invitations follow the selected calendar
+
+iCloud events can include guests when iCloud advertises that it sends invitations. Calendars without that feature explain the limitation and can still save personal events. A refused CalDAV event stays on the calendar marked as unsaved, with the reason and a way to reopen the draft.
+
+### Calendar moves and compact mail
+
+Move events between supported calendars in the same account from Event actions or the editor’s Calendar field. The app uses the provider’s move and explains when a destination is unavailable.
+
+On a phone, use Back to return from a deleted letter to Trash. Receipts keep the sender above the address and give the timestamp and details separate lines. On Linux, the native menu bar uses the system’s colors.
+
+### ohcal keeps only calendar data on the phone
+
+The calendar app syncs calendars, events and the account settings needed for calendar sync. It shows when the selected server does not support syncing with ohcal.
+
+Pair ohcal again if it was connected before calendar-only sign-in. The app asks you to sync pending edits before forgetting a server and lets you review time proposals saved before the upgrade.
+
+### ohcal on phones
+
+The calendar app has its own store build, with local event reminders and links to Privacy policy, Imprint, Support, and shared-account deletion in Settings.
+
+### Scroll all of Calendar Settings on narrow screens
+
+After going back from a Settings section, you can swipe through the menu and reach the last row above the bottom dock.
+
+### Easier returns to Mail
+
+On a phone, switch back to Mail from the calendar’s empty screen or its More drawer. The web app shows that it is opening your mailbox while the page loads after billing.
+
+### Cloud signup links to the Terms of Service and Privacy Policy
+
+Both documents are available from the account step. The desktop AI provider note also explains how credentials are removed from AI requests.
+
+### Read sender details and return to the Screener on narrow screens
+
+The message header puts the sender’s name above the address and gives the address more room. Browser Back from a held sender on a narrow screen returns to the Screener list.
+
+The web demo also shows the held messages’ text and keeps notification choices readable on narrow screens.
+
+### Phone writing stays above the keyboard
+
+The typing line stays visible while you write, start a new line or paste. Send stays in one row with the other actions, with extra actions available under More.
+
+### Keep the latest words when leaving the composer
+
+Drafts keep the latest words when you leave the composer during a save. On narrow screens, Back from a saved reply returns to Drafts.
+
+The phone welcome screen keeps its actions reachable above the home indicator in landscape.
+
+### Retry browser sign-in when ohmail Cloud is temporarily unavailable
+
+The desktop app tells you when browser sign-in could not start and lets you try again from the same screen. An approval already underway stays active until it finishes or you cancel it.
+
+### Keep invitation replies and calendar answers in step
+
+Mail offers calendar setup before replying when a writable calendar can be connected. If the server has no calendar service, the invitation details can't be read, or the provider calendar copy can't accept your answer, you can still reply by mail. Mail tells you when the calendar couldn't save the event or a change. When the save can be retried, you can do so without replying again. Downloads also recover verified text attachments when the mail server trims their trailing whitespace.
+
+### Mail opens in the new design
+
+Desktop startup now shows the same frame as the mailbox, with the local mail store’s status at the foot of the rail. Waiting mail lists on web and phone use placeholder rows that fit the new design.
+
+### Keep writing controls in reach on long letters
+
+A long reply, forward or new letter scrolls inside the editor, keeping the formatting tools and Send in view.
+
+Signature settings uses the same formatting toolbar with a taller writing area. Adding a link at the caret shows its address immediately in the editor, preview and saved signature. A formatted signature keeps its formatting when the letter itself has none.
+
+### Mailbox ports and phone reading
+
+- Use the values in the separate IMAP and SMTP port fields when connecting a first mailbox.
+- Keep long mailbox addresses readable in phone setup and let messages scroll behind the phone's floating action bar.
+
+### Mail lists and Settings on phones
+
+Mail rows show the delivery mailbox when you have more than one. All three Screener tabs show the latest subject and preview in the same layout.
+
+Settings opens into sections, and Servers uses the same design as the rest of the app. Devices opens account device management in the browser for Cloud and self-hosted accounts. Away responder lets you choose who receives replies, which mail gets a reply, and how often. History keeps the year you pick selected, and its year list scrolls on short screens. Ohbox, News and Receipts show Back to top above the bottom controls as you scroll.
+
+In the web app on phones, Screened out keeps long sender addresses on one line beside the mailbox label and time.
+
+### Trash moves show when they are pending
+
+Web, desktop and phone keep Undo available while a move to Trash is pending. If a mailbox has no Trash folder, ohmail explains why and keeps the letter. In the web demo, moved letters can be opened and restored from Trash.
+
+### AI replies keep their line breaks
+
+AI-drafted replies keep single line breaks and at most one blank line between paragraphs, including when sent. In the web and desktop reply composer, the Send and Discard bar leaves the formatting and Draft again controls reachable.
+
+### AI replies keep your words and tone
+
+Reply drafts keep your points in order. Choose **Use full conversation** to share the full stored message you’re answering and more of its earlier messages with your AI provider for that draft. Replies you wrote earlier help the draft match your greeting and tone. Drafts stay short and follow the conversation’s language unless you write in another one.
+
+### Android Back returns to the Screener list
+
+Press Android Back while reading a held sender's mail to return to the Screener list.
+
+### Search keeps your place when you switch to Calendar
+
+When you return to Mail, Search restores the results list’s scroll position with your query and open message. From mail now tells you when automatic event detection is unavailable and lets you add an event manually to a writable calendar.
+
+### Self-host sign-in and the web demo
+
+Self-host sign-in no longer shows a Back arrow that returns to the sign-in form. In the web demo, Parked and Resurface open their messages, and Write starts with an empty editor.
+
+### Keep all sending addresses reachable in the composer
+
+The From menu and recipient suggestions stay above the floating send controls. Long lists scroll so you can reach every address.
+
+### Signup shows the plan or trial you chose
+
+On ohmail Cloud, the first signup screen names the plan, billing period and price or explains the free trial. A short password keeps its length hint while you type. Signup and password reset link back to sign-in, including when you open a reset link in a new tab.
+
+### News and Receipts scroll behind the action pill
+
+Messages in News and Receipts now scroll behind the floating actions, with enough room to bring the last message fully into view above them.
+
+### Subscription shows the billing interval and one-time history suggestions
+
+Plan prices in the web app name the billing interval. Eligible accounts can see how many one-time history suggestions each offered plan includes. The hosted page shows the trial end date in the same time zone as Subscription when opened from Settings, the lifecycle banner, or the trial-ended screen.
+
+Subscription shows the full mailbox quota on narrow screens when an extra mailbox is available.
+
 ## [2.0.6] — 2026-11-25
 
 ### Keep sign-in credentials out of AI requests
@@ -19256,7 +19390,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.6...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.7...HEAD
+[2.0.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.7
 [2.0.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.6
 [2.0.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.5
 [2.0.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.4

@@ -4,8 +4,8 @@ import type { IconName } from "../../icons/Icon.js";
 import "./rail.css";
 
 export interface RailProps {
-  /** The landmark's name: "Places". */
-  label: string;
+  /** The landmark's name. Omitted for a passive rail made of startup shapes. */
+  label?: string;
   /** The way between the two products, where both are there. It stands first. */
   switcher?: ReactNode;
   /**
@@ -57,8 +57,9 @@ export function Rail({ label, switcher, write, groups, foot, drawer, focused, cl
     };
   }, [groups]);
 
+  const Surface = label === undefined ? "div" : "nav";
   return (
-    <nav
+    <Surface
       className="oh-rail"
       aria-label={label}
       data-focused={focused ? "" : undefined}
@@ -79,7 +80,7 @@ export function Rail({ label, switcher, write, groups, foot, drawer, focused, cl
           </Button>
         </div>
       ) : null}
-      <div ref={scroll} className="oh-rail-scroll" data-clip={clip}>
+      <div ref={scroll} className="oh-rail-scroll" data-clip={clip} inert={label === undefined || undefined}>
         {groups.map((group, index) => (
           <div key={index} className="oh-rail-group">
             {group}
@@ -88,6 +89,6 @@ export function Rail({ label, switcher, write, groups, foot, drawer, focused, cl
         {drawer ? foot : null}
       </div>
       {drawer ? null : foot}
-    </nav>
+    </Surface>
   );
 }

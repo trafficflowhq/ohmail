@@ -46,12 +46,14 @@ export function ResetPasswordRoute({ initialToken }: { initialToken: string }) {
   }
 
   const done = state === "done";
+  const signIn = <WayButton way={{ href: "/login" }} kind="quiet">{t("signIn")}</WayButton>;
   return (
     <WebDoor>
       {state === "form" ? (
         <DoorForm onSubmit={() => void submit()}>
           <Page
             refusal={refusal ? [refusal] : undefined}
+            back={signIn}
             acts={<Button type="submit" size="l" keyHint="↵" label={t(busy ? "changing" : "setPassword")} disabled={busy}>{t(busy ? "changing" : "setPassword")}</Button>}
           >
             <SaidWith level={1} parts={t.rich("myPassword", {
@@ -84,6 +86,7 @@ export function ResetPasswordRoute({ initialToken }: { initialToken: string }) {
         </DoorForm>
       ) : (
         <Page
+          back={done ? undefined : signIn}
           line={t(done ? "doneLine" : "refusedLine")}
           acts={<WayButton way={{ href: done ? "/login" : "/forgot-password" }} size="l">{t(done ? "signIn" : "newLink")}</WayButton>}
         >

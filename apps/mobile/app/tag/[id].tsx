@@ -13,7 +13,9 @@ import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld } from "../../src/state/world";
 import { tagHueOf } from "../../src/theme/palette";
 import { useTheme } from "../../src/theme";
-import { Empty, Screen, Scroller, TagDot, Txt } from "../../src/ui/base";
+import { Empty, Screen, Scroller, TagDot, Txt, ViewHead } from "../../src/ui/base";
+import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
+import { MailPlaceDock } from "../../src/ui/MailPlaceDock";
 import { DetailBar, PaneTop } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList } from "../../src/ui/MailList";
@@ -71,30 +73,30 @@ function TagBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
 
   const { rows, total } = w.tagged.items(tag.id);
   const surface = listSurface({ settled: w.boot.settled, count: total });
+  const count = metaWhen(surface, Copy.tagMeta(total));
+  const dot = <TagDot ink={t.c.tag[tagHueOf(tag.hue)].ink} />;
 
   const list = (
     <Screen>
-      {/* The page carries its own heading, so the bar carries only the way back. */}
-      {inPane ? <PaneTop /> : <DetailBar />}
+      {inPane ? <PaneTop /> : <DetailBar backCapsule={t.mail} />}
+      {t.mail ? (
+        <ViewHead title={tag.name} meta={count} badge={dot} leading={inPane ? undefined : <MailCalendarSwitch />} />
+      ) : null}
       <MailList
         groups={[{ key: "tagged", rows }]}
         rowKey={(m) => m.id}
         renderRow={(m) => <MailRow m={m} onPress={() => openRow(m.id)} swipe />}
         surface={surface !== "empty"}
         refresh={pull}
-        head={
+        head={t.mail ? undefined : (
           <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <TagDot ink={t.c.tag[tagHueOf(tag.hue)].ink} />
-              <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>
-                {tag.name}
-              </Txt>
-              <Txt variant="meta" tone="ink3" tabular>
-                {metaWhen(surface, Copy.tagMeta(total)) ?? " "}
-              </Txt>
+              {dot}
+              <Txt variant="h1" numberOfLines={1} style={{ flexShrink: 1 }}>{tag.name}</Txt>
+              <Txt variant="meta" tone="ink3" tabular>{count ?? " "}</Txt>
             </View>
           </View>
-        }
+        )}
         empty={
           surface === "skeleton" ? (
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
@@ -114,7 +116,7 @@ function TagBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
       open={open}
       onClose={close}
       toRoute={(mid) => `/message/${mid}`}
-      list={list}
+      list={t.mail && open === null ? <MailPlaceDock>{list}</MailPlaceDock> : list}
       renderDetail={(mid, ctx) => <MessageReader id={mid} inPane={ctx.inPane} onClose={ctx.onClose} />}
     />
   );

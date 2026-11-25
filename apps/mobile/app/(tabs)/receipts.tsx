@@ -143,6 +143,7 @@ function ReceiptsBody() {
     <Screen>
       <TopBar />
       <MailList
+        jumpToTop
         groups={dayGroups}
         rowKey={(m) => m.id}
         renderRow={(m) => (

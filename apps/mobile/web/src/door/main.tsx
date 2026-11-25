@@ -54,6 +54,22 @@ function Door({ door, made }: { door: DoorHandle; made: () => DoorDevice }) {
 
 async function start(bridge: DoorBridge, element: HTMLElement): Promise<void> {
   const config = await bridge.request("config", {});
+  if (__OHMAIL_CALENDAR_DOOR__ && config.app === "ohcal") {
+    try {
+      const { isKept } = await import("../../../src/shell/kept-families");
+      for (let index = localStorage.length - 1; index >= 0; index--) {
+        const key = localStorage.key(index);
+        if (key !== null && isKept(key)) localStorage.removeItem(key);
+      }
+      const { prepareCalendarCopies } = await import("@ohmail/client-engine");
+      await prepareCalendarCopies(undefined, async (scope, rows) => (await bridge.request("keepRows", {
+        scope, legacy: true, deletes: [], puts: rows.map((row) => ({ type: row.type, id: row.id, json: JSON.stringify(row) })),
+      })).kept, config.erasedCalendarScopes);
+    } catch {
+      await bridge.request("ready", { calendarPrepared: false });
+      return;
+    }
+  }
   const door = doorHandle(bridge, config);
   let held: DoorDevice | null = null;
   createRoot(element).render(

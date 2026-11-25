@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TextProvider } from "@ohmail/app/text";
 import { setStorageOwner, resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
 import type { EngineAdapter, OhmailEngine } from "@ohmail/client-engine";
+import { DraftServer } from "../_draft-shell";
+import { typeInto } from "../fixtures/rich-editor-driver";
 import messages from "../../messages/en.json";
 import { act, consentTransport, engineOver, msg, NOW, setup, storeWith, teardown, waitFor, S } from "../_view-shell";
 
@@ -74,40 +76,58 @@ afterEach(async () => {
 
 describe("a change of scope", () => {
   it("mounts the frame again: B's composer is empty, nothing under B carries A's words, A's letter is back", async () => {
-    /* Each account its own engine, as a host binds one per owner (`app/shell/engine.tsx`) and hands it with the scope:
-       what A's composer writes as it is taken down goes to A's engine, and B's engine is what "under B" means. Today's
-       composer wrote nothing as it was taken down, so one engine for both stood in for two; Write's composer writes its
-       last words as it leaves (`compose-autosave.ts`, the belt), to the engine it was mounted over. */
-    const engines = { [A]: engineOver(await storeWith([])), [B]: engineOver(await storeWith([])) };
+    const original = new DraftServer();
+    const replacement = new DraftServer();
+    const engines = { [A]: await original.device(), [B]: await replacement.device() };
+    let answer!: () => void;
+    const pending = new Promise<void>((resolve) => { answer = resolve; });
     const sent: Array<{ owner: string; words: string }> = [];
     for (const [owner, engine] of Object.entries(engines)) {
       const mutate = engine.mutate.bind(engine);
-      vi.spyOn(engine, "mutate").mockImplementation(((m: unknown, ...rest: unknown[]) => {
-        sent.push({ owner, words: JSON.stringify(m) });
-        return (mutate as (...a: unknown[]) => unknown)(m, ...rest);
-      }) as never);
+      vi.spyOn(engine, "mutate").mockImplementation(async (mutation, options) => {
+        sent.push({ owner, words: JSON.stringify(mutation) });
+        if (owner === A && mutation.kind === "draft_save") await pending;
+        return mutate(mutation, options);
+      });
     }
 
-    setStorageOwner(A);
-    S.engine = engines[A]!;
-    await draw(engines[A]!, A);
-    await waitFor(() => subject() !== null, "the composer under A");
-    await act(async () => { fireEvent.change(subject()!, { target: { value: WORDS } }); });
-    await waitFor(() => Object.keys(localStorage).some((k) => (localStorage.getItem(k) ?? "").includes(WORDS)), "A's words kept on this device");
+    const body = "First words. And the last words.";
+    try {
+      setStorageOwner(A);
+      S.engine = engines[A];
+      await draw(engines[A], A);
+      await waitFor(() => subject() !== null, "the composer under A");
+      const editor = await screen.findByRole("textbox", { name: "Message" });
+      await act(async () => {
+        fireEvent.change(subject()!, { target: { value: WORDS } });
+        typeInto(editor, "First words.");
+      });
+      await waitFor(() => Object.keys(localStorage).some((k) => (localStorage.getItem(k) ?? "").includes(WORDS)), "A's words kept on this device");
+      await waitFor(() => sent.some((write) => write.owner === A && write.words.includes("First words.")), "A's autosave");
+      await act(async () => { typeInto(editor, body); });
 
-    setStorageOwner(B);
-    S.engine = engines[B]!;
-    await draw(engines[B]!, B);
-    await waitFor(() => subject() !== null, "the composer under B");
-    expect(subject()!.value).toBe("");
-    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
-    expect(sent.filter((s) => s.owner === B && s.words.includes(WORDS))).toEqual([]);
+      setStorageOwner(B);
+      S.engine = engines[B];
+      await draw(engines[B], B);
+      await waitFor(() => subject() !== null, "the composer under B");
+      expect(subject()!.value).toBe("");
+      await act(async () => { answer(); });
+      await waitFor(() => [...original.rows.values()].some((row) => row.body === body), "all words on the previous account");
+      expect([...original.rows.values()]).toEqual([expect.objectContaining({ subject: WORDS, body })]);
+      expect(replacement.rows.size).toBe(0);
+      expect(sent.filter((write) => write.owner === B && write.words.includes(WORDS))).toEqual([]);
 
-    setStorageOwner(A);
-    S.engine = engines[A]!;
-    await draw(engines[A]!, A);
-    await waitFor(() => subject()?.value === WORDS, "A's letter back under A");
-  });
+      setStorageOwner(A);
+      S.engine = engines[A];
+      await draw(engines[A], A);
+      await waitFor(() => subject()?.value === WORDS, "A's letter back under A");
+      expect(screen.getByRole("textbox", { name: "Message" }).textContent).toBe(body);
+    } finally {
+      await act(async () => { answer(); });
+      engines[A].dispose();
+      engines[B].dispose();
+    }
+  }, 15_000);
 
   it("a late calendar attachment from the previous account cannot change the open reader", async () => {
     const id = "same-message";

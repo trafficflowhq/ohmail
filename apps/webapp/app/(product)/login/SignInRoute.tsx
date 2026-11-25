@@ -53,7 +53,7 @@ export function SignInRoute(
     restart: c.restart,
     join: { href: "/join" },
     forgotPassword: { href: "/forgot-password" },
-    back: "/",
+    back: SELF_HOST_BUILD ? undefined : "/",
     demo: { href: "/?demo=1" },
   };
   return (

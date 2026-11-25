@@ -227,10 +227,15 @@ export function offeredWays(
  * `GET /calendar/connect`: the ways offered to this account now, none while its calendar is off;
  * and the connections it holds, on or off.
  */
-export async function calendarConnectState(ctx: ServiceContext, port: CalendarConnectPort | undefined): Promise<CalendarConnectWire> {
+export async function calendarConnectState(
+  ctx: ServiceContext, port: CalendarConnectPort | undefined, calendarOnly = false,
+): Promise<CalendarConnectWire> {
   const on = (await calendarEnabledAt(ctx.db, ctx.accountId)) !== null;
   const ways = on ? offeredWays(port) : [];
   const held = await connectionsHeld(ctx);
+  if (calendarOnly) return {
+    ways, connections: held.connections.map((connection) => ({ ...connection, grantMailboxId: null })),
+  };
   if (!ways.includes("icloud")) return { ways, ...held };
   const icloudMailboxes = await ctx.db.select({ id: mailboxes.id, address: mailboxes.address }).from(mailboxes)
     .innerJoin(mailboxCredentials, mailboxImapJoin)

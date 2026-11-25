@@ -6,7 +6,7 @@ import { EventForm, type CalendarTone, type EventFormProps, type EventFormRow } 
 import { addDays, clockOf, dayShort, readQuickEntry, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useLocale, useText, type Text } from "../text/index.js";
 import { ShowAsMenu } from "./ShowAsMenu.js";
-import { calendarRow, DraftCalendarMenu } from "./DraftCalendarMenu.js";
+import { calendarRow, DraftCalendarMenu, type CalendarChooser } from "./DraftCalendarMenu.js";
 import { ZoneMenu } from "./ZoneMenu.js";
 import { useEditorRows, type EditorRows } from "./use-editor-rows.js";
 import { zoneForCity, zoneName } from "./zone-names.js";
@@ -19,8 +19,7 @@ interface Props {
   readonly today: string;
   readonly calendar: CalendarRecord | undefined;
   readonly tone: CalendarTone;
-  readonly choices: readonly CalendarRecord[];
-  readonly choose?: (id: string) => void;
+  readonly chooser: CalendarChooser;
   readonly edit?: EditorRows;
   readonly proposedGuest?: { name: string; take: () => void };
   readonly fixedTime?: string;
@@ -163,8 +162,7 @@ export function DraftFields({
   today,
   calendar,
   tone,
-  choices,
-  choose,
+  chooser,
   change,
   submit,
   cancel,
@@ -205,13 +203,15 @@ export function DraftFields({
         change,
         ordinaryOnly,
         edit: !!edit,
-        choose: choose ? (anchor) => setMenu({ kind: "calendar", anchor }) : undefined,
+        choose: chooser.choose ? (anchor) => setMenu({ kind: "calendar", anchor }) : undefined,
         showAs: (anchor) => setMenu({ kind: "busy", anchor }),
         active: menu?.kind,
       },
       t,
     ),
   );
+  if (chooser.note && !chooser.choose)
+    rows.push({ id: "calendar-note", items: [{ kind: "word", text: chooser.note }] });
   rows.push(...notesRow(draft, change, t));
   return (
     <>
@@ -252,9 +252,7 @@ export function DraftFields({
       {place.overlay}
       {details.menu}
       {menu && (
-        <DraftMenus
-          {...{ draft, today, calendar, choices, choose, change, menu, setMenu, timeZone, repeatShapes }}
-        />
+        <DraftMenus {...{ draft, today, calendar, chooser, change, menu, setMenu, timeZone, repeatShapes }} />
       )}
     </>
   );
@@ -264,17 +262,13 @@ function DraftMenus({
   draft,
   today,
   calendar,
-  choices,
-  choose,
+  chooser,
   change,
   menu,
   setMenu,
   timeZone,
   repeatShapes,
-}: Pick<
-  Props,
-  "repeatShapes" | "draft" | "today" | "calendar" | "choices" | "choose" | "change" | "timeZone"
-> & {
+}: Pick<Props, "repeatShapes" | "draft" | "today" | "calendar" | "chooser" | "change" | "timeZone"> & {
   menu: MenuAnchor;
   setMenu: (menu: null) => void;
 }) {
@@ -329,14 +323,16 @@ function DraftMenus({
           pick={(zone) => change({ zone })}
         />
       )}
-      {choose && menu?.kind === "calendar" && (
+      {chooser.choose && menu.kind === "calendar" && (
         <DraftCalendarMenu
           anchor={menu.anchor}
-          choices={choices}
+          choices={chooser.choices}
+          label={chooser.label}
+          note={chooser.note}
           current={calendar?.id}
           choose={(id) => {
-            choose(id);
             setMenu(null);
+            chooser.choose?.(id, menu.anchor);
           }}
           close={() => setMenu(null)}
         />

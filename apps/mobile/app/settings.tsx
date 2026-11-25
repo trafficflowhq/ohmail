@@ -1,16 +1,9 @@
-/**
- * Settings — appearance, new mail, and what this build is. Every control here
- * is real and every claim one this build can keep: the theme switch is the
- * app's own preference, the New mail block registers with the paired server,
- * and the About block states what is live and names what is not. Remaining
- * per-server settings (rules, mailboxes) arrive with later updates — absent,
- * not mocked; the pairing lives on the Servers screen. The New mail block shows
- * a real choice when the phone has distributors installed and one sentence with
- * no control when it does not — read from the device, never a build assumption.
- */
+/** The native Settings menu and the controls each section opens. Server pairing has its own route. */
+import settingsEn from "@ohmail/app/settings/labels.en.json";
+import settingsDe from "@ohmail/app/settings/labels.de.json";
 import Constants from "expo-constants";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Linking, Platform, View } from "react-native";
 import { buildCommit, buildLabel } from "../src/build-info";
 import { Copy } from "../src/copy";
@@ -20,9 +13,11 @@ import { useWake } from "../src/state/wake";
 import {
   accountGovernsFace,
   accountWideOffered,
+  useTheme,
   type FaceName,
   type ThemePref,
 } from "../src/theme";
+import { MailAppearance, mailSize } from "../src/theme/mail";
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
 import { connectionSaid, firstSyncSaid, readerZone } from "../src/state/live";
@@ -34,6 +29,7 @@ import { SenderNamePanel } from "../src/ui/SenderNamePanel";
 import { SignaturesPanel } from "../src/ui/SignaturesPanel";
 import { useConnection } from "../src/net/connection";
 import { accessFeedFor, onAccessFeed } from "../src/net/account";
+import { accountDevicesOrigin, accountDevicesPage } from "../src/net/devices";
 import type { ConnectedSession } from "../src/net/pairing";
 import { storageRowValue } from "../src/ui/storage-notice";
 import { aboutLinks } from "../src/ui/about-links";
@@ -114,12 +110,18 @@ import { setTimeLabel } from "../src/state/live";
 import { lateWho, mailboxIssue, notCheckedNoteSaid } from "../src/ui/late-lines";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
-export default function SettingsScreen({ inPane = false }: { inPane?: boolean }) {
+export default function SettingsScreen({ inPane = false, pane }: { inPane?: boolean; pane?: string }) {
+  const params = useLocalSearchParams<{ pane?: string; mailbox?: string }>();
+  const mailbox = inPane ? undefined : params.mailbox;
+  const section = inPane ? pane : mailbox ? "mailboxes" : params.pane;
+  const paneKey = inPane || mailbox ? null : section ? `settings:${section}` : "settings";
   return (
     <SurfaceBoundary surface="settings">
       <Gated>
-        <YieldToMore paneKey={inPane ? null : "settings"}>
-          <SettingsBody inPane={inPane} />
+        <YieldToMore paneKey={paneKey}>
+          <MailAppearance>
+            <SettingsBody inPane={inPane} section={section} mailbox={mailbox} />
+          </MailAppearance>
         </YieldToMore>
       </Gated>
     </SurfaceBoundary>
@@ -149,7 +151,7 @@ function LanguagePanel() {
   ];
   const chosen: AppLocale | "system" = controls.chosen ?? "system";
   return (
-    <View style={{ paddingHorizontal: 16, marginTop: 18 }}>
+    <Panel style={{ paddingHorizontal: 16, paddingTop: 18, paddingBottom: 16, marginBottom: mailSize.inset }}>
       <Txt variant="settingsLabel" style={{ marginBottom: 10 }}>{Copy.language}</Txt>
       <Segmented<AppLocale | "system">
         value={chosen}
@@ -163,14 +165,47 @@ function LanguagePanel() {
       <Txt variant="caption" tone="ink3" style={{ marginTop: 10 }}>
         {failed ? Copy.languageFailed : Copy.languageNote}
       </Txt>
-    </View>
+    </Panel>
   );
 }
 
-function SettingsBody({ inPane }: { inPane: boolean }) {
+function AccountDevices({ session }: { session: ConnectedSession }) {
+  const [failed, setFailed] = useState(false);
+  const pending = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    pending.current?.abort();
+    pending.current = null;
+  }, [session]);
+
+  const open = async () => {
+    if (pending.current) return;
+    const attempt = new AbortController();
+    pending.current = attempt;
+    setFailed(false);
+    try {
+      const page = await accountDevicesPage(session, attempt.signal);
+      if (attempt.signal.aborted) return;
+      if (page) await Linking.openURL(page);
+      else setFailed(true);
+    } catch {
+      if (!attempt.signal.aborted) setFailed(true);
+    } finally {
+      if (pending.current === attempt) pending.current = null;
+    }
+  };
+  return <>
+    <Nav label={Copy.settingsManageDevices} sub={Copy.settingsDevicesBrowser} icon="phone" chevron onPress={() => void open()} />
+    {failed ? <Txt variant="note" tone="ink2" accessibilityLiveRegion="polite">{Copy.settingsDevicesFailed}</Txt> : null}
+    <Rule />
+  </>;
+}
+
+function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?: string; mailbox?: string }) {
   /* Subscribed: this is the screen the switch is made ON, so it is the screen that must redraw
      under the finger rather than on the next navigation. */
-  useLocale();
+  const locale = useLocale();
+  const words = (locale === "de" ? settingsDe : settingsEn).settings;
+  const theme = useTheme();
   const w = useWorld();
   const conn = useConnection();
   /* The live session the "Filed automatically" panel reads through; none, no panel. */
@@ -203,33 +238,21 @@ function SettingsBody({ inPane }: { inPane: boolean }) {
   const backupSays = useSyncExternalStore(subscribeBackupExclusion, backupExclusion, backupExclusion);
   /* In More's pane the away responder opens in the same pane. */
   const pick = useMorePick();
-  const { mailbox } = useLocalSearchParams<{ mailbox?: string }>();
-
-  return (
-    <Screen>
-      {/* The page carries its own heading, so the bar carries only the way back (one title). */}
-      {inPane ? <PaneTop /> : <DetailBar />}
-      <Scroller bounded avoidKeyboard>
-        <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
-          <Txt variant="h1">{Copy.settings}</Txt>
-        </View>
-
-        {/* this phone — first, because it is the only block that says what this phone IS */}
-        <ThisPhonePanel mailbox={mailbox} />
-        <SenderNamePanel />
-        <SignaturesPanel />
-        <WaitingStrip />
-        <FilingStrip />
-        <FilingsBlocks />
-
-        {/* a "Not now" whose settings document still stands in the mailbox: Import, or Save */}
-        <SavedSettingsPanel />
-
-        {/* the people this account wrote to, offered again where this door organizes a mailbox */}
-        <SeedReopenPanel />
-
-        {/* appearance */}
-        <Panel style={{ paddingBottom: 16, marginBottom: 14 }}>
+  const links = aboutLinks(session);
+  const linkRow = (link: (typeof links)[number]) => (
+    <Nav key={link.url} label={link.label} sub={link.sub} chevron
+      onPress={() => { void Linking.openURL(link.url).catch(() => undefined); }}
+    />
+  );
+  const accountLink = links.find((link) => link.label === Copy.deleteAccountRow);
+  const openServers = () => (pick ? pick("servers") : router.push("/servers"));
+  const panes = {
+    general: {
+      label: Copy.settingsGeneral,
+      body: <>
+        <LanguagePanel />
+        <Panel style={{ paddingBottom: 16 }}>
+          <Section>{Copy.settingsAppearance}</Section>
           <Section style={{ paddingTop: 16 }}>{Copy.theme}</Section>
           <View style={{ paddingHorizontal: 16 }}>
             <Segmented<ThemePref>
@@ -261,14 +284,6 @@ function SettingsBody({ inPane }: { inPane: boolean }) {
           </View>
 
           {/*
-            LANGUAGE — the same shape as the control above it, one row down, because it is the same
-            kind of choice. It draws nothing when no locale provider is mounted, which is the demo's
-            bare panes and the node suite's component renders: a selector that cannot select is the
-            built-and-unreachable shape this screen avoids everywhere else.
-          */}
-          <LanguagePanel />
-
-          {/*
             LOOK — the face, in the same panel as light/dark because they are the same class of
             decision: how the app is drawn, changing nothing about anybody's mail.
           */}
@@ -283,17 +298,11 @@ function SettingsBody({ inPane }: { inPane: boolean }) {
             standalone={w.standalone}
           />
         </Panel>
-
-        {/*
-          New mail — a real control when there is a real choice, a sentence
-          otherwise. The list comes from the device (`listDistributors()`), so
-          rows show only when the phone has distributors installed. With none —
-          and on every iPhone, where UnifiedPush cannot exist — `wake.choices`
-          is empty and the pane is one sentence with no control: a toggle that
-          cannot move is worse than a paragraph saying why. The `None` row is
-          last and separated — the only destructive option: it drops the server
-          registration as well as forgetting the distributor.
-        */}
+      </>,
+    },
+    notifications: {
+      label: Copy.settingsNotifications,
+      body: (
         <Panel style={{ paddingVertical: 18, marginBottom: 14 }}>
           <View style={{ paddingHorizontal: 20, gap: 6 }}>
             <Txt variant="settingsLabel">{Copy.wake}</Txt>
@@ -341,64 +350,74 @@ function SettingsBody({ inPane }: { inPane: boolean }) {
           )}
         </Panel>
 
-        {/*
-          FOLDERS — the feature's master toggle (FOLDERS-SPEC.md §6; owner decision 1: fully
-          optional, off by default). The control renders the value the SERVER last answered
-          with, never the optimistic pick — a refused write must not draw a folders group the
-          account does not have (the webapp FoldersRow's rule; the world layer holds it). A
-          plain switch and not a confirm: ON is a read-only act on the mailbox — it shows
-          folders that already exist and moves nothing.
+      ),
+    },
+    mailboxes: {
+      label: Copy.settingsMailboxes,
+      body: <>
+        {/* this phone — first, because it is the only block that says what this phone IS */}
+        <ThisPhonePanel mailbox={mailbox} />
+        <SenderNamePanel />
+        <WaitingStrip />
+        <FilingStrip />
+        <FilingsBlocks />
 
-          WITHHELD where the door cannot keep the choice (`w.folders.storable`) — the paired
-          desktop host, a self-host server, this app's own standalone door: their consent answer
-          carries no folders axis, the PATCH is dropped, and the switch used to flip and snap
-          back with nothing said. The same structural rule the shared shell applies to its
-          Folders section (`consent.foldersStorable`), one client further.
-        */}
-        {w.folders.storable ? (
-          <FoldersPanel
-            on={w.folders.enabled}
-            pending={w.folders.pending}
-            setEnabled={w.folders.setEnabled}
-          />
-        ) : null}
+        {/* a "Not now" whose settings document still stands in the mailbox: Import, or Save */}
+        <SavedSettingsPanel />
 
-        {/* THE ACT ON SUGGESTIONS, drawn only where the consent answer carries it. */}
-        {w.autoAct ? (
-          <AutoActPanel
-            on={w.autoAct.on}
-            suggestOn={w.autoAct.suggestOn}
-            reader={readsOnly(w.mailboxes.known, w.mailboxes.rows)}
-            pending={w.autoAct.pending}
-            set={w.autoAct.set}
-          />
-        ) : null}
+        {/* the people this account wrote to, offered again where this door organizes a mailbox */}
+        <SeedReopenPanel />
 
+      </>,
+    },
+    screener: {
+      label: Copy.screener,
+      body: <>
         {/* WHAT THE SCREENER FILED ON ITS OWN, with Put back — beside the other automatic act.
             The phone has no auto-apply switch of its own; the panel reads the same route pair. */}
         {/* FILE IMPERSONATIONS TO SPAM — on by default; the switch every device agrees on. */}
         {session !== null ? <ImpersonationFilingPanel session={session} /> : null}
         {session !== null ? <AutoFiledPanel session={session} /> : null}
 
-        {/* STORAGE — the card's numbers in full, where the account keeps a storage limit. */}
-        {session !== null ? <StorageRow session={session} /> : null}
-
-        {/*
-          THE AWAY RESPONDER — a row rather than the form, because the form is
-          three controls plus three facts it does not change and that is a screen, not a panel.
-          Where the webapp keeps it: in Settings, so one product has one home for the one thing
-          that sends mail on its own. Its own route so a person can be handed it directly.
-        */}
-        <Panel style={{ paddingBottom: 8, marginBottom: 14 }}>
-          <Nav
-            label={Copy.awayRow}
-            sub={Copy.awayRowSub}
-            chevron
-            onPress={() => (pick ? pick("away") : router.push("/away"))}
-          />
-        </Panel>
-
-        {/* about — one sentence, true of the session on screen */}
+      </>,
+    },
+    ai: {
+      label: Copy.settingsAi,
+      body: w.autoAct ? (
+        <AutoActPanel
+          on={w.autoAct.on}
+          suggestOn={w.autoAct.suggestOn}
+          reader={readsOnly(w.mailboxes.known, w.mailboxes.rows)}
+          pending={w.autoAct.pending}
+          set={w.autoAct.set}
+        />
+      ) : null,
+    },
+    devices: {
+      label: Copy.settingsDevices,
+      body: <Panel>
+        {session && accountDevicesOrigin(session) ? <AccountDevices key={session.ownerKey} session={session} /> : null}
+        <Nav label={Copy.serversTitle} icon="phone" chevron onPress={openServers} />
+      </Panel>,
+    },
+    folders: {
+      label: Copy.settingsFolders,
+      body: w.folders.storable ? (
+        <FoldersPanel
+          on={w.folders.enabled}
+          pending={w.folders.pending}
+          setEnabled={w.folders.setEnabled}
+        />
+      ) : null,
+    },
+    signatures: { label: Copy.settingsSignatures, body: <SignaturesPanel /> },
+    account: {
+      label: words.account,
+      body: accountLink ? <Panel>{linkRow(accountLink)}</Panel> : null,
+    },
+    about: {
+      label: Copy.settingsAbout,
+      body: <>
         <Panel style={{ paddingVertical: 18, marginBottom: 10 }}>
           <View style={{ paddingHorizontal: 20, gap: 6 }}>
             <Txt variant="settingsLabel">{Copy.about}</Txt>
@@ -433,7 +452,12 @@ function SettingsBody({ inPane }: { inPane: boolean }) {
           </View>
           <DiagnosticPanel />
         </Panel>
-        <Panel style={{ paddingBottom: 8, marginBottom: 10 }}>
+        <Panel>{links.filter((link) => link !== accountLink).map(linkRow)}</Panel>
+      </>,
+    },
+    help: {
+      label: Copy.settingsHelp,
+      body: <Panel>
           {/* HELP & CONTACT: the phone's own composer to support, or the mail app where nothing here can send. */}
           <Nav
             label={Copy.helpRow}
@@ -451,19 +475,63 @@ function SettingsBody({ inPane }: { inPane: boolean }) {
               else void Linking.openURL(mail.mailto).catch(() => undefined);
             }}
           />
-          {/* The privacy policy, imprint and support pages, and Delete account for a Cloud account. */}
-          {aboutLinks(session).map((link) => (
-            <Nav
-              key={link.url}
-              label={link.label}
-              sub={link.sub}
-              chevron
-              onPress={() => { void Linking.openURL(link.url).catch(() => undefined); }}
-            />
-          ))}
-        </Panel>
+      </Panel>,
+    },
+  };
+
+  const selected = Object.entries(panes).find(([id, pane]) => id === section && pane.body !== null)?.[1];
+  const open = (id: string) => {
+    if (pick) pick(`settings:${id}`);
+    else router.push({ pathname: "/settings", params: { pane: id } });
+  };
+  const backToMenu = inPane && selected && pick ? () => pick("settings") : undefined;
+  const title = selected?.label ?? Copy.settings;
+
+  return (
+    <Screen>
+      {inPane && !backToMenu ? <PaneTop /> : <DetailBar backCapsule back={backToMenu} />}
+      <Scroller key={selected?.label ?? "menu"} bounded avoidKeyboard>
+        <View style={{ paddingHorizontal: mailSize.edge, minHeight: mailSize.bar, justifyContent: "center" }}>
+          <Txt variant="h1" accessibilityRole="header" accessibilityLabel={title}>
+            {title}{theme.mail ? "." : null}
+          </Txt>
+        </View>
+        {selected ? selected.body : (
+          <>
+            <Panel>
+              <SettingsGroup label={words.groupMail}>
+                <Nav label={panes.general.label} icon="filter" chevron onPress={() => open("general")} />
+                <Nav label={panes.notifications.label} chevron onPress={() => open("notifications")} />
+                <Nav label={panes.mailboxes.label} icon="ohbox" chevron onPress={() => open("mailboxes")} />
+                <Nav label={panes.screener.label} icon="screener" chevron onPress={() => open("screener")} />
+                {panes.ai.body ? <Nav label={panes.ai.label} icon="spark" chevron onPress={() => open("ai")} /> : null}
+                <Nav label={Copy.awayRow} icon="reply" chevron onPress={() => (pick ? pick("away") : router.push("/away"))} />
+                {panes.folders.body ? <Nav label={panes.folders.label} icon="folder" chevron onPress={() => open("folders")} /> : null}
+                <Nav label={panes.signatures.label} icon="pen" chevron onPress={() => open("signatures")} />
+              </SettingsGroup>
+              <SettingsGroup label={words.groupAccount}>
+                <Nav label={panes.devices.label} icon="phone" chevron onPress={() => open("devices")} />
+                {session !== null ? <StorageRow session={session} /> : null}
+                {accountLink ? <Nav label={panes.account.label} chevron onPress={() => open("account")} /> : null}
+              </SettingsGroup>
+              <SettingsGroup label={words.groupAbout}>
+                <Nav label={panes.about.label} icon="info" chevron onPress={() => open("about")} />
+                <Nav label={panes.help.label} icon="send" chevron onPress={() => open("help")} />
+              </SettingsGroup>
+            </Panel>
+          </>
+        )}
       </Scroller>
     </Screen>
+  );
+}
+
+function SettingsGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <View testID="settings-group" accessibilityLabel={label}>
+      <Section>{label}</Section>
+      {children}
+    </View>
   );
 }
 
@@ -1256,9 +1324,6 @@ function StorageRow({ session }: { session: ConnectedSession }) {
   const entry = useSyncExternalStore(onAccessFeed, feedOf, feedOf);
   const facts = entry?.answer.metered ? entry.answer.storage : undefined;
   if (facts === undefined) return null;
-  return (
-    <Panel style={{ paddingBottom: 8, marginBottom: 14 }}>
-      <Nav label={Copy.storageTitle} sub={storageRowValue(facts, Copy, locale)} chevron onPress={() => router.push("/storage")} />
-    </Panel>
-  );
+  return <Nav label={Copy.storageTitle} sub={storageRowValue(facts, Copy, locale)} chevron
+    onPress={() => router.push("/storage")} />;
 }

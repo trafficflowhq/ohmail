@@ -201,6 +201,7 @@ import {
   domainOf,
   isPlace,
   pileTitle,
+  type Address,
   type Destination,
   type Held,
   type Mail,
@@ -306,11 +307,22 @@ export function mailboxLabelOf(
   rows: readonly MailboxLabelRow[] | undefined,
   mailboxId: string,
 ): string | undefined {
+  return deliveryMailboxOf(rows, mailboxId).mailboxLabel;
+}
+
+function deliveryMailboxOf(rows: readonly MailboxLabelRow[] | undefined, mailboxId: string | null | undefined) {
+  if (!mailboxId || rows === undefined) return {};
   // Removed copies of one address are one mailbox (a removal leaves a row behind).
-  if (rows === undefined || new Set(rows.map((m) => m.address.trim().toLowerCase())).size <= 1) return undefined;
+  if (new Set(rows.map((m) => m.address.trim().toLowerCase())).size <= 1) return {};
   const row = rows.find((m) => m.id === mailboxId);
-  if (row === undefined) return undefined;
-  return row.displayName?.trim() || row.address;
+  if (!row) return {};
+  const name = row.displayName?.trim() || row.address;
+  return { mailboxLabel: name, mailbox: { name, address: row.address } };
+}
+
+function mailboxAvatarOf(rows: WorldView["mailboxes"], mailboxId: string | null | undefined) {
+  const { mailbox } = deliveryMailboxOf(rows, mailboxId);
+  return mailbox ? { mailbox } : {};
 }
 
 /** The phone's own zone, once — `Intl` on Hermes; UTC where the runtime cannot say. */
@@ -598,13 +610,6 @@ export type WorldMail = Omit<Mail, "earlier"> & {
    * could show one mailbox's signature and serialize under another's send.
    */
   mailboxId: string;
-  /**
-   * THAT MAILBOX AS A WORD, and only where the account holds more than one — what the Reads card
-   * and the message screen show so a person can tell which of their addresses was written to.
-   * Derived here rather than on the wire: the projection already has the id, and the world already
-   * holds the rows. Absent is the ordinary single-mailbox case, not a missing read.
-   */
-  mailboxLabel?: string;
   /** The pile the bar shows as pressed, or the resurface pin the Done slot answers to. */
   pile: WorldPileState;
   /**
@@ -832,10 +837,7 @@ function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: Mes
     folder: physical as Folder,
     presentedFolder: m.folder,
     mailboxId: m.mailboxId,
-    ...(() => {
-      const label = mailboxLabelOf(v.mailboxes, m.mailboxId);
-      return label === undefined ? {} : { mailboxLabel: label };
-    })(),
+    ...deliveryMailboxOf(v.mailboxes, m.mailboxId),
     // The wire's `name` is nullable; the row shape's is not — a nameless sender reads as
     // their address, exactly as every list row already renders one.
     from: { name: m.from.name || m.from.address, address: m.from.address },
@@ -1178,6 +1180,7 @@ export function liveTagged(pres: EntityReader, v: WorldView): WorldTagged {
  */
 export interface WorldScheduled {
   id: string;
+  mailbox?: Address;
   /** "Fri 18:00" / "12 Sep, 18:00" in the reader's zone, or `null` — see {@link liveScheduled}. */
   when: string | null;
   sendAt?: string;
@@ -1227,6 +1230,7 @@ export function liveScheduled(reader: EntityReader, v: WorldView): WorldSchedule
     .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   return [...scheduledSendsList(reader), ...failed].map((d) => ({
     id: d.id,
+    ...mailboxAvatarOf(v.mailboxes, d.mailboxId),
     when: d.status === "scheduled" && d.sendAt ? scheduleLabel(d.sendAt, v.now, v.zone) : null,
     ...(d.status === "scheduled" && d.sendAt ? { sendAt: d.sendAt } : {}),
     subject: d.subject.trim() === "" ? Copy.scheduledNoSubject : d.subject,
@@ -1266,6 +1270,7 @@ export type DraftHeldSays = "checking" | "notInSent" | "interrupted";
  */
 export interface WorldDraft {
   id: string;
+  mailbox?: Address;
   /** The subject, or the empty-subject stand-in the mail lists already use. */
   subject: string;
   /** To, Cc and Bcc as one readable line, or the empty string for a draft with no recipient yet. */
@@ -1430,6 +1435,7 @@ export function liveDrafts(reader: EntityReader, v: WorldView, waiting: readonly
     const repliesHere = parent !== null && reader.get<EngineMessage>("message", parent) !== undefined;
     return {
       id: w.draftId ?? w.id,
+      ...mailboxAvatarOf(v.mailboxes, paint?.mailboxId ?? m.mailboxId),
       subject: subject.trim() === "" ? Copy.scheduledNoSubject : subject,
       to: [...to, ...(paint?.cc ?? m.cc ?? []), ...(paint?.bcc ?? m.bcc ?? [])].map((a) => a.name ?? a.address).join(", "),
       preview: m.body.replace(/\s+/g, " ").trim().slice(0, 140),
@@ -1461,6 +1467,7 @@ export function liveDrafts(reader: EntityReader, v: WorldView, waiting: readonly
         : "open";
     return {
       id: d.id,
+      ...mailboxAvatarOf(v.mailboxes, d.mailboxId),
       subject: d.subject.trim() === "" ? Copy.scheduledNoSubject : d.subject,
       to: [...d.to, ...d.cc, ...d.bcc].map((a) => a.name ?? a.address).join(", "),
       preview: (d.body ?? "").replace(/\s+/g, " ").trim().slice(0, 140),
@@ -1747,6 +1754,9 @@ export interface ScreenerRow {
   initial: string;
   time: string;
   newestSubject: string;
+  newestPreview?: string;
+  mailboxLabel?: string;
+  mailbox?: Address;
   dull: boolean;
   scope: Scope;
   ai: { dest: Destination; confidence: number; rationale: string } | null;
@@ -1851,7 +1861,7 @@ export function decideLinesOf(
     : { ruleLine: Copy.decideRuleListClaim(target), listClaim: Copy.listClaimScreenOut(claims.brand) };
 }
 
-function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
+function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined, mailboxes: WorldView["mailboxes"]): ScreenerRow {
   const held: ScreenerHeld[] = dto.held.map((h) => ({
     id: h.id,
     subject: h.subject,
@@ -1866,6 +1876,7 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
   }));
   const ai = aiOfDto(dto.ai);
   const firstContact = firstContactTime(dto);
+  const newest = dto.held.at(-1);
   return {
     id: dto.id,
     routeKey: senderKey(dto.from.address),
@@ -1873,7 +1884,9 @@ function rowOf(dto: ScreenerSenderDTO, scope: Scope | undefined): ScreenerRow {
     address: dto.from.address,
     initial: dto.initial,
     time: dto.time,
-    newestSubject: held[held.length - 1]?.subject ?? "",
+    newestSubject: newest?.subject ?? "",
+    newestPreview: (newest?.snippet ?? newest?.body.slice(0, 160))?.trim().replace(/\s+/g, " "),
+    ...deliveryMailboxOf(mailboxes, dto.mailboxId),
     dull: dto.dull === true,
     scope: domainScopeOffered(dto.from.address) ? scope ?? dto.scope : "sender",
     ai,
@@ -1958,7 +1971,7 @@ export function liveScreener(
   const queueReader = server === null ? pres : gateReader(pres, waitingKeys);
   const segments = screenerSegments(queueReader, v.now, v.locale ?? "en", v.zone, v.ownAddresses);
   const map = (rows: ScreenerSenderDTO[]) =>
-    rows.map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)]));
+    rows.map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)], v.mailboxes));
   if (server === null && segments.source === "store" && segments.waitingCursor === null) {
     // The engine's copy of the store's page IS the whole queue: the store's set, not a derivation.
     return {
@@ -1990,13 +2003,14 @@ export function liveScreener(
      the two ends cannot disagree about who is waiting. */
   // The shared selector's join: the mirror's row where it presents the sender's held mail, a row
   // minted from the route's own words where the windowed mirror cannot back them.
-  const waiting = screenerRowsOfStore(
+  const waiting = map(screenerRowsOfStore(
     queueReader, server.map((s, order) => ({
       id: `sender:${senderKey(s.address)}`, kind: "sender" as const, order, messageId: s.messageId,
       address: s.address, name: s.name, receivedAt: s.receivedAt, subject: s.subject,
-      snippet: s.snippet, mailboxId: null, total: server.length, ...(s.claimsOnly ? { claimsOnly: true as const } : {}),
+      snippet: s.snippet, mailboxId: s.mailboxId ?? null, total: server.length,
+      ...(s.claimsOnly ? { claimsOnly: true as const } : {}),
     })), v.now, v.locale ?? "en", v.zone, v.ownAddresses,
-  ).map((dto) => rowOf(dto, scopes[senderKey(dto.from.address)]));
+  ));
   return {
     waiting,
     screened: map(segments.screenedOut),
@@ -2080,7 +2094,10 @@ export function livePiles(pres: EntityReader, v: WorldView): WorldPile[] {
   const piles = triagePiles(pres);
   const toItem = (e: (typeof piles)["replyLater"][number]): PileItem => ({
     id: e.messageId ?? e.title,
-    ...(e.messageId ? { messageId: e.messageId } : {}),
+    ...(e.messageId ? {
+      messageId: e.messageId,
+      ...mailboxAvatarOf(v.mailboxes, pres.get<EngineMessage>("message", e.messageId)?.mailboxId),
+    } : {}),
     ...(e.memberIds ? { memberIds: e.memberIds } : {}),
     title: e.title,
     ...(e.subtitle ? { subtitle: e.subtitle } : {}),
@@ -3636,6 +3653,7 @@ export interface LiveDeps {
    * of the app already had.
    */
   ownAddresses?: () => readonly string[];
+  mailboxes?: () => WorldView["mailboxes"];
   /** The letters kept on this phone, and the files kept with drafts (`compose/letter-store.ts`). */
   letters?: LetterDoor;
   /** The session's server sends only the forwarded parts a send names; `null` is not known yet. A getter. */
@@ -3878,8 +3896,7 @@ export interface LiveWorldActions {
    * drops it from every living view at the press. A mailbox with no Trash folder is the
    * server's 422 refusal, which rolls the row back whole — the one honest screen for a delete
    * that cannot happen. The confirm ceremony is the sheet's job; this arm dispatches.
-   * `quiet` is the held window's commit: the pill already said "Moved to Trash." at the press,
-   * so only the confirmed sentence is withheld — refusal and queued speak whatever happens.
+   * Replay uses `quiet` so the launch summary can report confirmed moves together.
    */
   deleteMessage(messageId: string, opts?: { quiet?: boolean }): Promise<boolean>;
   /**
@@ -5518,7 +5535,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const m = messageOf(messageId);
     if (!m) return false;
     const waiting = stillWaitingFor(messageId);
-    if (waiting) { toast(waiting); return true; }
+    if (waiting) { toast(waiting); return !opts?.quiet; }
     // The same door as `move`: a reader's delete is a REQUEST, and "In den Papierkorb
     // verschoben." over a message still in place is the sentence this arm exists to stop.
     const gone: EngineMutation = { kind: "message_delete", messageId };
@@ -5526,19 +5543,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (res?.status === "awaiting_organizer") {
       const holder = res.queuedWith?.name ?? null;
       toast(holder ? refuse("toastDeleteQueued", holder) : refuse("toastDeleteQueuedUnknown"));
-      return true;
+      return !opts?.quiet;
     }
     if (!res || res.status === "rolled_back") {
       toast(refuse(res?.error?.code === "no_trash_folder" ? "deleteNoTrash" : "deleteFailed"));
       return false;
     }
     // A newer press for this message replaced the delete: that press owns the sentence.
-    if (res.status === "superseded") return true;
+    if (res.status === "superseded") return !opts?.quiet;
     noteTrashLanded();
-    // `quiet` is the held window's commit (the pill said "Moved to Trash." at the press) — it
-    // suppresses ONLY the confirmed sentence; refusal and queued speak above whatever happens.
-    if (!opts?.quiet) toast(refuse("toastDeleted"));
-    return true;
+    const moved = res.status === "confirmed" && !res.alreadyGone;
+    if (!opts?.quiet && moved) toast(refuse("toastDeleted"));
+    return !opts?.quiet || moved;
   };
 
   /**
@@ -5560,6 +5576,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         body: "",
         snippet: r.snippet,
         unread: presentsUnread(r),
+        ...deliveryMailboxOf(deps.mailboxes?.(), r.mailboxId),
         ...(r.amount ? { amount: r.amount } : {}),
         ...(r.protected ? { protected: r.protected as Mail["protected"] } : {}),
         earlier: [],
@@ -7690,18 +7707,18 @@ export function liveBody(
 
 /**
  * THE QUIET COMMIT A KILLED SESSION'S DELETE IS REPLAYED THROUGH (`held-delete.ts`, opened by
- * `world.tsx`): the delete as pressed where the mirror holds the message; `true` where it does not
- * because the engine's outbox already carries this delete (a kill after the commit reached the outbox
+ * `world.tsx`): the delete as pressed where the mirror holds the message; `"pending"` where it does
+ * not because the engine's outbox already carries this delete (a kill after the commit reached the outbox
  * and before its record was forgotten: the tombstone hid it); `"nothing"`, said lost, otherwise.
  */
 export function deleteReplayDispatch(
   engine: Pick<OhmailEngine, "read" | "pendingMutations" | "inFlightMutations">,
   del: (id: string) => Promise<boolean>,
-): (id: string) => Promise<boolean | "nothing"> {
+): (id: string) => Promise<boolean | "nothing" | "pending"> {
   return (id) => {
     if (engine.read().get("message", id) !== undefined) return del(id);
     const carried = [...engine.pendingMutations(), ...engine.inFlightMutations()]
       .some((p) => p.mutation.kind === "message_delete" && p.mutation.messageId === id);
-    return Promise.resolve(carried ? true : ("nothing" as const));
+    return Promise.resolve(carried ? "pending" : "nothing");
   };
 }

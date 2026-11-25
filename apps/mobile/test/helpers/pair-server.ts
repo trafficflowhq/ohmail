@@ -138,6 +138,8 @@ export interface PairServerOptions {
   pairing?: boolean;
   /** The standalone server mounts `/auth/session`; the desktop-host door does not. */
   sessionRoute?: boolean;
+  /** Mount the calendar-only feeds on a server that offers the calendar. */
+  calendarSync?: boolean;
   /**
    * The redeem's `kind` whitelist, mirroring the real servers' three generations: absent = the
    * CURRENT vocabulary (the mobile kinds admissible); an explicit narrow list (e.g.
@@ -196,9 +198,10 @@ export function pairServer(opts: PairServerOptions = {}) {
     });
   };
 
-  const mintPair = () => {
+  const mintPair = (calendarOnly = refreshHead?.startsWith("cal.") === true) => {
     mintCounter += 1;
-    const tokens = { accessToken: `acc-${mintCounter}`, refreshToken: `ref-${mintCounter}` };
+    const prefix = calendarOnly ? "cal." : "";
+    const tokens = { accessToken: `${prefix}acc-${mintCounter}`, refreshToken: `${prefix}ref-${mintCounter}` };
     refreshHead = tokens.refreshToken;
     familyOf.set(tokens.refreshToken, family);
     liveAccess.add(tokens.accessToken);
@@ -283,10 +286,11 @@ export function pairServer(opts: PairServerOptions = {}) {
           revoked = false;
           endedWith = null;
           family += 1;
-          json(200, { grant: "app-handoff", tokens: mintPair() });
+          json(200, { grant: "app-handoff", tokens: mintPair(opts.calendarSync), ...(opts.calendarSync ? { scope: "calendar" } : {}) });
           return;
         }
-        if (parsed.grant !== "device-pair" || typeof parsed.token !== "string" || !mintable.has(parsed.token)) {
+        const calendarOnly = parsed.grant === "calendar-pair" && opts.calendarSync === true;
+        if ((!calendarOnly && parsed.grant !== "device-pair") || typeof parsed.token !== "string" || !mintable.has(parsed.token)) {
           json(404, { error: { code: "pairing_invalid", message: "no live pairing token matches" } });
           return;
         }
@@ -294,7 +298,7 @@ export function pairServer(opts: PairServerOptions = {}) {
         revoked = false;
         endedWith = null;
         family += 1;
-        json(200, { grant: "device-pair", tokens: mintPair() });
+        json(200, { grant: parsed.grant, tokens: mintPair(calendarOnly), ...(calendarOnly ? { scope: "calendar" } : {}) });
         return;
       }
       if (erased) {
@@ -379,6 +383,33 @@ export function pairServer(opts: PairServerOptions = {}) {
         json(200, { user: { accountId: account }, scope: "full" });
         return;
       }
+      if (opts.calendarSync && url.pathname === "/calendar/sync/snapshot") {
+        if (!authed()) {
+          unauthorized();
+          return;
+        }
+        json(200, {
+          asOfSeq: seq,
+          changes: [{ type: "settings", id: account, seq, entity: { accountId: account, calendarEnabled: true } }],
+          nextCursor: null,
+          window: { days: 90, minRows: 5000 },
+        });
+        return;
+      }
+      if (opts.calendarSync && url.pathname === "/calendar/sync") {
+        res.setHeader("x-ohmail-calendar-pairing", "1");
+        if (!authed()) {
+          unauthorized();
+          return;
+        }
+        json(200, {
+          changes: { creates: [], updates: [], moves: [], deletes: [] },
+          cursor: encodeSeqCursor(seq),
+          hasMore: false,
+          serverTime: new Date().toISOString(),
+        });
+        return;
+      }
       if (url.pathname === "/sync/snapshot") {
         if (!authed()) {
           unauthorized();
@@ -426,6 +457,7 @@ export function pairServer(opts: PairServerOptions = {}) {
   return {
     server,
     addMessage,
+    mintBrowserPair: mintPair,
     /** Put a single-use pairing token on the table — what the desktop's Devices pane mints. */
     mintPairToken: (token: string) => mintable.add(token),
     /** Put the sibling app's one-use handoff code on the table, bound to the receiver's challenge. */

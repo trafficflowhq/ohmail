@@ -148,7 +148,7 @@ export { Counters } from "./Pages/Counters.js";
 export type { Counter, CountersProps } from "./Pages/Counters.js";
 export { StepDots } from "./Pages/StepDots.js";
 export type { StepDotsProps } from "./Pages/StepDots.js";
-export { Opening } from "./Pages/Opening.js";
+export { Opening, OpeningHead, OpeningMenu, OpeningSwitchShape } from "./Pages/Opening.js";
 export type { OpeningProps } from "./Pages/Opening.js";
 export { RowsShape } from "./Pages/RowsShape.js";
 export type { RowsShapeProps } from "./Pages/RowsShape.js";

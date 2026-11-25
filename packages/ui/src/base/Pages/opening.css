@@ -8,6 +8,8 @@
   }
   .oh-opening[data-kind="web"] {
     min-height: calc(100dvh / var(--ui-zoom, 1));
+    box-sizing: border-box;
+    color: var(--ink);
     display: grid;
     place-items: center;
     padding: var(--s4);
@@ -22,7 +24,8 @@
     margin: 0;
     font-size: var(--t-title);
   }
-  .oh-opening-web[data-late] {
+  .oh-opening-web[data-late]:not([data-immediate]),
+  .oh-opening-web[data-late] > .oh-button {
     visibility: hidden;
     animation-name: oh-opening-reveal;
     animation-delay: var(--d-opening-reload);
@@ -34,7 +37,8 @@
     }
   }
 
-  .oh-opening-sheet .oh-shapebar {
+  .oh-opening-sheet .oh-shapebar,
+  .oh-opening-head .oh-shapebar {
     background: var(--soft-sheet);
   }
   /* The shapes breathe; with motion reduced the motion sheet's duration stops them. */
@@ -96,6 +100,19 @@
     height: var(--oh-opening-sign);
     border-radius: var(--r-pill);
     background: var(--hover-ground);
+  }
+  .oh-opening-menu[data-icons] {
+    align-items: center;
+  }
+  .oh-opening-menu[data-icons] .oh-opening-pill {
+    width: var(--h-m);
+    margin-inline: 0;
+  }
+  .oh-opening-menu[data-icons] .oh-opening-item {
+    justify-content: center;
+  }
+  .oh-opening-menu[data-icons] .oh-opening-item > .oh-shapebar {
+    display: none;
   }
   .oh-opening-foot {
     --oh-opening-foot-pad: var(--s2) var(--s3) var(--s3);

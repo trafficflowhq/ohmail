@@ -1155,6 +1155,49 @@ describe("a message's head", () => {
     60_000,
   );
 
+  it.each(["light", "dark"] as const)(
+    "keeps a phone receipt's timestamp clear of the details control in %s",
+    async (scheme) => {
+      const card = (
+        <div data-stream-window="" data-receipts="">
+          <div style={{ width: 334, containerType: "inline-size", containerName: "stream-card" }}>
+            <MessageHead
+              preview
+              sender={{ name: "The Neighborhood Workshop", address: ["shop", "workshop.example"].join("@") }}
+              menu={{ label: "Message actions" }}
+              stamp={{ when: "Mon 21 Sep 10:10", full: false, title: "Mon 21 Sep 10:10" }}
+              to={[{ word: "to", people: [{ name: "Orders and subscriptions" }] }]}
+              details={{ label: "details", open: false, lines: [] }}
+            />
+          </div>
+        </div>
+      );
+      const layout = await drawn(
+        card,
+        () => {
+          const box = (selector: string) =>
+            document.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+          const details = box("button[data-details]");
+          const stamp = box(".oh-messagehead-stamp");
+          const name = document.querySelector<HTMLElement>(".oh-messagehead-name")!;
+          const address = box(".oh-messagehead-address");
+          return {
+            overlap:
+              details.left < stamp.right &&
+              details.right > stamp.left &&
+              details.top < stamp.bottom &&
+              details.bottom > stamp.top,
+            wholeName: name.scrollWidth <= name.clientWidth + 1,
+            addressBelow: address.width > 0 && address.top >= name.getBoundingClientRect().bottom - 1,
+          };
+        },
+        { entry: "mail", device: "phone", window: [390, 664], scheme },
+      );
+      expect(layout).toEqual({ overlap: false, wholeName: true, addressBelow: true });
+    },
+    60_000,
+  );
+
   /* A News card on a phone: the card's head at the width a 412 and a 360 wide phone leave it. The sender reads as the
      reader's head does: the name on one line, the address on one line (its local part cut first), never a word broken. */
   it.each([356, 304])(

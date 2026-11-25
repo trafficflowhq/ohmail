@@ -11,10 +11,11 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { CalendarEventAct, CalendarEventFields } from "@ohmail/wire";
 import { BENCH_CALDAV_PLACE, PROVEN_REPEATS, proofPlaceOf } from "@ohmail/cal-providers";
 import {
-  CALENDAR_BUILDERS, checkedAct, cutToFit, dismissCalendarWrite, recordCalendarWrite as record, retryCalendarWrite,
+  CALENDAR_BUILDERS, calendarFeed, checkedAct, cutToFit, dismissCalendarWrite, recordCalendarWrite as record, retryCalendarWrite,
 } from "@trafficflow/services/calendar";
+import { answerInvitation } from "../src/invitation-answer-service.js";
 import { materializeMessage } from "../src/dto/materialize.js";
-import { invitationLetter, mailboxAt, ME, ORGANIZER } from "./_invitation-answer.js";
+import { invitationLetter, mailboxAt, ME, ORGANIZER, outbox } from "./_invitation-answer.js";
 import { ServiceError, type ServiceContext } from "../src/index.js";
 
 /** A CalDAV account's server in these cases, taken as the one the bench's repeat proof was run at: its row is the bench's. */
@@ -825,6 +826,42 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     expect(await refusal(recordCalendarWrite(ctx(w.accountId), "different-time", wrongStart))).toBe("409 calendar_read_only");
   });
 
+  it.each(["accepted", "tentative", "declined"] as const)(
+    "stores the mailed %s answer on the self-hosted calendar copy and never resends while filing",
+    async (answer) => {
+      const w = await world({ provider: "caldav" });
+      const mailbox = await mailboxAt(db, w.accountId);
+      const messageId = await invitationLetter(db, w.accountId, mailbox);
+      const [invitation] = await db.select().from(messageInvitations).where(eq(messageInvitations.messageId, messageId));
+      const eventId = invitationCalendarId(invitation!);
+      const smtp = outbox();
+      const answerDeps = {
+        send: { openSendAdapter: smtp.factory },
+        recordCalendarMailAnswer: calendarFeed.recordMailAnswer!,
+      };
+      const context = ctx(w.accountId);
+      const first = await answerInvitation(context, { messageId, answer, basis: null, key: "reply" }, answerDeps);
+      expect(first.result.status).toBe("sent");
+
+      const act = { ...create(w, {
+        start: { kind: "instant", value: "20261201T100000Z" },
+        end: { kind: "instant", value: "20261201T110000Z" },
+        busy: answer !== "declined", alarms: [],
+      }, eventId), invitationMessageId: messageId };
+      const saved = await recordCalendarWrite(context, "file-invitation", act);
+      expect(saved.answer.events).toMatchObject([{ id: eventId, mailAnswer: answer, myAnswer: null }]);
+      expect((await answerInvitation(context, { messageId, answer, basis: null, key: "retry" }, answerDeps)).result.status).toBe("already");
+      expect(smtp.sent).toHaveLength(1);
+      expect(smtp.sent[0]!.calendar?.text).toContain(`PARTSTAT=${answer.toUpperCase()}`);
+
+      const next = answer === "tentative" ? "accepted" : "tentative";
+      expect((await answerInvitation(context, { messageId, answer: next, basis: answer, key: "change-answer" }, answerDeps)).result.status).toBe("sent");
+      const events = await CALENDAR_BUILDERS.calendar_event(db, w.accountId, [eventId]);
+      expect(events.get(eventId)).toMatchObject({ mailAnswer: next, myAnswer: null });
+      expect(smtp.sent).toHaveLength(2);
+    },
+  );
+
   it("removes an existing invitation only for a current cancellation from its organizer", async () => {
     const w = await world({ organizer: ORGANIZER, myAnswer: "accepted" });
     const mailbox = await mailboxAt(db, w.accountId);
@@ -864,13 +901,28 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     }
   });
 
-  it("records a guest-free move to an owned calendar on another connection", async () => {
+  it("rejects a copy request when the destination supports a native move", async () => {
+    const principal = ["connected", "example.test"].join("@");
+    const w = await world({ organizer: principal });
+    await db.update(calConnections).set({ principal }).where(eq(calConnections.id, w.connectionId));
+    const [calendar] = await db.insert(calCalendars).values({
+      accountId: w.accountId, connectionId: w.connectionId, providerId: "destination",
+      name: "Workshop", access: "owner",
+    }).returning({ id: calCalendars.id });
+    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), { ...act, copyThenRemove: true }))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), act)).answer.write?.state).toBe("pending");
+  });
+  it("requires an explicit copy request for the older cross-account transfer path", async () => {
     const w = await world();
     const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
     const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
       providerId: "destination", name: "Personal", access: "owner" }).returning();
     const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
-    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), act)).answer.write?.state).toBe("pending");
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), act))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), { ...act, copyThenRemove: true })).answer.write?.state).toBe("pending");
     expect(await rowsOf(w.accountId)).toMatchObject([{ op: "move", state: "pending" }]);
   });
   it("keeps a record without proof its fields can be copied in its original calendar", async () => {
@@ -879,7 +931,7 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
     const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
       providerId: "destination", name: "Personal", access: "owner" }).returning();
-    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
+    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id, copyThenRemove: true };
     expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), act))).toBe("409 calendar_read_only");
     expect(await rowsOf(w.accountId)).toEqual([]);
     expect(await eventRows(w.accountId)).toMatchObject([{ id: w.eventId, versionTag: '"v1"' }]);
@@ -890,7 +942,7 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
     const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
       providerId: "destination", name: "Personal", access: "owner" }).returning();
-    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
+    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id, copyThenRemove: true };
     expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), act)).answer.write?.state).toBe("pending");
     expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), update(w, { title: "New title" })))).toBe("409 calendar_write_left");
     expect(await rowsOf(w.accountId)).toMatchObject([{ op: "move", state: "pending" }]);
@@ -904,7 +956,7 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
       providerId: "destination", name: "Personal", access: "owner" }).returning();
     const answer = await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(),
-      { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id }));
+      { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id, copyThenRemove: true }));
     expect(answer).toBe("409 calendar_read_only");
     expect(await rowsOf(w.accountId)).toEqual([]);
   });

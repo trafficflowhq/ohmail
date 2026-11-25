@@ -28,6 +28,7 @@ import { usePosture } from "../ui/posture";
 import { nativePosture } from "../ui/posture/posture-native";
 import { useNotifyPermission } from "../ui/useNotifyPermission";
 import { APP } from "../variant-native";
+import { markCalendarCopiesPrepared } from "./shell-stores-native";
 import type { FoldReading, SafeInsets } from "./bridge-kinds";
 import { DoorHost } from "./door-host";
 import type { DoorAt, Rect } from "./door-kinds";
@@ -49,6 +50,7 @@ export function DoorScreen({ asked }: { asked: DoorAt | null }) {
   const notify = useNotifyPermission();
   const [drawn, setDrawn] = useState(false);
   const [refused, setRefused] = useState<ShellRefusal | null>(null);
+  const [calendarPreparationFailed, setCalendarPreparationFailed] = useState(false);
   const [camera, setCamera] = useState<Rect | null>(null);
   const view = useRef<ShellViewHandle | null>(null);
   const keyboard = useRef(0);
@@ -113,7 +115,11 @@ export function DoorScreen({ asked }: { asked: DoorAt | null }) {
     /* A mailbox was opened: over the open mailbox's own route the door is dismissed, else the root places the app. */
     entered: () => (router.canGoBack() ? router.dismissAll() : router.replace("/")),
     back: () => (router.canGoBack() ? router.back() : router.replace("/")),
-    ready: () => setDrawn(true),
+    ready: (prepared) => {
+      if (APP.app === "ohcal") markCalendarCopiesPrepared(prepared !== false);
+      setCalendarPreparationFailed(prepared === false);
+      setDrawn(true);
+    },
     wake: () => wakeShell("foreground"),
     openSettings: () => openNotificationSettings(),
     // One host per screen: what it reads of a render it reads through `now`.
@@ -162,9 +168,13 @@ export function DoorScreen({ asked }: { asked: DoorAt | null }) {
   }, [host]);
 
   const usable = native !== null && webViewVerdict(native.webViewCheck()) === "usable";
+  useEffect(() => {
+    if (APP.app === "ohcal" && (!usable || refused !== null)) markCalendarCopiesPrepared(false);
+  }, [usable, refused]);
   if (!usable || refused?.why === "webview") return <Sentence words={Copy.shellWebViewMissing} />;
   if (refused?.why === "ended") return <Sentence words={Copy.shellEnded} />;
   const Native = shellView();
+  if (calendarPreparationFailed) return <Sentence words={Copy.calendarCopyRemains} />;
   return (
     <View style={styles.fill}>
       <Native

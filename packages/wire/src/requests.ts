@@ -285,13 +285,19 @@ export type PatchDraftBody = Partial<CreateDraftBody>;
  */
 export type SendResolution = "arrived" | "not_arrived";
 
+/** The optional consent for this reply draft. */
+export interface DraftReplyBody {
+  /** Explicitly approved for this request after disclosing what the configured provider receives. */
+  fullConversation?: boolean;
+}
+
 /**
  * A DRAFT FROM THE PERSON'S OWN WORDS (`POST /drafts/from-text`): `text` says what the letter should
  * say, and is the input. `inReplyToMessageId` names a letter to answer, read as context; without it
  * `mailboxId` names the mailbox the draft is written in, and with it a `mailboxId` must be that
  * letter's. `subject` is the person's own, kept as written. The draft is stored, never sent.
  */
-export interface DraftFromTextBody {
+export interface DraftFromTextBody extends DraftReplyBody {
   text: string;
   mailboxId?: string;
   inReplyToMessageId?: string;

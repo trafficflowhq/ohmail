@@ -100,6 +100,7 @@
   },
   "account": {
     "title": "Account löschen",
+    "sharedCalendarLead": "Damit wird der Account gelöscht, den du in ohcal und ohmail nutzt, samt den gespeicherten Kopien deiner Kalenderdaten und Mails.",
     "lead": "Das lässt sich nicht rückgängig machen.",
     "signedInAs": "Angemeldet als {email}.",
     "signOutTitle": "Abmelden",

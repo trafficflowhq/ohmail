@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, recordChange } from "@trafficflow/db";
-import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSuggestions, calWrites } from "@trafficflow/db/mail";
+import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSuggestions, calWrites, folderState, messages } from "@trafficflow/db/mail";
 import { calendarExport, calendarFeed, setCalendarSettings } from "@trafficflow/services/calendar";
 import type { CalendarEventRecord, CalendarWindow, SnapshotResponse, SyncChange } from "@ohmail/wire";
 import { SyncService, ServiceError, dbFor, namedCalendarSpan, NAMED_CALENDAR_SPAN_MAX_MS, type ServiceContext } from "../src/index.js";
@@ -90,6 +90,52 @@ describe("the calendar's phase follows the mail's", () => {
     expect(calendar.changes.map((c) => c.id)).toEqual([w.connectionId, w.calendarId, suggestion, e]);
     for (const p of pages) for (const c of p.changes) expect(c.seq).toBe(mail.asOfSeq);
     expect(calendar.calendarWindow).toEqual(calendarFeed.window);
+  });
+
+  it("serves a calendar-only copy without mail or letter suggestions, even with mail types and cursors supplied", async () => {
+    const w = await world();
+    const suggestion = randomUUID();
+    await w.db.insert(calSuggestions).values({
+      id: suggestion, accountId: w.accountId, messageId: randomUUID(), mailboxId: w.mailboxId, evidence: "dates",
+      proposed: { title: "From a letter", start: { kind: "date", value: "20260801" }, end: null, place: null },
+      sourceWords: "Private mail content",
+    });
+    const early = await event(w.db, w, { startsAt: day(1), endsAt: day(1.1) });
+    const later = await event(w.db, w, { startsAt: day(2), endsAt: day(2.1) });
+    const [letter] = await w.db.insert(messages).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "body", dedupKey: randomUUID(),
+      subject: "Private subject", fromAddress: "sender@example.invalid", date: NOW,
+    }).returning({ id: messages.id });
+    await w.db.insert(folderState).values({
+      messageId: letter!.id, accountId: w.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    });
+    await w.db.transaction((tx) => recordChange(tx as never, {
+      accountId: w.accountId, entityType: "message", entityId: letter!.id, op: "create",
+    }));
+    const ordinary = await svc.getSnapshot(w.ctx, { ...served, limit: 1 });
+    expect(ordinary.changes.find((change) => change.id === letter!.id)?.entity).toMatchObject({ subject: "Private subject" });
+    const tail = svc.encodeSnapshotCursor({ phase: "tail", asOfSeq: BigInt(ordinary.asOfSeq), emitted: 0, generation: null });
+    const strict = { ...served, calendarOnly: true, limit: 1 };
+    await expect(svc.getSnapshot(w.ctx, { ...strict, cursor: tail })).rejects.toMatchObject({ code: "cursor_expired" });
+    const pages = await walk(w.ctx, strict);
+    expect(pages.flatMap((page) => page.changes.map((change) => change.type)))
+      .toEqual(["settings", "calendar_connection", "calendar", "calendar_event", "calendar_event"]);
+    expect(ofKind(pages, "calendar_event")).toEqual([early, later]);
+    expect(pages[0]?.changes[0]?.entity).toEqual({ accountId: w.accountId, calendarEnabledAt: NOW.toISOString() });
+    await w.db.transaction((tx) => recordChange(tx as never, { accountId: w.accountId, entityType: "calendar_suggestion", entityId: suggestion, op: "create" }));
+    await w.db.transaction((tx) => recordChange(tx as never, { accountId: w.accountId, entityType: "calendar_event", entityId: later, op: "create" }));
+    const delta = await svc.getChanges(w.ctx, { ...strict, since: "0", limit: 100 });
+    const changes = Object.values(delta.changes).flat();
+    expect(changes.map((change) => change.type).sort()).toEqual(["calendar_event", "settings"]);
+    expect(changes.find((change) => change.type === "settings")?.entity).toEqual({ accountId: w.accountId, calendarEnabledAt: NOW.toISOString() });
+    expect(JSON.stringify([pages, delta])).not.toMatch(/Private mail content|Private subject/);
+    const newerMail = await w.db.transaction((tx) => recordChange(tx as never, {
+      accountId: w.accountId, entityType: "message", entityId: letter!.id, op: "update",
+    }));
+    const onlyMailAdvanced = await svc.getChanges(w.ctx, { ...strict, since: delta.cursor });
+    expect(Object.values(onlyMailAdvanced.changes).flat()).toEqual([]);
+    expect(onlyMailAdvanced.cursor).toBe(svc.encodeCursor(newerMail, null));
+    expect(onlyMailAdvanced.hasMore).toBe(false);
   });
 
   it("projects only times and recurrence from a calendar that now grants availability alone", async () => {

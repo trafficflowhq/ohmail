@@ -28,6 +28,8 @@ export interface MutationOutcome {
   partialEcho?: true;
   /** The X-Sync-Seq of the mutation (null when the endpoint does not echo one). */
   seq: number | null;
+  /** The delete found the message already gone and moved nothing to Trash. */
+  alreadyGone?: true;
   /**
    * The server's own id for a row this mutation created, when the caller
    * must keep using it. Absent for mutations on something already named and

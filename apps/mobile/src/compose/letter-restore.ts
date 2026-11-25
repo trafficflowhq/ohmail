@@ -313,9 +313,11 @@ export function settleLetters(
       }
       if (l.keep?.key === key && o.kind === "draft_save") {
         if (o.status === "confirmed" && o.createdDraftId) {
-          const next = { ...l, draftId: o.createdDraftId, savedAs: wordsOf(l), keep: null };
-          if (rowHoldsLetter(next)) door.drop(l.id);
+          const words = wordsOf(l);
+          const next = { ...l, draftId: o.createdDraftId, savedAs: l.savedAs ?? words, keep: null };
+          if (next.savedAs === words && rowHoldsLetter(next)) door.drop(l.id);
           else door.put({ ...next, updatedAt: now().toISOString() });
+          if (next.savedAs !== words) loose.push({ key, letter: l.id });
         } else if (o.status === "rolled_back") door.put({ ...l, keep: null, updatedAt: now().toISOString() });
       }
       if (l.send?.key === key && o.kind === "mail_send") {

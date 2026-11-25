@@ -1,0 +1,1 @@
+This store declares no CHECK on sessions.scope, so the calendar scope needs no change here.

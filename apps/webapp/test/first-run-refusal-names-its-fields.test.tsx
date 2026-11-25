@@ -1,7 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
 import { act, cleanup, fireEvent, within } from "@testing-library/react";
-import { createTranslator } from "next-intl";
 import { NO_DETAILS } from "@ohmail/app-logic/mailboxes/connect/refusal";
 import type { Answered, Refusal, RefusalDetails } from "@ohmail/app-logic/mailboxes/connect/types";
 import messagesEn from "../../../packages/app/messages/mailboxes.en.json";
@@ -12,24 +11,10 @@ import { fakeDoor } from "../../../packages/app/test/mailboxes/connect/support.j
 import { mountStage } from "./_first-run-stage.js";
 
 /**
- * THE FIRST-RUN TEST VERDICT NAMES ONLY THE FIELDS ON SCREEN. Behind a named provider the stage
- * shows no host and no port, and a refused test said "Check the IMAP host and port" anyway. The
- * generic entry has both fields, so there it keeps the sentence that names them — the control.
- *
- * RE-POINTED (the switch's older tests, sorted once): the first run is the new frame's stage
- * (`_first-run-stage.tsx`), its mailbox step the one connect form (`packages/app/src/mailboxes/connect`)
- * over a wire that answers as the door did (`fakeDoor`: the door's refusal is the wire's answer, `details.transport`
- * saying which leg), in the stage's catalogue (`packages/app/messages/mailboxes.*.json`). The new form asks for more
- * before a Test than today's did: a provider (no tile is pre-selected: a Gmail address chooses Gmail's tile, the
- * named provider these cases are about; the generic entry is its own tile), the address, the password and, on the
- * generic entry, both servers; the cases give them. The verdict is what the form says at the press as a refusal (an
- * alert). The service's own refusal on the generic form reaches the form as the web's wire hands it on: its status,
- * code, sentence and details. Both languages use the notice for the combined server-name field.
- *
- * RETIRED HERE: "on the generic entry, which has both fields, the sentence names them". On a new connection the new
- * form has one field per server (a port goes after the name), and its refusal for an unreachable incoming server
- * names that field and says where a port goes; the form's own model holds it
- * (`packages/app-logic/test/mailboxes/connect/model.test.ts`, "an unreachable host on the manual entry ...").
+ * The first-run verdict names the fields on screen. A named provider hides hosts and ports.
+ * Other (IMAP) exposes a host and a separate port for each server in its disclosure. The
+ * generic form names the refused leg and its fields in both languages. The Connect cases
+ * use a service refusal as the web wire hands it to the form.
  */
 
 afterEach(() => {
@@ -143,9 +128,7 @@ describe("the first-run refusal names the outgoing server", () => {
     expect(el.textContent).not.toContain("the server's own sentence");
   });
 
-  /* The generic form shows both hosts: an outgoing refusal sent the person to the IMAP host and
-     port, under the incoming Test that had just passed. The refusal is the service's own. */
-  it("on the generic form, a connect the outgoing server refused names the SMTP host, in English and in German", async () => {
+  it("on the generic form, a connect the outgoing server refused names the SMTP host and port, in English and in German", async () => {
     const { MailboxService } = await import("@trafficflow/services/mail");
     const svc = new MailboxService({ keyProvider: {} } as never);
     for (const reason of ["connect", "timeout", "tls"] as const) {
@@ -159,8 +142,7 @@ describe("the first-run refusal names the outgoing server", () => {
         const { el, press } = await mount(reason, { locale, probe: "ok", connect: answered(wire), generic: true });
         await press(said.onboarding.test);
         await press((locale === "de" ? doorsDe : doorsEn).join.manualConnect);
-        const t = createTranslator({ locale, messages: said, namespace: "mailboxes" });
-        expect(verdict(el), `${reason}, ${locale}`).toContain(t(`probe_${reason}_noport`, { field: "smtp" }));
+        expect(verdict(el), `${reason}, ${locale}`).toContain(said.mailboxes[`probe_${reason}_smtp`]);
         expect(verdict(el), `${reason}, ${locale}`).toMatch(/SMTP/);
         expect(verdict(el), `${reason}, ${locale}`).not.toMatch(/IMAP/);
       }
@@ -169,11 +151,14 @@ describe("the first-run refusal names the outgoing server", () => {
 });
 
 describe("the first-run test verdict", () => {
-  it("on the generic entry, which has both fields, the sentence names them", async () => {
+  it("on the generic entry, the incoming refusal names the visible IMAP host and port", async () => {
     const { el, press } = await mount("connect", { generic: true });
     expect(within(el).getByLabelText(messages.onboarding.imapHost)).toBeTruthy();
     expect(within(el).getByLabelText(messages.onboarding.smtpHost)).toBeTruthy();
+    expect(within(el).getByLabelText(messages.mailboxes.imapPortLabel)).toBeTruthy();
+    expect(within(el).getByLabelText(messages.mailboxes.smtpPortLabel)).toBeTruthy();
     await press(messages.onboarding.test);
+    expect(verdict(el)).toContain(messages.mailboxes.probe_connect);
     expect(verdict(el)).toMatch(/IMAP|incoming/i);
     expect(verdict(el)).toMatch(/port/i);
   });

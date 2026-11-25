@@ -12,28 +12,7 @@ import { DesktopGate } from "../src/DesktopGate.js";
 import { bootSentence, LONG_PHASE_MS } from "../src/BootStatus.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 
-const APP_CSS = readFileSync(resolve(process.cwd(), "apps/webapp/app/app.css"), "utf8");
-
-/**
- * ═══ THE BOOT'S WORDS SIT WHERE THE APP'S OWN SYNC LINE SITS — AND THEY ARE THE ENGINE'S ═══
- *
- * The launch used to be one centred card — a wordmark and one sentence — over an empty window,
- * for anything from half a second to the minute a write-ahead-log recovery takes. Two things
- * were wrong with that, and each half of this file pins the repair for one of them:
- *
- *  · WHERE. The app already has a corner where it reports work that is not the reader's job —
- *    the sync line at the foot of the rail. The boot now borrows that surface (`BootStatus`
- *    renders the sync line's own classes over the skeleton's rail), so the wait and the work
- *    that follows it read as one continuous thing in one place. The centred card is gone from
- *    the opening state; `GateNotice` keeps it for apologies, which are a different thing.
- *
- *  · WHAT. The sentence is the engine's own account of the wait: the engine writes `phase`
- *    frames while it starts, the shell surfaces the latest as `status.bootPhase`, and
- *    {@link bootSentence} maps that closed set to words. A recovery launch says "Replaying
- *    recent changes…" instead of one sentence for every wait — and a phase this build does not
- *    know must fall back to the generic sentence rather than surface as a wire token.
- */
-
+/** The engine's phase is spoken at the foot of the frame, including during its visual grace. */
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -103,26 +82,13 @@ describe("where the boot line stands", () => {
     await render();
 
     expect(mountPoint!.querySelector(".gate-card"), "the centred boot card is back").toBeNull();
-
-    const line = mountPoint!.querySelector<HTMLElement>(".gate-boot .rail-sync.busy");
-    expect(line, "no sync-line-shaped boot status in the opening state").not.toBeNull();
-    // Its pieces are the sync line's pieces — the spinner and the travelling track — so the boot
-    // reads as the same affordance the rail will carry once the engine serves.
-    expect(line!.querySelector(".mbx-spin")).not.toBeNull();
-    expect(line!.querySelector(".rs-track")).not.toBeNull();
-
-    // Anchored at the rail's foot: bottom-left of the window, not centred over the canvas. The box
-    // is app.css's `.gate-boot > .boot-foot` (the rail's own track; `boot-sync-line-frames.test.ts`
-    // measures it frame by frame in Chromium), so here it is the class and that rule's anchoring.
-    const anchor = line!.parentElement as HTMLElement;
-    expect(anchor.className).toBe("boot-foot");
-    expect(anchor.parentElement!.classList.contains("gate-boot")).toBe(true);
-    const rule = /\n\.gate-boot > \.boot-foot \{([^}]*)\}/.exec(APP_CSS)?.[1] ?? "";
-    expect(rule).toContain("position: absolute;");
-    expect(rule).toContain("left: var(--gap-edge);");
-    expect(rule).toContain("bottom: var(--gap-edge);");
-    // A live region, exactly like the sync line it stands in for.
-    expect(anchor.getAttribute("role")).toBe("status");
+    const rail = mountPoint!.querySelector(".gate-boot .fr-columns > .fr-opening-rail > .oh-rail");
+    const line = rail?.querySelector(".oh-opening-line[role=status][aria-live=polite]");
+    expect(line, "no live status in the rail").not.toBeNull();
+    const css = readFileSync(resolve(process.cwd(), "packages/app/src/frame/opening-frame.css"), "utf8");
+    expect(css).toMatch(/\.fr-opening \[role="status"\]\s*\{[^}]*margin: auto 0 0/);
+    expect(rail!.lastElementChild).toBe(line);
+    expect(line!.textContent).toBe("Opening your mailbox…");
   });
 
   it("is gone once the engine serves — the real rail takes the corner over", async () => {
@@ -159,7 +125,7 @@ describe("where the boot line stands", () => {
     };
     await render();
 
-    expect(mountPoint!.querySelector(".gate-boot .rail-sync"), "the boot line outlived the boot").toBeNull();
+    expect(mountPoint!.querySelector(".gate-boot [role=status]"), "the boot line outlived the boot").toBeNull();
   });
 });
 

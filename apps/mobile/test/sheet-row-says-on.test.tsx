@@ -5,20 +5,21 @@
  * then removed the tag the person was trying to add. The mark stands beside the name, and the row
  * is a checkbox whose state is read out.
  */
-import { createElement as h, type ReactNode } from "react";
+import { act, createElement as h, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
+const device = vi.hoisted(() => ({ width: 360, height: 780, mail: false }));
 vi.mock("react-native", async () => ({
   ...(await import("./_rendered-dom")).rnDom,
   KeyboardAvoidingView: () => null,
   /* A shown sheet's dialog, as the window manager is asked to draw it. */
-  Modal: (p: { statusBarTranslucent?: boolean; navigationBarTranslucent?: boolean }) =>
-    h("div", { "data-modal": "", "data-status-bar": String(p.statusBarTranslucent === true), "data-nav-bar": String(p.navigationBarTranslucent === true) }),
-  useWindowDimensions: () => ({ width: 360, height: 780, scale: 3, fontScale: 1 }),
+  Modal: (p: { statusBarTranslucent?: boolean; navigationBarTranslucent?: boolean; children: ReactNode }) =>
+    h("div", { "data-modal": "", "data-status-bar": String(p.statusBarTranslucent === true), "data-nav-bar": String(p.navigationBarTranslucent === true) }, p.children),
+  useWindowDimensions: () => ({ width: device.width, height: device.height, scale: 3, fontScale: 1 }),
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 vi.mock("../src/theme", () => ({
-  useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), radius: new Proxy({}, { get: () => 8 }), liftUp: () => ({}), reduceMotion: true }),
+  useTheme: () => ({ mail: device.mail, c: new Proxy({}, { get: () => "#000" }), radius: new Proxy({}, { get: () => 8 }), liftUp: () => ({}), reduceMotion: true }),
 }));
 vi.mock("../src/ui/keyboard-lift", () => ({ useKeyboardLift: () => 0 }));
 vi.mock("../src/ui/reader-cover", () => ({ useReaderCover: () => undefined }));
@@ -26,7 +27,6 @@ vi.mock("../src/ui/posture", () => ({
   usePosture: () => ({ panes: 1, fold: null, hinge: null }), separatingVerticalHinge: () => null, creaseAcross: () => null,
 }));
 vi.mock("../src/ui/scaffold/plan", () => ({ detailPaneRect: () => null, scaffoldPlan: () => ({ gutter: 16 }) }));
-vi.mock("../src/ui/sheet-bounds", () => ({ sheetPanelBounds: () => ({}), sheetRoom: () => ({}) }));
 vi.mock("../src/ui/Icon", () => ({ Icon: (p: { name: string }) => h("i", { "data-icon": p.name }) }));
 vi.mock("../src/ui/base", () => ({
   Tap: (p: { children?: ReactNode; accessibilityRole?: string; accessibilityState?: { checked?: boolean }; onPress?: () => void }) =>
@@ -38,7 +38,7 @@ vi.mock("../src/ui/base", () => ({
   Txt: (p: { children?: ReactNode }) => h("span", { "data-txt": "" }, p.children),
 }));
 
-const { mount } = await import("./_rendered-dom");
+const { mount, styleOf } = await import("./_rendered-dom");
 const { Sheet, SheetRow } = await import("../src/ui/Sheet");
 
 /** The row's parts in order: the check is `✓`, another icon `[name]`, a name its text. */
@@ -87,4 +87,25 @@ describe("a shown sheet dims the whole window", () => {
     expect([modal?.getAttribute("data-status-bar"), modal?.getAttribute("data-nav-bar")]).toEqual(["true", "true"]);
     unmount();
   });
+});
+
+it.each([[390, 844], [412, 915]])("insets a mail sheet and keeps its dismiss control at %i × %i", (width, height) => {
+  Object.assign(device, { width, height, mail: true });
+  const onClose = vi.fn();
+  const { el, unmount } = mount(h(Sheet, { open: true, onClose, label: "More", children: null }));
+  try {
+    const panel = el.querySelector('[data-label="More"]');
+    const style = styleOf(panel);
+    expect(style.width).toBeLessThan(width);
+    expect(style.marginBottom).toBeGreaterThan(0);
+    expect(style.borderBottomLeftRadius).toBe(style.borderTopLeftRadius);
+    expect(style.maxHeight).toBeLessThan(height);
+    const dismiss = [...el.querySelectorAll<HTMLElement>('[data-role="button"]')].at(-1);
+    expect(dismiss).toBeDefined();
+    act(() => dismiss!.click());
+    expect(onClose).toHaveBeenCalledOnce();
+  } finally {
+    unmount();
+    device.mail = false;
+  }
 });

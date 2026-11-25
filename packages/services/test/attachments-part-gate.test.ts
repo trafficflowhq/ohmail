@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import JSZip from "jszip";
 import { eq } from "drizzle-orm";
 import { attachments as attachmentsTbl, drafts, outboundSends } from "@trafficflow/db";
-import { createLogger, type Logger, type MimeStructure, type OutboundMessage, type SendAdapter } from "@trafficflow/core/mail";
+import { createLogger, normalizeMime, type Logger, type MimeStructure, type OutboundMessage, type SendAdapter } from "@trafficflow/core/mail";
 import { MessageGoneError } from "@trafficflow/core/adapters/imap";
 import {
   AttachmentsService, readerFor, repairedPart, type AttachmentAdapter, type OpenAdapter,
@@ -561,3 +561,87 @@ describe("a read the server's tree vouches for is read again before anything is 
     expect(state.asked).toEqual(["2.2", "2.2", "2.2"]);
   });
 });
+
+const meeting = [
+  "BEGIN:VCALENDAR", "VERSION:2.0", "METHOD:REQUEST", "BEGIN:VEVENT", "UID:workshop",
+  "DTSTAMP:20261125T120000Z", "DTSTART:20261126T130000Z", "DTEND:20261126T140000Z",
+  "SUMMARY:Workshop", "END:VEVENT", "END:VCALENDAR", "",
+].join("\r\n");
+
+it.each([
+  { name: null, type: "text/calendar", bytes: meeting },
+  { name: "invite.ics", type: "text/calendar", bytes: meeting },
+  { name: "notes.txt", type: "text/plain", bytes: "Workshop notes\r\n" },
+  { name: "agenda.csv", type: "text/csv", bytes: "Meeting,Workshop\r\n" },
+  { name: "invite.ics", type: "text/calendar", bytes: meeting, nested: true },
+  { name: null, type: "text/calendar", bytes: meeting, nested: true },
+  { name: null, type: "text/calendar", bytes: meeting, changed: true },
+  { name: null, type: "text/calendar", bytes: meeting, tooLarge: true },
+])("checks the digest of a trimmed $type section ($name, nested: $nested, changed: $changed, oversized: $tooLarge)",
+  async ({ name, type, bytes, nested, changed, tooLarge }) => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId);
+    const encoding = nested ? "quoted-printable" : "7bit";
+    const encoded = nested ? bytes.replace("Workshop", "Work=73hop") : bytes;
+    const leaf = { ...leafNode(type, name), encoding };
+    const boundary = name ? "mixed" : "alternative";
+    const inner = multi(boundary, [text("plain"), leaf]);
+    const structure = nested ? multi("related", [inner]) : inner;
+    const raw = Buffer.from([
+      ...(nested ? ['Content-Type: multipart/related; boundary="b-related"', "", "--b-related"] : []),
+      `Content-Type: multipart/${boundary}; boundary="b-${boundary}"`, "",
+      `--b-${boundary}`, "Content-Type: text/plain", "", "Please respond.",
+      `--b-${boundary}`, `Content-Type: ${type}; charset=utf-8`,
+      `Content-Transfer-Encoding: ${encoding}`,
+      ...(name ? [`Content-Disposition: attachment; filename="${name}"`] : []),
+      "", encoded, `--b-${boundary}--`, ...(nested ? ["--b-related--"] : []), "",
+    ].join("\r\n"));
+    const parsed = await normalizeMime(raw);
+    const [part] = parsed.attachments;
+    expect(part!.partId).toBe(nested ? "1.2" : "2");
+    expect(part!.filename).toBe(name);
+    expect(part!.contentSha256).toBe(sha(Buffer.from(bytes)));
+    const [row] = await db.insert(attachmentsTbl).values({
+      accountId, messageId, filename: part!.filename, contentType: part!.contentType, partId: part!.partId,
+      contentSha256: part!.contentSha256, sizeBytes: part!.sizeBytes, inline: false,
+    }).returning();
+    // GreenMail trims the final CRLF and serves the parent's MIME header for a nested section.
+    const fetchPart: AttachmentAdapter["fetchPart"] = async (_locator, section) => ({
+      contentType: nested ? inner.type : type, filename: nested ? null : name,
+      body: section === part!.partId ? Buffer.from(encoded.trimEnd()) : Buffer.alloc(0),
+    });
+    const openAdapter: OpenAdapter = async () => ({
+      fetchPart,
+      fetchPartTo: async (locator, section, write) => {
+        const { body, contentType, filename } = await fetchPart(locator, section);
+        await write(body);
+        return { contentType, filename, bytes: body.byteLength, sha256: sha(body) };
+      },
+      fetchStructure: async () => structure,
+      fetchRaw: async (_locator, opts) => {
+        expect(opts?.maxBytes).toBe(512 * 1024);
+        if (tooLarge) return Buffer.concat([raw, Buffer.alloc(512 * 1024)]);
+        return changed ? Buffer.from(raw.toString().replace("SUMMARY:Workshop", "SUMMARY:Briefing")) : raw;
+      },
+      close: async () => {},
+    });
+    const deps = { openAdapter, log: capturingLog().log };
+    if (changed || tooLarge) {
+      await expect(svc.fetchBytes(ctx, row!.id, deps)).rejects.toMatchObject({ code: "attachment_part_mismatch" });
+      return;
+    }
+    const got = await svc.fetchBytes(ctx, row!.id, deps);
+    expect(got.filename).toBe(name ?? "invite.ics");
+    expect(got.contentType).toBe(type);
+    expect(Buffer.from(got.body).toString()).toBe(bytes);
+
+    if (name) {
+      let held = Buffer.alloc(0);
+      const saved = await svc.fetchToSink(ctx, row!.id, deps, {
+        write: async (chunk) => { held = Buffer.concat([held, chunk]); },
+        reset: async () => { held = Buffer.alloc(0); },
+      });
+      expect(held.toString()).toBe(bytes);
+      expect(saved).toEqual({ filename: name, contentType: type, bytes: held.length, sha256: part!.contentSha256 });
+    }
+  });

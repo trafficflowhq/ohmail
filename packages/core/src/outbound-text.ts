@@ -3,7 +3,7 @@
  * path puts `body` and `html` on the wire as `multipart/alternative` when the second is present —
  * until this module, a generated draft never wrote it, so a model-written reply went out
  * `text/plain`. The SERVER promotes, not the model: two independent answers could disagree. The
- * grammar is the smallest that survives the round trip — `<p>`, `<br />`, `<p></p>`; `&`, `<`,
+ * grammar is the smallest that survives the round trip — `<p>` and `<br />`; `&`, `<`,
  * `>` escaped — inside the outbound sanitizer's allow-list, asserted as a fixed point. Both
  * halves return together: the text half is the NORMALIZED source, what every renderer of the html
  * shows. In `core` because both generated-draft writers live in different packages.
@@ -69,31 +69,29 @@ export function plainTextToOutboundBody(source: string): PromotedBody {
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   if (lines.length === 0) return { html: "", text: "" };
 
-  let html = "";
-  let paragraph: string[] = [];
-  const closeParagraph = (): void => {
-    if (paragraph.length === 0) return;
-    // `<br />`, not `<br>`, because that is the form the sanitizer re-serializes a break into.
-    // The two spellings render identically; only one of them is a fixed point.
-    html += `<p>${paragraph.join("<br />")}</p>`;
-    paragraph = [];
-  };
-
-  for (const line of lines) {
-    if (line === "") {
-      closeParagraph();
-      // An EMPTY PARAGRAPH is how a rich editor holds the gap between two paragraphs, and it is
-      // the one construct `htmlToPlainText` renders back as a blank line. Expressing the gap as
-      // paragraph margins instead would look right and would lose the blank line on the way
-      // back to text — the two halves would then disagree about where the message breathes.
-      html += "<p></p>";
-      continue;
-    }
-    paragraph.push(escapeText(line));
-  }
-  closeParagraph();
-
+  // One hard break per newline matches the editor's line model. Two breaks draw a blank
+  // line in both the composer and the delivered HTML, even with zero paragraph margins.
+  const html = `<p>${lines.map(escapeText).join("<br />")}</p>`;
   return { html, text: lines.join("\n") };
+}
+
+/**
+ * Older generated drafts stored blank lines as empty paragraphs. Repair only when every
+ * paragraph and break matches the old encoding of the saved text. Request drafts carried
+ * zero-margin paragraphs, while workflow drafts used bare paragraphs.
+ */
+export function repairLegacyDraftHtml(html: string, text: string): string {
+  if (!text.includes("\n\n") || !html.startsWith("<p")) return html;
+
+  const styled = `<p style="${AUTHORED_PARAGRAPH_STYLE}">`;
+  const paragraph = html.startsWith(styled) ? styled : "<p>";
+  const legacy = escapeText(text).split("\n\n")
+    .map((part) => `${paragraph}${part.replaceAll("\n", "<br />")}</p>`)
+    .join(`${paragraph}</p>`);
+  if (html !== legacy) return html;
+
+  const promoted = plainTextToOutboundBody(text);
+  return promoted.text === text ? promoted.html.replace("<p>", paragraph) : html;
 }
 
 /**

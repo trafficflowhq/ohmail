@@ -1,8 +1,10 @@
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, exists, isNull, ne, not, sql } from "drizzle-orm";
 import {
-  messages, draftAttemptKey, draftFromTextAttemptKey, modelConsentGate, ModelConsentWithdrawn, readManagedModelConsent, reverseCharge,
+  autoReplyByUsWhere, mailboxes, messageBodies, messageInstances, messages,
+  draftAttemptKey, draftFromTextAttemptKey, modelConsentGate, ModelConsentWithdrawn, readManagedModelConsent, reverseCharge,
   type IdempotencyKey, type ReverseChargeFact, type ReverseChargeResult,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 // TYPE-ONLY, and it has to stay that way: `import type` is erased, so it creates no module edge
 // into the hosted half. A value import from `/cloud` here would put billing and the ledger into
 // the desktop engine, which mounts this service.
@@ -13,7 +15,7 @@ import type {
   AccessPort, AiUsageHost, RefundObligationPort, SpendPort,
 } from "@trafficflow/db";
 import {
-  createLogger, plainTextToOutboundBody, ModelDeclinedError, NO_LETTER,
+  createLogger, inSentFolderSql, plainTextToOutboundBody, searchBodyOf, ModelDeclinedError, MAX_DRAFT_THREAD_MESSAGES, NO_LETTER,
   type DraftCallOptions, type DraftContext, type DraftInput, type DraftPort, type DraftResult,
 } from "@trafficflow/core/mail";
 import type { DraftFromTextBody, UntrustedBody } from "@ohmail/wire";
@@ -80,9 +82,18 @@ function kbHintOf(target: { subject: string; snippet: string }): string {
   return `${target.subject.slice(0, Math.max(0, subjectRoom))} ${snippet}`.trim();
 }
 
-/** How many KB entries and thread messages to retrieve as grounding context. */
 const DEFAULT_KB_K = 5;
-const MAX_THREAD_MESSAGES = 20;
+const draftLetterDate = sql<Date>`coalesce(${messages.date}, ${messages.createdAt})`.mapWith(messages.createdAt);
+// The body reader chooses the text or HTML using the same Unicode blank test for every letter.
+const draftLetterBody = {
+  text: messageBodies.text,
+  html: messageBodies.html,
+};
+const draftBodyJoin = and(eq(messageBodies.messageId, messages.id), eq(messageBodies.accountId, messages.accountId));
+const bodyOf = ({ text, html }: { text?: string | null; html?: string | null }): { text?: string } => {
+  const { bodyText } = searchBodyOf(text, html);
+  return bodyText === "" ? {} : { text: bodyText };
+};
 
 /**
  * THE ADMISSION ARITHMETIC — never charge for a draft that cannot finish inside the invocation.
@@ -127,6 +138,8 @@ export function draftWindow(
  */
 export interface DraftFromMessageDeps {
   drafter: DraftPort;
+  /** The person approved sharing full conversation text for this draft. */
+  fullConversation?: boolean;
   onPreview?: DraftCallOptions["onPreview"];
   /** KB retrieval top-k (default 5). */
   k?: number;
@@ -179,7 +192,7 @@ interface DraftWork {
 }
 
 /**
- * Drafts from a message preview or the person's words, using account-scoped context.
+ * Drafts a reply or polishes the person's words, using account-scoped context.
  * DraftsService stores the reply and writes the sync change in the same transaction.
  */
 export class DraftingService {
@@ -213,11 +226,10 @@ export class DraftingService {
     // Measured from the TOP with `Date.now()`, not `ctx.now()`: a frozen test clock would switch
     // the window off silently — the screener's `admissionDeadline` rule.
     const window = draftWindow(this.opts.invocationBudgetMs, Date.now(), this.opts.admission);
-    const target = await this.letterOf(ctx, messageId);
+    const fullConversation = deps.fullConversation === true;
+    const target = await this.letterOf(ctx, messageId, fullConversation);
 
-    // Assemble the context. We use snippets, never bodies.
-    //
-    //    BEFORE the charge, and that ordering is a fix rather than a preference. Both calls
+    // Assemble the context before the charge. Both calls
     //    below are database round-trips and both can fail; charging first meant a KB or thread
     //    retrieval fault billed the customer an AI action for a request in which zero model
     //    calls occurred — a charge the ledger could never explain. Nothing here spends a token,
@@ -231,19 +243,12 @@ export class DraftingService {
      * share, and the shares SUM to the downstream ceiling, stated as a subtraction: whatever the
      * snippet is allowed, the subject gets the rest, and the total is the ceiling exactly.
      */
-    const query = kbHintOf(target);
-    const kbHits = await this.kb.retrieve(ctx, query, deps.k ?? DEFAULT_KB_K);
-    const threadMessages = target.threadId
-      ? await this.retrieveThreadContext(ctx, target.threadId, target.id)
-      : [];
+    const query = kbHintOf(target.incoming);
+    const kbHits = await this.kb.retrieve(ctx, query, deps.k ?? DEFAULT_KB_K, { manualOnly: true });
+    const threadMessages = await this.retrieveThreadContext(ctx, target, fullConversation);
 
     const input: DraftInput = {
-      incoming: {
-        subject: target.subject,
-        from: target.fromAddress,
-        fromName: target.fromName,
-        snippet: target.snippet,
-      },
+      incoming: target.incoming,
       context: {
         kbEntries: kbHits.map((e) => ({ title: e.title, content: e.content })),
         threadMessages,
@@ -297,7 +302,8 @@ export class DraftingService {
     const mailboxId = optionalId(raw.mailboxId, "mailboxId");
 
     // 2. The letter answered, account-scoped, checked before the context is read.
-    const letter = letterId === undefined ? null : await this.letterOf(ctx, letterId);
+    const fullConversation = deps.fullConversation === true;
+    const letter = letterId === undefined ? null : await this.letterOf(ctx, letterId, fullConversation);
     if (letter !== null && mailboxId !== undefined && mailboxId !== letter.mailboxId) {
       throw new ServiceError("validation_failed", 400, "mailboxId is not the mailbox of the letter answered");
     }
@@ -307,13 +313,12 @@ export class DraftingService {
     const where = letter?.mailboxId ?? mailboxId!;
 
     // 3. The context: the knowledge base, asked with the letter's hint or the words, and the thread only with a letter.
-    const kbHits = await this.kb.retrieve(ctx, letter !== null ? kbHintOf(letter) : text.slice(0, SEARCH_QUERY_MAX_CHARS), deps.k ?? DEFAULT_KB_K);
-    const threadMessages = letter?.threadId ? await this.retrieveThreadContext(ctx, letter.threadId, letter.id) : [];
+    const query = letter !== null ? kbHintOf(letter.incoming) : text.slice(0, SEARCH_QUERY_MAX_CHARS);
+    const kbHits = await this.kb.retrieve(ctx, query, deps.k ?? DEFAULT_KB_K, { manualOnly: letter !== null });
+    const threadMessages = letter === null ? [] : await this.retrieveThreadContext(ctx, letter, fullConversation);
 
     const input: DraftInput = {
-      incoming: letter !== null
-        ? { subject: letter.subject, from: letter.fromAddress, fromName: letter.fromName, snippet: letter.snippet }
-        : { ...NO_LETTER },
+      incoming: letter?.incoming ?? { ...NO_LETTER },
       context: {
         kbEntries: kbHits.map((e) => ({ title: e.title, content: e.content })),
         threadMessages,
@@ -341,18 +346,21 @@ export class DraftingService {
     });
   }
 
-  /** The letter a draft answers, account-scoped: another account's id is a 404, and a sensitive one a 422. */
-  private async letterOf(ctx: ServiceContext, id: string) {
-    const [target] = await ctx.db
+  /** The letter a draft answers. The body is read through its account-scoped message. */
+  private async letterOf(ctx: ServiceContext, id: string, fullConversation: boolean) {
+    const query = ctx.db
       .select({
         id: messages.id, mailboxId: messages.mailboxId, threadId: messages.threadId, subject: messages.subject,
-        fromAddress: messages.fromAddress, fromName: messages.fromName, snippet: messages.snippet,
+        from: messages.fromAddress, fromName: messages.fromName, snippet: messages.snippet, at: draftLetterDate,
+        ...(fullConversation ? draftLetterBody : {}),
       })
-      .from(messages)
+      .from(messages);
+    const [target] = await (fullConversation ? query.leftJoin(messageBodies, draftBodyJoin) : query)
       .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)))
       .limit(1);
     if (!target) throw new ServiceError("not_found", 404, "message not found");
-    return target;
+    const { mailboxId, threadId, at, from, fromName, subject, snippet } = target;
+    return { id, mailboxId, threadId, at, incoming: { from, fromName, subject, snippet, ...bodyOf(target) } };
   }
 
   /**
@@ -591,24 +599,48 @@ export class DraftingService {
     return draftAttemptKey(messageId, deps.attemptKey);
   }
 
-  /** Other messages in the target thread, scoped to the account. */
+  /** Earlier messages in the target thread, newest first. A Sent copy identifies the person's writing. */
   private async retrieveThreadContext(
     ctx: ServiceContext,
-    threadId: string,
-    excludeId: string,
+    target: { threadId: string | null; id: string; at: Date },
+    fullConversation: boolean,
   ): Promise<DraftContext["threadMessages"]> {
-    return ctx.db
-      .select({ from: messages.fromAddress, fromName: messages.fromName, snippet: messages.snippet, subject: messages.subject })
+    if (target.threadId === null) return [];
+    const sentCopy = ctx.db.select({ id: messageInstances.id }).from(messageInstances).where(and(
+      eq(messageInstances.messageId, messages.id),
+      eq(messageInstances.accountId, messages.accountId),
+      eq(messageInstances.mailboxId, messages.mailboxId),
+      inSentFolderSql(messageInstances.folder, mailboxes.sentFolder),
+      sql`upper(${messageInstances.folder}) <> 'INBOX'`,
+    ));
+    const store = dialect(ctx.db);
+    const autoReply = autoReplyByUsWhere(store, {
+      accountId: sql`${messages.accountId}`,
+      id: sql`${messages.id}`,
+      fromAddress: sql`${messages.fromAddress}`,
+      messageIdHeader: sql`${messages.messageIdHeader}`,
+    });
+    const query = ctx.db
+      .select({
+        from: messages.fromAddress, fromName: messages.fromName, snippet: messages.snippet, subject: messages.subject,
+        writtenByOwner: and(exists(sentCopy), not(autoReply))!.mapWith(Boolean),
+        ...(fullConversation ? draftLetterBody : {}),
+      })
       .from(messages)
+      .innerJoin(mailboxes, and(eq(mailboxes.id, messages.mailboxId), eq(mailboxes.accountId, messages.accountId)));
+    const rows = await (fullConversation ? query.leftJoin(messageBodies, draftBodyJoin) : query)
       .where(
         and(
           eq(messages.accountId, ctx.accountId),
-          eq(messages.threadId, threadId),
-          ne(messages.id, excludeId),
+          eq(messages.threadId, target.threadId),
+          isNull(messages.deletedAt),
+          ne(messages.id, target.id),
+          sql`${draftLetterDate} <= ${store.ts(target.at)}`,
         ),
       )
-      .orderBy(asc(messages.date))
-      .limit(MAX_THREAD_MESSAGES);
+      .orderBy(desc(draftLetterDate), desc(messages.id))
+      .limit(MAX_DRAFT_THREAD_MESSAGES);
+    return rows.map(({ html, text, ...letter }) => ({ ...letter, ...bodyOf({ html, text }) }));
   }
 }
 

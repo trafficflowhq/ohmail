@@ -321,8 +321,12 @@ class ShellView(context: Context, appContext: AppContext) : ExpoView(context, ap
    */
   private fun keep(m: JSONObject, at: String) {
     val id = m.optLong("id", -1)
-    val live = scope ?: return refused(at, id, "notReady")
-    when (m.optString("kind")) {
+    val kind = m.optString("kind")
+    val nested = if (kind == "keepRows" && doorPage && scope == null) m.optJSONObject("ask") else null
+    val ask = nested ?: m
+    val legacy = kind == "keepRows" && ask.opt("legacy") == true
+    val live = (if (legacy && nested != null) ask.optString("scope") else scope) ?: return refused(at, id, "notReady")
+    when (kind) {
       "keep" -> {
         val key = m.opt("key") as? String ?: return refused(at, id, "malformed")
         val value = when (val v = m.opt("value")) { JSONObject.NULL -> null; is String -> v; else -> return refused(at, id, "malformed") }
@@ -340,12 +344,15 @@ class ShellView(context: Context, appContext: AppContext) : ExpoView(context, ap
         answer(at, id, JSONObject().put("ok", true).put("words", words).put("refused", names))
       }
       "keepRows" -> {
-        if (m.optString("scope") != live) return refused(at, id, "foreignScope")
-        val puts = rowsOf(m.optJSONArray("puts")) ?: return refused(at, id, "malformed")
-        val deletes = pairsOf(m.optJSONArray("deletes")) ?: return refused(at, id, "malformed")
-        keeper.run({ keeper.keepRows(live, puts, deletes) }, false) { ok ->
+        if (ask.optString("scope") != live) return refused(at, id, "foreignScope")
+        val puts = rowsOf(ask.optJSONArray("puts")) ?: return refused(at, id, "malformed")
+        val deletes = pairsOf(ask.optJSONArray("deletes")) ?: return refused(at, id, "malformed")
+        keeper.run({ keeper.keepRows(live, puts, deletes, legacy) }, false) { ok ->
           if (!ok) ShellRuntime.count("keeperRefused")
-          answer(at, id, JSONObject().put("ok", true).put("kept", ok))
+          val response = JSONObject().put("ok", true)
+          if (nested == null) response.put("kept", ok)
+          else response.put("answer", JSONObject().put("kept", ok))
+          answer(at, id, response)
         }
       }
       "keptRows" -> {

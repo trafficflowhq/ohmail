@@ -34,7 +34,7 @@ export type ApproveState =
   /** The browser cannot act for this account: the shell's sentence. */
   | { readonly at: "refused"; readonly said: string }
   /** The request cannot be confirmed any more: expired, used, declined, not this account's; the shell's sentence. */
-  | { readonly at: "gone"; readonly said: string | null }
+  | { readonly at: "gone"; readonly said: string | null; readonly phone?: boolean }
   | {
       readonly at: "ask";
       readonly asked: ApproveAsked;
@@ -46,8 +46,8 @@ export type ApproveState =
       /** The confirm met a closed step-up window: the second factor is asked over the page. */
       readonly factor: boolean;
     }
-  | { readonly at: "done" }
-  | { readonly at: "denied" };
+  | { readonly at: "done"; readonly phone?: boolean }
+  | { readonly at: "denied"; readonly phone?: boolean };
 
 export interface ApproveDoor {
   readonly state: ApproveState;

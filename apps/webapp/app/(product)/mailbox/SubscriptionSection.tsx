@@ -27,7 +27,6 @@ export function MountedSubscriptionSection({ onNowhere, sheet }: Props) {
   const offer = storage.figures?.plans;
   const mayChange = owner !== null && offer?.mayChange === true;
   const addon = mayChange && !offer.addon?.atLimit ? offer.addon : null;
-  // One more mailbox at any count, by the same way as storage: the account page that may change the add-ons.
   const mailboxAddon = mayChange ? offer.mailboxAddon : undefined;
   return (
     <SubscriptionPane
@@ -35,12 +34,12 @@ export function MountedSubscriptionSection({ onNowhere, sheet }: Props) {
       sheet={sheet}
       connectedCount={mailboxes?.length}
       addStorage={addon ? {
-        press: storage.change,
+        press: () => storage.change("storage"),
         busy: storage.changing,
         unit: addon.unit,
         price: addon.price,
       } : undefined}
-      addMailbox={mailboxAddon ? { press: storage.change, busy: storage.changing, ...mailboxAddon } : undefined}
+      addMailbox={mailboxAddon ? { press: () => storage.change("mailbox"), busy: storage.changing, ...mailboxAddon } : undefined}
       change={addon || mailboxAddon ? {
         feedback: storage,
         factor: storage.ask === null ? null : <StepUp {...storage.ask} expectedOwner={owner} />,

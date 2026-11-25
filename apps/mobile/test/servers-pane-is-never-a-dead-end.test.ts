@@ -90,6 +90,7 @@ vi.mock("../src/ui/base", () => {
     Tap: (p: { children?: ReactNode; onPress?: () => void; accessibilityLabel?: string }) =>
       h("button", { "data-button": p.accessibilityLabel, onClick: p.onPress }, p.children),
     Txt: (p: { children?: ReactNode }) => h("span", null, p.children),
+    ViewHead: (p: { title: string }) => h("h1", null, p.title),
     Panel: div, Screen: div, Scroller: div, Section: div, TapRow: div,
     useTopPad: () => 0,
   };

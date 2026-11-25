@@ -12,6 +12,8 @@ import { Copy } from "../copy";
 import { useTheme, type Theme } from "../theme";
 import { mailColors, mailSize } from "../theme/mail";
 import { MailAvatar } from "./MailAvatar";
+import { MailboxChip } from "./MailboxChip";
+import { MailRowByline } from "./MailRowByline";
 import type { Mail } from "../state/model";
 import { useWorld } from "../state/world";
 import { folderName, moveTargetsFor, type WorldMail, type WorldPileState } from "../state/live";
@@ -66,6 +68,8 @@ export function MailRow({
   const t = useTheme();
   const w = useWorld();
   const seen = !m.unread;
+  const mailbox = m.mailboxLabel;
+  const address = m.sentTo === undefined && m.from.address !== m.from.name ? m.from.address : undefined;
   const readInk = t.mail ? mailColors(t)["ink-read"] : t.c.ink2;
   const thread = threadBadgeOf(m);
   const marks = marksOfRow(m);
@@ -191,13 +195,15 @@ export function MailRow({
       {receipt ? (
         <>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-            <MailAvatar person={m.from} unread={m.unread} />
+            <MailAvatar person={m.from} unread={m.unread} mailbox={m.mailbox} />
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt variant="rowSender" numberOfLines={1}>{m.sentTo ?? m.from.name}</Txt>
-              {m.sentTo === undefined ? <Txt variant="caption" tone="ink2" numberOfLines={1}>{m.from.address}</Txt> : null}
+              {address ? <Txt variant="caption" tone="ink2" numberOfLines={1}>{address}</Txt> : null}
               {t.mail ? <StreamRecipient toYou={m.toYou} /> : null}
             </View>
-            <Txt variant="caption" tone="ink2" tabular style={t.mail ? { marginRight: 23 } : undefined}>{m.time}</Txt>
+            {mailbox ? <MailboxChip label={mailbox} /> : null}
+            <Txt variant="caption" tone="ink2" numberOfLines={1} tabular
+              style={t.mail ? { flexShrink: 0, marginRight: 23 } : { flexShrink: 0 }}>{m.time}</Txt>
           </View>
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 12 }}>
             {rowSubjectLine(m.subject, m.amount) ? <Txt variant="h2" style={{ flex: 1 }}>{searchTerm ? highlightSearch(m.subject, searchTerm, t) : <>{m.subject}</>}</Txt> : null}
@@ -207,31 +213,17 @@ export function MailRow({
           {!receiptPaper ? receiptDetail : null}
           {!receiptPaper && preview ? <Txt variant="streamBody" numberOfLines={3}>{preview}</Txt> : null}
         </>
-      ) : <MailAvatar person={m.from} unread={m.unread} additionalPeople={m.additionalPeople} />}
+      ) : <MailAvatar person={m.from} unread={m.unread} mailbox={m.mailbox} additionalPeople={m.additionalPeople} />}
       <View style={receipt ? { gap: 6, alignItems: "center" } : { flex: 1, minWidth: 0, gap: 2 }}>
         {!receipt ? <>
 
-        <View style={{ flexDirection: "row", alignItems: "baseline", gap: mailSize.inset }}>
-          <Txt
-            variant={seen ? "rowSenderSeen" : "rowSender"}
-            numberOfLines={1}
-            style={{ flexShrink: searchTerm ? 0 : 1, maxWidth: searchTerm ? "44%" : undefined, color: seen ? readInk : t.c.ink }}
-          >
-            {m.sentTo ?? m.from.name}
-          </Txt>
-          {t.mail && marks && !strip ? <RowMarks marks={marks} /> : m.sentTo === undefined && !m.senderCheck ? (
-            <Txt variant="caption" tone="ink2" numberOfLines={1} style={{ flexShrink: 2, minWidth: 0 }}>
-              {m.from.address}
-            </Txt>
-          ) : null}
-          <View style={{ flex: 1 }} />
+        <MailRowByline name={m.sentTo ?? m.from.name} address={m.senderCheck ? undefined : address}
+          time={m.time} seen={seen} mailbox={mailbox}>
+          {t.mail && marks && !strip ? <RowMarks marks={marks} /> : null}
           {searchPlace ? <Txt variant="caption" tone="ink2" numberOfLines={1}
-            style={{ flexShrink: 0, maxWidth: "26%" }}>{searchPlace}</Txt> : null}
+            style={{ flexShrink: 1, maxWidth: "26%" }}>{searchPlace}</Txt> : null}
           {m.hasAttachments ? <Icon name="clip" size={13} color={t.c.ink2} /> : null}
-          <Txt variant="caption" tone="ink2" tabular style={{ flexShrink: 0 }}>
-            {m.time}
-          </Txt>
-        </View>
+        </MailRowByline>
 
         {rowSubjectLine(m.subject, m.amount) ? (
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: mailSize.inset }}>

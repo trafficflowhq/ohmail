@@ -170,7 +170,12 @@ export function presetOf(typed: ConnectTyped, facts: ConnectFacts): ProviderPres
   return providerById(typed.provider);
 }
 
+/** The manual sign-in and standalone forms have a separate port beside each server. */
+export function newServerPortFields(purpose: ConnectFacts["purpose"]): boolean {
+  return purpose === "join" || purpose === "firstRun" || purpose === "standalone";
+}
+
 /** The servers the form holds now, each as a press would name it. */
 export function hostsNow(typed: ConnectTyped, facts: ConnectFacts): HostsNow {
-  return sentOf(typed, presetOf(typed, facts), facts.purpose === "standalone");
+  return sentOf(typed, presetOf(typed, facts), newServerPortFields(facts.purpose));
 }

@@ -169,9 +169,10 @@ export interface WriteDraftControl {
   readonly cancel: () => void;
   readonly confirm: () => void;
   /** The offer and the purchase in one press (its cost is said on the control before it); `own`: the reply's words. */
-  readonly press: (messageId: string, own: RichValue) => void;
+  readonly press: (messageId: string, own: RichValue, fullConversation?: boolean) => void;
   /** A draft made of the person's own words, in one press as `press`. `none`: the host has no door for it; not offered. */
-  readonly fromText: ((messageId: string, text: string, own: RichValue) => void) | None;
+  readonly fromText:
+    ((messageId: string, text: string, own: RichValue, fullConversation?: boolean) => void) | None;
   /** A new letter drafted from the person's words, as `fromText`; `none` exactly with it. */
   readonly letter: ((words: LetterWords, own: RichValue) => void) | None;
   /** The new letter's place among the drafts' letters: `messageId` while its draft is out, and its entry of `own`. */

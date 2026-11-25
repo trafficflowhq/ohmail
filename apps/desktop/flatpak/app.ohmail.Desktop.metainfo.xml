@@ -78,6 +78,40 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.7" date="2026-11-25">
+      <description>
+        <ul>
+          <li>Billing remembers the add-on you chose</li>
+          <li>Sign in on a phone through the browser</li>
+          <li>Calendar invitations follow the selected calendar</li>
+          <li>Calendar moves and compact mail</li>
+          <li>ohcal keeps only calendar data on the phone</li>
+          <li>ohcal on phones</li>
+          <li>Scroll all of Calendar Settings on narrow screens</li>
+          <li>Easier returns to Mail</li>
+          <li>Cloud signup links to the Terms of Service and Privacy Policy</li>
+          <li>Read sender details and return to the Screener on narrow screens</li>
+          <li>Phone writing stays above the keyboard</li>
+          <li>Keep the latest words when leaving the composer</li>
+          <li>Retry browser sign-in when ohmail Cloud is temporarily unavailable</li>
+          <li>Keep invitation replies and calendar answers in step</li>
+          <li>Mail opens in the new design</li>
+          <li>Keep writing controls in reach on long letters</li>
+          <li>Mailbox ports and phone reading</li>
+          <li>Mail lists and Settings on phones</li>
+          <li>Trash moves show when they are pending</li>
+          <li>AI replies keep their line breaks</li>
+          <li>AI replies keep your words and tone</li>
+          <li>Android Back returns to the Screener list</li>
+          <li>Search keeps your place when you switch to Calendar</li>
+          <li>Self-host sign-in and the web demo</li>
+          <li>Keep all sending addresses reachable in the composer</li>
+          <li>Signup shows the plan or trial you chose</li>
+          <li>News and Receipts scroll behind the action pill</li>
+          <li>Subscription shows the billing interval and one-time history suggestions</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.6" date="2026-11-25">
       <description>
         <ul>
@@ -127,18 +161,6 @@
           <li>Letters keep their written line breaks</li>
           <li>The reader holds your place as pictures load</li>
           <li>Screener sender details fit better on phones</li>
-        </ul>
-      </description>
-    </release>
-    <release version="2.0.2" date="2026-11-24">
-      <description>
-        <ul>
-          <li>CalDAV calendars keep syncing when the provider moves them to another of its servers</li>
-          <li>Calendar setup starts with provider buttons</li>
-          <li>Embedded pictures load without signing in again for each one</li>
-          <li>Mail lists on the phone fit their rows</li>
-          <li>The opened letter stays put while a long conversation loads its pictures</li>
-          <li>Cloud's background Screener checks stay fast on large accounts</li>
         </ul>
       </description>
     </release>

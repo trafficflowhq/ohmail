@@ -106,12 +106,12 @@ async function built<K extends CalendarRecordKind>(db: Db, accountId: string, ki
 }
 
 /** The phase's first page leads with the account's small calendar state: connections, calendars, open suggestions. */
-async function leadRecords(db: Db, accountId: string): Promise<CalendarSnapshotRecord[]> {
+async function leadRecords(db: Db, accountId: string, excludeSuggestions: boolean): Promise<CalendarSnapshotRecord[]> {
   const connections = await db.select({ id: calConnections.id }).from(calConnections)
     .where(eq(calConnections.accountId, accountId)).orderBy(asc(calConnections.createdAt), asc(calConnections.id));
   const calendars = await db.select({ id: calCalendars.id }).from(calCalendars)
     .where(eq(calCalendars.accountId, accountId)).orderBy(asc(calCalendars.connectionId), asc(calCalendars.id));
-  const suggestions = await db.select({ id: calSuggestions.id }).from(calSuggestions)
+  const suggestions = excludeSuggestions ? [] : await db.select({ id: calSuggestions.id }).from(calSuggestions)
     .where(and(eq(calSuggestions.accountId, accountId), eq(calSuggestions.state, "open")))
     .orderBy(desc(calSuggestions.createdAt), desc(calSuggestions.id)).limit(CALENDAR_SNAPSHOT_SUGGESTIONS);
   return [
@@ -150,7 +150,7 @@ export async function calendarSnapshotPage(db: Db, accountId: string, q: Calenda
   const lastRow = rows[rows.length - 1];
   return {
     span,
-    lead: after === null ? await leadRecords(db, accountId) : [],
+    lead: after === null ? await leadRecords(db, accountId, q.excludeSuggestions === true) : [],
     events,
     full: rows.length === q.limit,
     readTo: lastRow === undefined ? null : keysetOf(lastRow),

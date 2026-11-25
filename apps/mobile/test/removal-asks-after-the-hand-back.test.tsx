@@ -42,6 +42,7 @@ vi.mock("../src/ui/base", () => {
     Button: (p: { label: string; onPress?: () => void; style?: object }) =>
       h("button", { "data-button": p.label, "data-style": JSON.stringify(p.style ?? {}), onClick: p.onPress }, p.label),
     Txt: (p: { children?: ReactNode }) => h("span", null, p.children),
+    ViewHead: (p: { title: string }) => h("h1", null, p.title),
     Panel: div, Screen: div, Scroller: div, Section: div, Tap: div, TapRow: div,
   };
 });

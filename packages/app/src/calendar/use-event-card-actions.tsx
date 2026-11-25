@@ -1,16 +1,15 @@
-import type { CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useEffect, useState } from "react";
-import { Button, Menu, MenuItem } from "@ohmail/ui/base";
+import { Button, Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
 import type { PanelVerb } from "@ohmail/ui/mail";
 import { useText } from "../text/index.js";
 import type { CalendarEventFace } from "./faces.js";
 import type { EventActions } from "./use-event-actions.js";
 import { useFrame } from "../frame/commands.js";
-import { hasGuests, type removableEvent } from "./editable-event.js";
+import { hasGuests, type EventMoveOptions, type removableEvent } from "./editable-event.js";
 import { ReadActionPanel } from "./ReadActionPanel.js";
 import { cardKeys } from "./event-card-keys.js";
 
-interface EventCardActionsProps {
+interface EventCardActionsProps extends EventMoveOptions {
   event: CalendarEventFace;
   actions: EventActions;
   edit: { onPress: () => void } | null;
@@ -20,10 +19,8 @@ interface EventCardActionsProps {
   retry?: PanelVerb;
   join?: { href: string; label: string };
   removable: ReturnType<typeof removableEvent>;
-  destinations: readonly CalendarRecord[];
   remove?: PanelVerb;
   invited: boolean;
-  moveRestriction: "guests" | "fields" | null;
 }
 
 export function useEventCardActions({
@@ -120,6 +117,7 @@ export function useEventCardActions({
   const menu =
     moveMenu && canTransfer ? (
       <Menu open anchor={moveMenu} label={t("actions.moveTo")} onClose={() => setMoveMenu(null)}>
+        {moveRestriction && <MenuNote>{t(`actions.moveRestriction.${moveRestriction}`)}</MenuNote>}
         {destinations.map((target) => (
           <MenuItem
             key={target.id}

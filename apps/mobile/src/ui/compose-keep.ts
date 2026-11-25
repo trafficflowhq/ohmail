@@ -8,6 +8,7 @@
  * (`compose/letter-store.ts`); files past what the phone keeps, or a keep that failed, are said in
  * place, so one stray tap loses nothing.
  */
+import type { DraftKeepOutcome } from "../state/live";
 import type { ComposerPhase } from "./send-cancel";
 
 /**
@@ -65,9 +66,11 @@ export function unmountKeep(o: { phase: ComposerPhase; worth: boolean; keeping: 
 export async function autosaveKeep(
   saved: { current: string | null },
   onScreen: string,
-  keep: () => Promise<"kept" | "refused" | "tooLong">,
-): Promise<void> {
-  if ((await keep()) === "kept") saved.current = onScreen;
+  keep: () => Promise<DraftKeepOutcome>,
+): Promise<DraftKeepOutcome> {
+  const outcome = await keep();
+  if (outcome === "kept") saved.current = onScreen;
+  return outcome;
 }
 
 /**

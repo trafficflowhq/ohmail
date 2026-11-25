@@ -664,7 +664,7 @@
     "aiOn": "on",
     "aiOff": "off",
     "aiSends": "A suggestion sends the sender, the subject and a short extract.",
-    "aiDraftSends": "A draft sends the same details for the message you reply to, plus the sender and a short extract from up to 20 other messages in its thread and up to 5 matching knowledge-base notes, through the Claude API. Codes and login links are never sent.",
+    "aiDraftSends": "A draft sends the same details for the message you reply to, plus the sender and a short extract from up to 20 other messages in its thread and up to 5 matching knowledge-base notes, through the Claude API. A draft from your text also sends your typed text. If you choose and confirm Use full conversation for a draft, the provider receives the full stored text of the message you’re answering and up to 4,000 characters from those earlier messages. Codes and login links are never sent.",
     "aiCloudTag": "ohmail Cloud",
     "aiKeyTag": "Your model",
     "aiRulesOnly": "Rules only",

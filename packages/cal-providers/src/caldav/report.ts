@@ -17,7 +17,7 @@
 import { DEFAULT_LIMITS, MAX_ZONE_NAME_CHARS, readCalendar } from "@ohmail/cal-core";
 import { MAX_CALENDAR_NAME_CHARS, MAX_VALIDATOR_CHARS } from "../limits.js";
 import type { CalendarInfo } from "../port.js";
-import { addressOf, allowsMove, ask, bodyOf, finding, isSelf, isUnder, knownAt, propfindOf, refuse, sameMemberKey, scopeOf, xmlText, type Asked, type Refused, type Session } from "./ask.js";
+import { addressOf, ask, bodyOf, collectionOptions, davCapabilities, finding, isSelf, isUnder, knownAt, offersMove, offersScheduling, propfindOf, refuse, sameMemberKey, schedulingAnswer, scopeOf, xmlText, type Asked, type Refused, type Session } from "./ask.js";
 import { APPLE_ICAL, CALDAV, CALENDARSERVER, DAV, childOf, childrenOf, propOf, type DavResponse, type Multistatus } from "./multistatus.js";
 
 /** What a response that names no usable address is listed under: the start of what it wrote. */
@@ -145,21 +145,38 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
       zone: zoneOf(response),
     });
   }
-  const budget = withBudget(s.signal, ACCESS_PROBE_BUDGET_MS);
-  const probe = { ...s, signal: budget.signal };
-  try {
-    for (let i = 0; i < calendars.length; i += 4) {
-      await Promise.all(calendars.slice(i, i + 4).map(async (cal, index) => {
-        if (needsAccess.has(cal.id)) {
+  if (needsAccess.size > 0) {
+    const budget = withBudget(s.signal, ACCESS_PROBE_BUDGET_MS);
+    const probe = { ...s, signal: budget.signal };
+    const shared = calendars.flatMap((cal, index) => needsAccess.has(cal.id) ? [{ cal, index }] : []);
+    try {
+      for (let i = 0; i < shared.length; i += 4) {
+        await Promise.all(shared.slice(i, i + 4).map(async ({ cal, index }) => {
           const writable = await sharedWriteAccess(probe, cal.id, cal.writable);
-          calendars[i + index] = { ...cal, writable };
-        } else if (cal.owned && cal.writable && await allowsMove(s, cal.id)) {
-          calendars[i + index] = { ...cal, nativeMove: true };
-        }
-      }));
+          calendars[index] = { ...cal, writable };
+        }));
+      }
+    } finally {
+      budget.done();
     }
-  } finally {
-    budget.done();
+  }
+  for (let i = 0; i < calendars.length; i += 4) {
+    await Promise.all(calendars.slice(i, i + 4).map(async (cal, index) => {
+      if (!cal.writable) return;
+      const options = await collectionOptions(s, cal.id);
+      const answer = await schedulingAnswer(s, cal.id, options);
+      const autoSchedule = !answer.arrived || answer.status < 200 || answer.status >= 300
+        ? null : offersScheduling(davCapabilities(answer)) || undefined;
+      const nativeMove = cal.owned
+        ? (!options.arrived || options.status < 200 || options.status >= 300
+          ? null : offersMove(options) || undefined)
+        : undefined;
+      calendars[i + index] = {
+        ...cal,
+        ...(autoSchedule !== undefined && { autoSchedule }),
+        ...(nativeMove !== undefined && { nativeMove }),
+      };
+    }));
   }
   return { ok: true, calendars };
 }

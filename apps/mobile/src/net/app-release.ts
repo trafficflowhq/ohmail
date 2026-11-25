@@ -13,20 +13,43 @@
 export function releaseFrom(constants: unknown): string | undefined {
   const version = (constants as { default?: { expoConfig?: { version?: unknown } } } | null | undefined)
     ?.default?.expoConfig?.version;
+  return cleanVersion(version);
+}
+
+function cleanVersion(version: unknown): string | undefined {
   return typeof version === "string" && version.trim() !== "" ? version.trim() : undefined;
 }
 
-let cached: { release: string | undefined } | undefined;
+interface EmbeddedConfig {
+  readonly version?: unknown;
+  readonly android?: { readonly versionCode?: unknown };
+  readonly ios?: { readonly buildNumber?: unknown };
+}
+
+let cached: { config: EmbeddedConfig | undefined } | undefined;
+
+function embeddedConfig(): EmbeddedConfig | undefined {
+  if (cached !== undefined) return cached.config;
+  cached = { config: undefined };
+  if (typeof require === "function") {
+    try {
+      /* eslint-disable-next-line @typescript-eslint/no-var-requires */
+      cached.config = require("expo-constants").default?.expoConfig;
+    } catch {
+      /* no native config in this context */
+    }
+  }
+  return cached.config;
+}
 
 export function appRelease(): string | undefined {
-  if (cached !== undefined) return cached.release;
-  cached = { release: undefined };
-  if (typeof require !== "function") return cached.release;
-  try {
-    /* eslint-disable-next-line @typescript-eslint/no-var-requires */
-    cached = { release: releaseFrom(require("expo-constants")) };
-  } catch {
-    /* no native config in this context: an unnamed release, never a fault */
-  }
-  return cached.release;
+  return cleanVersion(embeddedConfig()?.version);
+}
+
+export function appBuildNumber(os: string): string | null {
+  const config = embeddedConfig();
+  const build = os === "ios" ? config?.ios?.buildNumber : config?.android?.versionCode;
+  return (typeof build === "number" || typeof build === "string") && /^[1-9]\d*$/.test(String(build))
+    ? String(build)
+    : null;
 }

@@ -30,7 +30,7 @@ import { draftRepeatSupported, PROVEN_REPEATS, proofPlaceOf, seriesEditShape, se
 import { carriedExclusions, clockOf, continuedSeries, endedRule, isDayOf, movedRule, offItsClock, personalSeriesOf, confirmedDeleteAudience, storedObjectFacts } from "@ohmail/cal-providers/series";
 import type {
   CalendarEventAct, CalendarEventFields, CalendarEventRecord, CalendarTime, CalendarWriteAnswer, CalendarWriteFault,
-  CalendarWriteReceipt,
+  CalendarWriteReceipt, InvitationAnswer,
 } from "@ohmail/wire";
 import { bridgeTx, withAccountTx, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -299,6 +299,7 @@ async function standing(
 /** A new event's row as the person wants it, named by its `create` row until the provider names it. */
 async function insertWanted(
   tx: Tx, accountId: string, calendarId: string, eventId: string, writeId: string, f: CalendarEventFields,
+  mailAnswer: InvitationAnswer | null = null,
 ): Promise<void> {
   const range = derivedRange({
     start: storedTime(f.start), end: storedTime(f.end), duration: null,
@@ -315,7 +316,7 @@ async function insertWanted(
     startKind: f.start.kind, startLocal: f.start.value, startZone: f.start.zone ?? null,
     endKind: f.end.kind, endLocal: f.end.value, endZone: f.end.zone ?? null, duration: null,
     startsAt: range.startsAt, endsAt: range.endsAt, occurrenceAt: null,
-    repeatRule: f.repeat, busy: f.busy, private: f.private,
+    repeatRule: f.repeat, busy: f.busy, private: f.private, mailAnswer,
   });
   if (f.invitees.length > 0) {
     await tx.insert(calAttendees).values(f.invitees.map((p) => ({ accountId, eventId, address: p.address, name: p.name, role: p.role, answer: "none" })));
@@ -376,7 +377,10 @@ async function recordCreate(
 ): Promise<EnqueuedCalendarWrite> {
   const cal = await holdCalendar(tx, accountId, act.calendarId);
   assertWritable(cal);
-  if (act.invitationMessageId && !await reviewedInvitationCopy(tx, accountId, act.invitationMessageId, act))
+  const mailAnswer = act.invitationMessageId
+    ? await reviewedInvitationCopy(tx, accountId, act.invitationMessageId, act)
+    : null;
+  if (act.invitationMessageId && mailAnswer === null)
     throw readOnly("the invitation is no longer available to add");
   // A new series in a shape proven where the calendar is, from a start its rule names: the drain sends no other.
   assertProven(shapesOf(cal, o), act.event.repeat === null ? null : parseRRule(act.event.repeat), eventTimeOf(storedTime(act.event.start)), act.repeatSelected ? "draft" : false);
@@ -386,7 +390,7 @@ async function recordCreate(
     baseVersionTag: null, idempotencyKey: key, state: "pending",
   });
   if (made === null) return { receipt: (await recorded(tx, accountId, key, act))!, eventIds: [], changes: [], wake: null };
-  await insertWanted(tx, accountId, cal.id, act.eventId, made.id, act.event);
+  await insertWanted(tx, accountId, cal.id, act.eventId, made.id, act.event, mailAnswer);
   return {
     receipt: { id: made.id, key, state: "pending", reason: null },
     eventIds: [act.eventId],
@@ -424,28 +428,30 @@ async function holdEventCopy(tx: Tx, accountId: string, calendarId: string, matc
   return { ...held, ...storedObjectFacts(held.original, held.organizer) };
 }
 
-async function calendarLetter(tx: Tx, accountId: string, id: string) {
-  const [letter] = await tx.select({ invitation: messageInvitations, sender: messages.fromAddress, auth: messages.authVerdict })
+async function calendarLetter(tx: Tx, accountId: string, id: string, hold = false) {
+  const query = tx.select({ invitation: messageInvitations, sender: messages.fromAddress, auth: messages.authVerdict })
     .from(messageInvitations).innerJoin(messages, and(
       eq(messages.id, messageInvitations.messageId), eq(messages.accountId, accountId)))
     .where(and(eq(messageInvitations.accountId, accountId), eq(messages.id, id), isNull(messages.deletedAt))).limit(1);
+  const [letter] = await (hold ? dialect(tx).forUpdate(query, { of: messageInvitations }) : query);
   return letter;
 }
 
 async function reviewedInvitationCopy(
   tx: Tx, accountId: string, messageId: string,
   act: Extract<CalendarEventAct, { kind: "calendar_event_create" }>,
-) {
-  const letter = await calendarLetter(tx, accountId, messageId);
+): Promise<InvitationAnswer | null> {
+  const letter = await calendarLetter(tx, accountId, messageId, true);
   const invitation = letter?.invitation;
   if (!invitation || storedAuthScreens(letter.auth) || invitation.method !== "REQUEST" || !invitation.organizer || !invitation.invitedAddress ||
-    (invitation.answer !== "accepted" && invitation.answer !== "tentative") || invitationCalendarId(invitation) !== act.eventId)
-    return false;
+    invitationCalendarId(invitation) !== act.eventId) return null;
+  const answer = invitation.answer;
+  if (answer !== "accepted" && answer !== "tentative" && (answer !== "declined" || act.event.busy)) return null;
   const start = eventTimeOf(storedTime(act.event.start));
   if (start === null || (invitation.startsAt && start.kind !== "date" ?
-    momentOrUtc(start, ZONES) !== invitation.startsAt.getTime() : invitation.startRaw !== act.event.start.value)) return false;
+    momentOrUtc(start, ZONES) !== invitation.startsAt.getTime() : invitation.startRaw !== act.event.start.value)) return null;
   const standing = await invitationStanding(tx, invitation);
-  if (standing.cancelled || standing.replacedBy) return false;
+  if (standing.cancelled || standing.replacedBy) return null;
   const [already] = await tx.select({ id: calEvents.id }).from(calEvents)
     .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
     .innerJoin(calConnections, and(eq(calConnections.id, calCalendars.connectionId), eq(calConnections.accountId, accountId)))
@@ -456,7 +462,7 @@ async function reviewedInvitationCopy(
         sql`exists (select 1 from ${calAttendees} where ${calAttendees.accountId} = ${accountId}
           and ${calAttendees.eventId} = ${calEvents.id} and lower(${calAttendees.address}) = ${invitation.invitedAddress.toLowerCase()})`)),
     )).limit(1);
-  return already === undefined;
+  return already === undefined ? answer : null;
 }
 
 async function cancelledByLetter(
@@ -731,9 +737,14 @@ async function recordOnEvent(
     if (to.access !== "owner") throw readOnly("an event can only move to a calendar the account owns");
     const native = to.connectionId === cal.connectionId &&
       (cal.provider === "google" || (cal.provider === "caldav" && cal.nativeMove && to.nativeMove));
-    if (native && !act.copyThenRemove && cal.provider === "google" && !verifiedOrganizer(event.organizer, own))
-      throw readOnly("only the verified organizer can move this Google event to another calendar");
-    if (!native || act.copyThenRemove) transfer = await personalTransferOf(tx, accountId, cal, to, event, days, act);
+    if (native) {
+      if (act.copyThenRemove) throw readOnly("this calendar requires the provider’s native move");
+      if (cal.provider === "google" && !verifiedOrganizer(event.organizer, own))
+        throw readOnly("only the verified organizer can move this Google event to another calendar");
+    } else {
+      if (!act.copyThenRemove) throw readOnly("the provider cannot move the event to this calendar");
+      transfer = await personalTransferOf(tx, accountId, cal, to, event, days, act);
+    }
   }
   // While a press on a day and the days after it is half carried out on this series (its first part is not done, and the series'
   // record ends exactly where it ends it), no other write may end, remove or re-shape the series: that press's own end could no

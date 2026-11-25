@@ -7,6 +7,7 @@ import { screen, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore,
+  MutationRejectedError,
   OhmailEngine,
   mutationEffects,
   type MirrorStore,
@@ -81,6 +82,7 @@ let seq = 0;
 let sent: EngineMutation[] = [];
 /** Set before `shell()` to make `matchMedia` answer a max-width query — the narrow layout. */
 let narrow = false;
+let mailboxHasTrash = true;
 
 beforeEach(() => {
   window.location.hash = "";
@@ -115,6 +117,7 @@ beforeEach(() => {
   sent = [];
   seq = 0;
   narrow = false;
+  mailboxHasTrash = true;
 });
 
 afterEach(async () => {
@@ -186,6 +189,11 @@ function engineOver(store: MirrorStore): OhmailEngine {
       }),
       mutate: async (m: EngineMutation) => {
         sent.push(m);
+        if (m.kind === "message_delete" && !mailboxHasTrash) {
+          throw new MutationRejectedError("This mailbox has no Trash folder", {
+            status: 422, code: "no_trash_folder",
+          });
+        }
         const changes = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++seq}` })
           .map((e) => ({
             type: e.type,
@@ -374,7 +382,7 @@ describe("an install that organizes the mailbox", () => {
     await key("Backspace");
 
     await waitFor(() => !rowIds(container).includes(id), "the row to leave the list");
-    expect(toastText()).toContain(endWords(messages.ohbox.toastDeleted));
+    expect(toastText()).toContain(endWords(messages.ohbox.toastMovingToTrash));
     expect(toastText()).toContain(messages.screener.toastUndo);
     /* THE WHOLE POINT OF THE WINDOW. The press is reversible because nothing has been sent —
        `message_delete` has no inverse, so an Undo over a request already gone would be a button
@@ -426,6 +434,20 @@ describe("an install that organizes the mailbox", () => {
 
     expect(deletes()).toEqual([{ kind: "message_delete", messageId: id }]);
     expect(rowIds(container)).not.toContain(id);
+    await waitFor(() => toastText().includes(endWords(messages.ohbox.toastDeleted)), "the confirmed move");
+
+    // Repeat with Trash discovery still incomplete. Undo is available while the server is unasked.
+    mailboxHasTrash = false;
+    await key("j");
+    await key("Delete");
+    await waitFor(() => rowIds(container).length === 1, "the next row to be held for Undo");
+    const stillHeld = toastText();
+    expect(stillHeld).toContain(messages.screener.toastUndo);
+    expect(stillHeld).toContain(endWords(messages.ohbox.toastMovingToTrash));
+    expect(stillHeld).not.toContain(endWords(messages.ohbox.toastDeleted));
+    await waitFor(() => toastText().includes(endWords(messages.ohbox.deleteNoTrash)),
+      "the mailbox refusal", UNDO_MS + 8000);
+    expect(rowIds(container)).toHaveLength(2);
   }, UNDO_MS + 20000);
 
   it("A QUESTION STANDING OVER THE DECK owns the key — the `?` sheet is open, nothing moves", async () => {
@@ -441,6 +463,7 @@ describe("an install that organizes the mailbox", () => {
     await settle();
     expect(rowIds(container)).toEqual(before);
     expect(toastText()).not.toContain(endWords(messages.ohbox.toastDeleted));
+    expect(toastText()).not.toContain(endWords(messages.ohbox.toastMovingToTrash));
     expect(deletes()).toEqual([]);
   });
 
@@ -493,7 +516,7 @@ describe("\"USE FOLDERS\" IS NOT A TERM — the same press, on a folders-off acc
     await key("Backspace");
 
     await waitFor(() => !rowIds(container).includes(id), "the row to leave the list");
-    expect(toastText()).toContain(endWords(messages.ohbox.toastDeleted));
+    expect(toastText()).toContain(endWords(messages.ohbox.toastMovingToTrash));
     expect(toastText()).toContain(messages.screener.toastUndo);
     expect(deletes()).toEqual([]);
   });
@@ -559,6 +582,7 @@ describe("\"USE FOLDERS\" IS NOT A TERM — the same press, on a folders-off acc
       endWords(messages.screener.readerMoveRefused.replace("{name}", "ohmail Cloud")),
     );
     expect(toastText()).not.toContain(endWords(messages.ohbox.toastDeleted));
+    expect(toastText()).not.toContain(endWords(messages.ohbox.toastMovingToTrash));
     expect(deletes()).toEqual([]);
   });
 });
@@ -580,6 +604,7 @@ describe("an install that only READS the mailbox", () => {
     expect(rowIds(container)).toEqual(before);
     expect(deletes()).toEqual([]);
     expect(toastText()).not.toContain(endWords(messages.ohbox.toastDeleted));
+    expect(toastText()).not.toContain(endWords(messages.ohbox.toastMovingToTrash));
   });
 
   it("…and no window opens behind the refusal — the delete never arrives late", async () => {
@@ -624,7 +649,7 @@ describe("the roster decides, one mailbox at a time", () => {
     await key("j");
     await key("Backspace");
     await waitFor(() => rowIds(container).length < before.length, "the row to leave the list");
-    expect(toastText()).toContain(endWords(messages.ohbox.toastDeleted));
+    expect(toastText()).toContain(endWords(messages.ohbox.toastMovingToTrash));
     expect(toastText()).not.toContain(endWords(messages.screener.readerMoveRefusedUnknown));
     await waitFor(() => deletes().length > 0, "the delete to reach the wire", UNDO_MS + 8000);
     expect(deletes()).toHaveLength(1);

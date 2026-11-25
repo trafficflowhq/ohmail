@@ -4,7 +4,12 @@ import {
   rules, tags, rulesTheActWrote, isCalendarRecordKind, type EntityType,
 } from "@trafficflow/db";
 import type {
+  Assert,
+  CalendarConnectionRecord,
+  CalendarEventRecord,
+  CalendarOnlyRecordKind,
   CalendarRecordKind,
+  Complete,
   CalendarWindow,
   ChangeOp,
   DraftDTO,
@@ -17,6 +22,7 @@ import type {
 } from "@ohmail/wire";
 import type { CalendarFeedPort, CalendarKeyset, CalendarSpanMs } from "./calendar-port.js";
 import type { DeviceNumbersPort } from "./device-numbers.js";
+import { withoutCalendarMailLinks } from "@trafficflow/core/calendar-privacy";
 import { dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, type Db, type ServiceContext } from "./context.js";
 import { arrivalKeyOf } from "./arrival-key.js";
@@ -190,10 +196,19 @@ export const SNAPSHOT_FIRST_PAGE_MESSAGES = 50;
 
 const DAY_MS = 86_400_000;
 
+const CALENDAR_ONLY_TYPES = ["settings", "calendar_connection", "calendar", "calendar_event"] as const;
+type _CalendarOnlyTypesComplete = Assert<Complete<CalendarOnlyRecordKind, typeof CALENDAR_ONLY_TYPES>>;
+
+function calendarOnlyEntity(type: EntityType, entity: unknown): unknown {
+  if (type === "calendar_connection") return { ...(entity as CalendarConnectionRecord), grantMailboxId: null };
+  return type === "calendar_event" ? withoutCalendarMailLinks(entity as CalendarEventRecord) : entity;
+}
+
 export interface GetChangesOptions {
   since?: string;
   limit?: number;
   types?: EntityType[];
+  calendarOnly?: boolean;
   /**
    * The calendar's builders, from a composition that keeps a calendar. ABSENT: no calendar
    * change is built, sent or turned into a deletion; the cursor moves past them.
@@ -301,6 +316,7 @@ export interface GetSnapshotOptions {
    * or asks for an earlier span); the route reads it only where a composition keeps a calendar.
    */
   phase?: "tail" | "calendar";
+  calendarOnly?: boolean;
   /** The kinds the request names. The snapshot serves the calendar only to a request that names one. */
   types?: readonly EntityType[];
   /**
@@ -629,6 +645,10 @@ export class SyncService {
   }
 
   async getChanges(ctx: ServiceContext, opts: GetChangesOptions = {}): Promise<SyncResponse> {
+    if (opts.calendarOnly) {
+      if (!opts.calendar) throw new ServiceError("not_found", 404, "calendar sync is unavailable");
+      opts = { ...opts, types: [...CALENDAR_ONLY_TYPES] };
+    }
     const { db, accountId } = ctx;
     const limit = clampPageLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
 
@@ -706,6 +726,7 @@ export class SyncService {
       // The bootstrap replay pages through the compacted region, so its outgoing cursors need
       // the floor tag from page one — one PK-row read, never the aggregate.
       prunedThrough = await prunedThroughSeq(db, accountId);
+      if (opts.calendarOnly) horizonSeq = await this.highWaterSeq(db, accountId);
     }
 
     const filters = [eq(changeLog.accountId, accountId), gt(changeLog.seq, sinceSeq)];
@@ -723,7 +744,7 @@ export class SyncService {
     // HONEST: the page is fetched with ONE LOOKAHEAD entity, and a CUT page's cursor is that
     // entity's first-seq MINUS ONE — the lookahead keeps a cut page's cursor MOVING. No lookahead
     // ⇒ the window was consumed and the cursor advances to its max seq.
-    const span = horizonSeq !== null ? horizonSeq - sinceSeq : 0n;
+    const span = horizonSeq !== null && sinceSeq > 0n ? horizonSeq - sinceSeq : 0n;
     const coalesced = span > BigInt(STALE_COALESCE_SPAN);
 
     let rows: (typeof changeLog.$inferSelect)[];
@@ -938,10 +959,14 @@ export class SyncService {
                 : type === "settings"
                   ? await (async () => {
                     if (!settingsMemo.has(id)) {
-                      const settings = await materializeSettings(db, accountId, id);
-                      settingsMemo.set(id, withHeldDevices(
-                        withCalendarSwitch(settings, settings !== null && port ? await enabledAt() : undefined), opts.devices, accountId,
-                      ));
+                      if (opts.calendarOnly) {
+                        settingsMemo.set(id, { accountId, calendarEnabledAt: (await enabledAt())?.toISOString() ?? null });
+                      } else {
+                        const settings = await materializeSettings(db, accountId, id);
+                        settingsMemo.set(id, withHeldDevices(
+                          withCalendarSwitch(settings, settings !== null && port ? await enabledAt() : undefined), opts.devices, accountId,
+                        ));
+                      }
                     }
                     return settingsMemo.get(id) ?? null;
                   })()
@@ -952,7 +977,7 @@ export class SyncService {
       }
 
       const updatedAt = (entity as { updatedAt?: string }).updatedAt ?? row.createdAt.toISOString();
-      const change: SyncChange = { type, op, id, seq, updatedAt, entity };
+      const change: SyncChange = { type, op, id, seq, updatedAt, entity: opts.calendarOnly ? calendarOnlyEntity(type, entity) : entity };
 
       let bucket = updates;
       if (op === "move") {
@@ -996,6 +1021,16 @@ export class SyncService {
       hasMore = horizonSeq !== null && cursorSeq < horizonSeq;
     }
 
+    // With all eligible rows consumed, the account's mail-only advances can be acknowledged too.
+    if (opts.calendarOnly && !hasMore && horizonSeq !== null && horizonSeq > cursorSeq) cursorSeq = horizonSeq;
+    // A concurrent compaction can drop a calendar deletion between the bounds and the row read.
+    if (opts.calendarOnly && sinceSeq > 0n && cursorSeq > sinceSeq) {
+      const nowPrunedThrough = await prunedThroughSeq(db, accountId);
+      if (nowPrunedThrough > sinceSeq && nowPrunedThrough > (parsed?.floor ?? 0n)) {
+        throw new ServiceError("cursor_expired", 410, "sync cursor is older than the retention horizon");
+      }
+    }
+
     return {
       changes: { creates, updates, moves, deletes },
       // A cursor still below the retention floor is a replay over the compacted region — tag it
@@ -1019,6 +1054,10 @@ export class SyncService {
    * `seq = asOfSeq`.
    */
   async getSnapshot(ctx: ServiceContext, opts: GetSnapshotOptions = {}): Promise<SnapshotResponse> {
+    if (opts.calendarOnly) {
+      if (!opts.calendar) throw new ServiceError("not_found", 404, "calendar sync is unavailable");
+      opts = { ...opts, types: CALENDAR_ONLY_TYPES };
+    }
     const { db, accountId } = ctx;
     const limit = clampPageLimit(opts.limit, DEFAULT_LIMIT, MAX_LIMIT);
     const cursor = opts.cursor && opts.cursor !== "" ? this.decodeSnapshotCursor(opts.cursor) : null;
@@ -1035,6 +1074,9 @@ export class SyncService {
     /* THE CALENDAR'S PHASE EXISTS ONLY WHERE A COMPOSITION KEEPS A CALENDAR. Elsewhere its cursor is
        a word this build does not serve, refused as an unknown phase always was. */
     const port = opts.calendar;
+    if (opts.calendarOnly && cursor !== null && cursor.phase !== "calendar") {
+      throw new ServiceError("cursor_expired", 410, "the calendar snapshot requires a calendar cursor");
+    }
     if (cursor !== null && cursor.phase === "calendar" && port === undefined) {
       throw new ServiceError(
         "cursor_expired", 410,
@@ -1060,14 +1102,22 @@ export class SyncService {
 
     // THE CALENDAR'S PHASE: a page of it, or the phase alone (`?phase=calendar`, page 1), which is
     // named once like `tailOnly`: the mail's page 1 stays the one `cursor === null` block.
-    const calendarOnly = cursor === null && opts.phase === "calendar" && port !== undefined;
+    const calendarOnly = cursor === null && (opts.calendarOnly || opts.phase === "calendar") && port !== undefined;
     if (cursor !== null && cursor.phase === "calendar") {
-      return this.calendarSnapshotPage(ctx, { served: await servedCalendar(), cursor, span: null, asOfSeq, gen, limit });
+      return this.calendarSnapshotPage(ctx, { served: await servedCalendar(), cursor, span: null, asOfSeq, gen, limit, excludeSuggestions: opts.calendarOnly === true });
     }
     if (calendarOnly) {
-      return this.calendarSnapshotPage(ctx, {
-        served: await servedCalendar(), cursor: null, span: opts.span ?? null, asOfSeq, gen, limit,
+      const served = await servedCalendar();
+      const page = await this.calendarSnapshotPage(ctx, {
+        served, cursor: null, span: opts.span ?? null, asOfSeq, gen, limit, excludeSuggestions: opts.calendarOnly === true,
       });
+      if (opts.calendarOnly) {
+        page.changes.unshift({
+          type: "settings", id: accountId, op: "create", seq, updatedAt: ctx.now().toISOString(),
+          entity: { accountId, calendarEnabledAt: (await enabledAt())?.toISOString() ?? null },
+        });
+      }
+      return page;
     }
     /** Where the mail's walk would end: the calendar's phase begins, for a request it serves. */
     const calendarNext = async (): Promise<{ nextCursor: string; calendarWindow: CalendarWindow } | null> => {
@@ -1497,6 +1547,7 @@ export class SyncService {
     asOfSeq: bigint;
     gen: number | null;
     limit: number;
+    excludeSuggestions: boolean;
   }): Promise<SnapshotResponse> {
     const { served, cursor, asOfSeq, gen } = p;
     const seq = Number(asOfSeq);
@@ -1504,6 +1555,7 @@ export class SyncService {
     if (served === null) return { asOfSeq: seq, changes: [], nextCursor: null, window: SNAPSHOT_WINDOW, ...generation };
     const slice = await served.snapshotPage(ctx.db, ctx.accountId, {
       now: ctx.now(), window: served.window, span: cursor?.span ?? p.span, after: cursor?.event ?? null, limit: p.limit,
+      ...(p.excludeSuggestions ? { excludeSuggestions: true } : {}),
     });
     const budget = new PageByteBudget(PAGE_MAX_ROW_BYTES);
     const changes: SyncChange[] = [];
@@ -1511,7 +1563,8 @@ export class SyncService {
       ({ type, op: "create", id, seq, updatedAt, entity });
     // The lead is the calendar's small state, bounded by what the person connected: charged, never refused.
     for (const r of slice.lead) {
-      const change = changeOf(r.kind, r.id, r.entity, r.updatedAt);
+      const entity = p.excludeSuggestions ? calendarOnlyEntity(r.kind, r.entity) : r.entity;
+      const change = changeOf(r.kind, r.id, entity, r.updatedAt);
       budget.charge(weighChange(change));
       changes.push(change);
     }
@@ -1519,7 +1572,8 @@ export class SyncService {
     let last: CalendarKeyset | undefined;
     let cut = false;
     for (const r of slice.events) {
-      const change = changeOf(r.kind, r.id, r.entity, r.updatedAt);
+      const entity = p.excludeSuggestions ? calendarOnlyEntity(r.kind, r.entity) : r.entity;
+      const change = changeOf(r.kind, r.id, entity, r.updatedAt);
       const bytes = weighChange(change);
       if (sent > 0 && !budget.admits(bytes)) {
         cut = true;

@@ -28,6 +28,8 @@ export interface ClassifierInput extends ScreenerLearningContext {
   from: EmailAddress;
   subject: string;
   snippet: string;                                       // NEVER the full body of a sensitive message
+  /** Fold the ingest preview for the provider after reading its line breaks. */
+  foldSnippet?: boolean;
   headersDigest: string;                                 // small, sensitivity-safe
   fewShot?: Array<{ from: string; destination: Destination }>;  // learned few-shot (spec §7, §11)
   /**

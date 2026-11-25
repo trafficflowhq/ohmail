@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
+import { Button } from "@ohmail/ui/button";
 import { buildId } from "../build-id";
 import { reportRenderError } from "../error-report";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { signOutAndSettle } from "../sign-out";
 import { signOutTrouble } from "../sign-out-trouble";
+import { ProductStyles } from "./providers";
 
 /**
  * THE MAIL CLIENT'S OWN ERROR PAGE. `ViewBoundary` keeps a throw inside one pile; this catches
@@ -48,6 +49,7 @@ export default function ProductError({ error }: { error: Error & { digest?: stri
 
   return (
     <main className="page-fail">
+      <ProductStyles />
       <div className="view-fail-card">
         <h1>{t("title")}</h1>
         <p>{t("body")}</p>

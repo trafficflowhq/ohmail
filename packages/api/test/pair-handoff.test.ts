@@ -153,11 +153,26 @@ describe("POST /pair/handoff — a phone's own refresh token, rotated, then a co
 });
 
 describe("POST /pair/redeem, grant app-handoff — the code and its challenge's verifier sign the sibling in", () => {
+  it("scopes a handoff to the calendar app and refuses a mail handoff from that session", async () => {
+    const { db, deps } = await makeDeps();
+    const phone = await pairedPhone(db, deps);
+    const key = proofKey();
+    const minted = await handOff(deps, phone.tokens.refreshToken, key.challenge);
+    const res = await redeem(deps, minted.body.handoff!.token, key.verifier);
+    expect(res.status).toBe(200);
+    const { tokens, scope } = await res.json();
+    expect(scope).toBe("calendar");
+    expect((await H(req("GET", "/messages", { bearer: tokens.accessToken }), deps)).status).toBe(403);
+    const onward = await handOff(deps, tokens.refreshToken, proofKey().challenge, "ohmail");
+    expect(onward.body).toMatchObject({ handoff: null, handoffRefused: "handoff_refused" });
+    expect((await H(req("GET", "/messages", { bearer: onward.body.tokens.accessToken }), deps)).status).toBe(403);
+  });
+
   it("makes a full session with no step-up time, of the phone's kind, under the composed label, child of the phone", async () => {
     const { db, deps } = await makeDeps();
     const phone = await pairedPhone(db, deps);
     const key = proofKey();
-    const { body } = await handOff(deps, phone.tokens.refreshToken, key.challenge);
+    const { body } = await handOff(deps, phone.tokens.refreshToken, key.challenge, "ohmail");
     const res = await redeem(deps, body.handoff!.token, key.verifier, "mobile-android");
     expect(res.status, await res.clone().text()).toBe(200);
     expect(res.headers.get("set-cookie")).toBeNull();
@@ -166,10 +181,10 @@ describe("POST /pair/redeem, grant app-handoff — the code and its challenge's 
     const [born] = await db.select().from(sessions).where(eq(sessions.accessTokenHash, hashToken(answer.tokens.accessToken)));
     expect(born).toMatchObject({ scope: "full", lastTwofaAt: null, userId: phone.owner.userId });
     const [device] = await db.select().from(devices).where(eq(devices.id, born!.deviceId!));
-    expect(device).toMatchObject({ kind: "mobile-android", label: "ohcal · Pixel", handedOffFrom: phone.deviceId });
+    expect(device).toMatchObject({ kind: "mobile-android", label: "ohmail · Pixel", handedOffFrom: phone.deviceId });
     // Listed in Devices beside the phone.
     const listed = await (await H(req("GET", "/devices", { bearer: answer.tokens.accessToken }), deps)).json();
-    expect(listed.items.map((d: { label: string }) => d.label).sort()).toEqual(expect.arrayContaining(["Pixel", "ohcal · Pixel"]));
+    expect(listed.items.map((d: { label: string }) => d.label).sort()).toEqual(expect.arrayContaining(["Pixel", "ohmail · Pixel"]));
   });
 
   it("burns nothing for a wrong verifier, the code at the plain redeem, a QR code at this arm, or a computer's kind", async () => {
@@ -222,10 +237,10 @@ describe("the lineage: what a phone handed its sign-in to ends with it", () => {
     const { db, deps } = made;
     const phone = await pairedPhone(db, deps);
     const key = proofKey();
-    const minted = await handOff(deps, phone.tokens.refreshToken, key.challenge);
+    const minted = await handOff(deps, phone.tokens.refreshToken, key.challenge, "ohmail");
     const child = (await (await redeem(deps, minted.body.handoff!.token, key.verifier)).json()).tokens as Tokens;
     const grandKey = proofKey();
-    const fromChild = await handOff(deps, child.refreshToken, grandKey.challenge, "ohmail");
+    const fromChild = await handOff(deps, child.refreshToken, grandKey.challenge, "ohcal");
     const grandchild = (await (await redeem(deps, fromChild.body.handoff!.token, grandKey.verifier)).json()).tokens as Tokens;
     const live = async (t: { accessToken: string }) =>
       (await db.select({ revokedAt: sessions.revokedAt }).from(sessions).where(eq(sessions.accessTokenHash, hashToken(t.accessToken))))[0]!.revokedAt === null;

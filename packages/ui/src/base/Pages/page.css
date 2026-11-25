@@ -334,8 +334,8 @@
   }
 
   :root[data-device="phone"] .oh-page:has([data-page-filling-form]) > .oh-page-body {
-    --oh-page-rows: auto minmax(0, 1fr);
-    --oh-page-areas: "say" "mat";
+    --oh-page-rows: auto minmax(0, 1fr) auto;
+    --oh-page-areas: "say" "mat" "acts";
     padding-block: var(--s2) var(--s5);
   }
 

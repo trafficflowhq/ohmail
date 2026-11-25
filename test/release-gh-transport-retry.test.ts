@@ -311,7 +311,7 @@ function sh(script: string, world: World = {}): Ran {
   writeFileSync(join(dir, "sleep.log"), "");
   writeFileSync(join(dir, "step.sh"), script);
   // A curated environment: nothing the host's shell exports (a `grep` function among them) leaks in.
-  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: dir, STUB: dir, LC_ALL: "C", GITHUB_REPOSITORY: "trafficflowhq/ohmail", GITHUB_REF_NAME: TAG };
+  const env = { PATH: `${bin}:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin`, HOME: dir, TMPDIR: dir, STUB: dir, LC_ALL: "C", GITHUB_REPOSITORY: "trafficflowhq/ohmail", GITHUB_REF_NAME: TAG };
   const p = spawnSync("bash", ["step.sh"], { cwd: dir, env, encoding: "utf8" });
   const lines = (f: string) => readFileSync(join(dir, f), "utf8").split("\n").filter(Boolean);
   return { code: p.status ?? -1, out: p.stdout ?? "", err: p.stderr ?? "", gh: lines("gh.log"), sleeps: lines("sleep.log"), dir };

@@ -1392,6 +1392,19 @@ describe("access — the storage offer and the confirmed decrease", () => {
   const withBlocks = (blocks: Record<string, unknown>): Record<string, unknown> =>
     ({ ...(wire("access-200-trialing") as Record<string, unknown>), ...blocks });
 
+  it("keeps the price comparison beside the single-interval change quote", async () => {
+    const comparisonPlans = [
+      { plan: "plus", mailboxes: 5, storageBytes: 5_000_000_000, setupSuggestions: 6_000,
+        monthlyCredits: 2_000, pricesMinor: { month: 1_500, year: 15_000 } },
+      { plan: "pro", mailboxes: 10, storageBytes: 10_000_000_000, setupSuggestions: 12_000,
+        monthlyCredits: 4_000, pricesMinor: { year: 29_000 } },
+    ];
+    const c = client([{ status: 200, body: withBlocks({ storageOffer: { ...OFFER, comparisonPlans } }) }]);
+    const v = await c.port.access(ACC, { fresh: true, storageNeed: NEED });
+    expect(v.ok && v.storageOffer).toMatchObject({ interval: "month", fit: { amount: 2_500 }, comparisonPlans });
+    expect(c.faults).toEqual([]);
+  });
+
   it("reads the billing program's nested offer and quotes its storage add-on for the year", async () => {
     const c = client([{ status: 200, body: withBlocks({ storageOffer: {
       card: {
@@ -1412,6 +1425,24 @@ describe("access — the storage offer and the confirmed decrease", () => {
       fit: { amount: 27_000 },
     });
     expect(c.faults).toEqual([]);
+  });
+
+  it("carries the program's one-time suggestions and the account's eligibility", async () => {
+    const c = client([{ status: 200, body: withBlocks({
+      storageOffer: {
+        ...OFFER,
+        setupBoostEligible: true,
+        card: {
+          ...OFFER.card,
+          plans: OFFER.card.plans.map((plan, index) => ({ ...plan, setupSuggestions: index * 137 })),
+        },
+      },
+    }) }]);
+    const verdict = await c.port.access(ACC, { storageNeed: NEED });
+    expect(verdict.ok && verdict.storageOffer).toMatchObject({
+      setupBoostEligible: true,
+      plans: [{ setupSuggestions: 0 }, { setupSuggestions: 137 }, { setupSuggestions: 274 }],
+    });
   });
 
   it("a read carrying the need sends it, and the offer the program sized comes back narrowed", async () => {
@@ -1590,6 +1621,14 @@ describe("access — the storage offer and the confirmed decrease", () => {
     expect(c.bodies.map((b) => JSON.parse(b))).toEqual([
       { accountId: ACC, lang: "de", elevated: true, storageNeed: NEED },
       { accountId: ACC, lang: "en" },
+    ]);
+  });
+
+  it("sends the requested add-on to the hosted change door", async () => {
+    const c = client([{ status: 200, body: wire("manage-link-200") }]);
+    await c.port.manageLink(ACC, "de", undefined, { elevated: true, storageNeed: NEED, addon: "mailbox" });
+    expect(c.bodies.map((b) => JSON.parse(b))).toEqual([
+      { accountId: ACC, lang: "de", elevated: true, storageNeed: NEED, addon: "mailbox" },
     ]);
   });
 });

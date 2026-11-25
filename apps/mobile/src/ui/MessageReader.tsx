@@ -314,7 +314,7 @@ export function MessageReader({
   }, [seen]);
   /* A read state, a body or the scope changed: look again (one look per frame however often). */
   useEffect(() => { seen.poke(); });
-  /* Only what stands OVER the scroll view shortens the read zone: the compact bar stands below it. */
+  /* The read zone ends where the floating bar begins. */
   const chromeExtent = useBottomChromeExtent();
   const chromeOver = readerChromeOverlap(verbMode, chromeExtent);
   useEffect(() => { seen.chrome(chromeOver); }, [seen, chromeOver]);

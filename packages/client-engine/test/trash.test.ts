@@ -7,8 +7,7 @@ import { HttpAdapter, OhmailEngine, applyToRecords, type MirrorRecord } from "..
  * Three properties, and each of them is a state the product has to be able to render rather than
  * a happy path:
  *
- *  1. an adapter with NEITHER capability reports "unavailable" and never throws — the demo,
- *     which is fixtures and zero network, and any build talking to a server with no Trash route;
+ *  1. an adapter with NEITHER capability reports "unavailable" and never throws;
  *  2. an adapter with ONE of the two reports unavailable as well, because a Trash list whose
  *     Restore is dead is not the feature and a half-forward must turn it off rather than half on
  *     (the wrapper that rebuilds the adapter as an object literal forwards them one at a time);

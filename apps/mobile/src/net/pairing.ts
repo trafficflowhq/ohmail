@@ -34,13 +34,14 @@ import {
   holdStandaloneDoor, releaseStandaloneLaunch, takeStandaloneLaunch, type SettingsKeptHere,
 } from "../engine/organizer-session";
 import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door";
-import { payShellWipe, type ShellStores } from "../shell/take-back";
+import { eraseShellKeeper, fenceCalendarWipe, payShellWipe, type ShellStores } from "../shell/take-back";
 import { oldCopyDoor, type OldCopyDoor } from "../shell/old-copy";
 import { accountRows } from "../state/account-rows";
-import { ServerProfileStore, type PendingSignOut, type ServerProfile } from "../state/servers";
+import { ServerProfileStore, StoreFault, type PendingSignOut, type ServerProfile } from "../state/servers";
 import { CREDENTIAL_CHECK, type BearerManagerRN, type FetchLike, type RefreshVault, type SessionDeath, type SignOutOutcome } from "./bearer";
 import { bearers as processBearers, type BearerRegistry } from "./bearer-registry";
 import { deathRefusal } from "./session-death";
+import { withinApprovalDeadline } from "./approval-deadline";
 import { withAccessLock } from "./access-lock";
 import { withUpdateAnswer } from "./update-answer";
 import { forgetAccessFeed } from "./account";
@@ -240,6 +241,7 @@ export async function resolveAccountId(
   authHeaders: () => Record<string, string>,
   /** Where the `/sync` family answers. Absent ⇒ the origin, which is right for two of three. */
   apiBase?: string,
+  calendarOnly = false,
 ): Promise<{ accountId: string; via: "session" | "rows" } | null> {
   /* THE ONE RESOLVER, not a second spelling of its rule — `request-base.ts`. */
   const base = apiBaseOf(origin, apiBase ?? null);
@@ -253,8 +255,29 @@ export async function resolveAccountId(
   } catch {
     /* fall through to the rows — a dead route and a dead network read the same here */
   }
-  const id = await resolveAccountFromRows(fetchImpl, base, authHeaders);
+  const id = calendarOnly
+    ? (await resolveCalendarAccount(fetchImpl, base, authHeaders)).accountId
+    : await resolveAccountFromRows(fetchImpl, base, authHeaders);
   return id === null ? null : { accountId: id, via: "rows" };
+}
+
+async function resolveCalendarAccount(
+  fetchImpl: FetchLike, base: string, authHeaders: () => Record<string, string>,
+): Promise<{ accountId: string | null; unavailable?: true }> {
+  try {
+    const res = await fetchImpl(`${base}/calendar/sync/snapshot?limit=1`, { headers: authHeaders() });
+    if (res.status === 404 || res.headers.get("content-type")?.includes("text/html")) {
+      return { accountId: null, unavailable: true };
+    }
+    if (!res.ok) return { accountId: null };
+    const body = (await res.json()) as { changes?: Array<{ type?: unknown; entity?: { accountId?: unknown } }> };
+    const named = body.changes?.find((row) => row.type === "settings")?.entity?.accountId;
+    const header = res.headers.get("x-ohmail-account") ?? res.headers.get("x-ohmail-mirror-account");
+    if (header !== null && named !== header) return { accountId: null };
+    return { accountId: typeof named === "string" && named !== "" ? named : null };
+  } catch {
+    return { accountId: null };
+  }
 }
 
 async function resolveAccountFromRows(
@@ -455,10 +478,13 @@ export function admitOrigin(
 }
 
 export interface PairingEnv {
+  calendarOnly?: boolean;
   profiles: ServerProfileStore;
   engineDeps: MobileEngineDeps;
   /** Override the transport (tests). Absent, RN's global fetch. */
   fetchImpl?: FetchLike;
+  /** The native transport that can refuse a redirect, including when a browser sign-out is retried. */
+  approvalFetchImpl?: FetchLike;
   /**
    * The app's release (`app.json`'s version), named to every server in `x-ohmail-client`. Read by the
    * composition and handed in, so this module imports nothing native. Absent reads `dev`.
@@ -538,6 +564,12 @@ export interface PairingEnv {
   familyDigest?: (refreshToken: string) => Promise<string>;
 }
 
+/** A bearer pair a server minted for this phone. */
+export interface MintedPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
 export type PairOutcome =
   | { kind: "paired"; session: ConnectedSession }
   | { kind: "refused"; reason: Refusal };
@@ -593,8 +625,8 @@ function vaultFor(profiles: ServerProfileStore, row: Pick<ServerProfile, "id" | 
   const { id } = row;
   return {
     save: (t, held) => profiles.saveRefreshToken(id, t, held),
-    clear: async (held, _why, removesCopy) => {
-      if (removesCopy) await profiles.markPendingWipe(id, mirrorOwnerKey(row.origin, row.accountId));
+    clear: async (held, why, removesCopy) => {
+      if (removesCopy) await profiles.markPendingWipe(id, mirrorOwnerKey(row.origin, row.accountId), why === "erased");
       return profiles.clearRefreshToken(id, held);
     },
     armAttempt: (a, head, held) => profiles.armRefreshAttempt(id, a, head, held),
@@ -604,9 +636,10 @@ function vaultFor(profiles: ServerProfileStore, row: Pick<ServerProfile, "id" | 
 
 /** Keep a sign-out `row`'s server was not told ({@link drainPendingSignOuts} sends it); `false` when it could not be kept. */
 function oweSignOutTo(
-  profiles: ServerProfileStore, row: Pick<ServerProfile, "origin" | "pin">, refreshToken: string,
+  profiles: ServerProfileStore, row: Pick<ServerProfile, "origin" | "pin">, refreshToken: string, browser?: true,
 ): Promise<boolean> {
-  return profiles.markPendingSignOut({ origin: row.origin, pin: row.pin, refreshToken }).then(() => true, () => false);
+  return profiles.markPendingSignOut({ origin: row.origin, pin: row.pin, refreshToken, ...(browser ? { browser } : {}) })
+    .then(() => true, () => false);
 }
 
 /**
@@ -759,7 +792,7 @@ export async function probePairing(
   // than derived from the door or flavor — a QR carries an origin and no door
   // — and placed before the redeem so a server whose API cannot be found
   // costs a sentence, not a spent code.
-  const resolved = await resolveApiBase(fetchImpl, origin);
+  const resolved = await resolveApiBase(fetchImpl, origin, { calendarOnly: env.calendarOnly });
   if (resolved.kind === "refused") {
     // A HANDSHAKE FAILURE HERE READS AS A PIN FAILURE too — the probe is a request to the same
     // socket the negotiation used, so a key that changed between them is the same event and gets
@@ -767,7 +800,8 @@ export async function probePairing(
     if (pin !== null && isPinFailure(resolved.reason)) {
       return refusedProbe(keyRefusal());
     }
-    return refusedProbe(resolved.reason);
+    return refusedProbe(env.calendarOnly && resolved.reason.say === "baseApiNotFound"
+      ? refuse("calendarServerUnavailable") : resolved.reason);
   }
 
   return {
@@ -803,7 +837,24 @@ async function previousFamily(env: PairingEnv, origin: string, owedHere: Pending
       return null;
     }
   }
-  return token === null ? null : env.familyDigest(token).catch(() => null);
+  if (token === null) return null;
+  const digest = await env.familyDigest(token).catch(() => null);
+  return digest === null || !calendarCredential(token) ? digest : "cal." + digest;
+}
+
+/**
+ * THE FAMILY A NEW PAIR AT `origin` REPLACES, after the sign-out this phone still owes there is paid: the redeem's
+ * `previousSession`, and the browser approval's claim's.
+ */
+export async function familyReplacedAt(env: PairingEnv, origin: string): Promise<string | null> {
+  const owedAt = async (): Promise<PendingSignOut[]> =>
+    (await env.profiles.pendingSignOuts().catch(() => [] as PendingSignOut[])).filter((e) => e.origin === origin);
+  let owedHere = await owedAt();
+  if (owedHere.length > 0) {
+    await drainPendingSignOuts(env, { origin });
+    owedHere = await owedAt();
+  }
+  return previousFamily(env, origin, owedHere);
 }
 
 /**
@@ -813,7 +864,7 @@ async function previousFamily(env: PairingEnv, origin: string, owedHere: Pending
  * door's own refusal, or a server without that door, where the bearer's 401 already said it.
  * Never throws.
  */
-async function endMintedPair(
+export async function endMintedPair(
   fetchImpl: FetchLike, origin: string, pair: { accessToken: string; refreshToken: string },
 ): Promise<boolean> {
   try {
@@ -852,8 +903,7 @@ async function pairWithServer(
   to: "screens" | "shell",
 ): Promise<PairOutcome | ShellOutcome> {
   const fetchImpl = pairingFetch(env);
-  const { origin, pin, apiBase } = input.admission;
-  const negotiatedFlavor = input.admission.flavor;
+  const { origin, pin } = input.admission;
   const token = input.token.trim();
   /**
    * A REFUSED PAIRING GIVES THE LEASE BACK — the probe installed this key only so it could dial,
@@ -871,14 +921,7 @@ async function pairWithServer(
      re-installed just below), and the family this phone held here is named in the redeem
      (`previousSession`) so the server ends it with the mint: the newest owed sign-out's, else the
      active pairing's at this origin, else the only one here. Two and neither active names none. */
-  const owedAt = async (): Promise<PendingSignOut[]> =>
-    (await env.profiles.pendingSignOuts().catch(() => [] as PendingSignOut[])).filter((e) => e.origin === origin);
-  let owedHere = await owedAt();
-  if (owedHere.length > 0) {
-    await drainPendingSignOuts(env, { origin });
-    owedHere = await owedAt();
-  }
-  const previousSession = await previousFamily(env, origin, owedHere);
+  const previousSession = await familyReplacedAt(env, origin);
 
   /**
    * THE ADMISSION'S PIN IS RE-INSTALLED HERE, and it is not belt-and-braces.
@@ -910,13 +953,14 @@ async function pairWithServer(
       body: JSON.stringify(input.handoff ? {
         grant: "app-handoff", token, verifier: input.handoff.verifier, kind: env.deviceKind,
       } : {
-        grant: "device-pair",
+        grant: env.calendarOnly ? "calendar-pair" : "device-pair",
         token,
         ...(declare && env.deviceKind ? { kind: env.deviceKind } : {}),
         ...(previousSession !== null ? { previousSession } : {}),
       }),
     });
   type RedeemAnswer = {
+    scope?: unknown;
     tokens?: { accessToken?: unknown; refreshToken?: unknown };
     error?: { code?: unknown; message?: unknown };
   };
@@ -957,10 +1001,71 @@ async function pairWithServer(
     return refusedRedeem(message);
   }
 
-  // 3 — whose mailbox did this open? The server's word, or no mirror at all.
-  const minted = { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
+  return pairApproved(env, {
+    admission: input.admission,
+    approved: { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken },
+    scope: answer.scope,
+  }, to);
+}
+
+/** Keep an unfinished browser sign-out in the same queue as any other sign-out this server hasn't heard. */
+export async function revokeBrowserPair(
+  env: PairingEnv, admission: Pick<PairAdmission, "origin" | "pin">, pair: MintedPair, fetchImpl: FetchLike,
+): Promise<boolean> {
+  const closed = await withinApprovalDeadline((signal) => endMintedPair(
+    (url, init) => fetchImpl(url, { ...(init as RequestInit), credentials: "omit", redirect: "error", signal }),
+    admission.origin, pair,
+  )).catch(() => false);
+  if (!closed) await oweSignOutTo(env.profiles, admission, pair.refreshToken, true);
+  return closed;
+}
+
+interface BrowserAdoption {
+  readonly signal: AbortSignal;
+  current(): boolean;
+  persisting(): void;
+  readonly fetchImpl?: FetchLike;
+}
+
+/** Adopt the native session minted by either redeeming a pairing code or claiming a browser approval. */
+export async function pairApproved(
+  env: PairingEnv, input: { admission: PairAdmission; approved: MintedPair; scope?: unknown }, to: "screens" | "shell",
+  browser?: BrowserAdoption,
+): Promise<PairOutcome | ShellOutcome> {
+  const { origin, pin, apiBase, flavor } = input.admission;
+  const minted = input.approved;
+  const fetchImpl = browser?.fetchImpl ?? pairingFetch(env);
+  const refusedAdoption = (reason: Refusal): { kind: "refused"; reason: Refusal } => {
+    discardAdmission(input.admission);
+    return { kind: "refused", reason };
+  };
+
+  const abandoned = () => browser !== undefined && (browser.signal.aborted || !browser.current());
+  const revoke = async () => {
+    if (browser === undefined) return endMintedPair(fetchImpl, origin, minted);
+    return revokeBrowserPair(env, input.admission, minted, fetchImpl);
+  };
+  const cancelled = async () => {
+    await revoke();
+    return refusedAdoption(refuse("connectSuperseded"));
+  };
+  if (abandoned()) return cancelled();
+  if (env.calendarOnly && (input.scope !== "calendar" ||
+      !calendarCredential(minted.accessToken) || !calendarCredential(minted.refreshToken))) {
+    await revoke();
+    return refusedAdoption(refuse("calendarServerUnavailable"));
+  }
+
+  // Whose mailbox did this open? The server's word, or no mirror at all.
   const authHeaders = () => ({ authorization: `Bearer ${minted.accessToken}` });
-  const identity = await resolveAccountId(fetchImpl, origin, authHeaders, apiBase);
+  const identity = browser === undefined
+    ? await resolveAccountId(fetchImpl, origin, authHeaders, apiBase, env.calendarOnly)
+    : await withinApprovalDeadline((signal) => resolveAccountId(
+      (url, init) => signal.aborted ? Promise.reject() : fetchImpl(url, {
+        ...(init as RequestInit), credentials: "omit", redirect: "error", signal,
+      }), origin, authHeaders, apiBase, env.calendarOnly,
+    ), browser.signal).catch(() => null);
+  if (abandoned()) return cancelled();
   if (identity === null) {
     // A door with no session read and zero rows (a fresh desktop engine) can name no account,
     // and the mirror's name, its __owner stamp and the drain-time guard all require the
@@ -968,8 +1073,9 @@ async function pairWithServer(
     // missing fact. The token above is single-use and is now spent, so the sentence says so,
     // and the session it minted is ended: nothing here will ever hold it.
     // (An identity read on the desktop-host door would let this name the account; not today.)
-    await endMintedPair(fetchImpl, origin, minted);
-    return refusedRedeem(refuse("pairNoAccountName"));
+    await revoke();
+    return refusedAdoption(env.calendarOnly && flavor === "desktop-host"
+      ? refuse("calendarServerUnavailable") : refuse("pairNoAccountName"));
   }
 
   // 3b — an owed forget for this mirror is settled before the pairing is
@@ -981,18 +1087,29 @@ async function pairWithServer(
   // from empty. If the deletion still cannot land the pairing is refused —
   // the token is already spent, so the sentence says what to do next.
   const ownerKey = mirrorOwnerKey(origin, identity.accountId);
-  if ((await env.profiles.pendingWipes()).some((w) => w.owner === ownerKey)) {
+  const owed = (await env.profiles.pendingWipes()).find((w) => w.owner === ownerKey);
+  if (abandoned()) return cancelled();
+  if (owed) {
     try {
-      await forgetMirror(env.engineDeps, ownerKey);
-      if (env.shell) await payShellWipe(env.shell, ownerKey);
-      // The CLEAR is inside the refusal too, and its read-back is what makes that matter: a
-      // debt that survives being cleared would be collected by a later launch against the
-      // mirror this pairing is about to create, deleting the mailbox the person just
-      // re-authorized. Refusing the pairing is the only safe answer to that.
+      if (env.calendarOnly && owed.erased) {
+        const clearErasedView = await eraseCalendarCopies(env, ownerKey, owed.id);
+        await clearErasedView();
+      } else if (env.calendarOnly && env.shell) {
+        try {
+          await payShellWipe(env.shell, ownerKey);
+        } catch (err) {
+          // The newly verified pairing owns the same queue and can recover it.
+          if (!pendingCalendarEdits(err)) throw err;
+        }
+        await forgetMirror(env.engineDeps, ownerKey);
+      } else {
+        await forgetMirror(env.engineDeps, ownerKey);
+        if (env.shell) await payShellWipe(env.shell, ownerKey);
+      }
       await env.profiles.clearPendingWipe(ownerKey);
     } catch (err) {
-      await endMintedPair(fetchImpl, origin, minted);
-      return refusedRedeem(refuse("pairOwedDeletion", faultDetail(err)));
+      await revoke();
+      return refusedAdoption(refuse("pairOwedDeletion", faultDetail(err)));
     }
   }
 
@@ -1002,13 +1119,15 @@ async function pairWithServer(
   // sentence, not escape as a throw that strands the screen on "Pairing…", and the minted
   // session is revoked rather than abandoned live under nobody's control. Whether that
   // revocation LANDED decides which sentence is told; see the arm itself.
+  if (abandoned()) return cancelled();
+  browser?.persisting();
   let profile: ServerProfile;
   try {
     profile = await env.profiles.add({
       origin,
-      flavor: negotiatedFlavor,
+      flavor,
       accountId: identity.accountId,
-      refreshToken: tokens.refreshToken,
+      refreshToken: minted.refreshToken,
       // The pin is persisted with the credential, because it has to be re-installed on every
       // launch before the first request — a pin that lived only in this process would pair
       // perfectly and fail on the next cold start.
@@ -1022,8 +1141,8 @@ async function pairWithServer(
   } catch (err) {
     // THE COMPENSATION IS ONLY CLAIMED IF IT LANDED: a 500 or a dead network is not "the session
     // was closed" — a take-back asserted on the strength of a request having been sent.
-    const closed = await endMintedPair(fetchImpl, origin, minted);
-    return refusedRedeem(
+    const closed = await revoke();
+    return refusedAdoption(
       refuse(closed ? "pairNotStoredClosed" : "pairNotStoredOpen", faultDetail(err)),
     );
   }
@@ -1032,15 +1151,15 @@ async function pairWithServer(
      Only after `add` resolved: a pairing that was not stored replaces nothing. */
   (env.bearers ?? processBearers).adoptRedeem(profile.id, {
     origin,
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken,
+    accessToken: minted.accessToken,
+    refreshToken: minted.refreshToken,
     accountId: identity.accountId,
     vault: vaultFor(env.profiles, profile),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
     ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
   });
   /* THE SHELL BOOTS NO ENGINE HERE: its page builds the one client engine, and the old mirror stays shut. */
-  if (to === "shell") return shellOf(await openTransport(env, profile), env.engineDeps);
+  if (to === "shell") return shellOf(await openTransport(env, profile), env);
   const connected = await buildSession(env, profile);
   if (connected.kind === "refused") return { kind: "refused", reason: connected.reason };
   return { kind: "paired", session: connected.session };
@@ -1101,11 +1220,12 @@ export function handoffMinter(
 export async function connectShellById(env: PairingEnv, id: string): Promise<ShellOutcome> {
   const profile = (await env.profiles.list()).find((p) => p.id === id);
   if (profile === undefined) return { kind: "refused", reason: refuse("notPairedHere") };
-  return shellOf(await openTransport(env, profile), env.engineDeps);
+  return shellOf(await openTransport(env, profile), env);
 }
 
-function shellOf(opened: OpenedTransport | Exclude<ConnectOutcome, { kind: "connected" }>, deps: MobileEngineDeps): ShellOutcome {
-  return opened.kind === "paired" || opened.kind === "local" ? { kind: "shell", session: shellSessionOf(opened, deps) } : opened;
+function shellOf(opened: OpenedTransport | Exclude<ConnectOutcome, { kind: "connected" }>, env: PairingEnv): ShellOutcome {
+  if (opened.kind !== "paired" && opened.kind !== "local") return opened;
+  return { kind: "shell", session: shellSessionOf(opened, env.calendarOnly ? null : env.engineDeps, undefined, env.calendarOnly) };
 }
 
 /** The profile's old mirror as the shell hands it across: its door, over the engine's own probe and removal. */
@@ -1200,6 +1320,18 @@ export type ForgetOutcome =
  * credential, reading the keystore back; revoke server-side, awaited (hosted
  * `logout` prunes the device's push row); delete the mail, read back ({@link forgetMirror}).
  */
+type ForgetProfileOptions = {
+  closed?: Promise<void>;
+  beforeForget?: () => Promise<void>;
+  revoke?: (() => Promise<boolean | SignOutOutcome>) | null;
+  settingsKept?: SettingsKeptHere | null;
+  anyway?: boolean;
+  erased?: boolean;
+};
+
+const pendingCalendarEdits = (err: unknown): boolean =>
+  err instanceof StoreFault && err.code === "calendar_queue_pending";
+
 export async function forgetProfile(
   env: PairingEnv,
   profileId: string,
@@ -1208,10 +1340,7 @@ export async function forgetProfile(
    * the removal's hand-back left only in this phone's store (`endStandaloneForRemoval`); `anyway` is the
    * person's answer to it. `erased`: the account was erased, so its own keystore rows go too (`account-rows.ts`).
    */
-  opts: {
-    closed?: Promise<void>; revoke?: (() => Promise<boolean | SignOutOutcome>) | null;
-    settingsKept?: SettingsKeptHere | null; anyway?: boolean; erased?: boolean;
-  } = {},
+  opts: ForgetProfileOptions = {},
 ): Promise<ForgetOutcome> {
   /* ── THE STORE STAYS WHILE IT SAYS WHAT THE MAILBOX DOES NOT ─────────────────────────────────
      The hand-back's own write is the one that finds a full mailbox, so this is read after it and
@@ -1222,8 +1351,6 @@ export async function forgetProfile(
     return { kind: "kept", settings: kept };
   }
   const row = (await env.profiles.list()).find((p) => p.id === profileId) ?? null;
-  // What the account door answered this pairing goes first: nothing of it may paint again.
-  forgetAccessFeed(profileId);
   /**
    * A second forget of a row the first already removed is not automatically
    * done. Two taps before the row re-renders both reach here: the first
@@ -1234,23 +1361,66 @@ export async function forgetProfile(
    * there. A missing row is not the end of the question: the durable queue is
    * asked whether this profile still owes a forget, and that debt is finished.
    */
-  const owed = row === null
-    ? (await env.profiles.pendingWipes()).find((w) => w.id === profileId) ?? null
-    : null;
-  const ownerKey = row !== null ? mirrorOwnerKey(row.origin, row.accountId) : owed?.owner ?? null;
-  if (opts.erased === true && ownerKey !== null) {
+  const owner = row === null ? null : mirrorOwnerKey(row.origin, row.accountId);
+  const owed = (row === null || env.calendarOnly)
+    ? (await env.profiles.pendingWipes()).find((w) => owner === null ? w.id === profileId : w.owner === owner)
+    : undefined;
+  const ownerKey = owner ?? owed?.owner ?? null;
+  const erased = opts.erased === true || owed?.erased === true;
+  let release: (() => Promise<void>) | undefined;
+  if (env.calendarOnly && ownerKey !== null && !erased) {
     try {
-      await env.profiles.forgetRows(accountRows(ownerKey));
-    } catch {
-      /* best-effort: a leftover preference holds no mail and opens nothing, so the Forget is not partial */
+      if (!env.shell) return { kind: "partial", reason: refuse("calendarQueueUnknown") };
+      release = await fenceCalendarWipe(env.shell, ownerKey);
+    } catch (err) {
+      return { kind: "partial", reason: pendingCalendarEdits(err)
+        ? refuse("calendarQueuePending") : refuse("calendarQueueUnknown") };
     }
   }
+  try {
+    await opts.beforeForget?.();
+    return await finishProfileForget(env, profileId, row, ownerKey, { ...opts, erased });
+  } finally {
+    await release?.();
+  }
+}
+
+async function eraseCalendarCopies(
+  env: PairingEnv, ownerKey: string, profileId: string, closed?: Promise<void>,
+): Promise<() => Promise<void>> {
+  const [shell, mirror, projection] = await Promise.allSettled([
+    eraseShellKeeper(env.shell, ownerKey),
+    Promise.resolve(closed).then(() => forgetMirror(env.engineDeps, ownerKey)),
+    profileId === "" ? undefined : env.calendar?.revoke(profileId),
+  ]);
+  if (shell.status === "rejected") throw shell.reason;
+  if (mirror.status === "rejected") throw mirror.reason;
+  if (projection.status === "rejected" || projection.value === false) {
+    throw new StoreFault("shell_view_not_cleared", "the native calendar copy is still on the phone");
+  }
+  return shell.value;
+}
+
+/** At launch, an unreadable keeper or WebView must not hold up deletion of a confirmed account's local copies. */
+export async function erasePendingCalendarCopies(env: PairingEnv): Promise<boolean> {
+  if (!env.calendarOnly) return false;
+  const erased = (await env.profiles.pendingWipes()).filter((owed) => owed.erased);
+  for (const owed of erased) {
+    await eraseCalendarCopies(env, owed.owner, owed.id).catch(() => undefined);
+  }
+  return erased.length > 0;
+}
+
+async function finishProfileForget(
+  env: PairingEnv, profileId: string, row: ServerProfile | null, ownerKey: string | null, opts: ForgetProfileOptions,
+): Promise<ForgetOutcome> {
+  forgetAccessFeed(profileId);
   // The intent names BOTH stores. An owner key alone made this crash boundary RESURRECT the
   // pairing: a kill here left the profile standing and still active, and the next launch
   // deleted the mirror, cleared the debt, then reconnected and drained the mailbox back.
   if (ownerKey !== null) {
     try {
-      await env.profiles.markPendingWipe(profileId, ownerKey);
+      await env.profiles.markPendingWipe(profileId, ownerKey, opts.erased === true);
     } catch (err) {
       // NOTHING HAS BEEN TOUCHED YET, and that is why this refusal is safe: the queue is full
       // of forgets whose mail could not be deleted, and recording one more would mean evicting
@@ -1263,8 +1433,20 @@ export async function forgetProfile(
     }
   }
 
-  // The wipe remains owed until native revokes the pairing and confirms cleanup.
-  if (env.calendar && !await env.calendar.revoke(profileId).catch(() => false)) {
+  if (opts.erased === true && ownerKey !== null) {
+    try {
+      await env.profiles.forgetRows(accountRows(ownerKey));
+    } catch {
+      /* best-effort: a leftover preference holds no mail and opens nothing, so the Forget is not partial */
+    }
+  }
+
+  const erasure = env.calendarOnly && opts.erased && ownerKey !== null
+    ? await eraseCalendarCopies(env, ownerKey, profileId, opts.closed).then(
+      (clear) => ({ clear }), (error: unknown) => ({ error }),
+    ) : null;
+  // Other removals require native to revoke the pairing before changing its stores.
+  if (erasure === null && env.calendar && !await env.calendar.revoke(profileId).catch(() => false)) {
     return { kind: "partial", reason: refuse("calendarCopyRemains") };
   }
 
@@ -1284,7 +1466,7 @@ export async function forgetProfile(
   const localOnly = (row?.origin ?? "") === LOCAL_ENGINE_ORIGIN
     || (ownerKey ?? "").startsWith(`${LOCAL_ENGINE_ORIGIN}::`);
   const asOutcome = (v: boolean | SignOutOutcome): SignOutOutcome => (v === true ? "told" : v === false ? "untold" : v);
-  const said: SignOutOutcome = localOnly ? "told"
+  const said: SignOutOutcome = localOnly || opts.erased ? "told"
     : opts.revoke ? asOutcome(await opts.revoke().catch(() => false))
     : row !== null ? await signOutProfile(env, row)
     : "told";
@@ -1365,10 +1547,14 @@ export async function forgetProfile(
 
   if (ownerKey === null) return told ? { kind: "forgotten" } : { kind: "partial", reason: notTold() };
   try {
-    await (opts.closed ?? Promise.resolve());
-    await forgetMirror(env.engineDeps, ownerKey);
-    // The shell's keeper and the view's copy go with the mirror, read back, before the debt is cleared.
-    if (env.shell) await payShellWipe(env.shell, ownerKey);
+    if (erasure !== null) {
+      if ("error" in erasure) throw erasure.error;
+      await erasure.clear();
+    } else {
+      await (opts.closed ?? Promise.resolve());
+      await forgetMirror(env.engineDeps, ownerKey);
+      if (env.shell) await payShellWipe(env.shell, ownerKey, env.calendarOnly === true);
+    }
     // INSIDE the try, because its read-back can refuse. A debt that survives being cleared is
     // collected by a later launch against whatever mirror that owner key names THEN — which,
     // after a re-pair, is the mailbox the person just re-authorized. Reporting a completed
@@ -1408,8 +1594,26 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
   const stillOwed: string[] = [];
   const rows = await env.profiles.list();
   for (const owed of await env.profiles.pendingWipes()) {
+    const stillHere = owed.id === "" ? undefined : rows.find((p) => p.id === owed.id);
+    const calendarErasure = env.calendarOnly && owed.erased;
+    let release: (() => Promise<void>) | undefined;
     try {
-      if (owed.id !== "" && env.calendar && !await env.calendar.revoke(owed.id)) {
+      if (env.calendarOnly && !owed.erased) {
+        if (!env.shell) {
+          stillOwed.push(owed.owner);
+          continue;
+        }
+        try {
+          release = await fenceCalendarWipe(env.shell, owed.owner);
+        } catch (err) {
+          if (!pendingCalendarEdits(err) || !stillHere) throw err;
+          // An older build recorded the debt without checking the queue. Reopen the pairing to sync.
+          await env.profiles.clearPendingWipe(owed.owner);
+          continue;
+        }
+      }
+      const clearErasedView = calendarErasure ? await eraseCalendarCopies(env, owed.owner, owed.id) : undefined;
+      if (!calendarErasure && owed.id !== "" && env.calendar && !await env.calendar.revoke(owed.id)) {
         stillOwed.push(owed.owner);
         continue;
       }
@@ -1418,18 +1622,27 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
       // moment anything can still spend that token — after the removal below there is nothing
       // left to revoke with, for ever. Best-effort: an unreachable server must not hold the
       // local deletion hostage, and the row ages out.
-      const stillHere = owed.id === "" ? undefined : rows.find((p) => p.id === owed.id);
-      if (stillHere) await revokeProfile(env, stillHere).catch(() => false);
+      if (owed.erased) {
+        await env.profiles.forgetRows(accountRows(owed.owner)).catch(() => undefined);
+      } else if (stillHere) {
+        await revokeProfile(env, stillHere).catch(() => false);
+      }
       // Idempotent: `remove` on a row that is already gone touches nothing and its read-back
       // passes, so a debt whose credential half landed before the kill costs one no-op.
       if (owed.id !== "") await env.profiles.remove(owed.id);
-      await forgetMirror(env.engineDeps, owed.owner);
-      if (env.shell) await payShellWipe(env.shell, owed.owner);
+      if (clearErasedView) {
+        await clearErasedView();
+      } else {
+        await forgetMirror(env.engineDeps, owed.owner);
+        if (env.shell) await payShellWipe(env.shell, owed.owner, env.calendarOnly === true);
+      }
       // Its read-back can refuse, and a debt that survives being cleared stays owed rather than
       // being reported paid — the next launch tries again.
       await env.profiles.clearPendingWipe(owed.owner);
     } catch {
       stillOwed.push(owed.owner);
+    } finally {
+      await release?.();
     }
   }
   return stillOwed;
@@ -1476,6 +1689,7 @@ async function drainSignOutsNow(
   env: PairingEnv, opts: { origin?: string; atLaunch?: boolean }, until: number | null,
 ): Promise<number> {
   const fetchImpl = pairingFetch(env);
+  const approvalFetch = pairingFetch({ ...env, fetchImpl: env.approvalFetchImpl ?? env.fetchImpl });
   let owed: PendingSignOut[];
   let live: ServerProfile[];
   try {
@@ -1501,7 +1715,7 @@ async function drainSignOutsNow(
       continue;
     }
     if (entry.pin !== null && !installPin(entry.origin, entry.pin)) { left += 1; continue; }
-    const settled = (await dialSignOut(fetchImpl, entry.origin, entry.refreshToken, dialMs)) === true;
+    const settled = (await dialSignOut(entry.browser ? approvalFetch : fetchImpl, entry, dialMs)) === true;
     // The registry holds what it held before this dial: the live pairing's key, or none.
     if (entry.pin !== null && livePin !== entry.pin) {
       if (livePin !== null) installPin(entry.origin, livePin);
@@ -1522,7 +1736,7 @@ const SIGN_OUT_DIAL_MS = 8_000;
 
 /** Whether the refresh door's sign-out for `refreshToken` settles the debt; `null` when nothing answered within `ms`. */
 async function dialSignOut(
-  fetchImpl: FetchLike, origin: string, refreshToken: string, ms: number,
+  fetchImpl: FetchLike, { origin, refreshToken, browser }: PendingSignOut, ms: number,
 ): Promise<boolean | null> {
   const abort = typeof AbortController === "function" ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1535,6 +1749,7 @@ async function dialSignOut(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ refreshToken }),
+      ...(browser ? { credentials: "omit", redirect: "error" } : {}),
       ...(abort ? { signal: abort.signal } : {}),
     });
     return res.ok || res.status === 404 || res.status === 405 || isSessionRefusal(res.status, await envelopeCode(res));
@@ -1681,7 +1896,7 @@ export interface ShellSession {
   readonly ownerKey: string;
   readonly standalone: boolean;
   /** Verify the current credential's account over native's transport. */
-  verifyIdentity(): Promise<IdentityVerdict>;
+  verifyIdentity(): Promise<IdentityVerdict | { kind: "calendarUnavailable" }>;
   /** The account this session may serve to the page. Null until positively bound. */
   boundAccount(): string | null;
   /** Ends synchronously when native leaves this session. */
@@ -1696,6 +1911,7 @@ export function shellSessionOf(
   opened: OpenedTransport,
   deps: MobileEngineDeps | null = null,
   deadlineMs = IDENTITY_PROBE_DEADLINE_MS,
+  calendarOnly = false,
 ): ShellSession {
   const { profile } = opened;
   const { accountId } = profile;
@@ -1724,13 +1940,15 @@ export function shellSessionOf(
   const base = apiBaseOf(profile.origin, opened.apiBase);
   const ownerKey = mirrorOwnerKey(profile.origin, profile.accountId);
   let verified: number | null = null;
-  let checking: Promise<IdentityVerdict> | null = null;
+  type ShellIdentity = Awaited<ReturnType<ShellSession["verifyIdentity"]>>;
+  let checking: Promise<ShellIdentity> | null = null;
   const authorized = (generation: number | null) =>
     !lifetime.signal.aborted && generation !== null && generation === verified;
-  function verifyIdentity(): Promise<IdentityVerdict> {
+  function verifyIdentity(): Promise<ShellIdentity> {
     if (lifetime.signal.aborted) return Promise.resolve({ kind: "unverified" });
     if (checking !== null) return checking;
     let stamped: number | null = null;
+    let calendarUnavailable = false;
     const probe: FetchLike = (url, init) => fetch(url, {
       ...(init as RequestInit), credentials: "omit", signal: lifetime.signal,
       [CREDENTIAL_CHECK]: (generation: number | null) => {
@@ -1740,10 +1958,15 @@ export function shellSessionOf(
     });
     const authHeaders = () => bearer.headers();
     const desktopAccount = profile.flavor === "desktop-host"
-      ? () => resolveAccountFromRows(probe, base, authHeaders, accountId)
+      ? () => calendarOnly
+        ? resolveCalendarAccount(probe, base, authHeaders).then((answer) => {
+          calendarUnavailable = answer.unavailable === true;
+          return answer.accountId;
+        })
+        : resolveAccountFromRows(probe, base, authHeaders, accountId)
       : undefined;
     checking = identityProbe(probe, profile.origin, authHeaders, accountId, deadlineMs, desktopAccount)
-      .then((identity): IdentityVerdict => {
+      .then((identity): ShellIdentity => {
         if (lifetime.signal.aborted || stamped === null || stamped !== bearer.credentialGeneration()) {
           return { kind: "unverified" };
         }
@@ -1752,7 +1975,7 @@ export function shellSessionOf(
           return { kind: "mismatch", reason: refuse("bootAccountMismatch", identity.serverSays, accountId) };
         }
         verified = identity.kind === "verified" ? stamped : null;
-        return { kind: identity.kind };
+        return { kind: calendarUnavailable ? "calendarUnavailable" : identity.kind };
       })
       .finally(() => { checking = null; });
     return checking;
@@ -1832,6 +2055,22 @@ async function buildSession(
  * refusals, the pin, the base, the manager and the door. A session without the Hermes engine (the
  * shell's) is built from this alone.
  */
+function calendarCredential(value: string | null): boolean {
+  return value?.startsWith("cal.") === true;
+}
+
+/** Retire credentials issued before the server could give ohcal a calendar session. */
+export async function clearUnscopedCalendarCredentials(env: PairingEnv): Promise<void> {
+  if (!env.calendarOnly) return;
+  for (const profile of await env.profiles.list()) {
+    if (profile.refreshToken === null || calendarCredential(profile.refreshToken)) continue;
+    await vaultFor(env.profiles, profile).clear(new Set([profile.refreshToken]), "refused", false);
+  }
+  for (const owed of await env.profiles.pendingSignOuts()) {
+    if (!calendarCredential(owed.refreshToken)) await env.profiles.clearPendingSignOut(owed.id);
+  }
+}
+
 export async function openTransport(
   env: PairingEnv,
   profile: ServerProfile,
@@ -1911,9 +2150,13 @@ export async function openTransport(
    * is not fatal: the profile boots against the origin as before, no worse than it was.
    */
   let apiBase = profile.apiBase;
-  if (apiBase === null && profile.flavor === "selfhost") {
-    const measured = await resolveApiBase(pairingFetch(env), profile.origin);
-    if (measured.kind === "base") {
+  const calendarComputer = env.calendarOnly === true && profile.flavor === "desktop-host";
+  if (calendarComputer || (apiBase === null && profile.flavor === "selfhost")) {
+    const measured = await resolveApiBase(pairingFetch(env), profile.origin, { calendarOnly: env.calendarOnly });
+    if (calendarComputer && measured.kind === "refused" && measured.reason.say === "baseApiNotFound") {
+      return { kind: "refused", reason: refuse("calendarServerUnavailable") };
+    }
+    if (measured.kind === "base" && apiBase !== measured.base) {
       apiBase = measured.base;
       /* Persisted, so the next launch is wire-free again. A refusal from the keystore is not worth
          failing the boot over — the session works either way and the repair simply retries. */
@@ -1921,6 +2164,8 @@ export async function openTransport(
     }
   }
 
+  const needsPairing = () => ({ kind: "refused" as const, needsRepair: true, reason: refuse("pairEnded") });
+  if (env.calendarOnly && !calendarCredential(profile.refreshToken)) return needsPairing();
   const bearer = slots.managerFor(profile.id, () => ({
     origin: profile.origin,
     refreshToken: profile.refreshToken,
@@ -1942,11 +2187,7 @@ export async function openTransport(
   if (!bearer.paired()) {
     const dying = bearer.deathSettled();
     if (dying !== null) return diedOutcome(await dying, bearer.removesCopy);
-    return {
-      kind: "refused",
-      needsRepair: true,
-      reason: refuse("pairEnded"),
-    };
+    return needsPairing();
   }
   /**
    * THE WALL'S ONE SINK, composed HERE and nowhere else — on the PAIRED door's transport, which

@@ -520,6 +520,17 @@ export const SUBPROCESSORS_URL = "https://ohmail.app/subprocessors";
  */
 export const WEB_APP_URL = "https://ohmail.app";
 
+/** Mint a routing reference tied to the connected account. The browser still checks its own session. */
+export async function mintDeviceSettingsHandoff(session: ConnectedSession, signal: AbortSignal): Promise<string | null> {
+  const { origin, accountId } = session.profile;
+  if (!accountId) return null;
+  const response = await session.fetch(new URL("/auth/session?settingsPane=devices", origin).href, { signal });
+  if (!response.ok) return null;
+  const body: { account?: unknown; reference?: unknown } = await response.json();
+  if (body?.account !== accountId || typeof body.reference !== "string") return null;
+  return /^\d{1,10}_[A-Za-z0-9_-]{40,700}$/.test(body.reference) ? body.reference : null;
+}
+
 /**
  * WHERE AN UPDATE OF THIS APP COMES FROM, written down here for the reason above: the page a build from the
  * release page is replaced from, and the two stores' pages, which `net/update-verbs.ts` completes with the

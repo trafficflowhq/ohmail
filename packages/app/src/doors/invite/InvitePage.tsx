@@ -97,7 +97,7 @@ function InviteForm(p: {
         </p>
         <AccountSentence
           t={invite}
-          passwordHint="minimum"
+          lengthHint="minimum"
           fields={fields}
           wanted={wanted}
           at={at}

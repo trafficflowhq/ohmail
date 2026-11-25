@@ -1,4 +1,4 @@
-import { useId, type ChangeEvent, type ClipboardEvent, type KeyboardEvent } from "react";
+import { useId, useRef, type ChangeEvent, type ClipboardEvent, type KeyboardEvent } from "react";
 import { Avatar, Button, SuggestionList, useSuggestions, type SuggestionRow } from "../../base/index.js";
 import "./recipients.css";
 
@@ -71,6 +71,7 @@ export function RecipientType({
   onKeys,
   onPaste,
 }: RecipientTypeProps) {
+  const anchor = useRef<HTMLSpanElement | null>(null);
   const offers = suggest && !locked ? suggest : undefined;
   const typed = line.typed.trim().toLowerCase();
   /* Asked here only where the words could be an address; elsewhere the list asks when it opens. */
@@ -154,9 +155,10 @@ export function RecipientType({
         </span>
       ) : null}
       {offers ? (
-        <span className="oh-recipients-suggest">
-          <SuggestionList {...suggestions.list} label={offers.label} />
-        </span>
+        <>
+          <span ref={anchor} className="oh-recipients-suggest-anchor" />
+          <SuggestionList {...suggestions.list} anchor={anchor} label={offers.label} flush popover />
+        </>
       ) : null}
     </span>
   );

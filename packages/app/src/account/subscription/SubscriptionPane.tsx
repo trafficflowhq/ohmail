@@ -213,6 +213,7 @@ function StandingSheet({
       {mailboxes === null ? null : (
         <SettingLine
           label={t("mailboxes")}
+          wrapValue
           value={
             connectedCount === undefined
               ? own("mailboxesUpTo", { count: mailboxes })

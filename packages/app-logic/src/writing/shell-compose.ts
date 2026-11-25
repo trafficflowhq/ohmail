@@ -37,6 +37,7 @@ import {
   type SendAndDonePlan,
   type TriagePileEntry,
 } from "@ohmail/client-engine";
+import { repairLegacyDraftHtml } from "@trafficflow/core/outbound-text";
 import type { ToastFn } from "../press/report.js";
 import {
   clearComposeDraft,
@@ -168,16 +169,23 @@ export async function openDraftDecision(
     unavailable: () => void;
   },
 ): Promise<void> {
+  const open = (row: EngineDraft, body: string): void => {
+    const html = row.html;
+    const repaired = typeof html === "string" && typeof row.rationale === "string"
+      ? repairLegacyDraftHtml(html, body)
+      : html;
+    io.openWithBody(html === repaired ? row : { ...row, html: repaired }, body);
+  };
   if (draftBodyKnown(draft)) {
     /* `?? ""` is unreachable past the predicate and is the type's, not a default: an empty string
        is a KNOWN body and takes this arm, which is what lets somebody clear a draft. */
-    io.openWithBody(draft, draft.body ?? "");
+    open(draft, draft.body ?? "");
     return;
   }
   const fetched = await io.readDraftBody(draft.id);
   if (fetched === null) { io.unavailable(); return; }
   const content = typeof fetched === "string" ? { body: fetched } : fetched;
-  io.openWithBody({ ...draft, ...content }, content.body);
+  open({ ...draft, ...content }, content.body);
 }
 
 /** No queued edit kept as a new draft, as one stable value. */
@@ -521,7 +529,12 @@ export function useShellCompose({
     if (saved.to || saved.subject || saved.body) {
       // The account may not hold it (a tab closed inside the pause, or died): written at this open.
       restoredRef.current();
-      setCompose(saved);
+      const rowId = saved.aiDraft === undefined ? readComposeRow(scope) : null;
+      const row = rowId === null ? undefined : engine.read().get<EngineDraft>("draft", rowId);
+      // An older buffer has provenance only when it still matches a generated row.
+      const generated = saved.aiDraft ?? (typeof row?.rationale === "string"
+        && row.body === saved.body && row.html === saved.html);
+      setCompose(generated ? { ...saved, aiDraft: true, html: repairLegacyDraftHtml(saved.html, saved.body) } : saved);
       setComposeResumed(true);
     }
     if (takeRecoveredComposer(scope)) toast(t("compose.recoveredFromClosedTab"));
@@ -998,7 +1011,7 @@ export function useShellCompose({
     /* A new letter's draft takes the letter's words; the person's own stay one tab away (`own`), as a reply's. */
     if (of === "letter") {
       // `onComposeFields` is declared below; a stable callback reads it when the answer lands.
-      onComposeFields({ ...composeRef.current, body: draft.text, html: draft.html });
+      onComposeFields({ ...composeRef.current, body: draft.text, html: draft.html, aiDraft: draft.aiDraft });
       return;
     }
     // The FORWARD dock's body is not "existing reply text": when the open editor is the
@@ -2135,10 +2148,8 @@ export function useShellCompose({
   /**
    * THE COMPOSE FORM IS A ROW ON THE ACCOUNT — see `compose-autosave.ts`.
    *
-   * `active` is the route, so a timer armed by the last keystroke cannot write a draft after the
-   * user has left. It stays armed while Compose is open and nowhere else; leaving mid-sentence
-   * loses at most the last two seconds to the account, and nothing at all to the local buffer,
-   * which is written on every keystroke and is what a reload restores from.
+   * `active` follows the route. When Write closes, autosave cancels the timer and keeps the latest
+   * words after any save already on the wire. Every edit also reaches the local reload buffer.
    */
   const autosave = useComposeAutosave({
     engine,
@@ -2477,6 +2488,7 @@ export function useShellCompose({
         // sent. A row whose html the sync page left out opens plain, and the engine
         // then keeps its save from flattening it (`Engine.enrich`).
         html: typeof d.html === "string" ? d.html : "",
+        aiDraft: typeof d.rationale === "string",
         fromMailboxId: d.mailboxId,
         // THE ROW'S FORWARD: a forward kept as a draft reopens as a forward, and its
         // send carries the original — an id, never a copy of the original's words, which the
@@ -2986,6 +2998,7 @@ export function useShellCompose({
       subject: fields.subject || draft.subject,
       body: draft.body ?? fields.body,
       html: "",
+      aiDraft: false,
     });
     await engine.mutate({ kind: "draft_accept", draftId: draft.id });
   });
@@ -3292,6 +3305,7 @@ export function useShellCompose({
   const closeCompose = useStableCallback(() => {
     if (closing.current) return;
     closing.current = true;
+    const frame = draftFrame.current;
     void (async () => {
       let flushed: ComposeFlush = { kind: "nothing" };
       try {
@@ -3299,6 +3313,7 @@ export function useShellCompose({
       } finally {
         closing.current = false;
       }
+      if (draftFrame.current !== frame || routeViewRef.current !== "compose") return;
       // A body past the ceiling is a message the account cannot hold: its note says how to shorten it.
       if (flushed.kind === "tooLong") {
         setComposeCloseRefusal(t("compose.closeNotSaved"));

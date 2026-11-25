@@ -121,6 +121,7 @@ function OhboxBody() {
     <Screen>
       <TopBar />
       <MailList
+        jumpToTop
         groups={groups}
         rowKey={(m) => m.rowKey ?? m.id}
         renderRow={(m) => {

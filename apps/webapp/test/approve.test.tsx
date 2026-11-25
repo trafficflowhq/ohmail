@@ -410,6 +410,16 @@ describe("the ways a request ends, and the ways the server says wait", () => {
     expect(el.querySelectorAll("button")).toHaveLength(0);
   });
 
+  it.each([
+    ["en", "This request has expired. Return to the app and start again."],
+    ["de", "Diese Anfrage ist abgelaufen. Kehre zur App zurück und starte erneut."],
+  ] as const)("a phone countdown gives app recovery in %s", async (locale, sentence) => {
+    readAnswers = [() => Promise.resolve(facts({ platform: "Android", expiresIn: 0 }))];
+    const el = await mount(ID, locale);
+    await waitFor(() => el.textContent!.includes(sentence), sentence);
+    expect(el.querySelectorAll("button")).toHaveLength(0);
+  });
+
   it("an already-confirmed request reads as done", async () => {
     readAnswers = [() => Promise.resolve(facts({ approved: true }))];
     const el = await mount();

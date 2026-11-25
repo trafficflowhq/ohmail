@@ -340,6 +340,8 @@ export function pgDialect(): Dialect {
       return sql`greatest(${sql.join(values.map((v) => sql`${v}`), sql`, `)})`;
     },
 
+    indexedInSubquery: (value, query) => sql`${value} = any(array(${query}))`,
+
     // SQL syntax, not a function: the separator is a keyword, which is why no list of function
     // names ever caught this construct.
     strpos: (hay, needle) => sql`position(${needle} in ${hay})`,

@@ -575,6 +575,31 @@ describe("the built page in a browser", () => {
     }
   }, 120_000);
 
+  it.each([
+    ["en", "This server does not support calendar sync for ohcal."],
+    ["de", "Dieser Server unterstützt die Kalendersynchronisierung für ohcal nicht."],
+  ] as const)("shows the unavailable state in %s without reading the mail feed", async (language, words) => {
+    const sent: string[] = [];
+    const session = {
+      profile: { accountId: CONFIG.accountId }, standalone: false, boundAccount: () => CONFIG.accountId,
+      async send(route: string) {
+        const path = route.split("?")[0]!;
+        sent.push(path);
+        return new Response("<html></html>", { headers: { "content-type": "text/html" } });
+      },
+    } as unknown as ShellSession;
+    const http = new HttpDoor({ live: () => ({ session, scope: CONFIG.scope }), ready: () => true, calendarOnly: true });
+    const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language }, [], undefined, undefined, {}, undefined, http);
+    try {
+      await browserExpect(page.getByRole("status").filter({ hasText: words })).toBeVisible();
+      expect(sent).toContain("/calendar/sync/snapshot");
+      expect(sent).not.toContain("/sync/snapshot");
+      expect(sent).not.toContain("/mailboxes");
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
   it("opens the preferred calendar view even when restoring a mail address", async () => {
     const { page, close } = await drawn({ ...CONFIG, app: "ohcal", language: "en", place: "#/ohbox" },
       [[`ohmail.calendar.display.${CONFIG.scope}`, JSON.stringify({ opensIn: "day" })]]);
@@ -660,7 +685,7 @@ describe("the built page in a browser", () => {
           if (method === "PATCH" && JSON.parse(String(init.body)).enabled === true) enabledAt = timestamp;
           return Response.json(settings());
         }
-        if (path === "/calendar/connect") {
+        if (path === "/calendar/setup") {
           return Response.json({ ways: enabledAt ? [SIGN_IN_WAY, "caldav"] : [], connections: connectionId ? [connection()] : [] });
         }
         if (path === "/calendar/connections" && method === "POST") {
@@ -677,10 +702,10 @@ describe("the built page in a browser", () => {
         ].map(([type, entity], i) => ({
           type, entity, id: (entity as { id: string }).id, seq: i + 1, op: "update", updatedAt: timestamp,
         }));
-        if (path === "/sync/snapshot") {
+        if (path === "/calendar/sync/snapshot") {
           return Response.json({ asOfSeq: rows.length, changes: rows, nextCursor: null });
         }
-        if (path === "/sync") {
+        if (path === "/calendar/sync") {
           return Response.json({ changes: { creates: [], updates: rows, deletes: [], moves: [] }, cursor: "NQ", hasMore: false });
         }
         return Response.json({}, { status: 404 });
@@ -976,6 +1001,75 @@ describe("the built page in a browser", () => {
       return asked.filter((ask) => ask.kind === kind && (ask.do ?? ask.act ?? `${ask.method} ${ask.path}`) === verb).length;
     }, { kind, verb }), { timeout: 1400 }).toBe(1);
   }
+
+  const calendarAccount = (pane: string, replies: Readonly<Record<string, object>> = {}) =>
+    drawn({ ...CONFIG, app: "ohcal", setting: "selfHosted", language: "en", place: `#/cal/calendars/${pane}` },
+      [], undefined, undefined, {}, undefined, undefined, {
+        ...accountReplies, "http:GET /auth/session": httpAnswer({ ...fixtureIdentity, scope: "calendar" }),
+        ...replies,
+      });
+
+  it("shows the calendar account identity and deletion link without password management", async () => {
+    const { page, close } = await calendarAccount("account");
+    try {
+      await browserExpect(page.getByText("Fixture Person", { exact: true }).first()).toBeVisible({ timeout: 1600 });
+      await browserExpect(page.getByRole("button", { name: "Change password", exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "Delete my account", exact: true }).click();
+      await askedFor(page, "phone.account", "deletePage");
+    } finally { await close(); }
+  }, 120_000);
+
+  it("withholds a calendar session identity belonging to a different account", async () => {
+    const { page, close } = await calendarAccount("account", {
+      "http:GET /auth/session": httpAnswer({
+        scope: "calendar", user: { ...fixtureIdentity.user, accountId: "other-account" },
+      }),
+    });
+    try {
+      await browserExpect(page.getByRole("button", { name: "Sign in", exact: true })).toBeVisible({ timeout: 1600 });
+      await browserExpect(page.getByText("Fixture Person", { exact: true })).toHaveCount(0);
+      await browserExpect(page.getByRole("button", { name: "Delete my account", exact: true })).toHaveCount(0);
+    } finally { await close(); }
+  }, 120_000);
+
+  it("shows calendar security status without factor management", async () => {
+    const { page, close } = await calendarAccount("security");
+    try {
+      await browserExpect(page.getByText("Authenticator app", { exact: true })).toBeVisible({ timeout: 1600 });
+      for (const name of ["Replace recovery codes", "Replace authenticator", "Remove authenticator"]) {
+        await browserExpect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
+      }
+    } finally { await close(); }
+  }, 120_000);
+
+  it("verifies a calendar account's factor when signing out a device without offering pairing links", async () => {
+    const { page, close } = await calendarAccount("devices", {
+      "http:DELETE /devices/remote-device": [
+        { ...httpAnswer({ error: { code: "step_up_required" } }), status: 403 }, httpAnswer({}),
+      ],
+      "http:POST /auth/step-up/totp": httpAnswer({}),
+    });
+    try {
+      await browserExpect(page.getByText("Travel phone", { exact: true })).toBeVisible({ timeout: 1600 });
+      await page.getByRole("button", { name: "Sign out", exact: true }).first().click();
+      const dialog = page.getByRole("dialog");
+      await dialog.getByRole("button", { name: "Sign out", exact: true }).click({ timeout: 1600 });
+      await browserExpect(dialog.getByRole("button", { name: "Use a recovery code instead", exact: true }))
+        .toBeVisible({ timeout: 1600 });
+      await dialog.getByLabel("Six-digit code from your authenticator app", { exact: true }).fill("123456", { timeout: 1600 });
+      await dialog.getByRole("button", { name: "Verify code", exact: true }).click();
+      await askedFor(page, "http", "POST /auth/step-up/totp");
+      await browserExpect.poll(() => page.evaluate(() => {
+        const { asked } = (window as unknown as { __native: { asked: { kind: string; method?: string; path?: string }[] } }).__native;
+        return asked.filter((ask) => ask.method === "DELETE" && ask.path === "/devices/remote-device").length;
+      })).toBe(2);
+      await browserExpect(page.getByRole("button", { name: "Add a device", exact: true })).toHaveCount(0);
+      expect(await page.evaluate(() => {
+        const { asked } = (window as unknown as { __native: { asked: { kind: string; do?: string }[] } }).__native;
+        return asked.some((ask) => ask.kind === "phone.account" && ask.do === "pairs");
+      })).toBe(false);
+    } finally { await close(); }
+  }, 120_000);
 
   it("changes the server password using the same form as the web", async () => {
     const { page, close } = await openedAccount("account");
@@ -1385,6 +1479,47 @@ describe("the built page in a browser", () => {
       await stop.click();
       await dialog.getByRole("button", { name: "Hand the mailbox back" }).click();
       expect(await stops()).toBe(1);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
+  it("returns to Trash from a deleted letter when the phone sends Back", async () => {
+    const now = new Date().toISOString();
+    const subject = "Deleted workshop note";
+    const session = {
+      profile: { accountId: CONFIG.accountId }, standalone: false, boundAccount: () => CONFIG.accountId,
+      async send(route: string) {
+        const { pathname, searchParams } = new URL(route, "https://app.example");
+        if (pathname === "/sync/snapshot") return Response.json({ asOfSeq: 0, nextCursor: null, changes: [] });
+        if (pathname === "/sync") return Response.json({
+          changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "MA", hasMore: false, serverTime: now,
+        });
+        if (pathname === "/messages" && searchParams.get("view") === "trash") return Response.json({
+          items: [{
+            id: "deleted", accountId: CONFIG.accountId, mailboxId: "mailbox", threadId: null, folder: "Trash",
+            subject, from: { name: "Workshop", address: ["shop", "workshop.example"].join("@") },
+            to: [], cc: [], date: now, updatedAt: now, unread: false, trashedAt: now, restoreTo: "INBOX", labels: [],
+          }], nextCursor: null,
+        });
+        return Response.json({}, { status: 404 });
+      },
+    } as unknown as ShellSession;
+    const http = new HttpDoor({ live: () => ({ session, scope: CONFIG.scope }), ready: () => true });
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/trash" }, [], undefined,
+      { width: 390, height: 664 }, {}, undefined, http);
+    try {
+      const row = page.getByRole("option", { name: new RegExp(subject) });
+      const reader = page.getByRole("region", { name: subject });
+      await row.getByText(subject, { exact: true }).tap();
+      await browserExpect(page).toHaveURL(/#\/trash\/m\/deleted$/);
+      await browserExpect(reader.getByRole("button", { name: "Trash", exact: true })).toBeVisible();
+      await page.evaluate(() => {
+        (window as unknown as { __native: { back(id: number): void } }).__native.back(1);
+      });
+      await browserExpect(reader).toBeHidden();
+      await browserExpect(row).toBeVisible();
+      await browserExpect(page).toHaveURL(/#\/trash$/);
     } finally {
       await close();
     }

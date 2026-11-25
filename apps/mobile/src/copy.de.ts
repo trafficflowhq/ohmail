@@ -29,8 +29,12 @@ export const DE: Deck = {
   /* --------------------------------------------------------------- welcome */
 
   welcomeTitle: "Mails von Leuten, zu denen du Ja gesagt hast.",
-  welcomeConnect: "Postfach verbinden",
-  welcomeScan: "Code scannen",
+  welcomeScan: "QR scannen",
+  welcomeSignIn: "Anmelden",
+  welcomeSignInSelfHosted: "Bei eigenem Server anmelden",
+  signInWaiting: "Schliesse die Anmeldung im Browser ab.",
+  signInFinishing: "Anmeldung wird abgeschlossen…",
+  signInServerAddress: "Serveradresse",
 
   /* ------------------------------------------------------------------ doors */
 
@@ -210,6 +214,20 @@ export const DE: Deck = {
 
   /* Die fünf Zustandslabels sind die des Desktops, Byte für Byte. */
   phoneThisPhone: "Dieses Handy",
+  settingsAppearance: "Darstellung",
+  settingsAi: "KI",
+  settingsDevices: "Geräte",
+  settingsManageDevices: "Kontogeräte verwalten",
+  settingsDevicesBrowser: "Öffnet sich im Browser",
+  settingsDevicesFailed: "Die Kontogeräte konnten nicht geöffnet werden. Versuche es erneut.",
+  settingsGeneral: "Allgemein",
+  settingsNotifications: "Benachrichtigungen",
+  settingsMailboxes: "Postfächer",
+  settingsFolders: "Ordner",
+  settingsSignatures: "Signaturen",
+  settingsAccount: "Konto",
+  settingsAbout: "Über ohmail",
+  settingsHelp: "Hilfe & Kontakt",
   phoneStateOrganizing: "Organisiert",
   phoneStateStopping: "Wird beendet",
   phoneStateStopPending: "Stopp ausstehend",
@@ -526,6 +544,7 @@ export const DE: Deck = {
   lateMailboxTimeout: "Der Mailserver hat nicht rechtzeitig geantwortet",
   lateMailboxDown: "Mailserver nicht erreichbar",
   lateMailboxOther: "Mail konnte nicht synchronisiert werden",
+  lateMailboxTitle: (mailbox: string, reason: string) => `${mailbox}: ${reason}`,
   lateSince: (time: string) => `seit ${time}`,
   lateHide: "Ausblenden",
   lateTitle: "Neue Mails haben Verspätung.",
@@ -636,6 +655,9 @@ export const DE: Deck = {
     + "entfernt. Die Mails auf deinem Mailserver sind unberührt.",
   pairRedeemUnreachable: "dieser Server war nicht erreichbar, um die Kopplung einzulösen",
   pairCodeRejected: "dieser Kopplungscode wurde nicht angenommen — erzeuge einen frischen und scanne erneut",
+  calendarQueuePending: "Synchronisiere deine Kalenderänderungen, bevor du diesen Server entfernst.",
+  calendarQueueUnknown: "Das Handy konnte nicht nach ausstehenden Kalenderänderungen suchen. Versuche erneut, diesen Server zu entfernen.",
+  calendarServerUnavailable: "Dieser Server unterstützt die Kalendersynchronisierung für ohcal nicht.",
   pairNoAccountName:
     "gekoppelt, aber der Server konnte den Account nicht benennen, den diese Kopplung öffnet — "
     + "erzeuge einen frischen Code und koppele erneut, sobald es Mails hat",
@@ -687,6 +709,15 @@ export const DE: Deck = {
     "Das ist eine numerische Adresse in einem Netz, und dafür kann keine Zertifizierungsstelle "
     + "bürgen — ohmail kann ihr deshalb nur über den Code vertrauen, den dein Computer zeigt. "
     + "Öffne dort Einstellungen → Geräte und scanne den.",
+  signInExpired: "Diese Anmeldeanfrage ist abgelaufen. Starte erneut.",
+  signInDenied: "Die Anmeldeanfrage wurde abgelehnt.",
+  signInUnreachable: "Der Server ist nicht erreichbar. Prüfe deine Verbindung und versuche es erneut.",
+  signInNotOffered: "Dieser Server unterstützt die Anmeldung über den Browser deines Telefons nicht.",
+  signInRateLimited: "Zu viele Anmeldeversuche. Versuche es später erneut.",
+  signInRefused: "Die Anmeldung konnte nicht abgeschlossen werden. Starte erneut.",
+  signInNoBrowser: "Der Browser für die Anmeldung konnte nicht geöffnet werden.",
+  signInWrongServer: (host: string) => `Die Anmeldeseite muss auf ${host} bleiben.`,
+  signInCancelled: "Die Anmeldung wurde abgebrochen.",
   baseCleartext:
     "Das ist eine unverschlüsselte Adresse, und ohmail sendet deine Mails nicht darüber. Gib die "
     + "https-Adresse an, unter der du ohmail im Browser öffnest.",
@@ -919,6 +950,8 @@ export const DE: Deck = {
         return "auf diesem Handy ist zu wenig Platz frei, um vor dem Aktualisieren eine Kopie des Postfachs zu behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert";
       case "store_copy_failed":
         return "dieses Handy konnte vor dem Aktualisieren keine geprüfte Kopie des Postfachs behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert";
+      case "calendar_queue_pending":
+        return "auf diesem Handy liegen noch nicht synchronisierte Kalenderänderungen";
       case "shell_keeper_not_deleted":
         return "dieses Handy konnte die ungesendeten Briefe und vorgemerkten Änderungen, die es für dieses Postfach aufbewahrt hat, nicht löschen";
       case "shell_view_not_cleared":
@@ -1091,6 +1124,9 @@ export const DE: Deck = {
   draftAiNeedWords: "Schreib zuerst ein paar Wörter.",
   draftAiConfirm: `${DRAFT_REPLY_COST_CREDITS} Credits verwenden`,
   draftAiOffer: `Der Entwurf kostet ${DRAFT_REPLY_COST_CREDITS} Credits. Du kannst ihn vor dem Senden bearbeiten.`,
+  draftAiFullTitle: "Ganze Unterhaltung verwenden",
+  draftAiFullDisclosure: "Für diesen Entwurf erhält dein eingerichteter KI-Anbieter deinen eingegebenen Text, den vollständigen gespeicherten Text der Nachricht, auf die du antwortest, und insgesamt bis zu 4.000 Zeichen aus bis zu 20 früheren Nachrichten dieser Unterhaltung.",
+  draftAiFullConfirm: "Teilen und entwerfen",
   composeFormat: "Text formatieren",
   composeBold: "Fett",
   composeItalic: "Kursiv",
@@ -1592,6 +1628,7 @@ export const DE: Deck = {
   actionMarkUnread: "Als ungelesen markieren",
   actionDone: "Erledigt",
   actionMore: "Mehr",
+  mailBackToTop: "Nach oben",
   tabMore: "Mehr",
   standaloneName: "ohmail auf diesem Handy",
 
@@ -1599,6 +1636,8 @@ export const DE: Deck = {
   deleteAsk: "In den Papierkorb.",
   deleteNote:
     "Sie wandert in den Papierkorb-Ordner auf deinem eigenen Mailserver — ohmail löscht nie unwiderruflich. Ab dort gelten die Papierkorb-Regeln deines Mailservers.",
+  toastMovingToTrash: "Wird in den Papierkorb verschoben.",
+  toastMovingToTrashMany: (count: number) => `${count} Nachrichten werden in den Papierkorb verschoben.`,
   toastDeleted: "In den Papierkorb verschoben.",
   deleteFailed: "Das Löschen konnte nicht gespeichert werden — die Nachricht ist noch an ihrem Platz.",
 
@@ -1667,7 +1706,7 @@ export const DE: Deck = {
   undo: "Rückgängig",
   toastUndone: "Rückgängig gemacht.",
   deleteUndone: "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
-  deleteUndoLost: "Das Rückgängigmachen konnte nicht gespeichert werden — die Nachricht ist im Papierkorb.",
+  deleteUndoLost: "Rückgängig konnte nicht gespeichert werden.",
   toastRoutingUndone: "Die Mails sind wieder da, wo sie waren, und es wurde keine Regel angelegt.",
   /* Siehe `copy.en.ts`. Der Doppelpunkt vor dem Ort nimmt keinen Fall — `toastMoved`s Regel. */
   routingReplayedTo: (n: number, place: string) =>
@@ -1879,12 +1918,12 @@ export const DE: Deck = {
   composeKeptQueued: "Als Entwurf behalten. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
   composeKeptQueuedWithoutFiles:
     "Als Entwurf behalten, ohne die Anhänge. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
-  composeKeepFailed: "Das konnte nicht als Entwurf behalten werden. Schließe noch einmal, um es zu verwerfen.",
+  composeKeepFailed: "Der Entwurf konnte nicht gespeichert werden. Er ist hier noch geöffnet.",
   composeTooLong: (size: string) => `Zu lang zum Speichern — höchstens ${size}. Kürze die Nachricht, dann wird sie wieder gespeichert.`,
   composeKeepTooLong: (size: string) =>
-    `Das kann nicht als Entwurf behalten werden — es ist über der Grenze von ${size}. Kürze es, oder schließe noch einmal, um es zu verwerfen.`,
+    `Das kann nicht als Entwurf behalten werden — es ist über der Grenze von ${size}. Kürze den Entwurf, um ihn zu speichern.`,
   composeKeepTooLongBound: (size: string) =>
-    `Diese Änderungen können nicht behalten werden — sie sind über der Grenze von ${size}, darum liegt in den Entwürfen noch die frühere Fassung. Kürze sie, oder schließe noch einmal, um die Änderungen zu verwerfen.`,
+    `Diese Änderungen können nicht behalten werden — sie sind über der Grenze von ${size}, darum liegt in den Entwürfen noch die frühere Fassung. Kürze den Entwurf, um deine Änderungen zu speichern.`,
   composeKeepFiles: (names: string, size: string) =>
     `Nicht beim Entwurf behalten: ${names}. Dieses Handy behält bis zu ${size} Anhänge bei Entwürfen. Schließe noch einmal, um ihn ohne sie zu behalten.`,
   composeKeptHere: "In den Entwürfen behalten. Die Anhänge bleiben nur auf diesem Handy.",
@@ -1995,7 +2034,6 @@ export const DE: Deck = {
   awayLeaveKeep: "Weiter bearbeiten",
   awayRow: "Abwesenheitsantwort",
   awayRowSub: "Eine automatische Antwort, solange du weg bist.",
-  awayScopeElsewhere: "Diese stellst du auf einem Computer oder in ohmail Cloud ein. Dieses Handy schickt sie unverändert zurück.",
   awayPileOther: (folder: string) => `Auch ${folder}`,
   awayPilesNone: "Keine Ablage bekommt eine Antwort, es wird also nichts gesendet.",
   awayWhereThisPhone: "Antworten werden gesendet, solange ohmail auf diesem Handy läuft.",

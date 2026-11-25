@@ -39,6 +39,8 @@ export type UnboundCall =
   | "POST /auth/desktop-approval/:id/deny"
   // apps/mobile/src/net/bearer.ts
   | "POST /auth/desktop-approval/claim"
+  // The self-hosted approval page verifies the launch before mounting.
+  | "POST /auth/desktop-approval/launch"
   // apps/webapp/app/api-client.ts
   | "POST /auth/desktop-claim"
   | "POST /auth/desktop-link"

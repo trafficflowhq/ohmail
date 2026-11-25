@@ -306,6 +306,137 @@ export async function calendarDayMenu(person: Person, title: string, compact: bo
   await browserExpect(page.getByRole("dialog", { name: title })).toBeVisible();
 }
 
+async function prepareBillingReturn(bench: Bench, person: Person) {
+  if (!(person instanceof PlaywrightPerson)) throw new Error("Billing returns in a browser");
+  const { page } = person;
+  await page.setViewportSize({ width: 390, height: 844 });
+  const hosted = "http://localhost:54321/";
+  await page.route(hosted, (route) => route.fulfill({
+    contentType: "text/html",
+    body: `<a href="${bench.origin}/">Back to ohmail</a>`,
+  }));
+  await page.goto(hosted);
+  return person;
+}
+
+async function followBillingReturn(bench: Bench, person: PlaywrightPerson) {
+  await person.page.getByRole("link", { name: "Back to ohmail" }).click({ noWaitAfter: true });
+  await person.page.waitForURL(`${bench.origin}/`, { waitUntil: "commit" });
+}
+
+export async function billingReturnPaint(bench: Bench, visitor: Person) {
+  const person = await prepareBillingReturn(bench, visitor);
+  const { page, context } = person;
+  const network = await context.newCDPSession(page);
+  await network.send("Network.enable");
+  await network.send("Network.setCacheDisabled", { cacheDisabled: true });
+  await network.send("Network.emulateNetworkConditions", {
+    offline: false,
+    latency: 400,
+    downloadThroughput: 1_600_000 / 8,
+    uploadThroughput: 750_000 / 8,
+    connectionType: "cellular3g",
+  });
+  const start = performance.now();
+  await followBillingReturn(bench, person);
+  const loading = page.getByRole("status").filter({ hasText: say("session.opening", {}, person.lang) });
+  const loadingVisible = expect.poll(() => loading.isVisible(), { timeout: 3_000, intervals: [16] })
+    .toBe(true).then(() => performance.now() - start, () => null);
+  await page.waitForFunction(() => performance.getEntriesByName("first-contentful-paint").length > 0);
+  const app = page.getByRole("heading", { name: say("ohbox.title", {}, person.lang), exact: true });
+  await browserExpect(app).toBeVisible({ timeout: 45_000 });
+  const appVisible = performance.now() - start;
+  const navigation = await page.evaluate(() => {
+    const document = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming;
+    const paint = performance.getEntriesByName("first-contentful-paint")[0]!.startTime;
+    const resources = performance.getEntriesByType("resource") as PerformanceResourceTiming[];
+    const css = resources.filter((entry) => new URL(entry.name).pathname.split(".").at(-1) === "css");
+    const scripts = resources.filter((entry) => entry.initiatorType === "script");
+    return {
+      responseStart: document.responseStart,
+      paint,
+      cssBytes: css.reduce((total, entry) => total + entry.encodedBodySize, 0),
+      cssFinished: Math.max(...css.map((entry) => entry.responseEnd)),
+      cssBytesBeforePaint: css.filter((entry) => entry.responseEnd < paint)
+        .reduce((total, entry) => total + entry.encodedBodySize, 0),
+      scriptBytesBeforePaint: scripts.filter((entry) => entry.responseEnd < paint)
+        .reduce((total, entry) => total + entry.encodedBodySize, 0),
+    };
+  });
+  const firstLoading = await loadingVisible;
+  console.info("Billing return timing", { firstLoading, ...navigation, appVisible });
+  expect(firstLoading ?? Infinity, "visible opening status from the tap").toBeLessThan(1_250);
+  expect(navigation.paint, "first contentful paint of the app document").toBeLessThan(1_250);
+}
+
+export async function billingReturnStyles(bench: Bench, visitor: Person, fail: boolean) {
+  const person = await prepareBillingReturn(bench, visitor);
+  const { page, lang } = person;
+  const requested = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  await page.route("**/_next/static/css/*.css", async (route) => {
+    const response = await route.fetch();
+    // The shell stylesheet owns the full-page product error as well as the mail layout.
+    if (!/\.page-fail\b/.test(await response.text())) return route.fulfill({ response });
+    requested.resolve();
+    if (fail) return route.abort();
+    await release.promise;
+    return route.fulfill({ response });
+  });
+  const app = page.getByRole("heading", { name: say("ohbox.title", {}, lang), exact: true });
+  await followBillingReturn(bench, person);
+  const intercepted = await Promise.race([
+    requested.promise.then(() => true),
+    app.waitFor({ state: "visible" }).then(() => false),
+  ]);
+  expect(intercepted, "the mailbox stylesheet was intercepted before Mail appeared").toBe(true);
+  if (fail) {
+    const error = page.getByRole("status").filter({ hasText: say("appError.title", {}, lang).replace(/\.$/, "") });
+    await Promise.race([error.waitFor({ state: "visible" }), app.waitFor({ state: "visible" })]);
+    await browserExpect(error).toBeVisible();
+    const reload = page.getByRole("button", { name: say("appError.reload", {}, lang) });
+    await browserExpect(reload).toBeVisible();
+    await browserExpect(reload).toHaveCSS("border-radius", /^(?!0px$)/);
+    await browserExpect(app).toHaveCount(0);
+    return;
+  }
+
+  try {
+    const opening = page.getByRole("status").filter({ hasText: say("session.opening", {}, lang) });
+    await browserExpect(opening).toBeVisible();
+    const frame = await opening.evaluate((status) => {
+      const node = status.closest("main");
+      if (!node) throw new Error("The opening status has no main region");
+      const style = getComputedStyle(node);
+      const ink = document.createElement("span");
+      ink.style.color = "var(--ink)";
+      node.append(ink);
+      const colorsMatch = style.color === getComputedStyle(ink).color;
+      ink.remove();
+      return { height: node.getBoundingClientRect().height, viewport: innerHeight, colorsMatch };
+    });
+    expect.soft(frame.height, "opening height at phone width").toBe(frame.viewport);
+    expect.soft(frame.colorsMatch, "opening uses the theme ink").toBe(true);
+    await browserExpect(app).toHaveCount(0);
+  } finally {
+    release.resolve();
+  }
+
+  await browserExpect(app).toBeVisible({ timeout: 45_000 });
+  const canvas = await page.evaluate(() => {
+    const { body } = document;
+    const style = getComputedStyle(body);
+    const probe = document.createElement("span");
+    probe.style.fontFamily = "var(--font-ui)";
+    body.append(probe);
+    const fontMatches = style.fontFamily === getComputedStyle(probe).fontFamily;
+    probe.remove();
+    return { fontMatches, token: style.getPropertyValue("--font-ui").trim() };
+  });
+  expect(canvas.token, "UI font token on the product canvas").not.toBe("");
+  expect(canvas.fontMatches, "body uses the UI font").toBe(true);
+}
+
 export async function startBench(f: Flavour, recordAs = "bench", features: ApiFeatures = {}, size: Size = "expanded"): Promise<Bench> {
   const built = await ensureBuilt(f === "demo" ? null : f);
   const withApi = f !== "demo";

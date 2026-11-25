@@ -12,6 +12,7 @@ import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { heldRuleKey } from "../rule-twins.js";
 import { rulesList } from "../selectors.js";
 import { replaceRecordedSentFolders } from "../sent-folders.js";
+import { CALENDAR_BOOTSTRAP_PENDING, isCalendarOnlySyncType } from "../types.js";
 import {
   encodeSeqCursor, MAILBOX_TYPE, MutationRejectedError, SyncAbortedError,
   type SyncChange,
@@ -29,6 +30,26 @@ import { EnginePastEnd } from "./past-end.js";
 import { messageTime, olderFirst } from "./server-wire.js";
 
 export abstract class EngineHydration extends EnginePastEnd {
+  protected calendarUnavailable = false;
+
+  calendarServerUnavailable(): boolean {
+    return this.calendarUnavailable;
+  }
+
+  protected noteCalendarAvailability(err: unknown): void {
+    if (this.calendarOnly && err instanceof MutationRejectedError && err.code === "calendar_unavailable") {
+      this.calendarUnavailable = true;
+      this.notify();
+    }
+  }
+
+  protected checkCalendarChanges(changes: readonly SyncChange[]): void {
+    if (this.calendarOnly && changes.some((row) => !isCalendarOnlySyncType(row.type))) {
+      throw new MutationRejectedError("calendar sync returned an unexpected record", { code: "protocol", retryable: false });
+    }
+  }
+
+
   // ── eager recent-window hydration ──────────────────────────────────────────
 
   /**
@@ -550,8 +571,13 @@ export abstract class EngineHydration extends EnginePastEnd {
         // Naming the kinds is what lets the calendar's phase follow the mail's, where it is served.
         page = await this.readCeiling(snapshot({
           ...(cursor !== undefined ? { cursor } : {}), ...(this.types ? { types: this.types } : {}),
+          ...(this.calendarOnly ? { phase: "calendar", calendarOnly: true } : {}),
         }));
       } catch (err) {
+        if (this.calendarOnly) {
+          this.noteCalendarAvailability(err);
+          throw err;
+        }
         if (err instanceof SyncAbortedError) throw err;
         if (applied) throw err; // unsound to fall back — see the note above
         // A TIMEOUT SAYS NOTHING ABOUT THE ROUTE: latched, a dead connection would put this tab on
@@ -560,14 +586,20 @@ export abstract class EngineHydration extends EnginePastEnd {
         this.snapshotUnavailable = true;
         return false; // nothing was written; `since=0` takes over
       }
-      if (!applied) await this.claimSnapshotPrefix(page.asOfSeq);
+      this.checkCalendarChanges(page.changes);
+      if (!applied) {
+        if (this.calendarOnly && this.store.getMeta(CALENDAR_BOOTSTRAP_PENDING) === true) {
+          await this.store.resetForBootstrap();
+        }
+        await this.claimSnapshotPrefix(page.asOfSeq);
+      }
       if (page.calendarWindow !== undefined) {
         this.calendarWindow = page.calendarWindow;
         calendarRead = true;
       }
       // Before the count and before the apply, so neither the received count nor the store ever
       // sees the bytes. See {@link OhmailEngine.withoutSentDraftText}.
-      page = { ...page, changes: OhmailEngine.withoutSentDraftText(page.changes) };
+      if (!this.calendarOnly) page = { ...page, changes: OhmailEngine.withoutSentDraftText(page.changes) };
       const last = page.nextCursor == null || page.nextCursor === "";
       if (last) {
         // Rows + cursor in ONE flush. The buckets are a formality: `flattenResponse` concatenates

@@ -292,11 +292,9 @@ describe("WorkflowExecutor — reversible steps apply + audit_log inverse", () =
     expect((await runner.runOne(deps(db, mockDrafter(body)), run)).status).toBe("succeeded");
 
     const [d] = await db.select().from(drafts).where(eq(drafts.accountId, accountId));
-    // The blank line between paragraphs is an empty paragraph and a soft break is a `<br />`;
-    // collapsing the two would lose the gap on the way back to text and the halves would then
-    // disagree about where the message breathes.
+    // An empty line is two hard breaks within one paragraph, as in the composer.
     expect(d!.html).toBe(
-      "<p>Hi Alice</p><p></p><p>Monday works.<br />I will send the file.</p><p></p><p>Best,<br />Bob</p>",
+      "<p>Hi Alice<br /><br />Monday works.<br />I will send the file.<br /><br />Best,<br />Bob</p>",
     );
     // And the text half is still exactly the model's words.
     expect(d!.body).toBe(body);

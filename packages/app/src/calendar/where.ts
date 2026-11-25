@@ -264,7 +264,7 @@ export function useFaces(
       capped: occurrences.capped,
       hiddenBusy: occurrences.hiddenBusy,
       events: occurrences.shown
-        .filter((o) => showDeclined || o.record.myAnswer !== "declined")
+        .filter((o) => showDeclined || (o.record.mailAnswer ?? o.record.myAnswer) !== "declined")
         .map((o): CalendarEventFace =>
           faceOf(
             o,

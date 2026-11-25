@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { type CalendarRecord, type CalendarPort, type ZoneSource } from "@ohmail/app-logic/calendar";
-import { Icon, Menu, MenuItem, MenuRule, type Point } from "@ohmail/ui/base";
+import { Icon, Menu, MenuItem, MenuNote, MenuRule, type Point } from "@ohmail/ui/base";
 import type { PanelVerb } from "@ohmail/ui/mail";
 import { useText } from "../text/index.js";
 import type { CalendarEventFace } from "./faces.js";
@@ -12,7 +12,7 @@ import { useFrame } from "../frame/commands.js";
 import { fragmentOf } from "../frame/route.js";
 import { useCalendarOwnAddresses } from "./own-addresses.js";
 import { NONE } from "../host/index.js";
-import { editableEvent, hasGuests, moveDestinations, removableEvent } from "./editable-event.js";
+import { editableEvent, eventMoveOptions, hasGuests, removableEvent } from "./editable-event.js";
 import type { useNewEvent } from "./use-new-event.js";
 import { useReadCardActions } from "./read-card-actions.js";
 import { useEventCall } from "./event-call.js";
@@ -240,7 +240,7 @@ export function EventContextMenu(props: EventContextMenuProps) {
   const known = useCalendarOwnAddresses();
   const current = event.viewOnly ? null : editableEvent(host, port, event, known);
   const removable = removableEvent(host, port, event, known, zones);
-  const destinations = current ? moveDestinations(host, current) : [];
+  const { destinations, moveRestriction } = eventMoveOptions(host, current);
   const [moving, setMoving] = useState(false);
   const [closed, setClosed] = useState(false);
   const { duplicate, mail, removal, removalQuestion, hide, retry } = useReadCardActions(
@@ -296,6 +296,9 @@ export function EventContextMenu(props: EventContextMenuProps) {
   const label = t(moving ? "actions.moveTo" : "actions.panel");
   return (
     <Menu open kind="context" {...{ anchor: at, returnFocus: opener, label, onClose: close }}>
+      {moveRestriction && (moving || destinations.length === 0) && (
+        <MenuNote>{t(`actions.moveRestriction.${moveRestriction}`)}</MenuNote>
+      )}
       {moving ? (
         <DestinationItems {...{ destinations, blocked, onPress, actions, event, opener }} />
       ) : (

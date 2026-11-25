@@ -8,7 +8,7 @@ import { Button, Dot, Page, Sentence, Tag } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
 import { Said, SaidTrail, SaidWith } from "../../text/Said.js";
 import { WayButton } from "../stage/way.js";
-import { Progress, refusalOf, SignOutAgain, type StepProps } from "./parts.js";
+import { Progress, refusalOf, SignOutAgain, JoinSignIn, type StepProps } from "./parts.js";
 
 export function PlanStep({ door, state, join, progress }: StepProps<"plan">): ReactNode {
   const { pending, busy } = door;
@@ -21,6 +21,7 @@ export function PlanStep({ door, state, join, progress }: StepProps<"plan">): Re
     return (
       <Page
         aside={progress}
+        back={<JoinSignIn door={door} join={join} />}
         refusal={refusalOf(pending, door.refusal)}
         material={waitLine(join("planLoading"))}
         acts={null}
@@ -52,6 +53,7 @@ export function PlanStep({ door, state, join, progress }: StepProps<"plan">): Re
   return (
     <Page
       aside={progress}
+      back={<JoinSignIn door={door} join={join} />}
       refusal={refusalOf(pending, door.refusal)}
       material={material}
       line={[
@@ -101,11 +103,14 @@ export function MailboxStep({ door, join }: StepProps<"mailbox">): ReactNode {
         refusal={refusalOf(door.pending, null)}
         material={material}
         acts={
-          later ? (
-            <Button kind="quiet" onPress={later}>
-              {t("providerLater")}
-            </Button>
-          ) : null
+          <>
+            {later ? (
+              <Button kind="quiet" onPress={later}>
+                {t("providerLater")}
+              </Button>
+            ) : null}
+            <JoinSignIn door={door} join={join} />
+          </>
         }
       >
         {choosing ? (
@@ -133,6 +138,7 @@ export function DoneStep({ door, state, join, progress }: StepProps<"done">): Re
   return (
     <Page
       aside={progress}
+      back={<JoinSignIn door={door} join={join} />}
       refusal={refusalOf(door.pending, door.refusal)}
       material={
         state.mailbox === null ? undefined : (

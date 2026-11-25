@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import messages from "../messages/en.json";
 import type { MailboxDTO } from "../app/api-client";
 import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import { statusKey } from "@ohmail/app-logic/mailboxes/pane/rows";
 
 /**
  * "CONNECTED" IS A CLAIM, AND THE ROW WAS MAKING IT BEFORE ANYTHING HAD CONNECTED.
@@ -174,10 +175,16 @@ describe("the derivation is a display rule, not a schema change", () => {
     expect(decl.slice(0, decl.indexOf("\n"))).toMatch(/connected\|error\|disabled/);
   });
 
-  it("the row's rule is exactly `connected` + never synced", () => {
-    // The rule moved beside the pane's other rules; the probe follows it there.
-    const src = read("packages/app-logic/src/mailboxes/pane/rows.ts");
-    expect(src).toMatch(/lastSyncAt === null \? "status_connecting"/);
+  it("only a connected row without a completed sync is shown as connecting", () => {
+    const syncedAt = "2026-08-03T10:05:33.000Z";
+    for (const status of ["connected", "error", "disabled"] as const) {
+      const waiting = status === "connected" ? "status_connecting" : `status_${status}`;
+      const synced = `status_${status}`;
+      expect(statusKey({ status, lastSyncAt: null })).toBe(waiting);
+      expect(statusKey({ status, lastSyncAt: syncedAt })).toBe(synced);
+      expect(statusKey({ status, lastSyncAt: syncedAt, hostedLastSyncAt: null })).toBe(waiting);
+      expect(statusKey({ status, lastSyncAt: null, hostedLastSyncAt: syncedAt })).toBe(synced);
+    }
   });
 
   it("every status label the row can ask for exists", () => {

@@ -18,6 +18,7 @@
       "gone": "Der Termin ist nicht mehr in diesem Kalender.",
       "unreachable": "Der Kalender war nicht erreichbar.",
       "notKept": "Der Kalender würde diese Änderung nicht so behalten.",
+      "inviteesUnsupported": "Dieser Kalender kann keine Einladungen senden.",
       "stale": "Anderswo geändert",
       "versionUnknown": "Die Fassung des Kalenders war nicht lesbar, darum wurde nichts gesendet.",
       "earlier": "Eine frühere Änderung dieses Termins wurde nicht gespeichert, darum wurde diese nicht gesendet.",
