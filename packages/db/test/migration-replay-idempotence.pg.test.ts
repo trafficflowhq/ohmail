@@ -211,9 +211,10 @@ const SPAN_KNOWN_DRIFT = [
  * BELOW THE FLOOR nothing re-executes them, so a refusal is a fact about the file and not about a
  * database: all six are below {@link LEGACY_CUTOFF_WHEN} too, adopted without ever running and
  * sha256-pinned against the pre-split original by `journal-split.test.ts`'s permutation oracle,
- * which reads an edit as a loss AND an invention. ABOVE the floor an entry may not be named here
- * at all — see the arm below.
+ * which reads an edit as a loss AND an invention. Above the floor the only exception is a frozen
+ * release entry outside the legacy replay span, checked below.
  */
+const CALENDAR_PREFERENCES = "mail/0223_calendar_preferences";
 const ALLOWED: Readonly<Record<string, string>> = {
   "mail/0001_cute_black_queen": "below the floor, below the cutoff — bare ADD CONSTRAINT UNIQUE (42P07)",
   "mail/0002_wet_thunderball": "below the floor, below the cutoff — thirteen bare ADD COLUMN (42701)",
@@ -223,15 +224,15 @@ const ALLOWED: Readonly<Record<string, string>> = {
   "mail/0015_workflow_step_dedup":
     "below the floor, below the cutoff — two ADD CONSTRAINT UNIQUE inside a DO block that catches "
     + "duplicate_object only, and a UNIQUE constraint's backing index raises duplicate_table (42P07)",
+  [CALENDAR_PREFERENCES]:
+    "released in 2.0.5, applied on the managed Cloud; bytes fixed by the release lock",
 };
 
 /**
- * The allow-list entries the floor does NOT excuse. An above-floor refusal is the 0118/0120 class
- * — a migration the skip window really does re-execute — so naming one here is a statement that a
- * fix is in flight, not that it is tolerable. When that fix lands, the both-directions check
- * above removes its ALLOWED line and this list must go to zero with it.
+ * The calendar preferences migration shipped after the old heads. The legacy skip window
+ * therefore never applies it twice. Every new migration is still checked against the live schema.
  */
-const ABOVE_FLOOR_ALLOWED: string[] = [];
+const ABOVE_FLOOR_ALLOWED: readonly string[] = [CALENDAR_PREFERENCES];
 
 describe.skipIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")(
   "every migration in both journals is a no-op the second time", () => {
@@ -313,14 +314,16 @@ describe.skipIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")(
     // hole 0118 and 0120 came through — 0015's DO block looked wrapped and was not.
     expect(refusedByForm(), "the static rules and the live replay name the same migrations")
       .toEqual(raisers.map((r) => r.key).sort());
-    // THE HARD ARM: below the floor a refusal is a fact about a file nothing re-executes; ABOVE it
-    // the skip window really does, and that is the 0118/0120 failure. Only a fix in flight may be
-    // named there, and it is named twice so neither list can quietly grow.
+    // Require the exact released exception and keep the legacy skip window free of exceptions.
     const floor = replayFloorWhen();
     const whenOf = new Map(migrations.map((m) => [keyOf(m), m.when]));
     expect(Object.keys(ALLOWED).filter((k) => (whenOf.get(k) ?? 0) > floor).sort(),
-      "allow-list entries ABOVE the replay floor — each needs a fix, not a line")
+      "allow-list entries above the replay floor must match the named frozen exception")
       .toEqual([...ABOVE_FLOOR_ALLOWED].sort());
+    expect(migrations.filter((m) => onOldRoad(m) && ABOVE_FLOOR_ALLOWED.includes(keyOf(m))).map(keyOf),
+      "the legacy skip window must replay every migration above the floor").toEqual([]);
+    expect(raisers.find((r) => r.key === CALENDAR_PREFERENCES)?.raised)
+      .toBe('column "local_color" of relation "cal_calendars" already exists');
   }, 900_000);
 
   it("the skip window's whole span, re-executed in order, leaves the schema identical", async () => {
