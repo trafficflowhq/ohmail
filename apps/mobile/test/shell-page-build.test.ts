@@ -1390,6 +1390,47 @@ describe("the built page in a browser", () => {
     }
   }, 120_000);
 
+  it("returns to Trash from a deleted letter when the phone sends Back", async () => {
+    const now = new Date().toISOString();
+    const subject = "Deleted workshop note";
+    const session = {
+      profile: { accountId: CONFIG.accountId }, standalone: false, boundAccount: () => CONFIG.accountId,
+      async send(route: string) {
+        const { pathname, searchParams } = new URL(route, "https://app.example");
+        if (pathname === "/sync/snapshot") return Response.json({ asOfSeq: 0, nextCursor: null, changes: [] });
+        if (pathname === "/sync") return Response.json({
+          changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "MA", hasMore: false, serverTime: now,
+        });
+        if (pathname === "/messages" && searchParams.get("view") === "trash") return Response.json({
+          items: [{
+            id: "deleted", accountId: CONFIG.accountId, mailboxId: "mailbox", threadId: null, folder: "Trash",
+            subject, from: { name: "Workshop", address: ["shop", "workshop.example"].join("@") },
+            to: [], cc: [], date: now, updatedAt: now, unread: false, trashedAt: now, restoreTo: "INBOX", labels: [],
+          }], nextCursor: null,
+        });
+        return Response.json({}, { status: 404 });
+      },
+    } as unknown as ShellSession;
+    const http = new HttpDoor({ live: () => ({ session, scope: CONFIG.scope }), ready: () => true });
+    const { page, close } = await drawn({ ...CONFIG, language: "en", place: "#/trash" }, [], undefined,
+      { width: 390, height: 664 }, {}, undefined, http);
+    try {
+      const row = page.getByRole("option", { name: new RegExp(subject) });
+      const reader = page.getByRole("region", { name: subject });
+      await row.getByText(subject, { exact: true }).tap();
+      await browserExpect(page).toHaveURL(/#\/trash\/m\/deleted$/);
+      await browserExpect(reader.getByRole("button", { name: "Trash", exact: true })).toBeVisible();
+      await page.evaluate(() => {
+        (window as unknown as { __native: { back(id: number): void } }).__native.back(1);
+      });
+      await browserExpect(reader).toBeHidden();
+      await browserExpect(row).toBeVisible();
+      await browserExpect(page).toHaveURL(/#\/trash$/);
+    } finally {
+      await close();
+    }
+  }, 120_000);
+
   it("uses the shared mailbox editor on the standalone phone", async () => {
     const row = {
       id: "mailbox", address: "Current mailbox", status: "active", provider: "other", authKind: "password",

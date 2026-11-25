@@ -341,6 +341,20 @@ describe("the calendars of a home", () => {
     );
   });
 
+  it("discovers native moves on owned calendars that need an access probe", async () => {
+    const s = await startCalDavStandIn({ nativeMove: true });
+    servers.push(s);
+    s.addCalendar("work", { homeShareAccess: "read-write", homePrivileges: null, privileges: ["write"] });
+    s.addCalendar("home");
+    s.addCalendar("read-only", { homeShareAccess: "read-write", homePrivileges: null, privileges: ["read"] });
+    const answer = await reader.listCalendars(signIn(s), signal());
+    expect(answer.ok && answer.value.map((c) => [c.name, c.writable, c.nativeMove])).toEqual([
+      ["work", true, true],
+      ["home", true, true],
+      ["read-only", false, undefined],
+    ]);
+  });
+
   it("reads the effective write grant of each shared calendar", async () => {
     const s = await startCalDavStandIn();
     servers.push(s);

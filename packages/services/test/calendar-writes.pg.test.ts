@@ -901,13 +901,28 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     }
   });
 
-  it("records a guest-free move to an owned calendar on another connection", async () => {
+  it("rejects a copy request when the destination supports a native move", async () => {
+    const principal = ["connected", "example.test"].join("@");
+    const w = await world({ organizer: principal });
+    await db.update(calConnections).set({ principal }).where(eq(calConnections.id, w.connectionId));
+    const [calendar] = await db.insert(calCalendars).values({
+      accountId: w.accountId, connectionId: w.connectionId, providerId: "destination",
+      name: "Workshop", access: "owner",
+    }).returning({ id: calCalendars.id });
+    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), { ...act, copyThenRemove: true }))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), act)).answer.write?.state).toBe("pending");
+  });
+  it("requires an explicit copy request for the older cross-account transfer path", async () => {
     const w = await world();
     const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
     const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
       providerId: "destination", name: "Personal", access: "owner" }).returning();
     const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
-    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), act)).answer.write?.state).toBe("pending");
+    expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), act))).toBe("409 calendar_read_only");
+    expect(await rowsOf(w.accountId)).toEqual([]);
+    expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), { ...act, copyThenRemove: true })).answer.write?.state).toBe("pending");
     expect(await rowsOf(w.accountId)).toMatchObject([{ op: "move", state: "pending" }]);
   });
   it("keeps a record without proof its fields can be copied in its original calendar", async () => {
@@ -916,7 +931,7 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
     const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
       providerId: "destination", name: "Personal", access: "owner" }).returning();
-    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
+    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id, copyThenRemove: true };
     expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), act))).toBe("409 calendar_read_only");
     expect(await rowsOf(w.accountId)).toEqual([]);
     expect(await eventRows(w.accountId)).toMatchObject([{ id: w.eventId, versionTag: '"v1"' }]);
@@ -927,7 +942,7 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     const [connection] = await db.insert(calConnections).values({ accountId: w.accountId, provider: "microsoft", label: "Work" }).returning();
     const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
       providerId: "destination", name: "Personal", access: "owner" }).returning();
-    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id };
+    const act = { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id, copyThenRemove: true };
     expect((await recordCalendarWrite(ctx(w.accountId), randomUUID(), act)).answer.write?.state).toBe("pending");
     expect(await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(), update(w, { title: "New title" })))).toBe("409 calendar_write_left");
     expect(await rowsOf(w.accountId)).toMatchObject([{ op: "move", state: "pending" }]);
@@ -941,7 +956,7 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     const [calendar] = await db.insert(calCalendars).values({ accountId: w.accountId, connectionId: connection!.id,
       providerId: "destination", name: "Personal", access: "owner" }).returning();
     const answer = await refusal(recordCalendarWrite(ctx(w.accountId), randomUUID(),
-      { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id }));
+      { kind: "calendar_event_move", eventId: w.eventId, base: w.updatedAt, toCalendarId: calendar!.id, copyThenRemove: true }));
     expect(answer).toBe("409 calendar_read_only");
     expect(await rowsOf(w.accountId)).toEqual([]);
   });

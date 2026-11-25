@@ -30,11 +30,13 @@ import { DraftTimeNotice } from "./DraftTimeNotice.js";
 import { draftWhen, eventWhen, guestNames } from "./event-words.js";
 import { editScopeLine, repeatLine } from "./EventActionQuestion.js";
 import type { EditableEvent } from "./editable-event.js";
+import { moveChooser, type CalendarChooser, type EventCalendarMove } from "./DraftCalendarMenu.js";
 import type { CalendarEventFace } from "./faces.js";
 
 interface Props {
   readonly port: CalendarPort;
   readonly actionItems: readonly PanelVerb[];
+  readonly move: EventCalendarMove;
   readonly connection: CalendarConnectionRecord | undefined;
   readonly scopeAnchor?: HTMLElement;
   readonly original: CalendarEventRecord;
@@ -54,6 +56,7 @@ interface Props {
 export function EditEvent({
   port,
   actionItems,
+  move,
   connection,
   original,
   exception,
@@ -90,7 +93,7 @@ export function EditEvent({
     onLeave,
   });
   const { busy, conflict, clear, discard, question, scopeAsked, submit } = saving;
-  const blocked = busy || scopeAsked || question !== null;
+  const blocked = busy || scopeAsked || question !== null || move.blocked;
   const ready = !blocked && !conflict && patch !== null && Object.keys(patch).length > 0;
   const cancelEdit = () => {
     if (blocked) return;
@@ -102,6 +105,7 @@ export function EditEvent({
     clear();
   };
   const sourceZone = original.start.kind === "instant" ? "UTC" : original.start.zone;
+  const draftZone = draft.zone ?? sourceZone ?? zone;
   const panel = (
     <EditorActionBar
       items={actionItems}
@@ -109,11 +113,7 @@ export function EditEvent({
       duplicate={() => duplicate(draftForDuplicate(shown, face, zone), calendar.id)}
       blocked={blocked}
       ordinaryOnly={ordinaryOnly}
-      timeZone={
-        initial.timeEditable && !original.repeat && !draft.allDay
-          ? (draft.zone ?? sourceZone ?? zone)
-          : undefined
-      }
+      timeZone={initial.timeEditable && !original.repeat && !draft.allDay ? draftZone : undefined}
       draft={draft}
       change={change}
     />
@@ -138,6 +138,7 @@ export function EditEvent({
         onKeyDown={(event) => editorKeys(event, ready, cancelEdit, submit)}
         editor={
           <EditorContents
+            chooser={moveChooser(move, dirty, t)}
             {...{
               draft,
               today,
@@ -155,7 +156,7 @@ export function EditEvent({
               allowed,
               ordinaryOnly,
             }}
-            zone={draft.zone ?? sourceZone ?? zone}
+            zone={draftZone}
             timeEditable={initial.timeEditable}
             issue={
               draftTimeChanged(draft, initial.draft) ? draftTimes(draft, draft.zone ?? zone).issue : null
@@ -171,6 +172,7 @@ export function EditEvent({
 
 function EditorContents({
   draft,
+  chooser,
   today,
   calendar,
   tone,
@@ -190,6 +192,7 @@ function EditorContents({
   issue,
 }: Pick<Props, "today" | "calendar" | "original" | "connection" | "when"> & {
   draft: EventDraft;
+  chooser: CalendarChooser;
   tone: CalendarEventFace["tone"];
   change: (edit: Partial<EventDraft>) => void;
   cancelEdit: () => void;
@@ -218,8 +221,7 @@ function EditorContents({
           <RefusalLine start>{t("edit.noInvitations")}</RefusalLine>
         )}
         <DraftFields
-          {...{ draft, today, calendar, tone, change }}
-          choices={[]}
+          {...{ draft, today, calendar, tone, change, chooser }}
           ordinaryOnly={ordinaryOnly}
           repeatShapes={connection?.repeatShapes}
           placeSource={original.id}

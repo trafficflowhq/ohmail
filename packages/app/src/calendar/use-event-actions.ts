@@ -10,8 +10,8 @@ import {
   editVersions,
   editableEvent,
   moveDestinations,
-  nativeMoveTo,
   removableEvent,
+  seriesMoveAudience,
   type EditableEvent,
 } from "./editable-event.js";
 import type { CalendarEventFace } from "./faces.js";
@@ -46,6 +46,7 @@ type Request = {
   firstOccurrence: boolean;
   guests: readonly string[];
   audience: ReturnType<typeof guestUpdate>["audience"];
+  seriesDestination?: string;
 };
 
 function deleteScopesAt(record: EditableEvent["record"], occurrence: string | null) {
@@ -96,8 +97,11 @@ function guestsFor(
 ) {
   const { record } = current;
   if (change.kind !== "delete" && change.kind !== "calendar") return editGuestUpdate(current, {}, scope);
-  if (!record.repeat || change.kind === "calendar") return guestUpdate(record, {});
-  const audience = record.deleteMembers && deleteAudienceOf(record.deleteMembers, scope);
+  if (!record.repeat) return guestUpdate(record, {});
+  const audience =
+    change.kind === "calendar"
+      ? seriesMoveAudience(record)
+      : record.deleteMembers && deleteAudienceOf(record.deleteMembers, scope);
   if (
     !audience ||
     (audience.audience.organizer !== null &&
@@ -145,8 +149,6 @@ function refreshedAction(
     audience,
     cancellationMessage,
   );
-  if (act?.kind === "calendar_event_move" && destination && !nativeMoveTo(current, destination))
-    return { act: { ...act, copyThenRemove: true as const }, destination };
   return act ? { act, destination } : "refusal.invalid";
 }
 
@@ -174,8 +176,15 @@ function requestFrom(
   change: EventChange,
   anchor: HTMLElement,
   own: readonly string[] | null,
+  host: Parameters<typeof moveDestinations>[0],
 ) {
   const next = requestFor(current, face, change, anchor);
+  if (change.kind === "calendar") {
+    const destination = moveDestinations(host, current).find(({ id }) => id === change.target);
+    const request = scopedRequest(next, current, "record", null, own);
+    if (!destination || !request) return null;
+    return current.record.repeat ? { ...request, seriesDestination: destination.name } : request;
+  }
   if (change.kind !== "accept-time") return next;
   return scopedRequest(
     next,
@@ -321,14 +330,14 @@ export function useEventActions(port: CalendarPort, zones: ZoneSource) {
         proposal.start(face, change, expectedVersion);
       return;
     }
-    const request = requestFrom(current, face, change, anchor, own);
+    const request = requestFrom(current, face, change, anchor, own, host);
     if (!request) return report(e("refusal.changed"));
     if (expectedVersion !== undefined && request.version !== expectedVersion) {
       if (needsFreshSeriesQuestion(current, change, expectedVersion)) ask(request);
       else report(e("refusal.changed"));
       return;
     }
-    if (!request.scope || request.guests.length) ask(request);
+    if (!request.scope || request.guests.length || request.seriesDestination !== undefined) ask(request);
     else void send(request);
   };
 

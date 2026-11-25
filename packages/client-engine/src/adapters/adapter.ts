@@ -109,6 +109,8 @@ export interface PullRing {
 export interface DraftBodyRead {
   body: string;
   html: string | null;
+  /** The generated draft's rationale. Absent when the fetch did not report it. */
+  rationale?: string | null;
 }
 
 export interface EngineAdapter {

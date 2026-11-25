@@ -316,6 +316,28 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect((await eventsOf(w, t.accountId)).length).toBe(3);
   }, 60_000);
 
+  it("stores newly confirmed Google event types even when the provider version is unchanged", async () => {
+    const seeded = await seedConnection(w, { provider: "google", credential: google });
+    const ordinary = upsert("ordinary", "same-version", single("ordinary", 17));
+    const imported = upsert("imported", "same-version", single("imported", 17));
+    const reviewed = { ...ordinary, googleDefaultEvent: true as const };
+    const readings = new Map<string, readonly ScriptedPage[]>([
+      ["", [{ items: [ordinary, imported] }]],
+      ["cursor", [{ items: [reviewed, imported] }]],
+    ]);
+    const reader = scriptedReader("google", { readings, endToken: () => "cursor" });
+    const deps = depsFor(w, providersOf({ google: { reader, http: silentHttp() } }), { oauth: { google: GOOGLE_REGISTRATION, microsoft: null } });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await makeDue(seeded.accountId);
+      expect(await calendarSyncPass(deps, seeded.due, never)).toMatchObject({ kind: "synced" });
+    }
+    const held = await w.db.select().from(calEvents).where(eq(calEvents.accountId, seeded.accountId));
+    expect(held).toEqual(expect.arrayContaining([
+      expect.objectContaining({ providerId: "ordinary", googleDefaultEvent: true }),
+      expect.objectContaining({ providerId: "imported", googleDefaultEvent: false }),
+    ]));
+  }, 60_000);
+
   it("Google: a cancelled day joins its series' excluded days, survives the series' next change, and leaves it once the day is changed", async () => {
     const seeded = await seedConnection(w, { provider: "google", credential: google });
     const series = (summary: string) => eventOf(["UID:series-1@x.test", "DTSTAMP:20261113T120000Z", "DTSTART;TZID=Europe/Zurich:20261117T180000",

@@ -1,20 +1,51 @@
 import { hueOf, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { wayOfConnection } from "@ohmail/app-logic/calendar/setup";
-import { Menu, MenuItem } from "@ohmail/ui/base";
+import { Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
 import { CalendarSquare, type CalendarTone, type EventFormRow } from "@ohmail/ui/calendar";
 import { useCalendarMirror } from "../calsetup/index.js";
 import { useText, type Text } from "../text/index.js";
 import type { EventDraft } from "./event-draft.js";
+import type { EventMoveOptions } from "./editable-event.js";
+
+export interface CalendarChooser {
+  choices: readonly CalendarRecord[];
+  choose?: (id: string, anchor: HTMLElement) => void;
+  label?: string;
+  note?: string;
+}
+
+export type EventCalendarMove = EventMoveOptions & {
+  blocked: boolean;
+  start: NonNullable<CalendarChooser["choose"]>;
+};
+
+export function moveChooser(move: EventCalendarMove, dirty: boolean, t: Text): CalendarChooser {
+  return {
+    choices: move.destinations,
+    choose: move.destinations.length && !dirty ? move.start : undefined,
+    label: t("actions.moveTo"),
+    note:
+      dirty && move.destinations.length
+        ? t("actions.moveRestriction.saveFirst")
+        : move.moveRestriction
+          ? t(`actions.moveRestriction.${move.moveRestriction}`)
+          : undefined,
+  };
+}
 
 export function DraftCalendarMenu({
   anchor,
   choices,
+  label,
+  note,
   current,
   choose,
   close,
 }: {
   anchor: HTMLElement;
   choices: readonly CalendarRecord[];
+  label?: string;
+  note?: string;
   current: string | undefined;
   choose: (id: string) => void;
   close: () => void;
@@ -23,7 +54,8 @@ export function DraftCalendarMenu({
   const settings = useText("calsettings");
   const mirror = useCalendarMirror();
   return (
-    <Menu open up anchor={anchor} label={t("create.calendar")} onClose={close}>
+    <Menu open up anchor={anchor} label={label ?? t("create.calendar")} onClose={close}>
+      {note && <MenuNote>{note}</MenuNote>}
       {choices.map((choice) => {
         const connection = mirror?.connections.find(({ id }) => id === choice.connectionId);
         return (

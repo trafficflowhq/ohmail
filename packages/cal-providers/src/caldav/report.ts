@@ -167,7 +167,7 @@ export async function calendarsOf(s: Session, home: string, principal: string): 
       const answer = await schedulingAnswer(s, cal.id, options);
       const autoSchedule = !answer.arrived || answer.status < 200 || answer.status >= 300
         ? null : offersScheduling(davCapabilities(answer)) || undefined;
-      const nativeMove = !needsAccess.has(cal.id) && cal.owned
+      const nativeMove = cal.owned
         ? (!options.arrived || options.status < 200 || options.status >= 300
           ? null : offersMove(options) || undefined)
         : undefined;

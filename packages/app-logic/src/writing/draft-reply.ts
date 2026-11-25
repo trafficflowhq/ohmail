@@ -11,6 +11,7 @@
 /** Read the saved draft directly after the purchase receipt. Progress is provisional. */
 import { useCallback, useRef, useState } from "react";
 import type { AnswerOf, ParamsOf, RequestOf } from "@ohmail/wire";
+import { repairLegacyDraftHtml } from "@trafficflow/core/outbound-text";
 import { isRichEmpty, type RichValue } from "./rich-text.js";
 import type { Translator } from "../text/translator.js";
 import { aiRefusalKey, draftFailureKey } from "../text/ai-refusal-copy.js";
@@ -202,7 +203,12 @@ export function useDraftReply(opts: {
           return;
         }
         setNotice(null);
-        const landed = { text: draft.body ?? "", html: draft.html ?? "" };
+        const text = draft.body ?? "";
+        const landed: DraftedReply = {
+          text,
+          html: repairLegacyDraftHtml(draft.html ?? "", text),
+          ...(lands === "letter" ? { aiDraft: true } : {}),
+        };
         /*
          * This letter's entry alone. Over the person's own words: they stay one tab away. Over none (or words let go
          * with their reply since the press): the draft is kept with no text of theirs, so it is drafted again as a

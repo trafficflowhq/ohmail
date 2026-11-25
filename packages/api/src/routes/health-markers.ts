@@ -910,6 +910,8 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // The calendar feed and sync read the server's automatic scheduling capability.
   ["cal_calendars", "auto_schedule"],
   ["cal_events", "mail_answer"],
+  // Calendar moves require the provider to confirm that a Google event is an ordinary event.
+  ["cal_events", "google_default_event"],
 ] as const;
 
 /**
@@ -1348,7 +1350,7 @@ export const MAIL_EXPECTED_MARKERS =
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
 // mail 0220_caldav_host_retry resets poll times without changing the schema.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0225_calendar_mail_answer";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0226_google_default_calendar_event";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

@@ -11,11 +11,15 @@ import type { PaneProps } from "../frame/contract.js";
 import { useText } from "../text/index.js";
 import { useRestoreBinding, useTrashKeys } from "./keys.js";
 
-export function TrashReading({ keysHere }: PaneProps) {
+export function TrashReading({ keysHere, plan, route }: PaneProps) {
   const model = useTrashModel();
   const t = useText("trash");
   /* The panel and its read slot say the reader's own words: Actions; Mark unread, Mark read. */
   const tr = useText("reader");
+  const back =
+    plan.device === "phone" && route.open !== null
+      ? { word: t("title"), label: t("title"), onPress: () => model.open(null) }
+      : undefined;
   const row = model.openRow;
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
   useRestoreBinding(true, t("restoreKey"), keysHere && row !== null ? () => model.restore(row) : undefined);
@@ -26,6 +30,7 @@ export function TrashReading({ keysHere }: PaneProps) {
     return (
       <Sheet
         kind="reading"
+        back={back}
         label={row.subject}
         scroller={setRoot}
         head={<ReadingHead subject={row.subject} people={[]} />}
@@ -81,6 +86,7 @@ export function TrashReading({ keysHere }: PaneProps) {
     return (
       <Sheet
         kind="reading"
+        back={back}
         label={live.subject}
         head={<ReadingHead subject={live.subject} people={[]} />}
         foot={<ActionPanel label={t("title")} items={[{ note: t("liveReadOnly"), keep: true }]} />}
@@ -110,6 +116,12 @@ export function TrashReading({ keysHere }: PaneProps) {
       </Sheet>
     );
   }
-  if (model.gone) return <BlankColumn>{tr("goneShort")}</BlankColumn>;
-  return <BlankColumn>{tr("blank.none")}</BlankColumn>;
+  const blank = <BlankColumn>{tr(model.gone ? "goneShort" : "blank.none")}</BlankColumn>;
+  return back ? (
+    <Sheet kind="reading" label={tr("pane")} back={back}>
+      {blank}
+    </Sheet>
+  ) : (
+    blank
+  );
 }

@@ -737,9 +737,14 @@ async function recordOnEvent(
     if (to.access !== "owner") throw readOnly("an event can only move to a calendar the account owns");
     const native = to.connectionId === cal.connectionId &&
       (cal.provider === "google" || (cal.provider === "caldav" && cal.nativeMove && to.nativeMove));
-    if (native && !act.copyThenRemove && cal.provider === "google" && !verifiedOrganizer(event.organizer, own))
-      throw readOnly("only the verified organizer can move this Google event to another calendar");
-    if (!native || act.copyThenRemove) transfer = await personalTransferOf(tx, accountId, cal, to, event, days, act);
+    if (native) {
+      if (act.copyThenRemove) throw readOnly("this calendar requires the provider’s native move");
+      if (cal.provider === "google" && !verifiedOrganizer(event.organizer, own))
+        throw readOnly("only the verified organizer can move this Google event to another calendar");
+    } else {
+      if (!act.copyThenRemove) throw readOnly("the provider cannot move the event to this calendar");
+      transfer = await personalTransferOf(tx, accountId, cal, to, event, days, act);
+    }
   }
   // While a press on a day and the days after it is half carried out on this series (its first part is not done, and the series'
   // record ends exactly where it ends it), no other write may end, remove or re-shape the series: that press's own end could no

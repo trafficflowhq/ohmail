@@ -78,6 +78,7 @@ function LaterCard({
   return (
     <Menu
       open
+      portal
       anchor={anchor}
       fit="whole"
       up

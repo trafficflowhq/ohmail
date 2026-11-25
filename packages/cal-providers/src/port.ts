@@ -92,7 +92,7 @@ export type ChangeItem =
    * and a subscription; `null` for Google and Microsoft, which store no calendar text.
    * `audienceIncomplete` marks a reading with omitted or unrepresentable participants.
    */
-  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true; readonly portableCopy?: true; readonly selfAttendee?: string | null }
+  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true; readonly portableCopy?: true; readonly googleDefaultEvent?: true; readonly selfAttendee?: string | null }
   /** The stored object of this id is no longer there. */
   | { readonly kind: "gone"; readonly id: string }
   /** One day of a series was cancelled, and the provider says so by a record of its own. */

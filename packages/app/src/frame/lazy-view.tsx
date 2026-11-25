@@ -173,8 +173,8 @@ function LoadingPane({ placeholder }: { placeholder?: ReactNode }): ReactElement
   return (
     <>
       {placeholder}
-      <div className="view-fail-card" role="status">
-        <p>{t("loading")}</p>
+      <div className="oh-empty" role="status">
+        <p className="oh-text oh-display oh-empty-label">{t("loading")}</p>
       </div>
     </>
   );

@@ -11,6 +11,9 @@
     font-weight: var(--w-text);
     line-height: var(--oh-lh);
   }
+  .oh-over[data-popover] {
+    z-index: var(--oh-layer-popover);
+  }
   .oh-over > * {
     pointer-events: auto;
   }

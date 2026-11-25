@@ -47,6 +47,8 @@ export function useFromLine(
         </Slot>
         <Menu
           open={open}
+          portal
+          fit="beside"
           onClose={() => setOpen(false)}
           anchor={anchor}
           label={t("from.label")}

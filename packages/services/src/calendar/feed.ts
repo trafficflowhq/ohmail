@@ -200,7 +200,8 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     startsAt: calEvents.startsAt, endsAt: calEvents.endsAt, occurrenceAt: calEvents.occurrenceAt,
     repeatRule: calEvents.repeatRule, excludedDates: calEvents.excludedDates, addedDates: calEvents.addedDates,
     busy: calEvents.busy, private: calEvents.private, organizer: calEvents.organizer, organizerName: calEvents.organizerName,
-    myAnswer: calEvents.myAnswer, mailAnswer: calEvents.mailAnswer, portableCopy: calEvents.portableCopy, removedOccurrences: calEvents.removedOccurrences, heldBack: calEvents.heldBack, updatedAt: calEvents.updatedAt,
+    myAnswer: calEvents.myAnswer, mailAnswer: calEvents.mailAnswer, portableCopy: calEvents.portableCopy,
+    googleDefaultEvent: calEvents.googleDefaultEvent, removedOccurrences: calEvents.removedOccurrences, heldBack: calEvents.heldBack, updatedAt: calEvents.updatedAt,
   }).from(calEvents)
     .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
     .innerJoin(calConnections, and(eq(calConnections.id, calCalendars.connectionId), eq(calConnections.accountId, accountId)))
@@ -347,6 +348,7 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       alarms: alarms.get(r.id) ?? [],
       cut: false,
       ...(r.portableCopy && { portableCopy: true as const }),
+      ...(r.googleDefaultEvent && { googleDefaultEvent: true as const }),
       writes: marks.get(r.id) ?? [],
       updatedAt: r.updatedAt.toISOString(),
     };

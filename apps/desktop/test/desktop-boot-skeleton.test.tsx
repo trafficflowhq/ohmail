@@ -144,7 +144,7 @@ async function advance(ms: number): Promise<void> {
   });
 }
 
-const skeleton = (): HTMLElement | null => mountPoint!.querySelector(".boot-sk");
+const skeleton = (): HTMLElement | null => mountPoint!.querySelector(".fr-opening-rows");
 const text = (): string => mountPoint!.textContent ?? "";
 
 beforeEach(() => {
@@ -184,24 +184,15 @@ describe("the window while an engine is still coming up", () => {
     const sk = skeleton();
     expect(sk, "a hundred seconds of recovery behind one centred sentence and nothing else")
       .not.toBeNull();
-    /* THE WHOLE WINDOW, IN ITS OWN GEOMETRY (owner report 2026-08-26): the desktop boot draws
-       this as the window, so it must be the window — three columns (rail, list panel, reading
-       pane), the list panel carrying its `.vhead` slot, the rows carrying `.row`'s anatomy.
-       A regression to generic text lines goes red on every one of these. */
-    expect(sk!.classList.contains("boot-sk-window"), "not the whole-window silhouette").toBe(true);
-    expect(sk!.querySelector(".boot-sk-pane"), "no list panel").not.toBeNull();
-    expect(sk!.querySelector(".boot-sk-head"), "no view-head slot on the list panel").not.toBeNull();
-    expect(sk!.querySelector(".boot-sk-reader"), "no reading-pane frame").not.toBeNull();
-    expect(sk!.querySelector(".boot-sk-pill"), "no compose-capsule slot in the rail").not.toBeNull();
-    expect(sk!.querySelector(".boot-sk-topbar"), "no narrow-topbar shape (shown ≤900px)").not.toBeNull();
-    expect(sk!.querySelectorAll(".boot-sk-item").length, "a rail with no nav items")
-      .toBeGreaterThan(3);
-    expect(sk!.querySelectorAll(".boot-sk-row .boot-sk-av").length, "rows without lead circles")
-      .toBeGreaterThan(0);
-    expect(sk!.querySelector(".boot-sk-rail"), "no rail column in the window's own geometry")
-      .not.toBeNull();
-    expect(sk!.querySelectorAll(".boot-sk-row").length, "a silhouette with no rows in it")
-      .toBeGreaterThan(0);
+    const frame = sk!.closest(".fr-frame")!;
+    expect(mountPoint!.querySelector(".oh-root .fr-columns .fr-list > .oh-sheet[data-kind=list] .oh-rowsshape"), "startup did not draw the shared frame, mail sheet and row shapes").not.toBeNull();
+    expect(sk!.querySelector(".oh-opening-head"), "no view-head slot on the list sheet").not.toBeNull();
+    expect(frame.querySelector(".fr-reading"), "no reading column").not.toBeNull();
+    expect(frame.querySelector('.oh-opening-pill[data-as="write"]'), "no compose slot in the rail").not.toBeNull();
+    expect(frame.querySelectorAll(".oh-opening-item").length, "a rail with no nav items").toBeGreaterThan(3);
+    expect(sk!.querySelectorAll(".oh-rowsshape-row .oh-rowsshape-face").length, "rows without lead circles").toBeGreaterThan(0);
+    expect(frame.querySelector(".fr-opening-rail"), "no rail column").not.toBeNull();
+    expect(sk!.querySelectorAll(".oh-rowsshape-row").length, "a silhouette with no rows in it").toBeGreaterThan(0);
   });
 
   it("keeps the honest sentence over the bars — the long recovery still says what it is", async () => {
@@ -232,7 +223,7 @@ describe("the window while an engine is still coming up", () => {
     expect(sk.textContent, "the silhouette started saying things").toBe("");
     expect(sk.getAttribute("aria-hidden")).toBe("true");
     // And no mail rows at all: bars are not rows and must never be counted as any.
-    expect(mountPoint!.querySelectorAll(".row").length, "mail on screen before an engine served")
+    expect(mountPoint!.querySelectorAll(".oh-row").length, "mail on screen before an engine served")
       .toBe(0);
   });
 
@@ -247,25 +238,6 @@ describe("the window while an engine is still coming up", () => {
 });
 
 describe("every boot-phase branch draws the whole window — never rows alone", () => {
-  /**
-   * ═══ THE 0.12.0 BOOT FRAME, PINNED (owner report 2026-08-27: "still some random lines") ═══
-   *
-   * The rebuilt three-column silhouette WAS in the 0.12.0 tag — the wrong frame came from the
-   * GATE: the cloud door's pending-auth branch returned `<BootSkeleton active />`, the rows-only
-   * variant, with no `.gate-boot` wrapper (undimmed, in normal flow) and no sentence. And on a
-   * cloud-door COLD START that branch is not a milliseconds edge case, it is the window for the
-   * whole of the engine's climb: `authKey` is non-null from the first status that names the
-   * door, and `/health` cannot answer before the engine serves — so every cold boot was
-   * full-width anonymous bars over nothing. The rail's existence is certain at boot even while
-   * its contents are not, so every boot-phase branch must carry the full three-column geometry.
-   *
-   * MUTATION WATCH (each verified red before landing): drop `rail` from the pending-auth branch
-   * ⇒ the `boot-sk-window`/rail/reader assertions go red; drop the `.gate.gate-boot` wrapper ⇒
-   * the wrapper assertion goes red; drop `BootStatus` ⇒ the sentence assertion goes red. Same
-   * three mutations on the no-shell-answer branch against the second case.
-   */
-
-  /** A cloud-door engine whose `/health` has not answered — the cold start's whole climb. */
   function shellCloudClimbing(): void {
     host.__TAURI_INTERNALS__ = {
       transformCallback: () => 1,
@@ -305,17 +277,16 @@ describe("every boot-phase branch draws the whole window — never rows alone", 
 
     const sk = skeleton();
     expect(sk, "no silhouette over the cloud door's whole boot climb").not.toBeNull();
-    expect(sk!.classList.contains("boot-sk-window"), "rows alone — the 0.12.0 'random lines' frame")
-      .toBe(true);
-    expect(sk!.querySelector(".boot-sk-rail"), "no rail column").not.toBeNull();
-    expect(sk!.querySelector(".boot-sk-reader"), "no reading-pane frame").not.toBeNull();
+    const frame = sk!.closest(".fr-frame")!;
+    expect(frame.querySelector(".fr-opening-rail"), "no rail column").not.toBeNull();
+    expect(frame.querySelector(".fr-reading"), "no reading column").not.toBeNull();
     expect(
-      sk!.parentElement?.classList.contains("gate-boot"),
+      Boolean(sk!.closest(".gate-boot > .fr-root")),
       "outside the gate frame — undimmed bars in normal flow",
     ).toBe(true);
     expect(text(), "a wait with no sentence over it").toContain("Opening your mailbox");
     // Still only a silhouette: the withheld mail app must not have mounted around it.
-    expect(mountPoint!.querySelectorAll(".row").length).toBe(0);
+    expect(mountPoint!.querySelectorAll(".oh-row").length).toBe(0);
   });
 
   it("no shell answer yet is the same three-column frame, saying only that it is opening", async () => {
@@ -325,10 +296,9 @@ describe("every boot-phase branch draws the whole window — never rows alone", 
 
     const sk = skeleton();
     expect(sk, "no silhouette while the shell's first answer is pending").not.toBeNull();
-    expect(sk!.classList.contains("boot-sk-window"), "rows alone before anything was read").toBe(true);
-    expect(sk!.querySelector(".boot-sk-rail"), "no rail column").not.toBeNull();
+    expect(sk!.closest(".fr-frame")?.querySelector(".fr-opening-rail"), "no rail column").not.toBeNull();
     expect(
-      sk!.parentElement?.classList.contains("gate-boot"),
+      Boolean(sk!.closest(".gate-boot > .fr-root")),
       "outside the gate frame — undimmed bars in normal flow",
     ).toBe(true);
     // The no-phase sentence: nothing has been read, so nothing more specific may be claimed.
@@ -351,7 +321,7 @@ describe("the silhouette decides nothing — `mailMount` still routes", () => {
     expect(skeleton(), "the silhouette appeared over a window with nothing to open").toBeNull();
     // …and the chooser is what is on screen: no rows, because there is no mail to draw.
     expect(mountPoint!.textContent ?? "").toMatch(/Which mailbox is this\?/);
-    expect(mountPoint!.querySelectorAll(".row").length).toBe(0);
+    expect(mountPoint!.querySelectorAll(".oh-row").length).toBe(0);
   });
 
   it("the decision table is untouched by the silhouette", () => {

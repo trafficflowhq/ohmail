@@ -191,7 +191,7 @@ function ParagraphMenu({
     [3, t("marks.heading3")],
   ];
   return (
-    <Menu open anchor={anchor} label={t("marks.paragraphStyle")} onClose={onClose}>
+    <Menu open portal anchor={anchor} label={t("marks.paragraphStyle")} onClose={onClose}>
       {choices.map(([style, name]) => (
         <MenuItem
           key={style}
@@ -223,6 +223,7 @@ function LinkCard({ link, onClose }: { link: EditorLink; onClose: () => void }) 
   };
   return (
     <Menu
+      portal
       open
       onClose={onClose}
       label={t("link.title")}

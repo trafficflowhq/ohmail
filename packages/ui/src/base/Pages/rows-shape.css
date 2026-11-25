@@ -11,6 +11,10 @@
     --oh-rowsshape-pad: 0;
   }
 
+  .oh-rowsshape .oh-shapebar {
+    background: var(--soft-sheet);
+  }
+
   .oh-rowsshape-row {
     --oh-rowsshape-row-pad: 0 var(--s3) 0 var(--s1);
     display: grid;

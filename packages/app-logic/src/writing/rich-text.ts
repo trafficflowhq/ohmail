@@ -20,6 +20,8 @@ export interface RichValue {
   text: string;
   /** The markup, or `""` for a message with no formatting in it. */
   html: string;
+  /** Generated-body provenance carried between a new letter and its draft tabs. */
+  aiDraft?: boolean;
 }
 
 export const EMPTY_RICH: RichValue = { text: "", html: "" };
