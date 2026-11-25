@@ -1000,29 +1000,47 @@ const ISSUED_PASSWORD = new RegExp("\\b(?:(?:temporary|provisional|initial|one[-
   + "|(?:vorl[aä]ufiges|tempor[aä]res|initiales) " + GERMAN_SECRET_NOUN + "|einmal" + GERMAN_SECRET_NOUN + ")\\b", "i");
 // The precise tier also reads these cues when interpreting a nearby code or URL.
 export const MODEL_LOGIN_WORDS = /\b(?:sign[\s-]*in|log[\s-]*in|magic[\s-]*link|passwordless|anmelden|anzumelden|anmeldelinks?|anmeldeversuchs?|einloggen|verify (?:your |this )?(?:account|email)|bestätig\w* (?:dein |ihr )?konto)\b/iu;
-const MODEL_GERMAN_LOGIN = /\b(?:neue[nr]?\s+anmeldung|anmeldung[\s:–-]+(?:bei|best[aä]tigen|(?:mit\s+(?:(?:einem|dem)\s+)?)?(?:code|link))|(?:code|link)\s+(?:zur\s+|für\s+(?:(?:ihre|deine|die)\s+)?)anmeldung)\b/iu;
+const MODEL_GERMAN_LOGIN = /\b(?:neue[nr]?\s+anmeldung|anmeldung[\s:–-]+(?:best[aä]tigen|(?:mit\s+(?:(?:einem|dem)\s+)?)?(?:code|link))|(?:code|link)\s+(?:zur\s+|für\s+(?:(?:ihre|deine|die)\s+)?)anmeldung)\b/iu;
+const GERMAN_SIGN_IN = /\banmeldung[\s:–-]+bei\b/giu;
+const REGISTRATION_THANKS = /\bdank(?:e|en)?\b[^.!?;]{0,80}?\bfür\s+(?:ihre|deine|die)\s+$/iu;
+const REGISTRATION_DATE = /^[ \t]+[\p{L}\p{N}.'’ -]{1,80}[ \t]+am[ \t]+(?:\d{1,2}\.\s*(?:\d{1,2}\.|\p{L}+\b)|\d{4}-\d{2}-\d{2}\b)/iu;
+const REGISTRATION_POSSESSIVE = /\b(?:ihre|deine|eure|die|ihrer|deiner|eurer|der)\s+$/iu;
+const SCHEDULED_EVENT = /^\s*(?:kurs|seminar|webinar|tagung|workshop)\s+\d{4,8}\s+(?:(?:startet|beginnt)\s+am|ab)\s+\d{1,2}\./iu;
+
+export function hasGermanSignInCue(text: string, details = ""): boolean {
+  for (const cue of text.matchAll(GERMAN_SIGN_IN)) {
+    const before = text.slice(Math.max(0, cue.index - 110), cue.index);
+    const after = text.slice(cue.index + cue[0].length, cue.index + cue[0].length + 110);
+    if (REGISTRATION_THANKS.test(before) || REGISTRATION_DATE.test(after)) continue;
+    // A possessive with a scheduled event in the message is a registration heading.
+    if (REGISTRATION_POSSESSIVE.test(before) && SCHEDULED_EVENT.test(details)) continue;
+    return true;
+  }
+  return false;
+}
 export const MODEL_RESET_WORDS = new RegExp("\\b(?:(?:passwor[dt]|" + GERMAN_SECRET_NOUN
   + ")[\\s_-]+(?:reset|recover\\w*|zur[üu]cksetz\\w*|[äa]nder\\w*|wiederherstell\\w*|vergessen)"
   + "|(?:reset|recover)\\s+(?:your\\s+)?password|(?:reset|recover)[_-]password)\\b", "iu");
-const MODEL_ACRONYM = /(?<![\p{L}\p{N}_])(?:\p{L}*TAN|PIN|OTP)s?(?![\p{L}\p{N}_])/u;
+// A TAN prefix can start with capitals, but it must contain a lowercase letter.
+export const MODEL_ACRONYM = /(?<![\p{L}\p{N}_])(?:(?:[^\P{L}\p{Ll}]*\p{Ll}\p{L}*)?TAN|PIN|OTP)s?(?![\p{L}\p{N}_])/u;
 const BARE_MODEL_ACRONYM = /\b(?:tan|pin|otp)s?\b/gi;
 const END_MODEL_ACRONYM = new RegExp(MODEL_ACRONYM.source + "$", "u");
-const END_ADJACENT_ACRONYM = /\b(?:tan|pin|otp)s?$/iu;
 const END_COMPOUND_CODE = /(?<![\p{L}\p{N}_])\p{L}+-?codes?$/iu;
-const COMMERCE_COMPOUND_CODE = /^(?:gutschein|rabatt|aktion|bestell|post|sendungs|order|booking|discount|promo|coupon|tracking|sort|reference|product|postal|bar)-?codes?$/iu;
-// These names are credential cues even without a value. Other compounds need a nearby value.
-const MODEL_GERMAN_CODE = "\\b(?:best[aä]tigungs|sicherheits|aktivierungs|freischalt|authentifizierungs|"
-  + "registrierungs|freigabe|login|anmelde|verifizierungs)[- ]?codes?\\b";
+// Established credential names can supply context for other compounds.
+const MODEL_GERMAN_CODE = "\\b(?:prüf|entsperr|einmal|kopplungs|geräte|banking|zugangs|best[aä]tigungs|"
+  + "sicherheits|verifizierungs|login|anmelde|freischalt|aktivierungs|authentifizierungs|registrierungs|freigabe)[- ]?codes?\\b";
 const MODEL_EMAIL_CONFIRMATION = /\b(?:best[aä]tige (?:deine|ihre)|best[aä]tigung (?:deiner|ihrer)) e-?mail\b/iu;
-const MODEL_INVITATION = /\b(?:invited you|(?:has|have) been invited|you(?:['’]re| are) invited to join|join now|accept (?:an? |the |your )?invit(?:e|ation)s?|invitations?[\s-]+accept|einladung annehmen|eingeladen|l[aä]dt (?:dich|sie)(?:[ \t]+[^.!?;\r\n]{1,80})?[ \t]+ein)\b/iu;
+const MODEL_INVITATION = /\b(?:invited you|(?:has|have|you['’]ve) been invited|you(?:['’]re| are) invited to join|join now|accept (?:an? |the |your )?invit(?:e|ation)s?|invitations?[\s-]+accept|einladung annehmen|eingeladen|l[aä]dt (?:dich|sie)(?:[ \t]+[^.!?;\r\n]{1,80})?[ \t]+ein)\b/iu;
 const MODEL_BRANDED_CODE = /\b(?:your|dein|ihr)[ \t]+(?:[\p{L}\p{N}][\p{L}\p{N}&-]{0,39}[- \t]+){1,3}code\b/iu;
 const END_BRANDED_CODE = new RegExp(MODEL_BRANDED_CODE.source + "$", "iu");
 const COMMERCE_CODE = /\b(?:order|booking|discount|promo|coupon|tracking|sort|reference|product|postal)[-\s]+code\b/i;
+const OPEN_COMPOUND_CODE = /\b(?:buchungs|fehler|artikel|ticket|kunden|aktions|vorteils|referenz|kurs|zip|dress|gutschein|rabatt|promo|länder|qr)[- \t]+code\b/iu;
+const MODEL_VERIFICATION = /\b(?:verifications?|verifizierung(?:en)?)\b/i;
 const MODEL_CREDENTIAL_WORDS = new RegExp("\\b(?:" + [
   "(?:sign|log)[\\s-]*ins|sign(?:ing|ed) in|log(?:ging|ged) in|magic[\\s-]*links",
-  "verifications?|" + "2" + "fa|two[\\s-]+factor",
-  "(?:new|forgot(?:ten)?) password|account recover(?:y|ies)|unlock your account",
-  "verifizierung(?:en)?|swissid|steam guard codes?|launch codes?|your passphrases?",
+  "2" + "fa|two[\\s-]+factor",
+  "(?:new|forgot(?:ten)?) password|account recover(?:y|ies)|unlock your account|konto entsperren",
+  "swissid|steam guard codes?|launch codes?|your passphrases?",
   "(?:backup|wiederherstellungs)[ -]?codes?|wiederherstellung(?:en)?",
   "neue(?:s)? " + GERMAN_SECRET_NOUN + "|konto best[aä]tigen",
   GERMAN_SECRET_NOUN + " f[üu]r [^.!?\\n]{1,60} zur[üu]cksetzen",
@@ -1039,7 +1057,7 @@ const ISSUED_PASSWORD_VALUE = new RegExp(`(${ISSUED_PASSWORD.source}\\s+(?:is|is
 
 export function hasModelBrandedCode(text: string, atEnd = false): boolean {
   const label = (atEnd ? END_BRANDED_CODE : MODEL_BRANDED_CODE).exec(text)?.[0];
-  return label !== undefined && !COMMERCE_CODE.test(label);
+  return label !== undefined && !COMMERCE_CODE.test(label) && !OPEN_COMPOUND_CODE.test(label);
 }
 
 export function hasModelInvitationCue(text: string): boolean {
@@ -1051,25 +1069,24 @@ export function hasModelLinkCue(text: string): boolean {
     || MODEL_EMAIL_CONFIRMATION.test(text) || MODEL_GERMAN_LOGIN.test(text);
 }
 
-export function hasCredentialMailCue(text: string): boolean {
+export function hasModelAuthContext(prose: string): boolean {
+  return ISSUED_PASSWORD.test(prose) || MODEL_LOGIN_WORDS.test(prose) || MODEL_VERIFICATION.test(prose)
+    || hasModelLinkCue(prose);
+}
+
+export function hasCredentialMailCue(text: string, includeAcronyms = true): boolean {
   const prose = text.replace(MODEL_URL, " ").replace(/(?<!\S)\S+@\S+/g, " ").replace(/\bpasswords\b/gi, "password");
-  return MODEL_CREDENTIAL_WORDS.test(prose) || ISSUED_PASSWORD.test(prose)
-    || MODEL_LOGIN_WORDS.test(prose) || hasModelLinkCue(prose) || hasModelInvitationCue(prose)
-    || hasModelBrandedCode(prose) || hasModelCodeCue(prose);
+  return MODEL_CREDENTIAL_WORDS.test(prose) || hasModelAuthContext(prose) || hasModelInvitationCue(prose)
+    || hasModelBrandedCode(prose) || hasModelCodeCue(prose, false, includeAcronyms);
 }
 
-/** Sender names can supply evidence through a credential phrase. */
+/** A one-word login spelling is also a surname. Preserve the other mail cues in a sender name. */
 export function hasCredentialSenderCue(name: string): boolean {
-  const prose = name.replace(BARE_MODEL_ACRONYM, " ");
-  return MODEL_CODE_CUE.test(canonicalise(prose).folded) || hasModelBrandedCode(prose)
-    || hasModelLinkCue(prose) || ISSUED_PASSWORD.test(prose);
+  return hasCredentialMailCue(name.replace(/\blogin\b(?![-\s]+(?:code|link)\b)/gi, " "));
 }
 
-/** Ambiguous labels count when the caller has found a credential-shaped value beside them. */
-export function hasAdjacentModelCodeCue(label: string, delimited: boolean): boolean {
-  if (END_ADJACENT_ACRONYM.test(label)) return true;
-  const compound = delimited ? END_COMPOUND_CODE.exec(label)?.[0] : undefined;
-  return compound !== undefined && !COMMERCE_COMPOUND_CODE.test(compound);
+export function hasModelCompoundCodeLabel(label: string): boolean {
+  return END_COMPOUND_CODE.test(label);
 }
 
 export function redactIssuedPassword(text: string): string {
@@ -1078,8 +1095,8 @@ export function redactIssuedPassword(text: string): string {
       ? label + "[code]" : match);
 }
 
-export function hasModelCodeCue(text: string, atEnd = false): boolean {
-  if ((atEnd ? END_MODEL_ACRONYM : MODEL_ACRONYM).test(text.normalize("NFKC"))) return true;
+export function hasModelCodeCue(text: string, atEnd = false, includeAcronyms = true): boolean {
+  if (includeAcronyms && (atEnd ? END_MODEL_ACRONYM : MODEL_ACRONYM).test(text.normalize("NFKC"))) return true;
   const { folded, plain } = canonicalise(text.replace(BARE_MODEL_ACRONYM, " "));
   return (atEnd ? END_MODEL_CODE_CUE : MODEL_CODE_CUE).test(folded)
     || (atEnd ? END_WORLD_OTP : WORLD_OTP).test(plain);

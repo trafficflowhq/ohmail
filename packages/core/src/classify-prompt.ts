@@ -352,7 +352,7 @@ export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload
     from: input.from.address,
     subject: input.subject,
     snippet: input.snippet,
-  }, { fromName: input.from.name });
+  }, { fromName: input.from.name, foldSnippet: input.foldSnippet });
   return { ...mail, ...redactAiPayload({
     headersDigest: input.headersDigest,
     fewShot: input.fewShot ?? [],

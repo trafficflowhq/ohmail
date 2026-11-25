@@ -1,7 +1,7 @@
 import {
-  decodeEntities, foldDigits, GERMAN_SECRET_NOUN, hasCredentialMailCue, hasModelBrandedCode,
-  hasAdjacentModelCodeCue, hasCredentialSenderCue,
-  hasModelCodeCue, hasModelInvitationCue, hasModelLinkCue, MODEL_LOGIN_WORDS,
+  decodeEntities, foldDigits, GERMAN_SECRET_NOUN, hasCredentialMailCue, hasCredentialSenderCue, hasGermanSignInCue,
+  hasModelAuthContext, hasModelBrandedCode, hasModelCodeCue, hasModelCompoundCodeLabel,
+  hasModelInvitationCue, hasModelLinkCue, MODEL_ACRONYM, MODEL_LOGIN_WORDS,
   MODEL_RESET_WORDS, MODEL_URL, readableBase64Text, redactIssuedPassword,
 } from "./sensitive.js";
 
@@ -99,13 +99,15 @@ function credentialLink(raw: string, auth: boolean, reset: boolean, wrapperDepth
 }
 
 // Spaces can join numeric chunks or uppercase/mixed code chunks. Dashes can join any code chunks.
-const CODE_CHUNK = "(?:[\\p{Lu}]{2,12}|[\\p{L}]{0,11}\\p{Nd}[\\p{L}\\p{Nd}]{0,11})";
+const CODE_CHUNK = `(?:(?!${MODEL_ACRONYM.source})[\\p{Lu}]{2,12}|[\\p{L}]{0,11}\\p{Nd}[\\p{L}\\p{Nd}]{0,11})`;
 const BROAD_CODE = new RegExp(
   "(?<![\\p{L}\\p{N}_@])(?:" +
   `${CODE_CHUNK}(?:[\\p{Zs}\\p{Pd}\\t]+${CODE_CHUNK})+(?![\\p{Pd}])|` +
   "[\\p{L}\\p{Nd}]+(?:\\p{Pd}[\\p{L}\\p{Nd}]+)*)(?![\\p{L}\\p{N}_@])",
   "gu",
 );
+const SPLIT_DIGITS = /(?<![\p{L}\p{N}_@])\p{Nd}+(?:[ \t]*\r?\n[ \t\r\n]*\p{Nd}+)+(?![\p{L}\p{N}_@])/gu;
+const BODY_NUMERIC_CODE = /^\p{Nd}(?:[\s-]*\p{Nd}){3,11}$/u;
 
 function redactBroadCodes(text: string, previewAtLimit: boolean): string {
   const mask = (value: string, min = 4) => {
@@ -143,7 +145,7 @@ const CODE_JOIN = /(?:[\s:：=*`(\[“"'–—>-]|\b(?:is|ist|lautet|est|è|es|�
 const CODE_INTRO = /\b(?:(?:enter(?:ing)?|use|type) (?:(?:the|this) )?(?:(?:verification|sign-in|one-time) )?code (?:below|above)|(?:here|this) is (?:the|your) (?:(?:verification|sign-in|one-time) )?code(?: you need)?|verwenden sie (?:den )?code (?:unten|oben))[.!:]?$/iu;
 const CODE_SUFFIX = /^[\t *\x60"']*(?:(?:is|ist)\s+(?:(?:your|dein|ihr|der)\s+)?([^\n!,.;?]{1,48})|(?:to\s+(?:sign[\s-]*in|log[\s-]*in|verify|authenticate)|zum\s+(?:anmelden|einloggen|bestätigen))\b)/iu;
 const USE_CODE = /\b(?:use|enter|type|verwende(?:n|st|t)?(?: sie)?|gib|geben sie)\s+[*\x60"']*$/iu;
-const LABELED_TOKEN = /\b(?:reset|verification|login|sign[- ]in|auth(?:entication)?|recovery|access|bestätigungs|anmelde)[- ]*token\b|\b(?:your code|dein code|ihr code|(?:einmalige|einmal verwendbare) (?:ziffern|zahlen)folge|(?:your|deine|ihre) tan)\b/iu;
+const LABELED_TOKEN = /\b(?:reset|verification|login|sign[- ]in|auth(?:entication)?|recovery|access|bestätigungs|anmelde)[- ]*token\b|\b(?:your code|dein code|ihr code|(?:einmalige|einmal verwendbare) (?:ziffern|zahlen)folge)\b/iu;
 const END_LABELED_TOKEN = new RegExp("(?:" + LABELED_TOKEN.source + ")$", "iu");
 const LEADING_SPACE = /^[\s:：=*"'`(\[{–—>-]*$/u;
 const CONTEXTUAL_LABEL = new RegExp("(?:(?:^|[.!?;\\n])\\s*|\\b(?:the (?:following )?|den (?:folgenden )?|diesen ))"
@@ -155,9 +157,13 @@ const DATE_PREFIX = /\d[./-]$/u;
 const MONEY_SUFFIX = /^[.,]\p{Nd}|^\s*(?:€|\$|£|EUR\b|USD\b|CHF\b)/iu;
 const DATE_VALUE = /^\d{4}[- ]\d{2}[- ]\d{2}$/;
 
-function codeCue(value: string, atEnd = false): boolean {
-  return hasModelCodeCue(value, atEnd) || (atEnd ? END_LABELED_TOKEN : LABELED_TOKEN).test(value)
+function codeCue(value: string, atEnd = false, includeAcronyms = true): boolean {
+  return hasModelCodeCue(value, atEnd, includeAcronyms) || (atEnd ? END_LABELED_TOKEN : LABELED_TOKEN).test(value)
     || hasModelBrandedCode(value, atEnd);
+}
+
+function acronymCanPair(separator: string): boolean {
+  return !/[\r\n]/u.test(separator) || /^[ \t]*[:：](?:[ \t]*\r?\n){1,2}[ \t]*$/u.test(separator);
 }
 
 function looksLikePlainCode(value: string): boolean {
@@ -185,23 +191,35 @@ function looksLikeCode(value: string): boolean {
 
 const LETTER_CODE = /(?<![\p{L}\p{N}@_/-])\p{L}{5,10}(?![\p{L}\p{N}@_/-])/gu;
 const LETTER_VALUE = /^\p{L}{5,10}$/u;
-const PROSE_AFTER_LABEL = /^(?:ready|below|above|expired|available|invalid|request|required|needed|shown|listed|angefordert|nicht|gültig|ungültig)$/iu;
-const SIGNATURE = /(?:^|\r?\n)[ \t]*(?:regards|best regards|thanks|sincerely|mit freundlichen grüßen|viele grüße)[ \t,]*\r?\n/iu;
+const PROSE_AFTER_LABEL = new Set([
+  "above", "appears", "arrives", "available", "below", "changed", "expired", "expires", "follows", "invalid",
+  "listed", "message", "needed", "notification", "ready", "request", "required", "should", "shown", "thanks", "works",
+  "abholung", "angefordert", "anfordern", "bleibt", "eingeben", "erscheint", "fehlt", "folgt", "gehört", "gilt",
+  "gültig", "kommt", "läuft", "lautet", "nicht", "stimmt", "ungültig", "unten", "verfällt", "verwenden", "wurde",
+]);
+const SIGNATURE = /(?:^|\r?\n)[ \t]*(?:regards|best regards|thanks|sincerely|mit freundlichen grüßen|viele grüße|gruss|gruß)[ \t,]*(?:\r?\n|$)/iu;
 const VALUE_FOLLOWS_LABEL = /(?:\b(?:code|passcode)|\bcode (?:below|above))\b[ \t]*(?:[.!:]|(?:is|ist|lautet)[ \t]*:?)?[\s>*]*$/iu;
+const BARE_CODE_LABEL = /\b(?:code|passcode|code (?:below|above)[.!]?)[\s>*]+$/iu;
 const CODE_FOLLOWUP = /^(?:,\s*|\s+(?:and\s+)?)(?:enter it|it expires|it is valid|if this|don't share)\b/iu;
 const CODE_DELIMITER = /(?:[:：=]|\blautet)[\s>*]*$/iu;
 const CODE_COPULA = /\b(?:is|ist)[\s>*]*$/iu;
 const DELIMITED_CODE_PHRASE = /\b(?:code|passcode)\b[^.!?;:\n]{0,70}[:：][\s>*]*$/iu;
 const VALUE_END = /^[^\S\n]*(?:[.!?]|$|\r?\n)/u;
 
-function labeledLetterCode(value: string, before: string, after: string): boolean {
+function labeledLetterCode(value: string, before: string, after: string, credentialContext: boolean): boolean {
   const delimited = CODE_DELIMITER.test(before);
   const attached = delimited || CODE_COPULA.test(before);
   const label = before.replace(CODE_JOIN, "");
-  return (!PROSE_AFTER_LABEL.test(value) || delimited)
-    && (VALUE_FOLLOWS_LABEL.test(before) || DELIMITED_CODE_PHRASE.test(before)
-      || (attached && (codeCue(label, true) || hasAdjacentModelCodeCue(label, true))))
-    && (attached || VALUE_END.test(after) || CODE_FOLLOWUP.test(after));
+  const separator = before.slice(label.length);
+  const onNewLine = /[\r\n]/u.test(separator);
+  // Preserve known prose after an inline label in a sentence or a flattened preview.
+  if (!delimited && !onNewLine && /^\p{Lu}?\p{Ll}+$/u.test(value) && PROSE_AFTER_LABEL.has(value.toLowerCase())) return false;
+  const compound = credentialContext && hasModelCompoundCodeLabel(label);
+  if (DELIMITED_CODE_PHRASE.test(before) || (attached && (codeCue(label, true, acronymCanPair(separator)) || compound))) return true;
+  if (!VALUE_FOLLOWS_LABEL.test(before) && !compound) return false;
+  // A known credential can have a bare label in a flattened preview between unrelated sentences.
+  return attached || onNewLine || VALUE_END.test(after) || CODE_FOLLOWUP.test(after)
+    || (credentialContext && (BARE_CODE_LABEL.test(before) || (compound && /^[\s>*]+$/u.test(separator))));
 }
 
 function redactLetterCodes(text: string, part?: { first: boolean; last: boolean }): string {
@@ -213,9 +231,9 @@ function redactLetterCodes(text: string, part?: { first: boolean; last: boolean 
     const startsLine = startsText || /\n[ \t]*$/u.test(before);
     const endsLine = /^[ \t]*\r?\n/u.test(after) || (part?.last && at + value.length + after.length === text.length
       && /^[ \t]*$/u.test(after));
-    const ownLine = startsLine && endsLine && at < signature;
+    const ownLine = startsLine && endsLine && at < signature && !/^anmeldung$/iu.test(value);
     const leading = part && /^\s*$/u.test(before) && CODE_FOLLOWUP.test(after);
-    return ownLine || leading || labeledLetterCode(value, before, after) ? "[code]" : value;
+    return ownLine || leading || labeledLetterCode(value, before, after, true) ? "[code]" : value;
   });
 }
 
@@ -224,12 +242,12 @@ const INCIDENTAL_SUBJECT = new RegExp("\\b(?:age verification|tan-verfahren|acco
   + "rolling out (?:two[- ]factor|" + "2" + "fa))\\b", "giu");
 const CODE_LABEL = new RegExp("\\b(?:[\\p{L}-]*(?:code|tan)s?|otp|token|pin|passwords?|" + GERMAN_SECRET_NOUN + ")\\b", "iu");
 const BODY_CODE = new RegExp("(?<![\\p{L}\\p{N}])\\p{Nd}(?:[ \\t]+\\p{Nd}){3,11}(?![\\p{L}\\p{N}]|[ \\t]+\\p{Nd}\\b)|"
-  + CANDIDATE.source, "gu");
+  + SPLIT_DIGITS.source + "|" + CANDIDATE.source, "gu");
 
-const BODY_NUMERIC_CODE = /^\p{Nd}(?:[ \t-]*\p{Nd}){3,11}$/u;
 const CODE_LABEL_END = /(?:[:：=.!]|\b(?:is|ist|lautet))[\s>*:]*$/iu;
+const GERMAN_SIGN_IN_CONFIRMATION = /\banmeldung\s+bestätigt(?:[\s:：]+(?:code|link)\b)?[\s:：]*$/iu;
 
-function bodyHasCode(text: string): boolean {
+function bodyHasCode(text: string, authContext: boolean): boolean {
   if (redactIssuedPassword(text) !== text) return true;
   for (const match of text.matchAll(BODY_CODE)) {
     const value = match[0];
@@ -239,22 +257,27 @@ function bodyHasCode(text: string): boolean {
     if (FOOTER_CUE.test(before) || DATE_PREFIX.test(before) || MONEY_SUFFIX.test(after)) continue;
     const numericCode = BODY_NUMERIC_CODE.test(value) && !DATE_VALUE.test(foldDigits(value));
     if (!looksLikeCode(value) && !numericCode
-      && !(LETTER_VALUE.test(value) && labeledLetterCode(value, before, after))) continue;
+      && !(LETTER_VALUE.test(value) && labeledLetterCode(value, before, after, authContext))) continue;
     const label = before.replace(CODE_JOIN, "");
+    const pairAcronym = acronymCanPair(before.slice(label.length));
     const suffix = CODE_SUFFIX.exec(after);
-    if (suffix && (suffix[1] ? hasCredentialMailCue(suffix[0]) : USE_CODE.test(before))) return true;
+    if (suffix && (suffix[1] ? hasCredentialMailCue(suffix[0], !/[\r\n]/u.test(suffix[0])) : USE_CODE.test(before))) return true;
     const delimited = CODE_LABEL_END.test(before);
-    if (CODE_INTRO.test(label) || codeCue(label, true) || hasAdjacentModelCodeCue(label, delimited)) return true;
-    if (delimited && CODE_LABEL.test(label) && hasCredentialMailCue(label)) return true;
+    if (CODE_INTRO.test(label) || codeCue(label, true, pairAcronym) || (authContext && hasModelCompoundCodeLabel(label))) return true;
+    if (GERMAN_SIGN_IN_CONFIRMATION.test(before) || (CODE_DELIMITER.test(before) && hasGermanSignInCue(label))) return true;
+    if (delimited && CODE_LABEL.test(label) && hasCredentialMailCue(label, pairAcronym)) return true;
   }
   return false;
 }
 
 function bodyHasLink(label: string, link: string): boolean {
   // Consider the clause introducing this URL. Navigation and unrelated article titles carry no credential.
-  const nearby = label.trimEnd().match(/[^.!?;\n]{1,120}$/u)?.[0] ?? "";
+  const end = label.trimEnd();
+  const nearby = end.match(/[^.!?;\n]{1,120}$/u)?.[0] ?? "";
   if (FOOTER_CUE.test(nearby)) return false;
   if (hasModelLinkCue(nearby) || /\b(?:sign|log)[- ]?in (?:here|below):?$/iu.test(nearby)) return true;
+  const germanContext = end.match(/[^.!?;]{1,120}$/u)?.[0] ?? "";
+  if (hasGermanSignInCue(germanContext) || GERMAN_SIGN_IN_CONFIRMATION.test(germanContext)) return true;
   if (!hasModelInvitationCue(nearby)) return false;
   try {
     return decodePart(new URL(link).pathname).split("/").some(segment => INVITE_PATH.test(segment));
@@ -265,7 +288,9 @@ function bodyHasLink(label: string, link: string): boolean {
 
 function hasCredentialBodyCue(text: string): boolean {
   const parts = text.split(MODEL_URL);
-  return parts.some((part, index) => index % 2 ? bodyHasLink(parts[index - 1]!, part) : bodyHasCode(part));
+  const authContext = parts.some((part, index) => index % 2 === 0 && part.split(/[.!?;\r\n]/u)
+    .some(clause => !FOOTER_CUE.test(clause) && hasModelAuthContext(clause)));
+  return parts.some((part, index) => index % 2 ? bodyHasLink(parts[index - 1]!, part) : bodyHasCode(part, authContext));
 }
 
 /** Redact the outgoing copy using nearby wording from the field and its siblings. */
@@ -289,7 +314,8 @@ function redactText(text: string, context: string, heading = false, credentialMa
     }
     const last = index === parts.length - 1;
     const source = credentialMail
-      ? redactBroadCodes(redactLetterCodes(part, heading ? undefined : { first: index === 0, last }), previewAtLimit && last)
+      ? redactBroadCodes(redactLetterCodes(part.replace(SPLIT_DIGITS, value => BODY_NUMERIC_CODE.test(value) ? "[code]" : value),
+        heading ? undefined : { first: index === 0, last }), previewAtLimit && last)
       : part;
     const outgoing = source.replace(CANDIDATE, (value: string, offset: number) => {
       if (!looksLikeCode(value)) return value;
@@ -299,7 +325,7 @@ function redactText(text: string, context: string, heading = false, credentialMa
       const prefix = before.replace(CODE_JOIN, "");
       const separator = before.slice(prefix.length);
       const introduced = CODE_INTRO.test(prefix);
-      const labeled = codeCue(prefix, true) || hasAdjacentModelCodeCue(prefix, false)
+      const labeled = codeCue(prefix, true, acronymCanPair(separator))
         || (contextCode && CONTEXTUAL_LABEL.test(prefix));
       const lettersOnly = /^[a-z_-]+$/i.test(value) && looksLikePlainCode(value);
       const delimiter = /[：:=]/u.test(separator);
@@ -308,7 +334,8 @@ function redactText(text: string, context: string, heading = false, credentialMa
         && (!/\bPIN$/i.test(prefix) || delimiter || /\b(?:is|ist|lautet)\b/iu.test(separator))
         && (!lettersOnly || delimiter || /[-_]/.test(value) || CREDENTIAL_CONTINUATION.test(after));
       const suffix = CODE_SUFFIX.exec(after);
-      const credentialUse = suffix && (suffix[1] ? codeCue(suffix[1]) : USE_CODE.test(before) || contextCode);
+      const credentialUse = suffix && (suffix[1] ? codeCue(suffix[1], false, !/[\r\n]/u.test(suffix[0]))
+        : USE_CODE.test(before) || contextCode);
       const afterValue = after.replace(/^[*\x60"']+/u, "");
       const leading = index === 0 && LEADING_SPACE.test(source.slice(0, offset));
       const leadingCode = leading && (!lettersOnly || value.replace(/[^aeiou]/gi, "").length <= 1)
@@ -338,32 +365,50 @@ export function redactAiPayload<T>(payload: T, context = ""): T {
 
 /** Apply the broader rule to a single outgoing message, using only its own evidence. */
 export function redactAiMail<T extends { subject?: string; snippet: string }>(
-  mail: T, { fromName, body = mail.snippet }: { fromName?: string | null; body?: string } = {},
+  mail: T, { fromName, body = mail.snippet, foldSnippet = false }:
+    { fromName?: string | null; body?: string; foldSnippet?: boolean } = {},
 ): T {
-  const credentialMail = hasCredentialSubjectCue(mail.subject ?? "")
+  const credentialMail = hasCredentialSubjectCue(mail.subject ?? "", body)
     || hasCredentialSenderCue(fromName ?? "") || hasCredentialBodyCue(body);
-  return redactFields(mail, credentialMail);
+  const cleaned = redactFields(mail, credentialMail);
+  if (foldSnippet) {
+    const folded = cleaned.snippet.replace(/\s+/g, " ").trim();
+    // Keep the evidence from the original layout when checking the newly adjacent values.
+    cleaned.snippet = credentialMail ? redactText(folded, cleaned.subject ?? "", false, true) : folded;
+  }
+  return cleaned;
 }
 
-function hasCredentialSubjectCue(text: string): boolean {
+function hasCredentialSubjectCue(text: string, body: string): boolean {
   const subject = text.replace(INCIDENTAL_SUBJECT, " ");
-  return hasCredentialMailCue(subject) || hasCredentialBodyCue(subject);
+  return END_LABELED_TOKEN.exec(subject.trim())?.index === 0
+    || hasCredentialMailCue(subject) || hasGermanSignInCue(subject.replace(MODEL_URL, " "), body) || hasCredentialBodyCue(subject)
+    || (GERMAN_SIGN_IN_CONFIRMATION.test(subject) && hasCredentialBodyCue(subject + "\n" + body));
 }
 
-const PASTED_SUBJECT = /^([ \t]*(?:forwarding this|subject|betreff)[ \t]*:[ \t]*)([^\r\n]*)(\r?\n)/iu;
+const PASTED_SUBJECT = /(^[ \t]*(?:subject|betreff|fwd?|wg)[ \t]*:[ \t]*|\bforwarding this[ \t]*:[ \t]*)([^\r\n]*)(\r?\n|$)/gimu;
 
 /** Recognize a credential in the person's own draft text with the same evidence as a mail. */
 export function redactAiDraftWords<T extends { text: string; subject?: string }>(words: T, context = ""): T {
-  const pasted = PASTED_SUBJECT.exec(words.text);
-  const pastedSubject = pasted?.[2] ?? "";
-  const body = words.text.slice(pasted?.[0].length ?? 0);
-  const credentialText = hasCredentialSubjectCue(pastedSubject) || hasCredentialSubjectCue(words.subject ?? "")
-    || hasCredentialBodyCue(body);
-  if (!pasted || !credentialText) return redactFields(words, credentialText, context);
+  const pasted = [...words.text.matchAll(PASTED_SUBJECT)];
+  const credentialText = pasted.some((heading, index) => hasCredentialSubjectCue(
+    heading[2]!, words.text.slice(heading.index + heading[0].length, pasted[index + 1]?.index),
+  )) || hasCredentialSubjectCue(words.subject ?? "", words.text) || hasCredentialBodyCue(words.text);
+  if (!pasted.length || !credentialText) return redactFields(words, credentialText, context);
 
-  // Keep the forwarded heading and body separate where the redactor reads layout.
-  const cleaned = redactFields({ ...words, text: body }, true, pastedSubject || context);
-  return { ...cleaned, text: pasted[1] + redactText(pastedSubject, body, true, true) + pasted[3] + cleaned.text };
+  // Keep pasted headings separate so the letter-code rules can still read the body layout.
+  const cleaned = redactFields({ ...words, text: "" }, true, context);
+  let text = "";
+  let start = 0;
+  let nearby = words.subject ?? context;
+  for (const [index, heading] of pasted.entries()) {
+    text += redactText(words.text.slice(start, heading.index), nearby, false, true);
+    start = heading.index + heading[0].length;
+    const body = words.text.slice(start, pasted[index + 1]?.index);
+    text += heading[1] + redactText(heading[2]!, body, true, true) + heading[3];
+    nearby = heading[2] || nearby;
+  }
+  return { ...cleaned, text: text + redactText(words.text.slice(start), nearby, false, true) };
 }
 
 /** Match emitted placeholders, including harmless formatting changes in a provider echo. */
