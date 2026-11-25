@@ -1,4 +1,4 @@
-ALTER TABLE "cal_events" ADD COLUMN "google_default_event" boolean DEFAULT false NOT NULL;
+ALTER TABLE "cal_events" ADD COLUMN IF NOT EXISTS "google_default_event" boolean DEFAULT false NOT NULL;
 --> statement-breakpoint
 UPDATE "cal_calendars" AS calendars
 SET "sync_token" = NULL

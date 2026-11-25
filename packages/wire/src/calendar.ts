@@ -257,6 +257,9 @@ export interface CalendarSuggestionRecord {
  * nowhere else first: {@link CalendarRecordKind} follows, and every list proved complete against
  * it refuses to compile until it names the new kind.
  */
+/** The standalone calendar's feed excludes proposals read from letters. */
+export type CalendarOnlyRecordKind = Exclude<CalendarRecordKind, "calendar_suggestion"> | "settings";
+
 export interface CalendarRecords {
   calendar_connection: CalendarConnectionRecord;
   calendar: CalendarRecord;

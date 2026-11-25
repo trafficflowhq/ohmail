@@ -259,7 +259,7 @@ export abstract class EngineWindowed extends EngineReads {
    * COMMIT order per account: a drain issued after our POST returned reads a log in which our row is visible. The
    * argument rests entirely on that row lock — a future `bigserial` seq would leave every test green and make this
    * silently unsound. Deliberately NOT a wait for `cursor >= outcome.seq`: the cursor is the max seq RETURNED after
-   * the `types` filter, so with `EngineOptions.types` set the wait never terminates; it also needs a fallback anyway
+   * the `types` filter, including in calendar-only mode, so the wait may never terminate; it needs a fallback anyway
    * (`seq: null` on a stripped header), and a wait loop is unbounded requests with nobody behind them, where this is
    * exactly one drain.
    */

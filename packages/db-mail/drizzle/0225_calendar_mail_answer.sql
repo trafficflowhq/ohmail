@@ -1,1 +1,1 @@
-ALTER TABLE "cal_events" ADD COLUMN "mail_answer" text;
+ALTER TABLE "cal_events" ADD COLUMN IF NOT EXISTS "mail_answer" text;

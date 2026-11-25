@@ -83,6 +83,9 @@
       "undo": "Rückgängig"
     },
     "proposal": {
+      "recovered": "Ungesendete Terminvorschläge",
+      "sendRecovered": "Vorschlag senden",
+      "discardRecovered": "Vorschlag verwerfen",
       "keepQuestion": "{name} sagen, dass die Zeit bleibt?",
       "keepConfirm": "Bestätigen",
       "action": "Neue Zeit vorschlagen",

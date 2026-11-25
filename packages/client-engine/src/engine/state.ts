@@ -18,7 +18,7 @@ import {
   type StoreTimelineOutcome,
 } from "../store-pages.js";
 import { type EntityReader, MemoryMirrorStore, type MirrorStore, type OutboxNotices } from "../store.js";
-import { NAMED_FEED_KINDS, OUTBOX_ABANDONED_TYPE } from "../types.js";
+import { CALENDAR_ONLY_TYPES, NAMED_FEED_KINDS, OUTBOX_ABANDONED_TYPE } from "../types.js";
 import type { AttachmentItem, AttachmentsOutcome } from "./attachment-items.js";
 import type { KeptAsNewDraft, MutationResult, PendingMutation } from "./mutation-views.js";
 import {
@@ -43,6 +43,7 @@ import {
 export abstract class EngineState {
   readonly store: MirrorStore;
   protected readonly adapter: EngineAdapter;
+  protected readonly calendarOnly: boolean;
   protected readonly types: string[] | undefined;
   protected readonly syncLimit: number | undefined;
   protected readonly now: () => Date;
@@ -634,42 +635,38 @@ export abstract class EngineState {
 
   constructor(opts: EngineOptions) {
     this.adapter = opts.adapter;
+    this.calendarOnly = opts.calendarOnly === true;
     this.inlineImageUrls = opts.inlineImageUrls === "object" ? "object" : "data";
     // The adapter's own capability is the shipped path; the option is the override. Resolved
     // ONCE, here, so `serverSearchAvailable()` cannot answer differently from what
     // `searchServer` will do a moment later.
     this.searchWarms = opts.warmSearch === true;
     this.searchSupersede = opts.searchSupersede === true;
-    this.serverSearchFn =
-      opts.serverSearch ??
-      (opts.adapter as ServerSearchCapableAdapter).searchServer?.bind(opts.adapter) ??
-      null;
+    this.serverSearchFn = this.calendarOnly ? null
+      : opts.serverSearch ?? (opts.adapter as ServerSearchCapableAdapter).searchServer?.bind(opts.adapter) ?? null;
     // The address arm, resolved by the SAME rule and INDEPENDENTLY of the text arm. Not derived
     // from `serverSearchFn`: an adapter wrapper forwards capabilities one at a time, so a client
     // can legitimately have the text search and not this, and deriving one from the other would
     // make `searchAddressServer` call a method that is not there.
-    this.serverAddressSearchFn =
-      opts.serverAddressSearch ??
-      (opts.adapter as ServerAddressSearchCapableAdapter).searchAddressServer?.bind(opts.adapter) ??
-      null;
+    this.serverAddressSearchFn = this.calendarOnly ? null
+      : opts.serverAddressSearch ?? (opts.adapter as ServerAddressSearchCapableAdapter).searchAddressServer?.bind(opts.adapter) ?? null;
     // Same resolution rule as `serverSearchFn`: the adapter's own capability, bound ONCE, so
     // nothing can answer "there is a snapshot route" differently from what `drain` will do.
     this.snapshotFn = (opts.adapter as SnapshotCapableAdapter).snapshot?.bind(opts.adapter) ?? null;
     // And again for the out-of-window read. No `opts` override beside it, unlike `serverSearch`:
     // one source means `listOlderAvailable()` and `listOlder` cannot disagree, and there is no
     // second way for a host to arm a capability the gate did not forward.
-    this.listOlderFn = (opts.adapter as ListMessagesCapableAdapter).listMessages?.bind(opts.adapter) ?? null;
-    this.timelineFn = (opts.adapter as TimelineCapableAdapter).timeline?.bind(opts.adapter) ?? null;
-    this.messageByIdFn = (opts.adapter as MessageByIdCapableAdapter).getMessage?.bind(opts.adapter) ?? null;
+    this.listOlderFn = this.calendarOnly ? null : (opts.adapter as ListMessagesCapableAdapter).listMessages?.bind(opts.adapter) ?? null;
+    this.timelineFn = this.calendarOnly ? null : (opts.adapter as TimelineCapableAdapter).timeline?.bind(opts.adapter) ?? null;
+    this.messageByIdFn = this.calendarOnly ? null : (opts.adapter as MessageByIdCapableAdapter).getMessage?.bind(opts.adapter) ?? null;
     // The Trash pair, bound by the SAME rule and INDEPENDENTLY of each other and of the list
     // above: an adapter wrapper forwards structural capabilities one at a time, so deriving
     // either from another would make a control call a method that is not there.
-    this.listTrashFn = (opts.adapter as ListTrashCapableAdapter).listTrash?.bind(opts.adapter) ?? null;
-    this.restoreFromTrashFn =
-      (opts.adapter as RestoreFromTrashCapableAdapter).restoreFromTrash?.bind(opts.adapter) ?? null;
+    this.listTrashFn = this.calendarOnly ? null : (opts.adapter as ListTrashCapableAdapter).listTrash?.bind(opts.adapter) ?? null;
+    this.restoreFromTrashFn = this.calendarOnly ? null : (opts.adapter as RestoreFromTrashCapableAdapter).restoreFromTrash?.bind(opts.adapter) ?? null;
     // And a fourth time, same rule: bound ONCE here so `hydrateThread` cannot decide it has a
     // batch route and then call something else.
-    this.fetchBodiesFn = (opts.adapter as FetchBodiesCapableAdapter).fetchBodies?.bind(opts.adapter) ?? null;
+    this.fetchBodiesFn = this.calendarOnly ? null : (opts.adapter as FetchBodiesCapableAdapter).fetchBodies?.bind(opts.adapter) ?? null;
     // NO UNLIMITED DEFAULT. See {@link DEFAULT_STORE_POLICY}: a host that configures nothing gets
     // a window, and `{ mode: "full" }` is a thing a host says rather than one it gets by silence.
     this.storePolicy = opts.storePolicy ?? DEFAULT_STORE_POLICY;
@@ -687,7 +684,7 @@ export abstract class EngineState {
     this.eagerBodiesOn = opts.eagerBodies === true;
     this.store = opts.store ?? new MemoryMirrorStore();
     // Named always: the calendar's kinds and the settings record reach only a request that names them.
-    this.types = opts.types ?? [...NAMED_FEED_KINDS];
+    this.types = this.calendarOnly ? [...CALENDAR_ONLY_TYPES] : opts.types ?? [...NAMED_FEED_KINDS];
     this.syncLimit = opts.syncLimit;
     this.staleResumeMs = opts.staleResumeMs ?? STALE_RESUME_MS;
     this.replayDeadlineMs = opts.outboxReplayDeadlineMs ?? OUTBOX_REPLAY_DEADLINE_MS;
@@ -699,7 +696,7 @@ export abstract class EngineState {
       positive(opts.outboxHoldCeilingMs, OUTBOX_HOLD_CEILING_MS), this.replayDeadlineMs, this.mutateDeadlineMs,
     );
     this.drainCeilingMs = positive(opts.drainRequestCeilingMs, DRAIN_REQUEST_CEILING_MS);
-    this.autoReplayOn = opts.outboxAutoReplay !== false;
+    this.autoReplayOn = !this.calendarOnly && opts.outboxAutoReplay !== false;
     this.transportIsUnreachable = opts.outboxTransportIsUnreachable === true;
     this.withdrawUnsupported = opts.onWithdrawUnsupported ?? null;
     this.now = opts.now ?? (() => new Date());

@@ -41,6 +41,8 @@ describe("OHMAIL_CALENDAR", () => {
       expect(p.services.calendar).toBeUndefined();
       expect(p.buildDeps(new Request("https://api.ohmail.app/hello")).hello!.features).not.toHaveProperty("calendar");
       expect((await ask(p, "/calendar/settings")).status).toBe(404);
+      expect((await ask(p, "/calendar/sync/snapshot")).status).toBe(404);
+      expect((await ask(p, "/calendar/sync")).status).toBe(404);
     }
     expect(Object.keys((await helloOf(managed())).features)).not.toContain("calendar");
   });
@@ -51,6 +53,8 @@ describe("OHMAIL_CALENDAR", () => {
       expect(p.buildDeps(new Request("https://api.ohmail.app/hello")).hello!.features.calendar).toBe(true);
       // Mounted: refused for want of a session, not for want of a route.
       expect((await ask(p, "/calendar/settings")).status).toBe(401);
+      expect((await ask(p, "/calendar/sync/snapshot")).status).toBe(401);
+      expect((await ask(p, "/calendar/sync")).status).toBe(401);
     }
     const on = await helloOf(managed({ OHMAIL_CALENDAR: "1" }));
     const off = await helloOf(managed());

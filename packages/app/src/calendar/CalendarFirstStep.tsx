@@ -62,7 +62,7 @@ export function CalendarLanding({ plan, children }: Pick<PaneProps, "plan"> & { 
   );
 }
 
-export function CalendarFirstStep({ plan }: Pick<PaneProps, "plan">) {
+export function CalendarFirstStep({ plan, recovery }: Pick<PaneProps, "plan"> & { recovery?: ReactNode }) {
   const { commands, host, route } = useFrame();
   const setup = useSetupPort();
   const settings = useSharedCalendarSettings();
@@ -100,6 +100,7 @@ export function CalendarFirstStep({ plan }: Pick<PaneProps, "plan">) {
 
   return (
     <CalendarLanding plan={plan}>
+      {recovery}
       <Empty
         label={accounts("accounts.none")}
         act={{

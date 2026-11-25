@@ -27,8 +27,8 @@ export interface DevicesPaneParts {
   readonly useWatch?: () => ((refresh: () => void) => () => void) | undefined;
   /** The second factor's dialog, drawn while an act waits for it. */
   readonly factor: FactorSlot;
-  /** The picture of a link to scan. */
-  readonly qr: QrSlot;
+  /** The picture of a link to scan, where this host can issue pairing links. */
+  readonly qr?: QrSlot;
   readonly End?: () => ReactNode;
 }
 

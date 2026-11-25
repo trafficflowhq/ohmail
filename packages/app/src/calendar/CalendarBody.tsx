@@ -22,6 +22,7 @@ import { useNewEvent, useNewEventKey } from "./use-new-event.js";
 import { NewEvent } from "./NewEvent.js";
 import { OpenEvent } from "./OpenEvent.js";
 import { EventActionQuestion } from "./EventActionQuestion.js";
+import { RecoveredProposals } from "./RecoveredProposals.js";
 import { ProposalQuestion } from "./use-event-proposals.js";
 import { openFace } from "./canvas-gestures.js";
 import { useCalendarCanvas } from "./use-calendar-canvas.js";
@@ -49,7 +50,13 @@ export function CalendarBody(pane: PaneProps) {
         <RefusalLine>{t("unreadable")}</RefusalLine>
       </CalendarLanding>
     );
-  if (firstStep) return <CalendarFirstStep plan={pane.plan} />;
+  if (firstStep)
+    return (
+      <CalendarFirstStep
+        plan={pane.plan}
+        recovery={port.recoveredProposals && <RecoveredProposals port={port} />}
+      />
+    );
   return <CalendarOn port={port} sources={sources} create={create} {...pane} />;
 }
 function CalendarOn({
@@ -202,6 +209,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
       <CalendarFrameHead
         {...{ where, route, plan, agendaPanel, go, commands, keysHere, settings, port, monthRun, onToday }}
       />
+      {port.recoveredProposals && <RecoveredProposals port={port} />}
       <CalendarMenus
         {...{ actions, reply, zones, editNext }}
         dragging={canvas.dragging}

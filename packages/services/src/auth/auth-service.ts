@@ -53,7 +53,7 @@ import type {
   EnrollmentSessionEstablished, RegistrationResult, VerifyEmailResult,
 } from "./types.js";
 import { isUuid } from "../ids.js";
-import type { SessionScope } from "./resolve-session.js";
+import { sessionScopeOf, type SessionScope } from "./resolve-session.js";
 import {
   buildRegistrationOptions, verifyRegistration,
   buildAuthenticationOptions, verifyAssertion,
@@ -1367,7 +1367,8 @@ export class AuthService extends SessionLifecycle {
       recent: sql<boolean>`${sessions.createdAt} > now() - make_interval(days => ${REUSE_SWEEP_WINDOW_DAYS})`,
     }).from(sessions).where(and(eq(sessions.id, ctx.sessionId), eq(sessions.userId, ctx.userId))).limit(1);
     if (!row) return null;
-    return { scope: row.scope === "enrollment" ? "enrollment" : "full", createdAt: row.createdAt, recent: row.recent === true };
+    const scope = sessionScopeOf(row.scope);
+    return scope === null ? null : { scope, createdAt: row.createdAt, recent: row.recent === true };
   }
 
   /**
@@ -2510,7 +2511,7 @@ export class AuthService extends SessionLifecycle {
 
   /**
    * The one writer of a step-up RE-stamp (the mint-time writer is `establish`'s `twofaAt`).
-   * Guarded in the statement itself — `revoked_at IS NULL AND scope = 'full'` — and judged by
+   * Guarded in the statement itself for live full or calendar sessions and judged by
    * `RETURNING`: zero rows is a refusal, never a success over an unstamped session. Reached
    * only from a factor verify that has already succeeded in this same call.
    */
@@ -2524,7 +2525,7 @@ export class AuthService extends SessionLifecycle {
         eq(sessions.id, ctx.sessionId!),
         eq(sessions.userId, user.id),
         isNull(sessions.revokedAt),
-        eq(sessions.scope, "full"),
+        or(eq(sessions.scope, "full"), eq(sessions.scope, "calendar")),
       ))
       .returning({ id: sessions.id });
     if (stamped.length === 0) {

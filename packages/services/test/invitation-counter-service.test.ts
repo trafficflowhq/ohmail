@@ -71,6 +71,19 @@ it("sends only to the organizer and leaves the event, its queued writes and its 
   expect(w.box.sent).toHaveLength(1);
 });
 
+it("recovers a confirmed send under the original proposal key after the event changed", async () => {
+  const w = await world();
+  const act = { ...w.base, kind: "calendar_event_propose", ...times } as const;
+  await expect(w.send(act, "proposal-original")).resolves.toMatchObject({ status: "sent" });
+  await w.db.update(calEvents).set({ updatedAt: new Date(Date.parse(act.base) + 1000) }).where(eq(calEvents.id, act.recordId));
+  const recover = (key: string) => sendInvitationProposal(w.ctx, act, key, {
+    send: { openSendAdapter: w.openSendAdapter },
+  }, { recovering: true });
+  await expect(recover("proposal-original")).resolves.toEqual({ status: "sent", seq: null });
+  await expect(recover("proposal-new")).rejects.toMatchObject({ code: "conflict" });
+  expect(w.box.sent).toHaveLength(1);
+});
+
 it("Keep sends a decline to the matching attendee alone and preserves the event", async () => {
   const w = await world({ owned: true });
   const letter = { method: "COUNTER", uid, organizer: ME, attendees: [ORGANIZER], sequence: 4, proposal: times } as const;

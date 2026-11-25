@@ -126,14 +126,16 @@ export function withSignature<M extends { body: string; html?: string | null }>(
   m: M, sig: string | null, sigHtml?: string | null,
 ): M {
   if (sig === null) return m;
-  const tail = sigHtml !== undefined && sigHtml !== null && sigHtml.trim().length > 0
-    ? sigHtml
-    : signatureHtml(sig);
+  const marked = sigHtml !== undefined && sigHtml !== null && sigHtml.trim().length > 0;
+  const tail = marked ? sigHtml : signatureHtml(sig);
+  const rich = typeof m.html === "string" && m.html !== "";
   return {
     ...m,
     body: `${m.body}\n\n${sig}`,
-    // `null` or "" (no formatting) stays as given: appended to, it became "null<p>…" or an html
-    // part holding only the signature, and the server derives the plain text from the html.
-    ...(typeof m.html === "string" && m.html !== "" ? { html: m.html + tail } : {}),
+    // A rich body gains the markup. A plain body stays plain unless the signature itself is
+    // formatted: then the words are escaped into markup with their line breaks and spaces, so
+    // the letter goes out formatted as the block showed it. Never appended to `null` or "":
+    // that became "null<p>…", or an html part holding only the signature.
+    ...(rich ? { html: m.html + tail } : marked ? { html: signatureHtml(m.body) + tail } : {}),
   };
 }

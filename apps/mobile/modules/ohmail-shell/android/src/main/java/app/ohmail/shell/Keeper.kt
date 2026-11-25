@@ -6,6 +6,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import org.json.JSONObject
 
 /**
  * THE KEEPER. A person's unsent words and intent, and the queue's rows, kept natively: one SQLite
@@ -32,6 +33,7 @@ class Keeper(private val context: Context) {
   data class Row(val type: String, val id: String, val json: String)
 
   private val io: ExecutorService = Executors.newSingleThreadExecutor { r -> Thread(r, "shell keeper") }
+  private val calendarOnly = context.packageName in setOf("app.ohcal", "app.ohcal.preview")
   private val open = HashMap<String, SQLiteDatabase>()
   /** Refused names the scope's file could not take, with their digests: this process's alone. */
   private val unwritten = HashMap<String, LinkedHashMap<String, String?>>()
@@ -64,6 +66,17 @@ class Keeper(private val context: Context) {
       d.execSQL("CREATE TABLE IF NOT EXISTS words (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")
       d.execSQL("CREATE TABLE IF NOT EXISTS rows (type TEXT NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY (type, id))")
       d.execSQL("CREATE TABLE IF NOT EXISTS refused (key TEXT PRIMARY KEY NOT NULL, digest TEXT)")
+      if (calendarOnly) {
+        val secure = d.rawQuery("PRAGMA secure_delete = ON", null).use { it.moveToFirst() && it.getInt(0) == 1 }
+        if (!secure) {
+          d.close()
+          return null
+        }
+        d.execSQL("CREATE TABLE IF NOT EXISTS calendar_import (done INTEGER PRIMARY KEY)")
+        d.execSQL("DELETE FROM words")
+        d.execSQL("DELETE FROM refused")
+        d.execSQL("DELETE FROM rows WHERE type NOT IN ('calendar_outbox', 'calendar_settlement')")
+      }
       open[scope] = d
       d
     } catch (e: Exception) {
@@ -71,7 +84,7 @@ class Keeper(private val context: Context) {
     }
   }
 
-  fun isKeptFamily(key: String): Boolean = key.length <= KEY_MAX && families.any { key.startsWith(it) }
+  fun isKeptFamily(key: String): Boolean = !calendarOnly && key.length <= KEY_MAX && families.any { key.startsWith(it) }
 
   /**
    * Keep one word, or remove it (`value` null). False: refused or not durable; the page says so, and the word is
@@ -120,6 +133,7 @@ class Keeper(private val context: Context) {
    * (null: a removal). The file's names, and over them those it could not take in this process.
    */
   fun refused(scope: String): List<Pair<String, String?>> {
+    if (calendarOnly) return emptyList()
     val out = LinkedHashMap<String, String?>()
     db(scope)?.let { d ->
       try {
@@ -154,6 +168,7 @@ class Keeper(private val context: Context) {
   }
 
   fun kept(scope: String): List<Pair<String, String>>? {
+    if (calendarOnly) return emptyList()
     val d = db(scope) ?: return null
     return try {
       d.rawQuery("SELECT key, value FROM words ORDER BY key", null).use { c ->
@@ -167,15 +182,25 @@ class Keeper(private val context: Context) {
   }
 
   /** The queue's rows: every put and delete in one transaction, or none of them. */
-  fun keepRows(scope: String, puts: List<Row>, deletes: List<Pair<String, String>>): Boolean {
-    if (puts.any { it.type !in CARRIED || it.id.length > ID_MAX || it.json.length > ROW_MAX }) return false
-    if (deletes.any { it.first !in CARRIED }) return false
+  private val calendarFences = mutableSetOf<String>()
+  private val calendarErasureFences = mutableSetOf<String>()
+
+  fun keepRows(scope: String, puts: List<Row>, deletes: List<Pair<String, String>>, legacy: Boolean = false): Boolean {
+    if (scope in calendarFences || scope in calendarErasureFences) return false
+    if (legacy && (!calendarOnly || deletes.isNotEmpty())) return false
+    val carried = if (calendarOnly) CALENDAR_CARRIED else CARRIED
+    if (puts.any { it.type !in carried || it.id.length > ID_MAX || it.json.length > ROW_MAX }) return false
+    if (deletes.any { it.first !in carried }) return false
+    if (calendarOnly && puts.any { !calendarRow(it) }) return false
     val d = db(scope) ?: return false
     return try {
       d.beginTransaction()
       try {
+        if (legacy && d.rawQuery("SELECT done FROM calendar_import", null).use { it.moveToFirst() }) return true
         for ((type, id) in deletes) d.execSQL("DELETE FROM rows WHERE type = ? AND id = ?", arrayOf(type, id))
-        for (r in puts) d.execSQL("INSERT OR REPLACE INTO rows (type, id, json) VALUES (?, ?, ?)", arrayOf(r.type, r.id, r.json))
+        val insert = if (legacy) "INSERT OR IGNORE" else "INSERT OR REPLACE"
+        for (r in puts) d.execSQL("$insert INTO rows (type, id, json) VALUES (?, ?, ?)", arrayOf(r.type, r.id, r.json))
+        if (legacy) d.execSQL("INSERT INTO calendar_import VALUES (1)")
         val count = d.rawQuery("SELECT count(*) FROM rows", null).use { if (it.moveToFirst()) it.getLong(0) else 0L }
         if (count > ROWS_MAX) return false
         d.setTransactionSuccessful()
@@ -188,7 +213,25 @@ class Keeper(private val context: Context) {
     }
   }
 
+  private fun calendarRow(row: Row): Boolean = try {
+    val record = JSONObject(row.json)
+    val entity = record.getJSONObject("entity")
+    record.getString("type") == row.type && record.getString("id") == row.id && record.getInt("seq") == 0 &&
+      if (row.type == "calendar_outbox") {
+        val act = entity.getJSONObject("act")
+        when (val kind = act.getString("kind")) {
+          "calendar_event_propose" -> entity.get("needsReview") is Boolean && act.get("recordId") is String &&
+            act.get("base") is String && act.get("occurrence") is String &&
+            act.get("start") is JSONObject && act.get("end") is JSONObject
+          else -> kind in CALENDAR_ACTS
+        }
+      } else entity.get("expiresAt") is Number
+  } catch (_: Exception) { false }
+
+  fun prepareCalendar(): Boolean = calendarOnly && scopes().all { it in calendarErasureFences || db(it) != null }
+
   fun keptRows(scope: String): List<Row>? {
+    if (scope in calendarFences || scope in calendarErasureFences) return null
     val d = db(scope) ?: return null
     return try {
       d.rawQuery("SELECT type, id, json FROM rows ORDER BY type, id", null).use { c ->
@@ -207,9 +250,42 @@ class Keeper(private val context: Context) {
       f.name.takeIf { it.startsWith(FILE_PREFIX) && it.endsWith(".db") }?.removePrefix(FILE_PREFIX)?.removeSuffix(".db")
     }?.filter { SCOPE.matches(it) }?.sorted() ?: emptyList()
 
+  private fun calendarQueueStatus(scope: String): String {
+    if (!calendarOnly) return "unknown"
+    val d = db(scope) ?: return "unknown"
+    return try {
+      d.rawQuery("SELECT 1 FROM rows WHERE type = 'calendar_outbox' LIMIT 1", null).use {
+        if (it.moveToFirst()) "pending" else "empty"
+      }
+    } catch (_: Exception) {
+      "unknown"
+    }
+  }
+
+  fun fenceCalendarWipe(scope: String): String {
+    if (scope in calendarFences || scope in calendarErasureFences) return "unknown"
+    val status = calendarQueueStatus(scope)
+    if (status == "empty") calendarFences.add(scope)
+    return status
+  }
+
+  fun releaseCalendarWipe(scope: String) { calendarFences.remove(scope) }
+  fun releaseCalendarErasure(scope: String) { calendarErasureFences.remove(scope) }
+
   /** Remove one scope's keeper and read back that none of its files is left. */
   fun forget(scope: String): Boolean {
-    if (!SCOPE.matches(scope)) return false
+    if (!SCOPE.matches(scope) || scope in calendarErasureFences) return false
+    if (calendarOnly && calendarQueueStatus(scope) != "empty") return false
+    return removeFiles(scope)
+  }
+
+  fun erase(scope: String): Boolean {
+    if (!calendarOnly || !SCOPE.matches(scope)) return false
+    calendarErasureFences.add(scope)
+    return removeFiles(scope)
+  }
+
+  private fun removeFiles(scope: String): Boolean {
     open.remove(scope)?.let { runCatching { it.close() } }
     unwritten.remove(scope)
     val base = fileOf(scope)
@@ -249,6 +325,9 @@ class Keeper(private val context: Context) {
       return sha.digest().joinToString("") { "%02x".format(it) }
     }
     /** The queue's carried row types: the client engine's `isCarriedLocalType`. */
+    private val CALENDAR_CARRIED = setOf("calendar_outbox", "calendar_settlement")
+    private val CALENDAR_ACTS = setOf("calendar_event_create", "calendar_event_update", "calendar_event_delete",
+      "calendar_event_move", "calendar_event_answer", "calendar_write_retry", "calendar_write_dismiss")
     val CARRIED = setOf("outbox_entry", "outbox_abandoned", "routing_journal", "compose_letter", "compose_file")
     val SCOPE = Regex("^p[0-9a-f]{32}$")
     private val SUFFIXES = listOf("", "-journal", "-wal", "-shm")

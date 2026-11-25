@@ -651,6 +651,9 @@ export const DE: Deck = {
     + "entfernt. Die Mails auf deinem Mailserver sind unberührt.",
   pairRedeemUnreachable: "dieser Server war nicht erreichbar, um die Kopplung einzulösen",
   pairCodeRejected: "dieser Kopplungscode wurde nicht angenommen — erzeuge einen frischen und scanne erneut",
+  calendarQueuePending: "Synchronisiere deine Kalenderänderungen, bevor du diesen Server entfernst.",
+  calendarQueueUnknown: "Das Handy konnte nicht nach ausstehenden Kalenderänderungen suchen. Versuche erneut, diesen Server zu entfernen.",
+  calendarServerUnavailable: "Dieser Server unterstützt die Kalendersynchronisierung für ohcal nicht.",
   pairNoAccountName:
     "gekoppelt, aber der Server konnte den Account nicht benennen, den diese Kopplung öffnet — "
     + "erzeuge einen frischen Code und koppele erneut, sobald es Mails hat",
@@ -934,6 +937,8 @@ export const DE: Deck = {
         return "auf diesem Handy ist zu wenig Platz frei, um vor dem Aktualisieren eine Kopie des Postfachs zu behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert";
       case "store_copy_failed":
         return "dieses Handy konnte vor dem Aktualisieren keine geprüfte Kopie des Postfachs behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert";
+      case "calendar_queue_pending":
+        return "auf diesem Handy liegen noch nicht synchronisierte Kalenderänderungen";
       case "shell_keeper_not_deleted":
         return "dieses Handy konnte die ungesendeten Briefe und vorgemerkten Änderungen, die es für dieses Postfach aufbewahrt hat, nicht löschen";
       case "shell_view_not_cleared":

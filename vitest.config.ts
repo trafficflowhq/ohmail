@@ -106,6 +106,7 @@ export default defineConfig({
       { find: "@trafficflow/core/destinations", replacement: r("./packages/core/src/destinations.ts") },
       // The client mirrors' shared staleness policy — dependency-free source, imported by the
       // engine AND by the sidecar's mirror driver so the two cannot drift.
+      { find: "@trafficflow/core/calendar-privacy", replacement: r("./packages/core/src/calendar-privacy.ts") },
       { find: "@trafficflow/core/drain-policy", replacement: r("./packages/core/src/drain-policy.ts") },
       // `Re: ` exactly once — dependency-free source, imported by the browser/phone engine (which
       // cannot load this package's barrel) and reached through the `mail` barrel by the away

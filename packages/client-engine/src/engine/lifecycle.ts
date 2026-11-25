@@ -79,7 +79,7 @@ export abstract class EngineLifecycle extends EngineTrash {
         // render is continuous with the killed session. See {@link OhmailEngine.restoreOutbox}.
         this.storeLoaded = true;
         this.restoreSentFolders();
-        this.restoreOutbox();
+        if (!this.calendarOnly) this.restoreOutbox();
         // The bodies the load restored are bodies this session holds, and the bound is theirs to
         // pay too — count them, then trim ONCE, before anybody is told. See {@link
         // OhmailEngine.countRestoredBodies}.
@@ -179,6 +179,7 @@ export abstract class EngineLifecycle extends EngineTrash {
   }
 
   async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<PullRing | null> {
+    if (this.calendarOnly) return null;
     const ring = this.adapter.requestPull?.bind(this.adapter);
     if (!ring) return null;
     try {
@@ -199,7 +200,7 @@ export abstract class EngineLifecycle extends EngineTrash {
    * whose bridge adapter has a doorbell but no Cloud base (a missing button on both desktop doors).
    */
   pullAvailable(): boolean {
-    return typeof this.adapter.requestPull === "function";
+    return !this.calendarOnly && typeof this.adapter.requestPull === "function";
   }
 
   /**
@@ -788,9 +789,9 @@ export abstract class EngineLifecycle extends EngineTrash {
     // not read: both are snapshot reads over a mirror that IS the refused snapshot, and the drain
     // stamp they key on is never written while every drain fails. The walk stays owed (the latch).
     const refused = this.snapshotCursorRefusals > 0;
-    if (!refused) await this.freshenStaleResume();
+    if (!this.calendarOnly && !refused) await this.freshenStaleResume();
     this.policyWalkFailed = refused;
-    if (!refused) await this.rehydrateForPolicy();
+    if (!this.calendarOnly && !refused) await this.rehydrateForPolicy();
     for (;;) {
       // COLD MIRROR + A SNAPSHOT ROUTE ⇒ TAKE THE SNAPSHOT INSTEAD OF REPLAYING THE LOG.
       //
@@ -808,6 +809,7 @@ export abstract class EngineLifecycle extends EngineTrash {
       // TRUE WHEN THIS ITERATION'S SNAPSHOT COMMITTED THE CURSOR THE PULL BELOW PRESENTS — the
       // one cursor a door has no reason to refuse. See the 410 arm.
       const snapshotIssued = this.store.getCursor() === "0" && this.snapshotFn !== null
+        && (!this.calendarOnly || this.store.getMeta(LAST_DRAIN_AT_META) === undefined)
         && await this.runSnapshot();
 
       // Rules before mail, on the degraded bootstrap. The snapshot path delivers the whole rule set in page 1 ("a
@@ -829,7 +831,7 @@ export abstract class EngineLifecycle extends EngineTrash {
         // (the horizon moves), and the recovery is the same one — reset, re-enter as a bootstrap.
         // Not after a refused snapshot cursor: that mirror is a COMPLETE snapshot, rules and all,
         // which only reads as an interrupted bootstrap because no drain has settled since.
-        if (this.snapshotFn && !rulesFirstDone && !refused
+        if (!this.calendarOnly && this.snapshotFn && !rulesFirstDone && !refused
             && (resumedIncomplete || (this.store.getCursor() === "0" && this.snapshotUnavailable))) {
           rulesFirstDone = true;
           await this.drainRulesFirst();
@@ -844,8 +846,10 @@ export abstract class EngineLifecycle extends EngineTrash {
           since: this.store.getCursor(),
           ...(backlogLimit !== undefined ? { limit: backlogLimit } : {}),
           ...(this.types ? { types: this.types } : {}),
+          ...(this.calendarOnly ? { calendarOnly: true } : {}),
         }));
       } catch (err) {
+        this.noteCalendarAvailability(err);
         if (err instanceof CursorExpiredError) {
           const at = this.now().getTime();
           if (snapshotIssued) {
@@ -915,6 +919,8 @@ export abstract class EngineLifecycle extends EngineTrash {
       const highBefore = this.store.maxSeq();
       pagesThisDrain += 1;
       const flat = flattenResponse(resp);
+      this.checkCalendarChanges(flat);
+      if (this.calendarOnly) this.calendarUnavailable = false;
       // Before the rows, which tombstone the mailbox the receipt names.
       await this.noteRemovalOwesRefill(flat);
       this.dropRemovedSentFolders(flat);
@@ -942,7 +948,7 @@ export abstract class EngineLifecycle extends EngineTrash {
       this.caughtUpInOnePage = pagesThisDrain <= 1;
       // THIS DEVICE'S FIRST COMPLETED SYNC, once: the reading streams' anchor before any visit. The
       // last page has landed; written before the settle's pass, so an idle next drain derives nothing.
-      if (this.store.get("view_meta", FEED_SINCE_ID) === undefined) {
+      if (!this.calendarOnly && this.store.get("view_meta", FEED_SINCE_ID) === undefined) {
         await this.store.putLocal("view_meta", FEED_SINCE_ID, { at: this.now().toISOString() } satisfies FeedSinceMeta);
       }
 

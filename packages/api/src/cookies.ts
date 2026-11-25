@@ -51,7 +51,7 @@ export const RESUME_COOKIE = "tf_resume";
  */
 const resumeMarkerFor = hashToken;
 
-const RESUME_MARKER = /^[A-Za-z0-9_-]{43}$/;
+const RESUME_MARKER = /^(?:cal\.)?[A-Za-z0-9_-]{43}$/;
 
 /**
  * The marker a jar presented, or `null`: a legacy `1` or anything not a digest names no family. A

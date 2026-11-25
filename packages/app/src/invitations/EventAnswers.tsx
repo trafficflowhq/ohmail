@@ -16,9 +16,12 @@ import { CalendarRecordScope } from "../calendar/EventActionQuestion.js";
 import type { AnswerSwitchProps } from "@ohmail/ui/calendar";
 import { AnswerChoices } from "./AnswerChoices.js";
 
+const NO_OWN_ADDRESSES: ReadonlySet<string> = new Set();
+
 export function useInvitationAnswer(port: CalendarPort | typeof NONE) {
   const { host } = useFrame();
   const addresses = useCalendarOwnAddresses();
+  const calendarOnly = host.capabilities.products === "calendar";
   const own = useMemo(() => addresses && new Set(addresses.map((a) => a.trim().toLowerCase())), [addresses]);
   const report = useReport();
   const e = useText("event");
@@ -32,9 +35,14 @@ export function useInvitationAnswer(port: CalendarPort | typeof NONE) {
   );
 
   const invitation = (recordId: string) => {
-    if (port === NONE || own === null) return null;
+    if (port === NONE || (own === null && !calendarOnly)) return null;
     const record = port.events().find((item) => item.record.id === recordId)?.record;
-    if (!record || record.heldBack || record.status === "cancelled" || !invitedByOthers(record, own))
+    if (
+      !record ||
+      record.heldBack ||
+      record.status === "cancelled" ||
+      !invitedByOthers(record, own ?? NO_OWN_ADDRESSES)
+    )
       return null;
     const calendar = host.engine.store.get<CalendarRecord>("calendar", record.calendarId);
     if (!calendar?.shown) return null;

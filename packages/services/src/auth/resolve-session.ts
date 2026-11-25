@@ -1,6 +1,6 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { assertBinding, bindDb, sessions, users } from "@trafficflow/db";
-import { hashToken } from "./crypto.js";
+import { CALENDAR_TOKEN_PREFIX, hashToken } from "./crypto.js";
 import type { ContextDb, UnboundDb } from "../context.js";
 
 /**
@@ -10,7 +10,11 @@ import type { ContextDb, UnboundDb } from "../context.js";
  * reach ONLY the routes flagged `enrollmentOk`, and `withSession` rejects it
  * everywhere else.
  */
-export type SessionScope = "full" | "enrollment";
+export type SessionScope = "full" | "enrollment" | "calendar";
+
+export function sessionScopeOf(value: string): SessionScope | null {
+  return value === "full" || value === "enrollment" || value === "calendar" ? value : null;
+}
 
 /**
  * The session identity `packages/api`'s `withSession` attaches to a request. The
@@ -61,13 +65,15 @@ export async function resolveSession(db: UnboundDb, token: string, now: Date): P
     ))
     .limit(1);
   if (!row) return null;
+  const scope = sessionScopeOf(row.scope);
+  if (scope === null || (scope === "calendar") !== digest.startsWith(CALENDAR_TOKEN_PREFIX)) return null;
   return {
     accountId: row.accountId,
     userId: row.userId,
     sessionId: row.id,
     familyId: row.familyId,
     lastTwofaAt: row.lastTwofaAt,
-    scope: row.scope === "enrollment" ? "enrollment" : "full",
+    scope,
     lastSyncedAt: row.lastSyncedAt,
   };
 }

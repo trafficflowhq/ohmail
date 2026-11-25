@@ -5627,35 +5627,6 @@ input.reply-subject-input { /* by element: this width and type outrank the line 
 }
 .sig-settings .lab b { display: block; font-size:calc(13px + var(--type-up)); font-weight: 600; }
 .sig-settings .lab span { display: block; font-size:calc(11.5px + var(--type-up)); color: var(--ink2); line-height: 1.5; }
-/* The compose editor, mounted in a settings pane (0.16, item 11) — so the treatment `TextField`
-   gave this field does NOT reach it: the box was `.tf`'s, and this host carries none of it. The
-   four declarations below are the editor's own and are restored for that reason. THE
-   SETTINGS-FIELD EDGE IS NOT DRAWN HERE and is a designer question at this seam
-   (`.sig-settings-editor` / `.sig-preview-text` / `.sig-rich`) — named rather than claimed. */
-.sig-settings-editor {
-  display: block;
-  width: 100%;
-  font-size:calc(13px + var(--type-up));
-  line-height: 1.45;
-  /* The same 4-column tab stops the compose block and the markup use — one width everywhere. */
-  -moz-tab-size: 4;
-  tab-size: 4;
-}
-/* The preview is the same editor read-only, so the line breaks are the DOCUMENT's paragraphs
-   and `<br>`s — `white-space: pre-wrap` came off with the textarea, where it was what made a
-   stored newline visible. Left on a wrapper of real elements it would render the whitespace
-   BETWEEN tags as well, which is not in the signature. `tab-size` stays: `signature.ts` names
-   this surface as one of the three that must agree on the stops. */
-.sig-preview-text {
-  font-size:calc(13px + var(--type-up));
-  line-height: 1.45;
-  color: var(--ink2);
-  -moz-tab-size: 4;
-  tab-size: 4;
-}
-.sig-preview-text .rte-body {
-  padding: 0;
-}
 .sig-settings-actions {
   display: flex;
   gap: 8px;

@@ -11,7 +11,7 @@ export const REFUSAL_KEYS = [
   "baseAddressMissing", "baseApiMixed", "baseApiNotFound", "baseApiStopped", "baseApiTimeout", "baseApiUnreachable",
   "baseCleartext", "baseNeedsTheCode", "baseNotAnAddress", "bootAccountMismatch", "bootApiBaseOffOrigin",
   "bootBadApiBase", "bootBadOrigin", "bootLocalEngineOffOrigin", "bootMirrorFailed", "bootNeedsCredential",
-  "calendarCopyRemains",
+  "calendarCopyRemains", "calendarQueuePending", "calendarQueueUnknown", "calendarServerUnavailable",
   "composeEarlierWent", "composeKept", "composeKeptChangedElsewhere", "composeKeptHere", "composeKeptQueued",
   "composeKeptQueuedHere", "composeKeptQueuedWithoutFiles", "composeKeptWithoutFiles", "composeNeedContent",
   "composeNeedRecipient", "composeNoMailbox", "composeSent", "connectSuperseded", "deleteFailed", "deleteNoTrash",

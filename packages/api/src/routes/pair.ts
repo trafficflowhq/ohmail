@@ -173,25 +173,30 @@ export const pairRedeemRoutes: Route[] = [
         if (b.grant === "app-handoff") {
           // A phone app's handoff to its sibling: the code and the verifier of the challenge it was minted for, and
           // the phone's kind; the same envelope, no cookie, and the same cross-account refusal as a scanned code's.
-          const { tokens } = await redeemAppHandoff(ctx, sessionMinter(deps), {
+          const { tokens, calendarOnly } = await redeemAppHandoff(ctx, sessionMinter(deps), {
             token,
             verifier: typeof b.verifier === "string" ? b.verifier : "",
             kind: b.kind as PairedDeviceKind,
           });
-          return json({ grant: "app-handoff", tokens }, 200);
+          return json({ grant: "app-handoff", tokens, ...(calendarOnly ? { scope: "calendar" } : {}) }, 200);
         }
-        if (b.grant === "device-pair") {
+        if (b.grant === "device-pair" || b.grant === "calendar-pair") {
+          const calendarOnly = b.grant === "calendar-pair";
+          if (calendarOnly && !deps.services?.calendar) {
+            return errorResponse("not_found", 404, "calendar pairing is unavailable");
+          }
           // `kind` is the redeemer's own declaration — "web" when absent, whitelist-gated in
           // the service BEFORE the burn (the same wire-input division as the mint's `grant`).
           // `previousSession`: the install's previous family on this host, honoured for the same kind only.
           const minting = { ...ctx, supersedesInstall: presentedResumeMarker(b.previousSession) };
           const { tokens } = await redeemDevicePair(minting, sessionMinter(deps), {
             token,
+            calendarOnly,
             ...(b.kind !== undefined ? { kind: b.kind as PairedDeviceKind } : {}),
           });
           // The bearer pair and nothing else — `POST /auth/desktop-claim`'s shape. No cookie:
           // a token shown on a screen must not be spendable into a browser session.
-          return json({ grant: "device-pair", tokens }, 200);
+          return json({ grant: b.grant, tokens, ...(calendarOnly ? { scope: "calendar" } : {}) }, 200);
         }
         return errorResponse("validation_failed", 400, 'grant must be "invite" or "device-pair"');
       } catch (e) {

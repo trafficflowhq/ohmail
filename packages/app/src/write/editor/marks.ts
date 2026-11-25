@@ -82,7 +82,25 @@ export function nextMarks(state: EditorState, typed?: string): readonly Mark[] {
 
 /** The link the caret stands in or at the end of — what ⌘K edits and what Remove removes. */
 export function linkAtCaret(state: EditorState): Mark | null {
+  const { $from, to, empty } = state.selection;
+  if (!empty) {
+    const link = $from.nodeAfter?.marks.find((mark) => mark.type.name === "link");
+    const range = link && getMarkRange($from, link.type, link.attrs);
+    return range && range.to >= to ? link : null;
+  }
   return nextMarks(state).find((m) => m.type.name === "link") ?? null;
+}
+
+/**
+ * Where {@link linkAtCaret}'s link lies — the range ⌘K, Apply and Remove act on. At a caret where
+ * two links meet, the link BEFORE the caret is the one (as it is for typing: `link-end-letter`),
+ * so the range is read from the character before; elsewhere from the selection's start.
+ */
+export function linkRangeAtCaret(state: EditorState, link: Mark): { from: number; to: number } | null {
+  const { $from, empty } = state.selection;
+  const before = empty && !!$from.nodeBefore && link.isInSet($from.nodeBefore.marks);
+  const $at = before ? state.doc.resolve($from.pos - 1) : $from;
+  return getMarkRange($at, link.type, link.attrs) ?? null;
 }
 
 const sameMarks = (a: readonly Mark[], b: readonly Mark[]): boolean =>

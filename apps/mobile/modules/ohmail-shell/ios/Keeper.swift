@@ -15,12 +15,18 @@ final class Keeper {
 
   static let shared = Keeper()
   private let queue = DispatchQueue(label: "shell keeper")
+  private let calendarOnly = ["app.ohcal", "app.ohcal.preview"].contains(Bundle.main.bundleIdentifier ?? "")
   private var open: [String: OpaquePointer] = [:]
   /** Refused names the scope's file could not take, with their digests (nil: a removal): this process's alone. */
   private var unwritten: [String: [String: String?]] = [:]
   var families: [String] = []
 
   static let filePrefix = "ohmail-keeper-"
+  private static let calendarCarried: Set<String> = ["calendar_outbox", "calendar_settlement"]
+  private static let calendarActs: Set<String> = [
+    "calendar_event_create", "calendar_event_update", "calendar_event_delete", "calendar_event_move",
+    "calendar_event_answer", "calendar_write_retry", "calendar_write_dismiss",
+  ]
   static let carried: Set<String> = ["outbox_entry", "outbox_abandoned", "routing_journal", "compose_letter", "compose_file"]
   static let keyMax = 512, valueMax = 10 * 1024 * 1024, wordsMax = 32 * 1024 * 1024
   static let idMax = 256, rowMax = 64 * 1024 * 1024, rowsMax = 10_000
@@ -53,11 +59,22 @@ final class Keeper {
     sqlite3_exec(h, "CREATE TABLE IF NOT EXISTS words (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)", nil, nil, nil)
     sqlite3_exec(h, "CREATE TABLE IF NOT EXISTS rows (type TEXT NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, PRIMARY KEY (type, id))", nil, nil, nil)
     sqlite3_exec(h, "CREATE TABLE IF NOT EXISTS refused (key TEXT PRIMARY KEY NOT NULL, digest TEXT)", nil, nil, nil)
+    if calendarOnly {
+      sqlite3_exec(h, "PRAGMA secure_delete = ON", nil, nil, nil)
+      guard intOf(h, "PRAGMA secure_delete") == 1,
+            exec(h, "CREATE TABLE IF NOT EXISTS calendar_import (done INTEGER PRIMARY KEY)", []),
+            exec(h, "DELETE FROM words", []),
+            exec(h, "DELETE FROM refused", []),
+            exec(h, "DELETE FROM rows WHERE type NOT IN ('calendar_outbox', 'calendar_settlement')", []) else {
+        sqlite3_close(h)
+        return nil
+      }
+    }
     open[scope] = h
     return h
   }
 
-  func isKeptFamily(_ key: String) -> Bool { key.count <= Keeper.keyMax && families.contains { key.hasPrefix($0) } }
+  func isKeptFamily(_ key: String) -> Bool { !calendarOnly && key.count <= Keeper.keyMax && families.contains { key.hasPrefix($0) } }
 
   /** False: refused, and the word is remembered as refused. Kept: a refusal of it remembered earlier goes in the same commit. */
   func keep(_ scope: String, _ key: String, _ value: String?) -> Bool {
@@ -91,6 +108,7 @@ final class Keeper {
 
   /** The scope's refused words, not kept since: each name with the digest of what was asked (nil: a removal). */
   func refused(_ scope: String) -> [(String, String?)] {
+    if calendarOnly { return [] }
     var names: [(String, String?)] = []
     if let h = db(scope), let st = prepare(h, "SELECT key, digest FROM refused ORDER BY key", []) {
       defer { sqlite3_finalize(st) }
@@ -139,24 +157,59 @@ final class Keeper {
   }
 
   func kept(_ scope: String) -> [(String, String)]? {
+    if calendarOnly { return [] }
     guard let h = db(scope) else { return nil }
     return rowsOf(h, "SELECT key, value FROM words ORDER BY key", []).map { ($0[0], $0[1]) }
   }
 
-  func keepRows(_ scope: String, _ puts: [Row], _ deletes: [(String, String)]) -> Bool {
-    guard puts.allSatisfy({ Keeper.carried.contains($0.type) && $0.id.count <= Keeper.idMax && $0.json.utf16.count <= Keeper.rowMax }),
-          deletes.allSatisfy({ Keeper.carried.contains($0.0) }), let h = db(scope) else { return false }
+  private var calendarFences = Set<String>()
+  private var calendarErasureFences = Set<String>()
+
+  func keepRows(_ scope: String, _ puts: [Row], _ deletes: [(String, String)], legacy: Bool = false) -> Bool {
+    if calendarFences.contains(scope) || calendarErasureFences.contains(scope) { return false }
+    if legacy && (!calendarOnly || !deletes.isEmpty) { return false }
+    let carried = calendarOnly ? Keeper.calendarCarried : Keeper.carried
+    guard puts.allSatisfy({ carried.contains($0.type) && $0.id.count <= Keeper.idMax && $0.json.utf16.count <= Keeper.rowMax }),
+          deletes.allSatisfy({ carried.contains($0.0) }),
+          !calendarOnly || puts.allSatisfy(calendarRow), let h = db(scope) else { return false }
     guard sqlite3_exec(h, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { return false }
+    if legacy && intOf(h, "SELECT count(*) FROM calendar_import") > 0 {
+      sqlite3_exec(h, "ROLLBACK", nil, nil, nil)
+      return true
+    }
     var ok = true
     for (type, id) in deletes where ok { ok = exec(h, "DELETE FROM rows WHERE type = ? AND id = ?", [type, id]) }
-    for r in puts where ok { ok = exec(h, "INSERT OR REPLACE INTO rows (type, id, json) VALUES (?, ?, ?)", [r.type, r.id, r.json]) }
+    let insert = legacy ? "INSERT OR IGNORE" : "INSERT OR REPLACE"
+    for r in puts where ok { ok = exec(h, "\(insert) INTO rows (type, id, json) VALUES (?, ?, ?)", [r.type, r.id, r.json]) }
+    if legacy && ok { ok = exec(h, "INSERT INTO calendar_import VALUES (1)", []) }
     if ok { ok = intOf(h, "SELECT count(*) FROM rows") <= Keeper.rowsMax }
-    sqlite3_exec(h, ok ? "COMMIT" : "ROLLBACK", nil, nil, nil)
+    let ended = sqlite3_exec(h, ok ? "COMMIT" : "ROLLBACK", nil, nil, nil)
+    if calendarOnly && ended != SQLITE_OK {
+      sqlite3_exec(h, "ROLLBACK", nil, nil, nil)
+      return false
+    }
     return ok
   }
 
+  private func calendarRow(_ row: Row) -> Bool {
+    guard let record = (try? JSONSerialization.jsonObject(with: Data(row.json.utf8))) as? [String: Any],
+          record["type"] as? String == row.type, record["id"] as? String == row.id, record["seq"] as? Int == 0,
+          let entity = record["entity"] as? [String: Any] else { return false }
+    if row.type == "calendar_outbox" {
+      guard let act = entity["act"] as? [String: Any], let kind = act["kind"] as? String else { return false }
+      if kind == "calendar_event_propose" {
+        return entity["needsReview"] is NSNumber && act["recordId"] is String && act["base"] is String &&
+          act["occurrence"] is String && ["start", "end"].allSatisfy { act[$0] is [String: Any] }
+      }
+      return Keeper.calendarActs.contains(kind)
+    }
+    return entity["expiresAt"] is NSNumber
+  }
+
+  func prepareCalendar() -> Bool { calendarOnly && scopes().allSatisfy { calendarErasureFences.contains($0) || db($0) != nil } }
+
   func keptRows(_ scope: String) -> [Row]? {
-    guard let h = db(scope) else { return nil }
+    guard !calendarFences.contains(scope), !calendarErasureFences.contains(scope), let h = db(scope) else { return nil }
     return rowsOf(h, "SELECT type, id, json FROM rows ORDER BY type, id", []).map { Row(type: $0[0], id: $0[1], json: $0[2]) }
   }
 
@@ -169,8 +222,41 @@ final class Keeper {
     }.sorted()
   }
 
+  private func calendarQueueStatus(_ scope: String) -> String {
+    guard calendarOnly, let h = db(scope),
+          let statement = prepare(h, "SELECT 1 FROM rows WHERE type = 'calendar_outbox' LIMIT 1", [])
+    else { return "unknown" }
+    defer { sqlite3_finalize(statement) }
+    switch sqlite3_step(statement) {
+    case SQLITE_DONE: return "empty"
+    case SQLITE_ROW: return "pending"
+    default: return "unknown"
+    }
+  }
+
+  func fenceCalendarWipe(_ scope: String) -> String {
+    guard !calendarFences.contains(scope), !calendarErasureFences.contains(scope) else { return "unknown" }
+    let status = calendarQueueStatus(scope)
+    if status == "empty" { calendarFences.insert(scope) }
+    return status
+  }
+
+  func releaseCalendarWipe(_ scope: String) { calendarFences.remove(scope) }
+  func releaseCalendarErasure(_ scope: String) { calendarErasureFences.remove(scope) }
+
   func forget(_ scope: String) -> Bool {
-    guard Keeper.isScope(scope) else { return false }
+    guard Keeper.isScope(scope), !calendarErasureFences.contains(scope) else { return false }
+    if calendarOnly && calendarQueueStatus(scope) != "empty" { return false }
+    return removeFiles(scope)
+  }
+
+  func erase(_ scope: String) -> Bool {
+    guard calendarOnly, Keeper.isScope(scope) else { return false }
+    calendarErasureFences.insert(scope)
+    return removeFiles(scope)
+  }
+
+  private func removeFiles(_ scope: String) -> Bool {
     if let h = open.removeValue(forKey: scope) { sqlite3_close(h) }
     unwritten[scope] = nil
     let base = fileOf(scope).path

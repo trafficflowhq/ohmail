@@ -83,6 +83,9 @@
       "undo": "Undo"
     },
     "proposal": {
+      "recovered": "Unsent time proposals",
+      "sendRecovered": "Send proposal",
+      "discardRecovered": "Discard proposal",
       "keepQuestion": "Tell {name} the time stays?",
       "keepConfirm": "Confirm",
       "action": "Propose a new time",

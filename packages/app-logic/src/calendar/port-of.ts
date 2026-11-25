@@ -122,6 +122,7 @@ export function calendarPortOf(parts: PortParts) {
           pendingProposals: () => queue.pendingProposals(),
         }
       : {}),
+    ...proposalRecovery(queue, transport),
     activate() {
       reporting = true;
       const stop = queue.activate();
@@ -290,6 +291,15 @@ function draftReportsOf(
   };
 }
 
+function proposalRecovery(queue: CalendarWriteQueue, transport: CalendarWriteTransport) {
+  return transport.recoverProposal
+    ? {
+        recoveredProposals: () => queue.recoveredProposals(),
+        reviewProposal: (key: string, send: boolean) => queue.reviewProposal(key, send),
+      }
+    : {};
+}
+
 function calendarWriteTransport(
   transport: CalendarWriteTransport,
   verdicts: Map<string, CalendarVerdict>,
@@ -323,6 +333,7 @@ function calendarWriteTransport(
             keep(key, signal, () => transport.mailProposal!(act, key, signal)),
         }
       : {}),
+    ...(transport.recoverProposal ? { recoverProposal: transport.recoverProposal.bind(transport) } : {}),
     writeCalendar: (act, key, signal) => keep(key, signal, () => transport.writeCalendar(act, key, signal)),
     retryCalendarWrite: (id, key, signal) =>
       keep(key, signal, () => transport.retryCalendarWrite(id, key, signal)),

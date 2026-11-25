@@ -12,7 +12,7 @@
  */
 import type { KeptRow } from "../../src/shell/bridge-kinds";
 import {
-  IndexedDbMirrorStore, isCarriedLocalType, recordKey, type IndexedDbMirrorStoreOptions, type MirrorRecord,
+  IndexedDbMirrorStore, isCalendarQueueType, isCarriedLocalType, recordKey, type IndexedDbMirrorStoreOptions, type MirrorRecord,
 } from "./engine-package";
 
 /** The keeper's door, as the store needs it: the scope is native's, whatever the page names. */
@@ -33,8 +33,15 @@ const pairOf = (key: string): [string, string] => [typeOf(key), key.slice(key.in
 const rowOf = (rec: MirrorRecord): KeptRow => ({ type: rec.type, id: rec.id, json: JSON.stringify(rec) });
 
 export class KeptIdbStore extends IndexedDbMirrorStore {
+  private readonly keepsCalendar: boolean;
+
   constructor(opts: IndexedDbMirrorStoreOptions, private readonly keeper: QueueKeeper) {
     super(opts);
+    this.keepsCalendar = opts.calendarOnly === true;
+  }
+
+  private carries(type: string): boolean {
+    return this.keepsCalendar ? isCalendarQueueType(type) : isCarriedLocalType(type);
   }
 
   private async keep(puts: readonly MirrorRecord[], deletes: readonly string[]): Promise<void> {
@@ -44,17 +51,17 @@ export class KeptIdbStore extends IndexedDbMirrorStore {
   }
 
   protected override async persist(...args: Parameters<IndexedDbMirrorStore["persist"]>): Promise<void> {
-    await this.keep(args[0].filter((r) => isCarriedLocalType(r.type)), []);
+    await this.keep(args[0].filter((r) => this.carries(r.type)), []);
     return super.persist(...args);
   }
 
   protected override async transact(puts: MirrorRecord[], deletes: string[]): Promise<void> {
-    await this.keep(puts.filter((r) => isCarriedLocalType(r.type)), deletes.filter((k) => isCarriedLocalType(typeOf(k))));
+    await this.keep(puts.filter((r) => this.carries(r.type)), deletes.filter((k) => this.carries(typeOf(k))));
     return super.transact(puts, deletes);
   }
 
   protected override async purge(keys: string[]): Promise<void> {
-    await this.keep([], keys.filter((k) => isCarriedLocalType(typeOf(k))));
+    await this.keep([], keys.filter((k) => this.carries(typeOf(k))));
     return super.purge(keys);
   }
 
@@ -66,21 +73,41 @@ export class KeptIdbStore extends IndexedDbMirrorStore {
     await this.persist(records, cursor, meta);
   }
 
-  protected override async readPersisted(): Promise<void> {
-    const kept = await this.keeper.rows();
-    await super.readPersisted();
-    // From here to the return, nothing is awaited: the base store stamps its types right after.
-    const native = new Map<string, MirrorRecord>();
-    for (const row of kept) {
-      if (!isCarriedLocalType(row.type)) continue;
+  private async nativeRows(): Promise<Map<string, MirrorRecord>> {
+    const records = new Map<string, MirrorRecord>();
+    for (const row of await this.keeper.rows()) {
+      if (!this.carries(row.type)) continue;
       try {
-        native.set(recordKey(row.type, row.id), JSON.parse(row.json) as MirrorRecord);
+        const record = JSON.parse(row.json) as MirrorRecord;
+        if (!this.keepsCalendar || (record.type === row.type && record.id === row.id && record.seq === 0)) {
+          records.set(recordKey(row.type, row.id), record);
+        }
       } catch {
         // A row native holds but cannot be read back is not invented into the queue.
       }
     }
+    return records;
+  }
+
+  protected override async readCalendarOutboxRange(now: number): Promise<MirrorRecord[] | null> {
+    if (!this.keepsCalendar) return super.readCalendarOutboxRange(now);
+    const rows = await this.nativeRows();
+    const expired: string[] = [];
+    for (const [key, row] of rows) {
+      if (row.type === "calendar_settlement" && Number((row.entity as { expiresAt?: unknown })?.expiresAt) <= now) {
+        rows.delete(key);
+        expired.push(key);
+      }
+    }
+    await this.keep([], expired);
+    return [...rows.values()];
+  }
+
+  protected override async readPersisted(): Promise<void> {
+    const native = await this.nativeRows();
+    await super.readPersisted();
     for (const [key, rec] of this.records) {
-      if (isCarriedLocalType(rec.type) && !native.has(key)) this.records.delete(key);
+      if (this.carries(rec.type) && !native.has(key)) this.records.delete(key);
     }
     for (const [key, rec] of native) this.records.set(key, rec);
     this.ver++;

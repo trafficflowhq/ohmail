@@ -35,7 +35,19 @@ export const NATIVE_ONLY = [
 ] as const;
 
 /** Keep the engine's existing retry code for the two feed reads. */
-const DRAIN_PATHS = new Set(["/sync", "/sync/snapshot"]);
+const DRAIN_PATHS = new Set(["/sync", "/sync/snapshot", "/calendar/sync", "/calendar/sync/snapshot"]);
+
+/** Calendar and shared account doors used by the calendar page. */
+const CALENDAR_PAGE_ROUTES = [
+  "GET /calendar/sync", "GET /calendar/sync/snapshot", "GET /calendar/settings", "PATCH /calendar/settings",
+  "GET /calendar/setup", "POST /calendar/connections", "DELETE /calendar/connections/:id",
+  "POST /calendar/connections/:id/check", "POST /calendar/connections/:id/sign-in", "PATCH /calendar/calendars/:id",
+  "POST /calendar/writes", "POST /calendar/writes/:id/retry", "DELETE /calendar/writes/:id",
+  "POST /calendar/proposals", "POST /calendar/places/suggest", "POST /calendar/oauth/google/start", "POST /calendar/oauth/google/complete",
+  "POST /calendar/oauth/microsoft/start", "POST /calendar/oauth/microsoft/complete",
+  "GET /auth/session", "POST /auth/step-up/totp", "POST /auth/step-up/recovery-code",
+  "GET /devices", "DELETE /devices/:id", "POST /devices/revoke-web-sessions",
+] as const;
 
 /** Header names the page may set. `x-ohmail-*` too, but never the two native stamps. */
 const HEADERS_IN = new Set(["content-type", "accept", "idempotency-key", "if-none-match"]);
@@ -47,6 +59,7 @@ export const BODY_MAX = 32 * 1024 * 1024;
 export const IN_FLIGHT_MAX = 16;
 
 export interface HttpDoorDeps {
+  readonly calendarOnly?: boolean;
   /** The live shell session and its scope, or null while none is entered. */
   readonly live: () => { readonly session: ShellSession; readonly scope: string } | null;
   /** The launch order (pins, install generation, owed wipes) has finished. */
@@ -145,7 +158,7 @@ export class HttpDoor {
     if (signal.aborted || live === null || live.scope !== ask.scope) return { refused: "foreignScope" };
     const { session } = live;
     const { profile } = session;
-    if (session.standalone || (profile.flavor !== "managed" && profile.flavor !== "selfhost")) {
+    if (this.deps.calendarOnly || session.standalone || (profile.flavor !== "managed" && profile.flavor !== "selfhost")) {
       return { result: answerOf(403, "not_relayed") };
     }
     if ("grant" in ask && ask.grant === "invite" && profile.flavor !== "selfhost") {
@@ -215,6 +228,7 @@ export class HttpDoor {
     const [path, query = ""] = splitQuery(ask.path);
     const method = ask.method;
     if (!oneSpelling(path) || !RELAY_ROUTES.some((spec) => matches(spec, method, path))
+      || (this.deps.calendarOnly && !accountSession && !CALENDAR_PAGE_ROUTES.some((spec) => matches(spec, method, path)))
       || (NATIVE_ONLY.some((spec) => matches(spec, method, path)) &&
         (!accountSession || !ACCOUNT_NATIVE_ROUTES.some((spec) => matches(spec, method, path))))) {
       count("notRelayed");
@@ -240,6 +254,7 @@ export class HttpDoor {
       const n = name.toLowerCase();
       if (HEADERS_IN.has(n) || (n.startsWith("x-ohmail-") && !NATIVE_STAMPS.has(n))) headers[n] = value;
     }
+    if (this.deps.calendarOnly) headers["x-ohmail-calendar-only"] = "1";
     this.inFlight += 1;
     try {
       const res = await live.session.send(`${path}${query}`, {

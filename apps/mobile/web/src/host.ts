@@ -32,6 +32,7 @@ export interface PhoneFacts {
 
 /** What the page hands in: the native ceremonies as acts, the notice reader, the frame's supplies, the bridge's signals. */
 export interface PhoneSupplies {
+  readonly calendarOnly?: boolean;
   /** Native's sign-out ceremony. Never the page's own: the credential is not the page's. */
   readonly signOut: () => Promise<void>;
   readonly notifications: DeviceNotifications;
@@ -57,10 +58,11 @@ const SERVICE = { managed: "managed", selfHosted: "self", desktopHost: "ownCompu
 
 export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies): HostContract {
   const { setting } = facts;
-  const { mailFetch } = has;
+  const calendarOnly = has.calendarOnly === true;
+  const { mailFetch, mailboxWires, accountFetch, search } = calendarOnly ? {} : has;
   const own = setting === "standalone";
   const calendar = has.frame.calendar !== NONE;
-  const settings = has.mailboxWires !== undefined || calendar;
+  const settings = mailboxWires !== undefined || calendar;
   const managesAccount = settings && (setting === "managed" || setting === "selfHosted");
   return {
     engine,
@@ -84,11 +86,11 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       access: NONE,
     },
     wires: {
-      organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: has.accountFetch ? phoneAwayWire(has.accountFetch) : NONE, profileImport: NONE,
+      organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: accountFetch ? phoneAwayWire(accountFetch) : NONE, profileImport: NONE,
       consent: mailFetch ? consentVia(mailFetch) : NONE,
       images: NONE, olderBody: NONE, junk: NONE, trash: NONE, suggest: NONE, draftReply: NONE, firstRun: NONE,
       screening: mailFetch ? screeningVia(mailFetch) : NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE,
-      connect: has.mailboxWires?.connect ?? NONE, mailboxes: has.mailboxWires?.mailboxes ?? NONE,
+      connect: mailboxWires?.connect ?? NONE, mailboxes: mailboxWires?.mailboxes ?? NONE,
       calendar: has.calendar ?? NONE,
     },
     capabilities: {
@@ -96,37 +98,37 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       // A phone never links out to a purchase.
       prices: CANNOT.prices,
       sendCeiling: CANNOT.sendCeiling,
-      awayRunsOn: !has.accountFetch ? CANNOT.awayRunsOn
+      awayRunsOn: !accountFetch ? CANNOT.awayRunsOn
         : setting === "desktopHost" ? facts.serverName ? { host: facts.serverName } : CANNOT.awayRunsOn
         : own ? "thisPhone" : "service",
       rulesMarked: true,
       imagesFrom: CANNOT.imagesFrom,
       unsubscribeFrom: setting === "managed" || setting === "selfHosted" ? "service" : "computer",
-      foldersStorable: has.mailboxWires !== undefined && mailFetch !== undefined,
+      foldersStorable: mailboxWires !== undefined && mailFetch !== undefined,
       suggest: CANNOT.suggest,
       pairing: managesAccount ? "account" : CANNOT.pairing,
       account: managesAccount ? "here" : own ? CANNOT.account : "signOutOnly",
       firstRunDoor: CANNOT.firstRunDoor,
-      mailboxes: has.mailboxWires?.mailboxes && has.mailboxWires.mailboxes !== NONE
+      mailboxes: mailboxWires?.mailboxes && mailboxWires.mailboxes !== NONE
         ? own ? "here" : "resyncOnly"
         : CANNOT.mailboxes,
       language: "install",
-      searchBy: has.search ?? (own ? "people" : CANNOT.searchBy),
+      searchBy: search ?? (!calendarOnly && own ? "people" : CANNOT.searchBy),
       products: calendar ? "calendar" : CANNOT.products,
     },
     features: {
       account: managesAccount ? { name: "account", render: () => null } : NONE,
-      mailboxes: has.mailboxWires ? { name: "mailboxes", render: () => null } : NONE,
-      ai: managesAccount && has.mailboxWires ? { name: "ai", render: () => null } : NONE,
-      subscription: managesAccount ? { name: "subscription", render: () => null } : NONE,
-      storage: managesAccount ? { name: "storage", render: () => null } : NONE, storageCard: NONE, accountStrip: NONE,
+      mailboxes: mailboxWires ? { name: "mailboxes", render: () => null } : NONE,
+      ai: managesAccount && mailboxWires ? { name: "ai", render: () => null } : NONE,
+      subscription: managesAccount && !calendarOnly ? { name: "subscription", render: () => null } : NONE,
+      storage: managesAccount && !calendarOnly ? { name: "storage", render: () => null } : NONE, storageCard: NONE, accountStrip: NONE,
       invites: managesAccount ? { name: "invites", render: () => null } : NONE,
       security: managesAccount ? { name: "security", render: () => null } : NONE,
       about: settings ? { name: "about", render: () => null } : NONE,
       desktop: NONE, devices: settings ? { name: "devices", render: () => null } : NONE,
       defaultMail: NONE, stageCard: NONE,
-      screener: has.mailboxWires ? { name: "screener", render: () => null } : NONE,
-      help: has.mailboxWires ? { name: "help", render: () => null } : NONE,
+      screener: mailboxWires ? { name: "screener", render: () => null } : NONE,
+      help: mailboxWires ? { name: "help", render: () => null } : NONE,
       places: has.frame.places,
       stages: has.frame.stages,
       overs: has.frame.overs,

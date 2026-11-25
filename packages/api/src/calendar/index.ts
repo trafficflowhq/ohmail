@@ -5,16 +5,21 @@
  * tables, and none of the calendar's. Every later calendar route that reads or writes the
  * account's calendar asks `requireCalendarOn` first; the place suggestions read nothing of it.
  */
+import type { CalendarWriteAnswer } from "@ohmail/wire";
+import { withoutCalendarMailLinks } from "@trafficflow/core/calendar-privacy";
 import { isWriteKey } from "@trafficflow/db/calendar";
 import {
   calendarSettings, dismissCalendarWrite, recordCalendarWrite, retryCalendarWrite, sendInvitationProposal, setCalendarSettings, setCalendarSuggestionDismissed,
 } from "@trafficflow/services/calendar";
 import { ServiceError } from "@trafficflow/services";
+import type { ApiDeps } from "../deps.js";
 import { serviceContext } from "../context.js";
+import { calendarRestricted } from "../middleware.js";
 import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import { sendDepsOf, sendKeyOf } from "../send-deps.js";
 import { readBody } from "../routes/shared.js";
+import { calendarSyncRoutes } from "../routes/sync.js";
 import { placesOff, readPlaceQuestion } from "./places.js";
 import { calendarConnectRoutes } from "./connect.js";
 import { calendarOAuthRoutes } from "./oauth.js";
@@ -36,7 +41,14 @@ function writeKeyOf(req: Request): string {
   return key;
 }
 
+function writesFor(req: Request, deps: ApiDeps, writes: CalendarWriteAnswer): CalendarWriteAnswer {
+  return calendarRestricted(req, deps)
+    ? { ...writes, events: writes.events.map(withoutCalendarMailLinks) }
+    : writes;
+}
+
 export const calendarRoutes: Route[] = [
+  ...calendarSyncRoutes,
   {
     /** The account's calendar settings: the switch, and the preferences a calendar view reads. */
     method: "GET",
@@ -86,9 +98,22 @@ export const calendarRoutes: Route[] = [
     cost: "connection",
     replay: "guarded",
     handler: async (req, deps) => {
-      const { status, seq } = await sendInvitationProposal(
-        serviceContext(deps, req), await readBody<unknown>(req), sendKeyOf(req), { send: sendDepsOf(deps) },
-      );
+      const body = await readBody<unknown>(req);
+      const restricted = calendarRestricted(req, deps);
+      if (restricted && (body as { kind?: unknown } | null)?.kind !== "calendar_event_propose") {
+        throw new ServiceError("validation_failed", 400, "this session can only send calendar counterproposals");
+      }
+      const key = sendKeyOf(req);
+      let result: Awaited<ReturnType<typeof sendInvitationProposal>>;
+      try {
+        result = await sendInvitationProposal(
+          serviceContext(deps, req), body, key, { send: sendDepsOf(deps) }, { recovering: restricted },
+        );
+      } catch (err) {
+        if (!restricted || !(err instanceof ServiceError)) throw err;
+        throw new ServiceError(err.code, err.httpStatus, "the calendar proposal could not be completed", undefined, err.retryable);
+      }
+      const { status, seq } = result;
       return answer<"POST /calendar/proposals">()({ status }, { seq: seq ?? undefined });
     },
   },
@@ -107,7 +132,7 @@ export const calendarRoutes: Route[] = [
     handler: async (req, deps) => {
       const key = writeKeyOf(req);
       const { answer: answered, seq } = await recordCalendarWrite(serviceContext(deps, req), key, await readBody<unknown>(req));
-      return answer<"POST /calendar/writes">()(answered, { status: 202, seq });
+      return answer<"POST /calendar/writes">()(writesFor(req, deps, answered), { status: 202, seq });
     },
   },
   {
@@ -120,7 +145,7 @@ export const calendarRoutes: Route[] = [
     replay: "state",
     handler: async (req, deps, params) => {
       const { answer: answered, seq } = await retryCalendarWrite(serviceContext(deps, req), params.id!);
-      return answer<"POST /calendar/writes/:id/retry">()(answered, { seq });
+      return answer<"POST /calendar/writes/:id/retry">()(writesFor(req, deps, answered), { seq });
     },
   },
   {
@@ -133,7 +158,7 @@ export const calendarRoutes: Route[] = [
     replay: "state",
     handler: async (req, deps, params) => {
       const { answer: answered, seq } = await dismissCalendarWrite(serviceContext(deps, req), params.id!);
-      return answer<"DELETE /calendar/writes/:id">()(answered, { seq });
+      return answer<"DELETE /calendar/writes/:id">()(writesFor(req, deps, answered), { seq });
     },
   },
   {

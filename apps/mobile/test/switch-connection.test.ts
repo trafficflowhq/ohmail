@@ -18,6 +18,7 @@ const scene = await vi.hoisted(async () => {
   const state = {
     store: null as unknown,
     deps: null as unknown,
+    shell: undefined as unknown,
     arrival: null as Record<string, string> | null,
     pending: null as { challenge: string; verifier: string } | null,
     notes: [] as string[][],
@@ -67,9 +68,10 @@ vi.mock("../src/state/servers-native", () => ({
   secureKV: () => null,
 }));
 vi.mock("../src/engine/native", () => ({ nativeEngineDeps: () => scene.state.deps }));
+vi.mock("../src/shell/shell-stores-native", () => ({ nativeShellStores: () => scene.state.shell }));
 
-import { pairLink } from "@ohmail/client-engine";
-import { LOCAL_ENGINE_ORIGIN, type MobileEngineDeps } from "../src/engine/boot";
+import { mirrorDbName, pairLink, SqlMirrorStore } from "@ohmail/client-engine";
+import { LOCAL_ENGINE_ORIGIN, mirrorOwnerKey, type MobileEngineDeps } from "../src/engine/boot";
 import type { StandaloneEngine } from "../src/engine/standalone-door";
 import { ConnectionProvider, useConnection, type Connection, type ConnectionState } from "../src/net/connection";
 import { refuse } from "../src/refusal";
@@ -108,7 +110,7 @@ function phone(opts: { markerRefused?: boolean } = {}) {
   scene.state.deps = deps;
   scene.state.notes = [];
   scene.state.takes = 0;
-  return { deps, store, opened };
+  return { deps, store, opened, world };
 }
 
 /** The provider rendered, its decided states read back through `useConnection`, and the connection itself. */
@@ -145,6 +147,7 @@ afterEach(() => {
   scene.native.appId = "app.ohcal.preview";
   scene.state.arrival = null;
   scene.state.pending = null;
+  scene.state.shell = undefined;
 });
 
 describe("the switch's receiving side in the connection layer", () => {
@@ -173,7 +176,7 @@ describe("the switch's receiving side in the connection layer", () => {
   });
 
   it("takes the arrival up after the launch order, signs the signed-out app in on the shell, and notes the pairing", async () => {
-    const fake = pairServer({ flavor: "desktop-host", accountId: "acct-1" });
+    const fake = pairServer({ flavor: "desktop-host", accountId: "acct-1", calendarSync: true });
     const origin = await listen(fake.server);
     try {
       fake.addMessage("m-1", "a letter");
@@ -191,6 +194,8 @@ describe("the switch's receiving side in the connection layer", () => {
       expect([last.session.profile.origin, last.session.profile.accountId]).toEqual([origin, "acct-1"]);
       // The launch went to the door first: the arrival waited for its order to finish.
       expect(seen.map((s) => s.k)).toContain("idle");
+      expect(fake.seen.some((r) => r.url.startsWith("/calendar/sync/snapshot"))).toBe(true);
+      expect(fake.seen.filter((r) => /^\/sync(?:\/|\?|$)/.test(r.url))).toEqual([]);
       expect(fake.seen.filter((r) => r.url === "/pair/redeem").map((r) => JSON.parse(r.body).grant)).toEqual(["app-handoff"]);
       await until(() => scene.state.notes.length >= 2);
       expect(scene.state.notes[0], "the launch's note: no live pairing").toEqual([]);
@@ -216,6 +221,44 @@ describe("the switch's receiving side in the connection layer", () => {
 });
 
 describe("the calendar's app never opens the phone's own engine", () => {
+  it("erases a confirmed calendar at launch before opening the other keepers for preparation", async () => {
+    const { deps, store, world } = phone();
+    await settleInstallGeneration(deps, store);
+    const profile = await store.add({
+      origin: "https://calendar.example.invalid", flavor: "managed", accountId: "erased", refreshToken: "cal.fixture-refresh",
+    });
+    const owner = mirrorOwnerKey(profile.origin, profile.accountId);
+    const dbName = mirrorDbName(owner);
+    const old = new SqlMirrorStore({ owner, open: deps.openExecutor });
+    await old.load();
+    await old.putLocal("calendar", "erased", { name: "Old calendar" });
+    old.close();
+    await store.markPendingWipe(profile.id, owner, true);
+    const keepers = new Map([[owner, "pending edit"], ["other", "independent edit"]]);
+    const atPreparation: boolean[] = [];
+    let clears = 0;
+    scene.state.shell = {
+      scopeOf: async (key: string) => key,
+      keeperScopes: async () => [...keepers.keys()],
+      eraseKeeper: async (scope: string) => { keepers.delete(scope); return true; },
+      releaseCalendarErasure: async () => {},
+      prepareCalendarKeeper: async () => { atPreparation.push(keepers.has(owner)); return false; },
+      calendarCopiesPrepared: () => false,
+      waitForCalendarCopies: async () => false,
+      clearViewCopies: async () => { clears++; return { listed: false, usage: 0 }; },
+    };
+    const { seen, view } = launch();
+    try {
+      await until(() => seen.at(-1)?.k === "refused");
+      expect(seen.at(-1)).toEqual({ k: "refused", reason: refuse("calendarCopyRemains") });
+      expect(atPreparation).toEqual([false]);
+      expect(keepers).toEqual(new Map([["other", "independent edit"]]));
+      expect(world.names()).not.toContain(dbName);
+      expect(clears).toBe(0);
+      expect(await store.pendingWipes()).toEqual([{ id: profile.id, owner, erased: true }]);
+    } finally { view.unmount(); }
+  });
+
   it("refuses the standalone door: no store is opened for it and the state never reads connecting", async () => {
     const { opened } = phone();
     const { seen, view, connection } = launch();

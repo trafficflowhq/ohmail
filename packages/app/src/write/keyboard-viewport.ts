@@ -5,10 +5,10 @@ const KEYBOARD_MIN = 100;
 const SHORT_ROOM = 200;
 
 /** Keep Write inside the visible glass while the system keyboard consumes part of it. */
-export function useWritingViewport(ref: RefObject<HTMLDivElement | null>, touch: boolean): boolean {
+export function useWritingViewport(ref: RefObject<HTMLElement | null>, touch: boolean): boolean {
   const [compact, setCompact] = useState(false);
   useLayoutEffect(() => {
-    const sheet = ref.current;
+    const sheet = ref.current?.closest<HTMLElement>('.oh-sheet[data-kind="reading"]');
     const doc = sheet?.ownerDocument;
     const win = doc?.defaultView;
     const viewport = win?.visualViewport;
@@ -43,10 +43,12 @@ export function useWritingViewport(ref: RefObject<HTMLDivElement | null>, touch:
         if (rect.height) caret = rect;
       }
       const visible = scroll.getBoundingClientRect();
-      if (caret.bottom > visible.bottom && caret.height < visible.height) {
-        scroll.scrollTop += caret.bottom - visible.bottom;
+      const editor = active.closest(".oh-composer-editor")?.getBoundingClientRect();
+      if (editor && editor.height <= visible.height) caret = editor;
+      if (caret.bottom > visible.bottom && caret.height <= visible.height) {
+        scroll.scrollTop += Math.ceil(caret.bottom - visible.bottom);
       } else if (caret.top < visible.top) {
-        scroll.scrollTop -= visible.top - caret.top;
+        scroll.scrollTop -= Math.ceil(visible.top - caret.top);
       }
     };
     const update = () => {

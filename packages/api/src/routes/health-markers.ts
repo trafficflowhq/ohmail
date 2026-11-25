@@ -1296,6 +1296,9 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
   // Mail 0209_app_handoff — `app-handoff` joins the pairing grants (0059's constraint, replaced under its name);
   // against an older database the handoff's mint is refused by the old CHECK.
   ["pairing_tokens_grant_check", "app-handoff"],
+  // Mail 0227_calendar_session_scope — `calendar` joins the session scopes (0017's constraint, replaced under its
+  // name); against an older database the calendar app's pairing is refused by the old CHECK.
+  ["sessions_scope_check", "calendar"],
 ];
 
 /**
@@ -1350,7 +1353,7 @@ export const MAIL_EXPECTED_MARKERS =
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
 // mail 0220_caldav_host_retry resets poll times without changing the schema.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0226_google_default_calendar_event";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0227_calendar_session_scope";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

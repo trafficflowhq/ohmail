@@ -55,6 +55,7 @@ export interface CalendarSnapshotQuery {
   /** `null` on the first page, which leads with the connections, calendars and suggestions. */
   readonly after: CalendarKeyset | null;
   readonly limit: number;
+  readonly excludeSuggestions?: boolean;
 }
 
 export interface CalendarFeedPort {

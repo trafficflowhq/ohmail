@@ -222,6 +222,7 @@ const readsInputInline = (r: Route): boolean => READS_INPUT.test(String(r.handle
 const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   "GET /calendar/settings",
   "GET /calendar/connect",
+  "GET /calendar/setup",
   "POST /calendar/oauth/google/start",
   "POST /calendar/oauth/microsoft/start",
   "DELETE /calendar/connections/:id",
@@ -606,6 +607,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // `?types=` is validated against a closed set of nine entity names (`VALID_TYPES`), so its
   // length is bounded by the vocabulary rather than by the caller.
   "GET /sync": { bounds: [DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, SYNC_CURSOR_MAX_CHARS] },
+  "GET /calendar/sync": { bounds: [DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, SYNC_CURSOR_MAX_CHARS] },
+  "GET /calendar/sync/snapshot": { bounds: [DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, SNAPSHOT_CURSOR_MAX_CHARS] },
   // closed. The caller chooses the page limit and the cursor; what the
   // SERVER then walks is bounded by three more named ceilings, and those are the ones the row was
   // about — a bootstrap's cost is the mailbox's size, not the request's. `maxRows` stops the
@@ -1280,7 +1283,11 @@ const QUERY_PARAM_READS: Readonly<Record<string, number>> = {
   // a bounded first one).
   "routes/search.ts#limit": 2,
   "routes/snippets.ts#limit": 1,
-  "routes/sync.ts#limit": 2,
+  "routes/sync.ts#limit": 4,
+  "routes/sync.ts#cursor": 2,
+  "routes/sync.ts#since": 2,
+  "routes/sync.ts#from": 2,
+  "routes/sync.ts#to": 2,
   // The delta filters by the kinds named; the snapshot reads them for the calendar's gate alone.
   "routes/sync.ts#types": 2,
   "routes/triage.ts#cursor": 2,

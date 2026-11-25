@@ -1457,6 +1457,13 @@
       "when": 1795624379480,
       "tag": "0226_google_default_calendar_event",
       "breakpoints": true
+    },
+    {
+      "idx": 208,
+      "version": "7",
+      "when": 1795629171181,
+      "tag": "0227_calendar_session_scope",
+      "breakpoints": true
     }
   ]
 }

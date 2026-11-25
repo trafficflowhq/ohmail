@@ -1342,6 +1342,34 @@ it("moves an opened event by fifteen minutes with Shift and an arrow", async () 
   );
 });
 
+it("lets the calendar app review and send a saved time proposal under its original key", async () => {
+  const record = meeting({ organizer, invitees: [guest], myAnswer: "none" });
+  const world = eventWorld(record);
+  const review = vi.fn(async () => true);
+  world.port.reviewProposal = review;
+  world.port.recoveredProposals = () => [
+    {
+      key: "original",
+      needsReview: true,
+      act: {
+        kind: "calendar_event_propose",
+        recordId: record.id,
+        base: record.updatedAt,
+        occurrence: "",
+        start: { kind: "instant", value: "20261116T090000Z" },
+        end: { kind: "instant", value: "20261116T103000Z" },
+      },
+    },
+  ];
+  mountFrame("#/cal/week/2026-11-16", world, NONE, { calendarOnly: true, words: invitationsEn });
+  const recovered = within(await screen.findByRole("region", { name: "Unsent time proposals" }));
+  expect(recovered.getByText(record.title)).toBeTruthy();
+  expect(recovered.getByText(/10:00.*11:30/)).toBeTruthy();
+  expect(review).not.toHaveBeenCalled();
+  fireEvent.click(recovered.getByRole("button", { name: "Send proposal" }));
+  expect(review).toHaveBeenCalledWith("original", true);
+});
+
 it.each(["caldav", "google", "microsoft"] as const)(
   "opens editing and moves an event on a shared writable %s calendar",
   async (provider) => {
@@ -1442,6 +1470,24 @@ it("keeps the answer controls on an invitation on a writable shared calendar", a
   expect(screen.getByRole("button", { name: "Yes" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "No" })).toBeTruthy();
   expect(card.queryByRole("button", { name: "Edit" })).toBeNull();
+});
+
+it("answers a confirmed invitation from the calendar-only event card", async () => {
+  const record = meeting({ organizer, invitees: [guest], myAnswer: "none" });
+  const world = eventWorld(record);
+  world.put("calendar", "cal-1", calendarRecord({ access: "writer" }));
+  const press = vi.fn(async () => ({ key: "answer" }));
+  world.port.press = press;
+  mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE, { calendarOnly: true, words: invitationsEn });
+  const card = within(await screen.findByRole("dialog", { name: record.title }));
+  fireEvent.click(card.getByRole("button", { name: "Yes" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "calendar_event_answer",
+      eventId: record.id,
+      answer: "accepted",
+    }),
+  );
 });
 
 it.each(["caldav", "google", "microsoft"] as const)(

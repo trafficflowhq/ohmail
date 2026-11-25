@@ -6,7 +6,7 @@ import { CalendarDeviceContext } from "@ohmail/app/calsettings";
  * shows are the ones registered with the frame, and where none is registered yet the frame stands with nothing in it.
  * Native holds its one waiting sentence over the page until the page says it has drawn.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ConsentContext, useConsentRow } from "@ohmail/app-logic/consent";
 import { EngineContext, useDerivedVersion, useEngine, useSyncStatus, type EngineBinding } from "@ohmail/app-logic/engine";
 import { SYNC_BOOTSTRAPPING, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
@@ -17,6 +17,8 @@ import { Frame } from "@ohmail/app/frame";
 import { useThemeLook } from "@ohmail/app/mail";
 import { NONE, type HostContract } from "@ohmail/app/host";
 import type { Messages } from "@ohmail/app/text";
+import { Button } from "@ohmail/ui/base";
+import { useText } from "@ohmail/app/text";
 import { ThemeProvider } from "@ohmail/ui/theme";
 import type { NoticeChoices } from "./engine-package";
 import { calendarPublisher, snapshotFromMirror, type calendarRecordClearer, type calendarRecordSender } from "./calendar-record";
@@ -27,7 +29,7 @@ import { PhoneLanguage, type PhoneLanguageDoor } from "./phone-language";
 const themeStorage = localStorageDoor("theme");
 const noAppearanceEvents = () => () => {};
 
-function PhoneFrame({ host }: { readonly host: HostContract }) {
+function PhoneFrame({ host, openServers }: { readonly host: HostContract; readonly openServers?: () => Promise<unknown> }) {
   const { face, scheme } = useThemeLook();
   const themedHost = useMemo(() => {
     const look = { face, scheme };
@@ -40,15 +42,29 @@ function PhoneFrame({ host }: { readonly host: HostContract }) {
     };
   }, [face, host, scheme]);
   return host.capabilities.products === "calendar" ? (
-    <PhoneCalendarFrame host={themedHost} />
+    <PhoneCalendarFrame host={themedHost} openServers={openServers} />
   ) : <Frame host={themedHost} />;
 }
 
-function PhoneCalendarFrame({ host }: { readonly host: HostContract }) {
+function PhoneCalendarFrame({ host, openServers }: { readonly host: HostContract; readonly openServers?: () => Promise<unknown> }) {
+  const t = useText("phoneSettings");
+  const servers = useText("servers");
   const derived = useDerivedVersion();
   const consent = useConsentRow({
     engine: host.engine, derived, facts: null, scope: host.session.scope, active: false, transport: NONE,
   });
+  const unavailable = useSyncExternalStore(
+    (changed) => host.engine.subscribe(changed),
+    () => host.engine.calendarServerUnavailable(),
+  );
+  if (unavailable) {
+    return (
+      <main>
+        <p role="status">{t("calendarServerUnavailable")}</p>
+        {openServers && <Button kind="two" size="s" onPress={() => void openServers().catch(() => undefined)}>{servers("title")}</Button>}
+      </main>
+    );
+  }
   return <ConsentContext.Provider value={consent}><Frame host={host} /></ConsentContext.Provider>;
 }
 
@@ -65,9 +81,10 @@ export interface PhonePageProps {
   /** This device's notice choices, read at each settle of the copy. */
   readonly noticeChoices: () => NoticeChoices;
   readonly widgets?: WidgetPublisher;
+  readonly openServers?: () => Promise<unknown>;
 }
 
-export function PhonePage({ host, language, catalogue, timeZone, sync, drawn, noticeChoices, widgets }: PhonePageProps) {
+export function PhonePage({ host, language, catalogue, timeZone, sync, drawn, noticeChoices, widgets, openServers }: PhonePageProps) {
   const calendarOnly = host.capabilities.products === "calendar";
   const calendarDevice = usePhoneCalendarDevice(calendarOnly ? host.session.scope : null);
   const zone = calendarDevice.settings.zone ?? timeZone;
@@ -104,7 +121,7 @@ export function PhonePage({ host, language, catalogue, timeZone, sync, drawn, no
         {widgets && pageReady && host.session.scope !== null &&
           <PhoneCalendarWidgets scope={host.session.scope} zone={zone} widgets={widgets} />}
         <ThemeProvider storage={themeStorage} faces stampPaper={host.capabilities.products === "calendar"} deferLinuxFace accountFaceScope={host.session.scope}>
-          <PhoneFrame host={host} />
+          <PhoneFrame host={host} openServers={openServers} />
         </ThemeProvider>
       </EngineContext.Provider>
       </CalendarDeviceContext.Provider>

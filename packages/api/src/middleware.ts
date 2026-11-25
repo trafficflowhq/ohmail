@@ -482,6 +482,23 @@ export const withSessionAcquireCeiling: Middleware = (next) => async (req, deps,
  * Its last step binds the request's handle to the session's account (`bindRequest`): the only
  * place `deps.session` is assigned is here, and the only place a request is bound follows it.
  */
+const CALENDAR_SESSION_ROUTES = new Set([
+  "GET /calendar/sync", "GET /calendar/sync/snapshot", "GET /calendar/settings", "PATCH /calendar/settings",
+  "GET /calendar/setup", "POST /calendar/connections", "DELETE /calendar/connections/:id",
+  "POST /calendar/connections/:id/check", "POST /calendar/connections/:id/sign-in", "PATCH /calendar/calendars/:id",
+  "POST /calendar/writes", "POST /calendar/writes/:id/retry", "DELETE /calendar/writes/:id",
+  "POST /calendar/proposals", "POST /calendar/places/suggest",
+  "POST /calendar/oauth/google/start", "POST /calendar/oauth/google/complete",
+  "POST /calendar/oauth/microsoft/start", "POST /calendar/oauth/microsoft/complete",
+  "GET /auth/session", "POST /auth/logout", "POST /auth/refresh", "POST /auth/refresh/logout",
+  "GET /devices", "DELETE /devices/:id", "POST /devices/revoke-web-sessions",
+  "POST /auth/step-up/totp", "POST /auth/step-up/recovery-code", "DELETE /account",
+]);
+
+export function calendarRestricted(req: Request, deps: ApiDeps): boolean {
+  return deps.session?.scope === "calendar" || req.headers.get("x-ohmail-calendar-only") === "1";
+}
+
 export const withSession: Middleware = (next, route) => async (req, deps, params) => {
   const token = readSessionToken(req, deps.allowCookieAuth !== false);
   if (token) {
@@ -491,6 +508,10 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
     deps.sessionMs = performance.now() - t0;
     if (core) deps.session = { ...core, via: token.via };
   }
+  const routeKey = `${route.method} ${route.pattern}`;
+  if (deps.session?.scope === "calendar" && !CALENDAR_SESSION_ROUTES.has(routeKey)) {
+    return errorResponse("forbidden", 403, "this session can only use calendar and account routes");
+  }
   if (deps.session?.scope === "enrollment" && !route.options?.enrollmentOk) {
     if (!route.options?.public) {
       return errorResponse("enrollment_incomplete", 403, "finish two-factor enrollment before using this endpoint");
@@ -499,7 +520,11 @@ export const withSession: Middleware = (next, route) => async (req, deps, params
   }
   if (!route.options?.public && !deps.session) {
     if (token && await erasedAccountBearer(req, deps, token.value)) return accountErasedResponse();
-    return errorResponse("unauthorized", 401, "authentication required");
+    const answer = errorResponse("unauthorized", 401, "authentication required");
+    if (routeKey === "GET /calendar/sync" && deps.services?.calendar) {
+      answer.headers.set("x-ohmail-calendar-pairing", "1");
+    }
+    return answer;
   }
   const expectedAccount = req.headers.get(EXPECTED_ACCOUNT_HEADER);
   const expectedFamily = req.headers.get(EXPECTED_FAMILY_HEADER);

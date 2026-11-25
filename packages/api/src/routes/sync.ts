@@ -220,3 +220,40 @@ export const syncRoutes: Route[] = [
     },
   },
 ];
+
+/** Separate URLs keep an older server from treating a calendar-only request as a mail read. */
+export const calendarSyncRoutes: Route[] = [
+  {
+    method: "GET",
+    pattern: "/calendar/sync",
+    wire: true,
+    relay: true,
+    cost: "read",
+    handler: async (req, deps) => {
+      const query = new URL(req.url).searchParams;
+      const since = query.get("since") ?? undefined;
+      const limit = pagingNumber(query.get("limit"));
+      const result = await sync(deps).getChanges(serviceContext(deps, req), {
+        since, limit, calendar: deps.services?.calendar, calendarOnly: true,
+      });
+      if (!result.hasMore && since === result.cursor) await stampDeviceSynced(deps);
+      return answer<"GET /calendar/sync">()(result);
+    },
+  },
+  {
+    method: "GET",
+    pattern: "/calendar/sync/snapshot",
+    wire: true,
+    relay: true,
+    cost: "read",
+    handler: async (req, deps) => {
+      const query = new URL(req.url).searchParams;
+      const cursor = query.get("cursor") ?? undefined;
+      const limit = pagingNumber(query.get("limit"));
+      const span = namedCalendarSpan(query.get("from"), query.get("to"));
+      return answer<"GET /calendar/sync/snapshot">()(await sync(deps).getSnapshot(serviceContext(deps, req), {
+        cursor, limit, span: span ?? undefined, calendar: deps.services?.calendar, calendarOnly: true,
+      }));
+    },
+  },
+];
