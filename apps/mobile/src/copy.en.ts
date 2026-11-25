@@ -762,6 +762,7 @@ const TABLE = {
   lateMailboxTimeout: "The mail server did not respond in time",
   lateMailboxDown: "Mail server unreachable",
   lateMailboxOther: "Mail could not sync",
+  lateMailboxTitle: (mailbox: string, reason: string) => `${mailbox}: ${reason}`,
   lateSince: (time: string) => `since ${time}`,
   lateHide: "Hide",
   lateTitle: "New mail is late.",

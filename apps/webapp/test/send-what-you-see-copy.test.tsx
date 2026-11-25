@@ -4,6 +4,7 @@ import * as React from "react";
 import type { Root } from "react-dom/client";
 import { act } from "react";
 import { MutationRejectedError, type MutationResult } from "@ohmail/client-engine";
+import { prepareWriting } from "@ohmail/app/mail";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { mountWriting, rounds, unmountWritings } from "./_write-1-writing.js";
@@ -29,15 +30,16 @@ let host: HTMLElement | null = null;
 void React;
 
 function lineOf(el: HTMLElement): string {
-  return [...el.querySelectorAll<HTMLElement>('[role="status"], [role="alert"]')]
-    .map((n) => (n.textContent ?? "").trim())
-    .filter((text) => text !== "")
-    .join(" ");
+  const lines = [...el.querySelectorAll<HTMLElement>('[role="status"][data-place], [role="alert"][data-place]')];
+  expect(lines, "the send status").toHaveLength(1);
+  return (lines[0]!.textContent ?? "").trim();
 }
 
 async function render(send: SendState, messages: typeof en | typeof de, locale: string): Promise<string> {
   await unmountWritings();
   host?.remove();
+  // The browser shell loads the writing views before opening the composer.
+  await prepareWriting();
   const world = await mountWriting({ view: true, send, locale: locale === "de" || messages === de ? "de" : "en" });
   host = world.el;
   await rounds(2);

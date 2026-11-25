@@ -134,25 +134,30 @@ describe("the folders surfaces are reachable, and gated on the consent answer", 
   });
 });
 
+// The recorded case names predate the first-use rule. The assertions cover both account states.
 describe("the delete verb — the engine's, behind a confirm", () => {
   const actions = read("../src/ui/MessageActions.tsx");
   /* The web's reading column: the reader's panel, and the app's own catalogue the new shell draws its words from. */
-  const pane = read("../../../packages/app/src/reader/actions/ActionBar.tsx");
+  const pane = read("../../../packages/app/src/reader/actions/ActionMenus.tsx");
   const web = (JSON.parse(read("../../../packages/app/messages/ohbox.en.json")) as { ohbox: Record<string, string> }).ohbox;
 
   it("the More sheet carries Delete, and the dispatch stands INSIDE the confirm sheet", () => {
-    // The entry row opens the confirm; only the confirm sheet dispatches.
-    expect(actions).toMatch(/label=\{Copy\.actionDelete\}\s+onPress=\{\(\) => setOpen\("delete"\)\}/);
-    expect(actions).toMatch(/open === "delete"/);
-    // The dispatch carries `onCommitted` now — the reader leaves at the window's COMMIT, not
-    // the press (the device fix); the site is still one, still inside the confirm sheet.
-    expect(actions).toMatch(/a\.deleteMessage\(m\.id, \{ onCommitted:/);
-    // Exactly ONE dispatch site — a second (an unconfirmed shortcut) is the defect this holds out.
+    expect(actions).toMatch(/label=\{Copy\.actionDelete\}\s+onPress=\{requestTrash\}/);
+    expect(actions).toMatch(/case "delete":\s*return\s*\{[^}]*\bonPress:\s*requestTrash\s*[,}]/);
+    expect(actions).not.toMatch(/\bonPress\s*(?::\s*trash\b|=\s*\{\s*trash\b)/);
+    const request = actions.match(/const requestTrash = \(\) => \{([^}]*)\}/)?.[1];
+    expect(request).toContain("const acknowledged = w.screenerConfirmation?.acknowledged ?? 0");
+    expect(request).toMatch(/if \(\(acknowledged & SCREENER_ACKNOWLEDGEMENTS\.moveToTrash\) !== 0\) trash\(\);\s*else setOpen\("delete"\);/);
+    const confirm = actions.slice(actions.indexOf('<Sheet open={open === "delete"}'));
+    expect(confirm.slice(0, confirm.indexOf("</Sheet>"))).toMatch(/w\.screenerConfirmation\?\.remember\("moveToTrash"\);\s*trash\(\);/);
+    expect(actions.match(/\btrash\s*\(/g)).toHaveLength(2);
+    // The shared dispatch leaves the reader once the Undo window commits.
+    expect(actions).toMatch(/const trash = \(\) => \{\s*close\(\);\s*a\.deleteMessage\(m\.id, \{ onCommitted:/);
     expect(actions.match(/deleteMessage\(/g)).toHaveLength(1);
   });
   it("Delete is offered on every message, whatever the folders flag or the door (the web's rule)", () => {
     // The server's `message_delete` never reads "Use folders", and the standalone door serves
-    // it as the paired one does, so every posture admits Delete behind its confirm.
+    // it as the paired one does, so every posture admits Delete.
     const facts = { canReplyAll: true, forwardOffered: true, junkOffered: true, screeningOffered: true };
     for (const mode of ["compact", "bar", "rail"] as const) {
       const p = readerVerbPlacement(mode, facts);
@@ -164,7 +169,7 @@ describe("the delete verb — the engine's, behind a confirm", () => {
     // live in `ohbox.*` (`packages/app/messages/ohbox.en.json`); the phone's `Copy.actionDelete` family must be
     // those strings word for word, so the two readers can never describe the same wire verb
     // in two voices.
-    expect(pane).toMatch(/"delete"/);
+    expect(pane).toContain('verbs.act("delete")');
     expect(Copy.actionDelete).toBe(web.actionDelete);
     expect(Copy.deleteAsk).toBe(web.deleteAsk);
     expect(Copy.deleteNote).toContain("your own mail server");
