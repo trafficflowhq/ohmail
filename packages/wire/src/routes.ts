@@ -36,7 +36,7 @@ import type { InvitationAnswerBody, InvitationAnswerResult } from "./invitations
 import type { QueuedAnswer, RuleQueuedAnswer, RuleTravel, WithdrawSendOutcome } from "./act-answers.js";
 import type { UnboundCall } from "./unbound-calls.js";
 import type {
-  CreateDraftBody, CreateRuleBody, DraftFromTextBody, FolderCreateBody, FolderRenameBody, MarkSeenBody, MessagePatchBody, MoveBody,
+  CreateDraftBody, CreateRuleBody, DraftFromTextBody, DraftReplyBody, FolderCreateBody, FolderRenameBody, MarkSeenBody, MessagePatchBody, MoveBody,
   PatchDraftBody, PatchRuleBody, ScreenBody, SendResolution, TagAssignBody, TagBody, TriageWireBody,
 } from "./requests.js";
 
@@ -210,7 +210,7 @@ export interface Routes {
   "GET /messages/:id": { params: Id; body: never; answer: MessageDTO };
   "GET /messages/:id/body": { params: Id; body: never; answer: MessageBodyDTO };
   /** Drafts a reply under the press's Idempotency-Key. 202 with the written draft's id and X-Sync-Seq. */
-  "POST /messages/:id/draft": { params: Id; body: never; answer: DraftWrittenAnswer };
+  "POST /messages/:id/draft": { params: Id; body: DraftReplyBody; answer: DraftWrittenAnswer };
   "PATCH /messages": { params: None; body: MarkSeenBody; answer: { items: MessageDTO[] } };
   /** 200: the letter. 202: the folder half became a request for the install that organizes the mailbox. */
   "PATCH /messages/:id": { params: Id; body: MessagePatchBody; answer: Applied | (QueuedAnswer & { dto: MessageDTO }) };

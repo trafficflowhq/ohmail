@@ -12,18 +12,20 @@ import { apiConfigured } from "../../api-client";
 import { WebDoor } from "../door-device";
 import { useWebStepUp } from "../mailbox/StepUp";
 import { useRefusalSentence } from "../refusal-sentence";
+import type { ApprovalEntry } from "./approval-return";
 import { useApproveDoor, type ApproveCeremony } from "./use-approve-door";
 
 /** What the ceremony holds, as the page's state, in the order the card drew it. */
-function stateOf(c: ApproveCeremony, request: string, say: (err: unknown) => string): ApproveState {
+function stateOf(c: ApproveCeremony, request: string, entry: ApprovalEntry, say: (err: unknown) => string): ApproveState {
   if (!request) return { at: "bare" };
-  if (c.phase === "done") return { at: "done" };
-  if (c.phase === "denied") return { at: "denied" };
+  const phone = c.asked?.platform === "iOS" || c.asked?.platform === "Android";
+  if (c.phase === "done") return { at: "done", phone };
+  if (c.phase === "denied") return { at: "denied", phone };
   if (c.settled.kind === "refused") return { at: "refused", said: say(c.settled.refusal) };
   if (c.settled.kind === "unchecked") return { at: "unchecked" };
   const retryIn = c.retryAt !== null ? c.retryIn : null;
   if (c.loading || c.settled.kind !== "owner") return { at: "checking", retryIn };
-  if (!c.asked) return { at: "gone", said: c.error };
+  if (!c.asked) return { at: "gone", said: c.error, phone: entry.phone === true };
   const minutes = Math.floor(Math.max(0, Date.now() - Date.parse(c.asked.requestedAt)) / 60_000);
   return {
     at: "ask",
@@ -44,12 +46,12 @@ function stateOf(c: ApproveCeremony, request: string, say: (err: unknown) => str
   };
 }
 
-export function ApproveRoute({ request = "" }: { request?: string }) {
-  const c = useApproveDoor(request);
+export function ApproveRoute({ request = "", ...entry }: { request?: string } & ApprovalEntry) {
+  const c = useApproveDoor(request, entry);
   const say = useRefusalSentence();
   const stepUp = useWebStepUp();
   const door: ApproveDoor = {
-    state: stateOf(c, request, say),
+    state: stateOf(c, request, entry, say),
     confirm: c.confirm,
     deny: c.deny,
     stepUp,

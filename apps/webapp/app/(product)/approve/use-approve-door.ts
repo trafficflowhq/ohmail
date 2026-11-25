@@ -16,7 +16,7 @@ import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { ApiError, SESSION_UNCHECKED, apiConfigured, auth, type DesktopApprovalDTO } from "../../api-client";
 import { isBusy, retryBusy } from "../../retry-busy";
 import { useRefusalSentence } from "../refusal-sentence";
-import { rememberApprovalRequest } from "./approval-return";
+import { rememberApprovalRequest, type ApprovalEntry } from "./approval-return";
 import { isOwnerAbsent, useSettledOwner, type Settled } from "./settle-owner";
 import { sessionIsDead } from "@ohmail/app-logic/session/session-truth";
 
@@ -46,7 +46,12 @@ export interface ApproveCeremony {
   stepUpDiscarded(): void;
 }
 
-export function useApproveDoor(request: string): ApproveCeremony {
+function expiryKey(platform: string | undefined, phone: boolean | undefined) {
+  if (platform === "Android" || platform === "iOS" || phone) return "expiredPhone";
+  return "expired";
+}
+
+export function useApproveDoor(request: string, entry: ApprovalEntry): ApproveCeremony {
   /* THIS PAGE ACTS ON AN ACCOUNT — `/link-desktop`'s reason: the account is pended during render
      so a press that comes before any effect still asks as the account this browser is bound to. */
   pendApiOwner(readOwner());
@@ -106,7 +111,7 @@ export function useApproveDoor(request: string): ApproveCeremony {
   /** The sentence for a refusal: the three request states by code, the server, never the session. */
   const sentenceFor = (err: unknown): string => {
     if (err instanceof ApiError) {
-      if (err.code === "approval_expired") return t("expired");
+      if (err.code === "approval_expired") return t(expiryKey(asked?.platform, entry.phone));
       if (err.code === "approval_used") return t("used");
       if (err.code === "approval_denied") return t("denied");
       if (err.status === 404) return t("notFound");
@@ -122,7 +127,7 @@ export function useApproveDoor(request: string): ApproveCeremony {
      unreachable server leaves the browser signed in, and the page says so instead. */
   const onUnauthorized = (): void => {
     if (sessionIsDead()) {
-      rememberApprovalRequest(request);
+      rememberApprovalRequest(request, Date.now(), entry);
       router.replace("/login");
       return;
     }
@@ -132,7 +137,7 @@ export function useApproveDoor(request: string): ApproveCeremony {
   /* No full session here, an enrolment-only one included: the ordinary sign-in, and back. */
   useEffect(() => {
     if (settled.kind === "none") {
-      rememberApprovalRequest(request);
+      rememberApprovalRequest(request, Date.now(), entry);
       router.replace("/login");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the verdict is the trigger
@@ -180,12 +185,12 @@ export function useApproveDoor(request: string): ApproveCeremony {
     const tick = (): void => {
       const left = Math.max(0, Math.ceil((ends - Date.now()) / 1000));
       setRemaining(left);
-      if (left === 0) { setAsked(null); setError(t("expired")); }
+      if (left === 0) { setAsked(null); setError(t(expiryKey(asked.platform, entry.phone))); }
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [asked, phase, t]);
+  }, [asked, phase, t, entry.phone]);
 
   const confirm = (): void => {
     if (wake.current) { wake.current(); return; }

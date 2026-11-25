@@ -1,8 +1,5 @@
-/**
- * THE FIRST SCREEN. The mark with its doorbell, the app's one sentence, and the ways in: "Connect a mailbox" (ink;
- * the mailbox app only, and only where this build can organize on the phone), "Scan a code", and a quiet "Servers"
- * that opens the door's list. What differs by app is a table over native's word, never a branch in markup.
- */
+/** The first screen shows the app’s mark, its welcome line, and the three ways in. */
+import "./welcome.css";
 import { useEffect, useState, type ReactNode } from "react";
 import { Button, Mark, Page } from "@ohmail/ui/base";
 import { Said } from "../text/Said.js";
@@ -15,19 +12,12 @@ const LINE = {
   ohcal: "welcome.line.ohcal",
 } as const satisfies { readonly [A in PhoneDoorConfig["app"]]: string };
 
-/** The calendar app never offers a mailbox of its own. */
-const OFFERS_A_MAILBOX = { ohmail: true, ohcal: false } as const satisfies {
-  readonly [A in PhoneDoorConfig["app"]]: boolean;
-};
-
 /** The doorbell rings by itself once, a moment after the first screen arrived, as the design rings it. */
 const RINGS_AFTER_MS = 1100;
 
 export function Welcome({ door, to }: StepProps): ReactNode {
   const { t } = useDoorWords();
-  const { app, organizes } = door.config;
-  /* Anything but a word that offers it withholds the way. */
-  const mailbox = OFFERS_A_MAILBOX[app] && organizes === "offered";
+  const { app } = door.config;
   const [rang, setRang] = useState(false);
   useEffect(() => {
     const ring = setTimeout(() => setRang(true), RINGS_AFTER_MS);
@@ -36,21 +26,19 @@ export function Welcome({ door, to }: StepProps): ReactNode {
   return (
     <Page
       centerLead
-      aside={
-        <Button kind="quiet" onPress={() => door.go("servers")}>
-          {t("welcome.servers")}
-        </Button>
-      }
       acts={
         <>
-          {mailbox ? (
-            <Button size="l" keyHint="↵" onPress={() => to({ step: "terms" })}>
-              {t("welcome.connect")}
-            </Button>
-          ) : null}
-          <Button size="l" kind={mailbox ? "quiet" : "ink"} onPress={() => to({ step: "scan" })}>
+          <Button size="l" onPress={() => to({ step: "scan" })}>
             {t("welcome.scan")}
           </Button>
+          <Button size="l" kind="two" onPress={() => to({ step: "signIn" })}>
+            {t("welcome.signIn")}
+          </Button>
+          <div className="phone-welcome-self-hosted">
+            <Button kind="quiet" onPress={() => to({ step: "signIn", address: "" })}>
+              {t("welcome.signInSelfHosted")}
+            </Button>
+          </div>
         </>
       }
     >

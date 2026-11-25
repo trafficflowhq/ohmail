@@ -7,9 +7,9 @@
         "ohcal": "Die Kalender, die du schon hast, an einem Ort."
       },
       "ring": "Klingeln",
-      "connect": "Postfach verbinden",
-      "scan": "Code scannen",
-      "servers": "Server"
+      "scan": "QR scannen",
+      "signIn": "Anmelden",
+      "signInSelfHosted": "Bei eigenem Server anmelden"
     },
     "scan": {
       "camera": "Kamera",
@@ -22,6 +22,10 @@
       "linkBlank": "einfügen",
       "pair": "Koppeln",
       "notACode": "Kein ohmail-Code."
+    },
+    "signIn": {
+      "waiting": "Schliesse die Anmeldung im Browser ab.",
+      "finishing": "Anmeldung wird abgeschlossen…"
     },
     "server": {
       "cloud": "ohmail Cloud.",
@@ -352,6 +356,15 @@
     "baseApiStopped": "Dieser Server hat zu antworten begonnen und dann aufgehört, ohmail hat deshalb nicht weiter gewartet. Wenn du ihn betreibst, prüfe, ob sein Proxy die Anfragen an die ohmail-API durchreicht.",
     "baseApiTimeout": "Dieser Server hat nicht rechtzeitig geantwortet, ohmail hat deshalb nicht weiter gewartet. Das kann am Netz zwischen diesem Handy und ihm liegen oder an einer Route auf dem Server, die nie antwortet.",
     "baseApiUnreachable": "Dieser Server war nicht erreichbar, um seine Mail-API zu finden — {0}",
+    "signInExpired": "Diese Anmeldeanfrage ist abgelaufen. Starte erneut.",
+    "signInDenied": "Die Anmeldeanfrage wurde abgelehnt.",
+    "signInUnreachable": "Der Server ist nicht erreichbar. Prüfe deine Verbindung und versuche es erneut.",
+    "signInNotOffered": "Dieser Server unterstützt die Anmeldung über den Browser deines Telefons nicht.",
+    "signInRateLimited": "Zu viele Anmeldeversuche. Versuche es später erneut.",
+    "signInRefused": "Die Anmeldung konnte nicht abgeschlossen werden. Starte erneut.",
+    "signInNoBrowser": "Der Browser für die Anmeldung konnte nicht geöffnet werden.",
+    "signInWrongServer": "Die Anmeldeseite muss auf {0} bleiben.",
+    "signInCancelled": "Die Anmeldung wurde abgebrochen.",
     "baseCleartext": "Das ist eine unverschlüsselte Adresse, und ohmail sendet deine Mails nicht darüber. Gib die https-Adresse an, unter der du ohmail im Browser öffnest.",
     "baseNeedsTheCode": "Das ist eine numerische Adresse in einem Netz, und dafür kann keine Zertifizierungsstelle bürgen. ohmail kann ihr nur über den Code vertrauen, den dein Computer zeigt, also öffne dort Einstellungen › Geräte und scanne den.",
     "baseNotAnAddress": "Das sieht nicht nach einer Serveradresse aus. Gib die Adresse an, unter der du ohmail im Browser öffnest, zum Beispiel ohmail.example.com, mit nichts hinter dem Host.",

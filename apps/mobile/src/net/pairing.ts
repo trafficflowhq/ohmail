@@ -41,6 +41,7 @@ import { ServerProfileStore, StoreFault, type PendingSignOut, type ServerProfile
 import { CREDENTIAL_CHECK, type BearerManagerRN, type FetchLike, type RefreshVault, type SessionDeath, type SignOutOutcome } from "./bearer";
 import { bearers as processBearers, type BearerRegistry } from "./bearer-registry";
 import { deathRefusal } from "./session-death";
+import { withinApprovalDeadline } from "./approval-deadline";
 import { withAccessLock } from "./access-lock";
 import { withUpdateAnswer } from "./update-answer";
 import { forgetAccessFeed } from "./account";
@@ -482,6 +483,8 @@ export interface PairingEnv {
   engineDeps: MobileEngineDeps;
   /** Override the transport (tests). Absent, RN's global fetch. */
   fetchImpl?: FetchLike;
+  /** The native transport that can refuse a redirect, including when a browser sign-out is retried. */
+  approvalFetchImpl?: FetchLike;
   /**
    * The app's release (`app.json`'s version), named to every server in `x-ohmail-client`. Read by the
    * composition and handed in, so this module imports nothing native. Absent reads `dev`.
@@ -561,6 +564,12 @@ export interface PairingEnv {
   familyDigest?: (refreshToken: string) => Promise<string>;
 }
 
+/** A bearer pair a server minted for this phone. */
+export interface MintedPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
 export type PairOutcome =
   | { kind: "paired"; session: ConnectedSession }
   | { kind: "refused"; reason: Refusal };
@@ -627,9 +636,10 @@ function vaultFor(profiles: ServerProfileStore, row: Pick<ServerProfile, "id" | 
 
 /** Keep a sign-out `row`'s server was not told ({@link drainPendingSignOuts} sends it); `false` when it could not be kept. */
 function oweSignOutTo(
-  profiles: ServerProfileStore, row: Pick<ServerProfile, "origin" | "pin">, refreshToken: string,
+  profiles: ServerProfileStore, row: Pick<ServerProfile, "origin" | "pin">, refreshToken: string, browser?: true,
 ): Promise<boolean> {
-  return profiles.markPendingSignOut({ origin: row.origin, pin: row.pin, refreshToken }).then(() => true, () => false);
+  return profiles.markPendingSignOut({ origin: row.origin, pin: row.pin, refreshToken, ...(browser ? { browser } : {}) })
+    .then(() => true, () => false);
 }
 
 /**
@@ -833,13 +843,28 @@ async function previousFamily(env: PairingEnv, origin: string, owedHere: Pending
 }
 
 /**
+ * THE FAMILY A NEW PAIR AT `origin` REPLACES, after the sign-out this phone still owes there is paid: the redeem's
+ * `previousSession`, and the browser approval's claim's.
+ */
+export async function familyReplacedAt(env: PairingEnv, origin: string): Promise<string | null> {
+  const owedAt = async (): Promise<PendingSignOut[]> =>
+    (await env.profiles.pendingSignOuts().catch(() => [] as PendingSignOut[])).filter((e) => e.origin === origin);
+  let owedHere = await owedAt();
+  if (owedHere.length > 0) {
+    await drainPendingSignOuts(env, { origin });
+    owedHere = await owedAt();
+  }
+  return previousFamily(env, origin, owedHere);
+}
+
+/**
  * END A PAIR THIS PHONE WAS HANDED AND DOES NOT KEEP — the desktop's `revokeHeldSession` order:
  * `/auth/logout` with its bearer, and on that 401 only `/auth/refresh/logout` with its refresh
  * token, never a renewal. Answers whether the server said the session is over: a 2xx, the refresh
  * door's own refusal, or a server without that door, where the bearer's 401 already said it.
  * Never throws.
  */
-async function endMintedPair(
+export async function endMintedPair(
   fetchImpl: FetchLike, origin: string, pair: { accessToken: string; refreshToken: string },
 ): Promise<boolean> {
   try {
@@ -878,8 +903,7 @@ async function pairWithServer(
   to: "screens" | "shell",
 ): Promise<PairOutcome | ShellOutcome> {
   const fetchImpl = pairingFetch(env);
-  const { origin, pin, apiBase } = input.admission;
-  const negotiatedFlavor = input.admission.flavor;
+  const { origin, pin } = input.admission;
   const token = input.token.trim();
   /**
    * A REFUSED PAIRING GIVES THE LEASE BACK — the probe installed this key only so it could dial,
@@ -897,14 +921,7 @@ async function pairWithServer(
      re-installed just below), and the family this phone held here is named in the redeem
      (`previousSession`) so the server ends it with the mint: the newest owed sign-out's, else the
      active pairing's at this origin, else the only one here. Two and neither active names none. */
-  const owedAt = async (): Promise<PendingSignOut[]> =>
-    (await env.profiles.pendingSignOuts().catch(() => [] as PendingSignOut[])).filter((e) => e.origin === origin);
-  let owedHere = await owedAt();
-  if (owedHere.length > 0) {
-    await drainPendingSignOuts(env, { origin });
-    owedHere = await owedAt();
-  }
-  const previousSession = await previousFamily(env, origin, owedHere);
+  const previousSession = await familyReplacedAt(env, origin);
 
   /**
    * THE ADMISSION'S PIN IS RE-INSTALLED HERE, and it is not belt-and-braces.
@@ -984,15 +1001,71 @@ async function pairWithServer(
     return refusedRedeem(message);
   }
 
-  // 3 — whose mailbox did this open? The server's word, or no mirror at all.
-  const minted = { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
-  if (env.calendarOnly && (answer.scope !== "calendar" ||
+  return pairApproved(env, {
+    admission: input.admission,
+    approved: { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken },
+    scope: answer.scope,
+  }, to);
+}
+
+/** Keep an unfinished browser sign-out in the same queue as any other sign-out this server hasn't heard. */
+export async function revokeBrowserPair(
+  env: PairingEnv, admission: Pick<PairAdmission, "origin" | "pin">, pair: MintedPair, fetchImpl: FetchLike,
+): Promise<boolean> {
+  const closed = await withinApprovalDeadline((signal) => endMintedPair(
+    (url, init) => fetchImpl(url, { ...(init as RequestInit), credentials: "omit", redirect: "error", signal }),
+    admission.origin, pair,
+  )).catch(() => false);
+  if (!closed) await oweSignOutTo(env.profiles, admission, pair.refreshToken, true);
+  return closed;
+}
+
+interface BrowserAdoption {
+  readonly signal: AbortSignal;
+  current(): boolean;
+  persisting(): void;
+  readonly fetchImpl?: FetchLike;
+}
+
+/** Adopt the native session minted by either redeeming a pairing code or claiming a browser approval. */
+export async function pairApproved(
+  env: PairingEnv, input: { admission: PairAdmission; approved: MintedPair; scope?: unknown }, to: "screens" | "shell",
+  browser?: BrowserAdoption,
+): Promise<PairOutcome | ShellOutcome> {
+  const { origin, pin, apiBase, flavor } = input.admission;
+  const minted = input.approved;
+  const fetchImpl = browser?.fetchImpl ?? pairingFetch(env);
+  const refusedAdoption = (reason: Refusal): { kind: "refused"; reason: Refusal } => {
+    discardAdmission(input.admission);
+    return { kind: "refused", reason };
+  };
+
+  const abandoned = () => browser !== undefined && (browser.signal.aborted || !browser.current());
+  const revoke = async () => {
+    if (browser === undefined) return endMintedPair(fetchImpl, origin, minted);
+    return revokeBrowserPair(env, input.admission, minted, fetchImpl);
+  };
+  const cancelled = async () => {
+    await revoke();
+    return refusedAdoption(refuse("connectSuperseded"));
+  };
+  if (abandoned()) return cancelled();
+  if (env.calendarOnly && (input.scope !== "calendar" ||
       !calendarCredential(minted.accessToken) || !calendarCredential(minted.refreshToken))) {
-    await endMintedPair(fetchImpl, origin, minted);
-    return refusedRedeem(refuse("calendarServerUnavailable"));
+    await revoke();
+    return refusedAdoption(refuse("calendarServerUnavailable"));
   }
+
+  // Whose mailbox did this open? The server's word, or no mirror at all.
   const authHeaders = () => ({ authorization: `Bearer ${minted.accessToken}` });
-  const identity = await resolveAccountId(fetchImpl, origin, authHeaders, apiBase, env.calendarOnly);
+  const identity = browser === undefined
+    ? await resolveAccountId(fetchImpl, origin, authHeaders, apiBase, env.calendarOnly)
+    : await withinApprovalDeadline((signal) => resolveAccountId(
+      (url, init) => signal.aborted ? Promise.reject() : fetchImpl(url, {
+        ...(init as RequestInit), credentials: "omit", redirect: "error", signal,
+      }), origin, authHeaders, apiBase, env.calendarOnly,
+    ), browser.signal).catch(() => null);
+  if (abandoned()) return cancelled();
   if (identity === null) {
     // A door with no session read and zero rows (a fresh desktop engine) can name no account,
     // and the mirror's name, its __owner stamp and the drain-time guard all require the
@@ -1000,8 +1073,8 @@ async function pairWithServer(
     // missing fact. The token above is single-use and is now spent, so the sentence says so,
     // and the session it minted is ended: nothing here will ever hold it.
     // (An identity read on the desktop-host door would let this name the account; not today.)
-    await endMintedPair(fetchImpl, origin, minted);
-    return refusedRedeem(env.calendarOnly && negotiatedFlavor === "desktop-host"
+    await revoke();
+    return refusedAdoption(env.calendarOnly && flavor === "desktop-host"
       ? refuse("calendarServerUnavailable") : refuse("pairNoAccountName"));
   }
 
@@ -1015,6 +1088,7 @@ async function pairWithServer(
   // the token is already spent, so the sentence says what to do next.
   const ownerKey = mirrorOwnerKey(origin, identity.accountId);
   const owed = (await env.profiles.pendingWipes()).find((w) => w.owner === ownerKey);
+  if (abandoned()) return cancelled();
   if (owed) {
     try {
       if (env.calendarOnly && owed.erased) {
@@ -1034,8 +1108,8 @@ async function pairWithServer(
       }
       await env.profiles.clearPendingWipe(ownerKey);
     } catch (err) {
-      await endMintedPair(fetchImpl, origin, minted);
-      return refusedRedeem(refuse("pairOwedDeletion", faultDetail(err)));
+      await revoke();
+      return refusedAdoption(refuse("pairOwedDeletion", faultDetail(err)));
     }
   }
 
@@ -1045,13 +1119,15 @@ async function pairWithServer(
   // sentence, not escape as a throw that strands the screen on "Pairing…", and the minted
   // session is revoked rather than abandoned live under nobody's control. Whether that
   // revocation LANDED decides which sentence is told; see the arm itself.
+  if (abandoned()) return cancelled();
+  browser?.persisting();
   let profile: ServerProfile;
   try {
     profile = await env.profiles.add({
       origin,
-      flavor: negotiatedFlavor,
+      flavor,
       accountId: identity.accountId,
-      refreshToken: tokens.refreshToken,
+      refreshToken: minted.refreshToken,
       // The pin is persisted with the credential, because it has to be re-installed on every
       // launch before the first request — a pin that lived only in this process would pair
       // perfectly and fail on the next cold start.
@@ -1065,8 +1141,8 @@ async function pairWithServer(
   } catch (err) {
     // THE COMPENSATION IS ONLY CLAIMED IF IT LANDED: a 500 or a dead network is not "the session
     // was closed" — a take-back asserted on the strength of a request having been sent.
-    const closed = await endMintedPair(fetchImpl, origin, minted);
-    return refusedRedeem(
+    const closed = await revoke();
+    return refusedAdoption(
       refuse(closed ? "pairNotStoredClosed" : "pairNotStoredOpen", faultDetail(err)),
     );
   }
@@ -1075,8 +1151,8 @@ async function pairWithServer(
      Only after `add` resolved: a pairing that was not stored replaces nothing. */
   (env.bearers ?? processBearers).adoptRedeem(profile.id, {
     origin,
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken,
+    accessToken: minted.accessToken,
+    refreshToken: minted.refreshToken,
     accountId: identity.accountId,
     vault: vaultFor(env.profiles, profile),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
@@ -1613,6 +1689,7 @@ async function drainSignOutsNow(
   env: PairingEnv, opts: { origin?: string; atLaunch?: boolean }, until: number | null,
 ): Promise<number> {
   const fetchImpl = pairingFetch(env);
+  const approvalFetch = pairingFetch({ ...env, fetchImpl: env.approvalFetchImpl ?? env.fetchImpl });
   let owed: PendingSignOut[];
   let live: ServerProfile[];
   try {
@@ -1638,7 +1715,7 @@ async function drainSignOutsNow(
       continue;
     }
     if (entry.pin !== null && !installPin(entry.origin, entry.pin)) { left += 1; continue; }
-    const settled = (await dialSignOut(fetchImpl, entry.origin, entry.refreshToken, dialMs)) === true;
+    const settled = (await dialSignOut(entry.browser ? approvalFetch : fetchImpl, entry, dialMs)) === true;
     // The registry holds what it held before this dial: the live pairing's key, or none.
     if (entry.pin !== null && livePin !== entry.pin) {
       if (livePin !== null) installPin(entry.origin, livePin);
@@ -1659,7 +1736,7 @@ const SIGN_OUT_DIAL_MS = 8_000;
 
 /** Whether the refresh door's sign-out for `refreshToken` settles the debt; `null` when nothing answered within `ms`. */
 async function dialSignOut(
-  fetchImpl: FetchLike, origin: string, refreshToken: string, ms: number,
+  fetchImpl: FetchLike, { origin, refreshToken, browser }: PendingSignOut, ms: number,
 ): Promise<boolean | null> {
   const abort = typeof AbortController === "function" ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1672,6 +1749,7 @@ async function dialSignOut(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ refreshToken }),
+      ...(browser ? { credentials: "omit", redirect: "error" } : {}),
       ...(abort ? { signal: abort.signal } : {}),
     });
     return res.ok || res.status === 404 || res.status === 405 || isSessionRefusal(res.status, await envelopeCode(res));

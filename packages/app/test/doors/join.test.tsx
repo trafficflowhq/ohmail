@@ -69,6 +69,7 @@ const ACTS = [
 type Acts = Record<(typeof ACTS)[number], ReturnType<typeof vi.fn>>;
 
 interface Over {
+  note?: JoinDoor["note"];
   stations?: readonly JoinStation[];
   invited?: boolean;
   busy?: boolean;
@@ -84,7 +85,7 @@ function Harness({ state, acts, o }: { state: JoinState; acts: Acts; o: Over }) 
   const door: JoinDoor = {
     state,
     stations: o.stations ?? MANAGED,
-    note: "managed-open",
+    note: o.note ?? "managed-open",
     invited: o.invited ?? false,
     busy: o.busy ?? false,
     refusal: o.refusal ?? null,
@@ -245,6 +246,32 @@ describe("the stages", () => {
 });
 
 describe("the invite code and the account", () => {
+  it.each([
+    { locale: "en", words: en, terms: "Terms of Service", privacy: "Privacy Policy" },
+    { locale: "de", words: de, terms: "Nutzungsbedingungen", privacy: "Datenschutzerklärung" },
+  ] as const)(
+    "account: shows the Cloud legal links before Continue in $locale",
+    ({ locale, words, terms, privacy }) => {
+      draw({ at: "account" }, {}, words, locale);
+      const submit = button(words.join.continue);
+      for (const [name, path] of [
+        [terms, "/terms"],
+        [privacy, "/privacy"],
+      ] as const) {
+        const legal = link(name);
+        expect(legal.getAttribute("href")).toBe(path);
+        expect(legal.closest("form")).toBe(submit.form);
+        expect(legal.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      }
+    },
+  );
+
+  it("account: self-hosted signup omits the Cloud legal links", () => {
+    draw({ at: "account" }, { note: "selfhost" });
+    expect(screen.queryByRole("link", { name: "Terms of Service" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Privacy Policy" })).toBeNull();
+  });
+
   it("invite: says which sentence about codes is true here, and Continue hands the code on", () => {
     const { acts } = draw({ at: "invite" }, { invited: true });
     expect(heading()).toBe(J.myInvite.replace("<blank></blank>.", J.inviteLabel));

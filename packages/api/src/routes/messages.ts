@@ -181,8 +181,10 @@ export const messageRoutes: Route[] = [
           "an Idempotency-Key header is required for AI drafting",
         );
       }
+      const body = await readBody<UntrustedBody<RequestOf<"POST /messages/:id/draft">> | null>(req);
       const { draftId, seq } = await drafting(deps).draftFromMessage(ctx, params.id!, {
         drafter: drafter(deps),
+        fullConversation: body?.fullConversation === true,
         onPreview: deps.onDraftPreview,
         credits,
         // The memory for a refund this request may owe. Composed by the same host that composes

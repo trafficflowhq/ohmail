@@ -7,10 +7,8 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 
 /**
- * `/approve` on a self-hosted build. That server mounts no browser approval, because the desktop
- * asks only the hosted service, so a link to this page was made by somebody else. The page says
- * so in the reader's language and does nothing else: no request leaves the browser, no request id
- * is kept for after a sign-in, nobody is sent to `/login`, and there is nothing to press.
+ * A self-hosted approval must prove this server issued it before the page opens the sign-in door.
+ * A bare computer link still shows the closed page in either language.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -18,6 +16,7 @@ import de from "../messages/de.json";
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 // THE FLAVOR, before any module under test loads, the way the build inlines it.
 process.env.NEXT_PUBLIC_OHMAIL_FLAVOR = "selfhost";
+process.env.OHMAIL_INTERNAL_API_ORIGIN = "http://api.example.test";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
@@ -27,7 +26,20 @@ vi.mock("next/navigation", () => ({
   notFound: () => { throw new Error("notFound"); },
 }));
 
+let approvalCookie: string | undefined;
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ host: "mail.example.test:8443" }),
+  cookies: async () => ({
+    get: (name: string) => name === "ohmail_approval_launch" && approvalCookie
+      ? { name, value: approvalCookie }
+      : undefined,
+  }),
+}));
+
 const ID = "4f9a3c1e-2b7d-4e8f-9a01-23456789abcd";
+const LAUNCH = "1780000000000." + "a".repeat(32);
+const VERIFY = "http://api.example.test/auth/desktop-approval/launch";
+const READ = `/api/auth/desktop-approval/${ID}`;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let fetched: string[] = [];
@@ -38,18 +50,32 @@ afterEach(async () => {
   host?.remove();
   host = null;
   globalThis.fetch = realFetch;
+  approvalCookie = undefined;
   sessionStorage.clear();
+  document.cookie = "tf_owner=; path=/; max-age=0";
+  document.cookie = "tf_csrf=; path=/; max-age=0";
+  const { markSessionAlive } = await import("@ohmail/app-logic/session/session-truth");
+  const { bindApiOwner } = await import("../app/api-client");
+  markSessionAlive();
+  bindApiOwner(null);
   replaced.length = 0;
 });
 
-async function mountPage(locale: "en" | "de"): Promise<HTMLDivElement> {
+async function mountPage(
+  locale: "en" | "de",
+  searchParams: Record<string, string> = { request: ID },
+  reply: (url: string, init?: RequestInit) => Response = () => Response.json({}),
+): Promise<HTMLDivElement> {
+  if (root) await act(() => { root?.unmount(); });
+  host?.remove();
   fetched = [];
-  globalThis.fetch = (async (input: unknown) => {
-    fetched.push(String(input));
-    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    fetched.push(url);
+    return reply(url, init);
   }) as typeof fetch;
   const { default: ApprovePage } = await import("../app/(product)/approve/page.js");
-  const page = await ApprovePage({ searchParams: Promise.resolve({ request: ID }) });
+  const page = await ApprovePage({ searchParams: Promise.resolve(searchParams) });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -73,4 +99,77 @@ describe("/approve on a self-hosted build", () => {
     expect(sessionStorage.length, "a request id was kept for after a sign-in").toBe(0);
     expect(replaced, "the page sent the browser somewhere").toEqual([]);
   });
+
+  it("keeps a launch this deployment refuses closed", async () => {
+    approvalCookie = LAUNCH;
+    const el = await mountPage("en", { request: ID }, () => new Response(null, { status: 404 }));
+    expect(el.querySelector("main p")?.textContent).toBe(en.approve.unavailableTitle);
+    expect(fetched).toEqual([VERIFY]);
+    expect(sessionStorage.length).toBe(0);
+    expect(replaced).toEqual([]);
+  });
+
+  it("tells a phone whose launch expired during sign-in to start again in the app", async () => {
+    approvalCookie = LAUNCH;
+    const el = await mountPage("en", { request: ID }, () => new Response(null, { status: 410 }));
+    expect(el.textContent).toContain(en.approve.expiredPhone);
+    expect(fetched).toEqual([VERIFY]);
+    expect(sessionStorage.length).toBe(0);
+    expect(replaced).toEqual([]);
+  });
+
+  it("keeps a local phone launch across login and waits for an explicit confirm", async () => {
+    approvalCookie = LAUNCH;
+    let signedIn = false;
+    let confirmations = 0;
+    const reply = (url: string, init?: RequestInit) => {
+      if (url === VERIFY) {
+        expect(JSON.parse(String(init?.body))).toEqual({ approvalId: ID, origin: "https://mail.example.test:8443", launch: LAUNCH });
+        expect(init).toMatchObject({ method: "POST", credentials: "omit", redirect: "error", cache: "no-store" });
+        return new Response(null, { status: 204 });
+      }
+      if (!signedIn) {
+        const code = url.endsWith("/refresh") ? "refresh_missing" : "unauthorized";
+        return Response.json({ error: { code, message: code } }, { status: 401 });
+      }
+      if (url === READ) {
+        return Response.json({ platform: "Android", label: "Android", requestedAt: new Date().toISOString(),
+          expiresIn: 300, network: "same", ipClass: "", approved: false });
+      }
+      if (url === `${READ}/confirm` && init?.method === "POST") {
+        confirmations += 1;
+        return Response.json({ approved: true });
+      }
+      return Response.json({ user: { accountId: "account-fixture", email: "owner@example.test" }, scope: "full" });
+    };
+    await mountPage("en", { request: ID }, reply);
+    expect(replaced).toEqual(["/login"]);
+    expect(fetched).not.toContain(READ);
+    expect(JSON.stringify(Object.values(sessionStorage))).not.toContain(LAUNCH);
+    const { takeApprovalReturn } = await import("../app/(product)/approve/approval-return");
+    const restored = takeApprovalReturn();
+    expect(restored).toBe(`/approve?request=${ID}&device=phone`);
+    const returnParams = new URL(restored!, "https://mail.example.test:8443").searchParams;
+
+    signedIn = true;
+    document.cookie = "tf_owner=account-fixture; path=/";
+    document.cookie = "tf_csrf=fixture; path=/";
+    const el = await mountPage("en", Object.fromEntries(returnParams), reply);
+    expect(replaced).toEqual(["/login"]);
+    expect(fetched[0]).toBe(VERIFY);
+    expect(fetched).toContain(READ);
+    expect(confirmations).toBe(0);
+    const confirm = [...el.querySelectorAll("button")].find((button) => button.textContent?.includes(en.approve.confirm));
+    expect(confirm).toBeDefined();
+    await act(() => { confirm!.click(); });
+    expect(confirmations).toBe(1);
+  });
+
+  it("rejects a proof supplied only in the URL", async () => {
+    const el = await mountPage("en", { request: ID, launch: LAUNCH }, () => new Response(null, { status: 204 }));
+    expect(el.querySelector("main p")?.textContent).toBe(en.approve.unavailableTitle);
+    expect(fetched).toEqual([]);
+    expect(replaced).toEqual([]);
+  });
+
 });

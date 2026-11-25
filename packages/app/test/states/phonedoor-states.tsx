@@ -211,6 +211,7 @@ function stateDoor(data: StateData, lang: Lang): PhoneDoor {
     },
     state: { read: () => STATE, subscribe: () => () => {} },
     ask: never,
+    signIn: never,
     scan: {
       start: () => Promise.resolve(camera),
       move: () => Promise.resolve(camera),

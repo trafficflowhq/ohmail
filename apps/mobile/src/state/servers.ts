@@ -213,6 +213,8 @@ export interface PendingSignOut {
   /** The key the pairing enforced for that origin, or `null` where the trust store verifies it. */
   pin: string | null;
   refreshToken: string;
+  /** A browser-issued family must use the transport that refuses redirects. */
+  browser?: true;
   /** When the sign-out could not be told, epoch milliseconds. */
   owedSince: number;
 }
@@ -778,7 +780,10 @@ export class ServerProfileStore {
       const p = JSON.parse((await this.kv.get(signOutKey(id))) ?? "null") as Partial<PendingSignOut> | null;
       if (p === null || typeof p.origin !== "string" || typeof p.refreshToken !== "string" || p.refreshToken === ""
         || typeof p.owedSince !== "number") return null;
-      return { id, origin: p.origin, pin: typeof p.pin === "string" ? p.pin : null, refreshToken: p.refreshToken, owedSince: p.owedSince };
+      return {
+        id, origin: p.origin, pin: typeof p.pin === "string" ? p.pin : null, refreshToken: p.refreshToken,
+        owedSince: p.owedSince, ...(p.browser === true ? { browser: true as const } : {}),
+      };
     } catch {
       return null;
     }
@@ -795,7 +800,7 @@ export class ServerProfileStore {
    * is written ({@link add}'s order: a name with no value is skipped, a token nothing names is not
    * reachable). A full list refuses and records nothing; so does a token already owed.
    */
-  markPendingSignOut(input: { origin: string; pin: string | null; refreshToken: string }): Promise<PendingSignOut> {
+  markPendingSignOut(input: Pick<PendingSignOut, "origin" | "pin" | "refreshToken" | "browser">): Promise<PendingSignOut> {
     return this.enqueue(async () => {
       const ids = await this.signOutIds();
       const held = (await Promise.all(ids.map((id) => this.readSignOut(id))))

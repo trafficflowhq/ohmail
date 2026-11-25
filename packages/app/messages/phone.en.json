@@ -7,9 +7,9 @@
         "ohcal": "The calendars you already have, in one place."
       },
       "ring": "Ring the doorbell",
-      "connect": "Connect a mailbox",
-      "scan": "Scan a code",
-      "servers": "Servers"
+      "scan": "Scan QR",
+      "signIn": "Sign in",
+      "signInSelfHosted": "Sign in self hosted"
     },
     "scan": {
       "camera": "Camera",
@@ -22,6 +22,10 @@
       "linkBlank": "paste it",
       "pair": "Pair",
       "notACode": "Not an ohmail code."
+    },
+    "signIn": {
+      "waiting": "Finish signing in in the browser.",
+      "finishing": "Finishing sign-in…"
     },
     "server": {
       "cloud": "ohmail Cloud.",
@@ -352,6 +356,15 @@
     "baseApiStopped": "That server started answering and then stopped, so ohmail stopped waiting. If you run it, check that its proxy passes requests through to the ohmail API.",
     "baseApiTimeout": "That server did not answer in time, so ohmail stopped waiting. It may be the network between this phone and it, or a route on the server that never replies.",
     "baseApiUnreachable": "ohmail could not reach that server to find its mail API — {0}",
+    "signInExpired": "This sign-in request expired. Start again.",
+    "signInDenied": "The sign-in request was declined.",
+    "signInUnreachable": "Could not reach the server. Check your connection and try again.",
+    "signInNotOffered": "This server does not support signing in from the phone’s browser.",
+    "signInRateLimited": "Too many sign-in attempts. Try again later.",
+    "signInRefused": "Could not finish signing in. Start again.",
+    "signInNoBrowser": "Could not open the sign-in browser.",
+    "signInWrongServer": "The sign-in page must stay on {0}.",
+    "signInCancelled": "The sign-in was cancelled.",
     "baseCleartext": "That is a plain, unencrypted address, and ohmail will not send your mail over one. Give the https address you open ohmail at in a browser.",
     "baseNeedsTheCode": "That is a numeric address on a network, and no certificate authority can vouch for one. ohmail can only trust it through the code your computer shows, so open Settings › Devices there and scan that instead.",
     "baseNotAnAddress": "That does not look like a server address. Give the address you open ohmail at in a browser, for example ohmail.example.com, with nothing after the host.",

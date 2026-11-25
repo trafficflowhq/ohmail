@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { MAX_DRAFT_THREAD_MESSAGES } from "@trafficflow/core/mail";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
@@ -9,7 +10,7 @@ import de from "../../webapp/messages/de.json";
  * WHAT A DRAFT SENDS, SAID WHERE THE PROVIDER IS CHOSEN.
  *
  * A suggestion sends the sender, the subject and a short extract. A draft sends more: the
- * drafting service grounds it in up to `MAX_THREAD_MESSAGES` other messages of the thread (sender
+ * drafting service grounds it in up to `MAX_DRAFT_THREAD_MESSAGES` other messages of the thread (sender
  * and extract) and up to `DEFAULT_KB_K` matching knowledge-base notes. The provider form said only
  * the first, which became a narrower claim than the truth once drafting worked on the desktop.
  * The counts are read off the service, so a change to what a draft sends breaks this file before
@@ -35,7 +36,7 @@ const REPLY_DRAFT = readFileSync(
   "utf8",
 );
 
-const THREAD = constant("MAX_THREAD_MESSAGES");
+const THREAD = MAX_DRAFT_THREAD_MESSAGES;
 const NOTES = constant("DEFAULT_KB_K");
 
 /** The five destination lines: each is shown on its own, as the option's line and as the summary's. */
@@ -45,8 +46,8 @@ const WHY = [
 
 describe("the provider form says what a draft sends", () => {
   it("the service still grounds a draft in the thread and the knowledge base", () => {
-    expect(SERVICE).toMatch(/const threadMessages = target\.threadId\s+\? await this\.retrieveThreadContext\(ctx, target\.threadId, target\.id\)/);
-    expect(SERVICE).toMatch(/const kbHits = await this\.kb\.retrieve\(ctx, query, deps\.k \?\? DEFAULT_KB_K\)/);
+    expect(SERVICE).toContain("const threadMessages = await this.retrieveThreadContext(ctx, target, fullConversation)");
+    expect(SERVICE).toContain("const kbHits = await this.kb.retrieve(ctx, query, deps.k ?? DEFAULT_KB_K, { manualOnly: true })");
     expect(SERVICE).toMatch(/context: \{\s+kbEntries: kbHits\.map\(\(e\) => \(\{ title: e\.title, content: e\.content \}\)\),\s+threadMessages,\s+\}/);
   });
 
@@ -56,6 +57,8 @@ describe("the provider form says what a draft sends", () => {
     expect(en.aiProvider.note).toContain(`up to ${NOTES} matching knowledge-base notes`);
     expect(de.aiProvider.note).toContain(`bis zu ${THREAD} weiteren Nachrichten im Thread`);
     expect(de.aiProvider.note).toContain(`bis zu ${NOTES} passende Notizen aus der Wissensdatenbank`);
+    expect(en.aiProvider.note).toMatch(/typed text.*confirm Use full conversation.*full stored text.*4,000 characters/);
+    expect(de.aiProvider.note).toMatch(/eingegebenen Text.*Ganze Unterhaltung verwenden.*bestätigst.*vollständigen gespeicherten Text.*4\.000 Zeichen/);
   });
 
   it("names every destination line the catalogue has (None sends nothing)", () => {

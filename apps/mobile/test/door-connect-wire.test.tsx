@@ -579,11 +579,11 @@ describe("the list of servers on the door's page", () => {
 });
 
 describe("the ways in on the door's page", () => {
-  it("lead to no page the door does not draw: a press on Servers at the first screen leaves a page on the stage", async () => {
+  it("lead to no page the door does not draw: a press on self-hosted sign-in at the first screen leaves a page on the stage", async () => {
     const n = native(() => ({}));
     const door = doorHandle(createDoorBridge(n.port, EPOCH), CONFIG);
     const { container } = render(h(TextProvider, { locale: "en", messages: WORDS as never, timeZone: "UTC", children: h(Stage, { door }) }));
-    pressWay(WAYS.welcome.servers);
+    pressWay(WAYS.welcome.signInSelfHosted);
     await settle();
     expect(pages[door.route.read()]).not.toBe(NONE);
     expect(container.textContent).not.toBe("");

@@ -293,6 +293,34 @@ function hasCredentialBodyCue(text: string): boolean {
   return parts.some((part, index) => index % 2 ? bodyHasLink(parts[index - 1]!, part) : bodyHasCode(part, authContext));
 }
 
+const PRIVATE_KEY_BLOCK = /-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|$)/g;
+const BEARER_VALUE = /^([\t >]*(?:proxy-)?authorization[ \t]*:[ \t]*bearer[ \t]+)\S+/gim;
+const BACKUP_CODE_VALUE = /^([\t >]*(?:your )?backup code[ \t]*(?:(?:[ \t]+(?:is|ist|lautet)\b)[ \t]*[:=]?|[:=])[ \t]*)(?:"[^"\r\n]+"|'[^'\r\n]+'|\S+)([ \t]*)$/gimu;
+const PASSWORD_LABEL = /(?<![^\s>])(?:(?:the|your|das|dein|ihr)[ \t]+)?(?:password|passphrase|passwort|kennwort)(?:[ \t]+(?:is|ist|lautet)\b[ \t]*[:=]?|[ \t]*[:=])[ \t]*/giu;
+const QUOTED_PASSWORD = /^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\x60(?:[^\x60\\]|\\.)*\x60|“[^”]*”|‘[^’]*’)/u;
+const PASSWORD_TOKEN_BEFORE_SENTENCE = /^\S+?(?=[.!?;][ \t]+\p{Lu}[\p{Ll}\p{M}])/u;
+
+function maskPasswordValues(text: string): { text: string; complete: boolean } {
+  let out = "";
+  let from = 0;
+  for (const label of text.matchAll(PASSWORD_LABEL)) {
+    if (label.index < from) continue;
+    const at = label.index + label[0].length;
+    const line = text.slice(at).match(/^[^\r\n\u2028\u2029]*/u)![0].trimEnd();
+    const quoted = /^["'\x60“‘]/u.test(line);
+    const value = (quoted ? QUOTED_PASSWORD : PASSWORD_TOKEN_BEFORE_SENTENCE).exec(line)?.[0];
+    if ((quoted && value === undefined) || (!line && at < text.trimEnd().length)) {
+      // Its value may continue onto another line. Keep the earlier text and mask the rest.
+      return { text: out + text.slice(from, at) + "[code]", complete: false };
+    }
+    if (!line) continue;
+    // Keep a separated sentence after a single token. An unquoted phrase can use the whole line.
+    out += text.slice(from, at) + "[code]";
+    from = at + (value?.length ?? line.length);
+  }
+  return { text: out + text.slice(from), complete: true };
+}
+
 /** Redact the outgoing copy using nearby wording from the field and its siblings. */
 function redactText(text: string, context: string, heading = false, credentialMail = false,
   previewAtLimit = false, decodeEmbedded = true): string {
@@ -302,8 +330,10 @@ function redactText(text: string, context: string, heading = false, credentialMa
   const reset = contextReset || MODEL_RESET_WORDS.test(text);
   const contextCode = contextAuth || contextReset || codeCue(context);
   const headingContext = heading && (POSITIVE_CODE_CONTEXT.test(context) || codeCue(context.trimEnd(), true));
+  const withoutExplicitSecrets = maskPasswordValues(text.replace(PRIVATE_KEY_BLOCK, "[code]")
+    .replace(BEARER_VALUE, "$1[code]").replace(BACKUP_CODE_VALUE, "$1[code]$2")).text;
   // Capture URLs before scanning words so codes inside ordinary links remain undisturbed.
-  const parts = text.split(credentialMail ? MODEL_URL : WEB_LINK);
+  const parts = withoutExplicitSecrets.split(credentialMail ? MODEL_URL : WEB_LINK);
   return parts.map((part, index) => {
     if (index % 2) {
       const punctuation = part.match(credentialMail ? /[.,;!?)']+$/ : /[.,;!?]+$/)?.[0] ?? "";
@@ -377,6 +407,17 @@ export function redactAiMail<T extends { subject?: string; snippet: string }>(
     cleaned.snippet = credentialMail ? redactText(folded, cleaned.subject ?? "", false, true) : folded;
   }
   return cleaned;
+}
+
+/** Use the old excerpt if an explicit password makes the full letter unsafe to share. */
+export function redactAiLetter<T extends { subject?: string; snippet: string }>(
+  mail: T, { fromName, text }: { fromName?: string | null; text?: string },
+): { cleaned: T; full: boolean } {
+  const fullText = text !== undefined && maskPasswordValues(text).complete ? text : undefined;
+  return {
+    cleaned: redactAiMail({ ...mail, snippet: fullText ?? mail.snippet }, { fromName, body: text }),
+    full: fullText !== undefined,
+  };
 }
 
 function hasCredentialSubjectCue(text: string, body: string): boolean {

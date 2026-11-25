@@ -3,7 +3,7 @@ import type { Route } from "../router.js";
  * this file. Re-exported below so every consumer of this barrel sees exactly what it did. */
 import { authRoutes } from "./auth.js";
 import { withManagedHandoff } from "./settings-handoff.js";
-// The browser approval of a desktop sign-in: this table only, never `selfHostRoutes`.
+// Hosted browser approval accepts desktop and phone requests.
 import { desktopApprovalRoutes } from "./desktop-approval.js";
 import { syncRoutes } from "./sync.js";
 import { eventsRoutes } from "./events.js";

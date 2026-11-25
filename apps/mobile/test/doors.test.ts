@@ -1403,18 +1403,18 @@ describe("the three doors — the claims, held to the code", () => {
   const welcome = read("../app/welcome.tsx");
   const servers = read("../app/servers.tsx");
 
-  it("first run introduces the app and keeps every connection route in reach", () => {
+  it("first run introduces the app and names the three available ways in", () => {
     expect(Copy.welcomeTitle).toBe("Mail from people you said yes to.");
-    expect(Copy.welcomeScan).toBe("Scan a code");
-    expect(Copy.welcomeConnect).toBe("Connect a mailbox");
-    // No door is filed under "other": the deck no longer has a key for it.
+    expect([Copy.welcomeScan, Copy.welcomeSignIn, Copy.welcomeSignInSelfHosted]).toEqual([
+      "Scan QR", "Sign in", "Sign in self hosted",
+    ]);
+    expect([DECKS.de.welcomeScan, DECKS.de.welcomeSignIn, DECKS.de.welcomeSignInSelfHosted]).toEqual([
+      "QR scannen", "Anmelden", "Bei eigenem Server anmelden",
+    ]);
     expect(Object.keys(Copy)).not.toContain("welcomeOther");
     for (const name of [Copy.doorCloud, Copy.doorOwnServer, Copy.doorDesktop]) {
       expect(name.length).toBeGreaterThan(0);
     }
-    expect(welcome).toContain('router.push("/servers")');
-    expect(welcome).toContain('router.push("/scan")');
-    expect(welcome).toContain('router.push("/standalone")');
     expect(servers).toContain("<Doors");
   });
 

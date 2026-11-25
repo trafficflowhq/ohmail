@@ -36,10 +36,12 @@ export function PhoneDrafter(props: PhoneDrafterProps) {
   const theme = useTheme();
   const session = useLiveSession();
   const wire = useMemo(() => phoneDraftWire(session, allowed), [session, allowed]);
-  const [confirming, setConfirming] = useState(false);
+  const [confirmation, setConfirmation] = useState<{
+    full: boolean; messageId: string | null; owner?: string;
+  } | null>(null);
   const [needsText, setNeedsText] = useState(false);
-  const [pair, setPair] = useState<{ source: string; draft: string } | null>(null);
-  const pending = useRef<{ text: string; original: string; owner?: string } | null>(null);
+  const [kept, setPair] = useState<{ source: string; draft: string; messageId: string | null; owner?: string } | null>(null);
+  const pending = useRef<{ text: string; original: string; messageId: string | null; owner?: string } | null>(null);
   const active = useRef({ props, owner: session?.ownerKey });
   const alive = useRef(true);
   active.current = { props, owner: session?.ownerKey };
@@ -51,46 +53,57 @@ export function PhoneDrafter(props: PhoneDrafterProps) {
     wire, t: translate,
     onDraft: (draft) => {
       const started = pending.current;
-      if (!alive.current || started === null || started.owner !== active.current.owner) return;
       const field = active.current.props;
-      setPair({ source: field.body === started.text ? started.original : field.body, draft: draft.text });
+      if (!alive.current || started === null || started.owner !== active.current.owner || started.messageId !== field.messageId) return;
+      setPair({
+        source: field.body === started.text ? started.original : field.body,
+        draft: draft.text, messageId: started.messageId, owner: started.owner,
+      });
       if (field.body === started.text && !field.blocked) field.onChange(draft.text);
     },
   });
   if (control === null) return props.children(null, null, null, false);
 
+  const pair = kept?.messageId === messageId && kept.owner === session?.ownerKey ? kept : null;
   const untouched = pair !== null && pair.draft === body;
   const source = untouched ? pair.source : body;
   const busy = control.phase === "running";
   const metered = session?.profile.flavor === "managed";
+  const confirming = confirmation?.messageId === messageId && confirmation.owner === session?.ownerKey ? confirmation : null;
   const label = busy ? Copy.draftAiRunning : untouched ? Copy.draftAiAgain : Copy.draftAiFromText;
-  const buy = () => {
+  const buy = (fullConversation = false) => {
     if (disabled || busy || source.trim() === "") return;
-    setConfirming(false);
+    setConfirmation(null);
     setNeedsText(false);
-    pending.current = { text: body, original: source, owner: session?.ownerKey };
+    pending.current = { text: body, original: source, messageId, owner: session?.ownerKey };
     const typed = { text: source, html: "" };
     if (messageId === null && control.letter !== "none") control.letter({ text: source, mailboxId, subject }, typed);
-    else if (messageId !== null && control.fromText !== "none") control.fromText(messageId, source, typed);
+    else if (messageId !== null && control.fromText !== "none") control.fromText(messageId, source, typed, fullConversation);
+  };
+  const offer = (full: boolean) => {
+    if (!source.trim()) setNeedsText(true);
+    else if (full || metered) setConfirmation({ full, messageId, owner: session?.ownerKey });
+    else buy();
   };
   const tool = (
-    <Button label={label} icon="spark" variant="quiet" disabled={disabled || busy}
-      style={{ backgroundColor: theme.c.tint2 }}
-      onPress={() => {
-        if (!source.trim()) setNeedsText(true);
-        else if (metered) setConfirming(true);
-        else buy();
-      }} />
+    <>
+      <Button label={label} icon="spark" variant="quiet" disabled={disabled || busy}
+        style={{ backgroundColor: theme.c.tint2 }} onPress={() => offer(false)} />
+      {messageId !== null ? <Button label={Copy.draftAiFullTitle} variant="quiet" disabled={disabled || busy}
+        onPress={() => offer(true)} /> : null}
+    </>
   );
   const notice = (
     <>
       {needsText && !source.trim() ? <Txt variant="caption" tone="ink2">{Copy.draftAiNeedWords}</Txt> : null}
       {confirming ? (
         <>
-          <Txt variant="note">{Copy.draftAiOffer}</Txt>
+          {confirming.full ? <Txt variant="note">{Copy.draftAiFullDisclosure}</Txt> : null}
+          {metered ? <Txt variant="note">{Copy.draftAiOffer}</Txt> : null}
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-            <Button label={Copy.draftAiConfirm} variant="solid" disabled={disabled} onPress={buy} />
-            <Button label={Copy.moveCancel} onPress={() => setConfirming(false)} />
+            <Button label={confirming.full ? Copy.draftAiFullConfirm : Copy.draftAiConfirm} variant="solid"
+              disabled={disabled || busy} onPress={() => buy(confirming.full)} />
+            <Button label={Copy.moveCancel} onPress={() => setConfirmation(null)} />
           </View>
         </>
       ) : null}

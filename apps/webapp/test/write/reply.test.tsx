@@ -349,13 +349,13 @@ describe("the reply's sheet", () => {
 
 /** The drafter's wire: every purchase with its key, each answered by the gate the case holds. */
 function drafter(fromText: "door" | "none" = "door") {
-  const bought: { messageId: string; key: string }[] = [];
+  const bought: { messageId: string; key: string; fullConversation?: boolean }[] = [];
   const fromWords: { body: unknown; key: string }[] = [];
   const state = { gate: null as Promise<void> | null };
   const wire: DraftReplyWire = {
     configured: () => true,
-    create: async (messageId, key) => {
-      bought.push({ messageId, key });
+    create: async (messageId, key, _preview, ...options: [fullConversation?: boolean]) => {
+      bought.push({ messageId, key, ...(options[0] === true ? { fullConversation: true } : {}) });
       if (state.gate) await state.gate;
       return { draftId: "d-drafted" };
     },
@@ -382,6 +382,25 @@ const replyText = (): string => {
   return box.editor.getText();
 };
 
+async function shareFullConversation(d: ReturnType<typeof drafter>, text?: string): Promise<void> {
+  const purchases = () => d.fromWords.length + d.bought.length;
+  const before = purchases();
+  const offer = () => draftButton("Use full conversation");
+  await act(async () => { fireEvent.click(offer()); });
+  const dialog = screen.getByRole("dialog", { name: "Use full conversation" });
+  expect(dialog.textContent).toMatch(/your typed text.*full stored text.*earlier messages.*configured AI provider/i);
+  expect(purchases()).toBe(before);
+  await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" })); });
+  expect(purchases()).toBe(before);
+
+  await act(async () => { fireEvent.click(offer()); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Share and draft" })); });
+  await rounds(10);
+  expect(purchases()).toBe(before + 1);
+  if (text === undefined) expect(d.bought.at(-1)).toMatchObject({ messageId: "m1", fullConversation: true });
+  else expect(d.fromWords.at(-1)?.body).toEqual({ text, inReplyToMessageId: "m1", fullConversation: true });
+}
+
 describe("draft reply in one press", () => {
   it("says its price before the press, buys once however often pressed while it runs, and lands in the reply", async () => {
     const d = drafter();
@@ -401,8 +420,10 @@ describe("draft reply in one press", () => {
     expect(d.bought[0]!.messageId).toBe("m1");
     await act(async () => release());
     await rounds(10);
+    await screen.findByRole("textbox", { name: W.reply.text });
     expect(replyText()).toBe("Drafted: noon suits me.");
     expect(sends(w)).toHaveLength(0);
+    await shareFullConversation(d);
   });
 
   it("over typed words, the draft takes their place and the person's own text is one tab away; Send sends the one shown", async () => {
@@ -498,6 +519,7 @@ describe("draft from your text", () => {
     expect(d.fromWords).toHaveLength(2);
     expect(d.fromWords[1]!.body).toEqual({ text: "noon ok", inReplyToMessageId: "m1" });
     expect(d.fromWords[1]!.key).not.toBe(d.fromWords[0]!.key);
+    await shareFullConversation(d, "noon ok");
   });
 
   it("where the host has no door for it the word is not drawn: the plain control stands and nothing is asked", async () => {
