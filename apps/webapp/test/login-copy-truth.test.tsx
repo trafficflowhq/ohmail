@@ -16,6 +16,7 @@
  * The real `LoginScreen`, the real `api-client`, only `fetch` and the router stubbed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { within } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -204,5 +205,19 @@ describe("sign-in offers account creation only where signup is open", () => {
     expect(page.textContent?.includes("Create an account")).toBe(joins.length > 0);
     expect(page.textContent).not.toContain("Have an invite code?");
     expect(page.textContent).not.toMatch(/invite-only|by invitation|you can sign up|invite code is not required/i);
+  });
+});
+
+describe("Back from sign-in", () => {
+  it("is absent when sign-in is the self-host entry page", async () => {
+    build.selfHost = true;
+    const page = within(await mountLogin());
+    expect(page.getByRole("button", { name: messages.login.continue })).toBeTruthy();
+    expect(page.queryByRole("link", { name: messages.login.back })).toBeNull();
+  });
+
+  it("leads back to the managed welcome page", async () => {
+    const page = within(await mountLogin());
+    expect(page.getByRole("link", { name: messages.login.back }).getAttribute("href")).toBe("/");
   });
 });

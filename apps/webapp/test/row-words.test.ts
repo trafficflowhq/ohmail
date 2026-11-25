@@ -5,6 +5,7 @@ import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider, useTranslations, type AbstractIntlMessages } from "next-intl";
 import { FixturesAdapter, DEMO_NOW } from "@ohmail/testing/adapter";
+import { getFixtures } from "@ohmail/testing";
 import { TAG_HUES } from "@ohmail/ui";
 import {
   AGO_COPY, DEFAULT_RESURFACE_TIME, PLACE_LABEL, agoStamp, avatarOf, clockOf, composedLocalInput, dayAt, dayEnd,
@@ -39,7 +40,16 @@ const NOW = DEMO_NOW;
 const OWN = "hello@milabrunner.example";
 
 async function world(): Promise<{ messages: EngineMessage[]; tags: TagDTO[] }> {
-  const answer = await new FixturesAdapter().sync({ since: "0", limit: 2000 } as never);
+  const fixtures = getFixtures();
+  // Keep the corpus used to record the row words, including the original row timestamps.
+  const adapter = new FixturesAdapter({
+    fixtures: {
+      ...fixtures,
+      ohbox: fixtures.ohbox.filter((message) => message.id !== "domain-renewal"),
+      triage: { ...fixtures.triage, resurface: [] },
+    },
+  });
+  const answer = await adapter.sync({ since: "0", limit: 2000 } as never);
   const of = <T,>(type: string): T[] =>
     answer.changes.creates.filter((c) => c.type === type).map((c) => c.entity as T);
   const tags = of<TagDTO>("tag");

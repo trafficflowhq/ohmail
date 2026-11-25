@@ -215,7 +215,7 @@ export interface TriageItemFixture {
   title: string;
   subtitle?: string;
   preview?: string;
-  /** Resurface only — "Fri 09:00". */
+  /** Resurface only. The booking as an ISO instant. */
   resurfaceAt?: string;
 }
 

@@ -296,8 +296,18 @@ export const ohbox: MessageFixture[] = [
     body: "Half the neighbourhood asked who made them. See you at the fest on Saturday — we saved you a raclette.\n\nCarla",
     rationale: "Ohbox — you said Yes to this sender",
   },
+  {
+    id: "domain-renewal",
+    folder: "ohbox",
+    from: { name: "Lichtgrat Studio", address: "webmaster@lichtgrat.example" },
+    subject: "Domain renewal for lichtgrat.example",
+    time: "Mon",
+    unread: false,
+    snippet: "Your domain is due for renewal on 30 November.",
+    body: "Hi Mila,\n\nThe studio domain is due for renewal on 30 November. Renewal costs CHF 19.00 for another year. Auto-renew is off. Please renew it from our registrar account.\n\nLichtgrat Studio",
+  },
   /*
-   * THE ANSWER LATER PAIR — the last two rows, and the only two the Ohbox does not show.
+   * THE ANSWER LATER PAIR — the last two rows.
    *
    * `triage.replyLater` parks both, and a parked message is in its pile and nowhere else
    * (`client-engine/selectors.ts#ohboxView`), so these two are absent from the Ohbox screen by
@@ -846,9 +856,14 @@ export const triage: TriageFixture = {
       preview: "The 11th or the 18th. I'll do the rest, I just need the date.",
     },
   ],
-  setAside: [{ title: "Alpenbahn", subtitle: "Itinerary Winterthur→Lugano, 12 Aug" }],
+  setAside: [{ messageId: "alpenbahn", title: "Alpenbahn", subtitle: "Dein Billett Winterthur–Lugano" }],
   resurface: [
-    { title: "Domain renewal lichtgrat.example", resurfaceAt: "Fri 09:00" },
+    {
+      messageId: "domain-renewal",
+      title: "Lichtgrat Studio",
+      subtitle: "Domain renewal for lichtgrat.example",
+      resurfaceAt: new Date(Date.UTC(2026, 6, 31, 9)).toISOString(),
+    },
   ],
 };
 
@@ -949,14 +964,10 @@ export const counts: CountsFixture = {
      above the fold, under exactly three unread rows */
   ohboxUnread: 3,
   /*
-   * MAIL FILED IN THE OHBOX FOLDER — thirteen — which is NOT the eleven rows the Ohbox screen
-   * shows. The two are different questions and the demo answers both: parking moves nothing on
-   * the mail server, so `nadja` and `jonas` are still Ohbox mail while Answer Later is the only
-   * place they are listed. Surfaces that apply the one-pile rule derive their own total from
-   * what they render (`AppShell` passes `allOhbox.length`, which is eleven); this field is the
-   * folder, and `messagesIn(r, FOLDER_OF_VIEW.ohbox)` is what it is checked against.
+   * Fourteen letters belong to the Ohbox folder. Answer Later holds two and Resurface holds
+   * one, so the Ohbox screen shows the other eleven.
    */
-  ohboxTotal: 13,
+  ohboxTotal: 14,
   reads: 12,
   receipts: 7,
   screenerWaiting: 3,

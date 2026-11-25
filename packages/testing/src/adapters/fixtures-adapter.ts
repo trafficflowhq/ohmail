@@ -243,7 +243,7 @@ export class FixturesAdapter implements EngineAdapter {
           states.set(item.messageId, {
             messageId: item.messageId,
             state: pile,
-            bubbleUpAt: null,
+            bubbleUpAt: item.resurfaceAt ?? null,
             setAt: iso,
             updatedAt: iso,
           });
