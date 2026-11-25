@@ -141,7 +141,6 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
       <Sheet
         kind="reading"
         extendTop={!phone}
-        coverFoot={phone && (route.place === "news" || route.place === "receipts")}
         flushFoot
         manualScrollAnchor={threaded}
         label={text("reader")("pane")}

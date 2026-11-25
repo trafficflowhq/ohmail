@@ -14,7 +14,6 @@
     --oh-sheet-top-h: 56px;
     --oh-sheet-foot-inset: 0px;
     --oh-sheet-layer-foot: 5;
-    --oh-sheet-layer-cover: -1;
     --oh-sheet-layer-ring: 4;
     --oh-sheet-side: 0px;
     --oh-sheet-out: calc(var(--ringw) * -1);
@@ -166,15 +165,6 @@
     margin-inline: var(--oh-sheet-side);
     pointer-events: none;
   }
-  .oh-sheet-foot[data-cover]::before {
-    content: "";
-    position: absolute;
-    inset-inline: calc(-1 * var(--oh-sheet-foot-inset));
-    inset-block: 0 calc(-1 * var(--oh-sheet-foot-own));
-    z-index: var(--oh-sheet-layer-cover);
-    background: var(--ground);
-  }
-
   /* The way back stands at the right corner of what is read: a step over the foot, or at the column's foot. */
   .oh-sheet > .oh-button.oh-jumpback {
     bottom: var(--oh-sheet-jump-own);
