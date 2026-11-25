@@ -70,6 +70,7 @@ interface RegisteredDoor {
   openings?: Array<(value: unknown) => void>;
   calendarRequests?: Array<number | undefined>;
   calendarWrites?: Array<{ url: string; body: unknown; key: string | undefined; session: number | undefined }>;
+  cloudChecked?: boolean;
 }
 interface RequestBody {
   key?: string;
@@ -118,6 +119,7 @@ async function answer(door: RegisteredDoor, method: string, url: string): Promis
     return encode(200, { items: [{
       ...MB, status: "connected", lastSyncAt: CONNECTED, initialImportCompletedAt: CONNECTED,
       organizeConsentedAt: CONNECTED,
+      ...(door.cloudChecked ? { lastSyncAt: null, initialImportCompletedAt: null, hostedLastSyncAt: CONNECTED } : {}),
     }] });
   }
   if (url.startsWith("/sync/snapshot")) {
@@ -368,6 +370,15 @@ const managedCalendar: EngineStatus = {
   ...STANDALONE, mode: "cloud", flavor: "managed", cloudUrl: "https://api.example.invalid",
   accountId: MB.id, noticeDocument: 1, noticeSession: 2,
 };
+
+it("shows the connected Cloud mailbox during the desktop copy's first replay", async () => {
+  vi.stubGlobal("innerWidth", 1440);
+  await mountRegisteredWindow({ status: managedCalendar, cloudChecked: true });
+  await act(async () => { window.location.hash = "#/settings/mailboxes"; });
+  const desktop = within(hostEl);
+  await desktop.findByRole("heading", { name: "Mailboxes" });
+  await waitFor(() => expect(desktop.getAllByRole("status").map((row) => row.textContent)).toContain("Connected"));
+});
 
 it("connects an iCloud calendar from empty desktop settings before Calendar is configured", async () => {
   vi.stubGlobal("innerWidth", 1440);

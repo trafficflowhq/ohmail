@@ -24,6 +24,7 @@ export interface PaneMailState {
     | readonly {
         readonly status: string;
         readonly lastSyncAt?: string | null;
+        readonly hostedLastSyncAt?: string | null;
         readonly displayName?: string | null;
         readonly address?: string;
         readonly syncBlockedReason?: string | null;
@@ -121,8 +122,8 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
     if (facts == null) return rosterFailed ? { value: failureText("loadFailed") } : null;
     const live = facts.filter((m) => m.status !== "disabled");
     const full = live.some((m) => m.syncBlockedReason === "mailbox_full");
-    const statuses = live.map(({ status, lastSyncAt, syncBlockedReason }) =>
-      lastSyncAt === undefined || syncBlockedReason ? null : statusKey({ status, lastSyncAt }),
+    const statuses = live.map((m) =>
+      m.syncBlockedReason || (!("hostedLastSyncAt" in m) && m.lastSyncAt === undefined) ? null : statusKey(m),
     );
     const connecting = statuses.includes("status_connecting");
     const connected = statuses.length > 0 && statuses.every((status) => status === "status_connected");

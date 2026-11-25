@@ -16,6 +16,7 @@ import {
 import { mailboxErrorKey } from "../../mail-state/mailbox-error-key.js";
 import { appPasswordPresetFor, providerById } from "../connect/providers.js";
 import type { PaneSaid } from "./organizer.js";
+import { mailboxCheckedAt } from "./rows.js";
 import type { Stamps } from "./stamps.js";
 import type { MailboxRow } from "./types.js";
 
@@ -110,16 +111,17 @@ export function rowStateOf(m: MailboxRow, ctx: RowContext): RowState {
     };
   }
   if (ctx.importingSole) return { kind: "wait", text: ctx.say({ key: "syncRunning" }) };
-  if (!m.lastSyncAt) {
+  const checkedAt = mailboxCheckedAt(m);
+  if (!checkedAt) {
     const when = m.createdAt ? ctx.stamps.ago(m.createdAt, ctx.now).rel : ctx.stamps.justNow;
     return { kind: "wait", text: ctx.say({ key: "syncFirstPending", values: { when } }) };
   }
-  const stamp = ctx.stamps.ago(m.lastSyncAt, ctx.now);
+  const stamp = ctx.stamps.ago(checkedAt, ctx.now);
   return {
     kind: "ok",
     text: ctx.say({
       key: "syncedAgo",
-      values: { when: ctx.stamps.when(m.lastSyncAt, ctx.now) || stamp.abs },
+      values: { when: ctx.stamps.when(checkedAt, ctx.now) || stamp.abs },
     }),
     title: stamp.abs,
   };

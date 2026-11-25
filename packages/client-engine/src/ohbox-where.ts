@@ -124,6 +124,11 @@ export interface CheckedRow {
   hostedLastSyncAt?: string | null;
 }
 
+/** A hosted scan field answers for Cloud even while its scan time is unknown. */
+export function mailboxCheckedAt(row: Pick<CheckedRow, "hostedLastSyncAt" | "lastSyncAt">): string | null {
+  return "hostedLastSyncAt" in row ? row.hostedLastSyncAt ?? null : row.lastSyncAt ?? null;
+}
+
 /**
  * WHEN EVERY MAILBOX WAS LAST CHECKED — the oldest scan stamp, so "Checked" holds for each one.
  * `null` unless the facts were read within {@link CHECKED_FACTS_MAX_AGE_MS} and every mailbox that
@@ -140,7 +145,7 @@ export function lastCheckedAt(
   for (const r of rows) {
     if (r.status === "disabled") continue;
     if (r.status !== "connected" || r.syncBlockedSince) return null;
-    const checked = "hostedLastSyncAt" in r ? r.hostedLastSyncAt ?? null : r.lastSyncAt ?? null;
+    const checked = mailboxCheckedAt(r);
     if (!checked) return null;
     const at = Date.parse(checked);
     if (!Number.isFinite(at)) return null;

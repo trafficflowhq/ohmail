@@ -4,7 +4,10 @@
  * never paints over a newer one. The old path re-exports them until it leaves.
  */
 import { useCallback, useRef } from "react";
+import { mailboxCheckedAt, type CheckedRow } from "@ohmail/client-engine";
 import { addressKey } from "../../mail-state/address-key.js";
+
+export { mailboxCheckedAt };
 
 /**
  * How often the pane re-reads the mailbox list while it is open.
@@ -29,12 +32,15 @@ export const WRITE_SETTLE_MS = 4_000;
  * before the host resolves, the password is offered, or one message arrives — measured on a live iCloud
  * mailbox, where a typed Apple ID password (instead of the mandatory app-specific one) produced a row reading
  * "connected" until the worker's first attach failed. No fourth status value, deliberately: the fact is already
- * in the row — `lastSyncAt` is NULL until a cycle completes, already on the wire, already read for the
- * timestamp; a `pending` member would be a second source of truth that can disagree with it. The rule is
- * one-directional, which keeps it honest: it can only ever WEAKEN the claim.
+ * in the row. The scan stamp is null until a cycle completes. On a Cloud copy the hosted stamp
+ * describes the mailbox, and the desktop stamp describes the copy's progress.
  */
-export function statusKey(m: { readonly status: string; readonly lastSyncAt: string | null }): string {
-  return m.status === "connected" && m.lastSyncAt === null ? "status_connecting" : `status_${m.status}`;
+export function statusKey(
+  m: Pick<CheckedRow, "lastSyncAt" | "hostedLastSyncAt"> & { readonly status: string },
+): string {
+  return m.status === "connected" && mailboxCheckedAt(m) === null
+    ? "status_connecting"
+    : `status_${m.status}`;
 }
 
 /**
