@@ -4909,6 +4909,13 @@
     },
     {
         "type": "file",
+        "url": "https://registry.npmjs.org/expo-web-browser/-/expo-web-browser-57.0.3.tgz",
+        "sha512": "f9e72f8724bf3dd5a4a6fe1a8ba145d53adde98ff8927fde4373bcea689ed9e714df0f88f1b299875de4a6963f8f0d6e48bef28a4b74dcbe56fe2887a23ac5c1",
+        "dest-filename": "2f8724bf3dd5a4a6fe1a8ba145d53adde98ff8927fde4373bcea689ed9e714df0f88f1b299875de4a6963f8f0d6e48bef28a4b74dcbe56fe2887a23ac5c1",
+        "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/f9/e7"
+    },
+    {
+        "type": "file",
         "url": "https://registry.npmjs.org/expo/-/expo-57.0.9.tgz",
         "sha512": "34312f9d4faf8d174c6ed3b20c2db9392a24f7f13deda97dee9cb1f9b32985080d4460040f40fba05f216bba0662c2c4fbb8c5ce93c00d533d4bad1d19ba4720",
         "dest-filename": "2f9d4faf8d174c6ed3b20c2db9392a24f7f13deda97dee9cb1f9b32985080d4460040f40fba05f216bba0662c2c4fbb8c5ce93c00d533d4bad1d19ba4720",
@@ -15685,6 +15692,12 @@
         "contents": "f8f968431a2ce26b48b1bc1e479f7a47522da283\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/@jest/diff-sequences/-/diff-sequences-30.5.0.tgz\", \"integrity\": \"sha512-OsqBjHXCn8cadasoAZBP6nWYvMsRhpMzGXTpxJ5aO04NlbdhIz+FVe3q49l0AwVhsz/cEmIpBes6gAFl1/dWQg==\", \"time\": 0, \"size\": 11430, \"metadata\": {\"url\": \"https://registry.npmjs.org/@jest/diff-sequences/-/diff-sequences-30.5.0.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
         "dest-filename": "c544ca49a556e485289e7a7d04918b7b24de372a84d4eab4ef7999083303",
         "dest": "flatpak-node/npm-cache/_cacache/index-v5/bf/96"
+    },
+    {
+        "type": "inline",
+        "contents": "f8fee3439dde35dfd7c2d25c42819362c960b4db\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/expo-web-browser/-/expo-web-browser-57.0.3.tgz\", \"integrity\": \"sha512-+ecvhyS/PdWkpv4ai6FF1Trd6Y/4kn/eQ3O86mie2ecU3w+I8bKZh13kppY/jw1uSL7yikt03L5W/iiHojrFwQ==\", \"time\": 0, \"size\": 117559, \"metadata\": {\"url\": \"https://registry.npmjs.org/expo-web-browser/-/expo-web-browser-57.0.3.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
+        "dest-filename": "a6632c94d59c44b726d905237290da96894f65a7ef82f2cc5303ad4197bf",
+        "dest": "flatpak-node/npm-cache/_cacache/index-v5/0d/22"
     },
     {
         "type": "inline",
