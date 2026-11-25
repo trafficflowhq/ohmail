@@ -97,11 +97,7 @@ async function liveEngine(): Promise<{ engine: OhmailEngine; h: LiveShaped }> {
   return { engine, h };
 }
 
-/**
- * The MESSAGE-BACKED pile members. The demo world also seeds fixture-only `triage_item`
- * orphans (no `messageId`); they ride no wire and cannot double, so they are held out of
- * every count here — the duplication under test is message-backed by construction.
- */
+/** The message ids the live-shaped reader lists in each pile. */
 const pileIds = (engine: OhmailEngine) => {
   const p = triagePiles(engine.read());
   const ids = (entries: Array<{ messageId?: string }>) =>
@@ -115,7 +111,7 @@ describe("TRI-F5 — the optimistic pile count equals the settled pile through t
     // The seed, under the server's own record ids: nadja and jonas wait in Answer Later. The
     // message has to START in a pile for this to be a pile-to-pile move at all, which is why it
     // is one of these two and not any Ohbox row.
-    expect(pileIds(engine)).toEqual({ replyLater: ["nadja", "jonas"], setAside: [] });
+    expect(pileIds(engine)).toEqual({ replyLater: ["nadja", "jonas"], setAside: ["alpenbahn"] });
 
     const release = h.holdMutations();
     const p = engine.mutate({ kind: "triage_set", messageId: "nadja", state: "set_aside" });
@@ -123,12 +119,12 @@ describe("TRI-F5 — the optimistic pile count equals the settled pile through t
 
     // IN FLIGHT: one message, one pile. The un-fixed overlay left the settled reply_later row
     // standing beside its own set_aside effect — nadja in two piles, the badge counting both.
-    expect(pileIds(engine)).toEqual({ replyLater: ["jonas"], setAside: ["nadja"] });
+    expect(pileIds(engine)).toEqual({ replyLater: ["jonas"], setAside: ["alpenbahn", "nadja"] });
 
     release();
     await p;
     // SETTLED: the drain delivered the same fact under the server's id; nothing doubled.
-    expect(pileIds(engine)).toEqual({ replyLater: ["jonas"], setAside: ["nadja"] });
+    expect(pileIds(engine)).toEqual({ replyLater: ["jonas"], setAside: ["alpenbahn", "nadja"] });
   });
 
   it("state:'none' takes the message out of its pile AT PRESS TIME, not a round trip later", async () => {
@@ -154,16 +150,16 @@ describe("TRI-F5 — the optimistic pile count equals the settled pile through t
     const release = h.holdMutations();
     const p = engine.mutate({ kind: "triage_set", messageId: "cinderlock", state: "set_aside" });
     await tick();
-    expect(pileIds(engine).setAside).toEqual(["cinderlock"]);
+    expect(pileIds(engine).setAside).toEqual(["cinderlock", "alpenbahn"]);
 
     // The poll drain delivers the committed row while the mutation's response is still in
     // transit — the exact window a badge was measured inflated in.
     await engine.syncOnce();
-    expect(pileIds(engine).setAside).toEqual(["cinderlock"]);
+    expect(pileIds(engine).setAside).toEqual(["cinderlock", "alpenbahn"]);
 
     release();
     await p;
-    expect(pileIds(engine).setAside).toEqual(["cinderlock"]);
+    expect(pileIds(engine).setAside).toEqual(["cinderlock", "alpenbahn"]);
   });
 
   it("re-filing (move) spends the resurface against the SERVER'S record id too", async () => {

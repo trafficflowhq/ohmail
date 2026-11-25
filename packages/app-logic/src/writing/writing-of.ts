@@ -135,13 +135,14 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
     ),
     compose.plan.mutation,
   );
+  const offeredDraft = ctx.drafts.find(
+    (draft) => draft.id === "draft-compose" && draft.status === "draft" && !draft.accepted,
+  );
   return {
     compose: compose.compose,
     composeEpochNow: compose.composeEpochNow,
     onComposeFields: compose.onComposeFields,
-    offeredDraft: ctx.drafts.find(
-      (draft) => draft.id === "draft-compose" && draft.status === "draft" && !draft.accepted,
-    ),
+    offeredDraft: offeredDraft?.inReplyToMessageId == null ? offeredDraft : undefined,
     takeOfferedDraft: compose.takeOfferedDraft,
     plan: compose.plan,
     composeFrom: compose.composeFrom,
