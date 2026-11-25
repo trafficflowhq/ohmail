@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -17,13 +18,14 @@ import {
 
 const FIXTURES = join(__dirname, "fixtures", "migration-forms");
 
+const CALENDAR_PREFERENCES = "mail/0223_calendar_preferences";
+
 /**
  * MIGRATIONS THESE RULES REFUSE AND THE TREE DOES NOT EDIT, with the reason and the census's own
  * reading of each. Below the replay floor nothing re-executes an entry, so a refusal there is a
  * fact about the file: six are also below `LEGACY_CUTOFF_WHEN` and sha256-pinned against the
- * pre-split original by `journal-split.test.ts`'s permutation oracle, and two are byte-frozen by
- * `released-migrations.lock.json`. Above the floor only a fix in flight may be named, and the pg
- * half is where that is enforced — it is the side that knows each entry's `when`.
+ * pre-split original by `journal-split.test.ts`'s permutation oracle. The pg half checks that
+ * the named release exception above the floor is outside the legacy replay span.
  */
 const ALLOWED: Readonly<Record<string, string>> = {
   "mail/0001_cute_black_queen":
@@ -39,6 +41,8 @@ const ALLOWED: Readonly<Record<string, string>> = {
   "mail/0015_workflow_step_dedup":
     "below the floor, below the cutoff — two ADD CONSTRAINT UNIQUE wrapped in a DO block that "
     + "catches duplicate_object only; census: refuses, 42P07 on the backing index",
+  [CALENDAR_PREFERENCES]:
+    "released in 2.0.5, applied on the managed Cloud; bytes fixed by the release lock",
 };
 
 describe("no migration is written in a form that cannot be applied twice", () => {
@@ -65,6 +69,18 @@ describe("no migration is written in a form that cannot be applied twice", () =>
     const keys = new Set(allMigrations().map(keyOf));
     expect(Object.keys(ALLOWED).filter((k) => !keys.has(k)), "allow-list keys not in a journal")
       .toEqual([]);
+  });
+
+  it("the calendar preferences exception matches the pinned release and its two bare column adds", () => {
+    const migration = allMigrations().find((m) => keyOf(m) === CALENDAR_PREFERENCES);
+    expect(migration).toBeDefined();
+    // The release lock on the release tag carries this pin. This branch has an older lock.
+    expect(createHash("sha256").update(migration!.text).digest("hex"))
+      .toBe("776f6bf2e23c6d115ba20b8a06bf9b5284b6841513bc1743e9d59bc5089f60da");
+    expect(nonIdempotentForms(statementsOf(migration!.text))).toEqual([
+      { statement: 0, form: "ADD COLUMN", object: "local_color" },
+      { statement: 1, form: "ADD COLUMN", object: "organizer_addresses" },
+    ]);
   });
 
   it("control: a bare ADD CONSTRAINT is refused, and the same file with a DROP is admitted", () => {
