@@ -4,6 +4,7 @@
  * Each answer runs the list's own path for that letter; Delete then holds its delete for the Undo window, as `⌫`
  * does. The same kit menus and words as the picked rows' questions (`OhboxMoveAsk`, `OhboxSelection`).
  */
+import { useScreenerAcknowledgements } from "@ohmail/app-logic/consent";
 import type { RowAsk } from "@ohmail/app-logic/ohbox";
 import { MOVE_TARGETS } from "@ohmail/app-logic/press/actions";
 import { EndDot, Menu, MenuItem } from "@ohmail/ui/base";
@@ -28,6 +29,7 @@ export function OhboxRowAsk({
   onClose: () => void;
 }) {
   const t = useText("ohbox");
+  const { remember } = useScreenerAcknowledgements();
   const places = useText("place");
   const anchor = ask === null ? undefined : (row(ask.letter.id) ?? undefined);
   const answer = (run: () => void) => () => {
@@ -62,7 +64,14 @@ export function OhboxRowAsk({
         <h4 className="oh-text oh-menu-title">
           <EndDot kind="hot">{t("deleteAsk").slice(0, -1)}</EndDot>
         </h4>
-        <MenuItem onPress={answer(() => ask?.act("delete"))}>{t("deleteConfirm")}</MenuItem>
+        <MenuItem
+          onPress={answer(() => {
+            remember?.("moveToTrash");
+            ask?.act("delete");
+          })}
+        >
+          {t("deleteConfirm")}
+        </MenuItem>
         <MenuItem onPress={onClose}>{t("moveCancel")}</MenuItem>
       </Menu>
     </>

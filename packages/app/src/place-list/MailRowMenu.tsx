@@ -1,4 +1,5 @@
-import { useContext, useState } from "react";
+import { useScreenerAcknowledgements } from "@ohmail/app-logic/consent";
+import { Fragment, useContext, useState } from "react";
 import type { EngineMessage, TagEntity } from "@ohmail/wire";
 import type { ListVerbs } from "@ohmail/app-logic/place-list";
 import type { MessageAction, MoveTarget } from "@ohmail/app-logic/press/actions";
@@ -134,6 +135,7 @@ function LetterRowMenu({
 }) {
   const own = useOwnAddresses();
   const host = useContext(FrameContext)?.api.host;
+  const trashAcknowledged = useScreenerAcknowledgements().has("moveToTrash");
   const [ask, setAsk] = useState<"tag" | "move" | "delete" | null>(null);
   const { message, verbs, markUnread, screen, folderMove } = actions ?? {};
   const act = (action: MessageAction) => () => {
@@ -176,7 +178,11 @@ function LetterRowMenu({
         ? { [message.unread ? "read" : "unread"]: readState }
         : {}),
       ...(pick ? { [picked ? "deselect" : "select"]: () => pick.onPress(false) } : {}),
-      delete: canDelete ? { onPress: () => setAsk("delete"), keepOpen: true } : undefined,
+      delete: canDelete
+        ? trashAcknowledged
+          ? act("delete")
+          : { onPress: () => setAsk("delete"), keepOpen: true }
+        : undefined,
     },
     false,
     items,
@@ -213,6 +219,7 @@ function LetterRowAsk({
 }) {
   const t = useText("ohbox");
   const reader = useText("reader");
+  const { remember } = useScreenerAcknowledgements();
   const place = useText("place");
   const host = useContext(FrameContext)?.api.host;
   const run = (action: MessageAction) => {
@@ -244,7 +251,10 @@ function LetterRowAsk({
         kind="delete"
         confirm={{
           label: t("actionMove"),
-          onPress: () => run("delete"),
+          onPress: () => {
+            remember?.("moveToTrash");
+            run("delete");
+          },
         }}
         cancel={{ label: reader("resurface.cancel") }}
       />

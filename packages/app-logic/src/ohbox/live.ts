@@ -35,6 +35,7 @@ import { useDayClock } from "../session/day-clock.js";
 import { senderName } from "../text/format.js";
 import { useSentLabel } from "../text/row-copy.js";
 import type { Translator } from "../text/translator.js";
+import { useScreenerAcknowledgements } from "../consent/consent-row.js";
 import { cursorRowKeys, type RowAsk } from "./cursor-verbs.js";
 export type { RowAsk, RowAskKind } from "./cursor-verbs.js";
 import { useOhboxMirror, useThreadFacts } from "./live-mirror.js";
@@ -204,8 +205,13 @@ export function useOhboxLive(
     forwardTargetFor: where.forwardTargetFor,
   });
 
+  const acknowledgements = useScreenerAcknowledgements();
   const model = useOhboxList({
     demo,
+    trashConfirmation: {
+      acknowledged: acknowledgements.has("moveToTrash"),
+      remember: () => acknowledgements.remember?.("moveToTrash"),
+    },
     /* The reply that last settled, as the one composer holds it: its letter is marked read and slides to Earlier. */
     replyDone: useReplyDone(),
     ...(own.setupHref === undefined ? {} : { setupHref: own.setupHref }),

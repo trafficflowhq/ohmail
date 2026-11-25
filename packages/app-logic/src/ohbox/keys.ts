@@ -19,6 +19,9 @@ import type { BulkVerbs, OhboxListInput, OhboxStep, PickPanel } from "./types.js
 const deleteDoc = (e: KeyboardEvent): Document =>
   (e.view as (Window & typeof globalThis) | null)?.document ?? globalThis.document;
 
+/** The modal and repeat checks run on the press so these shortcuts stay listed in key help. */
+const canDeleteByKey = (e: KeyboardEvent): boolean => !e.repeat && !isModalOpen(deleteDoc(e));
+
 /** What the key table reads. */
 export interface KeyParts {
   t: Translator;
@@ -36,6 +39,7 @@ export interface KeyParts {
   setPickPanel: (next: PickPanel | null) => void;
   runBulk: (action: BulkAction) => void;
   deletePicked: () => void;
+  requestDeletePicked: () => void;
   onAddTag: OhboxListInput["onAddTag"];
   togglePick: (id: string) => void;
   markUnread: (m: EngineMessage) => void;
@@ -173,7 +177,18 @@ function walkKeys({
  * that creates the state cannot be gated on it.
  */
 export function ohboxKeys(parts: KeyParts): KeyBinding[] {
-  const { t, input, selected, bulk, picked, pickedIds, setPickPanel, runBulk, deletePicked } = parts;
+  const {
+    t,
+    input,
+    selected,
+    bulk,
+    picked,
+    pickedIds,
+    setPickPanel,
+    runBulk,
+    deletePicked,
+    requestDeletePicked,
+  } = parts;
   /**
    * NO CURSOR IS ITS OWN REASON — spread into every `message` binding below whose `disabled` is `selected == null`.
    * See `keymap.tsx#DisabledReason`. This is the view the defect was reported against: an Ohbox nobody had touched
@@ -235,42 +250,25 @@ export function ohboxKeys(parts: KeyParts): KeyBinding[] {
             run: () => runBulk("unread"),
           },
           {
-            /* `d` ASKS; `⌫`/`⌦` DO NOT — item 10's own distinction, one verb wider. `d` is the letter
-         printed on the pill's own Delete item, an aimed press over a set somebody built, and
-         the ask is the last place the count is stated before the rows go. */
+            /* The selection's Delete button and its letter share the first-use confirmation. */
             chord: "d",
             group: "message",
             label: t("keySelDeleteAsk"),
-            run: () => setPickPanel({ kind: "delete" }),
+            when: canDeleteByKey,
+            run: requestDeletePicked,
           },
           {
             chord: "Backspace",
             group: "message",
             label: t("keySelDelete"),
-            /**
-             * TWO CONDITIONS ON THE EVENT, and neither can be a `disabled` flag.
-             * · A HELD KEY IS ONE PRESS. Backspace auto-repeats, and a finger resting on it would open window after
-             *   window over a whole pile.
-             * · NOTHING IS STANDING OVER THE DECK. Measured before this line existed: three rows picked, the `?` sheet
-             *   OPEN, one press of ⌫ — and all three were filed, because the selection's delete chords never received a
-             *   modal gate at all. The shell's own delete keys had one; these were not on the list, and could not have
-             *   been, since the list enumerated what the SHELL owns and the More menu's open state lives below it.
-             */
-
-            /**
-             * `isModalOpen` asks the DOM instead of a list, which is why it is a `when` and not a `disabled`: `disabled` is
-             * computed while React renders, and the menu this is meant to catch opens without the shell re-rendering. A
-             * `false` here does not consume the key — it falls through, and the `?` sheet keeps listing the verb, which is
-             * right: the key is bound, it is simply not the innermost thing being asked.
-             */
-            when: (e: KeyboardEvent) => !e.repeat && !isModalOpen(deleteDoc(e)),
+            when: canDeleteByKey,
             run: deletePicked,
           },
           {
             chord: "Delete",
             group: "message",
             label: t("keySelDelete"),
-            when: (e: KeyboardEvent) => !e.repeat && !isModalOpen(deleteDoc(e)),
+            when: canDeleteByKey,
             run: deletePicked,
           },
         ] satisfies KeyBinding[])

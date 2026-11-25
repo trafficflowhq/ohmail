@@ -85,6 +85,10 @@ export interface OhboxReplyDone {
  */
 export interface OhboxListInput {
   replyDone?: OhboxReplyDone | null;
+  trashConfirmation?: {
+    acknowledged: boolean;
+    remember: () => void;
+  };
   demo: boolean;
   setupHref?: string;
   resurfacedRows?: ResurfacedThreadRow[];
@@ -209,6 +213,8 @@ export interface OhboxListModel {
   runBulk: (action: BulkAction) => void;
   markPicked: () => void;
   deletePicked: () => void;
+  requestDeletePicked: () => void;
+  confirmDeletePicked: () => void;
   open: (m: EngineMessage) => void;
   enter: (m: EngineMessage) => void;
   selectByUser: (id: string, extend?: boolean) => void;

@@ -8,6 +8,7 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { consentVia, SCREENER_ACKNOWLEDGEMENTS } from "@ohmail/app-logic/consent";
 import { setFormatWords } from "@ohmail/app-logic/text";
 import { UNDO_MS } from "@ohmail/app-logic/press/undo-window";
 import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
@@ -60,6 +61,7 @@ function seat(
     more?: Readonly<Record<string, unknown>>;
     ownAddress?: string;
     reader?: typeof READER;
+    consent?: ReturnType<typeof consentVia>;
   } = {},
 ) {
   const mail = fakeMail(o.letters ?? THREE, [], {}, { ...ADMITTED, ...o.more });
@@ -70,6 +72,7 @@ function seat(
     scope: "acct-1",
     places: mailPlaces(),
     above: MailGround,
+    wires: o.consent ? { consent: o.consent } : undefined,
     reader: o.reader ?? READER,
     ...(o.ownAddress === undefined
       ? {}
@@ -210,6 +213,39 @@ describe("the Ohbox row menu on a read conversation with a newer Sent reply", ()
     });
     expect(sent(mail)).toEqual(["message_delete trip-latest"]);
   });
+});
+
+it("shares the Trash acknowledgement between the Ohbox row menu and the selection key", async () => {
+  const remember = vi.fn();
+  const consent = consentVia(async (path) => {
+    if (path === "/consent/settings") remember();
+    return Response.json({
+      dormancyDays: 60,
+      screenerAcknowledgements: remember.mock.calls.length ? SCREENER_ACKNOWLEDGEMENTS.moveToTrash : 0,
+    });
+  });
+  await act(async () => {
+    seat({ consent });
+  });
+  const choose = (subject: string, action: string) => {
+    fireEvent.contextMenu(screen.getByRole("option", { name: new RegExp(subject) }));
+    fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: action }));
+  };
+  const trashQuestion = () => screen.queryByRole("dialog", { name: /to Trash\./i });
+  choose("Studio keys", "Delete");
+  expect(trashQuestion()).toBeTruthy();
+  await act(async () => {
+    fireEvent.click(within(trashQuestion()!).getByRole("menuitem", { name: "Move" }));
+  });
+  expect(screen.queryByRole("option", { name: /Studio keys/ })).toBeNull();
+
+  choose("Glaze order", "Select");
+  choose("Kiln schedule", "Select");
+  press("d");
+  expect(trashQuestion()).toBeNull();
+  expect(screen.queryAllByRole("option")).toHaveLength(0);
+  expect(screen.getByRole("button", { name: "Undo" })).toBeTruthy();
+  expect(remember).toHaveBeenCalledTimes(1);
 });
 
 describe("the Ohbox's own seat, over the mail ground", () => {
