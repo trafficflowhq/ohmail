@@ -42,7 +42,7 @@ export function autoReplyByUsWhere(d: Dialect, row: {
   if (row.indexSender && d.name === "pg") {
     // The account's addresses are an initplan. Postgres can probe the sender index for each
     // address before looking at the ledger and bodies of the resulting messages.
-    return sql`(${sender} = any(array(${ownAddresses})) and ${evidence})`;
+    return sql`(${d.indexedInSubquery(sender, ownAddresses)} and ${evidence})`;
   }
   return sql`case when ${sender} in (${ownAddresses}) then ${evidence} else false end`;
 }
