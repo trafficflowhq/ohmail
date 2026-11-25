@@ -61,6 +61,24 @@ describe("the doors that make a mailbox the worker does not serve yet, or a pres
     expect(await stampOf(db, again.mailbox.id), "the reconnect rang nothing").not.toBeNull();
   });
 
+  it("an OAuth sign-in clears the previous retry without waiting for it", async () => {
+    const db = await makeTestDb();
+    const ctx = await seed(db);
+    const input = { provider: "outlook" as const, address: ["mailbox", "example.test"].join("@"), oauth: OAUTH };
+    const first = await svc.connectOAuth(ctx, input, PROBE_OK);
+    const id = first.mailbox.id;
+    await db.update(mailboxes).set({
+      status: "error", errorCode: "auth", failedAt: new Date(Date.now() - 48 * 60 * 60_000),
+      retryCount: 12, retryAfter: new Date(Date.now() + 60 * 60_000), syncRequestedAt: null,
+    }).where(eq(mailboxes.id, id));
+
+    const again = await svc.connectOAuth(ctx, input, PROBE_OK);
+    expect(again.mailbox.id).toBe(id);
+    const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, id));
+    expect(row).toMatchObject({ status: "connected", errorCode: null, failedAt: null, retryCount: 0, retryAfter: null });
+    expect(row!.syncRequestedAt).not.toBeNull();
+  });
+
   it("a re-enable rings it, and an ordinary edit does not", async () => {
     const db = await makeTestDb();
     const ctx = await seed(db);

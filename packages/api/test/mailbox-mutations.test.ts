@@ -99,6 +99,32 @@ describe("mailbox mutations (create / update / delete)", () => {
     expect(await KP.decrypt(after.secretEnc, after.keyVersion)).toBe("after-change-password");
   });
 
+  it.each([
+    ["a mailbox edit", { displayName: "Renamed" }],
+    ["a new sign-in", { status: "connected", imap: IMAP }],
+  ])("clears the failure and wakes the worker on %s", async (_label, patch) => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const created = await H(req("POST", "/mailboxes", {
+      bearer: s.token, headers: { "content-type": "application/json" },
+      body: body({ provider: "imap", address: ["mailbox", "example.test"].join("@"), imap: IMAP }),
+    }), deps);
+    expect(created.status).toBe(201);
+    const id = (await created.json()).id;
+    await db.update(mailboxes).set({
+      status: "error", errorCode: "auth", failedAt: new Date(FIXED_NOW.getTime() - 48 * 60 * 60_000),
+      retryCount: 12, retryAfter: new Date(FIXED_NOW.getTime() + 60 * 60_000), syncRequestedAt: null,
+    }).where(eq(mailboxes.id, id));
+
+    const response = await H(req("PATCH", `/mailboxes/${id}`, {
+      bearer: s.token, headers: { "content-type": "application/json" }, body: body(patch),
+    }), deps);
+    expect(response.status).toBe(200);
+    const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, id));
+    expect(row).toMatchObject({ status: "connected", errorCode: null, failedAt: null, retryCount: 0, retryAfter: null });
+    expect(row!.syncRequestedAt).not.toBeNull();
+  });
+
   it("PATCH a cross-account mailbox → 404", async () => {
     const { db, deps } = await makeDeps();
     const owner = await seedSession(db, { now: FIXED_NOW, token: "owner-tok", lastTwofaAt: FIXED_NOW });

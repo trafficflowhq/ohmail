@@ -83,8 +83,8 @@ export const mailboxes = pgTable("mailboxes", {
   authKind: text("auth_kind").notNull().default("password"),               // password|oauth
   // Mail 0023 — WHY a mailbox failed, not merely THAT it did. `status` alone was the whole
   // record, so Settings could only say "something went wrong" — a disk-full incident once stayed
-  // opaque for hours. The four columns are evidence, never control flow: nothing reads them to
-  // decide, and NULL is "not recorded". `errorDetail` IS NEVER A RAW ERROR STRING: a member of a
+  // opaque for hours. The worker reads the code and failure time to stop retrying stale
+  // sign-ins. `errorDetail` IS NEVER A RAW ERROR STRING: a member of a
   // CLOSED allowlist held by the worker's classifier (an IMAP response code, a Node errno, a TLS
   // constant), checked at the single write site, because a throw out of the sync cycle can embed
   // message bytes and a login failure's server text can echo the credential. MEMBERSHIP, not
@@ -93,7 +93,7 @@ export const mailboxes = pgTable("mailboxes", {
   // pane. An unrecognised token stores NULL.
   errorCode: text("error_code"),                                           // a MAILBOX_ERROR_CODES member, or null
   errorDetail: text("error_detail"),                                       // allowlisted token, or null
-  failedAt: timestamp("failed_at", { withTimezone: true }),                // when the CURRENT outage began (COALESCE on write)
+  failedAt: timestamp("failed_at", { withTimezone: true }),                // when the outage or current sign-in rejection began
   retryCount: integer("retry_count").notNull().default(0),                 // attempts within the current outage
   // Mail 0039 — WHEN the leader may next try this mailbox. The quarantine backoff, made durable:
   // it used to live only in the worker's in-process map, so a parked mailbox had two exits — the
