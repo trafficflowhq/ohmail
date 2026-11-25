@@ -7,6 +7,7 @@
  */
 import type { EmailAddress, EngineMessage } from "@ohmail/wire";
 import { useEffect, useState } from "react";
+import { useDemoMode } from "@ohmail/app-logic/engine";
 import { usePresentedMirror } from "@ohmail/app-logic/reading";
 import { isProtected, letterPictures, useLetterBody } from "@ohmail/app-logic/reader";
 import { HELD_BODY_STALL_MS } from "@ohmail/app-logic/screener";
@@ -29,11 +30,13 @@ export interface HeldLetterOf {
   readonly subject: string;
   readonly time: string;
   readonly snippet?: string;
+  /** Only the fictional demo letters carry their text on the sender row. */
+  readonly body?: string;
 }
 
-/** What the body reads of a letter: its id and the line shown until its text lands. */
-const asMessage = (letter: HeldLetterOf): EngineMessage =>
-  ({ id: letter.id, snippet: letter.snippet ?? "" }) as EngineMessage;
+/** Derived held rows are snapshots. Only the demo's full fixture text is read directly. */
+const toMessage = (demo: boolean, letter: HeldLetterOf): EngineMessage =>
+  ({ id: letter.id, snippet: letter.snippet ?? "", body: demo ? letter.body : undefined }) as EngineMessage;
 
 /** The element id of a held letter's sheet: the kit's jump to a message, which the column's anchor takes. */
 export const heldMark = (id: string): string => `sc-held-${id}`;
@@ -103,6 +106,7 @@ function HeldLetterContent({
   const bodyWords = useText("body");
   const { host } = useFrame();
   const scheme = useSignal(host.device.appearance).scheme;
+  const asMessage = toMessage.bind(null, useDemoMode());
   const body = useLetterBody(asMessage(letter));
   const { waiting, failed, retry } = useHeldBodyStall(letter.id, body.state, onRetry);
   const presented = usePresentedMirror();

@@ -39,6 +39,8 @@ export interface ScreenerViewInput {
   readonly words: ScreenerKeyWords;
   /** One column: the open sender stands over the list, and Escape takes it down. */
   readonly oneColumn: boolean;
+  /** The frame keeps the narrow reader in browser history. The selected sender stays in the view. */
+  readonly reader: { readonly open: boolean; readonly setOpen: (open: boolean) => void };
 }
 
 /** What is asked of the person now, over the list. */
@@ -251,22 +253,22 @@ function useDecisionScopes(
 }
 
 export function useScreenerView(input: ScreenerViewInput): ScreenerView {
-  const { state, segment, selected, select: selectAbove, words, oneColumn } = input;
+  const { state, segment, selected, select: selectAbove, words, oneColumn, reader } = input;
   const [filter, setFilter] = useState<ScreenerFilterId | null>(null);
   const { scopeOf, setScope } = useDecisionScopes(state.waiting);
   /** A decision left no undecided row to move to: nothing is open until the person picks one. */
   const [unpicked, setUnpicked] = useState(false);
-  const [full, setFull] = useState(false);
+  const { open: full, setOpen: setFull } = reader;
   const [enteredLetter, setEnteredLetter] = useState<string | null>(null);
   const [failedId, setFailedId] = useState<string | null>(null);
   const { counts, active, rows, decided, ids, selectable } = useRows(state, segment, filter, selected);
-  const failedOpen = segment === "waiting" ? failedOf(state, failedId) : null;
+  const failedOpen = segment === "waiting" && (!oneColumn || full) ? failedOf(state, failedId) : null;
   const openId = usePickedSender(selected, selectable, unpicked, selectAbove, segment, setUnpicked);
   const { shown, setShown, openWith } = useShown(openId, segment);
   const open = useMemo(() => openRow(openId, rows, decided), [openId, rows, decided]);
   useEffect(() => {
-    if (open === null && failedOpen === null) setFull(false);
-  }, [open, failedOpen]);
+    if (full && open === null && failedOpen === null && state.queueSettled) setFull(false);
+  }, [open, failedOpen, full, setFull, state.queueSettled]);
   const openWaiting = segment === "waiting" && failedOpen === null ? undecided(open, decided) : null;
   const engine = useEngineOrNull();
   const simulated = useContext(EngineContext)?.demo === true;
@@ -288,7 +290,7 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
   });
   const close = () => {
     setFull(false);
-    setFailedId(null);
+    if (!oneColumn) setFailedId(null);
   };
   const accept = openWaiting ? acceptDestOf(openWaiting) : null;
   /* Escape closes an ask, then a menu, then the open sender on one column. */

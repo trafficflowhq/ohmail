@@ -50,7 +50,7 @@ function DemoNotificationChoices({ fixture }: { readonly fixture: DemoNotificati
           <SettingLine
             key={channel.id}
             label={t(`channel.${channel.id}.label`)}
-            value={t(`channel.${channel.id}.description`)}
+            description={t(`channel.${channel.id}.description`)}
             toggle={{
               on: channel.enabled,
               onChange: (enabled) => setChannels((current) => current.map((item) =>

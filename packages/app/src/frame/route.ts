@@ -158,7 +158,13 @@ function placeOf(path: string, query: string): Route {
   const tail = rest.join("/");
   const byId = BY_ID.get(head);
   if (byId && tail) return route(byId, { sub: byId === "address" ? decoded(tail) : tail });
-  if (head === "screener") return route("screener", { sub: SEGMENTS.has(rest[0] ?? "") ? rest[0]! : null });
+  if (head === "screener") {
+    const sender = new URLSearchParams(query).get("sender");
+    return route("screener", {
+      sub: SEGMENTS.has(rest[0] ?? "") ? rest[0]! : null,
+      words: sender === "open" ? { sender } : {},
+    });
+  }
   if (head === "triage") return route(PILES.get(rest[0] ?? "") ?? "later");
   if (head === "settings") {
     const pane = PANES.has(rest[0] ?? "") || rest[0] === "calaccounts" ? rest[0]! : null;
@@ -220,7 +226,7 @@ export function fragmentOf(to: Route): string {
     case "address":
       return `#/${head}/${encodeURIComponent(to.sub ?? "")}${tail}`;
     case "screener":
-      return to.sub === null ? "#/screener" : `#/screener/${to.sub}`;
+      return `#/${head}${to.sub === null ? "" : `/${to.sub}`}${to.words.sender === "open" ? "?sender=open" : ""}`;
     case "settings":
       if (to.sub === null) return "#/settings";
       return `#/settings/${to.sub}${to.sub === "mailboxes" ? named(to.words.mailbox) : ""}`;

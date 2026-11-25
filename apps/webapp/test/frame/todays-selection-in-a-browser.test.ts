@@ -49,10 +49,10 @@ afterAll(async () => {
 });
 
 /** The demo at an address, on a phone under a finger. The page's body is the product layout's. */
-async function demo(at: string, phone = true, look?: { face: string; colorScheme: "light" | "dark" }): Promise<Page> {
+async function demo(at: string, phone = true, look?: { face: string; colorScheme: "light" | "dark" }, touch = phone): Promise<Page> {
   const context = await browser!.newContext({
     viewport: phone ? PHONE : { width: 1440, height: 900 },
-    hasTouch: phone,
+    hasTouch: touch,
     isMobile: phone,
     colorScheme: look?.colorScheme,
   });
@@ -394,3 +394,90 @@ it.each(looks)("shows the keyboard's indicator in $face $colorScheme (phone: $ph
     await page.context().close();
   }
 }, 30_000);
+
+describe("phone notification choices and letter reading", () => {
+  it("fits the words of demo notification labels next to their switches", async () => {
+    const page = await demo("#/settings/notifications", true, { face: "paper", colorScheme: "dark" });
+    try {
+      const group = page.getByRole("group", { name: "People in Ohbox" });
+      const label = group.getByText("People in Ohbox", { exact: true });
+      const toggle = group.getByRole("switch", { name: "People in Ohbox" });
+      await label.waitFor();
+      const lines = await label.evaluate((node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return range.getClientRects().length;
+      });
+      expect(lines).toBeLessThanOrEqual(3);
+      const before = await toggle.getAttribute("aria-checked");
+      await toggle.tap();
+      expect(await toggle.getAttribute("aria-checked")).not.toBe(before);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  it.each([true, false])("shows every held letter's body before filing (phone: %s)", async (phone) => {
+    const page = await demo("#/screener", phone);
+    try {
+      if (phone) {
+        await page.getByRole("option", { name: /Lena Kaufmann/ }).getByText("Kleine Ergänzung").tap();
+      } else {
+        await page.getByRole("option", { name: /Lena Kaufmann/ }).getByText("Kleine Ergänzung").click();
+      }
+      const letters = page.getByRole("feed", { name: "Lena Kaufmann" });
+      await letters.getByRole("heading", { name: "Kleine Ergänzung" }).waitFor();
+      await expect.poll(async () => ({
+        first: await letters.getByText(/Zeit für einen Besuch in der Werkstatt/).isVisible(),
+        latest: await letters.getByText(/Falls es nächste Woche nicht klappt/).isVisible(),
+      }), { timeout: 3500 }).toEqual({ first: true, latest: true });
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  it("returns to the Screener list with browser Back and reopens the reader with Forward", async () => {
+    const page = await demo("#/reads");
+    try {
+      const nav = page.getByRole("navigation", { name: "Places" });
+      await nav.getByRole("button", { name: /^Screener/ }).tap();
+      const list = page.getByRole("listbox", { name: "Screener" });
+      await list.getByRole("option", { name: /Paperbird/ }).getByText(/Welcome to Paperbird/).tap();
+      const sender = page.getByRole("feed", { name: "Paperbird" });
+      await sender.waitFor();
+      await page.goBack();
+      await expect.poll(() => list.isVisible(), { timeout: 3500 }).toBe(true);
+      expect(await sender.isVisible()).toBe(false);
+      await page.goForward();
+      await sender.waitFor({ timeout: 3500 });
+      await page.getByRole("button", { name: "Screener", exact: true }).filter({ visible: true }).tap();
+      await list.waitFor();
+      await page.goBack();
+      await page.getByRole("heading", { name: "News", exact: true }).waitFor();
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  it.each([true, false])("fits the sender name and a single address line in a phone reader (touch: %s)", async (touch) => {
+    const page = await demo("#/ohbox", true, { face: "paper", colorScheme: "light" }, touch);
+    try {
+      await page.getByRole("option", { name: /Giulia Ferrari.*Glaze order/ }).getByText(/Glaze order/).click();
+      const name = page.getByRole("button", { name: /^Giulia Ferrari / }).getByText("Giulia Ferrari", { exact: true });
+      await name.waitFor();
+      const geometry = await name.evaluate((element) => {
+        const name = element as HTMLElement;
+        const address = name.nextElementSibling as HTMLElement;
+        return {
+          nameFits: name.scrollWidth <= name.clientWidth + 1,
+          addressBelow: address.getBoundingClientRect().top >= name.getBoundingClientRect().bottom - 1,
+          addressLines: address.offsetHeight / parseFloat(getComputedStyle(address).lineHeight),
+        };
+      });
+      expect(geometry).toMatchObject({ nameFits: true, addressBelow: true });
+      expect(geometry.addressLines).toBeLessThan(1.25);
+    } finally {
+      await page.context().close();
+    }
+  });
+});
