@@ -95,6 +95,17 @@ function useScreenerList({ route, plan, keysHere }: PaneProps) {
   const select = useCallback((id: string | null) => above.select(segment, id), [above, segment]);
   const selectJunk = useCallback((key: string | null) => above.select("junk", key), [above]);
   const oneColumn = plan.columns === 1;
+  const senderOpen = route.words.sender === "open";
+  const setSenderOpen = useCallback(
+    (open: boolean) => {
+      if (open === senderOpen) return;
+      commands.go(
+        { place: "screener", sub: route.sub, words: open ? { sender: "open" } : {} },
+        open ? { history: "preview" } : { history: "dismiss-preview", replace: true },
+      );
+    },
+    [commands, route.sub, senderOpen],
+  );
   const { junk } = beside;
   const junkOn = segment === "spam" && junk !== NONE;
   const spam = useMemo(() => {
@@ -117,6 +128,7 @@ function useScreenerList({ route, plan, keysHere }: PaneProps) {
     undo: beside.undo,
     words,
     oneColumn,
+    reader: { open: senderOpen, setOpen: setSenderOpen },
   });
   const keptCursor = segment !== "waiting" && (!junkOn || quarantine) && !view.full ? view.openId : null;
   useCursorRowInView(keptCursor, listScroller);

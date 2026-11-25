@@ -138,6 +138,7 @@ it("wide, clicking an address selects its row and s opens that sender's screenin
 });
 
 it("narrow with a fine pointer, s opens the selected sender's card over the full letter", async () => {
+  window.location.hash = "#/reads";
   const { shell, row } = await mount({ width: 640, coarse: false, letters: [other, letter] });
   await tap(row);
   expectFullLetter(shell);
@@ -145,6 +146,11 @@ it("narrow with a fine pointer, s opens the selected sender's card over the full
   const card = within(document.body).getByRole("dialog", { name: cardName });
   expect(card.textContent).toContain(address);
   expect(shell.queryByRole("listbox", { name: "Screener" })).toBeNull();
+  await act(() => { fireEvent.keyDown(card, { key: "Escape" }); });
+  await act(async () => { window.history.back(); });
+  await tick(250);
+  expect(shell.getByRole("listbox", { name: "Screener" })).toBeTruthy();
+  expect(shell.queryByRole("heading", { name: subject })).toBeNull();
 });
 
 it("one mailbox stays unnamed in the phone queue and its full letter", async () => {
