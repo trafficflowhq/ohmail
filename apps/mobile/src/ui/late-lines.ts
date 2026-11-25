@@ -4,6 +4,7 @@
  * paired with says on each row whether new mail is being fetched, and null or an absent field says
  * nothing. In the web's words (`sync.behind*`, `mailboxes.notCheckedNote*`), from this phone's deck.
  */
+import { fetchingLate, mailboxErrorNeedsAction, noticeDelayPassed } from "@ohmail/app-logic/mail-state/mail-state";
 import { Copy } from "../copy";
 import type { PhoneMailbox } from "../net/mailboxes";
 import { setTimeLabel } from "../state/live";
@@ -21,29 +22,6 @@ export function lateWho(session: { standalone: boolean; profile: { flavor?: stri
   return session.profile.flavor === "managed" ? "cloud" : "server";
 }
 
-const DAY_MS = 86_400_000;
-
-/** The newest time the behind rows carry: the last instant anything was checked. */
-function newestSince(rows: readonly PhoneMailbox[]): string | null {
-  let newest: { iso: string; at: number } | null = null;
-  for (const m of rows) {
-    const iso = m.fetching?.since ?? null;
-    const at = iso === null ? Number.NaN : Date.parse(iso);
-    if (!Number.isNaN(at) && (newest === null || at > newest.at)) newest = { iso: iso!, at };
-  }
-  return newest?.iso ?? null;
-}
-
-/** The strip's line: a whole sentence per who checks and whether a time is on record. */
-function lineSaid(who: LateWho, said: string | null, days: number): string {
-  if (who === "cloud") {
-    if (said === null) return Copy.lateLineCloudNoTime;
-    // "On us" is said of our own service alone, so a server somebody runs has no day line.
-    return days >= 1 ? Copy.lateLineCloudDay(said) : Copy.lateLineCloud(said);
-  }
-  return said === null ? Copy.lateLineServerNoTime : Copy.lateLineServer(said);
-}
-
 /** One mailbox's note, on the same rule. */
 function noteSaid(who: LateWho, said: string | null): string {
   if (who === "cloud") return said === null ? Copy.notCheckedNoteCloudNoTime : Copy.notCheckedNoteCloud(said);
@@ -52,24 +30,36 @@ function noteSaid(who: LateWho, said: string | null): string {
 
 export interface LateStripSaid {
   title: string;
-  line: string;
+  mailboxId: string;
+  since: string;
+  hot?: boolean;
 }
 
-/** The strip: said while any row's fetching is behind, with the day form from 24 hours on. */
+/** The strip identifies the last check and opens the row that supplied it. */
 export function lateStripSaid(
-  rows: readonly PhoneMailbox[], now: number, zone: string, locale: string, who: LateWho | null, compact = false,
+  rows: readonly PhoneMailbox[], now: number, zone: string, locale: string, who: LateWho | null, _compact = false,
 ): LateStripSaid | null {
+  const issue = rows.map((row) => ({ row, error: mailboxIssue(row) })).find(
+    ({ error }) => error && (error.urgent || noticeDelayPassed(error.since, now)),
+  );
+  if (issue?.error) {
+    const { row, error } = issue;
+    return {
+      title: `${row.address}: ${error.words}`,
+      mailboxId: row.id,
+      since: error.since ?? `error:${row.errorCode}`,
+      hot: true,
+    };
+  }
   if (who === null) return null;
-  const behind = rows.filter((m) => m.fetching?.behind === true);
-  if (behind.length === 0) return null;
-  const since = newestSince(behind);
-  const said = since === null ? null : setTimeLabel(since, new Date(now), zone, locale);
-  // Whole days, rounded down.
-  const days = since === null ? 0 : Math.max(0, Math.floor((now - Date.parse(since)) / DAY_MS));
-  const line = compact && said !== null
-    ? (who === "cloud" ? Copy.latePhoneCloud(said) : Copy.latePhoneServer(said))
-    : lineSaid(who, said, days);
-  return { title: days >= 1 ? Copy.lateTitleDays(days) : Copy.lateTitle, line };
+  const late = fetchingLate(rows);
+  const since = late?.since;
+  if (!since || !noticeDelayPassed(since, now)) return null;
+  const mailbox = rows.find((m) => m.fetching?.behind && m.fetching.since === since);
+  if (!mailbox) return null;
+  const time = setTimeLabel(since, new Date(now), zone, locale);
+  const title = who === "cloud" ? Copy.lateCloudSince(time) : Copy.lateServerSince(time);
+  return { title, mailboxId: mailbox.id, since };
 }
 
 /** One mailbox's note in Settings, or `null` where its row says nothing. */
@@ -79,4 +69,18 @@ export function notCheckedNoteSaid(
   if (who === null || row.fetching?.behind !== true) return null;
   const since = row.fetching.since !== null && !Number.isNaN(Date.parse(row.fetching.since)) ? row.fetching.since : null;
   return noteSaid(who, since === null ? null : setTimeLabel(since, new Date(now), zone, locale));
+}
+
+/** The phone's Settings row and the notice read the same provider failure. */
+export function mailboxIssue(row: PhoneMailbox) {
+  if (row.status !== "error" && !row.unreachableSince) return null;
+  const code = row.errorCode ?? null;
+  const urgent = mailboxErrorNeedsAction({ errorCode: code });
+  const words = code === "auth" ? Copy.lateMailboxAuth
+    : code === "storage" ? Copy.lateMailboxStorage
+    : code === "tls" ? Copy.lateMailboxTls
+    : code === "timeout" ? Copy.lateMailboxTimeout
+    : row.unreachableSince || code === "connect" ? Copy.lateMailboxDown
+    : Copy.lateMailboxOther;
+  return { urgent, words, since: row.failedAt ?? row.unreachableSince ?? null };
 }

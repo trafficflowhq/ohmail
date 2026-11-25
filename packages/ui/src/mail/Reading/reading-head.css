@@ -2,8 +2,6 @@
 @layer oh {
   .oh-readinghead {
     --oh-readinghead-lh: 1.12;
-    --oh-head-up: 0px;
-    --oh-head-squares: 0px;
     --oh-readinghead-top: calc(var(--s2) + var(--oh-hair));
     --oh-readinghead-out: calc(var(--ringw) * -1);
     /* Cover the scrollport's top padding without moving the subject. */
@@ -27,15 +25,12 @@
     background: var(--ground);
   }
 
-  .oh-readinghead[data-under]:not([data-back])::after {
-    content: none;
-  }
-
   .oh-readinghead[data-bare] {
     padding-bottom: var(--s3);
   }
 
-  .oh-readinghead-subject {
+  .oh-readinghead-subject,
+  .oh-readinghead-short-text {
     font-family: var(--f-display);
     font-size: var(--t-head);
     font-weight: var(--w-display);
@@ -50,42 +45,124 @@
     display: none;
   }
 
-  @media (max-height: 899px) {
-    :root:not([data-device="phone"]) .oh-readinghead:has(> .oh-readinghead-short) {
-      top: calc(-1 * var(--oh-hair) - var(--oh-head-up, 0px));
-      padding-bottom: var(--s3);
-    }
-    :root:not([data-device="phone"]) .oh-readinghead-short {
-      display: flex;
-      align-items: center;
+  /* The heading's box keeps its normal height. Only its visible portion shrinks with the scrollport. */
+  .oh-readinghead[data-morph] {
+    --oh-head-progress: 0;
+    --oh-head-names-away: clamp(0, calc((var(--oh-head-progress) - 0.02) / 0.38), 1);
+    --oh-head-meta-away: clamp(0, calc((var(--oh-head-progress) - 0.08) / 0.4), 1);
+    --oh-head-edge-in: clamp(0, calc((var(--oh-head-progress) - 0.55) / 0.45), 1);
+    --oh-head-scroll: calc(var(--oh-head-progress) * var(--oh-head-travel));
+    --oh-head-byline-shift: calc(0.8 * var(--oh-head-scroll) - var(--s1) * var(--oh-head-meta-away));
+
+    position: sticky;
+    top: calc(var(--oh-readinghead-out-top) - var(--oh-head-travel));
+  }
+
+  :root[data-device="fold"] .oh-readinghead[data-morph] {
+    padding-bottom: var(--s3);
+  }
+
+  :root[data-device="fold"][data-pose="land"] .oh-readinghead[data-morph] .oh-readinghead-byline {
+    flex-wrap: nowrap;
+  }
+
+  .oh-readinghead[data-morph] > .oh-readinghead-subject {
+    transform-origin: top left;
+    transform: translateY(calc(var(--oh-head-progress) * var(--oh-head-title-shift)))
+      scale(calc(1 + var(--oh-head-progress) * (var(--oh-head-scale) - 1)));
+  }
+
+  /* Fade the names before the faces and metadata reach the subject's new row. */
+  .oh-readinghead[data-morph] .oh-readinghead-byline {
+    transform: translateY(var(--oh-head-byline-shift));
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"])
+    .oh-readinghead[data-morph]
+    .oh-readinghead-sub
+    > .oh-readinghead-byline
+    > * {
+    transform: translateY(var(--oh-head-byline-shift));
+  }
+
+  .oh-readinghead[data-morph] .oh-readinghead-byline > * {
+    opacity: calc(1 - var(--oh-head-meta-away));
+  }
+
+  .oh-readinghead[data-morph] .oh-readinghead-byline > .oh-readinghead-names {
+    opacity: calc(1 - var(--oh-head-names-away));
+  }
+
+  .oh-readinghead[data-morph] .oh-readinghead-sub > .oh-readsquares {
+    transform: translateY(calc(var(--oh-head-progress) * var(--oh-head-squares-shift, 0px)));
+  }
+
+  /* The Paper edge appears below the solid header as it settles. Ohmarchy already has its own hairline. */
+  @media (prefers-reduced-motion: no-preference) {
+    :root[data-face="paper"]:not([data-rm="1"]) .oh-readinghead[data-morph]::after {
       position: absolute;
-      inset: auto var(--oh-head-squares) 0 0;
+      inset: 100% 0 auto;
+      height: var(--s5);
+      background: linear-gradient(var(--ground), transparent);
+      opacity: var(--oh-head-edge-in);
       pointer-events: none;
-      height: var(--group);
-      padding: var(--s2) var(--s3) var(--s3) var(--sheet-pad);
-      background: var(--ground);
-      font-size: var(--t-title);
-      line-height: var(--oh-readinghead-lh);
-      visibility: hidden;
-    }
-    :root:not([data-device="phone"]) .oh-readinghead[data-back] .oh-readinghead-short {
-      visibility: visible;
-    }
-    :root:not([data-device="phone"]) .oh-readinghead[data-back] .oh-readinghead-subject {
-      opacity: 0;
-    }
-    :root:not([data-device="phone"]) .oh-readinghead[data-back] .oh-readinghead-byline > * {
-      visibility: hidden;
-    }
-    :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-readinghead-short {
-      padding-left: var(--oh-readinghead-lead);
+      content: "";
     }
   }
-  .oh-readinghead-short-text {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+
+  /* Reduced motion keeps both title sizes fixed and crossfades between them. The scroll offset
+     only keeps their positions steady while the header's excess leaves the viewport. */
+  @media (prefers-reduced-motion: reduce) {
+    .oh-readinghead[data-morph] > .oh-readinghead-subject {
+      transform: translateY(var(--oh-head-scroll));
+    }
+
+    .oh-readinghead[data-morph] {
+      --oh-head-byline-shift: var(--oh-head-scroll);
+      --oh-head-meta-away: clamp(0, calc((var(--oh-head-progress) - 0.04) / 0.24), 1);
+      --oh-head-names-away: var(--oh-head-meta-away);
+    }
+
+    .oh-readinghead[data-morph] > .oh-readinghead-short {
+      display: block;
+      position: absolute;
+      left: var(--oh-readinghead-lead, var(--sheet-pad));
+      right: var(--sheet-pad);
+      top: var(--oh-head-title-end);
+      transform-origin: top left;
+      transform: translateY(var(--oh-head-scroll)) scale(var(--oh-head-scale));
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    .oh-readinghead[data-morph] .oh-readinghead-sub > .oh-readsquares {
+      transform: translateY(var(--oh-head-scroll));
+      opacity: clamp(0, calc(abs(var(--oh-head-progress) - 0.5) * 5), 1);
+    }
+
+    .oh-readinghead[data-morph][data-back] .oh-readinghead-sub > .oh-readsquares {
+      transform: translateY(
+        calc(var(--oh-head-scroll) + var(--oh-head-squares-shift) - var(--oh-head-travel))
+      );
+    }
+
+    .oh-readinghead-short-text {
+      display: block;
+    }
+
+    .oh-readinghead[data-morph] > :is(.oh-readinghead-subject, .oh-readinghead-short) {
+      transition: opacity var(--d-reduced) var(--e-std);
+      /* Keep the opacity crossfade through the shell's reduced-motion duration reset. */
+      transition-duration: var(--d-reduced) !important;
+    }
+
+    .oh-readinghead[data-morph][data-back] > .oh-readinghead-subject {
+      opacity: 0;
+    }
+
+    .oh-readinghead[data-morph][data-back] > .oh-readinghead-short {
+      opacity: 1;
+    }
   }
 
   .oh-readinghead-byline {
@@ -137,9 +214,17 @@
   :root[data-face="ohmarchy"] .oh-readinghead-names {
     flex: 0 1 auto;
     min-width: var(--oh-readinghead-short);
+  }
+
+  .oh-readinghead-names {
+    max-width: 100%;
     overflow: hidden;
     white-space: nowrap;
-    text-overflow: ellipsis;
+    text-overflow: clip;
+  }
+
+  .oh-readinghead-names[data-faded] {
+    mask-image: linear-gradient(to right, var(--ink) calc(100% - var(--s6)), transparent);
   }
 
   :root[data-device="desktop"] .oh-readinghead-mailbox,
@@ -281,12 +366,15 @@
     --oh-readinghead-top: calc(var(--s1) + var(--oh-hair));
   }
 
-  /* On a phone it scrolls away with the sheets. */
+  /* The phone has no frame inset above the heading. */
   :root[data-device="phone"] .oh-readinghead {
     --oh-readinghead-inset: 0px;
 
-    position: static;
     padding-top: 0;
+  }
+
+  :root[data-device="phone"] .oh-readinghead:not([data-morph]) {
+    position: static;
   }
 
   /* ohmarchy keeps a hairline under it. */

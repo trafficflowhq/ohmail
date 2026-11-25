@@ -154,7 +154,7 @@ export function reminderOccurrence(
   const day = nowIn(startMs, zone, zones)?.day;
   if (!day) return null;
   const calendars = [...new Set(events.map(({ record }) => record.calendarId))].map(
-    (calendarId) => ({ id: calendarId, shown: true }) as CalendarRecord,
+    (calendarId) => ({ id: calendarId, shown: true, access: "owner" }) as CalendarRecord,
   );
   const { shown } = occurrencesIn({ events, calendars, query: { from: day, to: day }, zone, zones });
   const match = shown.find(

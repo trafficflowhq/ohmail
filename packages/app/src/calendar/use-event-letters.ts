@@ -30,7 +30,8 @@ export function useEventLetters(event: CalendarEventFace | undefined) {
         !tied.some((known) => known.id === letter.id) &&
         matched.some((row) => row.messageId === letter.id && row.mailboxId === letter.mailboxId),
     );
-    return [...tied, ...found];
+    const time = (message: MessageDTO) => Date.parse(message.sortAt ?? message.date ?? "") || 0;
+    return [...tied, ...found].sort((a, b) => time(b) - time(a) || a.id.localeCompare(b.id));
   }, [mirror, stamp, uid, fromMail, event?.recordId]);
   const openLetter = useOpenCalendarLetter();
   const links = letters.flatMap((letter) => {

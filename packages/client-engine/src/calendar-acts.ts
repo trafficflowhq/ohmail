@@ -53,7 +53,7 @@ function momentIso(t: CalendarTime): string | null {
 }
 
 /** A record's fields set from an act's: each field present is written, the times with the moments they make. */
-function withFields(r: CalendarEventRecord, f: Partial<CalendarEventFields>): CalendarEventRecord {
+export function withCalendarFields(r: CalendarEventRecord, f: Partial<CalendarEventFields>): CalendarEventRecord {
   const next: CalendarEventRecord = { ...r };
   if (f.title !== undefined) next.title = f.title;
   if (f.notes !== undefined) next.notes = f.notes;
@@ -73,7 +73,10 @@ function withFields(r: CalendarEventRecord, f: Partial<CalendarEventFields>): Ca
     // A series' last moment is the provider's to say; until then it may run on.
     next.endsAt = f.repeat === null ? momentIso(next.end ?? next.start) : null;
   }
-  if (f.invitees !== undefined) next.invitees = f.invitees.map((p) => ({ address: p.address, name: p.name, role: p.role, answer: "none" as const }));
+  if (f.invitees !== undefined) {
+    const confirmed = new Map(r.invitees.map(({ address, answer }) => [address.toLowerCase(), answer]));
+    next.invitees = f.invitees.map((p) => ({ ...p, answer: confirmed.get(p.address.toLowerCase()) ?? "none" }));
+  }
   if (f.alarms !== undefined) next.alarms = f.alarms.map((minutesBefore) => ({ minutesBefore, method: "notice" as const }));
   return next;
 }
@@ -86,7 +89,13 @@ function made(act: Extract<CalendarEventAct, { kind: "calendar_event_create" }>)
     startsAt: NOT_YET, endsAt: null, occurrenceAt: null, repeat: null, busy: true, private: false, organizer: null,
     myAnswer: null, heldBack: false, invitees: [], alarms: [], cut: false, writes: [], updatedAt: NOT_YET,
   };
-  return withFields(blank, act.event);
+  return withCalendarFields(blank, act.event);
+}
+
+function sameAttendeeCopy(record: CalendarEventRecord, act: Extract<CalendarEventAct, {
+  kind: "calendar_event_delete" | "calendar_event_answer";
+}>): boolean {
+  return act.copy?.calendarId === record.calendarId && act.copy.attendee === record.hideAttendee;
 }
 
 /**
@@ -103,9 +112,33 @@ export function applyCalendarActs(records: readonly CalendarEventRecord[], acts:
     }
     const r = byId.get(act.eventId);
     if (!r) continue;
+    if (act.kind === "calendar_event_delete" && act.hide) {
+      if (!sameAttendeeCopy(r, act) || r.thisAndFuture || r.heldBack || r.status === "cancelled" || r.myAnswer === "declined") continue;
+      const [base, seriesBase] = act.base.split("/");
+      const at = act.scope.kind === "record" ? "" : act.scope.at;
+      if (base !== r.updatedAt) continue;
+      let target = r;
+      if (r.recurrenceId) {
+        if (act.scope.kind !== "occurrence" || act.scope.at !== r.recurrenceId || !seriesBase) continue;
+        const series = [...byId.values()].find((candidate) =>
+            candidate.calendarId === r.calendarId && candidate.uid === r.uid && !candidate.recurrenceId &&
+            candidate.repeat && candidate.updatedAt === seriesBase && candidate.hideAttendee === r.hideAttendee &&
+            candidate.organizer?.address === r.organizer?.address);
+        if (!series) continue;
+        target = series;
+      } else if (seriesBase || act.scope.kind === "following" ||
+        act.scope.kind === "occurrence" && records.some((candidate) =>
+          candidate.calendarId === r.calendarId && candidate.uid === r.uid && candidate.recurrenceId === at)) continue;
+      const prior = target.hiddenOccurrences ?? [];
+      if (!prior.includes("") && !prior.includes(at)) {
+        byId.set(target.id, { ...target, hiddenOccurrences: at ? [...prior, at] : [""] });
+      }
+      continue;
+    }
+    if (act.kind === "calendar_event_answer" && act.copy && !sameAttendeeCopy(r, act)) continue;
     if (act.kind === "calendar_event_update" && r.recurrenceId !== "") {
       if (act.scope.kind === "occurrence" && act.scope.at === r.recurrenceId)
-        byId.set(r.id, withFields(r, act.change));
+        byId.set(r.id, withCalendarFields(r, act.change));
       continue;
     }
     if ("scope" in act && act.scope.kind !== "record") {
@@ -114,7 +147,7 @@ export function applyCalendarActs(records: readonly CalendarEventRecord[], acts:
       continue;
     }
     switch (act.kind) {
-      case "calendar_event_update": byId.set(r.id, withFields(r, act.change)); break;
+      case "calendar_event_update": byId.set(r.id, withCalendarFields(r, act.change)); break;
       case "calendar_event_delete":
         byId.delete(r.id);
         if (r.repeat && r.uid) {
@@ -136,6 +169,16 @@ export interface DeviceAct {
   readonly act: CalendarEventAct;
 }
 
+type Update = Extract<CalendarEventAct, { kind: "calendar_event_update" }>;
+const occurrenceEdit = (act: CalendarEventAct | null): act is Update & { scope: { kind: "occurrence"; at: string } } =>
+  act?.kind === "calendar_event_update" && act.scope.kind === "occurrence";
+
+export interface OccurrenceEdit {
+  readonly at: string;
+  readonly change: Update["change"];
+  readonly waiting: "device" | "provider";
+}
+
 /**
  * An answer to one day of a series that has no changed copy of that day yet: it waits, and is refused, on that day
  * alone (`at`, the day's key). `answer` is what the day shows while it waits; null once refused.
@@ -149,8 +192,12 @@ export interface DayAnswer {
 }
 
 /** An answer of one day, named on the series' own record (the day has no record of its own). */
-function dayAnswerOf(record: CalendarEventRecord, act: CalendarEventAct | null): { readonly at: string; readonly answer: CalendarEventRecord["myAnswer"] } | null {
-  return act?.kind === "calendar_event_answer" && act.scope.kind === "occurrence" && act.eventId === record.id && record.recurrenceId === ""
+function dayAnswerOf(
+  record: CalendarEventRecord | undefined,
+  act: CalendarEventAct | null,
+): Pick<DayAnswer, "at" | "answer"> | null {
+  return act?.kind === "calendar_event_answer" && act.scope.kind === "occurrence" &&
+    act.eventId === record?.id && record.recurrenceId === "" && (!act.copy || sameAttendeeCopy(record, act))
     ? { at: act.scope.at, answer: act.answer }
     : null;
 }
@@ -164,6 +211,7 @@ export interface EventWithWrites {
   /** The refused write a view can send again or let go; `null` for a refusal of our server's, which left nothing. */
   readonly refusedWriteId: string | null;
   readonly removals?: readonly CalendarRemoveScope[];
+  readonly occurrenceEdits?: readonly OccurrenceEdit[];
   /** Answers to single days of this series, each that day's own: the record's wait and refusal leave them out. */
   readonly answers?: readonly DayAnswer[];
 }
@@ -194,12 +242,18 @@ export function eventsWithWrites(
     r.writes.filter((w) => w.state === "pending" && w.act !== null).map((w) => w.act!),
   );
   const base = applyCalendarActs(records, pending);
-  const onDevice = new Set(device.map((d) => d.act.eventId));
   const local = device.map((d) => d.act);
+  const onDevice = new Set(
+    local.filter((act) => {
+      const record = original.get(act.eventId);
+      return (!occurrenceEdit(act) || record?.recurrenceId) && dayAnswerOf(record, act) === null;
+    }).map((act) => act.eventId),
+  );
+  const edits = pendingOccurrenceEdits(pending, local, original);
   const shown = applyCalendarActs(base, local);
   const hidden = new Map<string, CalendarRemoveScope[]>();
   for (const act of [...pending, ...local]) {
-    if (act.kind !== "calendar_event_delete" || act.scope.kind === "record") continue;
+    if (act.kind !== "calendar_event_delete" || act.hide || act.scope.kind === "record") continue;
     const scopes = hidden.get(act.eventId);
     if (scopes) scopes.push(act.scope);
     else hidden.set(act.eventId, [act.scope]);
@@ -223,16 +277,38 @@ export function eventsWithWrites(
     const marks = days.size === 0 ? all : all.filter((w) => dayAnswerOf(record, w.act) === null);
     const lastRefused = [...marks].reverse().find((w) => w.state === "refused") ?? null;
     const removals = hidden.get(record.id);
-    const deviceWaits = days.size === 0 ? onDevice.has(record.id) : device.some((d) => d.act.eventId === record.id && dayAnswerOf(record, d.act) === null);
+    const occurrenceEdits = edits.get(record.id);
     return {
       record,
       ...(removals && { removals }),
+      ...(occurrenceEdits && { occurrenceEdits }),
       ...(days.size > 0 && { answers: [...days.values()] }),
-      waiting: deviceWaits ? "device" : marks.some((w) => w.state === "pending") ? "provider" : null,
+      waiting: onDevice.has(record.id) ? "device" : marks.some((w) =>
+        w.state === "pending" && (record.recurrenceId || !occurrenceEdit(w.act))) ? "provider" : null,
       refusal: refused.get(record.id) ?? lastRefused?.reason ?? null,
       refusedWriteId: refused.has(record.id) ? null : lastRefused?.id ?? null,
     };
   });
+}
+
+function pendingOccurrenceEdits(
+  pending: readonly CalendarEventAct[],
+  local: readonly CalendarEventAct[],
+  original: ReadonlyMap<string, CalendarEventRecord>,
+) {
+  const edits = new Map<string, OccurrenceEdit[]>();
+  const add = (acts: readonly CalendarEventAct[], waiting: OccurrenceEdit["waiting"]) => {
+    for (const act of acts) {
+      if (!occurrenceEdit(act) || !original.get(act.eventId)?.repeat) continue;
+      const edit = { at: act.scope.at, change: act.change, waiting };
+      const list = edits.get(act.eventId);
+      if (list) list.push(edit);
+      else edits.set(act.eventId, [edit]);
+    }
+  };
+  add(pending, "provider");
+  add(local, "device");
+  return edits;
 }
 
 /**
@@ -244,6 +320,7 @@ export class CalendarActKeys {
 
   /** The act as it is pressed: `after` set where this session acted on the event before. */
   stamp(act: CalendarEventAct, key: string): CalendarEventAct {
+    if (act.kind === "calendar_event_delete" && act.hide) return act;
     const eventId = act.eventId;
     const prior = this.last.get(eventId);
     this.last.set(eventId, key);

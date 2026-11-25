@@ -1,5 +1,5 @@
 import type { MouseEventHandler, ReactNode } from "react";
-import { Button } from "../../base/index.js";
+import { Button, mailContextTrigger, type Point } from "../../base/index.js";
 import "./file-tile.css";
 
 export interface FileTileProps {
@@ -23,10 +23,11 @@ export interface FileTileProps {
   save?: { label: string; saved?: boolean; busy?: boolean; onPress?: () => void };
   /** On a draft: the way off the letter, said with the file's name. */
   off?: { label: string; onPress?: () => void };
+  onMenu?: (at: Point | Element, opener: HTMLElement) => void;
 }
 
 /** A file on a message, a draft or a waiting sender's letter. */
-export function FileTile({ kind, name, size, look, main, save, off }: FileTileProps) {
+export function FileTile({ kind, name, size, look, main, save, off, onMenu }: FileTileProps) {
   const face = (
     <>
       {look ? <i className="oh-file-kind oh-file-look">{look}</i> : <i className="oh-file-kind">{kind}</i>}
@@ -37,7 +38,7 @@ export function FileTile({ kind, name, size, look, main, save, off }: FileTilePr
     </>
   );
   return (
-    <span className="oh-file">
+    <span className="oh-file" {...mailContextTrigger(onMenu)}>
       {main ? (
         <button
           type="button"

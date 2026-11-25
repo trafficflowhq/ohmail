@@ -60,7 +60,7 @@ async function render(state: MailState, locale: "en" | "de" = "en"): Promise<HTM
       h(NextIntlClientProvider, {
         locale, messages: locale === "en" ? en : de, timeZone: "UTC",
         now: new Date("2026-09-17T00:00:00.000Z"),
-        children: h(SyncBar, { bare: true }),
+        children: h(SyncBar, { bare: true, details: true }),
       }),
     );
   });

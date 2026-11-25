@@ -1191,6 +1191,7 @@ export function useScreenerState(
     quiet: entry.quiet,
     at: entry.at,
     derived: entry.sender.derived === true,
+    ...(entry.sender.ai?.id ? { shownSuggestionId: entry.sender.ai.id } : {}),
     /**
      * Only when they are load-bearing — the same predicate `dispatchDecision` guards the `mark_seen` batch with
      * (`derived && read`), so gating the list here changes no behaviour and
@@ -1387,6 +1388,7 @@ export function useScreenerState(
       void engine.mutate({
         kind: "screener_decide",
         senderId: id,
+        ...(id === d.id && d.shownSuggestionId ? { shownSuggestionId: d.shownSuggestionId } : {}),
         decision,
         dest: d.dest as ScreenDest,
         ...(decision === "yes" ? { read: d.read } : {}),
@@ -1457,7 +1459,11 @@ export function useScreenerState(
         // backlog is the server pass's. Beside a decide they wait for its answer.
         void dispatchScreeningChange(plan, [...cardMoves, ...seedMoves], async (m) => {
           if (!mayDispatch()) return { status: "superseded" };
-          const r = await engine.mutate(over ? outrankCoveringDomains(over, m) : m);
+          const press = over ? outrankCoveringDomains(over, m) : m;
+          const r = await engine.mutate(press.kind === "rule_create" ? {
+            ...press, screenerMessageId: id,
+            ...(d.shownSuggestionId ? { shownSuggestionId: d.shownSuggestionId } : {}),
+          } : press);
           if (r.status === "rolled_back" && refused === undefined) refused = r.error;
           if (r.status === "confirmed" && r.pendingWith) {
             heldBy.current = r.pendingWith;

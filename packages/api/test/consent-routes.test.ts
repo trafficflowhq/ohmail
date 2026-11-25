@@ -1,3 +1,4 @@
+import { readScreenerLearning, updateScreenerLearning } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { accountSettings, changeLog, contacts, mailboxFolders, rules } from "@trafficflow/db";
@@ -1417,8 +1418,30 @@ describe("the onboarding-consent routes", () => {
       accountId: s.accountId, mailboxId, folder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     });
 
+    const another = await seedMailbox(db, { accountId: s.accountId, address: "work@example.test" });
+    const other = await seedSession(db, { now: FIXED_NOW });
+    const otherMailbox = await seedMailbox(db, { accountId: other.accountId });
+    const learned = async (accountId: string, mailboxId: string) => {
+      await updateScreenerLearning(db, { accountId, mailboxId }, state => ({
+        ...state, notice: false, text: "Keep receipts.", revision: 1, rewrittenRevision: 1,
+        lessons: [{
+          id: "first", decisionId: "decision", messageRef: "letter", at: FIXED_NOW.getTime(),
+          kind: "independent", suggested: null, previous: null, chosen: "ohmail/Receipts", topic: "receipt",
+        }],
+      }));
+    };
+    await learned(s.accountId, mailboxId);
+    await learned(s.accountId, another);
+    await learned(other.accountId, otherMailbox);
+
     const res = await H(req("POST", "/consent/reset", { bearer: s.token }), deps);
     expect(res.status).toBe(200);
+    for (const id of [mailboxId, another]) {
+      expect(await readScreenerLearning(db, { accountId: s.accountId, mailboxId: id }, FIXED_NOW))
+        .toMatchObject({ text: "", lessons: [], updatedAt: null, enabled: true, notice: false });
+    }
+    expect(await readScreenerLearning(db, { accountId: other.accountId, mailboxId: otherMailbox }, FIXED_NOW))
+      .toMatchObject({ text: "Keep receipts.", lessons: [expect.objectContaining({ topic: "receipt" })] });
     const result = await res.json();
     expect(result.rulesDeleted).toBe(1);
     expect(result.unmoved).toContainEqual({ folder: "ohmail/Screener", messages: 1, observed: 1 });

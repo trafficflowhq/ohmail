@@ -1,0 +1,13 @@
+@layer oh {
+  .screener-learned-note {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .screener-learning-label {
+    padding: var(--s2) 0 var(--s1);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+}

@@ -63,7 +63,7 @@ async function strip(reason: string, locale: "en" | "de"): Promise<string> {
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale, messages: locale === "en" ? en : de, timeZone: "UTC", now: new Date(NOW),
-      children: h(SyncBar, null),
+      children: h(SyncBar, { details: true }),
     }));
   });
   return container.textContent ?? "";

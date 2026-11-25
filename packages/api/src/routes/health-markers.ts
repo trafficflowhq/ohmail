@@ -145,6 +145,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["account_settings", "draft_replies"],
   // mail 0221: consent and sync read this column for the Screener's one-time confirmations.
   ["account_settings", "screener_acknowledgements"],
+  ["screener_learning", "data"],
+  // Suggestion writes and learning reads use the topic on the recorded decision.
+  ["routing_decisions", "screener_topic"],
   ["account_settings", "seed_confirmed_at"],
   // mail 0037_draft_html — the rich half of a draft. One nullable column on `drafts`, with a
   // second consumer that makes it sharper than the `mailboxes` entries: `materializeDraft`
@@ -1339,7 +1342,7 @@ export const MAIL_EXPECTED_MARKERS =
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
 // mail 0220_caldav_host_retry resets poll times without changing the schema.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0221_screener_acknowledgements";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0222_screener_learning";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

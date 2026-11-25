@@ -18,7 +18,7 @@ import { KnownSetCache } from "@ohmail/organizer/known-set";
 import { checkedDial } from "../dial-host-guard.js";
 import { runKickstart } from "../kickstart.js";
 import { makeSmtpSizeDial, recordSmtpMaxSize } from "../smtp-size.js";
-import { type EnabledMailbox, loadMailboxCreds, makeSyncWriteFence } from "../mailboxes.js";
+import { type EnabledMailbox, authRetryDeadline, loadMailboxCreds, makeSyncWriteFence } from "../mailboxes.js";
 import { OrganizerProfileSync } from "@ohmail/organizer/profile";
 import { type OrganizerWriteAuthority, writeDoorOf, LeaseUnavailableError, leaseBlockReason } from "@ohmail/organizer/lease";
 import { deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
@@ -71,6 +71,7 @@ export function attachSection(scope: WorkerScope): void {
         const own = scope.forAccount(mb.accountId);
         const creds = await loadMailboxCreds(own.db, mb.mailboxId, scope.keyProvider, scope.oauthTokenProvider);
         ticket.checkpoint();
+        if (Date.now() >= authRetryDeadline(mb)) return;
         if (!creds) {
           // RECORD ONLY. The log below still announces once ever — that is a log-noise control and
           // it is correct — but it is no longer the ONLY record, which is what made this the most
@@ -188,9 +189,17 @@ export function attachSection(scope: WorkerScope): void {
         // a phase that no longer exists is worse than its absence — it reads as a fast drain.
         const tAttach = Date.now();
         // Raced, so a deadline or a stop settles the attach even if the dial ignores the close.
+        if (tAttach >= authRetryDeadline(mb)) {
+          await adapter.close();
+          return;
+        }
         await ticket.abortable(adapter.connect());
         ticket.checkpoint();
         const connectMs = Date.now() - tAttach;
+        if (mb.errorCode === "auth") {
+          await scope.markRecovered(mb, mb.kickStamp);
+          ticket.checkpoint();
+        }
 
         // The organizer lease, before the first move. Here and not below `ensureFolders()`: every line
         // after this WRITES to somebody's mailbox (`ensureFolders` creates the `ohmail/*` tree,
@@ -690,7 +699,7 @@ export function attachSection(scope: WorkerScope): void {
         // connection force-closed inside the lease gate surfaces as `LeaseUnavailableError`, and that arm
         // would re-dial a hung provider every pass with no backoff.
         if (aborted === "deadline") {
-          await scope.quarantineMailbox(mb.mailboxId, mb.accountId, new AttachDeadlineError(scope.attachDeadlineMs), "attach");
+          await scope.quarantineMailbox(mb.mailboxId, mb.accountId, new AttachDeadlineError(scope.attachDeadlineMs), "attach", mb.kickStamp);
           return;
         }
         // A lease we could not read is not a broken mailbox, and must not be quarantined into an
@@ -716,7 +725,7 @@ export function attachSection(scope: WorkerScope): void {
           });
           return;
         }
-        await scope.quarantineMailbox(mb.mailboxId, mb.accountId, err, "attach");
+        await scope.quarantineMailbox(mb.mailboxId, mb.accountId, err, "attach", mb.kickStamp);
       }
     }
     scope.detach = detach;

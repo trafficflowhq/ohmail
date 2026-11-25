@@ -14,7 +14,7 @@
 import { and, eq, isNull, ne, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import type { CredentialPlace, StoredCredential } from "@ohmail/cal-providers/connect";
 import { claimIdempotencyKey, recordCalendarChanges, type CalendarChange, type Tx } from "@trafficflow/db";
-import { CalendarConnectionGone, holdCalendarConnection, sweepCalendarConnectionStep } from "@trafficflow/db/calendar";
+import { CalendarConnectionGone, holdCalendarConnection, publishCalendarOrganizerChanges, sweepCalendarConnectionStep } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { calCalendars, calConnections, calCredentials } from "@trafficflow/db/mail";
 import type { CalendarConnectionRecord, CalendarPatchBody, CalendarRecord } from "@ohmail/wire";
@@ -62,6 +62,7 @@ interface LockedConnection {
   readonly status: string;
   readonly errorCode: string | null;
   readonly nextPollAt: Date | null;
+  readonly organizerAddresses: readonly string[] | null;
 }
 
 /** The connection's row, this account's, under a writer's lock as the first lock this transaction takes on it. */
@@ -69,7 +70,7 @@ async function lockedConnection(tx: Tx, accountId: string, id: string, mode: "up
   const [row] = await dialect(tx).forUpdate(
     tx.select({
       provider: calConnections.provider, serverUrl: calConnections.serverUrl, status: calConnections.status,
-      errorCode: calConnections.errorCode, nextPollAt: calConnections.nextPollAt,
+      errorCode: calConnections.errorCode, nextPollAt: calConnections.nextPollAt, organizerAddresses: calConnections.organizerAddresses,
     }).from(calConnections).where(and(eq(calConnections.id, id), eq(calConnections.accountId, accountId))).limit(1),
     { mode },
   );
@@ -104,10 +105,11 @@ const withinTheMinute = (column: AnyColumn): SQL =>
  * The connection's calendars that are still read are due: now, or within the minute where the
  * connection's minute was taken already. Bookkeeping: no record a device holds moves.
  */
-async function calendarsDue(tx: Tx, accountId: string, connectionId: string, when: "now" | "within the minute"): Promise<void> {
+async function calendarsDue(tx: Tx, accountId: string, connectionId: string, when: "now" | "within the minute", calendarId?: string): Promise<void> {
   await tx.update(calCalendars).set({ nextPollAt: when === "now" ? null : withinTheMinute(calCalendars.nextPollAt) }).where(and(
     eq(calCalendars.accountId, accountId), eq(calCalendars.connectionId, connectionId),
     or(isNull(calCalendars.errorCode), ne(calCalendars.errorCode, "ended")),
+    calendarId === undefined ? undefined : eq(calCalendars.id, calendarId),
   ));
 }
 
@@ -154,26 +156,35 @@ export async function removeCalendarConnection(ctx: ServiceContext, named: strin
 // ── check now ────────────────────────────────────────────────────────────────────
 
 /**
- * `POST /calendar/connections/:id/check`: the connection and its calendars are due now, once a
+ * `POST /calendar/connections/:id/check`: the connection and its selected calendars are due now, once a
  * minute for each connection. The minute is the connection's (`takeMinute`), and a sign-in typed
  * again takes the same one: a second ask inside it is refused. A provider that asked to be left
  * alone is left alone until its own time has passed. The change is what rings the worker's bell.
  */
-export async function checkCalendarConnection(ctx: ServiceContext, named: string): Promise<{ record: CalendarConnectionRecord; seq: bigint }> {
+export async function checkCalendarConnection(
+  ctx: ServiceContext, named: string, namedCalendar?: string,
+): Promise<{ record: CalendarConnectionRecord; seq: bigint }> {
   const id = oneSpelling(named);
+  const calendarId = namedCalendar === undefined ? undefined : oneSpelling(namedCalendar);
   await requireCalendarOn(ctx);
   const fence = fenceOf((await connectionSeen(ctx, id)).mailboxId);
   return withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
     const row = await lockedConnection(t, ctx.accountId, id, "no key update");
     if (row.status !== "active" && row.status !== "failing") throw stopped();
+    if (calendarId !== undefined) {
+      const [calendar] = await t.select({ id: calCalendars.id }).from(calCalendars).where(and(
+        eq(calCalendars.id, calendarId), eq(calCalendars.accountId, ctx.accountId), eq(calCalendars.connectionId, id),
+      )).limit(1);
+      if (!calendar) throw noCalendar();
+    }
     const now = ctx.now();
     const waits = row.nextPollAt === null ? 0 : row.nextPollAt.getTime() - now.getTime();
     if (row.errorCode === "throttled" && waits > 0) throw limited(waits / SECOND);
     if (!await takeMinute(t, ctx.accountId, id, now)) throw limited(CALENDAR_CHECK_EVERY_MS / SECOND);
     await t.update(calConnections).set({ nextPollAt: null, updatedAt: sql`now()` })
       .where(and(eq(calConnections.id, id), eq(calConnections.accountId, ctx.accountId)));
-    await calendarsDue(t, ctx.accountId, id, "now");
+    await calendarsDue(t, ctx.accountId, id, "now", calendarId);
     const record = await connectionRecord(ctx, tx, id);
     const [seq] = await recordCalendarChanges(tx, ctx.accountId, [{ kind: "calendar_connection", id, op: "update" }]);
     return { record, seq: seq! };
@@ -254,7 +265,7 @@ export async function signInCalendarAgain(
     await t.insert(calCredentials).values({ accountId: ctx.accountId, connectionId: id, kind: credential.kind, ...columns })
       .onConflictDoUpdate({ target: [calCredentials.accountId, calCredentials.connectionId, calCredentials.kind], set: columns });
     await t.update(calConnections).set({
-      status: "active", errorCode: null, updatedAt: sql`now()`,
+      status: "active", errorCode: null, organizerAddresses: null, updatedAt: sql`now()`,
       nextPollAt: due === "now" ? null : withinTheMinute(calConnections.nextPollAt),
       ...(place === null ? {} : { sourceHost: place.sourceHost }),
     }).where(and(eq(calConnections.id, id), eq(calConnections.accountId, ctx.accountId)));
@@ -273,6 +284,7 @@ export async function signInCalendarAgain(
     }
     await calendarsDue(t, ctx.accountId, id, due);
     const record = await connectionRecord(ctx, tx, id);
+    await publishCalendarOrganizerChanges(t, ctx.accountId, id, row.organizerAddresses ?? [], []);
     changes.push({ kind: "calendar_connection", id, op: "update" });
     const seqs = await recordCalendarChanges(tx, ctx.accountId, changes);
     return { record, seq: seqs[seqs.length - 1]! };
@@ -309,10 +321,9 @@ function patchOf(body: unknown): CalendarPatchBody {
 }
 
 /**
- * `PATCH /calendar/calendars/:id`. `shown` is the person's own on every calendar. `name` and
- * `color` are the person's own only where no provider lists the calendar: a subscription's, whose
- * file is read for them once. Where a provider lists its calendars the store's two columns are the
- * provider's copy, written again by every listing, so a value set here would not stay: refused.
+ * `PATCH /calendar/calendars/:id`. Visibility and colour are the person's own on every calendar.
+ * A colour override belongs to the account and survives provider listings. A custom name is
+ * available for subscriptions, which have no provider calendar list.
  * A request that changes nothing writes nothing and names no seq.
  */
 export async function setCalendar(ctx: ServiceContext, named: string, body: unknown): Promise<{ record: CalendarRecord; seq: bigint | null }> {
@@ -322,30 +333,33 @@ export async function setCalendar(ctx: ServiceContext, named: string, body: unkn
   return withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
     const mine = and(eq(calCalendars.id, id), eq(calCalendars.accountId, ctx.accountId));
-    const [cal] = await t.select({
-      connectionId: calCalendars.connectionId, shown: calCalendars.shown, name: calCalendars.name, color: calCalendars.color,
-    }).from(calCalendars).where(mine).limit(1);
-    if (cal === undefined) throw noCalendar();
+    const [place] = await t.select({ connectionId: calCalendars.connectionId })
+      .from(calCalendars).where(mine).limit(1);
+    if (place === undefined) throw noCalendar();
     try {
-      await holdCalendarConnection(t, dialect(t), { accountId: ctx.accountId, connectionId: cal.connectionId });
+      await holdCalendarConnection(t, dialect(t), { accountId: ctx.accountId, connectionId: place.connectionId });
     } catch (err) {
       if (err instanceof CalendarConnectionGone) throw err.reason === "removing" ? stopped() : noCalendar();
       throw err;
     }
-    if (patch.name !== undefined || patch.color !== undefined) {
+    const [cal] = await dialect(t).forUpdate(t.select({
+      shown: calCalendars.shown, name: calCalendars.name, localColor: calCalendars.localColor,
+    }).from(calCalendars).where(mine).limit(1), { mode: "no key update" });
+    if (cal === undefined) throw noCalendar();
+    if (patch.name !== undefined) {
       const [conn] = await t.select({ provider: calConnections.provider }).from(calConnections)
-        .where(and(eq(calConnections.id, cal.connectionId), eq(calConnections.accountId, ctx.accountId))).limit(1);
-      if (conn?.provider !== "ics") throw readOnly("this calendar's name and colour are its provider's");
+        .where(and(eq(calConnections.id, place.connectionId), eq(calConnections.accountId, ctx.accountId))).limit(1);
+      if (conn?.provider !== "ics") throw readOnly("this calendar's name is its provider's");
     }
     const next = {
-      shown: patch.shown ?? cal.shown, name: patch.name ?? cal.name, color: patch.color === undefined ? cal.color : patch.color,
+      shown: patch.shown ?? cal.shown, name: patch.name ?? cal.name, localColor: patch.color === undefined ? cal.localColor : patch.color,
     };
     const record = async (): Promise<CalendarRecord> => {
       const built = (await CALENDAR_BUILDERS.calendar(bridgeDb(tx), ctx.accountId, [id])).get(id);
       if (built === undefined) throw noCalendar();
       return built;
     };
-    if (next.shown === cal.shown && next.name === cal.name && next.color === cal.color) return { record: await record(), seq: null };
+    if (next.shown === cal.shown && next.name === cal.name && next.localColor === cal.localColor) return { record: await record(), seq: null };
     await t.update(calCalendars).set({ ...next, updatedAt: sql`now()` }).where(mine);
     const kept = await record();
     const [seq] = await recordCalendarChanges(tx, ctx.accountId, [{ kind: "calendar", id, op: "update" }]);

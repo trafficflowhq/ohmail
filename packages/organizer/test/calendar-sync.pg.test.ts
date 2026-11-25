@@ -61,6 +61,29 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     await w.db.update(calConnections).set({ nextPollAt: null }).where(eq(calConnections.accountId, accountId));
   }
 
+  it("keeps the authenticated CalDAV organizer addresses of the connection and replaces them on discovery", async () => {
+    const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
+    const reader = scriptedReader("caldav", { readings: new Map([["", [{ items: [] }]]]) });
+    const first = ["second-principal", "example.test"].join("@");
+    const next = ["new-principal", "example.test"].join("@");
+    let addresses = [first.toUpperCase(), first];
+    reader.checkSignIn = async () => ({ ok: true, value: { principal: "/principal", addresses } });
+    const providers = providersOf({ caldav: { reader, http: silentHttp() } });
+    const read = async () => (await w.db.select({ addresses: calConnections.organizerAddresses }).from(calConnections)
+      .where(eq(calConnections.id, seeded.due.id)))[0]?.addresses;
+    const run = () => calendarSyncPass(depsFor(w, providers), seeded.due, never);
+    expect(await run()).toMatchObject({ kind: "synced" });
+    expect(await read()).toEqual([first]);
+    addresses = [next];
+    await makeDue(seeded.due.accountId);
+    expect(await run()).toMatchObject({ kind: "synced" });
+    expect(await read()).toEqual([next]);
+    reader.checkSignIn = async () => ({ ok: false, reason: "unreadable", retryAfterMs: null });
+    await makeDue(seeded.due.accountId);
+    expect(await run()).toMatchObject({ kind: "backed_off", word: "unreadable" });
+    expect(await read()).toEqual([]);
+  });
+
   /** Turns until a turn ends with nothing more to read. */
   async function turnsUntilDone(deps: Parameters<typeof calendarSyncPass>[0], due: Parameters<typeof calendarSyncPass>[1]): Promise<CalendarSyncOutcome[]> {
     const out: CalendarSyncOutcome[] = [];
@@ -138,10 +161,10 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     await makeDue(t.accountId);
     await calendarSyncPass(t.deps, t.due, never);
     expect((await calendarsOf(w, t.accountId))[0]?.lastSyncedAt).toEqual(read?.lastSyncedAt);
-    expect(await changesOf(w, t.accountId)).toEqual({ "calendar:create": 1, "calendar:update": 1, "calendar_connection:update": 1 });
+    expect(await changesOf(w, t.accountId)).toEqual({ "calendar:create": 1, "calendar:update": 1, "calendar_connection:update": 2 });
   }, 60_000);
 
-  it("a connection whose first listing finds no calendar says it was read, once, and only itself", async () => {
+  it("each successful empty listing advances only the account it checked", async () => {
     const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
     const other = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
     const reader = scriptedReader("caldav", { calendars: [], readings: new Map() });
@@ -154,18 +177,22 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect(await changesOf(w, other.accountId)).toEqual({});
 
     await makeDue(seeded.accountId);
-    await calendarSyncPass(deps, seeded.due, never);
-    expect((await connectionOf(w, seeded.accountId, seeded.connectionId)).lastSyncedAt).toEqual(first.lastSyncedAt);
-    expect(await changesOf(w, seeded.accountId)).toEqual({ "calendar_connection:update": 1 });
+    expect(await calendarSyncPass(deps, seeded.due, never)).toMatchObject({ kind: "synced", calendars: 0, changed: 0 });
+    expect((await connectionOf(w, seeded.accountId, seeded.connectionId)).lastSyncedAt!.getTime()).toBeGreaterThan(first.lastSyncedAt!.getTime());
+    expect(await changesOf(w, seeded.accountId)).toEqual({ "calendar_connection:update": 2 });
+    expect((await connectionOf(w, other.accountId, other.connectionId)).lastSyncedAt).toBeNull();
+    expect(await changesOf(w, other.accountId)).toEqual({});
   }, 60_000);
 
-  it("a reading that finds nothing changed writes nothing and records no change", async () => {
+  it("an unchanged reading advances the account’s last check without recording event or calendar changes", async () => {
     const t = await caldavWorld(new Map([["", eventsInPages("n", 3, 3)], ["tok", [{ items: [], unchanged: true }]]]), () => "tok");
     await calendarSyncPass(t.deps, t.due, never);
     const before = await changesOf(w, t.accountId);
+    const checked = (await connectionOf(w, t.accountId, t.connectionId)).lastSyncedAt!;
     await makeDue(t.accountId);
-    expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced", changed: 0, dropped: 0 });
-    expect(await changesOf(w, t.accountId)).toEqual(before);
+    expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced", calendars: 1, changed: 0, dropped: 0 });
+    expect((await connectionOf(w, t.accountId, t.connectionId)).lastSyncedAt!.getTime()).toBeGreaterThan(checked.getTime());
+    expect(await changesOf(w, t.accountId)).toEqual({ ...before, "calendar_connection:update": before["calendar_connection:update"]! + 1 });
     expect(t.reader.calls.at(-1)).toEqual({ since: "tok", cursor: null });
   }, 60_000);
 
@@ -197,7 +224,7 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect((await calendarsOf(w, t.accountId))[0]?.syncToken).toBe("t3");
   }, 60_000);
 
-  it("pages applied twice and out of order converge, and the second application writes nothing", async () => {
+  it("pages applied twice and out of order converge without recording duplicate calendar or event changes", async () => {
     const pages = eventsInPages("r", 12, 4);
     const shuffled: ScriptedPage[] = [{ items: [...pages[2]!.items, ...pages[0]!.items] }, { items: [...pages[1]!.items, ...pages[2]!.items] }, pages[0]!];
     const t = await caldavWorld(new Map([["", pages], ["tok", shuffled]]), () => "tok");
@@ -207,7 +234,7 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     await makeDue(t.accountId);
     expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced", changed: 0 });
     expect(await eventsOf(w, t.accountId)).toEqual(rows);
-    expect(await changesOf(w, t.accountId)).toEqual(changes);
+    expect(await changesOf(w, t.accountId)).toEqual({ ...changes, "calendar_connection:update": changes["calendar_connection:update"]! + 1 });
   }, 60_000);
 
   it("a whole reading drops at its end what no page named, and spares a left id, a newer row, and an owed write", async () => {
@@ -911,7 +938,7 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     reader.calls.length = 0;
     await turn();
     expect(reader.calls.map((c) => c.since)).toEqual([null, null]);
-    expect(await changesOf(w, seeded.accountId)).toEqual(before);
+    expect(await changesOf(w, seeded.accountId)).toEqual({ ...before, "calendar_connection:update": before["calendar_connection:update"]! + 1 });
     expect(await connectionOf(w, seeded.accountId, seeded.connectionId)).toMatchObject({ status: "active", errorCode: null });
   }, 60_000);
 
@@ -1001,6 +1028,29 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect((await connectionOf(w, unserved.accountId, unserved.connectionId)).errorCode).toBe("provider_off");
     expect({ opened, lists: reader.lists, reads: reader.calls.length }).toEqual({ opened: 0, lists: 0, reads: 0 });
   }, 60_000);
+
+  it("publishes existing event records when a calendar leaves and regains owner access", async () => {
+    const t = await caldavWorld(new Map([["", eventsInPages("e", 2, 2)]]), () => "unchanged");
+    let owned = true;
+    t.reader.listCalendars = async () => ({ ok: true, value: [
+      { id: "cal-1", name: "Studio", color: null, writable: true, owned, byToken: true, zone: null },
+    ] });
+    const relist = async () => {
+      t.deps.memory.listedAt.clear();
+      await makeDue(t.accountId);
+      expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced" });
+      return await changesOf(w, t.accountId);
+    };
+    const first = await relist();
+    const count = (await eventsOf(w, t.accountId)).length;
+    expect(count).toBeGreaterThan(0);
+    owned = false;
+    const shared = await relist();
+    expect(shared["calendar_event:update"] ?? 0).toBe((first["calendar_event:update"] ?? 0) + count);
+    owned = true;
+    const regained = await relist();
+    expect(regained["calendar_event:update"]).toBe(shared["calendar_event:update"]! + count);
+  });
 
   it("a calendar the listing stops naming goes at the second listing in a row; a listing that names none removes nothing", async () => {
     const two = [

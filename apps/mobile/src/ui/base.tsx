@@ -191,6 +191,7 @@ export function Panel({
 }
 
 export interface PullRefresh {
+  result?: string;
   refreshing: boolean;
   onRefresh: () => void;
 }

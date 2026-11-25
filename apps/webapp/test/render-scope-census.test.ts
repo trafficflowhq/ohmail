@@ -88,7 +88,6 @@ const SHELL_FRAMES: readonly string[] = [
   "packages/app/src/stream/Seat.tsx",
   "packages/app/src/tags/Seat.tsx",
   "packages/app/src/trash/Seat.tsx",
-  `${GROUND_DIR}/desktop-offer.ts`,
   "packages/app-logic/src/place-list/live.ts",
   "packages/app-logic/src/address/live.ts",
   "packages/app-logic/src/folder/live.ts",

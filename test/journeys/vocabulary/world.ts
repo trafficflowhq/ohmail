@@ -1,6 +1,6 @@
 import { ohbox, reads, receipts, waiting } from "@ohmail/testing";
 import { eq } from "drizzle-orm";
-import { folderState, mailboxes, mailboxFolders, messages } from "@trafficflow/db";
+import { calAttendees, calCalendars, calConnections, calEvents, folderState, mailboxes, mailboxFolders, messages } from "@trafficflow/db";
 import type { Db } from "@trafficflow/services";
 import { seedBody, seedContact, seedMailbox, seedMessage, seedRule, seedThread } from "../../../packages/api/test/helpers.js";
 
@@ -79,7 +79,10 @@ const FOLDER: Record<Pile, string> = {
 };
 
 /** Seeds an account's mail through the server's own tables' test helpers; the far end is the API's answer. */
-export function apiPlanter(db: Db, account: { accountId: string }, now: () => Date): Planter & { mailboxId(): Promise<string> } {
+export function apiPlanter(db: Db, account: { accountId: string }, now: () => Date): Planter & {
+  mailboxId(): Promise<string>;
+  plantCalendarInvitation(title: string): Promise<{ date: string; id: string }>;
+} {
   let mailbox: string | null = null;
   const mailboxId = async (address?: string): Promise<string> => {
     mailbox ??= await seedMailbox(db, {
@@ -91,6 +94,32 @@ export function apiPlanter(db: Db, account: { accountId: string }, now: () => Da
   return {
     kind: "api",
     mailboxId: () => mailboxId(),
+    async plantCalendarInvitation(title) {
+      const accountId = account.accountId;
+      const attendee = ["guest", "example.test"].join("@");
+      const organizer = ["host", "example.test"].join("@");
+      await mailboxId(attendee);
+      const day = now().toISOString().slice(0, 10);
+      const [connection] = await db.insert(calConnections).values({
+        accountId, provider: "google", label: "Studio", status: "active", principal: attendee,
+      }).returning({ id: calConnections.id });
+      const [calendar] = await db.insert(calCalendars).values({
+        accountId, connectionId: connection!.id, providerId: "studio", access: "owner", name: "Studio",
+        shown: true, lastSyncedAt: now(),
+        windowStart: new Date(now().getTime() - 45 * 86_400_000).toISOString().slice(0, 10),
+        windowEnd: new Date(now().getTime() + 45 * 86_400_000).toISOString().slice(0, 10),
+      }).returning({ id: calCalendars.id });
+      const at = day.replaceAll("-", "");
+      const [event] = await db.insert(calEvents).values({
+        accountId, calendarId: calendar!.id, providerId: "workshop", versionTag: '"1"', uid: "workshop",
+        title, organizer, organizerName: "Workshop organizer", myAnswer: "accepted", busy: true,
+        startKind: "instant", startLocal: at + "T100000Z", endKind: "instant", endLocal: at + "T110000Z",
+        startsAt: new Date(Date.parse(day) + 10 * 3_600_000), endsAt: new Date(Date.parse(day) + 11 * 3_600_000),
+      }).returning({ id: calEvents.id });
+      await db.insert(calAttendees).values({ accountId, eventId: event!.id, address: attendee, name: "Workshop guest", role: "required", answer: "accepted" });
+      return { date: day, id: event!.id };
+    },
+
     async plant(spec) {
       const box = await mailboxId(spec.mailbox?.address);
       if (spec.conversations.some((conv) => conv.deleted)) {

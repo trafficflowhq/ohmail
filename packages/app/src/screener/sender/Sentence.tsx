@@ -9,7 +9,17 @@ import {
   type ScreenerView,
 } from "@ohmail/app-logic/screener";
 import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
-import { Button, Dot, Icon, Menu, MenuItem, Sentence as KitSentence, Slot, Tag } from "@ohmail/ui/base";
+import {
+  Button,
+  Dot,
+  EndDot,
+  Icon,
+  Menu,
+  MenuItem,
+  Sentence as KitSentence,
+  Slot,
+  Tag,
+} from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
 import { useNoAdvice, useScreener } from "../contract.js";
 import "./sentence.css";
@@ -148,7 +158,8 @@ export function DecisionLines({ sender }: { sender: ScreenerSenderDTO }) {
   const t = useText("screener");
   const rules = useText("rules");
   const words = suggestionWords(sender, useNoAdvice());
-  const advice = words.badge !== null || words.sure !== null || words.reason !== null;
+  const learned = sender.ai?.learnedReason === "webinar" && sender.ai.reasonCode === undefined;
+  const advice = learned || words.badge !== null || words.sure !== null || words.reason !== null;
   return (
     <>
       {advice ? (
@@ -158,7 +169,13 @@ export function DecisionLines({ sender }: { sender: ScreenerSenderDTO }) {
           {words.sure !== null ? (
             <b title={t("place.confidence")}>{t("place.sure", { sure: words.sure })}</b>
           ) : null}
-          {words.reason ? <span>{t(words.reason.key, words.reason.values)}</span> : null}
+          {learned ? (
+            <span>
+              <EndDot kind="hot">{t("learnedWebinar")}</EndDot>
+            </span>
+          ) : words.reason ? (
+            <span>{t(words.reason.key, words.reason.values)}</span>
+          ) : null}
         </p>
       ) : null}
       {words.lines.map((line) => (

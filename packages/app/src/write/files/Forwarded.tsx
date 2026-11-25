@@ -3,8 +3,9 @@
  * line that says what goes, and, once a press was refused, why. The plan is the composition's; every sentence key
  * it can name is read here by a literal key, and a key with no row says that the files could not be counted.
  */
-import type { ReactNode } from "react";
-import { Files, FileTile, SendStatus } from "@ohmail/ui/mail";
+import { useState, type ReactNode } from "react";
+import { Files, FileTile, SendStatus, type FileTileProps } from "@ohmail/ui/mail";
+import { MailRowMenu, type MenuTarget } from "../../place-list/MailRowMenu.js";
 import { useText, type Text } from "../../text/index.js";
 import { useWriteBeside } from "../above.js";
 import type { ForwardLineKey, WriteForwardFiles } from "../ports.js";
@@ -55,7 +56,7 @@ export function useForwarded(plan: WriteForwardFiles | null, locked: boolean): F
       files: (
         <Files summary={summary}>
           {rows.map((row) => (
-            <FileTile
+            <ForwardedTile
               key={row.id}
               kind={kindOf(row.filename)}
               name={row.inline ? t("forwarded.embedded", { filename: row.filename }) : row.filename}
@@ -75,6 +76,24 @@ export function useForwarded(plan: WriteForwardFiles | null, locked: boolean): F
     },
     refusal: said,
   };
+}
+
+function ForwardedTile({ off, ...props }: FileTileProps) {
+  const [menu, setMenu] = useState<MenuTarget | null>(null);
+  const remove = off?.onPress;
+  return (
+    <>
+      <FileTile {...props} off={off} onMenu={remove ? (at, anchor) => setMenu({ at, anchor }) : undefined} />
+      {off && remove && menu ? (
+        <MailRowMenu
+          target={menu}
+          label={props.name}
+          onClose={() => setMenu(null)}
+          items={[{ label: off.label, icon: "x", onPress: remove }]}
+        />
+      ) : null}
+    </>
+  );
 }
 
 /** The refusal line, as the kit draws a file's note. */

@@ -16,6 +16,8 @@ export type AgendaMark =
 export interface AgendaRowProps {
   mark: AgendaMark;
   title: string;
+  recordId?: string;
+  saving?: boolean;
   /** What stands where the time does: the hours, "all day", "until 10:00", or the day in a list across many days. */
   time: string;
   /** The second line: the place, who it is from. */
@@ -47,6 +49,8 @@ export interface AgendaRowProps {
   onOpen?: () => void;
   /** A right click, the menu key or Shift F10: the row's menu, where the pointer is. */
   onMenu?: (at: { x: number; y: number }) => void;
+  onContextMenu?: (event: MouseEvent<HTMLDivElement>) => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
   ref?: Ref<HTMLDivElement>;
 }
 
@@ -72,7 +76,13 @@ export function AgendaRow(p: AgendaRowProps) {
   const tone = p.mark.kind === "draft" || (p.tinted && p.mark.kind === "calendar") ? p.mark.tone : null;
   const own = toneOf(tone);
   const key = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+    p.onKeyDown?.(event);
+    if (
+      event.defaultPrevented ||
+      event.target !== event.currentTarget ||
+      (event.key !== "Enter" && event.key !== " ")
+    )
+      return;
     event.preventDefault();
     p.onOpen?.();
   };
@@ -91,13 +101,15 @@ export function AgendaRow(p: AgendaRowProps) {
         "aria-label": p.label,
         onClick: p.onOpen,
         onKeyDown: key,
-        onContextMenu: menu,
+        onContextMenu: p.onContextMenu ?? menu,
       };
   return (
     <div
       ref={p.ref}
       className={cx("oh-erow", own.className)}
       data-tone={own["data-tone"]}
+      data-record={p.recordId}
+      aria-busy={p.saving || undefined}
       style={toneStyle(tone)}
       data-now={p.now ? "" : undefined}
       data-quiet={p.quiet ? "" : undefined}

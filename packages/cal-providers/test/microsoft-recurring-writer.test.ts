@@ -1720,3 +1720,16 @@ describe("Microsoft recurring event edits", () => {
     expect(fixture.writes()).toEqual([]);
   });
 });
+
+it("refuses to send a Friday pattern on a master that starts Monday", async () => {
+  const fixture = graph(() => master);
+  const result = await fixture.writer.change(
+    connection,
+    cal,
+    { ...target, occurrence: null },
+    { rule: parseRRule("FREQ=WEEKLY;BYDAY=FR")! },
+    signal,
+  );
+  expect(fixture.writes()).toEqual([]);
+  expect(result).toMatchObject({ ok: false, reason: "repeat_unsupported" });
+});

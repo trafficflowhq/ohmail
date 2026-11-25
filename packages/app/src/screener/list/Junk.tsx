@@ -1,3 +1,5 @@
+import { useFrame } from "../../frame/commands.js";
+import { MailRow } from "../../place-list/MailRowMenu.js";
 /**
  * JUNK, the third section where the shell hands its window: the mail server's own Junk folder, read when the section
  * opens and never mirrored. A read that failed says so and offers Try again (never "empty"); "Junk is empty" is said
@@ -10,7 +12,7 @@ import { headStamp, readerZone } from "@ohmail/app-logic/reader";
 import { junkKey, junkLabelOf, type JunkView } from "@ohmail/app-logic/screener";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { Empty, Field } from "@ohmail/ui/base";
-import { GroupHeading, ListLine, Row, Rows } from "@ohmail/ui/mail";
+import { GroupHeading, ListLine, Rows } from "@ohmail/ui/mail";
 import { useLocale, useText, type Text } from "../../text/index.js";
 import type { ScreenerJunk, ScreenerJunkItem } from "../ports.js";
 
@@ -42,15 +44,16 @@ function JunkRow({
   const key = junkKey(item);
   const who = junkWho(item);
   const open = view.openKey === key;
+  const { plan } = useFrame();
   return (
-    <Row
+    <MailRow
       who={who}
       address={item.from.name ? displayAddress(item.from.address) : undefined}
       people={[{ name: who, address: item.from.address }]}
       subject={item.subject}
       when={stamp(item).short}
       where={t(junkLabelOf(item))}
-      open={open}
+      open={open && plan.device !== "phone"}
       cursor={open}
       listing={{ name: item.subject ? `${who}: ${item.subject}` : who, selected: open, stop: open }}
       mark={{ id: key }}

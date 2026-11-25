@@ -79,7 +79,8 @@ const REPORTED = [
     file: "screener/screener-state.ts", declaration: "dispatchDecision",
     steps: [
       /dispatchScreeningChange\(plan, \[\.\.\.cardMoves, \.\.\.seedMoves\], async \(m\) =>/,
-      /const r = await engine\.mutate\(over \? outrankCoveringDomains\(over, m\) : m\)/,
+      /const press = over \? outrankCoveringDomains\(over, m\) : m/,
+      /const r = await engine\.mutate\(press\.kind === "rule_create" \? \{\s+\.\.\.press, screenerMessageId: id,[\s\S]*?\} : press\)/,
       /if \(r\.status === "rolled_back"/,
     ],
   },

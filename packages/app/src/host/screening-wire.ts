@@ -1,3 +1,4 @@
+import type { ScreenerLearningView } from "@ohmail/wire";
 import type * as Payloads from "./payloads.js";
 import type { AutoFiledWire, ScreeningWire } from "./wires.js";
 
@@ -38,6 +39,18 @@ export function screeningVia(request: Request): ScreeningWire {
   return {
     read: async () => preference(await readScreeningResponse(request)),
     change: async (next) => preference(await changeScreeningResponse(request, next)),
+    readLearning: async (mailboxId) =>
+      checked<ScreenerLearningView>(
+        await request(`${SCREENING_PATH}?learningMailbox=${encodeURIComponent(mailboxId)}`),
+      ),
+    changeLearning: async (mailboxId, learningEdit) =>
+      checked<ScreenerLearningView>(
+        await request(SCREENING_PATH, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ learningMailbox: mailboxId, learningEdit }),
+        }),
+      ),
   };
 }
 

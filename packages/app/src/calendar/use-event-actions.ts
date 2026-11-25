@@ -65,7 +65,10 @@ function requestFor(
   anchor: HTMLElement,
 ): Request {
   const { record, exception } = current;
-  const { names, audience } = guestUpdate(exception ?? record, {});
+  const { names, audience } =
+    change.kind === "delete" || change.kind === "calendar"
+      ? guestUpdate(exception ?? record, {})
+      : editGuestUpdate(current, {});
   return {
     face,
     change,
@@ -92,8 +95,8 @@ function guestsFor(
   own: readonly string[] | null,
 ) {
   const { record } = current;
-  if (!record.repeat) return guestUpdate(record, {});
-  if (change.kind !== "delete") return editGuestUpdate(current, {}, scope);
+  if (change.kind !== "delete" && change.kind !== "calendar") return editGuestUpdate(current, {}, scope);
+  if (!record.repeat || change.kind === "calendar") return guestUpdate(record, {});
   const audience = record.deleteMembers && deleteAudienceOf(record.deleteMembers, scope);
   if (
     !audience ||

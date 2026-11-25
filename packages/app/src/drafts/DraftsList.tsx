@@ -1,3 +1,4 @@
+import { MailRow } from "../place-list/MailRowMenu.js";
 /**
  * DRAFTS' LIST: the sends set for later first, each with Cancel send and when it sends; then the drafts, each with
  * Discard (one press, with Undo). A row that holds a send nobody could confirm says so on its row; its two answers
@@ -8,7 +9,7 @@ import { useListWindow } from "@ohmail/app-logic/lists";
 import type { EngineDraft } from "@ohmail/wire";
 import { heldSentence, isHeld, useDraftsModel, type DraftsModel } from "@ohmail/app-logic/drafts";
 import { Empty, RefusalLine } from "@ohmail/ui/base";
-import { GroupHeading, ListHead, Row, Rows, type RowProps } from "@ohmail/ui/mail";
+import { GroupHeading, ListHead, Rows, type RowProps } from "@ohmail/ui/mail";
 import { FrameContext } from "../frame/commands.js";
 import type { PaneProps } from "../frame/contract.js";
 import { ListColumn, ListMenu } from "../place-list/index.js";
@@ -171,7 +172,7 @@ function CurrentDraft({
   const subject = compose.subject.trim() || t("noSubject");
   return (
     <div data-index={index}>
-      <Row
+      <MailRow
         who={who}
         people={[]}
         sign="write"
@@ -180,6 +181,11 @@ function CurrentDraft({
         when={when}
         open
         own={discard}
+        menuItems={
+          discard?.onPress
+            ? () => [{ label: discard.label, icon: "trash", onPress: discard.onPress! }]
+            : undefined
+        }
         listing={{ name: `${who}: ${subject}`, selected: true, place: { at: 1, of: count } }}
       />
     </div>
@@ -205,7 +211,7 @@ function ScheduledRow({
   const subject = d.subject.trim() || t("noSubject");
   const sends = d.sendAt ? t("scheduledWhen", { when: model.appointment(d.sendAt) }) : "";
   return (
-    <Row
+    <MailRow
       who={to ? t("rowTo", { name: to }) : t("noRecipient")}
       address={first?.address}
       people={first ? [{ name: first.name || first.address, address: first.address }] : []}
@@ -216,6 +222,9 @@ function ScheduledRow({
       open={open}
       own={{ label: t("scheduledCancel"), onPress: () => model.door.cancelSchedule(d.id) }}
       onOpen={() => model.door.editScheduled(d)}
+      menuItems={() => [
+        { label: t("scheduledCancel"), icon: "clock", onPress: () => model.door.cancelSchedule(d.id) },
+      ]}
       listing={{
         name: `${to || t("noRecipient")}: ${subject}`,
         spoken: sends,
@@ -264,7 +273,7 @@ function DraftRow({
   const refused = model.refusal?.draftId === d.id ? model.refusal : null;
   return (
     <div className="dr-row" data-id={d.id} data-index={index}>
-      <Row
+      <MailRow
         who={to ? t("rowTo", { name: to }) : t("noRecipient")}
         people={[]}
         sign={reply ? "reply" : "drafts"}
@@ -274,6 +283,11 @@ function DraftRow({
         when={model.stamp(d.updatedAt)}
         open={open}
         own={discard}
+        menuItems={
+          discard?.onPress
+            ? () => [{ label: discard.label, icon: "trash", onPress: discard.onPress! }]
+            : undefined
+        }
         onOpen={() => model.door.open(d)}
         listing={{
           name: `${to || t("noRecipient")}: ${subject}`,

@@ -8,6 +8,8 @@ import { autoUnsubscribeConfirms } from "@ohmail/app-logic/screener";
 import { autoUnsubscribeDoor } from "@ohmail/app-logic/press/sender-screening";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
+import { useScreenerLearningSettings } from "../screener/useLearningSettings.js";
+export { useScreenerLearningSettings } from "../screener/useLearningSettings.js";
 import { useFrame } from "../../frame/index.js";
 import { useScreenerBeside } from "../../screener/index.js";
 import {
@@ -127,6 +129,7 @@ export function PairedScreenerSettings({
   const t = useText("screener");
   const consent = useConsent();
   const unsubscribe = useUnsubscribeSetting();
+  const learning = useScreenerLearningSettings();
   const since = consent.suggestionConsentKnown ? consent.autoSuggestAt : null;
   return (
     <>
@@ -139,6 +142,7 @@ export function PairedScreenerSettings({
       <ScreenerPane
         model={{
           ohbox,
+          learning,
           filed,
           suggest: null,
           act: null,

@@ -558,3 +558,18 @@ describe("a decline answers for one message — neutral, refunded, unwrapped", (
     expect(circuit.state()).toMatchObject({ open: true, opens: 1 });
   });
 });
+
+it("counts background note rewrite failures against the worker's classifier breaker", async () => {
+  const rewriteScreener: NonNullable<ClassifierPort["rewriteScreener"]> = async () => {
+    throw new Error("Synthetic provider outage");
+  };
+  const circuit = makeClassifierCircuit({ ...okPort(), rewriteScreener }, { faultThreshold: 1 });
+  const request = {
+    system: "Rewrite the note",
+    input: { language: "en", previous: "", choices: [], maxWords: 250, maxBytes: 2048 },
+    schema: { type: "object", additionalProperties: false, required: ["text"], properties: { text: { type: "string" } } },
+    maxTokens: 512,
+  } as const;
+  await expect(circuit.port()!.rewriteScreener!(request)).rejects.toBeInstanceOf(ClassifierFaultError);
+  expect(circuit.port()).toBeUndefined();
+});

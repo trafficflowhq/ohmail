@@ -1,4 +1,6 @@
-import type { Tx } from "../change-log.js";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { CALENDAR_CHANGES_PER_TRANSACTION, recordCalendarChanges, type LedgerTx, type Tx } from "../change-log.js";
+import { calCalendars, calEvents } from "../schema-mail.js";
 import { readOwnAddresses } from "../own-mail.js";
 
 /**
@@ -7,12 +9,59 @@ import { readOwnAddresses } from "../own-mail.js";
  * removed is no mailbox of the account's any more) and the calendar connection's principal where
  * that is an address (Google's and Microsoft's sign-in name the account by its address there). The
  * write door and the drain ask `writeActRefusal` with this one set, so they take an event for the
- * account's own alike. The addresses a CalDAV server names for the signed-in person are stored
- * nowhere yet: until they are, an event organized under one of them is someone else's.
+ * account's own alike. CalDAV also supplies the signed-in principal's scheduling addresses.
  */
-export async function ownOrganizerAddresses(tx: Tx, accountId: string, principal: string | null): Promise<Set<string>> {
+export async function ownOrganizerAddresses(
+  tx: Tx, accountId: string, principal: string | null, discovered: readonly string[] | null = null,
+): Promise<Set<string>> {
   const own = await readOwnAddresses(tx, accountId);
-  const address = principal?.trim().toLowerCase().replace(/^mailto:/, "") ?? "";
-  if (address.includes("@") && !address.includes("/")) own.add(address);
+  const address = organizerPrincipalAddress(principal);
+  if (address) own.add(address);
+  for (const address of discovered ?? []) own.add(address);
   return own;
+}
+
+export function organizerPrincipalAddress(principal: string | null): string | null {
+  const address = principal?.trim().toLowerCase().replace(/^mailto:/, "") ?? "";
+  return address.includes("@") && !address.includes("/") ? address : null;
+}
+
+/** CalDAV stores a resource's original once, on its master. A changed day shares that exact version. */
+export function calendarOriginalOf() {
+  return sql<string | null>`coalesce(${calEvents.original}, case when ${calEvents.recurrenceId} <> '' then (
+    select master.original from cal_events as master
+    where master.account_id = "cal_events"."account_id" and master.calendar_id = "cal_events"."calendar_id"
+      and master.uid = "cal_events"."uid" and master.provider_id = "cal_events"."provider_id"
+      and master.version_tag = "cal_events"."version_tag" and master.recurrence_id = ''
+    limit 1
+  ) end)`;
+}
+
+/** Publish the event-level ownership changes while the account and connection are held. */
+export async function publishCalendarOrganizerChanges(
+  tx: Tx, accountId: string, connectionId: string, before: readonly string[], after: readonly string[],
+) {
+  const changed = [...before.filter((address) => !after.includes(address)), ...after.filter((address) => !before.includes(address))];
+  if (!changed.length) return;
+  const events = await tx.select({ id: calEvents.id }).from(calEvents)
+    .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
+    .where(and(eq(calEvents.accountId, accountId), eq(calCalendars.connectionId, connectionId),
+      inArray(sql`lower(trim(${calEvents.organizer}))`, changed)));
+  for (let at = 0; at < events.length; at += CALENDAR_CHANGES_PER_TRANSACTION) {
+    await recordCalendarChanges(tx as unknown as LedgerTx, accountId, events.slice(at, at + CALENDAR_CHANGES_PER_TRANSACTION)
+      .map(({ id }) => ({ kind: "calendar_event", id, op: "update" })));
+  }
+}
+
+/** Resolve the attendee of a connection. A different mailbox of the same account is a different copy. */
+export function connectedAttendee(
+  people: readonly string[],
+  principal: string | null | undefined,
+  own: ReadonlySet<string>,
+): string | null {
+  const named = principal?.trim().toLowerCase().replace(/^mailto:/, "") ?? "";
+  const hasAddress = named.includes("@") && !named.includes("/");
+  const matching = people.map((address) => address.trim().toLowerCase())
+    .filter((address) => hasAddress ? address === named : own.has(address));
+  return matching.length === 1 ? matching[0]! : null;
 }

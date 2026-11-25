@@ -15,6 +15,7 @@ import type { AiProviderEnv } from "./provider-env.js";
  */
 export function portsOf(t: AiTransport): { classifier: Required<ClassifierPort>; drafter: DraftPort } {
   const classifier = {
+    rewriteScreener: t.rewriteScreener.bind(t),
     classify: (input: ClassifierInput, call?: AiCallOptions) => t.classify(input, call),
     screen: (input: ClassifierInput, call?: AiCallOptions) => t.screen(input, call),
   } satisfies Required<ClassifierPort>;

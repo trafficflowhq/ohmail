@@ -11,12 +11,13 @@
  */
 import { calendarKey, type ProviderWord } from "@ohmail/cal-providers";
 import { and, eq, ne, or, isNull, sql } from "drizzle-orm";
-import { calCalendars } from "@trafficflow/db";
+import { calCalendars, calConnections } from "@trafficflow/db";
+import { organizerPrincipalAddress, ownOrganizerAddresses, publishCalendarOrganizerChanges } from "@trafficflow/db/calendar";
 import { applyListing, mergeDuplicateCalendars, pruneUnlistedCalendars, storedCalendars, type DuplicateCalendar, type StoredCalendar } from "./calendars.js";
 import { inConnection, passDb, type ConnectionDb, type ConnectionKey } from "./connection.js";
 import { exchangeInvitationPass } from "./exchange-invitations.js";
 import { releaseReadings, remember } from "./memory.js";
-import { holdCalendar, ownAddressesOf, readCalendar, type ReadingContext, type TurnBudget } from "./reading.js";
+import { holdCalendar, readCalendar, type ReadingContext, type TurnBudget } from "./reading.js";
 import { CalendarKeyRingFault, openPassSignIn, sealedCredentialOf, type PassSignIn } from "./sign-in.js";
 import { calendarEnabledAt, holdCalendarUntil, holdConnectionUntil, setConnectionState } from "./state.js";
 import type { CalendarSyncDeps, CalendarSyncOutcome, DueConnection } from "./types.js";
@@ -118,7 +119,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
       kind: "open" as const, held,
       sealed: await sealedCredentialOf(tx, key, word),
       calendars: await storedCalendars(tx, key),
-      own: await ownAddressesOf(tx, key.accountId, held.principal),
+      own: await ownOrganizerAddresses(tx, key.accountId, held.principal),
     };
   }, { lock: "no key update" });
   if (gate === "gone") return { kind: "gone" };
@@ -134,7 +135,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   let changed = 0;
   let calendars = gate.calendars;
   let missing: readonly string[] | null = null;
-  /** The calendars were listed this turn: the connection's first finished listing is said even when it found none. */
+  /** The provider answered a calendar listing this turn, even if the list was empty. */
   let freshList = false;
   let duplicates: readonly DuplicateCalendar[] = [];
   const listingContext = { db, key, memory: deps.memory, halted: deps.halted };
@@ -142,6 +143,29 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   // A subscription is one calendar whose id never changes, and listing it fetches its whole file: it is
   // listed once, while it has no row, and from then on asked only as often as the file itself wishes.
   const listsAgain = w !== "ics" && deps.clock.now() - listedAt >= LIST_EVERY_MS;
+  if (w === "caldav" && (listsAgain || gate.held.organizerAddresses === null)) {
+    const identity = await p.reader.checkSignIn(signIn.connection, signal);
+    if (stopping()) return { kind: "halted" };
+    if (signIn.superseded()) return { kind: "superseded" };
+    // Withdraw cached aliases if a new discovery is ambiguous or cannot bind the principal.
+    if (!identity.ok && identity.reason !== "unreadable" && identity.reason !== "no_service")
+      return settleConnection(deps, db, key, signIn, identity.reason, identity.retryAfterMs);
+    const addresses = !identity.ok || identity.value.principal === null ? [] : [...new Set(identity.value.addresses.flatMap((value) => {
+      const address = organizerPrincipalAddress(value);
+      return address && address.length <= 254 && !/[\s<>?,]/.test(address) ? [address] : [];
+    }))].sort().slice(0, 32);
+    const refreshed = await inConnection(db, key, async ({ tx, held }) => {
+      if (!await signIn.stillStored(tx)) return "superseded";
+      if (JSON.stringify(held.organizerAddresses) !== JSON.stringify(addresses)) {
+        await tx.update(calConnections).set({ organizerAddresses: addresses })
+          .where(and(eq(calConnections.accountId, key.accountId), eq(calConnections.id, key.id)));
+        await publishCalendarOrganizerChanges(tx, key.accountId, key.id, held.organizerAddresses ?? [], addresses);
+      }
+      return "kept";
+    }, { lock: "no key update" });
+    if (refreshed !== "kept") return { kind: refreshed };
+    if (!identity.ok) return settleConnection(deps, db, key, signIn, identity.reason, identity.retryAfterMs);
+  }
   if (calendars.length === 0 || listsAgain) {
     const listed = await p.reader.listCalendars(signIn.connection, signal);
     if (stopping()) return { kind: "halted" };
@@ -184,7 +208,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   const turn = deps.turn ?? { pages: TURN_PAGES, ms: TURN_MS };
   const budget: TurnBudget = { pagesLeft: turn.pages, deadline: deps.clock.now() + turn.ms };
   const reading: ReadingContext = {
-    deps, db, key, word: w, provider: p, signIn, signal, budget, map: { zones: deps.zones, ownAddresses: gate.own },
+    deps, db, key, word: w, provider: p, signIn, signal, budget, map: { zones: deps.zones, ownAddresses: gate.own, principal: gate.held.principal },
   };
   let pages = 0;
   let dropped = 0;
@@ -246,8 +270,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     // The listing is asked again within the hour whatever the calendars say; a subscription has no listing to ask for.
     if (w !== "ics") at = Math.min(at, (deps.memory.listedAt.get(key.id) ?? nowMs) + LIST_EVERY_MS);
     await holdConnectionUntil(tx, key, new Date(at));
-    const firstListing = freshList && held.lastSyncedAt === null;
-    await setConnectionState(tx, key, held, { status: "active", errorCode: null, synced: changed + dropped > 0 || firstListing });
+    await setConnectionState(tx, key, held, { status: "active", errorCode: null, synced: freshList || read > 0 });
   }, { lock: "no key update" });
   if (settled === "gone") return { kind: "gone" };
   deps.memory.failures.delete(key.id);

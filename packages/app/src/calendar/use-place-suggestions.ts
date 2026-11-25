@@ -1,9 +1,12 @@
+import type { PlaceSuggestAnswer } from "@ohmail/wire";
 import { createElement, useId, useMemo, useRef, useState } from "react";
 import type { CalendarEventRecord, CalendarRecord } from "@ohmail/app-logic/calendar";
 import { Icon, suggestionStore, useSuggestions, type SuggestionRow } from "@ohmail/ui/base";
 import { useFrame } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
-import { useLocale, useText } from "../text/index.js";
+import { useLocale, useText, useTimeZone } from "../text/index.js";
+
+import { placeRegion, placeSecondLine } from "./place-region.js";
 
 const MAPS = "https://www.openstreetmap.org/search";
 export const PLACE_CREDIT = "https://www.openstreetmap.org/copyright";
@@ -56,18 +59,61 @@ function ownPlaces(
   return [...places.entries()].sort(([, a], [, b]) => b.count - a.count || b.last.localeCompare(a.last));
 }
 
+function remoteRows(
+  answer: PlaceSuggestAnswer,
+  own: readonly PlaceRow[],
+  source: { region: ReturnType<typeof placeRegion>; locale: string },
+): PlaceRow[] {
+  const seen = new Set(own.map(({ value }) => fold(value)));
+  return answer.places.flatMap(({ first, second: locality, kind, country }) => {
+    const second = placeSecondLine(locality, country, source.region.home, source.locale);
+    const value = [first, second].filter(Boolean).join(", ");
+    const key = fold(value);
+    if (seen.has(key) || seen.has(fold(first)) || !physicalPlace(first)) return [];
+    seen.add(key);
+    return [
+      {
+        id: `result:${key}`,
+        primary: first,
+        secondary: second,
+        value,
+        credit: answer.credit ?? undefined,
+        mark: createElement(Icon, {
+          name: kind === "address" ? "house" : kind === "town" ? "town" : "place",
+          size: 20,
+        }),
+        source,
+      },
+    ];
+  });
+}
+
 export function usePlaceSuggestions(
   place: string | null,
   onText: (place: string) => void,
-  { phone, exclude, onTake }: { phone: boolean; exclude?: string; onTake?: () => void },
+  {
+    phone,
+    exclude,
+    zone,
+    onTake,
+  }: { phone: boolean; exclude?: string; zone?: string | null; onTake?: () => void },
 ) {
   const { host } = useFrame();
   const { engine } = host;
   const locale = useLocale();
   const t = useText("calendar");
+  const deviceZone = useTimeZone();
   const id = useId();
   const anchor = useRef<HTMLInputElement>(null);
-  const source = useMemo(() => ({ engine, locale, store: suggestionStore<PlaceRow>() }), [engine, locale]);
+  const source = useMemo(
+    () => ({
+      engine,
+      locale,
+      region: placeRegion(zone, deviceZone),
+      store: suggestionStore<PlaceRow>(),
+    }),
+    [engine, locale, zone, deviceZone],
+  );
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const own = (typed: string) => {
     const port = host.wires.calendar;
@@ -97,38 +143,21 @@ export function usePlaceSuggestions(
     free: true,
     limit: phone ? 5 : 6,
     store: source.store,
+    drop: 3600,
     own: (typed) => [{ head: t("location.own"), rows: own(typed) }],
     ask: async (text, signal) => {
-      const answer = await engine.suggestPlaces?.({ text, lang: locale }, { signal });
+      const question = { text, lang: locale, ...source.region };
+      const answer = await engine.suggestPlaces?.(question, { signal });
       if (signal.aborted) return [];
       if (answer?.state !== "ok") {
-        if (answer?.state !== "stopped" && answer?.state !== "off") setUnavailable(text);
-        return [];
+        if (answer?.state === "failed" || answer?.state === "down" || answer?.state === "offline") {
+          setUnavailable(text);
+        }
+        // A limit or outage is not an answer to this prefix. The next visit may succeed.
+        throw new Error("No place suggestions");
       }
       setUnavailable(null);
-      const mine = own(text);
-      const seen = new Set(mine.map(({ value }) => fold(value)));
-      const rows = answer.places.flatMap(({ first, second, kind }) => {
-        const value = [first, second].filter(Boolean).join(", ");
-        const key = fold(value);
-        if (seen.has(key) || seen.has(fold(first)) || !physicalPlace(first)) return [];
-        seen.add(key);
-        return [
-          {
-            id: `result:${key}`,
-            primary: first,
-            secondary: second,
-            value,
-            credit: answer.credit ?? undefined,
-            mark: createElement(Icon, {
-              name: kind === "address" ? "house" : kind === "town" ? "town" : "pin",
-              size: 20,
-            }),
-            source,
-          },
-        ];
-      });
-      return [{ rows }];
+      return [{ rows: remoteRows(answer, own(text), source) }];
     },
     onTake: (row) => {
       if (row.source !== source) return;

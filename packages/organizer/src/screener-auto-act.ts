@@ -272,7 +272,7 @@ export async function screenerAutoActPass(
 
   // The ONE read path for stored advice, the one the Screener surface itself reads through:
   // newest-per-sender, decided in the database rather than in a loop here.
-  const advice = await screenerSuggestionsBySender(db, accountId, waiting.map((w) => w.address));
+  const advice = await screenerSuggestionsBySender(db, accountId, waiting.map((w) => w.address), false, true);
   // Checked FIRST, so the correspondent reads below see a claim the backfill had not reached yet.
   await checkUncheckedHeld(db, accountId, waiting.map((w) => w.address));
   /* THE CORRESPONDENT GATE, ABOVE THE BARS: the model's 1.0 does not outrank the person having

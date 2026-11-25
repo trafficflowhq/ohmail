@@ -15,7 +15,7 @@ import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
 import { startCalendarOAuth } from "./calendar-oauth";
 import { readMicrosoftApproval } from "./microsoft-door";
 import { calendarPortOf, type CalendarPort } from "@ohmail/app-logic/calendar";
-import type { FrameNotice } from "@ohmail/app/frame";
+import { useFrame, type FrameNotice } from "@ohmail/app/frame";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
@@ -26,9 +26,7 @@ import { mailboxTotalOf } from "@ohmail/app-logic/search";
 import { ApiError, account, api, apiConfigured, away, boundApiFamily, boundApiOwner, screenerAutoFiled, screeningSettings, mailboxes as mailboxApi } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 import { signOutAndSettle, subscribeTabRetirement } from "../../sign-out";
-import { dayStamp } from "../../shell/format";
 import { cloudWire as junkWire } from "./junk-wire";
-import { useOhmarchyNotice } from "./appearance-notice";
 import { browserNoticePage, noticeWordingOf, subscribeBrowserNoticeOpening, webNoticeEmitter } from "../../shell/notice-emitter";
 import { browserNotificationHost, type NotificationHost } from "../../shell/notification-settings";
 import { browserOpenLink, MAILBOXES_NOTICES } from "../../shell/browser-mail";
@@ -98,38 +96,27 @@ const NO_SWEEPS: readonly ReuseSweepLine[] = [];
  */
 export function useAccountNotices(): readonly FrameNotice[] {
   const t = useTranslations("accountLifecycle");
-  const tLock = useTranslations("accessLock");
-  const { notice, busy, mintRefusal, putAway, toManage } = useLifecycleNotice();
+  const tf = useTranslations("frame");
+  const { commands } = useFrame();
+  const { notice, putAway } = useLifecycleNotice(true);
   const { sweeps, acknowledge, recheck } = useReuseSweepFeed();
   useRecheckWhileShown(sweeps !== null, recheck);
   const answer = useSweepsAnswer(sweeps ?? NO_SWEEPS, acknowledge);
   const sweepsNotice = useSweepsFrameNotice(answer.shown, answer.ok);
-  const appearanceNotice = useOhmarchyNotice(() => {
-    const owner = readOwner();
-    return () => readOwner() === owner;
-  });
   const out: FrameNotice[] = [];
-  if (notice !== null) {
-    if (notice.kind === "caughtUp") {
-      out.push({ kind: "caughtUp", title: t("caughtUp", { date: dayStamp(notice.since) }), acts: [{ label: t("dismiss"), onPress: putAway }] });
-    } else {
-      const date = dayStamp(notice.deadline);
-      const deadline = notice.kind === "trialEnding" ? undefined : t("organizingUntil", { date });
-      const refusal = mintRefusal === null ? undefined : tLock(mintRefusal === "unverified" ? "mintUnverified" : "mintFailed");
-      out.push({
-        kind: notice.kind === "grace" ? "grace" : notice.kind === "pastDue" ? "payment" : "trial",
-        hot: notice.kind !== "trialEnding",
-        title: notice.kind === "trialEnding" ? t("trialEnds", { date }) : t(notice.kind === "grace" ? "trialEnded" : "paymentFailedTitle"),
-        line: deadline && refusal ? `${deadline} ${refusal}` : deadline ?? refusal,
-        acts: [
-          { label: notice.kind === "pastDue" ? t("fixPayment") : t("subscribe"), onPress: () => { if (!busy) void toManage(); } },
-          { label: t("later"), onPress: putAway },
-        ],
-      });
-    }
+  if (notice?.kind === "pastDue" || notice?.kind === "grace") {
+    const payment = notice.kind === "pastDue";
+    out.push({
+      kind: payment ? "payment" : "grace",
+      hot: true,
+      title: t(payment ? "paymentFailedTitle" : "trialEnded").replace(/[.]$/u, ""),
+      acts: [
+        { label: tf("connection.act.billing"), onPress: () => commands.go({ place: "settings", sub: "billing" }) },
+        { label: tf("notice.hide"), kind: "quiet", onPress: putAway },
+      ],
+    });
   }
   if (sweepsNotice !== null) out.push(sweepsNotice);
-  if (appearanceNotice !== null) out.push(appearanceNotice);
   return out;
 }
 
@@ -187,6 +174,8 @@ export function useWebHost(
       screening: {
         read: () => screeningSettings.get(scope),
         change: (change) => screeningSettings.set(change, scope),
+        readLearning: (mailboxId) => screeningSettings.readLearning(mailboxId, scope),
+        changeLearning: (mailboxId, edit) => screeningSettings.changeLearning(mailboxId, edit, scope),
       },
       autoFiled: {
         list: () => screenerAutoFiled.get(scope),

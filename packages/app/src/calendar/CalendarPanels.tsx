@@ -15,9 +15,11 @@ export function CalendarPanels({
   edge,
   onClose,
   onAgendaRow,
+  agendaPanel,
   compact,
 }: PaneProps & {
   where: Where;
+  agendaPanel: { visible: boolean; compact: boolean; toggle: () => void };
   input: RangeInput;
   acts: RangeActs;
   edge: HeldEdge;
@@ -33,9 +35,9 @@ export function CalendarPanels({
     );
     return plan.device === "phone" ? <div className="cal-invitations">{panel}</div> : panel;
   }
-  if (route.words.panel !== "agenda" || plan.device === "phone" || where.place === "agenda") return null;
+  if (!agendaPanel.visible || where.place === "agenda") return null;
   return (
-    <div className="cal-body-panel">
+    <div className="cal-body-panel" data-compact-agenda={agendaPanel.compact || undefined}>
       <AgendaView
         input={input}
         acts={acts}
@@ -43,7 +45,7 @@ export function CalendarPanels({
         from={where.agenda.first}
         days={where.agenda.days}
         onMore={where.agenda.more}
-        onClose={onClose}
+        onClose={agendaPanel.toggle}
         onRow={onAgendaRow}
         keysHere={keysHere && route.open === null}
       />

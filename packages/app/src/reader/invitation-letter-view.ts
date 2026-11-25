@@ -3,14 +3,17 @@ import {
   boundariesOf,
   daySpanOf,
   eventTimeOf,
+  explicitlyHidden,
   readerZones,
   storedTimeOf,
   type CalendarEventRecord,
   type CalendarPort,
+  type GridItem,
 } from "@ohmail/app-logic/calendar";
 import { newEventsCalendarOf } from "@ohmail/app-logic/calendar/setup";
 import { senderCheckFact } from "@ohmail/app-logic/screener";
 import type { CalendarTime } from "@ohmail/wire";
+import { useFrame } from "../frame/commands.js";
 import type { NONE } from "../host/index.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { useFaces, useSettings, useSources } from "../calendar/where.js";
@@ -37,12 +40,13 @@ function mirrorInvitation(props: InvitationLetterProps, sources: ReturnType<type
         record.removedOccurrences?.includes("")
       )
         return false;
+      if (record.hideAttendee && folded(i.invitedAddress) && record.hideAttendee !== folded(i.invitedAddress))
+        return false;
       if (record.id === i.calendarEventId) return true;
       const mailbox = sources.connections.get(calendar.connectionId)?.grantMailboxId;
       if (
-        mailbox
-          ? mailbox !== props.message.mailboxId
-          : !record.invitees.some(({ address }) => folded(address) === folded(i.invitedAddress))
+        (mailbox && mailbox !== props.message.mailboxId) ||
+        !record.invitees.some(({ address }) => folded(address) === folded(i.invitedAddress))
       )
         return false;
       return (
@@ -55,8 +59,41 @@ function mirrorInvitation(props: InvitationLetterProps, sources: ReturnType<type
     })
     .sort(
       (a, b) =>
-        Number(a.id === i.calendarEventId) - Number(b.id === i.calendarEventId) || b.sequence - a.sequence,
+        Number(b.id === i.calendarEventId) - Number(a.id === i.calendarEventId) || b.sequence - a.sequence,
     )[0];
+}
+
+function hiddenInvitation(
+  { invitation, message }: InvitationLetterProps,
+  sources: ReturnType<typeof useSources>,
+  record: CalendarEventRecord | undefined,
+): boolean {
+  const identity = record?.hideAttendee ?? folded(invitation.invitedAddress);
+  const organizer = folded(record?.organizer?.address ?? invitation.organizer);
+  const series = invitation.recurrenceId
+    ? sources.events
+        .map(({ record }) => record)
+        .filter((master) => {
+          const candidate = sources.calendars.find(({ id }) => id === master.calendarId);
+          const mailbox = candidate && sources.connections.get(candidate.connectionId)?.grantMailboxId;
+          return (
+            candidate?.shown &&
+            candidate.access === "owner" &&
+            !master.heldBack &&
+            (!mailbox || mailbox === message.mailboxId) &&
+            !master.recurrenceId &&
+            !!master.repeat &&
+            master.uid === invitation.uid &&
+            folded(master.organizer?.address) === organizer &&
+            master.hideAttendee === identity &&
+            (!record || master.calendarId === record.calendarId)
+          );
+        })
+    : [];
+  const master = series.length === 1 ? series[0] : undefined;
+  const copy = record ?? master;
+  const copyCalendar = sources.calendars.find(({ id }) => id === copy?.calendarId);
+  return !!copy && explicitlyHidden(copy, master, invitation.recurrenceId || null, copyCalendar?.access);
 }
 
 function earlierStart(
@@ -74,6 +111,7 @@ function earlierStart(
 
 export function useLetterView(props: InvitationLetterProps & { port: CalendarPort | typeof NONE }) {
   const { invitation, port } = props;
+  const { host } = useFrame();
   const text = useText("readerInvitation");
   const calendarText = useText("calendar");
   const locale = useLocale();
@@ -99,9 +137,15 @@ export function useLetterView(props: InvitationLetterProps & { port: CalendarPor
   const endTime = end && eventTimeOf(end);
   const span = startTime && daySpanOf({ start: startTime, end: endTime || startTime }, zone, zones);
   const day = span?.first ?? null;
-  const faces =
-    useFaces(port, sources, day ? { first: day, last: span?.last ?? day } : null, day, zone, zones)?.events ??
-    [];
+  const availability = useFaces(
+    port,
+    sources,
+    day ? { first: day, last: span?.last ?? day } : null,
+    day,
+    zone,
+    zones,
+  );
+  const faces = availability?.events ?? [];
   const placed =
     current &&
     faces.find(
@@ -109,10 +153,32 @@ export function useLetterView(props: InvitationLetterProps & { port: CalendarPor
         face.recordId === record.id &&
         (record.recurrenceId === "" || face.ref.occurrence === record.recurrenceId),
     );
+  const received = record && host.engine.store.get<CalendarEventRecord>("calendar_event", record.id);
+  const hidden = hiddenInvitation(props, sources, record);
+  const declinedCopy =
+    current &&
+    calendar?.access !== "busy" &&
+    received?.myAnswer === "declined" &&
+    received.recurrenceId === invitation.recurrenceId &&
+    !received.removedOccurrences?.some((key) => key === "" || key === received.recurrenceId) &&
+    !hidden
+      ? received
+      : undefined;
   const cancelled = invitation.method === "CANCEL" || record?.status === "cancelled";
   const face = day && startTime ? pendingFace(props, day, startTime, endTime || startTime) : null;
   const conflicts =
-    face && !cancelled ? overlapping(face, faces, record?.id, zone, locale, text("overlaps")) : [];
+    face && !cancelled
+      ? overlapping(
+          face,
+          faces,
+          availability?.hiddenBusy ?? [],
+          record?.id,
+          zone,
+          locale,
+          text("overlaps"),
+          text("busyOverlap"),
+        )
+      : [];
   const prior = earlierStart(props, record);
   const previousText = prior && eventWhen({ start: prior }, zone, zones, locale);
   const previous =
@@ -140,6 +206,8 @@ export function useLetterView(props: InvitationLetterProps & { port: CalendarPor
     placed,
     face,
     cancelled,
+    declinedCopy,
+    hidden,
     conflicts,
     previous,
     answer,
@@ -181,26 +249,32 @@ function pendingFace(
 function overlapping(
   face: CalendarEventFace,
   faces: readonly CalendarEventFace[],
+  hiddenBusy: readonly GridItem[],
   exclude: string | undefined,
   zone: string,
   locale: string,
   tag: string,
+  busy: string,
 ) {
   const at = boundariesOf(face, zone, zones);
   if (!at) return [];
-  return faces
-    .flatMap((other) => {
-      if (other.recordId === exclude || other.state === "off") return [];
-      const span = boundariesOf(other, zone, zones);
-      if (!span || !(at.first < span.last && span.first < at.last)) return [];
-      const when = eventWhen(
-        { start: storedTimeOf(other.start), end: storedTimeOf(other.end) },
-        zone,
-        zones,
-        locale,
-        true,
-      );
-      return [{ tone: other.tone, tag, text: [when, other.title].filter(Boolean).join(" ") }];
-    })
-    .slice(0, 2);
+  const hiddenOverlap = hiddenBusy.some((other) => {
+    if (other.id === exclude) return false;
+    const span = boundariesOf(other, zone, zones);
+    return span && at.first < span.last && span.first < at.last;
+  });
+  const visible = faces.flatMap((other) => {
+    if (other.recordId === exclude || other.state === "off") return [];
+    const span = boundariesOf(other, zone, zones);
+    if (!span || !(at.first < span.last && span.first < at.last)) return [];
+    const when = eventWhen(
+      { start: storedTimeOf(other.start), end: storedTimeOf(other.end) },
+      zone,
+      zones,
+      locale,
+      true,
+    );
+    return [{ tone: other.tone, tag, text: [when, other.title].filter(Boolean).join(" ") }];
+  });
+  return (hiddenOverlap ? [{ tone: null, tag, text: busy }, ...visible] : visible).slice(0, 2);
 }

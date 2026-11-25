@@ -3,6 +3,7 @@ import Heading from "@tiptap/extension-heading";
 import HorizontalRule from "@tiptap/extension-horizontal-rule";
 import { Mapping } from "@tiptap/pm/transform";
 import { Plugin } from "@tiptap/pm/state";
+import { AUTHORED_CODE_STYLE } from "@ohmail/app-logic/writing/rich-text";
 import type { ParagraphStyle } from "../ports.js";
 import { applyCodeBlock, applyParagraphStyle, splitTargetLines } from "./commands.js";
 
@@ -62,7 +63,8 @@ const AuthoredCode = Extension.create({
         attributes: {
           authored: {
             default: false,
-            parseHTML: (el: HTMLElement) => el.getAttribute("data-ohmail-code") === "1",
+            parseHTML: (el: HTMLElement) =>
+              el.getAttribute("data-ohmail-code") === "1" || el.getAttribute("style") === AUTHORED_CODE_STYLE,
             renderHTML: (attrs: Record<string, unknown>) =>
               attrs.authored ? { "data-ohmail-code": "1" } : {},
           },

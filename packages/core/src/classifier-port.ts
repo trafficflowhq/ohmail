@@ -1,5 +1,6 @@
-import type { EmailAddress } from "@ohmail/wire";
+import type { EmailAddress, ScreenerTopic } from "@ohmail/wire";
 import type { Destination } from "./types.js";
+import type { ScreenerRewriter } from "./screener-learning-rewrite.js";
 import type { AiCallOptions } from "./ai-call-report.js";
 
 /**
@@ -12,7 +13,18 @@ import type { AiCallOptions } from "./ai-call-report.js";
  * every build. This names no model; `classify.ts` re-exports, so no outside import moves.
  */
 
-export interface ClassifierInput {
+export interface ScreenerCorrection {
+  suggested: string;
+  chosen: string;
+  topic: string;
+}
+
+export interface ScreenerLearningContext {
+  learnedWords?: string;
+  recentCorrections?: readonly ScreenerCorrection[];
+}
+
+export interface ClassifierInput extends ScreenerLearningContext {
   from: EmailAddress;
   subject: string;
   snippet: string;                                       // NEVER the full body of a sensitive message
@@ -37,6 +49,7 @@ export interface ClassifierInput {
 }
 
 export interface ClassifierResult {
+  topic?: ScreenerTopic;
   destination: Destination;
   confidence: number;                                    // 0..1
   rationale: string;
@@ -45,6 +58,7 @@ export interface ClassifierResult {
 
 export interface ClassifierPort {                        // added to PipelineDeps (optional)
   /** `call` is this one call's usage hook ({@link AiCallOptions}); a port may ignore it. */
+  rewriteScreener?: ScreenerRewriter;
   classify(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult>;
   /**
    * The screening question — "what should happen to this first-contact sender". A separate

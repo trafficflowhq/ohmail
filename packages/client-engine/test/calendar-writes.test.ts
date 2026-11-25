@@ -38,6 +38,15 @@ const mark = (act: CalendarEventAct, over: Partial<CalendarWriteMark> = {}): Cal
   ({ id: "w-1", key: "k-1", state: "pending", reason: null, act, part: null, at: BASE, ...over });
 
 describe("the one overlay", () => {
+  it("projects an explicit Hide without deleting the busy record or changing its RSVP", () => {
+    const event = { ...record("invitation", { myAnswer: "accepted" }), hideAttendee: ["guest", "example.test"].join("@") };
+    const act = { kind: "calendar_event_delete" as const, eventId: event.id, base: BASE,
+      scope: { kind: "record" as const }, localOnly: true as const, hide: true as const, copy: { calendarId: event.calendarId, attendee: event.hideAttendee } };
+    const [shown] = eventsWithWrites([event], [{ key: "hide", act }]);
+    expect(shown?.record).toMatchObject({ id: event.id, myAnswer: "accepted", busy: true, hiddenOccurrences: [""] });
+    expect(eventsWithWrites([event], [])[0]?.record).toEqual(event);
+  });
+
   it("lays acts over records in order: a new event appears, a change is written, a removal takes it out, a move and an answer are the account's", () => {
     const shown = applyCalendarActs([record("e1"), record("e2")], [
       create("e3"), update("e1", "Kiln check, moved"), { kind: "calendar_event_delete", eventId: "e2", base: BASE, scope: { kind: "record" } },
@@ -105,6 +114,28 @@ describe("an answer to one day of a series", () => {
     const [shown] = eventsWithWrites([{ ...series, writes: [mark(answer, { id: "w-5", state: "refused", reason: "version_stale" })] }], []);
     expect(shown).toMatchObject({ record: { myAnswer: "none" }, waiting: null, refusal: null, refusedWriteId: null });
     expect(shown!.answers).toEqual([{ at, answer: null, waiting: null, refusal: "version_stale", refusedWriteId: "w-5" }]);
+  });
+
+  it("keeps a queued edit on its own day while another day's answer waits at the provider", () => {
+    const editAt = String(Date.UTC(2026, 10, 18, 9));
+    const edit: CalendarEventAct = {
+      kind: "calendar_event_update",
+      eventId: series.id,
+      base: BASE,
+      scope: { kind: "occurrence", at: editAt },
+      change: { title: "One firing" },
+    };
+    const [shown] = eventsWithWrites(
+      [{ ...series, writes: [mark(answer)] }],
+      [{ key: "k-2", act: edit }],
+    );
+    expect(shown).toMatchObject({
+      record: { title: series.title, myAnswer: "none" },
+      waiting: null,
+      refusal: null,
+      answers: [{ at, answer: "accepted", waiting: "provider" }],
+      occurrenceEdits: [{ at: editAt, change: { title: "One firing" }, waiting: "device" }],
+    });
   });
 });
 
@@ -262,6 +293,47 @@ it("keeps the delete durable and offline until the Undo window closes", async ()
   }
 });
 
+
+it("keeps explicit Hide in the mirror when the first held write reply is lost", async () => {
+  vi.useFakeTimers();
+  try {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const event = record("invitation", { hideAttendee: ["guest", "example.test"].join("@"), myAnswer: "tentative" });
+    await store.applyChanges([{ type: "calendar_event", op: "create", id: event.id, entity: event, seq: 1, updatedAt: BASE }]);
+    const hidden = { ...event, hiddenOccurrences: [""] };
+    let persisted = false;
+    const { t, asked } = transport(async (_act, key) => {
+      if (!persisted) {
+        persisted = true;
+        throw new MutationRejectedError("offline", { status: null, code: "network", retryable: true });
+      }
+      const replay = echo(hidden, key);
+      return { ...replay, answer: { ...replay.answer, write: { ...replay.answer.write!, state: "applied" } } };
+    });
+    const queue = new CalendarWriteQueue(store, t, { uuid: () => "hide-held", now: Date.now });
+    const act = { kind: "calendar_event_delete", eventId: event.id, base: BASE,
+      scope: { kind: "record" }, localOnly: true, hide: true, copy: { calendarId: event.calendarId, attendee: event.hideAttendee! } } as const;
+    const stop = queue.activate();
+    const held = await queue.holdDelete(act, 8000);
+    expect(queue.events()[0]?.record).toEqual(hidden);
+    expect(asked).toEqual([]);
+    await vi.advanceTimersByTimeAsync(8000);
+    await queue.flush();
+    expect(asked).toHaveLength(1);
+    expect(persisted).toBe(true);
+    expect(queue.events()[0]?.record).toEqual(hidden);
+    expect(store.get("calendar_event", event.id)).toEqual(event);
+    await vi.advanceTimersByTimeAsync(1000);
+    await queue.flush();
+    expect(asked.map(({ key }) => key)).toEqual([held.key, held.key]);
+    expect(queue.owed()).toEqual([]);
+    stop();
+    expect(queue.events()[0]?.record).toEqual(hidden);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("honors Undo on disk even when another tab already loaded the deletion", async () => {
   const factory = new IDBFactory();
@@ -607,4 +679,29 @@ it("holds a proposal for Undo and sends it without overlaying or writing the eve
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("shows a pressed event while the local write is still being saved and rolls it back if saving fails", async () => {
+  const store = new MemoryMirrorStore();
+  await store.load();
+  let rejectWrite!: (reason: Error) => void;
+  vi.spyOn(store, "commitLocal").mockImplementationOnce(
+    () => new Promise((_, reject) => { rejectWrite = reject; }),
+  );
+  const { t, asked } = transport(async (act, key) => echo(record(act.eventId), key));
+  const q = new CalendarWriteQueue(store, t, { uuid: () => "write-key", now: () => 1 });
+  const act = create("instant");
+  if (act.kind !== "calendar_event_create") throw new Error("Expected creation");
+  const saving = q.press({ ...act, event: { ...act.event, repeat: "FREQ=DAILY;COUNT=3" } });
+  try {
+    expect(q.events()).toMatchObject([{
+      record: { id: "instant", repeat: { rules: ["FREQ=DAILY;COUNT=3"] } },
+      waiting: "device",
+    }]);
+    expect(asked).toEqual([]);
+  } finally {
+    rejectWrite(new Error("The local write was refused"));
+    await expect(saving).rejects.toThrow("The local write was refused");
+  }
+  expect(q.events()).toEqual([]);
 });

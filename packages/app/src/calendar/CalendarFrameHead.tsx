@@ -34,7 +34,7 @@ interface CalendarFrameHeadProps {
   where: Where;
   route: Route;
   plan: LayoutPlan;
-  panelOn: boolean;
+  agendaPanel: { visible: boolean; toggle: () => void };
   go: Go;
   commands: FrameCommands;
   keysHere: boolean;
@@ -162,7 +162,7 @@ function useCalendarHead({
   where,
   route,
   plan,
-  panelOn,
+  agendaPanel,
   go,
   commands,
   keysHere,
@@ -174,6 +174,7 @@ function useCalendarHead({
   const t = useText("calendar");
   const locale = useLocale();
   const { place, anchor, today } = where;
+  const panelOn = agendaPanel.visible;
   const heading = headingOf(where, plan, panelOn, settings, monthRun, locale, t);
   const { one, phone, dated, single, visibleMonth } = heading;
   const [menu, setMenu] = useState<HeadMenu | null>(null);
@@ -203,15 +204,7 @@ function useCalendarHead({
     go({ place: view, sub: carried });
   };
   const search = () => commands.go({ place: "calsearch", sub: route.sub });
-  const agenda = () =>
-    phone || place === "agenda"
-      ? select("agenda")
-      : commands.go({
-          place: dated ? place : "week",
-          sub: route.sub,
-          open: route.open,
-          words: panelOn ? {} : { panel: "agenda" },
-        });
+  const agenda = () => (phone || place === "agenda" ? select("agenda") : agendaPanel.toggle());
   const invitations = () => commands.go(invitationsRoute(route));
   const waiting = useInvitations(port)?.groups.waiting ?? 0;
   const views = VIEWS.map((value, index) => ({
@@ -270,7 +263,7 @@ function useCalendarHead({
 
 function calendarHeadBar(
   head: ReturnType<typeof useCalendarHead>,
-  { plan, route, panelOn }: CalendarFrameHeadProps,
+  { plan, route, agendaPanel }: CalendarFrameHeadProps,
 ) {
   const {
     t,
@@ -347,7 +340,11 @@ function calendarHeadBar(
         )
       }
       search={{ label: t("search"), onPress: search }}
-      agenda={phone || place === "agenda" ? undefined : { label: t("agenda"), on: panelOn, onPress: agenda }}
+      agenda={
+        phone || place === "agenda"
+          ? undefined
+          : { label: t("agenda"), on: agendaPanel.visible, onPress: agenda }
+      }
       bell={
         waiting ? (
           <Doorbell

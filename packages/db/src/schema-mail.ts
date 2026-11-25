@@ -13,6 +13,7 @@ import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb
 import { shapeCheck } from "./closed-set-shape.js";
 import { sql, desc } from "drizzle-orm";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
+import type { ScreenerLearningState } from "./screener-learning-state.js";
 import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,8 +83,8 @@ export const mailboxes = pgTable("mailboxes", {
   authKind: text("auth_kind").notNull().default("password"),               // password|oauth
   // Mail 0023 — WHY a mailbox failed, not merely THAT it did. `status` alone was the whole
   // record, so Settings could only say "something went wrong" — a disk-full incident once stayed
-  // opaque for hours. The four columns are evidence, never control flow: nothing reads them to
-  // decide, and NULL is "not recorded". `errorDetail` IS NEVER A RAW ERROR STRING: a member of a
+  // opaque for hours. The worker reads the code and failure time to stop retrying stale
+  // sign-ins. `errorDetail` IS NEVER A RAW ERROR STRING: a member of a
   // CLOSED allowlist held by the worker's classifier (an IMAP response code, a Node errno, a TLS
   // constant), checked at the single write site, because a throw out of the sync cycle can embed
   // message bytes and a login failure's server text can echo the credential. MEMBERSHIP, not
@@ -92,7 +93,7 @@ export const mailboxes = pgTable("mailboxes", {
   // pane. An unrecognised token stores NULL.
   errorCode: text("error_code"),                                           // a MAILBOX_ERROR_CODES member, or null
   errorDetail: text("error_detail"),                                       // allowlisted token, or null
-  failedAt: timestamp("failed_at", { withTimezone: true }),                // when the CURRENT outage began (COALESCE on write)
+  failedAt: timestamp("failed_at", { withTimezone: true }),                // when the outage or current sign-in rejection began
   retryCount: integer("retry_count").notNull().default(0),                 // attempts within the current outage
   // Mail 0039 — WHEN the leader may next try this mailbox. The quarantine backoff, made durable:
   // it used to live only in the worker's in-process map, so a parked mailbox had two exits — the
@@ -1342,6 +1343,7 @@ export const routingDecisions = pgTable("routing_decisions", {
    * wire, not granted to staff. LAST.
    */
   senderReason: text("sender_reason"),
+  screenerTopic: text("screener_topic"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("routing_decisions_id_account_uq").on(t.id, t.accountId),
   ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId),
@@ -1965,6 +1967,19 @@ export const organizerRequests = pgTable("organizer_requests", {
   // `GET /screener` and asks by ACCOUNT, so the index above does not serve it — a different
   // leading column is a different index, and the miss is invisible to every test.
   ixAccountState: index("organizer_requests_account_state_idx").on(t.accountId, t.state),
+}));
+
+export const screenerLearning = pgTable("screener_learning", {
+  mailboxId: uuid("mailbox_id").primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  data: jsonb("data").$type<ScreenerLearningState>().notNull(),
+}, (t) => ({
+  mailbox: foreignKey({
+    name: "screener_learning_mailbox_account_fk",
+    columns: [t.mailboxId, t.accountId],
+    foreignColumns: [mailboxes.id, mailboxes.accountId],
+  }).onDelete("cascade"),
+  account: index("screener_learning_account_idx").on(t.accountId),
 }));
 
 /**
@@ -2839,6 +2854,7 @@ export const calConnections = pgTable("cal_connections", {
   /** CalDAV: the server's origin and path, never a user part, a query or a fragment. */
   serverUrl: text("server_url"),
   principal: text("principal"),
+  organizerAddresses: jsonb("organizer_addresses").$type<readonly string[]>(),
   /**
    * A subscription: its address's host and nothing else, lower case; the address is sealed. A
    * desktop's copy of a Cloud account, which holds no address, keeps a CalDAV server's host here too.
@@ -2889,6 +2905,7 @@ export const calCalendars = pgTable("cal_calendars", {
   providerId: text("provider_id").notNull(),
   name: text("name").notNull().default(""),
   color: text("color"),
+  localColor: text("local_color"),
   access: text("access").notNull().default("reader"),
   nativeMove: boolean("native_move").notNull().default(false),
   shown: boolean("shown").notNull().default(true),
@@ -2956,7 +2973,7 @@ export const calEvents = pgTable("cal_events", {
   organizer: text("organizer"),
   organizerName: text("organizer_name"),
   myAnswer: text("my_answer"),
-  removedOccurrences: jsonb("removed_occurrences").$type<string[]>(),
+  removedOccurrences: jsonb("removed_occurrences").$type<(string | { hide: string; attendee: string; organizer: string; uid: string; calendarId: string })[]>(),
   heldBack: boolean("held_back").notNull().default(false),
   /** A desktop's copy received this event cut to fit the feed: no notes, no invitees. */
   partial: boolean("partial").notNull().default(false),

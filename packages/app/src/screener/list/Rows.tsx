@@ -1,3 +1,5 @@
+import { useFrame } from "../../frame/commands.js";
+import { MailRow } from "../../place-list/MailRowMenu.js";
 /**
  * THE SECTION'S ROWS: first the letters their provider failed that no sender's decision covers, each opened and
  * decided alone with its own two answers; then one row per sender, an option of one listbox, the open one selected; under the
@@ -16,7 +18,7 @@ import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { revealInScroller, useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { Tag, type Point } from "@ohmail/ui/base";
-import { GroupHeading, Row, Rows as KitRows, type RowPlace } from "@ohmail/ui/mail";
+import { GroupHeading, Rows as KitRows, type RowPlace } from "@ohmail/ui/mail";
 import { useMovingRows } from "../../place-list/use-moving-rows.js";
 import { useText, type Text } from "../../text/index.js";
 import { useScreener, useScreenerBeside } from "../contract.js";
@@ -104,6 +106,7 @@ export function SenderRow({
   /* `held` is oldest first: the row speaks for the newest letter, the one its time is. */
   const t = useText("screener");
   const ohbox = useText("ohbox");
+  const { plan } = useFrame();
   const { mailboxWord } = useScreenerBeside();
   const mailbox = sender.mailboxId ? mailboxWord(sender.mailboxId, "short") : null;
   const deliveredTo = mailbox ? t("place.deliveredTo", { label: mailbox }) : undefined;
@@ -114,7 +117,7 @@ export function SenderRow({
   const unread = !decided && sender.held.some((h) => h.unread === true);
   const pick = selection?.rowProps(sender.id);
   return (
-    <Row
+    <MailRow
       {...pick}
       {...contact?.rowProps(sender.from, newest?.id ?? sender.id)}
       who={who}
@@ -137,7 +140,7 @@ export function SenderRow({
       place={place}
       leaving={leaving}
       unread={unread}
-      open={open}
+      open={open && plan.device !== "phone"}
       cursor={open}
       listing={{
         name: subject ? `${who}: ${subject}` : who,
@@ -360,7 +363,7 @@ export function Rows({
               const open = view.failedOpen?.id === f.id;
               const mailbox = f.mailboxId ? mailboxWord(f.mailboxId, "short") : null;
               return (
-                <Row
+                <MailRow
                   key={f.id}
                   who={who}
                   people={[{ name: who, address: f.from.address }]}

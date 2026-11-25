@@ -21,6 +21,8 @@ import "./event-chip.css";
 export type EventChipState = "plain" | "to-answer" | "from-mail" | "draft" | "maybe" | "off";
 
 interface EventChipCommon {
+  recordId?: string;
+  saving?: boolean;
   title: string;
   /** Whose it is; `null` while it is on no calendar. */
   tone: CalendarTone;
@@ -39,6 +41,7 @@ interface EventChipCommon {
   label?: string;
   onPress?: MouseEventHandler<HTMLButtonElement>;
   onContextMenu?: MouseEventHandler<HTMLButtonElement>;
+  onKeyDown?: import("react").KeyboardEventHandler<HTMLButtonElement>;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
   dayEdges?: { start?: string; end?: string };
   drag?: "lifted" | "copy";
@@ -122,6 +125,8 @@ function shared(p: EventChipProps, style: CSSProperties | undefined) {
     "data-open": p.open ? "" : undefined,
     "data-fresh": p.fresh ? "" : undefined,
     "data-drag": p.drag,
+    "data-record": p.recordId,
+    "aria-busy": p.saving || undefined,
     "aria-hidden": p.drag === "copy" || undefined,
     tabIndex: p.drag === "copy" ? -1 : undefined,
     "aria-label": p.label,
@@ -130,6 +135,7 @@ function shared(p: EventChipProps, style: CSSProperties | undefined) {
     style: { ...toneStyle(p.tone), ...style },
     onClick: p.onPress,
     onContextMenu: p.onContextMenu,
+    onKeyDown: p.onKeyDown,
     onPointerDown: p.onPointerDown,
   };
 }
@@ -158,7 +164,10 @@ function Block(p: EventBlockProps) {
               .join(" ")
           : undefined
       }
-      onKeyDown={p.onResizeKey}
+      onKeyDown={(event) => {
+        p.onKeyDown?.(event);
+        if (!event.defaultPrevented) p.onResizeKey?.(event);
+      }}
       data-failed={p.status?.failed ? "" : undefined}
     >
       <span className="oh-ev-t">

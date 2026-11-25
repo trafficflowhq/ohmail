@@ -320,6 +320,10 @@
   .oh-ev[data-lap][data-state="to-answer"] {
     box-shadow: var(--oh-ev-apart), var(--oh-ev-out);
   }
+  .oh-ev[aria-busy="true"] {
+    opacity: 0.72;
+  }
+
   /* Found in mail, a draft, a proposed time: dashed. Found has no colour yet: the letter's glyph instead. */
   .oh-ev[data-state="from-mail"],
   .oh-ev[data-state="draft"] {
@@ -446,6 +450,12 @@
   }
   .oh-ev[data-drag="copy"][data-state="draft"] {
     box-shadow: none;
+  }
+  .oh-ev[data-drag="copy"][data-state="draft"][data-size="block"] {
+    z-index: 0;
+  }
+  .oh-ev[data-drag="copy"][data-state="draft"][data-size="line"] {
+    background: var(--oh-ev-under);
   }
   .oh-ev[data-drag="copy"][data-size="line"] {
     border: var(--oh-hair) dashed var(--oh-cal-mark, var(--ink));

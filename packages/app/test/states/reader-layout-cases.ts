@@ -219,7 +219,7 @@ export function readerLayoutCases() {
         );
 
         it.each([...WIDTHS.map((view) => ({ ...view, face: "paper" })), { ...WIDTHS[0], face: "ohmarchy" }])(
-          "aligns the letter at $width in $face and shows small pictures at their natural size after consent",
+          "aligns plain mail, centers the designed letter at $width in $face, and shows small pictures at their natural size after consent",
           async ({ width, height, device, face }) => {
             const page = await browser.newPage({ viewport: { width, height }, reducedMotion: "reduce" });
             const imageBytes = Promise.withResolvers<void>();
@@ -256,7 +256,7 @@ export function readerLayoutCases() {
                   avatar: avatar.left,
                   files: files.left,
                   invitation: invitation.left,
-                  text: paper.left + text.left,
+                  textCenter: paper.left + (text.left + text.right) / 2,
                   plain: plain.querySelector(".msg-p")!.getBoundingClientRect().left,
                   sheetLeft: article.left,
                   sheetRight: article.right,
@@ -268,7 +268,9 @@ export function readerLayoutCases() {
                 console.info("reader geometry", browserName, width, JSON.stringify(geometry));
               }
               expect.soft(geometry.plain, "plain body at the avatar edge").toBeCloseTo(geometry.avatar, 0);
-              expect.soft(geometry.text, "framed text at the avatar edge").toBeCloseTo(geometry.avatar, 0);
+              expect
+                .soft(geometry.textCenter, "designed content is centered on its paper")
+                .toBeCloseTo((geometry.paperLeft + geometry.paperRight) / 2, 0);
               expect
                 .soft(geometry.files, "attachments at the invitation edge")
                 .toBeCloseTo(geometry.invitation, 0);
@@ -302,14 +304,14 @@ export function readerLayoutCases() {
                 .toBe(14);
               const unreadGeometry = await unread.evaluate((letter) => {
                 const article = letter.querySelector(".oh-message[data-unread]")!;
-                const avatar = article.querySelector(".oh-avatar")!.getBoundingClientRect();
                 const frame = article.querySelector("iframe")!;
                 const paper = frame.getBoundingClientRect();
+                const text = frame.contentDocument!.querySelector("p")!.getBoundingClientRect();
                 return {
                   paperOffset: paper.left - article.getBoundingClientRect().left,
                   bar: parseFloat(getComputedStyle(article).getPropertyValue("--new-bar")),
-                  text: paper.left + frame.contentDocument!.querySelector("p")!.getBoundingClientRect().left,
-                  avatar: avatar.left,
+                  textCenter: paper.left + (text.left + text.right) / 2,
+                  paperCenter: (paper.left + paper.right) / 2,
                 };
               });
               if (face === "ohmarchy") expect(unreadGeometry.bar).toBeGreaterThan(0);
@@ -317,8 +319,8 @@ export function readerLayoutCases() {
                 .soft(unreadGeometry.paperOffset, "paper begins after the unread bar")
                 .toBeCloseTo(unreadGeometry.bar, 0);
               expect
-                .soft(unreadGeometry.text, "unread framed text at the avatar edge")
-                .toBeCloseTo(unreadGeometry.avatar, 0);
+                .soft(unreadGeometry.textCenter, "unread designed content is centered after the bar")
+                .toBeCloseTo(unreadGeometry.paperCenter, 0);
 
               await opened.getByRole("button", { name: /show images/i }).press("Enter", { timeout: 5000 });
               await expect.poll(() => pictures).toBe(2);

@@ -23,7 +23,7 @@ import { dirname, join } from "node:path";
 import { and, asc, desc, eq, gt, inArray, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILITY_REQUESTS,
-  SCREENER_SUGGESTION_FAILED, SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
+  SCREENER_SUGGESTION_FAILED, SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, SCREENER_LEARNED_SUGGESTION_STATUS,
   // The erasure fence's own reads — the replay writes rows the ACCOUNT owns and rows one
   // MAILBOX owns, and SKIPS rather than throws on either stamp; see the folder arm for why a
   // throw is the wrong verb here.
@@ -38,7 +38,7 @@ import {
   junkRescues, listAddresses, mailboxCredentials, mailboxFolders, mailboxProfileMirror,
   mailboxes, messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messages,
   messageTags,
-  organizerRequests, outboundSends, routingDecisions, rules, tags, threadNotes, threads,
+  organizerRequests, outboundSends, routingDecisions, rules, screenerLearning, tags, threadNotes, threads,
   trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
@@ -1358,7 +1358,7 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
 export const MAILBOX_REFERENCE_TABLES: readonly string[] = [
   "messages", "drafts", "message_instances", "message_failures", "unsubscribe_records",
   "mailbox_folders", "mailbox_credentials", "folder_ops", "away_replies",
-  "mailbox_profile_mirror", "organizer_requests", "junk_rescues",
+  "mailbox_profile_mirror", "organizer_requests", "junk_rescues", "screener_learning",
 ];
 
 /**
@@ -1384,6 +1384,7 @@ async function mailboxReferenced(tx: Tx, id: string): Promise<boolean> {
   if (await hit(tx.select({ x: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror).where(eq(mailboxProfileMirror.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: organizerRequests.id }).from(organizerRequests).where(eq(organizerRequests.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: junkRescues.id }).from(junkRescues).where(eq(junkRescues.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: screenerLearning.mailboxId }).from(screenerLearning).where(eq(screenerLearning.mailboxId, id)).limit(1))) return true;
   return false;
 }
 
@@ -2189,9 +2190,11 @@ async function applyUpsert(
         matchedRuleId: null,
         destination: s.destination,
         confidence: s.confidence ?? null,
-        rationale: null,
+        screenerTopic: s.topic ?? null,
+        rationale: s.learnedReason === "webinar" ? "You usually screen out webinar invitations" : null,
         spam: !!s.spam,
-        status: s.failed ? SCREENER_SUGGESTION_FAILED : SCREENER_SUGGESTION_STATUS,
+        status: s.failed ? SCREENER_SUGGESTION_FAILED
+          : s.personalized === true ? SCREENER_LEARNED_SUGGESTION_STATUS : SCREENER_SUGGESTION_STATUS,
         createdAt: asDate(s.boughtAt) ?? now,
         updatedAt: asDate(s.updatedAt) ?? now,
       };

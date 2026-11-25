@@ -16,7 +16,7 @@ import type { HostResolver } from "@trafficflow/core/net";
 import { calCalendars, calConnections, calEvents, calWrites, changeLog } from "@trafficflow/db";
 import { CONTINUED_FIELDS, type CalendarWritePayload } from "@trafficflow/db/calendar";
 import { dbFor } from "@trafficflow/services";
-import { CALENDAR_BUILDERS } from "@trafficflow/services/calendar";
+import { CALENDAR_BUILDERS, recordCalendarWrite } from "@trafficflow/services/calendar";
 import { calendarSyncPass } from "@ohmail/organizer/calendar-sync-pass";
 import { calendarWriteDrain } from "@ohmail/organizer/calendar/write-drain";
 import { startCalDavStandIn, type Seen, type StandIn, type StandInCalendar } from "../../../packages/cal-providers/test/caldav-stand-in.js";
@@ -523,6 +523,53 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
   });
 
   describe("a new series, and a repeat put on one event", () => {
+    it("creates, reads, and removes a repeat on an unlisted scheduling server", async () => {
+      const b = await bench({}, undefined, { autoSchedule: true, proven: PROVEN_REPEATS });
+      const [cal] = await w.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, b.t.accountId));
+      const eventId = randomUUID();
+      const ctx = { db: dbFor(w.db, b.t.accountId), accountId: b.t.accountId, userId: null, now: () => new Date(), requestId: randomUUID() };
+      const created = await recordCalendarWrite(ctx, "create-repeat", {
+        kind: "calendar_event_create", eventId, calendarId: cal!.id, repeatSelected: true,
+        event: {
+          title: "Throwing class", start: zoned("20261125T180000"), end: zoned("20261125T200000"), notes: null, place: null, callLink: null,
+          busy: true, private: false, repeat: "FREQ=WEEKLY;INTERVAL=3;BYDAY=WE,FR;COUNT=5", invitees: [], alarms: [],
+        },
+      });
+      expect(created.answer.write?.state).toBe("pending");
+      expect((await b.turn()).kind).toBe("synced");
+      expect((await b.read()).kind).toBe("synced");
+      const records = await CALENDAR_BUILDERS.calendar_event(ctx.db, ctx.accountId, [eventId]);
+      const event = records.get(eventId);
+      expect(event?.repeat?.rules).toEqual(["FREQ=WEEKLY;INTERVAL=3;COUNT=5;BYDAY=WE,FR"]);
+      expect(event?.deleteScopes).toEqual(["record"]);
+      const removed = await recordCalendarWrite(ctx, "remove-repeat", {
+        kind: "calendar_event_delete", eventId, base: event!.updatedAt,
+        scope: { kind: "record" }, audience: { organizer: null, guests: [] },
+      });
+      expect(removed.answer.write?.state).toBe("pending");
+      const from = b.dav.seen.length;
+      expect((await b.turn()).kind).toBe("synced");
+      expect(b.written(from).map(({ method }) => method)).toEqual(["DELETE"]);
+      expect(await b.writes()).toEqual([["create-repeat", "applied", null], ["remove-repeat", "applied", null]]);
+      expect((await CALENDAR_BUILDERS.calendar_event(ctx.db, ctx.accountId, [eventId])).size).toBe(0);
+    });
+
+    it("writes an explicitly selected custom repeat to a CalDAV calendar", async () => {
+      const b = await bench({}, undefined, { proven: PROVEN_REPEATS });
+      const [cal] = await w.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, b.t.accountId));
+      await b.press("selected-repeat", {
+        kind: "calendar_event_create", eventId: randomUUID(), calendarId: cal!.id, repeatSelected: true,
+        event: {
+          title: "Throwing class", start: zoned("20261125T180000"), end: zoned("20261125T200000"), notes: null, place: null, callLink: null,
+          busy: true, private: false, repeat: "FREQ=WEEKLY;INTERVAL=3;BYDAY=WE,FR;COUNT=5", invitees: [], alarms: [],
+        },
+      });
+      const from = b.dav.seen.length;
+      expect((await b.turn()).kind).toBe("synced");
+      expect(await b.writes()).toEqual([["selected-repeat", "applied", null]]);
+      expect(b.written(from)[0]?.body).toContain("RRULE:FREQ=WEEKLY;INTERVAL=3;COUNT=5;BYDAY=WE,FR");
+    });
+
     it("makes a new series once under its key, in its proven shape, a member of its own", async () => {
       let cut = true;
       const b = await bench({}, (real) => ({

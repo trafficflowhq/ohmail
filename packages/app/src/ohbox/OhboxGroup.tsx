@@ -121,7 +121,7 @@ export function OhboxGroup({
       contact.person.anchor.isConnected ? (
         <Contact person={contact.person} onClose={() => setContact(null)} />
       ) : null}
-      {!displayOnly && menu ? (
+      {!displayOnly && menu?.anchor.isConnected ? (
         <OhboxRowMenu
           model={model}
           row={menu.row}

@@ -174,6 +174,10 @@ export function ollamaTransport(opts: OllamaTransportOptions): AiTransport {
       );
     },
 
+    async rewriteScreener(request, options) {
+      return chat(opts.classifyModel, request.system, request.input, request.schema, "screener", request.maxTokens, options);
+    },
+
     async draft(input: DraftInput, options?: AiCallOptions): Promise<DraftResult> {
       // Asserts the redaction allow-list and THROWS before a payload exists. Also shared.
       const userPayload = draftUserPayload(input);

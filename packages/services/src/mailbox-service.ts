@@ -1131,7 +1131,7 @@ export async function decryptCredential(
  */
 /**
  * The doorbell of a mailbox the worker does not serve yet, spread into the write that makes it one:
- * a create, an OAuth connect or reconnect, a re-enable — and the two lease presses, "Organize here"
+ * a create, an OAuth connect or reconnect, a re-enable or retry reset — and the two lease presses, "Organize here"
  * and "Hand the mailbox back", whose pending stamp the kick scan answers with a roster pass so the
  * gate reads it at once. The DATABASE's clock, as every writer of this column. A census in this
  * package's tests holds the six call sites.
@@ -1818,7 +1818,7 @@ export class MailboxService {
           status: "connected",
           authKind: "oauth",
           ...(input.displayName !== undefined ? { displayName: input.displayName ?? null } : {}),
-          errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
+          errorCode: null, errorDetail: null, failedAt: null, retryCount: 0, retryAfter: null,
           syncBlockedReason: null, syncBlockedSince: null,
           ...newMailboxDoorbell(ctx.db),
         }).where(and(eq(mailboxes.id, row.id), eq(mailboxes.accountId, ctx.accountId)));
@@ -1880,9 +1880,8 @@ export class MailboxService {
     // not owned. RE-ENABLING IS A CREATE: `delete` is a soft delete, so without this gate the limit
     // is trivially bypassed; only the disabled → not-disabled TRANSITION is gated. It may not step
     // around the worker's failure state machine (mail 0023): `status: 'error'` from a client is
-    // refused, and leaving `error` clears the four outage columns in the same UPDATE — `failed_at`
-    // is COALESCEd, so a stale episode would be inherited by the next failure. A rotated credential
-    // is probed; `opts` is optional where `create`'s is not — the enforcement is the runtime throw
+    // refused. Editing a failing mailbox clears its outage and backoff in the same UPDATE.
+    // A rotated credential is probed; `opts` is optional where `create`'s is not — the runtime check is
     // in {@link probedImapMeta}, mutation-checked at the API layer.
     const kp = this.requireKeyProvider();
 
@@ -1950,24 +1949,17 @@ export class MailboxService {
       const set: Partial<MailboxRow> = {};
       if ("displayName" in patch) set.displayName = patch.displayName ?? null;
       if (patch.status) set.status = patch.status;
-      // Leaving `error` ENDS the episode — atomically, in the same statement as the status.
-      // See the note on this method: `failed_at` is COALESCEd by the worker's failure write, so
-      // a value left behind here is inherited by the next, unrelated outage.
-      if (patch.status && current.status === "error") {
+      const editsMailbox = "displayName" in patch || Boolean(patch.status || patch.imap?.pass || patch.smtp?.pass);
+      const resetsRetry = editsMailbox && (current.status === "error" || current.retryAfter !== null);
+      if (resetsRetry) {
+        if (!patch.status && current.status === "error") set.status = "connected";
         set.errorCode = null;
         set.errorDetail = null;
         set.failedAt = null;
         set.retryCount = 0;
+        set.retryAfter = null;
       }
-      // The sync block goes with ANY status move (mail 0029). Not gated on `current.status ===
-      // "error"`, and the difference from the four above is not an inconsistency: a sync block
-      // happens while the status is `connected`, so an `error` gate would never fire. The block
-      // is THIS PROCESS's report about the worker's relationship to the mailbox, and both
-      // directions of a status move invalidate it — disconnecting ends it (a tombstone carries no
-      // explanation), reconnecting makes the old reason unverified. Clearing is SAFE precisely
-      // because the worker re-writes it: `reconcileSyncBlocks` writes on every roster pass while
-      // the block lasts.
-      if (patch.status) {
+      if (patch.status || resetsRetry) {
         set.syncBlockedReason = null;
         set.syncBlockedSince = null;
       }
@@ -1986,7 +1978,8 @@ export class MailboxService {
       if (Object.keys(set).length > 0) {
         const reEnabling = patch.status !== undefined && patch.status !== "disabled"
           && current.status === "disabled";
-        await tx.update(mailboxes).set({ ...set, ...(reEnabling ? newMailboxDoorbell(ctx.db) : {}) })
+        const retryNow = resetsRetry && (set.status ?? current.status) !== "disabled";
+        await tx.update(mailboxes).set({ ...set, ...(reEnabling || retryNow ? newMailboxDoorbell(ctx.db) : {}) })
           .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
       }
 

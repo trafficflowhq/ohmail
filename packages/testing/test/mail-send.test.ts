@@ -455,8 +455,8 @@ describe("mail_send — the client half of the gated send", () => {
      *
      * `m.body` remains the LOCAL plain rendering (the overlay row, and the "is there anything
      * to send" check). What arrives at the transport is the server's, derived from the
-     * sanitized markup, which is why the two assertions below differ in shape: the html is
-     * echoed verbatim and the text is a rendering nobody in the browser chose.
+     * sanitized markup, which is why the two assertions below differ in shape: the HTML keeps
+     * its saved recipient spacing and the text is a rendering nobody in the browser chose.
      */
     const w = await world();
 
@@ -470,13 +470,13 @@ describe("mail_send — the client half of the gated send", () => {
 
     expect(w.spy.delivered).toHaveLength(1);
     const msg = w.spy.delivered[0]!;
-    expect(msg.html).toBe('<p>Yes — see <a href="https://a.example/q">the quote</a>.</p>');
+    expect(msg.html).toBe('<p style="margin:0">Yes — see <a href="https://a.example/q">the quote</a>.</p>');
     // The link's TARGET is in the plain part, and it is the SERVER's rendering — the client
     // sent "Yes — see the quote." and never this string.
     expect(msg.text).toBe("Yes — see the quote (https://a.example/q).");
 
     const rows = await w.db.select().from(drafts);
-    expect(rows[0]!.html).toBe('<p>Yes — see <a href="https://a.example/q">the quote</a>.</p>');
+    expect(rows[0]!.html).toBe('<p style="margin:0">Yes — see <a href="https://a.example/q">the quote</a>.</p>');
     expect(rows[0]!.body).toBe("Yes — see the quote (https://a.example/q).");
   });
 

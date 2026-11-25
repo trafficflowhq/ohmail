@@ -24,6 +24,8 @@ export interface Way {
 export interface ListHeadProps {
   /** Where you are. */
   title: string;
+  /** A panel nested beside the main view has a subordinate heading. */
+  heading?: "h1" | "h2";
   /** Something there is open: the title ends in the hot dot. */
   hot?: boolean;
   lead?: ReactNode;
@@ -65,6 +67,7 @@ function fitWay(line: HTMLElement): void {
 /** Where you are, and the list's own tools. */
 export function ListHead({
   title,
+  heading: Heading = "h1",
   hot,
   lead,
   aside,
@@ -89,9 +92,9 @@ export function ListHead({
   return (
     <header className="oh-listhead" data-way={way ? "" : undefined} data-sections={sections ? "" : undefined}>
       {lead}
-      <h1 className="oh-text oh-display oh-listhead-title">
+      <Heading className="oh-text oh-display oh-listhead-title">
         <EndDot kind={hot ? "hot" : "ink"}>{title}</EndDot>
-      </h1>
+      </Heading>
       {sections ? <div className="oh-listhead-sections">{sections}</div> : null}
       {!sections || count || aside ? (
         <div className={asideClassName ? `oh-listhead-aside ${asideClassName}` : "oh-listhead-aside"}>

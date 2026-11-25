@@ -43,11 +43,11 @@ export async function checkCounts(tx: Executor, i: CheckInput): Promise<Verdict[
     out.push({ check: "count against the map's formula", subject: table, expected: String(want), found: String(found), ok: found === want });
   }
   // A table of the map with no expectation: the map names it for this store and the record of before never met it.
-  for (const table of tablesOf(i.kind)) {
+  for (const table of tablesOf(i.kind, "window")) {
     if (standing.has(table) && !i.expected.has(table)) out.push({ check: "a table the record of before did not expect", subject: table, expected: "absent", found: "it exists", ok: false });
   }
   const owners = new Set(i.foreign.filter((f) => f.refuses === null).map((f) => f.name));
-  const known = new Set(tablesOf(i.kind));
+  const known = new Set(tablesOf(i.kind, "window"));
   const strangers = [...standing].filter((t) => !known.has(t) && !owners.has(t)).length;
   out.push(zero("tables the map does not name for this store", "public", strangers));
   const lost = [...owners].filter((t) => !standing.has(t)).length;
@@ -147,7 +147,7 @@ export async function checkCatalog(tx: Executor, i: CheckInput): Promise<Verdict
   const carrying = await accountTablesFromCatalog(tx);
   const owners = new Set(i.foreign.filter((f) => f.refuses === null).map((f) => f.name));
   const found = new Set(carrying.filter((t) => !owners.has(t)));
-  const want = new Set(accountTablesOf(i.kind));
+  const want = new Set(accountTablesOf(i.kind, "window"));
   out.push({ check: "tables that carry the account", subject: "public", expected: String(want.size), found: String(found.size), ok: want.size === found.size });
   // Of the map's own names only: a table outside it is counted by check 1.
   for (const t of [...want].filter((x) => !found.has(x)).sort()) out.push({ check: "a table of the map does not carry the account", subject: t, expected: "account_id", found: "no such column", ok: false });

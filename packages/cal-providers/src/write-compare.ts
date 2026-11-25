@@ -8,6 +8,12 @@
 import { formatRRule, momentOrUtc, type CalEvent, type EventTime, type ZoneSource } from "@ohmail/cal-core";
 import type { EventChange, WriteTarget } from "./port.js";
 
+export function ordinarySharedChange(change: EventChange): boolean {
+  return Object.keys(change).every((key) =>
+    ["summary", "description", "location", "start", "end"].includes(key),
+  );
+}
+
 const blank = (v: string | null | undefined): string | null =>
   v === undefined || v === null || v === "" ? null : v;
 

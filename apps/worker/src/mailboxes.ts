@@ -173,6 +173,9 @@ export interface EnabledMailbox {
    * common answer is "already known", and that answer should cost no query of its own.
    */
   smtpMaxSizeBytes: number | null;
+  /** The current failure and when it began, used to stop retrying rejected sign-ins. */
+  errorCode: string | null;
+  failedAt: Date | null;
   /**
    * Mail 0039. WHEN the leader may next attach this mailbox, or NULL for "no backoff in force". THIS
    * ONE IS DECIDED ON, unlike the two above, and it is the only column in this projection that is. It
@@ -315,6 +318,8 @@ export async function loadRosterMailboxes(
       organizerParkedAt: mailboxes.organizerParkedAt,
       kickStamp: sql<string | null>`${mailboxes.syncRequestedAt}::text`,
       syncBlockedReason: mailboxes.syncBlockedReason,
+      errorCode: mailboxes.errorCode,
+      failedAt: mailboxes.failedAt,
       retryAfter: mailboxes.retryAfter,
       retryCount: mailboxes.retryCount,
       smtpMaxSizeBytes: mailboxes.smtpMaxSizeBytes,
@@ -352,6 +357,8 @@ export async function loadRosterMailboxes(
     organizerParkedAt: r.organizerParkedAt ?? null,
     kickStamp: r.kickStamp ?? null,
     syncBlockedReason: r.syncBlockedReason ?? null,
+    errorCode: r.errorCode ?? null,
+    failedAt: r.failedAt ?? null,
     retryAfter: r.retryAfter ?? null,
     retryCount: r.retryCount ?? 0,
     smtpMaxSizeBytes: r.smtpMaxSizeBytes ?? null,
@@ -982,11 +989,35 @@ export function makeSyncWriteFence(
   };
 }
 
+interface FailureWriteOptions {
+  fence?: LeaderFence;
+  now?: Date;
+  retryAfter?: Date | null;
+  kickAsRead?: string | null;
+}
+
+function kickMatches(stamp: string | null): SQL {
+  return sql`${mailboxes.syncRequestedAt}::text is not distinct from ${stamp}`;
+}
+
+function failureWriteWhere(mailboxId: string, opts: FailureWriteOptions): SQL | undefined {
+  return and(lifecycleWhere(mailboxId, opts.fence),
+    opts.kickAsRead === undefined ? undefined : kickMatches(opts.kickAsRead));
+}
+
+const AUTH_RETRY_WINDOW_MS = 24 * 60 * 60_000;
+
+export function authRetryDeadline(mb: Pick<EnabledMailbox, "status" | "errorCode" | "failedAt">): number {
+  return mb.status === "error" && mb.errorCode === "auth" && mb.failedAt !== null
+    ? mb.failedAt.getTime() + AUTH_RETRY_WINDOW_MS
+    : Infinity;
+}
+
 /**
  * Record that a mailbox is quarantined AND why — one statement, so `status` and its reason can never
- * disagree. Returns false when the write was FENCED OUT. `failed_at` uses `COALESCE`, so it holds the
- * start of the CURRENT outage (three days rather than "just now, again" on every retry), and
- * `retry_count` increments IN SQL for the same reason — it is the size of this outage and must survive
+ * disagree. Returns false when the write was fenced out. `failed_at` holds the start of the
+ * outage, or the start of the new failure when it changes to or from a sign-in rejection.
+ * `retry_count` increments in SQL so the size of the outage survives
  * the restart that resets the in-memory backoff map. Those two counters answer different questions and
  * are ALLOWED to disagree after a deploy. THE DETAIL IS RE-CHECKED HERE: `detail` is `string | null`,
  * so `{ detail: err.message }` typechecked and was stored verbatim into a column both the account
@@ -995,9 +1026,16 @@ export function makeSyncWriteFence(
 export async function markMailboxFailed(
   db: WorkerDb, mailboxId: string,
   failure: { code: MailboxErrorCode; detail: string | null },
-  opts: { fence?: LeaderFence; now?: Date; retryAfter?: Date | null } = {},
+  opts: FailureWriteOptions = {},
 ): Promise<boolean> {
   const now = opts.now ?? new Date();
+  const at = sql`${now.toISOString()}::timestamptz`;
+  const sameFailure = sql`(${mailboxes.errorCode} is not distinct from 'auth') = ${failure.code === "auth"}`;
+  const failedAt = sql`case when ${sameFailure} then coalesce(${mailboxes.failedAt}, ${at}) else ${at} end`;
+  const retryAfter = failure.code === "auth" && opts.retryAfter
+    ? sql`least(${opts.retryAfter.toISOString()}::timestamptz,
+        ${failedAt} + ${AUTH_RETRY_WINDOW_MS} * interval '1 millisecond')`
+    : opts.retryAfter;
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     status: "error",
     // The column is TEXT with no CHECK, so `MailboxErrorCode` is a compiler claim and a cast
@@ -1008,55 +1046,40 @@ export async function markMailboxFailed(
     // block. The candidate comes off the wire, so refusing would let a mail server fail the
     // quarantine write by answering with a word we do not know.
     errorDetail: isSafeMailboxErrorDetail(failure.detail) ? failure.detail : null,
-    // Mail 0039 — WHEN the leader may next attach this mailbox, in the SAME statement as the
-    // status, for the reason the whole of this function is one statement: a row that says
-    // `error` beside a stale or absent backoff is a half-truth, and the operator release path
-    // reads exactly this column. Passed in rather than computed here because the ladder lives in
-    // the worker's quarantine map — this function records a decision, it does not make one.
-    //
-    // `undefined` leaves the column ALONE, which is not the same as clearing it: a caller that
-    // does not know when the next attempt is due must not be able to release a mailbox by
-    // omission. Only an explicit `null` clears.
-    ...(opts.retryAfter !== undefined ? { retryAfter: opts.retryAfter } : {}),
-    // `.toISOString()` + an explicit cast: postgres-js has serialised a bare Date as TEXT in
-    // this repository before, and inside a raw `sql` fragment there is no column type to
-    // coerce it. The same form `alerts.ts` uses for its threshold comparisons.
-    failedAt: sql`coalesce(${mailboxes.failedAt}, ${now.toISOString()}::timestamptz)`,
+    // The caller supplies the backoff. For rejected sign-ins it is bounded by the cutoff.
+    // Only an explicit null clears the existing backoff.
+    ...(retryAfter !== undefined ? { retryAfter } : {}),
+    failedAt,
     retryCount: sql`${mailboxes.retryCount} + 1`,
     // Mail migration 0029: a quarantine is an ANSWER, so the "we declined to serve this" note goes. A row
     // that said both would tell the mailbox's owner "your mailbox rejected the password" and "we could not
     // read the organizer lease" at once, and only one of those can be the reason it is not syncing.
     syncBlockedReason: null, syncBlockedSince: null,
-  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
+  }).where(failureWriteWhere(mailboxId, opts)).returning({ id: mailboxes.id }));
 }
 
 /**
- * Record a VERIFIED recovery: connected, and the reason cleared in the same statement. Returns
- * false when the write was FENCED OUT — the user disconnected the mailbox, or another instance
- * now leads this shard.
+ * Record recovery after a successful sync or, with an attach stamp, after a successful
+ * sign-in for a mailbox that was rejected. Status and failure are cleared together.
  *
  * Atomic with the status flip on purpose — a `status='connected'` row sitting next to a stale
  * `error_code` would be exactly the kind of half-truth this slice exists to remove, and the UI
  * would render "connected" and "the mailbox rejected the password" side by side.
  */
 export async function markMailboxConnected(
-  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence } = {},
+  db: WorkerDb, mailboxId: string, opts: { fence?: LeaderFence; authKickAsRead?: string | null } = {},
 ): Promise<boolean> {
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     status: "connected", errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
-    // Mail 0039, cleared here for the same reason `retry_count` is: a mailbox that has COMPLETED
-    // a sync cycle is not in a failure backoff, so a leftover `retry_after` beside `connected`
-    // would park it on the next restart — the seed below reads the row, not the map, and would
-    // resurrect a backoff that a successful cycle already spent.
     retryAfter: null,
-    // Mail migration 0029, and for exactly the reason the four above it are cleared here: a VERIFIED
-    // recovery means the mailbox is connected, in the rotation, and has COMPLETED a sync cycle —
-    // the non-blocking attach moved that bar off "two inline cycles at attach time" and onto the cycle path, but
-    // did not lower it. So nothing is blocking this mailbox by definition, and a leftover
-    // `sync_blocked_reason` beside `connected` would be the same half-truth migration 0023 exists to remove,
-    // one column over.
+    // A successful login or sync invalidates the previous block. The roster will record
+    // a new reason if the mailbox is still blocked.
     syncBlockedReason: null, syncBlockedSince: null,
-  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
+  }).where(and(
+    lifecycleWhere(mailboxId, opts.fence),
+    opts.authKickAsRead === undefined ? undefined
+      : and(eq(mailboxes.errorCode, "auth"), kickMatches(opts.authKickAsRead)),
+  )).returning({ id: mailboxes.id }));
 }
 
 /* Standing down is not failing (mail 0027). A mailbox another organizer holds is a mailbox in perfect
@@ -1330,11 +1353,11 @@ export async function markMailboxReleased(
     // risk. The `FOR UPDATE` on the service side keeps the two presses ordered; this is what makes
     // the LOSING order harmless rather than merely unlikely.
     takeoverAuthorizedAt: null,
-    // Standing down is not failing, and neither is stopping on purpose. Same four columns, same
-    // argument as the stand-down above.
-    errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
+    // A subscription closure leaves the mailbox's own failure and retry schedule in place.
+    ...(opts.cause === "account_parked" ? {} : {
+      errorCode: null, errorDetail: null, failedAt: null, retryCount: 0, retryAfter: null,
+    }),
     syncBlockedReason: null, syncBlockedSince: null,
-    retryAfter: null,
     // Mail 0088 — the fifth writer of the triple. See `markMailboxStoodDown`'s note.
     organizerEventAt: now,
     /* THE GAP WINDOW OPENS WHERE THIS TENURE'S LAST FINISHED DRAIN BEGAN (mail 0169), never after
@@ -1414,24 +1437,19 @@ export async function markMailboxSyncBlocked(
     // `retry_count`. The absence is the design — see the block above this function.
   }).where(and(
     lifecycleWhere(mailboxId, opts.fence),
-    opts.kickAsRead === undefined ? undefined
-      : sql`${mailboxes.syncRequestedAt}::text is not distinct from ${opts.kickAsRead}`,
+    opts.kickAsRead === undefined ? undefined : kickMatches(opts.kickAsRead),
   )).returning({ id: mailboxes.id }));
 }
 
 /**
- * A ceiling we set ended the cycle — the soft block, with its backoff, and nothing else.
- * `markMailboxFailed` was wrong here rather than imprecise: an `ImapBoundExceeded` means the mailbox
- * authenticated, answered, and sent more than one pass takes, and `status='error'` tells its owner it
- * failed. So this writes the mail-0029 pair and leaves `status`, `error_code`, `error_detail`,
- * `failed_at` and `retry_count` as they were (mail 0039 makes the next-attempt instant survive a
- * restart). `retry_count` is NOT incremented: it counts FAILURES, and a cap hit is not one.
+ * The mailbox answered and sent more than one pass takes. Record the block and backoff,
+ * clearing any earlier sign-in rejection. A read limit leaves other failure counts alone.
  * On a mailbox no cycle has completed yet it also stamps `sync_progress_at` (mail 0130), as
  * {@link stampImportProgress} does after one: the `sync_lag` alert then calls a first import alive.
  */
 export async function markMailboxReadLimited(
   db: WorkerDb, mailboxId: string,
-  opts: { fence?: LeaderFence; now?: Date; retryAfter?: Date | null } = {},
+  opts: FailureWriteOptions = {},
 ): Promise<boolean> {
   return markMailboxSoftBlocked(db, mailboxId, "read_limited", opts);
 }
@@ -1443,7 +1461,7 @@ export async function markMailboxReadLimited(
  */
 export async function markMailboxProviderUnavailable(
   db: WorkerDb, mailboxId: string,
-  opts: { fence?: LeaderFence; now?: Date; retryAfter?: Date | null } = {},
+  opts: FailureWriteOptions = {},
 ): Promise<boolean> {
   return markMailboxSoftBlocked(db, mailboxId, "provider_unavailable", opts);
 }
@@ -1468,11 +1486,18 @@ export async function stampSyncProgress(
 
 async function markMailboxSoftBlocked(
   db: WorkerDb, mailboxId: string, reason: "read_limited" | "provider_unavailable",
-  opts: { fence?: LeaderFence; now?: Date; retryAfter?: Date | null },
+  opts: FailureWriteOptions,
 ): Promise<boolean> {
   const now = opts.now ?? new Date();
   const at = sql`${now.toISOString()}::timestamptz`;
+  // A temporary refusal or a read limit supersedes a previous sign-in rejection.
+  const wasAuthError = sql`${mailboxes.status} = 'error' and ${mailboxes.errorCode} = 'auth'`;
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
+    status: sql`case when ${wasAuthError} then 'connected' else ${mailboxes.status} end`,
+    errorCode: sql`case when ${wasAuthError} then null else ${mailboxes.errorCode} end`,
+    errorDetail: sql`case when ${wasAuthError} then null else ${mailboxes.errorDetail} end`,
+    failedAt: sql`case when ${wasAuthError} then null else ${mailboxes.failedAt} end`,
+    retryCount: sql`case when ${wasAuthError} then 0 else ${mailboxes.retryCount} end`,
     syncBlockedReason: reason,
     // `coalesce`: the caller repeats this while the block lasts, and the column holds its START.
     syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${at})`,
@@ -1482,7 +1507,7 @@ async function markMailboxSoftBlocked(
     // `undefined` leaves the column alone; only an explicit `null` clears — `markMailboxFailed`'s
     // rule, so a caller cannot release a mailbox by omission.
     ...(opts.retryAfter !== undefined ? { retryAfter: opts.retryAfter } : {}),
-  }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id }));
+  }).where(failureWriteWhere(mailboxId, opts)).returning({ id: mailboxes.id }));
 }
 
 /**

@@ -44,7 +44,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ENV_FILE = join(HERE, ".cal-bench.env");
 const DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const WINDOWS_ZONES = { UTC: "UTC", "W. Europe Standard Time": "Europe/Zurich", "Central Europe Standard Time": "Europe/Budapest", "GMT Standard Time": "Europe/London", "Pacific Standard Time": "America/Los_Angeles", "Eastern Standard Time": "America/New_York" };
-const PATTERNS = ["daily", "weekly", "absoluteMonthly", "absoluteYearly"];
+const PATTERNS = ["daily", "weekly", "absoluteMonthly", "relativeMonthly", "absoluteYearly", "relativeYearly"];
+const MONTH_INDEX = { first: 0, second: 1, third: 2, fourth: 3, last: -1 };
 const DAY_MS = 86_400_000;
 /** The tail that makes a date the start of its day in UTC. */
 const UTC_MIDNIGHT = "T" + "00:00:00Z";
@@ -75,6 +76,19 @@ function parseBound(value) {
   return Date.parse(/(Z|[+-]\d{2}:\d{2})$/.test(value) ? value : value + "Z");
 }
 const stamp = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+function monthDayOf(pattern, date) {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const last = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  if (pattern.type.startsWith("absolute")) return Math.min(pattern.dayOfMonth, last);
+  const firstWeekday = new Date(Date.UTC(year, month, 1)).getUTCDay();
+  const matches = [];
+  for (let day = 1; day <= last; day++) {
+    if (pattern.daysOfWeek.includes(DAYS[(firstWeekday + day - 1) % 7])) matches.push(day);
+  }
+  return matches.at(MONTH_INDEX[pattern.index ?? "first"]);
+}
 
 // ---------------------------------------------------------------------------------------------- the mailbox
 
@@ -187,8 +201,13 @@ class Mailbox {
       let hit = false;
       if (pattern.type === "daily") hit = Math.round((ms - first) / DAY_MS) % interval === 0;
       else if (pattern.type === "weekly") hit = (weekOf(ms) - weekOf(first)) % interval === 0 && (pattern.daysOfWeek ?? [DAYS[d0.getUTCDay()]]).includes(DAYS[d.getUTCDay()]);
-      else if (pattern.type === "absoluteMonthly") hit = months % interval === 0 && d.getUTCDate() === (pattern.dayOfMonth ?? d0.getUTCDate());
-      else if (pattern.type === "absoluteYearly") hit = months % (12 * interval) === 0 && d.getUTCDate() === (pattern.dayOfMonth ?? d0.getUTCDate());
+      else {
+        const yearly = pattern.type.endsWith("Yearly");
+        const active = yearly
+          ? (d.getUTCFullYear() - d0.getUTCFullYear()) % interval === 0 && d.getUTCMonth() + 1 === pattern.month
+          : months % interval === 0;
+        hit = active && d.getUTCDate() === monthDayOf(pattern, d);
+      }
       if (hit) out.push(d.toISOString().slice(0, 10));
     }
     return out;

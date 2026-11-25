@@ -212,7 +212,7 @@ describe("the positive control — no signal, and nothing about the row moves", 
     const page = await w.svc.list(w.ctx, {});
     expect(page.items[0]!.aiSuggestion).toEqual({
       decision: "yes", destination: "ohmail/News", spam: false,
-      confidence: 0.95, rationale: READS.rationale,
+      confidence: 0.95, rationale: READS.rationale, id: stored!.id,
     });
   });
 });

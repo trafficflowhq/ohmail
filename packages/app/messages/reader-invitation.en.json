@@ -5,6 +5,7 @@
     "cancelled": "Cancelled",
     "from": "From {organizer}",
     "overlaps": "overlaps",
+    "busyOverlap": "Busy",
     "show": "Show in calendar",
     "notOn": "Not on your calendar",
     "goes": "{title} goes to <calendar></calendar>",

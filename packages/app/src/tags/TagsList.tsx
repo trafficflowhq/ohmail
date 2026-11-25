@@ -131,6 +131,7 @@ function OneTag({
   if (model.list.rows.length === 0) return null;
   return (
     <LetterRows
+      verbs={model.list.verbs}
       selection={selection}
       contact={contact}
       label={model.tag?.name ?? t("title")}
@@ -169,6 +170,7 @@ function EveryTag({ model, t, selection, contact }: TagRowsProps) {
           </GroupHeading>
           {!g.shut && g.rows.length > 0 ? (
             <LetterRows
+              verbs={model.list.verbs}
               selection={selection}
               contact={contact}
               label={g.tag.name}

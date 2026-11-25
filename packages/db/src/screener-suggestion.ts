@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { accountSettings, messages, routingDecisions } from "./schema-mail.js";
 import { recordChanges, type Tx } from "./change-log.js";
 import { dialect, type Dialect } from "./dialect/index.js";
@@ -35,6 +35,8 @@ export const SCREENER_SUGGESTION_PROVENANCE = "screener_suggestion";
  * remember.
  */
 export const SCREENER_SUGGESTION_STATUS = "suggestion";
+export const SCREENER_LEARNED_SUGGESTION_STATUS = "suggestion_learned";
+const SCREENER_FILING_PROVENANCE = "screener_filing_advice";
 /** Exhausted retries for this message. An explicit purchase can replace this inert row. */
 export const SCREENER_SUGGESTION_FAILED = "suggestion_failed";
 
@@ -108,6 +110,9 @@ export interface ScreenerSuggestionRow {
    * quietly stop every rule its advice could write.
    */
   senderReason: string;
+  personalized?: boolean;
+  topic?: string;
+  filing?: Pick<ScreenerSuggestionRow, "destination" | "confidence" | "rationale" | "spam" | "senderReason">;
   failed?: true;
 }
 
@@ -121,9 +126,13 @@ export interface ScreenerSuggestionRow {
  * rows' deletes and the new row's create share one seq allocation, so a mirror never holds two
  * live rows for one purchase.
  */
-export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow): Promise<void> {
-  await db.transaction(async (tx) => {
+export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow): Promise<string> {
+  return db.transaction(async (tx) => {
     await tx.delete(routingDecisions).where(retryOf(row.accountId, row.messageId));
+    if (!row.failed) await tx.delete(routingDecisions).where(and(
+      eq(routingDecisions.accountId, row.accountId), eq(routingDecisions.messageId, row.messageId),
+      eq(routingDecisions.inputProvenance, SCREENER_FILING_PROVENANCE),
+    ));
     const removed = await tx.delete(routingDecisions).where(and(
       eq(routingDecisions.accountId, row.accountId),
       eq(routingDecisions.messageId, row.messageId),
@@ -138,9 +147,15 @@ export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow
       confidence: row.confidence,
       rationale: row.rationale,
       spam: row.spam,
-      status: row.failed ? SCREENER_SUGGESTION_FAILED : SCREENER_SUGGESTION_STATUS,
+      status: row.failed ? SCREENER_SUGGESTION_FAILED
+        : row.personalized ? SCREENER_LEARNED_SUGGESTION_STATUS : SCREENER_SUGGESTION_STATUS,
       senderReason: row.senderReason,
+      screenerTopic: row.topic ?? null,
     }).returning({ id: routingDecisions.id });
+    if (row.filing) await tx.insert(routingDecisions).values({
+      ...row.filing, accountId: row.accountId, messageId: row.messageId,
+      inputProvenance: SCREENER_FILING_PROVENANCE, status: SCREENER_SUGGESTION_STATUS,
+    });
     await recordChanges(tx, [
       ...removed.map((d) => ({
         accountId: row.accountId, entityType: "screener_suggestion" as const,
@@ -151,6 +166,7 @@ export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow
         entityId: inserted!.id, op: "create" as const,
       },
     ]);
+    return inserted!.id;
   });
 }
 
@@ -233,7 +249,7 @@ export interface StoredSenderSuggestion {
  * `senders` must already be lower-cased; the map is keyed the same way.
  */
 export async function screenerSuggestionsBySender(
-  db: Tx, accountId: string, senders: string[], includeFailures = false,
+  db: Tx, accountId: string, senders: string[], includeFailures = false, forFiling = false,
 ): Promise<Map<string, StoredSenderSuggestion>> {
   const out = new Map<string, StoredSenderSuggestion>();
   if (senders.length === 0) return out;
@@ -246,15 +262,27 @@ export async function screenerSuggestionsBySender(
   // for when the answer really is shared. The ordering moves INSIDE the window, where it belongs
   // — under `distinct on` the leading `k` in the ORDER BY was there to satisfy the clause rather
   // than to order the result, the detail that makes the two look different when they are not.
-  const ranked = db.select({
-    sender: sender.as("sender"),
+  // Ordinary filing advice and the learned suggestion share a message. Read the action state
+  // from the visible row, keeping the ordinary advice's verdict and ranking for automatic filing.
+  const shown = db.select({
     id: routingDecisions.id,
+    messageId: routingDecisions.messageId,
+    actRefusal: routingDecisions.actRefusal,
+  }).from(routingDecisions).where(and(
+    eq(routingDecisions.accountId, accountId),
+    eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
+    eq(routingDecisions.status, SCREENER_LEARNED_SUGGESTION_STATUS),
+  )).as("shown_suggestion");
+  const offered = db.select({
+    sender: sender.as("sender"),
+    id: forFiling ? sql<string>`coalesce(${shown.id}, ${routingDecisions.id})`.as("suggestion_id") : routingDecisions.id,
     messageId: routingDecisions.messageId,
     destination: routingDecisions.destination,
     confidence: routingDecisions.confidence,
     rationale: routingDecisions.rationale,
     spam: routingDecisions.spam,
-    actRefusal: routingDecisions.actRefusal,
+    actRefusal: forFiling ? sql<string | null>`case when ${shown.id} is not null then ${shown.actRefusal}
+      else ${routingDecisions.actRefusal} end`.as("suggestion_act_refusal") : routingDecisions.actRefusal,
     authVerdict: messages.authVerdict,
     senderReason: routingDecisions.senderReason,
     status: routingDecisions.status,
@@ -269,10 +297,17 @@ export async function screenerSuggestionsBySender(
       // `account_id` on BOTH sides of the join, so the sender identity is resolved inside this
       // account even if a `routing_decisions` row ever named a message that is not its own.
       eq(messages.accountId, accountId),
-    ))
-    .where(and(
+    ));
+  const ranked = (forFiling ? offered.leftJoin(shown, and(
+    eq(shown.messageId, routingDecisions.messageId),
+    eq(routingDecisions.inputProvenance, SCREENER_FILING_PROVENANCE),
+  )) : offered).where(and(
       eq(routingDecisions.accountId, accountId),
-      eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
+      forFiling ? or(
+        eq(routingDecisions.inputProvenance, SCREENER_FILING_PROVENANCE),
+        and(eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
+          eq(routingDecisions.status, SCREENER_SUGGESTION_STATUS)),
+      ) : eq(routingDecisions.inputProvenance, SCREENER_SUGGESTION_PROVENANCE),
       inArray(sender, senders),
       includeFailures ? undefined : ne(routingDecisions.status, SCREENER_SUGGESTION_FAILED),
     ))

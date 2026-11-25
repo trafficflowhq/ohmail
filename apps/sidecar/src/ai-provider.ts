@@ -335,7 +335,7 @@ export interface LocalAi {
    * that is not answering. See {@link createLocalAi}'s fault gate for why withholding rather than
    * failing is the only safe shape here.
    */
-  classifierForCycle(): ClassifierPort | undefined;
+  classifierForCycle(purpose?: "screening"): ClassifierPort | undefined;
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -668,9 +668,18 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
    * the Screener falls back — a capability built, tested and unreachable. `Required<>` makes dropping
    * it a compile error, and `src` is one of the few things `tsconfig.json` actually typechecks.
    */
+  const rewriteScreener: NonNullable<ClassifierPort["rewriteScreener"]> = async (request, call) => {
+    const blocked = blockedBy(store);
+    if (blocked) throw refuse(store, blocked);
+    const selected = store;
+    const result = await (await transportFor(selected)).rewriteScreener(request, withProviderConsent(selected, call));
+    if (selected !== store) throw new ModelConsentWithdrawn();
+    return result;
+  };
+
   const requestClassifier = {
     classify: classifyThrough,
-    screen: screenThrough,
+    screen: screenThrough, rewriteScreener,
   } satisfies Required<ClassifierPort>;
   const requestDrafter: DraftPort = { draft: draftThrough };
 
@@ -684,22 +693,27 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
    * stronger than a comment — `planChange` takes a `ClassifierPort` and could call either method, so
    * there is no argument or boolean that reaches the screening question from here.
    */
-  const cycleClassifier: ClassifierPort = {
-    async classify(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult> {
+  function cycleQuestion<Input, Result>(ask: (input: Input, call?: AiCallOptions) => Promise<Result>) {
+    return async (input: Input, call?: AiCallOptions): Promise<Result> => {
       try {
-        const result = await classifyThrough(input, call);
+        const result = await ask(input, call);
         noteSuccess();
         return result;
       } catch (err) {
         if (err instanceof ModelConsentWithdrawn) throw err;
         noteFault(err);
-        // Rethrown UNWRAPPED, deliberately: a refusal at the sensitivity sink is message-scoped
-        // and must not abort the batch, and the loop's own boundary is where it belongs. A decline
-        // goes on unwrapped too, and the pipeline files that message as it would with AI off.
         if (err instanceof ModelDeclinedError) throw err;
         throw new ClassifierFaultError(err);
       }
-    },
+    };
+  }
+  const cycleClassifier: ClassifierPort = {
+    classify: cycleQuestion(classifyThrough),
+  };
+  const cycleScreening: ClassifierPort = {
+    ...cycleClassifier,
+    screen: cycleQuestion(screenThrough),
+    rewriteScreener: cycleQuestion(rewriteScreener),
   };
 
   /**
@@ -850,10 +864,10 @@ export async function createLocalAi(opts: LocalAiOptions): Promise<LocalAi> {
       return blockedBy(store) === null ? requestClassifier : undefined;
     },
 
-    classifierForCycle() {
+    classifierForCycle(purpose) {
       if (blockedBy(store) !== null) return undefined;
       if (withheld !== null && !cadenceDue(withheld.at, withheld.forMs, clocks)) return undefined;
-      return cycleClassifier;
+      return purpose === "screening" ? cycleScreening : cycleClassifier;
     },
   };
 }

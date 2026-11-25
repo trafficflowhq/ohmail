@@ -22,12 +22,14 @@ import {
   MAX_ZONE_NAME_CHARS,
   MS_PER_SECOND,
   newEventComponent,
+  normalizeRepeatPosition,
   parseRRule,
   plainDate,
   resolveWall,
   timeProperty,
   wallFromSeconds,
   wallIn,
+  wallInstants,
   wallSeconds,
   WINDOWS_ZONES,
   zoned,
@@ -131,7 +133,8 @@ export function ruleOfRecurrence(recurrence: unknown): RRule | null {
     case "absoluteYearly": {
       const [day, of] = [dayOfMonth(), month()];
       if (day === null || of === null) return null;
-      parts.push("FREQ=YEARLY", `BYMONTH=${of}`, monthDay(day));
+      const shortest = new Date(Date.UTC(2001, of, 0)).getUTCDate();
+      parts.push("FREQ=YEARLY", `BYMONTH=${of}`, day <= shortest ? `BYMONTHDAY=${day}` : monthDay(day));
       break;
     }
     case "relativeYearly": {
@@ -396,12 +399,29 @@ export function seriesOfRecord(raw: Json, zones: ZoneSource, nowMs: number): { r
   const times = timesOf(raw, zones, clock);
   if (typeof times === "string") return times;
   if (!times.known) return "unreadable";
-  const item = upsertOf(raw, id, { uid, times, rule }, nowMs);
+  const normalized = seriesRule(rule, times.start, zones);
+  const item = upsertOf(raw, id, { uid, times, rule: normalized }, nowMs);
   if (typeof item === "string") return item;
   const { start } = times;
   // A series of whole days still has a clock: Microsoft may tell a day of it by that clock's midnight.
   const zone = start.kind === "zoned" ? start.tzid : start.kind === "date" && clock !== undefined && !UTC_NAMES.has(clock) ? zoneNameOf(clock) : null;
   return { item, series: { uid, wholeDays: start.kind === "date", zone } };
+}
+
+/** A Graph end date includes the final day on the series' clock. */
+function seriesRule(value: RRule, start: EventTime, zones: ZoneSource): RRule {
+  const rule = normalizeRepeatPosition(value);
+  const last = rule.until;
+  if (last?.kind !== "date" || (start.kind !== "zoned" && start.kind !== "instant")) return rule;
+  const first = start.kind === "zoned" ? start.wall : wallFromSeconds(Math.floor(start.epochMs / MS_PER_SECOND));
+  const { year, month, day } = last;
+  const wall = { ...first, year, month, day };
+  // When the clock skips the usual start, keep the whole last day within the rule.
+  const epochMs = start.kind === "zoned"
+    ? wallInstants(wall, start.tzid, zones)[0] ??
+      wallInstants({ year, month, day, hour: 23, minute: 59, second: 59 }, start.tzid, zones).at(-1)
+    : wallSeconds(wall) * MS_PER_SECOND;
+  return epochMs === undefined ? rule : { ...rule, until: instant(epochMs) };
 }
 
 /** A moment as the series tells its days: the day for a series of whole days, else the clock time in the series' zone. */

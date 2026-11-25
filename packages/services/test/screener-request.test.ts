@@ -2,7 +2,7 @@ import type { ScreenRequestResult } from "@ohmail/wire";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { mailboxes, organizerRequests } from "@trafficflow/db";
+import { mailboxes, messages, organizerRequests, screenerMessageRef } from "@trafficflow/db";
 import { ScreenerService } from "../src/index.js";
 import { makeCtx, seedMessage } from "./helpers.js";
 
@@ -36,7 +36,8 @@ describe("ScreenerService.decide — the reader branch", () => {
     const id = await seedMessage(db, accountId, mailboxId, { from: "person@example.com" });
     const svc = new ScreenerService({});
 
-    const result = await svc.decide(ctx, id, { decision: "yes" }) as ScreenRequestResult;
+    const shownSuggestionId = randomUUID();
+    const result = await svc.decide(ctx, id, { decision: "yes", shownSuggestionId }) as ScreenRequestResult;
     expect(result.pending).toBe(true);
     expect(typeof result.requestId).toBe("string");
     expect(result.holder).toEqual({ kind: "cloud", name: "ohmail Cloud", since: null });
@@ -56,9 +57,11 @@ describe("ScreenerService.decide — the reader branch", () => {
     // `applyRetro` rides along (0.19): the reader's past-mail answer has to cross the install
     // boundary, or a decline made here becomes consent on the organizer that applies it. Absent
     // from the caller's body ⇒ the default, true, and that is what is recorded.
+    const [message] = await db.select({ dedupKey: messages.dedupKey }).from(messages).where(eq(messages.id, id));
     expect(row?.payload).toEqual({
       scope: "sender", address: "person@example.com", appliedFolder: "INBOX", decision: "yes",
       match: "person@example.com", applyRetro: true,
+      learningMessage: screenerMessageRef(message!.dedupKey), shownSuggestionId,
     });
   });
 

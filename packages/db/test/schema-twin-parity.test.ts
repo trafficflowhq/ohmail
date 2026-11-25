@@ -166,7 +166,8 @@ const SERVER_ONLY_UNIQUE_INDEXES = new Set([
   // Mail 0118's twelve, which the device carried until its own entry 0206 dropped them, and the
   // folders' key target on `(id, mailbox_id)`. `outbound_sends_id_account_uq` is on both stores:
   // a sent copy keys onto it on a device too.
-  "mailboxes_id_account_uq", "messages_id_account_uq", "threads_id_account_uq", "contacts_id_account_uq",
+  // The learning row keys into the mailbox and its account on both stores.
+  "messages_id_account_uq", "threads_id_account_uq", "contacts_id_account_uq",
   "tags_id_account_uq", "drafts_id_account_uq", "routing_decisions_id_account_uq", "rules_id_account_uq",
   "workflows_id_account_uq", "users_id_account_uq", "devices_id_account_uq", "sessions_id_account_uq",
   "mailbox_folders_id_mailbox_uq",

@@ -1,3 +1,4 @@
+import type { ScreenerRewriter } from "../../screener-learning-rewrite.js";
 import type {
   AiCallOptions, AnthropicCallReport, ClassifierInput, ClassifierResult, DraftInput, DraftResult,
 } from "../../mail.js";
@@ -47,6 +48,7 @@ export interface ProbeOutcome {
 }
 
 export interface AiTransport {
+  rewriteScreener: ScreenerRewriter;
   /** THE ROUTING QUESTION — "which folder does this belong in". Asked of live mail, per message. */
   classify(input: ClassifierInput, call?: AiCallOptions): Promise<ClassifierResult>;
   /**

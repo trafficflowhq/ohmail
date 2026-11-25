@@ -11,12 +11,19 @@ import type { HostContract } from "../host/index.js";
 import type { CalendarEventFace } from "./faces.js";
 import type { CalendarEventRecord } from "@ohmail/app-logic/calendar";
 
-export function eventOwned(record: CalendarEventRecord, own: readonly string[] | null) {
-  if (record.repeat && record.personalSeries) return true;
+function verifiedEventOrganizer(record: CalendarEventRecord, own: readonly string[] | null) {
+  if (record.ownOrganizer !== undefined) return record.ownOrganizer;
   const organizer = record.organizer?.address.trim().toLowerCase();
-  return organizer
-    ? own?.some((address) => address.trim().toLowerCase() === organizer) === true
-    : record.myAnswer === null && record.invitees.length === 0;
+  return !!organizer && own?.some((address) => address.trim().toLowerCase() === organizer) === true;
+}
+
+export function eventOwned(record: CalendarEventRecord, own: readonly string[] | null) {
+  if (record.ownOrganizer === false) return false;
+  return (
+    verifiedEventOrganizer(record, own) ||
+    (record.repeat && record.personalSeries) ||
+    (record.organizer === null && record.myAnswer === null && record.invitees.length === 0)
+  );
 }
 
 export function canProposeRecord(record: CalendarEventRecord, own: readonly string[] | null) {
@@ -45,13 +52,17 @@ function writableRecord(
   access: CalendarRecord["access"],
 ) {
   return (
+    record.ownOrganizer !== false &&
     !movePending(record) &&
     !record.heldBack &&
     !record.cut &&
     record.status !== "cancelled" &&
-    (record.invitees.length === 0 || record.organizer !== null) &&
     (eventOwned(record, own) ||
-      (record.myAnswer === null && access === "writer" && (own !== null || record.invitees.length === 0)))
+      (record.myAnswer === null &&
+        access === "writer" &&
+        (record.sharedWithoutOrganizer ||
+          ((record.invitees.length === 0 || record.organizer !== null) &&
+            (own !== null || record.invitees.length === 0)))))
   );
 }
 
@@ -73,6 +84,12 @@ export function canEditRecord(
   access: CalendarRecord["access"],
   series?: CalendarEventRecord | null,
 ) {
+  if (
+    access === "writer" &&
+    !verifiedEventOrganizer(record, own) &&
+    (record.repeat || record.recurrenceId !== "")
+  )
+    return false;
   if (record.recurrenceId === "")
     return writableRecord(record, own, access) && editableSeries(record, connection);
   return (
@@ -103,7 +120,14 @@ export function writableEvent(
     calendar.connectionId,
   );
   if (viewOnlyOf(calendar, connection)) return null;
-  return { record, calendar, connection };
+  const verifiedOrganizer = verifiedEventOrganizer(record, own);
+  return {
+    record,
+    calendar,
+    connection,
+    verifiedOrganizer,
+    sharedCopy: calendar.access === "writer" && !verifiedOrganizer,
+  };
 }
 
 export function removableEvent(
@@ -224,7 +248,13 @@ export function eventMoveOptions(host: HostContract, source: ReturnType<typeof w
   if (!source) return { destinations: [], moveRestriction: null };
   const { record } = source;
   const guests = hasGuests(record);
-  const owned = ownedDestinations(host, source);
+  if (source.sharedCopy && (record.organizer || guests)) return { destinations: [], moveRestriction: null };
+  const owned = ownedDestinations(host, source).filter(
+    (target) =>
+      source.connection?.provider !== "google" ||
+      target.connectionId !== source.connection.id ||
+      source.verifiedOrganizer,
+  );
   const nonNative = (target: CalendarRecord) => !nativeMoveTo(source, target);
   const canCopy =
     record.portableCopy === true &&

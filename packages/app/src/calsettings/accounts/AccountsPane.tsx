@@ -2,7 +2,7 @@
  * SETTINGS › CALENDAR ACCOUNTS: one compact sheet an account, opened in place, read from the mirror on every version.
  * A control stands only where the setup's port has its door: no port, no Add, no Sign in again, no switch.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CalendarSquare } from "@ohmail/ui/calendar";
 import { Empty } from "@ohmail/ui/base";
 import {
@@ -21,6 +21,7 @@ import {
   type CalendarSetupPort,
 } from "@ohmail/app-logic/calendar/setup";
 import { useCalendarCheck } from "../../calendar/check.js";
+import { calendarCheckDeadline } from "../../calendar/connection-notice.js";
 import { useFrame, useReport } from "../../frame/commands.js";
 import { NONE } from "../../host/index.js";
 import type { PaneBodyProps } from "../../settings/contract.js";
@@ -47,7 +48,7 @@ export const NO_DOORS: CalendarSetupPort = {
 export function AccountsPane({ sheet }: PaneBodyProps) {
   const t = useText("calsettings");
   const check = useCalendarCheck();
-  const { commands, host } = useFrame();
+  const { commands, host, route } = useFrame();
   const report = useReport();
   const when = useWhen();
   const mirror = useCalendarMirror();
@@ -56,6 +57,11 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
   const settings = useCalendarSettings(mirror?.port ?? null, doors);
   const useCalendar = useCalendarSwitch(settings);
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  const account = route.words.account;
+  const named = mirror?.connections.find((c) => c.id === account)?.id;
+  useEffect(() => {
+    if (named) setOpened((was) => (was.has(named) ? was : new Set(was).add(named)));
+  }, [named]);
   if (mirror === null) {
     const unavailable = (
       <SettingsSheet>
@@ -110,6 +116,7 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
       if (!next.delete(id)) next.add(id);
       return next;
     });
+  const now = Date.now();
   const content = (
     <>
       {useCalendar}
@@ -118,7 +125,9 @@ export function AccountsPane({ sheet }: PaneBodyProps) {
           key={a.connection.id}
           name={a.connection.label}
           address={a.connection.serverHost ?? a.connection.label}
-          state={t(`accounts.state.${a.state}`)}
+          state={t(
+            `accounts.state.${a.state === "inStep" && calendarCheckDeadline(a.connection) <= now ? "overdue" : a.state}`,
+          )}
           facts={accountFacts(a, wayWord(a), when, t)}
           marks={accountMarks(a, mirror.tones)}
           offer={offerOf(a)}

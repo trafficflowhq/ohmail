@@ -1121,6 +1121,7 @@ packages/api/test/staleness-coverage.test.ts	source-text	reads source as text (t
 packages/api/test/step-up-doors-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/app-logic/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
+packages/app/test/calendar/day-agenda-in-a-browser.test.ts	artifact	builds the calendar frame and checks the Agenda at changing window widths in Chromium	none	cal-views	
 packages/app/test/calendar/follows.test.tsx	source-text	through test/support/browser-page.ts: the product sheets laid out in Chromium	layer 2	cal-views	
 packages/app/test/catalogue-aggregate.test.ts	data	reads data files (json): the place catalogues and the two assembled ones	none	frame	
 packages/app/test/compare/write-declared.test.ts	data	reads data files (json): the comparison's registry and write's declared rows	none	write	

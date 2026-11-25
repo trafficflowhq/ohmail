@@ -34,6 +34,8 @@ function patternLine(rule: Rule, start: CivilDate, t: Text, locale: string): str
   ) {
     return t("actions.repeat.weekdays");
   }
+  if (rule.freq === "DAILY" && rule.interval === 1 && rule.count === null && rule.until === null)
+    return t("repeat.everyDay");
   if (rule.freq === "DAILY") return t("actions.repeat.daily", { count: rule.interval });
   if (rule.freq === "WEEKLY") {
     const days = names.length ? names : [weekday.format(dateOf(start))];
@@ -64,16 +66,23 @@ function patternLine(rule: Rule, start: CivilDate, t: Text, locale: string): str
       }).format(stamp);
     return ordinal && names[0]
       ? t("actions.repeat.yearlyWeekday", {
+          count: rule.interval,
           ordinal: ordinalName(ordinal, t),
           weekday: names[0],
           month: format("month"),
         })
-      : t("actions.repeat.yearlyDate", { date: format("date") });
+      : t("actions.repeat.yearlyDate", { count: rule.interval, date: format("date") });
   }
   return null;
 }
 
-export function repeatLine(value: string | undefined, start: string, t: Text, locale: string): string {
+export function repeatLine(
+  value: string | undefined,
+  start: string,
+  t: Text,
+  locale: string,
+  zone = "UTC",
+): string {
   const rule = value && parseRRule(value);
   const description =
     rule &&
@@ -93,7 +102,10 @@ export function repeatLine(value: string | undefined, start: string, t: Text, lo
   if (!until) return description;
   const stamp =
     until.kind === "instant" ? new Date(until.epochMs) : dateOf(until.kind === "date" ? until : until.wall);
-  const date = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }).format(stamp);
+  const date = new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeZone: until.kind === "instant" ? zone : "UTC",
+  }).format(stamp);
   return t("actions.repeat.until", { frequency: description, date });
 }
 
@@ -171,12 +183,14 @@ export function CalendarRecordScope({
   anchor,
   question,
   occurrence,
+  record = true,
   onChoose,
   onClose,
 }: {
   anchor: HTMLElement;
   question: string;
   occurrence: boolean;
+  record?: boolean;
   onChoose: (scope: "record" | "occurrence") => void;
   onClose: () => void;
 }) {
@@ -192,7 +206,7 @@ export function CalendarRecordScope({
         ...(occurrence
           ? [{ id: "occurrence", label: t("edit.thisEvent"), onPress: () => onChoose("occurrence") }]
           : []),
-        { id: "record", label: t("edit.allEvents"), onPress: () => onChoose("record") },
+        ...(record ? [{ id: "record", label: t("edit.allEvents"), onPress: () => onChoose("record") }] : []),
       ]}
     />
   );

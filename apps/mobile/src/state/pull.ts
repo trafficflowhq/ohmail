@@ -14,16 +14,17 @@ import { useConnection } from "../net/connection";
 import { networkNow } from "../net/network-door";
 import { lateWho } from "../ui/late-lines";
 import { pullRound, spinUntil } from "./pull-round";
-import { useWorldToast } from "./world";
+import { sayRefusal } from "../refusal";
 
 export interface PullToSync {
   refreshing: boolean;
   onRefresh: () => void;
+  result?: string;
 }
 
 export function usePullToSync(): PullToSync {
   const conn = useConnection();
-  const toast = useWorldToast();
+  const [result, setResult] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
   /** No state write after unmount — the round can outlive the screen that pulled. */
   const alive = useRef(true);
@@ -33,18 +34,24 @@ export function usePullToSync(): PullToSync {
     },
     [],
   );
+  useEffect(() => {
+    if (!result) return;
+    const timer = setTimeout(() => setResult(undefined), 5_000);
+    return () => clearTimeout(timer);
+  }, [result]);
   const inFlight = useRef(false);
   const onRefresh = useCallback(() => {
     if (inFlight.current) return;
     inFlight.current = true;
+    setResult(undefined);
     setRefreshing(true);
     // With no network the pull says so and asks nothing (`pull-round.ts`); the spinner ends at once.
     // A server that is not fetching is said the moment the ring answers; the spinner is the drain's.
     const who = lateWho(conn.state.k === "live" ? conn.state.session : null);
-    void spinUntil(pullRound(networkNow(), (heard) => conn.syncNow(heard), toast.say, who)).finally(() => {
+    void spinUntil(pullRound(networkNow(), (heard) => conn.syncNow(heard), (answer) => { if (alive.current) setResult(sayRefusal(answer)); }, who)).finally(() => {
       inFlight.current = false;
       if (alive.current) setRefreshing(false);
     });
-  }, [conn, toast]);
-  return { refreshing, onRefresh };
+  }, [conn]);
+  return { refreshing, onRefresh, result };
 }

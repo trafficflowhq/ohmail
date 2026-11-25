@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { mailboxes, organizerRequests, ruleCreatePayload, rules } from "@trafficflow/db";
+import { accounts, changeScreenerLearning, folderState, mailboxes, messages, organizerRequests, readScreenerLearning, ruleCreatePayload, rules, screenerMessageRef, storeScreenerSuggestion } from "@trafficflow/db";
 import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
 } from "@trafficflow/core/adapters/organizer-lease";
@@ -57,7 +57,7 @@ async function world() {
     .from(organizerRequests).where(eq(organizerRequests.accountId, ACCT))).map((r) => `${r.kind}:${r.state}${r.why ? `(${r.why})` : ""}`).sort();
   const laptopRules = async () => (await laptop.select({ match: rules.match }).from(rules).where(eq(rules.accountId, ACCT))).map((r) => r.match);
   const round = async (t: number) => { await readerCycle(t); await laptopCycle(t + 1); await readerCycle(t + 2); };
-  return { queueByHand, states, laptopRules, round };
+  return { queueByHand, states, laptopRules, round, laptop, mailboxId: held };
 }
 
 const create = (match: string) => ruleCreatePayload({
@@ -90,4 +90,33 @@ describe("a request about the account's own address, from a build that did not r
     expect(await w.states()).toEqual(["rule.create:applied"]);
     expect(await w.laptopRules()).toEqual(["bob@shop.example"]);
   });
+});
+
+it("learns a correction when the organizer applies a reader's verified offer", async () => {
+  const w = await world();
+  const scope = { accountId: ACCT, mailboxId: w.mailboxId };
+  await w.laptop.insert(accounts).values({ id: ACCT });
+  const fromAddress = "reader-choice@fixture.test";
+  const dedupKey = "reader-choice";
+  const [message] = await w.laptop.insert(messages).values({
+    ...scope, fromAddress, dedupKey, bodyHash: "held", subject: "A note",
+  }).returning();
+  await w.laptop.insert(folderState).values({
+    accountId: ACCT, messageId: message!.id, desiredFolder: "ohmail/Screener",
+    observedFolder: "ohmail/Screener", lastSetBy: "us", reconcileStatus: "reconciled",
+  });
+  await changeScreenerLearning(w.laptop, scope, { kind: "notice" }, at(0));
+  const shownSuggestionId = await storeScreenerSuggestion(w.laptop, {
+    accountId: ACCT, messageId: message!.id, destination: "ohmail/News",
+    confidence: 0.8, rationale: "", spam: false, senderReason: "none", topic: "other",
+  });
+  await w.queueByHand("screener.decide", {
+    scope: "sender", address: fromAddress, appliedFolder: "INBOX", decision: "yes",
+    match: fromAddress, applyRetro: false, learningMessage: screenerMessageRef(dedupKey), shownSuggestionId,
+  }, at(1));
+  await w.round(2);
+  const learned = await readScreenerLearning(w.laptop, scope, at(4));
+  expect(learned?.lessons).toEqual([expect.objectContaining({
+    kind: "correction", topic: "other", suggested: "ohmail/News", chosen: "INBOX",
+  })]);
 });

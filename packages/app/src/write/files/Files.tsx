@@ -4,16 +4,8 @@
  * one line over the foot for what the last pick could not do. A drop on the letter is a pick.
  */
 import type { ComposeAttachment } from "@ohmail/wire";
-import {
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MouseEventHandler,
-  type ReactNode,
-} from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { MailRowMenu, type MenuTarget } from "../../place-list/MailRowMenu.js";
 import { Attach, AttachRoom, Files, FileTile, SendStatus, type ComposerProps } from "@ohmail/ui/mail";
 import { base64Bytes, useLetterFiles, type LetterCap, type LetterFiles } from "@ohmail/app-logic/write/files";
 import { fileLookOf } from "@ohmail/app-logic/reader";
@@ -98,8 +90,8 @@ export function useFiles({
                         onPress: () => model.remove(at),
                       }
                 }
-                open={(event) => {
-                  const previous = event.currentTarget.ownerDocument.activeElement;
+                open={(anchor) => {
+                  const previous = anchor.ownerDocument.activeElement;
                   restore.current =
                     previous instanceof HTMLInputElement && focusEditor
                       ? focusEditor
@@ -189,32 +181,55 @@ function DraftTile({
   file: ComposeAttachment;
   size: string;
   off?: { label: string; onPress: () => void };
-  open: MouseEventHandler<HTMLButtonElement>;
+  open: (anchor: HTMLElement) => void;
 }) {
   const t = useText("attachments");
+  const [menu, setMenu] = useState<MenuTarget | null>(null);
+  const preview = t("preview", { name: file.filename });
   const image = fileLookOf(file.contentType) === "image";
   const blob = useMemo(() => (image ? attachmentBlob(file) : undefined), [file, image]);
   const src = useFileImage(blob, image);
   return (
-    <FileTile
-      kind={kindOf(file.filename, file.contentType)}
-      name={file.filename}
-      size={size}
-      look={src ? <img src={src} alt="" /> : undefined}
-      main={{
-        label: t("preview", { name: file.filename }),
-        onPress: open,
-        onMouseDown: (event) => {
-          const current = event.currentTarget.ownerDocument.activeElement;
-          if (
-            current instanceof HTMLElement &&
-            (current.isContentEditable || current.matches("input, textarea"))
-          )
-            event.preventDefault();
-        },
-      }}
-      off={off}
-    />
+    <>
+      <FileTile
+        kind={kindOf(file.filename, file.contentType)}
+        name={file.filename}
+        size={size}
+        look={src ? <img src={src} alt="" /> : undefined}
+        main={{
+          label: preview,
+          onPress: (event) => open(event.currentTarget),
+          onMouseDown: (event) => {
+            const current = event.currentTarget.ownerDocument.activeElement;
+            if (
+              current instanceof HTMLElement &&
+              (current.isContentEditable || current.matches("input, textarea"))
+            )
+              event.preventDefault();
+          },
+        }}
+        off={off}
+        onMenu={(at, anchor) => setMenu({ at, anchor })}
+      />
+      {menu ? (
+        <MailRowMenu
+          target={menu}
+          label={file.filename}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: preview,
+              icon: "clip",
+              onPress: () => {
+                menu.anchor.focus({ preventScroll: true });
+                open(menu.anchor);
+              },
+            },
+            ...(off ? [{ ...off, icon: "x" as const }] : []),
+          ]}
+        />
+      ) : null}
+    </>
   );
 }
 

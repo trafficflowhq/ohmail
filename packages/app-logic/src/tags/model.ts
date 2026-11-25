@@ -33,6 +33,16 @@ export interface TagGroup {
 export type RenameAnswer =
   { kind: "save"; name: string } | { kind: "same" } | { kind: "empty" } | { kind: "taken"; name: string };
 
+export function judgeTagName(tags: readonly TagDTO[], tagId: string, draft: string): RenameAnswer {
+  const name = draft.trim();
+  if (!name) return { kind: "empty" };
+  if (tags.find((tag) => tag.id === tagId)?.name === name) return { kind: "same" };
+  const other = tags.find(
+    (tag) => tag.id !== tagId && tag.name.toLocaleLowerCase() === name.toLocaleLowerCase(),
+  );
+  return other ? { kind: "taken", name: other.name } : { kind: "save", name };
+}
+
 export interface TagsModel {
   readonly list: PlaceList;
   /** The tag shown, or null for every tag (or a tag that is gone). */
@@ -104,14 +114,7 @@ export function useTagsList(input: TagsInput): TagsModel {
     m.labels.map((id) => tagsById.get(id)).filter((x): x is TagDTO => x !== undefined),
   );
   const countOf = useStableCallback((id: string) => carrying.get(id)?.length ?? 0);
-  const judge = useStableCallback((id: string, draft: string): RenameAnswer => {
-    const name = draft.trim();
-    const own = tagsById.get(id);
-    if (name.length === 0) return { kind: "empty" };
-    if (own !== undefined && name === own.name) return { kind: "same" };
-    const other = tags.find((x) => x.id !== id && x.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-    return other !== undefined ? { kind: "taken", name: other.name } : { kind: "save", name };
-  });
+  const judge = useStableCallback((id: string, draft: string) => judgeTagName(tags, id, draft));
   const facts = { settled, count: tagId === null ? tags.length : rows.length, pending: owed };
   const surface = listSurface(facts);
   return {

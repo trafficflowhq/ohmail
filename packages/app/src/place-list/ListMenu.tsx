@@ -28,7 +28,7 @@ export interface ListMenuItem {
 const NO_RAIL = { read: (): RailModel | null => null, subscribe: (_told: () => void) => () => {} };
 
 /** The frame's one pull, as the host's rail model holds it; null outside a frame or where the host has none. */
-function useFramePull(): RailModel["pull"] {
+export function useFramePull(): RailModel["pull"] {
   const rail = useContext(FrameContext)?.rail ?? NO_RAIL;
   return useSyncExternalStore(rail.subscribe, rail.read, rail.read)?.pull ?? null;
 }
@@ -49,12 +49,23 @@ export function ListMenu({
   anchorRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const railPull = useFramePull();
+  const frame = useContext(FrameContext)?.api;
   const groundPull = usePull();
   const t = useText("ohbox");
+  const ts = useText("sync");
+  const mailbox = groundPull?.result?.mailboxId;
   const pull =
     railPull ??
     (mail && groundPull
-      ? { label: t("list.pull"), keyHint: "p", busy: groundPull.pulling, onPress: groundPull.pull }
+      ? {
+          label: groundPull.result ? ts(groundPull.result.key) : t("list.pull"),
+          keyHint: "p",
+          busy: groundPull.pulling,
+          onPress:
+            mailbox && frame
+              ? () => frame.commands.go({ place: "settings", sub: "mailboxes", words: { mailbox } })
+              : groundPull.pull,
+        }
       : null);
   const [open, setOpen] = useState(false);
   const checked = useLastMailCheckLabel(open && pull !== null);

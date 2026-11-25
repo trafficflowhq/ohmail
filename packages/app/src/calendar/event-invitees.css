@@ -1,0 +1,137 @@
+.cal-guest-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s2);
+  width: 100%;
+  min-height: var(--av-xs);
+  padding: var(--s1);
+  border-radius: var(--r-sq);
+  text-align: start;
+}
+
+.cal-guest-toggle:hover {
+  background: var(--soft-sheet);
+}
+
+.cal-guest-chevron {
+  color: var(--ink2);
+}
+
+.cal-guest-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.cal-guest-faces {
+  display: inline-flex;
+  gap: var(--s1);
+  flex: none;
+}
+
+.cal-guest-face {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.cal-guest-mark {
+  position: absolute;
+  inset: auto -2px -2px auto;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--sheet);
+  border-radius: var(--r-pill);
+  background: var(--oh-cal-mark);
+  color: var(--sheet);
+}
+
+.cal-guest-mark-icon {
+  width: 8px;
+  height: 8px;
+}
+
+.cal-guest-mark[data-answer="tentative"]::before {
+  content: "";
+  width: 5px;
+  border-block-start: 1px solid currentColor;
+}
+
+.cal-guest-mark[data-answer="none"] {
+  background: var(--sheet);
+  border-color: var(--ink2);
+}
+
+.cal-guest-dialog {
+  --oh-overlay-max: 400px;
+  display: flex;
+  flex-direction: column;
+  max-height: min(34rem, calc(100% - 2 * var(--oh-scrim-edge)));
+  padding: var(--s4) var(--s5);
+}
+
+.cal-guest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+
+.cal-guest-scroll {
+  --flush: 0px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.cal-guest-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cal-guest-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: 44px;
+  padding-block: var(--s2);
+  border-block-end: 1px solid var(--line);
+}
+
+.cal-guest-person {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cal-guest-meta {
+  display: block;
+}
+
+.cal-guest-meta,
+.cal-guest-answer {
+  color: var(--ink2);
+  font-size: var(--t-meta);
+}
+
+.cal-guest-answer {
+  margin-inline-start: auto;
+  text-align: end;
+}
+
+:root[data-touch="1"] .cal-guest-toggle {
+  min-height: var(--h-s);
+}
+
+:root[data-device="phone"] .cal-guest-dialog {
+  align-self: end;
+  width: 100%;
+  max-height: min(34rem, 88%);
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}

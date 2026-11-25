@@ -127,6 +127,12 @@ export const STORED_KEYS = [
     words: false, erased: "sign-out", mark: "kept",
   },
   {
+    key: "ohmail.ui.calendar.dayAgendaClosed", store: "localStorage", owner: "web",
+    at: ["packages/app-logic/src/storage/persisted-ui.ts"],
+    holds: "whether this device keeps the wide Day Agenda closed",
+    words: false, erased: "never", mark: "kept",
+  },
+  {
     key: "ohmail.ui.columns", store: "localStorage", owner: "web",
     at: ["packages/app-logic/src/storage/persisted-ui.ts"],
     holds: "the two column widths of this machine",

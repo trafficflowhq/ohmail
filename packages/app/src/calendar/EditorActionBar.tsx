@@ -11,6 +11,7 @@ export function EditorActionBar({
   close,
   duplicate,
   blocked,
+  ordinaryOnly,
   timeZone,
   draft,
   change,
@@ -19,6 +20,7 @@ export function EditorActionBar({
   close: () => void;
   duplicate: () => void;
   blocked: boolean;
+  ordinaryOnly?: boolean;
   timeZone?: string;
   draft: EventDraft;
   change: (edit: Partial<EventDraft>) => void;
@@ -82,16 +84,20 @@ export function EditorActionBar({
           {timeZone && (
             <MenuItem onPress={() => show({ anchor: more, kind: "zone" })}>{t("create.timeZone")}</MenuItem>
           )}
-          <MenuItem onPress={() => show({ anchor: more, kind: "busy" })}>{t("create.showAs")}</MenuItem>
-          <MenuItem
-            checked={draft.private}
-            onPress={() => {
-              change({ private: !draft.private });
-              hide();
-            }}
-          >
-            {t("create.private")}
-          </MenuItem>
+          {!ordinaryOnly && (
+            <>
+              <MenuItem onPress={() => show({ anchor: more, kind: "busy" })}>{t("create.showAs")}</MenuItem>
+              <MenuItem
+                checked={draft.private}
+                onPress={() => {
+                  change({ private: !draft.private });
+                  hide();
+                }}
+              >
+                {t("create.private")}
+              </MenuItem>
+            </>
+          )}
         </Menu>
       )}
     </>

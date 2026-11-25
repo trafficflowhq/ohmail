@@ -5,7 +5,13 @@
  * not look is not nothing there.
  */
 import { useEffect, useState } from "react";
-import type { MailState, StoreRefusals } from "@ohmail/app-logic/mail-state/mail-state";
+import {
+  mailboxErrorNeedsAction,
+  noticeDelayPassed,
+  NOTICE_DELAY_MS,
+  type MailState,
+  type StoreRefusals,
+} from "@ohmail/app-logic/mail-state/mail-state";
 import { MIRROR_STORE_REFUSED_DETAIL, mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
 import type { HostConnectionState, HostSession } from "../host/index.js";
 import type { ConnectionReason } from "./commands.js";
@@ -140,36 +146,39 @@ function refusalsFigure(r: StoreRefusals, locale: Locale, tm: Text): string {
   return r.exact ? figure : tm("storeRefusalsFloor", { count: figure });
 }
 
-function mailboxNotice(
+function mailboxDetails(
   kind: "mailServerDown" | "mailboxPassword" | "mailboxSync",
   mail: MailState,
   t: Text,
   tm: Text,
   locale: Locale,
 ): FrameNotice {
-  const title =
-    mail.key === "mailboxError"
-      ? mail.address
-        ? t("connection.mailboxFailed.named", { address: mail.address })
-        : t("connection.mailboxFailed.title")
-      : mail.address
-        ? t(`connection.${kind}.named`, { address: mail.address })
-        : t(`connection.${kind}.title`);
-  const sentence =
-    mail.key === "mailboxError"
-      ? mailboxErrorKey(
-          mail.errorCode,
-          mail.errorDetail,
-          mail.storeRefusals,
-          (r) => refusalsFigure(r, locale, tm),
-          mail.errorLocalServer,
-        )
-      : null;
+  const notice = mailboxNotice(kind, mail, t);
+  if (mail.key !== "mailboxError") return notice;
+  const sentence = mailboxErrorKey(
+    mail.errorCode,
+    mail.errorDetail,
+    mail.storeRefusals,
+    (r) => refusalsFigure(r, locale, tm),
+    mail.errorLocalServer,
+  );
+  const title = mail.address
+    ? t("connection.mailboxFailed.named", { address: mail.address })
+    : t("connection.mailboxFailed.title");
+  return { ...notice, title, line: tm(sentence.key, sentence.values) || undefined };
+}
+
+function mailboxNotice(
+  kind: "mailServerDown" | "mailboxPassword" | "mailboxSync",
+  mail: MailState,
+  t: Text,
+): FrameNotice {
+  const key = mail.address ? "named" : "title";
   return {
     kind,
-    title,
+    id: mail.mailboxId,
+    title: t(`connection.${kind}.${key}`, mail.address ? { address: mail.address } : undefined),
     hot: true,
-    line: sentence ? tm(sentence.key, sentence.values) || undefined : undefined,
   };
 }
 
@@ -192,9 +201,7 @@ function noticeOf(
   kind: ConnectionKind,
   input: ConnectionInput,
   t: Text,
-  tm: Text,
   recovers: boolean,
-  locale: Locale,
   timeZone: string,
 ): FrameNotice {
   const mail = input.mail;
@@ -213,15 +220,19 @@ function noticeOf(
     case "noMailbox":
       return { kind, title: t("connection.noMailbox.title"), hot: true };
     case "hostQuiet":
-      return { kind, title: input.host?.words.title ?? "", line: input.host?.words.detail };
+      return { kind, title: input.host?.words.title ?? "" };
     case "mailServerDown":
     case "mailboxPassword":
     case "mailboxSync":
-      return mailboxNotice(kind, mail!, t, tm, locale);
+      return mailboxNotice(kind, mail!, t);
     case "reconnecting":
       return { kind, title: t("connection.reconnecting.title") };
     case "late":
-      return { kind, title: t("connection.late.title") };
+      return {
+        kind,
+        id: mail?.mailboxId,
+        title: t("connection.late.since", { time: new Date(mail!.asOf!) }),
+      };
     case "behind":
       return {
         kind,
@@ -278,6 +289,7 @@ function actsOf(
         : [{ label: t("connection.act.reload"), onPress: () => recover("reload") }];
     case "noMailbox":
       return [{ label: t("connection.act.connect"), onPress: acts.connect ?? acts.mailboxes }];
+    case "late":
     case "mailServerDown":
     case "mailboxPassword":
     case "mailboxSync":
@@ -308,31 +320,74 @@ const REASONED: ReadonlySet<ConnectionKind> = new Set([
   "filingWaits",
 ]);
 
+const ACTIONABLE_BLOCKS = new Set([
+  "awaiting_credentials",
+  "clock_off",
+  "meta_folder_full",
+  "meta_undeletable",
+  "mailbox_full",
+]);
+
+function needsNotice(kind: ConnectionKind | null, input: ConnectionInput): boolean {
+  const { mail } = input;
+  if (kind === "late") return noticeDelayPassed(mail?.asOf, Date.now());
+  if (kind === "hostQuiet")
+    return input.host?.words.link != null && noticeDelayPassed(input.copyAsOf, Date.now());
+  if (kind === "mailServerDown" || kind === "mailboxPassword" || kind === "mailboxSync") {
+    if (mail?.key === "mailboxError") {
+      return mailboxErrorNeedsAction(mail) || (mail.minutes ?? 0) >= NOTICE_DELAY_MS / 60_000;
+    }
+    return ACTIONABLE_BLOCKS.has(mail?.reason ?? "") || (mail?.minutes ?? 0) >= NOTICE_DELAY_MS / 60_000;
+  }
+  return kind === "signedOut" || kind === "ownerLost" || kind === "noMailbox";
+}
+
 /** The connection state, as the one notice the slot draws, or null where nothing is said. */
 export function useConnectionNotice(
   input: ConnectionInput,
   acts: ConnectionActs,
   reason: ConnectionReason | null = null,
+  placement: "frame" | "mailboxes" = "frame",
 ): FrameNotice | null {
   const t = useText("frame");
   const tm = useText("mailboxes");
   const locale = useLocale();
   const timeZone = useTimeZone();
-  const kind = connectionOf(input);
+  const details = placement === "mailboxes";
+  const current = connectionOf(input);
+  const kind = details ? (current === "late" ? null : current) : needsNotice(current, input) ? current : null;
   const said = kind !== null && REASONED.has(kind) && input.mail?.key !== "mailboxError" ? reason : null;
+  const mailboxError = kind === "mailServerDown" || kind === "mailboxPassword" || kind === "mailboxSync";
   const framed =
-    kind === null ? null : noticeOf(kind, input, t, tm, acts.recover !== "none", locale, timeZone);
-  const notice =
-    framed && said
-      ? { ...framed, title: said.title ?? framed.title, line: said.line ?? framed.line }
-      : framed;
+    kind === null
+      ? null
+      : details && mailboxError && input.mail
+        ? mailboxDetails(kind, input.mail, t, tm, locale)
+        : noticeOf(kind, input, t, acts.recover !== "none", timeZone);
   const progress = kind === "firstSync" && input.mail?.total ? input.mail.count / input.mail.total : null;
   const countLine = useGatedWords(kind === "firstSync" ? (framed?.line ?? null) : null, progress);
-  if (kind === null || notice === null) return null;
-  const gated =
-    kind === "firstSync" && countLine !== null
-      ? { ...notice, line: said?.line ? `${countLine} · ${said.line}` : countLine }
-      : notice;
-  const answers = actsOf(kind, input, t, acts, said?.href ?? null);
-  return answers ? { ...gated, acts: answers, more: undefined } : gated;
+  if (kind === null || framed === null) return null;
+
+  let notice = framed;
+  if (said && details) {
+    notice = {
+      ...framed,
+      title: said.title ?? framed.title,
+      line:
+        countLine !== null && said.line
+          ? `${countLine} · ${said.line}`
+          : (countLine ?? said.line ?? framed.line),
+    };
+  } else if (countLine !== null) {
+    notice = { ...framed, line: countLine };
+  } else if (kind === "late" && said?.title) {
+    notice = { ...framed, title: said.title };
+  } else if (said?.line && input.mail?.reason === "mailbox_full") {
+    const where = input.mail.address ? `${input.mail.address}: ` : "";
+    notice = { ...framed, title: where + said.line.replace(/[.]$/u, "") };
+  }
+
+  const href = !details && input.mail?.mailboxId ? null : (said?.href ?? null);
+  const answers = actsOf(kind, input, t, acts, href);
+  return answers ? { ...notice, acts: answers, more: undefined } : notice;
 }

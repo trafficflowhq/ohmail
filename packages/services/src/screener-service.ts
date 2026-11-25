@@ -1,3 +1,5 @@
+import { SCREENER_WEBINAR_REASON } from "@trafficflow/core/mail";
+import type { ScreenerTopic } from "@ohmail/wire";
 import { and, desc, eq, inArray, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ScreenerQuoteGrant } from "@ohmail/wire";
@@ -10,7 +12,7 @@ import {
   claimIdempotencyKey, settleIdempotencyKey, releasePendingIdempotencyKey,
   IDEMPOTENCY_PENDING_STATUS, IDEMPOTENCY_PENDING_BODY,
   screenerAttemptKey,
-  storeScreenerSuggestion,
+  storeScreenerSuggestion, screenerMessageRef, readScreenerLearning, screenerLearningContext, learningSnapshotIsCurrent, screenerTopic, type ScreenerLearningState,
   screenerSuggestionsBySender,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_FAILED, screenerSuggestionExhausted, recordScreenerSuggestionRetry,
   UNPRICED,
@@ -36,11 +38,11 @@ import type {
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import { usageLines } from "./ai-usage-lines.js";
 import type {
-  AdapterPort, ClassifierPort, Destination, NativeLocator, OhboxPolicy,
+  AdapterPort, ClassifierInput, ClassifierPort, ScreeningAsk, Destination, NativeLocator, OhboxPolicy,
   KeyProvider, SenderSignals,
 } from "@trafficflow/core/mail";
 import {
-  applyReconcileAction, askScreeningQuestion, canonicalDestination, capSuggestion, createLogger,
+  applyReconcileAction, askScreeningQuestion, prepareScreeningQuestion, sendScreeningQuestion, screenerLearnedReason, canonicalDestination, capSuggestion, createLogger,
   DESTINATIONS, effectForDestination, isDecidedDestination, ModelDeclinedError,
   resolveOhboxPolicy, senderCheckAll, senderDomainOf, senderFacts, BRANDS, SCREENING_AUTH_VERDICTS,
   asAuthVerdict, ownedSenderName,
@@ -507,6 +509,8 @@ export interface ScreenerSuggestBody {
 export interface ScreenerSuggestion {
   sender: string;
   messageId: string;
+  id?: string;
+  learnedReason?: "webinar";
   /**
    * `hold` is the model declining to place this sender — see `screener-advice.ts`'s
    * `SCREEN_DISPOSITION`. It is
@@ -1003,12 +1007,14 @@ export class ScreenerReadService {
    */
   private screenerRequestPayload(v: {
     scope: "sender" | "domain"; address: string; domain: string; decision: "yes" | "no";
-    appliedFolder: Destination; applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
+    appliedFolder: Destination; applyRetro: boolean; target: AppliedScreenerRow; confirmedIds?: string[]; unsubscribeIds?: string[]; shownSuggestionId?: string;
   }) {
     const { scope, address, domain, decision, appliedFolder, applyRetro, confirmedIds } = v;
     return {
       scope: confirmedIds ? (scope === "sender" ? "confirmed_sender" : "confirmed_domain") : scope,
       address, appliedFolder, decision, match: scope === "sender" ? address : domain, applyRetro,
+      learningMessage: screenerMessageRef(v.target.dedupKey),
+      ...(v.shownSuggestionId ? { shownSuggestionId: v.shownSuggestionId } : {}),
       ...(confirmedIds ? { confirmedIds } : {}),
     };
   }
@@ -1016,7 +1022,7 @@ export class ScreenerReadService {
   private async validateScreenerDecision(ctx: ServiceContext, id: string, b: ScreenBody): Promise<{
     scope: "sender" | "domain"; decision: "yes" | "no"; dest: Destination | undefined;
     target: AppliedScreenerRow; address: string; domain: string; appliedFolder: Destination;
-    applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
+    applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[]; shownSuggestionId?: string;
   }> {
     // ── THE ROUTE HANDS THIS BODY OVER UNVALIDATED ──────────────────────────────────────────
     //
@@ -1122,7 +1128,10 @@ export class ScreenerReadService {
       throw new ServiceError("shared_provider_domain", 422, SHARED_PROVIDER_REFUSAL_SENTENCE);
     }
 
-    return { ...parsed, decision, dest, target, address, domain, appliedFolder, applyRetro };
+    const shownSuggestionId = typeof b.shownSuggestionId === "string" && UUID_RE.test(b.shownSuggestionId)
+      ? b.shownSuggestionId : null;
+    return { ...parsed, decision, dest, target, address, domain, appliedFolder, applyRetro,
+      ...(shownSuggestionId ? { shownSuggestionId } : {}) };
   }
 
   /**
@@ -1201,7 +1210,7 @@ export class ScreenerReadService {
     ctx: ServiceContext, id: string,
     v: {
       scope: "sender" | "domain"; decision: "yes" | "no"; address: string; domain: string;
-      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[];
+      appliedFolder: Destination; target: AppliedScreenerRow; applyRetro: boolean; confirmedIds?: string[]; unsubscribeIds?: string[]; shownSuggestionId?: string;
     },
     fanOut: AccountFanOut,
     opts: { idempotency?: ScreenIdempotency | null },
@@ -1232,6 +1241,8 @@ export class ScreenerReadService {
         applied = await applyScreenerDecision(carryDialect(ctx.db, tx) as typeof tx, {
           accountId: ctx.accountId, scope, address, appliedFolder, decision,
           triggeringActionId: `screener:${id}`, now: ctx.now(), applyRetro,
+          learning: { messageId: id, ...(v.shownSuggestionId ? { shownSuggestionId: v.shownSuggestionId } : {}),
+            ...(ctx.pressFloor === undefined || ctx.pressFloor === null ? {} : { pressedAt: ctx.pressFloor }) },
           ...(confirmedIds ? { within: confirmedScreenerRows(confirmedIds) } : {}),
           // A press: the decision is the person's, so a `no` licenses the unsubscribe pass, and it
           // converges the sender's existing rule rather than adding one beside it.
@@ -1869,7 +1880,9 @@ export class ScreenerReadService {
       out.set(sender, {
         ...suggestionAdvice(r.destination, r.spam, r.rationale ?? "", ohboxPolicy),
         confidence: r.confidence ?? 0,
-        rationale: r.rationale ?? "",
+        rationale: r.rationale === SCREENER_WEBINAR_REASON ? "" : r.rationale ?? "",
+        id: r.id,
+        ...(r.rationale === SCREENER_WEBINAR_REASON ? { learnedReason: "webinar" as const } : {}),
         ...(r.failed ? { failed: true } : {}),
       });
     }
@@ -1892,6 +1905,7 @@ export class ScreenerReadService {
     if (messageIds.length === 0) return out;
 
     const rows = await ctx.db.select({
+      id: routingDecisions.id,
       messageId: routingDecisions.messageId,
       destination: routingDecisions.destination,
       confidence: routingDecisions.confidence,
@@ -1911,7 +1925,9 @@ export class ScreenerReadService {
       out.set(r.messageId, {
         ...suggestionAdvice(r.destination, r.spam, r.rationale ?? "", ohboxPolicy),
         confidence: r.confidence ?? 0,
-        rationale: r.rationale ?? "",
+        rationale: r.rationale === SCREENER_WEBINAR_REASON ? "" : r.rationale ?? "",
+        id: r.id,
+        ...(r.rationale === SCREENER_WEBINAR_REASON ? { learnedReason: "webinar" as const } : {}),
       });
     }
     return out;
@@ -1966,7 +1982,7 @@ export class ScreenerService extends ScreenerReadService {
   ): string {
     this.quoteKey ??= this.quoteKeys?.deriveSubkey("ohmail screener quote v1") ?? randomBytes(32);
     return createHmac("sha256", this.quoteKey)
-      .update(JSON.stringify([account, ceiling, senders, pairs.map(({ sender, messageId }) => [sender, messageId])]))
+      .update(JSON.stringify([account, ceiling, senders, pairs.map(({ sender, messageId, learning }) => [sender, messageId, learning === true])]))
       .digest("hex");
   }
 
@@ -2146,6 +2162,7 @@ export class ScreenerService extends ScreenerReadService {
     const suggestions: ScreenerSuggestion[] = [];
     const skipped: ScreenerSuggestResult["skipped"] = [];
     let quoted = 0;
+    let learningCount = 0;
     let charged = 0;
     let stopped: ScreenerSuggestResult["stopped"];
     /** WHY the gate refused, kept undiminished for the status decision below the loop. */
@@ -2161,7 +2178,14 @@ export class ScreenerService extends ScreenerReadService {
      * land in position-indexed slots, flattened in `senders` order; `stopped`/`refusal` take the
      * LOWEST INDEX.
      */
-    interface Purchase { index: number; sender: string; row: ScreenerRow }
+    interface Purchase {
+      index: number;
+      sender: string;
+      row: ScreenerRow;
+      learned: ScreenerLearningState | null;
+      letter: ScreeningAsk;
+      input: ClassifierInput;
+    }
     const answered: Array<ScreenerSuggestion | undefined> = senders.map(() => undefined);
     const refused: Array<ScreenerSuggestResult["skipped"][number] | undefined> = senders.map(() => undefined);
     const stops: Array<ScreenerSuggestResult["stopped"] | undefined> = senders.map(() => undefined);
@@ -2174,6 +2198,13 @@ export class ScreenerService extends ScreenerReadService {
     // the defect standing on the path a person pays for.
     const checked = senderSignalsByMessage([...rep.values()]);
     await markCorrespondents(ctx, [...rep.values()], checked);
+    const mailboxIds = [...new Set([...rep.values()].map(row => row.mailboxId))];
+    const learning = new Map(await Promise.all(mailboxIds.map(async mailboxId => [
+      mailboxId, await readScreenerLearning(asTx(ctx), { accountId: ctx.accountId, mailboxId }, ctx.now()),
+    ] as const)));
+    const mayChargeLearning = this.credits !== undefined;
+    const anyLearning = mayChargeLearning && [...learning.values()].some(learned =>
+      Object.keys(screenerLearningContext(learned)).length > 0);
 
     // ── PASS 1 — RESOLUTION ONLY ────────────────────────────────────────────────────────────
     senders.forEach((sender, index) => {
@@ -2198,7 +2229,22 @@ export class ScreenerService extends ScreenerReadService {
         refused[index] = { sender, reason: "attempts_exhausted" };
         return;
       }
-      if (dryRun || mustVerify) pairs.push({ sender, messageId: r.messageId });
+      const learned = learning.get(r.mailboxId) ?? null;
+      const facts = senderFacts(checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
+      const letter = {
+        fromAddress: r.fromAddress, subject: r.subject, snippet: r.snippet,
+        ...(ohboxBar ? { ohboxBar } : {}),
+        ...(facts ? { senderFacts: facts } : {}),
+      };
+      const input = prepareScreeningQuestion({ ...letter, ...screenerLearningContext(learned) });
+      if (!input) {
+        refused[index] = { sender, reason: "model_unavailable" };
+        return;
+      }
+      const learningPurchase = mayChargeLearning && Boolean(input.learnedWords || input.recentCorrections);
+      if (dryRun || mustVerify) pairs.push({
+        sender, messageId: r.messageId, ...(learningPurchase ? { learning: true } : {}),
+      });
       /**
        * THE QUOTE IS THE CEILING — the first of two bounds, and the lower one is
        * {@link MAX_SUGGEST_SENDERS}, which caps the set before this loop sees it.
@@ -2209,22 +2255,33 @@ export class ScreenerService extends ScreenerReadService {
        * the same set cost more the second time — and a run that costs more than the figure
        * somebody pressed is the overstatement this whole surface exists to avoid.
        */
-      if (ceiling !== null && price !== null && (quoted + 1) * price > ceiling) {
+      if (!anyLearning && ceiling !== null && price !== null && (quoted + 1) * price > ceiling) {
         refused[index] = { sender, reason: "over_quote" };
         stops[index] = "over_quote";
         return;
       }
       quoted++;
+      if (learningPurchase) learningCount++;
 
       // THE PRICE CHECK STOPS HERE — above the gate, so a quote cannot debit, and above the
       // model, so a quote cannot send mail to a third party. `quoted` is the whole answer.
       if (dryRun) return;
-      purchases.push({ index, sender, row: r });
+      purchases.push({ index, sender, row: r, learned, letter, input });
     });
 
+    const learningPrice = learningCount === 0 ? 0
+      : await this.pricing.quoteScreenerLearning?.(ctx.accountId, learningCount) ?? null;
+    const quotedCredits = price === null || learningPrice === null
+      ? null : (quoted - learningCount) * price + learningPrice;
+    if (quotedCredits === null && !dryRun) {
+      await refuseAiSpend({ refusal: "fault", verdict: "unpriced" }, {
+        event: "screener_suggest_refused", accountId: ctx.accountId,
+        unavailable: "AI suggestions are temporarily unavailable; please retry",
+      });
+    }
     if (mustVerify && typeof proof === "string" && ceiling !== null) {
       const expected = this.quoteProof(ctx.accountId, senders, pairs, ceiling);
-      if (price === null || pairs.length * price > ceiling ||
+      if (quotedCredits === null || quotedCredits > ceiling ||
           !timingSafeEqual(Buffer.from(proof, "hex"), Buffer.from(expected, "hex"))) {
         throw changedSuggestionQuote();
       }
@@ -2252,7 +2309,8 @@ export class ScreenerService extends ScreenerReadService {
     };
 
     /** One sender's purchase, end to end. Everything below used to be the body of the loop. */
-    const buy = async ({ index, sender, row: r }: Purchase): Promise<void> => {
+    const buy = async (purchase: Purchase): Promise<void> => {
+      const { index, sender, row: r } = purchase;
       /**
        * THE LANE SLOT IS TAKEN BEFORE THE MONEY — THAT ORDER IS THE WHOLE OF ITS SAFETY. The
        * first version took the slot around the MODEL CALL, after `gate.spend()`: a multiplexing
@@ -2275,14 +2333,14 @@ export class ScreenerService extends ScreenerReadService {
         return;
       }
       try {
-        await buyAdmitted({ index, sender, row: r });
+        await buyAdmitted(purchase);
       } finally {
         laneGate.release();
       }
     };
 
     /** The purchase itself, inside a lane slot. */
-    const buyAdmitted = async ({ index, sender, row: r }: Purchase): Promise<void> => {
+    const buyAdmitted = async ({ index, sender, row: r, learned, letter, input }: Purchase): Promise<void> => {
       if (consent.withdrawn) {
         refused[index] = { sender, reason: "spend_unavailable" };
         return;
@@ -2293,6 +2351,8 @@ export class ScreenerService extends ScreenerReadService {
       const attemptKey = screenerAttemptKey(r.messageId);
       // This request refunds only attempts it charged and did not deliver.
       let chargedAttempt: string | null = null;
+      const personalized = Boolean(input.learnedWords || input.recentCorrections);
+      let chargedAmount = 0;
       let claimed = false;
       let released = false;
       /** The model call's usage, carried by the release below — a model fault's line included. */
@@ -2318,12 +2378,13 @@ export class ScreenerService extends ScreenerReadService {
           accountId: ctx.accountId, action: "screener", attemptKey, attempt: refunding, reason: "drafter_failed", meta,
           ...usage.field(),
         }, (f) => saySuggestRefund(f, ctx.accountId, refunding));
-        if (receipt === "settled") charged -= price ?? 0;
+        if (receipt === "settled") charged -= chargedAmount;
       };
       try {
         if (gate) {
           const outcome = await gate.spend(
-            ctx.accountId, "screener", attemptKey, { messageId: r.messageId });
+            ctx.accountId, "screener", attemptKey, { messageId: r.messageId,
+              ...(personalized ? { learning: true } : {}) });
 
           // SOMEBODY ELSE IS BUYING THIS ONE RIGHT NOW — the FOURTH layer, the only one that can
           // see a caller not yet finished. The three above describe work already OVER (a stored
@@ -2385,8 +2446,18 @@ export class ScreenerService extends ScreenerReadService {
           // reaches here unpriced (refused above), so `?? 0` only satisfies the type. A plain `+=`
           // across lanes is sound: JavaScript runs one lane at a time between `await`s.
           if (outcome.verdict === "ok") {
-            charged += price ?? 0;
+            chargedAmount = outcome.chargedCredits ?? (personalized ? 0 : price ?? 0);
+            charged += chargedAmount;
             chargedAttempt = outcome.attempt;
+            if (personalized && outcome.chargedCredits !== 1 && outcome.chargedCredits !== 2) {
+              refused[index] = { sender, reason: "spend_unavailable" };
+              return;
+            }
+            if (ceiling !== null && charged > ceiling) {
+              refused[index] = { sender, reason: "over_quote" };
+              stops[index] = "over_quote";
+              return;
+            }
           }
 
           // A FREE RETRY LOOKS FOR THE RESULT IT IS A RETRY OF, BEFORE RE-BUYING TOKENS. `charged:
@@ -2400,6 +2471,10 @@ export class ScreenerService extends ScreenerReadService {
           // a FRESH verdict; serving the old row takes the money and hands back what the customer
           // already had.
           if (outcome.verdict === "duplicate") {
+            if (personalized && outcome.chargedCredits !== 0) {
+              refused[index] = { sender, reason: "spend_unavailable" };
+              return;
+            }
             const settled = (await this.storedSuggestions(ctx, [r.messageId], ohboxPolicy)).get(r.messageId);
             if (settled) {
               answered[index] = {
@@ -2411,16 +2486,16 @@ export class ScreenerService extends ScreenerReadService {
           }
         }
 
+        const learningScope = { accountId: ctx.accountId, mailboxId: r.mailboxId };
+        const beforeDispatch = async () => {
+          await consent.beforeDispatch();
+          if (personalized && !(await learningSnapshotIsCurrent(asTx(ctx), learningScope, learned, ctx.now()))) throw new ModelConsentWithdrawn();
+        };
         let result;
+        let filing: ClassifierResultLike | undefined;
         try {
-          const facts = senderFacts(checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
-          const ask = () => askScreeningQuestion(classifier, {
-            fromAddress: r.fromAddress,
-            subject: r.subject,
-            snippet: r.snippet,
-            ...(ohboxBar ? { ohboxBar } : {}),
-            ...(facts ? { senderFacts: facts } : {}),
-          }, { ...usage.call, beforeDispatch: consent.beforeDispatch });
+          const options = { ...usage.call, beforeDispatch };
+          const ask = () => sendScreeningQuestion(classifier, input, options);
           try {
             result = await ask();
           } catch (err) {
@@ -2428,6 +2503,14 @@ export class ScreenerService extends ScreenerReadService {
             if (automatic || Date.now() >= laneDeadline || err instanceof ModelConsentWithdrawn
               || (err instanceof ModelDeclinedError && err.stopReason === "refusal")) throw err;
             result = await ask();
+          }
+          if (personalized && (await readAccountSettings(asTx(ctx), ctx.accountId))?.screenerAutoActAt) {
+            try {
+              const base = await askScreeningQuestion(classifier, letter, { ...usage.call, beforeDispatch: consent.beforeDispatch });
+              filing = capSuggestion(base, checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
+            } catch {
+              // The personalized answer is already bought. Automatic filing can wait for ordinary advice.
+            }
           }
         } catch (err) {
           if (err instanceof ModelConsentWithdrawn) {
@@ -2454,15 +2537,21 @@ export class ScreenerService extends ScreenerReadService {
         // wrote.
         const capped = capSuggestion(result, checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
         // Persisted NOW, in its own transaction, before this lane takes another sender.
-        await this.store(ctx, r.messageId, capped);
+        const reason = personalized && !capped.reasonCode
+          ? screenerLearnedReason(input.learnedWords ?? "", result.topic ?? screenerTopic(r.subject), capped.destination) : undefined;
+        const shown = reason ? { ...capped, rationale: SCREENER_WEBINAR_REASON }
+          : capped.rationale === SCREENER_WEBINAR_REASON ? { ...capped, rationale: "" } : capped;
+        const suggestionId = await this.store(ctx, r.messageId, shown, personalized, result.topic, filing);
         // DELIVERED, so the charge stands; the claim goes back at the door, after this write.
         chargedAttempt = null;
         answered[index] = {
           sender,
           messageId: r.messageId,
-          ...suggestionAdvice(capped.destination, capped.spam, capped.rationale, ohboxPolicy),
+          ...suggestionAdvice(capped.destination, capped.spam, shown.rationale, ohboxPolicy),
           confidence: capped.confidence,
-          rationale: capped.rationale,
+          rationale: reason ? "" : shown.rationale,
+          id: suggestionId,
+          ...(reason ? { learnedReason: reason } : {}),
           ...(capped.reasonCode
             ? { reasonCode: capped.reasonCode, ...reasonDetail(checked.get(r.messageId) as SenderSignals) }
             : {}),
@@ -2611,9 +2700,9 @@ export class ScreenerService extends ScreenerReadService {
 
       const dto: ScreenerSuggestResult = {
         dryRun, requested: senders.length, quoted,
-        ...(price !== null ? { quotedCredits: quoted * price } : {}), charged,
-        ...(dryRun && !automatic && price !== null && pairs.length === quoted ? {
-          quoteGrant: { pairs, proof: this.quoteProof(ctx.accountId, senders, pairs, quoted * price) },
+        ...(quotedCredits !== null ? { quotedCredits } : {}), charged,
+        ...(dryRun && !automatic && quotedCredits !== null && pairs.length === quoted ? {
+          quoteGrant: { pairs, proof: this.quoteProof(ctx.accountId, senders, pairs, quotedCredits) },
         } : {}),
         ...(stopped ? { stopped } : {}),
         ...(deferred ? { deferred: true } : {}),
@@ -2710,8 +2799,10 @@ export class ScreenerService extends ScreenerReadService {
    * per-message transaction are the row's definition, and the worker cannot reach this class. See
    * that module for the argument; this stays a method so the call sites above read the same.
    */
-  private async store(ctx: ServiceContext, messageId: string, result: ClassifierResultLike): Promise<void> {
-    await storeScreenerSuggestion(asTx(ctx), {
+  private async store(
+    ctx: ServiceContext, messageId: string, result: ClassifierResultLike, personalized: boolean, topic?: ScreenerTopic, filing?: ClassifierResultLike,
+  ): Promise<string> {
+    return storeScreenerSuggestion(asTx(ctx), {
       accountId: ctx.accountId,
       messageId,
       destination: result.destination,
@@ -2719,7 +2810,9 @@ export class ScreenerService extends ScreenerReadService {
       rationale: result.rationale,
       spam: result.spam,
       // Which fact capped it: the act writes no rule on the address from the crowd's cap.
-      senderReason: result.reasonCode ?? "none",
+      senderReason: result.reasonCode ?? "none", personalized,
+      ...(topic ? { topic } : {}),
+      ...(filing ? { filing: { ...filing, senderReason: filing.reasonCode ?? "none" } } : {}),
     });
   }
 }
@@ -2814,6 +2907,7 @@ function withSenderCheck(
     ...suggestionAdvice(capped.destination, capped.spam, capped.rationale, ohboxPolicy),
     confidence: capped.confidence,
     rationale: capped.rationale,
+    ...(advice.id ? { id: advice.id } : {}),
     ...(capped.reasonCode ? { reasonCode: capped.reasonCode, ...reasonDetail(signals) } : {}),
   };
 }

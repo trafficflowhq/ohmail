@@ -196,12 +196,12 @@ export function makeClassifierCircuit(
    * two thresholds). Forwarded ONLY when `inner` implements it, so the wrapper never claims a capability
    * the real classifier lacks.
    */
-  async function guard(
+  async function guard<Input, Result>(
     mailboxId: string | undefined,
-    ask: (input: ClassifierInput, call?: AiCallOptions) => Promise<ClassifierResult>, input: ClassifierInput,
+    ask: (input: Input, call?: AiCallOptions) => Promise<Result>, input: Input,
     call?: AiCallOptions,
-  ): Promise<ClassifierResult> {
-    let result: ClassifierResult;
+  ): Promise<Result> {
+    let result: Result;
     try {
       // The call's usage hook rides through unchanged; the breaker counts, it does not attribute.
       result = await (call ? ask(input, call) : ask(input));
@@ -243,6 +243,7 @@ export function makeClassifierCircuit(
   function wrapperFor(mailboxId: string | undefined): ClassifierPort {
     return {
       classify: (input, call) => guard(mailboxId, inner.classify.bind(inner), input, call),
+      ...(inner.rewriteScreener ? { rewriteScreener: (input, call) => guard(undefined, inner.rewriteScreener!.bind(inner), input, call) } : {}),
       ...(inner.screen
         ? {
           screen: (input: ClassifierInput, call?: AiCallOptions) =>

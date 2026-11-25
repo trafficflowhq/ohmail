@@ -89,7 +89,7 @@ export type ChangeItem =
    * and a subscription; `null` for Google and Microsoft, which store no calendar text.
    * `audienceIncomplete` marks a reading with omitted or unrepresentable participants.
    */
-  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true; readonly portableCopy?: true }
+  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true; readonly portableCopy?: true; readonly selfAttendee?: string | null }
   /** The stored object of this id is no longer there. */
   | { readonly kind: "gone"; readonly id: string }
   /** One day of a series was cancelled, and the provider says so by a record of its own. */
@@ -247,6 +247,8 @@ export interface WriteTarget {
   readonly seriesCancellation?: { readonly overrides: readonly { id: string; version: string }[]; readonly message: string };
   /** These scopes were chosen for a series with no guests. */
   readonly personalSeries?: true;
+  /** The selected shared copy accepts ordinary fields under a versioned, non-scheduling write. */
+  readonly sharedCopy?: true;
   /** The confirmed audience of a single-event change or cancellation. */
   readonly audience?: { readonly organizer: string | null; readonly guests: readonly string[] };
   /** `upsert.id` as a reading handed it. */

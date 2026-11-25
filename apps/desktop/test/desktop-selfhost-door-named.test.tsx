@@ -318,9 +318,9 @@ describe("the window's sync strip says when its server is not fetching new mail"
   it("the managed door: it arrives with the server's time, and leaves when fetching runs again", async () => {
     served = [door.behind];
     const win = await strip(MANAGED);
-    const line = tEn("behindLineCloud", { hasSince: "yes", since: "11:10" });
+    const line = tEn("checkingDelayedCloud", { since: "11:10" });
     const hideLabel = en.frame.notice.hide;
-    expect(win.said()).toBe(`New mail is late ${line}${hideLabel}`);
+    expect(win.said()).toBe(`${line}${en.frame.connection.act.mailboxes}${hideLabel}`);
     expect(within(hostEl!).getByRole("button", { name: hideLabel })).toBeDefined();
     served = [door.runs];
     await win.nextPoll();
@@ -330,7 +330,7 @@ describe("the window's sync strip says when its server is not fetching new mail"
   it("a self-hosted door names your ohmail server, never ohmail Cloud", async () => {
     served = [door.behind];
     const win = await strip(SELF_HOSTED);
-    expect(win.said()).toContain(tEn("behindLineServer", { hasSince: "yes", since: "11:10" }));
+    expect(win.said()).toContain(tEn("checkingDelayedServer", { since: "11:10" }));
     expect(hostEl!.textContent ?? "").not.toMatch(/Cloud/);
   });
 

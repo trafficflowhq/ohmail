@@ -9,6 +9,7 @@ import { consentListBrands, lockListAddress, readListAddresses, readListAddresse
 import { dialect } from "./dialect/index.js";
 import { AccountErasedError, readAccountErasedAt } from "./erasure-fence.js";
 import { readMailboxesTakingAPress, readOrganizerRole } from "./organizer-role.js";
+import { recordScreenerChoice } from "./screener-learning-choice.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { ruleMatchKey, ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
 import { endOwedWalk, findRulesByKey, keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
@@ -112,6 +113,8 @@ export interface ValidatedRequestPayload {
   applyRetro: boolean;
   confirmedIds?: string[];
   unsubscribeIds?: string[];
+  learningMessage?: string;
+  shownSuggestionId?: string;
 }
 
 /** A generous ceiling on the address field alone — RFC 5321's own 254-octet mailbox limit, doubled. */
@@ -180,7 +183,12 @@ export function validateRequestPayload(payload: unknown): ValidatedRequestPayloa
   if (p.applyRetro !== undefined && typeof p.applyRetro !== "boolean") return null;
   const applyRetro = confirmedIds === undefined && (p.applyRetro ?? true);
 
-  return { ...parsed, address, appliedFolder, decision, applyRetro };
+  const learningMessage = typeof p.learningMessage === "string" && /^[a-f0-9]{64}$/.test(p.learningMessage)
+    ? p.learningMessage : null;
+  const shownSuggestionId = typeof p.shownSuggestionId === "string"
+    && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(p.shownSuggestionId) ? p.shownSuggestionId : null;
+  return { ...parsed, address, appliedFolder, decision, applyRetro,
+    ...(learningMessage ? { learningMessage } : {}), ...(shownSuggestionId ? { shownSuggestionId } : {}) };
 }
 
 /**
@@ -676,6 +684,8 @@ export interface ApplyScreenerDecisionInput {
   appliedFolder: string;
   decision: "yes" | "no";
   /** Dedup key for the learning signal — `screener:<message id>` on the HTTP door, `screener:<request id>` on the drain. */
+  /** The representative of a direct press. A pass sends no learning input. */
+  learning?: { messageId: string; shownSuggestionId?: string; pressedAt?: Date };
   triggeringActionId: string;
   now: Date;
   /**
@@ -1029,6 +1039,14 @@ export async function applyScreenerDecision(
     destination: appliedFolder,
     label: "positive",
   });
+
+  const representative = input.learning && rerouted.find(row => row.messageId === input.learning?.messageId);
+  if (decidedBy === "person" && representative && input.learning && wrote.ruleId) {
+    await recordScreenerChoice(tx, { accountId, mailboxId: representative.mailboxId }, {
+      ...input.learning, decisionId: wrote.ruleId, actionId: `${triggeringActionId}:${lastSeq}`,
+      chosen: appliedFolder, at: now,
+    });
+  }
 
   return { createdRuleId: wrote.ruleId, retargetedRuleIds: [], rerouted, lastSeq, heldElsewhere };
 }

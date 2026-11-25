@@ -38,7 +38,7 @@ export interface OhboxBeside {
   doorbell: { count: number; settled: boolean };
   notOrganizing: NotOrganizingYet | null;
   /** Pull new mail, where this host can; none hides the item. */
-  pull: { busy: boolean; run(): void } | None;
+  pull: { busy: boolean; result?: { key: string; mailboxId?: string }; run(): void } | None;
   /** Key hints are shown on this device. */
   keysShown: boolean;
   askRow?: (ask: RowAsk) => void;

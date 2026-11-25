@@ -61,8 +61,8 @@ export function calendarSetupPortOf(
         refresh();
       }
     },
-    check: async (id) => {
-      await transport.checkCalendarConnection(id);
+    check: async (id, calendarId) => {
+      await transport.checkCalendarConnection(id, calendarId);
       refresh();
     },
     setCalendar: async (id, change) => {

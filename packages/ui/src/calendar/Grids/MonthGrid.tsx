@@ -38,6 +38,7 @@ export interface MonthGridWeek {
   at?: number;
   /** What runs across days of the week, placed by `style.gridColumn` ("1 / 4") and `style.gridRow`. It stands before the days' own lines. */
   children?: ReactNode;
+  preview?: ReactNode;
 }
 
 export interface MonthGridProps {
@@ -48,7 +49,13 @@ export interface MonthGridProps {
   run?: { rowHeight: number; height: number };
   /** A press on a date: its day. */
   onDayPress?: (id: string) => void;
+  onDateMenu?: (
+    id: string,
+    opener: HTMLElement,
+    event: import("react").MouseEvent | import("react").KeyboardEvent,
+  ) => void;
   /** A press anywhere else in a day's cell: the day is picked. */
+  onCellPointerDown?: (id: string, event: React.PointerEvent<HTMLDivElement>) => void;
   onCellPress?: (id: string) => void;
   onMorePress?: (id: string) => void;
   onWeekPress?: (weekId: string) => void;
@@ -79,6 +86,9 @@ function Week({ week, props }: { week: MonthGridWeek; props: MonthGridProps }) {
           data-cal-drop-kind="month"
           data-out={d.outside ? "" : undefined}
           style={{ gridColumn: i + 1 }}
+          tabIndex={props.onDateMenu ? -1 : undefined}
+          onContextMenu={props.onDateMenu ? (e) => props.onDateMenu?.(d.id, e.currentTarget, e) : undefined}
+          onPointerDown={props.onCellPointerDown ? (e) => props.onCellPointerDown?.(d.id, e) : undefined}
           onClick={onCellPress ? () => onCellPress(d.id) : undefined}
         />
       ))}
@@ -96,6 +106,8 @@ function Week({ week, props }: { week: MonthGridWeek; props: MonthGridProps }) {
             className="oh-control oh-mo-date"
             aria-label={d.label}
             aria-current={d.today ? "date" : undefined}
+            onContextMenu={props.onDateMenu ? (e) => props.onDateMenu?.(d.id, e.currentTarget, e) : undefined}
+            onKeyDown={props.onDateMenu ? (e) => props.onDateMenu?.(d.id, e.currentTarget, e) : undefined}
             onClick={onDayPress ? () => onDayPress(d.id) : undefined}
           >
             <span className="oh-mo-disc" data-today-pulse-target={d.today ? "badge" : undefined}>
@@ -106,6 +118,7 @@ function Week({ week, props }: { week: MonthGridWeek; props: MonthGridProps }) {
         </div>
       ))}
       {week.children}
+      {week.preview}
       {week.days.map((d, i) => (
         <Fragment key={d.id}>
           {d.lines}

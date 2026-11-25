@@ -146,6 +146,11 @@ function held(it: Extract<EventFormItem, { kind: "person" | "file" }>, key: numb
           >
             <Avatar name={it.name} address={it.address} size="xs" />
             <span className="oh-evform-name-text">{it.name}</span>
+            {it.name.toLowerCase() !== it.address.toLowerCase() && (
+              <small className="oh-evform-name-note oh-evform-name-text" title={it.address}>
+                {it.address}
+              </small>
+            )}
             {it.note ? <small className="oh-evform-name-note">{it.note}</small> : null}
           </button>
           {it.remove ? remove(it.remove) : null}

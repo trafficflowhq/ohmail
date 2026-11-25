@@ -24,6 +24,7 @@ export interface RowSides {
 /** Pull new mail, as the list already has it: the one flight's state and its press. */
 export interface ListPull {
   readonly busy: boolean;
+  readonly result?: { key: string; mailboxId?: string };
   run(): void;
 }
 

@@ -1,10 +1,12 @@
 import { useState, type MouseEvent } from "react";
+import { RepeatMenu } from "./RepeatMenu.js";
+import { repeatLine } from "./EventActionQuestion.js";
 import { DatePicker } from "./DatePicker.js";
 import { EventForm, type CalendarTone, type EventFormProps, type EventFormRow } from "@ohmail/ui/calendar";
 import { addDays, clockOf, dayShort, readQuickEntry, type CalendarRecord } from "@ohmail/app-logic/calendar";
 import { useLocale, useText, type Text } from "../text/index.js";
 import { ShowAsMenu } from "./ShowAsMenu.js";
-import { DraftCalendarMenu } from "./DraftCalendarMenu.js";
+import { calendarRow, DraftCalendarMenu } from "./DraftCalendarMenu.js";
 import { ZoneMenu } from "./ZoneMenu.js";
 import { useEditorRows, type EditorRows } from "./use-editor-rows.js";
 import { zoneForCity, zoneName } from "./zone-names.js";
@@ -13,6 +15,7 @@ import { endDayOf, type EventDraft } from "./event-draft.js";
 
 interface Props {
   readonly draft: EventDraft;
+  readonly repeatShapes?: readonly string[];
   readonly today: string;
   readonly calendar: CalendarRecord | undefined;
   readonly tone: CalendarTone;
@@ -21,6 +24,7 @@ interface Props {
   readonly edit?: EditorRows;
   readonly proposedGuest?: { name: string; take: () => void };
   readonly fixedTime?: string;
+  readonly ordinaryOnly?: boolean;
   readonly timeZone?: string;
   readonly placeSource?: string;
   readonly change: (edit: Partial<EventDraft>) => void;
@@ -127,7 +131,32 @@ function inviteeRows(rows: EventFormRow[], guest: Props["proposedGuest"], t: Tex
     : [{ id: "invitees", icon: "people", items: [{ kind: "word", text: t("edit.invite") }, slot] }];
 }
 
-type MenuAnchor = { kind: "date" | "end" | "calendar" | "busy" | "zone"; anchor: HTMLElement };
+type MenuAnchor = { kind: "date" | "end" | "calendar" | "busy" | "zone" | "repeat"; anchor: HTMLElement };
+
+function repeatRow(
+  draft: EventDraft,
+  t: Text,
+  locale: string,
+  expanded: boolean,
+  openRepeat: (e: MouseEvent<HTMLButtonElement>) => void,
+  timeZone?: string,
+): EventFormRow | undefined {
+  if (draft.repeat) {
+    return {
+      id: "repeat",
+      icon: "repeat",
+      items: [
+        {
+          kind: "slot",
+          label: t("edit.repeatLabel"),
+          value: repeatLine(draft.repeat, draft.day.replaceAll("-", ""), t, locale, draft.zone ?? timeZone),
+          expanded,
+          onPress: openRepeat,
+        },
+      ],
+    };
+  }
+}
 
 export function DraftFields({
   draft,
@@ -140,57 +169,49 @@ export function DraftFields({
   submit,
   cancel,
   fixedTime,
+  ordinaryOnly,
   timeZone,
   edit,
   proposedGuest,
+  repeatShapes,
   placeSource,
 }: Props) {
   const t = useText("calendar");
   const locale = useLocale();
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
   const details = useEditorRows(draft, change, edit);
-  const place = useDraftPlace(draft.place, (next) => change({ place: next }), placeSource);
+  const place = useDraftPlace(
+    draft.place,
+    (next) => change({ place: next }),
+    placeSource,
+    draft.zone ?? calendar?.timeZone,
+  );
   const rows: EventFormRow[] = [
     fixedTime
       ? { id: "when", icon: "clock", items: [{ kind: "word", text: fixedTime }] }
       : whenRow({ draft, today, change }, t, locale, menu, setMenu, timeZone),
   ];
+  const openRepeat = (event: MouseEvent<HTMLButtonElement>) =>
+    setMenu({ kind: "repeat", anchor: event.currentTarget });
+  const repeat = repeatRow(draft, t, locale, menu?.kind === "repeat", openRepeat, timeZone);
+  if (repeat && !ordinaryOnly) rows.push(repeat);
   rows.push(...inviteeRows(details.beforePlace, proposedGuest, t), ...place.rows, ...details.afterPlace);
-  rows.push({
-    id: "calendar",
-    mark: tone,
-    items: [
-      choose
-        ? {
-            kind: "slot",
-            label: t("create.calendar"),
-            value: calendar?.name ?? t("create.choose"),
-            expanded: menu?.kind === "calendar",
-            onPress: (event) => setMenu({ kind: "calendar", anchor: event.currentTarget }),
-          }
-        : {
-            kind: "slot",
-            state: "done",
-            disabled: true,
-            label: t("create.calendar"),
-            value: calendar?.name ?? "",
-          },
+  rows.push(
+    calendarRow(
       {
-        kind: "slot",
-        label: t("create.showAs"),
-        value: t(draft.busy ? "create.busy" : "create.free"),
-        expanded: menu?.kind === "busy",
-        onPress: (event) => setMenu({ kind: "busy", anchor: event.currentTarget }),
+        calendar,
+        tone,
+        draft,
+        change,
+        ordinaryOnly,
+        edit: !!edit,
+        choose: choose ? (anchor) => setMenu({ kind: "calendar", anchor }) : undefined,
+        showAs: (anchor) => setMenu({ kind: "busy", anchor }),
+        active: menu?.kind,
       },
-      {
-        kind: "toggle",
-        label: t("create.private"),
-        icon: edit && !choose ? "lock" : undefined,
-        on: draft.private,
-        onChange: (value) => change({ private: value }),
-      },
-    ],
-  });
+      t,
+    ),
+  );
   rows.push(...notesRow(draft, change, t));
   return (
     <>
@@ -198,6 +219,9 @@ export function DraftFields({
         rows={rows}
         adds={[
           ...details.adds,
+          ...(!ordinaryOnly && !draft.repeat
+            ? [{ id: "repeat", word: t("edit.repeatLabel"), icon: "repeat" as const, onPress: openRepeat }]
+            : []),
           ...(draft.place === null
             ? [
                 {
@@ -228,7 +252,9 @@ export function DraftFields({
       {place.overlay}
       {details.menu}
       {menu && (
-        <DraftMenus {...{ draft, today, calendar, choices, choose, change, menu, setMenu, timeZone }} />
+        <DraftMenus
+          {...{ draft, today, calendar, choices, choose, change, menu, setMenu, timeZone, repeatShapes }}
+        />
       )}
     </>
   );
@@ -244,7 +270,11 @@ function DraftMenus({
   menu,
   setMenu,
   timeZone,
-}: Pick<Props, "draft" | "today" | "calendar" | "choices" | "choose" | "change" | "timeZone"> & {
+  repeatShapes,
+}: Pick<
+  Props,
+  "repeatShapes" | "draft" | "today" | "calendar" | "choices" | "choose" | "change" | "timeZone"
+> & {
   menu: MenuAnchor;
   setMenu: (menu: null) => void;
 }) {
@@ -273,6 +303,14 @@ function DraftMenus({
             setMenu(null);
           }}
           onClose={() => setMenu(null)}
+        />
+      )}
+      {menu.kind === "repeat" && (
+        <RepeatMenu
+          {...{ draft, repeatShapes }}
+          anchor={menu.anchor}
+          choose={(repeat) => change({ repeat })}
+          close={() => setMenu(null)}
         />
       )}
       {menu?.kind === "busy" && (

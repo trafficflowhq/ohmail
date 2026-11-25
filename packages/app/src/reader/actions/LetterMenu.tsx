@@ -5,7 +5,7 @@
  * is read and is not the account's own.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { Menu, MenuItem } from "@ohmail/ui/base";
+import { Menu, MenuItem, type Point } from "@ohmail/ui/base";
 import { markSeenOver, mayMarkUnread } from "@ohmail/app-logic/reader";
 import { useFrame } from "../../frame/commands.js";
 import { useOwnAddresses, usePressWhereOn } from "../../frame/room.js";
@@ -15,11 +15,13 @@ import { draftFor, hasReplyAll, useAnswer } from "./use-verbs.js";
 export function LetterMenu({
   message,
   anchor,
+  returnFocus,
   onClose,
   markUnread,
 }: {
   message: EngineMessage;
-  anchor: HTMLElement | null;
+  anchor: Element | Point | null;
+  returnFocus?: HTMLElement;
   onClose: () => void;
   markUnread?: (id: string) => void;
 }) {
@@ -36,7 +38,15 @@ export function LetterMenu({
   const answers = (how: "reply" | "reply_all" | "forward") =>
     then(() => (answer !== null ? answer(message.id, how, "menu") : commands.write(draftFor(how, message))));
   return (
-    <Menu open={anchor !== null} onClose={onClose} anchor={anchor ?? undefined} label={t("head.menu")} right>
+    <Menu
+      open={anchor !== null}
+      onClose={onClose}
+      anchor={anchor ?? undefined}
+      returnFocus={returnFocus}
+      kind={returnFocus ? "context" : undefined}
+      label={t("head.menu")}
+      right={!returnFocus}
+    >
       <MenuItem icon="reply" onPress={answers("reply")}>
         {tm("menuReply")}
       </MenuItem>

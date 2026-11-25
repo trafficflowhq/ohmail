@@ -182,7 +182,8 @@ for (const major of PG_MAJORS) {
 
     it("asked: every locked table is forced, exactly the listed policies stand, the deadlines by role, and the census names only the views' rights the roles' apply writes next", async () => {
       const report = await ground.setup("ground", MIGRATOR_ROLE, { lock: "apply" });
-      expect(report.lock).toMatchObject({ state: "locked", tables: lockedTables().length, forced: 101, policies: policyList().length, repaired: [] });
+      // Screener learning has its own account-scoped table and must be forced too.
+      expect(report.lock).toMatchObject({ state: "locked", tables: lockedTables().length, forced: 102, policies: policyList().length, repaired: [] });
       expect(report.lock!.wrote).toBeGreaterThan(policyList().length);
       expect(report.lock!.deadlines).toEqual(Object.fromEntries(Object.entries(ROLE_DEADLINES).map(([role, cell]) =>
         [role, Object.fromEntries(Object.keys(cell).map((guc) => [guc, true]))])));
@@ -368,7 +369,7 @@ for (const major of PG_MAJORS) {
       for (const role of ["ohmail_api", "ohmail_worker"]) {
         expect(await verdictOf(db, role, { role }), role).toMatchObject({ verdict: "locked", why: [], census: 0, role: { policies: "equal" } });
       }
-      expect((await ground.setup(db, MIGRATOR_ROLE)).lock).toMatchObject({ state: "locked", forced: 101, wrote: 0, repaired: [] });
+      expect((await ground.setup(db, MIGRATOR_ROLE)).lock).toMatchObject({ state: "locked", forced: 102, wrote: 0, repaired: [] });
     }, CASE_MS);
 
     it("a dropped policy is red in the census, and the next setup makes it again", async () => {
@@ -408,7 +409,7 @@ for (const major of PG_MAJORS) {
           .toEqual([`LOCK_DRIFT tables.flags ${table}: ${found} while the lock is on`]);
         const said: string[] = [];
         const report = await ground.setup(db, MIGRATOR_ROLE, { log: (m) => said.push(m) });
-        expect(report.lock).toMatchObject({ forced: 101, wrote: 1, repaired: [`table ${table} was ${found}: locked again`] });
+        expect(report.lock).toMatchObject({ forced: 102, wrote: 1, repaired: [`table ${table} was ${found}: locked again`] });
         expect(said).toContain(`lock: repair: table ${table} was ${found}: locked again`);
         expect(await plantAndCensus(db, [])).toEqual([]);
       }
@@ -429,7 +430,7 @@ for (const major of PG_MAJORS) {
         "LOCK_DRIFT policies.missing planted_owned.lock_account",
       ]);
       const report = await ground.setup(db, MIGRATOR_ROLE);
-      expect(report.lock).toMatchObject({ tables: 102, forced: 102, repaired: [] });
+      expect(report.lock).toMatchObject({ tables: 103, forced: 103, repaired: [] });
       expect(await plantAndCensus(db, [])).toEqual([]);
     }, CASE_MS);
 
@@ -1153,11 +1154,11 @@ for (const major of PG_MAJORS) {
         setup: { repaired: ["policy cal_settings.pub is not the list's: dropped"] } },
       { name: "the_table_unforced", plant: () => ["alter table public.cal_settings no force row level security"],
         reads: [1, 0, 1, 0], census: [drift("tables.flags", "cal_settings", "on=true forced=false while the lock is on")],
-        api: ["101 of 101 locked tables on and 100 forced, with no marker"], worker: ["101 of 101 locked tables on and 100 forced, with no marker"],
+        api: ["102 of 102 locked tables on and 101 forced, with no marker"], worker: ["102 of 102 locked tables on and 101 forced, with no marker"],
         setup: { repaired: ["table cal_settings was on=true forced=false: locked again"] } },
       { name: "the_table_disabled", plant: () => ["alter table public.cal_settings disable row level security"],
         reads: [2, 2, 2, 2], census: [drift("tables.flags", "cal_settings", "on=false forced=true while the lock is on")],
-        api: ["100 of 101 locked tables on and 101 forced, with no marker"], worker: ["100 of 101 locked tables on and 101 forced, with no marker"],
+        api: ["101 of 102 locked tables on and 102 forced, with no marker"], worker: ["101 of 102 locked tables on and 102 forced, with no marker"],
         setup: { repaired: ["table cal_settings was on=false forced=true: locked again"] } },
       { name: "an_inherited_child_granted", plant: (_a, b) => ["create table public.cal_settings_child () inherits (public.cal_settings)",
         `insert into public.cal_settings_child (account_id) values ('${b}')`, "grant select on public.cal_settings_child to ohmail_api, ohmail_worker"],
@@ -1165,8 +1166,8 @@ for (const major of PG_MAJORS) {
         reads: [1, 0, 1, 0], extra: [["ohmail_api", "A", "select count(*)::int as n from public.cal_settings_child", 1, 0],
           ["ohmail_api", "none", "select count(*)::int as n from public.cal_settings_child", 1, 0]],
         census: [drift("tables.flags", "cal_settings_child", "on=false forced=false while the lock is on"), "LOCK_DRIFT policies.missing cal_settings_child.lock_account"],
-        api: ["101 of 102 locked tables on and 101 forced, with no marker", namesDiffer("ohmail_api")],
-        worker: ["101 of 102 locked tables on and 101 forced, with no marker", namesDiffer("ohmail_worker")], setup: { repaired: [] } },
+        api: ["102 of 103 locked tables on and 102 forced, with no marker", namesDiffer("ohmail_api")],
+        worker: ["102 of 103 locked tables on and 102 forced, with no marker", namesDiffer("ohmail_worker")], setup: { repaired: [] } },
       // Views and definer routines: of public, the check reads them for the login that reaches them; of another schema, the roles' check refuses them.
       { name: "a_view_of_public_for_the_worker", plant: () => ["create view public.all_settings as select account_id from public.cal_settings",
         "grant select on public.all_settings to ohmail_worker"],
@@ -1826,12 +1827,12 @@ for (const major of PG_MAJORS) {
       try { await mig.unsafe("insert into public.accounts (name) values ('switched')"); } finally { await mig.end({ timeout: 5 }); }
       expect(await unboundCount(db, "ohmail_api", "accounts")).toBe(0);
       const off = await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "off", { why: "test", now: () => new Date("2026-11-15T10:00:00.000Z") });
-      expect(off).toMatchObject({ to: "off", tables: 101, tries: 1, marker: "ohmail.lock off since=2026-11-15T10:00:00.000Z by=ohmail_migrator why=test" });
+      expect(off).toMatchObject({ to: "off", tables: 102, tries: 1, marker: "ohmail.lock off since=2026-11-15T10:00:00.000Z by=ohmail_migrator why=test" });
       expect(await unboundCount(db, "ohmail_api", "accounts")).toBe(1);
       expect(await verdictOf(db, MIGRATOR_ROLE)).toMatchObject({ verdict: "off", on: 0, forced: 0, marker: { since: "2026-11-15T10:00:00.000Z", by: "ohmail_migrator", why: "test" } });
       // The setup over a lock that is off keeps it off, and its policies as listed.
       expect((await ground.setup(db, MIGRATOR_ROLE)).lock).toMatchObject({ state: "off", forced: 0, wrote: 0 });
-      expect(await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "on")).toMatchObject({ to: "on", tables: 101, marker: null });
+      expect(await switchLock(ground.urlAs(db, MIGRATOR_ROLE), "on")).toMatchObject({ to: "on", tables: 102, marker: null });
       expect(await unboundCount(db, "ohmail_api", "accounts")).toBe(0);
       expect((await verdictOf(db, MIGRATOR_ROLE)).verdict).toBe("locked");
     }, CASE_MS);
@@ -1869,7 +1870,7 @@ for (const major of PG_MAJORS) {
         expect((await verdictOf(db, MIGRATOR_ROLE)).verdict).toBe("stale_marker");
         await mig.unsafe("comment on schema ohmail is null");
         await mig.unsafe("alter table public.messages disable row level security");
-        expect(await verdictOf(db, MIGRATOR_ROLE)).toMatchObject({ verdict: "broken", on: 100 });
+        expect(await verdictOf(db, MIGRATOR_ROLE)).toMatchObject({ verdict: "broken", on: 101 });
         await mig.unsafe("alter table public.messages enable row level security");
       } finally {
         await mig.end({ timeout: 5 });

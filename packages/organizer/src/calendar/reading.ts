@@ -17,7 +17,7 @@ import {
   type ProviderWord,
 } from "@ohmail/cal-providers";
 import { and, eq, sql } from "drizzle-orm";
-import { calCalendars, calConnections, mailboxes, recordCalendarChanges, type LedgerTx, type Tx } from "@trafficflow/db";
+import { calCalendars, calConnections, recordCalendarChanges, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
   applyChunk, applyChunks, chunksOf, dayCancelled, dropCandidates, objectGone, planItems, storedRowsOf,
   type ApplyContext, type ChunkResult, type Work,
@@ -438,13 +438,4 @@ export async function holdCalendar(
     if (moved) await recordCalendarChanges(tx as unknown as LedgerTx, key.accountId, [{ kind: "calendar", id: cal.id, op: "update" }]);
   });
   return done === "gone" ? "gone" : undefined;
-}
-
-/** The account's own addresses in lower case: its mailboxes', and the connection's principal where that is an address. */
-export async function ownAddressesOf(tx: Tx, accountId: string, principal: string | null): Promise<Set<string>> {
-  const rows = await tx.select({ address: mailboxes.address }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
-  const out = new Set(rows.map((r) => r.address.trim().toLowerCase()).filter((a) => a.includes("@")));
-  const p = principal?.trim().toLowerCase().replace(/^mailto:/, "") ?? "";
-  if (p.includes("@") && !p.includes("/")) out.add(p);
-  return out;
 }

@@ -1585,6 +1585,7 @@ function suggestionAi(s: ScreenerSuggestionEntity | undefined, representative?: 
     confidence: s.confidence,
     rationale: "",
     id: s.id,
+    ...(s.learnedReason === "webinar" && !code ? { learnedReason: s.learnedReason } : {}),
     ...(typeof s.actRefusal === "string" && s.actRefusal !== "" ? { actRefused: true as const } : {}),
     ...(code
       ? {

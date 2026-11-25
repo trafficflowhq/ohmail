@@ -3,7 +3,7 @@ import { plantReopenedCatchUp, dropUntoldCatchUps } from "@trafficflow/db/cloud"
 import { hostKeyOf } from "../attach-pool.js";
 import { asDatabaseFault } from "../db-fault.js";
 import {
-  loadRosterMailboxes, resumeParkedMailbox, markMailboxReleased, type EnabledMailbox, loadAttachHosts, accountsOf,
+  authRetryDeadline, loadRosterMailboxes, resumeParkedMailbox, markMailboxReleased, type EnabledMailbox, loadAttachHosts, accountsOf,
   deleteParkedPushRows, markMailboxSyncBlocked, clearMailboxSyncBlock,
 } from "../mailboxes.js";
 import { sample } from "../index.js";
@@ -257,12 +257,15 @@ export function rosterSection(scope: WorkerScope): void {
       for (const id of [...scope.leaseBlocked.keys()]) if (!desired.has(id)) scope.leaseBlocked.delete(id);
       // An attach still waiting for its slot is dropped with its duty; one already running finishes,
       // and if it adds a mailbox that has left, the next pass detaches it and releases the claim.
-      scope.attachPool.dropQueued((id) => !desired.has(id));
+      const now = Date.now();
+      scope.attachPool.dropQueued((id) => {
+        const mb = desired.get(id);
+        return mb === undefined || now >= authRetryDeadline(mb);
+      });
 
       // Schedule what is missing. The pass does not wait for the attaches (except at boot): each one
       // kicks and nudges a cycle as it joins the rotation (`attach-nonblocking.e2e.test.ts`, claim 7),
       // because `attach()` syncs nothing and the poll timer's first tick is a full period away.
-      const now = Date.now();
       const toSchedule: EnabledMailbox[] = [];
       for (const mb of served) {
         if (scope.stopped) return;
@@ -307,45 +310,42 @@ export function rosterSection(scope: WorkerScope): void {
           if (mb.status !== "connected" && attached.lastSuccessAt !== null) await scope.markRecovered(mb);
           continue;
         }
+        const authDeadline = authRetryDeadline(mb);
+        if (now >= authDeadline) {
+          if (!scope.quarantine.has(mb.mailboxId)) {
+            scope.quarantine.set(mb.mailboxId, {
+              attempts: mb.retryCount, retryAt: authDeadline, reason: "waiting for a new sign-in", persisted: true,
+            });
+          }
+          continue;
+        }
         // Already in the pool: a queued attach takes this pass's row, a running one keeps its own.
         const inPool = scope.attachPool.state(mb.mailboxId);
         if (inPool === "queued") { scope.attachPool.replaceQueued(mb.mailboxId, (t) => scope.attach(mb, t)); continue; }
         if (inPool === "running") continue;
-        // The backoff gate, and since mail 0039 the row can overrule the map. Three cases, and the
-        // ORDER of the first two is the whole of the release path: (1) an entry whose durable write
-        // LANDED (`persisted`) is governed by `mb.retryAfter`, re-read from the database this pass,
-        // so `retry_after IS NULL` means "somebody cleared it" (the admin release) and the mailbox
-        // is attached NOW — the map entry is NOT deleted, since `attempts` is the ladder's input and
-        // resetting it hands a struggling provider a fresh minimum-interval loop (a release buys one
-        // attempt, not a clean slate); (2) an entry whose write did NOT land falls back to
-        // `q.retryAt`, the pre-0039 behaviour; (3) no map entry but a future `retry_after` on the row
-        // is a mailbox this NEW process never quarantined, SEEDED below rather than attached.
+        // A persisted wait follows the row, so an operator can clear its timer for one
+        // extra attempt. A person's retry reset clears the timer and starts a fresh ladder.
+        // If persistence failed, keep the in-process wait. A new leader seeds from the row.
         const q = scope.quarantine.get(mb.mailboxId);
         if (q) {
           const until = q.persisted ? (mb.retryAfter?.getTime() ?? null) : q.retryAt;
           if (until !== null && now < until) continue;
-        } else if (mb.retryAfter && now < mb.retryAfter.getTime()) {
-          // The restart seed. Without this a fresh leader forgets every backoff and re-dials every
-          // parked mailbox at once — the gap this column was added to close, and a way to turn a
-          // deploy during a provider outage into a burst of retries. Two details are load-bearing:
-          // `attempts` is floored at the row's `retry_count`, so the ladder resumes where the outage
-          // is instead of the base delay (the two counters may disagree, and this is the one place
-          // the durable one is the better estimate); and `persisted: true`, because this entry was
-          // READ from the column, so it is governed by the column and an operator's release reaches
-          // it next pass. Seeding also keeps the roster invariant honest — a mailbox skipped on the
-          // row alone would log `roster_invariant_violated` every 30 s about correct behaviour.
+          if (q.persisted && mb.kickStamp !== null && mb.status === "connected" && mb.retryAfter === null) {
+            scope.quarantine.delete(mb.mailboxId);
+          }
+        } else if (mb.retryAfter !== null) {
+          const retryAt = mb.retryAfter.getTime();
+          const attempts = Math.max(1, mb.retryCount);
           scope.quarantine.set(mb.mailboxId, {
-            attempts: Math.max(1, mb.retryCount),
-            retryAt: mb.retryAfter.getTime(),
-            reason: "recovered from mailboxes.retry_after on takeover",
-            persisted: true,
+            attempts, retryAt, reason: "recovered from mailboxes.retry_after on takeover", persisted: true,
           });
-          scope.log.info("mailbox_quarantine_restored", {
-            mailboxId: mb.mailboxId, accountId: mb.accountId,
-            retryInMs: mb.retryAfter.getTime() - now, attempts: Math.max(1, mb.retryCount),
-            reason: "a durable backoff outlived the process that set it",
-          });
-          continue;
+          if (now < retryAt) {
+            scope.log.info("mailbox_quarantine_restored", {
+              mailboxId: mb.mailboxId, accountId: mb.accountId, retryInMs: retryAt - now, attempts,
+              reason: "a durable backoff outlived the process that set it",
+            });
+            continue;
+          }
         }
         toSchedule.push(mb);
       }

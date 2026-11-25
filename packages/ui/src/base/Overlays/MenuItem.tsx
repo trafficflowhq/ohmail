@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { Dot } from "../Primitives/Dot.js";
 import { KeyHint } from "../Primitives/KeyHint.js";
@@ -9,6 +9,7 @@ export interface MenuItemProps {
   /** The verb, or the choice. */
   children: string;
   label?: string;
+  description?: string;
   icon?: IconName;
   /** A person or a coloured mark alongside the choice. */
   leading?: ReactNode;
@@ -37,6 +38,7 @@ export interface MenuItemProps {
 export function MenuItem({
   children,
   label,
+  description,
   icon,
   leading,
   note,
@@ -51,6 +53,7 @@ export function MenuItem({
   ref,
   onPress,
 }: MenuItemProps) {
+  const descriptionId = useId();
   return (
     <button
       ref={ref}
@@ -58,7 +61,8 @@ export function MenuItem({
       className="oh-control oh-menu-item"
       role={checked === undefined ? "menuitem" : many ? "menuitemcheckbox" : "menuitemradio"}
       aria-checked={checked}
-      aria-label={label}
+      aria-label={label ?? (description ? children : undefined)}
+      aria-describedby={description ? descriptionId : undefined}
       disabled={disabled}
       data-sub={hue === undefined ? undefined : ""}
       data-dot={dot ? "" : undefined}
@@ -71,7 +75,14 @@ export function MenuItem({
       {dot ? <Dot kind={dot} /> : null}
       {hue === undefined ? null : <TagDot hue={hue} />}
       {leading}
-      <span className="oh-menu-word">{children}</span>
+      <span className="oh-menu-word">
+        {children}
+        {description ? (
+          <small id={descriptionId} className="oh-menu-item-description">
+            {description}
+          </small>
+        ) : null}
+      </span>
       {note ? <small className="oh-menu-item-note">{note}</small> : null}
       {keyHint ? <KeyHint unsaid>{keyHint}</KeyHint> : null}
     </button>

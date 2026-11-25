@@ -56,6 +56,8 @@ const REPLY_ONLY: ReadonlyArray<readonly [string, string, string]> = [
   ["packages/app-logic/src/writing/draft-reply.ts", "textWire({ text, inReplyToMessageId: id }", "the from-text request answers the letter the person opened"],
   ["packages/app-logic/src/writing/shell-compose.ts", "drafts.find((d) => d.inReplyToMessageId === messageId", "an unconfirmed reply belongs to its reply dock"],
   ["packages/app-logic/src/writing/shell-compose.ts", "const parent = draft.inReplyToMessageId", "a draft opened from the list uses the inline reply editor only when its reply parent is here"],
+  ["packages/client-engine/src/address-book.ts", "const tier = d.inReplyToMessageId",
+    "a reply can copy recipient names from the original letter; a forward is addressed by its author"],
   // The demo world's one reply draft.
   ["packages/testing/src/adapters/fixtures-adapter.ts", 'inReplyToMessageId: "giulia"', "demo data"],
 ];

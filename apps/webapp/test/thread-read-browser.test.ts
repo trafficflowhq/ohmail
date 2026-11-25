@@ -34,6 +34,7 @@ const SHEETS = [
   "packages/ui/src/composites/message.css",
   "packages/ui/src/composites/stream.css",
   "packages/ui/src/mail/Reading/message.css",
+  "packages/ui/src/mail/Shell/column-handle.css",
   "apps/webapp/app/app.css",
   "packages/letter-body/src/message-body.css",
   "packages/letter-body/src/message-body-sheet.css",
@@ -124,7 +125,7 @@ const REFLOW_BELOW_PX = 480;
 const MIN_FIT_SCALE = 0.6;
 
 const designFixtures = [
-  { name: "600px table", width: 600, html: '<table class="canvas" width="600"><tr><td>Weekly edition</td></tr></table>' },
+  { name: "600px table", width: 600, html: '<body bgcolor="#f3f5f9"><table class="canvas" width="600" bgcolor="#f3f5f9"><tr><td>Weekly edition</td></tr></table></body>' },
   { name: "640px heading and button", width: 640, html: '<table class="canvas" width="640"><tr><td><h1 style="font-size:48px">The weekend edition</h1><a href="https://example.test/edition" style="display:inline-block;padding:16px 36px;background:#ddd">Read the edition</a></td></tr></table>' },
   { name: "fluid table", width: 600, fluid: true, html: '<table class="canvas" width="100%" style="max-width:600px"><tr><td>Responsive edition</td></tr></table>' },
   { name: "fixed inner table", width: 260, html: '<table width="100%"><tr><td><table class="canvas" width="260"><tr><td>A narrow card</td><td>More</td></tr></table></td></tr></table>' },
@@ -133,6 +134,7 @@ const designFixtures = [
 interface DesignRig {
   openDesign(html: string): void;
   openPreview(html: string): void;
+  openResize(html: string): void;
   openAnchored(html: string, width?: number, thread?: boolean): void;
   openPendingPress(html: string): void;
   pressEarlier(): string | null;
@@ -156,6 +158,8 @@ function paintedDesign(page: Page) {
       scale: rect.width / table.offsetWidth,
       scaled: getComputedStyle(doc.body).transform !== "none",
       reflow: root.getAttribute("data-ohmail-reflow"),
+      canvasPaper: getComputedStyle(table).backgroundColor,
+      framePaper: getComputedStyle(root).backgroundColor,
     };
   });
 }
@@ -183,7 +187,10 @@ for (const [name, engine] of ENGINES) {
             await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
             const m = await paintedDesign(page);
             const room = m.frame - 2 * m.inset;
-            if (paneWidth === 940) wide = m.drawn;
+            if (paneWidth === 940) {
+              wide = m.drawn;
+              expect(Math.abs(m.left - (m.frame - m.right)), `${designName} left and right gaps`).toBeLessThanOrEqual(2);
+            }
             // Never cut: the letter's right edge stays inside the frame, its left edge too; only a letter already
             // shrunk to the smallest readable scale may reach past it.
             expect(m.left).toBeGreaterThanOrEqual(-1);
@@ -217,6 +224,10 @@ for (const [name, engine] of ENGINES) {
           await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
           const designWidth = fluid ? width : wide;
           await expect.poll(async () => Math.abs((await paintedDesign(page)).drawn - designWidth)).toBeLessThanOrEqual(1);
+          if (designName === "600px table") {
+            const m = await paintedDesign(page);
+            expect(m.framePaper).toBe(m.canvasPaper);
+          }
           if (!fluid && width > 390) {
             for (const paneWidth of [560, 390, 940]) {
               await page.evaluate((w) => (window as unknown as { rig: DesignRig }).rig.resizeDesign(w), paneWidth);
@@ -243,6 +254,112 @@ for (const [name, engine] of ENGINES) {
         }
       }, 15_000);
     }
+
+    it.each(["left", "right"])("keeps the frame and reading position still when hovering a %s foot link", async (side) => {
+      const page = await open(browser!);
+      try {
+        const html = '<table width="600"><tr><td style="height:1050px">Weekend edition</td></tr>' +
+          `<tr><td><table align="${side}" width="135"><tr><td><a href="https://subscriptions.weekend-edition.example.test/leave">Unsubscribe here</a></td></tr></table></td></tr></table>`;
+        await page.evaluate((value) => (window as unknown as { rig: DesignRig }).rig.openAnchored(value, 650), html);
+        const link = page.frameLocator(".mb-frame").getByRole("link", { name: "Unsubscribe here" });
+        await link.scrollIntoViewIfNeeded();
+        const frame = page.locator(".mb-frame");
+        const before = await frame.evaluate((f) => ({
+          height: f.clientHeight, top: f.closest(".read-col")!.scrollTop,
+          width: (f as HTMLIFrameElement).contentDocument!.documentElement.scrollWidth,
+        }));
+        const box = (await link.boundingBox())!;
+        await page.mouse.move(box.x + 5, box.y + 5);
+        const after = await frame.evaluate(async (f) => {
+          const samples = [];
+          for (let i = 0; i < 24; i++) {
+            await new Promise((done) => requestAnimationFrame(done));
+            samples.push({
+              height: f.clientHeight, top: f.closest(".read-col")!.scrollTop,
+              width: (f as HTMLIFrameElement).contentDocument!.documentElement.scrollWidth,
+            });
+          }
+          return samples;
+        });
+        expect(await link.evaluate((a) => a.matches(":hover"))).toBe(true);
+        expect([...new Set(after.map((sample) => JSON.stringify(sample)))]).toEqual([JSON.stringify(before)]);
+      } finally {
+        await page.context().close();
+      }
+    });
+
+    it("holds a letter steady through a 300px list divider drag", async () => {
+      const page = await open(browser!);
+      try {
+        const html = '<table width="600"><tr><td style="height:820px">Weekend edition</td></tr></table>';
+        await page.evaluate((value) => (window as unknown as { rig: DesignRig }).rig.openResize(value), html);
+        const frame = page.locator(".mb-frame");
+        await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
+        const divider = page.getByRole("separator", { name: "List width" });
+        const box = (await divider.boundingBox())!;
+        const x = box.x + box.width / 2;
+        const y = box.y + 10;
+        const starting = await frame.evaluate((f) => {
+          const scroller = f.closest(".fr-reading")!;
+          scroller.scrollTop = 110;
+          const heights = { probes: 0, tops: [] as number[] };
+          const observer = new MutationObserver((records) => {
+            heights.probes += records.filter((record) => record.oldValue?.includes("height: 600px")).length;
+          });
+          observer.observe(f, { attributes: true, attributeFilter: ["style"], attributeOldValue: true });
+          (window as unknown as { heights: typeof heights }).heights = heights;
+          return { width: f.clientWidth, height: f.clientHeight, top: f.getBoundingClientRect().top };
+        });
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        for (let moved = 10; moved <= 300; moved += 10) {
+          await page.mouse.move(x + moved, y);
+          await page.evaluate(() => new Promise((done) => requestAnimationFrame(done)));
+          await frame.evaluate((f) => {
+            (window as unknown as { heights: { tops: number[] } }).heights.tops.push(f.closest(".fr-reading")!.scrollTop);
+          });
+        }
+        expect(await divider.getAttribute("aria-valuenow")).toBe("620");
+        const samples = await page.evaluate(() => (window as unknown as { heights: { probes: number; tops: number[] } }).heights);
+        expect(samples.probes).toBeLessThanOrEqual(1);
+        expect(samples.tops.every((top) => Math.abs(top - 110) <= 2)).toBe(true);
+        const dragging = await frame.evaluate((f) => ({
+          width: f.clientWidth, height: f.clientHeight, top: f.getBoundingClientRect().top,
+          shown: f.getBoundingClientRect().width, room: f.parentElement!.clientWidth,
+        }));
+        expect(dragging).toMatchObject(starting);
+        expect(Math.abs(dragging.shown - dragging.room)).toBeLessThanOrEqual(1);
+        await page.mouse.up();
+        await expect.poll(() => frame.evaluate((f) => f.clientWidth)).toBe(dragging.room);
+        await expect.poll(() => frame.evaluate((f) => f.clientHeight)).toBeLessThan(700);
+        expect(await page.evaluate(() => (window as unknown as { heights: { probes: number } }).heights.probes)).toBeLessThanOrEqual(2);
+      } finally {
+        await page.context().close();
+      }
+    });
+
+    it("starts the first picture before parked stylesheet pictures finish", async () => {
+      let release!: () => void;
+      const proxied: Proxied = { asked: 0, now: 0, most: 0, urls: new Map(), release: new Promise((r) => { release = r; }) };
+      const page = await open(browser!, proxied, 20);
+      try {
+        const styles = Array.from({ length: 6 }, (_, i) =>
+          `.below${i}{background-image:url(https://pictures.example.test/below${i}-held.png)}`).join("");
+        const rows = Array.from({ length: 6 }, (_, i) => `<tr><td class="below${i}">More of the edition</td></tr>`).join("");
+        const html = `<style>${styles}</style><table width="600"><tr><td>` +
+          '<img src="https://pictures.example.test/cover.png" width="600" height="180" alt="Cover"></td></tr>' +
+          '<tr><td style="height:1000px">Weekend edition</td></tr>' + rows + '</table>';
+        await page.evaluate((value) => (window as unknown as { rig: DesignRig }).rig.openAnchored(value, 760), html);
+        await expect.poll(() => proxied.urls?.size).toBe(6);
+        expect(proxied.urls?.has("https://pictures.example.test/cover.png")).toBe(true);
+        const cover = page.frameLocator(".mb-frame").getByRole("img", { name: "Cover" });
+        await expect.poll(() => cover.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBe(8);
+        expect(proxied.most).toBeLessThanOrEqual(6);
+      } finally {
+        release();
+        await page.context().close();
+      }
+    });
 
     async function openNarrow(page: Page, html: string, preview: boolean) {
       await page.evaluate(({ value, preview }) => {
@@ -384,12 +501,13 @@ for (const [name, engine] of ENGINES) {
     });
 
     it.each([
-      { width: 940, thread: false, positionApi: false },
-      { width: 390, thread: false, positionApi: false },
-      { width: 940, thread: true, positionApi: false },
-      { width: 390, thread: true, positionApi: false },
-      { width: 390, thread: false, positionApi: true },
-    ])("holds text below a picture at $width px (thread: $thread, position API: $positionApi)", async (fixture) => {
+      { width: 940, thread: false, positionApi: false, zoom: 1 },
+      { width: 390, thread: false, positionApi: false, zoom: 1 },
+      { width: 940, thread: true, positionApi: false, zoom: 1 },
+      { width: 390, thread: true, positionApi: false, zoom: 1 },
+      { width: 390, thread: false, positionApi: true, zoom: 1 },
+      { width: 390, thread: true, positionApi: false, zoom: 1.5 },
+    ])("holds text below a picture at $width px (thread: $thread, position API: $positionApi, zoom: $zoom)", async (fixture) => {
       const release = Promise.withResolvers<void>();
       const page = await open(browser!, { asked: 0, now: 0, most: 0, release: release.promise });
       try {
@@ -398,13 +516,15 @@ for (const [name, engine] of ENGINES) {
           '<tr><td><img src="https://pictures.example.test/cover-held.png" width="600" alt="Cover"></td></tr>' +
           '<tr><td style="text-align:center"><span class="reading-text">The first line after the cover</span></td></tr>' +
           '<tr><td style="height:1000px">After the line</td></tr></table>';
-        await page.evaluate(({ html, width, thread }) => {
+        await page.evaluate(({ html, width, thread, zoom }) => {
+          document.documentElement.style.zoom = String(zoom);
+          document.documentElement.style.setProperty("--ui-zoom", String(zoom));
           (window as unknown as { rig: DesignRig }).rig.openAnchored(html, width, thread);
         }, { html, ...fixture });
         await page.locator(".mb [data-own-end]").waitFor({ state: "attached" });
         const photo = page.frameLocator(".mb-frame").getByRole("img", { name: "Cover" });
         await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.src.includes("/api/img"))).toBe(true);
-        await page.evaluate(({ positionApi }) => {
+        const caret = await page.evaluate(async ({ positionApi, zoom }) => {
           const frame = document.querySelector<HTMLIFrameElement>(".mb-frame")!;
           const doc = frame.contentDocument!;
           if (positionApi) {
@@ -419,16 +539,32 @@ for (const [name, engine] of ENGINES) {
           }
           const target = doc.querySelector(positionApi ? ".reading-text" : 'img[alt="Cover"]')!;
           const { top, height } = target.getBoundingClientRect();
-          frame.closest(".read-col")!.scrollTop += frame.getBoundingClientRect().top + top + height / 2 - 14;
+          const scroller = frame.closest<HTMLElement>(".read-col")!;
+          let firstY: number | undefined;
+          if (zoom !== 1) {
+            const getRange = doc.caretRangeFromPoint.bind(doc);
+            doc.caretRangeFromPoint = (x, y) => {
+              firstY ??= y;
+              return getRange(x, y);
+            };
+          }
+          scroller.scrollTop += frame.getBoundingClientRect().top / zoom + top + height / 2 - 14;
+          const expectedY = 14 - (frame.getBoundingClientRect().top - scroller.getBoundingClientRect().top) / zoom;
+          await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+          return { firstY, expectedY };
         }, fixture);
-        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        if (fixture.zoom !== 1) {
+          expect(caret.firstY, "the caret starts on the reading line inside the unzoomed frame")
+            .toBeCloseTo(caret.expectedY, 1);
+        }
         const cover = (await photo.boundingBox())!;
         const line = page.frameLocator(".mb-frame").locator(".reading-text");
         const before = (await line.boundingBox())!.y;
         if (!fixture.positionApi) {
-          expect(cover.y).toBeLessThan(14);
-          expect(cover.y + cover.height).toBeGreaterThan(14);
-          expect(before).toBeGreaterThan(14);
+          const readingLine = 14 * fixture.zoom;
+          expect(cover.y).toBeLessThan(readingLine);
+          expect(cover.y + cover.height).toBeGreaterThan(readingLine);
+          expect(before).toBeGreaterThan(readingLine);
         }
         const height = (await page.locator(".mb-frame").boundingBox())!.height;
         release.resolve();
