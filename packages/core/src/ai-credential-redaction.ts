@@ -1,5 +1,6 @@
 import {
   decodeEntities, foldDigits, GERMAN_SECRET_NOUN, hasCredentialMailCue, hasModelBrandedCode,
+  hasAdjacentModelCodeCue, hasCredentialSenderCue,
   hasModelCodeCue, hasModelInvitationCue, hasModelLinkCue, MODEL_LOGIN_WORDS,
   MODEL_RESET_WORDS, MODEL_URL, readableBase64Text, redactIssuedPassword,
 } from "./sensitive.js";
@@ -18,10 +19,10 @@ const EMBEDDED_BASE64 = /[A-Za-z0-9+/]{16,}={0,2}/g;
 const TRACKER_PATH = /^(?:click|track|redirect|link)$/i;
 const OPAQUE_PATH_VALUE = /^(?:[a-f\d]{16,}|(?=[\w.~%+-]{6,}$)(?=.*\d)(?=.*[a-z])[\w.~%+-]+|[A-Z\d_-]{12,})$/;
 const POSITIONAL_CREDENTIAL = /^(?:\d{4,}|[a-z]{12,})$/i;
-const EXTRA_CREDENTIAL_PARAM = /^(?:reset_password_token|password_reset_token|invitation_token)$/i;
+const EXTRA_CREDENTIAL_PARAM = /^(?:reset_password_token|password_reset_token|invitation_token|unlock_token)$/i;
 const EXTRA_RESET_PATH = new RegExp("password|" + GERMAN_SECRET_NOUN + "|reset|forgot", "i");
 const EXTRA_AUTH_PATH = new RegExp(EXTRA_RESET_PATH.source + "|login|signin|magic|verify|confirm", "i");
-const INVITE_PATH = /^(?:invite|join|shared[-_]invite|team[-_]invite|redeem)$/i;
+const INVITE_PATH = /^(?:(?:(?:shared|team)[-_])?invites?|invitations?|einladungen|einladung|join|redeem)$/i;
 
 type LinkPlaceholder = "[sign-in link]" | "[reset link]";
 
@@ -81,14 +82,15 @@ function credentialLink(raw: string, auth: boolean, reset: boolean, wrapperDepth
   }
 
   const explicit = params.find(([key, value]) => value && EXTRA_CREDENTIAL_PARAM.test(key));
-  if (explicit) return /^invitation/i.test(explicit[0]) ? "[sign-in link]" : "[reset link]";
+  if (explicit) return /password/i.test(explicit[0]) ? "[reset link]" : "[sign-in link]";
+  const inviteQuery = params.some(([key, value]) => value && AUTH_PARAM.test(key));
   for (const route of routes) {
     // A token directly after a compound auth action, including actions like wp-login.php.
     const utility = route.findIndex(segment => UTILITY_PATH.test(segment));
     const action = route.findIndex((segment, index) => {
       const next = route[index + 1] ?? "";
       return (utility === -1 || index < utility) && (
-        INVITE_PATH.test(segment) && OPAQUE_PATH_VALUE.test(next)
+        INVITE_PATH.test(segment) && (inviteQuery || OPAQUE_PATH_VALUE.test(next))
         || EXTRA_AUTH_PATH.test(segment) && (OPAQUE_PATH_VALUE.test(next) || POSITIONAL_CREDENTIAL.test(next))
       );
     });
@@ -143,7 +145,6 @@ const CODE_SUFFIX = /^[\t *\x60"']*(?:(?:is|ist)\s+(?:(?:your|dein|ihr|der)\s+)?
 const USE_CODE = /\b(?:use|enter|type|verwende(?:n|st|t)?(?: sie)?|gib|geben sie)\s+[*\x60"']*$/iu;
 const LABELED_TOKEN = /\b(?:reset|verification|login|sign[- ]in|auth(?:entication)?|recovery|access|bestätigungs|anmelde)[- ]*token\b|\b(?:your code|dein code|ihr code|(?:einmalige|einmal verwendbare) (?:ziffern|zahlen)folge|(?:your|deine|ihre) tan)\b/iu;
 const END_LABELED_TOKEN = new RegExp("(?:" + LABELED_TOKEN.source + ")$", "iu");
-const CODE_ACRONYM = /\b(?:OTP|TAN|PIN)$/;
 const LEADING_SPACE = /^[\s:：=*"'`(\[{–—>-]*$/u;
 const CONTEXTUAL_LABEL = new RegExp("(?:(?:^|[.!?;\\n])\\s*|\\b(?:the (?:following )?|den (?:folgenden )?|diesen ))"
   + "(?:code|token|passcode|" + GERMAN_SECRET_NOUN + ")\\b$", "iu");
@@ -156,7 +157,7 @@ const DATE_VALUE = /^\d{4}[- ]\d{2}[- ]\d{2}$/;
 
 function codeCue(value: string, atEnd = false): boolean {
   return hasModelCodeCue(value, atEnd) || (atEnd ? END_LABELED_TOKEN : LABELED_TOKEN).test(value)
-    || hasModelBrandedCode(value, atEnd) || CODE_ACRONYM.test(value);
+    || hasModelBrandedCode(value, atEnd);
 }
 
 function looksLikePlainCode(value: string): boolean {
@@ -184,17 +185,23 @@ function looksLikeCode(value: string): boolean {
 
 const LETTER_CODE = /(?<![\p{L}\p{N}@_/-])\p{L}{5,10}(?![\p{L}\p{N}@_/-])/gu;
 const LETTER_VALUE = /^\p{L}{5,10}$/u;
-const PROSE_AFTER_LABEL = /^(?:ready|below|above|expired|available|invalid|request|angefordert|nicht|gültig|ungültig)$/iu;
+const PROSE_AFTER_LABEL = /^(?:ready|below|above|expired|available|invalid|request|required|needed|shown|listed|angefordert|nicht|gültig|ungültig)$/iu;
 const SIGNATURE = /(?:^|\r?\n)[ \t]*(?:regards|best regards|thanks|sincerely|mit freundlichen grüßen|viele grüße)[ \t,]*\r?\n/iu;
-const VALUE_FOLLOWS_LABEL = /(?:\b(?:code|passcode)(?: you need[^:\n]{0,55})?|\bcode (?:below|above))\b[ \t]*(?:[.!:]|(?:is|ist|lautet)[ \t]*:?)?[\s>*]*$/iu;
-const CODE_FOLLOWUP = /^\s+(?:enter it|it expires|it is valid|if this|don't share)\b/iu;
+const VALUE_FOLLOWS_LABEL = /(?:\b(?:code|passcode)|\bcode (?:below|above))\b[ \t]*(?:[.!:]|(?:is|ist|lautet)[ \t]*:?)?[\s>*]*$/iu;
+const CODE_FOLLOWUP = /^(?:,\s*|\s+(?:and\s+)?)(?:enter it|it expires|it is valid|if this|don't share)\b/iu;
+const CODE_DELIMITER = /(?:[:：=]|\blautet)[\s>*]*$/iu;
+const CODE_COPULA = /\b(?:is|ist)[\s>*]*$/iu;
+const DELIMITED_CODE_PHRASE = /\b(?:code|passcode)\b[^.!?;:\n]{0,70}[:：][\s>*]*$/iu;
 const VALUE_END = /^[^\S\n]*(?:[.!?]|$|\r?\n)/u;
 
 function labeledLetterCode(value: string, before: string, after: string): boolean {
-  const delimited = /[:：=][\s>*]*$/u.test(before);
+  const delimited = CODE_DELIMITER.test(before);
+  const attached = delimited || CODE_COPULA.test(before);
+  const label = before.replace(CODE_JOIN, "");
   return (!PROSE_AFTER_LABEL.test(value) || delimited)
-    && (VALUE_FOLLOWS_LABEL.test(before) || (delimited && codeCue(before.replace(CODE_JOIN, ""), true)))
-    && (VALUE_END.test(after) || CODE_FOLLOWUP.test(after));
+    && (VALUE_FOLLOWS_LABEL.test(before) || DELIMITED_CODE_PHRASE.test(before)
+      || (attached && (codeCue(label, true) || hasAdjacentModelCodeCue(label, true))))
+    && (attached || VALUE_END.test(after) || CODE_FOLLOWUP.test(after));
 }
 
 function redactLetterCodes(text: string, part?: { first: boolean; last: boolean }): string {
@@ -207,7 +214,7 @@ function redactLetterCodes(text: string, part?: { first: boolean; last: boolean 
     const endsLine = /^[ \t]*\r?\n/u.test(after) || (part?.last && at + value.length + after.length === text.length
       && /^[ \t]*$/u.test(after));
     const ownLine = startsLine && endsLine && at < signature;
-    const leading = startsText && CODE_FOLLOWUP.test(after);
+    const leading = part && /^\s*$/u.test(before) && CODE_FOLLOWUP.test(after);
     return ownLine || leading || labeledLetterCode(value, before, after) ? "[code]" : value;
   });
 }
@@ -219,6 +226,9 @@ const CODE_LABEL = new RegExp("\\b(?:[\\p{L}-]*(?:code|tan)s?|otp|token|pin|pass
 const BODY_CODE = new RegExp("(?<![\\p{L}\\p{N}])\\p{Nd}(?:[ \\t]+\\p{Nd}){3,11}(?![\\p{L}\\p{N}]|[ \\t]+\\p{Nd}\\b)|"
   + CANDIDATE.source, "gu");
 
+const BODY_NUMERIC_CODE = /^\p{Nd}(?:[ \t-]*\p{Nd}){3,11}$/u;
+const CODE_LABEL_END = /(?:[:：=.!]|\b(?:is|ist|lautet))[\s>*:]*$/iu;
+
 function bodyHasCode(text: string): boolean {
   if (redactIssuedPassword(text) !== text) return true;
   for (const match of text.matchAll(BODY_CODE)) {
@@ -227,14 +237,15 @@ function bodyHasCode(text: string): boolean {
     const before = text.slice(Math.max(0, at - 100), at);
     const after = text.slice(at + value.length, at + value.length + 100);
     if (FOOTER_CUE.test(before) || DATE_PREFIX.test(before) || MONEY_SUFFIX.test(after)) continue;
-    if (!looksLikeCode(value) && !/^\p{Nd}(?:[ \t]+\p{Nd}){3,11}$/u.test(value)
+    const numericCode = BODY_NUMERIC_CODE.test(value) && !DATE_VALUE.test(foldDigits(value));
+    if (!looksLikeCode(value) && !numericCode
       && !(LETTER_VALUE.test(value) && labeledLetterCode(value, before, after))) continue;
     const label = before.replace(CODE_JOIN, "");
     const suffix = CODE_SUFFIX.exec(after);
     if (suffix && (suffix[1] ? hasCredentialMailCue(suffix[0]) : USE_CODE.test(before))) return true;
-    if (CODE_INTRO.test(label) || codeCue(label, true)) return true;
-    if (CODE_LABEL.test(label) && hasCredentialMailCue(label)
-      && /(?:[:：=.!]|\b(?:is|ist|lautet))[\s>*:]*$/iu.test(before)) return true;
+    const delimited = CODE_LABEL_END.test(before);
+    if (CODE_INTRO.test(label) || codeCue(label, true) || hasAdjacentModelCodeCue(label, delimited)) return true;
+    if (delimited && CODE_LABEL.test(label) && hasCredentialMailCue(label)) return true;
   }
   return false;
 }
@@ -288,13 +299,13 @@ function redactText(text: string, context: string, heading = false, credentialMa
       const prefix = before.replace(CODE_JOIN, "");
       const separator = before.slice(prefix.length);
       const introduced = CODE_INTRO.test(prefix);
-      const labeled = codeCue(prefix, true)
+      const labeled = codeCue(prefix, true) || hasAdjacentModelCodeCue(prefix, false)
         || (contextCode && CONTEXTUAL_LABEL.test(prefix));
       const lettersOnly = /^[a-z_-]+$/i.test(value) && looksLikePlainCode(value);
       const delimiter = /[：:=]/u.test(separator);
       // A bare acronym needs credential syntax. A word after a label needs stronger evidence than a number.
       const directlyLabeled = separator && labeled
-        && (!/\bPIN$/.test(prefix) || delimiter || /\b(?:is|ist|lautet)\b/iu.test(separator))
+        && (!/\bPIN$/i.test(prefix) || delimiter || /\b(?:is|ist|lautet)\b/iu.test(separator))
         && (!lettersOnly || delimiter || /[-_]/.test(value) || CREDENTIAL_CONTINUATION.test(after));
       const suffix = CODE_SUFFIX.exec(after);
       const credentialUse = suffix && (suffix[1] ? codeCue(suffix[1]) : USE_CODE.test(before) || contextCode);
@@ -329,11 +340,34 @@ export function redactAiPayload<T>(payload: T, context = ""): T {
 export function redactAiMail<T extends { subject?: string; snippet: string }>(
   mail: T, { fromName, body = mail.snippet }: { fromName?: string | null; body?: string } = {},
 ): T {
-  const subject = (mail.subject ?? "").replace(INCIDENTAL_SUBJECT, " ");
-  const credentialMail = hasCredentialMailCue(subject)
-    || hasCredentialMailCue(fromName ?? "") || hasCredentialBodyCue(body);
+  const credentialMail = hasCredentialSubjectCue(mail.subject ?? "")
+    || hasCredentialSenderCue(fromName ?? "") || hasCredentialBodyCue(body);
   return redactFields(mail, credentialMail);
 }
+
+function hasCredentialSubjectCue(text: string): boolean {
+  const subject = text.replace(INCIDENTAL_SUBJECT, " ");
+  return hasCredentialMailCue(subject) || hasCredentialBodyCue(subject);
+}
+
+const PASTED_SUBJECT = /^([ \t]*(?:forwarding this|subject|betreff)[ \t]*:[ \t]*)([^\r\n]*)(\r?\n)/iu;
+
+/** Recognize a credential in the person's own draft text with the same evidence as a mail. */
+export function redactAiDraftWords<T extends { text: string; subject?: string }>(words: T, context = ""): T {
+  const pasted = PASTED_SUBJECT.exec(words.text);
+  const pastedSubject = pasted?.[2] ?? "";
+  const body = words.text.slice(pasted?.[0].length ?? 0);
+  const credentialText = hasCredentialSubjectCue(pastedSubject) || hasCredentialSubjectCue(words.subject ?? "")
+    || hasCredentialBodyCue(body);
+  if (!pasted || !credentialText) return redactFields(words, credentialText, context);
+
+  // Keep the forwarded heading and body separate where the redactor reads layout.
+  const cleaned = redactFields({ ...words, text: body }, true, pastedSubject || context);
+  return { ...cleaned, text: pasted[1] + redactText(pastedSubject, body, true, true) + pasted[3] + cleaned.text };
+}
+
+/** Match emitted placeholders, including harmless formatting changes in a provider echo. */
+export const AI_REDACTION_PLACEHOLDER = /\[\s*(code|link|sign[-\s]+in\s+link|reset\s+link)\s*\]/iu;
 
 function redactFields<T>(payload: T, credentialMail: boolean, context = ""): T {
   if (typeof payload === "string") return redactText(payload, context, false, credentialMail) as T;

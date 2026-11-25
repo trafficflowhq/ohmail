@@ -999,21 +999,28 @@ export const GERMAN_SECRET_NOUN = /(?:pass|kenn)w(?:ort|[öo]rter)/.source;
 const ISSUED_PASSWORD = new RegExp("\\b(?:(?:temporary|provisional|initial|one[-\\s]?time|single[-\\s]?use) passwords?"
   + "|(?:vorl[aä]ufiges|tempor[aä]res|initiales) " + GERMAN_SECRET_NOUN + "|einmal" + GERMAN_SECRET_NOUN + ")\\b", "i");
 // The precise tier also reads these cues when interpreting a nearby code or URL.
-export const MODEL_LOGIN_WORDS = /\b(?:sign[\s-]*in|log[\s-]*in|magic[\s-]*link|passwordless|anmeld\w*|einloggen|verify (?:your |this )?(?:account|email)|bestätig\w* (?:dein |ihr )?konto)\b/iu;
+export const MODEL_LOGIN_WORDS = /\b(?:sign[\s-]*in|log[\s-]*in|magic[\s-]*link|passwordless|anmelden|anzumelden|anmeldelinks?|anmeldeversuchs?|einloggen|verify (?:your |this )?(?:account|email)|bestätig\w* (?:dein |ihr )?konto)\b/iu;
+const MODEL_GERMAN_LOGIN = /\b(?:neue[nr]?\s+anmeldung|anmeldung[\s:–-]+(?:bei|best[aä]tigen|(?:mit\s+(?:(?:einem|dem)\s+)?)?(?:code|link))|(?:code|link)\s+(?:zur\s+|für\s+(?:(?:ihre|deine|die)\s+)?)anmeldung)\b/iu;
 export const MODEL_RESET_WORDS = new RegExp("\\b(?:(?:passwor[dt]|" + GERMAN_SECRET_NOUN
   + ")[\\s_-]+(?:reset|recover\\w*|zur[üu]cksetz\\w*|[äa]nder\\w*|wiederherstell\\w*|vergessen)"
   + "|(?:reset|recover)\\s+(?:your\\s+)?password|(?:reset|recover)[_-]password)\\b", "iu");
-const MODEL_TAN = "\\b(?:(?:photo|chip|push|sms|m)?tans?)\\b";
+const MODEL_ACRONYM = /(?<![\p{L}\p{N}_])(?:\p{L}*TAN|PIN|OTP)s?(?![\p{L}\p{N}_])/u;
+const BARE_MODEL_ACRONYM = /\b(?:tan|pin|otp)s?\b/gi;
+const END_MODEL_ACRONYM = new RegExp(MODEL_ACRONYM.source + "$", "u");
+const END_ADJACENT_ACRONYM = /\b(?:tan|pin|otp)s?$/iu;
+const END_COMPOUND_CODE = /(?<![\p{L}\p{N}_])\p{L}+-?codes?$/iu;
+const COMMERCE_COMPOUND_CODE = /^(?:gutschein|rabatt|aktion|bestell|post|sendungs|order|booking|discount|promo|coupon|tracking|sort|reference|product|postal|bar)-?codes?$/iu;
+// These names are credential cues even without a value. Other compounds need a nearby value.
 const MODEL_GERMAN_CODE = "\\b(?:best[aä]tigungs|sicherheits|aktivierungs|freischalt|authentifizierungs|"
   + "registrierungs|freigabe|login|anmelde|verifizierungs)[- ]?codes?\\b";
 const MODEL_EMAIL_CONFIRMATION = /\b(?:best[aä]tige (?:deine|ihre)|best[aä]tigung (?:deiner|ihrer)) e-?mail\b/iu;
-const MODEL_INVITATION = /\b(?:invited you|join now|accept (?:an? |the |your )?invit(?:e|ation)s?|invitations?[\s-]+accept|einladung annehmen|l[aä]dt (?:dich|sie) ein)\b/iu;
+const MODEL_INVITATION = /\b(?:invited you|(?:has|have) been invited|you(?:['’]re| are) invited to join|join now|accept (?:an? |the |your )?invit(?:e|ation)s?|invitations?[\s-]+accept|einladung annehmen|eingeladen|l[aä]dt (?:dich|sie)(?:[ \t]+[^.!?;\r\n]{1,80})?[ \t]+ein)\b/iu;
 const MODEL_BRANDED_CODE = /\b(?:your|dein|ihr)[ \t]+(?:[\p{L}\p{N}][\p{L}\p{N}&-]{0,39}[- \t]+){1,3}code\b/iu;
 const END_BRANDED_CODE = new RegExp(MODEL_BRANDED_CODE.source + "$", "iu");
 const COMMERCE_CODE = /\b(?:order|booking|discount|promo|coupon|tracking|sort|reference|product|postal)[-\s]+code\b/i;
 const MODEL_CREDENTIAL_WORDS = new RegExp("\\b(?:" + [
   "(?:sign|log)[\\s-]*ins|sign(?:ing|ed) in|log(?:ging|ged) in|magic[\\s-]*links",
-  "verifications?|otps?|" + "2" + "fa|two[\\s-]+factor",
+  "verifications?|" + "2" + "fa|two[\\s-]+factor",
   "(?:new|forgot(?:ten)?) password|account recover(?:y|ies)|unlock your account",
   "verifizierung(?:en)?|swissid|steam guard codes?|launch codes?|your passphrases?",
   "(?:backup|wiederherstellungs)[ -]?codes?|wiederherstellung(?:en)?",
@@ -1022,7 +1029,7 @@ const MODEL_CREDENTIAL_WORDS = new RegExp("\\b(?:" + [
   "dein code f[üu]r|ihr code f[üu]r",
 ].join("|") + ")\\b", "i");
 const MODEL_CODE_SOURCE = [
-  OTP.source, `\\b(?:${CODE_QUALIFIER}|account)[-\\s]?${CODE_NOUN}s?\\b`, MODEL_TAN, MODEL_GERMAN_CODE,
+  OTP.source, `\\b(?:${CODE_QUALIFIER}|account)[-\\s]?${CODE_NOUN}s?\\b`, MODEL_GERMAN_CODE,
   "\\bcode (?:to|for) (?:verify|confirm) (?:your|this) (?:account|e-?mail(?: address)?|address|identity|phone|number)\\b",
 ].join("|");
 const MODEL_CODE_CUE = new RegExp(MODEL_CODE_SOURCE, "i");
@@ -1040,7 +1047,8 @@ export function hasModelInvitationCue(text: string): boolean {
 }
 
 export function hasModelLinkCue(text: string): boolean {
-  return VERIFY.test(text) || RESET.test(text) || MODEL_RESET_WORDS.test(text) || MODEL_EMAIL_CONFIRMATION.test(text);
+  return VERIFY.test(text) || RESET.test(text) || MODEL_RESET_WORDS.test(text)
+    || MODEL_EMAIL_CONFIRMATION.test(text) || MODEL_GERMAN_LOGIN.test(text);
 }
 
 export function hasCredentialMailCue(text: string): boolean {
@@ -1050,6 +1058,20 @@ export function hasCredentialMailCue(text: string): boolean {
     || hasModelBrandedCode(prose) || hasModelCodeCue(prose);
 }
 
+/** Sender names can supply evidence through a credential phrase. */
+export function hasCredentialSenderCue(name: string): boolean {
+  const prose = name.replace(BARE_MODEL_ACRONYM, " ");
+  return MODEL_CODE_CUE.test(canonicalise(prose).folded) || hasModelBrandedCode(prose)
+    || hasModelLinkCue(prose) || ISSUED_PASSWORD.test(prose);
+}
+
+/** Ambiguous labels count when the caller has found a credential-shaped value beside them. */
+export function hasAdjacentModelCodeCue(label: string, delimited: boolean): boolean {
+  if (END_ADJACENT_ACRONYM.test(label)) return true;
+  const compound = delimited ? END_COMPOUND_CODE.exec(label)?.[0] : undefined;
+  return compound !== undefined && !COMMERCE_COMPOUND_CODE.test(compound);
+}
+
 export function redactIssuedPassword(text: string): string {
   return text.replace(ISSUED_PASSWORD_VALUE, (match, label: string, value: string) =>
     /\p{L}/u.test(value) && /\p{Nd}/u.test(value) && /[^\p{L}\p{Nd}-]/u.test(value)
@@ -1057,7 +1079,8 @@ export function redactIssuedPassword(text: string): string {
 }
 
 export function hasModelCodeCue(text: string, atEnd = false): boolean {
-  const { folded, plain } = canonicalise(text);
+  if ((atEnd ? END_MODEL_ACRONYM : MODEL_ACRONYM).test(text.normalize("NFKC"))) return true;
+  const { folded, plain } = canonicalise(text.replace(BARE_MODEL_ACRONYM, " "));
   return (atEnd ? END_MODEL_CODE_CUE : MODEL_CODE_CUE).test(folded)
     || (atEnd ? END_WORLD_OTP : WORLD_OTP).test(plain);
 }

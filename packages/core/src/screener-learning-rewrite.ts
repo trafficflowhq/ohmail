@@ -1,4 +1,4 @@
-import { redactAiPayload } from "./ai-credential-redaction.js";
+import { AI_REDACTION_PLACEHOLDER, redactAiPayload } from "./ai-credential-redaction.js";
 import { boundedScreenerInputSize, SCREENER_INPUT_LIMIT, ScreenerInputBudgetError } from "./classify-prompt.js";
 import type { AiCallOptions } from "./ai-call-report.js";
 
@@ -98,7 +98,13 @@ export async function askScreenerRewrite(
   if (!raw || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).length !== 1
     || !("text" in raw) || typeof raw.text !== "string") throw new Error("Invalid Screener note");
   const text = raw.text.trim();
-  if (text === payload.previous.trim() || /\[(?:code|link|sign-in link|reset link)\]/i.test(text)) return input.previous;
+  const normalized = (value: string) => value.normalize("NFKC").toLowerCase().trim().replace(/\s+/gu, " ");
+  const unbracketed = normalized(payload.previous)
+    .replace(new RegExp(AI_REDACTION_PLACEHOLDER.source, "giu"), "$1");
+  const strippedEcho = payload.previous !== input.previous && AI_REDACTION_PLACEHOLDER.test(payload.previous)
+    && normalized(text).includes(unbracketed);
+  if (AI_REDACTION_PLACEHOLDER.test(text.normalize("NFKC")) || strippedEcho) throw new Error("Invalid Screener note");
+  if (text === payload.previous.trim()) return input.previous;
   if (new TextEncoder().encode(text).length > BYTE_LIMIT || tokens(text).length > WORD_LIMIT || identifiesMail(text, mailEvidence)) {
     throw new Error("Invalid Screener note");
   }
