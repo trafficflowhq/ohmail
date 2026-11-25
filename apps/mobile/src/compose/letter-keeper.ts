@@ -45,7 +45,7 @@ export interface LetterKeeper {
   /** Drop the files that do not fit before a keep: the close named them. */
   dropOverLimit(): void;
   markKeep(): void;
-  keepAnswered(row: KeptRow | null): void;
+  keepAnswered(row: KeptRow | null, savedAs?: string): void;
   markSend(sig?: string | null): void;
   sendAnswered(r: SendAnswer): void;
   /** A send press: marked on the disk before `dispatch` writes its outbox row, then answered. */
@@ -166,10 +166,10 @@ export function openLetterKeeper(o: KeeperOptions): LetterKeeper {
       for (const f of over) o.door.dropFile(f.fileId);
     },
     markKeep: () => { set({ keep: { at: now().toISOString(), key: null } }); write(); },
-    keepAnswered: (row) => {
+    keepAnswered: (row, savedAs) => {
       if (row === null) { set({ keep: null }); write(); return; }
-      if (row.draftId !== null) { bound(row.draftId, undefined, row.revision); return; }
-      set({ keep: { at: letter.keep?.at ?? now().toISOString(), key: row.key } });
+      if (row.draftId !== null) { bound(row.draftId, savedAs, row.revision); return; }
+      set({ keep: { at: letter.keep?.at ?? now().toISOString(), key: row.key }, ...(savedAs !== undefined ? { savedAs } : {}) });
       write();
     },
     markSend,

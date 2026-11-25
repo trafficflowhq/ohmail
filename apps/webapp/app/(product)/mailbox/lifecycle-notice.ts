@@ -7,6 +7,7 @@ import {
   type AccessFeed, type AccountAccess,
 } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
+import { activeFormatZone } from "../../shell/locale";
 import { durableSessionSet } from "@ohmail/app-logic/storage/durable";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
@@ -113,7 +114,7 @@ export function useLifecycleNotice(criticalOnly = false): LifecycleNotice {
       const url = link?.url;
       if (typeof url === "string" && url.length > 0) {
         armPoll();
-        leaveForManagePage(url);
+        leaveForManagePage(url, activeFormatZone());
         return;
       }
       // No page here (the mint's 404), or an answer with no address: the press went nowhere.

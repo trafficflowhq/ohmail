@@ -11,10 +11,11 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { CalendarEventAct, CalendarEventFields } from "@ohmail/wire";
 import { BENCH_CALDAV_PLACE, PROVEN_REPEATS, proofPlaceOf } from "@ohmail/cal-providers";
 import {
-  CALENDAR_BUILDERS, checkedAct, cutToFit, dismissCalendarWrite, recordCalendarWrite as record, retryCalendarWrite,
+  CALENDAR_BUILDERS, calendarFeed, checkedAct, cutToFit, dismissCalendarWrite, recordCalendarWrite as record, retryCalendarWrite,
 } from "@trafficflow/services/calendar";
+import { answerInvitation } from "../src/invitation-answer-service.js";
 import { materializeMessage } from "../src/dto/materialize.js";
-import { invitationLetter, mailboxAt, ME, ORGANIZER } from "./_invitation-answer.js";
+import { invitationLetter, mailboxAt, ME, ORGANIZER, outbox } from "./_invitation-answer.js";
 import { ServiceError, type ServiceContext } from "../src/index.js";
 
 /** A CalDAV account's server in these cases, taken as the one the bench's repeat proof was run at: its row is the bench's. */
@@ -824,6 +825,42 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     const wrongStart = { ...body, event: { ...body.event, start: { kind: "instant", value: "20261201T103000Z" } } };
     expect(await refusal(recordCalendarWrite(ctx(w.accountId), "different-time", wrongStart))).toBe("409 calendar_read_only");
   });
+
+  it.each(["accepted", "tentative", "declined"] as const)(
+    "stores the mailed %s answer on the self-hosted calendar copy and never resends while filing",
+    async (answer) => {
+      const w = await world({ provider: "caldav" });
+      const mailbox = await mailboxAt(db, w.accountId);
+      const messageId = await invitationLetter(db, w.accountId, mailbox);
+      const [invitation] = await db.select().from(messageInvitations).where(eq(messageInvitations.messageId, messageId));
+      const eventId = invitationCalendarId(invitation!);
+      const smtp = outbox();
+      const answerDeps = {
+        send: { openSendAdapter: smtp.factory },
+        recordCalendarMailAnswer: calendarFeed.recordMailAnswer!,
+      };
+      const context = ctx(w.accountId);
+      const first = await answerInvitation(context, { messageId, answer, basis: null, key: "reply" }, answerDeps);
+      expect(first.result.status).toBe("sent");
+
+      const act = { ...create(w, {
+        start: { kind: "instant", value: "20261201T100000Z" },
+        end: { kind: "instant", value: "20261201T110000Z" },
+        busy: answer !== "declined", alarms: [],
+      }, eventId), invitationMessageId: messageId };
+      const saved = await recordCalendarWrite(context, "file-invitation", act);
+      expect(saved.answer.events).toMatchObject([{ id: eventId, mailAnswer: answer, myAnswer: null }]);
+      expect((await answerInvitation(context, { messageId, answer, basis: null, key: "retry" }, answerDeps)).result.status).toBe("already");
+      expect(smtp.sent).toHaveLength(1);
+      expect(smtp.sent[0]!.calendar?.text).toContain(`PARTSTAT=${answer.toUpperCase()}`);
+
+      const next = answer === "tentative" ? "accepted" : "tentative";
+      expect((await answerInvitation(context, { messageId, answer: next, basis: answer, key: "change-answer" }, answerDeps)).result.status).toBe("sent");
+      const events = await CALENDAR_BUILDERS.calendar_event(db, w.accountId, [eventId]);
+      expect(events.get(eventId)).toMatchObject({ mailAnswer: next, myAnswer: null });
+      expect(smtp.sent).toHaveLength(2);
+    },
+  );
 
   it("removes an existing invitation only for a current cancellation from its organizer", async () => {
     const w = await world({ organizer: ORGANIZER, myAnswer: "accepted" });

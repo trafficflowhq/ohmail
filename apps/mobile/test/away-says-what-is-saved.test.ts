@@ -58,7 +58,7 @@ describe("an unsaved change is named, and leaving with one asks", () => {
   });
 
   it("the screen holds the stack on it, asks, and Discard puts the saved row back before it goes", () => {
-    expect(SCREEN).toContain("const unsaved = awayUnsaved(read, { enabled, body, endsAt });");
+    expect(SCREEN).toContain("const unsaved = awayUnsaved(read, edits);");
     expect(SCREEN).toContain("usePreventRemove(unsaved && !saving, ({ data }) => setLeaving({ action: data.action }));");
     expect(SCREEN).toContain("<SheetRow label={Copy.awayLeaveDiscard} onPress={discardAndLeave} />");
     expect(SCREEN).toMatch(/if \(read !== null\) adopt\(read\);\s+if \(held !== null\) navigation\.dispatch\(held\.action\);/);

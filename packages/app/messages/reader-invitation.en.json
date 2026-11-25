@@ -11,9 +11,16 @@
     "goes": "{title} goes to <calendar></calendar>",
     "on": "{title} is on {calendar}",
     "answerPending": "The answer is still being sent",
-    "answerRefused": "This answer could not be sent",
-    "calendarRefused": "The event could not be added to your calendar",
+    "answerUnverified": "We couldn't confirm whether your reply was sent. Check Sent before answering again.",
+    "calendarDisabled": "Calendar is unavailable on this server.",
+    "calendarRequired": "Connect a writable calendar before answering this invitation.",
+    "detailsUnavailable": "The event details needed to save this invitation are unavailable.",
+    "calendarRefused": "Your reply was sent. The event could not be added to your calendar. {reason}",
+    "calendarUpdateRefused": "Your reply was sent. The change could not be saved to your calendar. {reason}",
+    "calendarPending": "Your reply was sent. The calendar update is pending.",
+    "connect": "Connect a calendar",
     "add": "Add to calendar",
+    "retryUpdate": "Retry calendar update",
     "destination": "Goes to"
   }
 }

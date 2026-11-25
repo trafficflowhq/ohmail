@@ -373,6 +373,61 @@ it.each(["applied", "refused"] as const)(
   },
 );
 
+it("keeps a provider-refused CalDAV create visible as unsaved", async () => {
+  const store = new MemoryMirrorStore();
+  await store.load();
+  await store.commitLocal(
+    [
+      { type: "calendar", id: create.calendarId, entity: { connectionId: "dav" } },
+      { type: "calendar_connection", id: "dav", entity: { provider: "caldav" } },
+    ],
+    [],
+  );
+  const listeners = new Set<() => void>();
+  const port = portOver(
+    async (key) => ({
+      answer: { write: { id: "write", key, state: "pending", reason: null }, events: [] },
+      seq: null,
+    }),
+    store,
+    undefined,
+    (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  );
+  const pressed = port.press(create);
+  const local = port.events()[0]!.record;
+  const { key } = await pressed;
+  await port.flush();
+  const refused = vi.fn();
+  port.watchCreate(local.id, key, refused);
+  const mark: CalendarWriteMark = {
+    id: "write",
+    key,
+    state: "refused",
+    reason: "invitees_unsupported",
+    act: create,
+    part: null,
+    at: local.updatedAt,
+  };
+  await store.commitLocal(
+    [{ type: "calendar_event", id: local.id, entity: { ...local, uid: "pending:write", writes: [mark] } }],
+    [],
+  );
+  for (const listener of [...listeners]) listener();
+  expect(refused).toHaveBeenCalledWith(expect.objectContaining({ word: "invitees_unsupported" }), "write");
+  expect(port.events()).toMatchObject([
+    {
+      record: { id: local.id, title: create.event.title },
+      waiting: null,
+      refusal: "invitees_unsupported",
+    },
+  ]);
+});
+
 it("draws only the changed occurrence while a generated occurrence edit is pending", async () => {
   const store = new MemoryMirrorStore();
   await store.load();

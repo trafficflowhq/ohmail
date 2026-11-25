@@ -72,14 +72,21 @@ type Drawn = { readonly model: AccountDrawn; readonly body?: "pane" | "signOutOn
 
 const noFactor: FactorSlot = () => null;
 /** A state drawn as a shell draws it: the whole pane, or the sign-out alone. */
-function drawn(state: Drawn, { factor = noFactor, lang = "en" as Lang } = {}) {
+function drawn(state: Drawn, { factor = noFactor, lang = "en" as Lang, sharedCalendarAccount = false } = {}) {
   const { account, password, formOpen } = state.model;
   return render(
     <TextProvider locale={lang} messages={WORDS[lang]} timeZone="Europe/Zurich">
       {state.body === "signOutOnly" ? (
         <AccountPane body="signOutOnly" model={account} />
       ) : (
-        <AccountPane body="pane" model={account} password={password} factor={factor} formOpen={formOpen} />
+        <AccountPane
+          body="pane"
+          model={account}
+          password={password}
+          factor={factor}
+          formOpen={formOpen}
+          sharedCalendarAccount={sharedCalendarAccount}
+        />
       )}
     </TextProvider>,
   );
@@ -91,6 +98,12 @@ const listening = (state: Drawn, verbs: Partial<AccountDrawn["account"]>): Drawn
 });
 
 describe("the whole pane, signed in", () => {
+  it.each(["en", "de"] as const)("describes the shared account and irreversible deletion in %s", (lang) => {
+    drawn(STATES.rest, { lang, sharedCalendarAccount: true });
+    expect(seen(acc("sharedCalendarLead", lang))).toBe(true);
+    expect(seen(acc("lead", lang))).toBe(true);
+  });
+
   it("says who is signed in, and offers the three verbs by the names the journeys find", () => {
     drawn(STATES.rest);
     expect(screen.getByRole("heading", { name: ADDRESS })).toBeTruthy();

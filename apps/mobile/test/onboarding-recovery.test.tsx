@@ -1,9 +1,11 @@
 import { PROVIDERS } from "@ohmail/app-logic/mailboxes/connect/providers";
 import { createElement } from "react";
-import { screen as device } from "./helpers/rn-host";
+import { Platform, screen as device, StyleSheet } from "./helpers/rn-host";
 import { act, cleanupAsync, fireEvent, render, screen } from "@testing-library/react-native/pure";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import StandaloneScreen from "../app/standalone";
+import ScanScreen from "../app/scan";
+import { design } from "@ohmail/tokens/design";
 import { Copy } from "../src/copy";
 import { refuse } from "../src/refusal";
 import { ThemeProvider } from "../src/theme";
@@ -12,6 +14,12 @@ import { NavDrawnContext } from "../src/ui/nav-drawn";
 import { OnboardingPage } from "../src/ui/OnboardingPage";
 import { derivePosture } from "../src/ui/posture/derive";
 import { scaffoldPlan } from "../src/ui/scaffold/plan";
+
+const camera = vi.hoisted(() => ({ granted: true, ask: vi.fn() }));
+vi.mock("expo-camera", () => ({
+  CameraView: () => null,
+  useCameraPermissions: () => [{ granted: camera.granted }, camera.ask],
+}));
 
 const seam = vi.hoisted(() => ({ ask: vi.fn(), open: vi.fn(), leave: vi.fn(), release: vi.fn() }));
 vi.mock("react-native", async () => {
@@ -64,7 +72,31 @@ const press = (name: string) => fireEvent.press(button(name));
 afterEach(async () => {
   await cleanupAsync();
   Object.assign(device, { width: 400, height: 800 });
+  Platform.OS = "android";
+  camera.granted = true;
   vi.resetAllMocks();
+});
+
+it.each([
+  { os: "ios", width: 390, height: 844, granted: true },
+  { os: "android", width: 412, height: 915, granted: false },
+])("renders the square QR view and manual pairing at $width × $height on $os", ({ os, width, height, granted }) => {
+  Object.assign(device, { width, height });
+  Platform.OS = os;
+  camera.granted = granted;
+  draw(<ScanScreen />, false);
+  const scan = screen.getByLabelText(granted ? Copy.scanHint : Copy.scanCameraOff);
+  expect(StyleSheet.flatten(scan.props.style)).toMatchObject({
+    aspectRatio: 1,
+    backgroundColor: design.faces.paper.light.solid,
+  });
+  expect(screen.getByText(Copy.scanDevices)).toBeTruthy();
+  press(Copy.scanManual);
+  expect(seam.leave).toHaveBeenCalledOnce();
+  if (!granted) {
+    press(Copy.scanAllow);
+    expect(camera.ask).toHaveBeenCalledOnce();
+  }
 });
 
 describe("leaving phone setup", () => {

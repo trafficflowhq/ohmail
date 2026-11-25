@@ -4,8 +4,8 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNull } from "drizzle-orm";
 import { attachments, messages } from "@trafficflow/db";
 import {
-  CALENDAR_FALLBACK_FILENAME, candidateSections, createLogger, enumerateSections, isCalendarMime, isMessageGone,
-  sectionHoldsFile, transferDecoded,
+  CALENDAR_FALLBACK_FILENAME, candidateSections, createLogger, decodedSectionBytes, enumerateSections, isCalendarMime, isMessageGone,
+  locateSections, sectionHoldsFile, transferDecoded,
   type Logger, type MimeStructure, type NativeLocator,
 } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -86,11 +86,12 @@ export interface AttachmentAdapter {
     locator: NativeLocator, partId: string | null, sink: (chunk: Uint8Array) => Promise<void>, opts?: { maxBytes?: number },
   ): Promise<{ contentType: string; filename: string | null; bytes: number; sha256: string }>;
   /**
-   * The whole message as the server holds it, refused past `maxBytes` (the connection survives).
+   * The whole message as the server holds it, refused past `maxBytes`. Attachment recovery asks
+   * to keep the connection on a clean size refusal so it can still read numbered sections.
    * Optional: a forward whose stored words were let go reads them here, and an adapter without it
    * makes that forward refuse rather than go out without them.
    */
-  fetchRaw?(locator: NativeLocator, opts?: { maxBytes?: number }): Promise<Uint8Array>;
+  fetchRaw?(locator: NativeLocator, opts?: { maxBytes?: number; keepOpenOnLimit?: true }): Promise<Uint8Array>;
   /**
    * The message's MIME tree as the server declares it, for {@link repairedPart}. Optional: a door
    * without it cannot repair an older row, and a mismatch refuses as it always has.
@@ -157,6 +158,7 @@ export interface RepairRow extends PartRow { contentType: string; filename: stri
 export interface PartReader {
   fetchPart(partId: string | null): Promise<FetchedBytes>;
   fetchStructure?(): Promise<MimeStructure | null>;
+  fetchRecoverySource?(): Promise<Uint8Array | null>;
 }
 
 /** The per-request repair allowance, shared by every row of one archive or forward. */
@@ -167,7 +169,22 @@ export function readerFor(adapter: AttachmentAdapter, locator: NativeLocator, op
   return {
     fetchPart: (partId) => adapter.fetchPart(locator, partId, opts),
     ...(adapter.fetchStructure ? { fetchStructure: () => adapter.fetchStructure!(locator) } : {}),
+    ...(adapter.fetchRaw ? { fetchRecoverySource: () => recoverySource(adapter, locator, opts.maxBytes) } : {}),
   };
+}
+
+/** Limit a recovery read to a small message and honor any lower ceiling set by the caller. */
+async function recoverySource(
+  adapter: AttachmentAdapter, locator: NativeLocator, limit: number | undefined,
+): Promise<Uint8Array | null> {
+  const maxBytes = Math.min(limit ?? Infinity, 512 * 1024);
+  try {
+    const raw = await adapter.fetchRaw!(locator, { maxBytes, keepOpenOnLimit: true });
+    return raw.byteLength <= maxBytes ? raw : null;
+  } catch (err) {
+    if (typeof err === "object" && err !== null && (err as { code?: unknown }).code === "ERAWTOOLARGE") return null;
+    throw err;
+  }
 }
 
 /**
@@ -179,6 +196,7 @@ function sinkReaderFor(
 ): PartReader {
   const empty = new Uint8Array();
   return {
+    ...readerFor(adapter, locator, opts),
     fetchPart: async (partId) => {
       await sink.reset();
       if (adapter.fetchPartTo) {
@@ -189,7 +207,6 @@ function sinkReaderFor(
       await sink.write(got.body);
       return { contentType: got.contentType, filename: got.filename, body: empty, sha256: shaHex(got.body), bytes: got.body.byteLength };
     },
-    ...(adapter.fetchStructure ? { fetchStructure: () => adapter.fetchStructure!(locator) } : {}),
   };
 }
 
@@ -240,9 +257,8 @@ async function repairFrom(
   if (budget !== undefined) budget.rows -= 1;
   const structure = known ?? (read.fetchStructure ? await read.fetchStructure() : null);
   if (structure === null) return refuse("no_structure", 0);
-  // THE TREE VOUCHES FOR THE STORED SECTION, so the row is right and the READ was not: a chunk
-  // the connection lost, an answer the server had not settled. Read it again before anything else;
-  // one line either way, `served` or still a `mismatch`, with the number of re-reads.
+  // When the tree vouches for the stored section, first try decoding or recovering that section.
+  // If neither matches the digest, re-read it before trying other section numbers.
   if (sectionHoldsFile(structure, row)) {
     // A server that answers a nested section's MIME header for its parent (GreenMail) leaves the
     // download no transfer encoding, so the first read is still encoded: decode it by the tree's.
@@ -251,6 +267,18 @@ async function repairFrom(
     if (node && decoded && shaHex(decoded) === row.contentSha256) {
       log.info("attachment_part_decoded", { partRowId: row.id, partId: row.partId, kind: node.encoding });
       return { contentType: node.type, filename: first!.filename, body: decoded };
+    }
+    // GreenMail trims trailing whitespace from numbered BODY sections. Base64 wrapping is
+    // discarded by decoding, but trimming a text part can remove bytes hashed at ingest.
+    // Recover the section from the untrimmed message only when the stored digest matches.
+    if (read.fetchRecoverySource) {
+      const raw = await read.fetchRecoverySource();
+      const located = raw && locateSections(raw, structure);
+      const section = located?.ok && located.sections.find((item) => item.section === row.partId);
+      if (raw && section) {
+        const body = decodedSectionBytes(raw, section);
+        if (shaHex(body) === row.contentSha256) return { contentType: row.contentType, filename: row.filename, body };
+      }
     }
     let tries = 0;
     for (const wait of PART_REREAD_WAITS_MS) {
@@ -503,12 +531,20 @@ export class AttachmentsService {
 
   /**
    * {@link fetchBytes} into `sink` instead of memory: the same pre-flight, ceiling, part gate and
-   * refusals, and nothing of the part is held past one chunk. The desktop's save writes a file
-   * this way. A refusal leaves whatever the sink holds unserved; the caller discards it.
+   * refusals. The desktop streams one chunk at a time, with bounded buffering for source recovery.
+   * A refusal leaves whatever the sink holds unserved; the caller discards it.
    */
   async fetchToSink(ctx: ServiceContext, attachmentId: string, deps: FetchDeps, sink: AttachmentSink): Promise<SavedPart> {
     const got = await this.fetchVia(ctx, attachmentId, deps, (adapter, locator, opts) => sinkReaderFor(adapter, locator, sink, opts));
-    return { contentType: got.contentType, filename: got.filename ?? "attachment", bytes: got.bytes ?? 0, sha256: got.sha256 ?? "" };
+    if (got.bytes === undefined) {
+      // Source recovery returns the verified bytes in memory. Replace the failed streamed read.
+      await sink.reset();
+      await sink.write(got.body);
+    }
+    return {
+      contentType: got.contentType, filename: got.filename ?? "attachment",
+      bytes: got.bytes ?? got.body.byteLength, sha256: shaOf(got),
+    };
   }
 
   private async fetchVia(

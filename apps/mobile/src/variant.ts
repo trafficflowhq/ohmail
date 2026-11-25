@@ -68,6 +68,9 @@ export function siblingOf(row: VariantRow): VariantRow {
   return VARIANTS[row.sibling];
 }
 
+/** Store ohcal launches its sibling directly while the pairing transfer stays in preview. */
+export const launchOnlySwitch = (row: VariantRow): boolean => row.app === "ohcal" && row.channel === "release";
+
 /** The phone organizes a mailbox on its own only in an app that carries the engine. */
 export const standaloneOf = (row: VariantRow): boolean => row.carries.organizes;
 

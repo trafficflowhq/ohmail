@@ -37,7 +37,7 @@ export const FAULT_KEYS = {
   unsupported: "fault.notKept",
   left_out: "fault.notKept",
   field_unwritable: "fault.notKept",
-  invitees_unsupported: "fault.notKept",
+  invitees_unsupported: "fault.inviteesUnsupported",
   repeat_unsupported: "fault.notKept",
   move_copy_left: "fault.moveCopyLeft",
   move_unresolved: "fault.moveUnresolved",

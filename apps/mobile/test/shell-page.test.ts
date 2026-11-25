@@ -188,7 +188,10 @@ describe("the phone shell's answers, per setting", () => {
       features: {
         ...NO_FEATURE,
         calendar,
-        ...(calendar === NONE ? {} : { devices: { name: "devices", render: expect.any(Function) } }),
+        ...(calendar === NONE ? {} : {
+          about: { name: "about", render: expect.any(Function) },
+          devices: { name: "devices", render: expect.any(Function) },
+        }),
         ...Object.fromEntries((hosted ? ["account", "subscription", "storage", "invites", "security"] : [])
           .map((name) => [name, { name, render: expect.any(Function) }])),
       },

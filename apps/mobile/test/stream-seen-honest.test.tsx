@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** `at`: where the list stands, by its last report or the last scroll it was told. */
 const win = vi.hoisted(() => ({ ids: null as null | string[], scroller: null as any, held: "", scrolls: [] as number[], at: 0, view: null as any }));
+const foot = vi.hoisted(() => ({ clearance: 0 }));
 vi.mock("react-native", async () => {
   const React = await import("react");
   const keep = (props: any) => (el: any) => { if (el) el.__props = props; };
@@ -66,11 +67,16 @@ vi.mock("../src/ui/base", async () => {
   // The card's tap and the answer verbs are pressable, so a test can open a card and answer it.
   const tap = (p: any) => React.createElement("div", { "data-tap": "", onClick: p.onPress, ref: (el: any) => { if (el) el.__props = p; } }, p.children);
   const button = (p: any) => React.createElement("div", { "data-button": p.label, onClick: p.onPress });
-  return { ViewHead: (p: any) => React.createElement("div", null, p.right, p.children), Badge: () => null, Empty: () => null, Tail: () => null, Waterline: () => null, Panel: box, Screen: box, TapRow: tap, Button: button,
+  const control = (p: any) => React.createElement("button", {
+    "aria-label": p.accessibilityLabel, style: p.style, onClick: p.onPress,
+  }, p.children);
+  return { ViewHead: (p: any) => React.createElement("div", null, p.right, p.children), Badge: () => null, Empty: () => null, Tail: () => null, Waterline: () => null, Panel: box, Screen: box, Tap: control, TapRow: tap, Button: button,
     Txt: (p: any) => { st.txts.push(p); return null; }, Section: () => null, panelSurface: () => ({}), pullRefreshControl: () => undefined,
-    useListInsets: () => ({ paddingLeft: 0, paddingRight: 0, paddingBottom: 0 }) };
+    useListInsets: () => ({ paddingLeft: 0, paddingRight: 0, paddingBottom: foot.clearance }) };
 });
-vi.mock("../src/theme", () => ({ useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), radius: new Proxy({}, { get: () => 8 }) }) }));
+vi.mock("../src/theme", () => ({
+  useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), radius: new Proxy({}, { get: () => 8 }), lift: () => ({}) }),
+}));
 const focus = vi.hoisted(() => ({ cb: null as null | (() => (() => void) | void), cleanup: undefined as undefined | (() => void) | void }));
 vi.mock("expo-router", async () => {
   const React = await import("react");
@@ -252,7 +258,20 @@ const arrive = (rows: any[]) => { st.items = [...rows, ...st.items]; };
 beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] }); });
 afterEach(() => {
   screen?.unmount(); screen = null; win.ids = null; vi.restoreAllMocks(); vi.useRealTimers();
+  foot.clearance = 0;
   st.piles = {}; st.pileAsks = []; st.pilePresses = []; st.pilePrefs.clear();
+});
+
+it.each([ReadsScreen, ReceiptsScreen])("puts Back to top above the native dock and jumps the current list", (Stream) => {
+  foot.clearance = 96;
+  open(letters("mail", 40), () => h(Stream));
+  const back = () => screen!.el.querySelector<HTMLButtonElement>('[aria-label="Back to top"]');
+  expect(back()).toBeNull();
+  listMoves(800);
+  expect(back()?.style.bottom).toBe("96px");
+  act(() => back()!.click());
+  expect(win.at).toBe(0);
+  expect(back()).toBeNull();
 });
 
 describe("phone News marks only the letters a person scrolled through", () => {

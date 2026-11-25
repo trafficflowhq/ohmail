@@ -44,6 +44,8 @@ export interface SettingLineProps {
    * name and the word that acts keep one line, the value goes under the name.
    */
   narrow?: "under" | "detail";
+  /** Let the value and its action wrap onto separate lines in a narrow row. */
+  wrapValue?: boolean;
   /** The control, after the value: a segmented control, a slot, a word that acts. */
   children?: ReactNode;
 }
@@ -75,6 +77,7 @@ export function SettingLine(props: SettingLineProps) {
     sub,
     dense,
     narrow,
+    wrapValue,
     children,
   } = props;
   const labelId = useId();
@@ -103,6 +106,7 @@ export function SettingLine(props: SettingLineProps) {
       data-sub={sub ? "" : undefined}
       data-dense={dense ? "" : undefined}
       data-narrow={narrow}
+      data-wrap-value={wrapValue ? "" : undefined}
       onClick={press}
     >
       <span className="oh-settingline-name">

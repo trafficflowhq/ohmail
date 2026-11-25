@@ -2,8 +2,10 @@
 
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
+import { failProductStyles, productStylesReady } from "./product-styles-ready";
 import { ConfirmBrowserFaceOwner } from "./confirm-browser-face-owner";
-import { setViewTransitions, ThemeProvider, themeInitScript } from "@ohmail/ui";
+import { setViewTransitions, ThemeProvider, themeInitScript } from "@ohmail/ui/theme";
 import { portalRenderer } from "@ohmail/ui/portal-renderer";
 import { columnsBootScript } from "@ohmail/app-logic/lists/column-store";
 // One door per host, at module scope; its face mirror names the account it was written for.
@@ -19,6 +21,18 @@ import "../erased-door";
 
 // A document view transition captures pointer input. Fade the theme colors with the controls still live.
 if (typeof window !== "undefined") setViewTransitions(false);
+
+// Load the full styles with the ordinary product documents. A same-site return can paint
+// the opening frame first and pick them up with the mailbox.
+export const ProductStyles = dynamic(() => import("./ProductStylesheets"));
+export const DeferredProductStyles = dynamic(() => {
+  // Start listening before Next requests the stylesheet, even if the mailbox is still hydrating.
+  void productStylesReady();
+  return import("./ProductStylesheets").then(({ default: Styles }) => Styles, () => {
+    failProductStyles();
+    return () => null;
+  });
+}, { ssr: false });
 
 type AppearanceProps = {
   nonce?: string;

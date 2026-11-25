@@ -72,7 +72,8 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .oh-settingline-value:has(> .oh-settingline-facts) {
+  .oh-settingline-value:has(> .oh-settingline-facts),
+  .oh-settingline[data-wrap-value] > .oh-settingline-value {
     flex-wrap: wrap;
     justify-content: flex-end;
   }
@@ -89,6 +90,12 @@
     color: var(--ink2);
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+
+  .oh-settingline[data-wrap-value] > .oh-settingline-value > :is(.oh-settingline-text, .oh-button) {
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   /* A word that acts is in the ink, its value beside it in the second ink. */

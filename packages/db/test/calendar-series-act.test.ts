@@ -21,6 +21,18 @@ it("keeps rejecting a scoped change that replaces invitees", () => {
   expect(parseCalendarAct({ ...edit, scope: { kind: "occurrence", at }, change: { invitees: [] } })).toBeNull();
 });
 
+it("keeps the source invitation on a filing update through the stored write", () => {
+  const update = {
+    kind: "calendar_event_update", eventId: id, base: edit.base, scope: { kind: "record" },
+    change: { busy: false }, invitationMessageId: next,
+  };
+  const act = parseCalendarAct(update);
+  expect(act).toEqual(update);
+  if (!act) throw new Error("filing update could not be read");
+  const payload = writePayloadOf(act, null, null);
+  expect(parseWritePayload(payload)).toEqual(payload);
+});
+
 it("reads a current continuation for a personal series from an older client", () => {
   const first = parseCalendarAct({
     kind: "calendar_event_create",

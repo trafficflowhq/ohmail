@@ -21,16 +21,17 @@ afterAll(async () => {
 const row = (page: Page) => page.getByRole("option", { name: "Casey Sender: The Screener's test letter" });
 const badge = (page: Page) => row(page).locator(".sc-mailbox-badge");
 
-async function visit(width: number, check: (page: Page) => Promise<void>) {
-  const page = await browser.newPage({ viewport: { width, height: 900 }, hasTouch: true });
+async function visit(width: number, check: (page: Page) => Promise<void>, screened = false) {
+  const page = await browser.newPage({ viewport: { width, height: screened ? 844 : 900 }, hasTouch: true });
+  const url = `${origin}${screened ? "/screened" : "/"}`;
   try {
     await page.route("**/*", (route) =>
-      route.request().url() === `${origin}/`
+      route.request().url() === url
         ? route.fulfill({ contentType: "text/html", body: html })
         : route.abort(),
     );
     await page.addInitScript("window.process = { env: {} };");
-    await page.goto(origin);
+    await page.goto(url);
     await row(page).waitFor({ timeout: 5000 });
     await page.evaluate(() => document.fonts.ready);
     await check(page);
@@ -38,6 +39,32 @@ async function visit(width: number, check: (page: Page) => Promise<void>) {
     await page.close();
   }
 }
+
+it("keeps a long address on one line with its mailbox chip in Screened out at 390 wide", async () => {
+  await visit(390, async (page) => {
+    const address = await row(page).locator(".oh-row-address-words").evaluate((words) => {
+      const range = document.createRange();
+      range.selectNodeContents(words);
+      const lines = new Set(Array.from(range.getClientRects())
+        .filter((rect) => rect.width > 0)
+        .map((rect) => Math.round(rect.top)));
+      return { lines: lines.size, ellipsis: getComputedStyle(words).textOverflow,
+        clipped: words.scrollWidth > words.clientWidth };
+    });
+    expect(address).toEqual({ lines: 1, ellipsis: "ellipsis", clipped: true });
+    const chip = await row(page).getByText("Personal", { exact: true }).boundingBox();
+    const chipSlot = await badge(page).boundingBox();
+    const time = await row(page).locator("time").boundingBox();
+    const card = await row(page).boundingBox();
+    expect(chip).not.toBeNull();
+    expect(chip!.width).toBeGreaterThan(0);
+    expect(chip!.x).toBeGreaterThanOrEqual(card!.x);
+    expect(chip!.x + chip!.width).toBeLessThanOrEqual(time!.x);
+    expect(chip!.y + chip!.height).toBeLessThanOrEqual(card!.y + card!.height);
+    expect(chip!.y).toBeGreaterThanOrEqual(chipSlot!.y);
+    expect(chip!.y + chip!.height).toBeLessThanOrEqual(chipSlot!.y + chipSlot!.height);
+  }, true);
+}, 30_000);
 
 describe("the mailbox chip on a Screener row on a phone", () => {
   it.each([360, 404])(

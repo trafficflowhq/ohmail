@@ -58,7 +58,7 @@ desktop() {
 android() {
   case "$1" in
     .github/workflows/android.yml | apps/mobile/*) return 0 ;;
-    .github/scripts/assert-*.sh | .github/scripts/firebase-inert-allowlist.txt | .github/scripts/play-upload.mjs) return 0 ;;
+    .github/scripts/assert-*.sh | .github/scripts/firebase-inert-allowlist.txt | .github/scripts/play-upload.mjs | .github/scripts/android-artifact.mjs | .github/scripts/check-*-release-page.sh | .github/scripts/check-release-page.mjs | .github/scripts/setup-bundletool.sh | .github/ohcal-play-release-notes.json) return 0 ;;
   esac
   shared "$1"
 }

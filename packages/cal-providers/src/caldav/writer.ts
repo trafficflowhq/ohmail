@@ -47,7 +47,18 @@ import {
 } from "../request/index.js";
 import { personalSeriesOf, seriesDeleteMembers, spelledAs, storedObjectFacts } from "../series.js";
 import { alreadyHolds, ordinarySharedChange, sameAudience } from "../write-compare.js";
-import { addressOf, allowsMove, isUnder, leave, propfindOf, scopeOf, type Session } from "./ask.js";
+import {
+  addressOf,
+  allowsMove,
+  collectionOptions,
+  davCapabilities,
+  isUnder,
+  leave,
+  offersScheduling,
+  schedulingAnswer,
+  scopeOf,
+  type Session,
+} from "./ask.js";
 import {
   answerHolds,
   answeredObjectText,
@@ -281,26 +292,19 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     return { collection, member };
   }
 
-  /** Does the server send invitations itself? Read off the `DAV` line of its answer about the collection. */
+  /** Does the collection advertise server-side scheduling? */
   async function sendsInvitations(
     s: Session,
     collection: string,
     requireCalendarAccess = false,
   ): Promise<boolean | Refusal> {
-    const answer = await leave(s, collection, {
-      method: "PROPFIND",
-      headers: {
-        accept: "application/xml, text/xml",
-        "content-type": "application/xml; charset=utf-8",
-        depth: "0",
-      },
-      body: propfindOf("<D:resourcetype/>"),
-    });
+    const options = await collectionOptions(s, collection);
+    const answer = await schedulingAnswer(s, collection, options);
     if (!answer.arrived) return refused(answer.reason);
-    if (answer.status !== 207) return refusalOf(answer, "not_found");
-    const capabilities = (answer.header("dav") ?? "").split(",").map((w) => w.trim().toLowerCase());
+    if (answer.status < 200 || answer.status >= 300) return refusalOf(answer, "not_found");
+    const capabilities = davCapabilities(answer);
     if (requireCalendarAccess && !capabilities.includes("calendar-access")) return refused("read_only");
-    return capabilities.includes("calendar-auto-schedule");
+    return offersScheduling(capabilities);
   }
 
   /**

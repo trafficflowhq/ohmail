@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { publicPath } from "./support/public-root.mjs";
-import { evalValue } from "./support/workflow-if.js";
+import { evalIf, evalValue } from "./support/workflow-if.js";
 
 /**
  * A MATRIX THAT RUNS ON EVERY PULL REQUEST HOLDS A BOUNDED SHARE OF THE HOSTED RUNNERS.
@@ -136,10 +136,10 @@ describe("the hosted jobs each event starts", () => {
       "github.actor": "a-maintainer", "github.triggering_actor": "a-maintainer", "github.head_ref": pr ? "pr/lane-x" : "",
       "github.event.pull_request.head.repo.full_name": pr ? "trafficflowhq/ohmail" : null,
       "github.event.pull_request.user.type": pr ? "User" : null, "github.event.pull_request.author_association": pr ? "OWNER" : null,
-      "github.event.pull_request.draft": null, "github.base_ref": pr ? "main" : null, "github.event.action": null, "github.event.release.tag_name": null, "inputs.verify_only": null,
+      "github.event.pull_request.draft": null, "github.base_ref": pr ? "main" : null, "github.event.action": null, "github.event.release.tag_name": "", "inputs.verify_only": null,
       "needs.changes.outputs.desktop": "true", "needs.changes.outputs.android": "true", "needs.changes.outputs.selfhost": "true",
       "needs.version.outputs.promote_public": "yes",
-      "github.event.deleted": false, "inputs.play_version_code": "", ...PLAN, ...extra,
+      "vars.OHCAL_PLAY_UPLOAD": "", "github.event.deleted": false, "inputs.play_version_code": "", ...PLAN, ...extra,
     };
   };
   const hosted = (event: string, ref: string, more: Partial<RunEvent> = {}, extra: IfContext = {}, wfs = WORKFLOWS) =>
@@ -241,6 +241,26 @@ describe("the hosted jobs each event starts", () => {
     const android = WORKFLOWS["android.yml"] as { jobs: { play: { environment: string; permissions: unknown } } };
     expect(android.jobs.play.environment).toBe("play-release");
     expect(android.jobs.play.permissions).toEqual({ contents: "read" });
+  });
+
+  it("produces an ohcal workflow artifact before Play upload is enabled", () => {
+    const ref = "refs/tags/ohcal-android-v1.0.0";
+    const build = ["android.yml: build @ubuntu-24.04", "android.yml: sign @ubuntu-24.04"];
+    expect(hosted("push", ref)).toEqual(build);
+    expect(hosted("push", ref, {}, { "vars.OHCAL_PLAY_UPLOAD": "true" })).toEqual([
+      ...build, "android.yml: play @ubuntu-24.04",
+    ]);
+  });
+
+  it("attaches and reads back GitHub release assets only on the ohmail signing path", () => {
+    const workflow = WORKFLOWS["android.yml"] as { jobs: { sign: { steps: Array<{ name?: string; if?: string }> } } };
+    for (const name of ["Attach to the release", "What was uploaded is what was signed"]) {
+      const step = workflow.jobs.sign.steps.find((candidate) => candidate.name === name);
+      expect(step, name).toBeDefined();
+      const runs = (app: string) => evalIf(step?.if ?? "true", { "needs.build.outputs.app": app });
+      expect(runs("ohmail"), name).toBe(true);
+      expect(runs("ohcal"), name).toBe(false);
+    }
   });
 
   it("only a dispatch on an Android tag can promote an existing version without rebuilding", () => {

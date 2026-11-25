@@ -82,6 +82,9 @@ export interface StandInOptions {
   readonly refusedSignIn?: "status" | "unauthenticated";
   /** Say `calendar-auto-schedule` in the `DAV` line: the server sends invitations itself (RFC 6638). */
   readonly autoSchedule?: boolean;
+  readonly scheduleOnOptionsOnly?: boolean;
+  readonly optionsStatus?: number;
+  readonly optionsDav?: string;
   /** Paths that answer every request with a redirect (301) to the address beside them, whoever asks: a server that sends a caller on. */
   readonly sendsOn?: Readonly<Record<string, string>>;
 }
@@ -147,6 +150,7 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     deadTokenStatus: given.deadTokenStatus ?? 403,
     refusedSignIn: given.refusedSignIn ?? "status",
     autoSchedule: given.autoSchedule ?? false,
+    scheduleOnOptionsOnly: given.scheduleOnOptionsOnly ?? false,
   };
   const start = options.context;
   const principal = `${start}principals/${options.user}/`;
@@ -293,7 +297,7 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     for (const [k, v] of Object.entries(req.headers)) if (typeof v === "string") headers[k] = v;
     seen.push({ method: req.method ?? "", path, host: req.headers.host ?? "", withCredential: credential !== undefined, signedIn, depth, body, asks, headers });
     const send = (status: number, text: string, extra: Record<string, string> = {}): void => {
-      const dav = options.autoSchedule ? "1, 3, calendar-access, calendar-auto-schedule" : "1, 3, calendar-access";
+      const dav = options.autoSchedule && (!options.scheduleOnOptionsOnly || req.method === "OPTIONS") ? "1, 3, calendar-access, calendar-auto-schedule" : "1, 3, calendar-access";
       res.writeHead(status, { "content-type": "application/xml; charset=utf-8", dav, ...extra });
       res.end(text);
     };
@@ -316,7 +320,10 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
       }
       return send(401, "", { "www-authenticate": 'Basic realm="stand-in"' });
     }
-    if (given.nativeMove && req.method === "OPTIONS") return send(200, "", { allow: "GET, PUT, DELETE, MOVE" });
+    if (req.method === "OPTIONS") return send(given.optionsStatus ?? 200, "", {
+      allow: given.nativeMove ? "GET, PUT, DELETE, MOVE" : "GET, PUT, DELETE",
+      ...(given.optionsDav !== undefined && { dav: given.optionsDav }),
+    });
     if (given.nativeMove && req.method === "MOVE") {
       const from = [...calendars.values()].find((cal) => path.startsWith(paths.collection(cal.slug)));
       if (!from || typeof req.headers.destination !== "string") return send(404, "");

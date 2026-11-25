@@ -61,9 +61,9 @@ async function prebuilt(said: string | undefined): Promise<Resolved> {
 const GROUPS = "com.apple.security.application-groups";
 
 describe("which app carries the calendar's widget", () => {
-  it("the calendar's app, each with a group of its own name, and never the mail app", () => {
+  it("the calendar preview carries widgets, and each calendar app has its own group", () => {
     for (const [variant, row] of Object.entries(VARIANTS)) {
-      expect(plugin.carriesWidget(row), variant).toBe(row.app === "ohcal");
+      expect(plugin.carriesWidget(row), variant).toBe(variant === "ohcal-preview");
       if (row.app === "ohcal") expect(plugin.groupOf(row)).toBe(`group.${row.id}`);
     }
   });
@@ -89,13 +89,19 @@ describe("on Android", () => {
     (((r.manifest.manifest.application as Record<string, Element[]>[])[0]!.receiver ?? []) as Element[])
       .filter((e) => (e.$?.["android:name"] ?? "").startsWith("app.ohmail.calendar."));
 
-  it("the calendar's app declares the exact alarm a calendar app may, and its four widgets; the mail app neither", async () => {
+  it("both calendar apps declare exact alarms and the preview has four widget receivers", async () => {
     const ohcal = await prebuilt("ohcal");
     expect(usesOf(ohcal)).toEqual(expect.arrayContaining([
       { "android:name": "android.permission.USE_EXACT_ALARM" },
       { "android:name": "android.permission.SCHEDULE_EXACT_ALARM", "android:maxSdkVersion": "32" },
     ]));
-    const widgets = receiversOf(ohcal);
+    expect(receiversOf(ohcal)).toEqual([]);
+    const preview = await prebuilt("ohcal-preview");
+    expect(usesOf(preview)).toEqual(expect.arrayContaining([
+      { "android:name": "android.permission.USE_EXACT_ALARM" },
+      { "android:name": "android.permission.SCHEDULE_EXACT_ALARM", "android:maxSdkVersion": "32" },
+    ]));
+    const widgets = receiversOf(preview);
     expect(widgets.map((w) => w.$!["android:name"])).toEqual([
       "app.ohmail.calendar.CalendarWidgetNext", "app.ohmail.calendar.CalendarWidgetMonth",
       "app.ohmail.calendar.CalendarWidgetToday", "app.ohmail.calendar.CalendarWidgetWeek",
@@ -126,12 +132,12 @@ describe("the widget's extension in the Xcode project", () => {
     writeSync(): string;
   };
   const parsed = () => xcode.project(FIXTURE).parseSync();
-  const ohcal = VARIANTS.ohcal!;
+  const preview = VARIANTS["ohcal-preview"]!;
 
   it("is added to the calendar's app as an app extension, embedded in the app, once", () => {
     const project = parsed();
-    plugin.addWidgetTarget(project, ohcal, { version: "1.0.12", build: "122" });
-    plugin.addWidgetTarget(project, ohcal, { version: "1.0.12", build: "122" });
+    plugin.addWidgetTarget(project, preview, { version: "1.0.12", build: "122" });
+    plugin.addWidgetTarget(project, preview, { version: "1.0.12", build: "122" });
     const targets = Object.entries(project.pbxNativeTargetSection()).filter(([k]) => !k.endsWith("_comment"));
     const widget = targets.filter(([, t]) => t.name === `"${plugin.TARGET}"` || t.name === plugin.TARGET);
     expect(widget).toHaveLength(1);
@@ -150,7 +156,7 @@ describe("the widget's extension in the Xcode project", () => {
 
   it("compiles its own source with the three it shares with the module, under the app's version and its own name", () => {
     const project = parsed();
-    plugin.addWidgetTarget(project, ohcal, { version: "1.0.12", build: "122" });
+    plugin.addWidgetTarget(project, preview, { version: "1.0.12", build: "122" });
     const text = project.writeSync();
     for (const f of ["OhcalWidget.swift", "CalendarSnapshot.swift", "CalendarStore.swift", "CalendarWords.swift"]) {
       expect(text, f).toContain(`${f} in Sources`);
@@ -161,7 +167,7 @@ describe("the widget's extension in the Xcode project", () => {
     expect(settings).toHaveLength(2);
     for (const s of settings) {
       expect(s).toMatchObject({
-        PRODUCT_BUNDLE_IDENTIFIER: '"app.ohcal.widget"', MARKETING_VERSION: '"1.0.12"', CURRENT_PROJECT_VERSION: '"122"',
+        PRODUCT_BUNDLE_IDENTIFIER: '"app.ohcal.preview.widget"', MARKETING_VERSION: '"1.0.12"', CURRENT_PROJECT_VERSION: '"122"',
         CODE_SIGN_ENTITLEMENTS: '"OhcalWidget/OhcalWidget.entitlements"', INFOPLIST_FILE: '"OhcalWidget/OhcalWidget-Info.plist"',
         IPHONEOS_DEPLOYMENT_TARGET: "16.4", APPLICATION_EXTENSION_API_ONLY: "YES",
       });
@@ -171,9 +177,10 @@ describe("the widget's extension in the Xcode project", () => {
     }
   });
 
-  it("is not added to the mail app", () => {
+  it("is absent from both store apps", () => {
     const project = parsed();
     const before = project.writeSync();
+    plugin.addWidgetTarget(project, VARIANTS.ohcal!, { version: "1.0.0", build: "1" });
     plugin.addWidgetTarget(project, VARIANTS.ohmail!, { version: "1.0.12", build: "122" });
     expect(project.writeSync()).toBe(before);
   });
@@ -181,7 +188,7 @@ describe("the widget's extension in the Xcode project", () => {
   it("brings its files at prebuild: its source, the three shared ones as the module has them, its plist and entitlements", () => {
     const root = mkdtempSync(join(tmpdir(), "ohcal-widget-"));
     try {
-      const dir = plugin.writeExtension(root, ohcal, "ohcal");
+      const dir = plugin.writeExtension(root, preview, "ohcal");
       expect(readdirSync(dir).sort()).toEqual([
         "CalendarSnapshot.swift", "CalendarStore.swift", "CalendarWords.swift", "OhcalWidget-Info.plist",
         "OhcalWidget.entitlements", "OhcalWidget.swift",
@@ -191,8 +198,8 @@ describe("the widget's extension in the Xcode project", () => {
       }
       const info = readFileSync(join(dir, "OhcalWidget-Info.plist"), "utf8");
       expect(info).toContain("<string>com.apple.widgetkit-extension</string>");
-      expect(info).toContain("<key>OhcalGroup</key><string>group.app.ohcal</string>");
-      expect(readFileSync(join(dir, "OhcalWidget.entitlements"), "utf8")).toContain("<string>group.app.ohcal</string>");
+      expect(info).toContain("<key>OhcalGroup</key><string>group.app.ohcal.preview</string>");
+      expect(readFileSync(join(dir, "OhcalWidget.entitlements"), "utf8")).toContain("<string>group.app.ohcal.preview</string>");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

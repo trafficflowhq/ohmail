@@ -13,10 +13,13 @@ import {
   writeFaultOf,
   type CalendarWriteTransport,
 } from "@ohmail/client-engine/calendar-writes";
+import type { EventWithWrites } from "@ohmail/client-engine/calendar-acts";
 import { MutationRejectedError, type OhmailEngine } from "@ohmail/client-engine";
 import type {
   CalendarAct,
+  CalendarConnectionRecord,
   CalendarEventRecord,
+  CalendarRecord,
   CalendarProposalAct,
   CalendarSettingsWire,
   CalendarWindow,
@@ -28,6 +31,7 @@ import type { CalendarPort, CalendarRefusalWord, CalendarVerdict, HeldSpan } fro
 export { refusalWordOf };
 
 type Answered = { readonly answer: CalendarWriteAnswer; readonly seq: number | null };
+type LateRefusalReport = (word: CalendarRefusalWord | CalendarWriteFault) => void;
 
 export interface PortParts {
   readonly engine: Pick<OhmailEngine, "store" | "subscribe" | "read">;
@@ -50,10 +54,7 @@ export function calendarPortOf(parts: PortParts) {
   const listeners = new Set<() => void>();
   const watched = new Set<string>();
   const reported = new Set<string>();
-  const reports = new Map<
-    (word: CalendarRefusalWord | CalendarWriteFault) => void,
-    (() => void) | undefined
-  >();
+  const reports = new Map<LateRefusalReport, (() => void) | undefined>();
   let reporting = true;
   const retireReports = () => {
     reporting = false;
@@ -93,7 +94,12 @@ export function calendarPortOf(parts: PortParts) {
     ...(parts.mayRun ? { mayRun: parts.mayRun } : {}),
   });
   const verdict = verdictReader(queue, verdicts);
-  const drafts = draftReportsOf(parts.engine, listeners, verdict, () => reporting);
+  const drafts = draftReportsOf(parts.engine, listeners, {
+    verdict,
+    events: () => queue.events(),
+    changed,
+    reporting: () => reporting,
+  });
   const hold = async (...args: Parameters<typeof queue.hold>) => {
     const held = await queue.hold(...args);
     watchLateRefusal(held.key);
@@ -135,8 +141,7 @@ export function calendarPortOf(parts: PortParts) {
     hasOwedWrites: () => queue.owed().length > 0,
     flush: () => queue.flush(),
     verdict,
-    watchCreate: (eventId, key, refuse) => drafts.watch(eventId, key, "create", refuse),
-    watchEdit: (eventId, key, refuse) => drafts.watch(eventId, key, "update", refuse),
+    ...drafts.port,
     watchLateRefusal,
     subscribeLateRefusals(report, retire) {
       reports.set(report, retire);
@@ -145,7 +150,6 @@ export function calendarPortOf(parts: PortParts) {
         reports.delete(report);
       };
     },
-    events: () => queue.events().filter(({ record }) => drafts.visible(record)),
     settings: parts.settings,
     settingsVersion: () => parts.engine.store.stampOf("settings"),
     ...(parts.setSuggestionDismissed ? { setSuggestionDismissed: parts.setSuggestionDismissed } : {}),
@@ -177,30 +181,67 @@ function verdictReader(queue: CalendarWriteQueue, verdicts: ReadonlyMap<string, 
 function draftReportsOf(
   engine: PortParts["engine"],
   listeners: Set<() => void>,
-  verdict: CalendarPort["verdict"],
-  reporting: () => boolean,
+  {
+    verdict,
+    events: queueEvents,
+    changed,
+    reporting,
+  }: {
+    verdict: CalendarPort["verdict"];
+    events: () => EventWithWrites[];
+    changed: () => void;
+    reporting: () => boolean;
+  },
 ) {
   const drafts = new Map<string, () => void>();
   const refusedCreates = new Set<string>();
+  const unsentCreates = new Map<string, EventWithWrites>();
+  const onCalDav = (record: CalendarEventRecord) => {
+    const calendar = engine.store.get<CalendarRecord>("calendar", record.calendarId);
+    return (
+      !!calendar &&
+      engine.store.get<CalendarConnectionRecord>("calendar_connection", calendar.connectionId)?.provider ===
+        "caldav"
+    );
+  };
   const watch = (
     eventId: string,
     key: string,
     kind: "create" | "update",
     refuse: Parameters<NonNullable<CalendarPort["watchCreate"]>>[2],
+    recorded?: () => void,
   ) => {
     if (!reporting()) return;
     let wasPending = false;
+    const provisional =
+      kind === "create"
+        ? queueEvents().find(({ record }) => record.id === eventId && onCalDav(record))?.record
+        : undefined;
     const review = () => {
       const row = engine.store.get<CalendarEventRecord>("calendar_event", eventId);
       const mark = row?.writes.find((entry) => entry.key === key);
       const answer = verdict(key);
+      if (recorded && (mark || (row?.uid && !row.uid.startsWith("pending:")))) {
+        const confirm = recorded;
+        recorded = undefined;
+        confirm();
+      }
       if (answer?.kind === "refused") {
         stop();
-        if (kind === "create" && mark?.state === "refused") refusedCreates.add(eventId);
+        if (kind === "create" && mark?.state === "refused" && row && !onCalDav(row))
+          refusedCreates.add(eventId);
+        if (!row && provisional) {
+          unsentCreates.set(eventId, {
+            record: provisional,
+            waiting: null,
+            refusal: writeFaultOf(answer.word),
+            refusedWriteId: null,
+          });
+        }
         refuse(answer, mark?.id);
       } else if (mark?.state === "refused") {
         stop();
-        if (kind === "create") refusedCreates.add(eventId);
+        if (kind === "create" && row && !onCalDav(row)) refusedCreates.add(eventId);
         refuse({ kind: "refused", word: writeFaultOf(mark.reason), details: mark }, mark.id);
       } else if (mark?.state === "pending") {
         wasPending = true;
@@ -222,14 +263,29 @@ function draftReportsOf(
     listeners.add(review);
     review();
   };
+  const port = {
+    watchCreate: (eventId, key, refuse, recorded) => watch(eventId, key, "create", refuse, recorded),
+    watchEdit: (eventId, key, refuse) => watch(eventId, key, "update", refuse),
+    events: () => [
+      ...queueEvents().filter(
+        ({ record }) =>
+          !refusedCreates.has(record.id) ||
+          !record.writes.some(
+            (mark) => mark.state === "refused" && mark.act?.kind === "calendar_event_create",
+          ),
+      ),
+      ...unsentCreates.values(),
+    ],
+    forgetUnsentCreate: (eventId: string) => {
+      if (unsentCreates.delete(eventId)) changed();
+    },
+  } satisfies Pick<CalendarPort, "watchCreate" | "watchEdit" | "forgetUnsentCreate" | "events">;
   return {
-    watch,
-    visible: (record: CalendarEventRecord) =>
-      !refusedCreates.has(record.id) ||
-      !record.writes.some((mark) => mark.state === "refused" && mark.act?.kind === "calendar_event_create"),
+    port,
     retire: () => {
       for (const stop of drafts.values()) stop();
       refusedCreates.clear();
+      unsentCreates.clear();
     },
   };
 }

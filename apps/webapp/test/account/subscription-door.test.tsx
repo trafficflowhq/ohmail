@@ -210,7 +210,7 @@ describe("the press over the real filling", () => {
     server.answer(MINT, json({ url: PAGE }));
     await mounted();
     expect(await screen.findByText("6 of 14")).toBeTruthy();
-    expect(await screen.findByText("$15")).toBeTruthy();
+    expect(await screen.findByText("$15/month")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Monthly" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Yearly" })).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: /Plus/ }));
@@ -221,6 +221,142 @@ describe("the press over the real filling", () => {
       { lang: "en", plan: "plus", interval: "month" },
     ]);
   });
+
+  it("shows one-time history suggestions from the offer for an eligible account", async () => {
+    access = open({
+      ...NEAR,
+      offer: {
+        ...OFFER,
+        setupBoostEligible: true,
+        plans: OFFER.plans.map((plan, index) => ({ ...plan, setupSuggestions: (index + 1) * 137 })),
+      },
+    });
+    await mounted();
+    for (const count of [137, 274, 411]) {
+      expect(await screen.findByText(new RegExp(`${count} one-time history suggestions`))).toBeTruthy();
+    }
+  });
+
+  it.each([
+    ["en", "Aug 18, 2026"],
+    ["de", "18.08.2026"],
+  ] as const)("carries the trial date's display zone to Manage and Add storage in %s", async (lang, day) => {
+    const { setActiveFormatZone } = await import("../../app/shell/locale");
+    const { bindApiOwner } = await import("../../app/api-client");
+    const owner = "account-subscription";
+    const zone = "Europe/Zurich";
+    const page = new URL("/manage", PAGE);
+    const change = "POST /api/account/manage-link/change";
+    const messages = lang === "en" ? en : de;
+    access = {
+      ...open(NEAR),
+      lifecycle: { state: "trialing", closedReason: null, trialEndsAt: new Date(Date.UTC(2026, 7, 17, 23, 30)).toISOString() },
+    };
+    server.answer(MINT, json({ url: page.href }));
+    server.answer(change, json({ url: page.href }));
+    bindApiOwner(owner);
+    setActiveFormatZone(zone);
+    try {
+      await mounted(() => {}, owner, lang);
+      expect(screen.getByText(day)).toBeTruthy();
+      for (const name of [messages.settings.subscriptionManage, messages.settings.storageAddStorage]) {
+        await act(async () => {
+          fireEvent.click(screen.getByRole("button", { name }));
+        });
+      }
+      expect(server.on(MINT).map((entry) => entry.body)).toEqual([{ lang }]);
+      expect(server.on(change).map((entry) => entry.body)).toEqual([{ lang, addon: "storage" }]);
+      expect(server.left.map(({ href }) => new URL(href).searchParams.get("timeZone"))).toEqual([zone, zone]);
+    } finally {
+      setActiveFormatZone(null);
+      bindApiOwner(null);
+    }
+  });
+
+  it("compares confirmed monthly and yearly prices with the plan's AI allowance", async () => {
+    access = {
+      ...open({ ...NEAR, offer: { ...OFFER, setupBoostEligible: true, comparisonPlans: [
+        { plan: "solo", mailboxes: 2, storageBytes: 2_000_000_000, setupSuggestions: 3_000,
+          monthlyCredits: 1_000, pricesMinor: { month: 900, year: 9_000 } },
+        { plan: "plus", mailboxes: 5, storageBytes: 5_000_000_000, setupSuggestions: 6_000,
+          monthlyCredits: 2_000, pricesMinor: { month: 1_500 } },
+        { plan: "pro", mailboxes: 10, storageBytes: 10_000_000_000, setupSuggestions: 12_000,
+          monthlyCredits: 4_000, pricesMinor: { month: 2_900, year: 29_000 } },
+      ] } }),
+      lifecycle: { state: "trialing", closedReason: null, trialEndsAt: "2026-08-17T23:30:00.000Z" },
+    };
+    server.answer(MINT, json({ url: PAGE }));
+    await mounted();
+    const plus = await screen.findByRole("radio", { name: /Plus/ });
+    expect(await screen.findByText(/2,000 credits/i)).toBeTruthy();
+    expect(screen.getByText(/6,000 one-time history suggestions/)).toBeTruthy();
+    expect(screen.getByText("$15/month")).toBeTruthy();
+    fireEvent.click(plus);
+    fireEvent.click(screen.getByRole("button", { name: "Yearly" }));
+    expect(screen.getByText("$290/year")).toBeTruthy();
+    expect(screen.getByRole("radio", { name: /Plus/ }).textContent).not.toContain("$");
+    expect(screen.queryByRole("button", { name: "Subscribe to Plus" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Subscribe" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: /Pro/ }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Subscribe to Pro" })); });
+    expect(server.on(MINT).map((request) => request.body)).toEqual([{ lang: "en", plan: "pro", interval: "year" }]);
+  });
+
+  it("shows the yearly comparison when the account's monthly change card has no quoted plans", async () => {
+    access = open({ ...NEAR, offer: { ...OFFER, plans: [], comparisonPlans: [
+      { plan: "plus", mailboxes: 5, storageBytes: 5_000_000_000, setupSuggestions: 6_000,
+        monthlyCredits: 2_000, pricesMinor: { year: 15_000 } },
+    ] } });
+    await mounted();
+    expect(await screen.findByText("$150/year")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Monthly" })).toBeNull();
+  });
+
+  const SOLO_COMPARISON = [{
+    plan: "solo", mailboxes: 2, storageBytes: 2_000_000_000, setupSuggestions: 3_000,
+    monthlyCredits: 1_000, pricesMinor: { month: 900, year: 9_000 },
+  }];
+  const comparedTrial = (interval: "month" | "year", elapsed: boolean) => ({
+    ...open({ ...NEAR, offer: { ...OFFER, interval, comparisonPlans: SOLO_COMPARISON } }),
+    lifecycle: {
+      state: "trialing", closedReason: null,
+      trialEndsAt: new Date(Date.now() + (elapsed ? -1 : 1) * 7 * 86_400_000).toISOString(),
+    },
+  });
+
+  it.each([
+    ["month", "Monthly", "Yearly", "$9/month", "$90/year"],
+    ["year", "Yearly", "Monthly", "$90/year", "$9/month"],
+  ] as const)("keeps Subscribe on the running %s trial's interval while comparing", async (interval, own, other, ownPrice, otherPrice) => {
+    access = comparedTrial(interval, false);
+    server.answer(MINT, json({ url: PAGE }));
+    await mounted();
+    const subscribe = () => screen.getByRole<HTMLButtonElement>("button", { name: "Subscribe to Solo" });
+    await screen.findByRole("radio", { name: /Solo/ });
+    const solo = () => within(screen.getByRole("radio", { name: /Solo/ }));
+    expect(solo().getByText(ownPrice)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: other }));
+    expect(solo().getByText(otherPrice)).toBeTruthy();
+    await act(async () => { fireEvent.click(subscribe()); });
+    expect(server.on(MINT)).toEqual([]);
+    expect(subscribe().disabled).toBe(true);
+    expect(screen.getByText(`During your trial, you can only subscribe with ${own.toLowerCase()} billing.`)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: own }));
+    expect(solo().getByText(ownPrice)).toBeTruthy();
+    await act(async () => { fireEvent.click(subscribe()); });
+    expect(server.on(MINT).map((request) => request.body)).toEqual([{ lang: "en", plan: "solo", interval }]);
+  });
+
+  it.each([["Monthly", "month"], ["Yearly", "year"]] as const)(
+    "opens the chosen %s subscription after the trial expires", async (cadence, interval) => {
+      access = comparedTrial("month", true);
+      server.answer(MINT, json({ url: PAGE }));
+      await mounted();
+      fireEvent.click(await screen.findByRole("button", { name: cadence }));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Subscribe to Solo" })); });
+      expect(server.on(MINT).map((request) => request.body)).toEqual([{ lang: "en", plan: "solo", interval }]);
+    },
+  );
 
   it.each([
     { canChange: true, addonUnits: OFFER.addon.maxUnits - 1, offered: true },
@@ -249,6 +385,27 @@ describe("the press over the real filling", () => {
   });
 
   const MAILBOX_UNIT = { amount: 300, maxUnits: 10 };
+  it.each([
+    [en.settings.storageAddStorage, "storage"],
+    [ownEn.accountSubscription.addMailbox, "mailbox"],
+  ])("%s sends the selected add-on to billing", async (name, addon) => {
+    const change = "POST /api/account/manage-link/change";
+    const owner = "account-subscription";
+    const { bindApiOwner } = await import("../../app/api-client");
+    access = open({ ...NEAR, offer: { ...OFFER, mailboxAddon: MAILBOX_UNIT } });
+    server.answer(change, json({ url: PAGE }));
+    bindApiOwner(owner);
+    try {
+      await mounted(() => {}, owner);
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name })); });
+      await settle();
+      expect(server.on(change).map((s) => s.body)).toEqual([{ lang: "en", addon }]);
+      expect(server.left).toEqual([{ href: PAGE, rel: "noreferrer", target: "" }]);
+    } finally {
+      bindApiOwner(null);
+    }
+  });
+
   it.each([
     { canChange: true, held: 0, offered: true },
     { canChange: true, held: MAILBOX_UNIT.maxUnits - 1, offered: true },
@@ -299,7 +456,7 @@ describe("the press over the real filling", () => {
         fireEvent.click(screen.getByRole("button", { name: ownEn.accountSubscription.addMailbox }));
       });
       await settle();
-      expect(server.on(CHANGE).map((s) => s.body)).toEqual([{ lang: "en" }]);
+      expect(server.on(CHANGE).map((s) => s.body)).toEqual([{ lang: "en", addon: "mailbox" }]);
       const factor = await screen.findByRole("dialog", { name: en.stepUp.titleCode.replace(/\.$/, "") });
       await act(async () => {
         fireEvent.click(within(factor).getByRole("button", { name: en.stepUp.cancel }));

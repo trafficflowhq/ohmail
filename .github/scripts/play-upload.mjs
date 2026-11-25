@@ -1,10 +1,11 @@
-import { generateKeyPairSync, sign } from "node:crypto";
+import { generateKeyPairSync, sign, createHash } from "node:crypto";
 import { openAsBlob } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { taggedIdentity } from "../../apps/mobile/scripts/release-identity.mjs";
+import { assertAndroidIdentity, readAndroidArtifact } from "./android-artifact.mjs";
 
 const oauth = "https://oauth2.googleapis.com/token";
 const publisher = "https://androidpublisher.googleapis.com";
-const edits = "/androidpublisher/v3/applications/app.ohmail/edits";
 const internal = "internal";
 const commitOptions = "?changesInReviewBehavior=ERROR_IF_IN_REVIEW";
 
@@ -86,13 +87,48 @@ function serviceAccount() {
 async function main(args) {
   const dryRun = args[0] === "--dry-run";
   const origin = dryRun ? dryRunOrigin(args[1]) : publisher;
-  const [command, target, fraction, ...rest] = dryRun ? args.slice(2) : args;
+  const [command, targetPackage, target, tag, ...rest] = dryRun ? args.slice(2) : args;
   const promote = command === "promote";
-  const replaceStaged = promote && rest.length === 1 && rest[0] === "--replace-staged";
-  if (!target || (rest.length && !replaceStaged)
-      || (promote ? !fraction : command !== "upload" || fraction !== undefined)) {
-    throw new PlayError("Use upload <bundle.aab> or promote <version-code> <rollout-fraction> [--replace-staged].");
+  const [fraction, replace] = promote ? rest : [];
+  const replaceStaged = replace === "--replace-staged";
+  if (targetPackage !== "app.ohmail" && targetPackage !== "app.ohcal") {
+    throw new PlayError("Use the app.ohmail or app.ohcal package.");
   }
+  if (!target || !tag || (promote ? !fraction || (replace && !replaceStaged) || rest.length > 2
+      : command !== "upload" || rest.length !== 2)) {
+    throw new PlayError("Use upload <package> <bundle.aab> <tag> <bundletool jar> <digest> or promote <package> <version-code> <tag> <fraction> [--replace-staged].");
+  }
+  let identity;
+  try {
+    identity = taggedIdentity("android", tag);
+  } catch {
+    throw new PlayError("The Play release tag does not match the Expo release identity.");
+  }
+  if (targetPackage !== identity.androidPackage) throw new PlayError("Play target package does not match the release tag.");
+  let bundle;
+  let packageName = identity.androidPackage;
+  if (!promote) {
+    const [tool, digest] = rest;
+    if (!target.endsWith(".aab") || !/^[0-9a-f]{64}$/.test(digest)) {
+      throw new PlayError("Use a signed App Bundle and its verified SHA-256 digest.");
+    }
+    bundle = await openAsBlob(target, { type: "application/octet-stream" });
+    const hash = createHash("sha256");
+    for await (const chunk of bundle.stream()) hash.update(chunk);
+    if (hash.digest("hex") !== digest) throw new PlayError("The signed App Bundle digest differs.");
+    let parsed;
+    try {
+      parsed = readAndroidArtifact(target, tool);
+    } catch {
+      throw new PlayError("Could not parse the signed App Bundle manifest.");
+    }
+    try {
+      packageName = assertAndroidIdentity(parsed, identity).package;
+    } catch (error) {
+      throw new PlayError(error.message);
+    }
+  }
+  const edits = "/androidpublisher/v3/applications/" + packageName + "/edits";
   if (!dryRun && !process.env.PLAY_SERVICE_ACCOUNT_JSON) {
     console.log("::notice::Google Play skipped because PLAY_SERVICE_ACCOUNT_JSON is unset.");
     return;
@@ -102,14 +138,14 @@ async function main(args) {
   if (promote && (!/^[1-9]\d*$/.test(target) || !/^0\.\d+$/.test(fraction) || !(userFraction > 0 && userFraction < 1))) {
     throw new PlayError("Supply a positive Play version code and a rollout fraction between 0 and 1.");
   }
-  const releaseNotes = JSON.parse(await readFile(new URL("../play-release-notes.json", import.meta.url), "utf8"));
+  const notesFile = identity.app === "ohcal" ? "../ohcal-play-release-notes.json" : "../play-release-notes.json";
+  const releaseNotes = JSON.parse(await readFile(new URL(notesFile, import.meta.url), "utf8"));
   if (!Array.isArray(releaseNotes) || releaseNotes.length !== 2
       || !["en-US", "de-DE"].every((language) => releaseNotes.some((note) => note.language === language
         && typeof note.text === "string" && note.text.trim() && Array.from(note.text).length <= 500))) {
     throw new PlayError("Provide nonempty en-US and de-DE release notes, at most 500 characters each.");
   }
 
-  const bundle = promote ? null : await openAsBlob(target, { type: "application/octet-stream" });
   const credentials = dryRun ? {
     client_email: "dry-run@example.invalid",
     private_key: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey,
@@ -160,10 +196,10 @@ async function main(args) {
   } else {
     const uploaded = await api("bundles.upload", "POST",
       "/upload" + path + "/bundles?uploadType=media", bundle, "application/octet-stream");
-    if (!Number.isSafeInteger(uploaded?.versionCode) || uploaded.versionCode <= 0) {
-      throw new PlayError("bundles.upload did not return a valid version code.");
+    if (String(uploaded?.versionCode) !== identity.androidVersionCode) {
+      throw new PlayError("Play returned a version code that differs from the signed App Bundle.");
     }
-    versionCode = String(uploaded.versionCode);
+    versionCode = identity.androidVersionCode;
   }
 
   const release = {

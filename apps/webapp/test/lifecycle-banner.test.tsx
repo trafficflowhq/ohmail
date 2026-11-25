@@ -359,15 +359,21 @@ describe("the strip's press when the page cannot be opened", () => {
     });
   }
 
-  it("a later press that leaves takes the sentence with it", async () => {
+  it("a retry clears the refusal and opens the fresh link with the display zone", async () => {
     access = TRIAL;
     mint = { status: 503, body: { error: { code: "unavailable" } } };
     await mount();
     await press("Subscribe");
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(alert()).not.toBeNull();
-    mint = { status: 200, body: { url: "https://account.example/manage?t=abc" } };
-    const stop = (ev: Event): void => { ev.preventDefault(); };
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const page = new URL("https://account.example/manage?t=abc");
+    mint = { status: 200, body: { url: page.href } };
+    const left: string[] = [];
+    const stop = (ev: Event): void => {
+      if (ev.target instanceof HTMLAnchorElement) left.push(ev.target.href);
+      ev.preventDefault();
+    };
     document.addEventListener("click", stop, true);
     try {
       await press("Subscribe");
@@ -376,5 +382,7 @@ describe("the strip's press when the page cannot be opened", () => {
       document.removeEventListener("click", stop, true);
     }
     expect(alert(), "the refusal outlived the press it was about").toBeNull();
+    page.searchParams.set("timeZone", zone);
+    expect(left).toEqual([page.href]);
   });
 });

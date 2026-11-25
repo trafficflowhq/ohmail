@@ -1595,7 +1595,10 @@ describe("SECTION 2 — every query parameter this API reads has a stated bound"
       'const CALENDAR_PANES = ["calendar-google", "calendar-microsoft"];',
     );
     expect(handoff, "the Settings wrapper hands in its own vocabulary").toContain("return withHandoff(route, SETTINGS_PANES);");
-    expect(handoff, "the Calendar wrapper hands in its own vocabulary").toContain("return withHandoff(route, CALENDAR_PANES);");
+    expect(handoff, "the managed vocabulary adds Devices to the Calendar panes").toContain(
+      'const MANAGED_PANES = [...CALENDAR_PANES, "devices"];',
+    );
+    expect(handoff, "the managed wrapper hands in its own vocabulary").toContain("return withHandoff(route, MANAGED_PANES);");
     expect(handoff, "mint receives the selected vocabulary").toContain("if (pane !== null) return mint(pane, deps, panes);");
     expect(handoff, "the pane is refused before minting").toMatch(
       /if \(!panes\.includes\(pane\)\) return answer\(400, \{\}\);\s*const account = session\.accountId;\s*const \{ ciphertext, keyVersion \} = await deps\.keyProvider\.encrypt\(/,

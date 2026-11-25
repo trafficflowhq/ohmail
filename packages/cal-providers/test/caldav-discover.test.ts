@@ -98,7 +98,9 @@ describe("where the reader starts", () => {
       [new URL(numbered).host, true],
       [new URL(numbered).host, true],
       [new URL(numbered).host, true],
+      [new URL(numbered).host, true],
     ]);
+    expect(s.seen.at(-1)).toMatchObject({ method: "OPTIONS", path: s.paths.collection("work") });
 
     s.seen.length = 0;
     const rejected = await reader.listCalendars(signIn(s, start, "incorrect"), signal());
@@ -217,7 +219,9 @@ describe("whom the reader tells the password", () => {
       [`caldav.example.test:${s.port}`, "/dav/", true],
       [`caldav.example.test:${s.port}`, "/dav/principals/mila/", true],
       [`p01-caldav.example.test:${s.port}`, "/dav/calendars/mila/", true],
+      [s.seen[3]!.host, s.paths.collection("work"), true],
     ]);
+    expect(s.seen.at(-1)?.method).toBe("OPTIONS");
   });
 
   it("asks nothing of a host that is not the typed one's sibling, wherever the server names it", async () => {

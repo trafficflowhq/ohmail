@@ -3,9 +3,11 @@ import * as React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
 import messages from "../../messages/en.json";
 import { reportSays } from "../ohbox/_finders";
+import { typeInto } from "../fixtures/rich-editor-driver";
 async function demo(width: number, route: string): Promise<void> {
   vi.stubGlobal("React", React);
   vi.stubGlobal("innerWidth", width);
@@ -39,6 +41,7 @@ afterEach(() => {
   cleanup();
   resetStorageOwnerForTest();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("opening mail in the demo", () => {
@@ -109,3 +112,53 @@ describe("recovering deleted demo mail", () => {
     }
   }, 30_000);
 });
+it("keeps the demo's narrow Write open until its latest words are in one draft", async () => {
+  const gates = Array.from({ length: 3 }, () => {
+    let answer!: () => void;
+    const pending = new Promise<void>((resolve) => { answer = resolve; });
+    return { pending, answer };
+  });
+  let asked = 0;
+  const mutate = FixturesAdapter.prototype.mutate;
+  const save = vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(async function (
+    this: FixturesAdapter, mutation, options,
+  ) {
+    if (mutation.kind === "draft_save") await gates[asked++]?.pending;
+    return mutate.call(this, mutation, options);
+  });
+  await demo(390, "ohbox");
+  const subject = "An unfinished demo letter";
+  const body = "Keep all of these words.";
+  fireEvent.click(await screen.findByRole("button", { name: "Write" }));
+  fireEvent.change(await screen.findByRole("textbox", { name: "Subject" }), { target: { value: subject } });
+  const editor = await screen.findByRole("textbox", { name: "Message" });
+  const writes = () => save.mock.calls.flatMap(([m]) => m.kind === "draft_save" ? [m] : []);
+  try {
+    await act(async () => { typeInto(editor, "Keep all"); });
+    await waitFor(() => expect(writes()).toHaveLength(1), { timeout: 5_000 });
+    fireEvent.click(within(screen.getByRole("region", { name: "New message" })).getByRole("button", { name: "Ohbox" }));
+    await act(async () => { typeInto(editor, "Keep all of these"); });
+    await act(async () => { gates[0]!.answer(); });
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    await act(async () => { typeInto(editor, body); });
+    await act(async () => { gates[1]!.answer(); });
+    await waitFor(() => expect(writes()).toHaveLength(3));
+    expect(screen.getByRole("textbox", { name: "Message" })).toBe(editor);
+    expect(writes()).toEqual([
+      expect.objectContaining({ body: "Keep all", draftId: null }),
+      expect.objectContaining({ body: "Keep all of these", draftId: expect.any(String) }),
+      expect.objectContaining({ body, draftId: writes()[1]!.draftId }),
+    ]);
+  } finally {
+    await act(async () => { for (const gate of gates) gate.answer(); });
+  }
+  await screen.findByRole("heading", { name: "Ohbox" });
+
+  fireEvent.click(screen.getByRole("button", { name: "More" }));
+  const more = await screen.findByRole("dialog", { name: "More" });
+  fireEvent.click(within(more).getByText("Drafts", { exact: true }));
+  const list = await screen.findByRole("listbox", { name: "Drafts" });
+  const saved = await within(list).findByRole("option", { name: new RegExp(subject) });
+  fireEvent.click(saved);
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Message" }).textContent).toBe(body));
+}, 15_000);

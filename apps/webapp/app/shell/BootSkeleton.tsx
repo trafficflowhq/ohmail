@@ -171,7 +171,15 @@ export function BootSkeleton({
 const noSubscription = () => () => {};
 
 /** The web's quiet opening frame and the way forward when it stays on screen. */
-export function MailboxOpening({ serverFrame = false, network = true }: { serverFrame?: boolean; network?: boolean }) {
+export function MailboxOpening({
+  serverFrame = false,
+  network = true,
+  immediate = false,
+}: {
+  serverFrame?: boolean;
+  network?: boolean;
+  immediate?: boolean;
+}) {
   const session = useTranslations("session");
   const reload = useTranslations("appError")("reload");
   const online = useBrowserOnline();
@@ -180,14 +188,14 @@ export function MailboxOpening({ serverFrame = false, network = true }: { server
   const late = useLoadingGrace(!serverFrame, openingReloadDelay);
 
   if (served) {
-    return <Opening kind="web" late label={session("opening")} action={<Button kind="two" href="/">{reload}</Button>} />;
+    return <Opening kind="web" late immediate={immediate} label={session("opening")} action={<Button kind="two" href="/">{reload}</Button>} />;
   }
 
   const offerReload = waiting && (late || (network && !online));
   return (
     <Opening
       kind="web"
-      label={waiting ? session("opening") : undefined}
+      label={immediate || waiting ? session("opening") : undefined}
       action={offerReload ? <Button kind="two" onPress={() => window.location.reload()}>{reload}</Button> : undefined}
     />
   );

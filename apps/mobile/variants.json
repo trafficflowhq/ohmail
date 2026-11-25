@@ -28,6 +28,16 @@
     "channel": "release",
     "sibling": "ohmail",
     "id": "app.ohcal",
+    "iosPrivacyCollectedDataTypes": [
+      "NSPrivacyCollectedDataTypeEmailAddress",
+      "NSPrivacyCollectedDataTypeName",
+      "NSPrivacyCollectedDataTypeEmailsOrTextMessages",
+      "NSPrivacyCollectedDataTypeOtherUserContent",
+      "NSPrivacyCollectedDataTypeSearchHistory",
+      "NSPrivacyCollectedDataTypeUserID",
+      "NSPrivacyCollectedDataTypeDeviceID",
+      "NSPrivacyCollectedDataTypeOtherDataTypes"
+    ],
     "name": "ohcal",
     "scheme": "ohcal",
     "links": {

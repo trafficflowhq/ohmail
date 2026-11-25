@@ -60,7 +60,9 @@
 # it is checked FIRST and why its failure message says the scan is broken rather than the APK.
 set -euo pipefail
 
-APK="${1:?usage: assert-no-fcm.sh <path-to-apk>}"
+APK="${1:?usage: assert-no-fcm.sh <path-to-apk> [ohmail or ohcal]}"
+APP="${2:-ohmail}"
+case "$APP" in ohmail|ohcal) ;; *) exit 2 ;; esac
 test -f "$APK" || { echo "assert-no-fcm: no APK at $APK" >&2; exit 1; }
 
 WORK="$(mktemp -d)"
@@ -101,13 +103,23 @@ echo "assert-no-fcm: scanning $DEX_COUNT dex file(s), $DEX_BYTES bytes"
 # `grep -c` prints a count and exits 1 on no match, so `|| true` keeps `set -e` out of it and the
 # COUNT is what the assertion reads.
 CONNECTOR=$(/usr/bin/grep -a -c -F 'Lorg/unifiedpush/android/connector/' "$WORK/all.dex" || true)
-test "${CONNECTOR:-0}" -gt 0 || {
-  echo "assert-no-fcm: the UnifiedPush CONNECTOR was not found in the dex either." >&2
-  echo "  This means the scan is broken, not that the APK is clean — every absence check below" >&2
-  echo "  would have passed vacuously. Fix the scan before trusting it." >&2
-  exit 1
-}
-echo "assert-no-fcm: connector present ($CONNECTOR match line(s)) — the scan works"
+if [[ "$APP" == ohmail ]]; then
+  test "${CONNECTOR:-0}" -gt 0 || {
+    echo "assert-no-fcm: the UnifiedPush CONNECTOR was not found in the dex either." >&2
+    echo "  This means the scan is broken, not that the APK is clean — every absence check below" >&2
+    echo "  would have passed vacuously. Fix the scan before trusting it." >&2
+    exit 1
+  }
+  echo "assert-no-fcm: connector present ($CONNECTOR match line(s)) — the scan works"
+else
+  for dex in "$WORK"/classes*.dex; do
+    test "$(head -c 3 "$dex")" = dex || {
+      echo "assert-no-fcm: an extracted dex file has no dex header." >&2
+      exit 1
+    }
+  done
+  test "$CONNECTOR" = 0 || { echo "assert-no-fcm: ohcal includes the mail push connector." >&2; exit 1; }
+fi
 
 # ── and now the absences ──────────────────────────────────────────────────────────────────────
 fail=0
@@ -191,7 +203,8 @@ ALLOWED_N=$(wc -l < "$WORK/fb-allowed" | tr -d ' ')
 test "${ALLOWED_N:-0}" -ge 50 \
   || { echo "assert-no-fcm: the allow-list holds only $ALLOWED_N descriptors — it looks truncated" >&2; exit 1; }
 
-/usr/bin/grep -a -o 'Lcom/google/firebase/[A-Za-z0-9_/$]*;' "$WORK/all.dex" | sort -u > "$WORK/fb-found"
+{ /usr/bin/grep -a -o 'Lcom/google/firebase/[A-Za-z0-9_/$]*;' "$WORK/all.dex" || [ "$?" -eq 1 ]; } \
+  | sort -u > "$WORK/fb-found"
 fb_unexpected=$(comm -23 "$WORK/fb-found" "$WORK/fb-allowed")
 if [ -n "$fb_unexpected" ]; then
   echo "assert-no-fcm: UNEXPECTED Firebase class(es) in the dex:" >&2
@@ -239,54 +252,58 @@ RENDERER_FQCN='app.ohmail.push.WakePayloadRenderer'
 RENDERER_DESC='Lapp/ohmail/push/WakePayloadRenderer;'
 META_NAME='dev.djara.expounifiedpush.PAYLOAD_RENDERER'
 
-n=$(/usr/bin/grep -a -c -F "$RENDERER_DESC" "$WORK/all.dex" || true)
-if [ "${n:-0}" -gt 0 ]; then
-  echo "assert-no-fcm: present — the wake push renderer class is compiled in"
-else
-  echo "assert-no-fcm: MISSING the wake push renderer class ($RENDERER_DESC)." >&2
-  echo "  Check that plugins/wake-push-renderer.js wrote the class into the generated project." >&2
-  # SECOND CAUSE, and since minification was turned on it is the more likely one. The connector
-  # only ever names this class as a STRING (an AndroidManifest meta-data value it hands to
-  # Class.forName), and a string is not a code reference — so R8 sees an unreferenced class, and
-  # renames it or drops it as unused. `resolvePayloadRenderer` then returns null and the service
-  # falls back to its DEFAULT renderer, which draws server-supplied title/body/image with a
-  # server-supplied ACTION_VIEW tap target. That is the phishing surface the renderer exists to
-  # close, reopened, with nothing else in the build reporting a problem. This assertion is the
-  # only thing standing between that rule going missing and it shipping.
-  echo "  If minification is on, the more likely cause is a missing keep rule: the connector names" >&2
-  echo "  this class only as a manifest meta-data STRING, so R8 cannot see the reference and will" >&2
-  echo "  rename or drop it. apps/mobile/plugins/release-minification.js must carry" >&2
-  echo "  '-keep class $RENDERER_FQCN { *; }'." >&2
-  fail=1
-fi
+if [[ "$APP" == ohmail ]]; then
+  n=$(/usr/bin/grep -a -c -F "$RENDERER_DESC" "$WORK/all.dex" || true)
+  if [ "${n:-0}" -gt 0 ]; then
+    echo "assert-no-fcm: present — the wake push renderer class is compiled in"
+  else
+    echo "assert-no-fcm: MISSING the wake push renderer class ($RENDERER_DESC)." >&2
+    echo "  Check that plugins/wake-push-renderer.js wrote the class into the generated project." >&2
+    # SECOND CAUSE, and since minification was turned on it is the more likely one. The connector
+    # only ever names this class as a STRING (an AndroidManifest meta-data value it hands to
+    # Class.forName), and a string is not a code reference — so R8 sees an unreferenced class, and
+    # renames it or drops it as unused. `resolvePayloadRenderer` then returns null and the service
+    # falls back to its DEFAULT renderer, which draws server-supplied title/body/image with a
+    # server-supplied ACTION_VIEW tap target. That is the phishing surface the renderer exists to
+    # close, reopened, with nothing else in the build reporting a problem. This assertion is the
+    # only thing standing between that rule going missing and it shipping.
+    echo "  If minification is on, the more likely cause is a missing keep rule: the connector names" >&2
+    echo "  this class only as a manifest meta-data STRING, so R8 cannot see the reference and will" >&2
+    echo "  rename or drop it. apps/mobile/plugins/release-minification.js must carry" >&2
+    echo "  '-keep class $RENDERER_FQCN { *; }'." >&2
+    fail=1
+  fi
 
-# The manifest half. The binary AXML keeps its strings in a pool, so the name and the value are
-# searched for as bytes in BOTH encodings the format uses — a UTF-8 pool and a UTF-16LE one are
-# both legal and which one aapt emits is not ours to depend on. Verified against the shipped
-# android-v0.10.1 APK, where both strings appear exactly once.
-unzip -o -q "$APK" AndroidManifest.xml -d "$WORK" || true
-if [ ! -f "$WORK/AndroidManifest.xml" ]; then
-  echo "assert-no-fcm: no AndroidManifest.xml in the APK — cannot prove the renderer is wired" >&2
-  fail=1
-else
-  for want in "$META_NAME" "$RENDERER_FQCN"; do
-    hits=$(WANT="$want" python3 - "$WORK/AndroidManifest.xml" <<'PY'
+  # The manifest half. The binary AXML keeps its strings in a pool, so the name and the value are
+  # searched for as bytes in BOTH encodings the format uses — a UTF-8 pool and a UTF-16LE one are
+  # both legal and which one aapt emits is not ours to depend on. Verified against the shipped
+  # android-v0.10.1 APK, where both strings appear exactly once.
+  unzip -o -q "$APK" AndroidManifest.xml -d "$WORK" || true
+  if [ ! -f "$WORK/AndroidManifest.xml" ]; then
+    echo "assert-no-fcm: no AndroidManifest.xml in the APK — cannot prove the renderer is wired" >&2
+    fail=1
+  else
+    for want in "$META_NAME" "$RENDERER_FQCN"; do
+      hits=$(WANT="$want" python3 - "$WORK/AndroidManifest.xml" <<'PY'
 import os, sys
 data = open(sys.argv[1], "rb").read()
 t = os.environ["WANT"]
 print(data.count(t.encode("utf-8")) + data.count(t.encode("utf-16-le")))
 PY
-)
-    if [ "${hits:-0}" -gt 0 ]; then
-      echo "assert-no-fcm: manifest carries \"$want\""
-    else
-      echo "assert-no-fcm: the manifest does NOT carry \"$want\"." >&2
-      echo "  The renderer class can be compiled in and still never be used: the connector reads" >&2
-      echo "  this meta-data to find it, and falls back to its DEFAULT renderer when it is absent." >&2
-      echo "  Check that app.json applies the expo-unified-push plugin with payloadRendererClass." >&2
-      fail=1
-    fi
-  done
+      )
+      if [ "${hits:-0}" -gt 0 ]; then
+        echo "assert-no-fcm: manifest carries \"$want\""
+      else
+        echo "assert-no-fcm: the manifest does NOT carry \"$want\"." >&2
+        echo "  The renderer class can be compiled in and still never be used: the connector reads" >&2
+        echo "  this meta-data to find it, and falls back to its DEFAULT renderer when it is absent." >&2
+        echo "  Check that app.json applies the expo-unified-push plugin with payloadRendererClass." >&2
+        fail=1
+      fi
+    done
+  fi
+else
+  check_absent "mail wake renderer" "$RENDERER_DESC"
 fi
 
 test "$fail" -eq 0 || {

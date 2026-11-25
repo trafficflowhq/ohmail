@@ -5,6 +5,7 @@ import {
   storageChangeAnswer,
   storageModelOf,
   storageStep,
+  type StorageAddon,
   type StorageDoor,
   type StorageEvent,
   type StorageModel,
@@ -40,7 +41,8 @@ export function useStorage(door: StorageDoor): StorageModel {
       held.current = next.state;
       setState(next.state);
       if (next.run === null) return;
-      void door.change().then(
+      const { act } = next.run;
+      void door.change(act === "change" ? undefined : act).then(
         (answer) => step({ kind: "answered", answer: storageChangeAnswer(answer) }),
         () => step({ kind: "answered", answer: UNANSWERED }),
       );
@@ -48,7 +50,7 @@ export function useStorage(door: StorageDoor): StorageModel {
     [door],
   );
 
-  const change = useCallback(() => send({ kind: "try", act: "change" }), [send]);
+  const change = useCallback((addon?: StorageAddon) => send({ kind: "try", act: addon ?? "change" }), [send]);
   const setMail = useCallback(
     (on: boolean) => {
       if (!alive.current || held.current.mail?.busy === true) return;

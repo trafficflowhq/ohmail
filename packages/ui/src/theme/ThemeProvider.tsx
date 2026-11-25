@@ -20,6 +20,7 @@ import {
   type ReactNode,
 } from "react";
 import { armSchemeTransitions, withSchemeTransition } from "./scheme-transition.js";
+export { setViewTransitions } from "./scheme-transition.js";
 
 /** Did the value reach the jar — the answer `@ohmail/client-engine`'s door already returns. */
 export type StorageVerdict = "stored" | "lost";

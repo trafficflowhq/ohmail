@@ -6,14 +6,21 @@
  */
 import { act, createElement as h, forwardRef, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryMirrorStore, MutationRejectedError, OhmailEngine, mutationEffects, type SyncChange } from "@ohmail/client-engine";
+import { openLetterSession, ownedLetters } from "../src/compose/letter-keeper";
+import { restoreLetters, settleLetters } from "../src/compose/letter-restore";
+import { letterDoor } from "../src/compose/letter-store";
+import { flushQueued, keptRecipients, liveActions, liveDrafts, type DraftKeep } from "../src/state/live";
 
 vi.mock("react-native", async () => {
   const { rnDom } = await import("./_rendered-dom");
   const React = await import("react");
   return {
     ...rnDom,
-    Modal: (p: { children?: ReactNode; statusBarTranslucent?: boolean; navigationBarTranslucent?: boolean }) =>
-      React.createElement("div", { "data-modal": "", "data-under-bars": String(p.statusBarTranslucent === true && p.navigationBarTranslucent === true) }, p.children),
+    Modal: (p: { children?: ReactNode; statusBarTranslucent?: boolean; navigationBarTranslucent?: boolean; onRequestClose?: () => void }) =>
+      React.createElement("div", { "data-modal": "", "data-under-bars": String(p.statusBarTranslucent === true && p.navigationBarTranslucent === true),
+        onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Escape") p.onRequestClose?.(); },
+      }, p.children),
     KeyboardAvoidingView: rnDom.View,
     Keyboard: { dismiss: () => undefined, addListener: () => ({ remove: () => undefined }) },
     AppState: { addEventListener: () => ({ remove: () => undefined }), currentState: "active" },
@@ -46,7 +53,8 @@ vi.mock("../src/theme", () => ({
 vi.mock("../src/ui/base", async () => {
   const { rnDom } = await import("./_rendered-dom");
   return {
-    Tap: rnDom.Pressable,
+    Tap: (p: { accessibilityRole?: string; accessibilityLabel?: string; onPress?: () => void; children?: ReactNode }) =>
+      p.accessibilityLabel === "Back" ? h("button", { onClick: p.onPress }, p.accessibilityLabel) : h(rnDom.Pressable, p),
     Txt: (p: { children?: ReactNode }) => h("span", null, p.children),
     Button: (p: { label: string; disabled?: boolean; onPress?: () => void }) =>
       h("button", { "data-button": p.label, disabled: p.disabled, onClick: p.onPress }, p.label),
@@ -86,7 +94,7 @@ vi.mock("../src/ui/AttachmentPreview", () => ({
 const scene = vi.hoisted(() => ({ world: null as unknown }));
 vi.mock("../src/state/world", () => ({ useWorld: () => scene.world, useWorldToast: () => ({ say: () => undefined }) }));
 
-const { mount } = await import("./_rendered-dom");
+const { buttonByName, mount } = await import("./_rendered-dom");
 const { ComposeSheet } = await import("../src/ui/MessageActions");
 const { Copy } = await import("../src/copy");
 const { onReplySend } = await import("../src/ui/sent-reveal");
@@ -129,6 +137,161 @@ afterEach(() => {
   look.paper = false;
   open?.unmount();
   open = null;
+});
+
+it.each([
+  { exit: "Back", answerFirst: "saved" },
+  { exit: "System dismissal", answerFirst: "saved" },
+  { exit: "Close sheet", answerFirst: "saved" },
+  { exit: "Close sheet", answerFirst: "offline" },
+  { exit: "Close sheet", answerFirst: "refused" },
+])("keeps edits in Drafts when native $exit leaves after the first save was $answerFirst", async ({ exit, answerFirst }) => {
+  let now = new Date("2026-11-25T08:00:00.000Z");
+  const store = new MemoryMirrorStore();
+  await store.load();
+  let answer!: () => void;
+  const firstAnswer = new Promise<void>((resolve) => { answer = resolve; });
+  let writes = 0;
+  let sequence = 0;
+  const engine = new OhmailEngine({
+    store,
+    now: () => now,
+    adapter: {
+      sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: store.getCursor(), hasMore: false, serverTime: now.toISOString() }),
+      withdrawSend: async () => ({ outcome: "unreachable" }),
+      mutate: async (mutation) => {
+        writes += 1;
+        if (writes === 1) {
+          await firstAnswer;
+          if (answerFirst !== "saved") {
+            throw new MutationRejectedError("Draft save unavailable", { retryable: answerFirst === "offline" });
+          }
+        }
+        const changes = mutationEffects(store, mutation, { now: () => now, uuid: () => `kept-letter-${writes}` })
+          .map((effect) => ({ type: effect.type, op: "update", id: effect.id, entity: effect.entity, seq: ++sequence, updatedAt: now.toISOString() })) as SyncChange[];
+        return { changes, seq: sequence, ...(mutation.kind === "draft_save" && mutation.draftId === null ? { entityId: changes[0]!.id } : {}) };
+      },
+      fetchBody: async () => ({ text: "", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }),
+    },
+  });
+  open = composer();
+  open.unmount();
+  open = null;
+  look.paper = exit === "Back";
+  const letters = letterDoor(store);
+  openLetterSession({ door: letters, uuid: () => "letter-on-the-phone" });
+  const actions = liveActions({ engine, toast: () => undefined, now: () => now, letters });
+  const w = scene.world as { actions: Record<string, unknown> };
+  w.actions.draftKeep = actions.draftKeep;
+  const atClose: unknown[] = [];
+  const sheet = () => h(ComposeSheet, {
+    m: null, mode: "new", onClose: () => atClose.push(liveDrafts(engine.read(), { now, zone: "UTC" })),
+  });
+  const view = mount(sheet());
+  const type = (label: string, value: string) => {
+    const field = view.el.querySelector<HTMLInputElement>(`input[data-label="${label}"]`)!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, value);
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const bodyLabel = look.paper ? Copy.composePaperPlaceholder : Copy.composeBodyPlaceholder;
+  const close = () => act(async () => {
+    if (exit === "System dismissal") view.el.querySelector("[data-modal]")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    else buttonByName(view.el, exit === "Back" ? Copy.back : Copy.replyCancel).click();
+  });
+  try {
+    act(() => { type(Copy.composeSubject, "Unfinished letter"); type(bodyLabel, "The first words."); });
+    await close();
+    expect(writes).toBe(1);
+    expect(atClose).toEqual([]);
+    if (answerFirst !== "refused") act(() => { type(bodyLabel, "The first words. The last words too."); });
+    await act(async () => { answer(); });
+    if (answerFirst === "refused") {
+      expect(atClose).toEqual([]);
+      await close();
+      expect(atClose).toEqual([[expect.objectContaining({ subject: "Unfinished letter", preview: "The first words." })]]);
+      return;
+    }
+    const finalDraft = [expect.objectContaining({
+      subject: "Unfinished letter", preview: "The first words. The last words too.",
+    })];
+    if (answerFirst === "offline") {
+      expect(atClose).toHaveLength(1);
+      expect(engine.pendingMutations()).toHaveLength(1);
+      expect(await letters.landed()).toBe("stored");
+      expect(letters.letters()).toEqual([expect.objectContaining({
+        body: "The first words. The last words too.",
+        keep: expect.objectContaining({ key: engine.pendingMutations()[0]!.key }),
+      })]);
+      now = new Date(now.getTime() + 60_000);
+      const settled = await flushQueued(engine, actions.releaseConfirmed);
+      const loose = settleLetters(letters, ownedLetters(), settled);
+      await restoreLetters({
+        door: letters, owned: ownedLetters(), only: new Set(loose.map(({ letter }) => letter)),
+        outbox: () => engine.pendingMutations(), keep: actions.draftKeep, hasMessage: () => false,
+        drafts: () => engine.read().entries<Record<string, unknown>>("draft").map(({ id, entity }) => ({ ...entity, id })),
+        firstSync: () => engine.syncOnce().then(() => undefined), parse: keptRecipients,
+      });
+      expect(liveDrafts(engine.read(), { now, zone: "UTC" })).toEqual(finalDraft);
+    } else {
+      expect(atClose).toEqual([finalDraft]);
+    }
+    expect(writes).toBe(answerFirst === "offline" ? 3 : 2);
+  } finally {
+    answer();
+    view.unmount();
+    openLetterSession(null);
+  }
+});
+
+it("unmount waits for a draft save and keeps the latest words and copies on the row it named", async () => {
+  vi.useFakeTimers();
+  const fixture = composer();
+  fixture.unmount();
+  let answer!: () => void;
+  const first = new Promise<void>((resolve) => { answer = resolve; });
+  const body = "Words added while the save was on the wire.";
+  const updated = "Words added before the editor unmounted.";
+  const draft = {
+    id: "opened-letter", mailboxId: "mb-1", to: "", cc: "ann@x.test", bcc: "bob@x.test",
+    subject: "Unfinished letter", body: "Earlier words.", forwardOf: null, forwardParts: null, revision: null,
+  };
+  const requests: DraftKeep[] = [];
+  const w = scene.world as { actions: Record<string, unknown> };
+  w.actions.draftKeep = async (request: DraftKeep) => {
+    requests.push(request);
+    if (requests.length === 1) {
+      await first;
+      request.rebind?.("replacement-letter");
+      request.row?.({ draftId: "replacement-letter", key: "previous-save", revision: "current-revision" });
+    }
+    return "kept";
+  };
+  const onClose = vi.fn();
+  const view = mount(h(ComposeSheet, { m: null, mode: "new", draft, onClose }));
+  const editor = [...view.el.querySelectorAll("input")].find((input) => input.value === draft.body)!;
+  const type = (text: string) => act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(editor, text);
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  try {
+    type(body);
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(requests).toHaveLength(1);
+    type(updated);
+    view.render(null);
+    expect(requests).toHaveLength(1);
+    await act(async () => { answer(); });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({
+      draftId: "replacement-letter", revision: "current-revision", waited: ["previous-save"], body: updated,
+      cc: [{ address: draft.cc }], bcc: [{ address: draft.bcc }], quiet: true,
+    });
+    expect(onClose).not.toHaveBeenCalled();
+  } finally {
+    answer();
+    view.unmount();
+    vi.useRealTimers();
+  }
 });
 
 describe("a new mail from the second of two mailboxes", () => {

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import { getTranslations } from "next-intl/server";
 import { LocaleShell } from "./LocaleShell";
-import { AppearanceBoot, Providers } from "./providers";
+import { AppearanceBoot, DeferredProductStyles, ProductStyles, Providers } from "./providers";
 import { SELF_HOST_BUILD } from "../self-host-marketing";
 import { faceMirrorOwner } from "../shell/face-mirror";
 import { FIRST_PAGE_OWNER_HEADER, RESUME_COOKIE } from "../session-gate";
@@ -11,18 +11,13 @@ import { cookieFromJar } from "@ohmail/app-logic/storage/cookie-jar";
 import { DEFAULT_LOCALE, localeFromCookieHeader } from "../shell/locale";
 import { loadCatalog } from "../../i18n/catalog";
 import { firstScreenCatalog } from "../../i18n/first-screen";
-import "../app.css";
-/* AFTER app.css, so the Zero layout's overrides sit later in the cascade than the
-   classic narrow blocks they re-arrange (specificity already favors them; order
-   keeps it unambiguous). Classic is untouched by construction — every selector in
-   the file requires [data-layout="zero"] (test/zero-layout-purity.test.ts). */
-import "../zero-layout.css";
+import { showMailboxOpening } from "./mailbox/show-opening";
 
 /*
  * The other root layout of the single-origin app — see `(marketing)/layout.tsx` for why there are
  * two. Everything under `(product)` renders inside this <html>: `/login`, `/join`, and
  * `mailbox/page.tsx`, which is what a signed-in `/` becomes after `middleware.ts` rewrites it.
- * `app.css` is linked HERE and only here, so the marketing page never carries it. It stays at
+ * Product styles are loaded here or with the mailbox, so the marketing page never carries them. `app.css` stays at
  * `app/app.css` rather than moving in beside this file because `apps/desktop` imports it verbatim
  * (`src/main.tsx`) and `scripts/publish-desktop.mjs` copies it by path into the public mirror — the
  * route files moved into this group, the shared shell did not.
@@ -152,15 +147,18 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   // The boot script can still match the live cookie to the saved appearance in the browser.
   const rememberedOwner = firstPage === "resume" || (firstPage === "wait" && cookieFromJar(cookie, RESUME_COOKIE) !== null)
     ? requestOwner : undefined;
+  const deferProductStyles = showMailboxOpening(h);
   return (
     <html lang={locale} suppressHydrationWarning>
       <head>
         <AppearanceBoot nonce={nonce} deferLinuxFace={deferLinuxFace} owner={owner} rememberedOwner={rememberedOwner} />
       </head>
-      <body className="mo-canvas app-body today" style={{ backgroundColor: "var(--ground)" }}>
+      <body className="mo-canvas app-body today" style={{ backgroundColor: "var(--ground)", margin: 0 }}>
+        {deferProductStyles ? null : <ProductStyles />}
         <LocaleShell initialLocale={locale} initialMessages={messages}>
           <Providers nonce={nonce} deferLinuxFace={deferLinuxFace} owner={owner} rememberedOwner={rememberedOwner}>{children}</Providers>
         </LocaleShell>
+        {deferProductStyles ? <DeferredProductStyles /> : null}
       </body>
     </html>
   );

@@ -18,6 +18,7 @@ import {
   notePairings, placeHolder, switchIntake, takeUpArrival, type HandedSession, type ReceiveDeps,
 } from "../src/switch/receive";
 import { stepArrival } from "../src/switch/receiver";
+import { launchOnlySwitch, VARIANTS } from "../src/variant";
 import { HANDOFF_WAIT_MS, PRESS_GAP_MS, switchSender, type SenderDeps } from "../src/switch/sender";
 import type { SwitchNative } from "../src/switch/switch-port";
 import type { ShellEvent } from "../src/shell/bridge-kinds";
@@ -99,6 +100,21 @@ describe("the sender", () => {
     const { native, opened } = nativeDouble(false);
     expect(await switchSender(deps({ native, digest: async () => null })).open({ to: "last" })).toBe("absent");
     expect(opened).toEqual([{ v: "1", k: "open", p: "last" }]);
+  });
+
+  it("the calendar store app opens its sibling without a pairing digest or proof", async () => {
+    const { native, opened, asked } = askingDouble({ a: "none", c: "a".repeat(43) });
+    const launchOnly = launchOnlySwitch(VARIANTS.ohcal);
+    const mint = vi.fn(async () => LINK);
+    const sender = switchSender(deps({
+      app: "ohcal", native, digest: async () => launchOnly ? null : D, mint: launchOnly ? undefined : mint,
+    }));
+    expect(await sender.open({ to: "last" })).toBe("opened");
+    expect(opened).toEqual([{ v: "1", k: "open", p: "last" }]);
+    expect(asked).toEqual([]);
+    expect(mint).not.toHaveBeenCalled();
+    expect(launchOnlySwitch(VARIANTS.ohmail)).toBe(false);
+    expect(launchOnlySwitch(VARIANTS["ohcal-preview"])).toBe(false);
   });
 
   it("opens nothing at a place of the other direction, from behind, twice inside the gap, or without the module", async () => {

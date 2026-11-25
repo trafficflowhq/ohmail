@@ -55,7 +55,9 @@ vi.mock("../src/ui/base", () => {
     Tap: (p: { accessibilityLabel: string; onPress?: () => void; children?: ReactNode }) =>
       h("button", { "aria-label": p.accessibilityLabel, onClick: p.onPress }, p.children),
     useTopPad: () => 0,
-    Txt: (p: { children?: ReactNode }) => h("span", null, p.children),
+    Txt: (p: { children?: ReactNode; accessibilityRole?: string }) =>
+      h("span", { role: p.accessibilityRole === "header" ? "heading" : undefined }, p.children),
+    ViewHead: (p: { title: string }) => h("h1", null, p.title),
     Panel: div, Screen: div, Scroller: div, Section: div, TapRow: div,
   };
 });
@@ -78,9 +80,9 @@ const settle = () => act(async () => { for (let i = 0; i < 8; i++) await Promise
 /** A pairing whose credential is gone: nothing to open again. */
 const ENDED = { id: "row-1", origin: "https://mail.example.test", flavor: "selfhost", accountId: "account-1", refreshToken: null, pin: null };
 
-function connection(state: ConnectionState, profiles: object[]) {
+function connection(state: ConnectionState, profiles: object[], activeId: string | null = null) {
   scene.conn = {
-    state, profiles, activeId: null, syncing: false, syncError: null,
+    state, profiles, activeId, syncing: false, syncError: null,
     unsentDraftsHere: () => 0,
     forget: async () => ({ ok: true }),
     switchTo: async () => ({ ok: false, reason: refuse("pairEnded") }),
@@ -101,6 +103,30 @@ afterEach(() => {
 });
 
 describe("today's Servers pane under the shell", () => {
+  it("keeps a remembered server visible after disconnect without calling it connected", () => {
+    connection({ k: "idle" }, [ENDED], ENDED.id);
+    const view = mount(h(ServersScreen));
+    try {
+      expect(view.el.textContent).toContain(ENDED.origin);
+      expect(view.el.textContent).not.toContain(EN.serversActive);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("shows the same accessible Servers heading in ordinary and recovery states", () => {
+    for (const state of [{ k: "idle" }, { k: "refused", reason: refuse("pairEnded") }] as const) {
+      connection(state, [ENDED]);
+      const view = mount(h(ServersScreen));
+      try {
+        const headings = [...view.el.querySelectorAll("h1, [role='heading']")];
+        expect(headings.map((heading) => heading.textContent)).toEqual([EN.serversTitle]);
+      } finally {
+        view.unmount();
+      }
+    }
+  });
+
   it("opens the door's ways in on each way out with nothing left to open", async () => {
     expect(MAIL_SURFACE, "the calendar app is the shell").toBe("shell");
     const reached: string[] = [];

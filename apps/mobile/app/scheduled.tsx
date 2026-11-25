@@ -9,7 +9,7 @@
  */
 import { useTheme } from "../src/theme";
 import { MailAvatar } from "../src/ui/MailAvatar";
-import { MailAppearance } from "../src/theme/mail";
+import { MailAppearance, mailSize } from "../src/theme/mail";
 import { useState } from "react";
 import { View } from "react-native";
 import { Copy } from "../src/copy";
@@ -121,66 +121,68 @@ export function ScheduledRow({ row }: { row: WorldScheduled }) {
   const [asking, setAsking] = useState(false);
   const theme = useTheme();
 
+  const recipient = row.to === "" ? Copy.scheduledNoRecipient : Copy.draftToPerson(row.to);
+  const appointment = !row.cancellable ? Copy.scheduledNotSent
+    : row.when === null ? Copy.scheduledWhenUnknown
+      : Copy.scheduledWhen(row.when);
+  const stamp = (
+    <Txt variant={theme.mail ? "rowSubjectSeen" : "caption"} tone={row.cancellable ? "accent" : "ink3"}
+      tabular numberOfLines={theme.mail ? undefined : 1}>
+      {appointment}
+    </Txt>
+  );
+
   return (
-    <View style={{ paddingHorizontal: 18, paddingVertical: 12, gap: 4 }}>
-      {theme.mail ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <MailAvatar person={{ name: row.to, address: row.to }} />
-          <Txt variant="rowSenderSeen" numberOfLines={1} style={{ flex: 1 }}>
-            {row.to === "" ? Copy.scheduledNoRecipient : Copy.draftToPerson(row.to)}
+    <View style={theme.mail ? {
+      flexDirection: "row", alignItems: "center", gap: mailSize.inset, minHeight: mailSize.row,
+      paddingHorizontal: mailSize.edge, paddingVertical: mailSize.inset,
+    } : { paddingHorizontal: 18, paddingVertical: 12 }}>
+      {theme.mail ? <MailAvatar person={{ name: row.to, address: row.to }} mailbox={row.mailbox} /> : null}
+      <View style={theme.mail ? { flex: 1, minWidth: 0, gap: 2 } : { gap: 4 }}>
+        {theme.mail ? (
+          <>
+            <Txt variant="rowSenderSeen" numberOfLines={1}
+              accessibilityLabel={row.mailbox ? Copy.ariaLabelDetail(recipient, Copy.composeFrom(row.mailbox.name)) : undefined}>
+              {recipient}
+            </Txt>
+            {stamp}
+            <Txt variant="rowSenderSeen" tone="ink2" numberOfLines={1}>{row.subject}</Txt>
+          </>
+        ) : (
+          <>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+              <Txt variant="rowSender" style={{ flexShrink: 1 }} numberOfLines={1}>{row.subject}</Txt>
+              <View style={{ flex: 1 }} />
+              {stamp}
+            </View>
+            <Txt variant="caption" tone="ink3" numberOfLines={1}>{row.to === "" ? Copy.scheduledNoRecipient : row.to}</Txt>
+          </>
+        )}
+        {row.preview !== "" ? <Txt variant="caption" tone="ink2" numberOfLines={2}>{row.preview}</Txt> : null}
+        {/* A KEPT APPOINTMENT THAT FAILED speaks the SERVER's own sentence, quoted — a refusal
+            the reader can act on is worth more than a sentence of ours that generalises it. */}
+        {row.failure !== null ? (
+          <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
+            {Copy.scheduleFailedNote(row.failure)}
           </Txt>
-        </View>
-      ) : null}
-      <View style={{ flexDirection: theme.mail ? "column" : "row", alignItems: "baseline", gap: theme.mail ? 4 : 10 }}>
-        <Txt variant="rowSender" style={{ flexShrink: 1 }} numberOfLines={1}>
-          {row.subject}
-        </Txt>
-        {theme.mail ? null : <View style={{ flex: 1 }} />}
-        {/* The APPOINTMENT is the stamp — `Sends Fri 18:00`; a row whose `sendAt` the mirror
-            does not carry says the time is unknown; and a row whose send already FAILED has no
-            appointment left to name, so it says that instead of a time it does not have. */}
-        <Txt
-          variant="caption"
-          tone={row.cancellable ? "accent" : "ink3"}
-          tabular
-          numberOfLines={theme.mail ? undefined : 1}
-        >
-          {!row.cancellable ? Copy.scheduledNotSent
-            : row.when === null ? Copy.scheduledWhenUnknown
-              : Copy.scheduledWhen(row.when)}
-        </Txt>
+        ) : null}
+        {/* Cancel belongs to a STANDING appointment. A row whose send already failed has nothing
+            left to take off — the message is an ordinary draft on the account now, and the line
+            below says where to finish it rather than offering a verb with no act behind it. */}
+        {row.cancellable ? (
+          <View style={{ alignSelf: theme.mail ? "flex-end" : undefined, paddingTop: 6 }}>
+            <Button
+              label={Copy.scheduledCancel}
+              variant="quiet"
+              disabled={asking}
+              onPress={() => {
+                setAsking(true);
+                void w.actions.cancelSchedule(row.id).finally(() => setAsking(false));
+              }}
+            />
+          </View>
+        ) : null}
       </View>
-      {theme.mail ? null : <Txt variant="caption" tone="ink3" numberOfLines={1}>
-        {row.to === "" ? Copy.scheduledNoRecipient : row.to}
-      </Txt>}
-      {row.preview !== "" ? (
-        <Txt variant="caption" tone="ink2" numberOfLines={2}>
-          {row.preview}
-        </Txt>
-      ) : null}
-      {/* A KEPT APPOINTMENT THAT FAILED speaks the SERVER's own sentence, quoted — a refusal
-          the reader can act on is worth more than a sentence of ours that generalises it. */}
-      {row.failure !== null ? (
-        <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
-          {Copy.scheduleFailedNote(row.failure)}
-        </Txt>
-      ) : null}
-      {/* Cancel belongs to a STANDING appointment. A row whose send already failed has nothing
-          left to take off — the message is an ordinary draft on the account now, and the line
-          below says where to finish it rather than offering a verb with no act behind it. */}
-      {row.cancellable ? (
-        <View style={{ flexDirection: "row", paddingTop: 6 }}>
-          <Button
-            label={Copy.scheduledCancel}
-            variant="quiet"
-            disabled={asking}
-            onPress={() => {
-              setAsking(true);
-              void w.actions.cancelSchedule(row.id).finally(() => setAsking(false));
-            }}
-          />
-        </View>
-      ) : null}
     </View>
   );
 }

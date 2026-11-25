@@ -24,11 +24,12 @@ import { isPairEnded } from "../src/net/session-death";
 import { gateFor } from "../src/state/gate";
 import type { ServerProfile } from "../src/state/servers";
 import { useTheme } from "../src/theme";
-import { Button, Panel, Screen, Scroller, Section, Tap, TapRow, Txt, useTopPad } from "../src/ui/base";
+import { MailAppearance, mailSize } from "../src/theme/mail";
+import { Button, Panel, Screen, Scroller, Section, Tap, TapRow, Txt, ViewHead, useTopPad } from "../src/ui/base";
 import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { Doors } from "../src/ui/Doors";
 import { Icon } from "../src/ui/Icon";
-import { OnboardingTitle, useOnboardingLook } from "../src/ui/OnboardingPage";
+import { useOnboardingLook } from "../src/ui/OnboardingPage";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
@@ -38,7 +39,9 @@ const FIRST_SCREEN = MAIL_SURFACE === "shell" ? "/door" : "/welcome";
 export default function ServersScreen({ inPane = false }: { inPane?: boolean }) {
   return (
     <SurfaceBoundary surface="servers">
-      <ServersBody inPane={inPane} />
+      <MailAppearance>
+        <ServersBody inPane={inPane} />
+      </MailAppearance>
     </SurfaceBoundary>
   );
 }
@@ -48,7 +51,6 @@ function ServersBody({ inPane }: { inPane: boolean }) {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const conn = useConnection();
-  const { palette } = useOnboardingLook();
   const state = conn.state;
   const ended = (state.k === "refused" || state.k === "ended") && isPairEnded(state.reason);
   /** What a forget could not take back. Held HERE — see the note beside where it renders. */
@@ -97,33 +99,19 @@ function ServersBody({ inPane }: { inPane: boolean }) {
   }, [held, focused]);
 
   return (
-    <Screen style={ended ? { backgroundColor: palette.stage } : undefined}>
+    <Screen>
       {inPane ? null : <Stack.Screen options={{ gestureEnabled: !held }} />}
       {inPane ? <PaneTop /> : ended ? (
         <RecoveryBack opensMailbox={held && reopen !== null} onPress={() => void leave()} />
-      ) : <DetailBar back={ownBack ? () => void leave() : undefined} />}
+      ) : <DetailBar backCapsule back={ownBack ? () => void leave() : undefined} />}
       <Scroller bounded avoidKeyboard>
-        {ended ? (
-          <View style={{ paddingTop: 12, paddingBottom: 30 }}>
-            <OnboardingTitle text={Copy.serversTitle} compact />
-          </View>
-        ) : (
-          <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
-            <Txt variant="h1">{Copy.serversTitle}</Txt>
-            <Txt variant="hint" tone="ink3" style={{ marginTop: 6 }}>{Copy.serversNote}</Txt>
-          </View>
-        )}
+        <ViewHead title={Copy.serversTitle} attention={ended} />
 
         <StatusPanel />
 
         {conn.profiles.length > 0 ? (
-          <Panel style={{ marginTop: 16, paddingBottom: 12, ...(ended ? { backgroundColor: palette.sheet, boxShadow: [] } : {}) }}>
-            {ended ? (
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 20 }}>
-                <Txt variant="settingsLabel">{Copy.phoneServersPaired}</Txt>
-                <Txt variant="caption" tone="ink2">{conn.profiles.length}</Txt>
-              </View>
-            ) : <Section style={{ paddingTop: 16 }}>{Copy.serversProfiles}</Section>}
+          <Panel style={{ marginTop: mailSize.edge, paddingBottom: mailSize.inset }}>
+            <Section>{ended ? Copy.phoneServersPaired : Copy.serversProfiles}</Section>
             {conn.profiles.map((p) => (
               <ProfileRow
                 key={p.id}
@@ -166,7 +154,7 @@ function ServersBody({ inPane }: { inPane: boolean }) {
           </Panel>
         )}
 
-        <View style={{ marginTop: 14 }}>
+        <View style={{ marginTop: mailSize.edge }}>
           <Doors
             recovery={ended}
             onScan={() => router.push("/scan")}
@@ -181,13 +169,14 @@ function ServersBody({ inPane }: { inPane: boolean }) {
 
 function RecoveryBack({ opensMailbox, onPress }: { opensMailbox: boolean; onPress: () => void }) {
   const { palette } = useOnboardingLook();
+  const t = useTheme();
   const top = useTopPad(8);
   const label = opensMailbox ? Copy.ohbox : Copy.back;
   return (
     <View style={{ paddingTop: top, paddingHorizontal: 12, paddingBottom: 8, alignItems: "flex-start" }}>
       <Tap accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={{
-        minHeight: 40, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 4,
-        borderRadius: 999, borderWidth: 1, borderColor: palette["ctl-ring"], backgroundColor: palette.sheet,
+        minHeight: mailSize.back, paddingHorizontal: mailSize.edge, flexDirection: "row", alignItems: "center", gap: mailSize.rowInset,
+        borderRadius: t.radius.pill, borderWidth: 1, borderColor: palette["ctl-ring"], backgroundColor: palette.sheet,
       }}>
         <Icon name="back" size={16} color={palette.ink} />
         <Txt variant="settingsLabel" style={{ color: palette.ink }}>{label}</Txt>
@@ -250,8 +239,9 @@ function StatusPanel() {
         {s.k === "live" ? <LiveFacts /> : null}
       </View>
       {s.k === "live" ? (
-        <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 10 }}>
-          <Button label={Copy.connectSyncNow} disabled={conn.syncing} onPress={conn.syncNow} />
+        <View style={{ paddingHorizontal: mailSize.edge, paddingTop: mailSize.inset, gap: mailSize.inset,
+          flexDirection: "row", flexWrap: "wrap" }}>
+          <Button label={Copy.connectSyncNow} variant="solid" disabled={conn.syncing} onPress={conn.syncNow} />
           <Button label={Copy.connectDisconnect} variant="quiet" onPress={() => void conn.disconnect()} />
         </View>
       ) : null}
@@ -310,6 +300,8 @@ function ProfileRow({ profile, active, recovery, onForgetFailed }: {
      that row's origin is an address nothing dials and nobody should be shown. */
   const here = organizesHere(profile);
   const needsPair = !here && profile.refreshToken === null;
+  const state = conn.state;
+  const connected = (state.k === "live" || state.k === "shell") && state.session.profile.id === profile.id;
   // Forgetting the FINAL pairing returns to the welcome screen — explicitly, from the
   // action itself. The tabs' redirect cannot be trusted to fire here: while /servers is
   // the focused route, the gated layouts behind it may never re-render their verdict, and
@@ -360,26 +352,23 @@ function ProfileRow({ profile, active, recovery, onForgetFailed }: {
           else void conn.switchTo(profile.id);
         }}
         accessibilityRole="button"
-        accessibilityLabel={Copy.ariaLabelDetail(here ? Copy.standaloneName : profile.origin, profile.flavor)}
-        style={{ paddingHorizontal: 12, paddingVertical: 10, gap: recovery ? 8 : 2 }}
+        accessibilityLabel={Copy.ariaLabelDetail(here ? Copy.standaloneName : profile.origin,
+          connected ? Copy.serversActive : profile.flavor)}
+        style={{ paddingHorizontal: mailSize.edge, paddingVertical: mailSize.inset, gap: mailSize.rowInset }}
       >
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          {recovery ? <Icon name={here ? "phone" : "computer"} size={18} color={t.c.ink2} /> : active ? (
-            <View style={{ width: 7, height: 7, borderRadius: t.radius.dot, backgroundColor: t.c.accent }} />
-          ) : null}
-          <Txt variant={recovery ? "settingsLabel" : "navLabel"} numberOfLines={1} style={{ flexShrink: 1 }}>
+          <Icon name={here ? "phone" : "computer"} size={18} color={t.c.ink2} />
+          <Txt variant="settingsLabel" numberOfLines={1} style={{ flex: 1, minWidth: 0 }}>
             {here ? Copy.standaloneName : profile.origin}
           </Txt>
-          <View style={{ flex: 1 }} />
-          {recovery && needsPair ? null : <Txt variant="caption" tone="ink3">{profile.flavor}</Txt>}
+          {connected ? <Txt variant="caption" tone="ink2">{Copy.serversActive}</Txt> : null}
         </View>
-        <Txt variant={recovery ? "body" : "caption"} tone={recovery ? "ink2" : "ink3"}
-          numberOfLines={recovery ? undefined : 1} style={recovery ? { marginLeft: 26 } : undefined}
-        >
+        <Txt variant="caption" tone="ink2" numberOfLines={2} style={{ marginLeft: 26 }}>
           {here ? Copy.serversOrganizedHere : needsPair ? Copy.pairEnded : profile.accountId}
         </Txt>
       </TapRow>
-      <View style={{ flexDirection: recovery ? "row-reverse" : "row", paddingHorizontal: 12, paddingBottom: 6 }}>
+      <View style={{ flexDirection: recovery ? "row-reverse" : "row", flexWrap: "wrap",
+        paddingHorizontal: mailSize.edge, paddingBottom: mailSize.rowInset }}>
         {/* ONE VERB, AND IT READS AS WHAT IT DOES. Forgetting a pairing removes a credential;
             forgetting this one stops the engine on this phone and hands the mailbox back — see
             `connection.tsx`'s forget arm, which does all three before the row goes. */}

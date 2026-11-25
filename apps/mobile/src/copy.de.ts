@@ -210,6 +210,20 @@ export const DE: Deck = {
 
   /* Die fünf Zustandslabels sind die des Desktops, Byte für Byte. */
   phoneThisPhone: "Dieses Handy",
+  settingsAppearance: "Darstellung",
+  settingsAi: "KI",
+  settingsDevices: "Geräte",
+  settingsManageDevices: "Kontogeräte verwalten",
+  settingsDevicesBrowser: "Öffnet sich im Browser",
+  settingsDevicesFailed: "Die Kontogeräte konnten nicht geöffnet werden. Versuche es erneut.",
+  settingsGeneral: "Allgemein",
+  settingsNotifications: "Benachrichtigungen",
+  settingsMailboxes: "Postfächer",
+  settingsFolders: "Ordner",
+  settingsSignatures: "Signaturen",
+  settingsAccount: "Konto",
+  settingsAbout: "Über ohmail",
+  settingsHelp: "Hilfe & Kontakt",
   phoneStateOrganizing: "Organisiert",
   phoneStateStopping: "Wird beendet",
   phoneStateStopPending: "Stopp ausstehend",
@@ -1593,6 +1607,7 @@ export const DE: Deck = {
   actionMarkUnread: "Als ungelesen markieren",
   actionDone: "Erledigt",
   actionMore: "Mehr",
+  mailBackToTop: "Nach oben",
   tabMore: "Mehr",
   standaloneName: "ohmail auf diesem Handy",
 
@@ -1882,12 +1897,12 @@ export const DE: Deck = {
   composeKeptQueued: "Als Entwurf behalten. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
   composeKeptQueuedWithoutFiles:
     "Als Entwurf behalten, ohne die Anhänge. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
-  composeKeepFailed: "Das konnte nicht als Entwurf behalten werden. Schließe noch einmal, um es zu verwerfen.",
+  composeKeepFailed: "Der Entwurf konnte nicht gespeichert werden. Er ist hier noch geöffnet.",
   composeTooLong: (size: string) => `Zu lang zum Speichern — höchstens ${size}. Kürze die Nachricht, dann wird sie wieder gespeichert.`,
   composeKeepTooLong: (size: string) =>
-    `Das kann nicht als Entwurf behalten werden — es ist über der Grenze von ${size}. Kürze es, oder schließe noch einmal, um es zu verwerfen.`,
+    `Das kann nicht als Entwurf behalten werden — es ist über der Grenze von ${size}. Kürze den Entwurf, um ihn zu speichern.`,
   composeKeepTooLongBound: (size: string) =>
-    `Diese Änderungen können nicht behalten werden — sie sind über der Grenze von ${size}, darum liegt in den Entwürfen noch die frühere Fassung. Kürze sie, oder schließe noch einmal, um die Änderungen zu verwerfen.`,
+    `Diese Änderungen können nicht behalten werden — sie sind über der Grenze von ${size}, darum liegt in den Entwürfen noch die frühere Fassung. Kürze den Entwurf, um deine Änderungen zu speichern.`,
   composeKeepFiles: (names: string, size: string) =>
     `Nicht beim Entwurf behalten: ${names}. Dieses Handy behält bis zu ${size} Anhänge bei Entwürfen. Schließe noch einmal, um ihn ohne sie zu behalten.`,
   composeKeptHere: "In den Entwürfen behalten. Die Anhänge bleiben nur auf diesem Handy.",
@@ -1998,7 +2013,6 @@ export const DE: Deck = {
   awayLeaveKeep: "Weiter bearbeiten",
   awayRow: "Abwesenheitsantwort",
   awayRowSub: "Eine automatische Antwort, solange du weg bist.",
-  awayScopeElsewhere: "Diese stellst du auf einem Computer oder in ohmail Cloud ein. Dieses Handy schickt sie unverändert zurück.",
   awayPileOther: (folder: string) => `Auch ${folder}`,
   awayPilesNone: "Keine Ablage bekommt eine Antwort, es wird also nichts gesendet.",
   awayWhereThisPhone: "Antworten werden gesendet, solange ohmail auf diesem Handy läuft.",

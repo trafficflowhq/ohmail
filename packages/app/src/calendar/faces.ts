@@ -13,6 +13,7 @@ export interface CalendarEventFace extends CalendarEventView {
   readonly notes: string | null;
   readonly conflict?: boolean;
   readonly retryWriteId?: string;
+  readonly failedCreate?: NonNullable<ShownOccurrence["writes"]["refusal"]>;
   readonly invitation?: import("../reader/InvitationLetterCard.js").InvitationLetterProps;
   /** The account's own answer to this day, where it gave one; `apart`: a day of a series answered otherwise than the series. */
   readonly said?: { readonly answer: "accepted" | "tentative" | "declined"; readonly apart: boolean };
@@ -28,14 +29,24 @@ export interface FaceWords {
 function stateOf(o: ShownOccurrence): CalendarEventView["state"] {
   if (o.record.status === "cancelled") return "off";
   if (o.record.myAnswer === "none") return "to-answer";
-  if (o.record.status === "tentative" || o.record.myAnswer === "tentative") return "maybe";
+  if (
+    o.record.status === "tentative" ||
+    o.record.myAnswer === "tentative" ||
+    o.record.mailAnswer === "tentative"
+  )
+    return "maybe";
   return "plain";
 }
 
 function saidOf(o: ShownOccurrence): Pick<CalendarEventFace, "said"> {
-  const answer = o.record.myAnswer;
+  const answer = o.record.mailAnswer ?? o.record.myAnswer;
   if (answer !== "accepted" && answer !== "tentative" && answer !== "declined") return {};
-  return { said: { answer, apart: o.series !== null && o.key !== null && o.series.myAnswer !== answer } };
+  return {
+    said: {
+      answer,
+      apart: o.series !== null && o.key !== null && (o.series.mailAnswer ?? o.series.myAnswer) !== answer,
+    },
+  };
 }
 
 export function faceOf(
@@ -76,6 +87,10 @@ export function faceOf(
   const viewOnly = viewOnlyOf(o.calendar, connection);
   const { waiting, refusal, refusedWriteId } = o.writes;
   const conflict = refusal === "version_stale";
+  const failedCreate =
+    connection?.provider === "caldav" && (!o.record.uid || o.record.uid.startsWith("pending:"))
+      ? refusal
+      : null;
   const status =
     refusal !== null
       ? { text: words.notSaved, failed: true }
@@ -96,17 +111,20 @@ export function faceOf(
     viewOnly,
     timeEditable:
       !viewOnly &&
+      !failedCreate &&
       o.record.end !== null &&
       (canEditRecord(o.record, connection, own, o.calendar.access, o.series) ||
         (proposals && canProposeRecord(o.record, own))),
     waits: o.record.myAnswer === "none",
     ...saidOf(o),
     status,
-    ...(conflict
-      ? { conflict }
-      : !viewOnly && refusedWriteId && refusal !== "earlier_refused"
-        ? { retryWriteId: refusedWriteId }
-        : {}),
+    ...(failedCreate && { failedCreate }),
+    ...(!failedCreate &&
+      (conflict
+        ? { conflict }
+        : !viewOnly && refusedWriteId && refusal !== "earlier_refused"
+          ? { retryWriteId: refusedWriteId }
+          : {})),
     second: o.record.place,
     people,
     notes: o.record.notes,

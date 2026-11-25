@@ -78,10 +78,13 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     await makeDue(seeded.due.accountId);
     expect(await run()).toMatchObject({ kind: "synced" });
     expect(await read()).toEqual([next]);
+    await w.db.update(calCalendars).set({ autoSchedule: true }).where(eq(calCalendars.accountId, seeded.accountId));
+    const beforeWithdrawal = await changesOf(w, seeded.accountId);
     reader.checkSignIn = async () => ({ ok: false, reason: "unreadable", retryAfterMs: null });
     await makeDue(seeded.due.accountId);
     expect(await run()).toMatchObject({ kind: "backed_off", word: "unreadable" });
     expect(await read()).toEqual([]);
+    expect((await changesOf(w, seeded.accountId))["calendar:update"]).toBe((beforeWithdrawal["calendar:update"] ?? 0) + 1);
   });
 
   /** Turns until a turn ends with nothing more to read. */
@@ -137,6 +140,31 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     const deps = depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } }));
     return { ...seeded, reader, deps };
   }
+
+  it("keeps known capabilities after a timed-out probe and publishes a confirmed change", async () => {
+    const t = await caldavWorld(new Map([["", [{ items: [] }]]]));
+    const list = t.reader.listCalendars.bind(t.reader);
+    let capability: true | null | undefined = true;
+    t.reader.listCalendars = async (...args) => {
+      const result = await list(...args);
+      return result.ok
+        ? { ...result, value: result.value.map((calendar) => ({ ...calendar, autoSchedule: capability, nativeMove: capability })) }
+        : result;
+    };
+    await calendarSyncPass(t.deps, t.due, never);
+    expect((await calendarsOf(w, t.accountId))[0]).toMatchObject({ autoSchedule: true, nativeMove: true });
+    const before = await changesOf(w, t.accountId);
+    capability = null;
+    await makeDue(t.accountId);
+    await calendarSyncPass({ ...t.deps, memory: newCalendarSyncMemory() }, t.due, never);
+    expect.soft((await calendarsOf(w, t.accountId))[0]).toMatchObject({ autoSchedule: true, nativeMove: true });
+    expect.soft((await changesOf(w, t.accountId))["calendar:update"]).toBe(before["calendar:update"]);
+    capability = undefined;
+    await makeDue(t.accountId);
+    await calendarSyncPass({ ...t.deps, memory: newCalendarSyncMemory() }, t.due, never);
+    expect((await calendarsOf(w, t.accountId))[0]).toMatchObject({ autoSchedule: false, nativeMove: false });
+    expect((await changesOf(w, t.accountId))["calendar:update"]).toBe(before["calendar:update"]! + 1);
+  });
 
   it("a first reading is stored page by page, and the token is kept only once the last page committed", async () => {
     const pages: ScriptedPage[] = [

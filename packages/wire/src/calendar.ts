@@ -143,6 +143,8 @@ export interface CalendarRecord {
   /** The days the last reading covered (`to` inclusive), or `null` when the reading has no window. */
   window: { from: CalendarDay; to: CalendarDay } | null;
   nativeMove?: true;
+  /** The CalDAV server sends invitations when this calendar stores an event with guests. */
+  autoSchedule?: true;
   /** The reminders a new event of this calendar starts with. */
   defaultAlarms: CalendarAlarm[];
   lastSyncedAt: ISODateTime | null;
@@ -207,6 +209,8 @@ export interface CalendarEventRecord {
   sharedWithoutOrganizer?: true;
   /** The account's own answer, where it is invited. */
   myAnswer: CalendarAnswer | null;
+  /** The mailed answer on a personal copy. The provider sees a guest-free event. */
+  mailAnswer?: "accepted" | "tentative" | "declined";
   /** Cancelled or declined occurrences removed from this account’s calendar. The empty key covers the record or series. */
   removedOccurrences?: readonly string[];
   /** A verified copy where this account can hide an invitation. */
@@ -491,6 +495,8 @@ export type CalendarEventAct =
       kind: "calendar_event_update";
       scope: CalendarChangeScope;
       change: Partial<CalendarEventFields>;
+      /** The invitation letter whose reply is being filed on this personal copy. */
+      invitationMessageId?: string;
       /** Apply the chosen scope only while the provider's series remains personal. */
       personalSeries?: true;
       /** The people this editor expects the provider to notify, checked under the same tag as its write. */

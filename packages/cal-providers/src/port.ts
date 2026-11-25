@@ -58,7 +58,10 @@ export interface CalendarInfo {
   readonly color: string | null;
   readonly writable: boolean;
   readonly owned?: true;
-  readonly nativeMove?: true;
+  /** A failed capability probe reports null. An absent flag means the calendar lacks the capability. */
+  readonly nativeMove?: true | null;
+  /** Whether CalDAV schedules invitations. A failed probe reports null. */
+  readonly autoSchedule?: true | null;
   /** Whether changes can be asked by token. Where not, `readChanges` answers the whole set each time. */
   readonly byToken: boolean;
   /** The zone the calendar is meant to be read in, where the provider names one. */

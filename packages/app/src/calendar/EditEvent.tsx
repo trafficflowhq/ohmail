@@ -15,7 +15,7 @@ import type { CardPlacement } from "./use-event-placement.js";
 import { useEditLeave } from "./use-edit-leave.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
 import { DraftFields } from "./DraftFields.js";
-import { useDiscardReport, useDuplicateDraft } from "./draft-undo.js";
+import { useDiscardReport, useOpenNewDraft } from "./draft-undo.js";
 import {
   draftDiffers,
   draftForDuplicate,
@@ -78,7 +78,7 @@ export function EditEvent({
   const [initial] = useState(() => draftOfRecord(shown, zone));
   const [draft, setDraft] = useState(recovered ?? initial.draft);
   const discardReport = useDiscardReport(port);
-  const duplicate = useDuplicateDraft(port);
+  const duplicate = useOpenNewDraft(port);
   const dirty = draftDiffers(draft, initial.draft);
   const reportDraft = () => discardReport({ kind: "edit", draft, original: exception ?? original });
   const onLeave = dirty ? reportDraft : () => undefined;
@@ -214,6 +214,9 @@ function EditorContents({
     <>
       <div inert={blocked}>
         <DraftTimeNotice issue={issue} />
+        {!ordinaryOnly && provider === "caldav" && !calendar.autoSchedule && (
+          <RefusalLine start>{t("edit.noInvitations")}</RefusalLine>
+        )}
         <DraftFields
           {...{ draft, today, calendar, tone, change }}
           choices={[]}
@@ -228,6 +231,7 @@ function EditorContents({
             sentGuests: sentInvitees(host.engine.store.get<CalendarEventRecord>("calendar_event", shown.id)),
             canInvite:
               !ordinaryOnly &&
+              (provider !== "caldav" || calendar.autoSchedule === true) &&
               !original.repeat &&
               original.invitees.every(
                 ({ address, role }) =>

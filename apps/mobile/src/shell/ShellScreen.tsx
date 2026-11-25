@@ -35,7 +35,7 @@ import { Txt } from "../ui/base";
 import { usePosture } from "../ui/posture";
 import { nativePosture } from "../ui/posture/posture-native";
 import { buildCommit } from "../build-info";
-import { appRelease } from "../net/app-release";
+import { appBuildNumber, appRelease } from "../net/app-release";
 import { BridgeHost } from "./bridge-host";
 import { askDoorAt } from "./door-at";
 import type { FoldReading, NoticePermission, SafeInsets, ShellConfig } from "./bridge-kinds";
@@ -53,13 +53,13 @@ import { shellNative, shellView } from "./shell-native";
 import type { ShellRefusal, ShellViewHandle } from "./shell-port";
 import { handoffMinter, type ShellSession } from "../net/pairing";
 import { webViewVerdict } from "./webview-check";
-import { IMPRINT_URL, PRIVACY_URL, SUBPROCESSORS_URL, WEB_APP_URL, downloadPageOf } from "../net/account";
+import { DELETE_ACCOUNT_URL, IMPRINT_URL, PRIVACY_URL, SUBPROCESSORS_URL, SUPPORT_URL, WEB_APP_URL, downloadPageOf } from "../net/account";
 import { pairingDigest } from "../switch/digest";
 import { switchPlaces } from "../switch/receive";
 import { switchSender } from "../switch/sender";
 import { switchNative } from "../switch/switch-native";
 import type { SwitchNative } from "../switch/switch-port";
-import { siblingOf } from "../variant";
+import { launchOnlySwitch, siblingOf } from "../variant";
 import { APP } from "../variant-native";
 import { CALENDAR_WAYS } from "@ohmail/app-logic/calendar/setup";
 
@@ -150,7 +150,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         : session.profile.flavor === "managed" ? "managed"
         : session.profile.flavor === "selfhost" ? "selfHosted" : "desktopHost",
       serverName: session.standalone ? "" : hostOf(session.profile.origin),
-      build: { version: appRelease() ?? null, commit: buildCommit(process.env.EXPO_PUBLIC_COMMIT) },
+      build: {
+        version: appRelease() ?? null,
+        commit: buildCommit(process.env.EXPO_PUBLIC_COMMIT),
+        ...(APP.app === "ohcal" ? { number: appBuildNumber(Platform.OS) } : {}),
+      },
       os,
       language: activeLocale(),
       languageChoice: localeNow.current?.chosen ?? null,
@@ -167,11 +171,12 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     };
     /* THE SWITCH: this app's pairing named by its digest only, a code minted only for a signed-out sibling from a
        paired door; the store verb falls back to the other app's own page. */
-    const digest = () => session.standalone
+    const launchOnly = launchOnlySwitch(APP);
+    const digest = () => launchOnly || session.standalone
       ? Promise.resolve(null) : pairingDigest(sha256Base64, session.profile.origin, session.profile.accountId);
     const sender = switchSender({
       app: APP.app, native: switcher, inFront: () => AppState.currentState === "active", now: Date.now, digest,
-      mint: handoffMinter(session, siblingOf(APP).app),
+      mint: launchOnly ? undefined : handoffMinter(session, siblingOf(APP).app),
     });
     const page = siblingOf(APP).links.host;
     /* A MAIL NOTICE THE PAGE ASKS FOR: drawn natively, for this session's pairing only while it is the one that
@@ -205,7 +210,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       switch: {
         read: async () => ({ other: otherOf(switcher) }),
         open: async (to) => {
-          const went = await sender.open(to);
+          const went = await sender.open(launchOnly ? { to: "last" } : to);
           return typeof went === "string" ? { went } : went;
         },
         store: async () => ({
@@ -245,8 +250,10 @@ export function ShellScreen({ session }: { session: ShellSession }) {
             return { permission: (permission.current = await askNoticePermission(nativeNotificationPermission(), calendar)) };
           case "about.page": {
             if (!live()) return { refused: "notReady" };
-            const page = a.page === "imprint" ? IMPRINT_URL
-              : a.page === "subprocessors" ? SUBPROCESSORS_URL : PRIVACY_URL;
+            const page = {
+              privacy: PRIVACY_URL, imprint: IMPRINT_URL, subprocessors: SUBPROCESSORS_URL,
+              support: SUPPORT_URL, deleteAccount: DELETE_ACCOUNT_URL,
+            }[a.page];
             return Linking.openURL(page).then(() => ({}), () => ({ refused: "notReady" as const }));
           }
           case "backup.read":

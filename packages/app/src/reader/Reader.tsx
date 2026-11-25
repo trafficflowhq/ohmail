@@ -11,7 +11,7 @@ import { JumpBack } from "@ohmail/ui/base";
 import { Sheet } from "@ohmail/ui/mail";
 import { baseSubject, isForwardedByUs, isProtected, type ThreadWalk } from "@ohmail/app-logic/reader";
 import { scrollByHand } from "@ohmail/app-logic/session/programmatic-scroll";
-import type { PaneProps, Route } from "../frame/contract.js";
+import type { FrameCommands, PaneProps, Route } from "../frame/contract.js";
 import { useText, useTextLookup } from "../text/index.js";
 import { useNewEvent } from "../calendar/use-new-event.js";
 import { NONE } from "../host/index.js";
@@ -34,6 +34,7 @@ const ConversationLetter = memo(Letter);
 export function Reader({ route, plan, keysHere }: PaneProps) {
   const tp = useText("place");
   const search = useText("search");
+  const drafts = useText("drafts");
   const readerOpen = useReaderOpen();
   /* The keyboard stood on the column's scroller when the letter it showed left: the next letter's takes it. */
   const keyboard = useRef(false);
@@ -49,7 +50,14 @@ export function Reader({ route, plan, keysHere }: PaneProps) {
       </>
     );
   /* The way back names where it goes, where the place has a word of its own. */
-  const from = route.place === "search" ? search("title") : tp.has(route.place) ? tp(route.place) : "";
+  const from =
+    route.words.draftReturnLetter === route.open
+      ? drafts("title")
+      : route.place === "search"
+        ? search("title")
+        : tp.has(route.place)
+          ? tp(route.place)
+          : "";
   return (
     <Conversation
       key={`${readerOpen}:${route.wholeThread ? "thread" : "message"}:${route.open}`}
@@ -112,7 +120,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     closeCard,
     scroller,
   } = view;
-  const back = phone ? readerBack(from, text("reader")("back"), () => commands.open(null)) : undefined;
+  const back = phone ? readerBack(from, text("reader")("back"), commands, route) : undefined;
   const calendarAction = useCalendarAction(opened, host.features.calendar !== NONE);
   if (opened === null && state === "gone") return <GoneLetter back={back} />;
   if (opened === null) return <Sheet kind="reading" label={text("reader")("pane")} back={back} />;
@@ -204,7 +212,11 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
   );
 }
 
-function readerBack(from: string, fallback: string, onPress: () => void): ReadingBack {
+function readerBack(from: string, fallback: string, commands: FrameCommands, route: Route): ReadingBack {
+  const onPress = () => {
+    if (route.words.draftReturnLetter === route.open) commands.go({ place: "drafts", open: null });
+    else commands.open(null);
+  };
   return { word: from || undefined, label: from || fallback, onPress };
 }
 

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Button, Dot, Menu, MenuItem, Slot } from "@ohmail/ui/base";
+import { Button, Dot, Menu, MenuItem, RefusalLine, Slot } from "@ohmail/ui/base";
 import { CalendarSquare, InvitationCard, type EventCardRow } from "@ohmail/ui/calendar";
-import { pressAndHear, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
+import type { CalendarPort } from "@ohmail/app-logic/calendar";
 import type {
   CalendarTime,
   EngineMessage,
@@ -15,7 +15,9 @@ import { useText } from "../text/index.js";
 import { commitAction } from "../calendar/commit-event-action.js";
 import { useInvitationAnswer } from "../invitations/EventAnswers.js";
 import { AnswerChoices } from "../invitations/AnswerChoices.js";
-import { sameTime, useLetterView, type LetterView } from "./invitation-letter-view.js";
+import { useLetterView, withLetterAnswer, type LetterView } from "./invitation-letter-view.js";
+import type { CalendarEventFace } from "../calendar/faces.js";
+import { useInvitationFiling } from "./use-invitation-filing.js";
 
 export interface InvitationLetterProps {
   message: EngineMessage;
@@ -31,52 +33,27 @@ export interface InvitationLetterProps {
   chosenCalendarId?: string;
   reply: (body: InvitationAnswerBody, key: string) => Promise<InvitationAnswerResult>;
 }
-function personalFields(props: InvitationLetterProps) {
-  if (!props.start || !props.end || !props.copyable) return null;
-  return {
-    title: props.title,
-    start: props.start,
-    end: props.end,
-    place: props.place,
-    notes: null,
-    callLink: null,
-    private: false,
-    busy: true,
-    repeat: props.repeat,
-    invitees: [],
-    alarms: [],
-  };
-}
-
 export function InvitationLetterCard(props: InvitationLetterProps) {
   const { host } = useFrame();
-  const port = host.wires.calendar;
-  return port === NONE ? (
-    <LetterCard {...props} port={NONE} />
-  ) : (
-    <CalendarLetterCard {...props} port={port} />
-  );
+  return <LetterCard {...props} port={host.wires.calendar} />;
 }
 
-function CalendarLetterCard(props: InvitationLetterProps & { port: CalendarPort }) {
-  const providerAnswer = useInvitationAnswer(props.port);
-  return <LetterCard {...props} providerAnswer={providerAnswer} />;
-}
+type LetterCardProps = InvitationLetterProps & { port: CalendarPort | typeof NONE };
 
-type LetterCardProps = InvitationLetterProps & {
-  port: CalendarPort | typeof NONE;
-  providerAnswer?: ReturnType<typeof useInvitationAnswer>;
-};
+function unavailableCalendar(port: LetterCardProps["port"], ready: boolean, canFile: boolean) {
+  if (port === NONE) return "calendarDisabled";
+  if (!ready) return "calendarRequired";
+  return canFile ? null : "detailsUnavailable";
+}
 
 function useLetterActions(props: LetterCardProps, view: LetterView) {
-  const { invitation, message, port } = props;
-  const { record, target, face, placed, text, locale } = view;
+  const { invitation, port } = props;
+  const { alreadyOnCalendar, record, target, face, placed, text } = view;
   const { commands } = useFrame();
   const pending = useCalendarInvitation();
-  const report = useReport();
-  const eventText = useText("event");
+  const provider = useInvitationAnswer(port);
   const [confirmed, setConfirmed] = useState<InvitationAnswer | null>(null);
-  const [gone, setGone] = useState(false);
+  const [replyNotice, setReplyNotice] = useState<string | null>(null);
   const request = useRef(false);
   const live = useRef(false);
   useLayoutEffect(() => {
@@ -86,38 +63,52 @@ function useLetterActions(props: LetterCardProps, view: LetterView) {
     };
   }, []);
   useLayoutEffect(() => setConfirmed(null), [invitation.answeredAt]);
-  const save = async () => {
-    if (port === NONE || (!target && !record)) return;
-    const saved = await fileInvitation(port, props, target?.id, record).catch(() => false);
-    if (!saved && live.current) report(text("calendarRefused"));
-  };
+
+  const providerCopy = record && !view.personal && view.current ? provider.invitation(record.id) : null;
+  const answer = confirmed ?? (providerCopy ? view.answer : (view.copy?.mailAnswer ?? invitation.answer));
+  const { canFile, maySave, failed, waiting, save } = useInvitationFiling(props, answer, port, view, live);
+  const mayAdd = !providerCopy && answer !== null && !waiting && maySave;
+  const connect =
+    !target && !alreadyOnCalendar && !providerCopy && port !== NONE
+      ? () => commands.go({ place: "calsettings", sub: "calaccounts" })
+      : undefined;
+  const ready = !connect;
+
   const send = async (value: InvitationAnswer) => {
-    if (view.cancelled || request.current) return;
+    if (view.cancelled || !ready || waiting || request.current) return;
     request.current = true;
+    setReplyNotice(null);
     try {
-      const provider =
-        view.current && !view.personal && record && props.providerAnswer?.invitation(record.id);
-      if (provider) {
-        await props.providerAnswer!.answer(record.id, value);
+      if (providerCopy) {
+        await provider.answer(providerCopy.id, value);
         return;
       }
       const result = await props.reply(
         { answer: value, basis: confirmed ?? invitation.answer },
         crypto.randomUUID(),
       );
-      if (!live.current) return;
       if (result.status !== "sent" && result.status !== "already") {
-        report(text("answerPending"));
+        if (live.current)
+          setReplyNotice(text(result.status === "unverified" ? "answerUnverified" : "answerPending"));
         return;
       }
-      setConfirmed(value);
-      if (value !== "declined" && (!record || view.personal)) await save();
+      if (live.current) setConfirmed(value);
+      if (canFile) await save(value);
     } catch {
-      if (live.current) report(text("answerRefused"));
+      if (live.current) setReplyNotice(text("answerUnverified"));
     } finally {
       request.current = false;
     }
   };
+  const unavailableKey = providerCopy || alreadyOnCalendar ? null : unavailableCalendar(port, ready, canFile);
+  const unavailable = unavailableKey && text(unavailableKey);
+  const existingCopy = !!view.copy && !view.copy.uid.startsWith("pending:");
+  const couldNotFile =
+    ready && !providerCopy && !canFile && answer !== null && (!existingCopy || confirmed !== null);
+  const reason = failed ?? (couldNotFile ? unavailable : null);
+  const notice =
+    replyNotice ??
+    (reason ? text(existingCopy ? "calendarUpdateRefused" : "calendarRefused", { reason }) : null);
   const open =
     face && !view.hidden
       ? () => {
@@ -129,11 +120,50 @@ function useLetterActions(props: LetterCardProps, view: LetterView) {
               words: { invitation: placed.id },
             });
           } else {
-            pending.current = { ...face, invitation: { ...props, chosenCalendarId: target?.id } };
+            pending.current = {
+              ...withLetterAnswer(face, answer),
+              invitation: { ...props, chosenCalendarId: target?.id },
+            };
             commands.go({ place: "day", sub: face.ref.day, open: face.id, words: { invitation: face.id } });
           }
         }
       : undefined;
+  const { remove, gone } = useLetterRemoval(props, view, live);
+
+  const add = async () => {
+    if (!mayAdd || answer === null || request.current) return;
+    request.current = true;
+    try {
+      await save(answer, true);
+    } finally {
+      request.current = false;
+    }
+  };
+  return {
+    send,
+    mayAnswerThroughProvider: !!providerCopy,
+    open,
+    remove,
+    add,
+    gone,
+    answer,
+    ready,
+    canFile,
+    mayAdd,
+    connect,
+    notice,
+    waiting,
+    unavailable: !connect && reason && !replyNotice ? null : unavailable,
+    addLabel: text(existingCopy ? "retryUpdate" : "add"),
+  };
+}
+
+function useLetterRemoval(props: LetterCardProps, view: LetterView, live: { current: boolean }) {
+  const { invitation, message, port } = props;
+  const { record, locale } = view;
+  const report = useReport();
+  const eventText = useText("event");
+  const [gone, setGone] = useState(false);
   const removeRecord = view.hidden ? undefined : view.cancelled ? record : view.declinedCopy;
   const remove =
     removeRecord && !gone && port !== NONE
@@ -164,27 +194,19 @@ function useLetterActions(props: LetterCardProps, view: LetterView) {
         }
       : undefined;
 
-  const add = async () => {
-    if (request.current) return;
-    request.current = true;
-    try {
-      await save();
-    } finally {
-      request.current = false;
-    }
-  };
-  return { send, open, remove, add, gone, answer: confirmed ?? view.answer };
+  return { remove, gone };
 }
 
 function LetterCard(props: LetterCardProps) {
   const { invitation, from, port } = props;
   const view = useLetterView(props);
-  const { current, record, calendar, target, cancelled, conflicts, previous, mailAnswer, text } = view;
+  const { current, record, calendar, target, cancelled, conflicts, previous, text } = view;
   // A letter that carries no event of its own (an Outlook Web App link) shows its calendar event's title and place.
   const eventOnly = props.when === null && current && record ? record : null;
   const title = eventOnly?.title || props.title;
   const place = props.place ?? eventOnly?.place ?? null;
-  const { send, open, remove, add, gone, answer } = useLetterActions(props, view);
+  const actions = useLetterActions(props, view);
+  const { open, remove, gone, answer, waiting } = actions;
   const calendarText = useText("calendar");
   return (
     <InvitationCard
@@ -195,28 +217,24 @@ function LetterCard(props: LetterCardProps) {
       lines={[...(place ? [place] : []), ...(from ? [text("from", { organizer: from })] : [])]}
       around={conflicts}
       answers={
-        remove ? (
-          <Button kind="two" size="s" onPress={() => void remove()}>
-            {calendarText(cancelled ? "actions.removeFromCalendar" : "actions.removeDeclined")}
-          </Button>
-        ) : !cancelled && mailAnswer ? (
-          <>
-            <AnswerChoices on="sheet" answer={answer ?? "none"} onAnswer={(value) => void send(value)} />
-            {!record && target && props.copyable && (answer === "accepted" || answer === "tentative") && (
-              <Button kind="quiet" size="s" onPress={() => void add()}>
-                {text("add")}
-              </Button>
-            )}
-          </>
-        ) : undefined
+        <>
+          {(!remove || !actions.mayAnswerThroughProvider) && <LetterAnswers view={view} actions={actions} />}
+          {remove && (
+            <Button kind="two" size="s" onPress={() => void remove()}>
+              {calendarText(cancelled ? "actions.removeFromCalendar" : "actions.removeDeclined")}
+            </Button>
+          )}
+        </>
       }
       goes={
-        !gone && current && calendar ? (
+        waiting ? (
+          text("calendarPending")
+        ) : !gone && current && calendar && !view.copy?.uid.startsWith("pending:") ? (
           <>
             {text("on", { title, calendar: calendar.name })}
             <Dot kind="ink" />
           </>
-        ) : !cancelled && !record && target && answer !== "declined" ? (
+        ) : !cancelled && !record && actions.canFile && target && answer !== "declined" ? (
           <>
             {text.rich("goes", {
               title: title.split(",")[0]!,
@@ -230,6 +248,45 @@ function LetterCard(props: LetterCardProps) {
       }
       show={port !== NONE && open ? { label: text("show"), onPress: open } : undefined}
     />
+  );
+}
+
+function LetterAnswers({
+  view,
+  actions,
+}: {
+  view: LetterView;
+  actions: ReturnType<typeof useLetterActions>;
+}) {
+  if (view.cancelled || !view.mailAnswer) return null;
+  const { text } = view;
+  const { send, add, addLabel, answer, ready, mayAdd, connect, unavailable, notice, waiting } = actions;
+  return (
+    <>
+      {unavailable && (
+        <RefusalLine start way={connect && { label: text("connect"), onPress: connect }}>
+          {unavailable}
+        </RefusalLine>
+      )}
+      {notice && (
+        <RefusalLine start alert>
+          {notice}
+        </RefusalLine>
+      )}
+      {(ready || answer !== null) && (
+        <AnswerChoices
+          on="sheet"
+          answer={answer ?? "none"}
+          readOnly={!ready || waiting}
+          onAnswer={(value) => void send(value)}
+        />
+      )}
+      {mayAdd && (
+        <Button kind="quiet" size="s" onPress={() => void add()}>
+          {addLabel}
+        </Button>
+      )}
+    </>
   );
 }
 
@@ -265,6 +322,7 @@ function InvitationCalendarSlot({ view }: { view: LetterView }) {
 }
 
 export interface PendingInvitationDetails {
+  event: CalendarEventFace | null;
   rows: EventCardRow[];
   answers: ReactNode;
 }
@@ -281,7 +339,7 @@ export function PendingInvitationControls({
   const text = useText("readerInvitation");
   const props = { ...invitation, port: host.wires.calendar };
   const view = useLetterView(props);
-  const { send, answer } = useLetterActions(props, view);
+  const actions = useLetterActions(props, view);
   const rows: EventCardRow[] = [];
   if (view.target)
     rows.push({ label: text("destination"), children: <InvitationCalendarSlot view={view} /> });
@@ -299,48 +357,8 @@ export function PendingInvitationControls({
     ),
   });
   return render({
+    event: view.placed || (view.face && withLetterAnswer(view.face, actions.answer)),
     rows,
-    answers:
-      view.mailAnswer && !view.cancelled ? (
-        <AnswerChoices on="sheet" answer={answer ?? "none"} onAnswer={(value) => void send(value)} />
-      ) : null,
+    answers: <LetterAnswers view={view} actions={actions} />,
   });
-}
-
-async function fileInvitation(
-  port: CalendarPort,
-  props: InvitationLetterProps,
-  calendarId: string | undefined,
-  record?: CalendarEventRecord,
-) {
-  const fields = personalFields(props);
-  const id = props.invitation.calendarEventId;
-  if (!fields || !id) return false;
-  if (
-    record &&
-    sameTime(record.start, fields.start) &&
-    record.end &&
-    sameTime(record.end, fields.end) &&
-    record.title === fields.title &&
-    record.place === fields.place
-  )
-    return true;
-  const result = record
-    ? await pressAndHear(port, {
-        kind: "calendar_event_update",
-        eventId: record.id,
-        base: record.updatedAt,
-        scope: { kind: "record" },
-        change: { start: fields.start, end: fields.end, place: fields.place, title: fields.title },
-      })
-    : calendarId
-      ? await pressAndHear(port, {
-          kind: "calendar_event_create",
-          eventId: id,
-          calendarId,
-          event: fields,
-          invitationMessageId: props.message.id,
-        })
-      : null;
-  return result?.verdict?.kind === "taken";
 }

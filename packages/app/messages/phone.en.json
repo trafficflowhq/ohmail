@@ -211,6 +211,11 @@
     }
   },
   "phoneSettings": {
+    "calendarLegalTitle": "Legal and support",
+    "privacyPolicy": "Privacy policy",
+    "support": "Support",
+    "sharedAccount": "Shared account",
+    "deleteAccount": "Delete account",
     "legalTitle": "What happens to your mail",
     "privacy": "Privacy",
     "subprocessors": "Subprocessors",

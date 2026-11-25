@@ -73,6 +73,7 @@
     },
     "draft": {
       "reopen": "Reopen draft",
+      "saveWithoutGuests": "Save without guests",
       "discarded": "Discarded",
       "undo": "Undo"
     },
@@ -142,6 +143,9 @@
       "remove": "Remove",
       "now": "now {when}",
       "sendInvitation": "{count, plural, one {Send invitation} other {Send invitations}}",
+      "noInvitations": "This calendar does not support invitations.",
+      "iCloudSends": "iCloud sends the invitation.",
+      "saveAndInvite": "Save and invite",
       "from": "From",
       "cancelled": "cancelled",
       "maybe": "maybe",

@@ -9,7 +9,7 @@ import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
-import { CLOUD_URL } from "../src/doors.js";
+import { beginBrowserApproval, CLOUD_URL } from "../src/doors.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import messages from "../../webapp/messages/en.json";
 import { createCloudSidecar, readMirrorOwner, type CloudSidecar } from "../../sidecar/src/cloud-engine.js";
@@ -92,7 +92,7 @@ function standInShell(
   root: string,
   dataDir: string,
   server: ApprovalServer,
-  onOpen: (request: string) => void,
+  onOpen: (request: string) => void | Promise<void>,
   onLink: (challenge: string) => void = () => undefined,
   /** How long an addressed engine takes to come up — past the gate's own lifecycle poll, when set. */
   relaunchMs = 0,
@@ -151,7 +151,7 @@ function standInShell(
       if (command === "engine_status") return status();
       if (command === "engine_configure") return configure(payload!.config as Record<string, unknown>);
       if (command === "open_link") {
-        if (payload?.key === "approve") onOpen(String(payload.request));
+        if (payload?.key === "approve") await onOpen(String(payload.request));
         if (payload?.key === "link-desktop") onLink(String(payload.challenge));
         return null;
       }
@@ -227,6 +227,18 @@ function press(el: HTMLElement, label: string): Promise<void> {
   if (found.length !== 1) throw new Error(`expected one button saying "${label}", found ${found.length}`);
   return act(async () => { found[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
 }
+function browserButton(el: HTMLElement): HTMLButtonElement {
+  const button = [...el.querySelectorAll("button")].find((item) => item.textContent === "Sign in with browser");
+  if (!button) throw new Error("the browser sign-in button is missing");
+  return button;
+}
+
+function submitBrowserForm(el: HTMLElement): Promise<void> {
+  return act(async () => {
+    browserButton(el).form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+}
+
 const text = (el: HTMLElement): string => el.textContent ?? "";
 const mailMounted = (el: HTMLElement): boolean => text(el).includes("Ohbox");
 async function type(el: HTMLElement, id: string, value: string): Promise<void> {
@@ -256,10 +268,25 @@ describe("a fresh install's Cloud door is one motion", () => {
     const dataDir = await freshDataDir("ohmail-first-door-data-");
     dirs.push(root0, dataDir);
     const server = approvalServer(CLOUD_URL);
-    let confirmedAt = 0;
+    const fetchApproval = server.fetchImpl;
+    let starts = 0;
+    let releaseStart!: () => void;
+    const startHeld = new Promise<void>((resolve) => { releaseStart = resolve; });
+    let seeStart!: () => void;
+    const startSeen = new Promise<void>((resolve) => { seeStart = resolve; });
+    server.fetchImpl = async (input, init) => {
+      if (typeof input === "string" && new URL(input).pathname === "/auth/desktop-approval") {
+        if (++starts === 1) return new Response("server unavailable", { status: 500 });
+        if (starts === 2) { seeStart(); await startHeld; }
+      }
+      return fetchApproval(input, init);
+    };
+    const opened: string[] = [];
+    let releaseBrowser!: () => void;
+    const browserOpening = new Promise<void>((resolve) => { releaseBrowser = resolve; });
     shell = standInShell(root0, dataDir, server, (request) => {
-      // THE BROWSER: the page reads the request and the person presses Confirm.
-      void server.read(request).then(() => server.confirm(request)).then(() => { confirmedAt = Date.now(); });
+      opened.push(request);
+      return browserOpening;
     }, undefined, relaunchMs);
 
     const el = await render();
@@ -268,6 +295,31 @@ describe("a fresh install's Cloud door is one motion", () => {
     expect(el.querySelector("#cloud-address"), "the first-run Cloud door asked for an address").toBeNull();
     expect(el.querySelector("input"), "the first-run Cloud door showed a field").toBeNull();
     await press(el, "Sign in with browser");
+    await until(el, "the retry message", () => text(el).includes(DOOR_COPY.cloudApproveTryAgain));
+    expect(browserButton(el).disabled).toBe(false);
+    const configuredAfterFailure = shell.configured.length;
+    expect(configuredAfterFailure).toBe(1);
+    await press(el, "Sign in with browser");
+    await startSeen;
+    const overlap = beginBrowserApproval("", false, true);
+    releaseStart();
+    await until(el, "the browser launcher", () => opened.length === 1);
+    expect(await overlap).toMatchObject({ approvalId: null, resume: { note: null } });
+    expect(await beginBrowserApproval("", false, true)).toMatchObject({ approvalId: null, resume: { note: null } });
+    const disabledDuringLaunch = browserButton(el).disabled;
+    await press(el, "Sign in with browser");
+    await submitBrowserForm(el);
+    releaseBrowser();
+    await until(el, "the browser wait", () => text(el).includes(DOOR_COPY.cloudApproveWaiting));
+    const disabledDuringWait = browserButton(el).disabled;
+    await press(el, "Sign in with browser");
+    await submitBrowserForm(el);
+    expect({ disabledDuringLaunch, disabledDuringWait }).toEqual({ disabledDuringLaunch: true, disabledDuringWait: true });
+    expect(starts).toBe(2);
+    expect(opened).toHaveLength(1);
+    await server.read(opened[0]!);
+    await server.confirm(opened[0]!);
+    const confirmedAt = Date.now();
 
     let sawSigningIn = false;
     let heldBroken: string | null = null;
@@ -288,7 +340,7 @@ describe("a fresh install's Cloud door is one motion", () => {
 
     // The two configures: the pending door with NO address, then the relaunch behind the door the
     // claim wrote — carrying exactly the account the session named, which nobody typed.
-    const [first, second, ...more] = shell.configured;
+    const [first, second, ...more] = shell.configured.slice(configuredAfterFailure);
     expect(first).toEqual({ mode: "cloud", cloudUrl: CLOUD_URL, identityPending: true });
     expect(second).toEqual({ mode: "cloud", cloudUrl: CLOUD_URL, address: server.browser });
     expect(more).toEqual([]);
@@ -308,6 +360,7 @@ describe("a fresh install's Cloud door is one motion", () => {
       `FIXTURE held ${relaunchMs} ms: confirm->mail mounted ${mountedAt - confirmedAt} ms; confirm->first message served ${Math.max(firstMailAt, mountedAt) - confirmedAt} ms (the 2000 ms claim-poll cadence included)`,
     );
   }, 120_000);
+
   it("a claim the window never heard is finished by the next press, never asked again", async () => {
     const { root: r, dataDir } = await fresh("orphan");
     const server = approvalServer(CLOUD_URL);
@@ -350,15 +403,37 @@ describe("a fresh install's Cloud door is one motion", () => {
   it("a denied and an expired request each render their own sentence", async () => {
     const { root: r, dataDir } = await fresh("ended");
     const server = approvalServer(CLOUD_URL);
+    const fetchApproval = server.fetchImpl;
+    const statuses = [500, 503, 504];
+    let starts = 0;
+    server.fetchImpl = async (input, init) => {
+      if (typeof input === "string" && new URL(input).pathname === "/auth/desktop-approval") {
+        const status = statuses[starts++];
+        if (status !== undefined) return new Response("server unavailable", { status });
+      }
+      return fetchApproval(input, init);
+    };
+    let opened = 0;
     let ending: "deny" | "expire" = "deny";
     shell = standInShell(r, dataDir, server, (request) => {
+      opened += 1;
       if (ending === "deny") void server.deny(request);
       else server.expire(request);
     });
     const el = await render();
     await pickCloud(el);
+    const retry = () => [...el.querySelectorAll("button")].find((button) => button.textContent === "Sign in with browser");
+    for (const [index, status] of statuses.entries()) {
+      await press(el, "Sign in with browser");
+      await until(el, "the browser sign-in button to be ready again", () => starts === index + 1 && retry()?.disabled === false);
+      expect(text(el), `Cloud refusal ${status}`).toContain("Browser sign-in couldn’t start. Try again in a moment.");
+      expect(text(el)).not.toContain(`HTTP ${status}`);
+      expect(opened).toBe(0);
+    }
+
     await press(el, "Sign in with browser");
     await until(el, "the declined sentence", () => text(el).includes(DOOR_COPY.cloudApproveDenied), 30_000);
+    expect(opened).toBe(1);
     ending = "expire";
     await press(el, "Sign in with browser");
     await until(el, "the expired sentence", () => text(el).includes(DOOR_COPY.cloudApproveExpired), 30_000);

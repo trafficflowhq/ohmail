@@ -2135,10 +2135,8 @@ export function useShellCompose({
   /**
    * THE COMPOSE FORM IS A ROW ON THE ACCOUNT — see `compose-autosave.ts`.
    *
-   * `active` is the route, so a timer armed by the last keystroke cannot write a draft after the
-   * user has left. It stays armed while Compose is open and nowhere else; leaving mid-sentence
-   * loses at most the last two seconds to the account, and nothing at all to the local buffer,
-   * which is written on every keystroke and is what a reload restores from.
+   * `active` follows the route. When Write closes, autosave cancels the timer and keeps the latest
+   * words after any save already on the wire. Every edit also reaches the local reload buffer.
    */
   const autosave = useComposeAutosave({
     engine,
@@ -3292,6 +3290,7 @@ export function useShellCompose({
   const closeCompose = useStableCallback(() => {
     if (closing.current) return;
     closing.current = true;
+    const frame = draftFrame.current;
     void (async () => {
       let flushed: ComposeFlush = { kind: "nothing" };
       try {
@@ -3299,6 +3298,7 @@ export function useShellCompose({
       } finally {
         closing.current = false;
       }
+      if (draftFrame.current !== frame || routeViewRef.current !== "compose") return;
       // A body past the ceiling is a message the account cannot hold: its note says how to shorten it.
       if (flushed.kind === "tooLong") {
         setComposeCloseRefusal(t("compose.closeNotSaved"));

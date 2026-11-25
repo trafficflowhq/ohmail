@@ -6,10 +6,11 @@
  * then nowhere, while the row held the only copy of a message that may never have been
  * delivered. The verbs are on the row's card (`src/ui/DraftReader.tsx`); this screen lists.
  */
-import { MailAppearance } from "../../src/theme/mail";
+import { MailAppearance, mailSize } from "../../src/theme/mail";
 import { ScheduledRow } from "../scheduled";
 import { useTheme } from "../../src/theme";
 import { MailAvatar } from "../../src/ui/MailAvatar";
+import { MailRowByline } from "../../src/ui/MailRowByline";
 import { View } from "react-native";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
@@ -77,7 +78,7 @@ function DraftsBody({ inPane }: { inPane: boolean }) {
           </Txt>
         </View>)}
 
-        <Panel style={{ paddingBottom: 10, ...(theme.mail ? { backgroundColor: "transparent", shadowOpacity: 0, elevation: 0 } : {}) }}>
+        <Panel style={{ paddingBottom: 10, ...(theme.mail ? { shadowOpacity: 0, elevation: 0 } : {}) }}>
           {surface === "skeleton" ? (
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
               <SkeletonList rows={2} stalled={w.boot.syncFailure} />
@@ -95,7 +96,7 @@ function DraftsBody({ inPane }: { inPane: boolean }) {
               {theme.mail && rows.length ? <Section>{Copy.draftListCount(rows.length)}</Section> : null}
               {rows.map((row, i) => (
               <View key={row.id}>
-                {i > 0 ? <Rule inset={18} /> : null}
+                {i > 0 && !theme.mail ? <Rule inset={18} /> : null}
                 <DraftRow row={row} onPress={() => openRow(row.id)} />
               </View>
               ))}
@@ -122,63 +123,66 @@ function DraftsBody({ inPane }: { inPane: boolean }) {
 
 function DraftRow({ row, onPress }: { row: WorldDraft; onPress: () => void }) {
   const theme = useTheme();
+  const summary = row.waiting !== null
+    ? Copy.ariaLabelDetail(row.subject, Copy.draftsWaiting)
+    : row.heldSays === null
+      ? Copy.ariaLabelDetail(row.subject, row.to === "" ? Copy.scheduledNoRecipient : row.to)
+      : Copy.ariaLabelDetail(row.subject, heldSentence(row.heldSays));
+  const recipient = row.to === "" ? Copy.scheduledNoRecipient : Copy.draftToPerson(row.to);
   return (
     <TapRow
       onPress={onPress}
       accessibilityRole="button"
       /* The row's whole fact, spoken: what it is about, to whom, and — the half that matters —
          what is known about a send nobody has confirmed. `row-spoken.ts`'s discipline. */
-      accessibilityLabel={
-        row.waiting !== null
-          ? Copy.ariaLabelDetail(row.subject, Copy.draftsWaiting)
-          : row.heldSays === null
-            ? Copy.ariaLabelDetail(row.subject, row.to === "" ? Copy.scheduledNoRecipient : row.to)
-            : Copy.ariaLabelDetail(row.subject, heldSentence(row.heldSays))
-      }
-      style={{ paddingHorizontal: 18, paddingVertical: 12, gap: 4 }}
+      accessibilityLabel={row.mailbox ? Copy.ariaLabelDetail(summary, Copy.composeFrom(row.mailbox.name)) : summary}
+      style={theme.mail ? {
+        paddingHorizontal: mailSize.edge, paddingVertical: mailSize.inset, gap: mailSize.inset,
+        flexDirection: "row", alignItems: "center", minHeight: mailSize.row,
+      } : { paddingHorizontal: 18, paddingVertical: 12 }}
     >
-      {theme.mail ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <MailAvatar person={{ name: row.to, address: row.to }} />
-          <Txt variant="rowSenderSeen" numberOfLines={1} style={{ flex: 1 }}>
-            {row.to === "" ? Copy.scheduledNoRecipient : Copy.draftToPerson(row.to)}
+      {theme.mail ? <MailAvatar person={{ name: row.to, address: row.to }} mailbox={row.mailbox} /> : null}
+      <View style={theme.mail ? { flex: 1, minWidth: 0, gap: 2 } : { gap: 4 }}>
+        {theme.mail ? (
+          <>
+            <MailRowByline name={recipient} time={row.when} seen />
+            <Txt variant="rowSubjectSeen" numberOfLines={1}>{row.subject}</Txt>
+          </>
+        ) : (
+          <>
+            <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
+              <Txt variant="rowSender" style={{ flexShrink: 1 }} numberOfLines={1}>{row.subject}</Txt>
+              <View style={{ flex: 1 }} />
+              <Txt variant="caption" tone="ink3" tabular numberOfLines={1}>{row.when}</Txt>
+            </View>
+            <Txt variant="caption" tone="ink3" numberOfLines={1}>
+              {row.to === "" ? Copy.scheduledNoRecipient : row.to}
+            </Txt>
+          </>
+        )}
+        {row.preview !== "" ? (
+          <Txt variant={theme.mail ? "rowSenderSeen" : "caption"} tone="ink2" numberOfLines={theme.mail ? 1 : 2}>
+            {row.preview}
           </Txt>
-        </View>
-      ) : null}
-      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
-        <Txt variant="rowSender" style={{ flexShrink: 1 }} numberOfLines={1}>
-          {row.subject}
-        </Txt>
-        <View style={{ flex: 1 }} />
-        <Txt variant="caption" tone="ink3" tabular numberOfLines={1}>
-          {row.when}
-        </Txt>
+        ) : null}
+        {/* A HELD SEND IS NOT AN ORDINARY DRAFT and the list says so where a person is scanning
+            it, not only inside the card: the whole reason this destination exists on the phone. */}
+        {row.waiting !== null ? (
+          <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
+            {Copy.draftsWaiting}
+          </Txt>
+        ) : row.heldSays !== null ? (
+          <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
+            {heldSentence(row.heldSays)}
+          </Txt>
+        ) : null}
+        {/* Its schedule ended unsent and the files it kept went with it (the web's note). */}
+        {row.filesNotKept !== null ? (
+          <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
+            {Copy.draftsFilesNotKept(row.filesNotKept)}
+          </Txt>
+        ) : null}
       </View>
-      {theme.mail ? null : <Txt variant="caption" tone="ink3" numberOfLines={1}>
-        {row.to === "" ? Copy.scheduledNoRecipient : row.to}
-      </Txt>}
-      {row.preview !== "" ? (
-        <Txt variant="caption" tone="ink2" numberOfLines={2}>
-          {row.preview}
-        </Txt>
-      ) : null}
-      {/* A HELD SEND IS NOT AN ORDINARY DRAFT and the list says so where a person is scanning
-          it, not only inside the card: the whole reason this destination exists on the phone. */}
-      {row.waiting !== null ? (
-        <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
-          {Copy.draftsWaiting}
-        </Txt>
-      ) : row.heldSays !== null ? (
-        <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
-          {heldSentence(row.heldSays)}
-        </Txt>
-      ) : null}
-      {/* Its schedule ended unsent and the files it kept went with it (the web's note). */}
-      {row.filesNotKept !== null ? (
-        <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
-          {Copy.draftsFilesNotKept(row.filesNotKept)}
-        </Txt>
-      ) : null}
     </TapRow>
   );
 }

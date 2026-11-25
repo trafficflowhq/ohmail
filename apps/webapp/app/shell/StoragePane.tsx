@@ -192,7 +192,7 @@ export function StoragePane({ facts, linksOut, change, mail }: {
               <SettingActs>
                 <Button busy={change.busy} onPress={change.press}>{t("storageChangePlan")}</Button>
                 {offer.addon !== null ? (
-                  <Button kind="two" busy={change.busy} onPress={change.press}>{t("storageAddStorage")}</Button>
+                  <Button kind="two" busy={change.busy} onPress={(event) => change.press(event, "storage")}>{t("storageAddStorage")}</Button>
                 ) : null}
               </SettingActs>
               <SettingNote>{t("storageOpensPage")}</SettingNote>

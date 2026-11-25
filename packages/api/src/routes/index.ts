@@ -2,7 +2,7 @@ import type { Route } from "../router.js";
 /* The auth surface, whole, from its own mail-safe module — see `auth.ts` for why it moved out of
  * this file. Re-exported below so every consumer of this barrel sees exactly what it did. */
 import { authRoutes } from "./auth.js";
-import { withCalendarHandoff } from "./settings-handoff.js";
+import { withManagedHandoff } from "./settings-handoff.js";
 // The browser approval of a desktop sign-in: this table only, never `selfHostRoutes`.
 import { desktopApprovalRoutes } from "./desktop-approval.js";
 import { syncRoutes } from "./sync.js";
@@ -218,7 +218,7 @@ export const apiRoutes: Route[] = [
   ...adminStaffRoutes,
   ...adminActionRoutes,
   ...adminOAuthRoutes,
-  ...authRoutes.map(withCalendarHandoff),
+  ...authRoutes.map(withManagedHandoff),
   ...desktopApprovalRoutes,
   // The pairing ceremony, directly after the auth surface it extends: `POST /pair` (ceremony,
   // step-up), `GET /pair` (read), `DELETE /pair/:id` (ceremony, step-up), `POST /pair/redeem`

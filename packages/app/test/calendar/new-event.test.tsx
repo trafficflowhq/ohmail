@@ -203,6 +203,73 @@ it("adds and edits invitees in a new draft and asks before sending invitations",
   await act(async () => {});
 });
 
+function iCloudDraft(autoSchedule?: true) {
+  const w = world();
+  w.put("calendar_connection", "conn-1", connectionRecord({ serverHost: "caldav.icloud.com" }));
+  w.put("calendar", "personal", { ...calendarRecord({ id: "personal", name: "Personal" }), autoSchedule });
+  mountFrame("#/cal/week/2026-11-16?panel=new", w, NONE);
+  return w;
+}
+
+function addDraftGuest(form: ReturnType<typeof within>) {
+  fireEvent.click(form.getByRole("button", { name: "Invitees" }));
+  const picker = within(screen.getByRole("dialog", { name: "Add invitees" }));
+  const input = picker.getByRole("textbox", { name: "Name or address" });
+  fireEvent.change(input, { target: { value: ["Mara <mara", "example.test>"].join("@") } });
+  fireEvent.keyDown(input, { key: "Enter" });
+}
+
+it("offers a personal event when iCloud has not advertised invitations", async () => {
+  const w = iCloudDraft();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.press = press;
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  expect(form.queryByRole("button", { name: "Invitees" })).toBeNull();
+  expect(form.getByText("This calendar does not support invitations.")).toBeTruthy();
+  fireEvent.change(form.getByRole("textbox", { name: "New event" }), { target: { value: "Planning" } });
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({ event: expect.objectContaining({ invitees: [] }) }),
+  );
+  await act(async () => {});
+});
+
+it("names iCloud as the sender and reopens a refused draft with a way to save it without guests", async () => {
+  const w = iCloudDraft(true);
+  const watch = vi.fn<NonNullable<typeof w.port.watchCreate>>();
+  const press = vi.fn(async () => ({ key: "create" }));
+  w.port.watchCreate = watch;
+  w.port.press = press;
+  const form = within(screen.getByRole("dialog", { name: "New event" }));
+  await form.findByText("Personal");
+  fireEvent.change(form.getByRole("textbox", { name: "New event" }), { target: { value: "Planning" } });
+  addDraftGuest(form);
+  fireEvent.click(form.getByRole("button", { name: "Add" }));
+  const question = within(screen.getByRole("dialog", { name: "Invite Mara" }));
+  expect(question.getByText("iCloud sends the invitation.")).toBeTruthy();
+  fireEvent.click(question.getByRole("button", { name: "Save and invite" }));
+  await vi.waitFor(() => expect(watch).toHaveBeenCalledTimes(1));
+  act(() =>
+    watch.mock.calls[0]![2]({ kind: "refused", word: "invitees_unsupported", details: null }, "write"),
+  );
+  const reopen = await screen.findByRole("button", { name: "Reopen draft" });
+  expect(screen.getByText("This calendar cannot send invitations.")).toBeTruthy();
+  fireEvent.click(reopen);
+  const reopened = within(await screen.findByRole("dialog", { name: "New event" }));
+  expect(reopened.getByRole("textbox", { name: "New event" })).toHaveProperty("value", "Planning");
+  expect(reopened.getByText("This calendar cannot send invitations.")).toBeTruthy();
+  expect(reopened.queryByRole("button", { name: "Invitees" })).toBeNull();
+  fireEvent.click(reopened.getByRole("button", { name: "Save without guests" }));
+  expect(press).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      kind: "calendar_event_create",
+      event: expect.objectContaining({ title: "Planning", invitees: [] }),
+    }),
+  );
+  await act(async () => {});
+});
+
 it("saves a new event with the selected alert in place of the calendar default", async () => {
   const w = world();
   w.put(

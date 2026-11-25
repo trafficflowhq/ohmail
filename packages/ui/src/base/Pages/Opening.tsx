@@ -16,8 +16,10 @@ export type OpeningProps =
       kind: "web";
       label?: string;
       action?: ReactNode;
-      /** The server's own fallback, revealed even if the page's scripts never run. */
+      /** Delay the server's Reload link while the page's scripts have time to run. */
       late?: boolean;
+      /** Show the opening status immediately while the Reload link is delayed. */
+      immediate?: boolean;
     };
 
 /* The shapes: how wide each bar is, in parts of a hundred. A menu's groups. */
@@ -28,7 +30,11 @@ export function Opening(props: OpeningProps) {
   if (props.kind === "web") {
     return (
       <main className="oh-opening" data-kind="web">
-        <div className="oh-opening-web" data-late={props.late ? "" : undefined}>
+        <div
+          className="oh-opening-web"
+          data-late={props.late ? "" : undefined}
+          data-immediate={props.immediate ? "" : undefined}
+        >
           <p className="oh-display oh-opening-title" role="status">
             {props.label ? <EndDot kind="hot">{props.label}</EndDot> : null}
           </p>

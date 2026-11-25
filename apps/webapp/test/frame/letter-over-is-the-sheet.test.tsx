@@ -7,7 +7,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { READER_SCROLL_STEP } from "@ohmail/app-logic/keys";
-import { act, message, mountShell, stubDom, unmountAll, waitFor } from "../_draft-shell.js";
+import { fireEvent, within } from "@testing-library/react";
+import { act, message, mountShell, press, replyDraft, replySurface, stubDom, unmountAll, waitFor } from "../_draft-shell.js";
+import { key, letter as composer, letterSubject, letterText } from "../_writing-shell";
+import { navigate } from "../_handoff-steps";
+import { typeInto } from "../fixtures/rich-editor-driver";
 
 function sized(w: number, hgt: number): void {
   Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: w });
@@ -94,3 +98,119 @@ describe("the letter over the list at 390 wide is the sheet the keys scroll", ()
     expect(marked()).toBe(before);
   }, 30_000);
 });
+
+it.each([
+  { width: 390, exit: "Back" },
+  { width: 1024, exit: "Escape" },
+])("keeps the final words in Drafts when $exit closes Write during a save", async ({ width, exit }) => {
+  sized(width, 844);
+  const shell = await mountShell("#/compose", []);
+  const saves = () => shell.sent.filter((mutation) => mutation.kind === "draft_save");
+  const subject = "The letter I was writing";
+  const body = "The first words. The last words too.";
+  await waitFor(() => letterText(shell.el) !== null, "the editor");
+  let answer!: () => void;
+  let finish!: () => void;
+  shell.saveGate.wait = new Promise<void>((resolve) => { answer = resolve; });
+  const finalAnswer = new Promise<void>((resolve) => { finish = resolve; });
+  try {
+    fireEvent.change(letterSubject(shell.el)!, { target: { value: subject } });
+    await act(async () => { typeInto(letterText(shell.el)!, "The first words."); });
+    if (exit === "Back") {
+      await waitFor(() => saves().length === 1, "the autosave");
+      await press(within(composer(shell.el)!).getByRole("button", { name: "Ohbox" }), "Back");
+    } else {
+      await key("Escape");
+    }
+    await waitFor(() => saves().length === 1, "the first save");
+    await act(async () => { typeInto(letterText(shell.el)!, body); });
+    shell.saveGate.wait = finalAnswer;
+    await act(async () => { answer(); });
+    await waitFor(() => saves().length === 2, "the last words to start saving");
+    expect(composer(shell.el), "the composer closed before the last words were kept").not.toBeNull();
+  } finally {
+    await act(async () => { answer(); finish(); });
+  }
+  await waitFor(() => composer(shell.el) === null, "the closed composer");
+  expect(saves()[1]).toMatchObject({ subject, body });
+  expect(saves()[1]).not.toMatchObject({ draftId: null });
+
+  await navigate("#/drafts");
+  const list = within(await within(shell.el).findByRole("listbox", { name: "Drafts" }));
+  await press(list.getByRole("option", { name: new RegExp(subject) }), "the saved draft");
+  await waitFor(() => letterText(shell.el)?.textContent === body, "all the saved words");
+}, 15_000);
+
+it.each([
+  { width: 390, exit: "navigation" },
+  { width: 1024, exit: "navigation" },
+  { width: 390, exit: "navigation after Escape" },
+])("keeps the final words in one draft after $exit during an autosave at $width wide", async ({ width, exit }) => {
+  sized(width, 844);
+  const shell = await mountShell("#/compose", []);
+  const saves = () => shell.sent.filter((mutation) => mutation.kind === "draft_save");
+  const subject = "An unfinished letter";
+  const body = "First words. And the last words.";
+  await waitFor(() => letterText(shell.el) !== null, "the editor");
+  let answer!: () => void;
+  shell.saveGate.wait = new Promise<void>((resolve) => { answer = resolve; });
+  try {
+    fireEvent.change(letterSubject(shell.el)!, { target: { value: subject } });
+    await act(async () => { typeInto(letterText(shell.el)!, "First words."); });
+    await waitFor(() => saves().length === 1, "the autosave");
+    await act(async () => { typeInto(letterText(shell.el)!, body); });
+    if (exit === "navigation after Escape") await key("Escape");
+    await navigate("#/drafts");
+    expect(composer(shell.el)).toBeNull();
+  } finally {
+    await act(async () => { answer(); });
+  }
+  await waitFor(() => saves().some((save) => save.body === body), "the final words to be saved");
+  expect(window.location.hash).toBe("#/drafts");
+  expect(saves()).toEqual([
+    expect.objectContaining({ draftId: null, body: "First words." }),
+    expect.objectContaining({ draftId: expect.any(String), body }),
+  ]);
+  const list = within(await within(shell.el).findByRole("listbox", { name: "Drafts" }));
+  expect(list.getAllByRole("option")).toHaveLength(1);
+  await press(list.getByRole("option", { name: new RegExp(subject) }), "the saved draft");
+  await waitFor(() => letterText(shell.el)?.textContent === body, "all the saved words");
+}, 15_000);
+
+it("leaving Write while the first save is queued keeps later edits on the same draft", async () => {
+  const shell = await mountShell("#/compose", [], [], { startOffline: true });
+  const subject = "A letter written offline";
+  const body = "First words. More before leaving.";
+  await waitFor(() => letterText(shell.el) !== null, "the editor");
+  fireEvent.change(letterSubject(shell.el)!, { target: { value: subject } });
+  await act(async () => { typeInto(letterText(shell.el)!, "First words."); });
+  const pending = () => shell.engine.pendingMutations().filter(({ mutation }) => mutation.kind === "draft_save");
+  await waitFor(() => pending().length === 1, "the first queued save");
+  await act(async () => { typeInto(letterText(shell.el)!, body); });
+  await navigate("#/drafts");
+  expect(pending()).toHaveLength(1);
+  shell.offline.on = false;
+  await act(async () => { await shell.engine.flushPending(); });
+  await waitFor(() => shell.sent.some((save) => save.kind === "draft_save" && save.body === body), "the later edits to save");
+  const list = within(await within(shell.el).findByRole("listbox", { name: "Drafts" }));
+  expect(list.getAllByRole("option")).toHaveLength(1);
+  await press(list.getByRole("option", { name: new RegExp(subject) }), "the saved draft");
+  await waitFor(() => letterText(shell.el)?.textContent === body, "all the saved words");
+}, 15_000);
+
+it("the narrow reader's Back returns to Drafts and keeps the saved reply", async () => {
+  const parent = "parent-letter";
+  const text = "Thursday works, I will bring the samples.";
+  const shell = await mountShell("#/drafts", [message(parent)], [replyDraft("saved-reply", parent, text)]);
+  const open = async () => {
+    const list = within(await within(shell.el).findByRole("listbox", { name: "Drafts" }));
+    await press(list.getByRole("option"), "the saved reply");
+    await waitFor(() => replySurface(shell.el) !== null, "the opened reply");
+  };
+  await open();
+  const reader = within(within(shell.el).getByRole("region", { name: "Open message" }));
+  await press(reader.getByRole("button", { name: /Drafts|Ohbox/ }), "the reader's Back");
+  expect(window.location.hash).toBe("#/drafts");
+  await open();
+  expect(replySurface(shell.el)!.textContent).toBe(text);
+}, 15_000);

@@ -7,6 +7,7 @@ import {
   type CalendarRecord,
 } from "@ohmail/app-logic/calendar";
 import { invitedByOthers, pressAnswer, type InvitationAnswer } from "@ohmail/app-logic/calendar/invitations";
+import { NONE } from "../host/index.js";
 import { useFrame, useReport } from "../frame/commands.js";
 import { useCalendarOwnAddresses } from "../calendar/own-addresses.js";
 import { useText } from "../text/index.js";
@@ -15,7 +16,7 @@ import { CalendarRecordScope } from "../calendar/EventActionQuestion.js";
 import type { AnswerSwitchProps } from "@ohmail/ui/calendar";
 import { AnswerChoices } from "./AnswerChoices.js";
 
-export function useInvitationAnswer(port: CalendarPort) {
+export function useInvitationAnswer(port: CalendarPort | typeof NONE) {
   const { host } = useFrame();
   const addresses = useCalendarOwnAddresses();
   const own = useMemo(() => addresses && new Set(addresses.map((a) => a.trim().toLowerCase())), [addresses]);
@@ -31,7 +32,7 @@ export function useInvitationAnswer(port: CalendarPort) {
   );
 
   const invitation = (recordId: string) => {
-    if (own === null) return null;
+    if (port === NONE || own === null) return null;
     const record = port.events().find((item) => item.record.id === recordId)?.record;
     if (!record || record.heldBack || record.status === "cancelled" || !invitedByOthers(record, own))
       return null;
@@ -53,6 +54,7 @@ export function useInvitationAnswer(port: CalendarPort) {
       copy?: { calendarId: string; attendee: string };
     },
   ) => {
+    if (port === NONE) return;
     const current = invitation(recordId);
     if (pending.current.has(recordId) || !current?.myAnswer || current.myAnswer === value) return;
     if (reviewed && reviewed.base !== current.updatedAt) {

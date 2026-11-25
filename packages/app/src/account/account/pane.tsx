@@ -64,6 +64,7 @@ function WholePane({
   readonly service: HostCapabilities["service"];
   readonly sheet?: PaneSheet;
 }): ReactNode {
+  const { host } = useFrame();
   const model = useAccount(parts.useDoor(), "pane");
   const password = usePassword(parts.password.useDoor());
   return (
@@ -72,6 +73,7 @@ function WholePane({
       sheet={sheet}
       service={service}
       onPhone={onPhone}
+      sharedCalendarAccount={onPhone && host.capabilities.products === "calendar"}
       model={model}
       password={password}
       factor={parts.password.factor}

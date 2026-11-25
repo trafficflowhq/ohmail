@@ -1,5 +1,5 @@
 import { deleteAccount, erasureOutcome, throttleKeysFor } from "@trafficflow/services";
-import { planHintOf, storageEmptyingNow, storageFactsOf, type ReleaseOutcome, type Tx } from "@trafficflow/db";
+import { manageAddonOf, planHintOf, storageEmptyingNow, storageFactsOf, type ReleaseOutcome, type Tx } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
    and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
    cloud table the reopening reads never enters a standalone bundle. */
@@ -326,7 +326,7 @@ export const accountRoutes: Route[] = [
    * `stepUp`: that page charges the card on file, so a recent second factor is the floor, and only
    * this door asks the program for an elevated page. The mail's need rides along so the page can size
    * its offer; a failed reading sends none. Not open while refused: a closed account's way back is
-   * `manage-link`. The body names the page's language and nothing else.
+   * `manage-link`. The body names the page's language and the requested add-on, when there is one.
    */
   {
     method: "POST",
@@ -337,7 +337,9 @@ export const accountRoutes: Route[] = [
     options: { stepUp: true },
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const lang = (await readBody<{ lang?: unknown } | null>(req))?.lang;
+      const body = await readBody<{ lang?: unknown; addon?: unknown } | null>(req);
+      const lang = body?.lang;
+      const addon = manageAddonOf(body?.addon);
       const port = entitlementsPort(deps);
       if (!port) {
         throw new ServiceError("no_manage_surface", 404, "This deployment has no subscription management page.");
@@ -345,7 +347,7 @@ export const accountRoutes: Route[] = [
       const reading = await storageReadingOf(ctx.db as unknown as Tx, ctx.accountId).catch(() => null);
       const link = await port.manageLink(
         ctx.accountId, lang === "de" || lang === "en" ? lang : undefined, undefined,
-        { elevated: true, ...(reading !== null ? { storageNeed: reading.need } : {}) },
+        { elevated: true, ...(reading !== null ? { storageNeed: reading.need } : {}), ...(addon ? { addon } : {}) },
       );
       if (!link) {
         throw new ServiceError("no_manage_surface", 404, "This deployment has no subscription management page.");
