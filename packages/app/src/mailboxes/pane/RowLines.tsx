@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Button } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { filerKey } from "@ohmail/app-logic/mail-state/mail-state";
+import { mailboxCheckedAt } from "@ohmail/app-logic/mailboxes/pane/rows";
 import {
   notCheckedOf,
   providerName,
@@ -34,6 +35,7 @@ export function RowLines(
   const picker = useText("providerPicker");
   const figure = useFigure();
   const now = model.list.now;
+  const checkedAt = mailboxCheckedAt(m);
   const quiet = verbs.dismissQuiet ? quietSaid(m, { now, stamps }) : null;
   const late = notCheckedOf(m, { now, stamps });
   const [editing, setEditing] = props.editing;
@@ -70,7 +72,7 @@ export function RowLines(
       ) : null}
       <SettingLine
         label={say({ key: "lineSynced" })}
-        value={m.lastSyncAt ? stamps.when(m.lastSyncAt, now) : undefined}
+        value={checkedAt ? stamps.when(checkedAt, now) : undefined}
       >
         {verbs.resync && m.status !== "disabled" && !erasing ? (
           <Button

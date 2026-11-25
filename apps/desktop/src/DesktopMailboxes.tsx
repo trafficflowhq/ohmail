@@ -22,7 +22,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { appPasswordPresetFor, unsentDraftsOf } from "@ohmail/client-engine";
+import { appPasswordPresetFor, mailboxCheckedAt, unsentDraftsOf } from "@ohmail/client-engine";
 import { storageRowSentence } from "./storage-row-sentence.js";
 import { Button, Dialog, Field, RefusalLine, Tag } from "@ohmail/ui/base";
 import { Gloss } from "@ohmail/ui/body-parts";
@@ -1717,7 +1717,8 @@ export function DesktopMailboxes(
        row's own line says it, with since when; a second "Not checked" beside it would say one
        fact twice, so the state says nothing. */
     if (notCheckedOf(m)) return say("");
-    if (m.lastSyncAt === null) return say(t("desktopStateFirstOpen"));
+    if (mailboxCheckedAt(m) === null) return say(t("desktopStateFirstOpen"));
+    if (m.lastSyncAt === null) return say(t("status_connected"));
     if (m.initialImportCompletedAt === null) return say(t("desktopStateCatchingUp"));
     /* OLDER MAIL STILL BEING INDEXED — below catching up (mail arriving outranks words being
        indexed) and above "Up to date", which would otherwise be said of a search that is still
@@ -2268,10 +2269,10 @@ export function DesktopMailboxes(
               /* A MAILBOX THE SERVER IS NOT CHECKING leads with that and since when: "Last
                  checked" read as news of the day before for 26 hours. */
               organizesHere(shown) ? [
-                t("desktopLastChecked", { when: when(shown.lastSyncAt) }),
+                t("desktopLastChecked", { when: when(mailboxCheckedAt(shown)) }),
                 t("desktopRoleOrganizer"),
               ].join(" · ") : notCheckedOf(shown) ? t("notChecked", notCheckedOf(shown)!)
-                : t("desktopLastChecked", { when: when(shown.lastSyncAt) })
+                : t("desktopLastChecked", { when: when(mailboxCheckedAt(shown)) })
             }
           >
             {(() => {

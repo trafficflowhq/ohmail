@@ -1,8 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { unlinkSync } from "node:fs";
+import { unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "@trafficflow/api";
 import {
   fencedAccountWrite, recordCalendarChanges, sweepMailboxData, CALENDAR_RECORD_KINDS, type CalendarChange, type LedgerTx,
@@ -22,7 +22,8 @@ import { makeDeps, seedMailbox, seedSession, FIXED_NOW } from "../../../packages
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror, CLOUD_SYNC_TYPES } from "../src/cloud-mirror.js";
-import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
+import { createCloudSidecar, MIRROR_OWNER_FILE, type CloudSidecar } from "../src/cloud-engine.js";
+import { encodeMirrorRecord } from "../src/cloud-origin.js";
 import { storeCalendarSwitch, wipeCalendarCopy } from "../src/cloud-mirror-calendar.js";
 import type { CloudAuth } from "../src/cloud-auth.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
@@ -54,7 +55,7 @@ const at = (h: number) => new Date(FIXED_NOW.getTime() + h * 3_600_000);
  * the switch's own service, one row of every kind, and their changes. `word: false` is a server
  * that keeps none: the same rows, no port, no routes.
  */
-async function server(events = 1, opts: { word?: boolean; marks?: boolean } = {}) {
+async function server(events = 1, opts: { word?: boolean; marks?: boolean; logCalendarChanges?: boolean } = {}) {
   const word = opts.word ?? true;
   const { db, deps, clock } = await makeDeps();
   if (word) deps.services = { ...deps.services, calendar: calendarFeed } as never;
@@ -114,8 +115,10 @@ async function server(events = 1, opts: { word?: boolean; marks?: boolean } = {}
     ...ids.events.map((id): CalendarChange => ({ kind: "calendar_event", id, op: "create" })),
     { kind: "calendar_suggestion", id: ids.suggestion, op: "create" },
   ];
-  for (let i = 0; i < changes.length; i += 200) {
-    await fencedAccountWrite(db as never, { accountId: s.accountId }, (tx) => recordCalendarChanges(tx as never, s.accountId, changes.slice(i, i + 200)));
+  if (opts.logCalendarChanges !== false) {
+    for (let i = 0; i < changes.length; i += 200) {
+      await fencedAccountWrite(db as never, { accountId: s.accountId }, (tx) => recordCalendarChanges(tx as never, s.accountId, changes.slice(i, i + 200)));
+    }
   }
   const app = createApp(word ? [...syncRoutes, ...calendarRoutes] : syncRoutes);
   const route = (path: string, init: RequestInit = {}): Promise<Response> => app.handle(
@@ -423,12 +426,19 @@ describe("the copy's switch is stored behind the account's erasure stamp", () =>
  * copy holds it, is on.
  */
 describe("the desktop's door serves its copy's calendar by the switch it copied", () => {
+  const cloudUrl = "https://cloud.test";
   const send = (v: unknown, status = 200): Response =>
     new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
 
-  async function door(srv: Awaited<ReturnType<typeof server>>) {
+  async function door(srv: Awaited<ReturnType<typeof server>>, opts: {
+    beforeReplay?: (since: string | null) => Promise<Response | void>;
+    calendarSnapshot?: () => Response | void;
+    now?: () => Date;
+    prepare?: (dataDir: string) => Promise<void>;
+  } = {}) {
     const dataDir = await freshDataDir("ohmail-cal-door-");
     dirs.push(dataDir);
+    await opts.prepare?.(dataDir);
     const fetchImpl = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
       if (url.pathname === "/mailboxes") return send(mailboxList([hostedMailbox(srv.mailboxId, OWN)]));
@@ -436,6 +446,14 @@ describe("the desktop's door serves its copy's calendar by the switch it copied"
       if (url.pathname === "/auth/refresh") return send({ tokens: { accessToken: "a2", refreshToken: "r2", expiresIn: 900 } });
       if (url.pathname === "/consent") return send({ settings: {} });
       if (url.pathname === "/messages/bodies") return send({ items: [], nextCursor: null });
+      if (url.pathname === "/sync" && url.searchParams.get("types") !== "rule") {
+        const answer = await opts.beforeReplay?.(url.searchParams.get("since"));
+        if (answer) return answer;
+      }
+      if (url.pathname === "/sync/snapshot" && url.searchParams.get("phase") === "calendar") {
+        const answer = opts.calendarSnapshot?.();
+        if (answer) return answer;
+      }
       // The account's feed and its switch, answered by the server's own routes.
       if (url.pathname.startsWith("/sync") || url.pathname.startsWith("/calendar")) {
         return srv.route(`${url.pathname}${url.search}`, init?.method ? { method: init.method, ...(init.body ? { body: init.body } : {}) } : {});
@@ -443,11 +461,13 @@ describe("the desktop's door serves its copy's calendar by the switch it copied"
       return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
     const sidecar = await createCloudSidecar({
-      dataDir, cloudUrl: "https://cloud.test", address: OWN, tokens: { accessToken: "a", refreshToken: "r" },
+      dataDir, cloudUrl, address: OWN, tokens: { accessToken: "a", refreshToken: "r" },
       keks: { 1: randomBytes(32) }, fetchImpl, pollIntervalMs: 40,
+      now: opts.now,
     });
     sidecars.push(sidecar);
-    await sidecar.start();
+    const started = sidecar.start();
+    if (!opts.beforeReplay) await started;
     /** What the window is sent from the start: every record, by kind, under the kinds an engine names. */
     const window = async (): Promise<{ kinds: string[]; settings: Record<string, unknown> | undefined }> => {
       const res = await sidecar.handle(new Request(`http://sidecar/sync?since=0&limit=2000&types=${NAMED_FEED_KINDS.join(",")}`, {
@@ -467,7 +487,7 @@ describe("the desktop's door serves its copy's calendar by the switch it copied"
     const copyHolds = async (): Promise<number> =>
       (await sidecar.db.select({ id: calEvents.id }).from(calEvents)).length
       + (await sidecar.db.select({ id: calConnections.id }).from(calConnections)).length;
-    return { sidecar, window, copyHolds };
+    return { sidecar, window, copyHolds, started };
   }
 
   async function until(what: string, test: () => Promise<boolean>, ms = 30_000): Promise<void> {
@@ -479,6 +499,109 @@ describe("the desktop's door serves its copy's calendar by the switch it copied"
   }
 
   const EVERY_KIND = ["calendar", "calendar_connection", "calendar_event", "calendar_suggestion"];
+
+  it("shows the Cloud calendar before the desktop finishes replaying mail", { timeout: 120_000 }, async () => {
+    const srv = await server();
+    const replay = Promise.withResolvers<void>();
+    const reachedReplay = Promise.withResolvers<"replaying">();
+    const d = await door(srv, { beforeReplay: () => {
+      reachedReplay.resolve("replaying");
+      return replay.promise;
+    } });
+    try {
+      expect(await Promise.race([reachedReplay.promise, d.started])).toBe("replaying");
+      const seen = await d.window();
+      expect(seen.settings?.calendarEnabledAt).toBe(FIXED_NOW.toISOString());
+      expect(seen.kinds).toEqual(EVERY_KIND);
+    } finally {
+      replay.resolve();
+      await d.started;
+    }
+  });
+
+  it.each(["refused", "missing window", "thrown"])("retries a %s calendar snapshot while mail replay is still running", { timeout: 120_000 }, async (failure) => {
+    const srv = await server(1, { logCalendarChanges: false });
+    const replay = Promise.withResolvers<void>();
+    const reachedThirdPage = Promise.withResolvers<"replaying">();
+    const page = await (await srv.route("/sync?since=0")).json() as SyncResponse;
+    let elapsed = 0;
+    const realNow = performance.now.bind(performance);
+    const monotonic = vi.spyOn(performance, "now").mockImplementation(() => realNow() + elapsed);
+    const asks: number[] = [];
+    const d = await door(srv, {
+      now: () => new Date(FIXED_NOW.getTime() + elapsed),
+      calendarSnapshot: () => {
+        asks.push(elapsed);
+        if (asks.length !== 1) return;
+        if (failure === "thrown") throw new Error("calendar request interrupted");
+        return failure === "refused" ? send({}, 503) : send({ changes: [], nextCursor: null });
+      },
+      beforeReplay: async () => {
+        if (elapsed < 60_000) {
+          elapsed += 30_000;
+          return send({ ...page, hasMore: true });
+        }
+        reachedThirdPage.resolve("replaying");
+        await replay.promise;
+      },
+    });
+    try {
+      expect(await Promise.race([reachedThirdPage.promise, d.started])).toBe("replaying");
+      expect((await d.window()).kinds).toEqual(EVERY_KIND);
+      expect(asks).toEqual([0, 60_000]);
+    } finally {
+      replay.resolve();
+      await d.started;
+      monotonic.mockRestore();
+    }
+    expect(asks).toEqual([0, 60_000]);
+  });
+
+  it("reads the calendar once on a warm resume with the old calendar completion key", { timeout: 120_000 }, async () => {
+    const srv = await server(1, { logCalendarChanges: false });
+    const page = await (await srv.route("/sync?since=0")).json() as SyncResponse;
+    const replay = Promise.withResolvers<void>();
+    const reachedReplay = Promise.withResolvers<string | null>();
+    let asks = 0;
+    const d = await door(srv, {
+      now: () => FIXED_NOW,
+      prepare: async (dataDir) => {
+        const opened = await openLocalDb(dataDir);
+        try {
+          const world = await ensureLocalWorld(opened.db, { address: OWN, now: FIXED_NOW });
+          await opened.db.transaction((tx) => storeCalendarSwitch(tx, dialect(tx), world.accountId, FIXED_NOW.toISOString()));
+        } finally {
+          await opened.close();
+        }
+        writeFileSync(join(dataDir, "cloud-cursor.json"), JSON.stringify({
+          version: 2, sync: page.cursor, bootstrapping: false, window: { phase: "complete" },
+          bodies: { phase: "complete" }, lastDrainAt: FIXED_NOW.toISOString(), calendarLoadedFor: FIXED_NOW.toISOString(),
+        }));
+        writeFileSync(join(dataDir, MIRROR_OWNER_FILE), encodeMirrorRecord(OWN, cloudUrl));
+      },
+      calendarSnapshot: () => { asks++; },
+      beforeReplay: (since) => {
+        reachedReplay.resolve(since);
+        return replay.promise;
+      },
+    });
+    try {
+      expect(await Promise.race([reachedReplay.promise, d.started])).toBe(page.cursor);
+      expect((await d.window()).kinds).toEqual(EVERY_KIND);
+    } finally {
+      replay.resolve();
+      await d.started;
+    }
+    expect(asks).toBe(1);
+  });
+
+  it("reads existing Cloud calendars even when the mail replay has no calendar changes", { timeout: 120_000 }, async () => {
+    const srv = await server(1, { logCalendarChanges: false });
+    const d = await door(srv);
+    const seen = await d.window();
+    expect(seen.settings?.calendarEnabledAt).toBe(FIXED_NOW.toISOString());
+    expect(seen.kinds).toEqual(EVERY_KIND);
+  });
 
   it("a server that keeps a calendar, the switch on: the window is sent every kind and the switch", { timeout: 120_000 }, async () => {
     const srv = await server(2);

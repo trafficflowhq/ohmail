@@ -447,7 +447,7 @@ interface CursorState {
    * again owes a read of the calendar as it stands (`reconcileCalendarCopy`). Absent from older
    * files, which reads `null`: such a copy reads it once.
    */
-  calendarLoadedFor: string | null;
+  calendarSnapshotFor: string | null;
 }
 
 /** A hosted mailbox's gap offer: the rules' letters and, from a server that counts them, the strangers'. */
@@ -809,7 +809,7 @@ interface CursorFile {
   /** `"stale"`/`"fresh"` once the overflow reached {@link OVERFLOW_MAX}; absent while exact. */
   quarantineFloor?: unknown;
   /** The switch's instant the calendar was last read whole for; absent when none was. */
-  calendarLoadedFor?: unknown;
+  calendarSnapshotFor?: unknown;
 }
 
 /**
@@ -882,7 +882,8 @@ function readCursor(path: string): CursorState {
       lastDrainAt: typeof j.lastDrainAt === "string" && j.lastDrainAt !== "" ? j.lastDrainAt : null,
       quarantine: readQuarantine(j.quarantine),
       overflow: readOverflow(j.quarantineOverflow, j.quarantineFloor),
-      calendarLoadedFor: typeof j.calendarLoadedFor === "string" && j.calendarLoadedFor !== "" ? j.calendarLoadedFor : null,
+      // Older files could mark the calendar loaded after a mail replay alone. Read the calendar once on upgrade.
+      calendarSnapshotFor: typeof j.calendarSnapshotFor === "string" && j.calendarSnapshotFor !== "" ? j.calendarSnapshotFor : null,
     };
   } catch {
     // No file at all is a FRESH install, not an upgraded one: there are no rows to re-key, and the
@@ -907,7 +908,7 @@ function readCursor(path: string): CursorState {
       quarantine: [],
       overflow: { keys: new Map(), floor: null },
       // A fresh copy holds no calendar; its bootstrap reads the calendar with the rest.
-      calendarLoadedFor: null,
+      calendarSnapshotFor: null,
     };
   }
 }
@@ -937,7 +938,7 @@ function writeCursor(path: string, state: CursorState): void {
       : {}),
     ...(state.overflow.floor !== null ? { quarantineFloor: state.overflow.floor } : {}),
     // Absent while the copy holds no calendar, so such a file is byte-identical to an older one.
-    ...(state.calendarLoadedFor !== null ? { calendarLoadedFor: state.calendarLoadedFor } : {}),
+    ...(state.calendarSnapshotFor !== null ? { calendarSnapshotFor: state.calendarSnapshotFor } : {}),
   };
   writeFileSync(path, JSON.stringify(onDisk));
 }
@@ -1218,6 +1219,7 @@ const QUARANTINE_MAX = 500;
 
 /** How long since, never when: the mirror's waits and deadlines read this, not the wall clock. */
 const monotonicNow = (): number => performance.now();
+const CALENDAR_RETRY_MS = 60_000;
 
 /**
  * How many refusals past {@link QUARANTINE_MAX} are counted by key. Measured at the cap: +560 KB
@@ -2727,6 +2729,8 @@ async function applyTagBackfill(
 
 export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const now = cfg.now ?? ((): Date => new Date());
+  // A failed calendar read stays owed even while a bootstrap is still replaying mail.
+  let calendarRetryAt: number | null = null;
   const pageLimit = cfg.pageLimit ?? DEFAULT_PAGE_LIMIT;
   const cursor = readCursor(cfg.cursorPath);
   /** The bootstrap generation's on-disk marks, beside the cursor. See {@link BootstrapGen}. */
@@ -3276,6 +3280,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const drainWindowFirst = async (gen: BootstrapGen | null): Promise<{ applied: number; cut: boolean }> => {
     let applied = 0;
     let restarted = false;
+    if (cursor.window.phase !== "pending") await reconcileCalendarCopy(gen);
     for (;;) {
       if (aborted) return { applied, cut: true };
       applied += await runOwedRulesRefresh(gen);
@@ -3345,6 +3350,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       // A page LANDED, so Cloud demonstrably answers — the replay's own rule, from the first page.
       reachable = true;
+      // Page one brings the calendar switch. Load its records before continuing through older mail.
+      if (w.phase === "pending") await reconcileCalendarCopy(gen);
     }
   };
 
@@ -3485,6 +3492,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         cursor.bootstrapping = true;
         // A new generation owes the whole window, whatever an older file said about an earlier one.
         cursor.window = { phase: "pending" };
+        cursor.calendarSnapshotFor = null;
         sweep = newBootstrapGen(genPath);
         beginOverflowGeneration(overflow);
       }
@@ -3508,6 +3516,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // every change the ledger supersedes, because re-upserting a row the freshen just wrote is
     // the measured majority of the desktop replay's serial PGlite work.
     const freshened = sweep === null ? await freshenStaleResume() : null;
+    if (sweep === null && cursor.calendarSnapshotFor === null) await reconcileCalendarCopy(null);
     for (;;) {
       // BETWEEN PAGES, so a quit costs at most the page already in flight. `sweep: null` is the
       // load-bearing half: a bootstrap generation that stopped early has marked only part of the
@@ -3591,6 +3600,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // generation — whatever the last window had got to describes marks that no longer exist.
         rulesFirstOwed = true;
         cursor.window = { phase: "pending" };
+        cursor.calendarSnapshotFor = null;
         windowOwed = true;
         cfg.log?.("cloud_cursor_expired", { reason: "410 from /sync; re-bootstrapping from since=0 with mark-and-sweep" });
         continue;
@@ -3639,6 +3649,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (!body.hasMore) horizonAsk = Math.max(horizonAsk, ask);
       progressed();
       if (!body.hasMore) break;
+      if (sweep !== null && calendarRetryAt !== null) await reconcileCalendarCopy(sweep);
     }
     return { applied, sweep, cut: false };
   };
@@ -3753,46 +3764,49 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * THE CALENDAR, READ WHOLE WHEN ITS SWITCH WENT ON. The feed sends no calendar change while the
    * account's switch is off, and a copy whose switch went off let its calendar go
    * (`storeCalendarSwitch`), so a switch turned on again finds this copy without the events nobody
-   * changed since. Read once per instant the switch went on: the calendar's phase of the hosted
-   * snapshot, applied as a page is, every record re-emitted on the local feed. A bootstrap read the
-   * calendar with the rest and owes nothing. A page that does not answer leaves it owed; a server
-   * that serves no calendar leaves nothing to read.
+   * changed since. Read the hosted calendar snapshot as soon as the opening mail page brings the
+   * switch. Each page lands through the same apply path and marks the current bootstrap generation.
+   * A failed or incomplete snapshot leaves the read owed, including when the mail replay succeeded.
    */
-  const reconcileCalendarCopy = async (bootstrapped: boolean): Promise<void> => {
+  const reconcileCalendarCopy = async (gen: BootstrapGen | null): Promise<void> => {
+    if (aborted || (calendarRetryAt !== null && monotonicNow() < calendarRetryAt)) return;
     const [row] = await cfg.db.select({ at: calSettings.enabledAt }).from(calSettings)
       .where(eq(calSettings.accountId, cfg.world.accountId)).limit(1);
     const on = row?.at ? row.at.toISOString() : null;
-    if (on === cursor.calendarLoadedFor) return;
+    calendarRetryAt = null;
+    if (on === cursor.calendarSnapshotFor) return;
     const settle = (): void => {
-      cursor.calendarLoadedFor = on;
+      cursor.calendarSnapshotFor = on;
       writeCursor(cfg.cursorPath, cursor);
     };
-    if (on === null || bootstrapped) return settle();
+    if (on === null) return settle();
     // The settings record named too: the hosted reader serves the calendar only to a request that hears its switch.
     const types = "settings,calendar_connection,calendar,calendar_event,calendar_suggestion";
     let pageCursor: string | undefined;
+    calendarRetryAt = monotonicNow() + CALENDAR_RETRY_MS;
     try {
       for (;;) {
         if (aborted) return;
         const q = new URLSearchParams({ phase: "calendar", types, limit: String(pageLimit) });
         if (pageCursor) q.set("cursor", pageCursor);
         const res = await fetchCloud(`/sync/snapshot?${q.toString()}`);
-        // Left owed: the next pull reads it again.
+        // Leave the read owed. A replay with more pages can retry it as well as a later pull.
         if (!res.ok) return;
         const page = (await res.json()) as SnapshotResponse;
-        // Not the calendar's phase: this account's server serves it no calendar, so there is none to read.
-        if (page.calendarWindow === undefined || !Array.isArray(page.changes)) return settle();
-        await applyPage(cfg.db, cfg.world, {
+        if (page.calendarWindow === undefined || !Array.isArray(page.changes)) return;
+        await landPage({
           changes: { creates: page.changes, updates: [], moves: [], deletes: [] },
           cursor: cursor.sync, hasMore: false, serverTime: now().toISOString(),
-        }, now(), null, knownMailboxes);
+        }, gen);
         if (!page.nextCursor) break;
         pageCursor = page.nextCursor;
       }
-    } catch {
-      // Left owed, and the pull goes on: the mail never waits on the calendar.
+    } catch (err) {
+      if (err instanceof CloudAccountErased) throw err;
+      // Leave the calendar read owed and continue the mail pull.
       return;
     }
+    calendarRetryAt = null;
     settle();
   };
 
@@ -4429,7 +4443,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // AFTER the drain, so a bootstrap has already delivered the tags natively and is skipped by
       // the zero-tags gate rather than by a special case for it.
       await repairStaleTags();
-      await reconcileCalendarCopy(sweep !== null && sweep !== undefined);
+      await reconcileCalendarCopy(null);
       await repairStaleFolders(sweep !== null && sweep !== undefined);
       await repairRuleInstants(sweep !== null && sweep !== undefined);
       await repairProfiles();
