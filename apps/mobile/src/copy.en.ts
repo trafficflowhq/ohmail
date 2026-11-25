@@ -756,7 +756,6 @@ const TABLE = {
   quotaNotNow: "Not now",
   lateCloudSince: (time: string) => `ohmail Cloud hasn’t checked mail since ${time}`,
   lateServerSince: (time: string) => `Your server hasn’t checked mail since ${time}`,
-  mailboxIssueTitle: (address: string, issue: string) => `${address}: ${issue}`,
   lateMailboxAuth: "The mail server refused the sign-in",
   lateMailboxStorage: "Mailbox storage refused the sync",
   lateMailboxTls: "The secure connection to the mail server failed",

@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from "react";
 import { usePull } from "@ohmail/app-logic/session/pull-new-mail";
 import { RailEntry, RailFoot } from "@ohmail/ui/mail";
-import { useFramePull } from "../place-list/ListMenu.js";
-import { MailRowMenu, type MenuTarget } from "../place-list/MailRowMenu.js";
+import { useFramePull } from "./rail-pull.js";
+import { MailRowMenu, type MenuTarget } from "./ContextMenu.js";
 import { useText } from "../text/index.js";
 import type { RailFootModel } from "./contract.js";
 

@@ -443,7 +443,6 @@ export function readerLayoutCases() {
             await page.getByRole("button", { name: "Q3 plan" }).click();
             const older = page.locator('[data-conv-id="w4"]');
             const opened = page.locator('[data-conv-id="w5"][aria-current="true"]');
-            const gap = () => opened.evaluate(readingGap);
             const placeholder = older.locator(".msg-img-placeholder");
             const box = (el: Element) => ({
               width: el.getBoundingClientRect().width,
@@ -451,7 +450,14 @@ export function readerLayoutCases() {
             });
             await expect.poll(() => placeholder.count()).toBe(3);
             expect(await placeholder.first().evaluate(box)).toEqual({ width: 90, height: 70 });
-            const first = await gap();
+            const paintedGap = async () => {
+              await page.evaluate(async () => {
+                await document.fonts.ready;
+                await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              });
+              return opened.evaluate(readingGap);
+            };
+            const first = await paintedGap();
             await page.evaluate(
               ([sketch, logo]) => {
                 const fixture = window as Window & {
@@ -478,7 +484,11 @@ export function readerLayoutCases() {
             expect(
               await logo.evaluate((el) => el.parentElement!.getBoundingClientRect().height),
             ).toBeLessThan(60);
-            expect(Math.abs((await gap()) - first)).toBeLessThanOrEqual(2);
+            const after = await paintedGap();
+            expect(
+              Math.abs(after - first),
+              `reading gap: ${first} before, ${after} after`,
+            ).toBeLessThanOrEqual(2);
           } finally {
             await page.close();
           }

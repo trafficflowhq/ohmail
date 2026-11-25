@@ -1,23 +1,19 @@
-import { Fragment, useContext, useState } from "react";
+import { useContext, useState } from "react";
 import type { EngineMessage, TagEntity } from "@ohmail/wire";
 import type { ListVerbs } from "@ohmail/app-logic/place-list";
 import type { MessageAction, MoveTarget } from "@ohmail/app-logic/press/actions";
 import { moveTargetsOf, readIsItsRelease } from "@ohmail/app-logic/reader";
-import { Dialog, Menu, MenuItem, MenuRule, type IconName, type Point } from "@ohmail/ui/base";
+import { Dialog, type IconName } from "@ohmail/ui/base";
 import { MovePicker, Row, type RowProps } from "@ohmail/ui/mail";
 import { FrameContext } from "../frame/commands.js";
+import { MailRowMenu, type ContextItem, type MenuTarget } from "../frame/ContextMenu.js";
 import { TagPicker } from "../tags/TagPicker.js";
 import { useOwnAddresses } from "../frame/room.js";
 import { hasReplyAll } from "../reader/actions/use-verbs.js";
 import { useText } from "../text/index.js";
 import type { ListMenuItem } from "./ListMenu.js";
 
-export interface MenuTarget {
-  at: Point | Element;
-  anchor: HTMLElement;
-}
-
-type ContextItem = ListMenuItem & { keepOpen?: boolean };
+export { MailRowMenu, type MenuTarget } from "../frame/ContextMenu.js";
 
 const LETTER_ACTIONS = [
   ["open", "row.open", "mail", "↵", 0],
@@ -69,46 +65,6 @@ export function useMailRowItems(
     if (id === "open") items.push(...extras);
   }
   return items;
-}
-
-export function MailRowMenu({
-  target,
-  items,
-  onClose,
-  label,
-}: {
-  target: MenuTarget;
-  items: readonly ContextItem[];
-  onClose: () => void;
-  label?: string;
-}) {
-  const t = useText("ohbox");
-  return (
-    <Menu
-      open
-      onClose={onClose}
-      anchor={target.at}
-      returnFocus={target.anchor}
-      kind="context"
-      label={label ?? t("row.menu")}
-    >
-      {items.map(({ apart, keepOpen, onPress, spoken, label, ...item }, index) => (
-        <Fragment key={index}>
-          {index > 0 && apart ? <MenuRule /> : null}
-          <MenuItem
-            {...item}
-            label={spoken}
-            onPress={() => {
-              if (!keepOpen) onClose();
-              onPress();
-            }}
-          >
-            {label}
-          </MenuItem>
-        </Fragment>
-      ))}
-    </Menu>
-  );
 }
 
 interface RowMenuActions {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Notice } from "@ohmail/ui/base";
-import { browserClipboard } from "../../host/browser/clipboard.js";
+import { copyText } from "../../host/clipboard.js";
 import { useText } from "../../text/index.js";
 
 export function MicrosoftApproval({ read }: { read: () => Promise<string | null> }) {
@@ -42,7 +42,7 @@ export function MicrosoftApproval({ read }: { read: () => Promise<string | null>
           label: t("microsoftApproval.copy"),
           onPress: (event) => {
             const view = event.currentTarget.ownerDocument.defaultView;
-            if (view) void browserClipboard(view)(link).then(setCopied);
+            if (view) void copyText(view, link).then(setCopied);
           },
         },
       ]}

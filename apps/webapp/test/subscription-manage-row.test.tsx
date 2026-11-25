@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { setFormatWords } from "@ohmail/app-logic/text";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -64,6 +65,7 @@ afterEach(async () => {
   await act(async () => { root.unmount(); });
   host.remove();
   vi.unstubAllGlobals();
+  setFormatWords(null);
 });
 
 async function mount(node: React.ReactNode): Promise<void> {
@@ -74,6 +76,7 @@ async function mount(node: React.ReactNode): Promise<void> {
       locale: "en", messages, children: h(ThemeProvider, { children: node }),
     }));
   });
+  setFormatWords({ locale: () => "en", zone: () => DISPLAY_ZONE, translatorOf: () => null });
 }
 
 const text = (): string => host.textContent ?? "";
@@ -81,6 +84,8 @@ const links = (): HTMLAnchorElement[] => [...host.querySelectorAll("a")];
 const buttons = (): HTMLButtonElement[] => [...host.querySelectorAll("button")];
 
 const MANAGE = "https://account.example/manage?t=abc";
+const DISPLAY_ZONE = "Europe/Zurich";
+const PORTAL_URL = `${MANAGE}&timeZone=${encodeURIComponent(DISPLAY_ZONE)}`;
 const REFUSAL = messages.settings.subscriptionManageFailed;
 
 /** One door's answers, and the record of what was asked of it. */
@@ -220,7 +225,7 @@ describe("the offer — read without minting anything", () => {
 });
 
 describe("the press — one mint, and an answer for every way it can end", () => {
-  it("mints ONCE and leaves for the address it was given", async () => {
+  it("mints once and leaves for the given account page with the display zone", async () => {
     const door = stubDoor({
       access: { status: 200, body: { metered: true } },
       mint: { status: 200, body: { url: MANAGE } },
@@ -230,7 +235,7 @@ describe("the press — one mint, and an answer for every way it can end", () =>
     try {
       await pressManage();
       expect(mints(door), `mints: ${JSON.stringify(door.asked)}`).toBe(1);
-      expect(nav.to, "the press went nowhere").toBe(MANAGE);
+      expect(nav.to, "the press went nowhere").toBe(PORTAL_URL);
       // `noreferrer`: the address is minted for this account, and the referrer would otherwise
       // carry this app's own URL to whoever serves that page.
       expect(nav.rel).toContain("noreferrer");
@@ -259,7 +264,7 @@ describe("the press — one mint, and an answer for every way it can end", () =>
     try {
       await pressManage();
       expect(mints(door)).toBe(2);
-      expect(nav.to).toBe(MANAGE);
+      expect(nav.to).toBe(PORTAL_URL);
       expect(text(), "the sentence outlived the attempt it was about").not.toContain(REFUSAL);
     } finally {
       nav.off();

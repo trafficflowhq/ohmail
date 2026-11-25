@@ -520,7 +520,6 @@ export const DE: Deck = {
   quotaNotNow: "Nicht jetzt",
   lateCloudSince: (time: string) => `ohmail Cloud hat seit ${time} keine Mail geprüft`,
   lateServerSince: (time: string) => `Dein Server hat seit ${time} keine Mail geprüft`,
-  mailboxIssueTitle: (address: string, issue: string) => `${address}: ${issue}`,
   lateMailboxAuth: "Der Mailserver hat die Anmeldung abgelehnt",
   lateMailboxStorage: "Der Postfachspeicher hat die Synchronisierung abgelehnt",
   lateMailboxTls: "Die sichere Verbindung zum Mailserver ist fehlgeschlagen",
