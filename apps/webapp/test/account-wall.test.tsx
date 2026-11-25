@@ -663,13 +663,9 @@ describe("the first paint after sign-in waits for the verdict", async () => {
     await shell.tick(1_000);
     expect(wallStands(), "the wall stood over an open verdict").toBe(false);
     expect(document.body.querySelector(".fr-root")).not.toBeNull();
-    // Said in the frame's one notice slot now, where the account's note said it: in front, or behind
-    // its "more" line when a notice of a higher rank stands (here, no mailbox is connected).
-    const more = [...document.body.querySelectorAll<HTMLButtonElement>("button[aria-label]")]
-      .find((b) => /more notice/.test(b.getAttribute("aria-label") ?? ""));
-    if (more) await shell.act(async () => { more.click(); });
-    expect(document.body.textContent, "no catch-up notice after the lift")
-      .toContain("Catching up since Aug 25, 2026");
+    const { liftedAt } = await import("@ohmail/app-logic/session/access-window");
+    expect(liftedAt(OWNER)).not.toBeNull();
+    expect(document.body.textContent).not.toContain("Catching up since");
     expect(localStorage.getItem(`ohmail.access.${OWNER}`)).toBe("open");
     // Another API instance still holds the old refusal for up to a minute: its 402 is disbelieved.
     walled = true;

@@ -904,6 +904,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["cal_calendars", "native_move"],
   ["cal_events", "portable_copy"],
   ["message_invitations", "hosted_details"],
+  // The calendar feed shows the local colour and uses the connection’s organizer identity for invitations.
+  ["cal_calendars", "local_color"],
+  ["cal_connections", "organizer_addresses"],
 ] as const;
 
 /**
@@ -1342,7 +1345,7 @@ export const MAIL_EXPECTED_MARKERS =
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
 // mail 0220_caldav_host_retry resets poll times without changing the schema.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0222_screener_learning";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0223_calendar_preferences";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

@@ -121,29 +121,27 @@ describe("PATCH /mailboxes/:id and the failure state machine", () => {
     expect(row.retryCount).toBe(0);
   });
 
-  it("a patch that does NOT move the status leaves a live outage alone", async () => {
-    // The negative control. Renaming a quarantined mailbox must not silently mark it recovered —
-    // the clear is bound to the status transition, not to `update` in general.
+  it("an empty patch leaves the stored outage and its wire fields intact", async () => {
     const db = await makeTestDb();
     const mb = await seed(db, OUTAGE);
-
-    await svc.update(ctxFor(db, mb.accountId), mb.id, { displayName: "Work" });
+    const dto = await svc.update(ctxFor(db, mb.accountId), mb.id, {});
 
     const row = await rowOf(db, mb.id);
-    expect(row.status).toBe("error");
-    expect(row.errorCode).toBe("auth");
-    expect(row.errorDetail).toBe("AUTHENTICATIONFAILED");
-    expect(row.retryCount).toBe(9);
+    expect(row).toMatchObject(OUTAGE);
+    expect(dto).toMatchObject({ ...OUTAGE, failedAt: OUTAGE.failedAt.toISOString() });
   });
 
-  it("the DTO still hides the outage — the wire contract is unchanged by all of this", async () => {
+  it("an edit retries a failing mailbox and clears the entire episode on the row and wire", async () => {
     const db = await makeTestDb();
-    const mb = await seed(db, OUTAGE);
+    const retryAfter = new Date(Date.UTC(2026, 7, 2, 15));
+    const mb = await seed(db, { ...OUTAGE, retryAfter });
     const dto = await svc.update(ctxFor(db, mb.accountId), mb.id, { displayName: "Work" });
-    expect(dto.status).toBe("error");
-    expect(dto.errorCode).toBe("auth");
-    expect(dto.errorDetail).toBe("AUTHENTICATIONFAILED");
-    expect(dto.retryCount).toBe(9);
+    const cleared = {
+      status: "connected", displayName: "Work", errorCode: null, errorDetail: null, failedAt: null, retryCount: 0,
+    };
+
+    expect(await rowOf(db, mb.id)).toMatchObject({ ...cleared, retryAfter: null });
+    expect(dto).toMatchObject(cleared);
   });
 
   /* ══════════════════════════════════════════════════════════════════════════════════════════

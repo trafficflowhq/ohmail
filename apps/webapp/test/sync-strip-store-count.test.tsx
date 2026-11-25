@@ -57,7 +57,7 @@ async function stripText(state: MailState, lang: "en" | "de"): Promise<string> {
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
       locale: lang, messages: lang === "en" ? en : de, timeZone: "UTC", now: new Date("2026-09-29T08:00:00.000Z"),
-      children: h(SyncBar, null),
+      children: h(SyncBar, { details: true }),
     }));
   });
   return host.textContent ?? "";

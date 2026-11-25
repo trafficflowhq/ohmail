@@ -15,6 +15,7 @@ import {
 } from "@ohmail/client-engine";
 import { namesOwner, resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { fireEvent, getByRole, queryByRole, within } from "@testing-library/react";
+import { EngineContext } from "@ohmail/app-logic/engine";
 import { ConsentContext, useConsentState } from "@ohmail/app-logic/consent";
 import { KeymapContext, useKeymapStore } from "@ohmail/app-logic/keys/keymap";
 import { useSearchList } from "@ohmail/app-logic/search";
@@ -250,7 +251,12 @@ describe("drawn in no shell, a view keeps nothing", () => {
       const consent = useConsentState(false, null, NONE);
       return (
         <FrameContext.Provider value={frame}>
-          <ConsentContext.Provider value={consent}><WebGeneralPane /></ConsentContext.Provider>
+          <EngineContext.Provider value={{
+            engine: NO_ENGINE, demo: false, serverDemo: false,
+            sync: { bootstrapping: false, failures: 0, terminal: false, refused: false, ownerLost: false },
+          }}>
+            <ConsentContext.Provider value={consent}><WebGeneralPane /></ConsentContext.Provider>
+          </EngineContext.Provider>
         </FrameContext.Provider>
       );
     }

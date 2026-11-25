@@ -183,7 +183,7 @@ it("offers Mailboxes when the sending mailbox is not signed in", async () => {
   const readRoute = () => routes.push(window.location.hash);
   window.addEventListener("hashchange", readRoute);
   try {
-    await press(await ui.findByRole("button", { name: "Mailboxes" }), "open Mailboxes");
+    await press(await ui.findByRole("button", { name: en.frame.connection.act.mailboxes }), "open Mailboxes");
     expect(routes).toContain("#/settings/mailboxes");
   } finally {
     window.removeEventListener("hashchange", readRoute);

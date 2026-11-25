@@ -209,6 +209,13 @@ async function render(): Promise<HTMLElement> {
   return mountPoint;
 }
 
+async function openSettings(pane: "desktop" | "mailboxes"): Promise<void> {
+  await act(async () => {
+    window.location.hash = `#/settings/${pane}`;
+    window.dispatchEvent(new Event("hashchange"));
+  });
+}
+
 const text = (el: HTMLElement): string => el.textContent ?? "";
 const mounted = (el: HTMLElement): boolean => text(el).includes("Ohbox");
 const dialog = (el: HTMLElement): boolean => text(el).includes(DOOR_COPY.cloudTitle);
@@ -273,7 +280,9 @@ describe("the gate over each session state", () => {
     const el = await render();
     expect(mounted(el), "the mail app over a session that is only renewing").toBe(true);
     expect(dialog(el), "a firewall's 403 never opens the sign-in dialog").toBe(false);
-    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudUnreachableTitle.replace(/\.$/u, "")))).not.toBeNull();
+    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudUnreachableTitle.replace(/\.$/u, "")))).toBeNull();
+    expect(mounted(el)).toBe(true);
+    expect(dialog(el)).toBe(false);
   });
 
   it("a save the disk refused while signed in: the mail stays and the rail names the seal", async () => {
@@ -281,7 +290,9 @@ describe("the gate over each session state", () => {
     const el = await render();
     expect(mounted(el)).toBe(true);
     expect(dialog(el)).toBe(false);
-    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudSealPausedTitle(machineWord()).replace(/\.$/u, "")))).not.toBeNull();
+    await openSettings("desktop");
+    expect(await within(2_000, () => text(el).includes(DOOR_COPY.cloudSealPausedTitle(machineWord())))).not.toBeNull();
+    expect(text(el)).toContain(DOOR_COPY.credSealFailedNote(machineWord()));
   });
 
   it("the positive control: inside the grace, and when live, the rail says nothing", async () => {
@@ -601,6 +612,8 @@ describe("the sync strip over a refused session", () => {
   it("the positive control: the same refused pulls under a live session do say it", { timeout: 20_000 }, async () => {
     const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { reads: 409 });
     const el = await render();
+    expect(text(el)).not.toContain(RETRYING);
+    await openSettings("mailboxes");
     expect(await within(10_000, () => text(el).includes(RETRYING)), "the fixture never produced the sentence").not.toBeNull();
     expect(shell.refusedReads()).toBeGreaterThanOrEqual(3);
   });

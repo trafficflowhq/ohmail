@@ -101,7 +101,6 @@ const NOT_FACTS: Readonly<Record<string, string>> = {
   organizedByThisInstall: "the Mailboxes pane reads it off the DTO (`claimLeftBehind`)",
   setAside: "the Mailboxes pane reads it off the DTO",
   provider: "the Mailboxes pane and the rail read it off the DTO",
-  failedAt: "the Mailboxes pane's error line reads it off the DTO",
   retryCount: "the Mailboxes pane's error line reads it off the DTO",
   erasure: "the Mailboxes pane's erasure row reads it off the DTO",
   folders: "no web surface reads it; the web client does not declare it",

@@ -266,6 +266,7 @@ async function shell(recover?: (how: "signIn" | "reload") => void): Promise<HTML
           children: h(ToastHost, {
             children: h(AppShell, {
               demo: false,
+              mailboxesNotices: true,
               resolveOwner: async () => ({ kind: "owner", accountId: SYNC_FIXTURE_OWNER }) as const,
               ...(recover ? { recover } : {}),
             }),
@@ -332,7 +333,7 @@ describe("a failing sync is visible WITH ROWS PRESENT", () => {
       await goTo(view);
       const text = container.textContent ?? "";
       expect(text, `${view} did not show the fixture letter`).toContain(letter);
-      expect(text, `${view} said nothing about a failing sync`).toContain(FAILING);
+      expect(text, `${view} interrupted the list for a retry`).not.toContain(FAILING);
       // No reassurance nobody asked for, and no invented remedy.
       expect(text, `${view} editorialised`).not.toMatch(/try again later|contact|sorry|don't worry/i);
     }
@@ -341,6 +342,8 @@ describe("a failing sync is visible WITH ROWS PRESENT", () => {
     // list looks healthy, so the strip has to coexist with mail rather than replace it.
     await goTo("ohbox");
     expect(rowCount(container)).toBeGreaterThan(0);
+    await goTo("settings/mailboxes");
+    expect(connectionSaid(container)?.textContent).toContain(FAILING);
   });
 
   it("it is not inside a scroller — it sits above the deck, where a list cannot carry it off", async () => {
@@ -348,36 +351,25 @@ describe("a failing sync is visible WITH ROWS PRESENT", () => {
     answer = () => new Response("{}", { status: 503 });
     await tick(30_000);
 
-    // The strip is the frame's one notice; the deck is the frame's main column.
-    const bar = connectionSaid(container);
-    expect(bar).toBeTruthy();
-    expect(bar!.closest(".fr-main"), "the strip was rendered inside the deck").toBeNull();
-    expect(bar!.closest(".view"), "the strip was rendered inside a view").toBeNull();
-    expect(bar!.closest(".oh-railfoot, .fr-railfoot, .fr-noticebar") !== null).toBe(true);
+    expect(connectionSaid(container)).toBeNull();
+    await goTo("settings/mailboxes");
+    const status = connectionSaid(container);
+    expect(status?.textContent).toContain(FAILING);
+    expect(status?.closest('[role="region"][aria-label="Mailboxes"]')).toBeTruthy();
+    expect(status?.closest(".view")).toBeNull();
   });
 
-  /* At a desktop width the frame's one notice stands in the rail's foot: the rail's line and the strip are one node. */
   it("the RAIL carries the same sentence — the copy the stylesheet shows at 1024px and up", async () => {
     const container = await shell();
     expect(rowCount(container), "the fixture never landed").toBeGreaterThan(0);
     answer = () => new Response("{}", { status: 503 });
     await tick(30_000);
 
-    const said = connectionSaid(container);
-    const rail = said?.closest("nav") ? said : null;
-    expect(
-      rail,
-      "the rail has no sync line, so at 1024px and up — every desktop browser — a failing sync is " +
-        "reported nowhere: the strip that says it is hidden at exactly those widths",
-    ).toBeTruthy();
-    expect(rail!.textContent ?? "", "the rail's line said something other than the failure")
-      .toContain(FAILING);
-
-    expect(connectionSaid(container)!.getAttribute("role"))
-      .toBe(rail!.getAttribute("role"));
-
-    expect(rail!.closest("nav"), "the rail's sync line is not in the rail").toBeTruthy();
-    expect(rail!.closest(".view"), "the rail's sync line was rendered inside a view").toBeNull();
+    expect(container.querySelector("nav")?.textContent).not.toContain(FAILING);
+    await goTo("settings/mailboxes");
+    const status = connectionSaid(container);
+    expect(status?.textContent).toContain(FAILING);
+    expect(status?.closest("nav")).toBeNull();
   });
 });
 
@@ -406,9 +398,11 @@ describe("terminal is not retrying", () => {
       });
     await tick(30_000);
 
-    // THE CONFIRM WINDOW. Not silence (a refusal answered with nothing on screen), not the failure sentence
-    // (it flashed over a healthy transient), and not the strong signed-out claim, which one request has not
-    // earned. What is left is the calm true sentence: catching up, a status, no alert.
+    // The confirm window stays quiet over the list. Mailboxes carries the calm status.
+    expect(connectionSaid(container)).toBeNull();
+    await goTo("settings/mailboxes");
+    // The failure sentence
+    // and the signed-out claim each require more evidence.
     const bar = connectionSaid(container);
     const during = container.textContent ?? "";
     expect(bar, "a coded refusal was answered with silence for a minute").toBeTruthy();
@@ -429,6 +423,7 @@ describe("terminal is not retrying", () => {
 
     // Re-made on every confirm across the whole sustain window: NOW the claim may be made.
     await tick(REFUSAL_SUSTAIN_MS);
+    await goTo("ohbox");
 
     const text = container.textContent ?? "";
     expect(text).toContain(STOPPED);
@@ -455,8 +450,9 @@ describe("terminal is not retrying", () => {
     const text = container.textContent ?? "";
     expect(text, "a platform 401 told a signed-in user their session was revoked").not.toContain(STOPPED);
     expect(stoppedSaid(container)).toBeNull();
-    // And it must not silently render nothing either: the honest state is "retrying".
-    expect(connectionSaid(container)!.getAttribute("role")).toBe("status");
+    expect(connectionSaid(container)).toBeNull();
+    await goTo("settings/mailboxes");
+    expect(connectionSaid(container)?.textContent).toContain(FAILING);
   });
 
   it("a RETRYABLE outage renders the retrying strip, not the stopped one", async () => {
@@ -466,6 +462,8 @@ describe("terminal is not retrying", () => {
     answer = () => new Response("{}", { status: 503 });
     await tick(30_000);
 
+    expect(connectionSaid(container)).toBeNull();
+    await goTo("settings/mailboxes");
     expect(connectionSaid(container)).toBeTruthy();
     expect(stoppedSaid(container)).toBeNull();
     expect(connectionSaid(container)!.getAttribute("role")).toBe("status");
@@ -503,7 +501,9 @@ describe("a healthy sync says nothing", () => {
     answer = () => (failing ? new Response("{}", { status: 503 }) : populated());
     const container = await shell();
     await tick(30_000);
-    expect(connectionSaid(container)).toBeTruthy();
+    expect(connectionSaid(container)).toBeNull();
+    await goTo("settings/mailboxes");
+    expect(connectionSaid(container)?.textContent).toContain(FAILING);
 
     failing = false;
     await tick(120_000);

@@ -117,7 +117,7 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
     const el = await mountShell([
       // Unstamped, exactly as the measured mailbox was — and caught up.
       importing({ messageCount: 3615, hostedMessageCount: 3615 } as Partial<MailboxFacts>),
-    ]);
+    ], { mailboxesNotices: true });
     await tick(LOADING_GRACE_MS * 4);
 
     expect(textOf(el), "an in-progress claim with nothing in progress behind it")
@@ -126,12 +126,15 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
     // senders at the gate the honest arm is the Screener's, not the plain one.
     expect(textOf(el), "the list stayed withheld behind a claim that had ended")
       .toContain(OHBOX.emptyScreenerTitle);
+    await goTo("settings/mailboxes");
+    expect(textOf(el)).not.toContain(messages.frame.connection.firstSync.title);
   });
 
   it("keeps the claim while the device is genuinely behind the account", async () => {
     answerSyncWith(() => page(3, "ohmail/Screener"));
-    const el = await mountShell([importing()]);
+    const el = await mountShell([importing()], { mailboxesNotices: true });
     await tick(LOADING_GRACE_MS * 4);
+    await goTo("settings/mailboxes");
     expect(textOf(el), "a real import stopped being announced").toContain(messages.frame.connection.firstSync.title /* the strip's importing sentence, as the notice says the state */);
   });
 
@@ -145,8 +148,9 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
     answerSyncWith(() => page(3, "ohmail/Screener"));
     const el = await mountShell([
       mailbox({ lastSyncAt: ISO, initialImportCompletedAt: null } as Partial<MailboxFacts>),
-    ]);
+    ], { mailboxesNotices: true });
     await tick(LOADING_GRACE_MS * 4);
+    await goTo("settings/mailboxes");
     expect(textOf(el), "an absent count was read as a finished import")
       .toContain(messages.frame.connection.firstSync.title /* the strip's importing sentence, as the notice says the state */);
   });
@@ -157,7 +161,7 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
     // list that is empty for the first seconds, which is the window the pane spoke into. It is
     // also the import floor's own premise (`mirrored > 0`): a PARTIAL mailbox, not an empty one.
     answerSyncWith(() => page(3, "ohmail/Screener"));
-    const el = await mountShell([importing()]);
+    const el = await mountShell([importing()], { mailboxesNotices: true });
     await tick(LOADING_GRACE_MS * 4);
 
     expect(el.querySelectorAll(":is(.row, [role=option])[data-id]").length, "the premise: no OHBOX rows").toBe(0);
@@ -176,7 +180,8 @@ describe("the Ohbox withholds its emptiness and its count while the import is in
     // And it is not silent: the pane says what it is doing, past the grace.
     expect(textOf(el), "a blank column, which is the defect this answers wearing a hat")
       .toContain(OHBOX.loading);
-    // The rail is the one surface allowed to say WHY — and it is saying it.
+    // Mailboxes settings explains the import while the Ohbox holds its empty state.
+    await goTo("settings/mailboxes");
     expect(textOf(el), "no surface explained why the list is withheld")
       .toContain(messages.frame.connection.firstSync.title /* the strip's importing sentence, as the notice says the state */);
   });

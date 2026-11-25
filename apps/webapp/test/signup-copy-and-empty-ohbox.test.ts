@@ -5,6 +5,7 @@ import german from "../messages/de.json";
 import {
   ISO,
   answerSyncWith,
+  goTo,
   installShellEnv,
   page,
   mailbox,
@@ -49,7 +50,7 @@ describe("an empty Ohbox says it is empty", () => {
   it("no rows means no group headings, and one line saying so", async () => {
     // Mounted through the real shell on a mailbox that has never completed a cycle: no "New"/"Earlier" over an empty
     // column, no empty listbox to land in, and the pane's own one line.
-    const c = await mountShell([mailbox({ lastSyncAt: null, createdAt: ISO })]);
+    const c = await mountShell([mailbox({ lastSyncAt: null, createdAt: ISO })], { mailboxesNotices: true });
     await tick(0);
 
     expect(c.querySelectorAll("[role=option][data-id]").length, "the premise: no mail").toBe(0);
@@ -57,11 +58,11 @@ describe("an empty Ohbox says it is empty", () => {
     expect(list(c).querySelectorAll("[role=listbox]").length, "an empty listbox to land in").toBe(0);
     expect(textOf(c)).toContain(NOTHING);
 
-    // The pane says what it owns and no more: WHY the list is empty is the frame's notice, which says the first sync.
-    expect(textOf(c)).toContain(messages.frame.connection.firstSync.title);
-
     // One empty state, not two: no "Nothing open." beside "Nothing in your Ohbox.".
     expect(readingColumn(c)?.textContent ?? "", "a second empty state").toBe("");
+    expect(textOf(c)).not.toContain(messages.frame.connection.firstSync.title);
+    await goTo("settings/mailboxes");
+    expect(textOf(c)).toContain(messages.frame.connection.firstSync.title);
   });
 
   it("and a heading comes back the moment there is something under it", async () => {

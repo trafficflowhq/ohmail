@@ -18,7 +18,7 @@ import {
   calendarConnectState, checkCalendarConnection, connectCalendar, parseConnectAsk, removeCalendarConnection, setCalendar,
   signInCalendarAgain, CalendarConnectionTaken, type CalendarConnectAsk, type CalendarConnectDoor,
 } from "@trafficflow/services/calendar-connect";
-import { IdempotencyRaceLost, ServiceError, sha256 } from "@trafficflow/services/mail";
+import { IdempotencyRaceLost, ServiceError, requireUuid, sha256 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import type { ApiDeps } from "../deps.js";
 import { lookupIdempotent, replayOf } from "../idempotency.js";
@@ -130,8 +130,10 @@ export const calendarConnectRoutes: Route[] = [
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
-      const calendarId = new URL(req.url).searchParams.get("calendarId") ?? undefined;
-      const { record, seq } = await checkCalendarConnection(serviceContext(deps, req), params.id!, calendarId);
+      const calendarId = new URL(req.url).searchParams.get("calendarId");
+      const { record, seq } = await checkCalendarConnection(
+        serviceContext(deps, req), params.id!, calendarId === null ? undefined : requireUuid(calendarId, "calendarId"),
+      );
       return answer<"POST /calendar/connections/:id/check">()(record, { status: 202, seq });
     },
   },
