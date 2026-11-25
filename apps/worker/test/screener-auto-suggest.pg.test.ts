@@ -349,16 +349,40 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
   it("sends the same sign-in subject and snippet as stored", async () => {
     const w = await newWorld({ credits: 50 });
     const id = await held(w, "bank@example.test", AFTER);
-    await db.update(messages).set({ subject: "Your code is 482913", snippet: "Your code is 482913" })
-      .where(eq(messages.id, id));
+    const mail = { subject: "Your code is 482913", snippet: "Your code is 482913" };
+    await db.update(messages).set(mail).where(eq(messages.id, id));
     const spy = spyClassifier();
-
-    await screenerAutoSuggestPass(db, { accountId: w.accountId, classifier: spy, credits: w.gate });
+    const calls: unknown[] = [];
+    const client: AnthropicLike = { messages: { async create(request) {
+      calls.push(request);
+      return { content: [{ type: "text", text: JSON.stringify({
+        destination: "ohmail/Screened", confidence: 0.9, rationale: "Automated service notice.", spam: false,
+      }) }] };
+    } } };
+    const provider = makeHaikuClassifier({ client });
+    const result = await screenerAutoSuggestPass(db, {
+      accountId: w.accountId,
+      credits: w.gate,
+      classifier: {
+        ...spy,
+        async screen(input, call) {
+          await spy.screen!(input, call);
+          return provider.screen!(input, call);
+        },
+      },
+    });
 
     expect(spy.screened).toHaveLength(1);
     const sent = spy.screened[0]!;
     expect(sent.subject).toContain("482913");
     expect(sent.snippet).toContain("482913");
+    expect(result.bought).toBe(1);
+    expect(calls).toHaveLength(1);
+    const wire = JSON.stringify(calls);
+    expect(wire).toContain("Your code is [code]");
+    expect(wire).not.toContain("482913");
+    const [stored] = await db.select().from(messages).where(eq(messages.id, id));
+    expect(stored).toMatchObject(mail);
   });
 
   /* ── 1a. THE DECIDED SENDER — nothing is bought about somebody no surface asks about ───── */

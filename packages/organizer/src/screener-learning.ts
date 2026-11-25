@@ -199,9 +199,7 @@ export async function drainScreenerLearning(
       const { rewrite: _rewrite, rebuilding: _rebuilding, ...rest } = current;
       return {
         ...rest,
-        text,
-        noteTopics: [],
-        updatedAt: text === current.text ? current.updatedAt : clock().getTime(),
+        ...(text === current.text ? {} : { text, noteTopics: [], updatedAt: clock().getTime() }),
         rewrittenRevision: fresh.length > pending.length ? pending.at(-1)!.revision! : current.revision,
       };
     });

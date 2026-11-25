@@ -529,7 +529,10 @@ describe("automatic suggestions at the standalone drain's tail", () => {
 
     expect((await suggestionsOf(s)).map((r) => r.messageId).sort()).toEqual([ordinary, flagged, unreadable].sort());
     expect(sent).toHaveLength(3);
-    expect(sent.join("\n")).toContain("Use 482913 to sign in.");
+    expect(sent.join("\n")).toContain("Use [code] to sign in.");
+    expect(sent.join("\n")).not.toContain("482913");
+    const [stored] = await s.db.select().from(messages).where(eq(messages.id, flagged));
+    expect(stored).toMatchObject({ subject: "Your sign-in code", snippet: "Use 482913 to sign in." });
   }, 120_000);
 
   it("stops on the model's FIRST fault, and converges once the model comes back", async () => {

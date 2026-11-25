@@ -4,28 +4,33 @@ import type { AiCallOptions } from "./ai-call-report.js";
  * The drafting seam — the port and its shapes, no implementation behind it. A drafter is
  * optional: a deployment injecting none simply offers no drafts, so code that merely NAMES the
  * port needs these five shapes and nothing else. A leaf and not under `ai/`: declared beside the
- * implementation, mail-half modules depended on the model half just to say what shape they accept
- * — and a directory rule is the only kind that survives a new file. `ai/draft.ts` re-exports
- * these. The shapes guarantee the input carries ONLY sensitivity-safe previews — never a raw
- * body; the caller refuses AI-excluded messages and excludes them from context BEFORE building
- * the input — structural, because there is no field for a raw body to arrive in.
+ * implementation, mail-half modules depended on the model half just to say what shape they accept.
+ * A draft carries previews and grounding. The prompt builder removes mail credentials before
+ * assembling the provider request.
  */
 
-/** The message being replied to — subject/from/snippet only, and the snippet is redaction-safe. */
+/** The message being replied to — subject, sender and preview. */
 export interface DraftIncoming {
   subject: string;
   from: string;
+  /** Local credential context. */
+  fromName?: string | null;
   snippet: string;
 }
 
 /**
  * The retrieved grounding context: knowledge-base entries plus the target thread's OTHER
- * messages as snippets. No raw bodies, and nothing the user has marked as excluded from AI or
- * from the knowledge base — the caller's retrieval excludes those at the boundary.
+ * messages as snippets. Raw message bodies stay outside the draft request.
  */
 export interface DraftContext {
   kbEntries: Array<{ title: string; content: string }>;
-  threadMessages: Array<{ from: string; snippet: string }>;
+  threadMessages: Array<{
+    from: string;
+    fromName?: string | null;
+    snippet: string;
+    /** Local context for detecting a bare credential in the preview. */
+    subject?: string;
+  }>;
 }
 
 /**

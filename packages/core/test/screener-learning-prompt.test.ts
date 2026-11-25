@@ -53,4 +53,14 @@ describe("Screener learning prompt", () => {
     expect(screen).not.toHaveBeenCalled();
     expect(beforeDispatch).not.toHaveBeenCalled();
   });
+
+  it("recognizes the code in a screening preview before trimming its explanation", async () => {
+    const { classifier, screen, beforeDispatch } = fixture();
+    const snippet = "638194" + " ".repeat(22_000) + "is your verification code.";
+    await askScreeningQuestion(classifier, {
+      fromAddress: "sample@example.test", subject: "Account details", snippet,
+    }, { beforeDispatch });
+    expect(screen).toHaveBeenCalledOnce();
+    expect(classifyUserPayload(screen.mock.calls[0]![0]).snippet).toMatch(/^\[code\]\s*$/);
+  });
 });

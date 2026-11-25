@@ -2232,7 +2232,7 @@ export class ScreenerService extends ScreenerReadService {
       const learned = learning.get(r.mailboxId) ?? null;
       const facts = senderFacts(checked.get(r.messageId) ?? { senderDomain: "", urgency: false });
       const letter = {
-        fromAddress: r.fromAddress, subject: r.subject, snippet: r.snippet,
+        fromAddress: r.fromAddress, fromName: r.fromName, subject: r.subject, snippet: r.snippet,
         ...(ohboxBar ? { ohboxBar } : {}),
         ...(facts ? { senderFacts: facts } : {}),
       };
