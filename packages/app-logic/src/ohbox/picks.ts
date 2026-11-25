@@ -97,7 +97,14 @@ export function usePickSet(
 /** The model's fields the verbs over the picks answer. */
 export type PickVerbs = Pick<
   OhboxListModel,
-  "pickedIds" | "pickedRowCount" | "runBulk" | "markPicked" | "deletePicked" | "pickState"
+  | "pickedIds"
+  | "pickedRowCount"
+  | "runBulk"
+  | "markPicked"
+  | "deletePicked"
+  | "requestDeletePicked"
+  | "confirmDeletePicked"
+  | "pickState"
 >;
 
 export function usePickVerbs(
@@ -202,7 +209,7 @@ export function usePickVerbs(
    * ran: the rows leave every pile at once (`hideMessages` over the held ids), so a set that survived would be
    * pointing at rows that are not on screen.
    */
-  const deletePicked = useCallback(() => runBulk("delete"), [runBulk]);
+  const deletion = usePickedDeletion(input.trashConfirmation, setPickPanel, runBulk);
 
   /**
    * WHAT THE ROW PUBLISHES AS ITS SELECTION, and it is not always the pick.
@@ -213,7 +220,24 @@ export function usePickVerbs(
    * nothing that is drawn: the `picked` class is off for `false` and `undefined` alike.
    */
   const pickState = (on: boolean): boolean | undefined => (picked.size > 0 ? on : undefined);
-  return { pickedIds, pickedRowCount, runBulk, markPicked, deletePicked, pickState };
+  return { pickedIds, pickedRowCount, runBulk, markPicked, ...deletion, pickState };
+}
+
+function usePickedDeletion(
+  confirmation: OhboxListInput["trashConfirmation"],
+  setPickPanel: PickSet["setPickPanel"],
+  runBulk: PickVerbs["runBulk"],
+) {
+  const deletePicked = useCallback(() => runBulk("delete"), [runBulk]);
+  const requestDeletePicked = () => {
+    if (confirmation?.acknowledged) deletePicked();
+    else setPickPanel({ kind: "delete" });
+  };
+  const confirmDeletePicked = () => {
+    confirmation?.remember();
+    deletePicked();
+  };
+  return { deletePicked, requestDeletePicked, confirmDeletePicked };
 }
 
 /** What the keyboard's range reads: the walk, the cursor, and the cursor's move. */

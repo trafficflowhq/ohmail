@@ -7,7 +7,7 @@ import { letter, mountReader } from "./support/mail.js";
  * THE HEAD NAMES THE PERSON READING AS THEMSELVES, IN THEIR OWN LANGUAGE. Moved here from
  * `apps/webapp/test/reads-recipients.test.tsx` ("the German face calls the reader `dich`", over today's recipients
  * block): the open letter's head names everyone it went to (no field folds into a count any more), and the account's
- * own address among them is "dich" on the German face, never the address. Every address is invented.
+ * own address appears with the German self-label in the explicit recipient line. Every address is invented.
  */
 
 const ME = [{ id: "mb-1", address: "me@x.invalid", addressIsOwn: true, status: "active" }];
@@ -33,10 +33,12 @@ describe("the open letter's head names everyone it went to", () => {
       lang: "de",
       host: { mailboxes: async () => ME },
     });
-    const you = await screen.findByRole("button", { name: "dich" });
-    expect(screen.queryByRole("button", { name: "me@x.invalid" })).toBeNull();
+    const address = ME[0]!.address;
+    const label = `dich (${address})`;
+    const you = await screen.findByRole("button", { name: label });
+    expect(screen.queryByRole("button", { name: address })).toBeNull();
     const line = you.closest("p")!;
     const names = [...line.querySelectorAll("button")].map((b) => b.textContent);
-    expect(names.slice(0, 2)).toEqual(["dich", "Anna Roth"]);
+    expect(names.slice(0, 2)).toEqual([label, "Anna Roth"]);
   });
 });

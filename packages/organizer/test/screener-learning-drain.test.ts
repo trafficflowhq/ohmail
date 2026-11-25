@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { expect, it, vi } from "vitest";
-import type { ClassifierPort } from "@trafficflow/core";
+import { makeHaikuClassifier, type ClassifierPort } from "@trafficflow/core";
 import {
   accounts,
   accountSettings,
@@ -97,6 +97,99 @@ it("leases one rewrite and only saves while the choices are unchanged", async ()
     await pending;
   }
   expect(await w.before()).toMatchObject({ text: "Keep receipts.", revision: 2, rewrittenRevision: 0 });
+});
+
+const linkFixture = ["abc", "123", "def", "456"].join("");
+
+it.each([
+  ["[code]", "", "638194", "Your verification code: "],
+  ["[code]", " \n", "638194", "Your verification code: "],
+  ["[code]", " Keep invoices with receipts.", "638194", "Your verification code: "],
+  ["[ code ]", " Keep invoices with receipts.", "638194", "Your verification code: "],
+  ["code", " Keep invoices with receipts.", "638194", "Your verification code: "],
+  [
+    "[ reset link ]",
+    " Keep invoices with receipts.",
+    `https://shop.example.test/account/reset/${linkFixture}`,
+    "Old reference: ",
+  ],
+  [
+    "[ sign-in link ]",
+    " Keep invoices with receipts.",
+    `https://shop.example.test/login/${linkFixture}`,
+    "Old reference: ",
+  ],
+  ["[ link ]", " Keep invoices with receipts.", "638194", "Your verification code: "],
+])(
+  "keeps the saved note and lesson pending after a placeholder echo %j with suffix %j",
+  async (echo, suffix, value, prefix) => {
+    let time = now;
+    const w = await fixture(() => time);
+    const text = `Keep receipts. ${prefix}${value}.`;
+    const placeholder = value.includes("/reset/")
+      ? "[reset link]"
+      : value.includes("/login/")
+        ? "[sign-in link]"
+        : "[code]";
+    const updatedAt = now.getTime() - 60_000;
+    const noteTopics = ["receipt", "security"];
+    await updateScreenerLearning(w.db, w.scope, (state) => ({ ...state, text, updatedAt, noteTopics }));
+    const original = await w.before();
+    const wire: string[] = [];
+    const classifier = makeHaikuClassifier({
+      client: {
+        messages: {
+          async create(request) {
+            wire.push(JSON.stringify(request));
+            const {
+              messages: [user],
+            } = request as { messages: [{ content: string }] };
+            const { previous } = JSON.parse(user.content) as { previous: string };
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ text: previous.replace(placeholder, echo) + suffix }),
+                },
+              ],
+            };
+          },
+        },
+      },
+    });
+    await w.drain(classifier.rewriteScreener!);
+    expect(wire).toHaveLength(1);
+    expect(wire[0]).toContain(prefix + placeholder + ".");
+    expect(wire[0]).not.toContain(value);
+    const { rewrite, ...saved } = await w.before();
+    expect(saved).toEqual(original);
+    expect(rewrite?.failures).toBe(1);
+    time = new Date(now.getTime() + 60 * 60 * 1000);
+    const retry = vi.fn<NonNullable<ClassifierPort["rewriteScreener"]>>(async () => ({
+      text: "Keep invoices with receipts.",
+    }));
+    await w.drain(retry);
+    expect(retry.mock.calls[0]?.[0].input.choices).toMatchObject([{ kind: "correction", topic: "invoice" }]);
+    expect(await w.before()).toMatchObject({ text: "Keep invoices with receipts.", rewrittenRevision: 1 });
+  },
+);
+
+it.each([
+  "Verification codes always come to me. Mail from Shop" +
+    "24 and Galaxus go to the feed. Keep 2026 tax letters with me.",
+  "You keep one-time passwords and login links in the Inbox. You screen out webinar invitations from 2025 onwards.",
+  "Sicherheitscodes bleiben im Posteingang. Rechnungen aus 2026 gehen in Belege.",
+])("sends the saved lesson intact and accepts a clean rewrite of %s", async (text) => {
+  const w = await fixture();
+  await updateScreenerLearning(w.db, w.scope, (state) => ({ ...state, text }));
+  const suffix = " Webinar invitations are screened out.";
+  const rewrite = vi.fn<NonNullable<ClassifierPort["rewriteScreener"]>>(async (request) => ({
+    text: request.input.previous + suffix,
+  }));
+  await w.drain(rewrite);
+  expect(rewrite).toHaveBeenCalledTimes(1);
+  expect(rewrite.mock.calls[0]?.[0].input.previous).toBe(text);
+  expect(await w.before()).toMatchObject({ text: text + suffix, rewrittenRevision: 1 });
 });
 
 it.each(["Examplecorps sends invoices.", "Keep your quarterly partner briefing."])(

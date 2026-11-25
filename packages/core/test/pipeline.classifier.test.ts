@@ -72,6 +72,108 @@ describe("pipeline AI branch — gating", () => {
     expect(res.action).toEqual({ type: "move", to: "ohmail/Screener" });
   });
 
+  it("sends redacted routing input and retains the original mail", async () => {
+    const d = makeDeps(FEED);
+    const calls: unknown[] = [];
+    const client: AnthropicLike = { messages: { async create(request) {
+      calls.push(request);
+      return { content: [{ type: "text", text: JSON.stringify(FEED) }] };
+    } } };
+    const subject = "Your sign-in code";
+    const body = "Your sign-in code is 900123. Order 703821.";
+    const raw = eml({ subject, body });
+    const plan = await planChange(createChange("INBOX", raw), {
+      repo: d.repo, accountId: d.accountId, mailboxId: d.mailboxId,
+      classifier: makeHaikuClassifier({ client }), routing: d.routing,
+    });
+    const result = await commitChange(plan, {
+      repo: d.repo, accountId: d.accountId, mailboxId: d.mailboxId, routing: d.routing, storageCap: UNMETERED_STORAGE_CAP,
+    });
+    expect(calls).toHaveLength(1);
+    expect(JSON.stringify(calls)).toContain("Your sign-in code is [code]. Order [code].");
+    expect(JSON.stringify(calls)).not.toContain("703821");
+    expect(JSON.stringify(calls)).not.toContain("900123");
+    expect(d.repo.rows.get(result.messageId)?.input).toMatchObject({ subject, snippet: body });
+    expect(d.repo.bodies.get(result.messageId)?.text.trim()).toBe(body);
+  });
+
+  it("preserves the routing preview when sign-in wording appears only in a footer", async () => {
+    const d = makeDeps(FEED);
+    const subject = "Your order 48291735 has shipped";
+    const preview = "Order 48291735 shipped. Track: https://shop.example.test/orders/48291735/track.";
+    const body = [preview, "Thank you for shopping with us. ".repeat(15),
+      "Forgot your password? Visit our help center. We will never ask for your password or verification code by email."].join("\n");
+    const calls: unknown[] = [];
+    const classifier = makeHaikuClassifier({ client: { messages: { async create(request) {
+      calls.push(request);
+      return { content: [{ type: "text", text: JSON.stringify(FEED) }] };
+    } } } });
+    await planChange(createChange("INBOX", eml({ subject, body })), {
+      repo: d.repo, accountId: d.accountId, mailboxId: d.mailboxId, classifier, routing: d.routing,
+      ohboxBar: "Security codes and sign-in mails always come to me.",
+    });
+    expect(calls).toHaveLength(1);
+    const { messages: [user] } = calls[0] as { messages: [{ content: string }] };
+    expect(JSON.parse(user.content)).toMatchObject({ subject, snippet: body.replace(/\s+/g, " ").slice(0, 200) });
+  });
+
+  it("redacts the subject and detects codes before shortening the routing preview", async () => {
+    const d = makeDeps(FEED);
+    const wire: string[] = [];
+    const classifier = makeHaikuClassifier({ client: { messages: { async create(request) {
+      wire.push(JSON.stringify(request));
+      return { content: [{ type: "text", text: JSON.stringify(FEED) }] };
+    } } } });
+    const subject = "638194 Example Desk";
+    const notice = "Enter the verification code below.";
+    const intro = "A notice about your account. ".repeat(6).slice(0, 195 - notice.length) + ".";
+    const body = [intro + " " + notice, "749382", "It expires soon."].join("\n");
+    const snippet = body.replace(/\s+/g, " ").slice(0, 200);
+    expect(snippet).toMatch(/below\. 74$/);
+    const plan = await planChange(createChange("INBOX", eml({ subject, body })), {
+      repo: d.repo, accountId: d.accountId, mailboxId: d.mailboxId, classifier, routing: d.routing,
+    });
+    const result = await commitChange(plan, {
+      repo: d.repo, accountId: d.accountId, mailboxId: d.mailboxId, routing: d.routing, storageCap: UNMETERED_STORAGE_CAP,
+    });
+    expect(wire).toHaveLength(1);
+    const { messages: [user] } = JSON.parse(wire[0]!) as { messages: [{ content: string }] };
+    const outgoing = JSON.parse(user.content) as { subject: string; snippet: string };
+    expect(outgoing.subject).toBe("[code] Example Desk");
+    expect(outgoing.snippet).toContain("code below.");
+    expect(outgoing.snippet).not.toContain("74");
+    expect(wire[0]).not.toContain("638194");
+    expect(d.repo.rows.get(result.messageId)?.input).toMatchObject({ subject, snippet });
+    expect(d.repo.bodies.get(result.messageId)?.text.trim().replace(/\r\n/g, "\n")).toBe(body);
+  });
+
+  it("screens a stored flattened preview with its original subject redacted on the wire", async () => {
+    const d = makeDeps(FEED);
+    const subject = "638194 Example Desk";
+    const body = ["Here is the verification code you need.", "638194", "It expires soon."].join("\n");
+    const plan = await planChange(createChange("INBOX", eml({ subject, body })), {
+      repo: d.repo, accountId: d.accountId, mailboxId: d.mailboxId,
+    });
+    const result = await commitChange(plan, {
+      repo: d.repo, accountId: d.accountId, mailboxId: d.mailboxId, routing: d.routing, storageCap: UNMETERED_STORAGE_CAP,
+    });
+    const stored = d.repo.rows.get(result.messageId)!.input;
+    expect(stored.snippet).toBe("Here is the verification code you need. 638194 It expires soon.");
+    const wire: string[] = [];
+    const classifier = makeHaikuClassifier({ client: { messages: { async create(request) {
+      wire.push(JSON.stringify(request));
+      return { content: [{ type: "text", text: JSON.stringify(FEED) }] };
+    } } } });
+    await classifier.screen!({ subject: stored.subject, snippet: stored.snippet, from: { name: null, address: "" }, headersDigest: "" });
+    expect(wire).toHaveLength(1);
+    const { messages: [user] } = JSON.parse(wire[0]!) as { messages: [{ content: string }] };
+    expect(JSON.parse(user.content)).toMatchObject({
+      subject: "[code] Example Desk", snippet: "Here is the verification code you need. [code] It expires soon.",
+    });
+    expect(wire[0]).not.toContain("638194");
+    expect(stored.subject).toBe(subject);
+  });
+
   it("classifies sign-in mail and persists the original body without applying trained routing", async () => {
     const d = makeDeps({ ...FEED, confidence: 0.95 });
     d.routing.graduated.add("sender:friend@known.example→ohmail/News");

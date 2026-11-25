@@ -96,7 +96,7 @@ describe("thread circles are wired into every mail list", () => {
     const stream = app("stream/StreamList.tsx");
     expect(stream).toContain("const rowPeople = useRowPeople()");
     expect(stream).toMatch(/<ItemRow[\s\S]*?rowPeople=\{rowPeople\}/);
-    expect(sliceOfDeclaration(stream, "ItemRow")).toMatch(/<Row[\s\S]*?\{\.\.\.rowPeople\(m, recipient \?\? who\)\}/);
+    expect(sliceOfDeclaration(stream, "ItemRow")).toMatch(/<MailRow[\s\S]*?\{\.\.\.rowPeople\(m, recipient \?\? who\)\}/);
   });
 
   it("the shell hands its indexed binding to every one of them", () => {

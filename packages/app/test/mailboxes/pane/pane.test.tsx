@@ -118,7 +118,7 @@ describe("an opened row says its state with its exact time", () => {
     expect(line.textContent).toContain("08:58");
   });
 
-  it("a failing mailbox: since when, how often, and the token the server gave, as a setting's line", async () => {
+  it("a failing mailbox gives a localized reason, the exact time and the attempt count", async () => {
     const failing = row("mbx-a", A, {
       status: "error",
       errorCode: "imap_auth",
@@ -130,8 +130,10 @@ describe("an opened row says its state with its exact time", () => {
     drawPane(pane.wire, { opened: "mbx-a" });
     await settle();
     const since = say(M.errSince, { when: exact("2026-11-16T07:00:00.000Z") });
-    const value = screen.getByText(`${since} · ${say(M.errAttempts, { count: "3" })} · ETIMEDOUT`);
-    expect(value.closest('[role="group"]')).not.toBeNull();
+    const value = screen.getByText(`${since} · ${say(M.errAttempts, { count: "3" })}`);
+    expect(value.closest('[role="group"]')).toBe(screen.getByRole("group", { name: M.err_auth }));
+    expect(screen.queryByText(/ETIMEDOUT/)).toBeNull();
+    expect(screen.queryByTitle(/ETIMEDOUT/)).toBeNull();
   });
 });
 

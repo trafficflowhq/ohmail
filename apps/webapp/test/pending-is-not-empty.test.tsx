@@ -10,6 +10,7 @@ import {
   ISO,
   answerStoreWith,
   answerSyncWith,
+  goTo,
   installShellEnv,
   mailbox,
   mountShell,
@@ -259,7 +260,7 @@ describe("a signed-in user with mail on the server is never told there is none",
       if (String(input).includes("/sync")) throw new Error("network down");
       return new Response("{}", { status: 200 });
     }) as unknown as typeof globalThis.fetch;
-    const el = await mountShell([mailbox({ lastSyncAt: ISO })]);
+    const el = await mountShell([mailbox({ lastSyncAt: ISO })], { mailboxesNotices: true });
 
     // Past the failure streak — the point at which the strip starts speaking for itself.
     await tick(120_000);
@@ -267,7 +268,9 @@ describe("a signed-in user with mail on the server is never told there is none",
     expect(textOf(el), "the pane was still claiming to be loading a mirror nothing can fill")
       .not.toContain(OHBOX.loading);
     expect(textOf(el), "the empty pane never settled").toContain(OHBOX.emptyPlain);
-    // And the reason is on screen, from the one surface entitled to say it.
+    // A retry stays quiet over the list. Mailboxes settings reports the current status.
+    expect(textOf(el)).not.toContain(messages.frame.connection.reconnecting.title);
+    await goTo("settings/mailboxes");
     expect(textOf(el), "no surface explained why the mirror is frozen")
       .toContain(messages.frame.connection.reconnecting.title /* the strip's retrying sentence, as the notice says the state */);
   });

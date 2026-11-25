@@ -78,6 +78,17 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.6" date="2026-11-25">
+      <description>
+        <ul>
+          <li>Keep sign-in credentials out of AI requests</li>
+          <li>Cloud calendars appear while desktop mail catches up</li>
+          <li>Sync details in desktop Mailboxes settings</li>
+          <li>Move to Trash asks once per account</li>
+          <li>Faster returns to News and Receipts</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.5" date="2026-11-25">
       <description>
         <ul>
@@ -128,19 +139,6 @@
           <li>Mail lists on the phone fit their rows</li>
           <li>The opened letter stays put while a long conversation loads its pictures</li>
           <li>Cloud's background Screener checks stay fast on large accounts</li>
-        </ul>
-      </description>
-    </release>
-    <release version="2.0.1" date="2026-11-24">
-      <description>
-        <ul>
-          <li>Google and Microsoft calendar sign-in finishes on the web</li>
-          <li>The phone composer shows when signature removal is unavailable</li>
-          <li>Quieter Screener prompts</li>
-          <li>Screener suggestion sizes and progress</li>
-          <li>Screener suggests for the whole waiting queue</li>
-          <li>Events on writable shared calendars can be edited</li>
-          <li>Trial dates, account notices and Microsoft approval</li>
         </ul>
       </description>
     </release>

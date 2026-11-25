@@ -313,7 +313,7 @@ const heldBy = (
 
 async function rail(state: MailState): Promise<HTMLElement> {
   railState = state;
-  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the connection details in Mailboxes settings
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -323,7 +323,7 @@ async function rail(state: MailState): Promise<HTMLElement> {
       locale: "en", messages, timeZone: "UTC",
       /* The RAIL variant, because it is the rail this row is about: the shell variant lays the
          same sentence out differently and the notice's title is its first bold node. */
-      children: h(SyncBar),
+      children: h(SyncBar, { details: true }),
     }));
   });
   return container;

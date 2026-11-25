@@ -18,7 +18,7 @@ import { ScreenerPane, useFiledLetters } from "@ohmail/app/settings/screener";
 import { calendarNoticeFragment, fragmentOf, useFrame, type FrameNotice } from "@ohmail/app/frame";
 import { type WayOutDoor, type WayOutSection } from "@ohmail/app/account/way-out";
 import { calendar as calendarEntry, calendarNoticePlace } from "@ohmail/app/calendar";
-import { NO_PANE_PARTS } from "@ohmail/app/mail";
+import { MailConnectionDetails, NO_PANE_PARTS } from "@ohmail/app/mail";
 import { AwaySettings, awayFeedOver, useAwayNotice } from "@ohmail/app/settings/away";
 import { calendarPortOf, type CalendarPort } from "@ohmail/app-logic/calendar";
 import { calendarSetupPortOf } from "@ohmail/app-logic/calendar/setup";
@@ -195,6 +195,7 @@ function DesktopMailboxesPane({ goToSetup }: {
   if (mailboxes === null) throw new Error("Mailboxes Settings requires a desktop door");
   return (
     <>
+      <MailConnectionDetails />
       <DesktopMailboxes
         key={JSON.stringify([mailboxes.scope, mailboxes.door, mailboxes.flavor, mailboxes.removalDoor?.version])}
         {...mailboxes}

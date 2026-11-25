@@ -11,7 +11,6 @@
  * ITS ANSWER, where "connect a mailbox" goes on this host (null: Settings' Mailboxes), is handed on through ONE reader,
  * `useSetupHref()`, which the boot duties provide: the connection's feeder reads it there.
  */
-import { createContext, useContext } from "react";
 import { useConsent } from "@ohmail/app-logic/consent";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { useShellSetup } from "@ohmail/app-logic/doors/setup-resume";
@@ -32,12 +31,4 @@ export function useSetupAtBoot(): string | null {
   );
 }
 
-/** Where "connect a mailbox" goes, as the boot duties answered it. Provided by `MailBoot` alone. */
-export const SetupHrefContext = createContext<string | null | undefined>(undefined);
-
-/** The one reader of where "connect a mailbox" goes. Throws where no boot duties stand above. */
-export function useSetupHref(): string | null {
-  const href = useContext(SetupHrefContext);
-  if (href === undefined) throw new Error("useSetupHref: no boot duties stand above (SetupHrefContext)");
-  return href;
-}
+export { SetupHrefContext } from "../../mailboxes/connection.js";

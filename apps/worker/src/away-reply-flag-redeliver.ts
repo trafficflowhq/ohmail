@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { autoReplyByUsWhere, messages, recordChanges, type Tx } from "@trafficflow/db";
+import { autoReplyByUsWhere, messages, recordChanges, type AccountRelations, type Tx } from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import { silentLogger, type Logger } from "@trafficflow/core/mail";
 
@@ -29,6 +29,8 @@ export const AWAY_REPLY_REDELIVER_MAX_PAGES = 5_000;
 export interface AwayReplyRedeliverDeps {
   /** Scope to ONE account — the worker loops its served accounts. */
   accountId: string;
+  /** The relation the host selected for this runtime. */
+  relations?: AccountRelations;
   log?: Logger;
   /** Test seam. Default {@link AWAY_REPLY_REDELIVER_BATCH}. */
   batch?: number;
@@ -56,13 +58,15 @@ export interface AwayReplyRedeliverResult {
 
 /** The ordered live messages whose mirrors need the away reply flag. */
 export function awayReplyCandidatesSql(
-  d: Dialect, accountId: string, afterId: string | null,
+  d: Dialect, accountId: string, afterId: string | null, throughView: boolean,
 ) {
   const account = d.castUuid(accountId);
-  // Filter before sorting. This lets Postgres scan the account without following the primary key.
+  // On the account's view Postgres can use the sender index. The explicit account filter also
+  // scopes the scan when the host reads the table directly.
+  const source = throughView ? sql`ohmail.messages as messages` : sql`${messages}`;
   return sql`
     with matches as materialized (
-      select ${messages.id} from ${messages}
+      select ${messages.id} from ${source}
       where ${messages.accountId} = ${account}
         and ${messages.deletedAt} is null
         ${afterId === null ? sql`` : sql`and ${messages.id} > ${d.castUuid(afterId)}`}
@@ -71,6 +75,7 @@ export function awayReplyCandidatesSql(
           id: sql`${messages.id}`,
           fromAddress: sql`${messages.fromAddress}`,
           messageIdHeader: sql`${messages.messageIdHeader}`,
+          indexSender: throughView ? true : undefined,
         })}
     )
     select id from matches order by id`;
@@ -94,7 +99,10 @@ export async function awayReplyFlagRedeliverPass(
 
   const d = dialect(db);
   const rows = maxPages > 0
-    ? await d.exec(db, awayReplyCandidatesSql(d, deps.accountId, deps.afterId ?? null))
+    ? await d.exec(db, awayReplyCandidatesSql(
+      d, deps.accountId, deps.afterId ?? null,
+      deps.relations?.through === "views",
+    ))
     : [];
   const limit = maxPages * batch;
   for (let offset = 0; offset < rows.length && offset < limit; offset += batch) {

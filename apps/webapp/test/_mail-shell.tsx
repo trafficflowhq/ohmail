@@ -39,6 +39,7 @@ import { MAILBOXES_NOTICES } from "../app/shell/browser-mail";
 import { useAppLocale } from "../app/shell/LocaleContext";
 import { BROWSER_READER, MailFrame as BrowserMailFrame } from "../app/shell/browser-mail";
 import { WebContactScreening } from "../app/(product)/mailbox/WebContactScreening";
+import { WEB_PANE_PARTS } from "../app/(product)/mailbox/pane-parts";
 import { useAccountNotices } from "../app/(product)/mailbox/web-supplies";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
@@ -334,6 +335,7 @@ function MailFrame(props: MailShellProps) {
       paneParts: {
         ...NO_PANE_PARTS,
         general: props.general ?? NONE,
+        billing: props.billingSection === undefined ? NONE : WEB_PANE_PARTS.billing,
         folders: props.folders ?? NONE,
         mailboxes: props.mailboxesNotices === true ? { factor: NONE, calendar: NONE } : NONE,
         account: props.accountDoors ?? NONE,

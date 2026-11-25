@@ -14,7 +14,7 @@ import type {
 } from "@trafficflow/db";
 import {
   createLogger, plainTextToOutboundBody, ModelDeclinedError, NO_LETTER,
-  type DraftCallOptions, type DraftInput, type DraftPort, type DraftResult,
+  type DraftCallOptions, type DraftContext, type DraftInput, type DraftPort, type DraftResult,
 } from "@trafficflow/core/mail";
 import type { DraftFromTextBody, UntrustedBody } from "@ohmail/wire";
 import { usageLines } from "./ai-usage-lines.js";
@@ -241,6 +241,7 @@ export class DraftingService {
       incoming: {
         subject: target.subject,
         from: target.fromAddress,
+        fromName: target.fromName,
         snippet: target.snippet,
       },
       context: {
@@ -310,7 +311,9 @@ export class DraftingService {
     const threadMessages = letter?.threadId ? await this.retrieveThreadContext(ctx, letter.threadId, letter.id) : [];
 
     const input: DraftInput = {
-      incoming: letter !== null ? { subject: letter.subject, from: letter.fromAddress, snippet: letter.snippet } : { ...NO_LETTER },
+      incoming: letter !== null
+        ? { subject: letter.subject, from: letter.fromAddress, fromName: letter.fromName, snippet: letter.snippet }
+        : { ...NO_LETTER },
       context: {
         kbEntries: kbHits.map((e) => ({ title: e.title, content: e.content })),
         threadMessages,
@@ -343,7 +346,7 @@ export class DraftingService {
     const [target] = await ctx.db
       .select({
         id: messages.id, mailboxId: messages.mailboxId, threadId: messages.threadId, subject: messages.subject,
-        fromAddress: messages.fromAddress, snippet: messages.snippet,
+        fromAddress: messages.fromAddress, fromName: messages.fromName, snippet: messages.snippet,
       })
       .from(messages)
       .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)))
@@ -593,9 +596,9 @@ export class DraftingService {
     ctx: ServiceContext,
     threadId: string,
     excludeId: string,
-  ): Promise<Array<{ from: string; snippet: string }>> {
-    const rows = await ctx.db
-      .select({ from: messages.fromAddress, snippet: messages.snippet })
+  ): Promise<DraftContext["threadMessages"]> {
+    return ctx.db
+      .select({ from: messages.fromAddress, fromName: messages.fromName, snippet: messages.snippet, subject: messages.subject })
       .from(messages)
       .where(
         and(
@@ -606,7 +609,6 @@ export class DraftingService {
       )
       .orderBy(asc(messages.date))
       .limit(MAX_THREAD_MESSAGES);
-    return rows.map((r) => ({ from: r.from, snippet: r.snippet }));
   }
 }
 

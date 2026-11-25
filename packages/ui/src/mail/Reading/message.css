@@ -59,7 +59,7 @@
 
   .oh-message-heading[data-preview] {
     display: flex;
-    align-items: baseline;
+    align-items: start;
     gap: var(--s4);
   }
 

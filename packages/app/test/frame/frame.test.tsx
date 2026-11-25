@@ -935,19 +935,29 @@ describe("the frame", () => {
   });
 
   it("says the connection today's views feed it", () => {
+    const follow = vi.fn();
+    const copyAsOf = new Date(Date.now() - 31 * 60_000).toISOString();
     function Feeding(pane: PaneProps) {
-      useConnectionFeed({ mail: null, online: true, setupHref: null, follow: () => undefined });
+      useConnectionFeed({ mail: null, online: true, setupHref: null, copyAsOf, follow });
       return <Today {...pane} />;
     }
-    const quiet = movable<HostConnectionState | null>({
+    const stale: HostConnectionState = {
       state: "stale",
       words: { title: "Computer quiet", detail: "Waiting.", link: null },
-    });
+    };
+    const quiet = movable<HostConnectionState | null>(stale);
     mount(
       { address: fakeAddress("#/reads"), hostConnection: quiet },
       { news: { id: "news", body: "today", rail: null, panes: { kind: "wide", Wide: Feeding } } },
     );
-    expect(screen.getByRole("status").textContent).toBe("Computer quiet Waiting.");
+    expect(screen.queryAllByRole("status")).toEqual([]);
+    const link = { label: "Open Mailboxes", href: "#/settings/mailboxes" };
+    act(() => quiet.set({ ...stale, words: { ...stale.words, link } }));
+    const notice = screen.getByRole("status");
+    expect(notice.textContent).toContain("Computer quiet");
+    expect(notice.textContent).not.toContain("Waiting.");
+    fireEvent.click(within(notice).getByRole("button", { name: link.label }));
+    expect(follow.mock.calls).toEqual([[link.href]]);
     act(() => quiet.set(null));
     expect(screen.queryAllByRole("status")).toEqual([]);
   });

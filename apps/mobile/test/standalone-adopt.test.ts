@@ -1517,7 +1517,8 @@ describe("what the panel that names this phone reads", () => {
     const src = readFileSync(join(fileURLToPath(new URL(".", import.meta.url)), "..", "app/settings.tsx"), "utf8");
     const door = src.indexOf("const here = standaloneHereFor({ standalone: w.standalone })");
     const cards = src.indexOf("here !== null");
-    const roster = src.indexOf(": w.mailboxes.rows.map((row) => ({");
+    expect(src).toMatch(/const roster = mailbox && w\.mailboxes\.rows\.some[\s\S]*?: w\.mailboxes\.rows;/);
+    const roster = src.indexOf(": roster.map((row) => ({");
     expect(door, "the panel never asks the door").toBeGreaterThan(-1);
     expect(cards).toBeGreaterThan(door);
     expect(roster, "the paired arm's roster source is gone").toBeGreaterThan(cards);

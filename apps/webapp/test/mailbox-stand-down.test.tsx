@@ -410,12 +410,12 @@ afterEach(async () => { mockMailState = QUIET; await unmount(); });
 async function strip(state: MailState): Promise<string> {
   await unmount();
   mockMailState = state;
-  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the strip's state, said in the frame's notice
+  const { TodaysNotice: SyncBar } = await import("./_todays-notice.js"); // the connection details in Mailboxes settings
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(h(NextIntlClientProvider, { locale: "en", messages, children: h(SyncBar) }));
+    root!.render(h(NextIntlClientProvider, { locale: "en", messages, children: h(SyncBar, { details: true }) }));
   });
   return host.textContent ?? "";
 }

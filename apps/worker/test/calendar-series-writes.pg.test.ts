@@ -118,7 +118,7 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
   ) {
     const dav = await startCalDavStandIn({ autoSchedule: o.autoSchedule ?? false });
     servers.push(dav);
-    const calendar = dav.addCalendar("studio", { name: "Studio", ...o.calendar });
+    const calendar = dav.addCalendar("studio", { name: "Studio", owner: dav.paths.principal, ...o.calendar });
     for (const [name, text] of Object.entries(members)) dav.put("studio", name, text, `"${name}-1"`);
     const serverUrl = `http://127.0.0.1:${dav.port}${dav.paths.start}`;
     const t = await seedConnection(w, {
@@ -328,18 +328,22 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
     }
   });
 
-  it("tries an edit on a share without access data and records the provider's refusal", async () => {
-    const b = await bench({ "shared.ics": PLAIN }, undefined, {
+  it("tries a single-event edit on a share without access data, but keeps a repeat intact", async () => {
+    const single = PLAIN.replace("RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=10\r\n", "");
+    const b = await bench({ "shared.ics": single, "repeat.ics": PLAIN.replace("UID:plain", "UID:repeat") }, undefined, {
       calendar: { owner: "/dav/principals/another/", privileges: null },
     });
     const [event] = await b.rows("shared.ics");
     await b.press("edit", { kind: "calendar_event_update", ...on(event!), scope: { kind: "record" }, change: { title: "New title" } });
+    const [series] = await b.rows("repeat.ics");
+    await b.press("repeat", { kind: "calendar_event_update", ...on(series!), scope: { kind: "record" }, change: { title: "New repeat title" } });
     b.dav.refuseNextWriteOf("shared.ics", 403);
     const from = b.dav.seen.length;
     await b.turn();
-    expect(b.written(from).map((request) => request.method)).toEqual(["PUT"]);
-    expect(await b.writes()).toEqual([["edit", "refused", "read_only"]]);
+    expect(b.written(from).map(({ method, path }) => [method, path])).toEqual([["PUT", b.dav.paths.member("studio", "shared.ics")]]);
+    expect(await b.writes()).toEqual([["edit", "refused", "read_only"], ["repeat", "refused", "read_only"]]);
     expect((await b.rows("shared.ics"))[0]?.title).toBe(event!.title);
+    expect((await b.rows("repeat.ics"))[0]?.title).toBe(series!.title);
   });
 
   it("remembers a successful listing when a queued edit has to wait", async () => {

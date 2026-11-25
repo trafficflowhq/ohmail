@@ -191,7 +191,8 @@ for (const major of PG_MAJORS) {
       try {
         expect((await lockCensus(sql)).sort()).toEqual(ungrantedLines());
         const [t] = await sql<Array<{ n: number }>>`select count(*)::int as n from pg_tables where schemaname = 'public'`;
-        expect(t!.n).toBe(111);
+        // The public table inventory includes the new account-scoped Screener learning table.
+        expect(t!.n).toBe(112);
       } finally {
         await sql.end({ timeout: 5 });
       }

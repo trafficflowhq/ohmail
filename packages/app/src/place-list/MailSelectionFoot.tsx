@@ -1,3 +1,4 @@
+import { useScreenerAcknowledgements } from "@ohmail/app-logic/consent";
 import { useState } from "react";
 import type { TagDTO } from "@ohmail/wire";
 import { MOVE_TARGETS, type BulkAction } from "@ohmail/app-logic/press/actions";
@@ -32,6 +33,7 @@ function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProp
   const places = useText("place");
   const { host } = useFrame();
   const [menu, setMenu] = useState<{ kind: "move" | "delete" | "tag"; anchor: HTMLElement } | null>(null);
+  const acknowledgements = useScreenerAcknowledgements();
   const { ids } = selection;
   const close = () => setMenu(null);
   const run = (action: BulkAction) => {
@@ -57,7 +59,9 @@ function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProp
     { ...ask("move", t("actionMove"), "move"), ...(moveToFolder ? { onPress: moveToFolder } : {}) },
     ask("tag", t("actionTag"), "tags"),
     action("later", t("actionLater"), "later"),
-    ask("delete", t("actionDelete"), "trash"),
+    acknowledgements.has("moveToTrash")
+      ? action("delete", t("actionDelete"), "trash")
+      : ask("delete", t("actionDelete"), "trash"),
   ];
   const read = menu?.kind === "tag" ? host.engine.verbRead() : null;
   const tags = read?.list<TagDTO>("tag") ?? [];
@@ -102,7 +106,14 @@ function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProp
         <h4 className="oh-text oh-menu-title">
           <EndDot kind="hot">{t("bulkDeleteAsk", { count: ids.length }).slice(0, -1)}</EndDot>
         </h4>
-        <MenuItem onPress={() => run("delete")}>{t("deleteConfirm")}</MenuItem>
+        <MenuItem
+          onPress={() => {
+            acknowledgements.remember?.("moveToTrash");
+            run("delete");
+          }}
+        >
+          {t("deleteConfirm")}
+        </MenuItem>
         <MenuItem onPress={close}>{t("moveCancel")}</MenuItem>
       </Menu>
     </PickedFoot>

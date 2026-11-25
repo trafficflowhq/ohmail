@@ -1,3 +1,4 @@
+import { redactAiMail, redactAiPayload } from "./ai-credential-redaction.js";
 import type { ScreenerTopic } from "@ohmail/wire";
 import { DESTINATIONS, isDecidedDestination, type Destination } from "./types.js";
 import type { ClassifierInput, ClassifierPort, ClassifierResult, ScreenerLearningContext } from "./classifier-port.js";
@@ -258,6 +259,8 @@ export interface ClassifyUserPayload extends ScreenerLearningContext {
 export interface ScreeningAsk extends ScreenerLearningContext {
   /** The sender's address, already lower-cased by the caller's queue. */
   fromAddress: string;
+  /** Local credential context. */
+  fromName?: string | null;
   /** The stored subject. */
   subject: string;
   /** The stored preview. */
@@ -271,7 +274,7 @@ export interface ScreeningAsk extends ScreenerLearningContext {
 /** Fit the shared screening request before its caller prices the context it will send. */
 export function prepareScreeningQuestion(ask: ScreeningAsk): ClassifierInput | null {
   const input: ClassifierInput = {
-    from: { name: null, address: ask.fromAddress },
+    from: { name: ask.fromName ?? null, address: ask.fromAddress },
     subject: ask.subject,
     snippet: ask.snippet,
     headersDigest: "",
@@ -281,6 +284,11 @@ export function prepareScreeningQuestion(ask: ScreeningAsk): ClassifierInput | n
     ...(ask.learnedWords ? { learnedWords: ask.learnedWords } : {}),
     ...(ask.recentCorrections?.length ? { recentCorrections: ask.recentCorrections.slice(-5) } : {}),
   };
+  if (input.snippet && screenerInputSize(input) > SCREENER_INPUT_LIMIT) {
+    // Detect credentials before the budget cut can split a value or remove its context.
+    const { subject, snippet } = input;
+    Object.assign(input, redactAiMail({ subject, snippet }, { fromName: input.from.name }));
+  }
   while (input.snippet && screenerInputSize(input) > SCREENER_INPUT_LIMIT) {
     input.snippet = input.snippet.slice(0, Math.floor(input.snippet.length / 2));
   }
@@ -340,17 +348,19 @@ export function classifyUserPayload(input: ClassifierInput): ClassifyUserPayload
   // Same rule as the bar: a blank block carries no fact, so the key is omitted rather than
   // serialised as an empty field the model would have to reason about.
   const facts = input.senderFacts?.trim();
-  return {
+  const mail = redactAiMail({
     from: input.from.address,
     subject: input.subject,
     snippet: input.snippet,
+  }, { fromName: input.from.name });
+  return { ...mail, ...redactAiPayload({
     headersDigest: input.headersDigest,
     fewShot: input.fewShot ?? [],
     ...(bar ? { ohboxBar: bar } : {}),
     ...(facts ? { senderFacts: facts } : {}),
     ...(input.learnedWords ? { learnedWords: input.learnedWords } : {}),
     ...(input.recentCorrections?.length ? { recentCorrections: input.recentCorrections.slice(-5) } : {}),
-  };
+  }) };
 }
 
 /**

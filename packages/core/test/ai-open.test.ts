@@ -8,7 +8,7 @@ describe("authentication mail uses the ordinary model input", () => {
 
   it("builds the routing request for a sign-in message", () => {
     expect(classifyUserPayload({ from: { name: null, address: "sender@example.test" }, ...mail, headersDigest: "" }))
-      .toMatchObject(mail);
+      .toMatchObject({ subject: mail.subject, snippet: "Your one-time passcode is [code]." });
   });
 
   it("suggests using the original preview after checking consent", async () => {
@@ -26,6 +26,39 @@ describe("authentication mail uses the ordinary model input", () => {
     expect(steps).toEqual(["consent", "model"]);
     expect(seen).toEqual([expect.objectContaining(mail)]);
   });
+});
+
+describe("credential and ordinary content in the same model input", () => {
+  it.each([
+    ["Your sign-in code", "JQ" + "8PS. Order 784561. Total $43.50. Valid on 2026-11-25.", "[code]. Order [code]. Total $43.50. Valid on [code]."],
+    ["Dein Anmeldecode", "814729. Bestellung 475831 vom 25.11.2026 für 23,90 €.", "[code]. Bestellung [code] vom 25.11.[code] für 23,90 €."],
+    ["Bestellung 475831 bestätigt", "Bestellnummer 475831, Rabattcode WINTER25, Zahlung 23,90 €.", "Bestellnummer 475831, Rabattcode WINTER25, Zahlung 23,90 €."],
+    ["Your sign-in code", "Order 784561. Your code is 654321. Help: https://news.example.test/offers?code=WINTER" + "25", "Order [code]. Your code is [code]. Help: https://news.example.test/[link]"],
+    ["Dein Bestätigungscode", "Benutze den folgenden Code: ３８４９３２.", "Benutze den folgenden Code: [code]."],
+    ["Login verification", "Token: eyJhbGciOiJIUzI1NiJ9.dGVzdC1leGFtcGxl.Q29tcGFjdFNpZw.", "Token: [code]."],
+    ["Your one-time code", "Please enter the code below.\n934871\nKeep it private.", "Please enter the code below.\n[code]\nKeep it private."],
+    ["Your order confirmation", "Order confirmation number 475831. Offer code WINTER25.", "Order confirmation number 475831. Offer code WINTER25."],
+    ["Passwort zurücksetzen", "Reset-Token: yarrow-indigo-velvet.", "Reset-Token: [code]."],
+    ["Your verification code", "Use 384 932 to verify your account.", "Use [code] to verify your account."],
+    ["Sign in to your account", "Continue: https://account.example.test/login#access_token=plum-stone", "Continue: https://account.example.test/[link]"],
+    ["Sign in to your account", "One-click sign-in: https://account.example.test/login/kite" + "83", "One-click sign-in: https://account.example.test/[link]"],
+    ["Set a new password", "Continue: https://relay.example.test/click?url=" + encodeURIComponent("https://account.example.test/password-reset?token=violet-cedar"), "Continue: https://relay.example.test/[link]"],
+    ["Read the account guide", "See https://help.example.test/articles/reset-your-password and https://account.example.test/login.", "See https://help.example.test/articles/reset-your-password and https://account.example.test/login."],
+  ])("redacts according to the mail cues in %s", (subject, snippet, expected) => {
+    const input = { from: { name: null, address: "sender@example.test" }, subject, snippet, headersDigest: "" };
+    expect(classifyUserPayload(input)).toMatchObject({ subject, snippet: expected });
+    expect(input.snippet).toBe(snippet);
+  });
+});
+
+it("removes credentials from readable embedded mail while keeping an unrelated encoded passage", () => {
+  const encodedMail = Buffer.from("Your sign-in code is 674219. Orders stay in Receipts.").toString("base64");
+  const ordinary = Buffer.from("A paragraph about a museum and its history.").toString("base64");
+  const preview = `Forwarded message: ${encodedMail} / ${ordinary}`;
+  const input = { from: { name: null, address: "sender@example.test" }, subject: "Forwarded note", snippet: preview, headersDigest: "" };
+  const payload = classifyUserPayload(input);
+  expect(payload.snippet).toBe(`Forwarded message: Your sign-in code is [code]. Orders stay in Receipts. / ${ordinary}`);
+  expect(input.snippet).toBe(preview);
 });
 
 describe("the screening question — the Ohbox bar raised in a report", () => {

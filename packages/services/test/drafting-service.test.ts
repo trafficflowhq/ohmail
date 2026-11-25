@@ -6,7 +6,7 @@ import { mailboxes, threads, messages, kbEntries, drafts, clientIdempotencyKey }
 import { DraftingService, DraftsService, DRAFT_OWN_TEXT_MAX_CHARS, dbFor } from "../src/index.js";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import type { ServiceContext } from "../src/index.js";
-import type { DraftInput, DraftPort } from "@trafficflow/core";
+import { makeSonnetDrafter, type DraftInput, type DraftPort } from "@trafficflow/core";
 
 const NOW = new Date("2026-07-28T12:00:00.000Z");
 
@@ -234,6 +234,32 @@ describe("DraftingService.draftFromText — the person's words, the doors in ord
     expect([drafter.calls, m.credits.spends.length]).toEqual([1, 1]);
   });
 
+  it.each([false, true])("redacts pasted instructions and the supplied subject on the wire with replying set to %s", async (replying) => {
+    const { db, A, mbA, ctxA } = await setup();
+    const inReplyToMessageId = replying
+      ? await seedMsg(db, { accountId: A, mailboxId: mbA, subject: "Your sign-in code" })
+      : undefined;
+    const text = replying ? "> 638194\nPlease explain what happened." : "Your sign-in code: 638194. Please explain what happened.";
+    const subject = replying ? "749382 Example Desk" : "Your verification code: 749382";
+    const wire: unknown[] = [];
+    const drafter = makeSonnetDrafter({ messages: { async create(request) {
+      wire.push(request);
+      return { content: [{ type: "text", text: '{"subject":"Reply","body":"I can help.","rationale":"reply"}' }] };
+    } } });
+    const input = { text, subject, mailboxId: mbA, inReplyToMessageId };
+    const { draftId } = await svc.draftFromText(ctxA, input, { drafter });
+    expect(wire).toHaveLength(1);
+    const { messages: [user] } = wire[0] as { messages: [{ content: string }] };
+    expect(JSON.parse(user.content).own).toEqual({
+      text: text.replace("638194", "[code]"),
+      subject: subject.replace("749382", "[code]"),
+    });
+    expect(JSON.stringify(wire)).not.toMatch(/638194|749382/);
+    expect(input).toMatchObject({ text, subject });
+    const [stored] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(stored!.subject).toBe(subject);
+  });
+
   it("an empty balance is refused before the model; a disconnected mailbox before the charge", async () => {
     const { db, mbA, ctxA } = await setup();
     const drafter = mockDrafter();
@@ -277,4 +303,43 @@ describe("DraftingService.draftFromText — the person's words, the doors in ord
     expect(m.credits.spends.at(-1)!.outcome.verdict).not.toBe("ok");
     expect(m.credits.spends.at(-1)!.source).toBe(m.credits.spends[1]!.source);
   });
+});
+
+it("keeps the credential in stored mail while sending one redacted draft request", async () => {
+    const { db, A, mbA, ctxA } = await setup();
+    const mail = { subject: "Your verification code", snippet: "683294. Keep this private." };
+    const [thread] = await db.insert(threads).values({ accountId: A, subject: mail.subject }).returning();
+    const threadId = thread!.id;
+    const sibling = { subject: "Dein Anmeldecode", snippet: "947215." };
+    const quoted = { subject: "Earlier reply", snippet: "Thanks. > Here is your verification code. > 526814 > It expires soon." };
+    const note = { title: "749382 Example Desk", content: "Your verification code: 683294. Keep this private." };
+    const [entry] = await db.insert(kbEntries).values({ accountId: A, ...note }).returning();
+    const siblingId = await seedMsg(db, { accountId: A, mailboxId: mbA, threadId, ...sibling });
+    const quotedId = await seedMsg(db, { accountId: A, mailboxId: mbA, threadId, ...quoted });
+    const id = await seedMsg(db, { accountId: A, mailboxId: mbA, threadId, ...mail });
+    const calls: unknown[] = [];
+    const drafter = makeSonnetDrafter({ messages: { async create(request) {
+      calls.push(request);
+      return { content: [{ type: "text", text: JSON.stringify({ subject: "Re: account", body: "Thanks for the notice.", rationale: "reply" }) }] };
+    } } });
+    await expect(svc.draftFromMessage(ctxA, id, { drafter })).resolves.toHaveProperty("draftId");
+    expect(calls).toHaveLength(1);
+    expect(JSON.stringify(calls)).toContain("[code]. Keep this private.");
+    const request = JSON.stringify(calls);
+    expect(request).toContain("[code].");
+    expect(request).not.toContain("683294");
+    expect(request).not.toContain("947215");
+    expect(request).not.toContain(sibling.subject);
+    expect(request).toContain("Thanks. > Here is your verification code. > [code] > It expires soon.");
+    expect(request).not.toContain("526814");
+    expect(request).toContain("[code] Example Desk");
+    expect(request).not.toContain("749382");
+    const [storedEntry] = await db.select().from(kbEntries).where(eq(kbEntries.id, entry!.id));
+    expect(storedEntry).toMatchObject(note);
+    const [storedSibling] = await db.select().from(messages).where(eq(messages.id, siblingId));
+    expect(storedSibling).toMatchObject(sibling);
+    const [storedQuoted] = await db.select().from(messages).where(eq(messages.id, quotedId));
+    expect(storedQuoted).toMatchObject(quoted);
+    const [stored] = await db.select().from(messages).where(eq(messages.id, id));
+    expect(stored).toMatchObject(mail);
 });

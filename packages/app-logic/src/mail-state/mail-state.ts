@@ -788,7 +788,7 @@ export interface MailboxFacts {
   /**
    * CLOUD'S OWN SCAN OF THIS MAILBOX, on a Cloud-paired desktop only — there `lastSyncAt` is the
    * desktop's pull from Cloud. Present on every row of that door, `null` while not known yet;
-   * absent everywhere else. Read by the Ohbox's "Checked" line alone, never by the ladder.
+   * absent everywhere else. Read by the Ohbox's "Checked" line and the Mailboxes Settings summary.
    */
   hostedLastSyncAt?: string | null;
   /**

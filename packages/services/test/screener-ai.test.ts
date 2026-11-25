@@ -448,6 +448,30 @@ describe("the sender set is EXPLICIT, and absence never buys anything", () => {
  * so a reader can see one message change sides.
  */
 describe("Manual Screener suggestions use held mail previews, including sign-in codes", () => {
+  it("asks for a suggestion using a redacted link and keeps the stored preview", async () => {
+    const w = await billable({ credits: 10 });
+    const url = "https://account.example.test/magic-login?token=periwinkle-birch";
+    const mail = { subject: "Your sign-in link", snippet: `Sign in here: ${url}` };
+    const from = "no-reply@bank.example";
+    const id = await seedMessage(w.db, w.accountId, w.mailboxId, { from, ...mail });
+    const calls: unknown[] = [];
+    const client: AnthropicLike = { messages: { async create(request) {
+      calls.push(request);
+      return { content: [{ type: "text", text: JSON.stringify(YES) }] };
+    } } };
+    const svc = new ScreenerService({
+      adapter: new FakeAdapter(), classifier: makeHaikuClassifier({ client }), credits: w.credits, pricing: PLANE_PRICING,
+    });
+    const result = await svc.suggest(w.ctx, { senders: [from] });
+    expect(result.skipped).toEqual([]);
+    expect(result.suggestions).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(JSON.stringify(calls)).toContain("Sign in here: https://account.example.test/[link]");
+    expect(JSON.stringify(calls)).not.toContain(url);
+    const [stored] = await w.db.select().from(messages).where(eq(messages.id, id));
+    expect(stored).toMatchObject(mail);
+  });
+
   it("a no_ai / sensitive sender IS suggested for with the ordinary preview", async () => {
     const w = await billable({ credits: 10 });
     const id = await seedMessage(w.db, w.accountId, w.mailboxId, {

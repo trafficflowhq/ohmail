@@ -10,11 +10,8 @@ import { thinkingOffFor } from "../model-rules.js";
 /**
  * The AI classifier seam. The PORT lives in core so the pipeline can depend on it without a
  * cycle; the Haiku implementation takes an INJECTED client, so the suite makes no network call
- * and the worker depends on core only. This file has a sensitivity flag of its own: the only
- * thing between a credential and `messages.create` used to be one boolean computed one module
- * away, so `classifyUserPayload` re-reads the payload with the same local detector and THROWS
- * rather than sending — the outbound client is structurally unreachable for recognised content.
- * The taxonomy, schema and sensitivity sink live in `../classify-prompt.ts`; left here: the model
+ * and the worker depends on core only. The taxonomy, schema and outgoing mail payload
+ * live in classify-prompt.ts. This module owns the model
  * id, the request shape, the client seam.
  */
 

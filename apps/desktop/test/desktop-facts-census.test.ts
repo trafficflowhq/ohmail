@@ -81,6 +81,7 @@ describe("the desktop mailbox-facts seam", () => {
       /* The local door's outage clock, overlaid on the row from the first failed dial: the list's
          status line and a Pull press say "can't reach the mail server" from it. */
       unreachableSince: "2026-09-02T10:45:00.000Z",
+      failedAt: new Date(Date.UTC(2026, 8, 2, 10, 44)).toISOString(),
       disabledReason: null,
       syncBlockedReason: null,
       syncBlockedSince: null,

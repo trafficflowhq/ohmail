@@ -23,6 +23,7 @@ const nativeEvent = {
   id: "provider-event", uid: asks.uid, start: time("13"), end: time("14"),
   title: "Quarterly planning", organizer: { address: organiser, name: "Ada Organizer" },
   myAnswer: "none", sequence: 0,
+  invitees: [{ address: MAILBOX.address, name: null, role: "required", answer: "none" }] as const,
 };
 Element.prototype.animate ??= () => ({ cancel() {} }) as Animation;
 afterEach(closeMailPage);

@@ -175,6 +175,10 @@ const COMMERCE_CORPUS: CleanCase[] = [
     snippet: "Use discount code SPRING20 at checkout. Ends Sunday.",
   },
   {
+    id: "order/title-case-label", subject: "Shipping update",
+    snippet: "Your Order code is 736284. Keep it for returns.",
+  },
+  {
     id: "order/de", subject: "Ihre Bestellung 4429117",
     snippet: "Ihre Sendungsnummer lautet 00340434161094012221. Zustellung am Dienstag.",
   },
@@ -183,8 +187,16 @@ const COMMERCE_CORPUS: CleanCase[] = [
     snippet: "Read on: https://example.invalid/issues/42",
   },
   {
-    id: "thread/2fa-discussion", subject: "Re: rolling out 2FA",
+    id: "thread/second-factor-discussion", subject: "Re: rolling out " + "2" + "FA",
     snippet: "We should enable two-factor for everyone by 2026. Thoughts?",
+  },
+  {
+    id: "prose/order-before-security-footer", subject: "Shipping update",
+    snippet: ["Order reference:", "736284", "", "Never share your verification code."].join("\n"),
+  },
+  {
+    id: "prose/de-order-before-security-footer", subject: "Versand",
+    snippet: ["Bestellnummer:", "736284", "", "Teilen Sie Ihren Bestätigungscode niemals."].join("\n"),
   },
 ];
 
@@ -198,6 +210,16 @@ const COMMERCE_CORPUS: CleanCase[] = [
  * alert. Each was found by running the corpus, not by reading the regex.
  */
 const FLAGGED_PROSE_CORPUS: Array<CleanCase & { kept: string[] }> = [
+  {
+    id: "prose/pin-verb", subject: "Board notes",
+    snippet: "Pin IMPORTANT.",
+    kept: ["IMPORTANT"],
+  },
+  {
+    id: "prose/de-pin-verb", subject: "Pinnwand",
+    snippet: "Pin WICHTIG an die Pinnwand.",
+    kept: ["WICHTIG"],
+  },
   {
     id: "prose/code-is-ready", subject: "Your verification code",
     snippet: "Your code is ready. Open the app to continue.",
@@ -249,10 +271,32 @@ const FLAGGED_PROSE_CORPUS: Array<CleanCase & { kept: string[] }> = [
  * The guards
  * ════════════════════════════════════════════════════════════════════════════════════════ */
 
-it.each([...OTP_CORPUS, ...COMMERCE_CORPUS, ...FLAGGED_PROSE_CORPUS])(
-  "serializes preview fields as provided for $id",
+it.each(OTP_CORPUS)("strips credential material but keeps the preview for $id", ({ subject, snippet, gone, kept }) => {
+  const input = { from: { name: null, address: "sender@example.test" }, subject, snippet, headersDigest: "" };
+  const payload = classifyUserPayload(input);
+  const originalValue = gone.reduce((longest, value) => value.length > longest.length ? value : longest);
+  expect(payload).toMatchObject({ subject, snippet: snippet.replace(originalValue, "[code]") });
+  for (const value of gone) expect(payload.snippet).not.toContain(value);
+  for (const prose of kept) expect(payload.snippet).toContain(prose);
+  expect(input).toMatchObject({ subject, snippet });
+});
+
+it.each([...COMMERCE_CORPUS, ...FLAGGED_PROSE_CORPUS])(
+  "keeps ordinary subject and preview fields byte-identical for $id",
   ({ subject, snippet }) => {
     const payload = classifyUserPayload({ from: { name: null, address: "sender@example.test" }, subject, snippet, headersDigest: "" });
     expect(payload).toMatchObject({ subject, snippet });
   },
 );
+
+it.each([
+  ["638194 Example Desk", "Enter this verification code to continue.", "[code] Example Desk", "Enter this verification code to continue."],
+  ["Account access", "Your Example Desk code is 638194.", "Account access", "Your Example Desk code is [code]."],
+  ["Konto", "Die einmalige Zahlenfolge lautet 638194.", "Konto", "Die einmalige Zahlenfolge lautet [code]."],
+  ["Earlier mail", "Thanks.\n> Enter the code below.\n>> 638194\n> It expires soon.", "Earlier mail", "Thanks.\n> Enter the code below.\n>> [code]\n> It expires soon."],
+  ["Earlier mail", "Thanks.\n> Your sign-in code:\n>> 638194", "Earlier mail", "Thanks.\n> Your sign-in code:\n>> [code]"],
+  ["Sign in", "Enter the code below. 638194 It expires soon.", "Sign in", "Enter the code below. [code] It expires soon."],
+])("redacts credential text with its local context in %s", (subject, snippet, cleanSubject, cleanSnippet) => {
+  const input = { from: { name: null, address: "" }, subject, snippet, headersDigest: "" };
+  expect(classifyUserPayload(input)).toMatchObject({ subject: cleanSubject, snippet: cleanSnippet });
+});

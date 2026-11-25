@@ -15,6 +15,7 @@ import type { FrameHost, FramePlaces, PlaceEntry } from "../../src/frame/contrac
 import { Frame } from "../../src/frame/Frame.js";
 import { NONE, type ConsentWire, type HostReads } from "../../src/host/index.js";
 import { MailGround, mailSettings, NO_PANE_PARTS } from "../../src/mail/index.js";
+import { ListMenu } from "../../src/place-list/ListMenu.js";
 import { TextProvider } from "../../src/text/index.js";
 import { fakeMail, WORDS } from "../reader/support/mail.js";
 import { fakeHost } from "../support/fake-host.js";
@@ -209,16 +210,33 @@ describe("the rail's foot, fed by the ground", () => {
 
   it("Pull new mail is one press: a second press while the first is out rings nothing", async () => {
     const ring = ringOf();
-    mount({ mailboxes: async () => [mailbox("mila", "Mila Brunner")], ring });
+    const menu = "Ohbox actions";
+    mount({
+      mailboxes: async () => [mailbox("mila", "Mila Brunner")],
+      ring,
+      places: {
+        ohbox: {
+          ...stub("ohbox", "the Ohbox"),
+          panes: { kind: "wide", Wide: () => <ListMenu label={menu} mail /> },
+        },
+      },
+    });
     await answered();
-    const pull = rail().getByRole("button", { name: frameEn.sync.pull });
+    const open = () => {
+      fireEvent.click(screen.getByRole("button", { name: menu }));
+      return within(screen.getByRole("menu", { name: menu })).getByRole("menuitem");
+    };
+    const pull = open();
+    expect(pull.textContent).toContain(frameEn.sync.pull);
     fireEvent.click(pull);
-    fireEvent.click(pull);
+    const pending = open();
+    fireEvent.click(pending);
     await act(async () => {});
     expect(ring.requestPull).toHaveBeenCalledOnce();
     await act(async () => ring.answer());
     await answered();
-    fireEvent.click(rail().getByRole("button", { name: frameEn.sync.pull }));
+    const ready = screen.queryByRole("menu", { name: menu });
+    fireEvent.click(ready ? within(ready).getByRole("menuitem") : open());
     expect(ring.requestPull, "the flight never ended").toHaveBeenCalledTimes(2);
   });
 });
