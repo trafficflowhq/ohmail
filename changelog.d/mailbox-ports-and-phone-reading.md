@@ -1,2 +1,4 @@
+### Mailbox ports and phone reading
+
 - Use the values in the separate IMAP and SMTP port fields when connecting a first mailbox.
 - Keep long mailbox addresses readable in phone setup and let messages scroll behind the phone's floating action bar.

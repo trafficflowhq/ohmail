@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { AddressInfo } from "node:net";
@@ -8,6 +8,10 @@ import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+
+const { JSDOM } = createRequire(import.meta.url)("jsdom") as {
+  JSDOM: new (html: string) => { window: Window & typeof globalThis; serialize(): string };
+};
 
 /**
  * THE REWRITE ITSELF, EXERCISED — not the config object that describes it.
@@ -101,6 +105,64 @@ async function waitFor(url: string, timeoutMs = 60_000): Promise<void> {
       if (Date.now() > deadline) throw new Error(`timed out waiting for ${url}`);
       await new Promise((r) => setTimeout(r, 250));
     }
+  }
+}
+
+// The completion helper shipped by the locked Next.js React renderer. Unknown scripts stay in the comparison.
+const REACT_COMPLETION_HELPER = "7a3c441a297b4368e7168f53d44323873b11a160d3567f2d4695187785c22646";
+
+function settledFirstPage(html: string, nonce: string) {
+  const dom = new JSDOM(html);
+  const { document, Node } = dom.window;
+  try {
+    const flight: Buffer[] = [];
+    for (const script of Array.from(document.scripts)) {
+      if (script.attributes.length !== 1 || script.getAttribute("nonce") !== nonce) continue;
+      const source = script.textContent ?? "";
+      const chunk = /^self\.__next_f\.push\((\[[13],"[^<]*"\])\)$/.exec(source);
+      if (chunk) {
+        const [kind, data] = JSON.parse(chunk[1]) as [1 | 3, string];
+        flight.push(Buffer.from(data, kind === 1 ? "utf8" : "base64"));
+      } else if (
+        source !== "requestAnimationFrame(function(){$RT=performance.now()});" &&
+        source !== "document.querySelectorAll('body link[rel=\"icon\"], body link[rel=\"apple-touch-icon\"]').forEach(el => document.head.appendChild(el))"
+      ) {
+        const complete = /^(\$RB=\[\];[\s\S]*;)?\$RC\("(B:[0-9a-f]+)","(S:[0-9a-f]+)"\)$/.exec(source);
+        if (!complete) continue;
+        const [, helper, boundaryId, sectionId] = complete;
+        if (helper && createHash("sha256").update(helper).digest("hex") !== REACT_COMPLETION_HELPER) continue;
+        // Apply only the completion of an empty fallback. No response scripts run.
+        const boundary = document.getElementById(boundaryId);
+        const section = document.getElementById(sectionId);
+        const start = boundary?.previousSibling;
+        const end = boundary?.nextSibling;
+        if (!boundary?.matches("template") || boundary.attributes.length !== 1 || boundary.innerHTML !== "" ||
+            !section?.matches("div[hidden='']") || section.attributes.length !== 2 ||
+            start?.nodeType !== Node.COMMENT_NODE || start.nodeValue !== "$?" ||
+            end?.nodeType !== Node.COMMENT_NODE || end.nodeValue !== "/$") {
+          throw new Error("Unexpected first-page streaming boundary");
+        }
+        start.nodeValue = "$";
+        boundary.replaceWith(...section.childNodes);
+        section.remove();
+      }
+      script.remove();
+    }
+
+    // Next may send the same metadata in the head or after the shell. Keep every value and its order.
+    const metadata = 'title, meta, link[rel="manifest"], link[rel="icon"], link[rel="apple-touch-icon"]';
+    const fields: Element[] = [];
+    for (let field = document.querySelector("head > title, body > title"); field?.matches(metadata); field = field.nextElementSibling) {
+      fields.push(field);
+    }
+    document.head.append(...fields);
+    expect(flight.length).toBeGreaterThan(0);
+    return {
+      document: dom.serialize().replaceAll(nonce, "N"),
+      flight: Buffer.concat(flight).toString("latin1").replaceAll(nonce, "N"),
+    };
+  } finally {
+    dom.window.close();
   }
 }
 
@@ -802,37 +864,29 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     it("on: the app's empty document, no request upstream, private, two nonces, no cookie value in it, and the word wait", async () => {
       sessionUpstream(200, FULL);
       seen = [];
-      const one = await fetch(at("/"), { headers: { ...jar(TOKEN), "x-ohmail-first-page": "now" }, redirect: "manual" });
-      const other = await fetch(at("/"), { headers: jar(`${TOKEN}-other-jar`), redirect: "manual" });
-      expect(seen, "the upstream was asked").toHaveLength(0);
-      for (const res of [one, other]) {
-        expect(res.status).toBe(200);
-        expect(res.headers.get("cache-control")).toContain("private");
-        expect(res.headers.get("cache-control")).toContain("no-store");
-        expect(res.headers.get("set-cookie")).toBeNull();
-      }
-      expect(nonceOf(one)).toBeTruthy();
-      expect(nonceOf(one)).not.toBe(nonceOf(other));
-      const a = await one.text();
-      const b = await other.text();
-      expect(wordIn(a), "a client-sent word was believed").toBe("wait");
-      for (const html of [a, b]) {
+      const readPage = async (headers: Record<string, string>) => {
+        const response = await fetch(at("/"), { headers, redirect: "manual" });
+        expect(response.status).toBe(200);
+        expect(response.headers.get("cache-control")).toContain("private");
+        expect(response.headers.get("cache-control")).toContain("no-store");
+        expect(response.headers.get("set-cookie")).toBeNull();
+        const nonce = nonceOf(response);
+        expect(nonce).toBeTruthy();
+        const html = await response.text();
+        expect(html).toContain(nonce!);
+        expect(wordIn(html)).toBe("wait");
         expect(html).not.toContain(TOKEN);
         expect(html).not.toContain("m".repeat(43));
-      }
-      const blank = (html: string, res: Response) => {
-        const nonce = nonceOf(res)!;
-        expect(html).toContain(nonce);
-        let blanked = html.replaceAll(nonce, "N");
-        // The serialized boot props can carry a nonce across two React Flight script chunks.
-        const boundary = '"])</script><script nonce="N">self.__next_f.push([1,"';
-        for (let split = 1; split < nonce.length; split += 1) {
-          const divided = nonce.slice(0, split) + boundary + nonce.slice(split);
-          blanked = blanked.replaceAll(divided, "N" + boundary);
-        }
-        return blanked;
+        return { html, nonce: nonce! };
       };
-      expect(blank(a, one)).toBe(blank(b, other));
+      const one = await readPage({ ...jar(TOKEN), "x-ohmail-first-page": "now" });
+      const other = await readPage(jar(`${TOKEN}-other-jar`));
+      expect(seen, "the upstream was asked").toHaveLength(0);
+      expect(one.nonce).not.toBe(other.nonce);
+      const a = settledFirstPage(one.html, one.nonce);
+      const b = settledFirstPage(other.html, other.nonce);
+      expect(a.document).toBe(b.document);
+      expect(a.flight).toBe(b.flight);
       const head = await fetch(at("/"), { method: "HEAD", headers: jar(TOKEN) });
       expect(head.headers.get("set-cookie")).toBeNull();
       expect(seen).toHaveLength(0);
