@@ -1062,6 +1062,25 @@ describe("the onboarding-consent routes", () => {
     expect([...feed.changes.creates, ...feed.changes.updates].at(-1)?.entity.screenerAcknowledgements).toBe(5);
   });
 
+  it("remembers Move to Trash alongside the account's other confirmations", async () => {
+    const { db, deps } = await makeDeps();
+    const a = await seedSession(db, { now: FIXED_NOW });
+    const secondDevice = await seedSessionFor(db, { ...a, token: undefined, now: FIXED_NOW });
+    const other = await seedSession(db, { now: FIXED_NOW });
+    const read = async (bearer: string) =>
+      (await H(req("GET", "/consent", { bearer }), deps)).json();
+    const acknowledge = (bearer: string, acknowledgeScreener: string) =>
+      H(req("PATCH", "/consent/settings", { bearer, body: JSON.stringify({ acknowledgeScreener }) }), deps);
+
+    expect((await acknowledge(a.token, "spamUnsubscribe")).status).toBe(200);
+    const trash = await acknowledge(a.token, "moveToTrash");
+    expect(trash.status).toBe(200);
+    expect(await trash.json()).toEqual({ screenerAcknowledgements: 65 });
+    expect((await acknowledge(secondDevice.token, "moveToTrash")).status).toBe(200);
+    expect((await read(secondDevice.token)).screenerAcknowledgements).toBe(65);
+    expect((await read(other.token)).screenerAcknowledgements).toBe(0);
+  });
+
   it("stores the draft reply choice for its account and sends it on the settings feed", async () => {
     const { db, deps } = await makeDeps();
     const a = await seedAccount(db, FIXED_NOW);

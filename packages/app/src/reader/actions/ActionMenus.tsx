@@ -1,3 +1,5 @@
+import { useRef, useState } from "react";
+import { useScreenerAcknowledgements } from "@ohmail/app-logic/consent";
 import type { RefObject } from "react";
 import type { TagEntity } from "@ohmail/wire";
 import { Dialog, Menu, MenuItem, MenuRule } from "@ohmail/ui/base";
@@ -5,10 +7,54 @@ import { MovePicker } from "@ohmail/ui/mail";
 import type { useResurfaceTime } from "../../frame/room.js";
 import { TagPicker } from "../../tags/TagPicker.js";
 import { useText } from "../../text/index.js";
-import { isCardDeleteKey } from "../keys.js";
+import { isCardDeleteKey, type PanelMenu } from "../keys.js";
 import { ResurfaceMenu } from "./ResurfaceMenu.js";
 import type { ActionWords, OpenPanel, Placed } from "./panel-verbs.js";
 import type { Verbs } from "./use-verbs.js";
+
+function openScreening(root: HTMLElement | null, fallback?: () => void): void {
+  const opener = root?.querySelector<HTMLButtonElement>('button[data-id="screening"]:not([hidden])');
+  if (opener) opener.click();
+  else fallback?.();
+}
+
+function menuAnchor(root: HTMLElement | null, which: PanelMenu): HTMLElement | null {
+  const target = which === "resurface" || which === "tag" || which === "move" ? which : null;
+  const own = target ? root?.querySelector<HTMLElement>(`[data-id="${target}"]:not([hidden])`) : null;
+  return own ?? root?.querySelector<HTMLElement>("[data-more]") ?? null;
+}
+
+/** The reader panel's open menu and the control it opened from. */
+export function useActionMenu(
+  stop: RefObject<HTMLDivElement | null>,
+  verbs: Verbs,
+  onScreenKey?: () => void,
+) {
+  const [menu, setMenu] = useState<OpenPanel>(null);
+  const anchor = useRef<HTMLElement | null>(null);
+  const acknowledgements = useScreenerAcknowledgements();
+  const trashAcknowledged = acknowledgements.has("moveToTrash");
+  const close = () => setMenu(null);
+  const trash = () => {
+    close();
+    verbs.act("delete");
+  };
+  const confirmTrash = () => {
+    acknowledgements.remember?.("moveToTrash");
+    trash();
+  };
+  const toggle = (which: Exclude<OpenPanel, null>) => (at: HTMLElement) => {
+    anchor.current = at;
+    setMenu((open) => (open === which ? null : which));
+  };
+  const byKey = (which: PanelMenu) => {
+    if (which === "cardDelete" && trashAcknowledged) return trash();
+    if (which === "screening") return openScreening(stop.current, onScreenKey);
+    anchor.current = menuAnchor(stop.current, which);
+    setMenu((open) => (open === which ? null : which));
+  };
+  return { anchor, menu, setMenu, close, toggle, byKey, trash, confirmTrash, trashAcknowledged };
+}
 
 interface ActionMenusProps {
   words: ActionWords;
@@ -17,6 +63,7 @@ interface ActionMenusProps {
   setMenu: (menu: OpenPanel) => void;
   close: () => void;
   trash: () => void;
+  confirmTrash: () => void;
   hour: ReturnType<typeof useResurfaceTime>;
   tags: readonly TagEntity[];
   verbs: Verbs;
@@ -34,6 +81,7 @@ export function ActionMenus({
   setMenu,
   close,
   trash,
+  confirmTrash,
   hour,
   tags,
   verbs,
@@ -102,7 +150,7 @@ export function ActionMenus({
         onKey={(e) => {
           if (menu !== "cardDelete" || !isCardDeleteKey(e.nativeEvent)) return false;
           e.preventDefault();
-          trash();
+          confirmTrash();
           return true;
         }}
       >
@@ -129,7 +177,7 @@ export function ActionMenus({
           title={t("trashAsk")}
           hot
           kind="delete"
-          confirm={{ label: words.move, onPress: trash, keyHint: "↵" }}
+          confirm={{ label: words.move, onPress: confirmTrash, keyHint: "↵" }}
           cancel={{ label: t("resurface.cancel"), keyHint: "Esc" }}
         />
       ) : null}

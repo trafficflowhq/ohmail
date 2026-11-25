@@ -93,12 +93,12 @@ export function useConsentRow({
   return useConsentState(active, scope, transport, settingsStamp, windowOwners);
 }
 
-/** The current account's remembered Screener confirmations. */
+/** A reader without a consent row still asks for confirmation. */
 export function useScreenerAcknowledgements() {
-  const { screenerAcknowledgements, acknowledgeScreener } = useConsent();
+  const row = useContext(ConsentContext);
   return {
     has: (kind: ScreenerAcknowledgement) =>
-      (screenerAcknowledgements & SCREENER_ACKNOWLEDGEMENTS[kind]) !== 0,
-    remember: acknowledgeScreener,
+      ((row?.screenerAcknowledgements ?? 0) & SCREENER_ACKNOWLEDGEMENTS[kind]) !== 0,
+    remember: row?.acknowledgeScreener ?? null,
   };
 }

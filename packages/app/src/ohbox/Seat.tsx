@@ -14,6 +14,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, 
 import { useOhboxLive, type ListAnswer, type OhboxLiveOwn, type RowAsk } from "@ohmail/app-logic/ohbox";
 import { wordsOver } from "@ohmail/app-logic/reader";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import { useScreenerAcknowledgements } from "@ohmail/app-logic/consent";
 import { useMailboxFacts } from "@ohmail/app-logic/mail-state";
 import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
 import { usePull } from "@ohmail/app-logic/session/pull-new-mail";
@@ -234,7 +235,12 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
   const page = usePage();
   const [rowAsk, setRowAsk] = useState<RowAsk | null>(null);
   const [tagAsk, setTagAsk] = useState<TagAsk | null>(null);
-  const own = useOwn(page.read, setRowAsk, (ids, anchor, point) => setTagAsk({ ids, anchor, point }));
+  const trashAcknowledged = useScreenerAcknowledgements().has("moveToTrash");
+  const askRow = useStableCallback((ask: RowAsk | null) => {
+    if (ask?.kind === "delete" && trashAcknowledged) ask.act("delete");
+    else setRowAsk(ask);
+  });
+  const own = useOwn(page.read, askRow, (ids, anchor, point) => setTagAsk({ ids, anchor, point }));
   const args = usePlaceLiveArgs();
   const live = useOhboxLive(args, own, useResumingReader()?.square ?? null);
   const located = useLocatedLetter(args.entered.letter, route.open);
@@ -273,7 +279,7 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
       first: storageCard === NONE ? null : storageCard.render(),
       pull: pull === null ? NONE : { busy: pull.pulling, result: pull.result, run: pull.pull },
       keysShown: plan.pointer !== "coarse",
-      askRow: setRowAsk,
+      askRow,
       canDelete: (id) => host.engine.verbRead()?.get<EngineMessage>("message", id) != null,
       flipTime,
       located,
@@ -302,6 +308,7 @@ export function OhboxSeat({ children }: { readonly children: ReactNode }): React
       notOrganizing,
       storageCard,
       host.engine,
+      askRow,
       plan.pointer,
       flipTime,
       located,

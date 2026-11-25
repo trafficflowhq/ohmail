@@ -72,7 +72,7 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
           keyHint="d"
           onPress={() => {
             setMore(false);
-            model.setPickPanel({ kind: "delete" });
+            model.requestDeletePicked();
           }}
         >
           {t("actionDelete")}
@@ -90,7 +90,7 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
         <h4 className="oh-text oh-menu-title">
           <EndDot kind="hot">{t("bulkDeleteAsk", { count: letters }).slice(0, -1)}</EndDot>
         </h4>
-        <MenuItem onPress={() => model.deletePicked()}>{t("deleteConfirm")}</MenuItem>
+        <MenuItem onPress={model.confirmDeletePicked}>{t("deleteConfirm")}</MenuItem>
         <MenuItem ref={cancelDelete} onPress={close}>
           {t("moveCancel")}
         </MenuItem>

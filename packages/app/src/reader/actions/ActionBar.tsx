@@ -2,14 +2,7 @@
  * THE ACTION PANEL of the open letter, at the foot of the column, and its More menu. Its buttons carry the names a
  * person and the journeys find them by. The stop of the read rule: what runs under it is not on screen.
  */
-import {
-  panelVerbs,
-  usePanelHints,
-  type ActionWords,
-  type OpenPanel,
-  type PanelRoom,
-  type Placed,
-} from "./panel-verbs.js";
+import { panelVerbs, usePanelHints, type ActionWords, type PanelRoom, type Placed } from "./panel-verbs.js";
 export type { PanelRoom } from "./panel-verbs.js";
 import type { EngineMessage, TagEntity } from "@ohmail/wire";
 import { useContext, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
@@ -25,7 +18,7 @@ import { useText } from "../../text/index.js";
 import { useCardKeys, useLetterKeys, useReaderKeys, type DeleteKeyTarget, type PanelMenu } from "../keys.js";
 import { useReplyVerbs } from "../parts.js";
 import { ReplyPanel } from "./ReplyRun.js";
-import { ActionMenus } from "./ActionMenus.js";
+import { ActionMenus, useActionMenu } from "./ActionMenus.js";
 import { useVerbs, type Verbs } from "./use-verbs.js";
 
 interface ActionBarProps {
@@ -64,18 +57,6 @@ function useAnswerHint(card: ActionBarProps["card"], active: boolean): boolean {
   );
 }
 
-function openScreening(root: HTMLElement | null, fallback?: () => void): void {
-  const opener = root?.querySelector<HTMLButtonElement>('button[data-id="screening"]:not([hidden])');
-  if (opener) opener.click();
-  else fallback?.();
-}
-
-function menuAnchor(root: HTMLElement | null, which: PanelMenu): HTMLElement | null {
-  const target = which === "resurface" || which === "tag" || which === "move" ? which : null;
-  const own = target ? root?.querySelector<HTMLElement>(`[data-id="${target}"]:not([hidden])`) : null;
-  return own ?? root?.querySelector<HTMLElement>("[data-more]") ?? null;
-}
-
 export function ActionBar({
   verbs,
   room = "desktop",
@@ -97,22 +78,12 @@ export function ActionBar({
   const ohbox = useText("ohbox");
   const screening = useText("screening");
   const shortcuts = useText("shortcuts");
-  const [menu, setMenu] = useState<OpenPanel>(null);
   /* What did not fit the panel: offered first behind More, in the panel's order. */
   const [folded, setFolded] = useState<readonly string[]>([]);
-  /* The control a menu comes out of: the verb's button last pressed, or More's for a verb pressed inside More. */
-  const pressed = useRef<HTMLElement | null>(null);
-  const toggle = (which: Exclude<OpenPanel, null>) => (at: HTMLElement) => {
-    pressed.current = at;
-    setMenu((m) => (m === which ? null : which));
-  };
-  const close = () => setMenu(null);
   /* The panel's wrapper: the read rule's stop (`data-read-stop`). */
   const stop = useRef<HTMLDivElement | null>(null);
-  const file = (): void => {
-    close();
-    verbs.act("delete");
-  };
+  const { anchor, menu, setMenu, toggle, close, byKey, trash, confirmTrash, trashAcknowledged } =
+    useActionMenu(stop, verbs, onScreenKey);
   /* The account's resurface hour and its writer, as the shell handed them to the room. */
   const hour = useResurfaceTime();
   const { mirror } = useMirror();
@@ -144,12 +115,6 @@ export function ActionBar({
     expanded: menu === "more" || menu === "cardDelete",
     onPress: toggle("more"),
   };
-  /* A key opens a menu as its button does: out of the verb's own button, else out of More where it stands behind it. */
-  const byKey = (which: PanelMenu): void => {
-    if (which === "screening") return openScreening(stop.current, onScreenKey);
-    pressed.current = menuAnchor(stop.current, which);
-    setMenu((m) => (m === which ? null : which));
-  };
   usePanelKeyboard({
     card,
     cardKeys,
@@ -178,12 +143,13 @@ export function ActionBar({
         />
       )}
       <ActionMenus
-        anchor={pressed}
+        anchor={anchor}
         words={words}
         menu={menu}
         setMenu={setMenu}
         close={close}
-        trash={file}
+        trash={trash}
+        confirmTrash={confirmTrash}
         hour={hour}
         tags={tags}
         verbs={verbs}
@@ -191,7 +157,7 @@ export function ActionBar({
         separate={reply !== null}
         calendarAction={calendarAction}
         calendarKeyHint={hints.calendar.keyHint}
-        confirm={card !== undefined}
+        confirm={card !== undefined && !trashAcknowledged}
       />
     </div>
   );
