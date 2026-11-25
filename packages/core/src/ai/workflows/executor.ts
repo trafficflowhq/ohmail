@@ -197,7 +197,7 @@ async function buildDraftInput(
     .from(kbEntries).where(eq(kbEntries.accountId, accountId))
     .orderBy(asc(kbEntries.updatedAt)).limit(5);
   const siblings = target.threadId
-    ? await tx.select({ from: messages.fromAddress, snippet: messages.snippet }).from(messages)
+    ? await tx.select({ from: messages.fromAddress, fromName: messages.fromName, snippet: messages.snippet, subject: messages.subject }).from(messages)
         .where(and(
           eq(messages.accountId, accountId),
           eq(messages.threadId, target.threadId),
@@ -206,10 +206,10 @@ async function buildDraftInput(
         .orderBy(asc(messages.date)).limit(20)
     : [];
   return {
-    incoming: { subject: target.subject, from: target.fromAddress, snippet: target.snippet },
+    incoming: { subject: target.subject, from: target.fromAddress, fromName: target.fromName, snippet: target.snippet },
     context: {
       kbEntries: kb.map((e) => ({ title: e.title, content: e.content })),
-      threadMessages: siblings.map((s) => ({ from: s.from, snippet: s.snippet })),
+      threadMessages: siblings,
     },
   };
 }
@@ -220,13 +220,14 @@ interface DraftTarget {
   threadId: string | null;
   subject: string;
   fromAddress: string;
+  fromName: string | null;
   snippet: string;
 }
 
 async function loadDraftTarget(tx: Tx, accountId: string, messageId: string): Promise<DraftTarget> {
   const [t] = await tx.select({
     id: messages.id, mailboxId: messages.mailboxId, threadId: messages.threadId,
-    subject: messages.subject, fromAddress: messages.fromAddress, snippet: messages.snippet,
+    subject: messages.subject, fromAddress: messages.fromAddress, fromName: messages.fromName, snippet: messages.snippet,
   }).from(messages)
     .where(and(eq(messages.id, messageId), eq(messages.accountId, accountId))).limit(1);
   if (!t) throw new WorkflowStepError("target_missing");

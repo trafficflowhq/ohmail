@@ -364,7 +364,7 @@ export async function screenerAutoSuggestPass(
     const learned = await readScreenerLearning(db, { accountId, mailboxId: c.mailboxId }, now);
     const facts = senderFacts(checked);
     const letter = {
-      fromAddress: c.fromAddress, subject: c.subject, snippet: c.snippet,
+      fromAddress: c.fromAddress, fromName: c.fromName, subject: c.subject, snippet: c.snippet,
       ...(deps.ohboxBar ? { ohboxBar: deps.ohboxBar } : {}),
       ...(facts ? { senderFacts: facts } : {}),
     };

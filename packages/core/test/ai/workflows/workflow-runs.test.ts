@@ -547,3 +547,23 @@ describe("WorkflowExecutor — existing flags do not hide knowledge or grounding
     expect(seen).toContain("NOKB-SIBLING");
   });
 });
+
+it("keeps the credential in stored mail while sending one redacted draft request", async () => {
+    const db = await makeTestDb();
+    const { accountId, mailboxId } = await seedAccount(db);
+    const url = "https://account.example.test/password/reset?token=violet-birch";
+    const mail = { subject: "Passwort zurücksetzen", snippet: `Ändere dein Passwort hier: ${url}` };
+    const id = await seedMessage(db, accountId, mailboxId, mail);
+    const run = await seedWorkflowRun(db, accountId, [{ tool: "draft_reply", args: { messageId: id } }]);
+    const calls: unknown[] = [];
+    const drafter = makeSonnetDrafter({ messages: { async create(request) {
+      calls.push(request);
+      return { content: [{ type: "text", text: JSON.stringify({ subject: "Re: account", body: "Danke für den Hinweis.", rationale: "reply" }) }] };
+    } } });
+    expect(await runner.runOne(deps(db, drafter), run)).toMatchObject({ status: "succeeded", stepsRun: 1 });
+    expect(calls).toHaveLength(1);
+    expect(JSON.stringify(calls)).toContain("Ändere dein Passwort hier: https://account.example.test/[link]");
+    expect(JSON.stringify(calls)).not.toContain(url);
+    const [stored] = await db.select().from(messages).where(eq(messages.id, id));
+    expect(stored).toMatchObject(mail);
+});

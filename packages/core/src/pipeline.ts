@@ -9,6 +9,7 @@ import {
   verifiesLegacyIdentity,
 } from "./identity.js";
 import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
+import { MESSAGE_PREVIEW_LIMIT, redactAiMail } from "./ai-credential-redaction.js";
 import {
   NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, autoReplySuppression,
   dsnVerdict, effectForDestination, evaluateRules, gateAuthor, isDaemonAddress, isDeliveryReportShape, screenerAdmits,
@@ -951,14 +952,14 @@ export function dedupKeysOf(normalized: NormalizedMessage): { fp: string; prior:
   };
 }
 
-/** A short preview of the body for the DTO snippet + the classifier input. */
+/** A short preview of the body for the stored snippet. */
 function bodySnippet(normalized: NormalizedMessage): string {
   return snippetOfText(normalized.textBody);
 }
 
 /** The list preview of a stored text: whitespace folded, the first 200 characters. */
 export function snippetOfText(text: string): string {
-  return text.replace(/\s+/g, " ").trim().slice(0, 200);
+  return text.replace(/\s+/g, " ").trim().slice(0, MESSAGE_PREVIEW_LIMIT);
 }
 
 /**
@@ -1534,10 +1535,17 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
       let result: ClassifierResult | undefined;
       try {
         await consent?.beforeDispatch();
-        const input = {
-          from: normalized.from,
+        // Keep line breaks and enough following text to detect a code crossing the preview cutoff.
+        const previewSource = normalized.textBody.trimStart()
+          .replace(/\s+/g, gap => /[\r\n]/.test(gap) ? "\n" : " ").slice(0, 400);
+        const question = redactAiMail({
           subject: normalized.subject,
-          snippet: bodySnippet(normalized),
+          snippet: previewSource,
+        }, { fromName: normalized.from.name, body: normalized.textBody });
+        const input = {
+          ...question,
+          from: normalized.from,
+          snippet: snippetOfText(question.snippet),
           headersDigest: headersDigest(normalized),
           fewShot: [],
           // The account's own words, into the USER turn only. Absent ⇒ omitted. It sharpens what
