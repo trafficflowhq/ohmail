@@ -29,7 +29,7 @@ import {
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import type { EngineAdapter, SyncParams, WithdrawSendAnswer } from "@ohmail/client-engine";
+import type { EngineAdapter, ListTrashWire, RestoreFromTrashWire, SyncParams, TrashRowWire, WithdrawSendAnswer } from "@ohmail/client-engine";
 import { OUTBOX_WITHDRAWN_CODE } from "@ohmail/client-engine";
 
 /** The demo world's fixed "now" — a Wednesday; "Tue" fixtures land the day before. */
@@ -95,6 +95,7 @@ export interface FixturesAdapterOptions {
 export class FixturesAdapter implements EngineAdapter {
   private readonly world = new Map<string, MirrorRecord>();
   private readonly log: SyncChange[] = [];
+  private readonly trash = new Map<string, { row: TrashRowWire; seq: number }>();
   private readonly replays = new Map<string, MutationOutcome>();
   /** Send keys a Cancel tombstoned — the demo's half of the server's `withdrawn` row. */
   private readonly withdrawnKeys = new Set<string>();
@@ -405,6 +406,27 @@ export class FixturesAdapter implements EngineAdapter {
     };
   }
 
+  async listTrash({ cursor, limit = 50 }: { cursor?: string; limit?: number } = {}): Promise<ListTrashWire> {
+    const before = cursor === undefined ? Infinity : decodeSeqCursor(cursor);
+    if (before === null) throw new CursorExpiredError();
+    const size = Math.max(1, limit);
+    const rows = [...this.trash.values()].reverse().filter((entry) => entry.seq < before);
+    const page = rows.slice(0, size);
+    return {
+      items: page.map(({ row }) => row),
+      nextCursor: rows.length > page.length ? encodeSeqCursor(page[page.length - 1]!.seq) : null,
+    };
+  }
+
+  async restoreFromTrash(messageId: string): Promise<RestoreFromTrashWire> {
+    const entry = this.trash.get(messageId);
+    if (!entry) throw new MutationRejectedError("Message is no longer in Trash", { status: 409, code: "not_in_trash" });
+    const { trashedAt: _trashedAt, restoreTo, ...message } = entry.row;
+    this.emit("message", messageId, { ...message, updatedAt: this.now().toISOString() });
+    this.trash.delete(messageId);
+    return { restoreTo: restoreTo ?? message.folder, pending: false };
+  }
+
   /**
    * NO BODIES TO FETCH — and that is the demo's correct answer, not a missing feature. `toMessage` copies the
    * fixture's `body` straight onto the mirror row, so every message in Mila's world already holds its full text and
@@ -488,7 +510,14 @@ export class FixturesAdapter implements EngineAdapter {
     if (effects.length === 0) {
       throw new MutationRejectedError(`mutation target not found (${m.kind})`, { status: 404, code: "not_found" });
     }
+    const deleted = m.kind === "message_delete" ? reader.get<EngineMessage>("message", m.messageId) : undefined;
     const changes = effects.map((e: MutationEffect) => this.emit(e.type, e.id, e.entity, e.move));
+    if (deleted) {
+      this.trash.set(deleted.id, {
+        row: { ...deleted, trashedAt: this.now().toISOString(), restoreTo: deleted.folder },
+        seq: this.seq,
+      });
+    }
     const outcome: MutationOutcome = {
       changes,
       seq: changes[changes.length - 1]!.seq,

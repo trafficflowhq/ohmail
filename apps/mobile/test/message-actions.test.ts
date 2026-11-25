@@ -453,6 +453,27 @@ describe("delete — DELETE /messages/:id, to the provider's Trash, never an exp
     fake.server.close();
   });
 
+  it("distinguishes a confirmed move without an echo from a letter already gone", async () => {
+    const moved = dto("relay-letter");
+    const gone = dto("gone-letter");
+    const { fake, live } = await scene((server) => {
+      server.addMessage(moved);
+      server.addMessage(gone);
+    });
+    try {
+      fake.answerNext("DELETE", `/messages/${moved.id}`, 200, moved);
+      expect(await live.actions.deleteMessage(moved.id)).toBe(true);
+      expect(live.toasts).toEqual([Copy.toastDeleted]);
+
+      fake.answerNext("DELETE", `/messages/${gone.id}`, 200, { ...gone, alreadyGone: true });
+      expect(await live.actions.deleteMessage(gone.id)).toBe(true);
+      expect(live.toasts).toEqual([Copy.toastDeleted]);
+    } finally {
+      live.store.close();
+      fake.server.close();
+    }
+  });
+
   it("a refusal (the no-Trash 422) rolls the row back whole, with the failure sentence", async () => {
     const { fake, live } = await scene();
     fake.failNext("DELETE", "/messages/m1");

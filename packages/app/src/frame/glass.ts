@@ -78,17 +78,22 @@ export function useGlass(drawn: RefObject<HTMLElement | null>): void {
     };
   }, [drawn, key]);
 
-  /* The system's back, newest first: the whole rail over the app, then the open letter; else the app leaves. */
-  const now = useRef({ railOpen, open: route.open });
-  now.current = { railOpen, open: route.open };
+  /* The system's back closes the rail first, then an open sender or letter. */
+  const now = useRef({ railOpen, route });
+  now.current = { railOpen, route };
   useEffect(() => {
     if (back === NONE) return;
     return back.subscribe(() => {
-      if (now.current.railOpen) {
+      const { railOpen, route } = now.current;
+      if (railOpen) {
         commands.rail(false);
         return true;
       }
-      if (now.current.open !== null) {
+      if (route.place === "screener" && route.words.sender === "open") {
+        commands.go({ place: "screener", sub: route.sub }, { history: "dismiss-preview", replace: true });
+        return true;
+      }
+      if (route.open !== null) {
         commands.open(null);
         return true;
       }

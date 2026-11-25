@@ -3,9 +3,8 @@ import { localStorageDoor } from "@ohmail/client-engine/durable";
 /**
  * THE PLAN THE SITE'S TIER BUTTONS CARRY (`/join?plan=pro&interval=year`), read from closed sets and
  * kept through the signup's mail round trip: the verification link opens `/verify-email` and then
- * `/join` without the query, in the same browser. It is a hint for the plan page's preselection and
- * never a price; the API and the plan page check it again against the same sets (`planHintOf` in
- * `packages/db`, which `plan-hint.test.ts` holds this copy equal to).
+ * `/join` without the query, in the same browser. It names the choice at signup and preselects it on
+ * the plan page. The API checks the same sets (`planHintOf` in `packages/db`).
  */
 export const PLAN_HINT_PLANS = ["solo", "plus", "pro"] as const;
 export const PLAN_HINT_INTERVALS = ["month", "year"] as const;

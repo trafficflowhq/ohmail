@@ -219,7 +219,7 @@ describe("a field seeded from stored addresses is ALL chips — CMP-F3", () => {
     };
     w = await mountWriting({ view: true, drafts: [row as never] });
     await act(async () => w.now().openDraft(row as never));
-    await rounds(4);
+    await screen.findByRole("group", { name: W.to });
     expect(chipEntries()).toEqual(["a@x.invalid", "b@y.invalid"]);
     expect(input().value, "the last recipient is sitting in the input as text").toBe("");
   });

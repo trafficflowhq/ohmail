@@ -3,9 +3,8 @@ import { Field, FieldPair } from "@ohmail/ui/base";
 import type { ConnectForm } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
 
 /**
- * THE TWO SERVERS. On a new connection each is one field: a name, with a port after it where it is not the usual
- * one. On an edit each has its port beside it, and every field may stay blank: a blank keeps what is stored, which
- * is never shown.
+ * The two server names, with separate port fields where the form offers them.
+ * On an edit, blank fields keep the stored settings.
  */
 export function ServerFields({
   form,
@@ -14,7 +13,7 @@ export function ServerFields({
 }: {
   form: ConnectForm;
   labels: { readonly imap: string; readonly smtp: string };
-  /** An edit's port fields, with what a blank keeps. `null`: a new connection. */
+  /** Optional port fields and their placeholders. */
   ports: {
     readonly imap: string;
     readonly smtp: string;

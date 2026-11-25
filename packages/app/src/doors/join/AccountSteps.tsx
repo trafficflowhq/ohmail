@@ -6,7 +6,7 @@ import { PASSWORD_MIN, accountReady } from "../stage/fields.js";
 import { Address, SaidWith } from "../../text/Said.js";
 import { SentenceBlank } from "../../text/SentenceBlank.js";
 import { WayButton } from "../stage/way.js";
-import { refusalOf, SignOutAgain, type StepProps } from "./parts.js";
+import { refusalOf, SignOutAgain, JoinSignIn, type StepProps } from "./parts.js";
 
 const ACCOUNT_FIELDS = ["name", "email", "password"] as const;
 const ACCOUNT_IDS = { name: "join-name", email: "join-email", password: "join-pw" };
@@ -39,6 +39,7 @@ export function InviteStep({ door, join, progress }: StepProps<"invite">): React
   return (
     <DoorForm onSubmit={door.redeem}>
       <Page
+        back={<JoinSignIn door={door} join={join} />}
         aside={progress}
         refusal={refusalOf(pending, door.refusal)}
         acts={
@@ -56,8 +57,12 @@ export function InviteStep({ door, join, progress }: StepProps<"invite">): React
   );
 }
 
-export function AccountStep({ door, join, progress }: StepProps<"account">): ReactNode {
+export function AccountStep({ door, state, join, progress }: StepProps<"account">): ReactNode {
   const { fields, pending, busy } = door;
+  const { offer } = state;
+  const filled = Math.min([...fields.password].length, PASSWORD_MIN);
+  const remaining = PASSWORD_MIN - filled;
+  const lengthHintId = "join-password-length";
   const [withCode, setWithCode] = useState(fields.code.trim() !== "");
   const { at, wanted, typed } = useWanted(ACCOUNT_FIELDS);
   const type = (field: AccountField, value: string): void => {
@@ -69,6 +74,26 @@ export function AccountStep({ door, join, progress }: StepProps<"account">): Rea
       <Page
         smaller
         aside={progress}
+        trail={
+          offer === undefined ? undefined : (
+            <div className="way-join-row">
+              {offer === "trial" ? (
+                <>
+                  <span>{join("planTrial", { part: "heading" })}</span>
+                  <Tag>{join("planTrial", { part: "signupPayment" })}</Tag>
+                </>
+              ) : (
+                <>
+                  <Tag>{offer.name}</Tag>
+                  {offer.interval === null ? null : (
+                    <Tag>{join(offer.interval === "year" ? "planYearly" : "planMonthly")}</Tag>
+                  )}
+                  {offer.price === undefined ? null : <Tag>{offer.price}</Tag>}
+                </>
+              )}
+            </div>
+          )
+        }
         back={
           door.invited ? (
             <Button kind="quiet" icon="back" label={join("back")} onPress={door.toInvite} />
@@ -105,17 +130,29 @@ export function AccountStep({ door, join, progress }: StepProps<"account">): Rea
         <AccountSentence
           t={join}
           ids={ACCOUNT_IDS}
-          passwordHint="minimum"
+          lengthHint="minimum"
+          secretFieldHintId={remaining > 0 ? lengthHintId : undefined}
           fields={fields}
           at={at}
           wanted={wanted}
           type={type}
         />
-        <span className="oh-stepdots-mark" aria-hidden="true">
-          {Array.from({ length: PASSWORD_MIN }, (_, i) => (
-            <Dot key={i} kind={i < fields.password.length ? "ink" : "todo"} />
-          ))}
-        </span>
+        <div className="way-join-row">
+          <span
+            className="oh-stepdots-mark"
+            role="img"
+            aria-label={join("passwordLength", { filled, minimum: PASSWORD_MIN })}
+          >
+            {Array.from({ length: PASSWORD_MIN }, (_, i) => (
+              <Dot key={i} kind={i < filled ? "ink" : "todo"} />
+            ))}
+          </span>
+          {remaining > 0 ? (
+            <p id={lengthHintId} className="way-join-status">
+              {join("passwordRemaining", { minimum: PASSWORD_MIN, remaining })}
+            </p>
+          ) : null}
+        </div>
         {door.suggestion === null ? null : (
           <Button kind="two" size="s" onPress={door.takeSuggestion}>
             {join("didYouMean", { address: door.suggestion })}
@@ -179,6 +216,7 @@ export function VerifyStep({ door, state, join, progress }: StepProps<"verify">)
   return (
     <Page
       aside={progress}
+      back={<JoinSignIn door={door} join={join} />}
       line={join("step_verify_lead", { email: door.fields.email.trim() })}
       note={join("verifyWhy")}
       refusal={refusalOf(pending, door.refusal)}

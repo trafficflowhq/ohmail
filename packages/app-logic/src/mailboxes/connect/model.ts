@@ -32,6 +32,7 @@ import { wayOf } from "./sign-in.js";
 import {
   hostsNow,
   initialState,
+  newServerPortFields,
   presetOf,
   type ConnectEvent,
   type ConnectFacts,
@@ -52,7 +53,7 @@ export function contextOf(state: ConnectState, facts: ConnectFacts, afterFactor:
     purpose: facts.purpose,
     preset: preset?.id ?? null,
     manual: preset?.manual === true,
-    ports: edits,
+    ports: edits || (preset?.manual === true && newServerPortFields(facts.purpose)),
     signInArmed: wayOf(preset?.id ?? null, facts.ways, facts.code, false) !== null,
     afterFactor,
     factor: facts.factor,

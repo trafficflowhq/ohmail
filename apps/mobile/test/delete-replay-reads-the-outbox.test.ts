@@ -53,7 +53,7 @@ const deletes = (fake: ReturnType<typeof mailServer>) =>
   fake.seen.filter((r) => r.method === "DELETE" && r.url.startsWith("/messages/")).map((r) => r.url);
 
 describe("a delete killed after its commit reached the outbox", () => {
-  it("is not said lost at the launch: the outbox lands it, and the launch says it moved", async () => {
+  it("is still pending at launch while the outbox carries the move", async () => {
     const fake = mailServer();
     const origin = await listen(fake.server);
     fake.addMessage(dto("m1", { subject: "Old note" }));
@@ -77,7 +77,7 @@ describe("a delete killed after its commit reached the outbox", () => {
       await next.replayed;
       await settle();
       expect(next.said.join(" | "), "a delete the outbox carries was said lost").not.toContain("not moved to Trash");
-      expect(next.said).toEqual(["Moved 1 message to Trash that was waiting when ohmail closed."]);
+      expect(next.said).toEqual(["Moving to Trash."]);
       expect(deletes(fake).length, "the launch sent the delete a second time over the outbox's").toBeLessThanOrEqual(2);
       next.close();
     } finally { fake.server.close(); }

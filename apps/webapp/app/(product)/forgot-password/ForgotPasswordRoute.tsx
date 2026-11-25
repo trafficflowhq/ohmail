@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Button, Page } from "@ohmail/ui/base";
-import { DoorForm, Said, SaidWith, SentenceBlank } from "@ohmail/app/doors/stage";
+import { DoorForm, Said, SaidWith, SentenceBlank, WayButton } from "@ohmail/app/doors/stage";
 import { auth, codeOf } from "../../api-client";
 import { WebDoor } from "../door-device";
 
@@ -38,12 +38,14 @@ export function ForgotPasswordRoute() {
     }
   }
 
+  const signIn = <WayButton way={{ href: "/login" }} kind="quiet">{t("signIn")}</WayButton>;
   return (
     <WebDoor>
       {sent === null ? (
         <DoorForm onSubmit={() => void submit()}>
           <Page
             refusal={refusal ? [refusal] : undefined}
+            back={signIn}
             acts={<Button type="submit" size="l" keyHint="↵" label={t(busy ? "sending" : "send")} disabled={busy}>{t(busy ? "sending" : "send")}</Button>}
           >
             <SaidWith level={1} parts={t.rich("sendTo", {
@@ -65,6 +67,7 @@ export function ForgotPasswordRoute() {
         <Page
           line={t("expires")}
           refusal={refusal ? [refusal] : undefined}
+          back={signIn}
           acts={<Button size="l" kind="quiet" disabled={busy} onPress={() => void submit()}>{t(busy ? "sending" : "sendAgain")}</Button>}
         >
           <Said level={1} text={t("sent", { email: sent })} dot="ink" />

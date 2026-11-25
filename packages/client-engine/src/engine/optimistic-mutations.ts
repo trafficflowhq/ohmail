@@ -1996,6 +1996,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
       // rolled-back one has no answer from the organizer to report.
       return {
         id: p.id, key: p.key, status: "confirmed", seq: outcome.seq,
+        ...(outcome.alreadyGone ? { alreadyGone: true as const } : {}),
         ...(outcome.sentDraftId ? { sentDraftId: outcome.sentDraftId } : {}),
         ...(outcome.sentDraftThrough === undefined ? {} : { sentDraftThrough: outcome.sentDraftThrough }),
         ...(outcome.entityId ? { entityId: outcome.entityId } : {}),

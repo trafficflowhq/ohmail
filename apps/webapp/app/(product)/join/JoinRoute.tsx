@@ -30,14 +30,16 @@ import {
 /** A press the card handled as a form's submit: the ceremony's handlers take the event they always took. */
 const PRESS = { preventDefault() {} } as React.FormEvent;
 
-function stateOf(c: JoinCeremony): JoinState {
+type AccountOffer = Extract<JoinState, { at: "account" }>["offer"];
+
+function stateOf(c: JoinCeremony, offer: AccountOffer): JoinState {
   if (!apiConfigured()) return { at: "unavailable" };
   if (c.fatal) return c.fatalAction === "waitlist" ? { at: "full", said: c.fatal } : { at: "expired", said: c.fatal };
   if (c.unreachable) return { at: "unreachable" };
   if (c.resolving) return { at: "resolving" };
   switch (c.step) {
     case "invite": return { at: "invite" };
-    case "account": return { at: "account" };
+    case "account": return { at: "account", offer };
     case "sent": return { at: "sent", continuing: c.continuing };
     case "verify": return { at: "verify", resent: c.resent };
     case "factor":
@@ -155,6 +157,18 @@ function useMailboxAsk(c: JoinCeremony): { ask: ConnectAsk; door: ReturnType<typ
 export function JoinRoute(props: JoinProps) {
   const t = useTranslations("join");
   const c = useJoinDoor(props);
+  const pricing = useTranslations("pricing");
+  const { plan, interval } = props.planHint ?? {};
+  let offer: AccountOffer;
+  if (c.step === "account" && !SELF_HOST_BUILD && props.publicSignup && !c.needsInvite && !props.initialCode) {
+    if (plan === undefined) {
+      offer = "trial";
+    } else {
+      const priceKey = interval === undefined ? null : `${plan}Price${interval === "year" ? "Annual" : ""}`;
+      const price = priceKey !== null && pricing.has(priceKey) ? pricing(priceKey) : undefined;
+      offer = { name: PLAN_NAMES[plan], interval: interval ?? null, price };
+    }
+  }
   const pending = usePendingDoor(c.pending);
   const mailbox = useMailboxAsk(c);
   const set: Record<JoinField, (v: string) => void> = {
@@ -162,7 +176,7 @@ export function JoinRoute(props: JoinProps) {
   };
   const rail = c.needsInvite ? RAIL_BASE : c.step === "verify" ? RAIL_OPEN_LATE_VERIFY : RAIL_OPEN;
   const door: JoinDoor = {
-    state: stateOf(c),
+    state: stateOf(c, offer),
     stations: rail as readonly JoinStation[],
     note: signupPosture(SELF_HOST_BUILD, props.publicSignup ?? false),
     invited: c.needsInvite,

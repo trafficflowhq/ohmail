@@ -67,7 +67,7 @@ export const REFUSAL_KEYS = [
   "standaloneStarttlsFailed", "standaloneStarttlsInjected", "standaloneStarttlsTimeout", "storeFault", "tagTagged",
   "tagUntagged", "toastAside", "toastDeleteQueued", "toastDeleteQueuedUnknown", "toastDeleted", "toastMoveAlready",
   "toastMoveQueued", "toastMoveQueuedUnknown", "toastMoveQueuedWithRule", "toastMoveQueuedWithRuleUnknown",
-  "toastMoved", "toastQueued", "toastQueuedRuleUndone", "toastQueuedRuleUndoneUnknown", "toastRead",
+  "toastMoved", "toastMovingToTrash", "toastQueued", "toastQueuedRuleUndone", "toastQueuedRuleUndoneUnknown", "toastRead",
   "toastReadPartial", "toastResurface", "toastResurfaceCleared", "toastResurfaceDone", "toastResurfaceNow",
   "toastRoutingUndone", "toastRuledFuture", "toastRuledMoved", "toastSentAndDone", "toastUndone", "toastUnparked",
   "toastUnqueued", "toastUnread", "trashTitle", "trashToastRestoreFailed", "trashToastRestoreGone",

@@ -81,8 +81,11 @@ export function hideMessages(base: EntityReader, hidden: ReadonlySet<string>): E
  * functions out, and the object form never reaches them.
  */
 export interface DeleteUndoCopy {
-  /** The press succeeded and the window is open. */
+  /** The move was confirmed. */
   deleted: string;
+  /** The delete is held for Undo, before the mailbox has answered. */
+  pending?: string;
+  pendingMany?: (count: number) => string;
   /** The toast's action label. */
   undo: string;
   /** Undo was pressed inside the window — nothing was sent. */
@@ -146,6 +149,7 @@ export type HeldDispatch = (
  */
 export interface HeldOutcome {
   status: string;
+  alreadyGone?: true;
   error?: { code?: string | null } | undefined;
 }
 
@@ -277,17 +281,17 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
     let refused = 0;
     let trashless = 0;
     /* WAITING ON THE ORGANIZER — counted apart from the refusals, because it is a different
-       thing to be told. The press-time sentence says "Deleted" the moment the row is hidden;
-       where the server only RECORDED the request, nothing is in the bin and the window owes the
-       correction. A refusal outranks it: a press with both endings is a press that failed. */
+       thing to be told. A refusal outranks it when a selection has both outcomes. */
     let waiting = 0;
+    let moved = 0;
     const settled = () => {
       outstanding -= 1;
       if (outstanding > 0) return;
       disarmDeleteIntent(pressId, scope);
       if (refused > 0 && trashless === refused && deps.copy.noTrash) { deps.toast(deps.copy.noTrash); return; }
       if (refused > 0) { deps.toast(say(deps.copy.failed, deps.copy.failedMany, refused)); return; }
-      if (waiting > 0 && deps.copy.queued) deps.toast(say(deps.copy.queued, deps.copy.queuedMany, waiting));
+      if (waiting > 0 && deps.copy.queued) { deps.toast(say(deps.copy.queued, deps.copy.queuedMany, waiting)); return; }
+      if (deps.copy.pending !== undefined && moved > 0) deps.toast(say(deps.copy.deleted, deps.copy.deletedMany, moved));
     };
     for (const messageId of ids) {
       const answered = () => { if (answering.delete(messageId)) publish(); };
@@ -302,6 +306,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
           }
           if (res.status === "rolled_back") refused += 1;
           else if (res.status === "awaiting_organizer") waiting += 1;
+          else if (res.status === "confirmed" && !res.alreadyGone) moved += 1;
           settled();
         },
         () => { answered(); mailboxOf.delete(messageId); refused += 1; settled(); },
@@ -382,9 +387,13 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
          made it safe to postpone was the record on disk. With no record, a tab closed inside the
          window drops a delete the toast has already reported — so the press acts at once and the
          sentence says there is no undo, rather than offering one that cannot be honoured. */
+      const { pending, pendingMany, deleted, deletedMany } = deps.copy;
+      const pressSentence = pending === undefined
+        ? say(deleted, deletedMany, ids.length)
+        : say(pending, pendingMany, ids.length);
       if (written === "lost") {
         dispatch(pressId, ids);
-        deps.toast(`${say(deps.copy.deleted, deps.copy.deletedMany, ids.length)} ${deps.copy.noUndo}`);
+        deps.toast(`${pressSentence} ${deps.copy.noUndo}`);
         return true;
       }
       const timer = arm(() => commit(pressId), windowMs);
@@ -392,7 +401,7 @@ export function createDeleteUndo(deps: DeleteUndoDeps): DeleteUndo {
       open.set(pressId, { ids, timer, ends, undone });
       for (const id of ids) heldBy.set(id, pressId);
       publish();
-      deps.toast(say(deps.copy.deleted, deps.copy.deletedMany, ids.length), {
+      deps.toast(pressSentence, {
         action: deps.copy.undo,
         duration: windowMs,
         undo: true,

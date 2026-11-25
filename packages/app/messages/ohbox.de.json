@@ -75,6 +75,8 @@
     "moveCancel": "Abbrechen",
     "actionDelete": "Löschen",
     "deleteAsk": "In den Papierkorb.",
+    "toastMovingToTrash": "Wird in den Papierkorb verschoben.",
+    "toastMovingToTrashMany": "{count} Nachrichten werden in den Papierkorb verschoben.",
     "toastDeleted": "In den Papierkorb verschoben.",
     "deleteFailed": "Das Löschen konnte nicht gespeichert werden — die Nachricht ist noch an ihrem Platz.",
     "deleteNoTrash": "Nicht gelöscht — dieses Postfach hat keinen Papierkorb, und ohmail löscht nie endgültig.",

@@ -14,7 +14,7 @@ import { WayButton, type DoorWay } from "../stage/way.js";
 import { AccountStep, InviteStep, SentStep, VerifyStep } from "./AccountSteps.js";
 import type { JoinDoor } from "./door.js";
 import { CodesStep, FactorStep } from "./FactorSteps.js";
-import { Progress } from "./parts.js";
+import { JoinSignIn, Progress } from "./parts.js";
 import { DoneStep, MailboxStep, PlanStep } from "./PlanSteps.js";
 import "./placement.css";
 
@@ -24,16 +24,19 @@ export function JoinPage({ door }: { door: JoinDoor | None }): ReactNode {
   const gate = useText("gate");
   if (door === NONE) return <Unavailable gate={gate} demo={NONE} />;
   const { state } = door;
+  const signIn = <JoinSignIn door={door} join={join} />;
   switch (state.at) {
     case "unavailable":
       return <Unavailable gate={gate} demo={door.demo} signIn={door.signIn} />;
     case "resolving":
-      return <Resolving onboarding={onboarding} />;
+      return <Resolving onboarding={onboarding} signIn={signIn} />;
     case "unreachable":
       /* The first run's sentences are outside the document's first cut: no button stands without its name. */
-      if (!onboarding.has("resumeUnreachableTitle")) return <Resolving onboarding={onboarding} />;
+      if (!onboarding.has("resumeUnreachableTitle"))
+        return <Resolving onboarding={onboarding} signIn={signIn} />;
       return (
         <Page
+          back={signIn}
           line={onboarding("resumeUnreachableBody")}
           acts={
             <>
@@ -54,6 +57,7 @@ export function JoinPage({ door }: { door: JoinDoor | None }): ReactNode {
       const full = state.at === "full";
       return (
         <Page
+          back={full ? signIn : undefined}
           line={state.said}
           note={!full && state.said === join("expiredOpen") ? join("expiredNote") : undefined}
           acts={
@@ -137,11 +141,12 @@ function Unavailable({
  * The first run's sentences are outside the document's first cut, so until they have arrived the page waits without
  * a word.
  */
-function Resolving({ onboarding }: { onboarding: Text }): ReactNode {
+function Resolving({ onboarding, signIn }: { onboarding: Text; signIn: ReactNode }): ReactNode {
   const said = onboarding.has("resumeCheckingTitle") && onboarding.has("resumeChecking");
   return (
     <div className="way-live" aria-busy="true" aria-live="polite">
       <Page
+        back={said ? signIn : undefined}
         acts={null}
         material={
           said ? (

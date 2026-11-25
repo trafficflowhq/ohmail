@@ -1600,6 +1600,8 @@ export const DE: Deck = {
   deleteAsk: "In den Papierkorb.",
   deleteNote:
     "Sie wandert in den Papierkorb-Ordner auf deinem eigenen Mailserver — ohmail löscht nie unwiderruflich. Ab dort gelten die Papierkorb-Regeln deines Mailservers.",
+  toastMovingToTrash: "Wird in den Papierkorb verschoben.",
+  toastMovingToTrashMany: (count: number) => `${count} Nachrichten werden in den Papierkorb verschoben.`,
   toastDeleted: "In den Papierkorb verschoben.",
   deleteFailed: "Das Löschen konnte nicht gespeichert werden — die Nachricht ist noch an ihrem Platz.",
 
@@ -1668,7 +1670,7 @@ export const DE: Deck = {
   undo: "Rückgängig",
   toastUndone: "Rückgängig gemacht.",
   deleteUndone: "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
-  deleteUndoLost: "Das Rückgängigmachen konnte nicht gespeichert werden — die Nachricht ist im Papierkorb.",
+  deleteUndoLost: "Rückgängig konnte nicht gespeichert werden.",
   toastRoutingUndone: "Die Mails sind wieder da, wo sie waren, und es wurde keine Regel angelegt.",
   /* Siehe `copy.en.ts`. Der Doppelpunkt vor dem Ort nimmt keinen Fall — `toastMoved`s Regel. */
   routingReplayedTo: (n: number, place: string) =>

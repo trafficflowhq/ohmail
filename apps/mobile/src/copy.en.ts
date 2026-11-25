@@ -2266,6 +2266,8 @@ const TABLE = {
   deleteAsk: "Move to Trash.",
   deleteNote:
     "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
+  toastMovingToTrash: "Moving to Trash.",
+  toastMovingToTrashMany: (count: number) => `Moving ${count} messages to Trash.`,
   toastDeleted: "Moved to Trash.",
   deleteFailed: "That delete could not be saved — the message is where it was.",
   /*
@@ -2278,7 +2280,7 @@ const TABLE = {
   toastUndone: "Undone.",
   deleteUndone: "Not deleted — the message is where it was.",
   /* Said when the undo could not be saved on this device: the delete went ahead, Trash has it. */
-  deleteUndoLost: "That undo could not be saved — the message is in Trash.",
+  deleteUndoLost: "Couldn’t save Undo.",
   /**
    * MOVE'S OWN SETTLEMENT, because Move takes back two things. The mail is reversed on the wire
    * and the sender's RULE was never sent — a window, like the delete's — so the sentence names

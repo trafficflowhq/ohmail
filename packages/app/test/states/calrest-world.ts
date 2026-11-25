@@ -404,6 +404,7 @@ function readingCalendars(reading: ReturnType<typeof readingOf>): readonly Calen
 
 export function worldOf(at: WorldState): World {
   const reading = readingOf(at.state);
+  const unconfigured = at.state === "unconfigured";
   const connections: CalendarConnectionRecord[] = [
     connection("google", "google", "mila@lichtgrat.example", null, {
       ...(at.signedOut ? { status: "reconnect" } : {}),
@@ -436,8 +437,8 @@ export function worldOf(at: WorldState): World {
     });
   }
   const kinds: Record<string, readonly { readonly id: string }[]> = {
-    calendar_connection: connections,
-    calendar: readingCalendars(reading),
+    calendar_connection: unconfigured ? [] : connections,
+    calendar: unconfigured ? [] : readingCalendars(reading),
     calendar_event: events,
     calendar_suggestion: SUGGESTIONS,
   };
@@ -449,7 +450,8 @@ export function worldOf(at: WorldState): World {
     read: () => ({ version: () => 1 }),
   } as unknown as OhmailEngine;
   const settings: CalendarSettingsWire = {
-    enabledAt: UPDATED,
+    enabledAt: unconfigured ? null : UPDATED,
+    ...(unconfigured ? { unconfigured: true } : {}),
     secondZone: at.secondZone ? "Europe/Lisbon" : null,
     weekNumbers: false,
     dayFromMinute: 7 * 60,
