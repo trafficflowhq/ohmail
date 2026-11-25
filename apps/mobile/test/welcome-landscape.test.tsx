@@ -40,23 +40,23 @@ vi.mock("../src/ui/base", async () => {
 
 const { buttonByName, mount, styleOf } = await import("./_rendered-dom");
 const { default: WelcomeScreen } = await import("../app/welcome");
-const { Copy } = await import("../src/copy");
 
 afterEach(() => scene.push.mockClear());
 
 it("keeps all welcome actions above the home indicator after rotating to the short phone window", () => {
   const page = mount(h(WelcomeScreen));
   try {
-    const connect = () => buttonByName(page.el, Copy.welcomeConnect);
-    const scan = () => buttonByName(page.el, Copy.welcomeScan);
-    const servers = () => buttonByName(page.el, Copy.serversTitle);
+    const connect = () => buttonByName(page.el, "Sign in");
+    const scan = () => buttonByName(page.el, "Scan QR");
+    const servers = () => buttonByName(page.el, "Sign in self hosted");
     expect(styleOf(connect().parentElement).flexDirection).not.toBe("row");
 
     Object.assign(scene, { width: 905, height: 403, top: 0, bottom: 21 });
     page.render(h(WelcomeScreen));
     const actions = connect().parentElement!;
     expect(scan().parentElement).toBe(actions);
-    const scroller = actions.parentElement!;
+    const scroller = actions.closest('[data-label="Bounded onboarding"]')!;
+    expect(servers().parentElement).not.toBe(actions);
     expect(scroller.getAttribute("data-label")).toBe("Bounded onboarding");
     const px = (el: Element | null, key: string) => Number(styleOf(el)[key] ?? 0);
     const heights = [connect(), scan()].map((button) => Number(button.dataset.height));
@@ -67,15 +67,16 @@ it("keeps all welcome actions above the home indicator after rotating to the sho
     const mark = scroller.querySelector('svg[aria-label="ohmail"]')!;
     const hero = title.parentElement!;
     const center = hero.parentElement!;
-    const header = servers().parentElement!.parentElement!;
+    const header = scroller.previousElementSibling!.firstElementChild!;
     const required = scene.top + px(header, "height") + px(center, "paddingTop") + 2 * px(center, "paddingVertical")
       + px(hero, "paddingTop") + Number(mark.getAttribute("height")) + px(hero, "gap") + 2 * px(title, "lineHeight")
-      + px(actions, "paddingTop") + actionsHeight;
+      + px(actions.parentElement, "paddingTop") + px(actions.parentElement, "gap")
+      + actionsHeight + Number(servers().dataset.height);
     expect(px(scroller, "paddingBottom")).toBeGreaterThanOrEqual(scene.bottom);
     expect(required + px(scroller, "paddingBottom")).toBeLessThanOrEqual(scene.height);
 
-    act(() => { servers().click(); connect().click(); scan().click(); });
-    expect(scene.push.mock.calls).toEqual([["/servers"], ["/standalone"], ["/scan"]]);
+    act(() => { scan().click(); });
+    expect(scene.push.mock.calls).toEqual([["/scan"]]);
 
     Object.assign(scene, { width: 403, height: 905, top: 62, bottom: 34 });
     page.render(h(WelcomeScreen));

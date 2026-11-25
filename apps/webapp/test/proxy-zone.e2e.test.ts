@@ -243,7 +243,7 @@ describe.skipIf(!ENABLED)("the landing zone, over a real socket", () => {
 
   it("every other zone path: the zone saw no cookie, the bypass, and `rsc` when sent; ONE policy, the zone's", async () => {
     for (const path of [
-      "/de", "/privacy", "/imprint", "/subprocessors", "/support", "/delete-account", "/ohcal", "/flathub-verification",
+      "/de", "/privacy", "/terms", "/imprint", "/subprocessors", "/support", "/delete-account", "/ohcal", "/flathub-verification",
       "/.well-known/org.flathub.VerifiedApps.txt", "/site-assets/_next/static/a.js", "/landing/x.webp",
     ]) {
       zoneSeen = [];
@@ -329,7 +329,7 @@ describe.skipIf(!ENABLED)("the landing zone, over a real socket", () => {
 
   it("a case variant of a zone path is a 308 to the zone's spelling, which the zone answers under its one policy", async () => {
     for (const [variant, path] of [
-      ["/PRIVACY", "/privacy"], ["/De", "/de"], ["/Landing/x.webp", "/landing/x.webp"],
+      ["/PRIVACY", "/privacy"], ["/TERMS", "/terms"], ["/De", "/de"], ["/Landing/x.webp", "/landing/x.webp"],
       ["/.Well-Known/org.flathub.verifiedapps.txt", "/.well-known/org.flathub.VerifiedApps.txt"],
     ]) {
       zoneSeen = [];

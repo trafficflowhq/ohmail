@@ -240,13 +240,12 @@ export const OWN_PATHS = Object.freeze(OWN_ROUTES.map((r) => r.path));
 
 /**
  * THE LANDING ZONE'S PATHS — what `middleware.ts` rewrites to the website deployment once
- * `landing-zone.mjs` arms it: every route marked `zone`, then the three only the zone answers (the
- * Flathub alias, the website's asset prefix and its images). `ZONE_ONLY_PATHS` is the route census's
- * mark for those three: no route file here answers them. Each is a matcher literal, so every zone
- * path is in `EDGE_PATHS` too.
+ * `landing-zone.mjs` arms it: every route marked `zone`, then the paths only the zone answers
+ * (the Terms page, the Flathub alias, the website's asset prefix and its images).
+ * Each is a matcher literal, so every zone path is in `EDGE_PATHS` too.
  */
 export const ZONE_ONLY_PATHS = Object.freeze([
-  "/.well-known/org.flathub.VerifiedApps.txt", "/site-assets/:path*", "/landing/:path*",
+  "/terms", "/.well-known/org.flathub.VerifiedApps.txt", "/site-assets/:path*", "/landing/:path*",
 ]);
 export const ZONE_PATHS = Object.freeze([...OWN_ROUTES.filter((r) => r.zone).map((r) => r.path), ...ZONE_ONLY_PATHS]);
 

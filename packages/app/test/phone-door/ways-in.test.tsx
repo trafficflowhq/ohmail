@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TextProvider } from "../../src/text/index.js";
 import { PhoneDoorPage, type WayInSeed } from "../../src/phone-door/index.js";
 import phone from "../../messages/phone.en.json" with { type: "json" };
+import german from "../../messages/phone.de.json" with { type: "json" };
 import { fakePhoneDoor } from "../support/phone-door.js";
 
 const W = phone.phoneDoor;
@@ -36,9 +37,9 @@ const OFFER = {
   facts: { what: "computer" as const, address: "https://192.168.1.24:47800", key: "7F3A91C25D0E" },
 };
 
-function draw(fake: ReturnType<typeof fakePhoneDoor>, from?: WayInSeed) {
+function draw(fake: ReturnType<typeof fakePhoneDoor>, from?: WayInSeed, locale: "en" | "de" = "en") {
   return render(
-    <TextProvider locale="en" messages={phone as never} timeZone="UTC">
+    <TextProvider locale={locale} messages={(locale === "de" ? german : phone) as never} timeZone="UTC">
       <PhoneDoorPage door={fake.door} from={from} />
     </TextProvider>,
   );
@@ -56,30 +57,75 @@ afterEach(() => {
 });
 
 describe("the first screen", () => {
-  it("offers the mailbox, the scan and the list of servers, each sending its one step", async () => {
+  it.each(["ohmail", "ohcal"] as const)("shows the three ways in for %s", (app) => {
+    draw(fakePhoneDoor({ config: { app } }));
+    expect(says(W.welcome.line[app])).toBe(true);
+    expect(screen.getByRole("button", { name: "Scan QR" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign in self hosted" })).toBeTruthy();
+    expect(screen.getAllByRole("button")).toHaveLength(4); // The three choices and the doorbell.
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it.each(["ohmail", "ohcal"] as const)("shows the exact German choices for %s", (app) => {
+    draw(fakePhoneDoor({ config: { app, language: "de" } }), undefined, "de");
+    for (const name of ["QR scannen", "Anmelden", "Bei eigenem Server anmelden"])
+      expect(screen.getByRole("button", { name })).toBeTruthy();
+  });
+
+  it.each(["signInExpired", "signInDenied", "signInUnreachable", "signInNotOffered"] as const)(
+    "shows %s and returns from Cloud sign-in to the welcome choices",
+    async (code) => {
+      const fake = fakePhoneDoor({ answers: { "sign-in": () => ({ ok: false, said: { code, args: [] } }) } });
+      draw(fake);
+      press("Sign in");
+      await settle();
+      expect(fake.asked).toEqual([{ kind: "sign-in", ask: { address: null } }]);
+      expect(screen.getByRole("alert").textContent).toBe(R[code]);
+      press(W.back);
+      for (const name of ["Scan QR", "Sign in", "Sign in self hosted"])
+        expect(screen.getByRole("button", { name })).toBeTruthy();
+    },
+  );
+
+  it("shows finishing and holds Back while the approved pairing is being saved", async () => {
     const fake = fakePhoneDoor();
     draw(fake);
-    expect(says(W.welcome.line.ohmail)).toBe(true);
-    press(W.welcome.servers);
-    expect(fake.asked).toEqual([{ kind: "go", ask: "servers" }]);
-    press(W.welcome.connect);
-    expect(says(W.terms.say)).toBe(true);
+    press("Sign in");
+    await settle();
+    expect(screen.getByRole("button", { name: W.back })).toBeTruthy();
+
+    act(() => {
+      fake.tell({ session: "opening" });
+    });
+    expect(says(W.signIn.finishing)).toBe(true);
+    expect(screen.queryByRole("button", { name: W.back })).toBeNull();
+    act(() => {
+      expect(fake.back()).toBe(true);
+    });
+    expect(screen.queryByRole("button", { name: "Scan QR" })).toBeNull();
+    expect(says(W.signIn.finishing)).toBe(true);
   });
 
-  it("draws no mailbox way where this build withholds it, or where native's word is anything else", () => {
-    for (const organizes of ["withheld", "maybe"] as const) {
-      draw(fakePhoneDoor({ config: { organizes: organizes as "withheld" } }));
-      expect(screen.queryByRole("button", { name: (n) => n.startsWith(W.welcome.connect) })).toBeNull();
-      expect(screen.getByRole("button", { name: (n) => n.startsWith(W.welcome.scan) })).toBeTruthy();
-      cleanup();
-    }
-  });
-
-  it("says the calendar app's line and never offers it a mailbox", () => {
-    draw(fakePhoneDoor({ config: { app: "ohcal" } }));
-    expect(says(W.welcome.line.ohcal)).toBe(true);
-    expect(says(W.welcome.line.ohmail)).toBe(false);
-    expect(screen.queryByRole("button", { name: (n) => n.startsWith(W.welcome.connect) })).toBeNull();
+  it("keeps the server address editable after a validation error", async () => {
+    const fake = fakePhoneDoor({
+      answers: {
+        "sign-in": () => ({
+          ok: false,
+          said: { code: "baseCleartext", args: [] },
+        }),
+      },
+    });
+    draw(fake);
+    press("Sign in self hosted");
+    type(W.server.label, "http://mail.example.test");
+    press(W.server.continue);
+    await settle();
+    expect(fake.asked).toEqual([{ kind: "sign-in", ask: { address: "http://mail.example.test" } }]);
+    expect(screen.getByRole("alert").textContent).toBe(R.baseCleartext);
+    expect(screen.getByRole("textbox", { name: W.server.label })).toBeTruthy();
+    press(W.back);
+    expect(screen.getByRole("button", { name: "Scan QR" })).toBeTruthy();
   });
 
   it("rings its doorbell by itself a moment after it arrived, and leaves no timer behind when it is left", () => {
@@ -91,8 +137,8 @@ describe("the first screen", () => {
     expect(stop.hasAttribute("data-ringing")).toBe(true);
     cleanup();
     draw(fakePhoneDoor());
-    press(W.welcome.connect);
-    expect(says(W.terms.say)).toBe(true);
+    press("Scan QR");
+    expect(screen.getByRole("button", { name: W.scan.byHand })).toBeTruthy();
     expect(vi.getTimerCount()).toBe(0);
   });
 });
@@ -382,7 +428,7 @@ describe("back", () => {
     const fake = fakePhoneDoor();
     draw(fake);
     expect(fake.back()).toBe(false);
-    press(W.welcome.connect);
+    press("Scan QR");
     let took = false;
     act(() => void (took = fake.back()));
     expect(took).toBe(true);

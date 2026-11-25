@@ -91,6 +91,14 @@ describe("the sign-in returns to the approval by its id", () => {
     expect(pushed).toEqual([`/approve?request=${ID}`]);
   }, 20000);
 
+  it("a self-hosted phone's launch survives the password and authenticator steps", async () => {
+    const { rememberApprovalRequest } = await import("../app/(product)/approve/approval-return.js");
+    // The browser retains the launch cookie. Login only needs the approval ID to return to it.
+    rememberApprovalRequest(ID, Date.now(), { phone: true });
+    await signIn();
+    expect(pushed).toEqual([`/approve?request=${ID}&device=phone`]);
+  }, 20000);
+
   it("with nothing kept, the sign-in lands on the app as before", async () => {
     await signIn();
     expect(pushed).toEqual(["/"]);

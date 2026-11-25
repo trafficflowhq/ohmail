@@ -457,6 +457,7 @@ export function pairServer(opts: PairServerOptions = {}) {
   return {
     server,
     addMessage,
+    mintBrowserPair: mintPair,
     /** Put a single-use pairing token on the table — what the desktop's Devices pane mints. */
     mintPairToken: (token: string) => mintable.add(token),
     /** Put the sibling app's one-use handoff code on the table, bound to the receiver's challenge. */

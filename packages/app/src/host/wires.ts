@@ -142,7 +142,7 @@ export type { DraftFromTextBody } from "@ohmail/wire";
 /** A reply drafted by a model. The shell's `DraftReplyWire`. */
 export interface DraftReplyWire {
   configured: () => boolean;
-  create: (messageId: string, idempotencyKey: string) => Promise<{ draftId: string }>;
+  create: (messageId: string, idempotencyKey: string, onPreview?: (body: string) => void, fullConversation?: boolean) => Promise<{ draftId: string }>;
   read: (draftId: string) => Promise<DraftReplyRead>;
   /** A draft made of the person's own words, one key per press. `none`: no door for it here; the control does not offer it. */
   fromText: ((body: DraftFromTextBody, idempotencyKey: string) => Promise<{ draftId: string }>) | None;

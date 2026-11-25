@@ -1,20 +1,16 @@
 "use client";
 
-/**
- * `/approve` on a self-hosted server: the approval's closed page. A self-hosted server mounts no browser approval
- * (`routes/desktop-approval.ts` is the hosted table's alone): the desktop asks only the hosted service, so a link here
- * was made by somebody else. The page says so and nothing more: no settle, no read, no kept request.
- */
+/** The self-hosted approval page when opened without a valid request. */
 import { ApprovePage, type ApproveDoor } from "@ohmail/app/doors/approve";
 import { WebDoor } from "../door-device";
 import { useWebStepUp } from "../mailbox/StepUp";
 
 const nothing = (): void => {};
 
-export function ApproveClosed() {
+export function ApproveClosed({ expired = false }: { expired?: boolean }) {
   const stepUp = useWebStepUp();
   const door: ApproveDoor = {
-    state: { at: "closed" },
+    state: expired ? { at: "gone", said: null, phone: true } : { at: "closed" },
     confirm: nothing,
     deny: nothing,
     stepUp,

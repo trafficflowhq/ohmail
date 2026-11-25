@@ -10,7 +10,7 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { isRichEmpty, type RichValue } from "@ohmail/app-logic/writing/rich-text";
-import { Button } from "@ohmail/ui/base";
+import { Button, Dialog } from "@ohmail/ui/base";
 import { DraftControl, DraftTabs, GroupHeading } from "@ohmail/ui/mail";
 import { useOptionalReport } from "../../frame/commands.js";
 import { useText, type Text } from "../../text/index.js";
@@ -66,6 +66,7 @@ export function useDraftOffer(messageId: string, forward = false): DraftOffer | 
   const t = useText("write");
   const w = useWriting();
   const beside = useWriteBeside();
+  const [sharing, setSharing] = useState(false);
   const { control, pending, resolve, noCredits } = w.draftReplyChrome;
   const here = control.messageId === messageId;
   const drafting = here && control.phase === "running";
@@ -103,17 +104,50 @@ export function useDraftOffer(messageId: string, forward = false): DraftOffer | 
         ? t("draft.fromTextTitle", { cost: control.cost })
         : t("draft.title", { cost: control.cost });
   if (forward || !control.offered) return null;
+  const buy = (fullConversation?: boolean) => {
+    if (ownWords) fromText(messageId, madeOf, made, fullConversation);
+    else control.press(messageId, made, fullConversation);
+  };
   return {
     control: (
-      <DraftControl
-        label={label}
-        title={title}
-        cost={cost}
-        busy={drafting || waiting}
-        /* Another letter's draft is being written: this one cannot be pressed until it lands, and says so. */
-        disabled={waiting}
-        onPress={() => (ownWords ? fromText(messageId, madeOf, made) : control.press(messageId, made))}
-      />
+      <>
+        <DraftControl
+          label={label}
+          title={title}
+          cost={cost}
+          busy={drafting || waiting}
+          disabled={waiting}
+          onPress={() => buy()}
+        />
+        <Button
+          kind="quiet"
+          size="s"
+          opens="dialog"
+          disabled={drafting || waiting}
+          onPress={() => setSharing(true)}
+        >
+          {t("draft.fullTitle")}
+        </Button>
+        <Dialog
+          open={sharing}
+          title={t("draft.fullTitle")}
+          line={t("draft.fullDisclosure")}
+          announceLine
+          onClose={() => setSharing(false)}
+          cancel={{ label: t("draft.fullCancel") }}
+          keysOn="cancel"
+          confirm={{
+            label: t("draft.fullConfirm"),
+            disabled: drafting || waiting,
+            onPress: () => {
+              setSharing(false);
+              buy(true);
+            },
+          }}
+        >
+          {cost}
+        </Dialog>
+      </>
     ),
     notice:
       here && control.notice !== null ? control.notice : noCredits === true ? t("draft.noCredits") : null,

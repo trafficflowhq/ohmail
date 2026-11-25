@@ -48,7 +48,7 @@ export const UNBOUND_CALLS = [
   "POST /auth/2fa/webauthn/assert/verify", "POST /auth/2fa/webauthn/register/options",
   "POST /auth/2fa/webauthn/register/verify", "POST /auth/desktop-approval", "GET /auth/desktop-approval/:id",
   "POST /auth/desktop-approval/:id/confirm", "POST /auth/desktop-approval/:id/deny",
-  "POST /auth/desktop-approval/claim", "POST /auth/desktop-claim", "POST /auth/desktop-link",
+  "POST /auth/desktop-approval/claim", "POST /auth/desktop-approval/launch", "POST /auth/desktop-claim", "POST /auth/desktop-link",
   "POST /auth/login", "POST /auth/logout", "POST /auth/password", "POST /auth/password/reset",
   "POST /auth/password/reset/complete", "POST /auth/refresh",
   "POST /auth/refresh/logout", "POST /auth/register", "POST /auth/reuse-sweeps/ack", "GET /auth/session",

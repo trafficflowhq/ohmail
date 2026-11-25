@@ -1,6 +1,7 @@
 package app.ohmail.shell
 
 import android.content.Context
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -71,8 +72,45 @@ object ShellRuntime {
 class ShellModule : Module() {
   private val context: Context get() = requireNotNull(appContext.reactContext) { "no context" }
 
+  private var approval: Promise? = null
+  private val approvalRequest = 27419
+
   override fun definition() = ModuleDefinition {
     Name("OhmailShell")
+
+    AsyncFunction("openSelfHostApproval") { url: String, cookie: String, promise: Promise ->
+      val activity = appContext.currentActivity
+      if (activity == null || approval != null) {
+        promise.resolve("failed")
+      } else {
+        approval = promise
+        try {
+          activity.startActivityForResult(Intent(activity, ApprovalBrowserActivity::class.java)
+            .putExtra(ApprovalBrowserActivity.URL, url)
+            .putExtra(ApprovalBrowserActivity.COOKIE, cookie), approvalRequest)
+        } catch (_: RuntimeException) {
+          approval = null
+          promise.resolve("failed")
+        }
+      }
+    }.runOnQueue(expo.modules.kotlin.functions.Queues.MAIN)
+
+    AsyncFunction("closeSelfHostApproval") {
+      if (approval != null) appContext.currentActivity?.finishActivity(approvalRequest)
+      Unit
+    }.runOnQueue(expo.modules.kotlin.functions.Queues.MAIN)
+
+    OnActivityResult { _, result ->
+      if (result.requestCode == approvalRequest) {
+        val pending = approval
+        approval = null
+        pending?.resolve(when (result.resultCode) {
+          ApprovalBrowserActivity.WRONG_SERVER -> "wrong-server"
+          ApprovalBrowserActivity.FAILED -> "failed"
+          else -> "cancelled"
+        })
+      }
+    }
 
     Function("webViewCheck") { WebViewCheck.read(context).toMap() }
 

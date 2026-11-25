@@ -1,5 +1,5 @@
 import type { KbEntryDTO, Page } from "@ohmail/wire";
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
 import { kbEntries, poolKeyOf } from "@trafficflow/db";
 import { claimOrLose, withAccountTx, type IdempotencyClaim, type ServiceContext, type Db } from "./context.js";
 import { dialect, pgOnly } from "@trafficflow/db/dialect";
@@ -157,7 +157,7 @@ export class KbService {
    * DEGRADES to an ILIKE-contains so retrieval still returns matches offline. A
    * blank query yields nothing (no meaningful predicate). accountId-scoped.
    */
-  async retrieve(ctx: ServiceContext, query: string, k = DEFAULT_K): Promise<KbEntryDTO[]> {
+  async retrieve(ctx: ServiceContext, query: string, k = DEFAULT_K, { manualOnly = false } = {}): Promise<KbEntryDTO[]> {
     /**
      * The retrieval term is sender-chosen and reaches a per-row trigram comparison: the snippet
      * is capped at 200 characters, the SUBJECT is whatever header arrived — a stranger's 100 KB
@@ -180,11 +180,14 @@ export class KbService {
     const trgm = await hasTrgm(ctx.db);
     const lex = d.search.lexical(q, "kb");
     const fuzz = d.search.fuzzy(q, "kb", { trigram: trgm, threshold: FUZZY_THRESHOLD });
+    // Workflows can save a preview from another conversation. Replies use manually added notes.
+    const manual = manualOnly ? isNull(kbEntries.workflowDedupKey) : undefined;
 
     const retrieval = sql`
       select id
       from kb_entries
       where account_id = ${ctx.accountId} and (${lex.pred} or ${fuzz.pred})
+      ${manual ? sql`and ${manual}` : sql.empty()}
       order by (${lex.rank} + ${fuzz.rank}) desc, updated_at desc
       limit ${limit}`;
 
@@ -195,7 +198,7 @@ export class KbService {
     const out: KbEntryDTO[] = [];
     for (const h of hits) {
       const [row] = await ctx.db.select().from(kbEntries)
-        .where(and(eq(kbEntries.id, h.id), eq(kbEntries.accountId, ctx.accountId))).limit(1);
+        .where(and(eq(kbEntries.id, h.id), eq(kbEntries.accountId, ctx.accountId), manual)).limit(1);
       if (row) out.push(toDTO(row));
     }
     return out;

@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import UIKit
 import WebKit
 
 /** The shell's counts: numbers by name, what the diagnostics may carry; and the views alive now. */
@@ -14,8 +15,25 @@ enum ShellRuntime {
 
 /** The shell's module (iOS). Written, not compiled here. */
 public final class ShellModule: Module {
+  private weak var approval: ApprovalBrowserController?
+
   public func definition() -> ModuleDefinition {
     Name("OhmailShell")
+
+    AsyncFunction("openSelfHostApproval") { (url: String, cookie: String, promise: Promise) in
+      guard self.approval == nil, let top = self.appContext?.utilities?.currentViewController(),
+            let browser = ApprovalBrowserController(address: url, launchCookie: cookie, answer: { [weak self] result in
+              self?.approval = nil
+              promise.resolve(result)
+            }) else { return promise.resolve("failed") }
+      let sheet = UINavigationController(rootViewController: browser)
+      sheet.modalPresentationStyle = .formSheet
+      sheet.presentationController?.delegate = browser
+      self.approval = browser
+      top.present(sheet, animated: true)
+    }.runOnQueue(.main)
+
+    AsyncFunction("closeSelfHostApproval") { self.approval?.close() }.runOnQueue(.main)
 
     // iOS has one web view, the system's; it always names a message's frame and origin.
     Function("webViewCheck") { ["installed": true, "major": nil, "listener": true, "sealed": true] as [String: Any?] }

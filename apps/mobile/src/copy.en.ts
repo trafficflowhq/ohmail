@@ -32,8 +32,12 @@ const TABLE = {
   /* --------------------------------------------------------------- welcome */
 
   welcomeTitle: "Mail from people you said yes to.",
-  welcomeConnect: "Connect a mailbox",
-  welcomeScan: "Scan a code",
+  welcomeScan: "Scan QR",
+  welcomeSignIn: "Sign in",
+  welcomeSignInSelfHosted: "Sign in self hosted",
+  signInWaiting: "Finish signing in in the browser.",
+  signInFinishing: "Finishing sign-in…",
+  signInServerAddress: "Server address",
 
   /* ------------------------------------------------------------------ doors */
 
@@ -1026,6 +1030,15 @@ const TABLE = {
     "That is a numeric address on a network, and no certificate authority can vouch for one — "
     + "so ohmail can only trust it through the code your computer shows. Open Settings → "
     + "Devices there and scan that instead.",
+  signInExpired: "This sign-in request expired. Start again.",
+  signInDenied: "The sign-in request was declined.",
+  signInUnreachable: "Could not reach the server. Check your connection and try again.",
+  signInNotOffered: "This server does not support signing in from the phone’s browser.",
+  signInRateLimited: "Too many sign-in attempts. Try again later.",
+  signInRefused: "Could not finish signing in. Start again.",
+  signInNoBrowser: "Could not open the sign-in browser.",
+  signInWrongServer: (host: string) => `The sign-in page must stay on ${host}.`,
+  signInCancelled: "The sign-in was cancelled.",
   baseCleartext:
     "That is a plain, unencrypted address, and ohmail will not send your mail over one. "
     + "Give the https address you open ohmail at in a browser.",
@@ -1556,6 +1569,9 @@ const TABLE = {
   draftAiNeedWords: "Write a few words first.",
   draftAiConfirm: `Use ${DRAFT_REPLY_COST_CREDITS} credits`,
   draftAiOffer: `This writes a draft using ${DRAFT_REPLY_COST_CREDITS} credits. You can edit it before sending.`,
+  draftAiFullTitle: "Use full conversation",
+  draftAiFullDisclosure: "For this draft, share your typed text, the full stored text of the message you’re answering, and up to 4,000 characters from up to 20 earlier messages in this conversation with your configured AI provider.",
+  draftAiFullConfirm: "Share and draft",
   composeFormat: "Format text",
   composeBold: "Bold",
   composeItalic: "Italic",

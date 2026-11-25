@@ -89,6 +89,7 @@ export * from "./model-rules.js";
 export * from "./sender-check.js";
 export * from "./brands.js";
 export * from "./draft-prompt.js";
+export { inSentFolderSql } from "./correspondent.js";
 // The WORKFLOW SHAPES and their validators — the step/trigger grammar plus the two validators the
 // rules engine checks a stored workflow against. `workflow-shapes.js` is a LEAF outside `ai/` on
 // purpose: it names no model and carries no prompt, so it is mail-half code the local engine may

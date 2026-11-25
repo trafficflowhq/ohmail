@@ -37,13 +37,13 @@ export interface DraftReplyControl {
    * same message after a failure it retries that purchase with its key; a press while one runs does nothing. `own` is
    * the person's own text in that reply as the press found it: kept as {@link own} once the draft lands over it.
    */
-  press: (messageId: string, own: RichValue) => void;
+  press: (messageId: string, own: RichValue, fullConversation?: boolean) => void;
   /**
    * A draft made of the person's own words in the reply to this message, in one press, as {@link press} is: one key
    * per press, the same words pressed again after a failure retry that purchase, a press while one runs does nothing.
    * `none` where the host has no door for it: the control does not offer it.
    */
-  fromText: ((messageId: string, text: string, own: RichValue) => void) | "none";
+  fromText: ((messageId: string, text: string, own: RichValue, fullConversation?: boolean) => void) | "none";
   /**
    * A new letter drafted from the person's own words: the words, the address it goes from and its subject, as
    * {@link fromText} is pressed, kept under {@link NEW_LETTER}. `none` exactly when {@link fromText} is.

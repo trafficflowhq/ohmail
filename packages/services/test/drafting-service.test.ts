@@ -2,11 +2,13 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { eq } from "drizzle-orm";
-import { mailboxes, threads, messages, kbEntries, drafts, clientIdempotencyKey } from "@trafficflow/db";
+import { mailboxes, threads, messages, messageBodies, messageInstances, kbEntries, drafts, clientIdempotencyKey } from "@trafficflow/db";
 import { DraftingService, DraftsService, DRAFT_OWN_TEXT_MAX_CHARS, dbFor } from "../src/index.js";
 import { fakeSpendPort } from "./helpers/spend-port-fake.js";
 import type { ServiceContext } from "../src/index.js";
 import { makeSonnetDrafter, type DraftInput, type DraftPort } from "@trafficflow/core";
+
+import { pemHeader } from "../../../test/support/fixture-credentials.js";
 
 const NOW = new Date("2026-07-28T12:00:00.000Z");
 
@@ -59,6 +61,259 @@ async function seedMsg(db: Awaited<ReturnType<typeof setup>>["db"], o: SeedMsg):
 
 const svc = new DraftingService();
 const draftsSvc = new DraftsService();
+
+function captureDraftRequest(stream: boolean) {
+  const requests: { system: [{ text: string }]; messages: [{ content: string }] }[] = [];
+  const drafter = makeSonnetDrafter({ messages: { async create(request) {
+    requests.push(request as (typeof requests)[number]);
+    return { content: [{ type: "text", text: '{"subject":"Re: Plans","body":"Thanks for the update.","rationale":"reply"}' }] };
+  } } }, { stream });
+  return { drafter, requests };
+}
+
+describe("the reply composer’s provider request", () => {
+  const keyHeader = pemHeader("PRIVATE KEY");
+  it.each([
+    { value: "fixture" + ".bearer-value", line: (value: string) => `Authorization: Bearer ${value}` },
+    { value: "synthetic" + "KeyPayload", line: (value: string) => [keyHeader, value, keyHeader.replace("BEGIN", "END")].join("\n") },
+    { value: "fake" + "passphrase", line: (value: string) => `The password is ${value}` },
+    { value: "mock" + "recovery", line: (value: string) => `Backup code: ${value}` },
+  ])("redacts explicit credentials beyond the preview of both letters ($value)", async ({ value, line }) => {
+    const { db, A, mbA, ctxA } = await setup();
+    const [thread] = await db.insert(threads).values({ accountId: A, subject: "Plans" }).returning();
+    const here = { accountId: A, mailboxId: mbA, threadId: thread!.id };
+    const target = await seedMsg(db, here);
+    const prior = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 1_000) });
+    const intro = "The workshop moved to the west room. ".repeat(8);
+    const close = "Please use the blue copy at the meeting.";
+    const text = `${intro}\n\n${line(value)}\n\n${close}`;
+    await db.insert(messageBodies).values([target, prior].map(messageId => ({ accountId: A, messageId, text })));
+
+    const { drafter, requests } = captureDraftRequest(false);
+    const deps = { drafter, fullConversation: true };
+    await svc.draftFromMessage(ctxA, target, deps);
+
+    const { incoming, context } = JSON.parse(requests[0]!.messages[0].content);
+    for (const message of [incoming, context.threadMessages[0]]) {
+      expect.soft(message.text).toContain(intro);
+      expect.soft(message.text).toContain(close);
+      expect.soft(message.text).not.toContain(value);
+    }
+  });
+
+  it.each([
+    { name: "a password followed by prose on the same line", label: "Ask the workshop lead. The password is ",
+      value: "fixture" + "-lantern", tail: ". The blue copy is on the desk." },
+    { name: "an unquoted multiword passphrase", label: "Passphrase: ",
+      value: ["umber", "gull", "cedar"].join(" "), tail: "" },
+  ])("masks $name in both letters", async ({ label, value, tail }) => {
+    const { db, A, mbA, ctxA } = await setup();
+    const [thread] = await db.insert(threads).values({ accountId: A, subject: "Plans" }).returning();
+    const here = { accountId: A, mailboxId: mbA, threadId: thread!.id };
+    const target = await seedMsg(db, here);
+    const prior = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 1_000) });
+    const intro = "The workshop moved to the west room. ".repeat(8);
+    const close = "Please use the red copy at the meeting.";
+    const text = `${intro}\n\n${label}${value}${tail}\n\n${close}`;
+    await db.insert(messageBodies).values([target, prior].map(messageId => ({ accountId: A, messageId, text })));
+
+    const { drafter, requests } = captureDraftRequest(false);
+    await svc.draftFromMessage(ctxA, target, { drafter, fullConversation: true });
+
+    const { incoming, context } = JSON.parse(requests[0]!.messages[0].content);
+    for (const message of [incoming, context.threadMessages[0]]) {
+      for (const word of value.split(" ")) expect.soft(message.text.includes(word)).toBe(false);
+      expect.soft(message.text).toBe(`${intro}\n\n${label}[code]${tail}\n\n${close}`);
+    }
+  });
+
+  it("uses the excerpt for each letter with an unterminated password value", async () => {
+    const { db, A, mbA, ctxA } = await setup();
+    const [thread] = await db.insert(threads).values({ accountId: A, subject: "Plans" }).returning();
+    const here = { accountId: A, mailboxId: mbA, threadId: thread!.id };
+    const target = await seedMsg(db, { ...here, snippet: "The current plan." });
+    const prior = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 1_000), snippet: "The earlier plan." });
+    const text = "The workshop moved to the west room. ".repeat(8)
+      + '\n\nPassphrase: "' + ["umber", "gull", "cedar"].join("\n");
+    await db.insert(messageBodies).values([target, prior].map(messageId => ({ accountId: A, messageId, text })));
+
+    const { drafter, requests } = captureDraftRequest(false);
+    await svc.draftFromMessage(ctxA, target, { drafter, fullConversation: true });
+
+    const { incoming, context } = JSON.parse(requests[0]!.messages[0].content);
+    expect.soft(incoming.text !== undefined).toBe(false);
+    expect.soft(context.threadMessages[0].text !== undefined).toBe(false);
+    expect(incoming.snippet).toBe("The current plan.");
+    expect(context.threadMessages[0].snippet).toBe("The earlier plan.");
+  });
+
+  it.each([false, true])("carries grounded conversation and the person's voice (with typed text: %s)", async (withText) => {
+    const { db, A, mbA, ctxA } = await setup();
+    const [thread, other] = await db.insert(threads).values([
+      { accountId: A, subject: "Plans" }, { accountId: A, subject: "Plans" },
+    ]).returning();
+    const here = { accountId: A, mailboxId: mbA, threadId: thread!.id };
+    const ownerAddress = "a@x-ch.example";
+    const prior = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 2_000), snippet: "Guten Tag" });
+    const sent = await seedMsg(db, {
+      ...here, date: new Date(NOW.getTime() - 1_000), fromAddress: ownerAddress, snippet: "Hallo!",
+    });
+    await db.insert(messageInstances).values({
+      accountId: A, mailboxId: mbA, messageId: sent, folder: "Sent", uidvalidity: 1n, uid: 1,
+    });
+    const answered = await seedMsg(db, { ...here, subject: "Plans", snippet: "Guten Tag" });
+    const future = await seedMsg(db, { ...here, date: new Date(NOW.getTime() + 1_000), snippet: "Later message" });
+    const unrelated = await seedMsg(db, { ...here, threadId: other!.id, subject: "Plans", snippet: "Separate conversation" });
+    const targetText = "Guten Tag!\n\n" + "Die Unterlagen liegen zur Ansicht bereit. ".repeat(8)
+      + "\nKönnen Sie die rote Fassung zur Besprechung mitbringen?";
+    const ownStyle = "Hallo!\nSchick mir doch die Skizze 🙂\nBis bald, Alex";
+    const priorText = "Guten Tag,\nich habe zwei Entwürfe vorbereitet.\nFreundliche Grüße, Kim";
+    await db.insert(messageBodies).values([
+      { accountId: A, messageId: prior, text: priorText },
+      { accountId: A, messageId: sent, text: ownStyle },
+      { accountId: A, messageId: answered, text: targetText },
+      { accountId: A, messageId: future, text: "Later message body" },
+      { accountId: A, messageId: unrelated, text: "Separate conversation body" },
+    ]);
+
+    const typed = "Hey!\nI can bring the blue copy. Keep the red one on file.\nCheers, Alex";
+    const { drafter, requests } = captureDraftRequest(withText);
+    const deps = { drafter, fullConversation: true };
+    if (withText) await svc.draftFromText(ctxA, { text: typed, inReplyToMessageId: answered }, deps);
+    else await svc.draftFromMessage(ctxA, answered, deps);
+
+    expect(requests).toHaveLength(1);
+    const [request] = requests;
+    const payload = JSON.parse(request!.messages[0].content);
+    expect(payload.own).toEqual(withText ? { text: typed } : undefined);
+    expect(payload.incoming).toMatchObject({ from: "sender@example.com", subject: "Plans", text: targetText });
+    expect(payload.context.threadMessages).toEqual([
+      { from: ownerAddress, text: ownStyle, writtenByOwner: true },
+      { from: "sender@example.com", text: priorText, writtenByOwner: false },
+    ]);
+    expect(request!.messages[0].content).not.toMatch(/Separate conversation|Later message/);
+    const instructions = request!.system[0].text;
+    expect(instructions).toMatch(/language of the conversation/i);
+    expect(instructions).toMatch(/writtenByOwner/);
+    expect(instructions).toMatch(/greeting.*sign-off.*du\/Sie/i);
+    expect(instructions).toMatch(/no filler/i);
+    if (withText) {
+      expect(instructions).toMatch(/if the user.s text is in a different language/i);
+      expect(instructions).toMatch(/every point, decision, and fact.*in the same order/i);
+    }
+  });
+
+  it("spends the history budget on the newest earlier letters", async () => {
+    const { db, A, mbA, ctxA } = await setup();
+    const [thread] = await db.insert(threads).values({ accountId: A, subject: "Plans" }).returning();
+    const here = { accountId: A, mailboxId: mbA, threadId: thread!.id };
+    const target = await seedMsg(db, here);
+    const newest = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 1_000), snippet: "Newest" });
+    const second = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 2_000), snippet: "Second" });
+    const oldest = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 3_000), snippet: "Oldest" });
+    const newestText = "Newest. " + "a ".repeat(1_498);
+    const secondText = "Second. " + "b ".repeat(1_498);
+    await db.insert(messageBodies).values([
+      { accountId: A, messageId: newest, text: newestText },
+      { accountId: A, messageId: second, text: secondText },
+      { accountId: A, messageId: oldest, text: "Oldest body" },
+    ]);
+
+    const { drafter, requests } = captureDraftRequest(false);
+    await svc.draftFromMessage(ctxA, target, { drafter, fullConversation: true });
+
+    const payload = JSON.parse(requests[0]!.messages[0].content);
+    const history = payload.context.threadMessages.map((message: { text: string }) => message.text);
+    expect(history).toEqual([newestText, secondText.slice(0, 4_000 - newestText.length)]);
+  });
+
+  it("redacts credentials in full letters before the history budget cuts their text", async () => {
+    const { db, A, mbA, ctxA } = await setup();
+    const [thread] = await db.insert(threads).values({ accountId: A, subject: "Account update" }).returning();
+    const here = { accountId: A, mailboxId: mbA, threadId: thread!.id, subject: "Account update" };
+    const target = await seedMsg(db, here);
+    const prior = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 1_000) });
+    const targetCode = "482" + "913";
+    const priorCode = "638" + "194";
+    const targetIntro = "We have received your request. ".repeat(8);
+    const priorIntro = "We are reviewing your request. ".padEnd(3_993, " ") + "\n";
+    await db.insert(messageBodies).values([
+      { accountId: A, messageId: target, text: `${targetIntro}\nYour sign-in code is ${targetCode}.` },
+      { accountId: A, messageId: prior, text: `${priorIntro}${priorCode} is your verification code.` },
+    ]);
+
+    const { drafter, requests } = captureDraftRequest(false);
+    await svc.draftFromMessage(ctxA, target, { drafter, fullConversation: true });
+
+    const wire = requests[0]!.messages[0].content;
+    const payload = JSON.parse(wire);
+    expect(payload.incoming.text).toBe(`${targetIntro}\nYour sign-in code is [code].`);
+    expect(payload.context.threadMessages[0].text).toBe(`${priorIntro}[code]`);
+    expect(wire).not.toContain(targetCode);
+    expect(wire).not.toContain(priorCode);
+  });
+
+  it.each([false, true])("omits previews saved to the knowledge base from other conversations (with typed text: %s)", async (withText) => {
+    const { db, A, mbA, ctxA } = await setup();
+    const target = await seedMsg(db, { accountId: A, mailboxId: mbA, subject: "Room booking", snippet: "" });
+    await db.insert(kbEntries).values([
+      { accountId: A, title: "Room booking", content: "Use the upstairs room for meetings." },
+      { accountId: A, title: "Room booking", content: "Unrelated booking conversation", workflowDedupKey: "saved-preview" },
+    ]);
+    const { drafter, requests } = captureDraftRequest(false);
+    if (withText) await svc.draftFromText(ctxA, { text: "Please confirm the room.", inReplyToMessageId: target }, { drafter });
+    else await svc.draftFromMessage(ctxA, target, { drafter });
+
+    const payload = JSON.parse(requests[0]!.messages[0].content);
+    expect(payload.context.kbEntries).toEqual([
+      { title: "Room booking", content: "Use the upstairs room for meetings." },
+    ]);
+  });
+
+  it("keeps automatic Sent replies in the conversation and uses human Sent replies for style", async () => {
+    const { db, A, mbA, ctxA } = await setup();
+    const [thread] = await db.insert(threads).values({ accountId: A, subject: "Plans" }).returning();
+    const here = { accountId: A, mailboxId: mbA, threadId: thread!.id };
+    const target = await seedMsg(db, here);
+    const sent = { ...here, fromAddress: "a@x-ch.example" };
+    const human = await seedMsg(db, { ...sent, date: new Date(NOW.getTime() - 2_000) });
+    const automatic = await seedMsg(db, { ...sent, date: new Date(NOW.getTime() - 1_000) });
+    await db.insert(messageInstances).values([human, automatic].map((messageId, index) => ({
+      accountId: A, mailboxId: mbA, messageId, folder: "Sent", uidvalidity: 1n, uid: index + 1,
+    })));
+    await db.insert(messageBodies).values([
+      { accountId: A, messageId: human, text: "Hey, Tuesday works for me." },
+      { accountId: A, messageId: automatic, text: "I am out of the office.", headers: { "auto-submitted": ["auto-replied"] } },
+    ]);
+    const { drafter, requests } = captureDraftRequest(false);
+    const deps = { drafter, fullConversation: true };
+    await svc.draftFromMessage(ctxA, target, deps);
+
+    expect(JSON.parse(requests[0]!.messages[0].content).context.threadMessages).toEqual([
+      expect.objectContaining({ text: "I am out of the office.", writtenByOwner: false }),
+      expect.objectContaining({ text: "Hey, Tuesday works for me.", writtenByOwner: true }),
+    ]);
+  });
+
+  it.each(["\n", "\u00a0"])("uses the HTML of answered and earlier letters with blank text parts (%j)", async (text) => {
+    const { db, A, mbA, ctxA } = await setup();
+    const [thread] = await db.insert(threads).values({ accountId: A, subject: "Plans" }).returning();
+    const here = { accountId: A, mailboxId: mbA, threadId: thread!.id };
+    const target = await seedMsg(db, { ...here, snippet: "In the workshop" });
+    const prior = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 1_000), snippet: "The earlier plan" });
+    await db.insert(messageBodies).values([
+      { accountId: A, messageId: target, text, html: "<p>In the workshop</p><p>Bring the red notebook.</p>" },
+      { accountId: A, messageId: prior, text, html: "<p>The earlier plan</p><p>Meet by the east door.</p>" },
+    ]);
+    const { drafter, requests } = captureDraftRequest(false);
+    const deps = { drafter, fullConversation: true };
+    await svc.draftFromMessage(ctxA, target, deps);
+
+    const { incoming, context } = JSON.parse(requests[0]!.messages[0].content);
+    expect.soft(incoming.text ?? "").toContain("Bring the red notebook.");
+    expect.soft(context.threadMessages[0].text ?? "").toContain("Meet by the east door.");
+  });
+});
 
 describe("DraftingService.draftFromMessage — accepts authentication mail", () => {
   it("drafts a sign-in message with the no_ai flag", async () => {

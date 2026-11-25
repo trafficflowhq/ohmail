@@ -156,6 +156,7 @@ export interface DoorRequests {
       | { readonly k: "reached"; readonly address: string; readonly flavor: string; readonly apiUnder: string | null }
       | { readonly k: "refused"; readonly said: SaidRefusal };
   };
+  readonly "sign-in": { readonly ask: { readonly address: string | null }; readonly answer: Done };
   readonly "scan.start": { readonly ask: { readonly rect: Rect }; readonly answer: Camera };
   readonly "scan.move": { readonly ask: { readonly rect: Rect }; readonly answer: Camera };
   readonly "scan.stop": { readonly ask: Empty; readonly answer: Empty };
@@ -257,6 +258,7 @@ const FIELDS: { readonly [K in DoorKind]: (m: Record<string, unknown>) => boolea
   sync: none,
   disconnect: none,
   "server.ask": (m) => isStr(m.address, 2048),
+  "sign-in": (m) => m.address === null || isStr(m.address, 2048),
   "scan.start": (m) => isRect(m.rect),
   "scan.move": (m) => isRect(m.rect),
   "scan.stop": none,

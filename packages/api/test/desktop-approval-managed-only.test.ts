@@ -6,12 +6,7 @@ import { selfHostRoutes } from "@trafficflow/api/self-host";
 import { makeHttpServer } from "@trafficflow/core/adapters/http-host";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
-/**
- * The browser approval of a desktop sign-in lives on the hosted service only. A self-hosted
- * server answers 404 on every approval route, measured behind its own HTTP adapter with the
- * proxy-shaped forwarding a bundled reverse proxy sends; the hosted table keeps the routes and
- * still tells two networks apart.
- */
+/** The same HTTP approval surface supports phones on both hosts and desktop requests on Cloud. */
 
 const key = (r: { method: string; pattern: string }): string => `${r.method} ${r.pattern}`;
 const APPROVAL = ["POST /auth/desktop-approval", "POST /auth/desktop-approval/claim",
@@ -36,17 +31,17 @@ async function selfHosted(deps: ApiDeps): Promise<string> {
     resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`)));
 }
 
-describe("the browser approval of a desktop sign-in is the hosted service's alone", () => {
-  it("the tables: every approval route is in the hosted table, none in the self-hosted one", () => {
+describe("browser approval by deployment", () => {
+  it("mounts each approval route once on both servers", () => {
     expect(desktopApprovalRoutes.map(key)).toEqual(APPROVAL);
     for (const k of APPROVAL) {
       expect(apiRoutes.filter((r) => key(r) === k), k).toHaveLength(1);
-      expect(selfHostRoutes.some((r) => key(r) === k), `${k} is mounted on a self-hosted server`).toBe(false);
+      expect(selfHostRoutes.filter((r) => key(r) === k), k).toHaveLength(1);
       expect(authRoutes.some((r) => key(r) === k), `${k} rides in authRoutes, which self-host spreads whole`).toBe(false);
     }
   });
 
-  it("a self-hosted server answers 404 on all five, and still serves the auth surface beside them", async () => {
+  it("self-hosting refuses desktop start and claim and hides unknown approvals", async () => {
     const { db, deps } = await makeDeps();
     const base = await selfHosted(deps);
     const me = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
@@ -70,6 +65,53 @@ describe("the browser approval of a desktop sign-in is the hosted service's alon
     expect((await fetch(`${base}/auth/session`, { headers: bearer })).status).toBe(200);
     const sibling = await fetch(`${base}/auth/desktop-claim`, { method: "POST", headers: json, body: "{}" });
     expect(sibling.status, "a sibling auth route must still be mounted").not.toBe(404);
+  });
+
+  it("the same self-hosted server starts, confirms and claims a phone approval", async () => {
+    const { db, deps } = await makeDeps();
+    const base = await selfHosted(deps);
+    const me = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const verifier = randomBytes(32).toString("base64url");
+    const json = { "content-type": "application/json" };
+    const approval = `${base}/auth/desktop-approval`;
+    const start = await fetch(approval, { method: "POST", headers: json, body: JSON.stringify({
+      challenge: createHash("sha256").update(verifier).digest("base64url"),
+      kind: "mobile-android", label: "Android",
+    }) });
+    expect(start.status).toBe(200);
+    const { approvalId } = (await start.json()) as { approvalId: string };
+    const browser = { ...json, authorization: `Bearer ${me.token}` };
+    const read = await fetch(`${approval}/${approvalId}`, { headers: browser });
+    expect(await read.json()).toMatchObject({ label: "Android", platform: "Android" });
+    expect((await fetch(`${approval}/${approvalId}/confirm`, { method: "POST", headers: browser })).status).toBe(200);
+    const claim = () => fetch(`${approval}/claim`, { method: "POST", headers: json, body: JSON.stringify({
+      approvalId, kind: "mobile-android", verifier,
+    }) });
+    expect((await claim()).status).toBe(200);
+    expect((await claim()).status).not.toBe(200);
+  });
+
+  it("a self-host launch proves the exact phone request and origin until expiry", async () => {
+    const { deps, clock } = await makeDeps();
+    const base = await selfHosted(deps);
+    const origin = "https://mail.example.test";
+    const headers = { "content-type": "application/json" };
+    const start = await fetch(`${base}/auth/desktop-approval`, { method: "POST", headers, body: JSON.stringify({
+      kind: "mobile-ios", challenge: challenge(), launchOrigin: origin,
+    }) });
+    expect(start.status).toBe(200);
+    const { approvalId, launch } = (await start.json()) as { approvalId: string; launch: string };
+    expect(launch).toMatch(/^\d{13}\.[0-9a-f]{32}$/);
+    const prove = (fields = {}) => fetch(`${base}/auth/desktop-approval/launch`, { method: "POST", headers,
+      body: JSON.stringify({ approvalId, launch, origin, ...fields }),
+    });
+    expect((await prove()).status).toBe(204);
+    expect((await prove({ approvalId: randomUUID() })).status).toBe(404);
+    expect((await prove({ origin: "https://other.example.test" })).status).toBe(404);
+    expect((await prove({ launch: null })).status).toBe(404);
+    clock.advance(300_000);
+    expect((await prove()).status).toBe(410);
+    expect((await prove({ origin: "https://other.example.test" })).status).toBe(404);
   });
 
   it("the hosted table keeps them: a desktop and a browser on two networks read different", async () => {

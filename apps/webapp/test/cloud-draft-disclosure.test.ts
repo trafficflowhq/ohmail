@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { MAX_DRAFT_THREAD_MESSAGES } from "@trafficflow/core/mail";
 
 import en from "../../../packages/app/messages/mailboxes.en.json";
 import de from "../../../packages/app/messages/mailboxes.de.json";
@@ -19,12 +20,12 @@ function constant(name: string): number {
 }
 
 describe("the Cloud consent step says what a draft sends", () => {
-  const THREAD = constant("MAX_THREAD_MESSAGES");
+  const THREAD = MAX_DRAFT_THREAD_MESSAGES;
   const NOTES = constant("DEFAULT_KB_K");
 
   it("the service still grounds a draft in the thread and the knowledge base", () => {
-    expect(SERVICE).toMatch(/const threadMessages = target\.threadId\s+\? await this\.retrieveThreadContext\(ctx, target\.threadId, target\.id\)/);
-    expect(SERVICE).toMatch(/const kbHits = await this\.kb\.retrieve\(ctx, query, deps\.k \?\? DEFAULT_KB_K\)/);
+    expect(SERVICE).toContain("const threadMessages = await this.retrieveThreadContext(ctx, target, fullConversation)");
+    expect(SERVICE).toContain("const kbHits = await this.kb.retrieve(ctx, query, deps.k ?? DEFAULT_KB_K, { manualOnly: true })");
     expect(SERVICE).toMatch(/context: \{\s+kbEntries: kbHits\.map\(\(e\) => \(\{ title: e\.title, content: e\.content \}\)\),\s+threadMessages,\s+\}/);
   });
 
@@ -49,6 +50,7 @@ describe("the Cloud consent step says what a draft sends", () => {
     expect(/, through the ([^.]+)\./.exec(enBody)?.[1]).toBe(enProvider);
     expect(enBody).toContain("Codes and login links are never sent");
     expect(enBody).not.toContain("Only the sender");
+    expect(enBody).toMatch(/typed text.*confirm Use full conversation.*full stored text.*4,000 characters/);
     expect(deBody).toContain(`bis zu ${THREAD} weiteren Nachrichten im Thread`);
     expect(deBody).toContain(`bis zu ${NOTES} passende Notizen aus der Wissensdatenbank`);
     const deProvider = /^In der Cloud: über die (.+?-API) \([^()]+\),/.exec(deSite.faq.a3)?.[1];
@@ -56,6 +58,7 @@ describe("the Cloud consent step says what a draft sends", () => {
     expect(/^Ein Entwurf sendet über die (.+?) dieselben Angaben\b/.exec(deBody)?.[1]).toBe(deProvider);
     expect(deBody).toContain("Codes und Login-Links werden nie gesendet");
     expect(deBody).not.toContain("Gesendet werden nur");
+    expect(deBody).toMatch(/eingegebenen Text.*Ganze Unterhaltung verwenden.*bestätigst.*vollständigen gespeicherten Text.*4\.000 Zeichen/);
 
     expect(en.onboarding).not.toHaveProperty("providerCloudBody");
     expect(de.onboarding).not.toHaveProperty("providerCloudBody");

@@ -61,6 +61,7 @@ export type WaysInShapesAreTheDoors = Holds<
     Same<Wire.DoorRequests["scan.start"]["answer"], PhoneCamera>,
     Same<Wire.DoorRequests["server.ask"]["answer"], PhoneServerAnswer>,
     Same<Wire.DoorRequests["pair"]["answer"], PhonePairAnswer>,
+    Same<Wire.DoorRequests["sign-in"]["answer"], PhonePairAnswer>,
     Same<Extract<Wire.DoorEvent, { type: "scan" }>["scan"], PhoneScanned>,
   ]
 >;
@@ -94,6 +95,7 @@ function phoneDoorOf(door: DoorHandle): PhoneDoor {
     config: door.config,
     state: door.state,
     ask: (address) => door.ask("server.ask", { address }),
+    signIn: (address, signal) => door.ask("sign-in", { address }, { deadlineMs: PAIR_DEADLINE_MS, signal }),
     scan: {
       start: (rect) => door.ask("scan.start", { rect }),
       move: (rect) => door.ask("scan.move", { rect }),

@@ -19,9 +19,9 @@ import {
  * neither key nor content. {@link ANTHROPIC_BASE} is a LITERAL, a security decision: a pane that
  * let you name both a key AND its host would be a supported way to configure key exfiltration, so
  * the provider carrying a stored secret has a fixed destination and the one with a configurable
- * destination (a local model) carries none. `redirect: "error"` likewise. What travels: sender,
- * subject and a short redacted snippet (a draft adds thread snippets and knowledge-base entries) —
- * never a raw body, refused with authentication material by the shared allow-list in `@trafficflow/core/mail`.
+ * destination (a local model) carries none. `redirect: "error"` likewise. Classification uses
+ * the sender, subject and a preview. A reply draft uses the answered letter, earlier letters and
+ * relevant account notes. Both pass through the shared credential redactor before dispatch.
  */
 
 /** NOT configurable. See the header. */

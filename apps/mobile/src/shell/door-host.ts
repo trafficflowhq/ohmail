@@ -104,6 +104,7 @@ export class DoorHost {
       sync: async () => (await this.deps.conn().syncNow(), this.deps.wake(), {}),
       disconnect: async () => (await this.deps.conn().disconnect(), {}),
       "server.ask": (r) => this.serverAsk(r.address),
+      "sign-in": (r, signal) => this.signIn(r.address, signal),
       "scan.start": (r) => this.scanAt(r.rect, true),
       "scan.move": (r) => this.scanAt(r.rect, false),
       "scan.stop": () => (this.stopScan(), {}),
@@ -302,6 +303,18 @@ export class DoorHost {
     const link = pasted ?? { origin, token, pin: null };
     if (link.token.trim() === "") return { k: "refused", said: said(refuse("pairEmptyToken")) };
     return (await this.measure(link, () => !signal.aborted)) ?? { k: "refused", said: said(refuse("connectSuperseded")) };
+  }
+
+  private async signIn(address: string | null, signal: AbortSignal): Promise<Answered<"sign-in">> {
+    this.entering += 1;
+    try {
+      const outcome = await this.deps.conn().signIn(address, signal);
+      if (!outcome.ok) return { ok: false, said: said(outcome.reason) };
+      this.deps.entered();
+      return { ok: true };
+    } finally {
+      this.entering -= 1;
+    }
   }
 
   /**

@@ -101,14 +101,26 @@ export function AccountStep({ door, state, join, progress }: StepProps<"account"
         }
         refusal={refusalOf(pending, door.refusal)}
         afterLine={
-          <span className="way-join-row">
-            <Tag>{join(door.note === "selfhost" ? "whereServer" : "whereCloud")}</Tag>
-            {door.invited ? null : (
-              <Button kind="quiet" size="s" pressed={withCode} onPress={() => setWithCode(!withCode)}>
-                {join("inviteLabel")}
-              </Button>
+          <>
+            <span className="way-join-row">
+              <Tag>{join(door.note === "selfhost" ? "whereServer" : "whereCloud")}</Tag>
+              {door.invited ? null : (
+                <Button kind="quiet" size="s" pressed={withCode} onPress={() => setWithCode(!withCode)}>
+                  {join("inviteLabel")}
+                </Button>
+              )}
+            </span>
+            {door.note !== "selfhost" && (
+              <div className="way-join-row way-join-legal">
+                <a className="way-join-legal-link" href="/terms">
+                  {join("termsOfService")}
+                </a>
+                <a className="way-join-legal-link" href="/privacy">
+                  {join("privacyPolicy")}
+                </a>
+              </div>
             )}
-          </span>
+          </>
         }
         acts={
           <>

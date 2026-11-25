@@ -54,17 +54,22 @@ import {
   drainPendingWakeDrops,
   drainPendingWipes,
   clearUnscopedCalendarCredentials,
+  discardAdmission,
   erasePendingCalendarCopies,
+  familyReplacedAt,
   forgetProfile,
   handoffMinter,
   listHeldStandalone,
   mobileDeviceKind,
   negotiate,
   pairingFetch,
+  pairApproved,
   pairForShell,
   pairWithServer,
   probePairing,
+  revokeBrowserPair,
   type PairAdmission,
+  type PairOutcome,
   type ProbeOutcome,
   type ConnectedSession,
   type Negotiation,
@@ -72,6 +77,8 @@ import {
   type ShellOutcome,
   type ShellSession,
 } from "./pairing";
+import { awaitBrowserApproval, browserSignInOrigin, probeBrowserSignIn } from "./approval";
+import { approvalBrowser, approvalFetch } from "./approval-native";
 import { resolveApiBase, type BaseVerdict } from "./server-base.js";
 import { TransitionGate } from "./transitions";
 import { buildCommit } from "../build-info";
@@ -144,6 +151,7 @@ export interface Connection {
    * from a scanned string: the person in between is part of the type.
    */
   pairConfirmed(admission: PairAdmission, token: string): Promise<Attempt>;
+  signIn(address: string | null, signal: AbortSignal): Promise<Attempt>;
   /**
    * ADOPT THE MAILBOX THIS PHONE JUST OPENED — the fourth door's second half.
    *
@@ -270,6 +278,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       const calendarOnly = APP.app === "ohcal";
       return {
         profiles: nativeServerProfiles(),
+        approvalFetchImpl: approvalFetch,
         calendar: calendarOnly ? calendarLifecycle() : undefined,
         calendarOnly,
         engineDeps: nativeEngineDeps(),
@@ -951,6 +960,88 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const finishPair = useCallback(async (
+    admission: PairAdmission, pair: (persisting: () => void) => Promise<PairOutcome | ShellOutcome>,
+    stillCurrent: () => boolean, browser = false,
+  ): Promise<Attempt> => {
+    let leaving: Promise<boolean> | undefined;
+    let committed = false;
+    const startLeaving = () => {
+      const at = live.now();
+      if (at.k === "live") void teardown(at.session);
+      if (at.k === "shell") leaving = leaveEntered();
+    };
+    const entering = () => {
+      committed = true;
+      if (stillCurrent()) enter({ k: "connecting", origin: admission.origin });
+    };
+    if (!browser) {
+      startLeaving();
+      if (leaving) await leaving;
+      entering();
+    }
+    const outcome = await pair(() => {
+      startLeaving();
+      entering();
+    });
+    if (!committed && outcome.kind === "refused") return { ok: false, reason: outcome.reason };
+    if (browser && leaving) await leaving;
+    await refreshProfiles();
+    if (!stillCurrent()) {
+      if (outcome.kind === "paired") outcome.session.store.close();
+      return { ok: false, reason: SUPERSEDED() };
+    }
+    if (outcome.kind === "refused") {
+      enter({ k: "refused", reason: outcome.reason });
+      return { ok: false, reason: outcome.reason };
+    }
+    if (outcome.kind === "shell") {
+      if (!await adoptShell(outcome.session, stillCurrent)) return { ok: false, reason: SUPERSEDED() };
+    } else adopt(outcome.session);
+    return { ok: true };
+  }, [adopt, adoptShell, enter, leaveEntered, refreshProfiles, teardown]);
+
+  const signIn = useCallback((address: string | null, signal: AbortSignal): Promise<Attempt> => {
+    const target = browserSignInOrigin(address);
+    if ("reason" in target) return Promise.resolve({ ok: false, reason: target.reason });
+    return gate.run(async (current) => {
+      const stillCurrent = () => current() && !signal.aborted;
+      const superseded = (): Attempt => ({ ok: false, reason: SUPERSEDED() });
+      if (!stillCurrent()) return superseded();
+      const probe = await probeBrowserSignIn(env, target.origin, signal);
+      if (probe.kind === "refused") return { ok: false, reason: probe.reason };
+      const { admission } = probe;
+      if (!stillCurrent()) {
+        discardAdmission(admission);
+        return superseded();
+      }
+
+      const fetchImpl = pairingFetch({ ...env, fetchImpl: approvalFetch });
+      const selfHosted = address !== null;
+      const kind = mobileDeviceKind(Platform.OS);
+      const approved = await awaitBrowserApproval({
+        ...approvalBrowser(selfHosted), fetchImpl,
+        kind, label: kind === "mobile-ios" ? "iPhone" : "Android",
+        calendarOnly: env.calendarOnly,
+        previousSession: await familyReplacedAt(env, admission.origin),
+      }, { origin: admission.origin, selfHosted }, signal);
+      if (!approved.ok) {
+        if (approved.issued) await revokeBrowserPair(env, admission, approved.issued, fetchImpl);
+        discardAdmission(admission);
+        return { ok: false, reason: approved.reason };
+      }
+      if (!stillCurrent()) {
+        await revokeBrowserPair(env, admission, approved.approved, fetchImpl);
+        discardAdmission(admission);
+        return superseded();
+      }
+      return finishPair(admission, (persisting) => pairApproved(
+        env, { admission, approved: approved.approved, scope: approved.scope },
+        MAIL_SURFACE, { signal, current, persisting, fetchImpl },
+      ), current, true);
+    });
+  }, [env, finishPair, gate]);
+
   const api = useMemo<Connection>(
     () => ({
       state,
@@ -977,27 +1068,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
          exactly where they were, still paired with whatever they were paired with. */
       probePair: (origin, pin) => probePairing(env, { origin, pin: pin ?? null }),
       pairConfirmed: (admission, token) =>
-        gate.run(async (stillCurrent) => {
-          { const at = live.now(); if (at.k === "live") teardown(at.session); }
-          if (live.now().k === "shell") await leaveEntered();
-          if (stillCurrent()) enter({ k: "connecting", origin: admission.origin });
-          const outcome = MAIL_SURFACE === "shell"
-            ? await pairForShell(env, { admission, token })
-            : await pairWithServer(env, { admission, token });
-          await refreshProfiles();
-          if (!stillCurrent()) {
-            if (outcome.kind === "paired") outcome.session.store.close();
-            return { ok: false, reason: SUPERSEDED() };
-          }
-          if (outcome.kind === "refused") {
-            enter({ k: "refused", reason: outcome.reason });
-            return { ok: false, reason: outcome.reason };
-          }
-          if (outcome.kind === "shell") {
-            if (!await adoptShell(outcome.session, stillCurrent)) return { ok: false, reason: SUPERSEDED() };
-          } else adopt(outcome.session);
-          return { ok: true };
-        }),
+        gate.run((stillCurrent) => finishPair(admission, () => MAIL_SURFACE === "shell"
+          ? pairForShell(env, { admission, token })
+          : pairWithServer(env, { admission, token }), stillCurrent)),
+      signIn,
       openStandalone: (door) =>
         gate.run(async (stillCurrent) => {
           // The calendar's app organizes no mailbox: its only ways in are a server and a paired computer.
@@ -1182,7 +1256,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     }),
     [
       state, syncing, syncError, profiles, activeId, adopt, adoptShell, drain, env, gate, leaveEntered, leaveShell,
-      refreshProfiles, runConnect, runner, teardown,
+      finishPair, refreshProfiles, runConnect, runner, signIn, teardown,
     ],
   );
 

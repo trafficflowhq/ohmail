@@ -126,6 +126,7 @@ export interface PhoneDoor {
   readonly state: Signal<PhoneDoorState>;
   /** What answers at an address (`server.ask`). */
   ask(address: string): Promise<PhoneServerAnswer>;
+  signIn(address: string | null, signal: AbortSignal): Promise<PhonePairAnswer>;
   readonly scan: PhoneScan;
   /** A typed code or a pasted link, measured (`hand`). `address: null` is the address `ask` reached. */
   hand(typed: { readonly address: string | null; readonly token: string }): Promise<PhoneOffer>;
