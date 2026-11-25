@@ -21,6 +21,7 @@ import calsetupDe from "../../messages/calsetup.de.json" with { type: "json" };
 import calsetupEn from "../../messages/calsetup.en.json" with { type: "json" };
 import calsettingsDe from "../../messages/calsettings.de.json" with { type: "json" };
 import calsettingsEn from "../../messages/calsettings.en.json" with { type: "json" };
+import dayEn from "../../messages/day.en.json" with { type: "json" };
 import eventEn from "../../messages/event.en.json" with { type: "json" };
 import weekEn from "../../messages/week.en.json" with { type: "json" };
 import { calendar } from "../../src/calendar/entry.js";
@@ -41,6 +42,7 @@ export const WORDS = {
     ...FRAME_WORDS.en,
     ...calendarEn,
     ...eventEn,
+    ...dayEn,
     ...weekEn,
     ...calsetupEn,
     ...calsettingsEn,
@@ -49,6 +51,7 @@ export const WORDS = {
     ...FRAME_WORDS.en,
     ...calendarEn,
     ...eventEn,
+    ...dayEn,
     ...weekEn,
     ...calsetupDe,
     ...calsettingsDe,

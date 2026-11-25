@@ -26,6 +26,7 @@
   min-width: 0;
 }
 .cal-body-panel {
+  --cal-agenda-compact: 264px;
   --oh-calside-flex: 1;
   display: flex;
   flex-direction: column;
@@ -57,6 +58,14 @@
 
 :root[data-device="desktop"] .cal-body-panel {
   flex: 0 0 var(--cal-side-width);
+}
+
+:root .cal-body-panel[data-compact-agenda] {
+  flex: 0 0 var(--cal-agenda-compact);
+}
+
+:root[data-device="fold"] .cal-body-panel[data-compact-agenda] {
+  flex-basis: min(var(--cal-agenda-compact), 30%);
 }
 
 .cal-body [data-drag="lifted"] {
@@ -166,14 +175,6 @@
 
 :root[data-device="phone"] .cal-event-panel[data-proposal] {
   position: static;
-}
-
-.cal-detail-guest {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s1);
-  max-width: 100%;
-  min-width: 0;
 }
 
 .cal-event-letter-history {

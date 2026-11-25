@@ -128,6 +128,7 @@ export function AgendaView({
         label={t("landmark")}
         head={
           <ListHead
+            heading="h2"
             title={t("landmark")}
             hot={first === input.today}
             aside={<Button kind="quiet" size="s" icon="x" label={t("close")} onPress={onClose} />}

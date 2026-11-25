@@ -113,7 +113,8 @@ function addressOf(): string {
   if (screen === "mail-settings") return "#/settings/calaccounts";
   if (screen === "calsettings") return "#/cal/calendars";
   if (screen === "calsetup") return setupAddress();
-  if (screen === "day" || screen === "week" || screen === "month") return `#/cal/${screen}/2026-11-10`;
+  if (screen === "day" || screen === "week" || screen === "month")
+    return `#/cal/${screen}/2026-11-10${open ? `/e/${open}` : ""}`;
   const view = q.get("over") === "day" ? "day" : q.get("over") === "month" ? "month" : "week";
   if (open) return `#/cal/${view}/${DAY_OF[open] ?? "2026-11-10"}/e/${open}?panel=invitations`;
   return `#/cal/${view}/2026-11-10?panel=invitations`;
@@ -149,11 +150,13 @@ const world = worldOf({
   refused: state === "error",
   extraAccounts: screen === "mail-settings" ? 20 : 0,
 });
-if (q.has("record-times")) {
+if (q.has("record-times") || state === "garden-guests") {
   Object.assign(world.engine.store, {
     get: (kind: string, id: string) =>
       world.engine.store.entries<{ id: string }>(kind).find(({ entity }) => entity.id === id)?.entity,
   });
+}
+if (q.has("record-times")) {
   world.port.press = async (act) => {
     const fields =
       act.kind === "calendar_event_update"
@@ -173,6 +176,12 @@ const look = {
 document.documentElement.setAttribute("data-face", look.face);
 document.documentElement.setAttribute("data-theme", look.scheme);
 document.documentElement.setAttribute("lang", lang);
+const windowFacts = fakeWindow({ ...room, posture: "flat", reducedMotion: q.get("motion") !== "full" });
+if (q.has("viewport")) {
+  const resize = () => windowFacts.resize(window.innerWidth, window.innerHeight);
+  resize();
+  window.addEventListener("resize", resize);
+}
 const made = fakeHost({
   engine: world.engine,
   service: "managed",
@@ -184,7 +193,7 @@ const made = fakeHost({
       : undefined,
   products: "both",
   wires: { calendar: world.port },
-  window: fakeWindow({ ...room, posture: "flat", reducedMotion: q.get("motion") !== "full" }),
+  window: windowFacts,
   address: fakeAddress(addressOf()),
   appearance: fakeAppearance(look),
 });

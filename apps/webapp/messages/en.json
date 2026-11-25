@@ -7048,6 +7048,8 @@
       "anotherAlert": "and another",
       "noAlert": "None",
       "alertMinutes": "{minutes, select, 0 {At the time} 60 {1 hour before} 120 {2 hours before} 1440 {1 day before} 2880 {2 days before} 10080 {1 week before} other {{minutes} minutes before}}",
+      "guestOrganizer": "Organizer",
+      "guestPending": "Pending",
       "guestAnswer": "{answer, select, accepted {yes} declined {no} tentative {maybe} delegated {delegated} other {no answer}}",
       "duplicate": "Duplicate",
       "save": "Save",

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { RefusalLine } from "@ohmail/ui/base";
 import { readerZones, type CalendarPort } from "@ohmail/app-logic/calendar";
 import { useInvitationAnswer } from "../invitations/EventAnswers.js";
+import { useAgendaPanel } from "./use-agenda-panel.js";
 import { useEventBrowse } from "./use-event-browse.js";
 import { useGridKeys } from "./use-grid-keys.js";
 import { CurrentView } from "./CalendarCurrentView.js";
@@ -63,9 +64,10 @@ function CalendarOn({
   const zone = useTimeZone();
   const zones = readerZones();
   const settings = useSettings(port);
-  const where = useWhere(port, route, settings, zone, zones);
+  const agendaPanel = useAgendaPanel(route, plan);
+  const panelOn = agendaPanel.visible;
+  const where = useWhere(port, route, settings, zone, zones, panelOn);
   const [todayVisit, setTodayVisit] = useState<TodayVisit | null>(null);
-  const panelOn = route.words.panel === "agenda" && plan.device !== "phone";
   const monthRun = useMonthViewport();
   const found = useFaces(port, sources, monthRun ?? where?.span ?? null, where?.today ?? null, zone, zones);
   const beside = useFaces(
@@ -109,7 +111,7 @@ function CalendarOn({
       sources={sources}
       found={found}
       beside={beside}
-      panelOn={panelOn}
+      agendaPanel={agendaPanel}
       keysHere={keysHere}
       monthRun={monthRun}
       todayVisit={todayVisit}
@@ -132,7 +134,7 @@ export interface CalendarSurfaceProps extends Pick<PaneProps, "route" | "plan" |
   sources: ReturnType<typeof useSources>;
   found: NonNullable<ReturnType<typeof useFaces>>;
   beside: ReturnType<typeof useFaces>;
-  panelOn: boolean;
+  agendaPanel: ReturnType<typeof useAgendaPanel>;
   monthRun: MonthRun | null;
   todayVisit: TodayVisit | null;
   onToday: (top: number | undefined) => void;
@@ -153,7 +155,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
     sources,
     found,
     beside,
-    panelOn,
+    agendaPanel,
     monthRun,
     todayVisit,
     onToday,
@@ -188,7 +190,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
         <div className="cal-event-backdrop" aria-hidden onClick={() => commands.event(null)} />
       )}
       <CalendarFrameHead
-        {...{ where, route, plan, panelOn, go, commands, keysHere, settings, port, monthRun, onToday }}
+        {...{ where, route, plan, agendaPanel, go, commands, keysHere, settings, port, monthRun, onToday }}
       />
       <CalendarMenus
         {...{ actions, reply, zones, editNext }}
@@ -243,6 +245,7 @@ function CalendarSurface(props: CalendarSurfaceProps) {
               input={beside ? { ...input, events: beside.events } : input}
               acts={canvas.acts}
               edge={beside ? { ...beside.edge, load: port.load, provider: edge.provider } : edge}
+              agendaPanel={agendaPanel}
               onClose={canvas.closePanel}
               onAgendaRow={openAgendaRow}
               compact={compact}

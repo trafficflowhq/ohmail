@@ -1,10 +1,10 @@
 import { useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import type { CalendarEventRecord } from "@ohmail/app-logic/calendar";
-import { Avatar, Button } from "@ohmail/ui/base";
+import { Button } from "@ohmail/ui/base";
 import { EventBridge, type EventCardRow, type EventCardProps } from "@ohmail/ui/calendar";
 import { useEventPlacement } from "./use-event-placement.js";
 import type { Text } from "../text/index.js";
-import { sentInvitees } from "./edit-draft.js";
+import { EventInvitees } from "./EventInvitees.js";
 import { movePending } from "./editable-event.js";
 import type { CalendarEventFace } from "./faces.js";
 import { repeatLine } from "./EventActionQuestion.js";
@@ -29,31 +29,9 @@ function peopleRows(
     rows.push({ label: t("edit.from"), text: organizer.name || organizer.address });
   }
   if (!invitees.length) return rows;
-  const answers = new Map<string, number>();
-  const sent = new Map(sentInvitees(confirmed).map(({ address, answer }) => [address.toLowerCase(), answer]));
-  for (const { address } of invitees) {
-    const answer = sent.get(address.toLowerCase());
-    if (answer) answers.set(answer, (answers.get(answer) ?? 0) + 1);
-  }
-  const optional = invitees.filter(({ role }) => role === "optional").length;
-  const note = [...answers].map(([answer, count]) => `${count} ${t("edit.guestAnswer", { answer })}`);
-  if (optional) note.push(`${optional} ${t("edit.optional")}`);
   rows.push({
     label: t("edit.invitees"),
-    note: note.join(" · "),
-    children: invitees.map(({ name, address }) => {
-      const answer = sent.get(address.toLowerCase());
-      return (
-        <span key={address} className="cal-detail-guest" title={address}>
-          <Avatar name={name || address} address={address} size="xs" />
-          <span className="oh-evform-name-text">{name || address}</span>
-          {name && name.toLowerCase() !== address.toLowerCase() && (
-            <small className="oh-evform-name-note oh-evform-name-text">{address}</small>
-          )}
-          {answer && <small className="oh-evform-name-note">{t("edit.guestAnswer", { answer })}</small>}
-        </span>
-      );
-    }),
+    children: <EventInvitees key={record.id} guests={invitees} organizer={organizer} confirmed={confirmed} />,
   });
   return rows;
 }
