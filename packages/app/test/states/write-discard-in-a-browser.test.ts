@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import de from "../../messages/write.de.json" with { type: "json" };
 import en from "../../messages/write.en.json" with { type: "json" };
 import { chromium } from "../support/browser-page.js";
+import { replyControlsPage } from "./reply-controls-page.js";
 import { writeStatesPage } from "./write-states.mjs";
 
 const ORIGIN = "http://write.states.invalid";
@@ -193,3 +194,31 @@ it("keeps the Send target and typing line visible in a 105 px keyboard viewport"
     await page.close();
   }
 }, 30_000);
+
+it.each([390, 1440])(
+  "keeps reply tools above the Send panel at %i px",
+  async (width) => {
+    const phone = width === 390;
+    const page = await browser.newPage({ viewport: { width, height: 844 }, hasTouch: phone });
+    try {
+      await page.setContent(await replyControlsPage(phone));
+      const tools = page.getByRole("toolbar", { name: "Reply tools" });
+      const actions = page.getByRole("toolbar", { name: "Letter actions" });
+      // The scrollport clips the composer before the pill at every scroll position.
+      const scroll = page.locator("[data-reading-scroll]");
+      const [port, pill] = await Promise.all([scroll.boundingBox(), actions.boundingBox()]);
+      expect(port!.y + port!.height).toBeLessThanOrEqual(pill!.y);
+      for (const control of [
+        tools.getByRole("button", { name: "Show formatting", exact: true }),
+        tools.getByRole("button", { name: "Draft again", exact: true }),
+        actions.getByRole("button", { name: "Send", exact: true }),
+      ]) {
+        if (phone) await control.tap({ trial: true, timeout: 3000 });
+        else await control.click({ trial: true, timeout: 3000 });
+      }
+    } finally {
+      await page.close();
+    }
+  },
+  30_000,
+);

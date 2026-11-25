@@ -1,22 +1,4 @@
-/**
- * THE BOOT'S OWN SYNC LINE — the quiet card at the foot of the rail while the engine comes
- * up. The window used to spend the whole launch behind a centred card, half a second to the
- * minute a write-ahead-log recovery takes. The app already reports background work at the
- * sync line (`SyncBar`'s `rail` shape), so the boot borrows that exact surface, drawn at the
- * foot of the rail SILHOUETTE the boot skeleton paints; when the engine serves, the real sync
- * line takes over in the same corner. The sentence is the ENGINE'S OWN CLAIM, mapped —
- * {@link bootSentence} is a closed map over the phases the engine announces
- * (`bridge-fetch.ts`'s `bootPhase`); everything else gets the one sentence true in every
- */
-
-/*
- * case, because an unknown phase is an identifier, not prose. `role="status"` +
- * `aria-live="polite"` as the sync line carries them; the spinner and track are `aria-hidden`.
- */
-
-import * as React from "react";
-import { Spinner } from "@ohmail/ui";
-
+import { useEffect, useState } from "react";
 import { DOOR_COPY } from "./door-copy.js";
 
 /**
@@ -66,12 +48,6 @@ export function bootSentence(
   }
 }
 
-/*
- * Where the card sits: `.gate-boot > .boot-foot` in `app.css`, the boot skeleton's rail column
- * (the window's gap, the deck's rail track, the rail's padding), and in the Zero layout's ribbon
- * tier the foot of the tile beside the ribbon (`zero-layout.css`). In CSS, not inline numbers, so
- * the card is inside the rail from the first frame at every look, dragged width and window width.
- */
 export function BootStatus({
   phase,
   applied,
@@ -91,34 +67,19 @@ export function BootStatus({
   /* WHETHER THIS PHASE HAS LASTED, and the clock restarts at each phase — the sentence below
      belongs to the wait that is happening, not to the launch. Armed for every phase and spoken
      for one: a five-second `opening_store` is an ordinary cold start with nothing to explain. */
-  const [long, setLong] = React.useState(false);
-  React.useEffect(() => {
+  const [long, setLong] = useState(false);
+  useEffect(() => {
     setLong(false);
     const t = setTimeout(() => setLong(true), LONG_PHASE_MS);
     return () => clearTimeout(t);
   }, [phase]);
 
   return (
-    <div className="boot-foot" role="status" aria-live="polite">
-      {/* The sync line's own classes, on purpose — `rail-sync busy` is the app's one way of
-          saying "working, nothing wrong" in this corner, and a second styling of that statement
-          would be a second thing to keep honest. */}
-      <div className="rail-sync busy">
-        <div className="rs-line">
-          <Spinner className="mbx-spin" />
-          <b>{sentence ?? bootSentence(phase, { applied, pending })}</b>
-        </div>
-        {/* THE SECOND LINE, in the sync line's own shape for the volatile half (`SyncBar`'s
-            `rs-num`): the store upgrade is the one phase measured in minutes on a large mailbox,
-            and a still card for four of them is read as a hang. Only after the wait has proved
-            itself — see {@link LONG_PHASE_MS}. */}
-        {long && phase === "migrating" ? (
-          <span className="rs-num num">{DOOR_COPY.bootMigratingSlow}</span>
-        ) : null}
-        <span className="rs-track" aria-hidden="true">
-          <i />
-        </span>
-      </div>
+    <div className="oh-opening-line boot-foot" role="status" aria-live="polite">
+      <b className="oh-opening-say">{sentence ?? bootSentence(phase, { applied, pending })}</b>
+      {long && phase === "migrating" ? (
+        <small className="oh-opening-note">{DOOR_COPY.bootMigratingSlow}</small>
+      ) : null}
     </div>
   );
 }

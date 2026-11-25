@@ -1,25 +1,18 @@
-/**
- * The shape of the list that is coming — and nothing about what will be on it; the mobile port of the webapp's
- * `BootSkeleton`. Bars, never words: zero text nodes, hidden from the screen reader, widths from a fixed table
- * derived from nothing — a placeholder that could be mistaken for the reader's own mail is this product's
- * unforgivable failure, held here by construction. A breath, not a shimmer: one slow opacity pulse
- * (`boot-sk-breathe`, 2 s); reduced motion drops the breath and keeps the shape. The two quietest fills (`tint2`,
- * `tint`), alpha washes that read in light and dark. Below {@link SKELETON_GRACE_MS} nothing is drawn, so a warm boot
- * never strobes a skeleton (the constant is exported for fake timers). Unlike the webapp's approximate silhouette,
- * the row geometry mirrors the real rows, so when content replaces the skeleton, nothing jumps.
- */
+/** The list's own shapes during a long wait. Bars are fixed and hidden from assistive technology. */
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Animated, Easing, View, type ViewStyle } from "react-native";
+import { ActivityIndicator, Animated, Easing, View } from "react-native";
+import { design } from "@ohmail/tokens/design";
+import { Copy } from "../copy";
 import { useTheme } from "../theme";
+import { MailAppearance } from "../theme/mail";
 import { sayArg, type RefusalArg } from "../refusal";
-import { Panel, Screen, Txt } from "./base";
-import { TopBar } from "./chrome";
+import { Panel, Screen, Txt, useTopPad } from "./base";
 import { BOOT_MIGRATING_SLOW_MS, bootMigratingLines, type BootMigrating } from "./boot-migrating";
 
 /** How long a wait may go unshaped — the webapp's `BOOT_SKELETON_GRACE_MS`, kept equal. */
 export const SKELETON_GRACE_MS = 300;
 
-/** The breath's period — the webapp's `boot-sk-breathe`, kept equal. */
+/** A slow pulse for the loading shapes. */
 const BREATHE_MS = 2000;
 
 /**
@@ -139,24 +132,37 @@ function Bar({
 /* ── the rows ───────────────────────────────────────────────────────────────────────────── */
 
 function MailRowShape({ bars }: { bars: readonly [number, number, number] }) {
-  const t = useTheme();
+  const { face, scheme } = useTheme();
+  const look = design.faces[face][scheme];
   const [sender, subject, preview] = bars;
+  const avatar = parseFloat(look.av);
+  const inset = parseFloat(look.s2);
+  const color = look["soft-sheet"];
   return (
-    <View style={{ paddingHorizontal: 14, paddingVertical: 12 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-        <View style={{ flex: 1 }}>
-          <Bar width={sender} height={10} line={18} color={t.c.tint2} />
+    <View style={{
+      minHeight: parseFloat(look.row) + parseFloat(look.s4),
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: parseFloat(look.s4),
+      gap: inset,
+    }}>
+      <View style={{
+        width: avatar,
+        height: avatar,
+        borderRadius: parseFloat(look["av-r"]),
+        backgroundColor: color,
+      }} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: inset }}>
+          <View style={{ flex: 1 }}>
+            <Bar width={sender} height={parseFloat(look.s3)} line={parseFloat(look["row-l1"])} color={color} />
+          </View>
+          <View style={{ width: parseFloat(look.s6) }}>
+            <Bar width={100} height={8} line={15} color={color} />
+          </View>
         </View>
-        {/* The time slot — `MailRow`'s caption column, a fixed short bar. */}
-        <View style={{ width: 34 }}>
-          <Bar width={100} height={8} line={15} color={t.c.tint} />
-        </View>
-      </View>
-      <View style={{ marginTop: 2 }}>
-        <Bar width={subject} height={10} line={19} color={t.c.tint2} />
-      </View>
-      <View style={{ marginTop: 1 }}>
-        <Bar width={preview} height={8} line={17} color={t.c.tint} />
+        <Bar width={subject} height={10} line={19} color={color} />
+        <Bar width={preview} height={8} line={17} color={color} />
       </View>
     </View>
   );
@@ -208,6 +214,7 @@ export function SkeletonList({
   rows,
   /** The wait is still on. `false` (content or emptiness arrived) renders nothing. */
   active = true,
+  ready = false,
   /**
    * The standing sync-failure sentence (`world.boot.syncFailure`), for the one wait that
    * cannot currently resolve — a first-ever launch against a dead network. The sentence is
@@ -227,12 +234,14 @@ export function SkeletonList({
   kind?: SkeletonKind;
   rows?: number;
   active?: boolean;
+  /** The opening screen has already waited before mounting its list. */
+  ready?: boolean;
   stalled?: RefusalArg | null;
   note?: string | null;
 }) {
-  const show = useLoadingGrace(active);
+  const show = useLoadingGrace(active && !ready);
   const opacity = useBreathe();
-  if (!show) return null;
+  if (!active || (!ready && !show)) return null;
   const body: ReactNode =
     kind === "screener" ? (
       SCREENER_BARS.slice(0, rows ?? SCREENER_BARS.length).map((b, i) => <ScreenerRowShape key={i} bars={b} />)
@@ -263,17 +272,24 @@ export function SkeletonList({
   );
 }
 
-/**
- * THE INSTANT SHELL — what the navigation gate paints while the connection layer is still
- * deciding (the keystore read, a local boot, a profile switch). The real chrome (top bar on
- * the canvas), a panel where the list will be, and the mail silhouette inside it after the
- * grace — never a sentence over a blank window: with boot-from-local the wait this covers is
- * tens of milliseconds on a paired phone, so the common case is one quiet canvas frame, and
- * only a genuinely first-ever launch holds the silhouette long enough to breathe.
- */
-export function BootShell({ migrating }: { migrating?: BootMigrating | undefined } = {}) {
-  const t = useTheme();
-  const head: ViewStyle = { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 14 };
+interface BootProps {
+  migrating?: BootMigrating | undefined;
+  checkingAccess?: boolean;
+}
+
+/** A quiet startup frame with passive shapes, safe to draw while the access verdict is pending. */
+export function BootShell(props: BootProps = {}) {
+  return <MailAppearance><BootScreen {...props} /></MailAppearance>;
+}
+
+function BootScreen({ migrating, checkingAccess }: BootProps) {
+  const { face, scheme } = useTheme();
+  const look = design.faces[face][scheme];
+  const top = useTopPad(6) + 2;
+  const opacity = useBreathe();
+  const edge = parseFloat(look.s5);
+  const inset = parseFloat(look.s4);
+  const radius = parseFloat(look["r-sheet"]);
   /* THE ONE SENTENCE THIS SHELL EVER SAYS: a long store upgrade, counted (`boot-migrating.ts`).
      The clock re-renders once, when the slow line is due. */
   const [now, setNow] = useState(() => Date.now());
@@ -284,42 +300,50 @@ export function BootShell({ migrating }: { migrating?: BootMigrating | undefined
     const timer = setTimeout(() => setNow(Date.now()), Math.max(0, due - Date.now()));
     return () => clearTimeout(timer);
   }, [due, lines.count, lines.slow]);
+  const show = useLoadingGrace(true);
   return (
-    <Screen>
-      <TopBar />
-      <View style={{ paddingHorizontal: t.space.deckCompact, flex: 1 }}>
+    <Screen style={{ backgroundColor: look.ground }}>
+      <View style={{ paddingTop: top, paddingHorizontal: edge }}>
+        {checkingAccess ? (
+          <ActivityIndicator
+            size="small"
+            color={look.hot}
+            accessible
+            accessibilityRole="progressbar"
+            accessibilityLabel={Copy.wallChecking}
+            accessibilityState={{ busy: true }}
+            style={{ alignSelf: "flex-start" }}
+          />
+        ) : null}
+        <Animated.View
+          style={{ opacity, width: parseFloat(look.s8) + parseFloat(look.s6) }}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          {show ? <Bar width={100} height={inset} line={parseFloat(look.s8)} color={look["hover-ground"]} /> : null}
+        </Animated.View>
         {lines.count === null ? null : (
-          <View style={{ paddingHorizontal: 10, paddingTop: 8, gap: 2 }} accessibilityRole="text">
-            <Txt variant="note" tone="ink2">{lines.count}</Txt>
-            {lines.slow === null ? null : <Txt variant="note" tone="ink3">{lines.slow}</Txt>}
+          <View style={{ paddingBottom: inset }} accessibilityRole="text">
+            <Txt variant="note" style={{ color: look.ink }}>{lines.count}</Txt>
+            {lines.slow === null ? null : <Txt variant="note" style={{ color: look.ink2 }}>{lines.slow}</Txt>}
           </View>
         )}
-        <View style={head} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-          {/* The view head's h1 slot, as shape — same rhythm as the screens' own heads. */}
-          <SkeletonHead />
+      </View>
+      {show ? (
+        <View style={{
+          flex: 1,
+          backgroundColor: look.sheet,
+          borderColor: look.ring,
+          borderWidth: parseFloat(look.ringw),
+          borderBottomWidth: 0,
+          borderTopLeftRadius: radius,
+          borderTopRightRadius: radius,
+          paddingTop: inset,
+          overflow: "hidden",
+        }}>
+          <SkeletonList ready />
         </View>
-        <Panel style={{ paddingBottom: 4 }}>
-          <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>
-            <SkeletonList />
-          </View>
-        </Panel>
-      </View>
+      ) : null}
     </Screen>
-  );
-}
-
-/** The h1 + meta silhouette the boot shell draws where a view head is about to be. */
-function SkeletonHead() {
-  const t = useTheme();
-  const show = useLoadingGrace(true);
-  const opacity = useBreathe();
-  if (!show) return null;
-  return (
-    <Animated.View style={{ opacity }}>
-      <Bar width={34} height={14} line={28} color={t.c.tint2} />
-      <View style={{ marginTop: 4 }}>
-        <Bar width={22} height={8} line={17} color={t.c.tint} />
-      </View>
-    </Animated.View>
   );
 }

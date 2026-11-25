@@ -155,8 +155,7 @@ export function NewEvent({ port, now, calendars, tones, connections, preferred, 
           today={today}
           calendar={target}
           tone={tone}
-          choices={choices}
-          choose={selectCalendar}
+          chooser={{ choices, choose: selectCalendar }}
           timeZone={draft.zone}
           change={change}
           cancel={{ label: t("edit.cancel"), onPress: close }}

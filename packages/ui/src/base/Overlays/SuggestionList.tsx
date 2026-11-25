@@ -3,7 +3,7 @@ import { animate } from "../../motion/motion.js";
 import { Tag } from "../Primitives/Tag.js";
 import "./suggestion-list.css";
 import { markTyped } from "./suggestion-mark.js";
-import { portalRenderer } from "./portal-renderer.js";
+import { POPOVER_REPORT, popoverHost, portalRenderer } from "./portal-renderer.js";
 import { useAtField, type FieldPlace } from "./suggestion-place.js";
 
 /** One thing a field offers. */
@@ -34,6 +34,8 @@ export interface SuggestionListProps<R extends SuggestionRow = SuggestionRow> ex
   /** The listbox's id: its field names it, and row `n` is `<id>-<n>`, counted over all groups. */
   id: string;
   className?: string;
+  /** A field in the composer opens within its modal and below frame reports. */
+  popover?: boolean;
   /** Its name, said to a screen reader: "Place suggestions". */
   label: string;
   groups: readonly SuggestionGroup<R>[];
@@ -80,9 +82,11 @@ export function SuggestionList<R extends SuggestionRow = SuggestionRow>(props: S
     busy,
     foot,
     placement,
+    popover,
     anchor,
     boundary,
     align,
+    flush,
     span,
     avoid,
   } = props;
@@ -91,7 +95,10 @@ export function SuggestionList<R extends SuggestionRow = SuggestionRow>(props: S
   const list = useRef<HTMLDivElement | null>(null);
   const shown = groups.length > 0;
   const inline = placement === "inline";
-  const atField = !inline && anchor !== undefined ? { anchor, boundary, align, span, avoid } : null;
+  const atField =
+    shown && !inline && anchor !== undefined
+      ? { anchor, boundary, align, flush, span, avoid: avoid ?? (popover ? POPOVER_REPORT : undefined) }
+      : null;
 
   useAtField(card, atField);
   /* It arrives once, when it opens. Rows that change do not arrive again. */
@@ -156,9 +163,12 @@ export function SuggestionList<R extends SuggestionRow = SuggestionRow>(props: S
   if (!atField) return drawn;
   if (typeof document === "undefined") return null;
   const field = "current" in atField.anchor ? atField.anchor.current : atField.anchor;
+  const host = (popover ? popoverHost(field) : field?.ownerDocument.body) ?? document.body;
   return renderPortal(
-    <div className="oh-suggest-layer">{drawn}</div>,
-    field?.ownerDocument.body ?? document.body,
+    <div className="oh-suggest-layer" data-popover={popover ? "" : undefined}>
+      {drawn}
+    </div>,
+    host,
   );
 }
 

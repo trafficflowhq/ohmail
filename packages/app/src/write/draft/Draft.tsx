@@ -141,13 +141,14 @@ export function useLetterDraftOffer(): DraftOffer | null {
   const drafting = here && control.phase === "running";
   const waiting = !here && control.phase === "running";
   const texts = control.own.get(id) ?? null;
-  const body = { text: compose.body, html: compose.html };
+  const body = { text: compose.body, html: compose.html, aiDraft: compose.aiDraft };
   const untouched = texts !== null && texts.shown === "draft" && body.text === texts.draft.text;
   const made = untouched ? texts.yours : body;
   const words = made.text.trim() !== "";
   const letter = control.letter;
   const priced = beside.metered && noCredits !== true;
-  const set = (next: RichValue): void => w.onComposeFields({ ...compose, body: next.text, html: next.html });
+  const set = (next: RichValue): void =>
+    w.onComposeFields({ ...compose, body: next.text, html: next.html, aiDraft: next.aiDraft ?? false });
   if (!control.offered || letter === "none" || Boolean(compose.forwardOf)) return null;
   const fromText = !drafting && !waiting && !untouched;
   const word = drafting

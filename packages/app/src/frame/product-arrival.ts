@@ -74,12 +74,19 @@ function playArrival(shell: HTMLElement, device: LayoutPlan["device"], switching
   }
   const columns = shell.querySelectorAll(".fr-main > :is(.fr-list, .fr-reading, .fr-wide)");
   columns.forEach((column, index) => {
-    animations.push(arrive(column, transform, duration, stagger * (index + 1)));
+    // On the first Mail paint the opening frame has already drawn the sheet and the empty
+    // reader. Leave those surfaces in place and bring in the contents. A switch still moves
+    // the incoming columns as a whole.
+    const passive = !switching && column.matches(".fr-list, .fr-reading");
+    const parts = passive ? (column.firstElementChild?.children ?? []) : [column];
+    for (const part of parts) {
+      animations.push(arrive(part, transform, duration, stagger * (index + 1)));
+    }
   });
   return settleOnActivation(shell, animations);
 }
 
-/** The first desktop Mail open and each committed product switch use the same entry motion. */
+/** The first desktop Mail open moves its contents. Later product switches move the columns. */
 export function useProductArrival(
   frame: RefObject<HTMLDivElement | null>,
   device: LayoutPlan["device"],

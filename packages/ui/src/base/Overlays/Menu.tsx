@@ -1,4 +1,5 @@
 import {
+  useContext,
   useLayoutEffect,
   useRef,
   useState,
@@ -9,16 +10,19 @@ import {
 } from "react";
 import { Button } from "../Primitives/Button.js";
 import "./menu.css";
-import { EDGE, placeMenu, type MenuFit, type Point } from "./menu-place.js";
+import { clearMenuReport, EDGE, placeMenu, type MenuFit, type Point } from "./menu-place.js";
 import { cssRect } from "../ui-zoom.js";
 import { closeTopmost, useOverlayEscape } from "./overlay-escape.js";
 import { cycleTab, useOverlayFocus } from "./overlay-focus.js";
+import { POPOVER_REPORT, popoverHost, portalRenderer } from "./portal-renderer.js";
 import "./overlay.css";
 
 export interface MenuProps {
   open: boolean;
   id?: string;
   modal?: boolean;
+  /** Stand in the window's overlay layer when a scroller or toolbar would cover the menu. */
+  portal?: boolean;
   onClose: () => void;
   /**
    * What it comes out of: the control that opened it, or a point in the window in the page's px (a right
@@ -75,6 +79,28 @@ const menuItems = (el: HTMLElement) => [...el.querySelectorAll<HTMLElement>(ITEM
 const firstStop = (el: HTMLElement) =>
   menuItems(el).find(visible) ?? [...el.querySelectorAll<HTMLElement>("button:not(:disabled)")].find(visible);
 
+function focusMenuRow(box: HTMLElement, row: HTMLElement | undefined): void {
+  if (!row) return;
+  row.focus({ preventScroll: true });
+  const pane = box.getBoundingClientRect();
+  const item = row.getBoundingClientRect();
+  const scale = pane.height / box.offsetHeight;
+  if (!scale) return;
+  const top = (item.top - pane.top) / scale - box.clientTop;
+  const bottom = top + row.offsetHeight;
+  if (top < 0) box.scrollTop += top;
+  else if (bottom > box.clientHeight) box.scrollTop += bottom - box.clientHeight;
+}
+
+function moveMenuFocus(box: HTMLElement, key: string): void {
+  const items = menuItems(box).filter(visible);
+  const at = items.indexOf(box.ownerDocument.activeElement as HTMLElement);
+  const move = key === "ArrowDown" ? 1 : -1;
+  const to =
+    key === "Home" ? 0 : key === "End" ? items.length - 1 : (at + move + items.length) % items.length;
+  focusMenuRow(box, items[to]);
+}
+
 function repairMenuFocus(box: HTMLElement, held: HTMLElement, onClose: () => void): void {
   const { activeElement, body, documentElement } = box.ownerDocument;
   if (activeElement && activeElement !== held && activeElement !== body && activeElement !== documentElement)
@@ -83,7 +109,7 @@ function repairMenuFocus(box: HTMLElement, held: HTMLElement, onClose: () => voi
   const at = items.indexOf(held);
   if (at >= 0 && visible(held)) return;
   const next = items.slice(at + 1).find(visible) ?? items.slice(0, Math.max(0, at)).reverse().find(visible);
-  if (next) next.focus({ preventScroll: true });
+  if (next) focusMenuRow(box, next);
   else onClose();
 }
 
@@ -119,6 +145,7 @@ export function Menu(props: MenuProps) {
     onKey,
     children,
   } = props;
+  const renderPortal = useContext(portalRenderer);
   const box = useRef<HTMLDivElement | null>(null);
   const closeBar = useRef<HTMLDivElement | null>(null);
   const lastItem = useRef<HTMLElement | null>(null);
@@ -153,12 +180,7 @@ export function Menu(props: MenuProps) {
       if (dialog) cycleTab(e, el);
       else onClose();
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
-      const items = menuItems(el).filter(visible);
-      const at = items.indexOf(el.ownerDocument.activeElement as HTMLElement);
-      const move = e.key === "ArrowDown" ? 1 : -1;
-      const to =
-        e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (at + move + items.length) % items.length;
-      items[to]?.focus({ preventScroll: true });
+      moveMenuFocus(el, e.key);
       claimKey(e);
     } else if (e.key.length === 1 && e.key !== " " && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // Keep typing local without blocking the default action of an input inside the menu.
@@ -179,8 +201,8 @@ export function Menu(props: MenuProps) {
     }
   };
 
-  return (
-    <div className="oh-over">
+  const drawn = (
+    <div className="oh-over" data-popover={props.portal ? "" : undefined}>
       <div className="oh-veil" data-veil="" data-dim={anchor ? undefined : ""} onPointerDown={onClose} />
       <div
         ref={box}
@@ -214,10 +236,13 @@ export function Menu(props: MenuProps) {
       </div>
     </div>
   );
+  if (!props.portal) return drawn;
+  const host = popoverHost(from && "current" in from ? from.current : from);
+  return host ? renderPortal(drawn, host) : null;
 }
 
 function useMenuPosition(
-  { open, anchor, up, upFrom, right, fit, closeWhenFull }: MenuProps,
+  { open, portal, anchor, up, upFrom, right, fit, closeWhenFull }: MenuProps,
   box: RefObject<HTMLDivElement | null>,
   closeBar: RefObject<HTMLDivElement | null>,
   setFull: (full: boolean) => void,
@@ -230,6 +255,7 @@ function useMenuPosition(
     const el = box.current;
     const stage = el?.parentElement;
     if (!open || !el || !stage) return;
+    const report = portal ? el.ownerDocument.querySelector(POPOVER_REPORT) : null;
     const position = () => {
       const room = cssRect(stage);
       const height =
@@ -245,8 +271,10 @@ function useMenuPosition(
           el.style.maxHeight = "";
           delete el.dataset.up;
         }
+        if (portal) clearMenuReport(el, room, report);
         return;
       }
+      if (portal) el.style.removeProperty("--oh-menu-clearance");
       const control = from && "current" in from ? from.current : from;
       const r = control ? cssRect(control) : undefined;
       const at =
@@ -267,10 +295,11 @@ function useMenuPosition(
       else delete el.dataset.up;
     };
     position();
-    if (!fit && !closeWhenFull) return;
+    if (!fit && !closeWhenFull && !report) return;
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(position) : null;
     observer?.observe(el);
     observer?.observe(stage);
+    if (report) observer?.observe(report);
     if (upFrom) observer?.observe(upFrom);
     const window = el.ownerDocument.defaultView;
     window?.addEventListener("resize", position);
@@ -278,5 +307,5 @@ function useMenuPosition(
       observer?.disconnect();
       window?.removeEventListener("resize", position);
     };
-  }, [open, x, y, from, up, upFrom, right, fit, closeWhenFull, box, closeBar, setFull]);
+  }, [open, portal, x, y, from, up, upFrom, right, fit, closeWhenFull, box, closeBar, setFull]);
 }

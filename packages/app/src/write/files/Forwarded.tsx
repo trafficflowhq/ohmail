@@ -86,6 +86,7 @@ function ForwardedTile({ off, ...props }: FileTileProps) {
       <FileTile {...props} off={off} onMenu={remove ? (at, anchor) => setMenu({ at, anchor }) : undefined} />
       {off && remove && menu ? (
         <MailRowMenu
+          portal
           target={menu}
           label={props.name}
           onClose={() => setMenu(null)}

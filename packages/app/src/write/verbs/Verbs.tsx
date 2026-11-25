@@ -85,7 +85,7 @@ function CompactSendPanel({ label, items }: { label: string; items: readonly Pan
         more={{ label: more, behind: true, expanded: anchor !== null, onPress: setAnchor }}
       />
       {anchor ? (
-        <Menu open anchor={anchor} label={more} onClose={close} anchored up right>
+        <Menu open portal anchor={anchor} label={more} onClose={close} anchored up right>
           {items.slice(1).map((item) => (
             <MenuItem
               key={item.id}

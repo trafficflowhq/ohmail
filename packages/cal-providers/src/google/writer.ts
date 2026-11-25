@@ -56,7 +56,7 @@ import {
   sameAudience,
   sameCancellationAudience,
 } from "../write-compare.js";
-import { convertEvent, googleSelfAttendee, googleTimeOf } from "./convert.js";
+import { convertEvent, googleSelfAttendee, googleTimeOf, isDefaultGoogleEvent } from "./convert.js";
 import { GOOGLE_CALENDAR_BASE } from "./hosts.js";
 import { googleAuthorization } from "./reader.js";
 
@@ -1544,6 +1544,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       // The move endpoint has no conditional request. Recheck the version and audience immediately before it.
       const current = await readEvent(signedIn.token, events, target.id, signal);
       if ("ok" in current) return current;
+      if (!isDefaultGoogleEvent(current.raw)) return refused("unsupported");
       if (current.item.version !== target.version || !target.audience) return refused("version_stale");
       if (target.recurringSeries) {
         if (!seriesHead(current, target)) return refused("version_stale");

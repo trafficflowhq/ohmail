@@ -228,6 +228,8 @@ export interface CalendarEventRecord {
   cut: boolean;
   /** Stored content fits the fields a portable move preserves. */
   portableCopy?: true;
+  /** The Google provider allows native moves for this event type. */
+  googleDefaultEvent?: true;
   /**
    * The person's writes to this event that the provider has not taken yet, or refused: oldest
    * first. The record itself is the provider's copy; what waits rides here, beside it.

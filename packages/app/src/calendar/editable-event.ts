@@ -1,4 +1,5 @@
 import {
+  deleteAudienceOf,
   viewOnlyOf,
   recordAtOccurrence,
   type ZoneSource,
@@ -214,26 +215,14 @@ function calendarRecord<T extends { id: string }>(host: HostContract, kind: stri
   );
 }
 
-export function nativeMoveTo(source: NonNullable<ReturnType<typeof writableEvent>>, target: CalendarRecord) {
+function nativeMoveTo(source: NonNullable<ReturnType<typeof writableEvent>>, target: CalendarRecord) {
   return (
     target.connectionId === source.connection?.id &&
-    (source.connection.provider === "google" ||
+    ((source.connection.provider === "google" && source.verifiedOrganizer) ||
       (source.connection.provider === "caldav" &&
         source.calendar.nativeMove === true &&
         target.nativeMove === true))
   );
-}
-
-function ownedDestinations(host: HostContract, source: NonNullable<ReturnType<typeof writableEvent>>) {
-  return host.engine.store.entries<CalendarRecord | null>("calendar").flatMap(({ entity }) => {
-    if (!entity || entity.id === source.calendar.id || entity.access !== "owner") return [];
-    const connection = calendarRecord<CalendarConnectionRecord>(
-      host,
-      "calendar_connection",
-      entity.connectionId,
-    );
-    return connection && !viewOnlyOf(entity, connection) ? [entity] : [];
-  });
 }
 
 export function hasGuests(record: CalendarEventRecord) {
@@ -244,33 +233,52 @@ export function hasGuests(record: CalendarEventRecord) {
   );
 }
 
-export function eventMoveOptions(host: HostContract, source: ReturnType<typeof writableEvent>) {
-  if (!source) return { destinations: [], moveRestriction: null };
-  const { record } = source;
-  const guests = hasGuests(record);
-  if (source.sharedCopy && (record.organizer || guests)) return { destinations: [], moveRestriction: null };
-  const owned = ownedDestinations(host, source).filter(
-    (target) =>
-      source.connection?.provider !== "google" ||
-      target.connectionId !== source.connection.id ||
-      source.verifiedOrganizer,
+type MoveRestriction = "account" | "provider" | "event";
+export type EventMoveOptions = {
+  destinations: readonly CalendarRecord[];
+  moveRestriction: MoveRestriction | null;
+};
+
+export function seriesMoveAudience(record: CalendarEventRecord) {
+  return record.deleteMembers ? deleteAudienceOf(record.deleteMembers, { kind: "record" }) : null;
+}
+
+function googleMoveBlocked(record: CalendarEventRecord): boolean {
+  return (
+    record.googleDefaultEvent !== true ||
+    (record.repeat !== null &&
+      (record.repeat.excluded.length > 0 || record.deleteMembers?.some(({ at }) => at !== null) === true))
   );
-  const nonNative = (target: CalendarRecord) => !nativeMoveTo(source, target);
-  const canCopy =
-    record.portableCopy === true &&
-    record.status === "confirmed" &&
-    record.end !== null &&
-    !record.cut &&
-    !guests &&
-    !record.repeat?.added.length &&
-    !record.repeat?.excluded.length &&
-    !record.deleteMembers?.some((member) => member.at !== null);
-  const destinations =
-    record.repeat && !record.deleteScopes?.includes("record")
-      ? []
-      : owned.filter((target) => canCopy || !nonNative(target));
+}
+
+export function eventMoveOptions(
+  host: HostContract,
+  source: ReturnType<typeof writableEvent>,
+): EventMoveOptions {
+  if (!source) return { destinations: [], moveRestriction: null };
+  const { record, connection } = source;
+  if (
+    (source.sharedCopy && (record.organizer || hasGuests(record))) ||
+    (record.repeat && (!record.deleteScopes?.includes("record") || !seriesMoveAudience(record))) ||
+    (connection?.provider === "google" && (!source.verifiedOrganizer || googleMoveBlocked(record)))
+  )
+    return { destinations: [], moveRestriction: "event" };
+
+  const other = host.engine.store
+    .entries<CalendarRecord | null>("calendar")
+    .flatMap(({ entity }) => (entity && entity.id !== source.calendar.id ? [entity] : []));
+  const eligible = other.filter(
+    (target) => target.access === "owner" && target.connectionId === connection?.id,
+  );
+  const destinations = eligible.filter(
+    (target) => !viewOnlyOf(target, connection) && nativeMoveTo(source, target),
+  );
   const moveRestriction =
-    !canCopy && owned.some(nonNative) ? (guests ? ("guests" as const) : ("fields" as const)) : null;
+    connection?.provider === "microsoft" || destinations.length < eligible.length
+      ? "provider"
+      : destinations.length === 0 || eligible.length < other.length
+        ? "account"
+        : null;
   return { destinations, moveRestriction };
 }
 

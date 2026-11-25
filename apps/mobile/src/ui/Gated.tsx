@@ -9,7 +9,6 @@
  */
 import { Redirect, usePathname } from "expo-router";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ActivityIndicator, View } from "react-native";
 import { MAIL_SURFACE, useConnection } from "../net/connection";
 import { accessLock, onAccessLock } from "../net/access-lock";
 import { onUpdateAnswer, updateAnswer } from "../net/update-answer";
@@ -18,12 +17,9 @@ import type { ConnectedSession } from "../net/pairing";
 import "../state/access-verdict-native";
 import { recordVerdict, storedVerdict, verdictsReady, verdictsSettled } from "../state/access-verdict";
 import { gateFor } from "../state/gate";
-import { useTheme } from "../theme";
 import { AccountWall } from "./AccountWall";
 import { UpdateCard } from "./UpdateCard";
-import { Panel, Screen } from "./base";
 import { awaitFirstPaint, paintsAtOnce, type FirstPaintInputs } from "./first-paint";
-import { Wordmark } from "./Icon";
 import { LifecycleStrip } from "./LifecycleStrip";
 import { StorageNotice } from "./StorageNotice";
 import { BootShell } from "./Skeleton";
@@ -67,22 +63,6 @@ function useFirstPaint(session: ConnectedSession | null): boolean {
     });
   }, [session]);
   return atOnce || openFor === session;
-}
-
-/** The frame the first paint waits behind: the mark and a spinner, no sentence and no mail. */
-function AccessGate() {
-  const t = useTheme();
-  return (
-    <Screen style={{ justifyContent: "center" }}>
-      {/* A margin, not padding: `Screen` owns its horizontal padding (the safe-area insets). */}
-      <Panel style={{ marginHorizontal: 24, padding: 24, gap: 18 }}>
-        <Wordmark color={t.c.ink} dot={t.c.accent} size={22} />
-        <View accessibilityRole="progressbar" style={{ alignItems: "flex-start" }}>
-          <ActivityIndicator size="small" color={t.c.accent} />
-        </View>
-      </Panel>
-    </Screen>
-  );
 }
 
 export function Gated({ children }: { children: ReactNode }) {
@@ -131,7 +111,7 @@ export function Gated({ children }: { children: ReactNode }) {
      on this phone is untouched and so is the mailbox. */
   if (verdict.to === "wall") return <AccountWall facts={verdict.facts} session={session} />;
   /* THE WALL BEFORE MAIL: no stored `open` for this pairing, so the verdict is asked first. */
-  if (!painted) return <AccessGate />;
+  if (!painted) return <BootShell checkingAccess />;
   /* THE STRIP ABOVE THE APP, in the one mount every gated screen shares: the deadline or the
      catch-up is a fact about the ACCOUNT, not about a pile, so it is drawn once rather than by
      each list. It renders nothing at all whenever there is nothing to say. */

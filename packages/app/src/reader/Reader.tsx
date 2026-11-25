@@ -282,7 +282,16 @@ function facesOf(people: readonly { name: string; address: string }[]) {
 
 /** A wheel beside the sheets scrolls them as the person's own scroll. */
 function scrollConversation(e: WheelEvent<HTMLDivElement>, sc: HTMLElement | null): void {
-  if (!sc || e.ctrlKey || sc.contains(e.target as Node)) return;
+  // Portaled menus and suggestions scroll independently of the conversation.
+  const target = e.target as Element;
+  if (
+    !sc ||
+    e.ctrlKey ||
+    !e.currentTarget.contains(target) ||
+    sc.contains(target) ||
+    target.closest?.("[data-popover]")
+  )
+    return;
   const dy = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? sc.clientHeight : 1);
   if (dy !== 0) scrollByHand(sc, dy, { deltaY: e.deltaY, deltaMode: e.deltaMode });
 }

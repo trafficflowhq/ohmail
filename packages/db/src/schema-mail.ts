@@ -2982,6 +2982,7 @@ export const calEvents = pgTable("cal_events", {
   partial: boolean("partial").notNull().default(false),
   original: text("original"),
   portableCopy: boolean("portable_copy").notNull().default(false),
+  googleDefaultEvent: boolean("google_default_event").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({

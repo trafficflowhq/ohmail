@@ -8,6 +8,9 @@
     z-index: var(--oh-layer-over);
     pointer-events: none;
   }
+  .oh-suggest-layer[data-popover] {
+    z-index: var(--oh-layer-popover);
+  }
   .oh-suggest {
     --oh-suggest-min: 232px;
     --oh-suggest-pad: var(--s2);
@@ -15,6 +18,7 @@
     --oh-suggest-run-r: 1px;
     --oh-soft: var(--soft-sheet);
     position: relative;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     min-width: var(--oh-suggest-min);
@@ -39,6 +43,7 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow: hidden auto;
+    overscroll-behavior: contain;
     scrollbar-width: none;
   }
   .oh-suggest-group + .oh-suggest-group::before {

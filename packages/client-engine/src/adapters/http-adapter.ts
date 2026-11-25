@@ -1210,7 +1210,13 @@ export class HttpAdapter implements EngineAdapter {
       const res = await this.call("GET /drafts/:id", { params: { id: draftId }, signal });
       if (!res.ok) throw await this.rejectionOf(res, "read");
       const wire = await this.readUntrusted<"GET /drafts/:id">(res);
-      return typeof wire.body === "string" ? { body: wire.body, html: typeof wire.html === "string" ? wire.html : null } : null;
+      if (typeof wire.body !== "string") return null;
+      const rationale = wire.rationale;
+      return {
+        body: wire.body,
+        html: typeof wire.html === "string" ? wire.html : null,
+        ...(rationale === null || typeof rationale === "string" ? { rationale } : {}),
+      };
     });
   }
 

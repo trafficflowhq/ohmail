@@ -43,12 +43,17 @@
       "answerScope": "Answer {title}",
       "delete": "Delete",
       "moveTo": "Move to another calendar",
+      "moveAllTo": "Move all events to {calendar}",
+      "moveWithGuests": "With {guests}",
+      "moveConfirm": "Move",
       "hideCalendar": "Hide this calendar",
       "tellsDelete": "{title} is cancelled",
       "cancellationMessage": "The event has been cancelled",
       "moveRestriction": {
-        "guests": "Events with guests stay in their account’s calendars",
-        "fields": "This event has details that another calendar can’t keep"
+        "account": "Only writable calendars in the same account can receive this event",
+        "provider": "This provider cannot move the event to another calendar",
+        "event": "This event cannot move to another calendar",
+        "saveFirst": "Save your changes before moving the event"
       },
       "moving": "Moving event",
       "sendCancellation": "Send cancellation",

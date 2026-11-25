@@ -63,7 +63,7 @@ pub fn keep(dir: &Path, canvas: Rgb) -> std::io::Result<()> {
 
 /// What the window is asked to do. The shipped one is the main window; the tests' one records.
 pub trait Surface: Send + Sync + 'static {
-    /// The native background: the window's own surface and the web view's before its first frame.
+    /// The background behind the webview before its first frame.
     fn paint(&self, canvas: Rgb);
     /// Whether there was a window to show.
     fn show(&self) -> bool;
@@ -143,7 +143,12 @@ impl<R: tauri::Runtime> Surface for MainWindow<R> {
     fn paint(&self, (r, g, b): Rgb) {
         use tauri::Manager;
         if let Some(window) = self.0.get_webview_window("main") {
-            let _ = window.set_background_color(Some(tauri::window::Color(r, g, b, 255)));
+            let color = Some(tauri::window::Color(r, g, b, 255));
+            // GTK draws the menu over the window surface using the system's label colors.
+            #[cfg(target_os = "linux")]
+            let _ = window.as_ref().set_background_color(color);
+            #[cfg(not(target_os = "linux"))]
+            let _ = window.set_background_color(color);
         }
     }
     fn show(&self) -> bool {

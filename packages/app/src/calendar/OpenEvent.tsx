@@ -105,6 +105,7 @@ function OpenEventCard({
   const edit = current ? { label: t("edit.action"), onPress: begin } : null;
   const removable =
     port !== NONE && !event.failedCreate ? removableEvent(host, port, event, known, zones) : null;
+  const move = eventMoveOptions(host, current);
   const { blocked, onKeyDown, panel, toolbar, menu, items } = useEventCardActions({
     event,
     actions,
@@ -114,7 +115,7 @@ function OpenEventCard({
     ...readActions,
     join: call?.join,
     removable,
-    ...eventMoveOptions(host, current),
+    ...move,
   });
   const readMenu = useEventCardMenu({
     ...{ event, port, actions, zones, reply, edit, removal, removable, blocked, otherActions },
@@ -129,7 +130,12 @@ function OpenEventCard({
           key={editing.revision}
           beforeRestore={beforeRestore}
           port={editing.port}
-          actionItems={items}
+          actionItems={items.filter(({ id }) => id !== "move")}
+          move={{
+            ...move,
+            blocked,
+            start: (target, anchor) => actions.start(event, { kind: "calendar", target }, anchor),
+          }}
           connection={current.connection}
           original={editing.record}
           exception={editing.exception}

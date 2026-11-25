@@ -334,7 +334,7 @@ function SeedReviewNotice({ store }: { store: NoticeStore }) {
 
 function renderReport(slot: FramePartsProps["slot"], className: string, hideKeyedUndo = false) {
   return (
-    <div className={className}>
+    <div className={className} data-popover-avoid={className === "fr-report" ? "" : undefined}>
       <ReportHost slot={slot} hideKeyedUndo={hideKeyedUndo} />
     </div>
   );

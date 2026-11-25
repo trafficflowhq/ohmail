@@ -1,13 +1,12 @@
 "use client";
 
 /**
- * The three columns' widths — one contract, four readers: `ColumnHandles` (writes live during a drag, persists on
+ * The three columns' widths — one contract: `ColumnHandles` (writes live during a drag, persists on
  * release); the web door's pre-paint script (`columnsBootScript`, inlined by `(product)/providers.tsx` — a served
  * page has no bundle yet, so the widths are stamped or the first frame is the default and the second the truth); the
  * desktop window and served host client (`stampColumns` — their CSP forbids inline scripts, so they call the function
- * before `createRoot`); and `BootSkeleton` via `app.css`, reading the same two custom properties. Plain functions, no
- * React — four callers must agree. Per machine, never per account: a column width is a fact about the screen, so it
- * is origin `localStorage`, unkeyed by owner, and survives sign-out like the face pin and the rail disclosures; the
+ * before `createRoot`). Startup and mail read the same properties. Widths belong to the machine and survive
+ * sign-out, like the face pin and the rail disclosures; the
  * sidecar's settings hold mailbox and AI facts, and window chrome gets no route there.
  */
 
@@ -65,36 +64,7 @@ export const BIG_STEP = 64;
 /** The custom properties the geometry hangs on. Absent = today's stylesheet, verbatim. */
 export const RAIL_VAR = "--rail-w";
 export const SPLIT_VAR = "--split-user";
-/**
- * …and a second track list for the boot silhouette, which is not the same box. `--split-user`
- * contains `calc(100% - …)`, and `100%` means the element the property is USED on: in the shell
- * that is `.view.split` (rail and one gap already taken out), while the silhouette's
- * `.boot-sk-window` is the whole deck — a few hundred pixels wider. Handing it the same string
- * drew a list up to `rail + gap` wider than the shell it becomes: the exact cold-boot snap this
- * store exists to remove. It cannot be repaired at the point of use — a `var()` inside a custom
- * property is substituted where the property is DECLARED (`:root`) — so the room is baked in per
- * box by the one function below, and `column-geometry.test.ts` compares both properties.
- */
-export const SPLIT_SK_VAR = "--split-user-sk";
-
-/**
- * The rail's track, as CSS. One string, so the stylesheet and the stamp cannot drift. The ceiling
- * follows the window: a constant 360px cap let a rail dragged wide keep its width while the window
- * shrank, leaving the reading column ~250px at 1000px — its header address ran into the time. The
- * cap is now the smaller of the rail's own ceiling and what the window leaves once the list keeps
- * its floor and the reading column its own (`LIST.min` + `LIST.viewerMin`, plus the edge and tile
- * gaps, in tokens): the viewer keeps a floor at every split width, no script running. When the
- * window is too narrow even for the floor, `clamp()` resolves to the rail's minimum — right there
- * too.
- */
-export const RAIL_TRACK =
-  `clamp(${RAIL.min}px, var(${RAIL_VAR}, ${RAIL.dflt}px), `
-  + `min(${RAIL.max}px, calc(100vw / var(--ui-zoom, 1) - ${LIST.min + LIST.viewerMin}px - 2 * var(--gap-edge) - 2 * var(--gap-tile))))`;
-
-/** What is left for the list once the reading column keeps its floor — per box. */
 const ROOM_SPLIT = `calc(100% - ${LIST.viewerMin}px - var(--gap-tile))`;
-const ROOM_SKELETON =
-  `calc(100% - ${RAIL_TRACK} - var(--gap-tile) - ${LIST.viewerMin}px - var(--gap-tile))`;
 
 const clamp = (px: number, lo: number, hi: number): number =>
   Math.round(Math.min(hi, Math.max(lo, px)));
@@ -110,18 +80,8 @@ export const clampList = (px: number): number => clamp(px, LIST.min, LIST.max);
  * string: the live writer, the web door's inline stamp, and the desktop's. `column-geometry.test.ts` compares the
  * stamp's output against this for a table of stored values, including hostile ones.
  */
-function splitTracks(listPx: number, room: string): string {
-  return `minmax(${LIST.min}px, min(${listPx}px, ${room})) 1fr`;
-}
-
-/** The shell's split — `100%` is `.view.split`, the rail already taken out of it. */
 export function splitUserValue(listPx: number): string {
-  return splitTracks(listPx, ROOM_SPLIT);
-}
-
-/** The silhouette's — `100%` is the whole deck, so the rail and its gap come out here. */
-export function splitSkeletonValue(listPx: number): string {
-  return splitTracks(listPx, ROOM_SKELETON);
+  return `minmax(${LIST.min}px, min(${listPx}px, ${ROOM_SPLIT})) 1fr`;
 }
 
 /**
@@ -188,13 +148,8 @@ export function writeColumns(state: ColumnState): void {
 export function applyColumnVars(root: HTMLElement, state: ColumnState): void {
   if (state.rail !== undefined) root.style.setProperty(RAIL_VAR, `${state.rail}px`);
   else root.style.removeProperty(RAIL_VAR);
-  if (state.list !== undefined) {
-    root.style.setProperty(SPLIT_VAR, splitUserValue(state.list));
-    root.style.setProperty(SPLIT_SK_VAR, splitSkeletonValue(state.list));
-  } else {
-    root.style.removeProperty(SPLIT_VAR);
-    root.style.removeProperty(SPLIT_SK_VAR);
-  }
+  if (state.list !== undefined) root.style.setProperty(SPLIT_VAR, splitUserValue(state.list));
+  else root.style.removeProperty(SPLIT_VAR);
 }
 
 /**
@@ -224,8 +179,7 @@ export function columnsBootScript(): string {
     `if(typeof c.rail==="number"&&isFinite(c.rail)){n=Math.round(Math.min(${RAIL.max},Math.max(${RAIL.min},c.rail)));` +
     `d.setProperty(${JSON.stringify(RAIL_VAR)},n+"px")}` +
     `if(typeof c.list==="number"&&isFinite(c.list)){n=Math.round(Math.min(${LIST.max},Math.max(${LIST.min},c.list)));` +
-    `d.setProperty(${JSON.stringify(SPLIT_VAR)},"minmax(${LIST.min}px, min("+n+"px, ${ROOM_SPLIT})) 1fr");` +
-    `d.setProperty(${JSON.stringify(SPLIT_SK_VAR)},"minmax(${LIST.min}px, min("+n+"px, ${ROOM_SKELETON})) 1fr")}` +
+    `d.setProperty(${JSON.stringify(SPLIT_VAR)},"minmax(${LIST.min}px, min("+n+"px, ${ROOM_SPLIT})) 1fr")}` +
     `}catch(e){}})()`
   );
 }

@@ -56,3 +56,4 @@ export {
 export { CALENDAR_ADDRESS, isCalendarFragment, isRealDay } from "./route.js";
 
 export { ChunkLoadContext, lazyView, LoadFailed, ViewLoadFailed } from "./lazy-view.js";
+export { OpeningFrame } from "./OpeningFrame.js";

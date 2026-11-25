@@ -352,6 +352,22 @@
     right: calc(var(--s3) - var(--ringw));
   }
 
+  /* An inline reply's action panel takes its own row below the scrollport. */
+  .oh-sheet[data-kind="reading"]:has(> .oh-sheet-body .oh-composer[data-reply]) {
+    --oh-sheet-foot-room: var(--s2);
+  }
+
+  .oh-sheet[data-kind="reading"]:has(> .oh-sheet-body .oh-composer[data-reply]) .oh-sheet-scroll {
+    mask-image: none;
+  }
+
+  .oh-sheet[data-kind="reading"]:has(> .oh-sheet-body .oh-composer[data-reply]) > .oh-sheet-foot {
+    position: relative;
+    inset: auto;
+    flex: none;
+    margin-block: var(--s2) var(--oh-sheet-foot-own);
+  }
+
   :root[data-face="ohmarchy"]:not([data-device="phone"], [data-zone="rail"])
     .oh-sheet[data-kind="reading"][data-focused]::after {
     content: "";

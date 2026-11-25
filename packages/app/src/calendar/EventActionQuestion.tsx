@@ -118,7 +118,7 @@ export function EventActionQuestion({ actions }: { readonly actions: EventAction
   const locale = useLocale();
   const { question, chooseScope, cancel, confirm } = actions;
   if (!question) return null;
-  const { anchor, change, face, guests, scope } = question;
+  const { anchor, change, face, guests, scope, seriesDestination } = question;
   const whom = guestNames(guests, locale, t, change.kind !== "delete");
   const length = change.kind === "resize-time";
   const when = question.when;
@@ -164,12 +164,28 @@ export function EventActionQuestion({ actions }: { readonly actions: EventAction
               .map((option) => ({ ...option, onPress: () => chooseScope(option.id) })),
           }
         : {
-            question: t("edit.tell", { guests: whom }),
-            follows: prefix ? `${prefix} · ${detail}` : detail,
+            question:
+              seriesDestination !== undefined
+                ? t("actions.moveAllTo", { calendar: seriesDestination })
+                : t("edit.tell", { guests: whom }),
+            follows:
+              seriesDestination !== undefined
+                ? guests.length > 0
+                  ? t("actions.moveWithGuests", { guests: whom })
+                  : face.title
+                : prefix
+                  ? `${prefix} · ${detail}`
+                  : detail,
             answers: [
               {
                 id: "send",
-                label: t(change.kind === "delete" ? "actions.sendCancellation" : "edit.sendUpdate"),
+                label: t(
+                  seriesDestination !== undefined
+                    ? "actions.moveConfirm"
+                    : change.kind === "delete"
+                      ? "actions.sendCancellation"
+                      : "edit.sendUpdate",
+                ),
                 keyHint: "↵",
                 onPress: confirm,
               },

@@ -146,6 +146,7 @@ export interface StoredRow {
   readonly uid: string;
   readonly partial: boolean;
   readonly portableCopy: boolean;
+  readonly googleDefaultEvent: boolean;
   /** Whether the row keeps any excluded day. */
   readonly excludes: boolean;
 }
@@ -175,13 +176,14 @@ function united(a: readonly StoredTime[], b: readonly StoredTime[], zones: ZoneS
  * Is an object as a page names it already stored as it is? Every stored row carries the
  * provider's same version, which is not empty, and the rows are the same occurrences.
  */
-export function storedAsIs(rows: readonly MappedRow[], stored: readonly Pick<StoredRow, "versionTag" | "recurrenceId" | "partial" | "portableCopy">[]): boolean {
+export function storedAsIs(rows: readonly MappedRow[], stored: readonly Pick<StoredRow, "versionTag" | "recurrenceId" | "partial" | "portableCopy" | "googleDefaultEvent">[]): boolean {
   const version = rows[0]?.values.versionTag ?? null;
   if (version === null || stored.length !== rows.length) return false;
   const byDay = new Map(rows.map(({ values }) => [values.recurrenceId, values]));
   return stored.every((s) => {
     const row = byDay.get(s.recurrenceId);
-    return s.versionTag === version && row?.partial === s.partial && row.portableCopy === s.portableCopy;
+    return s.versionTag === version && row?.partial === s.partial && row.portableCopy === s.portableCopy &&
+      row.googleDefaultEvent === s.googleDefaultEvent;
   });
 }
 
@@ -347,7 +349,7 @@ export async function storedRowsOf(
   return inConnection(ctx.db, ctx.key, async ({ tx }) => {
     const pick = {
       id: calEvents.id, providerId: calEvents.providerId, recurrenceId: calEvents.recurrenceId,
-      versionTag: calEvents.versionTag, uid: calEvents.uid, partial: calEvents.partial, portableCopy: calEvents.portableCopy, excludes: sql<boolean>`${calEvents.excludedDates} is not null`,
+      versionTag: calEvents.versionTag, uid: calEvents.uid, partial: calEvents.partial, portableCopy: calEvents.portableCopy, googleDefaultEvent: calEvents.googleDefaultEvent, excludes: sql<boolean>`${calEvents.excludedDates} is not null`,
     };
     const mine = and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id));
     const found = new Map<string, StoredRow>();
@@ -502,7 +504,7 @@ function columnsOf(row: MappedRow, excluded: readonly StoredTime[]) {
     repeatRule: v.repeatRule, excludedDates: excluded.length > 0 ? [...excluded] : null,
     addedDates: v.addedDates === null ? null : [...v.addedDates],
     busy: v.busy, private: v.private, organizer: v.organizer, organizerName: v.organizerName,
-    myAnswer: v.myAnswer, original: v.original, partial: v.partial, portableCopy: v.portableCopy,
+    myAnswer: v.myAnswer, original: v.original, partial: v.partial, portableCopy: v.portableCopy, googleDefaultEvent: v.googleDefaultEvent,
   };
 }
 
@@ -525,7 +527,7 @@ async function replaceChildren(tx: Tx, ctx: ApplyContext, eventId: string, row: 
 async function lockedRows(tx: Tx, ctx: ApplyContext, where: ReturnType<typeof and>) {
   return dialect(tx).forUpdate(tx.select({
     id: calEvents.id, providerId: calEvents.providerId, recurrenceId: calEvents.recurrenceId,
-    versionTag: calEvents.versionTag, uid: calEvents.uid, partial: calEvents.partial, portableCopy: calEvents.portableCopy, excludedDates: calEvents.excludedDates,
+    versionTag: calEvents.versionTag, uid: calEvents.uid, partial: calEvents.partial, portableCopy: calEvents.portableCopy, googleDefaultEvent: calEvents.googleDefaultEvent, excludedDates: calEvents.excludedDates,
     startsAt: calEvents.startsAt, endsAt: calEvents.endsAt, repeatRule: calEvents.repeatRule,
   }).from(calEvents).where(and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id), where)), { mode: "update" });
 }

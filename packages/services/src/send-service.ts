@@ -28,7 +28,7 @@ import {
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { answerEnvelopeRefusal, isInvitationAnswerDraft, threadHeadersFit, type AnswerCalendar } from "./invitation-answer-draft.js";
 import { requireUuid } from "./ids.js";
-import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
+import { hasEditedQuotedHistory, repairLegacyDraftHtml } from "@trafficflow/core/outbound-text";
 import { htmlToPlainText, prepareOutboundDelivery, sanitizeQuotedHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
@@ -3279,7 +3279,8 @@ export class SendService {
       }
 
       // The saved draft already carries its recipient formatting and plain-text alternative.
-      const delivery = d.html ? prepareOutboundDelivery(d.html, d.body) : null;
+      const draftHtml = d.html && d.rationale !== null ? repairLegacyDraftHtml(d.html, d.body) : d.html;
+      const delivery = draftHtml ? prepareOutboundDelivery(draftHtml, d.body) : null;
       const html = delivery?.html ?? null;
       const text = delivery?.text ?? d.body;
 
