@@ -251,6 +251,7 @@ export function writeCallOf(o: {
   readonly continuation?: { readonly from: CalendarWriteContinuation; readonly source: StoredEvent | null };
 }): WriteCall {
   const { act } = o;
+  const caldav = o.place?.startsWith("caldav:") === true;
   if (act.kind === "calendar_event_delete" && act.localOnly) return { kind: "refuse", reason: "read_only" };
   const seriesEdit = act.kind === "calendar_event_update" && (act.audience !== undefined || o.confirmedFollowing) &&
     o.event !== null && writeRowOf(o.event) === "series";
@@ -266,7 +267,10 @@ export function writeCallOf(o: {
       ? !draftRepeatSupported(o.place, draft.rule, draft.start, o.zones, o.now)
       : unproven(draft.rule, draft.start);
     if (unsupported) return { kind: "refuse", reason: "repeat_unsupported" };
-    if (o.continuation === undefined) return { kind: "create", draft };
+    if (o.continuation === undefined) {
+      if (caldav && draft.attendees.length > 0 && draft.organizer === null) return { kind: "refuse", reason: "invitees_unsupported" };
+      return { kind: "create", draft };
+    }
     const { from, source } = o.continuation;
     if (source === null) return { kind: "refuse", reason: "event_gone" };
     if (from.personalSeries && (!o.place?.startsWith("caldav:") || !personalSeriesOf(source.original))) return { kind: "refuse", reason: "version_stale" };
@@ -377,7 +381,9 @@ export function writeCallOf(o: {
           return { kind: "refuse", reason: "read_only" };
         if (event.original !== null && event.versionTag !== o.base) return { kind: "refuse", reason: "version_stale" };
       }
-      let change = changeOf(act.change, existingAddress && o.owners.has(existingAddress) ? existingAddress : o.organizer);
+      if (caldav && act.change.invitees?.length && o.organizer === null) return { kind: "refuse", reason: "invitees_unsupported" };
+      const organizer = !caldav && existingAddress && o.owners.has(existingAddress) ? existingAddress : o.organizer;
+      let change = changeOf(act.change, organizer);
       if (change === null) return { kind: "refuse", reason: "content_refused" };
       // A whole series' new start, with no repeat named, moves the series' end (UNTIL) with it, from the series as it stands
       // now (behind a write of it that went first, too): its last day stays its last. Where it cannot be moved, nothing leaves.

@@ -745,6 +745,13 @@ jobs:
       - name: The tools
         run: node tools/check.mjs --base HEAD^1
 
+      - name: Parse GitHub shell scripts
+        run: |
+          set -e
+          for script in .github/scripts/*.sh; do
+            bash -n "$script"
+          done
+
       # Every rule refuses its planted violation, in a copy of the tree.
       - name: The tools' controls
         run: node tools/check.mjs --controls

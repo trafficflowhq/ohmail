@@ -148,6 +148,7 @@ export abstract class EngineBodies extends EngineWindowed {
     retry: boolean,
     rendered = false,
   ): { kind: "skip" } | { kind: "purge" } | { kind: "fetch"; held: MessageBodyRecord | undefined } {
+    if (this.calendarOnly) return { kind: "skip" };
     const msg = this.read().get<EngineMessage>("message", messageId);
     // Not in the mirror at all — a fixture `screener_sender`'s held id, or a row that has
     // since been drained away. Nothing to ask about.

@@ -1,5 +1,7 @@
+import { FrameContext } from "../../frame/commands.js";
+import { useWritingViewport } from "../../write/keyboard-viewport.js";
 import { useDraftLeave } from "../../host/use-draft-leave.js";
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { Button, Dialog, Tag } from "@ohmail/ui/base";
 import { SettingLine, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
@@ -13,7 +15,6 @@ import {
   type SignaturesModel,
 } from "./model.js";
 import { SIGNATURES_NAMESPACE } from "./namespace.js";
-import "./signature-field.css";
 
 export interface SignaturesPaneProps {
   readonly model: SignaturesModel;
@@ -130,6 +131,9 @@ function MailboxSignature(props: {
   const { mb, model, draft, pending, editing, onFocus, failed, onDraft, drop, save } = props;
   const t = useText("settings");
   const own = useText(SIGNATURES_NAMESPACE);
+  const field = useRef<HTMLDivElement>(null);
+  const touch = useContext(FrameContext)?.api.plan.pointer === "coarse";
+  useWritingViewport(field, editing && touch);
   const shown = draft ?? mb.stored;
   const dirty = isDirty(draft, mb.stored);
   const empty = mb.stored.text.trim().length === 0;
@@ -145,7 +149,7 @@ function MailboxSignature(props: {
       aside={mb.reading ? <Tag>{own("read")}</Tag> : empty ? <Tag>{own("none")}</Tag> : undefined}
       wants={failed !== null ? { word: t("notSaved"), line: failed } : undefined}
     >
-      <div className="signature-field" onFocus={mb.reading ? undefined : onFocus}>
+      <div ref={field} onFocus={mb.reading ? undefined : onFocus}>
         {model.editor({
           label: `${t("signatures.title")}: ${mb.address}`,
           value: shown,

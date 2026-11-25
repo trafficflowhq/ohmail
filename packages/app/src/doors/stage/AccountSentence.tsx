@@ -49,11 +49,12 @@ export function useWanted<F extends string>(
 /**
  * "I'm ___, at ___, with a password of ___.": an account's three blanks in the page's sentence, as the design draws
  * them. Each blank holds the comma after it, so they keep their line; the last ends in the dot. The words are the
- * page's namespace's (`account`, and each blank's label and hint); `passwordHint` names the password's hint.
+ * page's namespace's (`account`, and each blank's label and hint); `lengthHint` names the password's hint.
  */
 export function AccountSentence(p: {
   t: Text;
-  passwordHint: string;
+  lengthHint: string;
+  secretFieldHintId?: string;
   ids?: Readonly<Record<AccountField, string>>;
   fields: Blanks<AccountField>;
   wanted: string | null;
@@ -103,9 +104,10 @@ export function AccountSentence(p: {
           <SentenceBlank
             ref={at.password}
             id={ids?.password}
+            describedBy={p.secretFieldHintId}
             label={t("passwordLabel")}
-            placeholder={t(p.passwordHint)}
-            size={t(p.passwordHint).length}
+            placeholder={t(p.lengthHint)}
+            size={t(p.lengthHint).length}
             type="password"
             autoComplete="new-password"
             value={fields.password}

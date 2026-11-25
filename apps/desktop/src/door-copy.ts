@@ -205,6 +205,7 @@ const EN = {
   linkAddressCopied: "Address copied.",
   linkAddressNotCopied: "The address was not copied.",
   browserSignInFailed: "The browser sign-in could not be started.",
+  cloudApproveTryAgain: "Browser sign-in couldn’t start. Try again in a moment.",
   /* The Cloud door's way to an account. The press leads to the purchase step, so a store build
      says the setup sentence instead (`linksOutToBilling`). */
   cloudNoAccount: "No account yet?",

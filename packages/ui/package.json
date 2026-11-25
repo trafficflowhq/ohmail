@@ -82,6 +82,12 @@
       "node": "./dist/theme/ThemeProvider.js",
       "default": "./src/theme/ThemeProvider.tsx"
     },
+    "./button": {
+      "types": "./src/primitives/Button.tsx",
+      "ohmail-source": "./src/primitives/Button.tsx",
+      "node": "./dist/primitives/Button.js",
+      "default": "./src/primitives/Button.tsx"
+    },
     "./base": {
       "types": "./src/base/index.ts",
       "ohmail-source": "./src/base/index.ts",

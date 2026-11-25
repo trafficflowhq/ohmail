@@ -112,6 +112,11 @@ export async function settleRefused(ctx: SettleContext, w: ClaimedWrite, word: W
     if (word === "version_stale") {
       await tx.update(calCalendars).set({ nextPollAt: sql`now()` })
         .where(and(eq(calCalendars.id, w.calendarId), eq(calCalendars.accountId, ctx.key.accountId)));
+    } else if (ctx.word === "caldav" && w.op === "create" && word === "invitees_unsupported") {
+      const [calendar] = await tx.update(calCalendars).set({ autoSchedule: false, updatedAt: sql`now()` })
+        .where(and(eq(calCalendars.id, w.calendarId), eq(calCalendars.accountId, ctx.key.accountId), eq(calCalendars.autoSchedule, true)))
+        .returning({ id: calCalendars.id });
+      if (calendar) changes.push({ kind: "calendar", id: calendar.id, op: "update" });
     }
     await recordCalendarChanges(tx as unknown as LedgerTx, ctx.key.accountId, changes);
   });

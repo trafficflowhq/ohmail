@@ -10,12 +10,14 @@ import { createElement as h, type ReactNode } from "react";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount } from "./_rendered-dom";
+import { MANAGED_ORIGIN } from "../src/net/pairing";
 import type { PhoneMailbox } from "../src/net/mailboxes";
 
 const scene = vi.hoisted(() => ({
   world: null as unknown,
   session: null as unknown,
   opened: [] as string[],
+  settingsPane: null as string | null,
 }));
 
 vi.mock("react-native", async () => ({
@@ -23,10 +25,12 @@ vi.mock("react-native", async () => ({
   Linking: { openURL: async (url: string) => { scene.opened.push(url); } },
 }));
 vi.mock("expo-constants", () => ({ default: { expoConfig: {} } }));
-vi.mock("expo-router", () => ({ router: { push: () => undefined }, useLocalSearchParams: () => ({}) }));
+vi.mock("expo-router", () => ({ router: { push: (route: { params?: { pane?: string } }) => {
+  scene.settingsPane = route.params?.pane ?? null;
+} }, useLocalSearchParams: () => ({ pane: scene.settingsPane ?? undefined }) }));
 vi.mock("../src/theme", async () => {
   const { accountGovernsFace, accountWideOffered } = await import("../src/theme/face");
-  return { accountGovernsFace, accountWideOffered };
+  return { accountGovernsFace, accountWideOffered, useTheme: () => ({ mail: true }) };
 });
 vi.mock("../src/state/store", () => ({
   usePrefs: () => ({ themePref: "system", setTheme: () => undefined, facePin: null, setFacePin: () => undefined,
@@ -55,7 +59,10 @@ vi.mock("../src/engine/engine-artifact", () => ({ phoneEngineStart: () => () => 
 vi.mock("../src/engine/notification-permission-native", () => ({ openNotificationSettings: async () => undefined }));
 vi.mock("../src/ui/NotifyPermission", () => ({ NotifyPermission: () => null }));
 vi.mock("../src/ui/useNotifyPermission", () => ({ useNotifyPermission: () => ({ gate: async () => undefined }) }));
-vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en", useLocaleControls: () => null }));
+vi.mock("../src/i18n/LocaleProvider", async () => ({
+  useLocale: (await import("../src/i18n/locale")).activeLocale,
+  useLocaleControls: () => null,
+}));
 vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null }));
 vi.mock("../src/ui/Gated", () => ({ Gated: (p: { children?: ReactNode }) => p.children }));
 vi.mock("../src/ui/more-move", () => ({ YieldToMore: (p: { children?: ReactNode }) => p.children }));
@@ -74,6 +81,7 @@ vi.mock("../src/engine/diagnostics-native", () => ({ nativePhoneDiagnosticDeps: 
 
 import SettingsScreen from "../app/settings";
 import { Copy } from "../src/copy";
+import { setActiveLocale } from "../src/i18n/locale";
 import { forgetOrganizerSessionForTests, holdStandaloneDoor } from "../src/engine/organizer-session";
 import type { StandaloneEngine } from "../src/engine/standalone-door";
 
@@ -103,6 +111,7 @@ const cloudBox: PhoneMailbox = {
 };
 
 function cloudAccount(rows: PhoneMailbox[]) {
+  scene.settingsPane = null;
   const asked: { method: string; url: string; body?: string }[] = [];
   scene.session = {
     standalone: false,
@@ -133,13 +142,59 @@ function cloudAccount(rows: PhoneMailbox[]) {
 
 const settle = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
 
-afterEach(() => { forgetOrganizerSessionForTests(); document.body.innerHTML = ""; scene.opened.length = 0; });
+function openSection(view: ReturnType<typeof mount>, title: string) {
+  const entry = Array.from(view.el.querySelectorAll("button")).find((button) => button.textContent === title);
+  expect(entry, title).toBeDefined();
+  act(() => entry!.click());
+  view.render(h(SettingsScreen));
+}
+
+afterEach(() => {
+  forgetOrganizerSessionForTests();
+  document.body.innerHTML = "";
+  scene.opened.length = 0;
+  scene.settingsPane = null;
+});
+
+it.each([
+  { locale: "en", mail: "Mail", account: "Account", about: "About", devices: "Devices", servers: "Servers" },
+  { locale: "de", mail: "Mail", account: "Account", about: "Über", devices: "Geräte", servers: "Server" },
+] as const)("groups Settings and opens Devices in $locale", ({ locale, mail, account, about, devices, servers }) => {
+  cloudAccount([]);
+  setActiveLocale(locale);
+  const view = mount(h(SettingsScreen));
+  try {
+    const groups = [...view.el.querySelectorAll('[data-testid="settings-group"]')];
+    expect(groups.map((group) => group.getAttribute('data-label'))).toEqual([mail, account, about]);
+    expect(groups[1]?.querySelector('button')?.textContent).toBe(devices);
+    openSection(view, devices);
+    expect(view.el.querySelector(`[data-nav="${servers}"]`)).not.toBeNull();
+    expect(view.el.querySelector('[data-testid="settings-group"]')).toBeNull();
+  } finally {
+    view.unmount();
+    setActiveLocale("en");
+  }
+});
+
+it("opens a Settings section from the menu without showing the other sections' controls", async () => {
+  cloudAccount([cloudBox]);
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsMailboxes);
+    await settle();
+    expect(view.el.textContent).toContain("cloud@example.test");
+    expect(view.el.textContent).not.toContain(Copy.pictureQuality);
+  } finally {
+    view.unmount();
+  }
+});
 
 describe("Settings under a Cloud account while the phone's own engine still runs", () => {
   it("shows the Cloud mailbox's block with Try again and Leave, and Try again reaches its route", async () => {
     holdStandaloneDoor(ownEngine());
     const asked = cloudAccount([cloudBox]);
     const view = mount(h(SettingsScreen));
+    openSection(view, Copy.settingsMailboxes);
     await settle();
     const text = view.el.textContent ?? "";
     expect(text).toContain("6 messages have not been filed");
@@ -158,6 +213,7 @@ describe("Settings under a Cloud account while the phone's own engine still runs
     holdStandaloneDoor(ownEngine());
     cloudAccount([{ ...cloudBox, filing: undefined }]);
     const view = mount(h(SettingsScreen));
+    openSection(view, Copy.settingsMailboxes);
     await settle();
     expect(view.el.textContent).not.toContain("own@phone.test");
     expect(view.el.textContent).toContain("cloud@example.test");
@@ -170,6 +226,7 @@ describe("Settings under a Cloud account while the phone's own engine still runs
     (scene.session as { standalone: boolean }).standalone = true;
     (scene.world as { standalone: boolean }).standalone = true;
     const view = mount(h(SettingsScreen));
+    openSection(view, Copy.settingsMailboxes);
     await settle();
     expect(view.el.textContent).toContain("own@phone.test");
     view.unmount();
@@ -188,6 +245,7 @@ describe("a mailbox whose new mail is not being fetched, on its card", () => {
     cloudAccount([row]);
     (scene.session as { profile: { flavor?: string } }).profile.flavor = flavor;
     const view = mount(h(SettingsScreen));
+    openSection(view, Copy.settingsMailboxes);
     await settle();
     const text = view.el.textContent ?? "";
     view.unmount();
@@ -231,6 +289,7 @@ describe("the Look on a standalone phone", () => {
       standalone, face: { account, known: true, pending: false, applyAll: async () => true, choose: async () => true },
     });
     const view = mount(h(SettingsScreen));
+    openSection(view, Copy.settingsGeneral);
     await settle();
     const said = { text: view.el.textContent ?? "", applyAll: view.el.querySelector('[data-button="Apply on all devices"]') !== null };
     view.unmount();
@@ -264,14 +323,26 @@ describe("Settings links to the operator's pages", () => {
     (scene.session as { standalone: boolean }).standalone = account === "standalone";
     (scene.world as { standalone: boolean }).standalone = account === "standalone";
     const view = mount(h(SettingsScreen));
+    openSection(view, Copy.settingsAbout);
     await settle();
     const pressed: Record<string, string> = {};
-    for (const label of [...Object.keys(LINKS), "Delete account"]) {
+    for (const label of Object.keys(LINKS)) {
       const row = view.el.querySelector(`[data-nav="${label}"]`) as HTMLButtonElement | null;
       if (row === null) continue;
       scene.opened.length = 0;
       act(() => row.click());
       pressed[label] = scene.opened.join(" ");
+    }
+    scene.settingsPane = null;
+    view.render(h(SettingsScreen));
+    const accountEntry = view.el.querySelector(`[data-nav="${Copy.settingsAccount}"]`);
+    if (accountEntry !== null) {
+      openSection(view, Copy.settingsAccount);
+      const remove = view.el.querySelector(`[data-nav="${Copy.deleteAccountRow}"]`) as HTMLButtonElement | null;
+      expect(remove).not.toBeNull();
+      scene.opened.length = 0;
+      act(() => remove!.click());
+      pressed[Copy.deleteAccountRow] = scene.opened.join(" ");
     }
     view.unmount();
     return pressed;
@@ -284,4 +355,51 @@ describe("Settings links to the operator's pages", () => {
   it.each(["selfhost", "standalone"] as const)("%s: the three pages, and no Delete account for an account ohmail.app does not keep", async (account) => {
     expect(await rows(account)).toEqual(LINKS);
   });
+});
+
+it.each(["managed", "selfhost", "standalone"] as const)("keeps account devices separate from remembered servers on %s", async (flavor) => {
+  cloudAccount([]);
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ account: "account", reference: `1_${"x".repeat(48)}` })));
+  Object.assign(scene.session as object, {
+    standalone: flavor === "standalone",
+    fetch,
+    profile: { origin: flavor === "managed" ? MANAGED_ORIGIN : "https://mail.example", apiBase: null, accountId: "account", flavor },
+  });
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsDevices);
+    expect(view.el.querySelector(`[data-nav="${Copy.serversTitle}"]`)).not.toBeNull();
+    const manage = view.el.querySelector<HTMLElement>('[data-nav="Manage account devices"]');
+    if (flavor === "standalone") {
+      expect(manage).toBeNull();
+      expect(fetch).not.toHaveBeenCalled();
+    } else {
+      expect(manage).not.toBeNull();
+      await act(async () => manage!.click());
+      expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/auth/session?settingsPane=devices"), expect.anything());
+      const destination = new URL(scene.opened.at(-1)!);
+      expect(destination.origin).toBe(flavor === "managed" ? "https://ohmail.app" : "https://mail.example");
+      expect(destination.hash).toBe("#/settings/devices");
+      expect(destination.searchParams.get("settingsHandoff")).toBe(`1_${"x".repeat(48)}`);
+    }
+  } finally {
+    view.unmount();
+  }
+});
+
+it("keeps the browser closed when the Devices response names a different account", async () => {
+  cloudAccount([]);
+  Object.assign(scene.session as object, {
+    fetch: vi.fn(async () => new Response(JSON.stringify({ account: "other", reference: `1_${"x".repeat(48)}` }))),
+    profile: { origin: "https://mail.example", apiBase: null, accountId: "account", flavor: "selfhost" },
+  });
+  const view = mount(h(SettingsScreen));
+  try {
+    openSection(view, Copy.settingsDevices);
+    await act(async () => view.el.querySelector<HTMLElement>(`[data-nav="${Copy.settingsManageDevices}"]`)!.click());
+    expect(scene.opened).toEqual([]);
+    expect(view.el.textContent).toContain(Copy.settingsDevicesFailed);
+  } finally {
+    view.unmount();
+  }
 });

@@ -8,7 +8,7 @@ import { NONE } from "../host/index.js";
 import { useCalendarOwnAddresses } from "./own-addresses.js";
 import { isEmailAddress } from "@ohmail/app-logic/writing/compose";
 import { useText, useTimeZone } from "../text/index.js";
-import { useDuplicateDraft } from "./draft-undo.js";
+import { useOpenNewDraft } from "./draft-undo.js";
 import { draftForDuplicate } from "./edit-draft.js";
 import type { editableEvent } from "./editable-event.js";
 import { draftCalendars } from "./event-draft.js";
@@ -28,7 +28,7 @@ export function useReadCardActions(
   const setup = useSetupPort();
   const mirror = useCalendarMirror();
   const zone = useTimeZone();
-  const duplicateDraft = useDuplicateDraft(port);
+  const duplicateDraft = useOpenNewDraft(port);
   const retry = useRetry(port, event);
   const record =
     port === NONE ? undefined : port.events().find((item) => item.record.id === event.recordId)?.record;

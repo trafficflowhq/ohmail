@@ -12,7 +12,7 @@ export interface SecurityPaneProps {
   readonly phone?: boolean;
   readonly model: SecurityModel;
   /** The factor's dialog, filled by the shell: drawn while a verb is parked behind it. */
-  readonly factor: FactorSlot;
+  readonly factor?: FactorSlot;
   readonly qr?: QrSlot;
 }
 
@@ -42,7 +42,7 @@ export function SecurityPane({ model, factor, qr, phone }: SecurityPaneProps) {
     model.codes.at === "shown" ? <FreshCodes codes={model.codes.codes} done={model.codesDone} /> : null;
   const key = model.authenticator.at === "key" ? <NewAuthenticator model={model} qr={qr} /> : null;
   // A verb parked behind the factor; over a failed read that is only ever the key's code.
-  const asked = model.ask ? factor(model.ask) : null;
+  const asked = model.ask ? factor?.(model.ask) : null;
   if (enrolled.at === "failed") {
     return (
       <>
@@ -57,7 +57,7 @@ export function SecurityPane({ model, factor, qr, phone }: SecurityPaneProps) {
     <>
       {fresh}
       {key}
-      <Enrolment model={model} phone={phone} />
+      <Enrolment model={model} phone={phone} canManage={factor !== undefined} />
       <Dialog
         open={model.codes.at === "asked"}
         onClose={model.cancelNewCodes}
@@ -102,7 +102,15 @@ function Verb(p: {
 }
 
 /** The two facts, each with its verb, and what the last verb left to say. One verb at a time: the others are off. */
-function Enrolment({ model, phone }: { readonly model: SecurityModel; readonly phone?: boolean }) {
+function Enrolment({
+  model,
+  phone,
+  canManage,
+}: {
+  readonly model: SecurityModel;
+  readonly phone?: boolean;
+  readonly canManage: boolean;
+}) {
   const t = useText("security");
   const own = useText("accountSecurity");
   const steps = useText("devices");
@@ -126,7 +134,7 @@ function Enrolment({ model, phone }: { readonly model: SecurityModel; readonly p
         value={own(enrolled.recoveryCodes ? "codesUnused" : "codesNoneUnused")}
         narrow="detail"
       >
-        {model.codes.at === "shown" ? null : (
+        {!canManage || model.codes.at === "shown" ? null : (
           <Verb
             phone={phone}
             name={t(enrolled.recoveryCodes ? "codesReplace" : "codesGenerate")}
@@ -144,7 +152,7 @@ function Enrolment({ model, phone }: { readonly model: SecurityModel; readonly p
         value={own(enrolled.authenticator ? "on" : "notSetUp")}
         narrow="detail"
       >
-        {model.authenticator.at === "key" ? null : (
+        {!canManage || model.authenticator.at === "key" ? null : (
           <>
             <Verb
               phone={phone}

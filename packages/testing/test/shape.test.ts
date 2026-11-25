@@ -453,11 +453,11 @@ describe("reads", () => {
 
 describe("ohbox", () => {
   /**
-   * THIRTEEN IN THE FOLDER, ELEVEN ON THE SCREEN — and the gap is the whole point, not slack.
+   * FOURTEEN IN THE FOLDER, ELEVEN ON THE SCREEN.
    *
    * `nadja` and `jonas` are the Answer Later pile. Parking moves nothing on the mail server, so
    * they are Ohbox mail and belong to this array and to `counts.ohboxTotal`; the one-pile rule
-   * then holds them out of every Ohbox group, so the screen shows the other eleven. The two ids
+   * then holds them and the booked renewal out of every Ohbox group. The two Answer Later ids
    * are pinned as the LAST two because the showcase reads rows by index, and because it is the
    * fact `client-engine/test/selectors.test.ts` depends on when it asserts the visible eleven.
    *
@@ -469,13 +469,13 @@ describe("ohbox", () => {
    * plus the spent verification code read as this morning's already-handled mail at its top.
    * `landing-mailbox-truth.test.ts` pins the story from the landing's side.
    */
-  it("lists 13 messages — 11 the Ohbox shows, plus the 2 parked in Answer Later", () => {
-    expect(ohbox).toHaveLength(13);
+  it("lists 11 visible messages, two in Answer Later and one in Resurface", () => {
+    expect(ohbox).toHaveLength(14);
     expect(ohbox.filter((m) => m.unread)).toHaveLength(3);
     expect(ohbox.filter((m) => m.unread).map((m) => m.id)).toEqual(["giulia", "petra", "ben"]);
-    expect(ohbox.filter((m) => !m.unread)).toHaveLength(10);
+    expect(ohbox.filter((m) => !m.unread)).toHaveLength(11);
     expect(counts.ohboxUnread).toBe(3);
-    expect(counts.ohboxTotal).toBe(13);
+    expect(counts.ohboxTotal).toBe(14);
     // The parked pair, last and read: mail you have seen and owe more than a line.
     expect(ohbox.slice(-2).map((m) => m.id)).toEqual(["nadja", "jonas"]);
     expect(ohbox.slice(-2).every((m) => !m.unread)).toBe(true);
@@ -578,7 +578,7 @@ describe("tags", () => {
 });
 
 describe("triage", () => {
-  it("mirrors the piles: 2 answer later, 1 parked, 1 resurface at Fri 09:00", () => {
+  it("backs all four triage rows with messages and books the renewal for Friday at nine", () => {
     expect(triage.replyLater).toHaveLength(2);
     /*
      * NOT `giulia` AND `petra`, and that is the assertion. Those two were this pile until the
@@ -587,13 +587,15 @@ describe("triage", () => {
      * `ohbox`'s own test pins the nine that stayed.
      */
     expect(triage.replyLater.map((e) => e.messageId)).toEqual(["nadja", "jonas"]);
-    // Every entry is message-backed, so the pile can be opened and replied to in the demo — an
-    // orphan `triage_item` renders a row that nothing can open (`fixtures-adapter.ts`).
     for (const e of triage.replyLater) expect(ohbox.some((m) => m.id === e.messageId)).toBe(true);
     expect(triage.setAside).toHaveLength(1);
+    expect(triage.setAside[0].messageId).toBe("alpenbahn");
+    expect(receipts.some((m) => m.id === triage.setAside[0].messageId)).toBe(true);
     expect(triage.resurface).toHaveLength(1);
-    expect(triage.resurface[0].title).toBe("Domain renewal lichtgrat.example");
-    expect(triage.resurface[0].resurfaceAt).toBe("Fri 09:00");
+    expect(triage.resurface[0].messageId).toBe("domain-renewal");
+    expect(ohbox.some((m) => m.id === triage.resurface[0].messageId)).toBe(true);
+    expect(triage.resurface[0].title).toBe("Lichtgrat Studio");
+    expect(Date.parse(triage.resurface[0].resurfaceAt!)).toBe(Date.UTC(2026, 6, 31, 9));
     expect(counts.replyLater).toBe(2);
   });
 });

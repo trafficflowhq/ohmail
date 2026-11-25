@@ -84,11 +84,22 @@ export function subscriptionStatusOf(
 
 function plansOf(offer: StorageOffer, locale: string): PlansAnswer {
   const price = (amount: number) => formatStoragePrice(amount, offer.currency, locale);
+  const quotedPrice = (amount: number | undefined) => amount === undefined ? null : price(amount);
   return {
     kind: "plans",
-    plans: offer.plans.map((line) => ({
+    plans: offer.comparisonPlans?.map((line) => ({
       plan: line.plan,
       mailboxes: line.mailboxes,
+      storage: formatStorageBytes(line.storageBytes, locale, true),
+      credits: line.monthlyCredits,
+      ...(offer.setupBoostEligible && line.setupSuggestions !== undefined
+        ? { setupSuggestions: line.setupSuggestions } : {}),
+      price: { month: quotedPrice(line.pricesMinor.month), year: quotedPrice(line.pricesMinor.year) },
+    })) ?? offer.plans.map((line) => ({
+      plan: line.plan,
+      mailboxes: line.mailboxes,
+      ...(offer.setupBoostEligible && line.setupSuggestions !== undefined
+        ? { setupSuggestions: line.setupSuggestions } : {}),
       storage: formatStorageBytes(line.roomBytes, locale, true),
       price: {
         month: offer.interval === "month" ? price(line.amount) : null,
@@ -107,7 +118,7 @@ function plansOf(offer: StorageOffer, locale: string): PlansAnswer {
 /**
  * THE WEB'S SUBSCRIPTION DOOR. The standing is the access answer this tab already holds for the account the shell
  * hands in (`host.session.scope`), never one read from the browser's jar. The plans come from that answer's storage
- * offer and display amounts for the quoted interval. The press makes the account page's address (`POST /account/manage-link {lang}`, with the plan and
+ * offer and display the confirmed prices for each interval it quotes. The press makes the account page's address (`POST /account/manage-link {lang}`, with the plan and
  * the interval it was handed from their closed sets) and leaves for it in this tab with no referrer: the address
  * never leaves this file. No address, an empty one or a 404 is no page here: `withdraw` takes the pane away for the
  * shell, and the press answers `nowhere`. A mint that threw could not open the page.

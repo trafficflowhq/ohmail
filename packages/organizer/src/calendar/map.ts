@@ -68,6 +68,7 @@ export interface EventRowValues {
   /** The object's whole text where the provider keeps one (CalDAV, a subscription), on one row of it. */
   readonly original: string | null;
   readonly portableCopy: boolean;
+  readonly googleDefaultEvent: boolean;
 }
 
 export interface InviteeValues {
@@ -282,6 +283,7 @@ function rowOf(item: Upsert, ctx: MapContext, original: string | null): MappedRo
         e.attendees.some((a) => a.email === null || !fitsCalendarBytes(a.email, CALENDAR_ADDRESS_MAX_BYTES)),
       original,
       portableCopy: item.portableCopy === true || (original !== null && portableCalendarText(original)),
+      googleDefaultEvent: item.googleDefaultEvent === true,
     },
     invitees,
     alarms: alarmsOf(e),

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { managedAddress } from "../../../test/support/fixture-credentials.js";
+import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, drafts } from "@trafficflow/db";
@@ -76,7 +77,7 @@ describe("plainTextToOutboundBody — the two halves of a promoted reply", () =>
   it("paragraphs, soft breaks and the blank line between them are all distinct", () => {
     const { html, text } = plainTextToOutboundBody("Hi Alice\n\nThanks.\nMonday.\n\nBest,\nBob");
     expect(html).toBe(
-      "<p>Hi Alice</p><p></p><p>Thanks.<br />Monday.</p><p></p><p>Best,<br />Bob</p>",
+      "<p>Hi Alice<br /><br />Thanks.<br />Monday.<br /><br />Best,<br />Bob</p>",
     );
     expect(text).toBe("Hi Alice\n\nThanks.\nMonday.\n\nBest,\nBob");
   });
@@ -193,12 +194,29 @@ describe("an AI draft is stored with both halves, and sends as multipart/alterna
     expect(msg.html).toBeTruthy();
     expect(msg.text).toBe(MODEL_BODY);
     expect(htmlToPlainText(msg.html!)).toBe(msg.text);
-    expect(msg.html).toContain('<p style="margin:0">Hi Alice</p>');
+    expect(msg.html).toBe(`<p style="margin:0">${MODEL_BODY.replaceAll("\n", "<br />")}</p>`);
 
     // And what went on the wire is what was stored — the send-time sanitizer pass is a no-op
     // on promoted markup rather than a second, differently-rendered copy.
     const [row] = await db.select().from(drafts).limit(1);
     expect(msg.html).toBe(row!.html);
+  });
+
+  it("sends an untouched older generated draft with real line breaks in both parts", async () => {
+    const { db, ctx, messageId } = await setup();
+    const { draftId } = await drafting.draftFromMessage(ctx, messageId, {
+      drafter: mockDrafter("Hello,\n\nFriday works.\nSee you then."),
+    });
+    await draftsSvc.update(ctx, draftId, { to: [{ name: null, address: "alice@example.com" }] });
+    await db.update(drafts).set({
+      html: '<p style="margin:0">Hello,</p><p style="margin:0"></p><p style="margin:0">Friday works.<br />See you then.</p>',
+    }).where(eq(drafts.id, draftId));
+
+    const { factory, sent } = capturingAdapter();
+    const res = await sendSvc.send(ctx, draftId, `key-${randomUUID()}`, { openSendAdapter: factory });
+    expect(res.status).toBe("sent");
+    expect(sent[0]?.text).toBe("Hello,\n\nFriday works.\nSee you then.");
+    expect(sent[0]?.html).toBe('<p style="margin:0">Hello,<br /><br />Friday works.<br />See you then.</p>');
   });
 
   it("a model answer full of markup is sent as text, never as tags", async () => {

@@ -15,6 +15,7 @@ const INPUT = { address: "ada@example.test", pass: "x", name: null, imap: { host
 const ASKS: { readonly [K in DoorKind]: DoorRequests[K]["ask"] } = {
   config: {}, ready: {}, leave: {}, sync: {}, disconnect: {},
   "server.ask": { address: "mail.example.test" },
+  "sign-in": { address: null },
   "scan.start": { rect: RECT }, "scan.move": { rect: RECT }, "scan.stop": {}, "camera.allow": {},
   hand: { address: null, token: "t" },
   pair: { ticket: TICKET }, dismiss: { ticket: TICKET },

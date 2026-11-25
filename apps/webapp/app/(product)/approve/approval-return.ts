@@ -20,9 +20,16 @@ export function isApprovalId(value: string): boolean {
   return ID_RE.test(value);
 }
 
-export function rememberApprovalRequest(id: string, now = Date.now()): void {
+export const isApprovalLaunch = (value: unknown): value is string =>
+  typeof value === "string" && /^\d{13}\.[0-9a-f]{32}$/.test(value);
+
+export interface ApprovalEntry {
+  readonly phone?: boolean | undefined;
+}
+
+export function rememberApprovalRequest(id: string, now = Date.now(), entry: ApprovalEntry = {}): void {
   if (!isApprovalId(id)) return;
-  durableSessionSet(KEY, JSON.stringify({ id, at: now }), "approve.return");
+  durableSessionSet(KEY, JSON.stringify({ id, at: now, phone: entry.phone }), "approve.return");
 }
 
 function readKept(): string | null {
@@ -36,11 +43,13 @@ function readKept(): string | null {
 /** The one reading of what was kept: a request id inside its ten minutes, as the fixed path, or null. */
 function returnOf(raw: string, now: number): string | null {
   try {
-    const kept = JSON.parse(raw) as { id?: unknown; at?: unknown };
+    const kept = JSON.parse(raw) as { id?: unknown; at?: unknown; phone?: unknown };
     const id = typeof kept.id === "string" ? kept.id : "";
     const at = typeof kept.at === "number" ? kept.at : 0;
     if (!isApprovalId(id) || now - at > KEEP_MS || now < at) return null;
-    return `/approve?request=${id}`;
+    const query = new URLSearchParams({ request: id });
+    if (kept.phone === true) query.set("device", "phone");
+    return `/approve?${query}`;
   } catch {
     return null;
   }

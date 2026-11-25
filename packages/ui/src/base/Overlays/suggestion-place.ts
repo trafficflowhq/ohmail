@@ -24,15 +24,39 @@ export function placeSuggestions(
   field: Edges,
   list: Size,
   room: Edges,
+  gap = GAP,
+  avoid?: Edges,
 ): { left: number; top: number; maxHeight: number; up: boolean } {
-  const under = room.bottom - EDGE - (field.bottom + GAP);
-  const above = field.top - GAP - (room.top + EDGE);
+  const left = between(room.left + EDGE, room.right - EDGE - list.width, field.left);
+  const obstruction =
+    avoid &&
+    avoid.bottom > avoid.top &&
+    avoid.bottom > room.top &&
+    avoid.top < room.bottom &&
+    avoid.left < left + list.width &&
+    avoid.right > left
+      ? avoid
+      : null;
+  const before = field.top - gap;
+  const after = field.bottom + gap;
+  const aboveAt = obstruction && before <= obstruction.bottom ? Math.min(before, obstruction.top) : before;
+  const belowAt = obstruction && after >= obstruction.top ? Math.max(after, obstruction.bottom) : after;
+  const ceiling =
+    obstruction && aboveAt >= obstruction.bottom
+      ? Math.max(room.top + EDGE, obstruction.bottom)
+      : room.top + EDGE;
+  const floor =
+    obstruction && belowAt <= obstruction.top
+      ? Math.min(room.bottom - EDGE, obstruction.top)
+      : room.bottom - EDGE;
+  const under = floor - belowAt;
+  const above = aboveAt - ceiling;
   const up = list.height > under && above > under;
-  const maxHeight = Math.max(LEAST, up ? above : under);
+  const maxHeight = Math.max(obstruction ? 0 : LEAST, up ? above : under);
   const height = Math.min(list.height, maxHeight);
   return {
-    left: between(room.left + EDGE, room.right - EDGE - list.width, field.left),
-    top: up ? field.top - GAP - height : field.bottom + GAP,
+    left,
+    top: up ? aboveAt - height : belowAt,
     maxHeight,
     up,
   };
@@ -46,6 +70,8 @@ export interface FieldPlace {
   boundary?: RefObject<Element | null> | Element;
   /** `text`: a row's words start where the field's words start, and it is as much wider on the other side. */
   align?: "text";
+  /** Stand flush against the anchor. */
+  flush?: boolean;
   /** The field’s form supplies the width of its suggestion popover. */
   span?: string;
   /** A footer the popover should leave exposed when they overlap. */
@@ -69,7 +95,7 @@ const leadOf = (el: Element): number => {
 function place(
   card: HTMLElement,
   layer: Element,
-  { anchor, boundary, align, span, avoid }: FieldPlace,
+  { anchor, boundary, align, flush, span, avoid }: FieldPlace,
 ): void {
   const at = elementOf(anchor);
   if (!at) return;
@@ -97,12 +123,13 @@ function place(
     height: card.offsetHeight + (rows ? rows.scrollHeight - rows.clientHeight : 0),
   };
   const footer = avoid ? at.ownerDocument.querySelector(avoid) : null;
-  if (footer) {
-    const box = edgesOf(footer);
-    if (box.bottom > box.top && box.left < left + size.width && box.right > left)
-      room.bottom = Math.min(room.bottom, box.top);
-  }
-  const to = placeSuggestions({ ...field, left }, size, room);
+  const to = placeSuggestions(
+    { ...field, left },
+    size,
+    room,
+    flush ? 0 : GAP,
+    footer ? edgesOf(footer) : undefined,
+  );
   card.style.left = `${to.left - stage.left}px`;
   card.style.top = `${to.top - stage.top}px`;
   card.style.maxHeight = `${to.maxHeight}px`;
@@ -129,19 +156,25 @@ export function useAtField(card: RefObject<HTMLElement | null>, how: FieldPlace 
     again.current();
   });
   const stands = how !== null;
+  const avoid = how?.avoid;
   useEffect(() => {
     if (!stands) return;
-    const moved = (event: Event) => again.current(event);
+    const moved = (event?: Event) => again.current(event);
     const sight = globalThis.visualViewport;
+    const report = avoid ? card.current?.ownerDocument.querySelector(avoid) : null;
+    const observer =
+      report && typeof ResizeObserver === "function" ? new ResizeObserver(() => moved()) : null;
+    if (report) observer?.observe(report);
     window.addEventListener("resize", moved);
     window.addEventListener("scroll", moved, true);
     sight?.addEventListener("resize", moved);
     sight?.addEventListener("scroll", moved);
     return () => {
+      observer?.disconnect();
       window.removeEventListener("resize", moved);
       window.removeEventListener("scroll", moved, true);
       sight?.removeEventListener("resize", moved);
       sight?.removeEventListener("scroll", moved);
     };
-  }, [stands]);
+  }, [avoid, card, stands]);
 }

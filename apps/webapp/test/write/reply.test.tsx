@@ -10,6 +10,7 @@ import { Blob as NodeBlob } from "node:buffer";
 import type { Editor as TiptapEditor } from "@tiptap/react";
 import { MutationRejectedError } from "@ohmail/client-engine";
 import type { EngineMessage } from "@ohmail/wire";
+import { htmlToPlainText, plainTextToOutboundBody } from "@trafficflow/core/mail";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { resetComposerForTest } from "@ohmail/app-logic/writing/compose";
@@ -43,6 +44,7 @@ const sends = (w: WritingWorld) =>
     inReplyTo?: string | null;
     forwardOf?: string;
     body: string;
+    html?: string | null;
     to?: { address: string }[];
     cc?: { address: string }[];
   }[];
@@ -51,7 +53,7 @@ async function open(
   how: "reply" | "forward",
   messages: EngineMessage[] = [message("m1")],
   sheet = ["m1"],
-  more: { draftWire?: DraftReplyWire; metered?: boolean; noCredits?: boolean } = {},
+  more: Pick<NonNullable<Parameters<typeof mountWriting>[0]>, "draftWire" | "metered" | "noCredits" | "scope" | "signatures"> = {},
 ) {
   const w = await mountWriting({ messages, hash: "#/ohbox", sheet, ...more });
   await act(async () => (how === "reply" ? w.now().openReply("m1") : w.now().openForward("m1")));
@@ -347,13 +349,13 @@ describe("the reply's sheet", () => {
 
 /** The drafter's wire: every purchase with its key, each answered by the gate the case holds. */
 function drafter(fromText: "door" | "none" = "door") {
-  const bought: { messageId: string; key: string }[] = [];
+  const bought: { messageId: string; key: string; fullConversation?: boolean }[] = [];
   const fromWords: { body: unknown; key: string }[] = [];
   const state = { gate: null as Promise<void> | null };
   const wire: DraftReplyWire = {
     configured: () => true,
-    create: async (messageId, key) => {
-      bought.push({ messageId, key });
+    create: async (messageId, key, _preview, ...options: [fullConversation?: boolean]) => {
+      bought.push({ messageId, key, ...(options[0] === true ? { fullConversation: true } : {}) });
       if (state.gate) await state.gate;
       return { draftId: "d-drafted" };
     },
@@ -380,6 +382,25 @@ const replyText = (): string => {
   return box.editor.getText();
 };
 
+async function shareFullConversation(d: ReturnType<typeof drafter>, text?: string): Promise<void> {
+  const purchases = () => d.fromWords.length + d.bought.length;
+  const before = purchases();
+  const offer = () => draftButton("Use full conversation");
+  await act(async () => { fireEvent.click(offer()); });
+  const dialog = screen.getByRole("dialog", { name: "Use full conversation" });
+  expect(dialog.textContent).toMatch(/your typed text.*full stored text.*earlier messages.*configured AI provider/i);
+  expect(purchases()).toBe(before);
+  await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" })); });
+  expect(purchases()).toBe(before);
+
+  await act(async () => { fireEvent.click(offer()); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Share and draft" })); });
+  await rounds(10);
+  expect(purchases()).toBe(before + 1);
+  if (text === undefined) expect(d.bought.at(-1)).toMatchObject({ messageId: "m1", fullConversation: true });
+  else expect(d.fromWords.at(-1)?.body).toEqual({ text, inReplyToMessageId: "m1", fullConversation: true });
+}
+
 describe("draft reply in one press", () => {
   it("says its price before the press, buys once however often pressed while it runs, and lands in the reply", async () => {
     const d = drafter();
@@ -399,8 +420,10 @@ describe("draft reply in one press", () => {
     expect(d.bought[0]!.messageId).toBe("m1");
     await act(async () => release());
     await rounds(10);
+    await screen.findByRole("textbox", { name: W.reply.text });
     expect(replyText()).toBe("Drafted: noon suits me.");
     expect(sends(w)).toHaveLength(0);
+    await shareFullConversation(d);
   });
 
   it("over typed words, the draft takes their place and the person's own text is one tab away; Send sends the one shown", async () => {
@@ -496,6 +519,7 @@ describe("draft from your text", () => {
     expect(d.fromWords).toHaveLength(2);
     expect(d.fromWords[1]!.body).toEqual({ text: "noon ok", inReplyToMessageId: "m1" });
     expect(d.fromWords[1]!.key).not.toBe(d.fromWords[0]!.key);
+    await shareFullConversation(d, "noon ok");
   });
 
   it("where the host has no door for it the word is not drawn: the plain control stands and nothing is asked", async () => {
@@ -584,6 +608,37 @@ const press = async (label: string, settle = 10): Promise<void> => {
   await rounds(settle);
 };
 
+async function checkDraftSpacing(scope: string, first: string, second: string): Promise<void> {
+  const { serializeDraftBody, sanitizeOutboundHtml } = await import("../../../../packages/services/src/outbound-html.js");
+  const drafted = (body: string) => {
+    const promoted = plainTextToOutboundBody(body);
+    const stored = serializeDraftBody(promoted.html);
+    return { body: stored.text, html: stored.html };
+  };
+  const d = serial();
+  d.wire.read = vi.fn<DraftReplyWire["read"]>()
+    .mockResolvedValueOnce(drafted(first.replace("\n\n", "\r\n\r\n\r\n")))
+    .mockResolvedValueOnce(drafted(second));
+  const signature = "Pat\nWorkshop";
+  const w = await open("reply", [message("m1")], ["m1"], { draftWire: d.wire, scope, signatures: { mb1: signature } });
+  await write(W.reply.text, "Please confirm the date.");
+  await press(W.draft.fromText);
+  expect(screen.getByRole("button", { name: W.draft.draft }).getAttribute("aria-pressed")).toBe("true");
+  expect(replyText().split("\n")).toEqual(first.split("\n"));
+  await press(W.draft.again);
+  expect(replyText().split("\n")).toEqual(second.split("\n"));
+  expect(screen.getByRole("textbox", { name: W.signature.label }).textContent).toBe(signature);
+  await press(W.send);
+  const [sent] = sends(w);
+  expect(sent?.body).toBe(`${second}\n\n${signature}`);
+  const markup = document.createElement("div");
+  markup.innerHTML = sanitizeOutboundHtml(sent!.html!);
+  const [draft, signed] = markup.children;
+  expect(draft?.innerHTML).toBe(second.replaceAll("\n", "<br>"));
+  expect(htmlToPlainText(draft!.outerHTML)).toBe(second);
+  expect(htmlToPlainText(signed!.outerHTML)).toBe(signature);
+}
+
 describe("the person's own text, one tab away", () => {
   it("Draft again keeps the person's own words one tab away", async () => {
     const d = serial();
@@ -596,6 +651,17 @@ describe("the person's own text, one tab away", () => {
     expect(replyText()).toBe("second draft");
     await press(W.draft.yours, 4);
     expect(replyText()).toBe("noon ok");
+    await unmountWritings();
+    resetComposerForTest();
+
+    for (const [scope, first, second] of [
+      ["english-draft", "Hello,\n\nMonday works.\nI'll bring the notes.\n\nThanks!", "Hi,\n\nTuesday works.\nSee you there!"],
+      ["german-draft", "Hallo,\n\nMontag passt.\nIch bringe die Notizen mit.\n\nDanke!", "Guten Tag,\n\nDienstag passt.\nBis dann!"],
+    ] as const) {
+      await checkDraftSpacing(scope, first, second);
+      await unmountWritings();
+      resetComposerForTest();
+    }
   });
 
   it("Draft again keeps the person's own words one tab away where the host has no door for drafting from them", async () => {
@@ -814,6 +880,38 @@ describe("the person's own text: a draft over no words, and a discard", () => {
     await press(W.draft.verb);
     expect(replyText()).toBe("first draft");
     expect(drawnOf([W.draft.again, W.draft.fromText, W.draft.verb])).toEqual([W.draft.again]);
+    await unmountWritings();
+    resetComposerForTest();
+
+    // Older generated drafts represented the blank line with an empty paragraph.
+    const older = serial();
+    older.wire.read = async () => ({
+      body: "Hello,\n\nFriday works.",
+      html: '<p style="margin:0">Hello,</p><p style="margin:0"></p><p style="margin:0">Friday works.</p>',
+    });
+    const legacy = await open("reply", [message("m1")], ["m1"], {
+      draftWire: older.wire, scope: "older-draft", signatures: { mb1: "Pat\nWorkshop" },
+    });
+    await press(W.draft.verb);
+    expect(replyText().split("\n")).toEqual(["Hello,", "", "Friday works."]);
+    await press(W.send);
+    expect(sends(legacy)[0]?.body).toBe("Hello,\n\nFriday works.\n\nPat\nWorkshop");
+    expect(sends(legacy)[0]?.html).toMatch(/Hello,<br\s*\/?><br\s*\/?>Friday works\.<\/p><p>Pat<br>Workshop<\/p>/);
+    await unmountWritings();
+    resetComposerForTest();
+
+    const row = { ...replyDraft("saved-draft", "m1", "Hello,\n\nFriday works."),
+      html: "<p>Hello,</p><p></p><p>Friday works.</p>", rationale: "Drafted from the conversation",
+    };
+    const reopened = await mountWriting({
+      messages: [message("m1")], drafts: [row], hash: "#/ohbox", sheet: ["m1"], scope: "saved-draft",
+    });
+    await act(async () => reopened.now().openDraft(row));
+    await rounds(6);
+    expect(replyText().split("\n")).toEqual(["Hello,", "", "Friday works."]);
+    await press(W.send);
+    expect(sends(reopened)[0]?.body).toBe(row.body);
+    expect(sends(reopened)[0]?.html).toMatch(/Hello,<br\s*\/?><br\s*\/?>Friday works\.<\/p>/);
   });
 
   it("...pressed, it is a plain draft again and Your text never holds the model's words", async () => {
@@ -975,6 +1073,20 @@ describe("the reply's signature, off with its Undo", () => {
     await rounds(4);
     const back = screen.getByRole("textbox", { name: W.signature.label });
     expect(back.textContent).toBe("Lena\nMakers Fest");
+    await unmountWritings();
+    resetComposerForTest();
+
+    const signed = await mountWriting({
+      messages: [message("m1")],
+      hash: "#/ohbox",
+      sheet: ["m1"],
+      scope: "formatted-signature",
+      signatures: { mb1: "Pat\n\nWorkshop" },
+      signaturesHtml: { mb1: "<p><strong>Pat</strong></p><p></p><p>Workshop</p>" },
+    });
+    await act(async () => signed.now().openReply("m1"));
+    const box = await screen.findByRole("textbox", { name: W.signature.formatted }) as HTMLElement & { editor: TiptapEditor };
+    expect(box.editor.getText().split("\n")).toEqual(["Pat", "", "", "", "Workshop"]);
   });
 
   it("the Undo of one reply's removal does not touch another reply opened after it", async () => {

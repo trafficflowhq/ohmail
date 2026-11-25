@@ -4,6 +4,7 @@ import { json } from "./shared.js";
 
 const SETTINGS_PANES = ["account", "security", "devices", "storage", "mailboxes"];
 const CALENDAR_PANES = ["calendar-google", "calendar-microsoft"];
+const MANAGED_PANES = [...CALENDAR_PANES, "devices"];
 const PURPOSE = "ohmail/settings-handoff/1";
 const LIFETIME_MS = 5 * 60_000;
 
@@ -49,9 +50,9 @@ export function withSettingsHandoff(route: Route): Route {
   return withHandoff(route, SETTINGS_PANES);
 }
 
-/** Managed desktop delegates calendar sign-in to the browser for the same account. */
-export function withCalendarHandoff(route: Route): Route {
-  return withHandoff(route, CALENDAR_PANES);
+/** Managed apps hand off calendar sign-in and account device management to the browser. */
+export function withManagedHandoff(route: Route): Route {
+  return withHandoff(route, MANAGED_PANES);
 }
 
 function withHandoff(route: Route, panes: readonly string[]): Route {

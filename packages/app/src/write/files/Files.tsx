@@ -213,6 +213,7 @@ function DraftTile({
       />
       {menu ? (
         <MailRowMenu
+          portal
           target={menu}
           label={file.filename}
           onClose={() => setMenu(null)}

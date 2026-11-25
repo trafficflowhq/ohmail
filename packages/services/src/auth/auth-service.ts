@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 // `lt` is imported UNDER AN ALIAS: `lt` is the local name every 2FA verify uses for its
 // login-token row, and the shadowing turns a comparison into "call an object".
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, lte, or, sql } from "drizzle-orm";
@@ -53,7 +53,7 @@ import type {
   EnrollmentSessionEstablished, RegistrationResult, VerifyEmailResult,
 } from "./types.js";
 import { isUuid } from "../ids.js";
-import type { SessionScope } from "./resolve-session.js";
+import { sessionScopeOf, type SessionScope } from "./resolve-session.js";
 import {
   buildRegistrationOptions, verifyRegistration,
   buildAuthenticationOptions, verifyAssertion,
@@ -262,6 +262,10 @@ function pendingNetworkKey(raw: unknown): string {
   if (typeof raw !== "object" || raw === null) return "";
   const key = (raw as Record<string, unknown>).networkKey;
   return typeof key === "string" && /^[0-9a-f]{32}$/.test(key) ? key : "";
+}
+
+function calendarApproval(raw: unknown): boolean {
+  return typeof raw === "object" && raw !== null && "scope" in raw && raw.scope === "calendar";
 }
 
 /**
@@ -528,16 +532,34 @@ export const DESKTOP_APPROVAL_POLL_MS = 2_000;
 /** The request id is the row's uuid: 122 random bits, shape-checked before any query. */
 const APPROVAL_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** The device-row label when the desktop sent no name — the auto-mint spellings. */
+/** The device-row label when the claimant sent no name — the auto-mint spellings. */
 const APPROVAL_DEVICE_LABELS: Readonly<Record<string, string>> = {
   "macos": "ohmail for Mac", "desktop-macos": "ohmail for Mac",
   "desktop-linux": "ohmail for Linux", "desktop-windows": "ohmail for Windows",
+  "mobile-ios": "ohmail for iPhone", "mobile-android": "ohmail for Android",
 };
 
-/** What the page calls the computer's platform, from the claim kind's closed set — never caller text. */
+/** What the page calls the claimant's platform, from the claim kind's closed set — never caller text. */
 const APPROVAL_PLATFORM: Readonly<Record<string, string>> = {
   "macos": "macOS", "desktop-macos": "macOS", "desktop-linux": "Linux", "desktop-windows": "Windows",
+  "mobile-ios": "iOS", "mobile-android": "Android",
 };
+
+/**
+ * What a browser approval may say it is: the desktop's kinds, and a phone's. A phone that signs in through the
+ * browser instead of scanning a code makes the same device row a pairing redeem makes (whose kind is the same
+ * anonymous declaration); the mint pins `surface: "native"` for every kind, so the kind names the row and nothing
+ * about the credential.
+ */
+const APPROVAL_KINDS: ReadonlySet<string> = new Set<string>([...DESKTOP_CLAIM_KINDS, "mobile-ios", "mobile-android"]);
+const PHONE_APPROVAL_KINDS: ReadonlySet<string> = new Set(["mobile-ios", "mobile-android"]);
+
+/** The approval's kind: {@link APPROVAL_KINDS}, absent meaning the legacy desktop `"macos"`. */
+function approvalKind(raw: unknown): DeviceKind {
+  if (raw === undefined) return "macos";
+  if (typeof raw !== "string" || !APPROVAL_KINDS.has(raw)) throw invalidDeviceKind(APPROVAL_KINDS);
+  return raw as DeviceKind;
+}
 
 /** The desktop's own name for itself, made safe to show: no control or bidi characters, 64 at most. */
 function approvalLabel(raw: unknown): string {
@@ -1367,7 +1389,8 @@ export class AuthService extends SessionLifecycle {
       recent: sql<boolean>`${sessions.createdAt} > now() - make_interval(days => ${REUSE_SWEEP_WINDOW_DAYS})`,
     }).from(sessions).where(and(eq(sessions.id, ctx.sessionId), eq(sessions.userId, ctx.userId))).limit(1);
     if (!row) return null;
-    return { scope: row.scope === "enrollment" ? "enrollment" : "full", createdAt: row.createdAt, recent: row.recent === true };
+    const scope = sessionScopeOf(row.scope);
+    return scope === null ? null : { scope, createdAt: row.createdAt, recent: row.recent === true };
   }
 
   /**
@@ -1627,13 +1650,18 @@ export class AuthService extends SessionLifecycle {
    * signed-in browser's confirm AND the verifier.
    */
   async issueDesktopApproval(
-    ctx: ServiceContext, b: { challenge?: unknown; kind?: unknown; label?: unknown },
-  ): Promise<{ approvalId: string; expiresIn: number }> {
+    ctx: ServiceContext, b: { challenge?: unknown; kind?: unknown; label?: unknown; scope?: unknown },
+    launchOrigin?: string,
+  ): Promise<{ approvalId: string; expiresIn: number; launch?: string }> {
     const db = asTx(ctx);
     const now = ctx.now();
     const challenge = typeof b?.challenge === "string" ? b.challenge.trim() : "";
     if (!DESKTOP_CHALLENGE_RE.test(challenge)) throw invalidDesktopChallenge();
-    const kind = desktopClaimKind(b?.kind);
+    const kind = approvalKind(b?.kind);
+    const calendarOnly = b?.scope === "calendar";
+    if (b?.scope !== undefined && (!calendarOnly || !PHONE_APPROVAL_KINDS.has(kind))) {
+      throw new ServiceError("validation_failed", 400, "only phone approvals can request calendar scope");
+    }
     const label = approvalLabel(b?.label);
     const ip = (ctx.ip ?? "").trim();
     if (ip.length > 0) {
@@ -1646,6 +1674,11 @@ export class AuthService extends SessionLifecycle {
     const approvalId = randomUUID();
     const digest = hashToken(approvalId);
     const unit = addressUnitOf(ip);
+    const meta = {
+      ...(unit !== "" ? { networkKey: this.keys.approvalNetwork(approvalId, unit) } : {}),
+      ...(calendarOnly ? { scope: "calendar" } : {}),
+    };
+    const expiresAt = now.getTime() + this.cfg.desktopApprovalTtlMs;
     await bridgeTx(keyedCredentialDb(ctx, digest)).insert(loginTokens).values({
       id: approvalId,
       userId: null,
@@ -1656,18 +1689,34 @@ export class AuthService extends SessionLifecycle {
       label,
       platform: APPROVAL_PLATFORM[kind] ?? "",
       ipClass: ipClassOf(ip),
-      oauthMeta: unit === "" ? null : { networkKey: this.keys.approvalNetwork(approvalId, unit) },
-      expiresAt: new Date(now.getTime() + this.cfg.desktopApprovalTtlMs),
+      oauthMeta: unit === "" && !calendarOnly ? null : meta,
+      expiresAt: new Date(expiresAt),
       createdAt: now,
     });
-    return { approvalId, expiresIn: Math.floor(this.cfg.desktopApprovalTtlMs / 1000) };
+    const launch = launchOrigin !== undefined && PHONE_APPROVAL_KINDS.has(kind)
+      ? `${expiresAt}.${this.keys.approvalLaunch(approvalId, launchOrigin, String(expiresAt))}`
+      : undefined;
+    return { approvalId, expiresIn: Math.floor(this.cfg.desktopApprovalTtlMs / 1000), ...(launch ? { launch } : {}) };
+  }
+
+  /** A phone launch lets the page offer sign-in. Confirmation and claim still require their own proofs. */
+  verifyApprovalLaunch(
+    now: Date, approvalId: unknown, origin: string, launch: unknown,
+  ): "valid" | "expired" | "invalid" {
+    if (typeof approvalId !== "string" || !APPROVAL_ID_RE.test(approvalId) || typeof launch !== "string") return "invalid";
+    const match = /^(\d{13})\.([0-9a-f]{32})$/.exec(launch);
+    if (!match) return "invalid";
+    const expected = this.keys.approvalLaunch(approvalId, origin, match[1]!);
+    if (!timingSafeEqual(Buffer.from(match[2]!, "hex"), Buffer.from(expected, "hex"))) return "invalid";
+    return Number(match[1]) <= now.getTime() ? "expired" : "valid";
   }
 
   /** The row for a validated approval id and purpose. */
-  private async approvalRow(db: Tx, approvalId: string) {
-    const [row] = await db.select().from(loginTokens)
+  private async approvalRow(db: Tx, approvalId: string, lock = false) {
+    const query = db.select().from(loginTokens)
       .where(and(eq(loginTokens.id, approvalId), eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE)))
       .limit(1);
+    const [row] = await (lock ? dialect(db).forUpdate(query, { mode: "no key update" }) : query);
     return row ?? null;
   }
 
@@ -1711,7 +1760,6 @@ export class AuthService extends SessionLifecycle {
    */
   async confirmDesktopApproval(ctx: ServiceContext, approvalId: string): Promise<{ approved: true }> {
     const userId = this.requireUser(ctx);
-    const now = ctx.now();
     if (!APPROVAL_ID_RE.test(approvalId)) throw approvalNotFound();
     // The bind gives the row to this user, a row the erasure deletes: opened on the account row. A
     // confirm is a grant mint, so its user row comes first ({@link lockUserRow}).
@@ -1722,8 +1770,12 @@ export class AuthService extends SessionLifecycle {
       // stamped `approved_at`, a desktop signed in here could confirm the next one into a fresh window.
       const meta = await desktopGrantMeta(db, ctx);
       await rebindTx(txCtx.db, { key: hashToken(approvalId.toLowerCase()) });
+      const row = await this.approvalRow(db, approvalId, true);
+      if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
+      const oauthMeta = { ...meta, ...(calendarApproval(row.oauthMeta) ? { scope: "calendar" } : {}) };
+      const now = txCtx.now();
       const [bound] = await db.update(loginTokens)
-        .set({ userId, accountId: accountOfUser(userId), approvedAt: now, oauthMeta: meta })
+        .set({ userId, accountId: accountOfUser(userId), approvedAt: now, oauthMeta })
         .where(and(
           eq(loginTokens.id, approvalId),
           eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
@@ -1735,8 +1787,6 @@ export class AuthService extends SessionLifecycle {
         ))
         .returning({ id: loginTokens.id });
       if (!bound) {
-        const row = await this.approvalRow(db, approvalId);
-        if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
         const refusal = approvalRefusal(row, now);
         if (refusal) throw refusal;
         return { approved: true as const };
@@ -1751,12 +1801,14 @@ export class AuthService extends SessionLifecycle {
   /** "Not me": the request is dead for the desktop that made it, confirmed or not, until claimed. */
   async denyDesktopApproval(ctx: ServiceContext, approvalId: string): Promise<{ denied: true }> {
     const userId = this.requireUser(ctx);
-    const now = ctx.now();
     if (!APPROVAL_ID_RE.test(approvalId)) throw approvalNotFound();
     // Fenced for the confirm's reason: this bind gives the row to this user too.
     return this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
       await rebindTx(txCtx.db, { key: hashToken(approvalId.toLowerCase()) });
+      const row = await this.approvalRow(db, approvalId, true);
+      if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
+      const now = txCtx.now();
       const [killed] = await db.update(loginTokens)
         .set({ userId, accountId: accountOfUser(userId), revokedAt: now })
         .where(and(
@@ -1769,8 +1821,6 @@ export class AuthService extends SessionLifecycle {
         ))
         .returning({ id: loginTokens.id });
       if (!killed) {
-        const row = await this.approvalRow(db, approvalId);
-        if (!row || (row.userId !== null && row.userId !== userId)) throw approvalNotFound();
         throw approvalRefusal(row, now) ?? approvalDenied();
       }
       await this.audit(db, await this.loadUser(db, userId), "desktop_approval_denied", undefined, txCtx);
@@ -1788,10 +1838,10 @@ export class AuthService extends SessionLifecycle {
    */
   async claimDesktopApproval(
     ctx: ServiceContext, b: { approvalId?: unknown; verifier?: unknown; kind?: unknown },
-  ): Promise<{ status: "pending"; retryAfterMs: number } | { tokens: OAuthTokens }> {
+  ): Promise<{ status: "pending"; retryAfterMs: number } | { tokens: OAuthTokens; scope?: "calendar" }> {
     const db = asTx(ctx);
     const now = ctx.now();
-    const kind = desktopClaimKind(b?.kind);
+    const kind = approvalKind(b?.kind);
     const approvalId = typeof b?.approvalId === "string" ? b.approvalId.trim() : "";
     const verifier = typeof b?.verifier === "string" ? b.verifier.trim() : "";
     if (verifier.length === 0 || verifier.length > 512) throw approvalWrongVerifier();
@@ -1842,6 +1892,10 @@ export class AuthService extends SessionLifecycle {
       }
       throw approvalWrongVerifier();
     }
+    // A PHONE CLAIMS AS WHAT THE PAGE SHOWED: the platform the browser confirmed is the device row's. Desktop kinds keep
+    // their shipped freedom (the label is all a desktop's kind selects).
+    const phoneRow = row.platform === APPROVAL_PLATFORM["mobile-ios"] || row.platform === APPROVAL_PLATFORM["mobile-android"];
+    if ((PHONE_APPROVAL_KINDS.has(kind) || phoneRow) && APPROVAL_PLATFORM[kind] !== row.platform) throw approvalWrongVerifier();
     // THE OWNER, read before the burn: the fence must be the transaction's first statement. A row no
     // browser has confirmed has no owner and cannot be spent, so it is answered from this read as the
     // burn would answer it, and the burn below is bound to the user the fence was taken for.
@@ -1862,6 +1916,11 @@ export class AuthService extends SessionLifecycle {
     const answer = await this.inTransaction(owner, async (txCtx) => {
       await rebindTx(txCtx.db, { key: digest });
       const tx = asTx(txCtx);
+      // A guarded UPDATE can itself wait. Read the clock only once the account fence and
+      // the approval row are held, and use that instant for the predicate and its stamp.
+      const locked = await this.approvalRow(tx, approvalId, true);
+      if (!locked) throw approvalExpired();
+      const now = txCtx.now();
       const [spent] = await tx.update(loginTokens)
         .set({ consumedAt: now })
         .where(and(
@@ -1876,9 +1935,7 @@ export class AuthService extends SessionLifecycle {
         ))
         .returning({ label: loginTokens.label, oauthMeta: loginTokens.oauthMeta });
       if (!spent) {
-        const again = await this.approvalRow(tx, approvalId);
-        if (!again) throw approvalExpired();
-        const refusal = approvalRefusal(again, now);
+        const refusal = approvalRefusal(locked, now);
         if (refusal) throw refusal;
         return { status: "pending" as const, retryAfterMs: DESKTOP_APPROVAL_POLL_MS };
       }
@@ -1888,10 +1945,11 @@ export class AuthService extends SessionLifecycle {
         label: spent.label || (APPROVAL_DEVICE_LABELS[kind] ?? "ohmail for desktop"), ip: txCtx.ip ?? "",
       }).returning();
       const meta = readDesktopGrantMeta(spent.oauthMeta);
+      const calendarOnly = calendarApproval(spent.oauthMeta);
       const established = await this.establish(txCtx, user, {
-        kind, deviceId: dev!.id, twofaAt: meta?.twofaAt ? new Date(meta.twofaAt) : null, surface: "native",
+        kind, deviceId: dev!.id, twofaAt: meta?.twofaAt ? new Date(meta.twofaAt) : null, surface: "native", calendarOnly,
       });
-      return { tokens: established.tokens! };
+      return { tokens: established.tokens!, ...(calendarOnly ? { scope: "calendar" as const } : {}) };
     }, { fence: { accountId } });
     // Only the answer that carries the pair made a device; a poll that still waits made none.
     if ("tokens" in answer) await ringDeviceMade(owner, accountId);
@@ -2510,7 +2568,7 @@ export class AuthService extends SessionLifecycle {
 
   /**
    * The one writer of a step-up RE-stamp (the mint-time writer is `establish`'s `twofaAt`).
-   * Guarded in the statement itself — `revoked_at IS NULL AND scope = 'full'` — and judged by
+   * Guarded in the statement itself for live full or calendar sessions and judged by
    * `RETURNING`: zero rows is a refusal, never a success over an unstamped session. Reached
    * only from a factor verify that has already succeeded in this same call.
    */
@@ -2524,7 +2582,7 @@ export class AuthService extends SessionLifecycle {
         eq(sessions.id, ctx.sessionId!),
         eq(sessions.userId, user.id),
         isNull(sessions.revokedAt),
-        eq(sessions.scope, "full"),
+        or(eq(sessions.scope, "full"), eq(sessions.scope, "calendar")),
       ))
       .returning({ id: sessions.id });
     if (stamped.length === 0) {

@@ -234,16 +234,7 @@
     margin: 0;
     padding: 7px 0;
   }
-  /* the desktop's boot line (`BootStatus.tsx`) cannot sit in a 52px ribbon, and the
-     ribbon carries no sentence here either: it stands at the foot of the tile beside
-     the ribbon, never over it (app.css places it in the rail at width). */
-  :root[data-layout="zero"] .gate-boot > .boot-foot {
-    left: calc(var(--gap-edge) + 52px + var(--gap-tile));
-    bottom: var(--gap-edge);
-    width: 224px;
-    max-width: calc(100% - 2 * var(--gap-edge) - 52px - var(--gap-tile));
-    padding: 0 12px 18px 16px;
-  }
+
 }
 
 /* ═══ 722–1023: the split survives beside the ribbon, at the READER'S
@@ -275,22 +266,7 @@
   :root[data-layout="zero"] .view .stream-hints {
     display: flex;
   }
-  /* boot skeleton: the three-tile shape with the ribbon's column, so the
-     first paint and the hydrated ladder agree (data-layout is stamped
-     pre-paint by the boot script). */
-  :root[data-layout="zero"] .boot-sk-window {
-    display: grid;
-    grid-template-columns: 52px minmax(0, 1fr) 1.2fr;
-    grid-template-rows: minmax(0, 1fr); /* classic's drawer band adds a topbar row; none here */
-    flex-direction: row;
-  }
-  :root[data-layout="zero"] .boot-sk-rail,
-  :root[data-layout="zero"] .boot-sk-reader {
-    display: block;
-  }
-  :root[data-layout="zero"] .boot-sk-topbar {
-    display: none;
-  }
+
 }
 /* …and not where there are no keys. The re-show above outranks the touch rule's own strips pair
    (`touch-keys.css`), so on a coarse tablet this layout hides them itself, later in this file at
@@ -371,22 +347,7 @@
     border-radius: 0;
     padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px));
   }
-  /* boot skeleton: ribbon + one tile */
-  :root[data-layout="zero"] .boot-sk-window {
-    display: grid;
-    grid-template-columns: 52px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
-    flex-direction: row;
-  }
-  :root[data-layout="zero"] .boot-sk-reader {
-    display: none;
-  }
-  :root[data-layout="zero"] .boot-sk-rail {
-    display: block;
-  }
-  :root[data-layout="zero"] .boot-sk-topbar {
-    display: none;
-  }
+
 }
 
 /* ═══ ≤391: floating tier — classic's own phone model (topbar, overlay

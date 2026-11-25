@@ -15,12 +15,14 @@
     --oh-menu-edge: var(--s2);
     --oh-soft: var(--soft-sheet);
     position: absolute;
+    box-sizing: border-box;
     width: var(--oh-menu-width, auto);
     min-width: var(--oh-menu-min);
     max-width: var(--oh-menu-max);
     max-height: calc(100% - 2 * var(--oh-menu-edge));
     padding: var(--oh-menu-pad);
     overflow: auto;
+    overscroll-behavior: contain;
     scrollbar-width: none;
   }
   .oh-menu:focus {
@@ -236,7 +238,9 @@
     --oh-menu-width: auto;
     --oh-menu-max: none;
     /* It floats a margin over the edge, or over the system's bar, and on a keyboard that is up. */
-    --oh-menu-foot: calc(max(var(--s2), var(--oh-inset-foot)) + var(--oh-inset-keys));
+    --oh-menu-foot: calc(
+      max(var(--s2), var(--oh-inset-foot)) + var(--oh-inset-keys) + var(--oh-menu-clearance, 0px)
+    );
     top: auto;
     right: var(--s2);
     bottom: var(--oh-menu-foot);

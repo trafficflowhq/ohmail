@@ -78,10 +78,13 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     await makeDue(seeded.due.accountId);
     expect(await run()).toMatchObject({ kind: "synced" });
     expect(await read()).toEqual([next]);
+    await w.db.update(calCalendars).set({ autoSchedule: true }).where(eq(calCalendars.accountId, seeded.accountId));
+    const beforeWithdrawal = await changesOf(w, seeded.accountId);
     reader.checkSignIn = async () => ({ ok: false, reason: "unreadable", retryAfterMs: null });
     await makeDue(seeded.due.accountId);
     expect(await run()).toMatchObject({ kind: "backed_off", word: "unreadable" });
     expect(await read()).toEqual([]);
+    expect((await changesOf(w, seeded.accountId))["calendar:update"]).toBe((beforeWithdrawal["calendar:update"] ?? 0) + 1);
   });
 
   /** Turns until a turn ends with nothing more to read. */
@@ -137,6 +140,31 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     const deps = depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } }));
     return { ...seeded, reader, deps };
   }
+
+  it("keeps known capabilities after a timed-out probe and publishes a confirmed change", async () => {
+    const t = await caldavWorld(new Map([["", [{ items: [] }]]]));
+    const list = t.reader.listCalendars.bind(t.reader);
+    let capability: true | null | undefined = true;
+    t.reader.listCalendars = async (...args) => {
+      const result = await list(...args);
+      return result.ok
+        ? { ...result, value: result.value.map((calendar) => ({ ...calendar, autoSchedule: capability, nativeMove: capability })) }
+        : result;
+    };
+    await calendarSyncPass(t.deps, t.due, never);
+    expect((await calendarsOf(w, t.accountId))[0]).toMatchObject({ autoSchedule: true, nativeMove: true });
+    const before = await changesOf(w, t.accountId);
+    capability = null;
+    await makeDue(t.accountId);
+    await calendarSyncPass({ ...t.deps, memory: newCalendarSyncMemory() }, t.due, never);
+    expect.soft((await calendarsOf(w, t.accountId))[0]).toMatchObject({ autoSchedule: true, nativeMove: true });
+    expect.soft((await changesOf(w, t.accountId))["calendar:update"]).toBe(before["calendar:update"]);
+    capability = undefined;
+    await makeDue(t.accountId);
+    await calendarSyncPass({ ...t.deps, memory: newCalendarSyncMemory() }, t.due, never);
+    expect((await calendarsOf(w, t.accountId))[0]).toMatchObject({ autoSchedule: false, nativeMove: false });
+    expect((await changesOf(w, t.accountId))["calendar:update"]).toBe(before["calendar:update"]! + 1);
+  });
 
   it("a first reading is stored page by page, and the token is kept only once the last page committed", async () => {
     const pages: ScriptedPage[] = [
@@ -286,6 +314,28 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     await makeDue(t.accountId);
     expect(await calendarSyncPass(deps, t.due, never)).toMatchObject({ kind: "synced", dropped: 21 });
     expect((await eventsOf(w, t.accountId)).length).toBe(3);
+  }, 60_000);
+
+  it("stores newly confirmed Google event types even when the provider version is unchanged", async () => {
+    const seeded = await seedConnection(w, { provider: "google", credential: google });
+    const ordinary = upsert("ordinary", "same-version", single("ordinary", 17));
+    const imported = upsert("imported", "same-version", single("imported", 17));
+    const reviewed = { ...ordinary, googleDefaultEvent: true as const };
+    const readings = new Map<string, readonly ScriptedPage[]>([
+      ["", [{ items: [ordinary, imported] }]],
+      ["cursor", [{ items: [reviewed, imported] }]],
+    ]);
+    const reader = scriptedReader("google", { readings, endToken: () => "cursor" });
+    const deps = depsFor(w, providersOf({ google: { reader, http: silentHttp() } }), { oauth: { google: GOOGLE_REGISTRATION, microsoft: null } });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await makeDue(seeded.accountId);
+      expect(await calendarSyncPass(deps, seeded.due, never)).toMatchObject({ kind: "synced" });
+    }
+    const held = await w.db.select().from(calEvents).where(eq(calEvents.accountId, seeded.accountId));
+    expect(held).toEqual(expect.arrayContaining([
+      expect.objectContaining({ providerId: "ordinary", googleDefaultEvent: true }),
+      expect.objectContaining({ providerId: "imported", googleDefaultEvent: false }),
+    ]));
   }, 60_000);
 
   it("Google: a cancelled day joins its series' excluded days, survives the series' next change, and leaves it once the day is changed", async () => {

@@ -39,8 +39,10 @@ export const invitationRoutes: Route[] = [
     handler: async (req, deps, params) => {
       const key = sendKeyOf(req);
       const body = (await readBody<UntrustedBody<RequestOf<"POST /messages/:id/invitation/answer">> | null>(req)) ?? {};
+      const recordCalendarMailAnswer = deps.services?.calendar?.recordMailAnswer;
       const { result, seq } = await answerInvitation(
-        serviceContext(deps, req), { messageId: params.id!, answer: body.answer, basis: body.basis, key }, { send: sendDepsOf(deps) },
+        serviceContext(deps, req), { messageId: params.id!, answer: body.answer, basis: body.basis, key },
+        { send: sendDepsOf(deps), ...(recordCalendarMailAnswer && { recordCalendarMailAnswer }) },
       );
       const message = SAID[result.status];
       return answer<"POST /messages/:id/invitation/answer">()(

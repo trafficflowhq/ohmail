@@ -1639,6 +1639,21 @@ describe("Google's writer", () => {
     ]);
   });
 
+  it("refuses a Gmail event before posting a move even when it has the reviewed organizer", async () => {
+    const g = google();
+    const organizer = ["host", "example.test"].join("@");
+    const source = g.plant("gmail-event", { organizer: { email: organizer }, eventType: "fromGmail" });
+    const answer = await g.writer.moveEvent(
+      connection,
+      { id: "cal-1" },
+      { id: "cal-2" },
+      { ...target(source), audience: { organizer, guests: [] } },
+      never,
+    );
+    expect(word(answer)).toBe("unsupported");
+    expect(g.sent.map(({ method }) => method)).toEqual(["GET"]);
+  });
+
   it("moves an event only under its reviewed version and guest list", async () => {
     const g = google();
     const organizer = "host" + "@example.test",

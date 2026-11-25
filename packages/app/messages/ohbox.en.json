@@ -75,6 +75,8 @@
     "moveCancel": "Cancel",
     "actionDelete": "Delete",
     "deleteAsk": "Move to Trash.",
+    "toastMovingToTrash": "Moving to Trash.",
+    "toastMovingToTrashMany": "Moving {count} messages to Trash.",
     "toastDeleted": "Moved to Trash.",
     "deleteFailed": "That delete could not be saved — the message is where it was.",
     "deleteNoTrash": "Not deleted — this mailbox has no Trash folder, and ohmail never erases mail.",

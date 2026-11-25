@@ -130,7 +130,7 @@ export function WakeMailboxEntry() {
  * an answer: `session-outcome.ts` classifies into three, `EngineProvider` retries the middle one, and
  * only an ANSWERED refusal reaches the signed-out screen (`AUTH-FLICKER-DIAGNOSIS.md`).
  */
-export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSession }: {
+export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSession, showOpening = false }: {
   demo: boolean;
   /**
    * The page's word for the first frame: `page.tsx`, the one mount, always passes it (`now` only after the edge's probe
@@ -140,6 +140,7 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
   edgeOwner?: string | null;
   settingsAccount?: string;
   wakeSession?: WakeSession;
+  showOpening?: boolean;
 }) {
   /**
    * WHAT THE EFFECTS BELOW ASK, as opposed to what the shell RENDERS.
@@ -366,8 +367,8 @@ export function CloudShell({ demo, drawMail, edgeOwner, settingsAccount, wakeSes
   }
 
   // The server's opening frame offers Reload if the scripts never run. Hydration starts the verdict check.
-  if (firstPaint === "hydrating") return <MailboxOpening serverFrame />;
-  if (firstPaint === "asking") return <MailboxOpening />;
+  if (firstPaint === "hydrating") return <MailboxOpening serverFrame immediate={showOpening} />;
+  if (firstPaint === "asking") return <MailboxOpening immediate={showOpening} />;
 
   /* THE DEMO, booted by `?demo=1`: the invented world's host, never the hosted wires (`demo/host.ts`). */
   if (resolvedDemo) return <DemoShell serverDemo={demo} says={DEMO_SAYS} />;

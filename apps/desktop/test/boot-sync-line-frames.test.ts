@@ -3,32 +3,23 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { splitUserValue } from "@ohmail/app-logic/lists/column-store";
 
-/**
- * THE BOOT LINE STAYS INSIDE THE RAIL IN EVERY FRAME OF THE LAUNCH.
- *
- * Reported on the Linux desktop (the ohmarchy look): for about half a second at start the card at
- * the foot of the rail that says the mailbox is opening stood past the rail's right edge, over the
- * gap and into the list. The card was placed by fixed numbers (`left: 32px; width: 196px`), the
- * paper look's 16px window gap and the default 224px rail restated, while the rail it stands in is
- * `clamp(200px, var(--rail-w, 224px), …)` at `var(--gap-edge)` (10px in the ohmarchy look). A rail
- * dragged to its 200px floor, or a window under ~1064px that clamps it there, left the card 18px
- * outside it. The card now takes its box from the rail's own track, in CSS, from the first frame.
- *
- * Measured in Chromium over the window's own stylesheets, with the real `BootSkeleton` (its real
- * grace) and `BootStatus`, one reading per animation frame from the mount: in every frame the card
- * lies inside the rail silhouette, or, in the frames before the silhouette's grace has elapsed,
- * inside the rail the shell then stands on. The steady shell's sync line is held to the same rail,
- * in both looks, light and dark.
- */
-
+/** The startup status and columns are measured in the browser across the switch from quiet to shaped. */
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
 const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");
 const ROOT = process.cwd();
 
 type Box = { l: number; r: number; t: number; b: number };
-type Frame = { t: number; line: Box | null; rail: Box | null };
-type Rig = { shell: () => { rail: Box | null; line: Box | null }; boot: (ms: number) => Promise<Frame[]> };
+type Paint = { backgroundColor: string; boxShadow: string; padding: string };
+type Columns = { rail: Box | null; list: Box | null; reader: Box | null; paint: Paint | null };
+type SheetFrame = { list: Box | null; reader: Box | null; background: string | null; opacity: number; readerOpacity: number };
+type Frame = Columns & { t: number; line: Box | null; shaped: boolean; railInset: number };
+type Rig = {
+  shell: () => Columns;
+  boot: (ms: number) => Promise<Frame[]>;
+  handoff: () => Promise<{ opening: SheetFrame; frames: SheetFrame[] }>;
+};
 
 let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
 let js = "";
@@ -62,7 +53,7 @@ afterAll(async () => {
 
 type Face = "paper" | "ohmarchy";
 type Scheme = "light" | "dark";
-interface Case { face: Face; scheme: Scheme; width: number; height: number; rail?: number; zero?: boolean }
+interface Case { face: Face; scheme: Scheme; width: number; height: number; rail?: number; list?: boolean; zero?: boolean }
 
 /** One window: the face and scheme stamped as `boot-stamp.ts` stamps them, a dragged rail width as
  *  `stampColumns` writes it, the Zero layout as the stamp writes it, the stylesheets in the head (render-blocking, as in the window). */
@@ -70,7 +61,7 @@ async function open(c: Case) {
   const ctx = await browser!.newContext({ viewport: { width: c.width, height: c.height }, deviceScaleFactor: 1 });
   const page = await ctx.newPage();
   const attrs = `${c.face === "ohmarchy" ? ' data-face="ohmarchy"' : ""} data-theme="${c.scheme}"${c.zero ? ' data-layout="zero"' : ""}`;
-  const rail = c.rail === undefined ? "" : ` style="--rail-w: ${c.rail}px"`;
+  const rail = ` style="${c.rail === undefined ? "" : `--rail-w: ${c.rail}px;`}${c.list ? `--split-user: ${splitUserValue(520)};` : ""}"`;
   await page.setContent(`<!doctype html><html${attrs}${rail}><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head>
     <body class="mo-canvas app-body"><div id="root"></div></body></html>`);
@@ -86,38 +77,52 @@ for (const face of ["ohmarchy", "paper"] as const) {
   for (const scheme of ["dark", "light"] as const) {
     for (const [width, height] of [[1100, 700], [1440, 900]] as const) {
       CASES.push({ face, scheme, width, height });
-      // The rail dragged to its floor (`column-store.ts` RAIL.min).
-      CASES.push({ face, scheme, width, height, rail: 200 });
+      CASES.push({ face, scheme, width, height, rail: 200, list: true });
     }
+    CASES.push({ face, scheme, width: 1040, height: 700 });
+    CASES.push({ face, scheme, width: 900, height: 700, zero: true });
+    CASES.push({ face, scheme, width: 600, height: 700, zero: true });
+    CASES.push({ face, scheme, width: 390, height: 700 });
   }
-  // A window narrow enough that the track clamps the rail to its floor with no drag at all.
-  CASES.push({ face, scheme: "dark", width: 1040, height: 700 });
 }
 
-describe("the boot line at the foot of the rail, frame by frame", () => {
-  it.each(CASES.map((c) => [`${c.face} ${c.scheme} ${c.width}x${c.height}${c.rail ? ` rail ${c.rail}px` : ""}`, c] as const))(
-    "%s: inside the rail in every frame, and so is the steady sync line",
+describe("the desktop opens in the mail frame", () => {
+  it.each(CASES.map((c) => [`${c.face} ${c.scheme} ${c.width}x${c.height}${c.rail ? " with saved widths" : ""}`, c] as const))(
+    "%s: status stays inside its column and the layout matches the mailbox",
     async (_name, c) => {
       const w = await open(c);
       try {
         const steady = await w.page.evaluate(() => (window as unknown as { rig: Rig }).rig.shell());
-        expect(steady.rail, "the shell drew no rail").not.toBeNull();
-        expect(steady.line, "the shell drew no sync line").not.toBeNull();
-        expect(inside(steady.line!, steady.rail!), `steady line ${fmt(steady.line)} outside rail ${fmt(steady.rail)}`).toBe(true);
-
         const frames = await w.page.evaluate(() => (window as unknown as { rig: Rig }).rig.boot(600));
-        const withLine = frames.filter((f) => f.line !== null);
-        // Both sides of the silhouette's grace were sampled: frames with the card alone, and with it.
-        expect(withLine.some((f) => f.rail === null), "no frame before the silhouette's grace").toBe(true);
-        expect(withLine.some((f) => f.rail !== null), "no frame after the silhouette's grace").toBe(true);
-        const outside = withLine
-          .map((f) => ({ f, rail: f.rail ?? steady.rail! }))
-          .filter(({ f, rail }) => !inside(f.line!, rail))
-          .map(({ f, rail }) => `t=${f.t.toFixed(0)}ms line ${fmt(f.line)} rail ${fmt(rail)}`);
-        expect(outside, `${outside.length} of ${withLine.length} frames painted the boot line outside the rail`).toEqual([]);
-        // …and the silhouette's rail is the shell's: the card is placed against the rail it hands over to.
-        const sk = withLine.find((f) => f.rail !== null)!.rail!;
-        expect(Math.abs(sk.l - steady.rail!.l) + Math.abs(sk.r - steady.rail!.r)).toBeLessThan(1);
+        expect(frames.some((f) => !f.shaped), "no frame before the grace").toBe(true);
+        const shaped = frames.filter((f) => f.shaped);
+        expect(shaped.length, "no frame after the grace").toBeGreaterThan(0);
+        const slot = c.width >= 840 && !c.zero ? "rail" : "list";
+        if (c.zero) expect(steady.rail!.r - steady.rail!.l).toBe(52);
+        if (c.width < 700) expect(steady.reader).toBeNull();
+        if (c.width < 392) expect(steady.rail).toBeNull();
+        for (const frame of frames) {
+          expect(frame.line, "no opening status").not.toBeNull();
+          expect(frame[slot], "no column for the status").not.toBeNull();
+          expect(inside(frame.line!, frame[slot]!), `t=${frame.t.toFixed(0)}ms line ${fmt(frame.line)} outside ${fmt(frame[slot])}`).toBe(true);
+          expect(Math.abs(frame.line!.b - (frame[slot]!.b - (slot === "rail" ? frame.railInset : 0)))).toBeLessThan(1);
+        }
+        if (c.face === "ohmarchy" && slot === "rail") {
+          expect(steady.paint?.boxShadow).not.toBe("none");
+          for (const frame of shaped) expect(frame.paint).toEqual(steady.paint);
+          expect(shaped[0]!.rail).toEqual(steady.rail);
+        }
+        for (const column of ["rail", "list", "reader"] as const) {
+          const first = shaped[0]![column];
+          const live = steady[column];
+          if (live === null) {
+            expect(first).toBeNull();
+          } else {
+            expect(first).not.toBeNull();
+            expect(Math.abs(first!.l - live.l) + Math.abs(first!.r - live.r), `${column}: opening ${fmt(first)} vs steady ${fmt(live)}`).toBeLessThan(1);
+          }
+        }
+        await expect(w.page.locator(".boot-foot").textContent()).resolves.toBe("Opening your local mail store…");
       } finally {
         await w.close();
       }
@@ -126,37 +131,15 @@ describe("the boot line at the foot of the rail, frame by frame", () => {
   );
 });
 
-/* THE ZERO LAYOUT'S RIBBON TIER (392-1023px): the rail is a 52px ribbon of keys, in the silhouette
-   and in the shell, and it carries no sentence. A 196px card at the rail's foot covered the ribbon
-   and ran 160px on into the tile; it stands at the foot of the tile instead, clear of the ribbon. */
-const RIBBON: Case[] = [];
-for (const face of ["ohmarchy", "paper"] as const) {
-  for (const scheme of ["dark", "light"] as const) {
-    for (const [width, height] of [[900, 700], [600, 700]] as const) RIBBON.push({ face, scheme, width, height, zero: true });
-  }
-}
 
-describe("the boot line beside the Zero layout's ribbon, frame by frame", () => {
-  it.each(RIBBON.map((c) => [`${c.face} ${c.scheme} ${c.width}x${c.height}`, c] as const))(
-    "%s: never over the ribbon, inside the window, in every frame",
-    async (_name, c) => {
-      const w = await open(c);
-      try {
-        const steady = await w.page.evaluate(() => (window as unknown as { rig: Rig }).rig.shell());
-        expect(steady.rail, "the shell drew no ribbon").not.toBeNull();
-        expect(steady.rail!.r - steady.rail!.l, "the shell's rail is not the ribbon").toBeLessThan(60);
-        const frames = await w.page.evaluate(() => (window as unknown as { rig: Rig }).rig.boot(600));
-        const withLine = frames.filter((f) => f.line !== null);
-        expect(withLine.some((f) => f.rail !== null), "no frame after the silhouette's grace").toBe(true);
-        const bad = withLine
-          .map((f) => ({ f, rib: f.rail ?? steady.rail! }))
-          .filter(({ f, rib }) => f.line!.l < Math.max(rib.r, steady.rail!.r) - 0.5 || f.line!.r > c.width + 0.5)
-          .map(({ f, rib }) => `t=${f.t.toFixed(0)}ms line ${fmt(f.line)} ribbon ${fmt(rib)}`);
-        expect(bad, `${bad.length} of ${withLine.length} frames painted the boot line over the ribbon`).toEqual([]);
-      } finally {
-        await w.close();
-      }
-    },
-    30_000,
-  );
-});
+it.each(["light", "dark"] as const)("keeps the mail sheet painted throughout the %s startup handoff", async (scheme) => {
+  const w = await open({ face: "ohmarchy", scheme, width: 1440, height: 900 });
+  try {
+    const { opening, frames } = await w.page.evaluate(() => (window as unknown as { rig: Rig }).rig.handoff());
+    expect(opening.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(frames.length).toBeGreaterThan(2);
+    for (const frame of frames) expect(frame).toEqual(opening);
+  } finally {
+    await w.close();
+  }
+}, 30_000);

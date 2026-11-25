@@ -5,30 +5,30 @@ import type { AiCallOptions } from "./ai-call-report.js";
  * optional: a deployment injecting none simply offers no drafts, so code that merely NAMES the
  * port needs these five shapes and nothing else. A leaf and not under `ai/`: declared beside the
  * implementation, mail-half modules depended on the model half just to say what shape they accept.
- * A draft carries previews and grounding. The prompt builder removes mail credentials before
+ * A draft carries plain-text letters and grounding. The prompt builder removes mail credentials before
  * assembling the provider request.
  */
 
-/** The message being replied to — subject, sender and preview. */
+/** The message being replied to. Older callers and unavailable bodies supply a preview. */
 export interface DraftIncoming {
   subject: string;
   from: string;
   /** Local credential context. */
   fromName?: string | null;
   snippet: string;
+  text?: string;
 }
 
-/**
- * The retrieved grounding context: knowledge-base entries plus the target thread's OTHER
- * messages as snippets. Raw message bodies stay outside the draft request.
- */
+/** The retrieved grounding context: knowledge-base entries and earlier letters, newest first. */
 export interface DraftContext {
   kbEntries: Array<{ title: string; content: string }>;
   threadMessages: Array<{
     from: string;
     fromName?: string | null;
     snippet: string;
-    /** Local context for detecting a bare credential in the preview. */
+    text?: string;
+    writtenByOwner?: boolean;
+    /** Local context for credential detection. */
     subject?: string;
   }>;
 }
@@ -47,7 +47,7 @@ export interface DraftOwnWords {
 export interface DraftInput {
   incoming: DraftIncoming;
   context: DraftContext;
-  /** Absent for a reply drafted from the letter alone; its request is then what it always was. */
+  /** Absent when the person has supplied no text of their own. */
   own?: DraftOwnWords;
 }
 

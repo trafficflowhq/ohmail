@@ -1,6 +1,9 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { CalendarPort } from "@ohmail/app-logic/calendar";
 import { Empty } from "@ohmail/ui/base";
+import { CalendarHead } from "@ohmail/ui/calendar";
+import type { PaneProps } from "../frame/contract.js";
+import { ProductSwitch } from "../frame/ProductSwitch.js";
 import { useSetupPort } from "../calsetup/index.js";
 import { useSharedCalendarSettings } from "../calsettings/settings-read.js";
 import { useFrame, useReport } from "../frame/commands.js";
@@ -47,7 +50,19 @@ export function useCalendarFirstStep(): boolean {
   return useContext(EmptyCalendar);
 }
 
-export function CalendarFirstStep() {
+export function CalendarLanding({ plan, children }: Pick<PaneProps, "plan"> & { children: ReactNode }) {
+  const t = useText("calendar");
+  return (
+    <section className="cal-body" aria-label={t("landmark")}>
+      {plan.rail === "dock" && (
+        <CalendarHead title={t("landmark")} hot={false} switcher={<ProductSwitch kind="round" />} />
+      )}
+      <div className="cal-first-step">{children}</div>
+    </section>
+  );
+}
+
+export function CalendarFirstStep({ plan, recovery }: Pick<PaneProps, "plan"> & { recovery?: ReactNode }) {
   const { commands, host, route } = useFrame();
   const setup = useSetupPort();
   const settings = useSharedCalendarSettings();
@@ -84,7 +99,8 @@ export function CalendarFirstStep() {
   }
 
   return (
-    <section className="cal-body cal-first-step" aria-label={t("landmark")}>
+    <CalendarLanding plan={plan}>
+      {recovery}
       <Empty
         label={accounts("accounts.none")}
         act={{
@@ -93,6 +109,6 @@ export function CalendarFirstStep() {
           onPress: () => void connect(),
         }}
       />
-    </section>
+    </CalendarLanding>
   );
 }

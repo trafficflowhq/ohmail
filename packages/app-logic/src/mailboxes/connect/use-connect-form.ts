@@ -29,6 +29,7 @@ import { codeElsewhere, wayOf } from "./sign-in.js";
 import { NAME_REFUSED } from "./standalone-said.js";
 import {
   hostsNow,
+  newServerPortFields,
   presetOf,
   type ConnectFacts,
   type ConnectState,
@@ -139,7 +140,7 @@ function pressOf(verb: Parked["verb"], machine: Machine, facts: ConnectFacts): P
   const preset = presetOf(typed, facts);
   if (preset === null || facts.purpose === "edit" || facts.purpose === "reconnect") return null;
   const mode = verb === "connect" ? MODE_OF[facts.purpose] : null;
-  const body = inputOf(typed, preset, pass, claims, facts.purpose === "standalone");
+  const body = inputOf(typed, preset, pass, claims, newServerPortFields(facts.purpose));
   return Object.freeze({ verb, subject: null, mode, body, sent: Object.freeze({ ...hosts }) });
 }
 
@@ -219,6 +220,10 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
   const press = (verb: Parked["verb"]): void => {
     // A submit event can arrive even when the button is disabled.
     if (door.localServerWait && localTestPending.read()) return;
+    const separatePorts = edits || (newServerPortFields(facts.purpose) && preset?.manual === true);
+    const bad = (port: string): boolean => filled(port) && !validPort(port.trim());
+    if (separatePorts && (bad(state.typed.imapPort) || bad(state.typed.smtpPort)))
+      return dispatch({ kind: "said", shown: { said: PORT_INVALID, calm: false } });
     const act = pressOf(verb, machine, facts);
     if (act !== null) dispatch({ kind: "press", act });
   };
@@ -234,10 +239,6 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
     // A name that cannot be stored sends nothing and says so; only the mount that asks for one can hold one.
     if (senderNameOf(state.typed.displayName ?? "") === undefined)
       return dispatch({ kind: "said", shown: { said: NAME_REFUSED, calm: false } });
-    const separatePorts = edits || (facts.purpose === "standalone" && preset?.manual === true);
-    const bad = (port: string): boolean => filled(port) && !validPort(port.trim());
-    if (separatePorts && (bad(state.typed.imapPort) || bad(state.typed.smtpPort)))
-      return dispatch({ kind: "said", shown: { said: PORT_INVALID, calm: false } });
     press(edits ? "edit" : "connect");
   };
 

@@ -127,10 +127,13 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
   if (ids.length === 0) return new Map();
   const rows = await db.select({
     id: calCalendars.id, connectionId: calCalendars.connectionId, name: calCalendars.name, color: calCalendars.color, localColor: calCalendars.localColor,
-    access: calCalendars.access, nativeMove: calCalendars.nativeMove, shown: calCalendars.shown, timeZone: calCalendars.timeZone, availabilityKey: calCalendars.availabilityKey,
+    access: calCalendars.access, nativeMove: calCalendars.nativeMove, autoSchedule: calCalendars.autoSchedule, shown: calCalendars.shown, timeZone: calCalendars.timeZone, availabilityKey: calCalendars.availabilityKey,
+    organizerAddresses: calConnections.organizerAddresses,
     windowStart: calCalendars.windowStart, windowEnd: calCalendars.windowEnd, lastSyncedAt: calCalendars.lastSyncedAt,
     errorCode: calCalendars.errorCode, updatedAt: calCalendars.updatedAt,
-  }).from(calCalendars).where(and(eq(calCalendars.accountId, accountId), inArray(calCalendars.id, [...ids])));
+  }).from(calCalendars).innerJoin(calConnections, and(
+    eq(calConnections.id, calCalendars.connectionId), eq(calConnections.accountId, calCalendars.accountId),
+  )).where(and(eq(calCalendars.accountId, accountId), inArray(calCalendars.id, [...ids])));
   const alarms = await alarmsBy(db, accountId, "calendarId", rows.map((r) => r.id));
   return new Map(rows.map((r) => [r.id, {
     id: r.id,
@@ -139,6 +142,7 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
     color: r.localColor ?? r.color,
     access: accessOf(r.access),
     ...(r.nativeMove && { nativeMove: true as const }),
+    ...(r.autoSchedule && r.organizerAddresses?.length && { autoSchedule: true as const }),
     shown: r.shown,
     timeZone: r.access === "busy" && r.timeZone !== null ? zoneForAvailability(r.timeZone, r.availabilityKey) : r.timeZone,
     window: r.windowStart !== null && r.windowEnd !== null ? { from: String(r.windowStart), to: String(r.windowEnd) } : null,
@@ -196,7 +200,8 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     startsAt: calEvents.startsAt, endsAt: calEvents.endsAt, occurrenceAt: calEvents.occurrenceAt,
     repeatRule: calEvents.repeatRule, excludedDates: calEvents.excludedDates, addedDates: calEvents.addedDates,
     busy: calEvents.busy, private: calEvents.private, organizer: calEvents.organizer, organizerName: calEvents.organizerName,
-    myAnswer: calEvents.myAnswer, portableCopy: calEvents.portableCopy, removedOccurrences: calEvents.removedOccurrences, heldBack: calEvents.heldBack, updatedAt: calEvents.updatedAt,
+    myAnswer: calEvents.myAnswer, mailAnswer: calEvents.mailAnswer, portableCopy: calEvents.portableCopy,
+    googleDefaultEvent: calEvents.googleDefaultEvent, removedOccurrences: calEvents.removedOccurrences, heldBack: calEvents.heldBack, updatedAt: calEvents.updatedAt,
   }).from(calEvents)
     .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
     .innerJoin(calConnections, and(eq(calConnections.id, calCalendars.connectionId), eq(calConnections.accountId, accountId)))
@@ -333,6 +338,8 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       ...(ownOrganizer ? { ownOrganizer: true } : projected === "" || (r.provider === "caldav" && r.partial) ? { ownOrganizer: false } : {}),
       ...(sharedWithoutOrganizer && { sharedWithoutOrganizer: true as const }),
       myAnswer: r.myAnswer === null ? null : answerOf(confirmed?.answer ?? r.myAnswer),
+      ...((r.myAnswer === null && !organizer && (r.mailAnswer === "accepted" || r.mailAnswer === "tentative" || r.mailAnswer === "declined")) &&
+        { mailAnswer: r.mailAnswer }),
       ...(removedOccurrences?.length && { removedOccurrences }),
       ...(hiddenOccurrences?.length && { hiddenOccurrences }),
       ...(identity && { hideAttendee: identity.attendee }),
@@ -341,6 +348,7 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       alarms: alarms.get(r.id) ?? [],
       cut: false,
       ...(r.portableCopy && { portableCopy: true as const }),
+      ...(r.googleDefaultEvent && { googleDefaultEvent: true as const }),
       writes: marks.get(r.id) ?? [],
       updatedAt: r.updatedAt.toISOString(),
     };

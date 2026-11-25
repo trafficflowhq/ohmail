@@ -187,9 +187,15 @@ final class ShellView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMes
 
   private func keep(_ m: [String: Any], _ at: String) {
     let id = m["id"] as? Int ?? -1
-    guard let live = scope else { return answer(at, id, ["ok": false, "refused": "notReady"]) }
+    let kind = m["kind"] as? String
+    let nested = kind == "keepRows" && doorPage && scope == nil ? m["ask"] as? [String: Any] : nil
+    let ask = nested ?? m
+    let legacy = kind == "keepRows" && ask["legacy"] as? Bool == true
+    guard let live = (legacy && nested != nil) ? ask["scope"] as? String : scope else {
+      return answer(at, id, ["ok": false, "refused": "notReady"])
+    }
     let k = Keeper.shared
-    switch m["kind"] as? String {
+    switch kind {
     case "keep":
       guard let key = m["key"] as? String else { return answer(at, id, ["ok": false, "refused": "malformed"]) }
       let value = m["value"] as? String
@@ -205,13 +211,16 @@ final class ShellView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMes
         self.answer(at, id, ["ok": true, "words": r.0.map { [$0.0, $0.1] }, "refused": refused])
       }
     case "keepRows":
-      guard m["scope"] as? String == live else { return answer(at, id, ["ok": false, "refused": "foreignScope"]) }
-      let puts = (m["puts"] as? [[String: Any]] ?? []).compactMap { r -> Keeper.Row? in
+      guard ask["scope"] as? String == live else { return answer(at, id, ["ok": false, "refused": "foreignScope"]) }
+      let puts = (ask["puts"] as? [[String: Any]] ?? []).compactMap { r -> Keeper.Row? in
         guard let t = r["type"] as? String, let i = r["id"] as? String, let j = r["json"] as? String else { return nil }
         return Keeper.Row(type: t, id: i, json: j)
       }
-      let deletes = (m["deletes"] as? [[String]] ?? []).compactMap { p in p.count == 2 ? (p[0], p[1]) : nil }
-      k.run({ k.keepRows(live, puts, deletes) }) { ok in self.answer(at, id, ["ok": true, "kept": ok]) }
+      let deletes = (ask["deletes"] as? [[String]] ?? []).compactMap { p in p.count == 2 ? (p[0], p[1]) : nil }
+      k.run({ k.keepRows(live, puts, deletes, legacy: legacy) }) { ok in
+        let response: [String: Any] = nested == nil ? ["ok": true, "kept": ok] : ["ok": true, "answer": ["kept": ok]]
+        self.answer(at, id, response)
+      }
     case "keptRows":
       guard m["scope"] as? String == live else { return answer(at, id, ["ok": false, "refused": "foreignScope"]) }
       k.run({ k.keptRows(live) }) { rows in

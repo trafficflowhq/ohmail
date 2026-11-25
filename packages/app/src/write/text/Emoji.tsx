@@ -55,7 +55,7 @@ export function useEmoji(handle: EditorHandle | null, locked: boolean) {
       },
     },
     menu: open ? (
-      <Menu open label={label} title={label} anchor={anchor} onClose={close} up>
+      <Menu open portal label={label} title={label} anchor={anchor} onClose={close} up>
         <div className="write-emoji-grid" role="group" aria-label={label}>
           {EMOJI.map(([emoji, name]) => (
             <button

@@ -25,12 +25,13 @@ export function Columns({
   wide,
   above,
   labels,
-}: ColumnsProps) {
+  passive,
+}: ColumnsProps & { passive?: boolean }) {
   const drawn = useRef<HTMLDivElement>(null);
   const listColumn = useRef<HTMLElement>(null);
   const widths = useColumnWidths(drawn);
   const handle = (column: "rail" | "list") =>
-    plan.handles || (column === "list" && plan.ribbon === "split") ? (
+    !passive && (plan.handles || (column === "list" && plan.ribbon === "split")) ? (
       <div className="fr-handle">
         <ColumnHandle
           column={column}

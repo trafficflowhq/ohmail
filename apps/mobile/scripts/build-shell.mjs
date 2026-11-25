@@ -211,7 +211,7 @@ export async function buildShell({ out = SHELL_OUT, bench = false, app = "ohmail
   if (!bench && js.includes(BENCH_MARKER)) throw new Error("build-shell: the bench's door is in a release page");
   const doorInputs = await page({
     out, name: "door", entry: join(WEB, "src", "door", "main.tsx"), template: { file: "door.html", markup: doorTemplate },
-    define: {},
+    define: { __OHMAIL_CALENDAR_DOOR__: app === "ohcal" ? "true" : "false" },
     plugins: [catalogueOf(join(WEB, "src", "door"), DOOR_NAMESPACES)],
   });
   if (readFileSync(join(out, "door.js"), "utf8").includes(BENCH_MARKER)) throw new Error("build-shell: the bench's door is in the door's page");

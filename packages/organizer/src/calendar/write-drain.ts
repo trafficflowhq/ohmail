@@ -22,7 +22,7 @@ import {
 import type { Logger } from "@trafficflow/core";
 import { calAttendees, calCalendars, calEvents, calWrites, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  appliedPayloadOf, calendarOriginalOf, connectedAttendee, changedDaysOf, endedDayOf, exceptionBaseOf, ownOrganizerAddresses, parseWritePayload, isAttendeeCopy, sharedCopyNeedsProtection, writeRowOf, type CalendarWritePayload, type CalendarTransferProgress,
+  appliedPayloadOf, calendarOriginalOf, connectedAttendee, changedDaysOf, endedDayOf, exceptionBaseOf, organizerPrincipalAddress, ownOrganizerAddresses, parseWritePayload, isAttendeeCopy, sharedCopyNeedsProtection, writeRowOf, type CalendarWritePayload, type CalendarTransferProgress,
 } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { inConnection } from "./connection.js";
@@ -285,7 +285,8 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         .returning({ attempts: calWrites.attempts });
       if (claimedRow === undefined) return { kind: "busy" };
       const attendeeAddresses = await ownOrganizerAddresses(tx, key.accountId, held.principal);
-      const owners = new Set([...attendeeAddresses, ...(held.organizerAddresses ?? [])]);
+      const schedulingAddresses = held.organizerAddresses ?? [];
+      const owners = new Set([...attendeeAddresses, ...schedulingAddresses]);
       const exception = payload.exception === undefined ? undefined : await reviewedExceptionOf(
         tx, key.accountId, head.calendarId, payload, event, owners, head.calendarAccess, head.attempts === 0 && !payload.exception.masterReceipt,
       );
@@ -310,8 +311,15 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
           to = dest.providerId;
         }
       }
-      const principal = held.principal?.trim().toLowerCase().replace(/^mailto:/, "") ?? "";
-      const organizer = principal.includes("@") && !principal.includes("/") ? principal : ([...attendeeAddresses][0] ?? null);
+      let organizer: string | null;
+      if (input.provider.reader.provider === "caldav") {
+        const existing = payload.act.kind === "calendar_event_update" ? event?.organizer?.trim().toLowerCase() : null;
+        organizer = existing
+          ? (schedulingAddresses.includes(existing) ? existing : null)
+          : (schedulingAddresses.find((address) => attendeeAddresses.has(address)) ?? schedulingAddresses[0] ?? null);
+      } else {
+        organizer = organizerPrincipalAddress(held.principal) ?? [...attendeeAddresses][0] ?? null;
+      }
       // The first of a press's two parts is sent only where its second could be sent after it: else neither is.
       let second: Second | "unreadable" | null = null;
       if (payload.part?.n === 1) {

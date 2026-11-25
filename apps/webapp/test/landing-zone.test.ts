@@ -236,8 +236,12 @@ describe("armed: every zone path is rewritten to the zone and the jar stays here
       expect(res.headers.get("x-middleware-request-cookie"), path).toBeNull();
       expect(res.headers.get("x-middleware-request-x-vercel-protection-bypass"), path).toBe("b");
     }
-    const query = await run("/privacy?ref=x", { headers: { cookie: JAR } });
-    expect(query.headers.get("x-middleware-rewrite")).toBe(`${ZONE}/privacy?ref=x`);
+    for (const path of ["/privacy", "/terms"]) {
+      const res = await run(`${path}?ref=x`, { headers: { cookie: JAR, authorization: "Bearer x" } });
+      expect(res.headers.get("x-middleware-rewrite"), path).toBe(`${ZONE}${path}?ref=x`);
+      expect(overridden(res), path).not.toContain("cookie");
+      expect(overridden(res), path).not.toContain("authorization");
+    }
   });
 
   it("the store listings' support and account-deletion pages go to the zone, and the matcher runs for them", async () => {
@@ -305,8 +309,10 @@ describe("unarmed in every other state: the website is served from here, as befo
     const root = await run("/");
     expect(root.status).toBe(307);
     expect(new URL(root.headers.get("location")!).pathname).toBe("/login");
-    expect((await run("/privacy")).headers.get("x-middleware-rewrite")).toBeNull();
-    expect((await run("/PRIVACY")).headers.get("x-middleware-next")).toBe("1");
+    for (const path of ["/privacy", "/terms"]) {
+      expect((await run(path)).headers.get("x-middleware-rewrite"), path).toBeNull();
+      expect((await run(path.toUpperCase())).headers.get("x-middleware-next"), path).toBe("1");
+    }
   });
 
   it("a signed-in `/` is still the app under a nonce, armed or not", async () => {
@@ -475,7 +481,7 @@ describe("headerRules: unarmed byte for byte, armed with no policy of ours on th
 
   it("armed: every zone path carries the three static headers and no policy", async () => {
     const rules = await rulesOf(null, LISTED);
-    const paths = [...ZONE_PATHS.filter((p) => !ZONE_ONLY_PATHS.includes(p)), "/.well-known/org.flathub.VerifiedApps.txt",
+    const paths = [...ZONE_PATHS.filter((p) => !ZONE_ONLY_PATHS.includes(p)), "/terms", "/.well-known/org.flathub.VerifiedApps.txt",
       "/site-assets/_next/static/chunks/a.js", "/site-assets/x", "/landing/hero-paper.webp", "/landing/a/b.png"];
     for (const p of paths) {
       expect(csps(rules, p), p).toEqual([]);
@@ -504,7 +510,7 @@ describe("headerRules: unarmed byte for byte, armed with no policy of ours on th
 describe("armed: a zone path in other capitals is a 308 to the zone's own spelling, never a page without a policy", () => {
   /** Case variants and the spelling each names: the declared one, a prefix's remainder as sent. */
   const VARIANTS: Array<[string, string]> = [
-    ["/PRIVACY", "/privacy"], ["/De", "/de"], ["/IMPRINT", "/imprint"], ["/SubProcessors", "/subprocessors"],
+    ["/PRIVACY", "/privacy"], ["/TERMS", "/terms"], ["/De", "/de"], ["/IMPRINT", "/imprint"], ["/SubProcessors", "/subprocessors"],
     ["/Flathub-Verification", "/flathub-verification"], ["/SUPPORT", "/support"], ["/Delete-Account", "/delete-account"],
     ["/OHCAL", "/ohcal"],
     ["/.Well-Known/org.flathub.verifiedapps.txt", "/.well-known/org.flathub.VerifiedApps.txt"],

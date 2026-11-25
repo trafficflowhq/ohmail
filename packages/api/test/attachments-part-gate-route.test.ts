@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import type { MimeStructure } from "@trafficflow/core/mail";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { attachments as attachmentsTbl, mailboxCredentials } from "@trafficflow/db";
-import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, RawMessageTooLargeError } from "@trafficflow/core/adapters/imap";
 import { makeDeps, seedSession, seedMessage, req, FIXED_NOW } from "./helpers.js";
 
 /**
@@ -95,6 +95,28 @@ async function repairWorld() {
 }
 
 describe("the attachment routes repair an older row through the real door", () => {
+  it("re-reads the stored section when the optional message source exceeds its own limit", async () => {
+    const w = await world(WRONG);
+    let closed = false;
+    vi.spyOn(ImapAdapter.prototype, "forceClose").mockImplementation(() => { closed = true; });
+    const readPart = vi.spyOn(ImapAdapter.prototype, "fetchPart").mockImplementation(async () => {
+      if (closed) throw new Error("connection closed before section retry");
+      return { contentType: "application/pdf", filename: "a.pdf", body: RIGHT };
+    }).mockResolvedValueOnce({ contentType: "application/pdf", filename: "a.pdf", body: WRONG });
+    vi.spyOn(ImapAdapter.prototype, "fetchStructure").mockResolvedValue(
+      multi("mixed", [textNode("plain"), multi("mixed", [
+        textNode("plain"), multi("mixed", [leafNode("application/pdf", "a.pdf")]),
+      ])]),
+    );
+    vi.spyOn(ImapAdapter.prototype, "fetchRaw").mockImplementation(async (locator, opts) => {
+      throw new RawMessageTooLargeError(locator, opts!.maxBytes!, 600 * 1024);
+    });
+    const res = await H(req("GET", `/attachments/${w.attId}`, { bearer: w.s.token }), w.deps);
+    expect(res.status).toBe(200);
+    expect(Buffer.from(await res.arrayBuffer())).toEqual(RIGHT);
+    expect(readPart).toHaveBeenCalledTimes(2);
+  });
+
   it("GET /attachments/:id serves the file and rewrites the row", async () => {
     const w = await repairWorld();
     const res = await H(req("GET", `/attachments/${w.attId}`, { bearer: w.s.token }), w.deps);

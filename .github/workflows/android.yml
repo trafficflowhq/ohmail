@@ -94,7 +94,9 @@ name: android
 
 on:
   push:
-    tags: ["android-v*"]
+    tags: ["android-v*", "ohcal-android-v*"]
+  release:
+    types: [published, edited, released]
   pull_request:
     # The ready mark of a maintainer's batch into next follows build.yml and skips hosted packaging.
     types: [opened, synchronize, reopened, ready_for_review]
@@ -102,6 +104,11 @@ on:
   merge_group:
   workflow_dispatch:
     inputs:
+      app:
+        description: App whose internal Play version will be promoted
+        type: choice
+        options: [ohmail, ohcal]
+        default: ohmail
       play_version_code:
         description: Internal Play version code to promote to production (Android tag only)
         type: string
@@ -409,7 +416,9 @@ jobs:
   # ── the tag build: same native build, secretless, hand the APK to the sign job ──────────
   build:
     name: android · tag build (no secrets)
-    if: github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v') && !(github.event_name == 'workflow_dispatch' && inputs.play_version_code != '')
+    if: github.repository == 'trafficflowhq/ohmail' && (startsWith(github.ref, 'refs/tags/android-v') || startsWith(github.ref, 'refs/tags/ohcal-android-v')) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !(github.event_name == 'workflow_dispatch' && inputs.play_version_code != '')
+    outputs:
+      app: ${{ steps.identity.outputs.app }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -425,6 +434,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          fetch-depth: ${{ startsWith(github.ref, 'refs/tags/ohcal-android-v') && '0' || '1' }}
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -436,14 +446,27 @@ jobs:
           java-version: 17
 
       - name: The tag matches the app's own version
+        id: identity
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          VERSION=$(node -p "require('./apps/mobile/app.json').expo.version")
-          case "$TAG" in
-            "android-v${VERSION}"*) echo "tag $TAG matches app version $VERSION" ;;
-            *) echo "tag $TAG does not match apps/mobile/app.json version $VERSION" >&2; exit 1 ;;
-          esac
+          identity=$(node apps/mobile/scripts/release-identity.mjs android-tag "$GITHUB_REF_NAME")
+          app=$(jq -er .app <<< "$identity")
+          if [[ "$app" == ohcal ]]; then
+            head=$(git rev-parse HEAD)
+            git rev-list --first-parent origin/main | grep -Fx "$head" > /dev/null
+            test "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3
+            version=$(jq -er .version <<< "$identity")
+            mail_commit=$(git rev-parse --verify "refs/tags/v${version}^{commit}")
+            test "$head" = "$mail_commit" || { echo "The calendar tag must match the ohmail release commit." >&2; exit 1; }
+          fi
+          printf 'app=%s\n' "$app" >> "$GITHUB_OUTPUT"
+          printf 'OHMAIL_VARIANT=%s\n' "$app" >> "$GITHUB_ENV"
+
+      - name: Check the calendar tag has no unsafe release page
+        if: steps.identity.outputs.app == 'ohcal'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/check-ohcal-release-page.sh "$GITHUB_REF_NAME"
 
       - name: Install the locked dependency tree
         run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
@@ -484,14 +507,14 @@ jobs:
 
       # The shell's page, which plugins/shell-assets.js copies into the app and refuses to build without.
       - name: Build the shell's page
-        run: node apps/mobile/scripts/build-shell.mjs
+        run: node apps/mobile/scripts/build-shell.mjs --app "$OHMAIL_VARIANT"
 
       - name: Generate the native Android project
         working-directory: apps/mobile
         env:
           CI: "1"
           EXPO_NO_TELEMETRY: "1"
-        run: npx expo prebuild --platform android --no-install
+        run: npx expo prebuild --clean --platform android --no-install
 
       # THE HEAP THE TWO PACKAGING TASKS NEED, written into the project the prebuild just
       # generated. Expo's template sets `-Xmx2048m -XX:MaxMetaspaceSize=512m`, and packaging the
@@ -548,18 +571,20 @@ jobs:
       # On the TAG path too, and not only on the build check: this is the artifact that gets
       # signed and attached, so it is the one whose contents are a published claim.
       - name: No Google push code in the binary
-        run: bash .github/scripts/assert-no-fcm.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+        run: bash .github/scripts/assert-no-fcm.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk "$OHMAIL_VARIANT"
 
       # On the TAG path too: this is the artifact that gets signed and attached, so its contents
       # are a published claim. Also the only assertion that minification actually ran — the strip
       # rules do nothing without it, and an APK with the leak back in is otherwise shippable.
       - name: The push registration is not in logcat
+        if: steps.identity.outputs.app == 'ohmail'
         run: bash .github/scripts/assert-log-hygiene.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 
       # On the TAG path too, and for the same reason: this is the artifact people install, and it
       # is the only place the background-organizing claim can be settled. The dex and the merged
       # manifest are read for the service and its declaration.
       - name: The phone can organize in the background
+        if: steps.identity.outputs.app == 'ohmail'
         run: bash .github/scripts/assert-organizer-service.sh apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - name: The artifact is a real App Bundle
@@ -580,6 +605,19 @@ jobs:
           SIZE=$(stat -c%s "$AAB")
           test "$SIZE" -gt 10000000
           echo "AAB ok: $SIZE bytes"
+
+      - name: Prepare bundletool to read the App Bundle
+        run: bash .github/scripts/setup-bundletool.sh "$RUNNER_TEMP/bundletool.jar"
+
+      - name: Read the APK and App Bundle package and versions
+        run: |
+          set -euo pipefail
+          APK=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          AAB=apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
+          node .github/scripts/android-artifact.mjs "$GITHUB_REF_NAME" "$APK" "$BT/aapt2"
+          node .github/scripts/android-artifact.mjs "$GITHUB_REF_NAME" "$AAB" "$RUNNER_TEMP/bundletool.jar"
+          node apps/mobile/scripts/assert-variant.mjs "$APK" "$OHMAIL_VARIANT"
 
       # ── WHAT MAKES THE TWO SCANS ABOVE COVER THE BUNDLE TOO ─────────────────────────────────
       #
@@ -639,7 +677,8 @@ jobs:
       # KEPT 90 DAYS, like the desktop installers, and so is the mapping below: the release feeds
       # read the APK on the desktop page against this artifact before they sign anything, so an
       # artifact gone after a day would refuse a feeds re-run for the whole page.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - if: steps.identity.outputs.app == 'ohmail'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ohmail-android-unsigned
           path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
@@ -652,7 +691,7 @@ jobs:
       # common ancestor and quietly break that lookup.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ohmail-android-bundle-unsigned
+          name: ${{ steps.identity.outputs.app }}-android-bundle-unsigned
           path: apps/mobile/android/app/build/outputs/bundle/release/app-release.aab
           retention-days: 1
           if-no-files-found: error
@@ -679,13 +718,22 @@ jobs:
           set -euo pipefail
           MAP=apps/mobile/android/app/build/outputs/mapping/release/mapping.txt
           test -f "$MAP" || { echo "R8 wrote no mapping — did minification run?" >&2; exit 1; }
-          gzip -9 -c "$MAP" > ohmail-android-mapping.txt.gz
-          echo "mapping: $(stat -c%s "$MAP") bytes -> $(stat -c%s ohmail-android-mapping.txt.gz) bytes gzipped"
+          gzip -9 -c "$MAP" > "${OHMAIL_VARIANT}-android-mapping.txt.gz"
+          echo "mapping: $(stat -c%s "$MAP") bytes -> $(stat -c%s "${OHMAIL_VARIANT}-android-mapping.txt.gz") bytes gzipped"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - if: steps.identity.outputs.app == 'ohmail'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ohmail-android-mapping
           path: ohmail-android-mapping.txt.gz
+          retention-days: 90
+          if-no-files-found: error
+
+      - if: steps.identity.outputs.app == 'ohcal'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ohcal-android-mapping
+          path: ohcal-android-mapping.txt.gz
           retention-days: 90
           if-no-files-found: error
 
@@ -694,8 +742,9 @@ jobs:
     name: android · re-sign + attach the release APK and App Bundle
     needs: build
     outputs:
+      app: ${{ needs.build.outputs.app }}
       aab_sha256: ${{ steps.bundle-digest.outputs.aab_sha256 }}
-    if: github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v')
+    if: github.repository == 'trafficflowhq/ohmail' && (startsWith(github.ref, 'refs/tags/android-v') || startsWith(github.ref, 'refs/tags/ohcal-android-v'))
     # The `release` environment admits a run on a release tag and nothing else — a branch, a pull
     # request or a dispatch from one is refused before a step runs — and a keystore kept there is
     # readable by no other run.
@@ -708,6 +757,8 @@ jobs:
       run:
         shell: bash
 
+    env:
+      RELEASE_APP: ${{ needs.build.outputs.app }}
     steps:
       # No checkout of the tree: this job builds nothing, so no source of this repository (and
       # none of its dependencies) executes on the runner that holds the key. Java is for
@@ -719,6 +770,7 @@ jobs:
           java-version: 17
 
       - name: Fetch the built APK from the build job
+        if: needs.build.outputs.app == 'ohmail'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ohmail-android-unsigned
@@ -727,7 +779,7 @@ jobs:
       - name: Fetch the built App Bundle from the build job
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ohmail-android-bundle-unsigned
+          name: ${{ needs.build.outputs.app }}-android-bundle-unsigned
           path: unsigned-bundle
 
       # The mapping that belongs to the APK above. Downloading a compressed text file executes
@@ -735,6 +787,7 @@ jobs:
       # build job — so the key stays isolated from every piece of code that could read it. The
       # only things done to the file here are an upload and a `cmp` against what came back.
       - name: Fetch the deobfuscation mapping from the build job
+        if: needs.build.outputs.app == 'ohmail'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ohmail-android-mapping
@@ -755,20 +808,27 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          case "$RELEASE_APP:$GITHUB_REF_NAME" in
+            ohmail:android-v*|ohcal:ohcal-android-v*) ;;
+            *) echo "The signing job received a mismatched release app." >&2; exit 1 ;;
+          esac
+          trap 'rm -f "$RUNNER_TEMP/release.keystore" "$RUNNER_TEMP/bundle.aab"' EXIT
           test -n "$ANDROID_KEYSTORE_B64" || { echo "ANDROID_KEYSTORE_B64 secret is not set" >&2; exit 1; }
-          test -f unsigned/app-release.apk || { echo "no built APK was fetched from the build job" >&2; exit 1; }
           test -f unsigned-bundle/app-release.aab || { echo "no built App Bundle was fetched from the build job" >&2; exit 1; }
           # Absolute tool paths: nothing this job ran could have planted a shim on PATH, but the
           # decoder that touches the key reads the key on stdin, so it is named outright.
           /usr/bin/base64 -d <<< "$ANDROID_KEYSTORE_B64" > "$RUNNER_TEMP/release.keystore"
-          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
-          "$BT/apksigner" sign \
-            --ks "$RUNNER_TEMP/release.keystore" \
-            --ks-key-alias "$ANDROID_KEY_ALIAS" \
-            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
-            --key-pass env:ANDROID_KEY_PASSWORD \
-            --out ohmail-android.apk \
-            unsigned/app-release.apk
+          if [[ "$RELEASE_APP" == ohmail ]]; then
+            test -f unsigned/app-release.apk || { echo "no built APK was fetched from the build job" >&2; exit 1; }
+            BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
+            "$BT/apksigner" sign \
+              --ks "$RUNNER_TEMP/release.keystore" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+              --key-pass env:ANDROID_KEY_PASSWORD \
+              --out ohmail-android.apk \
+              unsigned/app-release.apk
+          fi
 
           # ── THE BUNDLE, AND WHY THE DEBUG SIGNATURE COMES OFF FIRST ─────────────────────────
           #
@@ -801,11 +861,10 @@ jobs:
             -storepass:env ANDROID_KEYSTORE_PASSWORD \
             -keypass:env ANDROID_KEY_PASSWORD \
             -digestalg SHA-256 \
-            -signedjar ohmail-android.aab \
+            -signedjar "$RELEASE_APP-android.aab" \
             "$RUNNER_TEMP/bundle.aab" \
             "$ANDROID_KEY_ALIAS"
 
-          rm -f "$RUNNER_TEMP/release.keystore" "$RUNNER_TEMP/bundle.aab"
 
       - name: Verify the signature IS the release key, and the artifact is real
         env:
@@ -815,25 +874,28 @@ jobs:
           EXPECTED_CERT_DN: "CN=ohmail android release"
         run: |
           set -euo pipefail
-          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
-          "$BT/apksigner" verify --print-certs ohmail-android.apk > /tmp/certs
-          cat /tmp/certs
-          # SHA-256 digest, normalised to lowercase hex with separators stripped, compared to
-          # the known release fingerprint. Captured into a variable — never piped to grep -q,
-          # whose SIGPIPE could turn a dead producer into a false pass.
-          GOT_SHA256=$(/usr/bin/grep -m1 'SHA-256 digest:' /tmp/certs | sed 's/.*digest:[[:space:]]*//' | tr 'A-F' 'a-f' | tr -d ' :')
-          test -n "$GOT_SHA256" || { echo "apksigner printed no SHA-256 digest" >&2; exit 1; }
-          test "$GOT_SHA256" = "$EXPECTED_CERT_SHA256" \
-            || { echo "signer SHA-256 $GOT_SHA256 is not the release key $EXPECTED_CERT_SHA256" >&2; exit 1; }
-          /usr/bin/grep -qF "$EXPECTED_CERT_DN" /tmp/certs \
-            || { echo "signer subject is not $EXPECTED_CERT_DN" >&2; exit 1; }
-          echo "signer verified: $GOT_SHA256 ($EXPECTED_CERT_DN)"
-          unzip -l ohmail-android.apk > /tmp/apk-listing
-          grep -F "AndroidManifest.xml" /tmp/apk-listing
-          grep -F "classes.dex" /tmp/apk-listing
-          SIZE=$(stat -c%s ohmail-android.apk)
-          test "$SIZE" -gt 10000000
-          echo "signed APK ok: $SIZE bytes"
+          if [[ "$RELEASE_APP" == ohmail ]]; then
+            BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
+            "$BT/apksigner" verify --print-certs ohmail-android.apk > /tmp/certs
+            cat /tmp/certs
+            # SHA-256 digest, normalised to lowercase hex with separators stripped, compared to
+            # the known release fingerprint. Captured into a variable — never piped to grep -q,
+            # whose SIGPIPE could turn a dead producer into a false pass.
+            GOT_SHA256=$(/usr/bin/grep -m1 'SHA-256 digest:' /tmp/certs | sed 's/.*digest:[[:space:]]*//' | tr 'A-F' 'a-f' | tr -d ' :')
+            test -n "$GOT_SHA256" || { echo "apksigner printed no SHA-256 digest" >&2; exit 1; }
+            test "$GOT_SHA256" = "$EXPECTED_CERT_SHA256" \
+              || { echo "signer SHA-256 $GOT_SHA256 is not the release key $EXPECTED_CERT_SHA256" >&2; exit 1; }
+            /usr/bin/grep -qF "$EXPECTED_CERT_DN" /tmp/certs \
+              || { echo "signer subject is not $EXPECTED_CERT_DN" >&2; exit 1; }
+            echo "signer verified: $GOT_SHA256 ($EXPECTED_CERT_DN)"
+            unzip -l ohmail-android.apk > /tmp/apk-listing
+            grep -F "AndroidManifest.xml" /tmp/apk-listing
+            grep -F "classes.dex" /tmp/apk-listing
+            SIZE=$(stat -c%s ohmail-android.apk)
+            test "$SIZE" -gt 10000000
+            echo "signed APK ok: $SIZE bytes"
+
+          fi
 
       - name: Verify the bundle's signature IS the release key, and the bundle is real
         env:
@@ -848,7 +910,7 @@ jobs:
           # content — so its status is not evidence of anything and the output is what gets read.
           # `-strict` is not the answer either: it turns the self-signed-chain warning that every
           # Android release key produces into a failure of its own.
-          VERIFY=$("$JAVA_HOME/bin/jarsigner" -verify -verbose:summary ohmail-android.aab)
+          VERIFY=$("$JAVA_HOME/bin/jarsigner" -verify -verbose:summary "$RELEASE_APP-android.aab")
           printf '%s\n' "$VERIFY"
           case "$VERIFY" in
             *"jar is unsigned"*) echo "the bundle carries no signature at all" >&2; exit 1 ;;
@@ -868,7 +930,7 @@ jobs:
           # match; tolerated, because the BLOCK COUNT is the assertion. Exactly one, so a leftover
           # signature cannot hide beside the release one.
           rm -rf sigblock && mkdir sigblock
-          unzip -o -q -j ohmail-android.aab 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' -d sigblock || true
+          unzip -o -q -j "$RELEASE_APP-android.aab" 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' -d sigblock || true
           BLOCKS=$(ls sigblock | wc -l | tr -d ' ')
           test "${BLOCKS:-0}" -eq 1 \
             || { echo "the bundle carries $BLOCKS signature block(s), not exactly 1" >&2; exit 1; }
@@ -882,11 +944,11 @@ jobs:
             || { echo "bundle signer subject is not $EXPECTED_CERT_DN" >&2; exit 1; }
           echo "bundle signer verified: $GOT_SHA256 ($EXPECTED_CERT_DN)"
 
-          unzip -l ohmail-android.aab > /tmp/signed-aab-listing
+          unzip -l "$RELEASE_APP-android.aab" > /tmp/signed-aab-listing
           grep -F "BundleConfig.pb" /tmp/signed-aab-listing
           grep -F "base/manifest/AndroidManifest.xml" /tmp/signed-aab-listing
           grep -F "base/dex/classes.dex" /tmp/signed-aab-listing
-          SIZE=$(stat -c%s ohmail-android.aab)
+          SIZE=$(stat -c%s "$RELEASE_APP-android.aab")
           test "$SIZE" -gt 10000000
           echo "signed AAB ok: $SIZE bytes"
 
@@ -911,7 +973,7 @@ jobs:
           test "$GOT" = "$BT_SHA256" \
             || { echo "bundletool-all-${BT_VERSION}.jar hashes $GOT, not the pinned $BT_SHA256" >&2; exit 1; }
           "$JAVA_HOME/bin/java" -jar "$RUNNER_TEMP/bundletool.jar" \
-            validate --bundle="$PWD/ohmail-android.aab" > /tmp/bt-validate
+            validate --bundle="$PWD/$RELEASE_APP-android.aab" > /tmp/bt-validate
           # `validate` writes its whole module table to stdout — around 80 KB for this app, so
           # only the head goes into the log. A zero exit with an empty or unrecognisable report
           # must not read as a pass, so the report is asserted to name the base module: that is
@@ -922,6 +984,7 @@ jobs:
             || { echo "bundletool's report does not name the base module" >&2; exit 1; }
 
       - name: Attach to the release
+        if: needs.build.outputs.app == 'ohmail'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1044,6 +1107,7 @@ jobs:
             ohmail-android.aab
 
       - name: What was uploaded is what was signed
+        if: needs.build.outputs.app == 'ohmail'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1128,14 +1192,14 @@ jobs:
       - name: Record the signed bundle digest for the Play job
         id: bundle-digest
         run: |
-          digest=$(sha256sum ohmail-android.aab)
+          digest=$(sha256sum "$RELEASE_APP-android.aab")
           printf 'aab_sha256=%s\n' "${digest%% *}" >> "$GITHUB_OUTPUT"
 
       - name: Make the verified bundle available to the Play job
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ohmail-android-play-bundle
-          path: ohmail-android.aab
+          name: ${{ needs.build.outputs.app }}-android-play-bundle
+          path: ${{ needs.build.outputs.app }}-android.aab
           retention-days: 7
           if-no-files-found: error
           overwrite: true
@@ -1144,8 +1208,9 @@ jobs:
     name: android · Google Play
     needs: sign
     if: >-
-      ${{ !cancelled() && github.repository == 'trafficflowhq/ohmail' && startsWith(github.ref, 'refs/tags/android-v') &&
-          (github.event_name == 'push' && github.event.deleted == false && needs.sign.result == 'success' ||
+      ${{ !cancelled() && github.repository == 'trafficflowhq/ohmail' && (startsWith(github.ref, 'refs/tags/android-v') || startsWith(github.ref, 'refs/tags/ohcal-android-v')) &&
+          (github.event_name == 'push' && github.event.deleted == false && needs.sign.result == 'success' &&
+             (startsWith(github.ref, 'refs/tags/android-v') || vars.OHCAL_PLAY_UPLOAD == 'true') ||
            github.event_name == 'workflow_dispatch' && inputs.play_version_code != '' && needs.sign.result == 'skipped') }}
     environment: play-release
     permissions:
@@ -1183,34 +1248,57 @@ jobs:
         if: steps.configured.outputs.enabled == 'true' && github.event_name == 'push'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ohmail-android-play-bundle
+          name: ${{ needs.sign.outputs.app }}-android-play-bundle
           path: play-bundle
 
-      - name: Check the downloaded bundle against the signing job's digest
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         if: steps.configured.outputs.enabled == 'true' && github.event_name == 'push'
-        shell: bash
-        env:
-          AAB_SHA256: ${{ needs.sign.outputs.aab_sha256 }}
-        run: |
-          [[ "$AAB_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo 'The signing job did not provide a valid bundle digest.' >&2; exit 1; }
-          printf '%s  %s\n' "$AAB_SHA256" play-bundle/ohmail-android.aab | sha256sum --check --strict
+        with:
+          distribution: temurin
+          java-version: 17
 
-      - name: Upload to internal testing
+      - name: Get the verified Android manifest parser
+        if: steps.configured.outputs.enabled == 'true' && github.event_name == 'push'
+        run: bash .github/scripts/setup-bundletool.sh "$RUNNER_TEMP/bundletool.jar"
+
+      - name: Upload the verified bundle to internal testing
         if: steps.configured.outputs.enabled == 'true' && github.event_name == 'push'
         env:
+          RELEASE_APP: ${{ needs.sign.outputs.app }}
+          AAB_SHA256: ${{ needs.sign.outputs.aab_sha256 }}
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-        run: node .github/scripts/play-upload.mjs upload play-bundle/ohmail-android.aab
+        run: |
+          node .github/scripts/play-upload.mjs upload "app.$RELEASE_APP" "play-bundle/$RELEASE_APP-android.aab" \
+            "$GITHUB_REF_NAME" "$RUNNER_TEMP/bundletool.jar" "$AAB_SHA256"
 
       - name: Start a staged production rollout
         if: steps.configured.outputs.enabled == 'true' && github.event_name == 'workflow_dispatch'
         env:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PLAY_APP: ${{ inputs.app }}
           PLAY_VERSION_CODE: ${{ inputs.play_version_code }}
           PLAY_ROLLOUT_FRACTION: ${{ inputs.play_rollout_fraction }}
           PLAY_REPLACE_STAGED: ${{ inputs.play_replace_staged }}
         run: |
-          args=(promote "$PLAY_VERSION_CODE" "$PLAY_ROLLOUT_FRACTION")
+          args=(promote "app.$PLAY_APP" "$PLAY_VERSION_CODE" "$GITHUB_REF_NAME" "$PLAY_ROLLOUT_FRACTION")
           if [[ "$PLAY_REPLACE_STAGED" == true ]]; then
             args+=(--replace-staged)
           fi
           node .github/scripts/play-upload.mjs "${args[@]}"
+
+  ohcal-page:
+    name: android · check calendar release page
+    if: github.repository == 'trafficflowhq/ohmail' && github.event_name == 'release' && startsWith(github.event.release.tag_name, 'ohcal-')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Restore the release page if it took Latest or was published as stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: bash .github/scripts/check-ohcal-release-page.sh "$RELEASE_TAG" --repair

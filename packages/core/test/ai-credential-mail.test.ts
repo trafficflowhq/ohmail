@@ -119,7 +119,7 @@ it("keeps the precise redactor's explicitly supplied nearby context", () => {
 
 it("uses the sender display name locally and applies the broad tier to every request field", () => {
   const input = {
-    from: { ...from, name: "Verification Code" },
+    from: { ...from, name: "VERIFICATION" },
     subject: "Message 9876",
     snippet: "638 194 is the number. https://example.test/anything?q=private#fragment",
     headersDigest: "",
@@ -173,7 +173,7 @@ it.each(["482", "abc"])("redacts a partial code at the stored preview limit (%s)
   expect(classify("Sign in", preview).snippet).toBe(preview.slice(0, -3) + "[code]");
   expect(classify("Sign in", "Call extension 482").snippet).toBe("Call extension 482");
   const body = "x".repeat(200 - tail.length) + tail + "913";
-  expect(draftFromText("Sign in", body)).toBe(`Forwarding this: Sign in\n${body.slice(0, -6)}[code]`);
+  expect(draftFromText(`Forwarding this: Sign in\n${body}`)).toBe(`Forwarding this: Sign in\n${body.slice(0, -6)}[code]`);
 });
 
 it("redacts pasted instructions before writing a draft from text", () => {
@@ -342,10 +342,9 @@ it.each(["invite", "join", "shared_invite", "team_invite", "redeem", "kennwort"]
   },
 );
 
-function draftFromText(subject: string, body: string): string {
-  const text = `Forwarding this: ${subject}\n${body}`;
+function draftFromText(text: string, replying = false): string {
   return draftUserPayload({
-    incoming: NO_LETTER, context: { kbEntries: [], threadMessages: [] }, own: { replying: false, text },
+    incoming: NO_LETTER, context: { kbEntries: [], threadMessages: [] }, own: { replying, text },
   }).own!.text;
 }
 
@@ -355,11 +354,15 @@ interface CredentialCase {
   cleanBody?: string;
   cleanSubject?: string;
   name?: string;
+  draftPrefix?: string;
+  cleanDraftBody?: string;
+  keepSnippetLines?: boolean;
 }
 
-async function expectMailPaths({ subject, body, cleanSubject = subject, cleanBody = body, name }: CredentialCase) {
-  const snippet = snippetOfText(body);
-  const expected = { subject: cleanSubject, snippet: snippetOfText(cleanBody) };
+async function expectMailPaths({ subject, body, cleanSubject = subject, cleanBody = body, name,
+  draftPrefix = "Forwarding this: ", cleanDraftBody = cleanBody, keepSnippetLines = false }: CredentialCase) {
+  const snippet = keepSnippetLines ? body : snippetOfText(body);
+  const expected = { subject: cleanSubject, snippet: keepSnippetLines ? cleanBody : snippetOfText(cleanBody) };
   const screening = prepareScreeningQuestion({ fromAddress: "", fromName: name, subject, snippet });
   expect(screening).not.toBeNull();
   const letter = { from: "", fromName: name, subject, snippet };
@@ -368,7 +371,10 @@ async function expectMailPaths({ subject, body, cleanSubject = subject, cleanBod
   expect.soft(classifyUserPayload(screening!), "Screener").toMatchObject(expected);
   expect.soft(draft.incoming, "reply draft").toMatchObject(expected);
   expect.soft(draft.context.threadMessages, "draft thread").toEqual([{ from: "", snippet: expected.snippet }]);
-  expect.soft(draftFromText(subject, body), "draft from text").toBe(`Forwarding this: ${cleanSubject}\n${cleanBody}`);
+  for (const replying of [false, true]) {
+    expect.soft(draftFromText(`${draftPrefix}${subject}\n${body}`, replying), "draft from text")
+      .toBe(`${draftPrefix}${cleanSubject}\n${cleanDraftBody}`);
+  }
 
   const repo = new FakeRepo();
   repo.senders.add("fixture@example.test");
@@ -390,13 +396,17 @@ async function expectMailPaths({ subject, body, cleanSubject = subject, cleanBod
       },
     },
   });
-  expect.soft(inputs, "ingest").toEqual([expect.objectContaining(expected)]);
+  expect.soft(inputs, "ingest").toEqual([expect.objectContaining({ ...expected, snippet: snippetOfText(cleanBody) })]);
 }
 
 it.each([
   ["Your Steam account: Access from new web or mobile device", "Dear bob,\nHere is the Steam Guard code you need to login to account bob:\n\nBCDFG\n\nThis email was generated because of a login attempt.", "BCDFG"],
   ["Ihr Steam-Account: Zugriff von einem neuen Gerät", "Hallo bob,\nHier ist der Steam-Guard-Code, den Sie zum Anmelden bei bob benötigen:\n\nBCDFG\n\nDiese E-Mail wurde wegen eines Anmeldeversuchs versendet.", "BCDFG"],
   ["Steam Guard code", "Login Code\nRKQTV\nIf this wasn't you, change your password.", "RKQTV"],
+  ["Steam Guard code", "Login Code\nRKQTV\nThis code was requested from Zurich.", "RKQTV"],
+  ["Steam Guard code", "Your Steam Guard code BCDFG Thanks", "BCDFG"],
+  ["Steam Guard code", "Your Steam Guard code abcdefghij Thanks", "abcdefghij"],
+  ["Your sign-in code", "Use the code below.\nkpqzrt\nThanks for using Acme today.", "kpqzrt"],
   ["Your sign-in code", "Your code is: kpqzrt\nThe app will ask you for it.", "kpqzrt"],
   ["Your sign-in code", "Your code is kpqzrt\nThe app will ask you for it.", "kpqzrt"],
   ["Your sign-in code", "Your code is: abcdefghij\nKeep this value private.", "abcdefghij"],
@@ -411,11 +421,25 @@ it.each([
   ["Hallo Anna", "Ihr Prüfcode lautet 482917", "482917"],
   ["Hallo Anna", "Ihr Prüfcode: 482917352761", "482917352761"],
   ["Hallo Anna", "Ihr Prüfcode lautet QWRTY Geben Sie ihn ein.", "QWRTY"],
+  ...["Prüfcode", "Entsperrcode", "Einmalcode", "Einmal-Code", "Kopplungscode", "Gerätecode", "Bankingcode",
+    "Zugangscode", "Bestätigungscode", "Sicherheitscode", "Verifizierungscode", "Anmeldecode", "Freischaltcode",
+    "Aktivierungscode", "Authentifizierungscode", "Registrierungscode", "Freigabecode"].map(
+    label => ["Hallo Anna", `Der ${label} ist 482917.`, "482917"],
+  ),
+  ["Hallo Anna", "Ihr Kopplungscode: KX7Q-RM2Z", "KX7Q-RM2Z"],
+  ["Ihr Prüfcode", "Ihr Prüfcode: 482917. Er ist 10 Minuten gültig.", "482917"],
   ["Konto entsperren", "Dein Entsperrcode: 4829-1735", "4829-1735"],
   ["Konto entsperren", "Dein Entsperrcode: 482917", "482917"],
+  ["Hallo Anna", "Zum Anmelden. Ihr Prüfcode lautet QWRTY Geben Sie ihn ein.", "QWRTY"],
+  ["Hallo Anna", "Verification is required. Ihr Prüfcode: 482917", "482917"],
+  ["Hallo Anna", "Temporary password issued for you. Ihr Prüfcode: 482917", "482917"],
   ["Hallo Anna", "Ihre Zugangscodes: 482917", "482917"],
-  ...["app", "photo", "push", "chip"].map(word => ["Überweisung", `Ihre ${word}TAN: 482917`, "482917"]),
-  ...["tan", "pin", "otp"].flatMap(word => [
+  ...["app", "photo", "push", "chip", "sms", "m", "Photo", "Secure", "Chip", "Smart", "BestSign", "appSMS"]
+    .map(word => ["Überweisung", `Ihre ${word}TAN: 482917`, "482917"]),
+  ["Zahlung", "Ihre SecureTAN 482917 für die Überweisung an Max.", "482917"],
+  ["Zahlung", "Ihre TAN:\n482917", "482917"],
+  ["Account information", "Your PIN:\n4821", "4821"],
+  ...["TAN", "PIN", "OTP"].flatMap(word => [
     ["Account information", `Your ${word}: 482917`, "482917"],
     ["Account information", `Your ${word} 482917`, "482917"],
     ["Account information", `Your ${word} is kpqzrt and it expires.`, "kpqzrt"],
@@ -437,6 +461,10 @@ it.each([
   ["Einladung", "Einladung annehmen:", `https://acme.example.de/invites/${token}`],
   ["Anna lädt Sie zu Acme ein", "Einladung annehmen:", `https://acme.example.de/x/${token}`],
   ["You have been invited to join a team", "Join Microsoft Teams:", `https://teams.example.com/l/invite?token=${token}`],
+  ["you have been invited", "Accept:", `https://acme.example.de/w/${token}`],
+  ["You've been invited", "Accept:", `https://acme.example.de/w/${token}`],
+  ["You've been invited to join Acme", "Accept:", `https://acme.example.de/w/${token}`],
+  ["You’ve been invited to join Acme", "Accept:", `https://acme.example.de/w/${token}`],
   ["You're invited to join Acme", "Open:", `https://acme.example.de/x/${token}`],
   ["Account information", "Anmeldung bestätigen:", `https://acme.example.de/x/${token}`],
   ...["invite", "invites", "invitation", "einladung", "join"].map(path => [
@@ -449,11 +477,96 @@ it.each([
 const ordinaryNotes = "Notes from our meeting on 25.11.2026: budget 48'000, order 4471, see https://docs.example.com/d/"
   + ["1a", "2B", "3c", "4D", "5e", "6F", "7g", "8H", "9i", "0J"].join("") + "/edit";
 it.each(["Amy Tan", "Kevin Tan", "Tan Wei Ming", "Michael Tans", "Anna Login", "Login Tours AG", "Otp Logistics",
-  "Verification Desk", "VERIFICATION", "Pin", "Amy Lee", "TAN", "PIN", "OTP"])("keeps ordinary mail from %s intact", async name => {
+  "Tan", "Pin", "Amy Lee"])("keeps ordinary mail from %s intact", async name => {
   await expectMailPaths({ name, subject: "Notes from Tuesday", body: ordinaryNotes });
 });
 
+it.each(["VERIFICATION", "Acme Verification", "Security Code", "Verification Desk", "Sign-in Service",
+  "Two-Factor Service", "Acme OTP", "Acme TAN", "TAN", "PIN", "OTP"])("recognizes %s as sender credential evidence", async name => {
+  const body = "482917 - use it within 10 minutes.";
+  await expectMailPaths({ name, subject: "Message", body, cleanBody: "[code] - use it within 10 minutes.", cleanDraftBody: body });
+});
+
+it.each(["Subject", "Betreff", "Fwd", "Fw", "WG", "Forwarding this"])("recognizes a pasted %s header after a lead-in", async header => {
+  await expectMailPaths({
+    subject: "Sign in to Notion", body: `Open https://notion.so/loginwithemail?token=${token}`,
+    cleanBody: "Open https://notion.so/[link]", draftPrefix: `Please reply politely to this:\r\n\r\n${header}: `,
+  });
+});
+
+it("recognizes a pasted subject after an inline forwarding phrase", async () => {
+  await expectMailPaths({
+    subject: "Reset your password", body: `Open https://example.test/password/new?token=${token}`,
+    cleanBody: "Open https://example.test/[link]", draftPrefix: "Can you answer this one? Forwarding this: ",
+  });
+});
+
+it("checks later pasted subjects when an earlier one has no credential cue", async () => {
+  await expectMailPaths({
+    subject: "Your code", body: "Use 482913 to continue.", cleanBody: "Use [code] to continue.",
+    draftPrefix: "Subject: Ordinary notes\n\nFwd: ",
+  });
+});
+
+it.each(["TAN", "PIN", "OTP", "photoTAN"])("requires a colon to pair %s with a value across a preserved line break", async acronym => {
+  await expectMailPaths({ subject: "Layout notes", body: `Terms:\n${acronym}:\n482917`,
+    cleanBody: `Terms:\n${acronym}:\n[code]`, keepSnippetLines: true });
+  await expectMailPaths({ subject: "Layout notes", body: `Terms:\n${acronym}\n482917`, keepSnippetLines: true });
+});
+
 it.each([
+  ["Your verification code", "Your verification code\n4\n8\n2\n9\n1\n7\nIt expires in 10 minutes.", "4\n8\n2\n9\n1\n7"],
+  ["Your sign-in code", "Enter this code:\n482\n917\n", "482\n917"],
+  ["Your Slack confirmation code", "Your confirmation code is below\n482\n917\nEnter it in the app.", "482\n917"],
+  ["Your sign-in code", "Hi Anna,\n\n482\n917\n\nEnter it in the app.", "482\n917"],
+  ["Dein Code", "Dein Code:\n48\n29\n17\nGruss", "48\n29\n17"],
+])("masks a code split across lines in %s", async (subject, body, value) => {
+  await expectMailPaths({ subject, body, cleanBody: body.replace(value, "[code]") });
+});
+
+it.each([
+  ["Buchungscode", ["Q", "7XK", "2M"].join("")], ["Fehlercode", "80070005"], ["Artikelcode", "482917"],
+  ["Ticketcode", "482917"], ["Kundencode", "482917"], ["Aktionscode", "482917"],
+  ["Vorteilscode", "482917"], ["Referenzcode", "482917"], ["Kurscode", "4821"],
+  ["Zipcode", "80331"], ["Dresscode", "elegant"],
+  ["Gutscheincode", "482917"], ["Rabattcode", "SPRING20"], ["Promocode", "BF2026"],
+  ["Ländercode", "0041"], ["QR-Code", "48291735A"],
+])("keeps %s intact without credential context", async (label, value) => {
+  await expectMailPaths({ subject: "Bestellung vom 25.11.2026", body: `Danke für Ihren Einkauf. ${label}: ${value}. Details: https://shop.example.de/o/48291735ab` });
+});
+
+it("keeps a QR code in a ticket intact without credential context", async () => {
+  await expectMailPaths({ subject: "Ihr Ticket", body: "Ihr QR-Code: 48291735A, Sitz 14C, Konzert am 03.12.2026." });
+});
+
+it.each(["PAKISTAN", "MANHATTAN", "TITAN", "KAZAKHSTAN", "SPARTAN", "AFGHANISTAN", "METROPOLITAN", "SULTAN"])("keeps %s intact in the subject and body", async word => {
+  await expectMailPaths({ subject: `${word} 2026`, body: `Fares from CHF 482. Booking 77431902. ${word} 482917 tickets.` });
+  await expectMailPaths({ subject: "Weekend deals", body: `${word} 482917 tickets. Order 77431902 on 03.12.2026.` });
+});
+
+it.each([
+  ["Danke für Ihre Anmeldung", "Kurs 4821 startet am 03.12.2026."],
+  ["Danke für Ihre Anmeldung bei uns", "Kurs 4821 startet am 03.12.2026."],
+  ["Danke für Ihre Anmeldung bei Acme", "Kurs 4821 startet am 03.12.2026."],
+  ...["Vielen Dank für Ihre Anmeldung bei uns", "Dank für deine Anmeldung bei uns",
+    "Danke für die Anmeldung bei Lauf 2027", "Danke für die Anmeldung bei Acme",
+    "Wir danken Ihnen für Ihre Anmeldung bei der Volkshochschule", "Ihre Anmeldung bei der VHS Zürich",
+    "Bestätigung Ihrer Anmeldung bei Acme", "Anmeldung bei Dr. Meier am 03.12.2026",
+    "Ihre Anmeldung zur Tagung", "Ihre Anmeldung für den Kurs", "Anmeldung bestätigt"].map(
+    subject => [subject, "Kurs 4821 startet am 03.12.2026. Details: https://kurse.example.de/k/48291735ab."],
+  ),
+  ["Ordinary correspondence", "For questions call Kevin Tan 079 482 91 73. Invoice 48291735 due 10.12.2026."],
+  ["Ordinary correspondence", "Call Amy Tan: 079 482 91 73 about the venue. Also the report for 2026 is ready."],
+  ["Ordinary correspondence", "Pin 4821 to the board. Meeting at 10 in room 3."],
+  ["Ordinary correspondence", "Pin: Berlin. Score 4821 points on 03.12.2026."],
+  ["Ordinary correspondence", "The report for 2026 is ready.\nBest regards,\nLisa Pin\n079 482 91 73"],
+  ["Ordinary correspondence", "Best regards,\nKevin Tan\n9123-4567"],
+  ["Support request", "Der Fehlercode lautet 80070005. Rechnung 48291735."],
+  ...["tan", "TaN", "pin", "PiN", "otp", "Otp"].flatMap(word => [
+    ["Account information", `Your ${word}: 482917`],
+    ["Account information", `Your ${word} 482917`],
+    ["Account information", `Your ${word} is kpqzrt and it expires.`],
+  ]),
   ["Ihre Anmeldung zum Webinar am 03.12.2026", "Webinar-ID 84213 am 03.12.2026."],
   ["Ihre Anmeldung ist bestätigt – Kurs 4821", "Kursnummer 4821."],
   ["Anmeldebestätigung Yoga 03.12.2026", "Buchung 73921."],
@@ -505,4 +618,91 @@ it("redacts the explicit Devise unlock token under an otherwise ambiguous subjec
 
 it.each(["TAN", "PIN", "OTP"])("recognizes the uppercase %s cue in the subject", async subject => {
   await expectMailPaths({ subject, body: "Wert: 482917", cleanBody: "Wert: [code]" });
+});
+
+const signInOrigin = "https://acme.example.de";
+const signInUrl = `${signInOrigin}/m/${deviseToken}`;
+const signInBodies = [
+  [`Hier klicken: ${signInUrl}`, signInUrl],
+  [`Weiter: ${signInUrl}\nDer Link ist 15 Minuten gültig.`, signInUrl],
+  ["Code: 482917", "482917"],
+  ["482917\nGültig 10 Minuten.", "482917"],
+] as const;
+const signInSubjects = [
+  "Anmeldung bei Acme", "Anmeldung bei Acme AG", "Anmeldung bei E-Banking", "Anmeldung bei UBS e-banking",
+  "Anmeldung bei Ihrem Acme-Konto", "Anmeldung bei Acme bestätigen", "Anmeldung bei Acme – Ihr Link",
+  "Ihre Anmeldung bei Acme", "Anmeldung bei der Acme App", "Neue Anmeldung bei Acme",
+  "Anmeldung bei myAcme", "Ihr Link zur Anmeldung bei Acme",
+];
+const signInBodyCues = [
+  [`Anmeldung bei Acme: ${signInUrl}`, signInUrl],
+  ["Anmeldung bei Acme: 482917", "482917"],
+  [`Anmeldung bei Acme\n${signInUrl}`, signInUrl],
+  [`Zur Anmeldung bei Acme: ${signInUrl}`, signInUrl],
+] as const;
+
+it.each([
+  ...signInSubjects.flatMap(subject => [...signInBodies, ...signInBodyCues].map(([body, value]) => ({ subject, body, value }))),
+  ...["Anmeldung: Ihr Link", "Hallo"].flatMap(subject => signInBodyCues.map(([body, value]) => ({ subject, body, value }))),
+  ...["Anmeldung: bei Acme", "Anmeldung–bei Acme", "Anmeldung-bei Acme", "Anmeldung\nbei Acme"]
+    .map(cue => ({ subject: "Hallo", body: `${cue}: ${signInUrl}`, value: signInUrl })),
+  { subject: "Hallo", body: "Anmeldung bestätigt: Code: 482917", value: "482917" },
+  { subject: "Hallo", body: `Anmeldung bestätigt: Link: ${signInUrl}`, value: signInUrl },
+  { subject: "Anmeldung bestätigt", body: "Code: 482917", value: "482917" },
+  { subject: "Anmeldung bestätigt", body: `Link: ${signInUrl}`, value: signInUrl },
+])("redacts sign-in credentials in $subject / $body", async ({ subject, body, value }) => {
+  await expectMailPaths({
+    subject, body, cleanBody: body.replace(value, value === signInUrl ? `${signInOrigin}/[link]` : "[code]"),
+  });
+});
+
+it.each([
+  "Vielen Dank für Ihre Anmeldung bei Acme.",
+  "Wir danken Ihnen für Ihre Anmeldung bei der Volkshochschule.",
+  "Eure Anmeldung zum Kurs ist eingetragen.",
+  "Ihre Anmeldung für das Seminar ist eingetragen.",
+  "Anmeldung bestätigt.",
+  "Anmeldung bei Dr. Meier am 03.12.2026.",
+])("keeps event registration in the body intact for %s", async registration => {
+  await expectMailPaths({
+    subject: "Termin", body: registration + " Kurs 4821 startet am 03.12.2026. Details: https://kurse.example.de/k/48291735ab",
+  });
+});
+
+it.each([
+  "Ihr Code wurde soeben angefordert. Sie haben zehn Minuten Zeit.",
+  "Der Code wurde an Ihre Nummer gesendet.",
+  "Der Code kommt gleich per SMS.",
+  "Your code arrives shortly by SMS.",
+  "Dein Code bleibt zehn Minuten gültig.",
+  "Your code message is on its way.",
+  "The code notification is on its way.",
+  "Der Code gehört zu Ihrer Anmeldung.",
+])("keeps the prose after a code label in %s", async body => {
+  await expectMailPaths({ subject: "Ihr Anmeldecode", body });
+});
+
+it.each([
+  ["Your sign-in code", "Your code\nkpqzrt\nIt expires in 10 minutes.", "kpqzrt"],
+  ["Hallo", "Login Code\nkpqzrt", "kpqzrt"],
+  ["Hallo", "Login Code\nQxRtZb", "QxRtZb"],
+  ["Ihr Anmeldecode", "Dein Code\n\nkpqzrt\n\nGruss", "kpqzrt"],
+  ["Your sign-in code", "Your code QxRaTb. It expires in 10 minutes.", "QxRaTb"],
+  ["Your sign-in code", "Your code kpaqrt. It expires in 10 minutes.", "kpaqrt"],
+])("redacts letters after a code label in %s / %s", async (subject, body, value) => {
+  await expectMailPaths({ subject, body, cleanBody: body.replace(value, "[code]") });
+});
+
+it("pairs a word-shaped code with its label across a line break", async () => {
+  await expectMailPaths({ subject: "Hallo", body: "Login Code\nready", cleanBody: "Login Code\n[code]", keepSnippetLines: true });
+});
+
+it.each([
+  ["Ihre TAN:\n\n482917", "482917"],
+  ["Your PIN:\n\n4821", "4821"],
+  ["Your OTP:\n\n482917\n\nValid 5 minutes", "482917"],
+  ["Ihre pushTAN:\r\n\r\n482917", "482917"],
+  ["TAN:\n \n482917", "482917"],
+])("pairs an acronym and value across a blank line in %s", async (body, value) => {
+  await expectMailPaths({ subject: "Zahlung", body, cleanBody: body.replace(value, "[code]") });
 });

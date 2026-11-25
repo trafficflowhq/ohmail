@@ -1,14 +1,61 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { localRoutes } from "../src/routes/local.js";
-import type { DraftInput, DraftPort } from "@trafficflow/core";
+import { makeSonnetDrafter, type DraftInput, type DraftPort } from "@trafficflow/core";
 import {
-  makeDeps, seedSession, seedThread, seedMessage, seedMailbox, req, FIXED_NOW,
+  makeDeps, seedSession, seedThread, seedMessage, seedMailbox, seedBody, req, FIXED_NOW,
 } from "./helpers.js";
 import { drafts, kbEntries, type AccessVerdict, type EntitlementsPort } from "@trafficflow/db";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
+
+describe("the reply draft disclosure", () => {
+  it.each([false, true])("shares full conversation text only for an explicit opt-in (with typed text: %s)", async (withText) => {
+    const requests: string[] = [];
+    const drafter = makeSonnetDrafter({ messages: { async create(params) {
+      requests.push(JSON.stringify(params));
+      return { content: [{ type: "text", text: '{"subject":"Re: Plans","body":"Sounds good."}' }] };
+    } } });
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { drafter });
+    const session = await seedSession(db, { now: FIXED_NOW });
+    const other = await seedSession(db, { now: FIXED_NOW });
+    const { accountId } = session;
+    const mailboxId = await seedMailbox(db, { accountId });
+    const threadId = await seedThread(db, { accountId });
+    const anotherThread = await seedThread(db, { accountId });
+    const scope = { accountId, mailboxId, threadId };
+    const { id: target } = await seedMessage(db, { ...scope, snippet: "Current excerpt", date: FIXED_NOW });
+    const { id: prior } = await seedMessage(db, { ...scope, snippet: "Earlier excerpt", date: new Date(FIXED_NOW.getTime() - 1_000) });
+    const { id: unrelated } = await seedMessage(db, { ...scope, threadId: anotherThread, snippet: "Different conversation" });
+    const { id: foreign } = await seedMessage(db, { accountId: other.accountId, snippet: "Different account" });
+    await seedBody(db, { messageId: target, text: "Current excerpt. Complete current text." });
+    await seedBody(db, { messageId: prior, text: "Earlier excerpt. Complete earlier text." });
+    await seedBody(db, { messageId: unrelated, text: "Different conversation" });
+    await seedBody(db, { messageId: foreign, text: "Different account" });
+    const typed = "Thursday works. Bring the small model.";
+    const path = withText ? "/drafts/from-text" : `/messages/${target}/draft`;
+    for (const optIn of [undefined, "true", true]) {
+      const body = { ...(withText ? { text: typed, inReplyToMessageId: target } : {}), fullConversation: optIn };
+      const response = await H(req("POST", path, {
+        bearer: session.token, ...(withText || optIn !== undefined ? { body: JSON.stringify(body) } : {}),
+      }), deps);
+      expect(response.status).toBe(202);
+      const request = requests.at(-1)!;
+      expect(request).toContain("Current excerpt");
+      expect(request).toContain("Earlier excerpt");
+      expect(request).not.toMatch(/Different conversation|Different account/);
+      if (withText) expect(request).toContain(typed);
+      if (optIn === true) {
+        expect(request).toContain("Complete current text");
+        expect(request).toContain("Complete earlier text");
+      } else {
+        expect(request).not.toMatch(/Complete current text|Complete earlier text/);
+      }
+    }
+    expect(requests).toHaveLength(3);
+  });
+});
 
 /** A capturing mock DraftPort injected via makeDeps `over.drafter` (no network). */
 function mockDrafter(): DraftPort & { calls: number; inputs: DraftInput[] } {

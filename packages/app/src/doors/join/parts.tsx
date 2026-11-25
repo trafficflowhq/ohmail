@@ -3,6 +3,15 @@ import type { ReactNode } from "react";
 import { StepDots } from "@ohmail/ui/base";
 import type { Text } from "../../text/index.js";
 import type { JoinDoor, JoinState } from "./door.js";
+import { WayButton } from "../stage/way.js";
+
+export function JoinSignIn({ door, join }: { door: JoinDoor; join: Text }): ReactNode {
+  return (
+    <WayButton way={door.signIn} kind="quiet">
+      {join("signIn")}
+    </WayButton>
+  );
+}
 
 export { refusalOf, SignOutAgain, type Refusal } from "../stage/pending.js";
 

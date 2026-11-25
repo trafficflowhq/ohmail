@@ -145,7 +145,12 @@ describe("a draft opened here is one row from the first keystroke to the send", 
     expect(SHEET).toContain("mailboxId, to: m === null || addressed ? keptRecipients(to) : [], ...(m === null || fresh ? copiesToKeep(copies) : {}),");
     expect(SHEET).toContain("}, DRAFT_AUTOSAVE_MS);");
     // Files are content too: the close and the unmount count them (`compose-keep.ts`).
-    expect(SHEET).toContain("const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body, files });");
+    const close = SHEET.slice(SHEET.indexOf("const closeComposer ="), SHEET.indexOf("atUnmount.current = () => {"));
+    const unmount = SHEET.slice(SHEET.indexOf("atUnmount.current = () => {"), SHEET.indexOf("const send = async ("));
+    for (const exit of [close, unmount]) {
+      expect(exit).toContain("const target = latestDraft.current;");
+      expect(exit).toContain("const worth = target !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body, files });");
+    }
     // `tooLong` is a flag of the words on screen, not the seed: past the limit nothing is saved.
     expect(SHEET, "the timer must not reset on the route's per-render seed").toContain("}, [bound, draftId, phase, onScreen, tooLong]);");
   });

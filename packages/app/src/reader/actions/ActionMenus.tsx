@@ -255,6 +255,8 @@ function BehindMore({
       <MenuItem
         icon={verb.icon}
         keyHint={verb.keyHint}
+        label={verb.name}
+        disabled={verb.disabled}
         onPress={() => {
           const at = more.current;
           if (verb.id !== "resurface" && verb.id !== "tag" && verb.id !== "move") close();

@@ -164,7 +164,7 @@ describe("the configuration as a function of the variant", () => {
     expect(base).toEqual(appJson());
   });
 
-  it("gives every app one version and one build number", () => {
+  it("uses the same version and build numbers across all variants", () => {
     const base = appJson();
     for (const variant of Object.keys(VARIANTS)) {
       const exp = resolveVariant(base, variant);

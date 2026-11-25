@@ -3,12 +3,14 @@ import { createElement, type ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import { Copy } from "../src/copy";
 import { scheduleLabel } from "../src/state/live";
-import { mount } from "./_rendered-dom";
+import { mount, styleOf } from "./_rendered-dom";
 
 vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
 vi.mock("../src/theme", () => ({ useTheme: () => ({ mail: true }) }));
-vi.mock("../src/theme/mail", () => ({}));
-vi.mock("../src/ui/MailAvatar", () => ({ MailAvatar: () => null }));
+vi.mock("../src/theme/mail", () => ({ mailSize: { edge: 16, inset: 8, row: 72 } }));
+vi.mock("../src/ui/MailAvatar", () => ({
+  MailAvatar: () => createElement("span", { "data-avatar": "" }),
+}));
 vi.mock("../src/state/pull", () => ({}));
 vi.mock("../src/state/world", () => ({ useWorld: () => ({}) }));
 vi.mock("../src/ui/chrome", () => ({}));
@@ -38,6 +40,9 @@ it("shows the scheduled send in the reader's zone when the device is elsewhere",
   }));
   try {
     expect(view.el.textContent).toContain(Copy.scheduledWhen(when));
+    const avatar = view.el.querySelector("[data-avatar]");
+    expect(styleOf(avatar?.parentElement ?? null)).toMatchObject({ flexDirection: "row" });
+    expect(avatar?.nextElementSibling?.textContent).toContain(Copy.scheduledWhen(when));
   } finally {
     view.unmount();
   }

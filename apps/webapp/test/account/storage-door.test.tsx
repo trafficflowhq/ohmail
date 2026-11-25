@@ -143,6 +143,9 @@ describe("the plan's change over the real filling", () => {
     await verified();
     await settle();
     expect(server.on(CHANGE)).toHaveLength(2);
+    expect(server.on(CHANGE).map((s) => s.body)).toEqual([
+      { lang: "en", addon: "storage" }, { lang: "en", addon: "storage" },
+    ]);
     expect(factorShown()).toBe(false);
     expect(seen(en.settings.storageChangeFailed)).toBe(true);
     expect(seen(en.devices.stepUpExpired)).toBe(false);

@@ -372,6 +372,7 @@ export type SnapshotFn = (params: SnapshotParams) => Promise<SyncSnapshotPage>;
  * to. `phase: "calendar"` with `from`/`to` (instants): the calendar's phase alone over a span.
  */
 export interface SnapshotParams {
+  calendarOnly?: boolean;
   cursor?: string;
   limit?: number;
   phase?: "tail" | "calendar";

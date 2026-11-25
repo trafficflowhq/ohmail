@@ -37,15 +37,15 @@ function rowOf(id) {
   return found.row;
 }
 
-/** Whether an app carries the calendar's widget: the calendar's app. */
-const carriesWidget = (row) => row.app === "ohcal";
-/** The shared group's one name, for an app that carries the widget. */
+/** The store app keeps the host group and alerts. Widgets ship in the calendar preview. */
+const carriesWidget = (row) => row.app === "ohcal" && row.channel === "preview";
+/** The shared group's name for the calendar store. */
 const groupOf = (row) => `group.${row.id}`;
 const widgetIdOf = (row) => `${row.id}.widget`;
 
 /** The app's entitlements with its shared group, where it carries the widget. */
 function calendarEntitlements(entitlements, row) {
-  if (!carriesWidget(row)) return entitlements;
+  if (row.app !== "ohcal") return entitlements;
   const groups = entitlements[GROUP_KEY] ?? [];
   if (!groups.includes(groupOf(row))) entitlements[GROUP_KEY] = [...groups, groupOf(row)];
   return entitlements;
@@ -53,7 +53,7 @@ function calendarEntitlements(entitlements, row) {
 
 /** The app's Info.plist with the group's name for the module's store, where it carries the widget. */
 function calendarInfoPlist(plist, row) {
-  if (carriesWidget(row)) plist.OhcalGroup = groupOf(row);
+  if (row.app === "ohcal") plist.OhcalGroup = groupOf(row);
   return plist;
 }
 

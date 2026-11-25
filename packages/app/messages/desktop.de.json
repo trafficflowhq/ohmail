@@ -186,7 +186,7 @@
     "remove": "Anbieter und Schlüssel vergessen",
     "forget": "Vergessen",
     "removeWhy": "Entfernt die gespeicherten Schlüssel von diesem Computer. Mails kommen weiter an und werden weiter einsortiert.",
-    "note": "Gesendet wird nur, was ein Modell zum Antworten braucht. Ein Vorschlag schickt Absender, Betreff und einen kurzen Auszug. Ein Entwurf schickt dasselbe für die Nachricht, auf die du antwortest, dazu Absender und einen kurzen Auszug von bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank."
+    "note": "Gesendet wird nur, was ein Modell zum Antworten braucht. Ein Vorschlag schickt Absender, Betreff und einen kurzen Auszug. Ein Entwurf schickt dasselbe für die Nachricht, auf die du antwortest, dazu Absender und einen kurzen Auszug von bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank. Ein Entwurf aus deinem Text sendet auch deinen eingegebenen Text. Wenn du Ganze Unterhaltung verwenden für einen Entwurf bestätigst, erhält dein eingerichteter Anbieter den vollständigen gespeicherten Text der Nachricht, auf die du antwortest, und bis zu 4.000 Zeichen aus diesen früheren Nachrichten. Enthält eine Nachricht einen Bestätigungscode oder einen Anmeldelink, wird dieser vor jeder KI-Anfrage entfernt, unabhängig vom gewählten Anbieter. Das gilt auch für Tokens zum Zurücksetzen des Passworts."
   },
   "ohmarchy": {
     "offerLead": "ohmarchy auf diesem Computer",

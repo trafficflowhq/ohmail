@@ -140,7 +140,10 @@ describe("the refusal is said in the composer, above its buttons", () => {
     expect(send).toContain("if (result.outcome === \"failed\" && result.draftId) setDraftId(result.draftId);");
     expect(send).toContain("if (result.outcome === \"failed\" && result.failure) setFailNote(result.failure);");
     const close = SHEET.slice(SHEET.indexOf("const closeComposer = () => {"), SHEET.indexOf("const send = async ("));
-    expect(close).toMatch(/files, dropped, draftId,/);
+    expect(close).toContain("...keepRequest(files, dropped)");
+    const request = SHEET.slice(SHEET.indexOf("const keepRequest ="), SHEET.indexOf("const latestClose ="));
+    expect(request).toContain("const target = latestDraft.current;");
+    expect(request).toContain("files, dropped, draftId: target,");
     // Inside the sheet, as an alert, BEFORE the button row — never a toast under the Modal.
     const line = SHEET.indexOf("failedSendLine(failNote, w.boot.connection, draftId !== null)");
     expect(line).toBeGreaterThan(-1);

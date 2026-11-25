@@ -6,7 +6,7 @@ import { devices, pairingTokens, refreshTokens, sessions, users, type Tx } from 
 import { bridgeTx, credentialContext, keyedCredentialDb, runInTransaction, type ContextDb, type Db, type ServiceContext, type TransactionFence, type UnboundDb } from "../context.js";
 import { createLogger } from "@trafficflow/core/mail";
 import { ServiceError } from "../errors.js";
-import { generateToken, hashToken } from "./crypto.js";
+import { CALENDAR_TOKEN_PREFIX, generateToken, hashToken } from "./crypto.js";
 import { ringDeviceRevoked } from "./device-doorbell.js";
 import { surfaceTtls, type SurfaceTtls } from "./config.js";
 import type { SessionSurface } from "./config-types.js";
@@ -450,7 +450,7 @@ export class SessionLifecycle {
    * records its parent (`handedOffFrom`), so a sweep or a take-back of the parent ends it too.
    */
   async establishPairedDevice(
-    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind; handedOffFrom?: string | null },
+    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind; handedOffFrom?: string | null; calendarOnly?: boolean },
   ): Promise<{ tokens: OAuthTokens }> {
     // The runtime whitelist behind the type, for JavaScript callers and wire input — the same
     // division `mintPairingToken` establishes for its grant.
@@ -468,6 +468,7 @@ export class SessionLifecycle {
       // The declared kind rides on the DEVICE ROW above; the lifetime surface is pinned to the
       // bearer transport this redeem answers with — see the kind bullet in the header.
       kind: b.kind, deviceId: dev!.id, twofaAt: null, surface: "native",
+      calendarOnly: b.calendarOnly,
     });
     // The bearer pair and nothing else — `claimDesktopLink`'s shape, for its reasons.
     return { tokens: established.tokens! };
@@ -745,6 +746,7 @@ export class SessionLifecycle {
        * header for the whole argument.
        */
       surface?: SessionSurface;
+      calendarOnly?: boolean;
     },
   ): Promise<SessionEstablished> {
     // BEFORE ANY WRITE. This is the single seam every full session is minted through — the
@@ -819,7 +821,7 @@ export class SessionLifecycle {
         .where(and(
           eq(refreshTokens.tokenHash, jar.install.digest),
           eq(sessions.userId, user.id),
-          eq(sessions.scope, "full"),
+          or(eq(sessions.scope, "full"), eq(sessions.scope, "calendar")),
           isNull(sessions.revokedAt),
         ))
         .limit(1);
@@ -888,8 +890,9 @@ export class SessionLifecycle {
       deviceId = dev!.id;
     }
     const familyId = o.familyId ?? randomUUID();
-    const accessToken = generateToken();
-    const refreshToken = generateToken();
+    const prefix = o.calendarOnly ? CALENDAR_TOKEN_PREFIX : "";
+    const accessToken = prefix + generateToken();
+    const refreshToken = prefix + generateToken();
 
     const [session] = await db.insert(sessions).values({
       accountId: user.accountId, userId: user.id, deviceId, familyId,
@@ -897,7 +900,7 @@ export class SessionLifecycle {
       // ever reached through a completed 2FA (or the PKCE code that one produced,
       // which is now itself gated on one), and that must not depend on a default
       // that could later change.
-      scope: "full",
+      scope: o.calendarOnly ? "calendar" : "full",
       accessTokenHash: hashToken(accessToken),
       accessExpiresAt: new Date(now.getTime() + this.cfg.accessTtlMs),
       refreshExpiresAt: new Date(now.getTime() + ttls.refreshTtlMs),
@@ -1244,7 +1247,7 @@ export class SessionLifecycle {
   private async mintRotation(
     ctx: ServiceContext,
     db: Tx,
-    base: { accountId: string; userId: string; sessionId: string; familyId: string },
+    base: { accountId: string; userId: string; sessionId: string; familyId: string; tokenHash: string },
     now: Date,
     ttls: SurfaceTtls,
     sessionAccountId: string,
@@ -1252,8 +1255,9 @@ export class SessionLifecycle {
     // Every arm mints here, the ones answering a SPENT token included: the throw rolls back the
     // arm's claim, its kills and its row, so another account's line is left as it was.
     refuseCrossAccountCredential({ accountId: sessionAccountId }, base.accountId);
-    const newRefresh = generateToken();
-    const newAccess = generateToken();
+    const prefix = base.tokenHash.startsWith(CALENDAR_TOKEN_PREFIX) ? CALENDAR_TOKEN_PREFIX : "";
+    const newRefresh = prefix + generateToken();
+    const newAccess = prefix + generateToken();
     await db.insert(refreshTokens).values({
       accountId: base.accountId, userId: base.userId, sessionId: base.sessionId, familyId: base.familyId,
       tokenHash: hashToken(newRefresh),

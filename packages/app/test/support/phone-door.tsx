@@ -49,6 +49,7 @@ export const CONFIG: PhoneDoorConfig = {
 type Answer<A, T> = (ask: A) => T | Promise<T>;
 export interface FakeAnswers {
   readonly "server.ask"?: Answer<string, PhoneServerAnswer>;
+  readonly "sign-in"?: Answer<string | null, PhonePairAnswer>;
   readonly "scan.start"?: Answer<unknown, PhoneCamera>;
   readonly "scan.move"?: Answer<unknown, PhoneCamera>;
   readonly "camera.allow"?: Answer<unknown, PhoneCamera>;
@@ -92,6 +93,7 @@ export function fakePhoneDoor(
       },
     },
     ask: (address) => answer("server.ask", address, answers["server.ask"], { address }),
+    signIn: (address) => answer("sign-in", address, answers["sign-in"], { address }),
     scan: {
       start: (rect) =>
         answer("scan.start", rect, answers["scan.start"] ?? (() => ({ camera: "on" })), { rect }),

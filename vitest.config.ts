@@ -106,6 +106,7 @@ export default defineConfig({
       { find: "@trafficflow/core/destinations", replacement: r("./packages/core/src/destinations.ts") },
       // The client mirrors' shared staleness policy — dependency-free source, imported by the
       // engine AND by the sidecar's mirror driver so the two cannot drift.
+      { find: "@trafficflow/core/calendar-privacy", replacement: r("./packages/core/src/calendar-privacy.ts") },
       { find: "@trafficflow/core/drain-policy", replacement: r("./packages/core/src/drain-policy.ts") },
       // `Re: ` exactly once — dependency-free source, imported by the browser/phone engine (which
       // cannot load this package's barrel) and reached through the `mail` barrel by the away
@@ -252,6 +253,7 @@ export default defineConfig({
       // The next design's components, three entries, above the bare name for the same reason.
       // The theme provider and its readers as a leaf, for the same reason: a door's device reads the theme and nothing else of today's kit.
       { find: "@ohmail/ui/theme", replacement: r("./packages/ui/src/theme/ThemeProvider.tsx") },
+      { find: "@ohmail/ui/button", replacement: r("./packages/ui/src/primitives/Button.tsx") },
       { find: "@ohmail/ui/base", replacement: r("./packages/ui/src/base/index.ts") },
       { find: "@ohmail/ui/mail", replacement: r("./packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui/calendar", replacement: r("./packages/ui/src/calendar/index.ts") },

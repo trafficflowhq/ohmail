@@ -19,6 +19,29 @@ const eventIds = (page: SnapshotResponse) =>
 describe.skipIf(!pgUp)("a calendar's first sync on PostgreSQL", () => {
   beforeAll(async () => { await runMigrations(PG_TEST_URL); }, 120_000);
 
+  it("offers CalDAV invitations in the feed only for a connection with a scheduling address", async () => {
+    const { db, close } = makeOwnedDb(PG_TEST_URL, { role: "api" });
+    const accountId = randomUUID();
+    const connectionId = randomUUID();
+    const calendarId = randomUUID();
+    try {
+      await db.insert(accounts).values({ id: accountId, name: "Calendar snapshot" });
+      await db.insert(calConnections).values({ id: connectionId, accountId, provider: "caldav", label: "Personal" });
+      await db.insert(calCalendars).values({ id: calendarId, accountId, connectionId, providerId: "home", name: "Home", access: "owner", autoSchedule: true });
+      const load = async () => (await calendarFeed.build(dbFor(db, accountId), accountId, "calendar", [calendarId])).get(calendarId);
+      expect.soft(await load()).not.toHaveProperty("autoSchedule");
+      await db.update(calConnections).set({ organizerAddresses: [["calendar", "example.test"].join("@")] })
+        .where(eq(calConnections.id, connectionId));
+      expect(await load()).toMatchObject({ autoSchedule: true });
+    } finally {
+      await db.transaction(async (tx) => {
+        await tx.delete(calCalendars).where(eq(calCalendars.accountId, accountId));
+        await tx.delete(calConnections).where(eq(calConnections.accountId, accountId));
+        await tx.delete(accounts).where(eq(accounts.id, accountId));
+      }).finally(close);
+    }
+  });
+
   it.each([
     { name: "direct", open: () => makeOwnedDb(PG_TEST_URL, { role: "api" }) },
     { name: "pooled", open: () => ({ db: makePooledDb(PG_TEST_URL), close: closePooledDbs }) },

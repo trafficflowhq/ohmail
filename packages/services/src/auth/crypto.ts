@@ -123,8 +123,12 @@ export function generateToken(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
 }
 
+// The stored prefix keeps older servers from resolving either credential after a rollback.
+export const CALENDAR_TOKEN_PREFIX = "cal.";
+
 export function hashToken(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("base64url");
+  const digest = createHash("sha256").update(token, "utf8").digest("base64url");
+  return token.startsWith(CALENDAR_TOKEN_PREFIX) ? CALENDAR_TOKEN_PREFIX + digest : digest;
 }
 
 export function sha256(input: string | Buffer): Buffer {

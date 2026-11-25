@@ -43,12 +43,17 @@
       "answerScope": "Auf {title} antworten",
       "delete": "Löschen",
       "moveTo": "In anderen Kalender verschieben",
+      "moveAllTo": "Alle Termine nach {calendar} verschieben",
+      "moveWithGuests": "Mit {guests}",
+      "moveConfirm": "Verschieben",
       "hideCalendar": "Diesen Kalender ausblenden",
       "tellsDelete": "{title} ist abgesagt",
       "cancellationMessage": "Der Termin wurde abgesagt",
       "moveRestriction": {
-        "guests": "Termine mit Gästen bleiben in den Kalendern ihres Accounts",
-        "fields": "Dieser Termin enthält Details, die ein anderer Kalender nicht übernehmen kann"
+        "account": "Nur beschreibbare Kalender im selben Konto können den Termin übernehmen",
+        "provider": "Dieser Anbieter kann den Termin nicht in einen anderen Kalender verschieben",
+        "event": "Dieser Termin kann nicht in einen anderen Kalender verschoben werden",
+        "saveFirst": "Speichere deine Änderungen, bevor du den Termin verschiebst"
       },
       "moving": "Termin wird verschoben",
       "sendCancellation": "Absage senden",
@@ -73,10 +78,14 @@
     },
     "draft": {
       "reopen": "Entwurf öffnen",
+      "saveWithoutGuests": "Ohne Gäste speichern",
       "discarded": "Verworfen",
       "undo": "Rückgängig"
     },
     "proposal": {
+      "recovered": "Ungesendete Terminvorschläge",
+      "sendRecovered": "Vorschlag senden",
+      "discardRecovered": "Vorschlag verwerfen",
       "keepQuestion": "{name} sagen, dass die Zeit bleibt?",
       "keepConfirm": "Bestätigen",
       "action": "Neue Zeit vorschlagen",
@@ -142,6 +151,9 @@
       "remove": "Entfernen",
       "now": "jetzt {when}",
       "sendInvitation": "{count, plural, one {Einladung senden} other {Einladungen senden}}",
+      "noInvitations": "Dieser Kalender unterstützt keine Einladungen.",
+      "iCloudSends": "iCloud sendet die Einladung.",
+      "saveAndInvite": "Speichern und einladen",
       "from": "Von",
       "cancelled": "abgesagt",
       "maybe": "vielleicht",

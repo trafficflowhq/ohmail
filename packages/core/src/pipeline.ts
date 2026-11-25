@@ -1545,7 +1545,8 @@ async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMes
         const input = {
           ...question,
           from: normalized.from,
-          snippet: snippetOfText(question.snippet),
+          snippet: question.snippet.trim().slice(0, MESSAGE_PREVIEW_LIMIT),
+          foldSnippet: true,
           headersDigest: headersDigest(normalized),
           fewShot: [],
           // The account's own words, into the USER turn only. Absent ⇒ omitted. It sharpens what

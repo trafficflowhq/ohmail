@@ -141,7 +141,7 @@ export interface StorageDoor {
    * Change plan and Add storage: makes the address of the account page that may change the plan and leaves for it.
    * The address never leaves the door.
    */
-  change(): Promise<Answer<"left", StorageWord>>;
+  change(addon?: StorageAddon): Promise<Answer<"left", StorageWord>>;
 }
 
 /** What the pane draws. */
@@ -158,7 +158,7 @@ export interface StorageModel {
   readonly nothingRan: boolean;
   /** The factor is asked: the pane hands this to its factor slot. */
   readonly ask: GatedAsk | null;
-  change(): void;
+  change(addon?: StorageAddon): void;
   setMail(on: boolean): void;
 }
 
@@ -174,8 +174,10 @@ export interface StorageModel {
 /** The storage mails' switch as the person last set it; `null` until the first press, so the figures' word stands. */
 export type StorageMail = StorageModel["mail"] | null;
 
-/** The plan's change is one act: both verbs, Change plan and Add storage, open the same page. */
-export type StorageAct = "change";
+export type StorageAddon = "storage" | "mailbox";
+
+/** Keep the choice in the gated act so a verified factor retries the same request. */
+export type StorageAct = "change" | StorageAddon;
 
 /** What the pane holds between two events. */
 export interface StorageState {

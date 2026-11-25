@@ -19,7 +19,7 @@ export interface DevicesPaneProps {
   /** The factor's dialog, filled by the shell: drawn while a verb is parked behind it. */
   readonly factor: FactorSlot;
   /** The picture of the pairing link to scan, filled by the shell. */
-  readonly qr: QrSlot;
+  readonly qr?: QrSlot;
   readonly sheet?: PaneSheet;
 }
 
@@ -55,14 +55,20 @@ export function DevicesPane({ model, factor, qr, sheet, phone }: DevicesPaneProp
   const locale = useLocale();
   const body = (
     <>
-      {model.made === null ? <NewDevice model={model} /> : <MadeLink model={model} qr={qr} />}
-      <CodesNotUsed model={model} />
+      {qr ? (
+        <>
+          {model.made === null ? <NewDevice model={model} /> : <MadeLink model={model} qr={qr} />}
+          <CodesNotUsed model={model} />
+        </>
+      ) : model.problem || model.nothingRan || model.told ? (
+        <FirstSheet model={model} />
+      ) : null}
       <SignedIn model={model} phone={phone} />
       <Question model={model} />
       {model.ask ? factor(model.ask) : null}
     </>
   );
-  const foot = (
+  const foot = qr ? (
     <ActionPanel
       label={t("title")}
       items={[
@@ -78,7 +84,7 @@ export function DevicesPane({ model, factor, qr, sheet, phone }: DevicesPaneProp
           : { id: "done", icon: "check", label: t("mintedDone"), kind: "ink", onPress: model.done },
       ]}
     />
-  );
+  ) : undefined;
   const count =
     model.list.at === "read"
       ? new Intl.NumberFormat(locale).format(model.list.devices.length + (model.list.webGroup?.count ?? 0))
@@ -101,7 +107,7 @@ function FirstSheet(p: {
   readonly model: DevicesModel;
   readonly title?: string;
   readonly aside?: string;
-  readonly children: ReactNode;
+  readonly children?: ReactNode;
 }) {
   const t = useText("devices");
   const own = useText("accountDevices");

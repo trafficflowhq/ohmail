@@ -182,33 +182,31 @@ describe.each(SURFACES)("the /join connect form on $name", (surface) => {
     }
   });
 
-  it("names the field this form has, and how a port is written in it — never a port field", async () => {
+  it("points to the labeled IMAP port field when the incoming server cannot be reached", async () => {
     const ui = await manualForm(surface);
     await ui.press();
     const text = ui.alert().textContent ?? "";
-    // The server's own sentence says "host and port"; this form has one field per server, which
-    // takes `name:port` (R23-03), so the sentence names that and not a field that is not there.
-    expect(text).not.toMatch(/host and port/i);
-    expect(text).toContain("IMAP server name");
-    expect(text).toContain("goes after the name, as mail.example.com:1143");
+    expect([...ui.host.querySelectorAll("label")].some((label) =>
+      label.textContent === en.mailboxes.imapPortLabel && label.control instanceof HTMLInputElement,
+    )).toBe(true);
+    expect(text).toBe(en.mailboxes.probe_connect);
   });
 });
 
 describe("the /join refusal copy", () => {
   const managed = SURFACES[0];
-  const cases: Array<{ what: string; set: () => void; has: RegExp }> = [
-    { what: "an unreachable outgoing server", set: () => refuse("connect", "smtp"), has: /SMTP server name/ },
-    { what: "a server that did not answer in time", set: () => refuse("timeout", "imap"), has: /in time.*IMAP server name/ },
-    { what: "a certificate refused with no detail", set: () => refuse("tls", "imap"), has: /certificate.*IMAP server name/ },
+  const cases = [
+    { what: "an unreachable outgoing server", set: () => refuse("connect", "smtp"), said: en.mailboxes.probe_connect_smtp },
+    { what: "a server that did not answer in time", set: () => refuse("timeout", "imap"), said: en.mailboxes.probe_timeout },
+    { what: "a certificate refused with no detail", set: () => refuse("tls", "imap"), said: en.mailboxes.probe_tls },
   ];
   for (const c of cases) {
-    it(`${c.what}: says so without a port`, async () => {
+    it(`${c.what}: names its server and port`, async () => {
       c.set();
       const ui = await manualForm(managed);
       await ui.press();
       const text = ui.alert().textContent ?? "";
-      expect(text).toMatch(c.has);
-      expect(text).not.toMatch(/host and port|whether the port/i);
+      expect(text).toBe(c.said);
     });
   }
 
@@ -257,12 +255,10 @@ describe("the /join refusal copy", () => {
     expect(text).not.toMatch(/\bport\b|server name/i);
   });
 
-  it("German: the sentence is the catalogue's, and a port goes after the name", async () => {
+  it("German: the sentence points to the incoming server and port", async () => {
     const ui = await manualForm(managed, de);
     await ui.press();
     const text = ui.alert().textContent ?? "";
-    expect(text).toContain("IMAP-Server");
-    expect(text).toContain("kommt hinter den Namen");
-    expect(text).not.toMatch(/host and port/i);
+    expect(text).toBe(de.mailboxes.probe_connect);
   });
 });

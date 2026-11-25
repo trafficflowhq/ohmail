@@ -1,6 +1,6 @@
 import type { KeyboardEvent, MouseEvent } from "react";
 /** Where a menu stands: at its anchor or at a point, flipped and held inside the window. */
-import { cssPoint } from "../ui-zoom.js";
+import { cssPoint, cssRect } from "../ui-zoom.js";
 
 export interface Point {
   x: number;
@@ -140,4 +140,23 @@ export function mailContextTrigger<T extends HTMLElement>(
         }
       : undefined,
   };
+}
+
+/** Raise a foot sheet clear of a report only when their unshifted footprints intersect. */
+export function clearMenuReport(el: HTMLElement, stage: Edges, report: Element | null): void {
+  el.style.removeProperty("--oh-menu-clearance");
+  if (!report) return;
+  const r = cssRect(report);
+  const left = stage.left + el.offsetLeft;
+  const top = stage.top + el.offsetTop;
+  const bottom = top + el.offsetHeight;
+  if (
+    r.bottom <= r.top ||
+    r.right <= left ||
+    r.left >= left + el.offsetWidth ||
+    r.bottom <= top ||
+    r.top >= bottom
+  )
+    return;
+  el.style.setProperty("--oh-menu-clearance", `${bottom - r.top}px`);
 }

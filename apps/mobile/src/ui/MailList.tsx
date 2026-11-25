@@ -33,10 +33,12 @@ import {
   type SectionListData,
   type SectionListRenderItemInfo,
 } from "react-native";
+import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { mailSize } from "../theme/mail";
+import { Icon } from "./Icon";
 import { KeyboardRoom } from "./keyboard-room";
-import { Button, Section, Txt, panelSurface, pullRefreshControl, useListInsets, type PullRefresh } from "./base";
+import { Button, Section, Tap, Txt, panelSurface, pullRefreshControl, useListInsets, type PullRefresh } from "./base";
 import {
   FIRST_GROUP_TOP,
   LIST_WINDOW,
@@ -115,6 +117,7 @@ export interface MailListProps<T> {
   place?: { current: ListPlace | null };
   /** A list under a text field (Search): `Scroller`'s `avoidKeyboard`, so a press lands with the keyboard up. */
   avoidKeyboard?: boolean;
+  jumpToTop?: boolean;
 }
 
 type ScrollEv = NativeSyntheticEvent<NativeScrollEvent>;
@@ -272,6 +275,7 @@ export function MailList<T>({
   topFor,
   place,
   avoidKeyboard = false,
+  jumpToTop = false,
 }: MailListProps<T>) {
   const t = useTheme();
   const listRef = useRef<SectionList<T, PlannedSection<T>>>(null);
@@ -285,8 +289,14 @@ export function MailList<T>({
   useLayoutEffect(() => keeper.current?.committed());
   const keyOf = useRef(rowKey);
   keyOf.current = rowKey;
-  const own = useRef({ onScroll, onScrollBeginDrag, onScrollEndDrag, onMomentumScrollBegin, onMomentumScrollEnd });
-  own.current = { onScroll, onScrollBeginDrag, onScrollEndDrag, onMomentumScrollBegin, onMomentumScrollEnd };
+  const [far, setFar] = useState(false);
+  const listScroll = jumpToTop ? (event: ScrollEv) => {
+    const { y, height } = viewOf(event);
+    setFar(y > Math.max(240, height / 2));
+    onScroll?.(event);
+  } : onScroll;
+  const own = useRef({ onScroll: listScroll, onScrollBeginDrag, onScrollEndDrag, onMomentumScrollBegin, onMomentumScrollEnd });
+  own.current = { onScroll: listScroll, onScrollBeginDrag, onScrollEndDrag, onMomentumScrollBegin, onMomentumScrollEnd };
   const keeping = keeper.current !== null;
   const gestures = useMemo(() => {
     const k = keeper.current;
@@ -429,12 +439,12 @@ export function MailList<T>({
         stickySectionHeadersEnabled={false}
         showsVerticalScrollIndicator={false}
         refreshControl={pullRefreshControl(t, refresh)}
-        onScroll={gestures?.onScroll ?? onScroll}
+        onScroll={gestures?.onScroll ?? listScroll}
         onScrollBeginDrag={gestures?.onScrollBeginDrag ?? onScrollBeginDrag}
         onScrollEndDrag={gestures?.onScrollEndDrag ?? onScrollEndDrag}
         onMomentumScrollBegin={gestures?.onMomentumScrollBegin ?? onMomentumScrollBegin}
         onMomentumScrollEnd={gestures?.onMomentumScrollEnd ?? onMomentumScrollEnd}
-        scrollEventThrottle={scrollEventThrottle}
+        scrollEventThrottle={scrollEventThrottle ?? (jumpToTop ? 16 : undefined)}
         /* The list keys its window by the first ROW (the first group is never empty), so rows arriving
            above move the window with them; keyed by the group's header it stayed put, and at the end
            of News the rows on screen left it. The native hold starts at the first cell
@@ -456,5 +466,36 @@ export function MailList<T>({
       />
     </CellRulesContext.Provider>
   );
+  if (jumpToTop) {
+    return (
+      <View style={{ flex: 1 }}>
+        {list}
+        {far ? (
+          <Tap
+            accessibilityRole="button"
+            accessibilityLabel={Copy.mailBackToTop}
+            onPress={() => {
+              toY(0);
+              setFar(false);
+            }}
+            style={{
+              position: "absolute",
+              right: Math.max(mailSize.edge, insets.paddingRight),
+              bottom: Math.max(mailSize.edge, insets.paddingBottom),
+              width: mailSize.back,
+              height: mailSize.back,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: t.c.panel,
+              borderRadius: t.radius.pill,
+              ...t.lift("l1"),
+            }}
+          >
+            <Icon name="up" size={mailSize.inset * 3} color={t.c.ink} />
+          </Tap>
+        ) : null}
+      </View>
+    );
+  }
   return avoidKeyboard && Platform.OS === "android" ? <KeyboardRoom>{list}</KeyboardRoom> : list;
 }

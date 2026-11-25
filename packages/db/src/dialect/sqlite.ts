@@ -607,6 +607,8 @@ export function sqliteDialect(): Dialect {
       return sql`max(${sql.join(values.map((v) => sql`${v}`), sql`, `)})`;
     },
 
+    indexedInSubquery: (value, query) => sql`${value} in (${query})`,
+
     // Arguments in the opposite order to the server's syntax, which is the whole reason this is
     // a member rather than a shared spelling.
     strpos: (hay, needle) => sql`instr(${hay}, ${needle})`,

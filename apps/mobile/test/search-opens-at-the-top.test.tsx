@@ -83,7 +83,8 @@ vi.mock("../src/theme", () => ({
 }));
 vi.mock("../src/ui/base", async () => {
   const React = await import("react");
-  const line = (p: { children?: unknown }) => React.createElement("span", { "data-line": "" }, p.children as never);
+  const line = (p: { children?: unknown; accessibilityRole?: string }) =>
+    React.createElement("span", { "data-line": "", "data-role": p.accessibilityRole }, p.children as never);
   return {
     Screen: (p: { children?: unknown }) => React.createElement("div", null, p.children as never),
     Empty: (p: { title: string }) => React.createElement("span", { "data-empty": "" }, p.title),
@@ -175,6 +176,16 @@ const type = (text: string): void => { screen!.render(h(SearchScreen)); act(() =
 const answer = (length: number): void => { store.ready = true; store.length = length; screen!.render(h(SearchScreen)); };
 const dragTo = (y: number): void => { list.props!.onScrollBeginDrag?.(); list.offset = y; };
 const topOf = (key: string): number => list.stack.find((c) => c.key === key)!.top;
+
+it("groups the search result count and sort on the paper surface above the matches", () => {
+  appearance.paper = true;
+  type("fenwick");
+  answer(12);
+  const head = screen!.el.querySelector('[data-role="header"]');
+  expect(head?.textContent).toContain("Results.");
+  expect(head?.parentElement?.querySelector(`[data-label="${Copy.searchSortLabel}"]`)).not.toBeNull();
+  expect((head?.compareDocumentPosition(screen!.el.querySelector('[data-row="s0"]')!) ?? 0) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
 
 describe("a search opens at its top", () => {
   it("the device's paint and then the mailbox's page: the count line and the newest match stay in view", () => {

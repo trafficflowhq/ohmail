@@ -126,37 +126,48 @@ it("keeps the wide Agenda time beside its single-line title", async () => {
 });
 
 it.each([
-  { width: 1440, height: 900, phone: false },
-  { width: 390, height: 780, phone: true },
-])("opens the guest list and hands focus back at width $width", async ({ width, height, phone }) => {
-  const page = await browser.newPage({ viewport: { width, height }, hasTouch: phone });
-  try {
-    await openCalRestPage(page, "screen=day&viewport&state=garden-guests&open=garden-workshop");
-    const event = page.getByRole("dialog", { name: "Garden workshop" });
-    const trigger = event.getByRole("button", { name: "Invitees" });
-    const guests = page.getByRole("dialog", { name: "Invitees" });
-    await browserExpect(event).toBeVisible();
-    await trigger.focus({ timeout: 3000 });
-    await page.keyboard.press("Enter");
-    await browserExpect(guests).toBeVisible({ timeout: 2500 });
-    await browserExpect(guests.getByRole("button", { name: "Close" })).toBeFocused();
-    await browserExpect(guests.getByRole("listitem")).toHaveCount(gardenGuests.length + 1);
-    const last = guests.getByRole("listitem").last();
-    await last.scrollIntoViewIfNeeded();
-    await browserExpect(last).toBeInViewport();
-    const box = await guests.boundingBox();
-    expect(box).not.toBeNull();
-    if (phone) {
-      expect(box!.width).toBe(width);
-      expect(box!.y + box!.height).toBeCloseTo(height, 0);
-    } else {
-      expect(box!.width).toBeLessThan(width / 2);
+  { width: 1440, height: 900, phone: false, scheme: "light", lang: "en", label: "Invitees" },
+  { width: 1440, height: 900, phone: false, scheme: "dark", lang: "de", label: "Gäste" },
+  { width: 390, height: 780, phone: true, scheme: "light", lang: "de", label: "Gäste" },
+  { width: 390, height: 780, phone: true, scheme: "dark", lang: "en", label: "Invitees" },
+])(
+  "shows the inline guest list at $width px in $scheme ($lang)",
+  async ({ width, height, phone, scheme, lang, label }) => {
+    const page = await browser.newPage({ viewport: { width, height }, hasTouch: phone });
+    try {
+      await openCalRestPage(
+        page,
+        `screen=day&viewport&state=garden-guests&open=garden-workshop&scheme=${scheme}&lang=${lang}`,
+      );
+      const event = page.getByRole("dialog", { name: "Garden workshop" });
+      const trigger = event.getByRole("button", { name: label });
+      const guests = event.getByRole("region", { name: label });
+      await browserExpect(event).toBeVisible();
+      await browserExpect(trigger).toHaveAttribute("aria-expanded", "false");
+      await browserExpect(guests).toHaveCount(0);
+      await trigger.focus({ timeout: 3000 });
+      await page.keyboard.press("Enter");
+      await browserExpect(trigger).toHaveAttribute("aria-expanded", "true");
+      await browserExpect(trigger).toBeFocused();
+      await browserExpect(guests).toBeVisible({ timeout: 2500 });
+      await browserExpect(page.getByRole("dialog", { name: label })).toHaveCount(0);
+      await browserExpect(guests.getByRole("listitem")).toHaveCount(gardenGuests.length + 1);
+      const last = guests.getByRole("listitem").last();
+      await last.scrollIntoViewIfNeeded();
+      await browserExpect(last).toBeInViewport();
+      const card = await event.boundingBox();
+      const list = await guests.boundingBox();
+      expect(list).not.toBeNull();
+      expect(list!.x).toBeGreaterThan(card!.x);
+      expect(list!.x + list!.width).toBeLessThanOrEqual(card!.x + card!.width);
+      await trigger.focus();
+      await page.keyboard.press("Space");
+      await browserExpect(guests).toHaveCount(0);
+      await browserExpect(trigger).toHaveAttribute("aria-expanded", "false");
+      await browserExpect(event).toBeVisible();
+      await browserExpect(trigger).toBeFocused();
+    } finally {
+      await page.close();
     }
-    await page.keyboard.press("Escape");
-    await browserExpect(guests).toHaveCount(0);
-    await browserExpect(event).toBeVisible();
-    await browserExpect(trigger).toBeFocused();
-  } finally {
-    await page.close();
-  }
-});
+  },
+);

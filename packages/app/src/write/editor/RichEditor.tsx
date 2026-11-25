@@ -13,12 +13,15 @@ import { dropCarriesFiles } from "@ohmail/app-logic/write/dropped-files";
 import { richToHtml, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import type { EditorHandle, EditorMarks, EditorProps, MarkId, ParagraphStyle } from "../ports.js";
 import { applyCodeBlock, applyDivider, applyList, applyParagraphStyle, applyQuote } from "./commands.js";
-import { linkAtCaret, nextMarks, normalizeHref } from "./marks.js";
+import { linkAtCaret, nextMarks } from "./marks.js";
 import { EXTENSIONS, escapeUnlessTaken, linksIn } from "./schema.js";
 import { LETTER_TEXT, LetterNames } from "./letter-names.js";
 import { QuotedHistory, appendHistory, historyIn, historyValue } from "./quoted-history.js";
 import { HistorySelection } from "./history-selection.js";
 import { HistoryEditorContent } from "./HistoryEditorContent.js";
+import { UnlinkedText } from "./unlinked-text.js";
+import { openEditorLink } from "./edit-link.js";
+import { revealWritingSelection } from "./scroll-selection.js";
 import { FormatExtensions } from "./formats.js";
 import { PasteAsLines, readParagraphsAsLines } from "./paste.js";
 
@@ -50,7 +53,7 @@ const NO_LINKS: readonly string[] = [];
  * The schema, the names the kit's sheet reads stamped on the view alone, and the paste rule (`paste.ts`): pasted
  * text keeps its lines, and a draft's paragraphs are read as lines when it is put back.
  */
-const DRAWN = [...EXTENSIONS, QuotedHistory, ...FormatExtensions, LetterNames, PasteAsLines];
+const DRAWN = [...EXTENSIONS, QuotedHistory, ...FormatExtensions, LetterNames, PasteAsLines, UnlinkedText];
 
 /** The marks that hold where the caret is: the next letter's marks with nothing selected, the selection's otherwise. */
 function activeIn(editor: Editor): ReadonlySet<MarkId> {
@@ -109,35 +112,8 @@ function marksOf(editor: Editor, asks: Set<() => void>): EditorMarks {
     },
     link: {
       open() {
-        const { view } = editor;
-        keepNativeSelection(view);
-        const { doc, selection, storedMarks } = editor.state;
-        let editedDoc = doc;
-        return {
-          href: (linkAtCaret(editor.state)?.attrs.href as string | undefined) ?? null,
-          set(raw) {
-            const href = raw === null ? "" : normalizeHref(raw);
-            if (href === null || editor.isDestroyed || editor.state.doc !== doc) return "refused";
-            const chain = editor
-              .chain()
-              .command(({ tr }) => {
-                tr.setSelection(selection).setStoredMarks(storedMarks);
-                return true;
-              })
-              .extendMarkRange("link");
-            const changed = href === "" ? chain.unsetLink().run() : chain.setLink({ href }).run();
-            editedDoc = editor.state.doc;
-            return changed ? "ok" : "refused";
-          },
-          restore() {
-            if (editor.isDestroyed) return;
-            if (editor.state.doc === editedDoc && !selection.eq(editor.state.selection)) {
-              const tr = editor.state.tr;
-              view.dispatch(tr.setSelection(selection.getBookmark().resolve(tr.doc)));
-            }
-            editor.commands.focus(null, { scrollIntoView: false });
-          },
-        };
+        keepNativeSelection(editor.view);
+        return openEditorLink(editor);
       },
       onKey(ask) {
         asks.add(ask);
@@ -224,6 +200,7 @@ export function RichEditor({
       editable,
       immediatelyRender: false,
       editorProps: {
+        handleScrollToSelection: revealWritingSelection,
         handleDOMEvents: {
           keyup: syncArrowSelection,
           keydown: (view, event) => editorKeyDown(view, event, keys.current, asks),

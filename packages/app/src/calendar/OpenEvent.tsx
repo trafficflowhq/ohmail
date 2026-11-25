@@ -24,6 +24,7 @@ import { useCalendarOwnAddresses } from "./own-addresses.js";
 import { useDraftRestore } from "./draft-undo.js";
 import type { EventDraft } from "./event-draft.js";
 import { EditEvent } from "./EditEvent.js";
+import { FailedCreate } from "./FailedCreate.js";
 import {
   eventTags,
   eventTimeRestriction,
@@ -65,7 +66,9 @@ export function OpenEvent(props: OpenEventProps) {
   return invitation ? (
     <PendingInvitationControls
       invitation={invitation}
-      render={(pending) => <OpenEventCard {...props} pending={pending} />}
+      render={(pending) => (
+        <OpenEventCard {...props} event={pending.event ?? props.event} pending={pending} />
+      )}
     />
   ) : (
     <OpenEventCard {...props} />
@@ -98,8 +101,11 @@ function OpenEventCard({
     end,
   );
   const when = calendarInterval(event, zone, zones, today, locale, t);
+
   const edit = current ? { label: t("edit.action"), onPress: begin } : null;
-  const removable = port !== NONE ? removableEvent(host, port, event, known, zones) : null;
+  const removable =
+    port !== NONE && !event.failedCreate ? removableEvent(host, port, event, known, zones) : null;
+  const move = eventMoveOptions(host, current);
   const { blocked, onKeyDown, panel, toolbar, menu, items } = useEventCardActions({
     event,
     actions,
@@ -109,7 +115,7 @@ function OpenEventCard({
     ...readActions,
     join: call?.join,
     removable,
-    ...eventMoveOptions(host, current),
+    ...move,
   });
   const readMenu = useEventCardMenu({
     ...{ event, port, actions, zones, reply, edit, removal, removable, blocked, otherActions },
@@ -124,7 +130,12 @@ function OpenEventCard({
           key={editing.revision}
           beforeRestore={beforeRestore}
           port={editing.port}
-          actionItems={items}
+          actionItems={items.filter(({ id }) => id !== "move")}
+          move={{
+            ...move,
+            blocked,
+            start: (target, anchor) => actions.start(event, { kind: "calendar", target }, anchor),
+          }}
           connection={current.connection}
           original={editing.record}
           exception={editing.exception}
@@ -161,7 +172,8 @@ function OpenEventCard({
         }
         headActions={readMenu.head}
         {...(edit && !blocked && !reply ? { edit } : {})}
-        foot={reply ? null : renderCardFoot(edit, panel, blocked)}
+        editor={event.failedCreate ? <FailedCreate port={port} event={event} /> : undefined}
+        foot={event.failedCreate || reply ? null : renderCardFoot(edit, panel, blocked)}
         {...readCardDetails(event, { when, rows, maps, invited, canEdit: current !== null }, t)}
         tags={[...proposal.tags, ...eventTags(event, t), ...overlapTags(event, events ?? [], zone, zones, t)]}
         close={{ label: t("closeEvent"), onPress: () => commands.event(null) }}
@@ -226,7 +238,8 @@ function useStoredEdit(event: CalendarEventFace) {
   const port = host.wires.calendar;
   const known = useCalendarOwnAddresses();
   const allowed = useCallback(
-    () => (port === NONE || event.viewOnly ? null : editableEvent(host, port, event, known)),
+    () =>
+      port === NONE || event.viewOnly || event.failedCreate ? null : editableEvent(host, port, event, known),
     [port, event, host, known],
   );
   return { known, allowed, current: allowed() };

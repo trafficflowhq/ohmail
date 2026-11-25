@@ -125,6 +125,7 @@ function world(opts: { asked?: DoorAt | null; offered?: boolean } = {}) {
     /* A probe as the pairing's: the key the link named is installed before anything dials, as a lease. */
     probe: (origin) => ({ kind: "offers", admission: { origin, pin: KEY, flavor: "desktop-host", apiBase: origin, provisionalPin: true, probed: true } }),
     ask: async () => conn.hello,
+    signIn: async () => ({ ok: true }),
     probeBase: async (origin) => ({ kind: "base", base: `${origin}/api`, prefixed: true }),
     probePair: async (origin, pin) => {
       conn.probes.push([origin, pin ?? null]);
@@ -723,7 +724,7 @@ describe("the door's host: the list of servers", () => {
   });
 
   it("explains the copied calendar that remained after disconnect in either language", async () => {
-    const server = pairServer({ flavor: "selfhost", accountId: "account-1", sessionRoute: true });
+    const server = pairServer({ flavor: "selfhost", accountId: "account-1", sessionRoute: true, calendarSync: true });
     const origin = await listen(server.server);
     const rows = new Map<string, string>();
     const profiles = new ServerProfileStore({

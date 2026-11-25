@@ -1,3 +1,4 @@
+import { spacing } from "@ohmail/tokens";
 import type { ReactNode } from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
@@ -18,12 +19,13 @@ export function useOnboardingLook() {
 }
 
 export function OnboardingPage({
-  back, aside, children, actions, centered = false, row = false, showUnsaved = false,
+  back, aside, children, actions, actionBelow, centered = false, row = false, showUnsaved = false,
 }: {
   back?: () => void;
   aside?: ReactNode;
   children: ReactNode;
   actions?: ReactNode;
+  actionBelow?: ReactNode;
   centered?: boolean;
   row?: boolean;
   showUnsaved?: boolean;
@@ -36,7 +38,7 @@ export function OnboardingPage({
   return (
     <Screen style={{ backgroundColor: palette.stage }}>
       <View style={{ paddingTop: top }}>
-        <View style={styles.top}>
+        <View style={row && back === undefined && aside === undefined ? undefined : styles.top}>
           {back !== undefined && !railBack ? (
             <Tap
               onPress={back}
@@ -54,7 +56,14 @@ export function OnboardingPage({
       <Scroller bounded avoidKeyboard contentStyle={[styles.scroll, { paddingBottom: 24 + bottom }]}>
         <View style={centered ? styles.centered : styles.content}>{children}</View>
         {actions !== undefined ? (
-          <View style={[styles.actions, row ? styles.actionRow : undefined]}>{actions}</View>
+          actionBelow === undefined ? (
+            <View style={[styles.actions, row ? styles.actionRow : undefined]}>{actions}</View>
+          ) : (
+            <View style={styles.actions}>
+              <View style={row ? styles.actionRow : styles.actionStack}>{actions}</View>
+              {actionBelow}
+            </View>
+          )
         ) : null}
       </Scroller>
     </Screen>
@@ -124,26 +133,28 @@ export function OnboardingTag({ label, accessibilityLabel, onPress, expanded, la
   );
 }
 
-export function OnboardingButton({ label, onPress, kind = "ink", short = false, grow = false }: {
+export function OnboardingButton({ label, onPress, kind = "ink", short = false, grow = false, subtle = false }: {
   label: string;
   onPress: () => void;
-  kind?: "ink" | "quiet" | "soft";
+  kind?: "ink" | "quiet" | "soft" | "sheet";
   short?: boolean;
   grow?: boolean;
+  subtle?: boolean;
 }) {
   return (
-    <Button label={label} onPress={onPress} appearance={useOnboardingButton(kind, short)}
+    <Button label={label} onPress={onPress} appearance={useOnboardingButton(kind, short, subtle)}
       style={grow ? styles.grow : undefined} />
   );
 }
 
-export function useOnboardingButton(kind: "ink" | "quiet" | "soft" = "ink", short = false) {
+export function useOnboardingButton(kind: "ink" | "quiet" | "soft" | "sheet" = "ink", short = false, subtle = false) {
   const { palette, type } = useOnboardingLook();
   return {
-    color: kind === "ink" ? palette["on-solid"] : palette.ink,
+    color: kind === "ink" ? palette["on-solid"] : subtle ? palette.ink2 : palette.ink,
     surface: {
       ...styles.button,
-      backgroundColor: kind === "ink" ? palette.solid : kind === "soft" ? palette.soft : "transparent",
+      backgroundColor: kind === "ink" ? palette.solid :
+        kind === "soft" ? palette.soft : kind === "sheet" ? palette.sheet : "transparent",
       minHeight: points(type[short ? "h-s" : "h-xl"]),
     },
     text: styles.buttonText,
@@ -157,8 +168,9 @@ const styles = StyleSheet.create({
   scroll: { flexGrow: 1, paddingLeft: 24, paddingRight: 24 },
   centered: { flexGrow: 1, justifyContent: "center", paddingVertical: 24 },
   content: { paddingTop: 24 },
-  actions: { marginTop: "auto", paddingTop: 24, gap: 8 },
-  actionRow: { flexDirection: "row" },
+  actions: { marginTop: "auto", paddingTop: 24, gap: spacing.scale[3] },
+  actionRow: { flexDirection: "row", gap: spacing.scale[3] },
+  actionStack: { gap: spacing.scale[3] },
   button: { alignItems: "center", justifyContent: "center", borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8 },
   buttonText: { textAlign: "center", ...onboardingType.button },
   grow: { flex: 1 },

@@ -189,7 +189,7 @@ export interface ConnectTyped {
   readonly user: string;
   readonly imapHost: string;
   readonly smtpHost: string;
-  /** An edit's own two fields; a new connection writes a port after the name. */
+  /** Separate port fields where the form draws them. */
   readonly imapPort: string;
   readonly smtpPort: string;
   /** On a provider that signs in: "use an app password instead" was taken. */

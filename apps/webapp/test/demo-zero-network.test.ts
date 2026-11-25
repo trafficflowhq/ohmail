@@ -130,6 +130,23 @@ describe("?demo=1 — the engine performs ZERO network operations", () => {
     expect(engine.read().version()).not.toBe(before);
     expect(engine.read().get<{ folder?: string }>("message", target!.id)?.folder).toBe(DEST);
 
+    const letter = reader.entries<{ folder: string; subject: string }>("message")
+      .find(({ entity }) => entity.folder === "INBOX")!;
+    const moved = await engine.mutate({ kind: "message_delete", messageId: letter.id });
+    expect(moved.status).toBe("confirmed");
+    expect(engine.read().get("message", letter.id)).toBeUndefined();
+    expect(engine.trashAvailable()).toBe(true);
+    await expect(engine.listTrash()).resolves.toMatchObject({
+      state: "ready",
+      items: [{ id: letter.id, subject: letter.entity.subject, restoreTo: letter.entity.folder }],
+    });
+    await expect(engine.restoreFromTrash(letter.id)).resolves.toMatchObject({
+      state: "restored", restoreTo: letter.entity.folder,
+    });
+    await engine.syncOnce();
+    expect(engine.read().get("message", letter.id)).toMatchObject({ folder: letter.entity.folder });
+    await expect(engine.listTrash()).resolves.toMatchObject({ state: "ready", items: [] });
+
     expect(watcher.fetch).not.toHaveBeenCalled();
     expect(watcher.xhrOpen).not.toHaveBeenCalled();
     expect(watcher.ws).not.toHaveBeenCalled();

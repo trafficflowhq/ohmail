@@ -42,8 +42,6 @@ interface ReadingProps {
   fixedHead?: ReactNode;
   /** What floats over the column's foot: the action panel. */
   foot?: ReactNode;
-  /** The ground at the foot covers what scrolls beneath the panel. */
-  coverFoot?: boolean;
   /** Align the action panel with the phone reading column's leading edge. */
   flushFoot?: boolean;
   /** The way back to the column's start (`JumpBack`): it stands at the column's right corner, over the foot. */
@@ -117,7 +115,7 @@ export function Sheet(props: SheetProps) {
               {back.word === undefined ? (
                 <Button kind="quiet" icon="back" label={back.label} onPress={back.onPress} />
               ) : (
-                <Button kind="quiet" icon="back" label={back.label} onPress={back.onPress}>
+                <Button kind="quiet" icon="back" label={back.label ?? back.word} onPress={back.onPress}>
                   {back.word}
                 </Button>
               )}
@@ -143,7 +141,7 @@ export function Sheet(props: SheetProps) {
         </div>
       </div>
       {foot ? (
-        <div className="oh-sheet-foot" data-cover={props.coverFoot ? "" : undefined}>
+        <div className="oh-sheet-foot">
           {jump}
           {foot}
         </div>

@@ -62,10 +62,11 @@ export function draftReplyVia(
 ): DraftReplyWire {
   return {
     configured,
-    create: async (messageId, idempotencyKey) => answerOf<Awaited<ReturnType<DraftReplyWire["create"]>>>(
+    create: async (messageId, idempotencyKey, _onPreview, fullConversation) => answerOf<Awaited<ReturnType<DraftReplyWire["create"]>>>(
       await fetchImpl(`/messages/${encodeURIComponent(messageId)}/draft`, {
         method: "POST",
-        headers: { "Idempotency-Key": idempotencyKey },
+        headers: { "Idempotency-Key": idempotencyKey, ...(fullConversation ? { "Content-Type": "application/json" } : {}) },
+        ...(fullConversation ? { body: JSON.stringify({ fullConversation: true }) } : {}),
       }),
     ),
     read: async (draftId) => answerOf<DraftReplyRead>(

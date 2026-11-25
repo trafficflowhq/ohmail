@@ -69,6 +69,8 @@ export interface MutationResult {
   key: string;
   status: MutationStatus;
   seq: number | null;
+  /** The server answered the delete without moving a letter to Trash. */
+  alreadyGone?: true;
   /** A confirmed `draft_save`'s version of the row ({@link MutationOutcome.revision}). */
   revision?: string;
   error?: MutationRejectedError;

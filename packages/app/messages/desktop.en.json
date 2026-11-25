@@ -186,7 +186,7 @@
     "remove": "Forget the provider and keys",
     "forget": "Forget",
     "removeWhy": "Removes the stored keys from this computer. Mail keeps arriving and keeps being filed.",
-    "note": "Only what a model needs to answer is sent. A suggestion sends the sender, the subject and a short extract. A draft sends the same for the message you reply to, plus the sender and a short extract of up to 20 other messages in its thread and up to 5 matching knowledge-base notes."
+    "note": "Only what a model needs to answer is sent. A suggestion sends the sender, the subject and a short extract. A draft sends the same for the message you reply to, plus the sender and a short extract of up to 20 other messages in its thread and up to 5 matching knowledge-base notes. A draft from your text also sends your typed text. If you choose and confirm Use full conversation for a draft, your configured provider receives the full stored text of the message you’re answering and up to 4,000 characters from those earlier messages. Where a message carries a code or a login link, the credential itself is never sent, whichever provider is chosen. Password-reset tokens are also blanked before any AI request."
   },
   "ohmarchy": {
     "offerLead": "ohmarchy on this computer",

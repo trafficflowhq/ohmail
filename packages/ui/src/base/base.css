@@ -37,6 +37,7 @@
     --oh-layer-recessed: -1;
     --oh-layer-raised: 1;
     --oh-layer-jump: 5;
+    --oh-layer-popover: 30;
     --oh-layer-over: 40;
     --oh-layer-top: 60;
     /* How far a ring leaves what rang. */

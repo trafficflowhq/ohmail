@@ -6,6 +6,7 @@ export {
   storageModelOf,
   storageStep,
   type StorageAct,
+  type StorageAddon,
   type StorageDoor,
   type StorageEvent,
   type StorageFigures,

@@ -11,6 +11,7 @@ export const calendarMark = "#2953FF";
 const px = (value: string) => Number.parseFloat(value);
 export const mailSize = {
   avatar: px(paper.av),
+  avatarBadge: px(paper["av-xs"]),
   edge: px(paper.s4),
   inset: px(paper.s2),
   rowInset: px(paper.s1),

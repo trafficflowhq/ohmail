@@ -16,8 +16,65 @@ import { MIRROR_ENTITY_TYPES } from "./engine-package";
 type Backup = NonNullable<Requests["act"]["answer"]["backup"]>;
 const BACKUP = { excluded: "out", included: "in", unknown: "unknown" } as const;
 
+type PhoneAboutConfig = Pick<ShellConfig, "scope" | "os" | "build" | "setting">;
+type LegalPage = Extract<Requests["act"]["ask"], { act: "about.page" }>["page"];
+
+function LegalPages({ bridge, calendar }: { bridge: Bridge; calendar?: PhoneAboutConfig }) {
+  const t = useText("phoneSettings");
+  const refusal = useText("viewError");
+  const account = useText("account");
+  const [failed, setFailed] = useState(false);
+  const pages: readonly LegalPage[] = calendar ? ["privacy", "imprint", "support"] : ["privacy", "subprocessors", "imprint"];
+  const title = t(calendar ? "calendarLegalTitle" : "legalTitle");
+  function open(page: LegalPage) {
+    setFailed(false);
+    const request = page === "deleteAccount" && calendar && (calendar.setting === "managed" || calendar.setting === "selfHosted")
+      ? bridge.request("phone.account", { scope: calendar.scope, do: "deletePage" })
+      : bridge.request("act", { act: "about.page", page });
+    void request.catch(() => setFailed(true));
+  }
+  return (
+    <SettingsSheet>
+      <SettingLine label={title} narrow="under">
+        <SettingActs label={title}>{pages.map((page) => (
+          <Button key={page} kind="quiet" size="s" onPress={() => open(page)}>
+            {t(page === "privacy" && calendar ? "privacyPolicy" : page)}
+          </Button>
+        ))}</SettingActs>
+      </SettingLine>
+      {calendar ? (
+        <SettingLine label={t("sharedAccount")} narrow="under">
+          <SettingNote>{account("sharedCalendarLead")} {account("lead")}</SettingNote>
+          <Button kind="quiet" size="s" onPress={() => open("deleteAccount")}>{t("deleteAccount")}</Button>
+        </SettingLine>
+      ) : null}
+      {failed ? <SettingNote warn>{refusal("tryAgain")}</SettingNote> : null}
+    </SettingsSheet>
+  );
+}
+
+export function phoneCalendarAbout(bridge: Bridge, config: PhoneAboutConfig) {
+  return function AboutCalendar() {
+    const about = useText("about");
+    const build = config.build.number;
+    const version = config.build.version ?? "";
+    return (
+      <>
+        <SettingsSheet>
+          <p className="oh-text oh-display"><EndDot kind="hot">ohcal</EndDot></p>
+          <SettingLine
+            label={about("buildLabel")}
+            value={about("build", { version: build ? version + " (" + build + ")" : version, build: config.build.commit ?? "dev" })}
+          />
+        </SettingsSheet>
+        <LegalPages bridge={bridge} calendar={config} />
+      </>
+    );
+  };
+}
+
 export function phoneSettingsParts(
-  bridge: Bridge, config: Pick<ShellConfig, "scope" | "os" | "build" | "setting">,
+  bridge: Bridge, config: PhoneAboutConfig,
 ): Pick<MailPaneParts, "about" | "mailboxes"> {
   function About() {
     const engine = useEngine();
@@ -25,7 +82,6 @@ export function phoneSettingsParts(
     const t = useText("phoneSettings");
     const about = useText("about");
     const words = useText("settings");
-    const refusal = useText("viewError");
     const roster = host.wires.mailboxes;
     const [count, setCount] = useState<number | null>(null);
     useEffect(() => {
@@ -36,7 +92,6 @@ export function phoneSettingsParts(
       }, () => {});
       return () => { live = false; };
     }, [roster]);
-    const [linkFailed, setLinkFailed] = useState(false);
     const [backup, setBackup] = useState<Backup | null>(null);
     useEffect(() => {
       const read = new AbortController();
@@ -56,17 +111,7 @@ export function phoneSettingsParts(
           />
           <SettingLine label={words("mailboxes")} value={count === null ? undefined : t("mailboxCount", { count })} />
         </SettingsSheet>
-        <SettingsSheet>
-          <SettingLine label={t("legalTitle")} narrow="under">
-            <SettingActs label={t("legalTitle")}>{(["privacy", "subprocessors", "imprint"] as const).map((page) => (
-              <Button key={page} kind="quiet" size="s" onPress={() => {
-                setLinkFailed(false);
-                void bridge.request("act", { act: "about.page", page }).catch(() => setLinkFailed(true));
-              }}>{t(page)}</Button>
-            ))}</SettingActs>
-          </SettingLine>
-          {linkFailed ? <SettingNote warn>{refusal("tryAgain")}</SettingNote> : null}
-        </SettingsSheet>
+        <LegalPages bridge={bridge} />
         <SettingsSheet title={t("onThisPhone.title")} sign="phone">
           <SettingNote>{t("onThisPhone.forgetting")}</SettingNote>
           {config.os === "ios" ? <SettingNote>{t("onThisPhone.keychainIos")}</SettingNote> : null}

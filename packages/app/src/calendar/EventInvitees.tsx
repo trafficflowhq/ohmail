@@ -1,5 +1,5 @@
-import { useId, useRef, useState } from "react";
-import { Avatar, Button, Icon, Overlay, Sentence } from "@ohmail/ui/base";
+import { useId, useState } from "react";
+import { Avatar, Icon } from "@ohmail/ui/base";
 import { toneStyle } from "@ohmail/ui/calendar";
 import { GroupHeading } from "@ohmail/ui/mail";
 import type { CalendarAnswer, CalendarInvitee } from "@ohmail/wire";
@@ -43,8 +43,7 @@ export function EventInvitees({
 }) {
   const t = useText("calendar");
   const [open, setOpen] = useState(false);
-  const trigger = useRef<HTMLButtonElement>(null);
-  const heading = useId();
+  const details = useId();
   const summary = useId();
   const title = t("edit.invitees");
   const sent = new Map(sentInvitees(confirmed).map(({ address, answer }) => [address.toLowerCase(), answer]));
@@ -65,19 +64,17 @@ export function EventInvitees({
         ...guestRows,
       ]
     : guestRows;
-  const close = () => setOpen(false);
 
   return (
-    <>
+    <div className="cal-guest-disclosure">
       <button
-        ref={trigger}
         type="button"
         className="oh-control cal-guest-toggle"
         aria-label={title}
         aria-describedby={compactCounts.length ? summary : undefined}
-        aria-haspopup="dialog"
+        aria-controls={details}
         aria-expanded={open}
-        onClick={() => setOpen(true)}
+        onClick={() => setOpen(!open)}
       >
         <span className="cal-guest-summary">
           <span className="cal-guest-faces">
@@ -93,24 +90,9 @@ export function EventInvitees({
         </span>
         <Icon name="down" size={16} className="cal-guest-chevron" />
       </button>
-      <Overlay
-        open={open}
-        onClose={close}
-        portal
-        inertBackground
-        returnFocus={() => trigger.current}
-        labelledBy={heading}
-        className="cal-guest-dialog"
-        scrimMotion="backdrop"
-      >
-        <header className="cal-guest-head">
-          <Sentence id={heading} level={2} end="ink">
-            {title}
-          </Sentence>
-          <Button kind="quiet" size="s" icon="x" label={t("closeEvent")} onPress={close} />
-        </header>
-        <div className="cal-guest-scroll" tabIndex={0} role="region" aria-labelledby={heading}>
-          {[...GROUPS, "pending" as const].map((group) => {
+      <div id={details} role="region" aria-label={title} className="cal-guest-groups" hidden={!open}>
+        {open &&
+          [...GROUPS, "pending" as const].map((group) => {
             const members = people.filter(
               ({ answer, organizer }) =>
                 (answer || organizer ? groupOf(answer ?? "none") : "pending") === group,
@@ -141,8 +123,7 @@ export function EventInvitees({
               </section>
             );
           })}
-        </div>
-      </Overlay>
-    </>
+      </div>
+    </div>
   );
 }

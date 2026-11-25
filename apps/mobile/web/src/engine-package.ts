@@ -8,7 +8,7 @@ import {
 } from "@ohmail/client-engine";
 
 export {
-  HttpAdapter, IndexedDbMirrorStore, MIRROR_ENTITY_TYPES, NOTICE_COUNT_MAX, OUTBOX_TYPE, OhmailEngine, ROUTING_JOURNAL_TYPE, SYNC_ENTITY_TYPES,
+  HttpAdapter, IndexedDbMirrorStore, isCalendarQueueType, prepareCalendarCopies, MIRROR_ENTITY_TYPES, NOTICE_COUNT_MAX, OUTBOX_TYPE, OhmailEngine, ROUTING_JOURNAL_TYPE, SYNC_ENTITY_TYPES,
   calendarChoicesOf, flattenResponse, lost, mailChoicesOf, noticeChoicesOf, readCalendarSnapshot, parseMailto, recordKey, unsentDraftsOf,
 } from "@ohmail/client-engine";
 

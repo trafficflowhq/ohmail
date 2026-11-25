@@ -52,6 +52,13 @@ export interface CalendarPort {
     delay: number,
   ): Promise<HeldCalendarAct>;
   holdProposal?(act: CalendarProposalAct, delay: number): Promise<HeldCalendarAct>;
+  recoveredProposals?(): readonly {
+    key: string;
+    act: Extract<CalendarProposalAct, { kind: "calendar_event_propose" }>;
+    needsReview: boolean;
+    reviewRefused?: true;
+  }[];
+  reviewProposal?(key: string, send: boolean): Promise<boolean>;
   pendingProposals?(): readonly { key: string; act: CalendarProposalAct }[];
   /** Resume this account's pending queue while its host is present. */
   activate?(): () => void;
@@ -67,7 +74,10 @@ export interface CalendarPort {
     eventId: string,
     key: string,
     refuse: (verdict: CalendarVerdict, writeId?: string) => void,
+    recorded?: () => void,
   ): void;
+  /** Release the local copy of a create that was refused before reaching the provider queue. */
+  forgetUnsentCreate?(eventId: string): void;
   /** Follow an edit's write on the record that holds its receipt, including a generated occurrence. */
   watchEdit?(
     eventId: string,

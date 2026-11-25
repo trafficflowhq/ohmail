@@ -21,8 +21,8 @@ import {
 /** The part of the connection the door stands on. */
 export type DoorConnection = Pick<
   Connection,
-  | "state" | "syncing" | "syncError" | "profiles" | "activeId" | "ask" | "probeBase" | "probePair" | "pairConfirmed"
-  | "openStandalone" | "switchTo" | "forget" | "unsentDraftsHere" | "disconnect" | "syncNow"
+  | "state" | "syncing" | "syncError" | "profiles" | "activeId" | "ask" | "probeBase" | "probePair" | "pairConfirmed" | "signIn"
+  | "openStandalone" | "switchTo" | "forget" | "erasedCalendarScopes" | "unsentDraftsHere" | "disconnect" | "syncNow"
 >;
 
 /**

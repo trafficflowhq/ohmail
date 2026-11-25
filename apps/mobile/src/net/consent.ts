@@ -498,7 +498,8 @@ export function phoneDraftWire(session: DraftSession | null, allowed = true): Dr
   };
   return {
     configured: () => true,
-    create: (id, key) => buy("/messages/" + encodeURIComponent(id) + "/draft", key),
+    create: (id, key, _onPreview, fullConversation) => buy("/messages/" + encodeURIComponent(id) + "/draft", key,
+      fullConversation ? { fullConversation: true } : undefined),
     fromText: (words, key) => buy("/drafts/from-text", key, words),
     read: async (id) => {
       const reply = await read("/drafts/" + encodeURIComponent(id));

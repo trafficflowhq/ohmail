@@ -237,6 +237,9 @@ describe("the storage card atop the Ohbox", () => {
     await act(async () => { rig.onVerified!(); });
     await tick(0);
     expect(sent("POST /api/account/manage-link/change")).toHaveLength(2);
+    expect(sent("POST /api/account/manage-link/change").map((w) => w.body)).toEqual([
+      { lang: "en", addon: "storage" }, { lang: "en", addon: "storage" },
+    ]);
     expect(left).toEqual(["https://pay.example.com/manage/t"]);
   });
 });

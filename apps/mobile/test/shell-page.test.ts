@@ -114,10 +114,19 @@ describe("the phone shell's answers, per setting", () => {
     },
   };
   const engine = named<HostContract["engine"]>("engine");
-  const of = (setting: ShellSetting, calendar: PhoneSupplies["frame"]["calendar"]) =>
+  const of = (setting: ShellSetting, calendar: PhoneSupplies["frame"]["calendar"], calendarOnly = false) =>
     phoneHost(engine, {
       setting, scope: "p0123456789abcdef0123456789abcdef", accountId: "acct-1", build: { version: "2.0.0", commit: "abc" },
-    }, { ...has, frame: { ...has.frame, calendar } });
+    }, { ...has, frame: { ...has.frame, calendar }, calendarOnly });
+  it("keeps mail readers and mail usage panes closed on the calendar phone", () => {
+    const host = of("managed", named("calendar"), true);
+    expect(host.reads.mailboxes).toBe(NONE);
+    expect(host.wires).toMatchObject({ mailboxes: NONE, consent: NONE, screening: NONE });
+    expect(host.capabilities.searchBy).toBe(CANNOT.searchBy);
+    expect(host.features.storage).toBe(NONE);
+    expect(host.features.subscription).toBe(NONE);
+  });
+
   const NO_WIRE = Object.fromEntries([
     "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "images", "olderBody", "junk", "trash",
     "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "ownModelAutoSuggest", "connect", "mailboxes",
@@ -188,7 +197,10 @@ describe("the phone shell's answers, per setting", () => {
       features: {
         ...NO_FEATURE,
         calendar,
-        ...(calendar === NONE ? {} : { devices: { name: "devices", render: expect.any(Function) } }),
+        ...(calendar === NONE ? {} : {
+          about: { name: "about", render: expect.any(Function) },
+          devices: { name: "devices", render: expect.any(Function) },
+        }),
         ...Object.fromEntries((hosted ? ["account", "subscription", "storage", "invites", "security"] : [])
           .map((name) => [name, { name, render: expect.any(Function) }])),
       },

@@ -145,6 +145,7 @@ async function probeCandidate(
   fetchImpl: FetchLike,
   requested: string,
   deadlineMs: number,
+  calendarOnly: boolean,
 ): Promise<ProbeAnswer> {
   const controller = typeof AbortController === "function" ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -187,6 +188,7 @@ async function probeCandidate(
   try {
     const inFlight = fetchImpl(requested, {
       redirect: "manual",
+      ...(calendarOnly ? { credentials: "omit" } : {}),
       ...(controller ? { signal: controller.signal } : {}),
     });
     /* THE ABANDONED RESPONSE IS STILL LET GO. If the platform ignores the abort, this fetch outlives
@@ -203,7 +205,7 @@ async function probeCandidate(
     try {
       /* The body read is INSIDE the race too — round 3's first finding. `answeredByApi` reads it,
          so the race is around the classification rather than around the fetch. */
-      return (await Promise.race([answeredByApi(res, requested), timedOut])) ? "api" : "not-api";
+      return (await Promise.race([answeredByApi(res, requested, calendarOnly), timedOut])) ? "api" : "not-api";
     } catch (err) {
       /**
        * The body read lost to the deadline and this response is orphaned — the `settled` handler
@@ -279,9 +281,10 @@ function answeredFromRequest(finalUrl: string, requested: string): boolean {
  * `redirect: "manual"`, `Response.redirected`, {@link answeredFromRequest}'s exact-URL check; the
  * stored base is never a redirect target, and the issued request is the residual — bounded: `/hello` already dialled this origin.
  */
-async function answeredByApi(res: Response, requested: string): Promise<boolean> {
+async function answeredByApi(res: Response, requested: string, calendarOnly: boolean): Promise<boolean> {
   /* Every rejection below lets the body go — see {@link letGo}. Only the arm that READS the body
      does not, because reading it is releasing it. */
+  if (calendarOnly && res.headers.get("x-ohmail-calendar-pairing") !== "1") { letGo(res); return false; }
   if (res.status !== 401) { letGo(res); return false; }
   /* `redirected` is the third guard and the cheapest: a platform that followed a redirect and SAYS
      so is caught here even if it reports no final URL. Compared strictly to `true`, so a platform
@@ -343,9 +346,11 @@ export async function resolveApiBase(
    * eight seconds twice per such case is a suite people stop running. A case still pins the DEFAULT,
    * so the override cannot quietly become the shipped value.
    */
-  opts: { deadlineMs?: number } = {},
+  opts: { deadlineMs?: number; calendarOnly?: boolean } = {},
 ): Promise<BaseVerdict> {
   const deadlineMs = opts.deadlineMs ?? PROBE_DEADLINE_MS;
+  const calendarOnly = opts.calendarOnly === true;
+  const path = calendarOnly ? "/calendar/sync" : PROBE_PATH;
   const bare = origin.replace(/\/+$/, "");
   const prefixed = apiBaseFor(bare);
 
@@ -384,7 +389,7 @@ export async function resolveApiBase(
   for (const candidate of [bare, prefixed]) {
     let answer: ProbeAnswer;
     try {
-      answer = await probeCandidate(fetchImpl, `${candidate}${PROBE_PATH}`, deadlineMs);
+      answer = await probeCandidate(fetchImpl, candidate + path, deadlineMs, calendarOnly);
     } catch (err) {
       if (err instanceof ProbeTimeout) {
         stalled = true;

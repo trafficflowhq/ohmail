@@ -107,6 +107,24 @@ async function mount(width: number, place: (typeof cases)[number]) {
   return { touched, ids };
 }
 
+it("returns from a phone Trash reader to its list", async () => {
+  try {
+    await mount(390, cases.find(({ list }) => list === "Trash")!);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("option", { name: /Pottery first/ }));
+    });
+    await tick(500);
+    expect(window.location.hash).toMatch(/^#\/trash\/m\//);
+    const reader = within(screen.getByRole("region", { name: "Pottery first" }));
+    await act(async () => { fireEvent.click(reader.getByRole("button", { name: "Trash" })); });
+    await tick(500);
+    expect(window.location.hash).toBe("#/trash");
+    expect(screen.getByRole("option", { name: /Pottery first/ })).toBeTruthy();
+  } finally {
+    await teardownScreeningWeb();
+  }
+}, 30_000);
+
 describe.each([1440, 390])("mail lists at %i pixels wide", (width) => {
   const rows = cases.filter(({ list }) => width !== 390 || (list !== "News" && list !== "Receipts"));
 

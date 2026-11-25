@@ -16,8 +16,10 @@ import { hasHostedAccount, PhoneNoAccount } from "./account-data-panes";
 import type { Bridge } from "./bridge";
 import { phoneDevicesPane } from "./settings-panes";
 
+type HostedScope = "full" | "calendar";
+
 type Session = {
-  scope: "full" | "enrollment";
+  scope: HostedScope | "enrollment";
   user?: {
     accountId: string;
     email: string;
@@ -107,18 +109,19 @@ function BrowserFactor({ open }: { open: () => Promise<unknown> }) {
   </>;
 }
 
-async function readHostedUser(request: ReturnType<typeof accountFetch>, accountId: string) {
+async function readHostedUser(request: ReturnType<typeof accountFetch>, accountId: string, expected: HostedScope) {
   const { scope: access, user } = await request<Session>("/auth/session");
-  if (access !== "full" || user?.accountId !== accountId) throw new AccountRefusal(401);
+  if (access !== expected || user?.accountId !== accountId) throw new AccountRefusal(401);
   return user;
 }
 
 export function phoneSettingsFactor(
   bridge: Bridge, config: Pick<ShellConfig, "scope" | "accountId">, pane: BrowserAccountPane,
+  expected: HostedScope = "full",
 ): FactorSlot {
   const { scope } = config;
   const request = accountFetch(bridge, scope);
-  const readUser = () => readHostedUser(request, config.accountId);
+  const readUser = () => readHostedUser(request, config.accountId, expected);
   const verification: StepUpDoor = {
     async factors() {
       try {
@@ -156,9 +159,12 @@ export function phoneSettingsFactor(
   );
 }
 
-export function hostedSettingsPanes(bridge: Bridge, config: Pick<ShellConfig, "scope" | "setting" | "accountId" | "serverName">):
-  Pick<MailPaneParts, "account" | "devices" | "invites" | "security"> {
+export function hostedSettingsPanes(
+  bridge: Bridge, config: Pick<ShellConfig, "scope" | "setting" | "accountId" | "serverName">,
+  expected: HostedScope = "full",
+): Pick<MailPaneParts, "account" | "devices" | "invites" | "security"> {
   const { scope, setting } = config;
+  const calendarOnly = expected === "calendar";
   const Servers = phoneDevicesPane(bridge);
   if (!hasHostedAccount(setting)) return {
     account: NONE,
@@ -172,7 +178,7 @@ export function hostedSettingsPanes(bridge: Bridge, config: Pick<ShellConfig, "s
   const copy = (text: string) => browserClipboard(window)(text);
   const openServers = () => bridge.request("act", { act: "openServers" });
   const signOut = () => bridge.request("act", { act: "signOut" });
-  const readUser = () => readHostedUser(request, config.accountId);
+  const readUser = () => readHostedUser(request, config.accountId, expected);
 
   async function pairs(grant: PairGrant) {
     const { items } = await native<{ items: PairRow[] }>({ do: "pairs" });
@@ -195,7 +201,10 @@ export function hostedSettingsPanes(bridge: Bridge, config: Pick<ShellConfig, "s
       return {
         async read() {
           try {
-            const [{ items }, codes] = await Promise.all([request<{ items: DeviceRow[] }>("/devices"), pairs("device-pair")]);
+            const [{ items }, codes] = await Promise.all([
+              request<{ items: DeviceRow[] }>("/devices"),
+              calendarOnly ? [] : pairs("device-pair"),
+            ]);
             return { ok: true, value: {
               sessions: items.map((row) => deviceOf(row, formatDay)),
               codes: codes.map((row) => ({ id: row.id, name: row.label || null, until: clock.format(new Date(row.expiresAt)) })),
@@ -313,9 +322,19 @@ export function hostedSettingsPanes(bridge: Bridge, config: Pick<ShellConfig, "s
   }
 
 
+  const devices = {
+    useDoor: useDevicesDoor, factor: phoneSettingsFactor(bridge, config, "devices", expected),
+    End: phoneDevicesPane(bridge, true),
+  };
+  if (calendarOnly) return {
+    account: { useDoor: useAccountDoor, password: NONE, identityOnly: true },
+    devices,
+    invites: NONE,
+    security: { useDoor: useSecurityDoor },
+  };
   return {
     account: { useDoor: useAccountDoor, password: { useDoor: usePasswordDoor, factor: phoneSettingsFactor(bridge, config, "account") } },
-    devices: { useDoor: useDevicesDoor, factor: phoneSettingsFactor(bridge, config, "devices"), qr, End: phoneDevicesPane(bridge, true) },
+    devices: { ...devices, qr },
     invites: setting === "selfHosted" ? { useDoor: useInvitesDoor, factor: phoneSettingsFactor(bridge, config, "invites"), qr } : unavailableInvites,
     security: { useDoor: useSecurityDoor, factor: phoneSettingsFactor(bridge, config, "security"), qr },
   };

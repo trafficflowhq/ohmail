@@ -7,7 +7,8 @@
  */
 
 import type {
-  Assert, Complete, Cursor, EngineMutation, FeedView, Folder, MutationKind, OhmailView, RecordKind, ScreenerWaitingPageDTO,
+  Assert,
+  CalendarOnlyRecordKind, Complete, Cursor, EngineMutation, FeedView, Folder, MutationKind, OhmailView, RecordKind, ScreenerWaitingPageDTO,
   SensitivityFlags, SyncChange as WireSyncChange, SyncEntityType, SyncResponse as WireSyncResponse,
   TriageState as WireTriageState, WithheldMarker,
 } from "@ohmail/wire";
@@ -66,6 +67,16 @@ export const SYNC_ENTITY_TYPES = [
   "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
 ] as const satisfies readonly SyncEntityType[];
 type _SyncEntityTypesComplete = Assert<Complete<SyncEntityType, typeof SYNC_ENTITY_TYPES>>;
+
+export const CALENDAR_BOOTSTRAP_PENDING = "calendarBootstrapPending";
+export const CALENDAR_KEEPER_READY = "calendarKeeperReady";
+
+export const CALENDAR_ONLY_TYPES = ["settings", "calendar_connection", "calendar", "calendar_event"] as const;
+type _CalendarOnlyTypesComplete = Assert<Complete<CalendarOnlyRecordKind, typeof CALENDAR_ONLY_TYPES>>;
+
+export function isCalendarOnlySyncType(type: string): boolean {
+  return CALENDAR_ONLY_TYPES.some((allowed) => type === allowed);
+}
 
 /**
  * THE KINDS AN ENGINE NAMES ON EVERY FEED REQUEST unless its host names its own: the declared list

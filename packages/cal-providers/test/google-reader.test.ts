@@ -12,11 +12,27 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expandSeries, instantOf, intlZones, parseRRule, plainDate, seriesOf, wall, zoned, type CalEvent, type EventTime } from "@ohmail/cal-core";
 import { describe, expect, it } from "vitest";
+import { convertEvent } from "../src/google/convert.js";
 import { makeReader, provider } from "../src/google/index.js";
 import { MAX_RETRY_AFTER_MS } from "../src/limits.js";
 import type { ChangeItem, Connection, Credential } from "../src/port.js";
 import type { ProviderRefusal } from "../src/refusals.js";
 import { hopOf, type HttpPort } from "../src/request/index.js";
+
+it("marks default Google events independently of their copyable fields", () => {
+  const raw = {
+    id: "event", iCalUID: "event", etag: '"reviewed"', status: "confirmed",
+    start: { date: "2026-11-17" }, end: { date: "2026-11-18" }, colorId: "blue",
+  };
+  const zones = intlZones();
+  const now = Date.UTC(2026, 10, 16);
+  expect(convertEvent({ ...raw, eventType: "default" }, zones, now)).toMatchObject({
+    kind: "item", item: { googleDefaultEvent: true },
+  });
+  const imported = convertEvent({ ...raw, eventType: "fromGmail" }, zones, now);
+  expect(imported).toMatchObject({ kind: "item", item: { kind: "upsert" } });
+  if (imported.kind === "item") expect(imported.item).not.toHaveProperty("googleDefaultEvent");
+});
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const recorded = (name: string): any => JSON.parse(readFileSync(join(HERE, "support", "fixtures", "google", `${name}.json`), "utf8")).response.body;

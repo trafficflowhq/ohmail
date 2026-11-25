@@ -25,14 +25,21 @@ export function ReplyPanel({
   run,
   reply,
   more,
+  folded,
+  onFold,
 }: {
   readonly run: ReplyRunState | null;
   readonly reply: readonly PanelVerb[] | null;
   readonly more?: ComponentProps<typeof ActionPanel>["more"];
+  readonly folded?: readonly string[];
+  readonly onFold?: ComponentProps<typeof ActionPanel>["onFold"];
 }) {
   const reader = useText("reader");
   const t = useText("later");
-  if (run === null) return <ActionPanel label={reader("panel")} items={reply ?? []} more={more} />;
+  if (run === null)
+    return (
+      <ActionPanel label={reader("panel")} items={reply ?? []} more={more} folded={folded} onFold={onFold} />
+    );
   const send = reply?.find(({ id }) => id === "send");
   const items: PanelVerb[] = [
     ...(send ? [{ ...send, label: t("run.done"), rank: 0, wordOrder: 1 }] : []),

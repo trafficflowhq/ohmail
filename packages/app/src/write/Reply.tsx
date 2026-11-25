@@ -12,7 +12,7 @@ import { inlineForwardKey, SEND_IN_FLIGHT_PHASES } from "@ohmail/app-logic/writi
 import { letterCap } from "@ohmail/app-logic/write/files";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { pageModal } from "@ohmail/app-logic/session/modal-gate";
-import { useLandInView } from "./reply-landing.js";
+import { useReplyViewport } from "./reply-landing.js";
 import { useText, type Text } from "../text/index.js";
 import { useWriteBeside, useWriting } from "./above.js";
 import { People } from "./head/People.js";
@@ -160,7 +160,7 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
     notice !== null ||
     forwarded.refusal !== null ||
     files.note !== null;
-  useLandInView(sheet);
+  useReplyViewport(sheet);
   return (
     <>
       <Composer

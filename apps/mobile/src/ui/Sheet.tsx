@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
+import { mailSize } from "../theme/mail";
 import { useKeyboardLift } from "./keyboard-lift";
 import { useReaderCover } from "./reader-cover";
 import { creaseAcross, separatingVerticalHinge, usePosture } from "./posture";
@@ -29,7 +30,7 @@ import { Icon, type IconName } from "./Icon";
  * rect comes from the pair's own split (`detailPaneRect`); over a HORIZONTAL hinge (tabletop) it
  * stays inside the lower half. One pane keeps the thumb sheet. Shared with the composer's modal.
  */
-export function useSheetPanelBounds(): ViewStyle {
+export function useSheetPanelBounds(floatOnPhone = false): ViewStyle {
   const { width: w, height: h } = useWindowDimensions();
   const posture = usePosture();
   const insets = useSafeAreaInsets();
@@ -38,6 +39,13 @@ export function useSheetPanelBounds(): ViewStyle {
   const pane = detailPaneRect(posture, plan, { w, h }, insets);
   /* One pane hands no hinge (a flat fold has no width), except a book fold, which a sheet keeps off. */
   const hinge = posture.panes === 2 || separatingVerticalHinge(posture.fold, posture.hinge) !== null ? posture.hinge : null;
+  if (floatOnPhone && pane === null && hinge === null) {
+    return sheetPanelBounds(w, h, insets.top, pane, hinge, {
+      gutter: plan.gutter,
+      radius: t.radius.panel,
+      inset: mailSize.inset + Math.max(insets.left, insets.right),
+    });
+  }
   return sheetPanelBounds(w, h, insets.top, pane, hinge, { gutter: plan.gutter, radius: t.radius.panel });
 }
 
@@ -87,7 +95,7 @@ export function Sheet({
   const t = useTheme();
   const keyboardLift = useKeyboardLift();
   const insets = useSafeAreaInsets();
-  const bounds = useSheetPanelBounds();
+  const bounds = useSheetPanelBounds(t.mail === true);
   const room = useSheetRoom(keyboardLift);
   const modalKey = useModalKey();
   /* A shown sheet stands over the reader: nothing under it is read (`reader-cover.ts`). */

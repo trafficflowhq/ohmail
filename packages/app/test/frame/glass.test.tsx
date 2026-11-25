@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Frame } from "../../src/frame/Frame.js";
 import type { PlaceEntry } from "../../src/frame/contract.js";
 import type {
@@ -33,6 +33,7 @@ const ohbox: PlaceEntry = {
   rail: { group: "main", icon: "ohbox", label: "title" },
   panes: { kind: "columns", List: () => <p>the list</p>, Reading: () => <p>a letter</p> },
 };
+const screener: PlaceEntry = { ...ohbox, id: "screener", body: "screener" };
 
 /** A back the test presses: the newest handler first, as the platform asks them. */
 function fakeBack(): BackSignal & { press(): boolean } {
@@ -55,7 +56,7 @@ function mount(signals: Partial<HostSignals>, room: "phone" | "fold" = "phone", 
     engine: NO_ENGINE,
     service: "self",
     scope: "acct-1",
-    places: { ohbox },
+    places: { ohbox, screener },
     window: fakeWindow(room),
     address,
   }).host;
@@ -121,6 +122,23 @@ describe("the glass's foot", () => {
 });
 
 describe("the system's back", () => {
+  it("dismisses the open Screener sender before letting the app leave", () => {
+    const back = fakeBack();
+    const { address } = mount({ back }, "phone", "#/screener?sender=open");
+    const write = vi.spyOn(address, "write");
+    let took = false;
+    act(() => {
+      took = back.press();
+    });
+    expect(took).toBe(true);
+    expect(address.read()).toBe("#/screener");
+    expect(write).toHaveBeenCalledWith("#/screener", "replace", "dismiss-preview");
+    act(() => {
+      took = back.press();
+    });
+    expect(took).toBe(false);
+  });
+
   it("closes the open letter, and with nothing open lets the app leave", () => {
     const back = fakeBack();
     const { address } = mount({ back }, "phone", "#/ohbox/m/a1");

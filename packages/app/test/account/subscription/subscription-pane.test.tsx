@@ -347,8 +347,16 @@ describe("the plans, where the server answers them", () => {
   it("subscribes to the plan and interval selected after a trial ends", () => {
     const manage = vi.fn();
     const model = withStanding({ state: "grace", until: null }, STATES.trial.model);
-    if (model.plans.at !== "read") throw new Error("the state holds the read");
-    drawn({ ...model, plans: { ...model.plans, interval: "year" }, manage });
+    if (model.plans.at !== "read" || model.plans.answer.kind !== "plans")
+      throw new Error("the state holds the plans");
+    const plans = model.plans.answer.plans.map((line) =>
+      line.plan === "pro" ? { ...line, price: { ...line.price, year: "$290" } } : line,
+    );
+    drawn({
+      ...model,
+      plans: { at: "read", interval: "year", answer: { ...model.plans.answer, plans } },
+      manage,
+    });
     fireEvent.click(screen.getByRole("radio", { name: /^Pro/ }));
     fireEvent.click(screen.getByRole("button", { name: said("subscribeTo", { plan: "pro" }) }));
     expect(manage).toHaveBeenCalledWith({ plan: "pro", interval: "year" });
@@ -379,12 +387,12 @@ describe("the plans, where the server answers them", () => {
     fireEvent.click(screen.getByRole("button", { name: said("subscribe") }));
     expect(manage).toHaveBeenLastCalledWith({ interval: "month" });
     cleanup();
-    // The press carries the interval the prices are shown for: by the year where the year was chosen.
+    // After a trial ends, the press carries the selected billing interval.
     const byYear = (model: SubscriptionModel): SubscriptionModel => {
       if (model.plans.at !== "read") throw new Error("the state holds the read");
       return { ...model, plans: { ...model.plans, interval: "year" }, manage };
     };
-    drawn(byYear(STATES.trial.model));
+    drawn(byYear(withStanding({ state: "trialEnded" }, STATES.trial.model)));
     fireEvent.click(screen.getByRole("button", { name: said("subscribeTo", { plan: "plus" }) }));
     expect(manage).toHaveBeenLastCalledWith({ plan: "plus", interval: "year" });
     cleanup();

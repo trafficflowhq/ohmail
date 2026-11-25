@@ -52,6 +52,10 @@ export interface SwitchDoor {
   store(): Promise<Requests["switch.store"]["answer"] | { readonly refused: Refused }>;
 }
 
+const MAIL_PAGE_KINDS = new Set<Kind>([
+  "phone.diagnostics", "phone.organize", "phone.mailbox", "phone.name", "phone.wake", "oldCopy.page", "oldCopy.done",
+]);
+
 const NOT_READY = { refused: "notReady" } as const;
 
 type Answer<K extends Kind> = Requests[K]["answer"] | { readonly refused: Refused };
@@ -105,6 +109,7 @@ export class BridgeHost {
       post: (epoch, text) => this.deps.post(epoch, text),
       read: (raw) => readRequest(raw, this.deps.app ?? null, PHONE_DIAGNOSTIC_ENTITIES.length),
       run: async (req, signal): Promise<Ran> => {
+        if (this.deps.app === "ohcal" && MAIL_PAGE_KINDS.has(req.kind)) return NOT_READY;
         const answer: object = await (this.handlers[req.kind] as Handler<Kind>)(req, signal);
         return "refused" in answer ? (answer as { readonly refused: Refused }) : { answer };
       },

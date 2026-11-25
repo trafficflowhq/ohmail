@@ -137,7 +137,7 @@ describe("selectors over the fixture mirror", () => {
     expect(seg.waiting[0]?.held).toHaveLength(2);
   });
 
-  it("triage piles join message-backed states with orphan demo items", async () => {
+  it("joins demo triage states to the messages in each pile", async () => {
     const r = (await demoEngine()).read();
     const piles = triagePiles(r);
     expect(piles.replyLater.map((e) => e.messageId)).toEqual(["nadja", "jonas"]);
@@ -148,8 +148,13 @@ describe("selectors over the fixture mirror", () => {
     expect(piles.replyLater[0]?.subtitle).toBe(fx.ohbox.at(-2)!.subject);
     expect(piles.replyLater[0]?.preview).toBe(fx.ohbox.at(-2)!.snippet);
     expect(piles.setAside.map((e) => e.title)).toEqual(["Alpenbahn"]);
+    expect(piles.setAside.map((e) => e.messageId)).toEqual(["alpenbahn"]);
     expect(piles.resurface).toEqual([
-      expect.objectContaining({ title: "Domain renewal lichtgrat.example", resurfaceAt: "Fri 09:00" }),
+      expect.objectContaining({
+        messageId: "domain-renewal",
+        title: "Lichtgrat Studio",
+        resurfaceAt: new Date(Date.UTC(2026, 6, 31, 9)).toISOString(),
+      }),
     ]);
   });
 
@@ -170,11 +175,10 @@ describe("selectors over the fixture mirror", () => {
     const unreadIn = (view: "ohbox" | "reads" | "receipts"): number =>
       messagesIn(r, FOLDER_OF_VIEW[view]).filter((m) => m.unread).length;
     expect(unreadIn("ohbox")).toBe(fx.counts.ohboxUnread); // 3
-    // 13 — every mail is a real row. This counts the FOLDER, parked mail included, which is why
-    // it is two more than the eleven `ohboxView` renders; see `fixtures/data.ts#counts`.
+    // This counts the folder, including the three letters in Answer Later and Resurface.
     const ohboxTotal = messagesIn(r, FOLDER_OF_VIEW.ohbox).length;
     expect(ohboxTotal).toBe(fx.counts.ohboxTotal);
-    expect(ohboxTotal).toBe(13);
+    expect(ohboxTotal).toBe(14);
     expect(unreadIn("reads")).toBe(fx.counts.reads); // 12
     expect(unreadIn("receipts")).toBe(fx.counts.receipts); // 7
     expect(screenerSegments(r, DEMO_NOW).waiting).toHaveLength(fx.counts.screenerWaiting); // 3

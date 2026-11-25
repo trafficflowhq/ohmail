@@ -22,7 +22,7 @@ import { PANE_FACTS, paneOf } from "../../settings/facts.js";
 import { accountBodies } from "../bodies.js";
 import type { FactorSlot } from "../contract.js";
 import { useWayOut, WayOutPane, type WayOutDoor } from "../way-out/index.js";
-import { AccountPane } from "./AccountPane.js";
+import { AccountPane, type AccountPaneProps } from "./AccountPane.js";
 import type { AccountDoor } from "./model.js";
 import type { PasswordDoor } from "./password.js";
 import { useAccount } from "./use-account.js";
@@ -36,6 +36,8 @@ interface SessionParts {
    * no password here, and only the sign-out alone can be drawn.
    */
   readonly password: { readonly useDoor: () => PasswordDoor; readonly factor: FactorSlot } | None;
+  /** The signed-in identity and ways out, for a host without a password change. */
+  readonly identityOnly?: true;
 }
 
 type BrowserParts = { readonly useBrowserDoor: () => WayOutDoor };
@@ -43,14 +45,15 @@ type BrowserParts = { readonly useBrowserDoor: () => WayOutDoor };
 /** The session controls or the browser action this host supplies to the Account section. */
 export type AccountPaneParts = SessionParts | BrowserParts;
 
-type Whole = SessionParts & { readonly password: Exclude<SessionParts["password"], None> };
+type AccountDetails = Extract<AccountPaneProps, { body: "pane" }>;
+type PasswordPart = Exclude<SessionParts["password"], None>;
 
 /** The body these parts can draw for this host's answer, or null: the section is then not listed. */
 function paneBodyOf(host: HostContract, parts: AccountPaneParts): "pane" | "signOutOnly" | "card" | null {
   const asked = accountBodies(host).account;
   if ("useBrowserDoor" in parts) return asked === "card" ? asked : null;
   if (asked === "signOutOnly") return asked;
-  return asked === "pane" && parts.password !== NONE ? asked : null;
+  return asked === "pane" && (parts.password !== NONE || parts.identityOnly) ? asked : null;
 }
 
 function WholePane({
@@ -59,24 +62,31 @@ function WholePane({
   onPhone,
   sheet,
 }: {
-  readonly parts: Whole;
+  readonly parts: SessionParts;
   readonly onPhone: boolean;
   readonly service: HostCapabilities["service"];
   readonly sheet?: PaneSheet;
 }): ReactNode {
+  const { host } = useFrame();
   const model = useAccount(parts.useDoor(), "pane");
-  const password = usePassword(parts.password.useDoor());
-  return (
-    <AccountPane
-      body="pane"
-      sheet={sheet}
-      service={service}
-      onPhone={onPhone}
-      model={model}
-      password={password}
-      factor={parts.password.factor}
-    />
+  const pane = {
+    body: "pane",
+    sheet,
+    service,
+    onPhone,
+    sharedCalendarAccount: onPhone && host.capabilities.products === "calendar",
+    model,
+  } satisfies AccountDetails;
+  return parts.password === NONE ? (
+    <AccountPane {...pane} />
+  ) : (
+    <AccountWithPassword pane={pane} part={parts.password} />
   );
+}
+
+function AccountWithPassword({ pane, part }: { pane: AccountDetails; part: PasswordPart }) {
+  const password = usePassword(part.useDoor());
+  return <AccountPane {...pane} password={password} factor={part.factor} />;
 }
 
 function SignOutOnly({ parts }: { readonly parts: SessionParts }): ReactNode {
@@ -106,10 +116,10 @@ export function accountPane(parts: AccountPaneParts): SettingsPane {
   function Body({ sheet }: { readonly sheet?: PaneSheet } = {}): ReactNode {
     const { host } = useFrame();
     const body = paneBodyOf(host, parts);
-    if (body === "pane" && "password" in parts && parts.password !== NONE) {
+    if (body === "pane" && "password" in parts) {
       return (
         <WholePane
-          parts={parts as Whole}
+          parts={parts}
           service={host.capabilities.service}
           onPhone={host.device.build.surface === "phone"}
           sheet={sheet}

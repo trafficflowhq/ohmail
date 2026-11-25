@@ -1,7 +1,7 @@
-import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, like, ne, sql } from "drizzle-orm";
 import {
   accountSettings, calAttendees, calCalendars, calConnections, calEvents, invitationStanding, mailboxes,
-  messageInvitations, messages, sameAddress,
+  drafts, messageInvitations, messages, outboundSends, sameAddress,
 } from "@trafficflow/db";
 import { ownOrganizerAddresses } from "@trafficflow/db/calendar";
 import { invitationCounterText } from "@trafficflow/core/mail";
@@ -11,7 +11,7 @@ import { bridgeTx, type ServiceContext } from "../context.js";
 import { draftsService } from "../drafts-service.js";
 import { ServiceError } from "../errors.js";
 import { requireUuid } from "../ids.js";
-import { invitationProposalKey } from "../invitation-answer-draft.js";
+import { invitationProposalKey, INVITATION_PROPOSAL_MARK } from "../invitation-answer-draft.js";
 import { cancelled, notAnswerable, readInvitation, refuseWithdrawnKey, type InvitationAnswerDeps } from "../invitation-answer-service.js";
 import { sendService, type SendResult } from "../send-service.js";
 import { storedOccurrence } from "./event-range.js";
@@ -155,12 +155,20 @@ function proposalWords(start: CalendarTime, end: CalendarTime, keep: boolean, lo
 
 /** A proposal is mail only. It cannot create or queue a provider write. */
 export async function sendInvitationProposal(
-  ctx: ServiceContext, raw: unknown, key: string, deps: InvitationAnswerDeps,
+  ctx: ServiceContext, raw: unknown, key: string, deps: InvitationAnswerDeps, options: { recovering?: boolean } = {},
 ): Promise<Pick<SendResult, "status" | "seq">> {
   if (typeof raw !== "object" || raw === null) throw notAnswerable("This is not a proposal.");
   const act = raw as CalendarProposalAct;
   if (act.kind !== "calendar_event_propose" && act.kind !== "calendar_proposal_keep") {
     throw notAnswerable("This is not a proposal.");
+  }
+  if (options.recovering && act.kind === "calendar_event_propose") {
+    // An answered send can predate a changed or now-missing calendar event. Resolve it first.
+    const [prior] = await bridgeTx(ctx.db).select({ status: outboundSends.status }).from(outboundSends)
+      .innerJoin(drafts, and(eq(drafts.id, outboundSends.draftId), eq(drafts.accountId, outboundSends.accountId)))
+      .where(and(eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.idempotencyKey, key),
+        like(drafts.workflowDedupKey, INVITATION_PROPOSAL_MARK + "%"))).limit(1);
+    if (prior?.status === "sent") return { status: "sent", seq: null };
   }
   await requireCalendarOn(ctx);
   await refuseWithdrawnKey(ctx, key);

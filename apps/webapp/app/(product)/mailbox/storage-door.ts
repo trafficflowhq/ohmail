@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { Answer, StorageDoor, StorageFigures, StoragePlan, StorageWord } from "@ohmail/app/account";
+import type { StorageAddon } from "@ohmail/app/account/storage";
 import { ApiError, account, accessFeedFor, accessStorage, apiConfigured, onAccessFeed } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 import { useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
@@ -10,6 +11,7 @@ import {
   estimatedEmails, formatStorageBytes, formatStoragePrice, storageDayName, storageFitExtraBytes, storageFitIsChange,
   storageMonthName, storagePercent, storageRefillOf, storageRoomLine, type StorageFacts, type StorageOffer,
 } from "../../shell/storage-state";
+import { activeFormatZone } from "../../shell/locale";
 import { leaveForManagePage } from "./manage-navigation";
 
 /** The account's mailboxes as the shell holds them: their names for the table, and whether the refill runs. */
@@ -186,11 +188,13 @@ export function storageFiguresOf(facts: StorageFacts, say: StorageSaying): Stora
 }
 
 /** The change's answer from the server's: an address leaves; none, or any refusal but the two read here, is "failed". */
-async function changeOver(lang: "de" | "en", expectedOwner?: string | null): Promise<Answer<"left", StorageWord>> {
+async function changeOver(
+  lang: "de" | "en", expectedOwner: string | null | undefined, addon?: StorageAddon,
+): Promise<Answer<"left", StorageWord>> {
   try {
-    const url = (await account.manageLinkChange({ lang }, expectedOwner))?.url;
+    const url = (await account.manageLinkChange({ lang, ...(addon ? { addon } : {}) }, expectedOwner))?.url;
     if (typeof url === "string" && url.length > 0) {
-      leaveForManagePage(url);
+      leaveForManagePage(url, activeFormatZone());
       return { ok: true, value: "left" };
     }
     return { ok: false, word: "failed" };
@@ -206,7 +210,7 @@ async function changeOver(lang: "de" | "en", expectedOwner?: string | null): Pro
  * THE WEB'S STORAGE DOOR. The figures are the access answer this tab already holds for the account the shell hands
  * in (`host.session.scope`), never one read from the browser's jar, and nothing is asked to draw them. The switch
  * writes `PATCH /account/storage {mail}` and, once taken, asks the access answer fresh. The change mints the page
- * that may change the plan (`POST /account/manage-link/change {lang}`) and leaves for it in this tab with no
+ * that may change the plan (`POST /account/manage-link/change`) and leaves for it in this tab with no
  * referrer: the address never leaves this file.
  */
 export function useStorageDoor(scope: string | null, owner: string | null | undefined = scope ?? undefined): StorageDoor {
@@ -239,6 +243,6 @@ export function useStorageDoor(scope: string | null, owner: string | null | unde
     });
     return true;
   }, [owner]);
-  const change = useCallback(() => changeOver(lang, owner), [lang, owner]);
+  const change = useCallback((addon?: StorageAddon) => changeOver(lang, owner, addon), [lang, owner]);
   return useMemo(() => ({ figures: signal, setMail, change }), [signal, setMail, change]);
 }

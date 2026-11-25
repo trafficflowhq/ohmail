@@ -218,7 +218,7 @@ describe("the sentences", () => {
   });
 
   it("are in both catalogues, and the German deck is what a German reader gets", () => {
-    for (const key of ["awayTitle", "awayOn", "awayNever", "awayScopeElsewhere", "awayWhereThisPhone"] as const) {
+    for (const key of ["awayTitle", "awayOn", "awayNever", "awayAudienceLabel", "awayPilesLabel", "awayThrottleLabel", "awayWhereThisPhone"] as const) {
       expect(DECKS.de[key], `${key} is missing from the German deck`).toBeTruthy();
       expect(DECKS.de[key]).not.toBe(DECKS.en[key]);
     }

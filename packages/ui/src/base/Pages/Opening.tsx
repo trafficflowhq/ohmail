@@ -16,8 +16,10 @@ export type OpeningProps =
       kind: "web";
       label?: string;
       action?: ReactNode;
-      /** The server's own fallback, revealed even if the page's scripts never run. */
+      /** Delay the server's Reload link while the page's scripts have time to run. */
       late?: boolean;
+      /** Show the opening status immediately while the Reload link is delayed. */
+      immediate?: boolean;
     };
 
 /* The shapes: how wide each bar is, in parts of a hundred. A menu's groups. */
@@ -28,7 +30,11 @@ export function Opening(props: OpeningProps) {
   if (props.kind === "web") {
     return (
       <main className="oh-opening" data-kind="web">
-        <div className="oh-opening-web" data-late={props.late ? "" : undefined}>
+        <div
+          className="oh-opening-web"
+          data-late={props.late ? "" : undefined}
+          data-immediate={props.immediate ? "" : undefined}
+        >
           <p className="oh-display oh-opening-title" role="status">
             {props.label ? <EndDot kind="hot">{props.label}</EndDot> : null}
           </p>
@@ -73,27 +79,52 @@ function OpeningShape({ kind, status }: Exclude<OpeningProps, { kind: "web" }>) 
     );
   return (
     <div className="oh-opening" data-kind="window">
-      <div className="oh-opening-menu" aria-hidden="true">
-        <i className="oh-opening-pill" data-as="switch" />
-        <i className="oh-opening-pill" data-as="write" />
-        {MENU.map((group) => (
-          <span key={group.join("-")} className="oh-opening-group">
-            {group.map((part) => (
-              <span key={part} className="oh-opening-item">
-                <i className="oh-opening-sign" />
-                <Bar part={part} />
-              </span>
-            ))}
-          </span>
-        ))}
-      </div>
+      <OpeningMenu />
       <div className="oh-opening-foot">{line}</div>
       <div className="oh-opening-sheet">
-        <div className="oh-opening-head" aria-hidden="true">
-          <Bar as="title" />
-        </div>
+        <OpeningHead />
         {rows}
       </div>
+    </div>
+  );
+}
+
+/** The menu as shape while its mailbox and places are still unknown. */
+export function OpeningMenu({
+  icons = false,
+  hideSwitch = false,
+}: {
+  icons?: boolean;
+  hideSwitch?: boolean;
+}) {
+  return (
+    <div className="oh-opening-menu" data-icons={icons ? "" : undefined} aria-hidden="true">
+      {hideSwitch ? null : <OpeningSwitchShape />}
+      <i className="oh-opening-pill" data-as="write" />
+      {MENU.map((group) => (
+        <span key={group.join("-")} className="oh-opening-group">
+          {group.map((part) => (
+            <span key={part} className="oh-opening-item">
+              <i className="oh-opening-sign" />
+              <Bar part={part} />
+            </span>
+          ))}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** The switcher's place in the rail while its products are still unknown. */
+export function OpeningSwitchShape() {
+  return <i className="oh-opening-pill" data-as="switch" aria-hidden="true" />;
+}
+
+/** The opening list's title slot. */
+export function OpeningHead() {
+  return (
+    <div className="oh-opening-head" aria-hidden="true">
+      <Bar as="title" />
     </div>
   );
 }

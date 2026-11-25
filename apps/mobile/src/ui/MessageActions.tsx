@@ -64,6 +64,7 @@ import {
   type PressForecast,
   connectionSaid,
   type FailedSendCopy,
+  type DraftKeep,
   ruleMatchKey,
   isSharedProviderDomain,
 } from "../state/live";
@@ -74,7 +75,7 @@ import { GlassActionBar, GlassPill, nextRoom, type BarVerbSpec } from "./glass";
 import { mailSize } from "../theme/mail";
 import type { RailAction } from "./glass/GlassRail";
 import { useAppWindow, usePosture } from "./posture";
-import { readerBarClearance, scaffoldPlan } from "./scaffold/plan";
+import { readerBarClearance, scaffoldPlan, screenHingeClearance, screenSideInsets } from "./scaffold/plan";
 import { publishReaderRail } from "./reader-rail";
 import {
   readerPaneWidth,
@@ -295,6 +296,8 @@ export function MessageActions({
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const mode = useReaderVerbMode(inPane);
   const barRail = readerBarClearance(plan, inPane);
+  const barSide = screenSideInsets(insets, inPane);
+  const barHinge = screenHingeClearance(posture, plan, !inPane, inPane, useAppWindow().width);
   /* This bar stands at the foot, so it reports how far up it reaches and the toast clears it
      (`bottom-chrome.ts`); on the rail postures nothing stands here and the slot says so. */
   const standing = useBottomChromeSlot("reader-bar");
@@ -522,10 +525,13 @@ export function MessageActions({
           setCompactRoom((r) => nextRoom(r, width));
         }}
         style={{
+          position: "absolute",
+          left: Math.max(barSide.left + barRail.left, barHinge.left),
+          right: Math.max(barSide.right + barRail.right, barHinge.right),
+          bottom: 0,
           paddingHorizontal: BAR.outerPadH,
           paddingBottom: Math.max(insets.bottom, t.mail ? 16 : 8),
-          alignSelf: t.mail ? "flex-start" : "stretch",
-          width: t.mail ? "100%" : undefined,
+          zIndex: t.zLayer.tabBar,
         }}
       >
       {/* The hidden copy every width is read from — the same capsules, absolute and invisible,
@@ -1292,6 +1298,11 @@ export function ComposeSheet({
   /* EVERY ROAD OUT IS A CLOSE: `leave` marks it. An unmount that did not come through one keeps what
      a close would have kept (`unmountKeep`), so nothing typed goes with a screen that went. */
   const closed = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const leave = () => {
     closed.current = true;
     onClose();
@@ -1420,8 +1431,7 @@ export function ComposeSheet({
   /** TRUE after a press on a Send that lacks only content — cleared the moment content arrives. */
   const [needNote, setNeedNote] = useState(false);
   /**
-   * WHY THE LAST CLOSE DID NOT CLOSE — the keep failed, or the files cannot be kept. Said in place;
-   * the next close discards (`compose-keep.ts`). Any edit takes it back, so new text is kept again.
+   * Why the last close stayed. A second close retries a failed save; only Discard drops words.
    */
   const [keepNote, setKeepNote] = useState<"failed" | "files" | "tooLong" | null>(null);
   /** The files the last close named as past what this phone keeps with drafts. */
@@ -1606,7 +1616,7 @@ export function ComposeSheet({
   /** The quiet save of a draft opened here, when one is owed; also run as the app leaves the foreground. */
   const quietSave = useRef<() => void>(() => undefined);
   quietSave.current = () => {
-    if (discarding.current || !bound || draftId === null || phase !== "idle" || saved.current === onScreen || tooLong) return;
+    if (keeping.current || discarding.current || !bound || draftId === null || phase !== "idle" || saved.current === onScreen || tooLong) return;
     if (savingFor.current === onScreen) return;
     const snapshot = onScreen;
     savingFor.current = snapshot;
@@ -1830,16 +1840,44 @@ export function ComposeSheet({
     void send(at.toISOString());
   };
 
+  const keepRequest = (files: number, dropped: number): DraftKeep => {
+    const target = latestDraft.current;
+    keeper?.markKeep();
+    return {
+      mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
+      ...(fresh ? copiesToKeep(copies) : {}), subject, body, ...rich, files, dropped, draftId: target,
+      quiet: target !== null, ...keptOnRow,
+      revision: baseFor(base.current, target), waited: waitedFor(base.current, target),
+      row: (r) => {
+        rebase(r);
+        keeper?.keepAnswered(r, onScreen);
+        if (r.draftId !== null && r.draftId !== latestDraft.current) {
+          latestDraft.current = r.draftId;
+          if (mounted.current) setDraftId(r.draftId);
+        }
+      },
+    };
+  };
+
   /**
    * EVERY ROAD OUT OF THIS SHEET — the button, the scrim, the back gesture. Over a queued send
    * the close KEEPS it: the send stands under its one key and goes when the network is back, and
    * the sheet's caption is said as it goes. Only {@link cancelSend} withdraws.
    */
+  const latestClose = useRef<{ words: string; retry: () => void } | null>(null);
   const closeComposer = () => {
-    if (discarding.current) return;
+    if (discarding.current || keeping.current) return;
     if (discardAsked) { setDiscardAsked(false); return; }
     // An open suggestion list is the inner state Back steps out of first.
     if (stepBack(suggestionsBack)) return;
+    if (savesOutstanding.current.size > 0) {
+      keeping.current = true;
+      void Promise.all(savesOutstanding.current).then(() => {
+        keeping.current = false;
+        latestClose.current?.retry();
+      });
+      return;
+    }
     const way = cancelAct({ road: "close", phase, key: queuedKey, alreadySent, cancelOwed: cancelUnreachable });
     if (way === "keepSend") {
       w.actions.leaveSend(queuedKey!);
@@ -1861,17 +1899,18 @@ export function ComposeSheet({
       /* A bound draft keeps exactly what is on screen, emptied included; unchanged, it just closes,
          its files staying with it on this phone. After a Cancel the server could not answer the words
          are kept too, except standalone, whose engine already wrote them into a row. */
-      const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body, files });
+      const target = latestDraft.current;
+      const worth = target !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body, files });
       const cancelOwed = cancelUnreachable && !alreadySent && !w.standalone;
       const over = dropped > 0 ? [] : keeper?.overKeepLimit() ?? [];
       const act = keepAct({
-        phase, worth, filesOver: over.length, armed: keepNote !== null && dropped === 0, tooLong, cancelOwed,
+        phase, worth, filesOver: over.length, armed: keepNote === "files" && dropped === 0, tooLong, cancelOwed,
       });
       if (act === "close") {
         // Nothing worth a row, or discarded: the letter goes; a bound draft's or a send's stays.
-        if (phase === "idle" && !(bound && draftId !== null) && !cancelOwed) keeper?.drop();
+        if (phase === "idle" && target === null && !cancelOwed) keeper?.drop();
         else keeper?.release();
-        leave();
+        if (mounted.current) leave();
         return;
       }
       if (act === "tooLong") {
@@ -1883,30 +1922,36 @@ export function ComposeSheet({
         setKeepNote("files");
         return;
       }
-      if (keeping.current) return;
       keeping.current = true;
-      keeper?.markKeep();
       void (async () => {
-        /* A draft opened from Drafts is kept where it was, unannounced: its keep's Undo would
-           discard a row that existed before this sheet. */
-        const kept = await w.actions.draftKeep({
-          mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-          ...(fresh ? copiesToKeep(copies) : {}), subject, body, ...rich, files, dropped, draftId, ...(draft !== undefined ? { quiet: true } : {}),
-          ...keptOnRow,
-          revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId),
-          rebind: setDraftId, row: (r) => { rebase(r); keeper?.keepAnswered(r); },
-        });
+        const kept = await autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
+          ...keepRequest(files, dropped),
+        }).catch(() => "refused" as const));
         keeping.current = false;
-        if (kept !== "kept") keeper?.keepAnswered(null);
         if (kept === "kept") {
+          const latest = latestClose.current;
+          if (latest && latest.words !== onScreen) {
+            if (latestDraft.current !== null) {
+              latest.retry();
+              return;
+            }
+            // A queued create will bind the device letter on reconnect and save its later edits.
+            if (keeper?.current().keep?.key == null) {
+              setKeepNote("failed");
+              return;
+            }
+          }
           keeper?.release();
-          leave();
+          if (mounted.current) leave();
+        } else {
+          keeper?.keepAnswered(null);
+          setKeepNote(kept === "tooLong" ? "tooLong" : "failed");
         }
-        else setKeepNote(kept === "tooLong" ? "tooLong" : "failed");
       })();
-      return;
     }
   };
+
+  latestClose.current = { words: onScreen, retry: closeComposer };
 
   /**
    * CANCEL SEND, the one way to withdraw a queued send. A withdrawal the engine refuses because the
@@ -1941,24 +1986,23 @@ export function ComposeSheet({
 
   atUnmount.current = () => {
     if (discarding.current) return;
-    // Nobody is left to ask about files past the phone's limit: the keep goes without them.
-    keeper?.dropOverLimit();
-    const files = keeper?.current().files.length ?? 0;
-    const dropped = 0;
-    const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body, files });
-    if (unmountKeep({ phase, worth, keeping: keeping.current, tooLong }) !== "keep") {
+    const keep = () => {
+      // Nobody is left to ask about files past the phone's limit: the keep goes without them.
+      keeper?.dropOverLimit();
+      const files = keeper?.current().files.length ?? 0;
+      const target = latestDraft.current;
+      const worth = target !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body, files });
+      if (unmountKeep({ phase, worth, keeping: keeping.current, tooLong }) === "keep") {
+        void w.actions.draftKeep({ ...keepRequest(files, 0), quiet: true }).then((kept) => {
+          if (kept !== "kept") keeper?.keepAnswered(null);
+        });
+      }
       keeper?.release();
-      return;
-    }
-    keeper?.markKeep();
-    /* Answered after the sheet is gone; a keep that never answers is the next launch's to settle. */
-    void w.actions.draftKeep({
-      mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-      ...(fresh ? copiesToKeep(copies) : {}), subject, body, ...rich, files, dropped, draftId, quiet: true, ...keptOnRow,
-      revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId),
-      rebind: setDraftId, row: (r) => { rebase(r); keeper?.keepAnswered(r); },
-    });
-    keeper?.release();
+    };
+    if (!keeping.current && savesOutstanding.current.size > 0) {
+      keeper?.flush();
+      void Promise.all(savesOutstanding.current).then(keep);
+    } else keep();
   };
 
   /* OVER A LETTER SENT ELSEWHERE A PRESS IS ANSWERED IN WORDS; only the offer sends, and it sends
@@ -1966,6 +2010,7 @@ export function ComposeSheet({
   const sendAsNew = useRef(false);
 
   const send = async (sendAt: string | null = null, andDone = false) => {
+    if (keeping.current) return;
     if (goneNote !== null && !sendAsNew.current) { setFailNote(goneNote); return; }
     // The picker closes the moment ANY send is dispatched — a panel left standing over a
     // message that is already on its way offers rows for an act that may no longer happen.
@@ -2170,13 +2215,17 @@ export function ComposeSheet({
       {paperEditor ? fromAddress : Copy.composeFrom(fromAddress)}
     </Txt>
   );
+  const discardButton = (
+    <Button label={Copy.draftsDiscard} icon="trash" variant="quiet"
+      onPress={() => { setDiscardRefused(null); setDiscardAsked(true); }} />
+  );
   const closeButton = cancelSendOffered({ phase, key: queuedKey, alreadySent }) ? (
     <Button label={Copy.cancelSend} variant="quiet" onPress={cancelSend} style={{ marginRight: "auto" }} />
   ) : held.close === "close" ? (
     /* Over a held send the close leaves the message in Drafts: Close, not Cancel. */
     <Button label={Copy.replyUnverifiedClose} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
   ) : fresh && paperEditor && phase === "idle" ? (
-    <Button label={Copy.draftsDiscard} icon="trash" variant="quiet" onPress={() => { setDiscardRefused(null); setDiscardAsked(true); }} />
+    discardButton
   ) : (
     <Button label={Copy.replyCancel} icon={inline ? "x" : undefined} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
   );
@@ -2874,6 +2923,8 @@ export function ComposeSheet({
                 </Tap>
               ) : null}
             </> : <>{closeButton}{laterButton}{doneButton}{sendButton}</>}
+            {!discardAsked && !(fresh && paperEditor) && phase === "idle" && (keepNote === "failed" || keepNote === "tooLong")
+              ? discardButton : null}
           </View>
           {replyMenu && inline && laterOffered ? (
             <Button label={Copy.sendLater} variant="quiet" disabled={!canSend} onPress={() => { setReplyMenu(false); openLater(); }} />

@@ -108,6 +108,8 @@ export interface DoorConfig {
   readonly canPin: boolean;
   readonly facts: ShellConfig["facts"];
   readonly state: DoorState;
+  /** Scopes with a durable confirmation of account erasure. */
+  readonly erasedCalendarScopes?: readonly string[];
 }
 
 /** Where the camera stands over the page, in CSS px of the page's window. */
@@ -142,7 +144,7 @@ export type OnlyHere = "answer" | "newer" | "unsaved" | "unknown" | "none";
 export interface DoorRequests {
   readonly config: { readonly ask: Empty; readonly answer: DoorConfig };
   /** The page drew its first frame. */
-  readonly ready: { readonly ask: Empty; readonly answer: Empty };
+  readonly ready: { readonly ask: { readonly calendarPrepared?: false }; readonly answer: Empty };
   /** The way back out of the door: to the open mailbox, or to one this phone can open again. */
   readonly leave: { readonly ask: Empty; readonly answer: Empty };
   readonly sync: { readonly ask: Empty; readonly answer: Empty };
@@ -154,6 +156,7 @@ export interface DoorRequests {
       | { readonly k: "reached"; readonly address: string; readonly flavor: string; readonly apiUnder: string | null }
       | { readonly k: "refused"; readonly said: SaidRefusal };
   };
+  readonly "sign-in": { readonly ask: { readonly address: string | null }; readonly answer: Done };
   readonly "scan.start": { readonly ask: { readonly rect: Rect }; readonly answer: Camera };
   readonly "scan.move": { readonly ask: { readonly rect: Rect }; readonly answer: Camera };
   readonly "scan.stop": { readonly ask: Empty; readonly answer: Empty };
@@ -250,11 +253,12 @@ const isOpenInput = (v: unknown): boolean =>
 const none = (): boolean => true;
 const FIELDS: { readonly [K in DoorKind]: (m: Record<string, unknown>) => boolean } = {
   config: none,
-  ready: none,
+  ready: (m) => m.calendarPrepared === undefined || m.calendarPrepared === false,
   leave: none,
   sync: none,
   disconnect: none,
   "server.ask": (m) => isStr(m.address, 2048),
+  "sign-in": (m) => m.address === null || isStr(m.address, 2048),
   "scan.start": (m) => isRect(m.rect),
   "scan.move": (m) => isRect(m.rect),
   "scan.stop": none,

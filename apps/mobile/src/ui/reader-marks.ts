@@ -192,12 +192,7 @@ export function openedBodyFinal(
   return m.bodyState !== "full" || !frame.framed || frame.final;
 }
 
-/**
- * WHAT OF THE BOTTOM CHROME STANDS OVER THE READER'S SCROLL VIEW: the pinned bar floats over it
- * (`bar`); the compact bar stands in the column below it and the rail at its side, so the scroll
- * view already ends above them. Taking the compact bar off again ended the read zone about 76dp
- * above the bar (a top on screen just over it did not count).
- */
+/** Both bottom bars cover the scroll view. The side rail leaves its height alone. */
 export function readerChromeOverlap(mode: "compact" | "bar" | "rail", extent: number): number {
-  return mode === "bar" ? Math.max(0, extent) : 0;
+  return mode === "rail" ? 0 : Math.max(0, extent);
 }

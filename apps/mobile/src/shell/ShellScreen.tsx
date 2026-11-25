@@ -35,7 +35,7 @@ import { Txt } from "../ui/base";
 import { usePosture } from "../ui/posture";
 import { nativePosture } from "../ui/posture/posture-native";
 import { buildCommit } from "../build-info";
-import { appRelease } from "../net/app-release";
+import { appBuildNumber, appRelease } from "../net/app-release";
 import { BridgeHost } from "./bridge-host";
 import { askDoorAt } from "./door-at";
 import type { FoldReading, NoticePermission, SafeInsets, ShellConfig } from "./bridge-kinds";
@@ -53,13 +53,13 @@ import { shellNative, shellView } from "./shell-native";
 import type { ShellRefusal, ShellViewHandle } from "./shell-port";
 import { handoffMinter, type ShellSession } from "../net/pairing";
 import { webViewVerdict } from "./webview-check";
-import { IMPRINT_URL, PRIVACY_URL, SUBPROCESSORS_URL, WEB_APP_URL, downloadPageOf } from "../net/account";
+import { DELETE_ACCOUNT_URL, IMPRINT_URL, PRIVACY_URL, SUBPROCESSORS_URL, SUPPORT_URL, WEB_APP_URL, downloadPageOf } from "../net/account";
 import { pairingDigest } from "../switch/digest";
 import { switchPlaces } from "../switch/receive";
 import { switchSender } from "../switch/sender";
 import { switchNative } from "../switch/switch-native";
 import type { SwitchNative } from "../switch/switch-port";
-import { siblingOf } from "../variant";
+import { launchOnlySwitch, siblingOf } from "../variant";
 import { APP } from "../variant-native";
 import { CALENDAR_WAYS } from "@ohmail/app-logic/calendar/setup";
 
@@ -76,6 +76,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
   const switcher = useMemo(() => switchNative(), []);
   const notices = useMemo(() => noticesNative(), []);
   const calendar = useMemo(() => calendarNative(), []);
+  const calendarOnly = APP.app === "ohcal";
   /* The session this screen stands for, while it stands: a notice is drawn only for the one that still does. */
   const standing = useRef<ShellSession | null>(null);
   useEffect(() => {
@@ -106,7 +107,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
      shell keeps mail is marked out of the backups and read back before the view exists, the worst answer recorded. */
   useEffect(() => {
     let live = true;
-    void (native?.setFamilies([...KEPT_FAMILIES]) ?? Promise.resolve(false))
+    void (native?.setFamilies(calendarOnly ? [] : [...KEPT_FAMILIES]) ?? Promise.resolve(false))
       .then(() => scopeOf(session.ownerKey, sha256Hex))
       .then(async (s) => {
         if (native !== null) {
@@ -122,11 +123,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
           logBackupExclusion(state, Platform.OS);
         }
         // Whether the screens' old copy of this mailbox waits to be handed across; a handed one is removed here.
-        oldCopy.current = (await session.oldCopy?.present().catch(() => false)) === true ? "present" : "absent";
+        oldCopy.current = !calendarOnly && (await session.oldCopy?.present().catch(() => false)) === true ? "present" : "absent";
         if (live) setScope(s);
       });
     return () => { live = false; };
-  }, [native, session, calendar]);
+  }, [native, session, calendar, calendarOnly]);
 
   /* The notice permission as the phone reads it, kept current for the page's `config`. */
   const permission = useRef<NoticePermission>("default");
@@ -138,6 +139,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
 
   const host = useMemo(() => {
     const http = new HttpDoor({
+      calendarOnly,
       live: () => (scope !== null && standing.current === session && !session.lifetime.aborted ? { session, scope } : null),
       ready: () => scope !== null,
     });
@@ -150,7 +152,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         : session.profile.flavor === "managed" ? "managed"
         : session.profile.flavor === "selfhost" ? "selfHosted" : "desktopHost",
       serverName: session.standalone ? "" : hostOf(session.profile.origin),
-      build: { version: appRelease() ?? null, commit: buildCommit(process.env.EXPO_PUBLIC_COMMIT) },
+      build: {
+        version: appRelease() ?? null,
+        commit: buildCommit(process.env.EXPO_PUBLIC_COMMIT),
+        ...(APP.app === "ohcal" ? { number: appBuildNumber(Platform.OS) } : {}),
+      },
       os,
       language: activeLocale(),
       languageChoice: localeNow.current?.chosen ?? null,
@@ -167,11 +173,12 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     };
     /* THE SWITCH: this app's pairing named by its digest only, a code minted only for a signed-out sibling from a
        paired door; the store verb falls back to the other app's own page. */
-    const digest = () => session.standalone
+    const launchOnly = launchOnlySwitch(APP);
+    const digest = () => launchOnly || session.standalone
       ? Promise.resolve(null) : pairingDigest(sha256Base64, session.profile.origin, session.profile.accountId);
     const sender = switchSender({
       app: APP.app, native: switcher, inFront: () => AppState.currentState === "active", now: Date.now, digest,
-      mint: handoffMinter(session, siblingOf(APP).app),
+      mint: launchOnly ? undefined : handoffMinter(session, siblingOf(APP).app),
     });
     const page = siblingOf(APP).links.host;
     /* A MAIL NOTICE THE PAGE ASKS FOR: drawn natively, for this session's pairing only while it is the one that
@@ -198,14 +205,14 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       },
       config,
       app: APP.app,
-      name: (request, signal) => answerPhoneName(request, session, live, signal),
+      name: calendarOnly ? undefined : (request, signal) => answerPhoneName(request, session, live, signal),
       diagnostics: APP.app === "ohmail" ? phoneDiagnosticsOf(live, readRoster) : undefined,
       organize: APP.app === "ohmail" ? phoneOrganizerOf(session, live, readRoster) : undefined,
-      mailbox: (request, signal) => answerPhoneMailbox(request, session, live, signal),
+      mailbox: calendarOnly ? undefined : (request, signal) => answerPhoneMailbox(request, session, live, signal),
       switch: {
         read: async () => ({ other: otherOf(switcher) }),
         open: async (to) => {
-          const went = await sender.open(to);
+          const went = await sender.open(launchOnly ? { to: "last" } : to);
           return typeof went === "string" ? { went } : went;
         },
         store: async () => ({
@@ -245,8 +252,10 @@ export function ShellScreen({ session }: { session: ShellSession }) {
             return { permission: (permission.current = await askNoticePermission(nativeNotificationPermission(), calendar)) };
           case "about.page": {
             if (!live()) return { refused: "notReady" };
-            const page = a.page === "imprint" ? IMPRINT_URL
-              : a.page === "subprocessors" ? SUBPROCESSORS_URL : PRIVACY_URL;
+            const page = {
+              privacy: PRIVACY_URL, imprint: IMPRINT_URL, subprocessors: SUBPROCESSORS_URL,
+              support: SUPPORT_URL, deleteAccount: DELETE_ACCOUNT_URL,
+            }[a.page];
             return Linking.openURL(page).then(() => ({}), () => ({ refused: "notReady" as const }));
           }
           case "backup.read":
@@ -312,7 +321,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     });
     return bridge;
     // The host is one per session and scope: a new scope is a new page.
-  }, [session, scope, notices, calendar, os]);
+  }, [session, scope, notices, calendar, os, calendarOnly]);
 
   useEffect(() => {
     const retire = () => host.begin("");
@@ -402,7 +411,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         onEpoch={(e) => host.begin(e.nativeEvent.epoch)}
         onMessage={(e) => host.receive(e.nativeEvent)}
         onLinkAsk={(e) => host.send({ type: "linkAsk", token: e.nativeEvent.token, url: e.nativeEvent.url })}
-        onMailto={(e) => host.send({ type: "mailto", url: e.nativeEvent.url })}
+        onMailto={(e) => { if (!calendarOnly) host.send({ type: "mailto", url: e.nativeEvent.url }); }}
         onRefused={(e) => setRefused(e.nativeEvent)}
       />
       {drawn ? null : <View style={styles.over}><Txt variant="body">{Copy.shellOpening}</Txt></View>}

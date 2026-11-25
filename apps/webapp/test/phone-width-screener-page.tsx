@@ -20,18 +20,22 @@ const now = new Date();
 const at = now.toISOString();
 const local = "casey-with-a-deliberately-long-mailbox-label";
 const full = `${local}@example.invalid`;
+const screened = location.pathname === "/screened";
 const person = letter("held", {
   accountId: scope,
   mailboxId: "personal",
-  folder: "ohmail/Screener",
+  folder: screened ? "ohmail/Screened" : "ohmail/Screener",
   subject: "The Screener's test letter",
-  from: { name: "Casey Sender", address: "sender@example.invalid" },
+  from: { name: "Casey Sender", address: screened
+    ? "letters@receipts-by-mail-for-different-company-departments.example"
+    : "sender@example.invalid" },
   date: at,
   updatedAt: at,
 });
 const mailboxes: MailboxFacts[] = ["personal", "work"].map((id) => ({
   id,
   address: id === "personal" ? full : "work@example.invalid",
+  ...(screened && id === "personal" ? { displayName: "Personal" } : {}),
   status: "connected",
   errorCode: null,
   disabledReason: null,
@@ -75,7 +79,7 @@ const { host } = fakeHost({
   overs: { palette: paletteOver, keys: keySheetOver },
   reader: BROWSER_READER,
   above: ({ children }) => <MailGround subjectRule={WebScreenerSubjectRule}>{children}</MailGround>,
-  address: fakeAddress("#/screener/waiting"),
+  address: fakeAddress(screened ? "#/screener/screened" : "#/screener/waiting"),
   window: fakeWindow({ pointer: coarse ? "coarse" : "fine", width: innerWidth, height: innerHeight, posture: "flat", reducedMotion: true }),
   mailboxes: async () => mailboxes,
   wires: {

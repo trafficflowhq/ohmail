@@ -140,6 +140,7 @@ function facetsOf(wire: unknown): ServerSearchFacets | null {
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface HttpAdapterOptions {
+  calendarOnly?: boolean;
   /** e.g. "" (same origin), "/api/v1", or "http://localhost" in tests. */
   baseUrl?: string;
   /** Only the web host offers writes to account-wide calendar settings. */
@@ -593,9 +594,11 @@ export class HttpAdapter implements EngineAdapter {
    */
   private readonly createAttempted = new Set<string>();
 
+  private readonly calendarOnly: boolean;
   private readonly saveCalendarSettings: CalendarSetupTransport["saveCalendarSettings"];
 
   constructor(opts: HttpAdapterOptions = {}) {
+    this.calendarOnly = opts.calendarOnly === true;
     this.saveCalendarSettings = opts.saveCalendarSettings;
     this.baseUrl = (opts.baseUrl ?? "").replace(/\/$/, "");
     const injected = opts.fetch;
@@ -872,12 +875,18 @@ export class HttpAdapter implements EngineAdapter {
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.types && params.types.length > 0) q.set("types", params.types.join(","));
     return this.underSyncDeadlines(async (signal, answered) => {
-      const res = await this.call("GET /sync", { query: q, ...(signal ? { signal } : {}) });
+      const route = params.calendarOnly ? "GET /calendar/sync" : "GET /sync";
+      const res = await this.call(route, { query: q, ...(signal ? { signal } : {}) });
+      if (params.calendarOnly && (res.status === 404 || res.headers.get("content-type")?.includes("text/html"))) throw this.calendarUnavailable();
       answered();
       if (res.status === 410) throw new CursorExpiredError();
       if (!res.ok) throw await this.rejectionOf(res);
       return await this.readAnswer<"GET /sync">(res);
     });
+  }
+
+  private calendarUnavailable(): MutationRejectedError {
+    return new MutationRejectedError("this server does not offer calendar sync", { code: "calendar_unavailable", retryable: false });
   }
 
   /**
@@ -923,7 +932,7 @@ export class HttpAdapter implements EngineAdapter {
     return {
       calendarWays: this.calendarWays.bind(this),
       calendarConnections: this.calendarConnections.bind(this),
-      icloudMailboxes: async () => {
+      ...(!this.calendarOnly ? { icloudMailboxes: async () => {
         const answer = await this.call("GET /calendar/connect", {});
         if (!answer.ok) return [];
         const rows = (await this.readUntrusted<"GET /calendar/connect">(answer)).icloudMailboxes;
@@ -934,7 +943,7 @@ export class HttpAdapter implements EngineAdapter {
         if (!answer.ok) throw await this.rejectionOf(answer, "read");
         const ids = (await this.readUntrusted<"GET /calendar/connect">(answer)).linkedMailboxIds;
         return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
-      },
+      } } : {}),
       connectCalendar: this.connectCalendar.bind(this),
       removeCalendarConnection: this.removeCalendarConnection.bind(this),
       checkCalendarConnection: this.checkCalendarConnection.bind(this),
@@ -1028,7 +1037,7 @@ export class HttpAdapter implements EngineAdapter {
    */
   async calendarWays(): Promise<CalendarWay[]> {
     try {
-      const res = await this.call("GET /calendar/connect", {});
+      const res = await this.call(this.calendarOnly ? "GET /calendar/setup" : "GET /calendar/connect", {});
       if (!res.ok) return [];
       return calendarWaysOf((await this.readUntrusted<"GET /calendar/connect">(res)).ways);
     } catch {
@@ -1038,7 +1047,7 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   async calendarConnections(): Promise<CalendarConnectionRecord[]> {
-    const res = await this.call("GET /calendar/connect", {});
+    const res = await this.call(this.calendarOnly ? "GET /calendar/setup" : "GET /calendar/connect", {});
     if (!res.ok) throw await this.rejectionOf(res, "read");
     const held = (await this.readUntrusted<"GET /calendar/connect">(res)).connections;
     // An answer that names no list is no word about what the account holds (a server whose door is older than this read
@@ -1130,7 +1139,9 @@ export class HttpAdapter implements EngineAdapter {
     if (params.to !== undefined) q.set("to", params.to);
     const qs = q.toString();
     const wire = await this.underSyncDeadlines(async (signal, answered) => {
-      const res = await this.call("GET /sync/snapshot", { ...(qs ? { query: qs } : {}), ...(signal ? { signal } : {}) });
+      const route = params.calendarOnly ? "GET /calendar/sync/snapshot" : "GET /sync/snapshot";
+      const res = await this.call(route, { ...(qs ? { query: qs } : {}), ...(signal ? { signal } : {}) });
+      if (params.calendarOnly && (res.status === 404 || res.headers.get("content-type")?.includes("text/html"))) throw this.calendarUnavailable();
       answered();
       if (!res.ok) throw await this.rejectionOf(res);
       return await this.readAnswer<"GET /sync/snapshot">(res);
@@ -1210,7 +1221,13 @@ export class HttpAdapter implements EngineAdapter {
       const res = await this.call("GET /drafts/:id", { params: { id: draftId }, signal });
       if (!res.ok) throw await this.rejectionOf(res, "read");
       const wire = await this.readUntrusted<"GET /drafts/:id">(res);
-      return typeof wire.body === "string" ? { body: wire.body, html: typeof wire.html === "string" ? wire.html : null } : null;
+      if (typeof wire.body !== "string") return null;
+      const rationale = wire.rationale;
+      return {
+        body: wire.body,
+        html: typeof wire.html === "string" ? wire.html : null,
+        ...(rationale === null || typeof rationale === "string" ? { rationale } : {}),
+      };
     });
   }
 
@@ -1988,6 +2005,7 @@ export class HttpAdapter implements EngineAdapter {
             ? [{ type: "message", op: "delete", id: dto.id, seq, updatedAt: dto.updatedAt }]
             : [],
           seq,
+          ...(body && "alreadyGone" in body && body.alreadyGone ? { alreadyGone: true as const } : {}),
         };
       }
 

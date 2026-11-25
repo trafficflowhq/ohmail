@@ -27,16 +27,19 @@ export function MailRowMenu({
   items,
   onClose,
   label,
+  portal,
 }: {
   target: MenuTarget;
   items: readonly ContextItem[];
   onClose: () => void;
   label?: string;
+  portal?: boolean;
 }) {
   const t = useText("ohbox");
   return (
     <Menu
       open
+      portal={portal}
       onClose={onClose}
       anchor={target.at}
       returnFocus={target.anchor}

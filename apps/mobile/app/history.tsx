@@ -6,9 +6,9 @@
  * mirror's rows painting first until page one replaces them in place. Nothing has moved: every row
  * states its server folder.
  */
-import { MailAppearance } from "../src/theme/mail";
+import { MailAppearance, mailColors } from "../src/theme/mail";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
-import { View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { ScrollView, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 
 import { Copy } from "../src/copy";
 import { useNetworkNow } from "../src/net/network-door";
@@ -16,7 +16,7 @@ import { unansweredSaid } from "../src/state/live";
 import { usePullToSync } from "../src/state/pull";
 import { useStoreHistory } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
-import { Empty, Screen, Tail, Tap, Txt, ViewHead } from "../src/ui/base";
+import { Empty, Screen, Tail, Tap, Txt, useListInsets, ViewHead } from "../src/ui/base";
 import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { ListDetail, useListDetail } from "../src/ui/list-detail";
 import { MailList } from "../src/ui/MailList";
@@ -47,6 +47,7 @@ export default function HistoryScreen({ inPane = false }: { inPane?: boolean }) 
 
 function HistoryBody({ inPane }: { inPane: boolean }) {
   const t = useTheme();
+  const railBottom = useListInsets().paddingBottom + 8;
   const w = useWorld();
   const network = useNetworkNow();
   const pull = usePullToSync();
@@ -57,6 +58,7 @@ function HistoryBody({ inPane }: { inPane: boolean }) {
   /* The year rail stands over the list's right edge: the list keeps its measured width clear, so
      the head's words and every row's date end before it (`history-rail.ts`). */
   const [railWidth, setRailWidth] = useState<number | null>(null);
+  const [selection, setSelection] = useState<{ slot: number } | { year: string | null }>({ slot: 0 });
   const scrollTo = useRef<((y: number) => void) | null>(null);
   /** Where slot 0 sits in the scroll content, learnt from its own frame. */
   const top = useRef(0);
@@ -103,17 +105,29 @@ function HistoryBody({ inPane }: { inPane: boolean }) {
   }), [heights, rowAt]);
   const groups = useMemo(() => [{ key: "history", rows: slots }], [slots]);
 
+  const slotAt = (y: number) => heights.indexAt(Math.max(0, y - top.current), h.length);
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, layoutMeasurement } = e.nativeEvent;
     scrollY.current = contentOffset.y;
     viewport.current = layoutMeasurement.height;
+    if (h.years.length > 1) {
+      const slot = slotAt(contentOffset.y);
+      setSelection((previous) => "year" in previous || previous.slot === slot ? previous : { slot });
+    }
     asks.scrolled(h, contentOffset.y - top.current, viewport.current, h.length);
   };
-  const jump = (start: number) => {
+  const jump = ({ year, start }: (typeof h.years)[number]) => {
+    if (!scrollTo.current) return;
+    // Hold the pressed year while the scroll can clamp or new mail can move its start slot.
+    setSelection({ year });
     scrollTo.current?.(top.current + asks.jumped(h, start, viewport.current, h.length));
   };
 
   const rail = h.state === "ready" && h.years.length > 1;
+  const currentYear = h.years.find((group, index) => "year" in selection
+    ? group.year === selection.year
+    : selection.slot < (h.years[index + 1]?.start ?? Infinity));
+  const paper = t.mail ? mailColors(t) : null;
   const meta = h.state === "ready" && h.total !== null
     ? Copy.historyMeta(h.total)
     : h.state === "unavailable" && w.boot.settled ? Copy.historyMeta(h.length) : " ";
@@ -154,6 +168,7 @@ function HistoryBody({ inPane }: { inPane: boolean }) {
           }}
           onRowFrame={(i, frame) => { if (i === 0) top.current = frame.y; }}
           onScroll={onScroll}
+          onScrollBeginDrag={(e) => setSelection({ slot: slotAt(e.nativeEvent.contentOffset.y) })}
           scrollEventThrottle={100}
           scrollTo={scrollTo}
           rowLayout={rowLayout}
@@ -205,15 +220,30 @@ function HistoryBody({ inPane }: { inPane: boolean }) {
             accessibilityRole="menu"
             accessibilityLabel={Copy.historyRailLabel}
             onLayout={(e) => setRailWidth(e.nativeEvent.layout.width)}
-            style={{ position: "absolute", right: HISTORY_RAIL_RIGHT, top: 8, gap: 2, paddingVertical: 4, paddingHorizontal: 2,
-              borderRadius: 10, backgroundColor: t.c.panel }}
+            style={{ position: "absolute", right: HISTORY_RAIL_RIGHT, top: 8, bottom: railBottom }}
           >
-            {h.years.map((y) => (
-              <Tap key={y.year ?? "undated"} onPress={() => jump(y.start)} accessibilityRole="button"
-                accessibilityLabel={y.year ?? Copy.historyUndated} style={{ paddingVertical: 3, paddingHorizontal: 6 }}>
-                <Txt variant="meta" tone="ink3" tabular>{y.year ?? Copy.historyUndated}</Txt>
-              </Tap>
-            ))}
+            <ScrollView
+              style={{ flexGrow: 0, flexShrink: 1, borderRadius: 10, backgroundColor: t.mail ? t.c.tint2 : t.c.panel }}
+              contentContainerStyle={{ gap: 2, paddingVertical: 4, paddingHorizontal: 2 }}
+            >
+              {h.years.map((y) => {
+                const selected = y === currentYear;
+                const active = selected ? paper : null;
+                return (
+                  <Tap key={y.year ?? "undated"} onPress={() => jump(y)} accessibilityRole="button"
+                    accessibilityLabel={y.year ?? Copy.historyUndated} accessibilityState={{ selected }}
+                    style={{
+                      minHeight: t.mail ? 40 : undefined, justifyContent: "center", alignItems: "center",
+                      paddingVertical: 3, paddingHorizontal: 6, borderRadius: t.radius.pill,
+                      backgroundColor: active?.solid,
+                    }}>
+                    <Txt variant="meta" tone="ink3" tabular style={active ? { color: active["on-solid"] } : undefined}>
+                      {y.year ?? Copy.historyUndated}
+                    </Txt>
+                  </Tap>
+                );
+              })}
+            </ScrollView>
           </View>
         ) : null}
       </View>

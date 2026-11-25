@@ -4,10 +4,8 @@
  * a mirror's wipe, these are paid in the same step, before the debt is cleared, each read back. A fresh install wipes
  * every keeper and every view copy before the install is stamped.
  *
- * The view's copies of every scope live under one origin, and no page is trusted to delete its own: a page may be dead,
- * and one that is alive is the less trusted side. So native clears the web view's data whole, which is the safe
- * direction (every copy refills, and every other scope's words and queue are in its keeper), and every live view
- * starts over from its keeper.
+ * The view's copies of every scope live under one origin. Only the native clear and read-back can settle the wipe:
+ * every copy refills, every other scope's words and queue are in its keeper, and every live view starts over.
  */
 import { StoreFault, type ServerProfileStore } from "../state/servers";
 
@@ -30,8 +28,17 @@ export interface ShellStores {
   scopeOf(ownerKey: string): Promise<string>;
   /** The scopes whose keeper is on this phone. */
   keeperScopes(): Promise<readonly string[]>;
+  prepareCalendarKeeper?(): Promise<boolean>;
+  calendarCopiesPrepared?(): boolean;
+  /** Stop writes on the keeper's own queue before checking the durable outbox. */
+  fenceCalendarWipe?(scope: string): Promise<"empty" | "pending" | "unknown">;
+  releaseCalendarWipe?(scope: string): Promise<void>;
   /** One scope's keeper removed; false when a read-back still finds any of its files. */
   forgetKeeper(scope: string): Promise<boolean>;
+  /** Erases the keeper and fences its scope until the shared WebView has been cleared. */
+  eraseKeeper?(scope: string): Promise<boolean>;
+  releaseCalendarErasure?(scope: string): Promise<void>;
+  waitForCalendarCopies?(): Promise<boolean>;
   /** Every scope's view copy removed; every live view starts over. What the storage reads afterwards. */
   clearViewCopies(): Promise<WebDataReading>;
 }
@@ -53,9 +60,43 @@ async function clearViewCopies(stores: ShellStores): Promise<void> {
 }
 
 /** One owner's keeper and the view's copy, gone and read back. Throws, so the caller keeps the debt, when either stayed. */
-export async function payShellWipe(stores: ShellStores, ownerKey: string): Promise<void> {
-  await forgetKeeper(stores, await stores.scopeOf(ownerKey));
-  await clearViewCopies(stores);
+export async function fenceCalendarWipe(stores: ShellStores, ownerKey: string): Promise<() => Promise<void>> {
+  if (stores.calendarCopiesPrepared?.() !== true || !stores.fenceCalendarWipe || !stores.releaseCalendarWipe) {
+    throw new StoreFault("shell_view_not_cleared", "calendar queue could not be verified");
+  }
+  const scope = await stores.scopeOf(ownerKey);
+  const result = await stores.fenceCalendarWipe(scope);
+  if (result === "pending") throw new StoreFault("calendar_queue_pending", "calendar edits are still on this phone");
+  if (result !== "empty") throw new StoreFault("shell_view_not_cleared", "calendar queue could not be verified");
+  return () => stores.releaseCalendarWipe!(scope);
+}
+
+export async function payShellWipe(stores: ShellStores, ownerKey: string, fenced = false): Promise<void> {
+  const release = !fenced && stores.calendarCopiesPrepared
+    ? await fenceCalendarWipe(stores, ownerKey) : undefined;
+  try {
+    await forgetKeeper(stores, await stores.scopeOf(ownerKey));
+    await clearViewCopies(stores);
+  } finally {
+    await release?.();
+  }
+}
+
+/** Remove the confirmed account's keeper before asking the WebView to transfer any queues. */
+export async function eraseShellKeeper(stores: ShellStores | undefined, ownerKey: string): Promise<() => Promise<void>> {
+  if (!stores) throw new StoreFault("shell_view_not_cleared", "the calendar stores are unavailable");
+  const scope = await stores.scopeOf(ownerKey);
+  if (!await stores.eraseKeeper?.(scope)) {
+    throw new StoreFault("shell_keeper_not_deleted", "the erased account's keeper is still on the phone");
+  }
+  return async () => {
+    const prepared = stores.calendarCopiesPrepared?.() === true || await stores.waitForCalendarCopies?.() === true;
+    if (!prepared || !stores.releaseCalendarErasure) {
+      throw new StoreFault("shell_view_not_cleared", "the other calendar queues could not be transferred");
+    }
+    await clearViewCopies(stores);
+    await stores.releaseCalendarErasure(scope);
+  };
 }
 
 /** A fresh install: every keeper and every view copy, gone and read back. Throws when anything stayed. */

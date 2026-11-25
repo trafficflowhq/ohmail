@@ -6,8 +6,12 @@ import { PAIRING_TTL_BOUNDS, generateToken, hashToken } from "@trafficflow/servi
 import { apiRoutes } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
+import { calCalendars, calConnections, calSettings } from "@trafficflow/db/mail";
+import { createHash } from "node:crypto";
+import { calendarRoutes } from "@trafficflow/api/calendar";
+import { calendarFeed } from "@trafficflow/services/calendar";
 import { pairRoutes } from "../src/routes/pair.js";
-import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedMailbox, seedSession, req, FIXED_NOW } from "./helpers.js";
 
 /**
  * ═══ THE PAIRING CEREMONY OVER HTTP — authority, wire shapes, and the table censuses ════════
@@ -247,6 +251,52 @@ describe("POST /pair/redeem — anonymous, and the handler owns its envelope", (
     const chained = await H(mintReq(body.tokens.accessToken, { grant: "device-pair" }), deps);
     expect(chained.status).toBe(403);
     expect((await chained.json()).error.code).toBe("step_up_required");
+  });
+
+  it("issues calendar pairing credentials that keep their scope after refresh", async () => {
+    const { db, deps } = await makeDeps();
+    const owner = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    await seedMailbox(db, owner);
+    await db.insert(calSettings).values({ accountId: owner.accountId, enabledAt: FIXED_NOW });
+    const [connection] = await db.insert(calConnections).values({
+      accountId: owner.accountId, provider: "caldav", label: "Calendar connection",
+    }).returning({ id: calConnections.id });
+    const [calendar] = await db.insert(calCalendars).values({
+      accountId: owner.accountId, connectionId: connection!.id, providerId: "primary", name: "Calendar", access: "owner",
+    }).returning({ id: calCalendars.id });
+    const calendarApp = createApp([...selfHostRoutes, ...calendarRoutes]);
+    const calendarDeps = { ...deps, services: { ...deps.services, calendar: calendarFeed } };
+    const handle = (request: Request) => calendarApp.handle(request, { ...calendarDeps, session: null, idempotency: null });
+    const probe = await handle(req("GET", "/calendar/sync"));
+    expect(probe.status).toBe(401);
+    expect(probe.headers.get("x-ohmail-calendar-pairing")).toBe("1");
+    expect((await H(req("GET", "/mailboxes", { bearer: owner.token }), deps)).status).toBe(200);
+    const minted = await (await H(mintReq(owner.token, { grant: "device-pair" }), deps)).json();
+    const paired = await handle(req("POST", "/pair/redeem", {
+      body: JSON.stringify({ grant: "calendar-pair", token: minted.token, kind: "mobile-ios" }),
+    }));
+    expect(paired.status).toBe(200);
+    const { grant, scope, tokens } = await paired.json();
+    expect({ grant, scope }).toEqual({ grant: "calendar-pair", scope: "calendar" });
+    const legacyHash = (value: string) => createHash("sha256").update(value).digest("base64url");
+    expect(await db.select().from(sessions).where(eq(sessions.accessTokenHash, legacyHash(tokens.accessToken)))).toHaveLength(0);
+    expect(await db.select().from(refreshTokens).where(eq(refreshTokens.tokenHash, legacyHash(tokens.refreshToken)))).toHaveLength(0);
+    const checkScope = async (bearer: string) => {
+      const snapshot = await handle(req("GET", "/calendar/sync/snapshot?phase=calendar", { bearer }));
+      expect(snapshot.status).toBe(200);
+      const { changes } = await snapshot.json();
+      expect(changes).toContainEqual(expect.objectContaining({ id: calendar!.id, type: "calendar" }));
+      expect(changes.every((row: { type: string }) => ["calendar", "calendar_connection", "settings"].includes(row.type))).toBe(true);
+      for (const path of ["/messages", "/mailboxes", "/sync", "/search"]) {
+        expect((await handle(req("GET", path, { bearer }))).status).toBe(403);
+      }
+    };
+    await checkScope(tokens.accessToken);
+    const refreshed = await H(req("POST", "/auth/refresh", {
+      body: JSON.stringify({ refreshToken: tokens.refreshToken }),
+    }), deps);
+    expect(refreshed.status).toBe(200);
+    await checkScope((await refreshed.json()).tokens.accessToken);
   });
 
   it("device-pair `kind`: a declared macos lands on the row; junk refuses 400 WITHOUT burning", async () => {

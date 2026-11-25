@@ -86,10 +86,42 @@ function movedRequest(req: Request, from: string, to: string): Request {
   return moved === destination ? req : { ...req, headers: { ...req.headers, destination: moved } };
 }
 
-export async function allowsMove(session: Session, url: string): Promise<boolean> {
-  const answer = await leave(session, url, { method: "OPTIONS", headers: {}, body: null });
+/** The collection advertises its CalDAV capabilities on OPTIONS. */
+export function collectionOptions(session: Session, url: string): Promise<HttpAnswer> {
+  return leave(session, url, { method: "OPTIONS", headers: {}, body: null });
+}
+
+export function davCapabilities(answer: HttpResponse): string[] {
+  return (answer.header("dav") ?? "").split(",").map((word) => word.trim().toLowerCase()).filter(Boolean);
+}
+
+/** Use the property response as a compatibility fallback where the OPTIONS response lacks CalDAV. */
+export async function schedulingAnswer(
+  session: Session,
+  url: string,
+  options: HttpAnswer,
+): Promise<HttpAnswer> {
+  if (!options.arrived) return options;
+  const understood = options.status >= 200 && options.status < 300;
+  if (understood && davCapabilities(options).includes("calendar-access")) return options;
+  return leave(session, url, {
+    method: "PROPFIND",
+    headers: { accept: "application/xml, text/xml", "content-type": "application/xml; charset=utf-8", depth: "0" },
+    body: propfindOf("<D:resourcetype/>"),
+  });
+}
+
+export function offersScheduling(capabilities: readonly string[]): boolean {
+  return capabilities.includes("calendar-access") && capabilities.includes("calendar-auto-schedule");
+}
+
+export function offersMove(answer: HttpAnswer): boolean {
   return answer.arrived && answer.status >= 200 && answer.status < 300 &&
     (answer.header("allow") ?? "").split(",").some((method) => method.trim().toUpperCase() === "MOVE");
+}
+
+export async function allowsMove(session: Session, url: string): Promise<boolean> {
+  return offersMove(await collectionOptions(session, url));
 }
 
 /** `url` is the address that answered, after the redirects the request port followed. `status` is `null` when no answer arrived. */

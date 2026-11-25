@@ -409,7 +409,7 @@ export async function pairingLinkState(ctx: ServiceContext, tokenHash: unknown):
  */
 export interface PairedDeviceSessionMinter {
   establishPairedDevice(
-    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind; handedOffFrom?: string | null },
+    ctx: ServiceContext, b: { userId: string; label: string; kind: PairedDeviceKind; handedOffFrom?: string | null; calendarOnly?: boolean },
   ): Promise<{ tokens: OAuthTokens }>;
 }
 
@@ -424,7 +424,7 @@ export interface PairedDeviceSessionMinter {
  * session's LIFETIME — anonymous wire input; `establishPairedDevice` pins the bearer surface.
  */
 export async function redeemDevicePair(
-  ctx: ServiceContext, auth: PairedDeviceSessionMinter, input: { token: string; kind?: PairedDeviceKind },
+  ctx: ServiceContext, auth: PairedDeviceSessionMinter, input: { token: string; kind?: PairedDeviceKind; calendarOnly?: boolean },
 ): Promise<{ tokens: OAuthTokens }> {
   const kind = input.kind === undefined ? "web" : input.kind;
   // The same closed set `establishPairedDevice` enforces (it re-checks; this refusal is the
@@ -454,6 +454,7 @@ export async function redeemDevicePair(
       userId: consumed.createdByUserId,
       label: consumed.label.length > 0 ? consumed.label : "Paired device",
       kind,
+      calendarOnly: input.calendarOnly,
     });
   }, { fence: { accountId } });
   // The device is made and committed: the account's other clients are told (`device-doorbell.ts`).
@@ -544,11 +545,11 @@ export async function mintAppHandoff(
  * burn; the verifier is checked for shape before any query, and the burn asks for its hash as the challenge, so a
  * wrong one matches nothing and burns nothing. After the burn, inside the same transaction, a live session of the
  * minting device must still exist (a code is spent only while the session that minted it lives). The new session is
- * a pairing's own, full, with no step-up time; its device records whose child it is.
+ * scoped to the intended app, with no step-up time; its device records whose child it is.
  */
 export async function redeemAppHandoff(
   ctx: ServiceContext, auth: PairedDeviceSessionMinter, input: { token: string; verifier: string; kind: PairedDeviceKind },
-): Promise<{ tokens: OAuthTokens }> {
+): Promise<{ tokens: OAuthTokens; calendarOnly: boolean }> {
   if (typeof input.kind !== "string" || !MOBILE_KINDS.has(input.kind)) {
     throw new ServiceError("validation_failed", 400, 'device kind must be "mobile-android" or "mobile-ios"');
   }
@@ -571,12 +572,16 @@ export async function redeemAppHandoff(
       isNull(sessions.revokedAt),
     )).orderBy(asc(sessions.id)).limit(1), { mode: "share" });
     if (!parent) throw pairingInvalid();
-    return auth.establishPairedDevice(txCtx, {
+    // The label prefix is stamped by the handoff minter from its validated target.
+    const calendarOnly = consumed.label.startsWith("ohcal · ");
+    const { tokens } = await auth.establishPairedDevice(txCtx, {
       userId,
       label: consumed.label,
       kind: input.kind,
       handedOffFrom: consumed.handoffFromDeviceId,
+      calendarOnly,
     });
+    return { tokens, calendarOnly };
   }, { fence: { accountId } });
   // A handed-off app is a device of its own in Devices: made and committed, and told as a pairing is.
   await ringDeviceMade(owner, accountId);

@@ -52,6 +52,7 @@ export function Quality({
         ),
       })}
       <Menu
+        portal
         open={open}
         onClose={() => setOpen(false)}
         anchor={anchor}

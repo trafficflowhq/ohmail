@@ -1,5 +1,6 @@
 import { calendarSettlementExpiry, type CalendarSettlement } from "./calendar-receipts.js";
-import type { Cursor } from "@ohmail/wire";
+import { withoutCalendarMailLink, withoutCalendarMailLinks } from "@trafficflow/core/calendar-privacy";
+import type { CalendarAct, CalendarEventRecord, CalendarProposalAct, Cursor } from "@ohmail/wire";
 import type { MirrorRecord } from "./apply.js";
 import {
   durableIdbCommit,
@@ -12,7 +13,10 @@ import {
   type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
 } from "./store.js";
 import { OutboxNoticeBus, outboxNoticeChannel, type NoticeChannel } from "./outbox-notices.js";
-import { CALENDAR_OUTBOX_TYPE, CALENDAR_SETTLEMENT_TYPE, isCalendarQueueType, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE } from "./types.js";
+import {
+  CALENDAR_BOOTSTRAP_PENDING, CALENDAR_KEEPER_READY, CALENDAR_OUTBOX_TYPE, CALENDAR_SETTLEMENT_TYPE,
+  isCalendarOnlySyncType, isCalendarQueueType, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE,
+} from "./types.js";
 
 /**
  * WHICH STORE LOST A WRITE, for the notice's log line. The mirror's stable label and not the
@@ -24,6 +28,7 @@ const MIRROR_STORE = "idb:ohmail-mirror";
 const ENTITIES = "entities";
 const META = "meta";
 const CURSOR_KEY = "cursor";
+const CALENDAR_ONLY_KEY = "__calendarOnly";
 
 /**
  * Where the mirror records WHOSE mail it is holding. Read before anything is hydrated.
@@ -128,6 +133,7 @@ function outboxRanges(KeyRange: typeof IDBKeyRange): IDBKeyRange[] {
 }
 
 export interface IndexedDbMirrorStoreOptions {
+  calendarOnly?: boolean;
   /**
    * THE ACCOUNT THIS MIRROR BELONGS TO — a server-verified account id, never a client guess. Required unless {@link
    * IndexedDbMirrorStoreOptions.dbName} is given. It does two separate jobs and both are load-bearing:
@@ -539,6 +545,93 @@ export function holdsMirrorOf(owner: string): boolean {
   }
 }
 
+async function scrubCalendarDatabase(db: IDBDatabase): Promise<string[]> {
+  const changed: string[] = [];
+  const tx = db.transaction([ENTITIES, META], "readwrite");
+  const entities = tx.objectStore(ENTITIES);
+  const meta = tx.objectStore(META);
+  if (await requestDone(meta.get(CALENDAR_ONLY_KEY)) !== true) {
+    for (const key of await requestDone(entities.getAllKeys())) {
+      const type = String(key).split(":", 1)[0]!;
+      if (!isCalendarQueueType(type) && !isCalendarOnlySyncType(type)) {
+        entities.delete(key);
+        changed.push(String(key));
+        continue;
+      }
+      if (type === "calendar" || type === CALENDAR_SETTLEMENT_TYPE) continue;
+      const row = await requestDone(entities.get(key)) as MirrorRecord;
+      if (row.entity === null) continue;
+      if (type === "settings") {
+        const { accountId, calendarEnabledAt } = row.entity as { accountId?: unknown; calendarEnabledAt?: unknown };
+        entities.put({ ...row, entity: { accountId, calendarEnabledAt } }, key);
+      } else if (type === "calendar_connection") {
+        entities.put({ ...row, entity: { ...(row.entity as object), grantMailboxId: null } }, key);
+      } else if (type === "calendar_event") {
+        entities.put({ ...row, entity: withoutCalendarMailLinks(row.entity as CalendarEventRecord) }, key);
+      } else if (type === CALENDAR_OUTBOX_TYPE) {
+        const entity = row.entity as { act?: CalendarAct | CalendarProposalAct };
+        const act = entity.act;
+        if (act?.kind === "calendar_event_propose") {
+          const { recordId, base, occurrence, start, end } = act;
+          const time = ({ kind, value, zone }: typeof start) => ({ kind, value, ...(zone && { zone }) });
+          const proposal = { kind: act.kind, recordId, base, occurrence, start: time(start), end: time(end) };
+          entities.put({ ...row, entity: { ...entity, act: proposal, needsReview: true } }, key);
+          changed.push(String(key));
+        } else if (act?.kind === "calendar_proposal_keep") {
+          entities.delete(key);
+          changed.push(String(key));
+        } else if (act && act.kind !== "calendar_write_retry" && act.kind !== "calendar_write_dismiss") {
+          entities.put({ ...row, entity: { ...entity, act: withoutCalendarMailLink(act) } }, key);
+        }
+      }
+    }
+    for (const key of await requestDone(meta.getAllKeys())) {
+      if (key !== OWNER_KEY && key !== GEN_KEY) meta.delete(key);
+    }
+    meta.put(true, CALENDAR_ONLY_KEY);
+    meta.put(true, CALENDAR_BOOTSTRAP_PENDING);
+  }
+  await commitWrite(tx);
+  return changed;
+}
+
+async function markCalendarQueueImported(db: IDBDatabase): Promise<void> {
+  const tx = db.transaction(META, "readwrite");
+  tx.objectStore(META).put(true, CALENDAR_KEEPER_READY);
+  await commitWrite(tx);
+}
+
+/** Upgrade all mirrors on the calendar page's origin, including the copies of inactive accounts. */
+export async function prepareCalendarCopies(
+  owner?: string, importQueue?: (scope: string, rows: readonly MirrorRecord[]) => Promise<boolean>,
+  erasedScopes: readonly string[] = [],
+): Promise<void> {
+  const active = owner === undefined ? undefined : mirrorDbName(owner);
+  const erased = new Set(erasedScopes.map(mirrorDbName));
+  // Erased mirrors have no queue to save. The caller still needs the native read-back of the shared clear.
+  for (const name of erased) await clearOneMirror(indexedDB, name);
+  const names = new Set<string>(registry());
+  if (active !== undefined) names.add(active);
+  if (typeof indexedDB.databases === "function") {
+    for (const { name } of await listDatabases(indexedDB)) {
+      if (name?.startsWith(MIRROR_DB_PREFIX)) names.add(name);
+    }
+  }
+  for (const name of names) {
+    if (erased.has(name)) continue;
+    const store = new IndexedDbMirrorStore(name === active ? { owner } : { dbName: name });
+    try {
+      await store.prepareCalendarOnly();
+      const scope = name.slice(MIRROR_DB_PREFIX.length + 1);
+      if (importQueue && (owner === undefined || scope === owner) && /^p[0-9a-f]{32}$/.test(scope)) {
+        await store.importCalendarQueue((rows) => importQueue(scope, rows));
+      }
+    } finally {
+      store.close();
+    }
+  }
+}
+
 /**
  * The IndexedDB-backed mirror (brief §2: "apply them into a local store — IndexedDB for web"). Layout:
  * - object store `entities`: key "type:id" → MirrorRecord (tombstones INCLUDED — they carry the seq guard that
@@ -548,6 +641,24 @@ export function holdsMirrorOf(owner: string): boolean {
  * page (contract §3.3 step 3).
  */
 export class IndexedDbMirrorStore extends BaseMirrorStore {
+  async prepareCalendarOnly(): Promise<void> {
+    const changed = await scrubCalendarDatabase(await this.open());
+    if (changed.length > 0) this.noticeOutbox(changed);
+  }
+
+  async importCalendarQueue(keep: (rows: readonly MirrorRecord[]) => Promise<boolean>): Promise<void> {
+    const db = await this.open();
+    const read = db.transaction([ENTITIES, META], "readonly");
+    const imported = await requestDone(read.objectStore(META).get(CALENDAR_KEEPER_READY)) === true;
+    const rows = imported ? [] : await carriedOnDisk(read.objectStore(ENTITIES));
+    await txDone(read);
+    if (imported) return;
+    const calendarRows = rows.filter((row) => isCalendarQueueType(row.type) && row.entity !== null);
+    if (calendarRows.length > 0 && !(await keep(calendarRows))) throw new Error("calendar keeper refused the existing queue");
+    await markCalendarQueueImported(db);
+  }
+
+  private readonly calendarOnly: boolean;
   private readonly dbName: string;
   private readonly owner: string | null;
   private readonly factory: IDBFactory;
@@ -576,6 +687,7 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
 
   constructor(opts: IndexedDbMirrorStoreOptions = {}) {
     super();
+    this.calendarOnly = opts.calendarOnly === true;
     const owner = opts.owner?.trim();
     if (owner) {
       this.owner = owner;
@@ -806,6 +918,8 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
   protected async decideCalendarOnDisk(
     id: string, decide: (entity: unknown) => unknown, receipt?: CalendarSettlement,
   ): Promise<{ changed: boolean; rec: MirrorRecord | null }> {
+    // One native shell page per scope. The base transaction writes through the keeper.
+    if (this.calendarOnly) return super.decideCalendarOnDisk(id, decide, receipt);
     const db = await this.open();
     const tx = db.transaction([ENTITIES, META], "readwrite");
     const entities = tx.objectStore(ENTITIES);
@@ -1022,6 +1136,10 @@ export class IndexedDbMirrorStore extends BaseMirrorStore {
     // that is empty and unowned would be silently claimable by the next account to open
     // it, which is the state this whole mechanism exists to make impossible.
     if (this.owner !== null) meta.put(this.owner, OWNER_KEY);
+    if (this.calendarOnly) {
+      meta.put(true, CALENDAR_ONLY_KEY);
+      meta.put(true, CALENDAR_KEEPER_READY);
+    }
     // THE BUMP, in the transaction that does the emptying. Every OTHER connection open on this
     // database is now writing against a baseline that no longer exists and will be refused by
     // the fence in `persist`; this instance moves its own baseline forward so its own next write

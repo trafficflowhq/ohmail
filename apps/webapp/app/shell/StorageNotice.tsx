@@ -1,6 +1,6 @@
 "use client";
 
-import type { MouseEventHandler, ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { useOptionalReport } from "@ohmail/app/frame";
 import { Button, Notice, type NoticeProps } from "@ohmail/ui/base";
@@ -12,7 +12,7 @@ import {
 
 /** What a press of Change plan or Add storage does on this host, and what it has to say. */
 export interface StorageChange {
-  press: MouseEventHandler<HTMLButtonElement>;
+  press(event: MouseEvent<HTMLButtonElement>, addon?: "storage"): void;
   busy: boolean;
   /** A refusal sentence or the step-up prompt, under the buttons. */
   note: ReactNode;
@@ -67,7 +67,7 @@ export function StorageNotice({ facts, linksOut, onDismiss, change }: {
   const acts: NoticeProps["acts"] = changes
     ? [{
         label: t(offer.addon === null ? "storageChangePlan" : "storageAddStorage"),
-        onPress: change.press,
+        onPress: (event) => change.press(event, offer.addon === null ? undefined : "storage"),
         busy: change.busy,
       }, dismissAct]
     : [dismissAct];

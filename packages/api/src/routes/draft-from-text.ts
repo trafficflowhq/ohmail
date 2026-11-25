@@ -31,6 +31,7 @@ export const draftFromTextRoutes: Route[] = [
       const body = await readBody<UntrustedBody<DraftFromTextBody>>(req);
       const { draftId, seq } = await drafting(deps).draftFromText(ctx, body, {
         drafter: port,
+        fullConversation: body?.fullConversation === true,
         onPreview: deps.onDraftPreview,
         credits,
         ...(refundObligationsOf(deps) ? { obligations: refundObligationsOf(deps)! } : {}),

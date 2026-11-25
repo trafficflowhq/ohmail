@@ -7,8 +7,8 @@
  * another row of `variants.json` returns a copy made for that app; any other word is a build error, never a guess.
  *
  * The copy only renames and takes away: every plugin stays listed in `app.json`, where the plugin censuses read it,
- * and a row's `without` names what its app leaves out. The version and the build numbers are never touched, so the
- * apps of one tree carry one version. Requires the table and nothing else (it runs inside Expo's config loader).
+ * and a row's `without` names what its app leaves out. Every app inherits the same version and build numbers.
+ * Requires the table and nothing else (it runs inside Expo's config loader).
  */
 const VARIANTS = require("./variants.json");
 
@@ -77,6 +77,13 @@ function resolveVariant(base, said) {
   out.scheme = row.scheme;
   out.ios = { ...out.ios, bundleIdentifier: row.id };
   out.android = { ...out.android, package: row.id };
+  // Confirm the calendar app's collection list against the calendar-only sync audit before submission.
+  if (row.iosPrivacyCollectedDataTypes !== undefined) {
+    out.ios.privacyManifests.NSPrivacyCollectedDataTypes =
+      out.ios.privacyManifests.NSPrivacyCollectedDataTypes.filter(
+        (entry) => row.iosPrivacyCollectedDataTypes.includes(entry.NSPrivacyCollectedDataType),
+      );
+  }
   if (row.app === "ohcal") {
     out.icon = OHCAL_LOOK.icon;
     out.ios.icon = OHCAL_LOOK.icon;

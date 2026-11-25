@@ -2,10 +2,11 @@ import { headers } from "next/headers";
 import { FIRST_PAGE_OWNER_HEADER } from "../../session-gate";
 import { getTranslations } from "next-intl/server";
 import { DEFAULT_LOCALE } from "../../shell/locale";
-import { NoPageRoute } from "../NoPageRoute";
+import { NoPageEntry } from "../NoPageEntry";
 import { SETTINGS_HANDOFF, settingsReference } from "../../settings-handoff";
 import { SettingsHandoffGate } from "./SettingsHandoffGate";
-import { CloudShell, WakeMailboxEntry } from "./CloudShell";
+import { CloudMailbox, ReturningMailbox, WakeMailbox } from "./MailboxEntry";
+import { showMailboxOpening } from "./show-opening";
 import { isDemoBuild, isDemoRequested, type SearchParamsLike } from "../../demo-mode";
 
 /**
@@ -39,11 +40,14 @@ export default async function Page(props: { searchParams?: Promise<SearchParamsL
   const request = await headers();
   const edgeOwner = request.get(FIRST_PAGE_OWNER_HEADER);
   const drawMail = request.get("x-ohmail-first-page") === "now" && edgeOwner !== null ? "now" : "wait";
-  if (wakeEntry && apiConfigured) return <WakeMailboxEntry />;
-  if (serverDemo || apiConfigured) return <CloudShell demo={serverDemo} drawMail={drawMail} edgeOwner={edgeOwner} />;
+  if (wakeEntry && apiConfigured) return <WakeMailbox />;
+  if (apiConfigured && !serverDemo && showMailboxOpening(request)) {
+    return <ReturningMailbox demo={false} drawMail={drawMail} edgeOwner={edgeOwner} showOpening />;
+  }
+  if (serverDemo || apiConfigured) return <CloudMailbox demo={serverDemo} drawMail={drawMail} edgeOwner={edgeOwner} />;
 
   /* English explicitly — the request config resolves `requestLocale` since the bilingual
      marketing slice, and no layout pins one for this route. Same string as before. */
   const t = await getTranslations({ locale: DEFAULT_LOCALE, namespace: "gate" });
-  return <NoPageRoute at="noserver" words={{ title: t("lede"), body: t("body"), note: t("note"), demo: t("openDemo"), signIn: t("signIn") }} />;
+  return <NoPageEntry at="noserver" words={{ title: t("lede"), body: t("body"), note: t("note"), demo: t("openDemo"), signIn: t("signIn") }} />;
 }

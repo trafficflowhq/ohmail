@@ -1,5 +1,5 @@
 import { Button, RadioLines, Seg } from "@ohmail/ui/base";
-import { ActionPanel, SettingLine, SettingsSheet } from "@ohmail/ui/mail";
+import { ActionPanel, SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
 import type { PlanInterval, PlanName, PlanPick, PlansAnswer, SubscriptionModel } from "./model.js";
 
@@ -44,8 +44,32 @@ type PlanSelection = {
   readonly selection?: PlanName;
 };
 
-function pickedPlan(answer: ReadPlans, selection: PlanName | undefined): PlanName | undefined {
-  return answer.plans.find(({ plan }) => plan === selection)?.plan ?? answer.current?.plan;
+function planFacts(line: ReadPlans["plans"][number], own: ReturnType<typeof useText>): string {
+  const { mailboxes, storage, credits, setupSuggestions } = line;
+  const included =
+    credits === undefined
+      ? own("planFactsWithoutCredits", { mailboxes, storage })
+      : own("planFacts", { mailboxes, credits, storage });
+  return setupSuggestions === undefined
+    ? included
+    : own("planFactsWithSetup", { included, count: setupSuggestions });
+}
+
+function pickedPlan(
+  answer: ReadPlans,
+  interval: PlanInterval,
+  selection: PlanName | undefined,
+): PlanName | undefined {
+  const requested = selection ?? answer.current?.plan;
+  return answer.plans.find((line) => line.plan === requested && line.price[interval] !== null)?.plan;
+}
+
+function subscribeInterval(
+  model: SubscriptionModel,
+  answer: ReadPlans,
+  comparisonInterval: PlanInterval,
+): PlanInterval | undefined {
+  return model.status?.standing.state === "trial" ? answer.current?.interval : comparisonInterval;
 }
 
 export function SubscriptionPlans({
@@ -75,21 +99,22 @@ export function SubscriptionPlans({
   if (read === null) return null;
   const { answer, interval } = read;
   const { current } = answer;
+  const billingInterval = subscribeInterval(model, answer, interval);
   const both =
     answer.plans.some((line) => line.price.month !== null) &&
     answer.plans.some((line) => line.price.year !== null);
   const verb = payingVerb(model, answer);
   const selectable = verb === "subscribe";
-  const picked = selectable ? pickedPlan(answer, selection) : current?.plan;
+  const picked = selectable ? (selection ?? current?.plan) : current?.plan;
   const options = answer.plans.map((line) => ({
     value: line.plan,
     label: t("storagePlanName", { plan: line.plan }),
     tag: current?.plan === line.plan ? t("storageTagYours") : undefined,
-    note:
-      line.credits === undefined
-        ? own("planFactsWithoutCredits", { mailboxes: line.mailboxes, storage: line.storage })
-        : own("planFacts", { mailboxes: line.mailboxes, credits: line.credits, storage: line.storage }),
-    figure: line.price[interval] ?? undefined,
+    note: planFacts(line, own),
+    figure:
+      line.price[interval] === null
+        ? undefined
+        : t(interval === "year" ? "storagePriceYear" : "storagePriceMonth", { price: line.price[interval] }),
   }));
   return (
     <SettingsSheet
@@ -108,6 +133,9 @@ export function SubscriptionPlans({
         ) : undefined
       }
     >
+      {billingInterval !== undefined && billingInterval !== interval ? (
+        <SettingNote>{own("subscribeDuringTrial", { interval: billingInterval })}</SettingNote>
+      ) : null}
       {selectable && options.length > 0 ? (
         <RadioLines
           kind="sheet"
@@ -140,8 +168,13 @@ export function SubscriptionPayment({ model, selection }: PlanSelection) {
   if (read === null || model.status?.standing.state === "overdue") return null;
   const verb = payingVerb(model, read.answer);
   if (verb === null) return null;
-  const picked = pickedPlan(read.answer, selection);
-  const pick: PlanPick = picked ? { plan: picked, interval: read.interval } : { interval: read.interval };
+  const billingInterval = subscribeInterval(model, read.answer, read.interval);
+  const comparing = billingInterval !== undefined && billingInterval !== read.interval;
+  const picked = pickedPlan(read.answer, billingInterval ?? read.interval, selection);
+  const pick: PlanPick = {
+    ...(picked ? { plan: picked } : {}),
+    ...(billingInterval ? { interval: billingInterval } : {}),
+  };
   return (
     <ActionPanel
       label={t("storagePlansHead")}
@@ -151,7 +184,10 @@ export function SubscriptionPayment({ model, selection }: PlanSelection) {
           kind: "ink",
           icon: verb === "subscribe" ? "check" : undefined,
           rank: 0,
-          disabled: model.opening,
+          disabled:
+            model.opening ||
+            comparing ||
+            (verb === "subscribe" && selection !== undefined && picked === undefined),
           label:
             verb === "fix"
               ? own("fixPayment")

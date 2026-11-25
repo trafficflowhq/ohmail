@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { setFormatWords } from "@ohmail/app-logic/text";
-import { readComposeDraft, resetComposerForTest } from "@ohmail/app-logic/writing/compose";
+import { EMPTY_COMPOSE, readComposeDraft, resetComposerForTest, writeComposeDraft, writeComposeRow } from "@ohmail/app-logic/writing/compose";
 import { COMPOSE_ATTACH_MAX_TOTAL_BYTES, type ImageQualityLevel } from "@ohmail/client-engine";
 import { UNDO_MS } from "@ohmail/app-logic/press";
 import en from "../../messages/en.json";
@@ -152,6 +152,60 @@ describe("the new letter", () => {
     fireEvent.click(screen.getByRole("button", { name: "Emoji" }));
     fireEvent.click(screen.getByRole("button", { name: "smile" }));
     expect(richText().getText()).toContain("\u{1F642}");
+
+    await unmountWritings();
+    resetComposerForTest();
+
+    const body = "Hello,\n\nFriday works.";
+    const legacy = '<p style="margin:0">Hello,</p><p style="margin:0"></p><p style="margin:0">Friday works.</p>';
+    const generatedRow = { ...letter("saved-generated-letter", "Friday", body), html: legacy, rationale: "Drafted from your text" };
+    for (const linked of [false, true]) {
+      const scope = linked ? "linked-generated-letter" : "marked-generated-letter";
+      writeComposeDraft({
+        ...EMPTY_COMPOSE,
+        to: "workshop@example.invalid,",
+        subject: "Friday",
+        body,
+        html: legacy,
+        ...(linked ? {} : { aiDraft: true }),
+      }, scope);
+      if (linked) writeComposeRow(generatedRow.id, scope);
+      const restored = await mountWriting({ view: true, scope, drafts: linked ? [generatedRow] : [] });
+      await rounds(4);
+      await act(async () => { fireEvent.click(sendButton()); });
+      await rounds(10);
+      const sent = restored.sent.find((m) => m.kind === "mail_send");
+      expect(sent?.body).toBe(body);
+      expect(sent?.html).toBe('<p style="margin:0">Hello,<br /><br />Friday works.</p>');
+      await unmountWritings();
+      resetComposerForTest();
+    }
+
+    const { serializeDraftBody } = await import("../../../../packages/services/src/outbound-html.js");
+    const authored = serializeDraftBody("<p>Workshop notes</p><p></p><p>Friday works.</p>");
+    const row = { ...letter("saved-workshop-letter", "Workshop", authored.text), html: authored.html, rationale: null };
+    const manualScope = "restored-authored-letter";
+    const manual = await mountWriting({ view: true, drafts: [row], scope: manualScope });
+    await act(async () => manual.now().openDraft(row));
+    await rounds(6);
+    expect(manual.now().compose.html).toBe(authored.html);
+    const stored = readComposeDraft(manualScope);
+    expect(stored.html).toBe(authored.html);
+    expect(stored.aiDraft).toBe(false);
+    await manual.unmount();
+
+    // The same draft may have been buffered before the browser recorded provenance.
+    const { aiDraft: _unrecorded, ...older } = stored;
+    writeComposeDraft(older, manualScope);
+
+    const reloaded = await mountWriting({ view: true, store: manual.store, scope: manualScope });
+    await rounds(6);
+    expect(reloaded.now().compose.html).toBe(authored.html);
+    await act(async () => { fireEvent.click(sendButton()); });
+    await rounds(10);
+    expect(reloaded.sent.find((m) => m.kind === "mail_send")).toMatchObject({
+      body: authored.text, html: authored.html,
+    });
   });
 
   it("draws the sender's signature under the text; written over in place, the send carries the new words", async () => {
@@ -314,6 +368,25 @@ describe("the new letter", () => {
     const field = screen.getByRole("textbox", { name: W.signature.label });
     expect(field.textContent).toBe("Lena\nMakers Fest");
     expect(w.now().compose.sig).toEqual({ kind: "edited", text: "Lena\nMakers Fest" });
+  });
+
+  it("a plain letter with a formatted signature is sent with the signature's formatting and the letter's words", async () => {
+    const w = await mountWriting({
+      view: true,
+      signatures: { mb1: "Lena\nMakers Fest" },
+      signaturesHtml: { mb1: '<p><strong>Lena</strong><br><a href="https://makers.example">Makers Fest</a></p>' },
+    });
+    await typeLetter("lena@example.invalid", "See you <there> & then.");
+    await act(async () => {
+      fireEvent.click(sendButton());
+    });
+    await rounds(10);
+    const sent = w.sent.find((m) => m.kind === "mail_send") as { body?: string; html?: string | null } | undefined;
+    expect(sent?.body).toContain("See you <there> & then.");
+    expect(sent?.body).toContain("Makers Fest");
+    expect(sent?.html).toContain("See you &lt;there&gt; &amp; then.");
+    expect(sent?.html).toContain("<strong>Lena</strong>");
+    expect(sent?.html).toContain('<a href="https://makers.example">Makers Fest</a>');
   });
 
   it("a signature written down to nothing stays, empty; typed again it keeps the new words, and a send carries none", async () => {
@@ -731,17 +804,20 @@ describe("draft from your text, on a new letter", () => {
     await rounds(10);
     expect(d.asked.map((a) => a.body)).toEqual([{ text: "noon ok", mailboxId: "mb1", subject: "Friday" }]);
     expect(letterText()).toBe("first draft");
+    expect(readComposeDraft("acc-1").aiDraft).toBe(true);
     /* The person's words one tab away; the send carries the text on screen, once. */
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: W.draft.yours }));
     });
     await rounds(4);
     expect(letterText()).toBe("noon ok");
+    expect(readComposeDraft("acc-1").aiDraft).toBe(false);
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: W.draft.draft }));
     });
     await rounds(4);
     expect(letterText()).toBe("first draft");
+    expect(readComposeDraft("acc-1").aiDraft).toBe(true);
     await act(async () => {
       fireEvent.click(sendButton());
     });

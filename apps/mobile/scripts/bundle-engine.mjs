@@ -643,6 +643,7 @@ export async function buildPhoneEngine({ write = true, workspaceSources = false 
     platform: "neutral",
     format: "cjs",
     target: "es2022",
+    charset: "utf8",
     /* The app's bundler consumes this file; `cjs` is what it expects from a pre-bundled module, and
        it is also what makes the two native `require`s come out as requires rather than imports. */
     mainFields: ["react-native", "browser", "module", "main"],

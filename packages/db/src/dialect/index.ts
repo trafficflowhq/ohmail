@@ -797,6 +797,9 @@ export interface Dialect {
    */
   greatest(...values: readonly (SQL | unknown)[]): SQL;
 
+  /** Membership in an uncorrelated subquery, in a form that can drive an index scan on the value. */
+  indexedInSubquery(value: SQL, query: SQL): SQL;
+
   /**
    * Where `needle` first occurs in `hay` — 1-based, and 0 when it does not occur.
    *

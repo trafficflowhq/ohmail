@@ -664,7 +664,7 @@
     "aiOn": "an",
     "aiOff": "aus",
     "aiSends": "Für einen Vorschlag werden Absender, Betreff und ein kurzer Auszug gesendet.",
-    "aiDraftSends": "Ein Entwurf sendet über die Claude-API dieselben Angaben zur Nachricht, auf die du antwortest. Dazu kommen Absender und kurze Auszüge aus bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank. Codes und Login-Links werden nie gesendet.",
+    "aiDraftSends": "Ein Entwurf sendet über die Claude-API dieselben Angaben zur Nachricht, auf die du antwortest. Dazu kommen Absender und kurze Auszüge aus bis zu 20 weiteren Nachrichten im Thread und bis zu 5 passende Notizen aus der Wissensdatenbank. Ein Entwurf aus deinem Text sendet auch deinen eingegebenen Text. Wenn du Ganze Unterhaltung verwenden für einen Entwurf bestätigst, erhält der Anbieter den vollständigen gespeicherten Text der Nachricht, auf die du antwortest, und bis zu 4.000 Zeichen aus diesen früheren Nachrichten. Codes und Login-Links werden nie gesendet.",
     "aiCloudTag": "ohmail Cloud",
     "aiKeyTag": "Dein Modell",
     "aiRulesOnly": "Nur Regeln",

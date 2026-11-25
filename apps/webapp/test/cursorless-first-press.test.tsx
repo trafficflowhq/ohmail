@@ -314,7 +314,7 @@ describe("a list with rows and no cursor", () => {
     await key("Backspace");
 
     await waitFor(() => !rowIds(container).includes(before[0]!), "the row to leave the list");
-    expect(toastText()).toContain(messages.ohbox.toastDeleted.replace(/\.$/u, ""));
+    expect(toastText()).toContain(messages.ohbox.toastMovingToTrash.replace(/\.$/u, ""));
     expect(toastText()).toContain(messages.screener.toastUndo);
   }, 30000);
 

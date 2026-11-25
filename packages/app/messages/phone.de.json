@@ -7,9 +7,9 @@
         "ohcal": "Die Kalender, die du schon hast, an einem Ort."
       },
       "ring": "Klingeln",
-      "connect": "Postfach verbinden",
-      "scan": "Code scannen",
-      "servers": "Server"
+      "scan": "QR scannen",
+      "signIn": "Anmelden",
+      "signInSelfHosted": "Bei eigenem Server anmelden"
     },
     "scan": {
       "camera": "Kamera",
@@ -22,6 +22,10 @@
       "linkBlank": "einfügen",
       "pair": "Koppeln",
       "notACode": "Kein ohmail-Code."
+    },
+    "signIn": {
+      "waiting": "Schliesse die Anmeldung im Browser ab.",
+      "finishing": "Anmeldung wird abgeschlossen…"
     },
     "server": {
       "cloud": "ohmail Cloud.",
@@ -211,6 +215,12 @@
     }
   },
   "phoneSettings": {
+    "calendarServerUnavailable": "Dieser Server unterstützt die Kalendersynchronisierung für ohcal nicht.",
+    "calendarLegalTitle": "Rechtliches und Support",
+    "privacyPolicy": "Datenschutzerklärung",
+    "support": "Support",
+    "sharedAccount": "Gemeinsamer Account",
+    "deleteAccount": "Account löschen",
     "legalTitle": "Was mit deiner Mail passiert",
     "privacy": "Datenschutz",
     "subprocessors": "Unterauftragsverarbeiter",
@@ -346,6 +356,15 @@
     "baseApiStopped": "Dieser Server hat zu antworten begonnen und dann aufgehört, ohmail hat deshalb nicht weiter gewartet. Wenn du ihn betreibst, prüfe, ob sein Proxy die Anfragen an die ohmail-API durchreicht.",
     "baseApiTimeout": "Dieser Server hat nicht rechtzeitig geantwortet, ohmail hat deshalb nicht weiter gewartet. Das kann am Netz zwischen diesem Handy und ihm liegen oder an einer Route auf dem Server, die nie antwortet.",
     "baseApiUnreachable": "Dieser Server war nicht erreichbar, um seine Mail-API zu finden — {0}",
+    "signInExpired": "Diese Anmeldeanfrage ist abgelaufen. Starte erneut.",
+    "signInDenied": "Die Anmeldeanfrage wurde abgelehnt.",
+    "signInUnreachable": "Der Server ist nicht erreichbar. Prüfe deine Verbindung und versuche es erneut.",
+    "signInNotOffered": "Dieser Server unterstützt die Anmeldung über den Browser deines Telefons nicht.",
+    "signInRateLimited": "Zu viele Anmeldeversuche. Versuche es später erneut.",
+    "signInRefused": "Die Anmeldung konnte nicht abgeschlossen werden. Starte erneut.",
+    "signInNoBrowser": "Der Browser für die Anmeldung konnte nicht geöffnet werden.",
+    "signInWrongServer": "Die Anmeldeseite muss auf {0} bleiben.",
+    "signInCancelled": "Die Anmeldung wurde abgebrochen.",
     "baseCleartext": "Das ist eine unverschlüsselte Adresse, und ohmail sendet deine Mails nicht darüber. Gib die https-Adresse an, unter der du ohmail im Browser öffnest.",
     "baseNeedsTheCode": "Das ist eine numerische Adresse in einem Netz, und dafür kann keine Zertifizierungsstelle bürgen. ohmail kann ihr nur über den Code vertrauen, den dein Computer zeigt, also öffne dort Einstellungen › Geräte und scanne den.",
     "baseNotAnAddress": "Das sieht nicht nach einer Serveradresse aus. Gib die Adresse an, unter der du ohmail im Browser öffnest, zum Beispiel ohmail.example.com, mit nichts hinter dem Host.",
@@ -356,6 +375,9 @@
     "bootLocalEngineOffOrigin": "ohmail sollte das Postfach auf diesem Handy und zugleich einen Server öffnen und hat deshalb keines von beiden geöffnet.",
     "bootMirrorFailed": "Die Kopie deiner Mails auf diesem Handy ließ sich nicht öffnen: {0}",
     "bootNeedsCredential": "Eine Anmeldung und eine Account-ID werden beide gebraucht.",
+    "calendarServerUnavailable": "Dieser Server unterstützt die Kalendersynchronisierung für ohcal nicht.",
+    "calendarQueuePending": "Synchronisiere deine Kalenderänderungen, bevor du diesen Server entfernst.",
+    "calendarQueueUnknown": "Das Handy konnte nicht nach ausstehenden Kalenderänderungen suchen. Versuche erneut, diesen Server zu entfernen.",
     "calendarCopyRemains": "Der Kalender, den dieses Handy kopiert hat, ließ sich noch nicht entfernen. ohmail versucht es beim nächsten Start erneut.",
     "composeEarlierWent": "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
     "composeKept": "In den Entwürfen behalten.",
@@ -374,7 +396,7 @@
     "deleteNoTrash": "Dieses Postfach hat keinen Papierkorb, und ohmail löscht nie endgültig — die Nachricht ist noch an ihrem Platz.",
     "deleteReplayExpired": "{0, select, 1 {1 Nachricht wurde} other {{0} Nachrichten wurden}} nicht in den Papierkorb verschoben — seit der Anfrage ist zu viel Zeit vergangen. Lösche sie noch einmal, wenn du das weiterhin willst.",
     "deleteReplayGone": "{0, select, 1 {1 Nachricht wurde} other {{0} Nachrichten wurden}} nicht in den Papierkorb verschoben — dieses Handy hat sie beim nächsten Start nicht gefunden. Lösche sie noch einmal, wenn du das weiterhin willst.",
-    "deleteUndoLost": "Das Rückgängigmachen konnte nicht gespeichert werden — die Nachricht ist im Papierkorb.",
+    "deleteUndoLost": "Rückgängig konnte nicht gespeichert werden.",
     "deleteUndone": "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
     "draftsDiscardAwaitingOrganizer": "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn bei ihrem nächsten Durchlauf.",
     "draftsDiscardQueued": "Noch nicht verworfen: Dieses Handy konnte deinen Account nicht erreichen. Wir versuchen es weiter.",
@@ -596,7 +618,7 @@
     "standaloneStarttlsFailed": "Der Wechsel auf eine verschlüsselte Verbindung zu deinem Mailserver ist fehlgeschlagen, wir haben also abgebrochen, bevor das Passwort rausging. Versuch es erneut oder nimm Port 993.",
     "standaloneStarttlsInjected": "Dein Mailserver hat beim Wechsel auf eine verschlüsselte Verbindung unerwartete Daten geschickt, wir haben also abgebrochen, bevor das Passwort rausging. Etwas in diesem Netz könnte stören. Versuch es in einem anderen Netz oder mit Port 993.",
     "standaloneStarttlsTimeout": "Der Wechsel auf eine verschlüsselte Verbindung zu deinem Mailserver wurde nicht rechtzeitig fertig, wir haben also abgebrochen, bevor das Passwort rausging. Versuch es erneut oder nimm Port 993.",
-    "storeFault": "{0, select, origin_not_normalized {diese Serveradresse hatte nicht die Form, in der dieses Handy sie speichert} account_id_missing {der Server hat den Account nicht benannt, den diese Kopplung öffnet} pairing_not_recorded {dieses Handy konnte die Kopplung nicht erfassen, bevor es sie speichert} pairing_still_held {dieses Handy hält die Kopplung weiterhin} pairing_still_listed {dieses Handy führt die Kopplung weiterhin in seiner Liste} no_such_profile {eine solche Kopplung gibt es auf diesem Handy nicht} wipe_queue_full {dieses Handy hat bereits mehr unerledigte Löschungen, als es erfassen kann} wipe_not_recorded {dieses Handy konnte nicht erfassen, dass für die kopierten Mails eine Löschung aussteht} wipe_still_owed {dieses Handy führt für dieses Postfach noch eine ausstehende Löschung} wake_queue_full {dieses Handy hat bereits mehr unerledigte Weckruf-Abmeldungen, als es erfassen kann} wake_not_recorded {dieses Handy konnte nicht erfassen, dass für die Weckruf-Registrierung eine Abmeldung aussteht} wake_still_owed {dieses Handy führt für diese Registrierung noch eine ausstehende Abmeldung} sign_out_queue_full {dieses Handy hat bereits mehr unerledigte Abmeldungen, als es erfassen kann} sign_out_not_recorded {dieses Handy konnte nicht erfassen, dass einem Server eine Abmeldung aussteht} sign_out_still_owed {dieses Handy hält noch eine Abmeldung, die es einem Server schuldet} index_unreadable {die Kopplungsliste dieses Handys ließ sich nicht lesen} purge_refused {der Schlüsselspeicher wollte die Kopplungen der früheren Installation nicht hergeben} mirror_not_deleted {dieses Handy konnte die gespeicherten Mails dieses Accounts nicht löschen} sync_held_pre_identity {ohmail prüft noch, welchen Account dieser Server öffnet} account_mismatch {dieser Server synchronisiert einen anderen Account als den, auf den diese Kopplung lautet} index_not_removed {der Schlüsselspeicher wollte die Kopplungsliste nicht entfernen} engine_removal_not_recorded {dieses Handy konnte nicht vermerken, dass das Postfach auf ihm entfernt wird} engine_removal_still_recorded {dieses Handy vermerkt noch eine unabgeschlossene Entfernung des Postfachs auf ihm} engine_store_not_deleted {dieses Handy konnte die Mails und das gespeicherte Passwort des Postfachs auf ihm nicht löschen} engine_key_not_removed {der Schlüsselspeicher wollte den Schlüssel nicht entfernen, der das gespeicherte Passwort dieses Postfachs öffnet} engine_store_not_durable {die Datenbank dieses Handys sicherte nicht zu, eine gespeicherte Änderung über einen Stromausfall zu behalten, deshalb wurde das Postfach darauf nicht geöffnet} engine_store_closed {das Postfach auf diesem Handy war bereits geschlossen, deshalb wurde nichts gelesen oder gespeichert} store_copy_no_room {auf diesem Handy ist zu wenig Platz frei, um vor dem Aktualisieren eine Kopie des Postfachs zu behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert} store_copy_failed {dieses Handy konnte vor dem Aktualisieren keine geprüfte Kopie des Postfachs behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert} shell_keeper_not_deleted {dieses Handy konnte die ungesendeten Briefe und vorgemerkten Änderungen, die es für dieses Postfach aufbewahrt hat, nicht löschen} shell_view_not_cleared {dieses Handy konnte die Kopie der Mails dieses Postfachs, die seine Mail-Ansicht aufbewahrt hat, nicht löschen} other {{0}}}",
+    "storeFault": "{0, select, origin_not_normalized {diese Serveradresse hatte nicht die Form, in der dieses Handy sie speichert} account_id_missing {der Server hat den Account nicht benannt, den diese Kopplung öffnet} pairing_not_recorded {dieses Handy konnte die Kopplung nicht erfassen, bevor es sie speichert} pairing_still_held {dieses Handy hält die Kopplung weiterhin} pairing_still_listed {dieses Handy führt die Kopplung weiterhin in seiner Liste} no_such_profile {eine solche Kopplung gibt es auf diesem Handy nicht} wipe_queue_full {dieses Handy hat bereits mehr unerledigte Löschungen, als es erfassen kann} wipe_not_recorded {dieses Handy konnte nicht erfassen, dass für die kopierten Mails eine Löschung aussteht} wipe_still_owed {dieses Handy führt für dieses Postfach noch eine ausstehende Löschung} wake_queue_full {dieses Handy hat bereits mehr unerledigte Weckruf-Abmeldungen, als es erfassen kann} wake_not_recorded {dieses Handy konnte nicht erfassen, dass für die Weckruf-Registrierung eine Abmeldung aussteht} wake_still_owed {dieses Handy führt für diese Registrierung noch eine ausstehende Abmeldung} sign_out_queue_full {dieses Handy hat bereits mehr unerledigte Abmeldungen, als es erfassen kann} sign_out_not_recorded {dieses Handy konnte nicht erfassen, dass einem Server eine Abmeldung aussteht} sign_out_still_owed {dieses Handy hält noch eine Abmeldung, die es einem Server schuldet} index_unreadable {die Kopplungsliste dieses Handys ließ sich nicht lesen} purge_refused {der Schlüsselspeicher wollte die Kopplungen der früheren Installation nicht hergeben} mirror_not_deleted {dieses Handy konnte die gespeicherten Mails dieses Accounts nicht löschen} sync_held_pre_identity {ohmail prüft noch, welchen Account dieser Server öffnet} account_mismatch {dieser Server synchronisiert einen anderen Account als den, auf den diese Kopplung lautet} index_not_removed {der Schlüsselspeicher wollte die Kopplungsliste nicht entfernen} engine_removal_not_recorded {dieses Handy konnte nicht vermerken, dass das Postfach auf ihm entfernt wird} engine_removal_still_recorded {dieses Handy vermerkt noch eine unabgeschlossene Entfernung des Postfachs auf ihm} engine_store_not_deleted {dieses Handy konnte die Mails und das gespeicherte Passwort des Postfachs auf ihm nicht löschen} engine_key_not_removed {der Schlüsselspeicher wollte den Schlüssel nicht entfernen, der das gespeicherte Passwort dieses Postfachs öffnet} engine_store_not_durable {die Datenbank dieses Handys sicherte nicht zu, eine gespeicherte Änderung über einen Stromausfall zu behalten, deshalb wurde das Postfach darauf nicht geöffnet} engine_store_closed {das Postfach auf diesem Handy war bereits geschlossen, deshalb wurde nichts gelesen oder gespeichert} store_copy_no_room {auf diesem Handy ist zu wenig Platz frei, um vor dem Aktualisieren eine Kopie des Postfachs zu behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert} store_copy_failed {dieses Handy konnte vor dem Aktualisieren keine geprüfte Kopie des Postfachs behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert} calendar_queue_pending {auf diesem Handy liegen noch nicht synchronisierte Kalenderänderungen} shell_keeper_not_deleted {dieses Handy konnte die ungesendeten Briefe und vorgemerkten Änderungen, die es für dieses Postfach aufbewahrt hat, nicht löschen} shell_view_not_cleared {dieses Handy konnte die Kopie der Mails dieses Postfachs, die seine Mail-Ansicht aufbewahrt hat, nicht löschen} other {{0}}}",
     "tagTagged": "Mit „{0}“ getaggt.",
     "tagUntagged": "Tag „{0}“ entfernt.",
     "toastAside": "Geparkt",

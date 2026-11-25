@@ -82,6 +82,8 @@ export function openFace(
   return (
     events.find((event) => event.id === route.open) ??
     beside?.find((event) => event.id === route.open) ??
-    (pending?.id === route.open && pending.id === route.words.invitation ? pending : undefined)
+    (pending?.id === route.open && pending.id === route.words.invitation
+      ? (events.find((event) => event.recordId === pending.invitation?.invitation.calendarEventId) ?? pending)
+      : undefined)
   );
 }

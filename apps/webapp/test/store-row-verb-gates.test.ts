@@ -44,10 +44,18 @@ describe("every verb gate on the browser and the phone reads the verb reader", (
     const reader = "../../../packages/app/src/reader";
     const panel = codeOf(sliceOfDeclaration(read(`${reader}/actions/ActionBar.tsx`), "ActionBar"));
     const menus = codeOf(sliceOfDeclaration(read(`${reader}/actions/ActionMenus.tsx`), "ActionMenus"));
+    // The panel delegates to the shared action so the first-use press can remember the account choice.
+    const action = codeOf(sliceOfDeclaration(read(`${reader}/actions/ActionMenus.tsx`), "useActionMenu"));
     const keys = read(`${reader}/keys.ts`);
-    expect(panel).toMatch(/const file = \(\): void => \{\s*close\(\);\s*verbs\.act\("delete"\);/);
-    expect(panel).toContain("trash={file}");
-    expect(menus).toMatch(/if \(menu !== "cardDelete" \|\| !isCardDeleteKey\(e\.nativeEvent\)\) return false;\s*e\.preventDefault\(\);\s*trash\(\);/);
+    expect(panel).toMatch(/\btrash, confirmTrash, trashAcknowledged \}\s*=\s*useActionMenu\(stop, verbs, onScreenKey\)/);
+    expect(panel).toContain("trash={trash}");
+    expect(panel).toContain("confirmTrash={confirmTrash}");
+    expect(panel).toContain("confirm={card !== undefined && !trashAcknowledged}");
+    expect(action).toContain('const trashAcknowledged = acknowledgements.has("moveToTrash")');
+    expect(action).toMatch(/const trash = \(\) => \{\s*close\(\);\s*verbs\.act\("delete"\);/);
+    expect(action).toMatch(/const confirmTrash = \(\) => \{\s*acknowledgements\.remember\?\.\("moveToTrash"\);\s*trash\(\);/);
+    expect(action).toContain('if (which === "cardDelete" && trashAcknowledged) return trash()');
+    expect(menus).toMatch(/if \(menu !== "cardDelete" \|\| !isCardDeleteKey\(e\.nativeEvent\)\) return false;\s*e\.preventDefault\(\);\s*confirmTrash\(\);/);
     expect(keys).toContain('run: () => open.menu("cardDelete")');
     expect(codeOf(sliceOfDeclaration(keys, "trashKeys"))).toContain('open.verbs.act("delete")');
 

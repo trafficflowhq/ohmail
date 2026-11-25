@@ -15,7 +15,7 @@ import { ServiceError } from "./errors.js";
 
 /** The mark an answer's draft carries in `drafts.workflow_dedup_key`. */
 export const INVITATION_ANSWER_MARK = "invitation-answer:";
-const INVITATION_PROPOSAL_MARK = "invitation-proposal:";
+export const INVITATION_PROPOSAL_MARK = "invitation-proposal:";
 
 /**
  * THE ANSWER'S DRAFT KEY: one draft per account, letter, answer and the answer on record before

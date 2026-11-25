@@ -251,6 +251,26 @@ describe("where a list stands at its field", () => {
     expect(low.maxHeight).toBe(96);
   });
 
+  it("cuts downward suggestions at a report instead of showing rows behind it", () => {
+    const fieldNearTop = { ...field, top: 24, bottom: 56 };
+    const report = { left: 80, top: 122, right: 500, bottom: 162 };
+    expect(placeSuggestions(fieldNearTop, { width: 300, height: 900 }, room, 0, report)).toMatchObject({
+      up: false,
+      top: 56,
+      maxHeight: 66,
+    });
+  });
+
+  it("cuts upward suggestions at the bottom of a report when the field is below it", () => {
+    const fieldNearBottom = { ...field, top: 540, bottom: 568 };
+    const report = { left: 80, top: 418, right: 500, bottom: 464 };
+    expect(placeSuggestions(fieldNearBottom, { width: 300, height: 900 }, room, 0, report)).toMatchObject({
+      up: true,
+      top: 464,
+      maxHeight: 76,
+    });
+  });
+
   it("never leaves the element it is held inside, on either side", () => {
     const inside = { left: 200, top: 0, right: 700, bottom: 600 };
     expect(

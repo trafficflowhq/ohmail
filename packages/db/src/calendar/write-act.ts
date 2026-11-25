@@ -288,9 +288,15 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
     case "calendar_event_update": {
       const scope = changeScopeOf(v.scope);
       const pairedBase = scope !== null && scope.kind !== "occurrence" && Object.hasOwn(v, "audience") && !Object.hasOwn(v, "after");
-      const b = based(v, ["scope", "change"], ["audience", "personalSeries"], pairedBase);
+      const b = based(v, ["scope", "change"], ["audience", "personalSeries", "invitationMessageId"], pairedBase);
       const change = fieldsOf(v.change, false);
       if (b === null || scope === null || change === null) return null;
+      const invitation = v.invitationMessageId;
+      if (invitation !== undefined) {
+        return isWriteUuid(invitation) && scope.kind === "record" && change.busy !== undefined &&
+          !Object.hasOwn(v, "audience") && !Object.hasOwn(v, "personalSeries")
+          ? { kind: v.kind, ...b, scope, change, invitationMessageId: invitation } : null;
+      }
       if (Object.hasOwn(v, "personalSeries")) {
         if (v.personalSeries !== true || Object.hasOwn(v, "audience") ||
           !Object.keys(change).every((field) => ["title", "notes", "place", "busy", "private"].includes(field))) return null;

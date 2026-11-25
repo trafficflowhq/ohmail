@@ -12,7 +12,10 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
+import type { SearchParamsLike } from "../app/demo-mode.js";
+import { firstScreenCatalog } from "../i18n/first-screen.js";
 
+vi.mock("../app/signup-mode.js", () => ({ publicSignupEnabled: () => true }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
 
 const KEY = "ohmail.signup.plan";
@@ -37,12 +40,14 @@ let originalFetch: typeof globalThis.fetch;
 let mints: Array<Record<string, unknown>> = [];
 /** What `/account/access` answers: refused until the test says the trial started. */
 let entitled = false;
+let signedIn = true;
 /** The lifecycle a refused answer carries; `undefined` leaves the block out. */
 let lifecycle: unknown = NEVER_STARTED;
 
 beforeEach(() => {
   mints = [];
   entitled = false;
+  signedIn = true;
   lifecycle = NEVER_STARTED;
   localStorage.clear();
   originalFetch = globalThis.fetch;
@@ -50,7 +55,7 @@ beforeEach(() => {
     const url = String(input);
     const json = (status: number, body: unknown) =>
       new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-    if (url.includes("/auth/session")) return json(200, FULL);
+    if (url.includes("/auth/session")) return signedIn ? json(200, FULL) : json(401, { error: { code: "unauthorized" } });
     if (url.includes("/account/access")) {
       return json(200, entitled
         ? { access: "ok", metered: true, canAddMailbox: true, mailboxes: 0 }
@@ -77,7 +82,7 @@ const trialCopy = {
   de: { title: "Starte deine 14-tägige Testphase", noCard: "Keine Karte" },
 };
 
-async function join(messages: typeof en, props: Record<string, unknown> = {}) {
+async function join(messages: typeof en, props: Record<string, unknown> = {}, query?: SearchParamsLike) {
   const locale = messages === de ? "de" : "en";
   vi.resetModules();
   process.env.NEXT_PUBLIC_API_BASE = "/api";
@@ -92,10 +97,13 @@ async function join(messages: typeof en, props: Record<string, unknown> = {}) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
+  const screen = query === undefined
+    ? React.createElement(JoinScreen, { initialCode: "", publicSignup: true, ...props })
+    : await (await import("../app/(product)/join/page.js")).default({ searchParams: Promise.resolve(query) });
   await act(async () => {
     root.render(React.createElement(NextIntlClientProvider, {
-      locale, messages, timeZone: "UTC",
-      children: React.createElement(JoinScreen, { initialCode: "", publicSignup: true, ...props }),
+      locale, messages: query === undefined ? messages : firstScreenCatalog(messages), timeZone: "UTC",
+      children: screen,
     }));
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -134,6 +142,26 @@ describe("/join reads ?plan and ?interval from closed sets", () => {
     expect([...PLAN_HINT_PLANS]).toEqual(["solo", "plus", "pro"]);
     expect(members("PLAN_HINT_PLANS")).toEqual([...PLAN_HINT_PLANS]);
     expect(members("PLAN_HINT_INTERVALS")).toEqual([...PLAN_HINT_INTERVALS]);
+  });
+});
+
+describe("the first signup screen confirms the landing choice before the form", () => {
+  it.each([
+    { messages: en, query: { plan: "plus", interval: "year" }, copy: ["Plus", "Billed yearly", en.pricing.plusPriceAnnual] },
+    { messages: de, query: { plan: "solo", interval: "month" }, copy: ["Solo", "Monatliche Abrechnung", de.pricing.soloPrice] },
+    { messages: en, query: { plan: "pro" }, copy: ["Pro"] },
+    { messages: en, query: {}, copy: ["Start your 14-day trial.", "No card needed"] },
+    { messages: de, query: {}, copy: ["Starte deine 14-tägige Testphase.", "Keine Karte nötig"] },
+  ])("shows $copy", async ({ messages, query, copy }) => {
+    signedIn = false;
+    const { host } = await join(messages, {}, query);
+    const field = host.querySelector("input");
+    expect(field).not.toBeNull();
+    for (const phrase of copy) {
+      const label = [...host.querySelectorAll("span, p")].find((el) => el.textContent === phrase);
+      expect(label, phrase).toBeDefined();
+      expect(label!.compareDocumentPosition(field!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
   });
 });
 

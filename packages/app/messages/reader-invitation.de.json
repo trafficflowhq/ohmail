@@ -11,9 +11,16 @@
     "goes": "{title} kommt in <calendar></calendar>",
     "on": "{title} ist in {calendar}",
     "answerPending": "Die Antwort wird noch gesendet",
-    "answerRefused": "Die Antwort konnte nicht gesendet werden",
-    "calendarRefused": "Der Termin konnte nicht zum Kalender hinzugefügt werden",
+    "answerUnverified": "Wir konnten nicht bestätigen, ob deine Antwort gesendet wurde. Prüfe den Ordner Gesendet, bevor du erneut antwortest.",
+    "calendarDisabled": "Der Kalender ist auf diesem Server nicht verfügbar.",
+    "calendarRequired": "Verbinde einen beschreibbaren Kalender, bevor du auf diese Einladung antwortest.",
+    "detailsUnavailable": "Die zum Speichern der Einladung nötigen Termindetails sind nicht verfügbar.",
+    "calendarRefused": "Deine Antwort wurde gesendet. Der Termin konnte nicht zum Kalender hinzugefügt werden. {reason}",
+    "calendarUpdateRefused": "Deine Antwort wurde gesendet. Die Änderung konnte nicht in deinem Kalender gespeichert werden. {reason}",
+    "calendarPending": "Deine Antwort wurde gesendet. Die Kalenderänderung steht noch aus.",
+    "connect": "Kalender verbinden",
     "add": "Zum Kalender hinzufügen",
+    "retryUpdate": "Kalenderänderung erneut versuchen",
     "destination": "Kommt in"
   }
 }

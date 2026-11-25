@@ -214,6 +214,11 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     m: EngineMutation,
     opts: MutateOptions = {},
   ): Promise<MutationResult> {
+    if (this.calendarOnly) {
+      const key = opts.key ?? this.uuid();
+      return { id: key, key, status: "rolled_back", seq: null,
+        error: new MutationRejectedError("mail changes are unavailable", { code: "unsupported", retryable: false }) };
+    }
     this.noteFiling(m);
     const result = await this.mutateOnce(m, opts);
     // A verb that may travel to another install re-reads what waits — on a 202 AND on an applied
@@ -1996,6 +2001,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
       // rolled-back one has no answer from the organizer to report.
       return {
         id: p.id, key: p.key, status: "confirmed", seq: outcome.seq,
+        ...(outcome.alreadyGone ? { alreadyGone: true as const } : {}),
         ...(outcome.sentDraftId ? { sentDraftId: outcome.sentDraftId } : {}),
         ...(outcome.sentDraftThrough === undefined ? {} : { sentDraftThrough: outcome.sentDraftThrough }),
         ...(outcome.entityId ? { entityId: outcome.entityId } : {}),

@@ -14,7 +14,6 @@
     --oh-sheet-top-h: 56px;
     --oh-sheet-foot-inset: 0px;
     --oh-sheet-layer-foot: 5;
-    --oh-sheet-layer-cover: -1;
     --oh-sheet-layer-ring: 4;
     --oh-sheet-side: 0px;
     --oh-sheet-out: calc(var(--ringw) * -1);
@@ -166,15 +165,6 @@
     margin-inline: var(--oh-sheet-side);
     pointer-events: none;
   }
-  .oh-sheet-foot[data-cover]::before {
-    content: "";
-    position: absolute;
-    inset-inline: calc(-1 * var(--oh-sheet-foot-inset));
-    inset-block: 0 calc(-1 * var(--oh-sheet-foot-own));
-    z-index: var(--oh-sheet-layer-cover);
-    background: var(--ground);
-  }
-
   /* The way back stands at the right corner of what is read: a step over the foot, or at the column's foot. */
   .oh-sheet > .oh-button.oh-jumpback {
     bottom: var(--oh-sheet-jump-own);
@@ -212,7 +202,7 @@
     @supports (animation-timeline: view()) {
       :root:not([data-device="phone"], [data-rm="1"])
         .oh-sheet-run
-        > :not([role="feed"], [data-stream-window]),
+        > :not([role="feed"], [data-stream-window], .oh-composer),
       :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > [data-stream-window] .oh-message,
       :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > [role="feed"] > [aria-posinset] {
         transform-origin: 50% 0;
@@ -362,6 +352,22 @@
     right: calc(var(--s3) - var(--ringw));
   }
 
+  /* An inline reply's action panel takes its own row below the scrollport. */
+  .oh-sheet[data-kind="reading"]:has(> .oh-sheet-body .oh-composer[data-reply]) {
+    --oh-sheet-foot-room: var(--s2);
+  }
+
+  .oh-sheet[data-kind="reading"]:has(> .oh-sheet-body .oh-composer[data-reply]) .oh-sheet-scroll {
+    mask-image: none;
+  }
+
+  .oh-sheet[data-kind="reading"]:has(> .oh-sheet-body .oh-composer[data-reply]) > .oh-sheet-foot {
+    position: relative;
+    inset: auto;
+    flex: none;
+    margin-block: var(--s2) var(--oh-sheet-foot-own);
+  }
+
   :root[data-face="ohmarchy"]:not([data-device="phone"], [data-zone="rail"])
     .oh-sheet[data-kind="reading"][data-focused]::after {
     content: "";
@@ -402,6 +408,7 @@
 }
 
 .oh-sheet[data-writing-keyboard] > .oh-sheet-foot {
+  margin-block: 0;
   position: relative;
   inset: auto;
   flex: none;
@@ -432,4 +439,15 @@
 
 .oh-sheet[data-writing-compact]:not(:has(> .oh-sheet-top)) > .oh-sheet-foot {
   grid-column: 1 / -1;
+}
+
+/* At the keyboard's shortest heights, keep the way back beside the actions as an icon. */
+:root[data-device="phone"] .oh-sheet[data-writing-compact] .oh-sheet-back > .oh-button {
+  width: var(--h-m);
+  padding: 0;
+}
+
+:root[data-device="phone"] .oh-sheet[data-writing-compact] .oh-sheet-back > .oh-button > :not(.oh-icon),
+:root[data-device="phone"] .oh-sheet[data-writing-compact] .oh-sheet-top > .oh-readsquares {
+  display: none;
 }

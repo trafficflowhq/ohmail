@@ -21,7 +21,8 @@ export function LetterText(props: Omit<EditorProps, "value" | "onChange" | "labe
   );
   const editorKey = `${composeEpochNow?.() ?? 0}:${composeHistoryTarget?.messageId ?? ""}:${composeHistoryTarget?.forward ?? false}`;
   const value = { text: compose.body, html: compose.html };
-  const onChange = (next: RichValue) => onComposeFields({ ...compose, body: next.text, html: next.html });
+  const onChange = (next: RichValue) =>
+    onComposeFields({ ...compose, body: next.text, html: next.html, aiDraft: false });
   return (
     <>
       <Editor

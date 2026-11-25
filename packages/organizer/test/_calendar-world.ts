@@ -294,7 +294,7 @@ export async function calendarsOf(w: World, accountId: string) {
   return w.db.select({
     id: calCalendars.id, providerId: calCalendars.providerId, name: calCalendars.name, syncToken: calCalendars.syncToken,
     errorCode: calCalendars.errorCode, nextPollAt: calCalendars.nextPollAt, lastSyncedAt: calCalendars.lastSyncedAt,
-    color: calCalendars.color, timeZone: calCalendars.timeZone,
+    color: calCalendars.color, timeZone: calCalendars.timeZone, nativeMove: calCalendars.nativeMove, autoSchedule: calCalendars.autoSchedule,
   }).from(calCalendars).where(eq(calCalendars.accountId, accountId)).orderBy(asc(calCalendars.providerId));
 }
 

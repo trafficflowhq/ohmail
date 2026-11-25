@@ -20,7 +20,8 @@ export function FilingStrip({ link = false }: { link?: boolean }) {
       <Txt variant="body" accessibilityRole={said.warn ? "alert" : "summary"}>{said.title}</Txt>
       <Txt variant="note" tone="ink2">{said.detail}</Txt>
       {link ? (
-        <Button label={Copy.filingStripOpen} variant="quiet" style={{ alignSelf: "flex-start" }} onPress={() => router.push("/settings")} />
+        <Button label={Copy.filingStripOpen} variant="quiet" style={{ alignSelf: "flex-start" }}
+          onPress={() => router.push({ pathname: "/settings", params: { pane: "mailboxes" } })} />
       ) : null}
     </Panel>
   );

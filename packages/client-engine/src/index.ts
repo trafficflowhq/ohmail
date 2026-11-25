@@ -271,7 +271,7 @@ export {
   FOLDER_OF_VIEW,
   VIEW_OF_FOLDER,
   folderLeaf,
-  isProtectedMessage,
+  isCalendarQueueType, isProtectedMessage,
   encodeSeqCursor,
   decodeSeqCursor,
   // The runtime list of the wire's mutation kinds — what lets the verb-parity harness enumerate
@@ -352,7 +352,7 @@ export {
   type EntityReader, type MirrorStore, type OutboxNotice, type OutboxNotices, type OutboxRowAct, type OutboxRowVerdict,
 } from "./store.js";
 export {
-  IndexedDbMirrorStore,
+  IndexedDbMirrorStore, prepareCalendarCopies,
   LEGACY_MIRROR_DB,
   MIRROR_DB_PREFIX,
   clearAllMirrors,

@@ -3546,9 +3546,14 @@ export const account = {
    * storage add-on. Step-up gated: a 403 `step_up_required` is the caller's to answer with the
    * factor and ask once more. `null` only for a 404 (no such page here), as `manageLink`.
    */
-  manageLinkChange: async (opts?: { lang?: "de" | "en" }, expectedOwner?: string | null): Promise<{ url: string } | null> => {
+  manageLinkChange: async (
+    opts?: { lang?: "de" | "en"; addon?: "storage" | "mailbox" }, expectedOwner?: string | null,
+  ): Promise<{ url: string } | null> => {
     try {
-      const body = opts?.lang === "de" || opts?.lang === "en" ? { lang: opts.lang } : {};
+      const body = {
+        ...(opts?.lang === "de" || opts?.lang === "en" ? { lang: opts.lang } : {}),
+        ...(opts?.addon ? { addon: opts.addon } : {}),
+      };
       return await api<{ url: string }>("/account/manage-link/change", { method: "POST", body, expectedOwner });
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) return null;

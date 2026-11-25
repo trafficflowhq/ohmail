@@ -1,14 +1,5 @@
-/**
- * The away responder's rules on this phone — pure, so the census and the tests drive them as
- * data (`reader-verbs.ts`'s posture). Three facts live here and nowhere else: what the switch's
- * state SAYS, what a save may send, and what the phone is not offering to change.
- *
- * `PUT /away-responder` IS A FULL REPLACE — it defaults every field the body omits, so a partial
- * write silently resets what it left out. This phone edits three of the seven and sends back the
- * OTHER FOUR as it read them, which makes a successful read a precondition of a save: saving over
- * a read that never landed would narrow the audience and the pile scope on somebody's behalf.
- */
-
+/** Away settings edit a complete server row and require a successful read before saving. */
+import { AWAY_PILE_VIEW, isAwayPile } from "@ohmail/app-logic/away";
 import { Copy } from "../copy";
 
 /** The holder turned this install's last away change down, as the read says (`change`). */
@@ -31,24 +22,27 @@ export interface AwayRow {
   startsAt: string | null;
   /** When the responder stops — the end of the chosen day where the reader is, or open-ended. */
   endsAt: string | null;
-  /** Who gets a reply. Read-only on this phone; carried back verbatim on every save. */
+  /** Who gets a reply. An unfamiliar value is preserved until an explicit choice. */
   audience: string;
-  /** How often one person may be answered. Read-only here; carried back verbatim. */
+  /** How often one person may be answered. An unfamiliar value is preserved until an explicit choice. */
   throttle: string;
-  /** WHICH piles get a reply, as FOLDER names. Read-only here; carried back verbatim. */
+  /** WHICH piles get a reply, as FOLDER names. An unfamiliar value is preserved until an explicit choice. */
   piles: string[];
   updatedAt: string | null;
 }
 
-/** The three fields this phone edits. Everything else on the row travels back untouched. */
+export type AwayScope = Pick<AwayRow, "audience" | "piles" | "throttle">;
+
+/** The responder fields that can be edited. The server owns the remaining fields. */
 export interface AwayEdits {
   enabled: boolean;
   body: string;
   endsAt: string | null;
+  scope?: AwayScope;
 }
 
 /**
- * THE PUT BODY — the row that was read, with this phone's three edits over it.
+ * THE PUT BODY — the row that was read, with the edits applied.
  *
  * `null` where there is no read, which is a refusal and not an empty save: see the header. The
  * body is trimmed to `null` when nothing is written, which is what the server stores for an
@@ -58,6 +52,7 @@ export function awaySaveBody(read: AwayRow | null, edits: AwayEdits): AwayRow | 
   if (read === null) return null;
   return {
     ...read,
+    ...edits.scope,
     enabled: edits.enabled,
     body: edits.body.trim() === "" ? null : edits.body,
     endsAt: edits.endsAt,
@@ -111,7 +106,14 @@ export function awayUnsaved(read: AwayRow | null, edits: AwayEdits): boolean {
   if (read === null) return false;
   const at = (v: string | null): number | null => (v === null ? null : Date.parse(v));
   const body = edits.body.trim() === "" ? null : edits.body;
-  return read.enabled !== edits.enabled
+  const scope = edits.scope ?? read;
+  const savedPiles = new Set(read.piles);
+  const editedPiles = new Set(scope.piles);
+  return read.audience !== scope.audience
+    || read.throttle !== scope.throttle
+    || savedPiles.size !== editedPiles.size
+    || [...editedPiles].some((pile) => !savedPiles.has(pile))
+    || read.enabled !== edits.enabled
     || (read.body?.trim() ? read.body : null) !== body
     || at(read.endsAt) !== at(edits.endsAt);
 }
@@ -136,30 +138,13 @@ export function awayUnsavedLine(read: AwayRow): string {
   return read.enabled ? Copy.awayUnsavedStillOn : Copy.awayUnsavedStillOff;
 }
 
-/** The folder names the phone has words for, and the word for each. */
-const PILE_WORD: Readonly<Record<string, "ohbox" | "reads" | "receipts" | "screener">> = {
-  "INBOX": "ohbox",
-  "ohmail/News": "reads",
-  "ohmail/Receipts": "receipts",
-  "ohmail/Screener": "screener",
-};
-
-/**
- * WHAT THE STORED SCOPE IS, for the sentence that says who will be answered.
- *
- * An unrecognised folder is carried through VERBATIM rather than dropped. Filtering it would make
- * this surface report a NARROWER scope than the pass acts on — the exact failure the responder
- * service's own narrowing comment names — and on a phone that is a person reading "only your
- * Ohbox is answered" while a fourth pile is going out in their name. The phone offers no control
- * over this set; it states it.
- */
+/** Translate known folders and retain any newer folders verbatim. */
 export function awayPileWords(piles: readonly string[]): { known: string[]; verbatim: string[] } {
   const known: string[] = [];
   const verbatim: string[] = [];
-  for (const p of piles) {
-    const word = PILE_WORD[p];
-    if (word === undefined) verbatim.push(p);
-    else known.push(word);
+  for (const pile of piles) {
+    if (isAwayPile(pile)) known.push(AWAY_PILE_VIEW[pile]);
+    else verbatim.push(pile);
   }
   return { known, verbatim };
 }

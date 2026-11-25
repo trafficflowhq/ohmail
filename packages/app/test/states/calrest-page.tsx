@@ -11,8 +11,16 @@ import { calendar } from "../../src/calendar/entry.js";
 import { calendarAccountsPane, calendarViewPane } from "../../src/calsettings/index.js";
 import { SetupPortProvider } from "../../src/calsetup/index.js";
 import { Frame } from "../../src/frame/Frame.js";
+import { useFrame } from "../../src/frame/commands.js";
 import type { CalendarEntry, PaneProps, PlaceEntry } from "../../src/frame/contract.js";
-import { PaneColumn, settingsPlace, type SettingsPane } from "../../src/settings/index.js";
+import {
+  PANE_IDS,
+  PaneColumn,
+  paneOf,
+  settingsPlace,
+  type SettingsPane,
+  type SettingsPanes,
+} from "../../src/settings/index.js";
 import { fillOver, TextProvider, type Messages } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, fakeAppearance, fakeWindow, ROOMS } from "../support/fake-window.js";
@@ -38,6 +46,8 @@ import monthDe from "../../messages/month.de.json" with { type: "json" };
 import monthEn from "../../messages/month.en.json" with { type: "json" };
 import settingsDe from "../../messages/settings.de.json" with { type: "json" };
 import settingsEn from "../../messages/settings.en.json" with { type: "json" };
+import settingsMenuDe from "../../messages/settings-menu.de.json" with { type: "json" };
+import settingsMenuEn from "../../messages/settings-menu.en.json" with { type: "json" };
 import weekDe from "../../messages/week.de.json" with { type: "json" };
 import weekEn from "../../messages/week.en.json" with { type: "json" };
 
@@ -61,6 +71,7 @@ const WORDS: Record<"en" | "de", Messages> = {
   en: {
     ...FRAME_WORDS.en,
     ...({ settings: settingsEn.settings } as unknown as Messages),
+    ...settingsMenuEn,
     ...(calendarEn as unknown as Messages),
     ...(eventEn as unknown as Messages),
     ...(weekEn as unknown as Messages),
@@ -75,6 +86,7 @@ const WORDS: Record<"en" | "de", Messages> = {
   de: {
     ...FRAME_WORDS.de,
     ...({ settings: settingsDe.settings } as unknown as Messages),
+    ...settingsMenuDe,
     ...(calendarDe as unknown as Messages),
     ...(eventDe as unknown as Messages),
     ...(weekDe as unknown as Messages),
@@ -111,6 +123,8 @@ function setupAddress(): string {
 function addressOf(): string {
   if (screen === "frommail") return open ? `#/cal/from-mail/e/${open}` : "#/cal/from-mail";
   if (screen === "mail-settings") return "#/settings/calaccounts";
+  if (screen === "calendar-settings")
+    return state === "unconfigured" ? "#/cal/week" : "#/cal/calendars/calaccounts";
   if (screen === "calsettings") return "#/cal/calendars";
   if (screen === "calsetup") return setupAddress();
   if (screen === "day" || screen === "week" || screen === "month")
@@ -143,12 +157,21 @@ function paneAlone(): PlaceEntry {
   return { id: "calsettings", body: "calsettings", rail: null, panes: { kind: "wide", Wide } };
 }
 
+const settingsPanes = Object.fromEntries(
+  PANE_IDS.map((id) => [id, { ...paneOf(id, { Body: () => null }), listed: () => true }]),
+) as SettingsPanes;
+const calendarSettings = settingsPlace(settingsPanes, function useBeside() {
+  const { commands } = useFrame();
+  return { go: (sub) => commands.go({ place: "calsettings", sub }), startAt: "calaccounts" };
+});
+
 const world = worldOf({
   state,
   signedOut: state === "signin",
   secondZone: q.get("zone2") === "1",
   refused: state === "error",
-  extraAccounts: screen === "mail-settings" ? 20 : 0,
+  extraAccounts:
+    screen === "mail-settings" || (screen === "calendar-settings" && state !== "unconfigured") ? 20 : 0,
 });
 if (q.has("record-times") || state === "garden-guests") {
   Object.assign(world.engine.store, {
@@ -186,11 +209,13 @@ const made = fakeHost({
   engine: world.engine,
   service: "managed",
   scope: "mila",
-  calendar: entry,
+  calendar: screen === "calendar-settings" ? calendar : entry,
   places:
     screen === "mail-settings"
       ? { settings: settingsPlace(null, () => ({ go: () => undefined, startAt: "calaccounts" })) }
-      : undefined,
+      : screen === "calendar-settings"
+        ? { settings: calendarSettings }
+        : undefined,
   products: "both",
   wires: { calendar: world.port },
   window: windowFacts,

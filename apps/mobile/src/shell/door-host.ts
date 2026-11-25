@@ -70,7 +70,7 @@ export interface DoorHostDeps {
   /** Out of a door that stands over an open mailbox. */
   readonly back: () => void;
   /** The page drew its first frame. */
-  readonly ready: () => void;
+  readonly ready: (calendarPrepared?: false) => void;
   /** Wakes the open mailbox's page, which holds the mail under the shell. */
   readonly wake: () => void;
   readonly openSettings: (what: "notifications") => Promise<void>;
@@ -98,12 +98,13 @@ export class DoorHost {
     const done = async (): Promise<Record<never, never>> => ({});
     this.handlers = {
       config: () => this.config(),
-      ready: () => (this.deps.ready(), {}),
+      ready: (request) => (this.deps.ready(request.calendarPrepared), {}),
       leave: async () => (await this.leave(), {}),
       /* The ring is the connection's; under the shell the open mailbox's page holds the mail and drains on a wake. */
       sync: async () => (await this.deps.conn().syncNow(), this.deps.wake(), {}),
       disconnect: async () => (await this.deps.conn().disconnect(), {}),
       "server.ask": (r) => this.serverAsk(r.address),
+      "sign-in": (r, signal) => this.signIn(r.address, signal),
       "scan.start": (r) => this.scanAt(r.rect, true),
       "scan.move": (r) => this.scanAt(r.rect, false),
       "scan.stop": () => (this.stopScan(), {}),
@@ -211,10 +212,13 @@ export class DoorHost {
     });
   }
 
-  private config(): DoorConfig {
+  private async config(): Promise<DoorConfig> {
     const conn = this.deps.conn();
+    const facts = this.deps.facts();
+    const erasedCalendarScopes = facts.app === "ohcal" ? await conn.erasedCalendarScopes?.() : undefined;
     return {
-      ...this.deps.facts(),
+      ...facts,
+      ...(erasedCalendarScopes?.length ? { erasedCalendarScopes } : {}),
       at: doorAtOf(this.deps.asked, conn),
       organizes: this.deps.standalone.offered() ? "offered" : "withheld",
       canPin: canPin(),
@@ -299,6 +303,18 @@ export class DoorHost {
     const link = pasted ?? { origin, token, pin: null };
     if (link.token.trim() === "") return { k: "refused", said: said(refuse("pairEmptyToken")) };
     return (await this.measure(link, () => !signal.aborted)) ?? { k: "refused", said: said(refuse("connectSuperseded")) };
+  }
+
+  private async signIn(address: string | null, signal: AbortSignal): Promise<Answered<"sign-in">> {
+    this.entering += 1;
+    try {
+      const outcome = await this.deps.conn().signIn(address, signal);
+      if (!outcome.ok) return { ok: false, said: said(outcome.reason) };
+      this.deps.entered();
+      return { ok: true };
+    } finally {
+      this.entering -= 1;
+    }
   }
 
   /**

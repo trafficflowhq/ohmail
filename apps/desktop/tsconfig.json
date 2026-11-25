@@ -162,6 +162,7 @@
       "@trafficflow/core/url-escapes": ["../../packages/core/src/url-escapes.ts"],
       "@trafficflow/core/image-dimensions": ["../../packages/core/src/image-dimensions.ts"],
       "@trafficflow/core/away-scope": ["../../packages/core/src/away-scope.ts"],
+      "@trafficflow/core/calendar-privacy": ["../../packages/core/src/calendar-privacy.ts"],
       "@trafficflow/core/screener-acknowledgements": ["../../packages/core/src/screener-acknowledgements.ts"],
       /* The organized six and the retro-move question, reached through `@ohmail/client-engine`'s
          re-export — the bundler's twin, and the pair must agree. */

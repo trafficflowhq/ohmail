@@ -32,8 +32,12 @@ const TABLE = {
   /* --------------------------------------------------------------- welcome */
 
   welcomeTitle: "Mail from people you said yes to.",
-  welcomeConnect: "Connect a mailbox",
-  welcomeScan: "Scan a code",
+  welcomeScan: "Scan QR",
+  welcomeSignIn: "Sign in",
+  welcomeSignInSelfHosted: "Sign in self hosted",
+  signInWaiting: "Finish signing in in the browser.",
+  signInFinishing: "Finishing sign-in…",
+  signInServerAddress: "Server address",
 
   /* ------------------------------------------------------------------ doors */
 
@@ -298,6 +302,20 @@ const TABLE = {
    * a person who reads "Organizing" on a laptop must not meet a second word for it here.
    */
   phoneThisPhone: "This phone",
+  settingsAppearance: "Appearance",
+  settingsAi: "AI",
+  settingsDevices: "Devices",
+  settingsManageDevices: "Manage account devices",
+  settingsDevicesBrowser: "Opens in your browser",
+  settingsDevicesFailed: "Could not open account devices. Try again.",
+  settingsGeneral: "General",
+  settingsNotifications: "Notifications",
+  settingsMailboxes: "Mailboxes",
+  settingsFolders: "Folders",
+  settingsSignatures: "Signatures",
+  settingsAccount: "Account",
+  settingsAbout: "About ohmail",
+  settingsHelp: "Help & contact",
   phoneStateOrganizing: "Organizing",
   phoneStateStopping: "Stopping",
   /* THE STOP THE MAIL SERVER HAS NOT HONOURED, which is neither of the two above. The person
@@ -762,6 +780,7 @@ const TABLE = {
   lateMailboxTimeout: "The mail server did not respond in time",
   lateMailboxDown: "Mail server unreachable",
   lateMailboxOther: "Mail could not sync",
+  lateMailboxTitle: (mailbox: string, reason: string) => `${mailbox}: ${reason}`,
   lateSince: (time: string) => `since ${time}`,
   lateHide: "Hide",
   lateTitle: "New mail is late.",
@@ -955,6 +974,9 @@ const TABLE = {
    */
   pairRedeemUnreachable: "could not reach that server to redeem the pairing",
   pairCodeRejected: "that pairing code was not accepted — mint a fresh one and scan again",
+  calendarQueuePending: "Sync your calendar edits before forgetting this server.",
+  calendarQueueUnknown: "The phone could not check for unsynced calendar edits. Try forgetting this server again.",
+  calendarServerUnavailable: "This server does not support calendar sync for ohcal.",
   pairNoAccountName:
     "paired, but the server could not name the account this pairing opens — once it holds mail, "
     + "mint a fresh code and pair again",
@@ -1008,6 +1030,15 @@ const TABLE = {
     "That is a numeric address on a network, and no certificate authority can vouch for one — "
     + "so ohmail can only trust it through the code your computer shows. Open Settings → "
     + "Devices there and scan that instead.",
+  signInExpired: "This sign-in request expired. Start again.",
+  signInDenied: "The sign-in request was declined.",
+  signInUnreachable: "Could not reach the server. Check your connection and try again.",
+  signInNotOffered: "This server does not support signing in from the phone’s browser.",
+  signInRateLimited: "Too many sign-in attempts. Try again later.",
+  signInRefused: "Could not finish signing in. Start again.",
+  signInNoBrowser: "Could not open the sign-in browser.",
+  signInWrongServer: (host: string) => `The sign-in page must stay on ${host}.`,
+  signInCancelled: "The sign-in was cancelled.",
   baseCleartext:
     "That is a plain, unencrypted address, and ohmail will not send your mail over one. "
     + "Give the https address you open ohmail at in a browser.",
@@ -1310,6 +1341,8 @@ const TABLE = {
         return "this phone has too little free space to keep a copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed";
       case "store_copy_failed":
         return "this phone could not keep a checked copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed";
+      case "calendar_queue_pending":
+        return "this phone still holds unsynced calendar edits";
       case "shell_keeper_not_deleted":
         return "this phone could not delete the unsent letters and queued changes it kept for that mailbox";
       case "shell_view_not_cleared":
@@ -1536,6 +1569,9 @@ const TABLE = {
   draftAiNeedWords: "Write a few words first.",
   draftAiConfirm: `Use ${DRAFT_REPLY_COST_CREDITS} credits`,
   draftAiOffer: `This writes a draft using ${DRAFT_REPLY_COST_CREDITS} credits. You can edit it before sending.`,
+  draftAiFullTitle: "Use full conversation",
+  draftAiFullDisclosure: "For this draft, share your typed text, the full stored text of the message you’re answering, and up to 4,000 characters from up to 20 earlier messages in this conversation with your configured AI provider.",
+  draftAiFullConfirm: "Share and draft",
   composeFormat: "Format text",
   composeBold: "Bold",
   composeItalic: "Italic",
@@ -2248,6 +2284,7 @@ const TABLE = {
   actionMarkUnread: "Mark unread",
   actionDone: "Done",
   actionMore: "More",
+  mailBackToTop: "Back to top",
   /** The fifth tab. Its own key rather than {@link actionMore}'s: a destination, not a verb. */
   tabMore: "More",
   /** What a standalone phone calls itself on its own screens. The claim keeps its constant. */
@@ -2265,6 +2302,8 @@ const TABLE = {
   deleteAsk: "Move to Trash.",
   deleteNote:
     "It moves to the Trash folder on your own mail server — ohmail never erases mail. Your mail server's Trash rules apply from there.",
+  toastMovingToTrash: "Moving to Trash.",
+  toastMovingToTrashMany: (count: number) => `Moving ${count} messages to Trash.`,
   toastDeleted: "Moved to Trash.",
   deleteFailed: "That delete could not be saved — the message is where it was.",
   /*
@@ -2277,7 +2316,7 @@ const TABLE = {
   toastUndone: "Undone.",
   deleteUndone: "Not deleted — the message is where it was.",
   /* Said when the undo could not be saved on this device: the delete went ahead, Trash has it. */
-  deleteUndoLost: "That undo could not be saved — the message is in Trash.",
+  deleteUndoLost: "Couldn’t save Undo.",
   /**
    * MOVE'S OWN SETTLEMENT, because Move takes back two things. The mail is reversed on the wire
    * and the sender's RULE was never sent — a window, like the delete's — so the sentence names
@@ -2604,13 +2643,13 @@ const TABLE = {
   composeKeptQueued: "Kept as a draft. It reaches Drafts once this phone is back online.",
   composeKeptQueuedWithoutFiles:
     "Kept as a draft, without the attachments. It reaches Drafts once this phone is back online.",
-  composeKeepFailed: "This could not be kept as a draft. Close again to discard it.",
+  composeKeepFailed: "This draft couldn’t be saved. It’s still open here.",
   /* PAST THE DRAFT LIMIT — said while typing (the web's `compose.bodyTooLong`), and on a close. */
   composeTooLong: (size: string) => `Too long to save — the limit is ${size}. Shorten the message and it saves again.`,
   composeKeepTooLong: (size: string) =>
-    `This can't be kept as a draft — it's past the ${size} limit. Shorten it, or close again to discard it.`,
+    `This can't be kept as a draft — it's past the ${size} limit. Shorten it to save it.`,
   composeKeepTooLongBound: (size: string) =>
-    `These changes can't be kept — they're past the ${size} limit, so Drafts still holds the earlier version. Shorten it, or close again to discard the changes.`,
+    `These changes can't be kept — they're past the ${size} limit, so Drafts still holds the earlier version. Shorten it to save your changes.`,
   composeKeepFiles: (names: string, size: string) =>
     `Not kept with the draft: ${names}. This phone keeps up to ${size} of attachments with drafts. Close again to keep it without them.`,
   /* A DRAFT ROW HOLDS NO BYTES: the attachments stay on this phone, and the sentence says where. */
@@ -2790,7 +2829,6 @@ const TABLE = {
    * switch that turns on a standing order without naming who it answers is a control with its
    * consequence off screen, and the webapp's own audience note calls that a disclosure.
    */
-  awayScopeElsewhere: "Set these on a computer or in ohmail Cloud. This phone sends them back unchanged.",
   /**
    * PHONE-ONLY (3/6): a pile this build has no word for. Named verbatim rather than dropped:
    * filtering it would state a NARROWER scope than the responder acts on, which on a screen

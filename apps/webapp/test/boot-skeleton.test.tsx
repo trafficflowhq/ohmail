@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import messages from "../messages/en.json";
 import { BOOT_SKELETON_GRACE_MS } from "../app/shell/BootSkeleton";
-import { RAIL_TRACK } from "@ohmail/app-logic/lists/column-store";
+import { layoutPlan } from "@ohmail/app/frame";
 import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import {
   ISO,
@@ -61,7 +61,7 @@ function holdSync(): void {
   }) as unknown as typeof globalThis.fetch;
 }
 
-const skeleton = (el: HTMLElement): HTMLElement | null => el.querySelector(".boot-sk");
+const skeleton = (el: HTMLElement): HTMLElement | null => el.querySelector(".oh-rowsshape");
 
 describe("the cold-mirror silhouette in the shared shell", () => {
   beforeEach(installShellEnv);
@@ -87,19 +87,17 @@ describe("the cold-mirror silhouette in the shared shell", () => {
     const sk = skeleton(el);
     expect(sk, "the mirror was unread for longer than the grace and the column stayed blank")
       .not.toBeNull();
-    const rows = sk!.querySelectorAll(".boot-sk-row");
+    expect(sk!.closest(".fr-list .oh-sheet"), "the kit’s row shapes do not stand on the mail sheet").not.toBeNull();
+    const rows = sk!.querySelectorAll(".oh-rowsshape-row");
     expect(rows.length, "a silhouette with no rows in it").toBeGreaterThan(0);
 
-    /* THE ROWS ARE `.row`'S OWN ANATOMY, NOT GENERIC TEXT LINES (owner report 2026-08-26):
-       the 30px lead circle every Ohbox row draws, the sender line with its far-right time
-       stub, the subject line, the preview line. A regression to two anonymous bars per row
-       goes red here. */
+    /* The kit keeps the sender, time, subject and phone preview slots beside the avatar. */
     for (const row of rows) {
-      expect(row.querySelector(".boot-sk-av"), "a mail row without its lead circle").not.toBeNull();
-      expect(row.querySelector(".boot-sk-who"), "no sender line").not.toBeNull();
-      expect(row.querySelector(".boot-sk-time"), "no time stub").not.toBeNull();
-      expect(row.querySelector(".boot-sk-subj"), "no subject line").not.toBeNull();
-      expect(row.querySelector(".boot-sk-line"), "no preview line").not.toBeNull();
+      expect(row.querySelector(".oh-rowsshape-face"), "a mail row without its lead circle").not.toBeNull();
+      expect(row.querySelector(".oh-shapebar[data-as=who]"), "no sender line").not.toBeNull();
+      expect(row.querySelector(".oh-shapebar[data-as=time]"), "no time stub").not.toBeNull();
+      expect(row.querySelector(".oh-rowsshape-row > .oh-shapebar:not([data-as])"), "no subject line").not.toBeNull();
+      expect(row.querySelector(".oh-shapebar[data-as=more]"), "no preview line").not.toBeNull();
     }
   });
 
@@ -158,120 +156,59 @@ describe("the cold-mirror silhouette in the shared shell", () => {
   });
 });
 
-/**
- * ── THE MOTION, ASSERTED AT THE STYLESHEET ──────────────────────────────────────────────
- *
- * jsdom lays nothing out and runs no animation, so the reduced-motion promise is asserted where
- * it is made — the same way `empty-explainer-gutter.test.ts` asserts its geometry, and read with
- * `readFileSync` because this repo's `grep` skips a whole file on one NUL byte.
- */
-const bare = (p: string): string =>
-  readFileSync(resolve(process.cwd(), p), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8");
 
 describe("the silhouette is the live shell's geometry, asserted at the stylesheet", () => {
-  const css = bare("apps/webapp/app/app.css");
-
   it("the window variant is the deck's three columns — rail, --split list, reading pane", () => {
-    const win = /(?:^|[};])\s*\.boot-sk-window\s*\{([^{}]*)\}/m.exec(css);
-    expect(win, "no `.boot-sk-window` rule in app.css").not.toBeNull();
-    // `.deck`'s rail + `--split`'s list/reader, with the same gaps — the real window.
-    //
-    // The rail's 224 and the list's minmax(320px,400px) are now the FALL-THROUGHS of the two
-    // properties the columns hang on (`shell/column-store.ts`), not literals, and that is the
-    // point rather than an incidental rewrite: those columns are draggable, so a silhouette
-    // pinned at 224/400 in front of a shell about to stand at 304/560 is exactly the visible
-    // re-layout this whole geometry exists to prevent. The defaults are still asserted, inside
-    // the `var()`, so a build that changed them without changing the skeleton is still red.
-    // The rail's track is the one string `column-store.ts` exports — its ceiling follows the
-    // window — so the silhouette is asserted against that constant rather than a retyped clamp.
-    const railTrack = RAIL_TRACK.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s*");
-    expect(win![1]).toMatch(
-      new RegExp(`grid-template-columns:\\s*${railTrack}\\s+var\\(--split-user-sk,\\s*minmax\\(320px,\\s*400px\\)\\s+1fr\\)`),
-    );
-    expect(RAIL_TRACK).toContain("clamp(200px, var(--rail-w, 224px),");
-    expect(win![1]).toMatch(/gap:\s*0\s+var\(--gap-tile\)/);
+    const css = read("packages/app/src/frame/placement.css");
+    expect(css).toMatch(/\.fr-columns\s*\{[^}]*grid-template-columns: var\(--fr-rail\) minmax\(0, 1fr\)/);
+    expect(css).toMatch(/\.fr-main\s*\{[^}]*grid-template-columns: var\(--fr-listw\) minmax\(0, 1fr\)/);
+    expect(css).toMatch(/\.fr-main\s*\{[^}]*grid-template-columns: var\(--split-user/);
   });
 
   it("a row is `.row` verbatim — 12×14 padding, radius 16, a 30px lead circle", () => {
-    const row = /(?:^|[};])\s*\.boot-sk-row\s*\{([^{}]*)\}/m.exec(css);
-    expect(row).not.toBeNull();
-    expect(row![1]).toMatch(/padding:\s*12px\s+14px/);
-    expect(row![1]).toMatch(/border-radius:\s*calc\(var\(--r-card\) \* 16 \/ 14\)/);
-    const av = /(?:^|[};])\s*\.boot-sk-av\s*\{([^{}]*)\}/m.exec(css);
-    expect(av).not.toBeNull();
-    expect(av![1]).toMatch(/width:\s*30px/);
-    expect(av![1]).toMatch(/height:\s*30px/);
-    expect(av![1]).toMatch(/border-radius:\s*var\(--r-avatar\)/);
+    const css = read("packages/ui/src/base/Pages/rows-shape.css");
+    expect(css).toMatch(/\.oh-rowsshape-row\s*\{[^}]*grid-template-columns: var\(--gutter\) minmax\(0, 1fr\)/);
+    expect(css).toMatch(/\.oh-rowsshape-row\s*\{[^}]*height: var\(--row\);[^}]*padding: var\(--oh-rowsshape-row-pad\)/);
+    expect(css).toMatch(/\.oh-rowsshape-face\s*\{[^}]*width: var\(--av\);[^}]*height: var\(--av\);[^}]*border-radius: var\(--av-r\)/);
   });
 
   it("below 1024px the rail disappears and below 700px the reading pane does — the width ladder's bands", () => {
-    // DESIGN-FOLD-WIDTHS §0: the rail is a drawer below 1024 (no rail silhouette), and the split
-    // is one column below 700 (no reader silhouette); between the two the skeleton keeps its
-    // reader panel, because the live shell seats two panes there.
-    const drawer = css.split(/@media\s*\(max-width:\s*1023\.98px\)/).slice(1);
-    const railGone = drawer.some((b) =>
-      /\.boot-sk-rail[^{},]*\{[^{}]*display:\s*none/.test(b.split("@media")[0]));
-    expect(railGone, "the drawer band would show a rail it does not have").toBe(true);
-    const phone = css.split(/@media\s*\(max-width:\s*699\.98px\)/).slice(1);
-    const readerGone = phone.some((b) =>
-      /\.boot-sk-reader[^{},]*\{[^{}]*display:\s*none/.test(b.split("@media")[0]));
-    expect(readerGone, "the phone band would show a reading pane it does not have").toBe(true);
-    expect(drawer.some((b) => /\.boot-sk-reader[^{},]*\{[^{}]*display:\s*none/.test(b.split("@media")[0])),
-      "the reader silhouette is hidden in the drawer band — the two-pane band has a reader").toBe(false);
-    // …and the narrow shell's TOPBAR shape appears there (review round): the live narrow layout
-    // is a topbar over the deck, and a silhouette without one ends with the real topbar
-    // arriving and every row shifting down.
-    const topbarShown = drawer.some((b) =>
-      /\.boot-sk-topbar[^{},]*\{[^{}]*display:\s*flex/.test(b.split("@media")[0]));
-    expect(topbarShown, "no narrow topbar silhouette").toBe(true);
-    expect(/\.boot-sk-topbar\s*\{\s*display:\s*none/.test(css), "the topbar shape must hide wide").toBe(true);
+    const plan = (width: number, zero = false) =>
+      layoutPlan({ width, height: 900, pointer: "fine", posture: "flat", reducedMotion: false }, zero ? "zero" : undefined);
+    expect(plan(1440)).toMatchObject({ rail: "words", columns: 2 });
+    expect(plan(760)).toMatchObject({ rail: "icons", columns: 2 });
+    expect(plan(699)).toMatchObject({ rail: "dock", columns: 1 });
+    expect(plan(900, true)).toMatchObject({ rail: "icons", columns: 2, ribbon: "split" });
+    expect(plan(600, true)).toMatchObject({ rail: "icons", columns: 1, ribbon: "push" });
   });
 
   it("the base bar is declared BEFORE its modifiers — source order is the cascade", () => {
-    // Every shaped bar carries `.boot-sk-bar` plus a modifier at equal specificity, so a base
-    // rule declared after them flattens the wordmark, the title and the time stub to 9px/tint2
-    // (review round — measured, not hypothetical).
-    const base = css.search(/(?:^|[};])\s*\.boot-sk-bar\s*\{/m);
-    const firstModifier = css.search(/\.boot-sk-(mark|h1|meta|label|time|who|subj|line)\s*\{/);
-    expect(base).toBeGreaterThan(-1);
-    expect(firstModifier).toBeGreaterThan(-1);
-    expect(base, "the base .boot-sk-bar rule must come first or the modifiers lose the tie")
-      .toBeLessThan(firstModifier);
+    const css = read("packages/ui/src/base/Pages/shape-bar.css");
+    const base = css.indexOf(".oh-shapebar {");
+    const firstRole = css.indexOf(".oh-shapebar[data-as=");
+    expect(base).toBeGreaterThanOrEqual(0);
+    expect(firstRole).toBeGreaterThan(base);
   });
 
   it("the window variant leaves width to the gate's insets", () => {
-    // `width:100%` beside `inset:16px` makes CSS drop the far inset and run 16px past the
-    // window (review round). The window variant declares width:auto and wins the source-order
-    // tie against the base's width:100%.
-    const win = /(?:^|[};])\s*\.boot-sk-window\s*\{([^{}]*)\}/m.exec(css)!;
-    expect(win[1]).toMatch(/width:\s*auto/);
-    const base = css.search(/(?:^|[};])\s*\.boot-sk\s*\{/m);
-    const win2 = css.search(/(?:^|[};])\s*\.boot-sk-window\s*\{/m);
-    expect(base, "the window rule must FOLLOW the base .boot-sk rule to win the width tie")
-      .toBeLessThan(win2);
+    const css = read("packages/app/src/frame/placement.css");
+    expect(css).toMatch(/\.fr-columns\s*\{[^}]*padding: var\(--edge\)/);
+    const tracks = /\.fr-columns\s*\{([^}]*)\}/.exec(css)![1]!;
+    expect(tracks).not.toMatch(/(?:^|;)\s*width:/);
   });
 });
 
 describe("the silhouette's motion is a preference, not a fact", () => {
-  const css = bare("apps/webapp/app/app.css");
-
   it("the bars carry a pulse at rest", () => {
-    const bar = /(?:^|[};])\s*\.boot-sk-bar\s*\{([^{}]*)\}/m.exec(css);
-    expect(bar, "no `.boot-sk-bar` rule in app.css").not.toBeNull();
-    expect(bar![1], "the bars have no motion to suppress — the case below proves nothing")
-      .toMatch(/animation:/);
+    const css = read("packages/ui/src/base/Pages/rows-shape.css");
+    const motion = read("packages/tokens/src/design/motion.css");
+    expect(css).toMatch(/animation: oh-shape-breathe var\(--d-pull\)/);
+    expect(motion).toMatch(/--d-pull:\s*calc\(640ms \* var\(--m-time\)\)/);
   });
 
   it("and `prefers-reduced-motion: reduce` takes it away", () => {
-    /* The whole `@media (prefers-reduced-motion: reduce)` blocks, and one of them has to name
-       the bars. Matched as "the media query, then this selector before the next @media" so a
-       rule that merely sits somewhere after one cannot pass for a rule inside it. */
-    const blocks = css.split(/@media\s*\(prefers-reduced-motion:\s*reduce\)/).slice(1);
-    expect(blocks.length, "app.css makes no reduced-motion promise at all").toBeGreaterThan(0);
-    const honoured = blocks.some((b) => {
-      const upToNextQuery = b.split("@media")[0];
-      return /\.boot-sk-bar[^{}]*\{[^{}]*animation:\s*none/.test(upToNextQuery);
-    });
-    expect(honoured, "the silhouette pulses at somebody who asked for no motion").toBe(true);
+    const motion = read("packages/tokens/src/design/motion.css");
+    expect(motion).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?--d-pull:\s*0ms/);
   });
 });

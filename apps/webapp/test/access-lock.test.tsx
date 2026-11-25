@@ -21,6 +21,7 @@ process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+const DISPLAY_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
@@ -188,6 +189,8 @@ describe("the doors", () => {
 describe("the primary mints its link at the press", () => {
   const OLD = "https://plane.ohmail.app/manage?token=OLD";
   const FRESH = "https://plane.ohmail.app/manage?token=FRESH";
+  const destination = new URL(FRESH);
+  destination.searchParams.set("timeZone", DISPLAY_ZONE);
   const CLOSED = {
     reason: "payment_required" as const,
     manageUrl: OLD,
@@ -227,14 +230,14 @@ describe("the primary mints its link at the press", () => {
     for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
   };
 
-  it("asks the mint once, with the screen's language, and leaves for its answer — never the 402's", async () => {
+  it("mints once in the screen's language and opens the fresh link with the display zone", async () => {
     const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
     await mount(h(WallRoute, { facts: CLOSED }));
     await act(async () => { primary().click(); });
     await settle();
     const mints = wire.filter((c) => c.url.endsWith("/account/manage-link"));
     expect(mints).toEqual([{ method: "POST", url: "/api/account/manage-link", body: JSON.stringify({ lang: "en" }) }]);
-    expect(left).toEqual([FRESH]);
+    expect(left).toEqual([destination.href]);
     expect(JSON.stringify(wire)).not.toContain("OLD");
   });
 
@@ -267,7 +270,7 @@ describe("the primary mints its link at the press", () => {
     mint = async () => jsonRes({ url: FRESH }, 200);
     await act(async () => { primary().click(); });
     await settle();
-    expect(left).toEqual([FRESH]);
+    expect(left).toEqual([destination.href]);
     expect(host.querySelector("[role=alert]")).toBeNull();
   });
 
@@ -290,6 +293,7 @@ describe("the primary mints its link at the press", () => {
  * silence all leave it standing. The session lapsing under the wall is renewed by the read.
  */
 describe("the wall lifts on the service's fresh open word", () => {
+  const managePage = "https://plane.ohmail.app/manage?token=NEW";
   const CLOSED = {
     reason: "payment_required" as const,
     manageUrl: "https://plane.ohmail.app/manage?token=OLD",
@@ -325,7 +329,7 @@ describe("the wall lifts on the service's fresh open word", () => {
       const url = typeof input === "string" ? input : String(input);
       if (url.endsWith("/account/access")) { reads += 1; return access(); }
       if (url.endsWith("/auth/refresh")) { refreshes += 1; return new Response(null, { status: 204 }); }
-      if (url.endsWith("/account/manage-link")) return jsonRes({ url: "https://plane.ohmail.app/manage?token=NEW" });
+      if (url.endsWith("/account/manage-link")) return jsonRes({ url: managePage });
       return jsonRes({ items: [] });
     }) as typeof fetch;
     HTMLAnchorElement.prototype.click = function click(this: HTMLAnchorElement) { navigated.push(this.href); };
@@ -404,7 +408,9 @@ describe("the wall lifts on the service's fresh open word", () => {
     const primary = buttons().find((b) => b.textContent === "Subscribe")!;
     await act(async () => { primary.click(); });
     await pass(0);
-    expect(navigated).toEqual(["https://plane.ohmail.app/manage?token=NEW"]);
+    const destination = new URL(managePage);
+    destination.searchParams.set("timeZone", DISPLAY_ZONE);
+    expect(navigated).toEqual([destination.href]);
     await focus();
     expect(host.querySelector("[role=status]")?.textContent).toContain(messages.accessLock.checkingTag);
     expect(buttons().map((b) => b.textContent)).toEqual(["Sign out"]);

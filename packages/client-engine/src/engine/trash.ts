@@ -14,9 +14,7 @@ export abstract class EngineTrash extends EngineOptimisticMutations {
   /**
    * Can this client see and restore deleted mail at all? BOTH capabilities, deliberately. A Trash view whose Restore
    * button cannot work is not the feature — it is a list of mail with one dead control on every row — so the palette
-   * row, the chord and the rail entry are gated on the pair. `false` for the demo (`?demo=1` is fixtures and zero
-   * network), which must read as "Trash is not available here" and not as an empty Trash. Resolved from the adapter's
-   * own optional capabilities, so it cannot disagree with what the two methods below will do.
+   * row, the chord and the rail entry are gated on the pair. The demo supplies both from its local fixture world.
    */
   trashAvailable(): boolean {
     return this.listTrashFn !== null && this.restoreFromTrashFn !== null;

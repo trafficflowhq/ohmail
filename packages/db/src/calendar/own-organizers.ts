@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { CALENDAR_CHANGES_PER_TRANSACTION, recordCalendarChanges, type LedgerTx, type Tx } from "../change-log.js";
+import { CALENDAR_CHANGES_PER_TRANSACTION, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "../change-log.js";
 import { calCalendars, calEvents } from "../schema-mail.js";
 import { readOwnAddresses } from "../own-mail.js";
 
@@ -37,7 +37,7 @@ export function calendarOriginalOf() {
   ) end)`;
 }
 
-/** Publish the event-level ownership changes while the account and connection are held. */
+/** Publish the changed event ownership and calendar invitation capabilities under the connection lock. */
 export async function publishCalendarOrganizerChanges(
   tx: Tx, accountId: string, connectionId: string, before: readonly string[], after: readonly string[],
 ) {
@@ -47,9 +47,15 @@ export async function publishCalendarOrganizerChanges(
     .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
     .where(and(eq(calEvents.accountId, accountId), eq(calCalendars.connectionId, connectionId),
       inArray(sql`lower(trim(${calEvents.organizer}))`, changed)));
-  for (let at = 0; at < events.length; at += CALENDAR_CHANGES_PER_TRANSACTION) {
-    await recordCalendarChanges(tx as unknown as LedgerTx, accountId, events.slice(at, at + CALENDAR_CHANGES_PER_TRANSACTION)
-      .map(({ id }) => ({ kind: "calendar_event", id, op: "update" })));
+  const changes: CalendarChange[] = events.map(({ id }) => ({ kind: "calendar_event", id, op: "update" }));
+  if ((before.length === 0) !== (after.length === 0)) {
+    const calendars = await tx.select({ id: calCalendars.id }).from(calCalendars).where(and(
+      eq(calCalendars.accountId, accountId), eq(calCalendars.connectionId, connectionId), eq(calCalendars.autoSchedule, true),
+    ));
+    for (const { id } of calendars) changes.push({ kind: "calendar", id, op: "update" });
+  }
+  for (let at = 0; at < changes.length; at += CALENDAR_CHANGES_PER_TRANSACTION) {
+    await recordCalendarChanges(tx as unknown as LedgerTx, accountId, changes.slice(at, at + CALENDAR_CHANGES_PER_TRANSACTION));
   }
 }
 
