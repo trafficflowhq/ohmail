@@ -115,7 +115,7 @@ export function Sheet(props: SheetProps) {
               {back.word === undefined ? (
                 <Button kind="quiet" icon="back" label={back.label} onPress={back.onPress} />
               ) : (
-                <Button kind="quiet" icon="back" label={back.label} onPress={back.onPress}>
+                <Button kind="quiet" icon="back" label={back.label ?? back.word} onPress={back.onPress}>
                   {back.word}
                 </Button>
               )}

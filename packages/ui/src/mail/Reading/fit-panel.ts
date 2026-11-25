@@ -21,7 +21,7 @@ export function fitPanel(wrap: HTMLElement): string[] {
     note.hidden = false;
     delete note.dataset.fold;
   }
-  if (more) more.hidden = false;
+  if (more) more.hidden = more.dataset.behind === undefined;
 
   const folded: string[] = [];
   const shown = (verb: HTMLElement) => !verb.hidden;
@@ -40,6 +40,7 @@ export function fitPanel(wrap: HTMLElement): string[] {
     if (foldable.length) {
       const worst = foldable.reduce((a, b) => (Number(b.dataset.rank) >= Number(a.dataset.rank) ? b : a));
       worst.hidden = true;
+      if (more) more.hidden = false;
       folded.push(worst.dataset.id ?? "");
       continue;
     }
@@ -66,6 +67,5 @@ export function fitPanel(wrap: HTMLElement): string[] {
     if (!kept) break;
     kept.dataset.fold = "";
   }
-  if (more) more.hidden = folded.length === 0 && more.dataset.behind === undefined;
   return folded;
 }

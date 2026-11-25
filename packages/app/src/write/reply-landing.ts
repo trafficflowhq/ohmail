@@ -19,11 +19,12 @@ export function useReplyViewport(sheet: RefObject<HTMLElement | null>): void {
     if (!editor) return;
     const port = editor.closest<HTMLElement>("[data-reading-scroll]");
     const run = editor.closest(".oh-sheet-run");
-    scrollIntoViewProgrammatically(editor, { block: "end" });
+    if (!port?.closest("[data-writing-keyboard]")) scrollIntoViewProgrammatically(editor, { block: "end" });
     if (!port || !run || typeof ResizeObserver !== "function") return;
 
     let settling = Boolean(port.closest("[data-read-column]"));
     const watch = new ResizeObserver(() => {
+      if (port.closest("[data-writing-keyboard]")) return;
       if (settling) scrollProgrammatically(port, port.scrollHeight - port.clientHeight);
       else if (editor.contains(editor.ownerDocument.activeElement)) {
         // The reply grows upwards while typing. Once capped, only its text scrolls.

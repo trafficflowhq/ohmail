@@ -440,3 +440,14 @@
 .oh-sheet[data-writing-compact]:not(:has(> .oh-sheet-top)) > .oh-sheet-foot {
   grid-column: 1 / -1;
 }
+
+/* At the keyboard's shortest heights, keep the way back beside the actions as an icon. */
+:root[data-device="phone"] .oh-sheet[data-writing-compact] .oh-sheet-back > .oh-button {
+  width: var(--h-m);
+  padding: 0;
+}
+
+:root[data-device="phone"] .oh-sheet[data-writing-compact] .oh-sheet-back > .oh-button > :not(.oh-icon),
+:root[data-device="phone"] .oh-sheet[data-writing-compact] .oh-sheet-top > .oh-readsquares {
+  display: none;
+}
