@@ -97,11 +97,14 @@ export function Field({
   const display = sentence && look ? onboardingDisplay(look.type, sentence.compact) : null;
   const ink = look?.palette.ink ?? t.c.ink;
   const quiet = look?.palette.ink2 ?? t.c.ink2;
+  const wrapsAddress = display !== null && !secret && input?.keyboardType === "email-address";
+  const multiline = wrapsAddress || input?.multiline === true;
+  const dotted = { borderBottomWidth: 2, borderStyle: "dotted", borderColor: ink } as const;
   const blank = (
     <TextInput
       ref={inputRef}
       value={value}
-      onChangeText={onChange}
+      onChangeText={wrapsAddress ? (text) => onChange(text.replace(/[\r\n]/g, "")) : onChange}
       autoCorrect={false}
       autoCapitalize="none"
       {...input}
@@ -115,11 +118,17 @@ export function Field({
       placeholderTextColor={sentence ? quiet : undefined}
       /* A prose field grows: it starts at about five lines, aligns to the top rather than
          centring one line in a tall box, and the row above it stops centring with it. */
-      multiline={input?.multiline === true}
-      textAlignVertical={input?.multiline === true ? "top" : "center"}
+      multiline={multiline}
+      submitBehavior={wrapsAddress ? "submit" : undefined}
+      textAlignVertical={multiline ? "top" : "center"}
       style={[
         display
-          ? [StyleSheet.absoluteFill, { ...display, color: ink, paddingVertical: 3 }]
+          ? [
+              { ...display, color: ink },
+              wrapsAddress
+                ? { ...dotted, minHeight: t.hit, minWidth: t.hit, maxWidth: "100%", paddingVertical: 0 }
+                : [StyleSheet.absoluteFill, { paddingVertical: 3 }],
+            ]
           : [t.type.msgBody, { color: ink, paddingVertical: 10, flex: 1 }],
         input?.multiline === true ? { minHeight: 112 } : null,
       ]}
@@ -139,30 +148,41 @@ export function Field({
       </Txt>
     </Tap>
     ) : null;
+  const after = sentence?.after && display ? <Txt style={{ ...display, color: ink }}>{sentence.after}</Txt> : null;
+  const end = sentence?.end && display ? (
+    <View style={{ backgroundColor: sentence.end === "ink" ? ink : look?.palette.hot,
+      width: display.fontSize * 0.33, height: display.fontSize * 0.33,
+      borderRadius: display.fontSize, marginLeft: display.fontSize * 0.08 }} />
+  ) : null;
   return (
     <View style={sentence || boxed ? undefined : { paddingHorizontal: 16, paddingTop: 12 }}>
       {sentence && display ? (
         <>
           <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", columnGap: 4 }}>
             {sentence.before ? <Txt style={{ ...display, color: ink }}>{sentence.before}</Txt> : null}
-            <View style={{ flexDirection: "row", alignItems: "center", maxWidth: "100%" }}>
-              <View style={{
-                minHeight: t.hit, minWidth: t.hit, flexShrink: 1, justifyContent: "center",
-                borderBottomWidth: 2, borderStyle: "dotted", borderColor: ink,
-              }}>
-                {/* The public placeholder sizes the blank. Typed credentials never enter the measuring text. */}
-                <Txt accessible={false} importantForAccessibility="no" style={{ ...display, opacity: 0 }}>
-                  {sentence.placeholder}
-                </Txt>
+            {wrapsAddress ? (
+              // The native editor measures its value or placeholder. Let the trailing word wrap
+              // with the sentence and give the editor up to a whole line to draw the address.
+              <>
                 {blank}
+                {after}
+                {end}
+              </>
+            ) : (
+              <View style={{ flexDirection: "row", alignItems: "center", maxWidth: "100%" }}>
+                <View style={{
+                  ...dotted, minHeight: t.hit, minWidth: t.hit, flexShrink: 1, justifyContent: "center",
+                }}>
+                  {/* The public placeholder sizes the blank. Typed credentials never enter the measuring text. */}
+                  <Txt accessible={false} importantForAccessibility="no" style={{ ...display, opacity: 0 }}>
+                    {sentence.placeholder}
+                  </Txt>
+                  {blank}
+                </View>
+                {after}
+                {end}
               </View>
-              {sentence.after ? <Txt style={{ ...display, color: ink }}>{sentence.after}</Txt> : null}
-              {sentence.end ? (
-                <View style={{ backgroundColor: sentence.end === "ink" ? ink : look?.palette.hot,
-                  width: display.fontSize * 0.33, height: display.fontSize * 0.33,
-                  borderRadius: display.fontSize, marginLeft: display.fontSize * 0.08 }} />
-              ) : null}
-            </View>
+            )}
           </View>
           {value === "" ? null : reveal}
         </>

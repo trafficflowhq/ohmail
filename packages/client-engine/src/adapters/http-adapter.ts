@@ -1988,6 +1988,7 @@ export class HttpAdapter implements EngineAdapter {
             ? [{ type: "message", op: "delete", id: dto.id, seq, updatedAt: dto.updatedAt }]
             : [],
           seq,
+          ...(body && "alreadyGone" in body && body.alreadyGone ? { alreadyGone: true as const } : {}),
         };
       }
 

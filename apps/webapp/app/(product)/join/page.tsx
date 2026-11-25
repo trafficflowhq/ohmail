@@ -18,7 +18,7 @@ import { planHintOf } from "../../plan-hint";
  * user corrects. `?billing=success|cancelled` is the other way in (the plan step's account page redirects back here);
  * anything else is dropped — a stranger's link value may only influence whether the wizard WAITS for entitlement,
  * which it then reads from the server. `?plan=solo|plus|pro` and `?interval=month|year` are what the site's tier
- * buttons carry: closed sets, a preselection hint for the plan page and never a price. `publicSignup` decides where
+ * buttons carry: closed sets, shown at signup and passed on as a preselection for the plan page. `publicSignup` decides where
  * the wizard STARTS and nothing else, read here on the server so a bookmarked `/join` gets the same answer as the CTA.
  */
 export default async function JoinPage(props: { searchParams?: Promise<SearchParamsLike> }) {

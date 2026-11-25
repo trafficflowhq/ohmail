@@ -236,6 +236,7 @@ describe("the address comes first and chooses the tile", () => {
     await ui.tile(en.providerPicker.otherShort);
     expect(ui.tiles()).toEqual([]);
     expect(ui.host.textContent).toContain(en.join.manualTitle);
+    expect(ui.host.querySelector('a[href="/login"]')?.textContent).toBe(en.join.signIn);
     answer(found("gmail"));
     await ui.settle();
     expect(ui.checked()).toEqual(["Gmail"]);

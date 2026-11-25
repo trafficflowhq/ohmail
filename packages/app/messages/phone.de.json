@@ -374,7 +374,7 @@
     "deleteNoTrash": "Dieses Postfach hat keinen Papierkorb, und ohmail löscht nie endgültig — die Nachricht ist noch an ihrem Platz.",
     "deleteReplayExpired": "{0, select, 1 {1 Nachricht wurde} other {{0} Nachrichten wurden}} nicht in den Papierkorb verschoben — seit der Anfrage ist zu viel Zeit vergangen. Lösche sie noch einmal, wenn du das weiterhin willst.",
     "deleteReplayGone": "{0, select, 1 {1 Nachricht wurde} other {{0} Nachrichten wurden}} nicht in den Papierkorb verschoben — dieses Handy hat sie beim nächsten Start nicht gefunden. Lösche sie noch einmal, wenn du das weiterhin willst.",
-    "deleteUndoLost": "Das Rückgängigmachen konnte nicht gespeichert werden — die Nachricht ist im Papierkorb.",
+    "deleteUndoLost": "Rückgängig konnte nicht gespeichert werden.",
     "deleteUndone": "Nicht gelöscht — die Nachricht ist noch an ihrem Platz.",
     "draftsDiscardAwaitingOrganizer": "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn bei ihrem nächsten Durchlauf.",
     "draftsDiscardQueued": "Noch nicht verworfen: Dieses Handy konnte deinen Account nicht erreichen. Wir versuchen es weiter.",

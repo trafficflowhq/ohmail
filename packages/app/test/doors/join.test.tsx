@@ -366,6 +366,7 @@ describe("the address", () => {
     expect([acts.recheck.mock.calls.length, acts.resend.mock.calls.length]).toEqual([1, 1]);
     cleanup();
     draw({ at: "verify", resent: true });
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
     expect(button(J.verifyResent).disabled).toBe(true);
   });
 });
@@ -574,6 +575,7 @@ describe("the pages around the steps", () => {
     expect(heading()).toBe(J.capacityTitle.replace(/\.$/, ""));
     expect(document.body.textContent).toContain(J.refusedFull);
     expect(link(J.capacityCta).getAttribute("href")).toBe("/#pricing");
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
   });
 
   it("unreachable: says nothing was changed; Try again asks again, and the way back to ohmail", () => {
@@ -584,6 +586,7 @@ describe("the pages around the steps", () => {
     expect(acts.retry).toHaveBeenCalledTimes(1);
     /* The way back is a link, as the card's: the address the host handed. */
     expect(link(O.resumeLeave).getAttribute("href")).toBe("/");
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
   });
 
   it("resolving: says where the setup stands is being found; wordless, and with nothing to press, until its words arrive", () => {
@@ -592,6 +595,7 @@ describe("the pages around the steps", () => {
     expect(heading()).toBe(O.resumeCheckingTitle);
     expect(screen.getByRole("status").textContent).toBe(O.resumeChecking);
     expect(view.container.querySelector("[aria-busy='true']")).not.toBeNull();
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
     cleanup();
     const { onboarding: _held, ...cut } = en;
     const later = draw({ at: "resolving" }, {}, cut, "en", true);
@@ -628,7 +632,8 @@ describe("the pages around the steps", () => {
         <JoinPage door={{ ...doorWith({ at: "full", said: J.refusedFull }), waitlist: { press } }} />
       </TextProvider>,
     );
-    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getAllByRole("link")).toEqual([link(J.signIn)]);
+    expect(link(J.signIn).getAttribute("href")).toBe("/login");
     fireEvent.click(button(J.capacityCta));
     expect(press).toHaveBeenCalledTimes(1);
   });

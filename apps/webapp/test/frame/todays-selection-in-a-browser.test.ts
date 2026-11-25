@@ -403,12 +403,26 @@ describe("phone notification choices and letter reading", () => {
       const label = group.getByText("People in Ohbox", { exact: true });
       const toggle = group.getByRole("switch", { name: "People in Ohbox" });
       await label.waitFor();
-      const lines = await label.evaluate((node) => {
+      const { lines, splitWords } = await label.evaluate(async (node) => {
+        await document.fonts.ready;
         const range = document.createRange();
         range.selectNodeContents(node);
-        return range.getClientRects().length;
+        const lines = range.getClientRects().length;
+        const splitWords: string[] = [];
+        const text = node.firstChild;
+        if (!(text instanceof Text) || text !== node.lastChild) {
+          throw new Error("The notification label should contain a single text node");
+        }
+        for (const word of text.data.matchAll(/\S+/g)) {
+          range.setStart(text, word.index);
+          range.setEnd(text, word.index + word[0].length);
+          const rows = new Set(Array.from(range.getClientRects(), (rect) => rect.top));
+          if (rows.size > 1) splitWords.push(word[0]);
+        }
+        return { lines, splitWords };
       });
       expect(lines).toBeLessThanOrEqual(3);
+      expect(splitWords).toEqual([]);
       const before = await toggle.getAttribute("aria-checked");
       await toggle.tap();
       expect(await toggle.getAttribute("aria-checked")).not.toBe(before);

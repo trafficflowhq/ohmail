@@ -3878,8 +3878,7 @@ export interface LiveWorldActions {
    * drops it from every living view at the press. A mailbox with no Trash folder is the
    * server's 422 refusal, which rolls the row back whole — the one honest screen for a delete
    * that cannot happen. The confirm ceremony is the sheet's job; this arm dispatches.
-   * `quiet` is the held window's commit: the pill already said "Moved to Trash." at the press,
-   * so only the confirmed sentence is withheld — refusal and queued speak whatever happens.
+   * Replay uses `quiet` so the launch summary can report confirmed moves together.
    */
   deleteMessage(messageId: string, opts?: { quiet?: boolean }): Promise<boolean>;
   /**
@@ -5518,7 +5517,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const m = messageOf(messageId);
     if (!m) return false;
     const waiting = stillWaitingFor(messageId);
-    if (waiting) { toast(waiting); return true; }
+    if (waiting) { toast(waiting); return !opts?.quiet; }
     // The same door as `move`: a reader's delete is a REQUEST, and "In den Papierkorb
     // verschoben." over a message still in place is the sentence this arm exists to stop.
     const gone: EngineMutation = { kind: "message_delete", messageId };
@@ -5526,19 +5525,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (res?.status === "awaiting_organizer") {
       const holder = res.queuedWith?.name ?? null;
       toast(holder ? refuse("toastDeleteQueued", holder) : refuse("toastDeleteQueuedUnknown"));
-      return true;
+      return !opts?.quiet;
     }
     if (!res || res.status === "rolled_back") {
       toast(refuse(res?.error?.code === "no_trash_folder" ? "deleteNoTrash" : "deleteFailed"));
       return false;
     }
     // A newer press for this message replaced the delete: that press owns the sentence.
-    if (res.status === "superseded") return true;
+    if (res.status === "superseded") return !opts?.quiet;
     noteTrashLanded();
-    // `quiet` is the held window's commit (the pill said "Moved to Trash." at the press) — it
-    // suppresses ONLY the confirmed sentence; refusal and queued speak above whatever happens.
-    if (!opts?.quiet) toast(refuse("toastDeleted"));
-    return true;
+    const moved = res.status === "confirmed" && !res.alreadyGone;
+    if (!opts?.quiet && moved) toast(refuse("toastDeleted"));
+    return !opts?.quiet || moved;
   };
 
   /**
@@ -7690,18 +7688,18 @@ export function liveBody(
 
 /**
  * THE QUIET COMMIT A KILLED SESSION'S DELETE IS REPLAYED THROUGH (`held-delete.ts`, opened by
- * `world.tsx`): the delete as pressed where the mirror holds the message; `true` where it does not
- * because the engine's outbox already carries this delete (a kill after the commit reached the outbox
+ * `world.tsx`): the delete as pressed where the mirror holds the message; `"pending"` where it does
+ * not because the engine's outbox already carries this delete (a kill after the commit reached the outbox
  * and before its record was forgotten: the tombstone hid it); `"nothing"`, said lost, otherwise.
  */
 export function deleteReplayDispatch(
   engine: Pick<OhmailEngine, "read" | "pendingMutations" | "inFlightMutations">,
   del: (id: string) => Promise<boolean>,
-): (id: string) => Promise<boolean | "nothing"> {
+): (id: string) => Promise<boolean | "nothing" | "pending"> {
   return (id) => {
     if (engine.read().get("message", id) !== undefined) return del(id);
     const carried = [...engine.pendingMutations(), ...engine.inFlightMutations()]
       .some((p) => p.mutation.kind === "message_delete" && p.mutation.messageId === id);
-    return Promise.resolve(carried ? true : ("nothing" as const));
+    return Promise.resolve(carried ? "pending" : "nothing");
   };
 }

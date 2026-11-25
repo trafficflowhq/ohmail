@@ -115,8 +115,7 @@ function serverOf(
   preset: ProviderPreset,
   of: Leg,
 ): Pick<ConnectServer, "host" | "port" | "secure"> {
-  // A manual server sends no TLS mode, and a port only when one follows the name: the server's probe walks the
-  // standard ladder and stores what it proved. A preset sends its own pair.
+  // The manual form leaves TLS discovery to the probe. A preset sends its own port and TLS mode.
   return preset.manual
     ? splitHostPort(field)
     : { host: field.trim(), port: preset[of].port, secure: preset[of].secure };

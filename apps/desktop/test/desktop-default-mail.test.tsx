@@ -276,7 +276,7 @@ describe("the ask stands beside the mail, in the stage's card slot, not over it"
       expect(el.querySelector(":is(.row.sel, [role=option][data-open])")?.getAttribute("data-id"), "the row is not the open one").toBe(id);
       await press(key);
       expect(row(id), `${key} left the row in the Ohbox`).toBeNull();
-      expect(el.querySelector(".oh-report-said")?.textContent).toBe("Moved to Trash");
+      expect(el.querySelector(".oh-report-said")?.textContent).toBe("Moving to Trash");
     }
     expect(el.textContent, "the key answered the card").toContain("Open email links with ohmail?");
   }, 30_000);

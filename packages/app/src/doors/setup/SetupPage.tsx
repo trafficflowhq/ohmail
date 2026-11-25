@@ -152,14 +152,7 @@ function SetupForm(p: {
             ),
           })}
         />
-        <AccountSentence
-          t={setup}
-          passwordHint="minimum"
-          fields={fields}
-          wanted={wanted}
-          at={at}
-          type={type}
-        />
+        <AccountSentence t={setup} lengthHint="minimum" fields={fields} wanted={wanted} at={at} type={type} />
       </Page>
     </DoorForm>
   );

@@ -74,7 +74,7 @@ import { GlassActionBar, GlassPill, nextRoom, type BarVerbSpec } from "./glass";
 import { mailSize } from "../theme/mail";
 import type { RailAction } from "./glass/GlassRail";
 import { useAppWindow, usePosture } from "./posture";
-import { readerBarClearance, scaffoldPlan } from "./scaffold/plan";
+import { readerBarClearance, scaffoldPlan, screenHingeClearance, screenSideInsets } from "./scaffold/plan";
 import { publishReaderRail } from "./reader-rail";
 import {
   readerPaneWidth,
@@ -295,6 +295,8 @@ export function MessageActions({
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const mode = useReaderVerbMode(inPane);
   const barRail = readerBarClearance(plan, inPane);
+  const barSide = screenSideInsets(insets, inPane);
+  const barHinge = screenHingeClearance(posture, plan, !inPane, inPane, useAppWindow().width);
   /* This bar stands at the foot, so it reports how far up it reaches and the toast clears it
      (`bottom-chrome.ts`); on the rail postures nothing stands here and the slot says so. */
   const standing = useBottomChromeSlot("reader-bar");
@@ -522,10 +524,13 @@ export function MessageActions({
           setCompactRoom((r) => nextRoom(r, width));
         }}
         style={{
+          position: "absolute",
+          left: Math.max(barSide.left + barRail.left, barHinge.left),
+          right: Math.max(barSide.right + barRail.right, barHinge.right),
+          bottom: 0,
           paddingHorizontal: BAR.outerPadH,
           paddingBottom: Math.max(insets.bottom, t.mail ? 16 : 8),
-          alignSelf: t.mail ? "flex-start" : "stretch",
-          width: t.mail ? "100%" : undefined,
+          zIndex: t.zLayer.tabBar,
         }}
       >
       {/* The hidden copy every width is read from — the same capsules, absolute and invisible,

@@ -37,7 +37,10 @@ export type JoinState =
   /** The service takes no new accounts for now: the list. */
   | { readonly at: "full"; readonly said: string }
   | { readonly at: "invite" }
-  | { readonly at: "account" }
+  | {
+      readonly at: "account";
+      readonly offer?: "trial" | (JoinPlanChosen & { readonly name: string; readonly price?: string });
+    }
   /** The public path: a mail went to the address, and this tab waits for its link to be opened. */
   | { readonly at: "sent"; readonly continuing: boolean }
   | { readonly at: "verify"; readonly resent: boolean }

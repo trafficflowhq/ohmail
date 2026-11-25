@@ -14,6 +14,7 @@ export const FIRST_SCREEN: Readonly<Record<string, true | readonly string[]>> = 
   // The credential screens, every state of each.
   login: true, join: true, joinInvite: true, approve: true, verify: true, setup: true,
   linkDesktop: true, authorizeDesktop: true, resume: true, session: true, appError: true,
+  pricing: ["soloPrice", "plusPrice", "proPrice", "soloPriceAnnual", "plusPriceAnnual", "proPriceAnnual"],
   account: [
     "signOutUnverified", "signOutBlocked", "signOutServerRefused", "signOutServerRefusedUnverified",
     "signOutCleanupPending", "signOutReplaced", "signOutBusy", "signOut",

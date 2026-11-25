@@ -206,6 +206,8 @@ export function useShellDispatch({
     toast,
     onUndone: rowsUndone,
     copy: {
+      pending: t("ohbox.toastMovingToTrash"),
+      pendingMany: (count) => t("ohbox.toastMovingToTrashMany", { count }),
       deleted: t("ohbox.toastDeleted"),
       undo: t("screener.toastUndo"),
       undone: t("ohbox.deleteUndone"),
@@ -259,7 +261,11 @@ export function useShellDispatch({
        their mail was back while it sat in Trash. The place is still the server's answer. */
     mutate: (messageId, pressId) => fileAndRefresh(
       restoreDispatch(
-        (id, opts) => engine.restoreFromTrash(id, opts),
+        async (id, opts) => {
+          const result = await engine.restoreFromTrash(id, opts);
+          if (demo && result.state === "restored") await engine.syncOnce();
+          return result;
+        },
         (restoreTo) => toast(t("trash.toastRestoringTo", { place: placeLabel(restoreTo) })),
         () => toast(t("trash.toastRestoreGone")),
       )(messageId, pressId),

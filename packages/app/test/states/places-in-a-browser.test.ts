@@ -8,6 +8,7 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { Locator, Page } from "@playwright/test";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openCalRestPage } from "./calrest-page-open.js";
 import { openPlacesPage, placesStatesPage } from "./places-pages.js";
@@ -266,3 +267,75 @@ describe.each([
     }
   }, 30_000);
 });
+
+async function swipeUp(page: Page, over: Locator) {
+  const box = (await over.boundingBox())!;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("Input.synthesizeScrollGesture", {
+      x: Math.round(box.x + box.width / 2),
+      y: Math.round(box.y + box.height / 2),
+      yDistance: -2400,
+      speed: 5000,
+      gestureSourceType: "touch",
+    });
+  } finally {
+    await cdp.detach();
+  }
+}
+
+it.each([
+  { width: 390, scheme: "light", state: "unconfigured" },
+  { width: 640, scheme: "dark", state: "connected" },
+])(
+  "can scroll Calendar Settings and its sections at $width pixels ($scheme)",
+  async ({ width, scheme, state }) => {
+    const page = await browser!.newPage({ viewport: { width, height: 664 }, hasTouch: true });
+    page.setDefaultTimeout(5_000);
+    try {
+      await openCalRestPage(
+        page,
+        `screen=calendar-settings&device=phone&viewport&scheme=${scheme}&state=${state}`,
+      );
+      const back = page.getByRole("button", { name: "Back to Settings" });
+      const menu = page.getByRole("navigation", { name: "Settings sections" });
+      const last = menu.getByRole("button", { name: "Help & contact", exact: true });
+      const dock = page.locator(".fr-dockbox");
+      const checkMenu = async () => {
+        await back.tap();
+        await menu.waitFor();
+        const dockTop = (await dock.boundingBox())!.y;
+        const lastRowBottom = async () => {
+          const row = (await last.boundingBox())!;
+          return row.y + row.height;
+        };
+        if ((await lastRowBottom()) > dockTop) await swipeUp(page, menu);
+        await expect.poll(lastRowBottom).toBeLessThanOrEqual(dockTop);
+      };
+
+      if (state === "unconfigured") {
+        await page.getByRole("button", { name: "Connect a calendar" }).tap();
+      } else {
+        const pane = page.getByRole("region", { name: "Calendar accounts" });
+        const lastAccount = pane.getByRole("button", { name: /Workshop calendar/ }).last();
+        const add = page.getByRole("button", { name: "Add account", exact: true });
+        await lastAccount.waitFor();
+        await swipeUp(page, pane);
+        await expect
+          .poll(async () => {
+            const row = (await lastAccount.boundingBox())!;
+            return row.y + row.height;
+          })
+          .toBeLessThanOrEqual((await add.boundingBox())!.y);
+        await lastAccount.tap();
+        expect(await lastAccount.getAttribute("aria-expanded")).toBe("true");
+      }
+      await checkMenu();
+      await last.tap();
+      await checkMenu();
+    } finally {
+      await page.close();
+    }
+  },
+  30_000,
+);

@@ -104,6 +104,72 @@ describe("each purpose sends what its shipped form sent", () => {
     expect(screen.getByRole("button", { name: J.manualConnect })).toHaveProperty("disabled", false);
   });
 
+  it.each(["join", "firstRun"] as const)("uses both labeled server ports for %s", async (kind) => {
+    const { door, of } = fakeDoor({ connect: [CONNECTED] });
+    draw(door, { purpose: { kind } });
+    type(kind === "join" ? J.mailboxAddress : O.address, ADDRESS);
+    press(P.otherLabel);
+    fireEvent.click(screen.getByText(J.manualPorts));
+    type(kind === "join" ? J.imapHost : O.imapHost, A);
+    type(kind === "join" ? J.smtpHost : O.smtpHost, B);
+    type(M.imapPortLabel, "3143");
+    type(M.smtpPortLabel, "3025");
+    type(kind === "join" ? J.appPasswordLabel : O.password, MARKER);
+    press(J.manualConnect);
+    await settle();
+    const sent = of("connect")[0]?.sent as
+      { input?: { imap?: { port?: number }; smtp?: { port?: number } } } | undefined;
+    expect([sent?.input?.imap?.port, sent?.input?.smtp?.port]).toEqual([3143, 3025]);
+  });
+
+  it.each([
+    ["join", "99999", J.manualConnect],
+    ["join", "abc", J.manualConnect],
+    ["firstRun", "99999", O.test],
+    ["firstRun", "abc", O.test],
+    ["firstRun", "99999", J.manualConnect],
+    ["firstRun", "abc", J.manualConnect],
+  ] as const)("%s rejects an invalid port (%s) at %s before sending", async (kind, port, label) => {
+    const { door, of } = fakeDoor();
+    draw(door, { purpose: { kind } });
+    if (kind === "join") {
+      fillJoin();
+    } else {
+      type(O.address, ADDRESS);
+      press(P.otherLabel);
+      fireEvent.click(screen.getByText(J.manualPorts));
+      type(O.imapHost, A);
+      type(O.smtpHost, B);
+      type(O.password, MARKER);
+    }
+    type(M.imapPortLabel, port);
+    expect(screen.getByLabelText(M.imapPortLabel)).toHaveProperty("value", port);
+    expect(screen.getByRole("button", { name: label })).toHaveProperty("disabled", false);
+    expect(screen.queryByText(M.portInvalid)).toBeNull();
+    press(label);
+    await settle();
+    expect(of("probe")).toHaveLength(0);
+    expect(of("connect")).toHaveLength(0);
+    expect(screen.getByText(M.portInvalid)).toBeTruthy();
+  });
+
+  it("keeps both port fields when retrying with the incoming encryption consent", async () => {
+    const { door, of } = fakeDoor({ connect: [noEncryption("imap"), CONNECTED] });
+    draw(door, { purpose: { kind: "join" } });
+    fillJoin();
+    type(M.imapPortLabel, "3143");
+    type(M.smtpPortLabel, "3025");
+    press(J.manualConnect);
+    await settle();
+    fireEvent.click(screen.getByRole("switch", { name: M.insecureConsentLabel }));
+    press(J.manualConnect);
+    await settle();
+    expect(of("connect")[1]?.sent).toEqual({
+      input: body(leg(A, { port: 3143, allowInsecure: true }), leg(B, { port: 3025 })),
+      mode: "seed",
+    });
+  });
+
   it("the join connects a first mailbox: the body as typed, the mode `seed`, and the wire's id in the answer", async () => {
     const { door, of } = fakeDoor({ connect: [CONNECTED] });
     const view = draw(door, { purpose: { kind: "join" } });
