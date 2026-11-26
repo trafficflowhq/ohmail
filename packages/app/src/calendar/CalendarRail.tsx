@@ -155,7 +155,7 @@ function CalendarRailContents({
   const loading = useCalendarLoading();
   const count = loading ? t("loading") : ts("accounts.calendarCount", { count: all });
   const mini = useRailMiniMonth({ route, commands }, said?.weekNumbers);
-  const entry = (place: DockPlace, shortcut?: string) => (
+  const entry = (place: DockPlace) => (
     <RailEntry
       key={place.id}
       kind="place"
@@ -163,7 +163,6 @@ function CalendarRailContents({
       current={place.current}
       count={place.count}
       label={place.count ? t("placeCount", { place: place.label, count: place.count }) : undefined}
-      keyHint={shortcut}
       onPress={place.onPress}
     >
       {place.label}
@@ -202,8 +201,8 @@ function CalendarRailContents({
                     onPress: () => commands.go({ place: "calsearch" }),
                   }),
                 ]}
-            {entry(places[0]!, "g i")}
-            {entry(places[1]!, "g f")}
+            {entry(places[0]!)}
+            {entry(places[1]!)}
           </>
         }
         calendars={{
@@ -213,7 +212,7 @@ function CalendarRailContents({
           accounts: rows,
           note: !loading && shown < all ? t("shown", { shown, total: all }) : undefined,
         }}
-        below={entry(places[2]!, "g ,")}
+        below={entry(places[2]!)}
         foot={
           <RailFoot
             notice={notice}

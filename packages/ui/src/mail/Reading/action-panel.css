@@ -129,6 +129,46 @@
     color: var(--on-solid);
   }
 
+  :root:not([data-face="ohmarchy"]) .oh-actionpanel-verb[data-shortcut-send] > .oh-key {
+    opacity: 0;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    :root:not([data-face="ohmarchy"], [data-device="phone"])
+      :is(.oh-sheet, [data-stream-item]):has(.oh-composer:focus-within)
+      .oh-actionpanel-verb[data-shortcut-send] {
+      position: relative;
+    }
+
+    :root:not([data-face="ohmarchy"], [data-device="phone"])
+      :is(.oh-sheet, [data-stream-item]):has(.oh-composer:focus-within)
+      .oh-actionpanel-verb[data-shortcut-send]
+      > .oh-key {
+      position: absolute;
+      inset-block-end: 2px;
+      inset-inline: 0;
+      width: max-content;
+      margin-inline: auto;
+      display: inline-flex;
+      height: 1em;
+      min-width: 0;
+      padding-inline: var(--s1);
+      font-weight: var(--w-text);
+      box-shadow: none;
+      opacity: 0.6;
+      pointer-events: none;
+      word-spacing: -0.2em;
+    }
+
+    :root:not([data-face="ohmarchy"], [data-device="phone"])
+      :is(.oh-sheet, [data-stream-item]):has(.oh-composer:focus-within)
+      .oh-actionpanel-verb[data-shortcut-send]
+      > :is(.oh-icon, .oh-actionpanel-label) {
+      position: relative;
+      inset-block-start: -5px;
+    }
+  }
+
   /* More stands as its icon. */
   .oh-actionpanel-verb[data-more] {
     width: var(--oh-actionpanel-bare);

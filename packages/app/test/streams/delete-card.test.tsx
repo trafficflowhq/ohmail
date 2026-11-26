@@ -31,6 +31,7 @@ it.each(places)("two deliberate d presses on a %s card file only that letter", a
   fireEvent.keyDown(document.body, { key: "d" });
   const menu = screen.getByRole("menu", { name: "More" });
   const choice = within(menu).getByRole("menuitem", { name: "Delete" });
+  expect(choice.getAttribute("aria-keyshortcuts")).toBe("d");
   for (const init of [
     { repeat: true },
     { ctrlKey: true },

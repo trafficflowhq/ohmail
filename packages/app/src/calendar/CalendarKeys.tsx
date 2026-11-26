@@ -1,12 +1,34 @@
-import { useKeyBindings } from "@ohmail/app-logic/keys";
+import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys";
 import { addDays, dayOfIso } from "@ohmail/app-logic/calendar";
 import { isCalendarPlace } from "../frame/product.js";
 import { useFrame } from "../frame/commands.js";
 import type { CalendarPlaceId, Route, RouteTarget } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
-import { useText } from "../text/index.js";
+import { useText, type Text } from "../text/index.js";
+import { calendarGridKeys } from "./use-grid-keys.js";
+import { newEventKey, useNewEvent } from "./use-new-event.js";
 import { useCalendarCheck } from "./check.js";
 import { isView, shifted, VIEWS } from "./where.js";
+
+export const CALENDAR_KEYS = {
+  settings: "g ,",
+  check: "p",
+  search: "/",
+  fromMail: "g f",
+  invitations: "g i",
+  today: "t",
+  agenda: "g a",
+  date: "g d",
+  before: "[",
+  after: "]",
+} as const;
+
+function calendarKey(chord: string, label: string, run: () => void): KeyBinding {
+  return { chord, label, run, group: "navigate", place: "calendar" };
+}
+
+const teachCalendarKey = (binding: KeyBinding): KeyBinding => ({ ...binding, helpOnly: true });
+const nothing = () => undefined;
 
 /** Read cards leave navigation active while editors own their keys. */
 export function fromCalendarReadCard(event: KeyboardEvent): boolean {
@@ -28,61 +50,47 @@ export function CalendarKeys() {
   const t = useText("calendar");
   const ts = useText("calsettings");
   const check = useCalendarCheck();
+  const create = useNewEvent();
   const available =
     isCalendarPlace(route.place) &&
     host.wires.calendar !== NONE &&
     route.stage === null &&
     route.words.panel !== "new";
   const sub = dayOfIso(route.sub) === null ? null : route.sub;
-  const bind = (chord: string, label: string, run: () => void) => ({
-    chord,
-    group: "navigate" as const,
-    label,
-    run,
-  });
   const outsideView = route.place === "calsettings" || route.place === "frommail";
+  const keys: KeyBinding[] = [
+    calendarKey(CALENDAR_KEYS.settings, t("settings"), () => {
+      if (route.place === "calsettings") commands.closeCalendarSettings();
+      else commands.go({ place: "calsettings" });
+    }),
+    ...(check ? [calendarKey(CALENDAR_KEYS.check, ts("accounts.checkNow"), check.run)] : []),
+    {
+      ...calendarKey(CALENDAR_KEYS.search, t("search"), () => commands.go({ place: "calsearch" })),
+      when: route.open === null ? undefined : fromCalendarReadCard,
+    },
+    calendarKey(CALENDAR_KEYS.fromMail, t("fromMail"), () => commands.go({ place: "frommail" })),
+    calendarKey(CALENDAR_KEYS.invitations, t("invitations"), () => commands.go(invitationsRoute(route))),
+    ...(!available || outsideView
+      ? VIEWS.map((view, i) =>
+          calendarKey(String(i + 1), t(`view.${view}`), () => commands.go({ place: view, sub })),
+        )
+      : []),
+  ];
   useKeyBindings(
     available
-      ? [
-          bind("g ,", t("settings"), () => {
-            if (route.place === "calsettings") commands.closeCalendarSettings();
-            else commands.go({ place: "calsettings" });
-          }),
-          ...(check ? [bind("p", ts("accounts.checkNow"), check.run)] : []),
-          {
-            ...bind("/", t("search"), () => commands.go({ place: "calsearch" })),
-            when: route.open === null ? undefined : fromCalendarReadCard,
-          },
-          bind("g f", t("fromMail"), () => commands.go({ place: "frommail" })),
-          bind("g i", t("invitations"), () => commands.go(invitationsRoute(route))),
-          ...(outsideView
-            ? VIEWS.map((view, i) =>
-                bind(String(i + 1), t(`view.${view}`), () => commands.go({ place: view, sub })),
-              )
-            : []),
-        ]
-      : [],
+      ? keys
+      : [
+          ...keys,
+          ...calendarHelp(t),
+          ...calendarGridKeys(t),
+          ...(create ? [newEventKey(t, create)] : []),
+        ].map(teachCalendarKey),
     "global",
   );
   return null;
 }
 
-export function useCalendarNavigationKeys({
-  enabled,
-  eventOpen,
-  place,
-  anchor,
-  dated,
-  panelOn,
-  views,
-  select,
-  todayNow,
-  agenda,
-  openDate,
-  step,
-  toDate,
-  selectDay,
-}: {
+type Navigation = {
   enabled: boolean;
   eventOpen: boolean;
   place: CalendarPlaceId;
@@ -97,42 +105,75 @@ export function useCalendarNavigationKeys({
   step: (n: number) => void;
   toDate: (day: string | null) => void;
   selectDay: (day: string) => void;
-}) {
-  const t = useText("calendar");
+};
+
+function navigationKeys(
+  t: Text,
+  {
+    eventOpen,
+    place,
+    anchor,
+    dated,
+    panelOn,
+    views,
+    select,
+    todayNow,
+    agenda,
+    openDate,
+    step,
+    toDate,
+    selectDay,
+  }: Omit<Navigation, "enabled">,
+): KeyBinding[] {
   const bind = (chord: string, label: string, run: () => void) => ({
-    chord,
-    label,
-    group: "navigate" as const,
-    run,
+    ...calendarKey(chord, label, run),
     when: eventOpen ? fromCalendarReadCard : undefined,
   });
-  useKeyBindings(
-    enabled
+  return [
+    ...views.map(({ shortcut, label, value }) => bind(shortcut, label, () => select(value))),
+    bind(CALENDAR_KEYS.today, t("today"), todayNow),
+    bind(CALENDAR_KEYS.agenda, t("agenda"), agenda),
+    ...(panelOn && !eventOpen ? [bind("Escape", t("closeAgenda"), agenda)] : []),
+    ...(dated
       ? [
-          ...views.map(({ shortcut, label, value }) => bind(shortcut, label, () => select(value))),
-          bind("t", t("today"), todayNow),
-          bind("g a", t("agenda"), agenda),
-          ...(panelOn && !eventOpen ? [bind("Escape", t("closeAgenda"), agenda)] : []),
-          ...(dated
+          bind(CALENDAR_KEYS.date, t("goToDate"), openDate),
+          bind(CALENDAR_KEYS.before, t("before"), () => step(-1)),
+          bind(CALENDAR_KEYS.after, t("after"), () => step(1)),
+          bind("ArrowLeft", t("previousDay"), () => toDate(shifted("day", anchor, -1, false))),
+          bind("h", t("previousDay"), () => toDate(shifted("day", anchor, -1, false))),
+          bind("ArrowRight", t("nextDay"), () => toDate(shifted("day", anchor, 1, false))),
+          bind("l", t("nextDay"), () => toDate(shifted("day", anchor, 1, false))),
+          ...(place === "month" || place === "year"
             ? [
-                bind("g d", t("goToDate"), openDate),
-                bind("[", t("before"), () => step(-1)),
-                bind("]", t("after"), () => step(1)),
-                bind("ArrowLeft", t("previousDay"), () => toDate(shifted("day", anchor, -1, false))),
-                bind("h", t("previousDay"), () => toDate(shifted("day", anchor, -1, false))),
-                bind("ArrowRight", t("nextDay"), () => toDate(shifted("day", anchor, 1, false))),
-                bind("l", t("nextDay"), () => toDate(shifted("day", anchor, 1, false))),
-                ...(place === "month" || place === "year"
-                  ? [
-                      bind("ArrowUp", t("previousWeek"), () => toDate(addDays(anchor, -7))),
-                      bind("ArrowDown", t("nextWeek"), () => toDate(addDays(anchor, 7))),
-                      ...(!eventOpen ? [bind("Enter", t("view.day"), () => selectDay(anchor))] : []),
-                    ]
-                  : []),
+                bind("ArrowUp", t("previousWeek"), () => toDate(addDays(anchor, -7))),
+                bind("ArrowDown", t("nextWeek"), () => toDate(addDays(anchor, 7))),
+                ...(!eventOpen ? [bind("Enter", t("view.day"), () => selectDay(anchor))] : []),
               ]
             : []),
         ]
-      : [],
-    "view",
-  );
+      : []),
+  ];
+}
+
+function calendarHelp(t: Text): KeyBinding[] {
+  return navigationKeys(t, {
+    eventOpen: false,
+    place: "month",
+    anchor: "",
+    dated: true,
+    panelOn: true,
+    views: [],
+    select: nothing,
+    todayNow: nothing,
+    agenda: nothing,
+    openDate: nothing,
+    step: nothing,
+    toDate: nothing,
+    selectDay: nothing,
+  });
+}
+
+export function useCalendarNavigationKeys({ enabled, ...navigation }: Navigation) {
+  const t = useText("calendar");
+  useKeyBindings(enabled ? navigationKeys(t, navigation) : [], "view");
 }

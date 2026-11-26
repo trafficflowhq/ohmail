@@ -9,6 +9,7 @@ export interface MenuItemProps {
   /** The verb, or the choice. */
   children: string;
   label?: string;
+  className?: string;
   description?: string;
   icon?: IconName;
   /** A person or a coloured mark alongside the choice. */
@@ -17,6 +18,8 @@ export interface MenuItemProps {
   note?: string;
   /** The key that runs it, as it is printed. */
   keyHint?: string;
+  shortcut?: string;
+  shortcutHint?: string;
   /** One of a few choices: whether this is the taken one. Left out: a verb. */
   checked?: boolean;
   /** Use the kit check icon for the current choice. */
@@ -38,11 +41,14 @@ export interface MenuItemProps {
 export function MenuItem({
   children,
   label,
+  className,
   description,
   icon,
   leading,
   note,
   keyHint,
+  shortcut,
+  shortcutHint,
   checked,
   checkmark,
   many,
@@ -58,9 +64,11 @@ export function MenuItem({
     <button
       ref={ref}
       type="button"
-      className="oh-control oh-menu-item"
+      className={className ? `oh-control oh-menu-item ${className}` : "oh-control oh-menu-item"}
       role={checked === undefined ? "menuitem" : many ? "menuitemcheckbox" : "menuitemradio"}
       aria-checked={checked}
+      aria-keyshortcuts={shortcut}
+      data-shortcut-hint={shortcut ? (shortcutHint ?? keyHint) : undefined}
       aria-label={label ?? (description ? children : undefined)}
       aria-describedby={description ? descriptionId : undefined}
       disabled={disabled}

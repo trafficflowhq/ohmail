@@ -7,6 +7,10 @@ import { AUTHORED_CODE_STYLE } from "@ohmail/app-logic/writing/rich-text";
 import type { ParagraphStyle } from "../ports.js";
 import { applyCodeBlock, applyParagraphStyle, splitTargetLines } from "./commands.js";
 
+export const CODE_KEYS = { code: "mod+shift+c", codeBlock: "mod+alt+shift+c" } as const;
+export const PARAGRAPH_STYLES = [0, 1, 2, 3] as const;
+export const paragraphKey = (style: ParagraphStyle): string => `mod+alt+${style}`;
+
 const FormatKeys = Extension.create({
   name: "letterFormatKeys",
   priority: 101,
@@ -19,12 +23,18 @@ const FormatKeys = Extension.create({
           handleKeyDown(_view, event) {
             if (!(event.metaKey || event.ctrlKey) || event.isComposing || event.getModifierState("AltGraph"))
               return false;
-            if (event.shiftKey && (event.code === "KeyC" || event.key.toLowerCase() === "c")) {
+            const codeKey = event.altKey ? CODE_KEYS.codeBlock : CODE_KEYS.code;
+            const codeLetter = codeKey.at(-1)!;
+            if (
+              event.shiftKey &&
+              (event.code === `Key${codeLetter.toUpperCase()}` || event.key.toLowerCase() === codeLetter)
+            ) {
               return event.altKey ? applyCodeBlock(editor) : editor.commands.toggleCode();
             }
             if (!event.altKey || event.shiftKey) return false;
             const digit = /^Digit([0-3])$/.exec(event.code)?.[1] ?? event.key;
-            return /^[0-3]$/.test(digit) && applyParagraphStyle(editor, Number(digit) as ParagraphStyle);
+            const style = PARAGRAPH_STYLES.find((value) => paragraphKey(value) === `mod+alt+${digit}`);
+            return style !== undefined && applyParagraphStyle(editor, style);
           },
         },
       }),

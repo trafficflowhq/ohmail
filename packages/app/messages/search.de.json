@@ -135,9 +135,12 @@
     "foot": "Die Tasten gelten dort, wo sie stehen. Jede Taste schließt diese Übersicht.",
     "group": {
       "navigate": "Bewegen",
-      "message": "Diese Nachricht",
+      "message": "Leseansicht",
       "screener": "Screener",
-      "app": "App"
+      "app": "App",
+      "lists": "Listen",
+      "composer": "Nachricht verfassen",
+      "calendar": "Kalender"
     },
     "undo": "Letzte Aktion rückgängig",
     "nothingToUndo": "Nichts rückgängig zu machen.",

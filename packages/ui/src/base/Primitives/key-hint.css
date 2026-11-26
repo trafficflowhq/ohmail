@@ -34,6 +34,15 @@
     color: var(--ink3);
     font-weight: var(--w-text);
   }
+  :root .oh-key[data-quiet] {
+    min-width: 0;
+    height: 17px;
+    padding-inline: var(--s1);
+    background: var(--ground);
+    color: var(--ink2);
+    box-shadow: none;
+    font-weight: var(--w-text);
+  }
   :root[data-touch="1"] .oh-key,
   :root[data-touch="1"] .oh-key[data-shown] {
     display: none;

@@ -23,6 +23,9 @@ import { UnlinkedText } from "./unlinked-text.js";
 import { openEditorLink } from "./edit-link.js";
 import { revealWritingSelection } from "./scroll-selection.js";
 import { FormatExtensions } from "./formats.js";
+import { editorShortcuts, LINK_KEY } from "./shortcuts.js";
+import { chordMatches } from "@ohmail/app-logic/keys";
+import { isSendKey } from "../keys.js";
 import { PasteAsLines, readParagraphsAsLines } from "./paste.js";
 
 /** The links a body reads, handed by the shell that mounts the body (the folder imports nothing of it). */
@@ -78,6 +81,7 @@ function activeIn(editor: Editor): ReadonlySet<MarkId> {
 function marksOf(editor: Editor, asks: Set<() => void>): EditorMarks {
   return {
     ids: RICH_MARKS,
+    shortcuts: editorShortcuts,
     active: () => activeIn(editor),
     subscribe(changed) {
       editor.on("transaction", changed);
@@ -127,7 +131,7 @@ function marksOf(editor: Editor, asks: Set<() => void>): EditorMarks {
 
 /** Mod+K asks for the link, as the strip's Link does: the app's own Mod+K gets no key from the text. */
 function askedLink(editable: boolean, e: KeyboardEvent, asks: ReadonlySet<() => void>): boolean {
-  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "k") return false;
+  if (!chordMatches(LINK_KEY, e)) return false;
   if (!editable || asks.size === 0) return false;
   e.preventDefault();
   for (const ask of asks) ask();
@@ -351,7 +355,7 @@ function editorKeyDown(
 ): boolean {
   /* Mod+Shift+Enter is Send + Done, the app's key (bound where the reply's composer is): answered here only
      so that the editor's own Mod-Enter (a line break) does not take it, and left to reach the binding. */
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+  if (isSendKey(e)) {
     const send = keys.onSendKey;
     if (!e.shiftKey && send) {
       e.preventDefault();

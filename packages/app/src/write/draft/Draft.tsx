@@ -9,6 +9,8 @@
  * Nothing is asked of a server before the press.
  */
 import { useEffect, useState, type ReactNode } from "react";
+import { ariaShortcut, useModGlyph, useOptionalKeyBindings } from "@ohmail/app-logic/keys";
+import { DRAFT_REPLY_KEY } from "../keys.js";
 import { isRichEmpty, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { Button, Dialog } from "@ohmail/ui/base";
 import { DraftControl, DraftTabs, GroupHeading } from "@ohmail/ui/mail";
@@ -62,8 +64,9 @@ export interface DraftOffer {
 }
 
 /** The reply's draft offer; null where the host hands no draft wire (nothing is drawn). */
-export function useDraftOffer(messageId: string, forward = false): DraftOffer | null {
+export function useDraftOffer(messageId: string, forward: boolean, keysHere: boolean): DraftOffer | null {
   const t = useText("write");
+  const mod = useModGlyph();
   const w = useWriting();
   const beside = useWriteBeside();
   const [sharing, setSharing] = useState(false);
@@ -103,21 +106,41 @@ export function useDraftOffer(messageId: string, forward = false): DraftOffer | 
       : ownWords && !untouched
         ? t("draft.fromTextTitle", { cost: control.cost })
         : t("draft.title", { cost: control.cost });
-  if (forward || !control.offered) return null;
+  const offered = !forward && control.offered;
   const buy = (fullConversation?: boolean) => {
     if (ownWords) fromText(messageId, madeOf, made, fullConversation);
     else control.press(messageId, made, fullConversation);
   };
+  const draft = () => buy();
+  useOptionalKeyBindings(
+    offered && keysHere
+      ? [
+          {
+            chord: DRAFT_REPLY_KEY,
+            group: "message",
+            place: "composer",
+            label: t("draft.verb"),
+            inInput: true,
+            inWriting: true,
+            disabled: drafting || waiting,
+            when: (event) => !event.repeat,
+            run: draft,
+          },
+        ]
+      : [],
+  );
+  if (!offered) return null;
   return {
     control: (
       <>
         <DraftControl
           label={label}
           title={title}
+          shortcut={keysHere ? ariaShortcut(DRAFT_REPLY_KEY, mod) : undefined}
           cost={cost}
           busy={drafting || waiting}
           disabled={waiting}
-          onPress={() => buy()}
+          onPress={draft}
         />
         <span className="oh-draft-full-context">
           <Button

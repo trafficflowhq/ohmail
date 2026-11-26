@@ -5,24 +5,27 @@
  * stands is the model's (`pickPanel`), so the keys m, s and d open the same ones and Escape closes them.
  */
 import { useRef, useState } from "react";
+import { useModGlyph } from "@ohmail/app-logic/keys";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { EndDot, Menu, MenuItem } from "@ohmail/ui/base";
 import { SelectionBar } from "@ohmail/ui/mail";
 import { useText } from "../text/index.js";
 import type { OhboxBeside } from "./beside.js";
 import { OhboxMoveAsk } from "./OhboxMoveAsk.js";
-import { pickVerbs } from "./selection-verbs.js";
+import { pickVerbs, selectionHint } from "./selection-verbs.js";
 
 export function OhboxSelection({ model, beside }: { model: OhboxListModel; beside: OhboxBeside }) {
   const t = useText("ohbox");
   const reader = useText("reader");
+  const mod = useModGlyph();
   const foot = useRef<HTMLDivElement>(null);
   const cancelDelete = useRef<HTMLButtonElement>(null);
   const [more, setMore] = useState(false);
   /* The verbs the bar had no room for (the kit says which, whenever that changes): they stand behind More. */
   const [folded, setFolded] = useState<readonly string[]>([]);
   const filingHint = model.pickedReplyCopyPending ? reader("replyCopyWaiting") : undefined;
-  const verbs = pickVerbs(model, t, foot, filingHint ? { disabled: true, disabledHint: filingHint } : {});
+  const filingHold = filingHint ? { disabled: true, disabledHint: filingHint } : {};
+  const verbs = pickVerbs(model, t, foot, mod, filingHold);
   /* The rows picked, as the person picked them: a folded conversation is one. Delete asks over the letters. */
   const count = model.pickedRowCount;
   const letters = model.pickedIds.length;
@@ -66,6 +69,7 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
               key={verb.id}
               icon={verb.icon}
               keyHint={verb.keyHint}
+              shortcut={verb.shortcut}
               disabled={verb.disabled}
               description={verb.disabledHint}
               onPress={() => {
@@ -78,7 +82,7 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
           ))}
         <MenuItem
           icon="trash"
-          keyHint="d"
+          {...selectionHint(model, t("keySelDeleteAsk"), mod)}
           onPress={() => {
             setMore(false);
             model.requestDeletePicked();
