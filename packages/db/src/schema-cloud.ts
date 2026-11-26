@@ -617,6 +617,7 @@ export const staffUsers = pgTable("staff_users", {
   totpPendingStartedAt: timestamp("totp_pending_started_at", { withTimezone: true }),
   /** False until a code from the pending secret has verified; set as that secret is promoted. */
   totpActivated: boolean("totp_activated").notNull().default(false),
+  enrollmentGeneration: uuid("enrollment_generation").defaultRandom().notNull(),
   /** TOTP single-use per timestep. */
   totpLastConsumedStep: bigint("totp_last_consumed_step", { mode: "bigint" }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -1195,10 +1196,15 @@ export const calPushChannels = pgTable("cal_push_channels", {
   ixExpires: index("cal_push_channels_expires_idx").on(t.expiresAt),
 }));
 
+export const workerTopology = pgTable("worker_topology", {
+  singleton: boolean("singleton").primaryKey().default(true),
+  shards: integer("shards").notNull(),
+});
+
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, accountCounters, pushSubscriptions,
-  workerHeartbeats, alertState, alertPassRuns, alertDriverGaps, alertDrills, platformSignals, apiFaults,
+  workerHeartbeats, workerTopology, alertState, alertPassRuns, alertDriverGaps, alertDrills, platformSignals, apiFaults,
   waitlist, staffUsers, staffSessions, staffAuditLog, staffRoleGrants, staffAuditEvents,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,

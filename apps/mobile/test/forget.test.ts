@@ -33,8 +33,8 @@ import {
 } from "../src/engine/local-engine";
 import { KEK_KEY } from "../src/engine/kek";
 import {
-  connectProfileById, drainPendingSignOuts, drainPendingWakeDrops, drainPendingWipes, forgetProfile, pairWithServer,
-  revokeProfile, type PairingEnv,
+  connectProfileById, drainPendingSignOuts, drainPendingWakeDrops, drainPendingWipes, familyReplacedAt, forgetProfile, pairWithServer,
+  revokeProfile, signOutNoticeText, type PairingEnv,
 } from "../src/net/pairing";
 import type { FetchLike } from "../src/net/bearer";
 import { installPinning } from "../src/net/host-pinning";
@@ -76,7 +76,7 @@ function testEnv(overrides: Partial<MobileEngineDeps> = {}, kv?: SecureKV) {
     ...overrides,
   };
   const profiles = new ServerProfileStore(kv ?? memoryKV().kv);
-  const env: PairingEnv = { profiles, engineDeps: deps };
+  const env: PairingEnv = { profiles, engineDeps: deps, fetchImpl: (url, init) => fetch(url, init as RequestInit) };
   return { env, world, profiles };
 }
 
@@ -1872,7 +1872,7 @@ describe("a sign-out the server did not hear is owed, and sent when it can be", 
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ refreshToken }),
   });
 
-  it("offline: the forget says so, and the drain behind the next launch ends the session at the refresh door", async () => {
+  it("offline: the forget says so, and reconnect a month later ends the session at the refresh door", async () => {
     const fake = pairServer({ accountId: "acct-1", flavor: "selfhost", sessionRoute: true });
     const origin = await listen(fake.server);
     try {
@@ -1880,7 +1880,8 @@ describe("a sign-out the server did not hear is owed, and sent when it can be", 
       fake.addMessage("m2", "Your invoice");
       fake.mintPairToken("tok-1");
       const net = switchable();
-      const { env, profiles } = testEnv();
+      const { kv, map } = memoryKV();
+      const { env, profiles } = testEnv({}, kv);
       env.fetchImpl = net.fetchImpl;
       const session = await pairedWithMail(env, origin, "tok-1");
       const row = (await profiles.list())[0]!;
@@ -1890,6 +1891,8 @@ describe("a sign-out the server did not hear is owed, and sent when it can be", 
       const owed = await profiles.pendingSignOuts();
       expect(owed.map((e) => [e.origin, e.pin])).toEqual([[origin, null]]);
       const token = owed[0]!.refreshToken;
+      const key = `ohmail.servers.v1.signout.${owed[0]!.id}`;
+      map.set(key, JSON.stringify({ ...owed[0], owedSince: Date.now() - 31 * 24 * 60 * 60 * 1000 }));
 
       net.offline(false);
       const from = fake.seen.length;
@@ -1931,6 +1934,46 @@ describe("a sign-out the server did not hear is owed, and sent when it can be", 
     }
   });
 
+  it.each(["11111111-1111-4111-8111-111111111111", undefined])("keeps a device notice after recovering an interrupted forget with a full retry queue (device %s)", async (deviceId) => {
+    const { kv, map } = memoryKV();
+    const { env, profiles } = testEnv({}, kv);
+    const origin = "https://unconfirmed.example";
+    const digest = async (value: string) => createHash("sha256").update(value).digest("hex");
+    const row = await profiles.add({
+      origin, flavor: "selfhost", accountId: "fixture-account", refreshToken: "fixture-refresh", deviceLabel: "Travel phone", deviceId,
+    });
+    await profiles.markPendingWipe(row.id, mirrorOwnerKey(origin, row.accountId));
+    for (let i = 0; i < 8; i += 1) {
+      await profiles.markPendingSignOut({ origin: "https://elsewhere.example", pin: null, refreshToken: `t${i}` });
+    }
+    env.fetchImpl = async () => { throw new TypeError("offline"); };
+    env.familyDigest = digest;
+
+    expect(await drainPendingWipes(env)).toEqual([]);
+    const restarted = new ServerProfileStore(kv);
+    expect(await restarted.list()).toEqual([]);
+    expect(await restarted.pendingWipes()).toEqual([]);
+    expect(await restarted.pendingSignOuts()).toHaveLength(8);
+    const stored = map.get("ohmail.servers.v1.signout-notices");
+    const [notice] = await restarted.unresolvedSignOutNotices();
+    expect(notice).toEqual({ profileId: row.id, origin, deviceLabel: "Travel phone", ...(deviceId && { deviceId }), previousSession: await digest(row.refreshToken!) });
+    const remedy = signOutNoticeText(notice!.origin, notice!.deviceLabel, notice!.deviceId, true);
+    if (deviceId) {
+      const otherId = "22222222-2222-4222-8222-222222222222";
+      const other = signOutNoticeText(origin, notice!.deviceLabel, otherId, true);
+      expect(remedy).toContain("Travel phone");
+      expect(remedy).toContain(deviceId);
+      expect(remedy).not.toContain(otherId);
+      expect(other).toContain(otherId);
+    } else {
+      expect(remedy).toContain("same account");
+      expect(remedy).not.toContain("Travel phone");
+    }
+    expect(stored).not.toContain(row.refreshToken);
+    expect(await familyReplacedAt({ ...env, profiles: restarted }, origin)).toBe(notice!.previousSession);
+    expect(await familyReplacedAt({ ...env, profiles: restarted }, "https://different.example")).toBeNull();
+  });
+
   /** One owed sign-out to `https://a.example`, and a transport that answers `answer`. */
   async function owing(answer: () => Response | Promise<Response>, owedSince?: number) {
     const { kv, map } = memoryKV();
@@ -1954,7 +1997,10 @@ describe("a sign-out the server did not hear is owed, and sent when it can be", 
     ["a page in front of the server", () => new Response("<!doctype html><title>Wi-Fi</title>", { status: 401 }), 1],
     ["the network", () => Promise.reject(new TypeError("Network request failed")), 1],
     ["the door's own refusal", () => new Response(JSON.stringify({ error: { code: "unauthorized" } }), { status: 401 }), 0],
-    ["a server without the door (404)", () => new Response("not found", { status: 404 }), 0],
+    ["a server without the door (404)", () => new Response("not found", { status: 404 }), 1],
+    ["a server without the door (405)", () => new Response(null, { status: 405 }), 1],
+    ["a redirect followed by a 204", () => Object.defineProperty(new Response(null, { status: 204 }), "redirected", { value: true }), 1],
+    ["a 204 reported by a different server", () => Object.defineProperty(new Response(null, { status: 204 }), "url", { value: "https://different.example/auth/refresh/logout" }), 1],
     ["the door's 204", () => new Response(null, { status: 204 }), 0],
   ] as const)("%s: kept or forgotten as the answer says", async (_name, answer, left) => {
     const o = await owing(answer);
@@ -1963,10 +2009,18 @@ describe("a sign-out the server did not hear is owed, and sent when it can be", 
     expect((await o.profiles.pendingSignOuts()).length).toBe(left);
   });
 
-  it("one older than thirty days is dropped unsent", async () => {
-    const o = await owing(() => new Response(null, { status: 204 }), Date.now() - 31 * 24 * 60 * 60 * 1000);
-    expect(await drainPendingSignOuts(o.env, { atLaunch: true })).toBe(0);
-    expect(o.sent).toEqual([]);
+  it.each([404, 200])("retries a month-old sign-out after status %i and clears it when confirmed", async (status) => {
+    let healthy = false;
+    const o = await owing(() => healthy ? new Response(null, { status: 204 }) : new Response("<html>Gateway</html>", {
+      status, headers: { "content-type": "text/html" },
+    }), Date.now() - 31 * 24 * 60 * 60 * 1000);
+    expect(await drainPendingSignOuts(o.env, { atLaunch: false })).toBe(1);
+    expect(await o.profiles.pendingSignOuts()).toHaveLength(1);
+    healthy = true;
+    expect(await drainPendingSignOuts(o.env, { atLaunch: false })).toBe(0);
+    expect(o.sent).toEqual(Array.from({ length: 2 }, () => ({
+      url: "https://a.example/auth/refresh/logout", body: { refreshToken: "owed-1" }, auth: null,
+    })));
     expect(await o.profiles.pendingSignOuts()).toEqual([]);
   });
 

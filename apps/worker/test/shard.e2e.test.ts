@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import postgres from "postgres";
+import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { accounts, mailboxes, mailboxCredentials, messageBodies, messages, messageStates } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { loadEnabledMailboxes, accountInShard } from "../src/mailboxes.js";
-import { LEADER_LOCK_KEY, leaderLockKeyFor } from "../src/leader-lock.js";
+import { acquireLeaderLock, LEADER_LOCK_KEY, leaderLockKeyFor } from "../src/leader-lock.js";
+import { startWorker } from "../src/index.js";
 import { runWorkerSupervised } from "../src/supervisor.js";
 import { runBubbleUpCron } from "../src/bubble-up-cron.js";
 import { runReconcileCron } from "../src/reconcile-cron.js";
@@ -87,6 +89,130 @@ describe("shard seam", () => {
     for (const c of closers.splice(0)) { try { await c(); } catch { /* ignore */ } }
   }, ISOLATED_DB_RESET_BUDGET_MS);
 
+  it("records the width of an already-running two-shard installation", async () => {
+    const db = makeDb(DB);
+    const one = await seedMailbox(db, await accountWithHash((h) => h % 2 === 0));
+    const two = await seedMailbox(db, await accountWithHash((h) => h % 2 !== 0));
+    const shardZero = postgres(DB, { max: 1 });
+    const shardOne = postgres(DB, { max: 1 });
+    const migration = readFileSync(new URL(
+      "../../../packages/db/drizzle-cloud/0108_worker_topology.sql", import.meta.url,
+    ), "utf8");
+    try {
+      await shardZero`select pg_advisory_lock(${leaderLockKeyFor(0)})`;
+      await shardZero`insert into worker_heartbeats (shard_index, instance_id, shards)
+        values (0, 'fixture-zero', 2)`;
+      await shardZero`delete from worker_topology`;
+      await shardZero.unsafe(migration);
+      expect(await shardZero`select shards from worker_topology`).toHaveLength(0);
+
+      await shardOne`select pg_advisory_lock(${leaderLockKeyFor(1)})`;
+      await shardOne`insert into worker_heartbeats (shard_index, instance_id, shards)
+        values (1, 'fixture-one', 2)`;
+      expect((await shardZero`select initialize_worker_topology(1) as width`)[0]?.width).toBeNull();
+      await shardZero.unsafe(migration);
+      expect((await shardZero`select shards from worker_topology`)[0]?.shards).toBe(2);
+      expect((await shardZero`select initialize_worker_topology(2) as width`)[0]?.width).toBe(2);
+    } finally {
+      await shardZero.end({ timeout: 5 });
+      await shardOne.end({ timeout: 5 });
+    }
+    const fleets = [new FakeAdapterFleet(), new FakeAdapterFleet()];
+    for (const [shardIndex, fleet] of fleets.entries()) {
+      const worker = await startWorker(cfgFor(fleet, { shards: 2, shardIndex, pollIntervalMs: 60_000 }));
+      closers.push(() => worker.stop());
+    }
+    expect(fleets.map((fleet) => [fleet.openFor(one), fleet.openFor(two)])).toEqual([[1, 0], [0, 1]]);
+  });
+
+  it("requires the configured width to initialize a verified stopped legacy roster", async () => {
+    const db = makeDb(DB);
+    await seedMailbox(db, randomUUID());
+    await db.execute(sql`insert into worker_heartbeats (shard_index, instance_id, shards, leader)
+      values (0, 'fixture-zero', 2, false), (1, 'fixture-one', 2, false)`);
+    await db.execute(sql`delete from worker_topology`);
+    expect((await db.execute<{ width: number }>(sql`select initialize_worker_topology() as width`))[0]?.width).toBeNull();
+    expect((await db.execute<{ width: number }>(sql`select initialize_worker_topology(1) as width`))[0]?.width).toBeNull();
+    expect((await db.execute<{ width: number }>(sql`select initialize_worker_topology(2) as width`))[0]?.width).toBe(2);
+  });
+
+  it("refuses a database topology change while there is a mailbox to serve", async () => {
+    const db = makeDb(DB);
+    await seedMailbox(db, randomUUID());
+    const [change] = await db.execute<{ changed: boolean }>(sql`select change_worker_topology(1, 2) as changed`);
+    expect(change?.changed).toBe(false);
+    expect((await db.execute<{ shards: number }>(sql`select shards from worker_topology`))[0]?.shards).toBe(1);
+  });
+
+  it("refuses a second organizer until the old width is drained and the transition commits", async () => {
+    const db = makeDb(DB);
+    const account = await accountWithHash((h) => Math.abs(h % 2) === 1);
+    const mailboxId = await seedMailbox(db, account);
+    const one = new FakeAdapterFleet();
+    const two = new FakeAdapterFleet();
+    const worker = await startWorker(cfgFor(one, { pollIntervalMs: 60_000 }));
+    closers.push(() => worker.stop());
+    expect(one.openFor(mailboxId)).toBe(1);
+    await expect(startWorker(cfgFor(two, { shards: 2, shardIndex: 1 }))).rejects.toThrow(/leader lock/);
+    expect(two.created).toBe(0);
+    const [busy] = await db.execute<{ changed: boolean }>(sql`select change_worker_topology(1, 2) as changed`);
+    expect(busy?.changed).toBe(false);
+    await worker.stop();
+    expect((await db.execute<{ changed: boolean }>(sql`select change_worker_topology(1, 2) as changed`))[0]?.changed).toBe(false);
+    await truncateAll(DB);
+
+    const transition = postgres(DB, { max: 1 });
+    try {
+      await expect(transition.begin(async (tx) => {
+        expect((await tx`select change_worker_topology(1, 2) as changed`)[0]?.changed).toBe(true);
+        expect(await acquireLeaderLock(DB, leaderLockKeyFor(1), { shards: 2 })).toBeNull();
+        throw new Error("interrupt the transition");
+      })).rejects.toThrow("interrupt the transition");
+      expect((await transition`select shards from worker_topology`)[0]?.shards).toBe(1);
+      expect((await transition`select change_worker_topology(1, 2) as changed`)[0]?.changed).toBe(true);
+      await expect(startWorker(cfgFor(one, {}))).rejects.toThrow(/leader lock/);
+      expect(one.created).toBe(1);
+      const relocated = await seedMailbox(db, account);
+      const a = await startWorker(cfgFor(new FakeAdapterFleet(), { shards: 2, shardIndex: 0 }));
+      closers.push(() => a.stop());
+      const b = await startWorker(cfgFor(two, { shards: 2, shardIndex: 1 }));
+      closers.push(() => b.stop());
+      expect(two.openFor(relocated)).toBe(1);
+      expect(a.stats().mailboxes).toBe(0);
+      expect(b.stats().mailboxes).toBe(1);
+    } finally { await transition.end(); }
+  }, 60_000);
+
+  it("admits every mailbox once after provisioning a second distinct shard", async () => {
+    const db = makeDb(DB);
+    const a = await accountWithHash((h) => h % 2 === 0);
+    const b = await accountWithHash((h) => Math.abs(h % 2) === 1);
+    const seeded: string[] = [];
+    for (let i = 0; i < 65; i++) seeded.push(await seedMailbox(db, i < 33 ? a : b));
+    const singleFleet = new FakeAdapterFleet();
+    const single = await startWorker(cfgFor(singleFleet, { pollIntervalMs: 60_000, rosterIntervalMs: 50 }));
+    closers.push(() => single.stop());
+    await waitFor(() => single.stats().truncated === 1, 10_000, "the overflow count");
+    for (let i = 0; i < 3; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(singleFleet.openFor(seeded[64]!)).toBe(0);
+    }
+    expect(singleFleet.created).toBe(64);
+    await single.stop();
+    expect((await db.execute<{ changed: boolean }>(sql`select change_worker_topology(1, 2) as changed`))[0]?.changed).toBe(false);
+    // Exercise the roster at a pre-provisioned width; the resize command refuses a populated store.
+    await db.execute(sql`UPDATE worker_topology SET shards = 2`);
+
+    const fleets = [new FakeAdapterFleet(), new FakeAdapterFleet()];
+    for (const [shardIndex, fleet] of fleets.entries()) {
+      const worker = await startWorker(cfgFor(fleet, { shards: 2, shardIndex, pollIntervalMs: 60_000 }));
+      closers.push(() => worker.stop());
+      expect(worker.stats().truncated).toBe(0);
+    }
+    expect(fleets.map((fleet) => fleet.created)).toEqual([33, 32]);
+    for (const id of seeded) expect(fleets.reduce((count, fleet) => count + fleet.openFor(id), 0)).toBe(1);
+  }, 120_000);
+
   it("serves accounts whose hashtext is NEGATIVE (not a random-uuid coin flip)", async () => {
     const db = makeDb(DB);
     // `hashtext` is int4 and half its range is negative. For a negative ODD hash, a plain
@@ -122,6 +248,7 @@ describe("shard seam", () => {
   }, 60000);
 
   it("runs TWO shard workers side by side, each serving a disjoint slice", async () => {
+    await makeDb(DB).execute(sql`UPDATE worker_topology SET shards = 2`);
     const db = makeDb(DB);
     const byMailbox = new Map<string, string>();          // mailboxId → accountId
     for (let i = 0; i < 12; i++) {
@@ -153,6 +280,7 @@ describe("shard seam", () => {
   }, 60000);
 
   it("a shard leader's tail tidies its own accounts' gone letters and leaves the other shard's to its leader", async () => {
+    await makeDb(DB).execute(sql`UPDATE worker_topology SET shards = 2`);
     const db = makeDb(DB);
     const mine = await accountWithHash((h) => ((h % 2) + 2) % 2 === 0);
     const theirs = await accountWithHash((h) => ((h % 2) + 2) % 2 === 1);
@@ -184,6 +312,7 @@ describe("shard seam", () => {
   }, 60000);
 
   it("scopes the bubble-up backstop to its OWN shard's accounts", async () => {
+    await makeDb(DB).execute(sql`UPDATE worker_topology SET shards = 2`);
     const db = makeDb(DB);
     const a = await accountWithHash((h) => ((h % 2) + 2) % 2 === 0);
     const b = await accountWithHash((h) => ((h % 2) + 2) % 2 === 1);
@@ -210,6 +339,7 @@ describe("shard seam", () => {
   }, 60000);
 
   it("refuses a reconcile sweep of a mailbox outside its shard, or one it does not own", async () => {
+    await makeDb(DB).execute(sql`UPDATE worker_topology SET shards = 2`);
     const db = makeDb(DB);
     const owner = await accountWithHash((h) => ((h % 2) + 2) % 2 === 1);   // lives in shard 1
     const mailboxId = await seedMailbox(db, owner);

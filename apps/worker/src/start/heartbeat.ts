@@ -30,7 +30,7 @@ export function heartbeatSection(scope: WorkerScope): void {
      * a beat only renews, and what a renewal finds is final: a row that no longer names this takeover
      * is a lost lock ({@link renew}).
      */
-    async function beat(): Promise<void> {
+    async function beat({ required = false } = {}): Promise<void> {
       if (scope.stopped) return;
       try {
         if (scope.claimed) { await renew(); return; }
@@ -42,6 +42,7 @@ export function heartbeatSection(scope: WorkerScope): void {
         if (landed) scope.claimed = true;
         else scope.handleLockLoss(new LockLostError("the database does not show this instance's session holding the lock", "LOCK_UNCLAIMED"));
       } catch (err) {
+        if (required) throw err;
         scope.log.warn("heartbeat_write_failed", { err });
       }
     }

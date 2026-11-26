@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { mailboxFolders, messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
-import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, type ChangeBatch } from "@trafficflow/core/adapters/imap";
 import { dbFor, mailboxService } from "@trafficflow/services";
 import { runSyncCycle } from "@ohmail/organizer/sync";
 import { makeHarness, rawClient, emlOf, imapCfg, dbUrlFor } from "../../../packages/organizer/test/_workerenv.js";
@@ -60,6 +60,42 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
       .where(and(eq(mailboxFolders.mailboxId, mailboxId), eq(mailboxFolders.folder, "INBOX")));
     return row;
   };
+
+  it("keeps a disappearing source live until its later destination range can correlate the move", async () => {
+    const h = await makeHarness();
+    closers.push(() => h.adapter.close());
+    const raw = emlOf({ from: "anna@x.example", subject: "a moving letter", messageId: "move-between-pages@fixture.invalid" });
+    const c = await rawClient(h.cfg);
+    try { await c.append("INBOX", raw); } finally { await c.logout(); }
+    const deps = { repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId,
+      role: "reader" as const, storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE };
+    await runSyncCycle(deps);
+    const [stored] = await h.db.select().from(messages).where(eq(messages.mailboxId, h.mailboxId));
+    const source = stored!.nativeLocator as { folder: string; ref: string };
+    const srcCursor = { uidValidity: source.ref.split(":")[0]!, uidNext: 2, highestModseq: "0" };
+    const dstCursor = { uidValidity: "200", uidNext: 0, highestModseq: "0" };
+    const destination = { folder: "Archive", ref: "200:513" };
+    const pages: ChangeBatch[] = [
+      { creates: [], moves: [], flagChanges: [], deletes: [{ type: "delete", locator: source }],
+        newCursor: { folders: { INBOX: srcCursor, Archive: { ...dstCursor, scanNextUid: 513 } } }, hasBacklog: true },
+      { creates: [{ type: "create", locator: destination, raw: Buffer.from(raw), seen: true }],
+        moves: [], flagChanges: [], deletes: [], newCursor: { folders: { INBOX: srcCursor, Archive: { ...dstCursor, uidNext: 514 } } } },
+    ];
+    const adapter = new Proxy(h.adapter, {
+      get(target, property) {
+        if (property === "changesSince") return async () => pages.shift()!;
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    await runSyncCycle({ ...deps, adapter });
+    const [holding] = await h.db.select().from(messages).where(eq(messages.id, stored!.id));
+    expect(holding?.deletedAt).toBeNull();
+    await runSyncCycle({ ...deps, adapter });
+    const [arrived] = await h.db.select().from(messages).where(eq(messages.id, stored!.id));
+    expect(arrived?.deletedAt).toBeNull();
+    expect(arrived?.nativeLocator).toEqual(destination);
+  }, 30_000);
 
   /**
    * THE LOOP. A stale epoch plus a batch cap smaller than the folder, which before that change re-fetched

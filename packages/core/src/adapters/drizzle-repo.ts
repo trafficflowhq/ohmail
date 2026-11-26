@@ -1,5 +1,5 @@
 import type { EmailAddress } from "@ohmail/wire";
-import { and, asc, desc, eq, exists, getTableColumns, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, asc, desc, eq, exists, getTableColumns, gte, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn, PgInsertValue } from "drizzle-orm/pg-core";
 import { accountOfMessage, accountOfMailbox, mailboxPass, markPassDone, passMark, readPassProgress, accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, folderQueueOf, flagQueueOf, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock, writeInvitation as writeInvitationDoor, invitationBackfillPage, settleInvitationBackfill, type InvitationBackfillPage, type InvitationWrite } from "@trafficflow/db";
 import type {
@@ -75,6 +75,9 @@ export interface PersistedFolderCursor {
   uidValidity: string; uidNext: number; highestModseq: string;
   /** Mail 0083 — the folder's `EXISTS`. Absent ⇒ the stored value is LEFT ALONE, not nulled. */
   serverExists?: number;
+  scanNextUid?: number;
+  /** Last prior-epoch locator examined after the live ranges completed. */
+  scanResetAfter?: string;
   /**
    * Mail 0115 — where a budgeted pass stopped IN THIS FOLDER, or absent for every folder but the
    * one. Written only by {@link WorkerRepo.setMailboxBudgetStop}; the cursor upsert leaves the
@@ -600,7 +603,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * `repair_owed` for the legacy News name while instances are still spelled there: they are News
    * letters, not letters that left with a folder, and {@link repairLegacyNews} owns them.
    */
-  retireGoneFolder?(accountId: string, mailboxId: string, folder: string): Promise<"retired" | "held" | "absent" | "repair_owed">;
+  retireGoneFolder?(accountId: string, mailboxId: string, folder: string): Promise<"retired" | "held" | "absent" | "repair_owed" | "more">;
   /**
    * THE LEGACY NEWS REPAIR (the 0.22 rename): one chunk of up to `limit` messages whose locator,
    * an instance or a `folder_state` folder is still spelled `ohmail/Reads`. Content-matched only:
@@ -660,6 +663,11 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   refuseJunkRescue(id: string, attempts: number, errorClass: FilingRefusalClass): Promise<void>;
   listKnownLocators(mailboxId: string): Promise<KnownLocator[]>;
+  listPriorKnownLocators?(mailboxId: string, folder: string, epoch: string, after: string, limit: number):
+    Promise<import("./imap-types.js").PriorKnownEntry[]>;
+  listKnownLocatorsWithin?(mailboxId: string, limit: number): Promise<KnownLocator[] | null>;
+  listKnownLocatorRange?(mailboxId: string, folder: string, epoch: string, from: number, through: number,
+    limit: number): Promise<KnownLocator[]>;
   /**
    * Record that a locator disappeared — the worker's half of the move-evidence rule. On
    * `WorkerRepo` and not `RepoPort` because only the sync loop can observe it: a disappearance
@@ -717,7 +725,10 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * pending `folder_state` whose folders agree on its `trashed_from` (an Undo of a delete), until the
    * organizer has looked for the copy. Optional; returns how many rows were tombstoned.
    */
-  tombstoneInstanceless?(accountId: string, mailboxId: string, limit: number): Promise<number>;
+  tombstoneInstanceless?(accountId: string, mailboxId: string, limit: number, confirmed?: readonly string[]): Promise<number>;
+  /** Bounded candidates for checking whether a missing letter moved into an unread folder. */
+  listInstanceless?(accountId: string, mailboxId: string, limit: number, after?: string):
+    Promise<Array<{ id: string; messageIdHeader: string | null }>>;
   /**
    * The letters ohmail filed into the provider's Junk (the reaper's exempt shape) whose stored
    * location is in `folder`: live, not missing on the server, no copy on record. Paged by id.
@@ -1130,8 +1141,10 @@ const REAPER_CHECK_CHUNK = 64;
  * caller applies the whole predicate to these ids alone, so the answer is the full scan's.
  * Module-level so the known-set census enumerates operations, not fragment builders.
  */
-async function instancelessCandidates(db: Db, accountId: string, mailboxId: string): Promise<string[]> {
-  const rows = await db.select({ id: messages.id }).from(messages)
+async function instancelessCandidates(
+  db: Db, accountId: string, mailboxId: string, page?: { limit: number; after?: string },
+): Promise<string[]> {
+  const query = db.select({ id: messages.id }).from(messages)
     .where(and(
       eq(messages.mailboxId, mailboxId),
       eq(messages.accountId, accountId),
@@ -1140,10 +1153,12 @@ async function instancelessCandidates(db: Db, accountId: string, mailboxId: stri
       // Mail 0164: a letter marked missing on the server has no instance BY DESIGN; the mirror
       // holds its only copy, and the reaper's husk would destroy it.
       isNull(messages.serverMissingAt),
+      page?.after === undefined ? undefined : sql`${messages.id} > ${page.after}`,
     ))
     .except(db.select({ id: messageInstances.messageId }).from(messageInstances)
       .where(eq(messageInstances.mailboxId, mailboxId)))
     .orderBy(asc(messages.id));
+  const rows = await (page ? query.limit(page.limit) : query);
   return rows.map((r) => r.id);
 }
 
@@ -1326,6 +1341,40 @@ export function folderStateRowOf(messageId: string, s: FolderStateRow): PgInsert
     lastSetBy: s.lastSetBy, reconcileStatus: reconcileStatusFor(s), conflict: false,
     ...(s.decidedAt !== undefined ? { decidedAt: s.decidedAt } : {}),
   };
+}
+
+async function recordedSentForLocators(db: Db, mailboxId: string): Promise<string | null> {
+  const [box] = await db.select({ sentFolder: mailboxes.sentFolder }).from(mailboxes)
+    .where(eq(mailboxes.id, mailboxId)).limit(1);
+  return box?.sentFolder ?? null;
+}
+
+async function knownLocatorPage(
+  db: Db, mailboxId: string, recordedSent: string | null, filters: SQL[], limit: number, bounded: boolean,
+): Promise<KnownLocator[]> {
+  // Long IDs can still be compared by the indexed dedup path. The scan need not
+  // retain the full header just to exclude an already-known UID from body fetches.
+  const messageIdHeader = bounded
+    ? sql<string | null>`case when length(${messages.messageIdHeader}) <= 1024 then ${messages.messageIdHeader} end`
+    : messages.messageIdHeader;
+  const rows = await db.select({
+    folder: messageInstances.folder,
+    uid: messageInstances.uid,
+    uidvalidity: messageInstances.uidvalidity,
+    messageIdHeader,
+    observedSeen: flagState.observedSeen,
+    unread: messages.unread,
+  }).from(messageInstances)
+    .innerJoin(messages, eq(messages.id, messageInstances.messageId))
+    .leftJoin(flagState, eq(flagState.messageId, messageInstances.messageId))
+    .leftJoin(folderState, eq(folderState.messageId, messageInstances.messageId))
+    .where(and(eq(messageInstances.mailboxId, mailboxId), sql`not (${inboxCopyOfSentRow(recordedSent)})`, ...filters))
+    .orderBy(asc(messageInstances.folder), asc(messageInstances.uidvalidity), asc(messageInstances.uid))
+    .limit(limit);
+  return rows.map((row) => ({
+    folder: row.folder, uid: row.uid, uidValidity: String(row.uidvalidity),
+    messageId: row.messageIdHeader ?? null, seen: row.observedSeen ?? !row.unread,
+  }));
 }
 
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
@@ -2176,8 +2225,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * It runs once a cycle, so its cost follows the instance-less rows, not the mailbox: see
    * {@link instancelessCandidates} and {@link REAPER_CHECK_CHUNK}.
    */
-  async tombstoneInstanceless(accountId: string, mailboxId: string, limit: number): Promise<number> {
-    const candidates = await instancelessCandidates(this.db, accountId, mailboxId);
+  async tombstoneInstanceless(
+    accountId: string, mailboxId: string, limit: number, confirmed?: readonly string[],
+  ): Promise<number> {
+    const candidates = confirmed ?? await instancelessCandidates(this.db, accountId, mailboxId);
     const victims: string[] = [];
     const threadsOf = new Set<string>();
     for (let at = 0; at < candidates.length && victims.length < limit; at += REAPER_CHECK_CHUNK) {
@@ -2206,6 +2257,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }
     await this.tombstoneGone(accountId, victims, threadsOf);
     return victims.length;
+  }
+
+  async listInstanceless(accountId: string, mailboxId: string, limit: number, after?: string) {
+    const ids = await instancelessCandidates(this.db, accountId, mailboxId, {
+      limit, ...(after === undefined ? {} : { after }),
+    });
+    const identities = await this.letterIdentities(accountId, ids);
+    return ids.map((id) => ({ id, messageIdHeader: identities.get(id)?.messageIdHeader ?? null }));
   }
 
   /** The reaper's write: `deleted_at`, the `'expunged'` husk, the change-log delete, the threads. */
@@ -3408,6 +3467,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       // to `upsertMailboxFolder`, which is harmless only because the writer skips an absent one.
       // Carrying it keeps the cursor a faithful round trip of the row.
       ...(r.serverExists == null ? {} : { serverExists: r.serverExists }),
+      ...(r.scanNextUid == null ? {} : { scanNextUid: Number(r.scanNextUid) }),
+      ...(r.scanResetAfter == null ? {} : { scanResetAfter: r.scanResetAfter }),
       // Mail 0115, on the line above's rule: carried on the READ so `buildCursor` can hand the
       // stop back as `ImapCursor.budgetStop` and the pass resumes where the last one ran out.
       // BOTH columns or neither — a uid whose epoch did not survive the read names a different
@@ -3446,11 +3507,15 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       mailboxId, accountId: accountOfMailbox(mailboxId), folder,
       uidvalidity: BigInt(cursor.uidValidity), uidnext: BigInt(cursor.uidNext), highestmodseq: BigInt(cursor.highestModseq),
       serverExists: cursor.serverExists ?? null,
+      scanNextUid: cursor.scanNextUid === undefined ? null : BigInt(cursor.scanNextUid),
+      scanResetAfter: cursor.scanResetAfter ?? null,
     }))).onConflictDoUpdate({
       target: [mailboxFolders.mailboxId, mailboxFolders.folder],
       set: {
         uidvalidity: excluded("uidvalidity"), uidnext: excluded("uidnext"),
         highestmodseq: excluded("highestmodseq"), updatedAt: new Date(),
+        scanNextUid: excluded("scan_next_uid"),
+        scanResetAfter: excluded("scan_reset_after"),
         serverExists: sql`coalesce(${excluded("server_exists")}, ${mailboxFolders.serverExists})`,
       },
     });
@@ -3911,7 +3976,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     });
   }
 
-  async retireGoneFolder(accountId: string, mailboxId: string, folder: string): Promise<"retired" | "held" | "absent" | "repair_owed"> {
+  async retireGoneFolder(accountId: string, mailboxId: string, folder: string): Promise<"retired" | "held" | "absent" | "repair_owed" | "more"> {
     const [row] = await this.db.select({ id: mailboxFolders.id }).from(mailboxFolders)
       .where(and(eq(mailboxFolders.mailboxId, mailboxId), eq(mailboxFolders.folder, folder))).limit(1);
     if (!row) return "absent";
@@ -3928,12 +3993,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }
     // The server's statement covers every epoch: residue of a dead one is no copy either, and a
     // row-less folder would turn it into a "maybe alive" survivor the reaper never takes.
+    const limit = 512;
     const residue = await this.db.select({ uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid })
       .from(messageInstances)
-      .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder)));
-    for (const r of residue) {
+      .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder)))
+      .orderBy(asc(messageInstances.uidvalidity), asc(messageInstances.uid))
+      .limit(limit + 1);
+    for (const r of residue.slice(0, limit)) {
       await this.forgetInstanceAt(mailboxId, { folder, ref: `${String(r.uidvalidity)}:${r.uid}` });
     }
+    if (residue.length > limit) return "more";
     await this.removeFolderRow(accountId, row.id);
     return "retired";
   }
@@ -4175,52 +4244,64 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * `buildCursor` still drops epoch-0 entries. `messages.message_id_header` stays a property of
    * the logical message — `correlateMoves` pairs on it.
    */
-  async listKnownLocators(mailboxId: string): Promise<KnownLocator[]> {
+  async listPriorKnownLocators(mailboxId: string, folder: string, epoch: string, after: string, limit: number) {
+    const afterEpoch = BigInt(parseUidValidity(after));
+    const afterUid = parseUid(after);
+    const current = BigInt(epoch);
+    const rows = await this.db.select({
+      uid: messageInstances.uid, uidValidity: messageInstances.uidvalidity,
+      messageId: sql<string | null>`case when length(${messages.messageIdHeader}) <= 1024 then ${messages.messageIdHeader} end`,
+      hasCurrentCopy: sql<boolean>`exists (
+        select 1 from ${messageInstances} as current_instance
+        where current_instance.mailbox_id = ${messageInstances.mailboxId}
+          and current_instance.message_id = ${messageInstances.messageId}
+          and current_instance.folder = ${messageInstances.folder}
+          and current_instance.uidvalidity = ${sql.param(current, messageInstances.uidvalidity)}
+      )`,
+    }).from(messageInstances)
+      .innerJoin(messages, eq(messages.id, messageInstances.messageId))
+      .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder),
+        sql`${messageInstances.uidvalidity} <> ${sql.param(current, messageInstances.uidvalidity)}`,
+        sql`(${messageInstances.uidvalidity}, ${messageInstances.uid}) > (${sql.param(afterEpoch, messageInstances.uidvalidity)}, ${afterUid})`))
+      .orderBy(asc(messageInstances.uidvalidity), asc(messageInstances.uid)).limit(limit);
+    return rows.map((r) => ({ ...r, uidValidity: String(r.uidValidity), hasCurrentCopy: Boolean(r.hasCurrentCopy) }));
+  }
+
+  async listKnownLocatorsWithin(mailboxId: string, limit: number): Promise<KnownLocator[] | null> {
+    const rows = await this.listKnownLocators(mailboxId, limit + 1);
+    return rows.length <= limit ? rows : null;
+  }
+
+  async listKnownLocatorRange(
+    mailboxId: string, folder: string, epoch: string, from: number, through: number, limit: number,
+  ): Promise<KnownLocator[]> {
+    if (through < from) return [];
+    const sent = await recordedSentForLocators(this.db, mailboxId);
+    return knownLocatorPage(this.db, mailboxId, sent, [
+      eq(messageInstances.folder, folder),
+      eq(messageInstances.uidvalidity, BigInt(epoch)),
+      gte(messageInstances.uid, from), lte(messageInstances.uid, through),
+    ], limit, true);
+  }
+
+  async listKnownLocators(mailboxId: string, maxRows = Number.POSITIVE_INFINITY): Promise<KnownLocator[]> {
     const out: KnownLocator[] = [];
-    const [box] = await this.db.select({ sentFolder: mailboxes.sentFolder }).from(mailboxes)
-      .where(eq(mailboxes.id, mailboxId)).limit(1);
-    const recordedSent = box?.sentFolder ?? null;
+    const recordedSent = await recordedSentForLocators(this.db, mailboxId);
     // Below every stored key, so every page is one statement text (`pglite-plans.ts` pins it).
     let after: { folder: string; uidvalidity: bigint; uid: number } = { folder: "", uidvalidity: -1n, uid: -1 };
     for (;;) {
-      const rows = await this.db.select({
-        folder: messageInstances.folder,
-        uid: messageInstances.uid,
-        uidvalidity: messageInstances.uidvalidity,
-        messageIdHeader: messages.messageIdHeader,
-        // The seen baseline, for the adapter's no-CONDSTORE flag fallback (see `KnownLocator.seen`).
-        // `observed_seen` is what the server was last SEEN holding; `!unread` is what ingest
-        // derived from the server's flags before any flag row existed. Both are observations of
-        // the server, which is what a diff against the server needs — `desired_seen` is not, and
-        // using it would report the user's own pending write back as an external change.
-        observedSeen: flagState.observedSeen,
-        unread: messages.unread,
-      }).from(messageInstances)
-        .innerJoin(messages, eq(messages.id, messageInstances.messageId))
-        .leftJoin(flagState, eq(flagState.messageId, messageInstances.messageId))
-        .leftJoin(folderState, eq(folderState.messageId, messageInstances.messageId))
-        .where(and(
-          eq(messageInstances.mailboxId, mailboxId), sql`not (${inboxCopyOfSentRow(recordedSent)})`,
-          // The locator's unique key, so a page edge can neither skip nor repeat a row. Each value
-          // is bound through its column: the device's SQLite binding refuses a raw bigint.
-          sql`(${messageInstances.folder}, ${messageInstances.uidvalidity}, ${messageInstances.uid}) > (${
-            sql.param(after.folder, messageInstances.folder)}, ${sql.param(after.uidvalidity, messageInstances.uidvalidity)}, ${
-            sql.param(after.uid, messageInstances.uid)})`,
-        ))
-        .orderBy(asc(messageInstances.folder), asc(messageInstances.uidvalidity), asc(messageInstances.uid))
-        .limit(KNOWN_LOCATOR_PAGE_ROWS);
-      for (const r of rows) {
-        out.push({
-          folder: r.folder,
-          uid: r.uid,
-          uidValidity: r.uidvalidity != null ? String(r.uidvalidity) : "0",
-          messageId: r.messageIdHeader ?? null,
-          seen: r.observedSeen ?? !r.unread,
-        });
-      }
-      if (rows.length < KNOWN_LOCATOR_PAGE_ROWS) return out;
+      const limit = Math.min(KNOWN_LOCATOR_PAGE_ROWS, maxRows - out.length);
+      if (limit <= 0) return out;
+      const rows = await knownLocatorPage(this.db, mailboxId, recordedSent, [
+        // The locator's unique key, so a page edge can neither skip nor repeat a row.
+        sql`(${messageInstances.folder}, ${messageInstances.uidvalidity}, ${messageInstances.uid}) > (${
+          sql.param(after.folder, messageInstances.folder)}, ${sql.param(after.uidvalidity, messageInstances.uidvalidity)}, ${
+          sql.param(after.uid, messageInstances.uid)})`,
+      ], limit, Number.isFinite(maxRows));
+      for (const row of rows) out.push(row);
+      if (rows.length < limit || out.length >= maxRows) return out;
       const last = rows[rows.length - 1]!;
-      after = { folder: last.folder, uidvalidity: last.uidvalidity, uid: last.uid };
+      after = { folder: last.folder, uidvalidity: BigInt(last.uidValidity), uid: last.uid };
       // A macrotask, not `setImmediate`: the phone's is a microtask shim and gives no turn.
       await new Promise<void>((r) => setTimeout(r, 0));
     }

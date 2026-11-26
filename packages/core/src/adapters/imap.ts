@@ -918,6 +918,8 @@ function usableFolderCursor(v: unknown): FolderCursor | null {
   const c = v as Partial<FolderCursor>;
   if (typeof c.uidValidity !== "string" || typeof c.highestModseq !== "string") return null;
   if (typeof c.uidNext !== "number" || !Number.isFinite(c.uidNext) || c.uidNext < 0) return null;
+  if (c.scanNextUid !== undefined && (!Number.isSafeInteger(c.scanNextUid) || c.scanNextUid < 0)) return null;
+  if (c.scanResetAfter !== undefined && (typeof c.scanResetAfter !== "string" || !/^\d{1,20}:\d{1,10}$/.test(c.scanResetAfter))) return null;
   if (!Array.isArray(c.known)) return null;
   if (!c.known.every((k) => typeof k === "object" && k !== null && typeof k.uid === "number")) {
     return null;
@@ -2832,8 +2834,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   }
 
   /** See {@link MailboxAdapter.folderKeys}: the LIST's STATUS when it carries one, else one STATUS. */
-  async folderKeys(folder: string): Promise<FolderKeysAnswer> {
-    const listed = this.passiveStatusPass === this.passiveCycle ? this.passiveStatus.get(folder) : undefined;
+  async folderKeys(folder: string, opts?: { fresh?: boolean }): Promise<FolderKeysAnswer> {
+    const listed = !opts?.fresh && this.passiveStatusPass === this.passiveCycle
+      ? this.passiveStatus.get(folder) : undefined;
     if (listed && epochOf(listed.uidValidity).known
       && typeof listed.uidNext === "number" && typeof listed.messages === "number") {
       return { k: "keys", keys: { uidValidity: String(listed.uidValidity), uidNext: listed.uidNext, messages: listed.messages } };
@@ -3478,6 +3481,55 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }));
   }
 
+  private async sequenceUid(sequence: number, folder: string): Promise<number | undefined> {
+    const row = await this.bounded(this.client.fetchOne(String(sequence), { uid: true }), folder);
+    if (row && row.seq === sequence && Number.isSafeInteger(row.uid) && row.uid > 0) return row.uid;
+    return undefined;
+  }
+
+  /** A gap can be skipped only past adjacent sequence rows in the same FETCH response. */
+  private async firstUidAfter(uid: number, count: number, folder: string): Promise<number | undefined> {
+    const first = await this.sequenceUid(1, folder);
+    if (first === undefined || first > uid) return first;
+    if (!Number.isSafeInteger(count) || count < 2) return undefined;
+    const stop = this.now() + 5_000;
+    let low = 1;
+    let high = count;
+    for (let probes = 0; high - low > 1 && probes < 20 && this.now() < stop; probes++) {
+      const middle = Math.floor((low + high) / 2);
+      const answer = await this.sequenceUid(middle, folder);
+      if (answer === undefined) return undefined;
+      if (answer <= uid) low = middle;
+      else high = middle;
+    }
+    if (high - low !== 1 || this.now() >= stop) return undefined;
+    const pair = await boundedCollect(this.client.fetch(`${low}:${high}`, { uid: true }), {
+      max: 2, bound: "enumerate_uids", deadline: this.readDeadline(), folder,
+      onAbandon: (_notify, because) => this.retireConnection(because),
+      map: (row) => ({ seq: row.seq, uid: row.uid }),
+    });
+    const before = pair.find((row) => row.seq === low)?.uid;
+    const after = pair.find((row) => row.seq === high)?.uid;
+    return before !== undefined && Number.isSafeInteger(before) && before > 0 && before <= uid
+      && after !== undefined && Number.isSafeInteger(after) && after > uid ? after : undefined;
+  }
+
+  private async enumerateUidWindow(from: number, through: number, folder: string): Promise<number[]> {
+    if (through < from) return [];
+    let outOfRange = false;
+    const rows = await boundedCollect(this.client.fetch(`${from}:${through}`, { uid: true }, { uid: true }), {
+      max: IMAP_ENUM_MAX_UIDS, bound: "enumerate_uids",
+      deadline: this.readDeadline(), folder,
+      onAbandon: (_notify, because) => this.retireConnection(because),
+      map: (row) => {
+        if (!Number.isSafeInteger(row.uid) || row.uid < from || row.uid > through) outOfRange = true;
+        return row.uid;
+      },
+    });
+    if (outOfRange) throw new Error("IMAP did not answer the requested UID range");
+    return eachUidOnce(rows);
+  }
+
   /**
    * UIDs of the newest `count` messages of the OPEN mailbox, by SEQUENCE number.
    *
@@ -3664,6 +3716,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     folder: string,
     curUidValidity: bigint,
     budget: { messages: number; bytes: number },
+    arrivalFrom?: number,
   ): Promise<CappedFetch> {
     /* AN OVERRUN KEEPS WHAT ARRIVED. The connection is retired, so the fetch ends here; the
        messages already read are handed back with the breach, newest first, and the caller stores
@@ -3671,7 +3724,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
        asked for one). Any other refusal is thrown. */
     const fetched: InternalCreate[] = [];
     try {
-      return await this.fetchCapped(fetched, uids, folder, curUidValidity, budget);
+      return await this.fetchCapped(fetched, uids, folder, curUidValidity, budget, arrivalFrom);
     } catch (err) {
       if (!(err instanceof ImapBoundExceeded) || err.bound !== "body_overrun"
         || err.folder !== folder) throw err;
@@ -3686,6 +3739,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     folder: string,
     curUidValidity: bigint,
     budget: { messages: number; bytes: number },
+    arrivalFrom?: number,
   ): Promise<CappedFetch> {
     if (uids.length === 0) {
       return { fetched, truncated: false, unanswered: [], oversize: [], budgetSpent: false };
@@ -3707,7 +3761,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const dates = await this.arrivalDatesFor(folder, curUidValidity, uids, Math.max(1, budget.messages));
     // Only DATED candidates compete for the page. An undated one waits for a later pass, and the
     // page counts against ALL candidates, so the cursor stays held for it (`truncated`).
-    const newestFirst = orderCandidates(uids.filter((u) => dates.has(u)), dates);
+    const dated = uids.filter((u) => dates.has(u));
+    const newestFirst = arrivalFrom === undefined ? orderCandidates(dated, dates) : [
+      ...orderCandidates(dated.filter((u) => u >= arrivalFrom), dates),
+      ...orderCandidates(dated.filter((u) => u < arrivalFrom), dates),
+    ];
     const slice = newestFirst.slice(0, Math.max(1, budget.messages));
     let truncated = slice.length < uids.length;
 
@@ -4298,7 +4356,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // leave the tail waiting for days. Nothing else about the order moves: it is the CREATES
     // order, a mail-latency guarantee, and with no stop to resume from it is exactly what it was.
     const resumeAt = cursor.budgetStop ?? this.budgetStop;
-    const scanOrder = leadWith(scanFolders, resumeAt?.folder);
+    const resumeIndex = resumeAt?.uid === 0 ? scanFolders.indexOf(resumeAt.folder) : -1;
+    const scanOrder = resumeIndex > 0
+      ? [...scanFolders.slice(resumeIndex), ...scanFolders.slice(0, resumeIndex)]
+      : leadWith(scanFolders, resumeAt?.folder);
     /** Set when a folder is refused for a spent budget — the cursor the NEXT pass leads with. */
     let stoppedAt: BudgetStop | undefined;
     /* THE CALLER'S SET-ASIDE ROWS, by folder: decided against each folder's LIVE epoch below,
@@ -4311,6 +4372,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
     const setAsideStale: MessageSite[] = [];
     let overrun: ChangeBatch["overrun"];
+    const incompleteFolders: string[] = [];
+    let scanFailure: Error | undefined;
     // ONE budget for the whole call, spent in WATCHED_FOLDERS order (INBOX first, Sent LAST),
     // so the bound is per-cycle rather than per-folder — six folders each fetching a full batch
     // would be six times the memory this is supposed to cap.
@@ -4329,9 +4392,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // `DEFAULT_SYNC_BATCH_MAX_FLAGS`: this one bounds the worker's serial queue, not memory.
       flags: this.opts.maxBatchFlags ?? DEFAULT_SYNC_BATCH_MAX_FLAGS,
     };
-    let hasBacklog = false;
+    const uidWindowSize = 4096;
+    let hasBacklog: boolean = false;
     /** A folder's creates were truncated this pass — see the remembered-folder question below. */
-    let createsOwed = false;
+    let createsOwed: boolean = false;
     /** Reset deletes the whole re-read proved gone — see {@link ChangeBatch.resetGone}. */
     const provedGone = new Set<InternalDelete>();
 
@@ -4373,6 +4437,25 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
     /** Folders this pass proved unchanged without reading them — see {@link ChangeBatch.unchanged}. */
     let unchangedFolders = 0;
+    // A zero position means this folder has completed the current historical sweep.
+    const cleanupUntil = this.now() + IMAP_CYCLE_DEADLINE_MS / 4;
+    // A scheduled poll can reopen a completed folder while a peer is still retrying its page.
+    const historicalSweepOpen = asked?.startHistorySweep === undefined
+      ? scanOrder.some((folder) => (stored.get(folder)?.scanNextUid ?? 0) > 0)
+      : !asked.startHistorySweep;
+    const recordIncomplete = (folder: string): void => {
+      this.quietReads.delete(folder);
+      incompleteFolders.push(folder);
+    };
+    const stopAfterReadFailure = (err: unknown, folder: string, index: number): void => {
+      const next = scanOrder.slice(index + 1).find((name) =>
+        listedPaths?.has(name) || epochOf(stored.get(name)?.uidValidity).known);
+      if (next === undefined && creates.length === 0 && deletes.length === 0
+        && flagChanges.length === 0 && Object.keys(newFolders).length === 0) throw err;
+      recordIncomplete(folder);
+      scanFailure = err instanceof Error ? err : new Error("IMAP connection failed");
+      if (next !== undefined) stoppedAt = { folder: next, uidValidity: stored.get(next)?.uidValidity ?? "0", uid: 0 };
+    };
     for (const [folderIndex, folder] of scanOrder.entries()) {
       const isSent = folder === sentFolder;
       const isPassive = passiveFolders.has(folder);
@@ -4381,7 +4464,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // PROVABLY UNCHANGED PASSIVE FOLDER — not even a SELECT. See {@link unchangedPassive} for the
       // epoch and the three equalities, and why each is required. This is what keeps a mailbox
       // with a hundred customer folders costing one LIST per cycle instead of a hundred SELECTs.
-      if (isPassive && this.unchangedPassive(listStatus.get(folder), prev, caps.condstore)) {
+      if (isPassive && !cursor.knownWindows && prev?.scanNextUid === undefined && prev?.scanResetAfter === undefined
+        && this.unchangedPassive(listStatus.get(folder), prev, caps.condstore)) {
         newFolders[folder] = {
           uidValidity: prev!.uidValidity, uidNext: prev!.uidNext, highestModseq: prev!.highestModseq,
         };
@@ -4393,26 +4477,31 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const cachedSelect = !!this.client.mailbox && this.client.mailbox.path === serverPath;
       let lock: { release(): void };
       try {
-        lock = await this.bounded(this.client.getMailboxLock(serverPath));
+        lock = await this.bounded(this.client.getMailboxLock(serverPath), folder);
       } catch (err) {
-        // ── A CEILING BREACH IS THE ONE THING THIS ARM MUST NOT ABSORB ────────────────────────
-        //
-        // This is the most consequential of the SELECT catches. "The folder is not there" is a
-        // legitimate, common state and carrying the cursor forward is exactly right for it. A
-        // DEADLINE reaching here would be read the same way: the folder is silently reported as
-        // having no changes, `hasBacklog` stays false, and the pass ends looking complete — so a
-        // server that simply stopped answering one folder's SELECT would present as a healthy,
-        // fully-drained cycle. That is the shape `initial_import_completed_at` is written on.
-        // A lost connection is the same: every folder after it would read as absent and the pass as drained.
-        if (err instanceof ImapBoundExceeded || this.lostConnection(err)) throw err;
-        // Folder does not exist yet (e.g. ensureFolders not run, or server lacks it).
-        // Carry the previous cursor forward and skip — no changes can be observed here.
-        this.quietReads.delete(folder);
-        newFolders[folder] = prev
-          ? { uidValidity: prev.uidValidity, uidNext: prev.uidNext, highestModseq: prev.highestModseq }
-          : { uidValidity: "0", uidNext: 0, highestModseq: "0" };
+        if (err instanceof ImapBoundExceeded || this.lostConnection(err)) {
+          stopAfterReadFailure(err, folder, folderIndex);
+          break;
+        }
+        if (folder === "INBOX" || listedPaths?.has(folder) || (prev && epochOf(prev.uidValidity).known)) {
+          recordIncomplete(folder);
+        } else if (!prev) {
+          newFolders[folder] = { uidValidity: "0", uidNext: 0, highestModseq: "0" };
+        }
         continue;
       }
+      let releaseKnown: (() => void) | undefined;
+      let readingLocators = false;
+      const before: {
+        creates: number; deletes: number; flags: number; unanswered: number;
+        oversize: number; stale: number; budget: typeof budget; hasBacklog: boolean;
+        createsOwed: boolean; drain: FlagDrain | undefined;
+      } = {
+        creates: creates.length, deletes: deletes.length, flags: flagChanges.length,
+        unanswered: unanswered.length, oversize: oversize.length, stale: setAsideStale.length,
+        budget: { ...budget }, hasBacklog, createsOwed,
+        drain: this.flagDrain.get(folder),
+      };
       try {
         // A quiet verdict is read only off a SELECT this pass made: a cached one is re-SELECTed.
         let freshKeys = !cachedSelect;
@@ -4430,8 +4519,74 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // PROVED QUIET: this SELECT repeats the keys of a full read that found nothing, so the UID
         // enumeration is skipped. With CONDSTORE (or in Sent, which takes no flag read) the folder
         // is done; without it the flag read still runs this pass, against the known-set.
-        const print = knownPrint(prev?.known ?? [], asideByFolder.get(folder) ?? []);
-        const quiet = freshKeys && this.provedQuiet(folder, selected, prev, caps.condstore, print);
+        const windows = cursor.knownWindows;
+        const liveEpoch = epochOf(curUidValidity);
+        const sameWindowEpoch = prev !== undefined && sameEpoch(epochOf(prev.uidValidity), liveEpoch);
+        const windowed = windows !== undefined || prev?.scanNextUid !== undefined
+          || prev?.scanResetAfter !== undefined || (!isSent && selected.exists > IMAP_ENUM_MAX_UIDS);
+        let mailboxHigh = selected.uidNext ?? 0;
+        if (windowed && liveEpoch.known && (!Number.isSafeInteger(mailboxHigh) || mailboxHigh < 1)) {
+          const last = selected.exists > 0 ? await this.sequenceUid(selected.exists, folder) : undefined;
+          if (last !== undefined || selected.exists === 0) {
+            mailboxHigh = Math.max((last ?? 0) + 1, sameWindowEpoch ? prev.uidNext : 0);
+          }
+        }
+        if (windowed && (!liveEpoch.known || !Number.isSafeInteger(mailboxHigh) || mailboxHigh < 1)) {
+          recordIncomplete(folder);
+          continue;
+        }
+        const resetReady = sameWindowEpoch && prev.scanResetAfter !== undefined && !prev.scanNextUid;
+        const savedWatermark = sameWindowEpoch ? prev.uidNext : 0;
+        const sentWatermark = isSent ? savedWatermark : 0;
+        const historyDone = windowed && sameWindowEpoch
+          && (resetReady || (historicalSweepOpen && prev.scanNextUid === 0));
+        const width = windows?.rows ?? uidWindowSize;
+        let fromUid = windowed && sameWindowEpoch ? (prev.scanNextUid || 1) : 1;
+        if (windowed && isSent && !historyDone && (!sameWindowEpoch || !prev.scanNextUid)) {
+          if (sentWatermark > 0 && windows) {
+            readingLocators = true;
+            const oldest = await windows.read(folder, String(curUidValidity), 1, sentWatermark, 1);
+            readingLocators = false;
+            try { fromUid = oldest.rows[0]?.uid ?? sentWatermark; }
+            finally { oldest.release(); }
+          } else {
+            const newest = await this.enumerateNewestUids(sentHistory, folder);
+            fromUid = minOf(newest, mailboxHigh);
+          }
+        }
+        const skipGap = async (from: number, high: number): Promise<number> => {
+          if (from >= high || (this.cycleDeadline?.remainingMs() ?? Infinity) < IMAP_READ_DEADLINE_MS) return from;
+          const first = selected.exists === 0 ? high : await this.firstUidAfter(from - 1, selected.exists, folder);
+          if (first === undefined || first <= from) return from;
+          if (!windows) {
+            let next = Math.min(first, high);
+            for (const entry of sameWindowEpoch ? prev.known : []) {
+              if (entry.uid >= from && entry.uid < next) next = entry.uid;
+            }
+            return next;
+          }
+          readingLocators = true;
+          const earliest = await windows.read(folder, String(curUidValidity), from, Math.min(first - 1, high - 1), 1);
+          readingLocators = false;
+          try { return Math.min(earliest.rows[0]?.uid ?? first, high); }
+          finally { earliest.release(); }
+        };
+        const arrivalsDue = windowed && (!isSent || historyDone) && savedWatermark > 0 && savedWatermark < mailboxHigh;
+        const arrivalFrom = !arrivalsDue ? undefined : mailboxHigh - savedWatermark > width
+          ? await skipGap(savedWatermark, mailboxHigh) : savedWatermark;
+        const arrivalThrough = arrivalFrom === undefined ? undefined : Math.min(mailboxHigh - 1, arrivalFrom + width - 1);
+        const historyHigh = arrivalsDue ? savedWatermark : mailboxHigh;
+        const throughUid = historyDone ? fromUid - 1
+          : windowed ? Math.min(historyHigh - 1, fromUid + width - 1) : Number.MAX_SAFE_INTEGER;
+        const historyUids = windowed ? await this.enumerateUidWindow(fromUid, throughUid, folder) : [];
+        const nextHistoryFrom = !windowed || isSent || historyDone || historyUids.length > 0
+          ? throughUid + 1 : await skipGap(throughUid + 1, historyHigh);
+        const moreWindows = windowed && !historyDone && nextHistoryFrom < historyHigh;
+        let scanResetAfter = windowed && cursor.readPriorEpoch && prev && epochOf(prev.uidValidity).known
+          ? sameWindowEpoch ? prev.scanResetAfter : "0:0"
+          : undefined;
+        const print = windowed ? null : knownPrint(prev?.known ?? [], asideByFolder.get(folder) ?? []);
+        const quiet = print !== null && freshKeys && this.provedQuiet(folder, selected, prev, caps.condstore, print);
         if (quiet && (caps.condstore || isSent)) {
           newFolders[folder] = {
             uidValidity: prev!.uidValidity, uidNext: prev!.uidNext, highestModseq: prev!.highestModseq,
@@ -4450,7 +4605,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         const reportsBefore = {
           deletes: deletes.length, flags: flagChanges.length, stale: setAsideStale.length,
         };
-        const knownMap = new Map<number, KnownEntry>((prev?.known ?? []).map((k) => [k.uid, k]));
+        readingLocators = true;
+        const arrivals = arrivalFrom !== undefined && arrivalThrough !== undefined && arrivalThrough >= arrivalFrom
+          ? { from: arrivalFrom, through: arrivalThrough } : undefined;
+        const page = windows && (throughUid >= fromUid || arrivals !== undefined)
+          ? await windows.read(folder, String(curUidValidity), fromUid, throughUid, undefined, arrivals) : undefined;
+        releaseKnown = page?.release;
+        readingLocators = false;
+        const knownMap = new Map<number, KnownEntry>();
+        for (const k of page?.rows ?? prev?.known ?? []) {
+          if (!windowed || (k.uid >= fromUid && k.uid <= throughUid)
+            || (arrivals && k.uid >= arrivals.from && k.uid <= arrivals.through)) knownMap.set(k.uid, k);
+        }
         // A reset is a CONTRADICTION between two named epochs. A cold cursor names none and a
         // silent server names none, and neither is evidence that the folder was recreated — read
         // as strings, the second wiped the known-set every cycle (`"undefined"` matches nothing).
@@ -4459,8 +4625,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // On a UIDVALIDITY change every prior UID is stale: treat the known-set as empty for
         // create/flag detection (so all current UIDs are re-learned) and emit every prior UID as a
         // delete; correlateMoves then re-pairs create↔delete by Message-ID into a single locator refresh.
-        const effectiveKnown = uidValidityChanged ? new Map<number, KnownEntry>() : knownMap;
-        const canFastPath = caps.condstore && !!prev && prev.highestModseq !== "0" && !uidValidityChanged;
+        const effectiveKnown = uidValidityChanged && !page ? new Map<number, KnownEntry>() : knownMap;
+        const canFastPath = !windowed && caps.condstore && !!prev && prev.highestModseq !== "0" && !uidValidityChanged;
         // The fallback: flag changes without CONDSTORE. Office 365 advertises none (measured
         // live), so `canFastPath` is false for ever there — and until this branch existed no flag
         // change was derived: mail read in Outlook stayed bold here permanently. The prior flags
@@ -4472,7 +4638,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // not an observation — diffing it would flip the user's own sent mail unread. The
         // user-wins decision stays in `applyExternalFlag`; this diff is a cost filter.
         const canFlagFallback =
-          !caps.condstore && !isSent && !uidValidityChanged && effectiveKnown.size > 0;
+          (windowed || !caps.condstore) && !isSent && !uidValidityChanged && effectiveKnown.size > 0;
 
         // Enumeration: whole folder, or the Sent watermark. Every watched folder is enumerated
         // end to end, because the known-set diff is what detects creates. Sent cannot use that,
@@ -4487,7 +4653,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         let enumFloorUid = 0;
         /** Below this no UID may be a create — the Sent watermark; 0 everywhere else. */
         let createFloorUid = 0;
-        if (!isSent) {
+        if (windowed) {
+          createFloorUid = sentWatermark;
+          currentUids = historyUids;
+          if (arrivalFrom !== undefined && arrivalThrough !== undefined) {
+            currentUids.push(...await this.enumerateUidWindow(arrivalFrom, arrivalThrough, folder));
+          }
+        } else if (!isSent) {
           // Proved quiet: the server holds exactly the known-set, so it stands in for the read.
           currentUids = quiet ? [...knownMap.keys()] : await this.enumerateUids(folder);
         } else {
@@ -4526,7 +4698,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // bodies are then discarded. So "mark thousands of messages read" reproduced the same OOM
         // as a cold sync. The unknown-UID diff is a strict superset of the creates
         // `changedSince` could report, so nothing is lost by sourcing them here instead.
-        const liveEpoch = epochOf(curUidValidity);
         const asideHere = new Set<number>();
         for (const a of asideByFolder.get(folder) ?? []) {
           const verdict = epochVerdict(epochOf(a.uidValidity), liveEpoch);
@@ -4542,7 +4713,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // drain dying mid-cycle on a mailbox whose only fault is a server that does not answer the field.
         const priorEpoch = prev ? epochOf(prev.uidValidity) : UNKNOWN_EPOCH;
         const priorUidValidity = priorEpoch.known ? BigInt(priorEpoch.value) : curUidValidity;
-        const resetDeletes: InternalDelete[] = uidValidityChanged
+        const resetDeletes: InternalDelete[] = uidValidityChanged && !windowed
           ? [...knownMap].map(([uid, { messageId }]) => ({ folder, uidValidity: priorUidValidity, uid, messageId }))
           : [];
         // A RESET'S DELETE IS SILENCE, UNLESS THE WHOLE FOLDER SAYS OTHERWISE. A remembered
@@ -4562,7 +4733,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         const {
           fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize, budgetSpent,
           overrun: breach,
-        } = await this.fetchCappedKeeping(unknownUids, folder, curUidValidity, budget);
+        } = await this.fetchCappedKeeping(unknownUids, folder, curUidValidity, budget, arrivalFrom);
         creates.push(...fetched);
         budget.messages -= fetched.length;
         for (const f of fetched) budget.bytes -= f.raw.length;
@@ -4581,7 +4752,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             : { folder, breach };
           if (uidValidityChanged) settleReset();
           if (prev === undefined || uidValidityChanged) {
-            newFolders[folder] = { uidValidity: String(curUidValidity), uidNext: 0, highestModseq: "0" };
+            newFolders[folder] = { uidValidity: String(curUidValidity), uidNext: 0, highestModseq: "0",
+              ...(windowed ? { scanNextUid: fromUid } : {}),
+              ...(scanResetAfter === undefined ? {} : { scanResetAfter }) };
           }
           hasBacklog = true;
           createsOwed = true;
@@ -4633,8 +4806,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           // baseline. The resume machinery is shared, so "mark all read in Outlook" drains across
           // cycles; `sinceModseq`/`advanceTo` are inert in that mode — the folder cursor's
           // `highestModseq` is pinned "0" for a no-CONDSTORE server.
-          const from = drain?.resumeUid ?? 1;
-          const since = drain?.sinceModseq ?? prev!.highestModseq;
+          const from = Math.max(drain?.resumeUid ?? 1, fromUid);
+          const since = drain?.sinceModseq ?? prev?.highestModseq ?? "0";
           // The resume point is what this pass EXAMINED, not what it accepted. Seeded at `from -
           // 1` so `resumeUid: lastFlagUid + 1` reads "no progress" when nothing was accepted;
           // seeded at 0 the same expression wrote `resumeUid: 1` — START OVER, discarding every
@@ -4667,11 +4840,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           // a bounded degrade that keeps every flag rather than a failed cycle.
           let examined = 0;
           const flagDeadline = this.readDeadline();
-          for await (const m of this.client.fetch(
-            `${from}:*`,
-            { uid: true, flags: true },
+          const flagRanges = [{ from: fromUid, through: throughUid }, ...(arrivals ? [arrivals] : [])]
+            .map((range) => ({ ...range, from: Math.max(range.from, from) }))
+            .filter((range) => range.from <= range.through);
+          const flagSet = windowed ? flagRanges.map(({ from, through }) => `${from}:${through}`).join(",") : `${from}:*`;
+          const flagRows = flagSet ? this.client.fetch(
+            flagSet, { uid: true, flags: true },
             canFastPath ? { uid: true, changedSince: BigInt(since) } : { uid: true },
-          )) {
+          ) : [];
+          for await (const m of flagRows) {
             flagDeadline.check(folder);
             // This used to truncate, and the premise was false. It set `flagsTruncated` and
             // broke, arguing the drain's resume point keeps every flag — the resume point is
@@ -4696,6 +4873,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             // safe to ignore: `advanceTo` is the modseq observed when the drain STARTED, so it
             // is at or above this UID's modseq, and a flag change on it after the drain ends is
             // re-reported by the ordinary `changedSince` on the next cycle.
+            if (windowed && !flagRanges.some(({ from, through }) => m.uid >= from && m.uid <= through)) continue;
             const known = effectiveKnown.get(m.uid);
             if (!known) { lastFlagUid = m.uid; continue; }
             const seen = m.flags?.has("\\Seen") ?? false;
@@ -4764,6 +4942,67 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // first baseline was ever published and no flag pass ever ran. A completed drain advances
         // only to where it BEGAN (`FlagDrain.advanceTo`). Residual: a `\Seen` toggled between a
         // create and the first baseline is never reported.
+        if (resetReady && scanResetAfter !== undefined && cursor.readPriorEpoch) {
+          releaseKnown?.();
+          releaseKnown = undefined;
+          const limit = 32;
+          readingLocators = true;
+          const prior = await cursor.readPriorEpoch(folder, String(curUidValidity), scanResetAfter, limit);
+          readingLocators = false;
+          let examined = 0;
+          try {
+            for (const row of prior.rows) {
+              const id = row.messageId?.replace(/[<>]/g, "").trim();
+              let gone = row.hasCurrentCopy;
+              if (!gone && id) {
+                if (this.now() >= cleanupUntil
+                  || (this.cycleDeadline?.remainingMs() ?? Infinity) < IMAP_READ_DEADLINE_MS) break;
+                let found: number[] | false;
+                try {
+                  found = await this.searchBounded({ header: { "message-id": id } }, { uid: true }, folder);
+                } catch (err) {
+                  if (err instanceof ImapBoundExceeded || this.lostConnection(err)) {
+                    stopAfterReadFailure(err, folder, folderIndex);
+                  } else recordIncomplete(folder);
+                  break;
+                }
+                if (found === false) {
+                  recordIncomplete(folder);
+                  break;
+                }
+                gone = found.length === 0;
+              }
+              scanResetAfter = makeRef(BigInt(row.uidValidity), row.uid);
+              examined++;
+              if (gone) {
+                const deletion = { folder, uidValidity: BigInt(row.uidValidity), uid: row.uid, messageId: row.messageId };
+                deletes.push(deletion);
+                provedGone.add(deletion);
+              }
+            }
+          } finally { prior.release(); }
+          if (prior.rows.length < limit && examined === prior.rows.length) scanResetAfter = undefined;
+        }
+        let historyTruncated = truncated;
+        let arrivalsTruncated = truncated;
+        if (truncated && arrivalFrom !== undefined) {
+          const settled = new Set([...fetched.map((m) => m.uid), ...withheldUids, ...refusedOnSize.map((m) => m.uid)]);
+          historyTruncated = unknownUids.some((uid) => uid < arrivalFrom && !settled.has(uid));
+          arrivalsTruncated = unknownUids.some((uid) => uid >= arrivalFrom && !settled.has(uid));
+        }
+        const windowHeld = windowed && (historyTruncated || flagsTruncated);
+        if (moreWindows) { hasBacklog = true; createsOwed = true; }
+        if (scanResetAfter !== undefined && !incompleteFolders.includes(folder)) hasBacklog = true;
+        const scanNextUid = !windowed ? undefined
+          : !historyDone && windowHeld ? fromUid : moreWindows ? nextHistoryFrom : scanResetAfter === undefined ? 0 : undefined;
+        const nextWatermark = !windowed ? undefined : isSent
+          ? (windowHeld || moreWindows || arrivalsTruncated ? sentWatermark : (arrivalThrough ?? mailboxHigh - 1) + 1)
+          : savedWatermark === 0 ? (windowHeld ? 0 : mailboxHigh)
+          : arrivalThrough === undefined || arrivalsTruncated || flagsTruncated ? savedWatermark : arrivalThrough + 1;
+        if (arrivalThrough !== undefined && arrivalThrough + 1 < mailboxHigh) {
+          hasBacklog = true;
+          createsOwed = true;
+        }
         const advanceTo = drain && !flagsTruncated
           ? drain.advanceTo
           : String(mb.highestModseq ?? 0n);
@@ -4778,10 +5017,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           // two epoch-scoped cursors must go cold with it: `prev.uidNext` counts UIDs that no
           // longer exist, and the Sent watermark reads it, so carrying it into a new epoch would
           // strand every message below it.
-          uidValidity: uidValidityChanged || !(truncated || flagsTruncated)
+          ...(scanNextUid === undefined ? {} : { scanNextUid }),
+          ...(scanResetAfter === undefined ? {} : { scanResetAfter }),
+          uidValidity: windowed || uidValidityChanged || !(truncated || flagsTruncated)
             ? String(curUidValidity)
             : (prev?.uidValidity ?? "0"),
-          uidNext: uidValidityChanged && truncated ? 0 : truncated ? (prev?.uidNext ?? 0) : mb.uidNext,
+          uidNext: nextWatermark ?? (uidValidityChanged && truncated ? 0 : truncated ? (prev?.uidNext ?? 0) : mb.uidNext),
           // …AND THE MODSEQ BASELINE IS EPOCH-SCOPED TOO, which the uidNext line above learned
           // first. A modseq remembered under the old epoch names nothing in the new one, and it
           // is the value `canFastPath` asks `changedSince` for — so it goes cold with the epoch
@@ -4809,20 +5050,42 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         }
         // A full read that found NOTHING is the only one a later SELECT may stand in for: every
         // report this folder could make is empty, its cursor advanced whole, and the keys exist.
-        const foundNothing = !uidValidityChanged && !truncated && !flagsTruncated
+        const foundNothing = print !== null && !uidValidityChanged && !truncated && !flagsTruncated
           && unknownUids.length === 0 && withheldUids.length === 0 && refusedOnSize.length === 0
           && deletes.length === reportsBefore.deletes && flagChanges.length === reportsBefore.flags
           && setAsideStale.length === reportsBefore.stale
           && typeof selected.uidNext === "number" && typeof selected.exists === "number"
           && (!caps.condstore || selected.highestModseq != null);
-        if (foundNothing) {
+        if (foundNothing && print !== null) {
           this.quietReads.set(folder, {
             uidValidity: String(selected.uidValidity), uidNext: selected.uidNext!, exists: selected.exists,
             modseq: caps.condstore ? String(selected.highestModseq) : null,
             cursor: newFolders[folder]!, print, atMs: quietSince ?? this.now(),
           });
         }
+        if (scanFailure) break;
+      } catch (err) {
+        if (readingLocators) throw err;
+        const disconnected = err instanceof ImapBoundExceeded || this.lostConnection(err);
+        creates.length = before.creates;
+        deletes.slice(before.deletes).forEach((d) => provedGone.delete(d));
+        deletes.length = before.deletes;
+        flagChanges.length = before.flags;
+        unanswered.length = before.unanswered;
+        oversize.length = before.oversize;
+        setAsideStale.length = before.stale;
+        Object.assign(budget, before.budget);
+        hasBacklog = before.hasBacklog;
+        createsOwed = before.createsOwed;
+        if (before.drain) this.flagDrain.set(folder, before.drain);
+        else this.flagDrain.delete(folder);
+        if (disconnected) {
+          stopAfterReadFailure(err, folder, folderIndex);
+          break;
+        }
+        recordIncomplete(folder);
       } finally {
+        releaseKnown?.();
         lock.release();
       }
     }
@@ -4835,7 +5098,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // are either. Held while creates are owed: a folder renamed elsewhere must meet its new
     // folder's creates in this pass, or it reads as a delete.
     const foldersGone: string[] = [];
-    if (listedPaths !== null && stoppedAt === undefined && !createsOwed) {
+    if (listedPaths !== null && stoppedAt === undefined && !createsOwed && incompleteFolders.length === 0) {
       const scanned = new Set(scanFolders);
       /* PAST THE CEILING the same holds: a folder renamed to a name the cap leaves unread never
          meets its creates, so a vanished folder WITH letters is unknown while any listed folder
@@ -4844,7 +5107,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       for (const [name, prev] of stored) {
         if (scanned.has(name) || listedPaths.has(name)) continue;
         if (SENT_SHAPED_PATHS.includes(name.toLowerCase())) continue;
-        if (unread && prev.known.length > 0) continue;
+        if (unread && (cursor.knownWindows !== undefined || prev.known.length > 0)) continue;
         const epoch = epochOf(prev.uidValidity);
         if (prev.known.length > 0 && !epoch.known) continue;
         if (!(await this.folderStatedGone(name))) continue;
@@ -4856,6 +5119,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         }
         // Carried, so the cycle's epoch guard believes these deletes at the epoch they name.
         newFolders[name] = { uidValidity: prev.uidValidity, uidNext: prev.uidNext, highestModseq: prev.highestModseq };
+      }
+    }
+
+    // Hosts that distinguish polls from wakes retain the completed sweep across both and across restarts.
+    if (asked?.startHistorySweep === undefined && !hasBacklog && stoppedAt === undefined) {
+      for (const fc of Object.values(newFolders)) {
+        if (fc.scanNextUid === 0) delete fc.scanNextUid;
       }
     }
 
@@ -4901,6 +5171,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       deletes: correlated.deletes.filter((d) => !provedGone.has(d)).map(asDelete),
       newCursor: { folders: newFolders },
       hasBacklog,
+      ...(incompleteFolders.length > 0 ? { incompleteFolders } : {}),
+      ...(scanFailure ? { scanFailure } : {}),
       ...(stoppedAt ? { budgetStop: stoppedAt } : {}),
       unanswered,
       oversize,

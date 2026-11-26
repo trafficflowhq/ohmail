@@ -60,6 +60,7 @@ const SESSION_TTL_SECONDS = 12 * 60 * 60;
 const ENROLL_TTL_SECONDS = 10 * 60;
 /** TOTP skew tolerance, in 30s steps. One step each way is the standard, and enough. */
 const TOTP_WINDOW = 1;
+const TOTP_STEP_MS = 30_000;
 /**
  * How long a BEGUN enrolment stays confirmable (cloud 0036). Long enough to photograph a QR and
  * type six digits; short enough that a pending secret from last month is not a credential this
@@ -100,7 +101,8 @@ async function decoy(): Promise<string> {
  * `staff:ip:<keyed hash>` — both are the deployment's keyed hash (`throttle-keys.ts`), because an
  * operations table is not a place to accumulate who signed in or where they were working from.
  */
-interface ThrottleVerdict { locked: boolean; retryAfterSeconds: number }
+type ThrottleVerdict = { locked: true; retryAfterSeconds: number } | { locked: false; windowStartedAt: Date };
+type PasswordReservation = { key: string; windowStartedAt: Date };
 
 /**
  * Count one attempt and decide, in one statement — the admission gate, replacing a check-then-act
@@ -157,7 +159,7 @@ async function throttleReserve(
   if (row.failures > THROTTLE_MAX_FAILURES) {
     return { locked: true, retryAfterSeconds: THROTTLE_LOCK_SECONDS };
   }
-  return { locked: false, retryAfterSeconds: 0 };
+  return { locked: false, windowStartedAt: row.windowStartedAt };
 }
 
 /**
@@ -205,15 +207,17 @@ async function throttleClear(db: ApiDeps["db"], key: string): Promise<void> {
  * {@link throttleClear}: clearing on a correct password would let somebody holding the password
  * but not the phone wipe the TOTP failures between guesses.
  */
-async function throttleRefund(db: ApiDeps["db"], key: string, now: Date): Promise<void> {
+async function throttleRefund(db: ApiDeps["db"], reservation: PasswordReservation, now: Date, preserveLock = false): Promise<void> {
   const back = sql`greatest(${authThrottle.failures} - 1, 0)`;
   await db.update(authThrottle)
     .set({
       failures: back,
-      lockedUntil: sql`case when (${back}) >= ${THROTTLE_MAX_FAILURES} then ${authThrottle.lockedUntil} else null end`,
+      ...(preserveLock ? {} : {
+        lockedUntil: sql`case when (${back}) >= ${THROTTLE_MAX_FAILURES} then ${authThrottle.lockedUntil} else null end`,
+      }),
       updatedAt: now,
     })
-    .where(eq(authThrottle.key, key));
+    .where(and(eq(authThrottle.key, reservation.key), eq(authThrottle.windowStartedAt, reservation.windowStartedAt)));
 }
 
 /**
@@ -229,6 +233,22 @@ function ipKey(req: Request, deps: ApiDeps): string {
 const emailKey = (email: string, deps: ApiDeps): string =>
   `staff:email:${throttleKeysFor(deps.keyProvider).address(email)}`;
 
+async function reserveStaffPassword(deps: ApiDeps, req: Request, email: string, now: Date): Promise<
+  { reservations: PasswordReservation[] } | { status: 429; body: Extract<StaffSignInResult, { status: "throttled" }> }
+> {
+  const door = staffDb(deps);
+  const reservations: PasswordReservation[] = [];
+  for (const key of [emailKey(email, deps), ipKey(req, deps)]) {
+    const verdict = await throttleReserve(door, key, now);
+    if (verdict.locked) {
+      for (const reservation of reservations) await throttleRefund(door, reservation, now, true);
+      return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
+    }
+    reservations.push({ key, windowStartedAt: verdict.windowStartedAt });
+  }
+  return { reservations };
+}
+
 /* ── enrolment tokens ──────────────────────────────────────────────────────────────────── */
 
 /**
@@ -236,34 +256,37 @@ const emailKey = (email: string, deps: ApiDeps): string =>
  * obvious implementation — a short-lived `staff_sessions` row with a flag keeping it out of the
  * authorised set — was rejected: it puts a not-quite-session in the table every authorised path
  * queries, surviving exactly as long as every path remembers the filter. An enrolment token is
- * not a session and has no row: an HMAC over the staff id and an expiry, signed with the
+ * not a session and has no row: an HMAC over the staff id, enrollment generation and expiry, signed with the
  * deployment's admin secret, authorising exactly two routes. Nothing that reads `staff_sessions`
  * can be tricked into treating one as a login, because there is no row to find.
  */
-async function signEnrollToken(secret: string, staffId: string, expiresAt: number): Promise<string> {
+type BootstrapAuthority = { staffId: string; generation: string; expiresAt: number };
+
+async function signEnrollToken(secret: string, { staffId, generation, expiresAt }: BootstrapAuthority): Promise<string> {
   const key = await crypto.subtle.importKey(
     "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
   );
   const mac = await crypto.subtle.sign(
-    "HMAC", key, new TextEncoder().encode(`ohmail-staff-enroll:v1:${staffId}:${expiresAt}`),
+    "HMAC", key, new TextEncoder().encode(`ohmail-staff-enroll:v2:${staffId}:${generation}:${expiresAt}`),
   );
-  return `${staffId}.${expiresAt}.${Array.from(new Uint8Array(mac))
+  return `${staffId}.${generation}.${expiresAt}.${Array.from(new Uint8Array(mac))
     .map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
 async function readEnrollToken(
   secret: string, token: string | undefined, now: Date,
-): Promise<string | null> {
+): Promise<BootstrapAuthority | null> {
   if (!token) return null;
   const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [staffId, expiresRaw, mac] = parts as [string, string, string];
+  if (parts.length !== 4) return null;
+  const [staffId, generation, expiresRaw] = parts as [string, string, string, string];
   const expiresAt = Number(expiresRaw);
-  if (!Number.isSafeInteger(expiresAt)) return null;
-  const expected = await signEnrollToken(secret, staffId, expiresAt);
+  if (!isUuid(staffId) || !isUuid(generation) || !Number.isSafeInteger(expiresAt) || expiresAt * 1000 <= now.getTime()) return null;
+  const authority = { staffId, generation, expiresAt };
+  const expected = await signEnrollToken(secret, authority);
   // Constant-time over the whole token, so neither the id nor the MAC leaks through timing.
   if (!timingSafeEqualStr(expected, token)) return null;
-  return expiresAt * 1000 > now.getTime() ? staffId : null;
+  return authority;
 }
 
 /** Length-invariant compare; the edge runtime has no `crypto.timingSafeEqual`. */
@@ -304,18 +327,15 @@ async function mintSession(
  * hands out no token.
  */
 async function mintAuditedSession(
-  deps: ApiDeps, user: { id: string; email: string }, now: Date, requestId: string,
+  door: ReturnType<typeof staffDb>, tx: Tx, user: { id: string; email: string }, now: Date, requestId: string,
 ): Promise<{ token: string; expiresAt: Date }> {
-  const door = staffDb(deps);
-  return (door as unknown as Tx).transaction(async (tx) => {
-    const minted = await mintSession(tx, user.id, now);
-    const roles = await liveRolesOf(tx, user.id);
-    await recordStaffEvents(carryBinding(door, tx), [{
-      requestId, at: now, action: "staff.signin", outcome: "ok",
-      actor: { staffId: user.id, sessionId: minted.sessionId, email: user.email, roles },
-    }]);
-    return { token: minted.token, expiresAt: minted.expiresAt };
-  });
+  const minted = await mintSession(tx, user.id, now);
+  const roles = await liveRolesOf(tx, user.id);
+  await recordStaffEvents(carryBinding(door, tx), [{
+    requestId, at: now, action: "staff.signin", outcome: "ok",
+    actor: { staffId: user.id, sessionId: minted.sessionId, email: user.email, roles },
+  }]);
+  return { token: minted.token, expiresAt: minted.expiresAt };
 }
 
 export interface StaffIdentity {
@@ -330,9 +350,11 @@ export interface StaffIdentity {
 }
 
 /** The live roles of one staff member, in `STAFF_ROLES` order. A revocation counts at once. */
-export async function liveRolesOf(db: Pick<Tx, "select">, staffId: string): Promise<StaffRole[]> {
-  const rows = await db.select({ role: staffRoleGrants.role }).from(staffRoleGrants)
+export async function liveRolesOf(db: Pick<Tx, "select">, staffId: string, hold = false): Promise<StaffRole[]> {
+  const query = db.select({ role: staffRoleGrants.role }).from(staffRoleGrants)
     .where(and(eq(staffRoleGrants.staffUserId, staffId), isNull(staffRoleGrants.revokedAt)));
+  // Match the role writer's lock order by holding `owner` grants first.
+  const rows = await (hold ? query.orderBy(sql`${staffRoleGrants.role} <> 'owner'`, staffRoleGrants.role).for("share") : query);
   const held = new Set(rows.map((r) => r.role));
   return STAFF_ROLES.filter((r) => held.has(r));
 }
@@ -419,32 +441,60 @@ export async function resolveStaffSession(
   return { staffId: row.id, sessionId: row.sessionId, email: row.email, lastTwofaAt: row.lastTwofaAt, roles };
 }
 
-/**
- * Consume one TOTP code for a staff member: verified against the active secret, single-use per
- * timestep by the compare-and-swap on `totp_last_consumed_step` (two presentations of one code
- * cannot both win). The caller throttles and answers; this only says what happened.
- */
-async function consumeStaffTotp(
-  deps: ApiDeps, staffId: string, code: string, now: Date,
-): Promise<"ok" | "invalid" | "no_enrollment"> {
-  const [user] = await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
+type StaffUser = typeof staffUsers.$inferSelect;
+
+async function lockStaffUser(tx: Tx, staffId: string): Promise<StaffUser | undefined> {
+  return (await tx.select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1).for("no key update"))[0];
+}
+
+async function lockStaffSession(tx: Tx, who: StaffIdentity, clock: ApiDeps["now"]) {
+  const [session] = await tx.select().from(staffSessions).where(and(
+    eq(staffSessions.id, who.sessionId), eq(staffSessions.staffUserId, who.staffId),
+  )).limit(1).for("update");
+  if (!session || session.revokedAt || session.expiresAt.getTime() <= clock().getTime()) return null;
+  return session;
+}
+
+type StaffTotpProof = { user: StaffUser; step: bigint };
+
+function freshStaffTotpStep(step: number, now: Date): boolean {
+  return Math.abs(step - Math.floor(now.getTime() / TOTP_STEP_MS)) <= TOTP_WINDOW;
+}
+
+async function verifyStaffTotp(
+  deps: ApiDeps, user: StaffUser | undefined, code: string, now: Date,
+): Promise<StaffTotpProof | "invalid" | "no_enrollment"> {
   if (!user?.totpActivated || !user.totpSecretEnc || user.totpKeyVersion === null) return "no_enrollment";
   const totpSecret = await deps.keyProvider.decrypt(user.totpSecretEnc, user.totpKeyVersion);
   const v = verifyTotp({
     secret: totpSecret, token: code, now, window: TOTP_WINDOW,
     afterStep: user.totpLastConsumedStep === null ? null : Number(user.totpLastConsumedStep),
   });
-  if (!v.valid) return "invalid";
-  const advanced = await staffDb(deps).update(staffUsers)
-    .set({ totpLastConsumedStep: BigInt(v.timeStep!), updatedAt: now })
-    .where(and(
-      eq(staffUsers.id, user.id),
-      user.totpLastConsumedStep === null
-        ? isNull(staffUsers.totpLastConsumedStep)
-        : eq(staffUsers.totpLastConsumedStep, user.totpLastConsumedStep),
-    ))
-    .returning();
-  return advanced.length === 0 ? "invalid" : "ok";
+  return v.valid ? { user, step: BigInt(v.timeStep!) } : "invalid";
+}
+
+async function readStaffTotp(deps: ApiDeps, staffId: string, code: string, now: Date) {
+  const [user] = await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
+  return verifyStaffTotp(deps, user, code, now);
+}
+
+/** Advance only the authenticator that was verified, while holding its staff row. */
+async function advanceStaffTotp(tx: Tx, current: StaffUser, proof: StaffTotpProof, now: Date, signIn = false): Promise<boolean> {
+  const { user, step } = proof;
+  if (!freshStaffTotpStep(Number(step), now)
+    || !current.totpActivated || current.enrollmentGeneration !== user.enrollmentGeneration
+    || current.totpSecretEnc !== user.totpSecretEnc || current.totpKeyVersion !== user.totpKeyVersion
+    || (current.totpLastConsumedStep !== null && current.totpLastConsumedStep >= step)) return false;
+  await tx.update(staffUsers).set({
+    totpLastConsumedStep: step, updatedAt: now, ...(signIn ? { lastLoginAt: now } : {}),
+  }).where(eq(staffUsers.id, current.id));
+  return true;
+}
+
+async function stampStaffSession(tx: Tx, sessionId: string, now: Date): Promise<void> {
+  const [stamped] = await tx.update(staffSessions).set({ lastTwofaAt: now })
+    .where(eq(staffSessions.id, sessionId)).returning({ id: staffSessions.id });
+  if (!stamped) throw new Error("locked staff session disappeared");
 }
 
 /**
@@ -524,13 +574,9 @@ async function signIn(
   // budget by doing so, and — see {@link throttleReserve} — a reservation is what makes the
   // five-attempt window a bound on GUESSES rather than a bound on how fast one client can read a
   // row. This was a pure SELECT with the increment after the scrypt and the TOTP compare.
-  const keys = [emailKey(email, deps), ipKey(req, deps)];
-  for (const key of keys) {
-    const verdict = await throttleReserve(staffDb(deps), key, now);
-    if (verdict.locked) {
-      return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
-    }
-  }
+  const admission = await reserveStaffPassword(deps, req, email, now);
+  if ("status" in admission) return admission;
+  const { reservations } = admission;
 
   const [user] = email
     ? await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1)
@@ -552,16 +598,19 @@ async function signIn(
   };
 
   if (!user || !passwordOk) {
-    for (const key of keys) await throttleFail(staffDb(deps), key, now);
+    for (const { key } of reservations) await throttleFail(staffDb(deps), key, now);
     await failed("password");
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
   // The customer door's rule (`AuthService.rehashIfStale`): a verified password under an older
   // cost is written again, a compare-and-set on the old hash, best-effort.
+  let verifiedHash = user.passwordHash;
   if (scryptHasher.needsRehash?.(user.passwordHash)) {
     try {
-      await staffDb(deps).update(staffUsers).set({ passwordHash: await scryptHasher.hash(password) })
-        .where(and(eq(staffUsers.id, user.id), eq(staffUsers.passwordHash, user.passwordHash)));
+      const fresh = await scryptHasher.hash(password);
+      const [updated] = await staffDb(deps).update(staffUsers).set({ passwordHash: fresh })
+        .where(and(eq(staffUsers.id, user.id), eq(staffUsers.passwordHash, user.passwordHash))).returning();
+      if (updated) verifiedHash = fresh;
     } catch {
       /* the stored hash still verifies; the next sign-in rehashes */
     }
@@ -574,56 +623,42 @@ async function signIn(
   // in with two calls, so charging each of them would spend two of five attempts on every clean
   // sign-in. See {@link throttleRefund}.
   if (!user.totpActivated || !user.totpSecretEnc || user.totpKeyVersion === null) {
-    for (const key of keys) await throttleRefund(staffDb(deps), key, now);
-    const enrollToken = await signEnrollToken(
-      secret, user.id, Math.floor(now.getTime() / 1000) + ENROLL_TTL_SECONDS,
-    );
+    const door = staffDb(deps);
+    const enrollToken = await (door as unknown as Tx).transaction(async (tx) => {
+      const current = await lockStaffUser(tx, user.id);
+      if (!current || current.totpActivated || current.passwordHash !== verifiedHash
+        || current.enrollmentGeneration !== user.enrollmentGeneration) return null;
+      return signEnrollToken(secret, {
+        staffId: user.id, generation: current.enrollmentGeneration,
+        expiresAt: Math.floor(deps.now().getTime() / 1000) + ENROLL_TTL_SECONDS,
+      });
+    });
+    for (const reservation of reservations) await throttleRefund(staffDb(deps), reservation, now);
+    if (!enrollToken) return { status: 401, body: { ok: false, status: "invalid" } };
     return { status: 200, body: { ok: false, status: "enrollment_required", enrollToken } };
   }
 
   if (!code) {
-    for (const key of keys) await throttleRefund(staffDb(deps), key, now);
+    for (const reservation of reservations) await throttleRefund(staffDb(deps), reservation, now);
     return { status: 200, body: { ok: false, status: "totp_required" } };
   }
 
-  const totpSecret = await deps.keyProvider.decrypt(user.totpSecretEnc, user.totpKeyVersion);
-  const v = verifyTotp({
-    secret: totpSecret, token: code, now, window: TOTP_WINDOW,
-    afterStep: user.totpLastConsumedStep === null ? null : Number(user.totpLastConsumedStep),
+  const proof = await verifyStaffTotp(deps, user, code, now);
+  const door = staffDb(deps);
+  const minted = typeof proof === "string" ? null : await (door as unknown as Tx).transaction(async (tx) => {
+    const current = await lockStaffUser(tx, user.id);
+    const at = deps.now();
+    if (!current || current.passwordHash !== verifiedHash || !await advanceStaffTotp(tx, current, proof, at, true)) return null;
+    return mintAuditedSession(door, tx, current, at, requestId);
   });
-  if (!v.valid) {
-    for (const key of keys) await throttleFail(staffDb(deps), key, now);
+  if (!minted) {
+    for (const { key } of reservations) await throttleFail(staffDb(deps), key, now);
     await failed("totp");
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
 
-  // Advance the step conditionally — the compare-and-swap that makes single-use-per-timestep
-  // survive concurrency. `verifyTotp` was handed `afterStep` from a row this call read; an
-  // unconditional write means two submissions of the same six digits inside one 30-second window
-  // both read the old step, both verify, both sign in. The sequential replay is stopped upstream
-  // by `afterStep` inside `verifyTotp` (`test/admin-staff.test.ts` proves it). This `where`
-  // clause is the concurrent case: removing it leaves every sequential test passing, because a
-  // one-connection PGlite suite cannot interleave. `test/admin-staff-concurrency.pg.test.ts` is
-  // the real-Postgres test: two connections, a barrier, one sign-in wins.
-  const advanced = await staffDb(deps).update(staffUsers)
-    .set({ totpLastConsumedStep: BigInt(v.timeStep!), lastLoginAt: now, updatedAt: now })
-    .where(and(
-      eq(staffUsers.id, user.id),
-      user.totpLastConsumedStep === null
-        ? isNull(staffUsers.totpLastConsumedStep)
-        : eq(staffUsers.totpLastConsumedStep, user.totpLastConsumedStep),
-    ))
-    .returning();
-  if (advanced.length === 0) {
-    // Somebody else consumed this step between the read and the write. That is the replay this
-    // guard exists for, and it is refused exactly like a wrong code.
-    for (const key of keys) await throttleFail(staffDb(deps), key, now);
-    await failed("totp");
-    return { status: 401, body: { ok: false, status: "invalid" } };
-  }
-
-  for (const key of keys) await throttleClear(staffDb(deps), key);
-  const { token, expiresAt } = await mintAuditedSession(deps, user, now, requestId);
+  for (const { key } of reservations) await throttleClear(staffDb(deps), key);
+  const { token, expiresAt } = minted;
   return {
     status: 200,
     body: { ok: true, status: "signed_in", token, email: user.email, expiresAt: expiresAt.toISOString() },
@@ -636,27 +671,50 @@ async function signIn(
  * session — and the session arm needed more: a session alone authorised replacing the
  * authenticator, so a stolen cookie could mint a fresh TOTP secret, confirm it, and re-mint
  * sessions before every expiry — permanent access, the operator locked out. The session arm now
- * costs a password, verified with the same scrypt and decoy timing as `signIn`. The console's
- * sign-in screen only uses the enrolment-token arm. `viaSession` travels back because it decides
- * one more thing — see {@link totpConfirm}.
+ * costs a password, verified and throttled as in `signIn`. The console's sign-in screen only
+ * uses the enrolment-token arm.
  */
+type EnrollmentAuthority = BootstrapAuthority | { staffId: string; session: StaffIdentity; passwordHash: string };
+const enrollmentRefused = { status: 401, body: { error: { code: "unauthorized" } } } as const;
+
 async function authorizeEnrollment(
-  body: Record<string, unknown>, deps: ApiDeps, now: Date,
-): Promise<{ staffId: string; viaSession: boolean } | null> {
+  body: Record<string, unknown>, deps: ApiDeps, req: Request, now: Date,
+): Promise<{ authorized: EnrollmentAuthority } | { status: number; body: unknown }> {
   const secret = deps.admin!.secret;
   const fromToken = await readEnrollToken(secret, str(body.enrollToken) || undefined, now);
-  if (fromToken) return { staffId: fromToken, viaSession: false };
+  if (fromToken) return { authorized: fromToken };
 
-  const session = await resolveStaffSession(staffDb(deps), staffTokenOf(body), now);
-  if (!session) return null;
+  const door = staffDb(deps);
+  const session = await resolveStaffSession(door, staffTokenOf(body), now);
+  if (!session) return enrollmentRefused;
+  const admission = await reserveStaffPassword(deps, req, session.email, now);
+  if ("status" in admission) return admission;
 
   // RE-ASSERT THE PASSWORD. Always a full scrypt, against the decoy when the row has somehow
   // gone, so a wrong password and a vanished operator cost the same time.
-  const [user] = await staffDb(deps).select().from(staffUsers)
+  const [user] = await door.select().from(staffUsers)
     .where(eq(staffUsers.id, session.staffId)).limit(1);
   const ok = await scryptHasher.verify(str(body.password), user?.passwordHash ?? (await decoy()));
-  if (!user || !ok) return null;
-  return { staffId: session.staffId, viaSession: true };
+  if (!user || !ok) {
+    for (const { key } of admission.reservations) await throttleFail(door, key, now);
+    return enrollmentRefused;
+  }
+  for (const reservation of admission.reservations) await throttleRefund(door, reservation, now);
+  return { authorized: { staffId: session.staffId, session, passwordHash: user.passwordHash } };
+}
+
+function admitsBootstrap(user: StaffUser, authority: BootstrapAuthority, now: Date): boolean {
+  return !user.totpActivated && user.enrollmentGeneration === authority.generation
+    && authority.expiresAt * 1000 > now.getTime();
+}
+
+async function lockEnrollmentAuthority(tx: Tx, authority: EnrollmentAuthority, clock: ApiDeps["now"]) {
+  const user = await lockStaffUser(tx, authority.staffId);
+  if (!user) return null;
+  if ("session" in authority) {
+    return user.passwordHash === authority.passwordHash && await lockStaffSession(tx, authority.session, clock) ? user : null;
+  }
+  return admitsBootstrap(user, authority, clock()) ? user : null;
 }
 
 /**
@@ -670,24 +728,25 @@ async function authorizeEnrollment(
  * only; the authenticator in use keeps working until {@link totpConfirm} promotes a new one.
  */
 async function totpBegin(
-  body: Record<string, unknown>, deps: ApiDeps,
+  body: Record<string, unknown>, deps: ApiDeps, req: Request,
 ): Promise<{ status: number; body: unknown }> {
   const now = deps.now();
-  const authorized = await authorizeEnrollment(body, deps, now);
-  if (!authorized) return { status: 401, body: { error: { code: "unauthorized" } } };
-  const staffId = authorized.staffId;
-
-  const [user] = await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
-  if (!user) return { status: 401, body: { error: { code: "unauthorized" } } };
+  const admission = await authorizeEnrollment(body, deps, req, now);
+  if ("status" in admission) return admission;
 
   const totpSecret = newTotpSecret();
   const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(totpSecret);
-  await staffDb(deps).update(staffUsers)
-    .set({
+  const user = await (staffDb(deps) as unknown as Tx).transaction(async (tx) => {
+    const current = await lockEnrollmentAuthority(tx, admission.authorized, deps.now);
+    if (!current) return null;
+    const at = deps.now();
+    await tx.update(staffUsers).set({
       totpPendingSecretEnc: ciphertext, totpPendingKeyVersion: keyVersion,
-      totpPendingStartedAt: now, updatedAt: now,
-    })
-    .where(eq(staffUsers.id, staffId));
+      totpPendingStartedAt: at, updatedAt: at,
+    }).where(eq(staffUsers.id, current.id));
+    return current;
+  });
+  if (!user) return enrollmentRefused;
 
   return {
     status: 200,
@@ -713,59 +772,67 @@ async function totpConfirm(
 ): Promise<{ status: number; body: unknown }> {
   const now = deps.now();
   const code = str(body.code).replace(/\s+/g, "");
-  const authorized = await authorizeEnrollment(body, deps, now);
-  if (!authorized) return { status: 401, body: { error: { code: "unauthorized" } } };
+  const admission = await authorizeEnrollment(body, deps, req, now);
+  if ("status" in admission) return admission;
+  const { authorized } = admission;
   const staffId = authorized.staffId;
 
-  const ip = ipKey(req, deps);
+  const door = staffDb(deps);
+  const [user] = await door.select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
+  if (!user || (!("session" in authorized) && !admitsBootstrap(user, authorized, deps.now()))) return enrollmentRefused;
+  const pending = user.totpPendingSecretEnc;
+  const pendingVersion = user.totpPendingKeyVersion;
+  const pendingFresh = user.totpPendingStartedAt !== null
+    && deps.now().getTime() - user.totpPendingStartedAt.getTime() <= PENDING_ENROLLMENT_TTL_SECONDS * 1000;
+  if (!pending || pendingVersion === null || !pendingFresh) {
+    return { status: 409, body: { error: { code: "no_enrollment" } } };
+  }
+
+  const factorKey = `${ipKey(req, deps)}:enrollment:${user.enrollmentGeneration}`;
   // RESERVED, not read — the same fix as `signIn`'s. A pure read in front of the TOTP compare
-  // makes the six-digit code sprayable as wide as the caller's connection count.
-  const verdict = await throttleReserve(staffDb(deps), ip, now);
+  // makes the six-digit code sprayable as wide as the caller's connection count. Enrollment
+  // attempts have a budget for this enrollment so an in-flight confirmation cannot lock a later sign-in.
+  const reservedAt = deps.now();
+  const verdict = await throttleReserve(door, factorKey, reservedAt);
   if (verdict.locked) {
     return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
   }
 
-  const [user] = await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.id, staffId)).limit(1);
-  const pending = user?.totpPendingSecretEnc;
-  const pendingFresh = user?.totpPendingStartedAt != null
-    && now.getTime() - user.totpPendingStartedAt.getTime() <= PENDING_ENROLLMENT_TTL_SECONDS * 1000;
-  if (!user || !pending || user.totpPendingKeyVersion === null || !pendingFresh) {
-    return { status: 409, body: { error: { code: "no_enrollment" } } };
-  }
+  const totpSecret = await deps.keyProvider.decrypt(pending, pendingVersion);
+  const v = verifyTotp({ secret: totpSecret, token: code, now: reservedAt, window: TOTP_WINDOW, afterStep: null });
+  const invalidCode = { status: 401, body: { ok: false, status: "invalid" } } as const;
 
-  const totpSecret = await deps.keyProvider.decrypt(pending, user.totpPendingKeyVersion);
-  const v = verifyTotp({ secret: totpSecret, token: code, now, window: TOTP_WINDOW, afterStep: null });
-  if (!v.valid) {
-    await throttleFail(staffDb(deps), ip, now);
-    return { status: 401, body: { ok: false, status: "invalid" } };
-  }
-
-  // THE PROMOTION. One statement, and its `where` is the compare-and-swap described above.
-  const promoted = await staffDb(deps).update(staffUsers)
-    .set({
-      totpSecretEnc: pending, totpKeyVersion: user.totpPendingKeyVersion,
+  const outcome = await (door as unknown as Tx).transaction(async (tx) => {
+    const current = await lockEnrollmentAuthority(tx, authorized, deps.now);
+    if (!current) return enrollmentRefused;
+    const at = deps.now();
+    if (current.totpPendingSecretEnc !== pending || current.totpPendingKeyVersion !== pendingVersion
+      || !current.totpPendingStartedAt || at.getTime() - current.totpPendingStartedAt.getTime() > PENDING_ENROLLMENT_TTL_SECONDS * 1000) {
+      return { status: 409, body: { error: { code: "enrollment_superseded" } } };
+    }
+    if (!v.valid) return "invalid_code" as const;
+    if (!freshStaffTotpStep(v.timeStep!, at)) return invalidCode;
+    await tx.update(staffUsers).set({
+      totpSecretEnc: pending, totpKeyVersion: pendingVersion,
       totpPendingSecretEnc: null, totpPendingKeyVersion: null, totpPendingStartedAt: null,
       totpActivated: true, totpLastConsumedStep: BigInt(v.timeStep!),
-      lastLoginAt: now, updatedAt: now,
-    })
-    .where(and(eq(staffUsers.id, staffId), eq(staffUsers.totpPendingSecretEnc, pending)))
-    .returning();
-  if (promoted.length === 0) {
-    return { status: 409, body: { error: { code: "enrollment_superseded" } } };
+      enrollmentGeneration: randomUUID(), lastLoginAt: at, updatedAt: at,
+    }).where(eq(staffUsers.id, staffId));
+    if ("session" in authorized) return { status: 200, body: { ok: true, status: "reenrolled", email: current.email } };
+    const { token, expiresAt } = await mintAuditedSession(door, tx, current, at, adoptRequestId(req, deps));
+    return { status: 200, body: { ok: true, status: "signed_in", token, email: current.email, expiresAt: expiresAt.toISOString() } };
+  });
+  if (outcome === "invalid_code") {
+    await throttleFail(door, factorKey, reservedAt);
+    return invalidCode;
   }
-  await throttleClear(staffDb(deps), ip);
-  await throttleClear(staffDb(deps), emailKey(user.email, deps));
-
-  // No new session on the session arm — see the note on this function.
-  if (authorized.viaSession) {
-    return { status: 200, body: { ok: true, status: "reenrolled", email: user.email } };
+  if (outcome.status === 200) {
+    await throttleClear(door, factorKey);
+    await throttleClear(door, emailKey(user.email, deps));
+  } else {
+    await throttleRefund(door, { key: factorKey, windowStartedAt: verdict.windowStartedAt }, deps.now(), true);
   }
-
-  const { token, expiresAt } = await mintAuditedSession(deps, { id: staffId, email: user.email }, now, adoptRequestId(req, deps));
-  return {
-    status: 200,
-    body: { ok: true, status: "signed_in", token, email: user.email, expiresAt: expiresAt.toISOString() },
-  };
+  return outcome;
 }
 
 /**
@@ -825,11 +892,26 @@ async function stepUp(
   }
 
   const requestId = adoptRequestId(req, deps);
-  const consumed = await consumeStaffTotp(deps, session.staffId, code, now);
-  if (consumed === "no_enrollment") {
+  const proof = await readStaffTotp(deps, session.staffId, code, now);
+  if (proof === "no_enrollment") {
     return { status: 409, body: { error: { code: "no_enrollment" } } };
   }
-  if (consumed === "invalid") {
+  const door = staffDb(deps);
+  const outcome = proof === "invalid" ? "invalid" : await (door as unknown as Tx).transaction(async (tx) => {
+    const user = await lockStaffUser(tx, session.staffId);
+    const live = await lockStaffSession(tx, session, deps.now);
+    if (!user || !live) return "signed_out" as const;
+    const at = deps.now();
+    if (!await advanceStaffTotp(tx, user, proof, at)) return "invalid" as const;
+    await stampStaffSession(tx, live.id, at);
+    const roles = await liveRolesOf(tx, user.id);
+    await recordStaffEvents(carryBinding(door, tx), [{
+      requestId, at, action: "staff.stepup", outcome: "ok", actor: actorOf({ ...session, email: user.email, roles }),
+    }]);
+    return { at, email: user.email };
+  });
+  if (outcome === "signed_out") return { status: 401, body: { ok: false, status: "signed_out" } };
+  if (outcome === "invalid") {
     await throttleFail(staffDb(deps), ip, now);
     await recordStaffEvents(staffDb(deps), [{
       requestId, at: now, action: "staff.stepup_failed", outcome: "refused", refusalCode: "invalid",
@@ -838,14 +920,6 @@ async function stepUp(
     return { status: 401, body: { ok: false, status: "invalid" } };
   }
 
-  // The fresh stamp and its record, together: a step-up the audit cannot record grants nothing.
-  const door = staffDb(deps);
-  await (door as unknown as Tx).transaction(async (tx) => {
-    await tx.update(staffSessions)
-      .set({ lastTwofaAt: now })
-      .where(and(eq(staffSessions.tokenHash, hashToken(token!)), isNull(staffSessions.revokedAt)));
-    await recordStaffEvents(carryBinding(door, tx), [{ requestId, at: now, action: "staff.stepup", outcome: "ok", actor: actorOf(session) }]);
-  });
   await throttleClear(staffDb(deps), ip);
 
   return {
@@ -853,9 +927,9 @@ async function stepUp(
     body: {
       ok: true,
       status: "stepped_up",
-      email: session.email,
+      email: outcome.email,
       stepUpWindowSeconds: STAFF_STEP_UP_WINDOW_SECONDS,
-      freshUntil: new Date(now.getTime() + STAFF_STEP_UP_WINDOW_SECONDS * 1000).toISOString(),
+      freshUntil: new Date(outcome.at.getTime() + STAFF_STEP_UP_WINDOW_SECONDS * 1000).toISOString(),
     },
   };
 }
@@ -877,7 +951,6 @@ const MIN_RESET_FIELD = 8;
 async function totpReset(
   body: Record<string, unknown>, deps: ApiDeps,
 ): Promise<{ status: number; body: unknown }> {
-  const now = deps.now();
   const email = normalizeEmail(body.email);
   const operator = str(body.operator).trim();
   const note = str(body.note).trim();
@@ -890,44 +963,32 @@ async function totpReset(
   if (note.length < MIN_RESET_FIELD) return { status: 400, body: { error: { code: "note_required" } } };
   if (!email) return { status: 400, body: { error: { code: "email_required" } } };
 
-  const [user] = await staffDb(deps).select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1);
-  // An address that matches no row is the operator's mistake, not a no-op: a 200 over a typo
-  // reads as "done" and leaves the person still locked out.
-  if (!user) return { status: 404, body: { error: { code: "staff_not_found" } } };
-
-  await staffDb(deps).update(staffUsers)
-    .set({
+  const door = staffDb(deps);
+  return (door as unknown as Tx).transaction(async (tx) => {
+    const [user] = await tx.select().from(staffUsers).where(eq(staffUsers.email, email)).limit(1).for("no key update");
+    if (!user) return { status: 404, body: { error: { code: "staff_not_found" } } };
+    const now = deps.now();
+    await tx.update(staffUsers).set({
       totpSecretEnc: null, totpKeyVersion: null,
       totpPendingSecretEnc: null, totpPendingKeyVersion: null, totpPendingStartedAt: null,
       totpActivated: false, totpLastConsumedStep: null,
-      updatedAt: now,
-    })
-    .where(eq(staffUsers.id, user.id));
-  const revoked = await staffDb(deps).update(staffSessions)
-    .set({ revokedAt: now })
-    .where(and(eq(staffSessions.staffUserId, user.id), isNull(staffSessions.revokedAt)))
-    .returning();
-  await staffDb(deps).insert(staffAuditLog).values({
-    staffUserId: user.id, action: "staff.totp.reset", actor: operator, note, createdAt: now,
+      enrollmentGeneration: randomUUID(), updatedAt: now,
+    }).where(eq(staffUsers.id, user.id));
+    const revoked = await tx.update(staffSessions).set({ revokedAt: now })
+      .where(and(eq(staffSessions.staffUserId, user.id), isNull(staffSessions.revokedAt))).returning();
+    await tx.insert(staffAuditLog).values({
+      staffUserId: user.id, action: "staff.totp.reset", actor: operator, note, createdAt: now,
+    });
+    await recordStaffEvents(carryBinding(door, tx), [{
+      requestId: randomUUID(), at: now, action: "staff.totp_reset", outcome: "ok",
+      actor: { staffId: user.id, sessionId: null, email: operator.slice(0, 64), roles: await liveRolesOf(tx, user.id) },
+      detail: { sessionsRevoked: revoked.length },
+    }]);
+    return {
+      status: 200,
+      body: { ok: true, action: "staff.totp.reset", email: user.email, sessionsRevoked: revoked.length, at: now.toISOString() },
+    };
   });
-  // The structured record beside the old table's note: the operator's name is the label (no
-  // staff session is presented to this command), the note stays in `staff_audit_log` alone.
-  await recordStaffEvents(staffDb(deps), [{
-    requestId: randomUUID(), at: now, action: "staff.totp_reset", outcome: "ok",
-    actor: { staffId: user.id, sessionId: null, email: operator.slice(0, 64), roles: await liveRolesOf(staffDb(deps) as unknown as Tx, user.id) },
-    detail: { sessionsRevoked: revoked.length },
-  }]);
-
-  return {
-    status: 200,
-    body: {
-      ok: true,
-      action: "staff.totp.reset",
-      email: user.email,
-      sessionsRevoked: revoked.length,
-      at: now.toISOString(),
-    },
-  };
 }
 
 /** `POST /admin/staff/sign-out` — revoke now, not at expiry. Idempotent. */
@@ -998,10 +1059,10 @@ async function mintAssertions(
   const list = Array.isArray(body.requests) ? body.requests.map(assertRequestOf) : [];
   const requests = list.filter((r): r is AssertRequest => r !== null);
   const secret = deps.admin!.secret;
-  const rowsFor = (outcome: "ok" | "refused", refusalCode: string | null, tier: StaffAssertionTier): StaffEventInput[] =>
+  const rowsFor = (outcome: "ok" | "refused", refusalCode: string | null, tier: StaffAssertionTier, identity = who, at = now): StaffEventInput[] =>
     (requests.length > 0 ? requests : [null]).map((r, index): StaffEventInput => ({
-      requestId, at: now, action: "assert.external" as StaffAuditAction, outcome, refusalCode,
-      actor: actorOf(who), audience: AUDIENCE_RE.test(audience) ? audience : null,
+      requestId, at, action: "assert.external" as StaffAuditAction, outcome, refusalCode,
+      actor: actorOf(identity), audience: AUDIENCE_RE.test(audience) ? audience : null,
       queryHmac: r && r.query ? queryHmacOf(secret, r.query) : null,
       detail: r
         ? { method: r.method, path: r.pathname, scope: scope === "write" ? "write" : "read", tier, index }
@@ -1020,45 +1081,60 @@ async function mintAssertions(
   }
   if (scope === "read" && requests.some((r) => r.method !== "GET")) return refuse(400, "scope_mismatch");
 
-  let tier: StaffAssertionTier = 0;
   const code = str(body.totp).replace(/\s+/g, "");
-  if (code) {
-    const ip = ipKey(req, deps);
+  const ip = code ? ipKey(req, deps) : null;
+  if (ip) {
     const verdict = await throttleReserve(staffDb(deps), ip, now);
     if (verdict.locked) {
       return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
     }
-    const consumed = await consumeStaffTotp(deps, who.staffId, code, now);
-    if (consumed !== "ok") {
-      await throttleFail(staffDb(deps), ip, now);
-      return refuse(401, "totp_invalid");
-    }
-    await staffDb(deps).update(staffSessions).set({ lastTwofaAt: now }).where(eq(staffSessions.id, who.sessionId));
-    await throttleClear(staffDb(deps), ip);
-    tier = 2;
-  } else if (scope === "write") {
-    if (now.getTime() - who.lastTwofaAt.getTime() > STAFF_STEP_UP_WINDOW_SECONDS * 1000) {
-      return refuse(403, "step_up_required");
-    }
-    tier = 1;
   }
+  const proof = ip ? await readStaffTotp(deps, who.staffId, code, now) : null;
+  const door = staffDb(deps);
+  const outcome = await (door as unknown as Tx).transaction(async (tx) => {
+    const user = await lockStaffUser(tx, who.staffId);
+    const live = await lockStaffSession(tx, who, deps.now);
+    if (!user || !live) return { status: 401, code: "staff_session_required" };
+    const roles = await liveRolesOf(tx, who.staffId, true);
+    const at = deps.now();
+    if (live.expiresAt.getTime() <= at.getTime()) return { status: 401, code: "staff_session_required" };
+    if (!rolesAdmit(roles, "any")) return { status: 403, code: "role_required" };
 
-  const iat = Math.floor(now.getTime() / 1000);
-  const exp = iat + (scope === "write" ? STAFF_ASSERTION_WRITE_TTL_SECONDS : STAFF_ASSERTION_READ_TTL_SECONDS);
-  const assertions = requests.map((r) => {
-    const claims: StaffAssertionClaims = {
-      v: 1, iss: STAFF_ASSERTION_ISSUER, aud: audience, sub: who.staffId, sid: who.sessionId,
-      label: who.email.slice(0, 200), roles: [...who.roles], tier, rid: requestId,
-      req: requestDigest(r.method, r.path, r.bodySha256), iat, exp, jti: newJti(),
-    };
-    return mintStaffAssertion(claims, key);
+    let tier: StaffAssertionTier = 0;
+    if (proof !== null) {
+      if (typeof proof === "string" || !await advanceStaffTotp(tx, user, proof, at)) {
+        return { status: 401, code: "totp_invalid" };
+      }
+      await stampStaffSession(tx, live.id, at);
+      tier = 2;
+    } else if (scope === "write") {
+      if (at.getTime() - live.lastTwofaAt.getTime() > STAFF_STEP_UP_WINDOW_SECONDS * 1000) {
+        return { status: 403, code: "step_up_required" };
+      }
+      tier = 1;
+    }
+
+    const iat = Math.floor(at.getTime() / 1000);
+    const exp = iat + (scope === "write" ? STAFF_ASSERTION_WRITE_TTL_SECONDS : STAFF_ASSERTION_READ_TTL_SECONDS);
+    const assertions = requests.map((r) => {
+      const claims: StaffAssertionClaims = {
+        v: 1, iss: STAFF_ASSERTION_ISSUER, aud: audience, sub: user.id, sid: live.id,
+        label: user.email.slice(0, 200), roles, tier, rid: requestId,
+        req: requestDigest(r.method, r.path, r.bodySha256), iat, exp, jti: newJti(),
+      };
+      return mintStaffAssertion(claims, key);
+    });
+    await recordStaffEvents(carryBinding(door, tx), rowsFor("ok", null, tier, { ...who, email: user.email, roles }, at));
+    const answer: StaffAssertionAnswer = { assertions, expiresAt: new Date(exp * 1000).toISOString(), kid: key.kid, tier };
+    return { answer };
   });
-  // BEFORE the answer, all rows or none: an assertion nobody recorded is never handed out.
-  await recordStaffEvents(staffDb(deps), rowsFor("ok", null, tier));
-  const answer: StaffAssertionAnswer = {
-    assertions, expiresAt: new Date(exp * 1000).toISOString(), kid: key.kid, tier,
-  };
-  return { status: 200, body: answer };
+  if (outcome.answer) {
+    if (ip) await throttleClear(door, ip);
+    return { status: 200, body: outcome.answer };
+  }
+  if (outcome.code === "staff_session_required") return { status: 401, body: { error: { code: outcome.code } } };
+  if (ip && outcome.code === "totp_invalid") await throttleFail(door, ip, now);
+  return refuse(outcome.status, outcome.code);
 }
 
 /* ── staff roles ──────────────────────────────────────────────────────────────────────── */
@@ -1097,12 +1173,11 @@ async function changeRole(
   if (verdict.locked) {
     return { status: 429, body: { ok: false, status: "throttled", retryAfterSeconds: verdict.retryAfterSeconds } };
   }
-  if (await consumeStaffTotp(deps, who.staffId, code, now) !== "ok") {
+  const proof = await readStaffTotp(deps, who.staffId, code, now);
+  if (typeof proof === "string") {
     await throttleFail(staffDb(deps), ip, now);
     return refuse(401, "totp_invalid");
   }
-  await throttleClear(staffDb(deps), ip);
-  await staffDb(deps).update(staffSessions).set({ lastTwofaAt: now }).where(eq(staffSessions.id, who.sessionId));
 
   const email = normalizeEmail(body.staffEmail);
   const [target] = email
@@ -1113,33 +1188,51 @@ async function changeRole(
 
   const door = staffDb(deps);
   const outcome = await (door as unknown as Tx).transaction(async (tx) => {
-    const record = (o: "ok" | "no_change" | "refused", refusalCode: string | null): Promise<void> =>
-      recordStaffEvents(carryBinding(door, tx), [{
-        requestId, at: now, action, outcome: o, refusalCode, actor: actorOf(who),
-        detail: { role, targetStaffUserId: target.id },
-      }]);
-    // The caller's authority, re-read under the lock every concurrent change also takes.
+    const user = await lockStaffUser(tx, who.staffId);
+    const session = await lockStaffSession(tx, who, deps.now);
+    if (!user || !session) return { status: "signed_out" } as const;
     const owners = await tx.select({ id: staffRoleGrants.staffUserId }).from(staffRoleGrants)
       .where(and(eq(staffRoleGrants.role, "owner"), isNull(staffRoleGrants.revokedAt)))
+      .orderBy(staffRoleGrants.staffUserId)
       .for("update");
-    if (!owners.some((o) => o.id === who.staffId)) { await record("refused", "role_required"); return "role_required" as const; }
+    const roles = await liveRolesOf(tx, who.staffId, true);
     const live = await tx.select({ grantedAt: staffRoleGrants.grantedAt }).from(staffRoleGrants)
       .where(and(eq(staffRoleGrants.staffUserId, target.id), eq(staffRoleGrants.role, role), isNull(staffRoleGrants.revokedAt)))
       .for("update");
-    if (op === "grant") {
-      if (live.length > 0) { await record("no_change", null); return "no_change" as const; }
-      await tx.insert(staffRoleGrants).values({ staffUserId: target.id, role, grantedBy: who.staffId, grantedAt: now });
-      await record("ok", null);
-      return "ok" as const;
+    const at = deps.now();
+    if (session.expiresAt.getTime() <= at.getTime()) return { status: "signed_out" } as const;
+    const record = (o: "ok" | "no_change" | "refused", refusalCode: string | null): Promise<void> =>
+      recordStaffEvents(carryBinding(door, tx), [{
+        requestId, at, action, outcome: o, refusalCode, actor: actorOf({ ...who, email: user.email, roles }),
+        detail: { role, targetStaffUserId: target.id },
+      }]);
+    if (!owners.some((o) => o.id === who.staffId)) {
+      await record("refused", "role_required");
+      return { status: "role_required" } as const;
     }
-    if (live.length === 0) { await record("no_change", null); return "no_change" as const; }
-    await tx.update(staffRoleGrants).set({ revokedAt: now, revokedBy: who.staffId })
-      .where(and(eq(staffRoleGrants.staffUserId, target.id), eq(staffRoleGrants.role, role), isNull(staffRoleGrants.revokedAt)));
+    if (!await advanceStaffTotp(tx, user, proof, at)) return { status: "totp_invalid" } as const;
+    await stampStaffSession(tx, session.id, at);
+    if ((op === "grant") === (live.length > 0)) {
+      await record("no_change", null);
+      return { status: "ok", changed: false, at } as const;
+    }
+    if (op === "grant") {
+      await tx.insert(staffRoleGrants).values({ staffUserId: target.id, role, grantedBy: who.staffId, grantedAt: at });
+    } else {
+      await tx.update(staffRoleGrants).set({ revokedAt: at, revokedBy: who.staffId })
+        .where(and(eq(staffRoleGrants.staffUserId, target.id), eq(staffRoleGrants.role, role), isNull(staffRoleGrants.revokedAt)));
+    }
     await record("ok", null);
-    return "ok" as const;
+    return { status: "ok", changed: true, at } as const;
   });
-  if (outcome === "role_required") return { status: 403, body: { error: { code: "role_required" } } };
-  return { status: 200, body: { ok: true, op, role, changed: outcome === "ok", at: now.toISOString() } };
+  if (outcome.status === "signed_out") return { status: 401, body: { error: { code: "staff_session_required" } } };
+  if (outcome.status === "role_required") return { status: 403, body: { error: { code: "role_required" } } };
+  if (outcome.status === "totp_invalid") {
+    await throttleFail(door, ip, now);
+    return refuse(401, "totp_invalid");
+  }
+  await throttleClear(door, ip);
+  return { status: 200, body: { ok: true, op, role, changed: outcome.changed, at: outcome.at.toISOString() } };
 }
 
 /**

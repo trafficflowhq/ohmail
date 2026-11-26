@@ -821,6 +821,8 @@ export const DEFAULT_SYNC_BATCH_MAX_FLAGS = 500;
 /** One `changesSince` call's own limit, under {@link DEFAULT_SYNC_BATCH_MAX_MESSAGES}: at least one message. */
 export interface ChangeBudget {
   messages?: number;
+  /** Open a new historical sweep when no previous sweep is still in progress. */
+  startHistorySweep?: boolean;
 }
 
 export interface ImapAdapterOpts {
@@ -865,6 +867,10 @@ export interface PersistedFolderCursor {
   uidValidity: string;
   uidNext: number;
   highestModseq: string;
+  /** Next historical UID in this epoch. Zero marks a finished folder in an open sweep. */
+  scanNextUid?: number;
+  /** Last prior-epoch locator examined after the live ranges completed. */
+  scanResetAfter?: string;
   /**
    * The folder's `EXISTS` as this SELECT reported it — the first pull's denominator (mail 0083).
    * The adapter always read `mb.exists` and always discarded it, so no truthful total existed
@@ -911,11 +917,30 @@ export interface FolderCursor extends PersistedFolderCursor { known: KnownEntry[
  * The epoch travels with the uid or the uid is not a fact: `uidValidity` is the server's own
  * spelling and is read through `epochOf` before anything compares it, never as a number.
  */
-export interface BudgetStop { folder: string; uidValidity: string; uid: number; }
+export interface BudgetStop {
+  folder: string;
+  uidValidity: string;
+  /** Zero resumes the folder order after a transport failure. */
+  uid: number;
+}
 /** One message coordinate: a UID is a fact only under the epoch that issued it. */
 export interface MessageSite { folder: string; uidValidity: string; uid: number; }
+export interface PriorKnownEntry extends KnownEntry {
+  uidValidity: string;
+  hasCurrentCopy: boolean;
+}
+
 export interface ImapCursor {
+  readPriorEpoch?(folder: string, epoch: string, after: string, limit: number):
+    Promise<{ rows: readonly PriorKnownEntry[]; release(): void }>;
   folders: Record<string, FolderCursor>;
+  /** An alternate source for cold locator projections. An omitted page is never evidence. */
+  knownWindows?: {
+    rows: number;
+    read(folder: string, epoch: string, from: number, through: number, limit?: number,
+      arrivals?: { from: number; through: number }):
+      Promise<{ rows: readonly KnownEntry[]; release(): void }>;
+  };
   /** Where the previous pass's budget ran out, if it did — see {@link BudgetStop}. */
   budgetStop?: BudgetStop;
   /**
@@ -947,6 +972,10 @@ export interface ChangeBatch {
    * every fake adapter keeps compiling; absent reads as `false`.
    */
   hasBacklog?: boolean;
+  /** Folders whose reads could not be completed. Their cursor is retried on the next poll. */
+  incompleteFolders?: readonly string[];
+  /** A read retired the transport after earlier folders had already answered. */
+  scanFailure?: Error;
   /**
    * This pass stopped at this folder on a spent byte budget — the first sync CONTINUES, it did
    * not finish. Set with `hasBacklog`; absent means the pass reached every folder it scanned. A
@@ -1316,9 +1345,10 @@ export interface MailboxAdapter {
   findSpecialFolders?(): Promise<SpecialFolders>;
   /**
    * The folder's UIDVALIDITY, UIDNEXT and EXISTS: this pass's LIST-STATUS reading when the server
-   * gave one, else one STATUS. Read-only. Optional; absence reads as `unanswered`.
+   * gave one, else one STATUS. Request fresh keys to bypass the LIST snapshot. Read-only.
+   * Optional; absence reads as `unanswered`.
    */
-  folderKeys?(folder: string): Promise<FolderKeysAnswer>;
+  folderKeys?(folder: string, opts?: { fresh?: boolean }): Promise<FolderKeysAnswer>;
   /**
    * Which of `uids` the folder still holds under `uidValidity`: bounded `UID SEARCH UID <set>` under
    * one lock, never ALL, never a FETCH, never a write. A refused or partial read, a changed epoch

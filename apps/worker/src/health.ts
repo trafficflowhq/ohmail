@@ -135,6 +135,8 @@ export interface HealthSnapshot {
    */
   kek: { active: number; count: number; fingerprint: string } | null;
   shard: { index: number; shards: number };
+  topologyGuarded?: boolean;
+  attaches?: { queued: number; running: number };
   /**
    * EVERY CONFIGURED PAGER ARM AND WHETHER IT IS ACTUALLY DELIVERING — one entry per arm, in compose
    * order. `[]` on a standby instance. The state it closes is the one the pager cannot report: an arm
@@ -184,7 +186,7 @@ export interface HealthSnapshot {
  */
 export const PUBLIC_HEALTH_KEYS = [
   "version", "buildError", "leader", "standby", "takingOver", "healthy", "unhealthyReason",
-  "waitingForLockSeconds", "waitingForDatabaseSeconds", "waitingForDatabaseCode", "kekFingerprint", "kekActiveVersion", "kekVersionCount", "kek", "shard",
+  "waitingForLockSeconds", "waitingForDatabaseSeconds", "waitingForDatabaseCode", "kekFingerprint", "kekActiveVersion", "kekVersionCount", "kek", "shard", "topologyGuarded",
   "alertSinks", "pager", "apiCron", "parkedReader", "dbTls", "error",
 ] as const satisfies readonly (keyof HealthSnapshot)[];
 

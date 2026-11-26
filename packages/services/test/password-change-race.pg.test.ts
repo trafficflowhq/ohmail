@@ -17,9 +17,8 @@ import {
  * so it cannot show the two waits the change relies on:
  *
  *  1. A sign-in that checked the old password writes its first step only while that password is
- *     still the account's, read FOR SHARE. With the change holding the credential row it rewrote,
- *     the sign-in waits, then reads the new hash and is refused; a plain read would see the old one,
- *     write a first step the change's void has already passed, and leave it live.
+ *     still the account's. The sign-in waits on the user row held by the change, then reads
+ *     the new credential hash under that lock and is refused.
  *  2. The change voids pending grants BEFORE it claims the sessions. A pairing redeem that burned
  *     its code first holds that row, so the change waits on it; when the redeem commits, the claim
  *     that follows takes the session it minted. Claiming first would miss that session.
@@ -68,7 +67,7 @@ async function blockedOn(waiter: string, holder: string, ms: number): Promise<st
 /** The lock a waiting statement asks for, in words. */
 function lockOf(q: string | null): string {
   if (q === null) return "never";
-  if (/from "credentials".*for share/is.test(q)) return "credentials FOR SHARE";
+  if (/from "users".*for no key update/is.test(q)) return "users FOR NO KEY UPDATE";
   if (/from "sessions".*for update/is.test(q)) return "sessions FOR UPDATE";
   if (/^\s*update "pairing_tokens"/i.test(q)) return "UPDATE pairing_tokens";
   if (/^\s*update "auth_throttle"/i.test(q)) return "UPDATE auth_throttle";
@@ -81,7 +80,7 @@ const randomIp = (): string =>
 interface Person { accountId: string; userId: string; email: string; caller: string; other: string }
 
 /** A user with the old password, a second factor, and two full sessions: the caller's and another. */
-async function person(): Promise<Person> {
+async function person(withFactor = true): Promise<Person> {
   const deps = makeTestAuthDeps();
   const tag = randomUUID().slice(0, 8);
   const [a] = await db().insert(accounts).values({ name: `pw-race-${tag}` }).returning();
@@ -89,8 +88,10 @@ async function person(): Promise<Person> {
   const [u] = await db().insert(users).values({ accountId: a!.id, email }).returning();
   await db().insert(credentials).values({ userId: u!.id, accountId: accountOfUser(u!.id), passwordHash: await deps.passwordHasher.hash(OLD), algo: "scrypt" });
   // An activated factor, so a right password answers with a first step and not a session.
-  const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(generateToken());
-  await db().insert(totpSecrets).values({ userId: u!.id, accountId: accountOfUser(u!.id), secretEnc: ciphertext, keyVersion, activated: true });
+  if (withFactor) {
+    const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(generateToken());
+    await db().insert(totpSecrets).values({ userId: u!.id, accountId: accountOfUser(u!.id), secretEnc: ciphertext, keyVersion, activated: true });
+  }
   const session = async (): Promise<string> => {
     const now = Date.now();
     const [s] = await db().insert(sessions).values({
@@ -138,7 +139,40 @@ describe.skipIf(!PG_UP)("the password change against a sign-in in flight, on Pos
     await base?.close();
   });
 
-  it("a sign-in that checked the old password waits on the change's credential row, is refused, and leaves no first step", async () => {
+  it("serializes enrollment issuance on the user row", async () => {
+    const p = await person(false);
+    const auth = makeAuthService(makeTestAuthDeps());
+    const tag = randomUUID().slice(0, 8);
+    const holder = `enrollment-hold-${tag}`;
+    const waiter = `enrollment-issue-${tag}`;
+    const signer = named(waiter);
+    const held = await holding(named(holder), sql`select id from users where id = ${p.userId} for no key update`);
+    const login = settle(auth.login(ctxOn(signer.db, p, null), { email: p.email, password: OLD }));
+    let waiting: string | null;
+    try {
+      waiting = await Promise.race([blockedOn(waiter, holder, 5_000), login.then(() => null)]);
+    } finally {
+      held.release();
+      await held.done;
+    }
+    expect(await login).toMatchObject({ ok: true, v: { status: "enrollment" } });
+    expect(waiting).toMatch(/from "users".*for no key update/i);
+  }, 30_000);
+
+  it("preserves the password when the caller's access has ended", async () => {
+    const p = await person();
+    const deps = makeTestAuthDeps();
+    const auth = makeAuthService(deps);
+    await db().update(sessions).set({ accessExpiresAt: new Date(0) }).where(eq(sessions.id, p.caller));
+    const ctx = ctxOn(db(), p, p.caller);
+    const outcome = await settle(auth.changePassword(ctx, { currentPassword: OLD, newPassword: NEW }));
+    const [stored] = await db().select().from(credentials).where(eq(credentials.userId, p.userId));
+    expect({ result: answer(outcome), previousPassword: await deps.passwordHasher.verify(OLD, stored!.passwordHash) })
+      .toEqual({ result: "unauthorized", previousPassword: true });
+    expect(await liveSessions(p.userId)).toContain(p.other);
+  });
+
+  it("a sign-in that checked the old password waits on the change's user row, is refused, and leaves no first step", async () => {
     const p = await person();
     const auth = makeAuthService(makeTestAuthDeps());
     const tag = randomUUID().slice(0, 8);
@@ -158,7 +192,7 @@ describe.skipIf(!PG_UP)("the password change against a sign-in in flight, on Pos
     const [c, l] = await Promise.all([change, signIn]);
 
     expect({ change: answer(c), signIn: answer(l), waited }).toEqual({
-      change: "ok", signIn: "credential_refused", waited: "credentials FOR SHARE",
+      change: "ok", signIn: "credential_refused", waited: "users FOR NO KEY UPDATE",
     });
     const firstSteps = await db().select({ id: loginTokens.id }).from(loginTokens).where(and(
       eq(loginTokens.userId, p.userId), eq(loginTokens.purpose, "login"), isNull(loginTokens.consumedAt),

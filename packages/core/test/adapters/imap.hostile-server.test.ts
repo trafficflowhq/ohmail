@@ -132,6 +132,17 @@ interface HostileOpts {
   listPaths?: string[];
   /** How many UIDs the enumeration fetch will yield if nobody stops it. */
   floodUids?: number;
+  honorUidRanges?: boolean;
+  sparseUids?: readonly number[];
+  epoch?: bigint;
+  missingUidNext?: string;
+  unknownEpoch?: string;
+  sequenceAnswers?: boolean;
+  searchMs?: number;
+  searchRefusedAt?: number;
+  failedFolder?: string;
+  lostFolder?: string;
+  failedRange?: string;
   /** UIDs a SEARCH answers with. */
   searchUids?: number[];
   /** Bytes each body actually streams, whatever `RFC822.SIZE` said. */
@@ -187,6 +198,7 @@ function hostileClient(o: HostileOpts) {
   const counters = {
     /** UIDs the enumeration fetch actually yielded before the consumer stopped pulling. */
     uidsYielded: 0,
+    uidRanges: [] as string[],
     /** Envelope/flag rows the page fetch yielded. */
     fetched: 0,
     /** Full-body `fetchOne` calls the move's candidate loop issued. */
@@ -212,8 +224,8 @@ function hostileClient(o: HostileOpts) {
   // nothing about the leak. So the test makes this server honest between passes.
   const flood = (): number => o.floodUids ?? 0;
   const mailbox = {
-    path: "INBOX", uidValidity: 100n, uidNext: flood() + 1, highestModseq: 0n,
-    exists: flood() > 0 ? flood() : 1,
+    path: "INBOX", uidValidity: o.epoch ?? 100n, uidNext: (o.sparseUids?.at(-1) ?? flood()) + 1, highestModseq: 0n,
+    exists: o.sparseUids?.length ?? (flood() > 0 ? flood() : 1),
   };
   /**
    * A REAL message of exactly `n` bytes: headers, a blank line, then filler.
@@ -259,16 +271,25 @@ function hostileClient(o: HostileOpts) {
         await new Promise(() => { /* for ever */ });
       }
       client._path = path;
-      client.mailbox = (path === "INBOX" || o.populateAllFolders)
+      client.mailbox = (path === "INBOX" || (o.populateAllFolders && (!o.listPaths || paths.includes(path))))
         ? { ...mailbox, path }
         : { ...mailbox, path, exists: 0, uidNext: 1 };
+      if (path === o.missingUidNext) delete (client.mailbox as { uidNext?: number }).uidNext;
+      if (path === o.unknownEpoch) delete (client.mailbox as { uidValidity?: bigint }).uidValidity;
       return { path, release() { /* nothing */ } };
     },
     async search() {
       counters.searches++;
+      if (o.searchMs) clock.advance(o.searchMs);
+      if (counters.searches === o.searchRefusedAt) return false;
       return o.searchUids ?? [];
     },
-    async fetchOne(_range: string, query?: { source?: boolean; envelope?: boolean }) {
+    async fetchOne(_range: string, query?: { source?: boolean; envelope?: boolean; uid?: boolean }) {
+      if (query?.uid && !query.source && !query.envelope && o.sequenceAnswers) {
+        const uid = o.sparseUids?.[Number(_range) - 1];
+        return uid === undefined ? false : { uid, seq: Number(_range) };
+      }
+      if (query?.uid && !query.source && !query.envelope) return false;
       if (expunged.has(Number(_range))) return false;   // this server already said it was gone
       // The MOVE's source probe asks for the envelope too; the candidate loop asks for the body
       // ALONE. That is what makes `bodyProbes` count only the per-candidate downloads — the
@@ -337,7 +358,33 @@ function hostileClient(o: HostileOpts) {
       // THE ENUMERATION — `1:*`. This is the flood, and it will run to `flood` unless the
       // consumer stops pulling. `uidsYielded` is therefore the measurement that says whether the
       // ceiling bounded the READ or merely the result.
-      for (let uid = 1; uid <= flood(); uid++) {
+      const uidRange = o.honorUidRanges && _options?.uid === true && typeof range === "string"
+        ? /^(\d+):(\d+)$/.exec(range) : null;
+      if (uidRange) counters.uidRanges.push(range);
+      if (o.lostFolder === client._path) throw Object.assign(new Error("fixture connection closed"), { code: "NoConnection" });
+      if (o.failedRange === range && (!o.failedFolder || o.failedFolder === client._path)) throw new Error("range read failed");
+      const seqRange = o.sequenceAnswers && !_options?.uid && typeof range === "string"
+        ? /^(\d+):(\d+)$/.exec(range) : null;
+      if (seqRange && o.sparseUids) {
+        const from = Number(seqRange[1]);
+        const through = Number(seqRange[2]);
+        for (let seq = from; seq <= through && seq <= o.sparseUids.length; seq++) {
+          counters.uidsYielded++;
+          yield { seq, uid: o.sparseUids[seq - 1] };
+        }
+        return;
+      }
+      if (o.sparseUids) {
+        for (const uid of o.sparseUids) {
+          if (uidRange && (uid < Number(uidRange[1]) || uid > Number(uidRange[2]))) continue;
+          counters.uidsYielded++;
+          yield { uid };
+        }
+        return;
+      }
+      const from = uidRange ? Number(uidRange[1]) : 1;
+      const to = uidRange ? Math.min(flood(), Number(uidRange[2])) : flood();
+      for (let uid = from; uid <= to; uid++) {
         counters.uidsYielded++;
         if (o.msPerItem) clock.advance(o.msPerItem);
         yield { uid };
@@ -398,7 +445,10 @@ function hostileClient(o: HostileOpts) {
 /** The refusal, narrowed — every case asserts the CLASS, not a message substring. */
 async function refusal(fn: () => Promise<unknown>): Promise<ImapBoundExceeded> {
   try {
-    await fn();
+    const result = await fn();
+    if (result && typeof result === "object" && "scanFailure" in result && result.scanFailure) {
+      throw result.scanFailure;
+    }
   } catch (err) {
     if (err instanceof ImapBoundExceeded) return err;
     throw new Error(`expected ImapBoundExceeded, got ${String(err)}`);
@@ -474,6 +524,422 @@ describe("hostile IMAP server — COUNT ceilings", () => {
     for (const s of ["", "a", "\u00e9", "\u4e2d", "\u{1F600}", "a\u{1F600}\u4e2d\u00e9", "\ud800", "x\udc00y", "\ud83d\ud83d\ude00"]) {
       expect(utf8ByteLength(s), JSON.stringify(s)).toBe(enc.encode(s).length);
     }
+  });
+
+  it("imports a bounded first page from a large compliant inbox and resumes after reconnect", async () => {
+    const count = IMAP_ENUM_MAX_UIDS + 1;
+    const client = hostileClient({ floodUids: count, honorUidRanges: true });
+    adapter = new ImapAdapter(cfg, { client });
+    await adapter.connect();
+    const first = await adapter.changesSince(emptyCursor(), { messages: 2 });
+    expect(first.creates).toHaveLength(2);
+    expect(first.hasBacklog).toBe(true);
+    expect(client.counters.uidsYielded).toBeLessThan(20_000);
+    expect(client.counters.uidRanges).toHaveLength(1);
+    const saved = first.newCursor.folders.INBOX!;
+    expect(saved.scanNextUid).toBeGreaterThan(0);
+    await adapter.close();
+
+    const secondClient = hostileClient({ floodUids: count, honorUidRanges: true });
+    adapter = new ImapAdapter(cfg, { client: secondClient });
+    await adapter.connect();
+    const known = first.creates.map((change) => ({
+      uid: Number(change.locator.ref.split(":")[1]), messageId: null,
+    }));
+    const restarted = emptyCursor();
+    restarted.folders.INBOX = { ...saved, known };
+    const second = await adapter.changesSince(restarted, { messages: 2 });
+    expect(second.creates).toHaveLength(2);
+    expect(second.creates.map((change) => change.locator.ref))
+      .not.toContain(first.creates[0]!.locator.ref);
+    expect(second.deletes).toEqual([]);
+    expect(secondClient.counters.uidsYielded).toBeLessThan(20_000);
+  });
+
+  function pagedCursor(paths: string[], rows = 512): ImapCursor {
+    const cursor = emptyCursor(paths);
+    cursor.knownWindows = { rows, read: async () => ({ rows: [], release() {} }) };
+    return cursor;
+  }
+
+  it.each(["missing uidnext", "unknown epoch", "failed fetch"])("returns healthy folders after %s", async (fault) => {
+    const options: HostileOpts = {
+      listPaths: ["INBOX", "News"], sparseUids: [3], populateAllFolders: true,
+      honorUidRanges: true, sequenceAnswers: false,
+      ...(fault === "missing uidnext" ? { missingUidNext: "News" } : {}),
+      ...(fault === "unknown epoch" ? { unknownEpoch: "News" } : {}),
+      ...(fault === "failed fetch" ? { failedFolder: "News", failedRange: "2:3" } : {}),
+    };
+    adapter = new ImapAdapter(cfg, { client: hostileClient(options) });
+    await adapter.connect();
+    const cursor = pagedCursor(["INBOX", "News"]);
+    cursor.folders.News = { uidValidity: "100", uidNext: 2, highestModseq: "0", known: [] };
+    const batch = await adapter.changesSince(cursor);
+    expect(batch.creates.map((c) => c.locator.folder)).toEqual(["INBOX"]);
+    expect(batch.deletes).toEqual([]);
+    expect(batch.newCursor.folders.News?.uidNext ?? cursor.folders.News.uidNext).toBe(2);
+    expect(batch).toMatchObject({ incompleteFolders: ["News"] });
+  });
+
+  it("resumes all later folders on a new connection when the first folder drops the socket", async () => {
+    const paths = ["INBOX", "News", "Letters", "Travel"];
+    const opts: HostileOpts = {
+      listPaths: paths, populateAllFolders: true, sparseUids: [1], lostFolder: "INBOX",
+    };
+    adapter = new ImapAdapter(cfg, { client: hostileClient(opts) });
+    await adapter.connect();
+    const cursor = emptyCursor(paths);
+    const first = await adapter.changesSince(cursor);
+    expect(first.incompleteFolders).toEqual(["INBOX"]);
+    expect(first.newCursor.folders.INBOX).toBeUndefined();
+    expect(first.scanFailure).toMatchObject({ code: "NoConnection" });
+    expect(first.budgetStop).toBeDefined();
+    await adapter.close();
+
+    adapter = new ImapAdapter(cfg, { client: hostileClient(opts) });
+    await adapter.connect();
+    cursor.budgetStop = first.budgetStop;
+    const second = await adapter.changesSince(cursor);
+    expect(second.creates.map((c) => c.locator.folder).sort()).toEqual(["Letters", "News", "Travel"]);
+    expect(second.incompleteFolders).toEqual(["INBOX"]);
+  });
+
+  it("uses an answered sequence UID to scan through a missing UIDNEXT", async () => {
+    const client = hostileClient({
+      sparseUids: [3], honorUidRanges: true, sequenceAnswers: true, missingUidNext: "INBOX",
+    });
+    adapter = new ImapAdapter(cfg, { client });
+    await adapter.connect();
+    const batch = await adapter.changesSince(pagedCursor(["INBOX"]));
+    expect(batch.creates.map((c) => c.locator.ref)).toEqual(["100:3"]);
+    expect(batch.newCursor.folders.INBOX?.uidNext).toBe(4);
+  });
+
+  it("fetches new arrivals while an older sparse window is still outstanding", async () => {
+    const client = hostileClient({ sparseUids: [50_000_001], honorUidRanges: true, sequenceAnswers: true });
+    adapter = new ImapAdapter(cfg, { client });
+    await adapter.connect();
+    const cursor = pagedCursor(["INBOX"]);
+    cursor.folders.INBOX = { uidValidity: "100", uidNext: 50_000_001, highestModseq: "0", known: [] };
+    const batch = await adapter.changesSince(cursor);
+    expect(batch.creates.map((c) => c.locator.ref)).toEqual(["100:50000001"]);
+    expect(batch.newCursor.folders.INBOX?.uidNext).toBe(50_000_002);
+    expect(batch.hasBacklog).toBe(false);
+  });
+
+  it("finds an arrival just beyond a provider jump in UID allocation on the same visit", async () => {
+    const client = hostileClient({ sparseUids: [1, 50_000_001], honorUidRanges: true, sequenceAnswers: true });
+    adapter = new ImapAdapter(cfg, { client });
+    await adapter.connect();
+    const cursor = pagedCursor(["INBOX"]);
+    cursor.folders.INBOX = { uidValidity: "100", uidNext: 3, highestModseq: "0", known: [] };
+    const batch = await adapter.changesSince(cursor);
+    expect(batch.creates.map((c) => c.locator.ref)).toContain("100:50000001");
+    expect(batch.newCursor.folders.INBOX?.uidNext).toBe(50_000_002);
+  });
+
+  it("skips a sparse gap after an answered low UID without skipping an indexed expunge", async () => {
+    const client = hostileClient({ sparseUids: [1, 50_000_001], honorUidRanges: true, sequenceAnswers: true });
+    adapter = new ImapAdapter(cfg, { client });
+    await adapter.connect();
+    const cursor = pagedCursor(["INBOX"]);
+    cursor.folders.INBOX = {
+      uidValidity: "100", uidNext: 50_000_002, highestModseq: "0", scanNextUid: 513, known: [],
+    };
+    cursor.knownWindows!.read = async (_folder, _epoch, from, through) => ({
+      rows: 40_000_000 >= from && 40_000_000 <= through ? [{ uid: 40_000_000, messageId: null }] : [],
+      release() {},
+    });
+    const first = await adapter.changesSince(cursor);
+    expect(first.newCursor.folders.INBOX?.scanNextUid).toBe(40_000_000);
+    cursor.folders.INBOX = { ...first.newCursor.folders.INBOX!, known: [] };
+    const second = await adapter.changesSince(cursor);
+    expect(second.deletes.map((c) => c.locator.ref)).toEqual(["100:40000000"]);
+    expect(second.newCursor.folders.INBOX?.scanNextUid).toBe(50_000_001);
+  });
+
+  it("finishes a staggered sweep across restarts and still checks an expunge on the next sweep", async () => {
+    const options: HostileOpts = {
+      sparseUids: [1, 3], honorUidRanges: true, populateAllFolders: true, listPaths: ["INBOX", "News"],
+    };
+    const paths = ["INBOX", "News"];
+    const cursor = pagedCursor(paths, 2);
+    cursor.knownWindows!.read = async (_folder, _epoch, from, through) => ({
+      rows: [1, 3].filter((uid) => uid >= from && uid <= through).map((uid) => ({ uid, messageId: null })),
+      release() {},
+    });
+    for (const folder of paths) cursor.folders[folder] = {
+      uidValidity: "100", uidNext: 4, highestModseq: "0", known: [],
+      scanNextUid: folder === "INBOX" ? 3 : 1,
+    };
+    const visit = async () => {
+      adapter = new ImapAdapter(cfg, { client: hostileClient(options) });
+      await adapter.connect();
+      const batch = await adapter.changesSince(cursor);
+      await adapter.close();
+      for (const folder of paths) cursor.folders[folder] = { ...batch.newCursor.folders[folder]!, known: [] };
+      return batch;
+    };
+    expect((await visit()).hasBacklog).toBe(true);
+    expect((await visit()).hasBacklog).toBe(false);
+    options.sparseUids = [3];
+    expect((await visit()).deletes.map((c) => c.locator.ref)).toEqual(["100:1", "100:1"]);
+  });
+
+  it.each(["prior epoch", "history range"])("still checks a healthy folder for an expunge while a peer stalls at %s", async (phase) => {
+    const options: HostileOpts = {
+      sparseUids: [3, 4], honorUidRanges: true, populateAllFolders: true, listPaths: ["INBOX", "News"],
+    };
+    const cursor = pagedCursor(["INBOX", "News"]);
+    cursor.folders.INBOX = { uidValidity: "100", uidNext: 4, highestModseq: "0", scanNextUid: 0, known: [] };
+    cursor.folders.News = {
+      uidValidity: "100", uidNext: 4, highestModseq: "0", known: [],
+      ...(phase === "prior epoch" ? { scanResetAfter: "0:0" } : { scanNextUid: 1 }),
+    };
+    const known = new Set([1, 3]);
+    cursor.knownWindows!.read = async (folder, _epoch, from, through, _limit, arrivals) => ({
+      rows: folder === "INBOX" ? [...known].filter((uid) => (uid >= from && uid <= through)
+        || (arrivals && uid >= arrivals.from && uid <= arrivals.through)).map((uid) => ({ uid, messageId: null })) : [],
+      release() {},
+    });
+    cursor.readPriorEpoch = async () => ({
+      rows: [{ uidValidity: "99", uid: 1, messageId: "<old@fixture.invalid>", hasCurrentCopy: false }],
+      release() {},
+    });
+    const visit = async (peerAnswers: boolean) => {
+      const client = hostileClient({
+        ...options,
+        ...(phase === "history range" && !peerAnswers ? { failedFolder: "News", failedRange: "1:3" } : {}),
+      });
+      client.search = async () => peerAnswers ? [] : false;
+      adapter = new ImapAdapter(cfg, { client });
+      await adapter.connect();
+      const batch = await adapter.changesSince(cursor, { startHistorySweep: true });
+      for (const [folder, next] of Object.entries(batch.newCursor.folders)) cursor.folders[folder] = { ...next, known: [] };
+      await adapter.close();
+      return batch;
+    };
+    const first = await visit(false);
+    expect(first.incompleteFolders).toContain("News");
+    expect(first.creates.some((change) => change.locator.folder === "INBOX" && change.locator.ref === "100:4")).toBe(true);
+    known.add(4);
+    const affected = [first, await visit(false), await visit(false)];
+    await visit(true);
+    const afterRecovery = await visit(true);
+    expect(afterRecovery.deletes.some((change) => change.locator.folder === "INBOX" && change.locator.ref === "100:1")).toBe(true);
+    expect(affected.some((batch) => batch.deletes.some((change) => change.locator.folder === "INBOX"
+      && change.locator.ref === "100:1"))).toBe(true);
+  });
+
+  it("checks arrivals on an IDLE wake and reopens completed history on the next poll", async () => {
+    const options: HostileOpts = { sparseUids: [1], honorUidRanges: true };
+    const cursor = pagedCursor(["INBOX"], 2);
+    let known: number[] = [];
+    cursor.knownWindows!.read = async (_folder, _epoch, from, through, _limit, arrivals) => ({
+      rows: known.filter((uid) => (uid >= from && uid <= through)
+        || (arrivals && uid >= arrivals.from && uid <= arrivals.through)).map((uid) => ({ uid, messageId: null })),
+      release() {},
+    });
+    const read = async (startHistorySweep: boolean) => {
+      adapter = new ImapAdapter(cfg, { client: hostileClient(options) });
+      await adapter.connect();
+      const batch = await adapter.changesSince(cursor, { startHistorySweep });
+      await adapter.close();
+      return batch;
+    };
+    const first = await read(true);
+    expect(first.hasBacklog).toBe(false);
+    cursor.folders.INBOX = { ...first.newCursor.folders.INBOX!, known: [] };
+    known = [1];
+
+    options.sparseUids = [3];
+    const wake = await read(false);
+    expect(wake.creates.map((c) => c.locator.ref)).toEqual(["100:3"]);
+    expect(wake.deletes).toEqual([]);
+    expect(wake.hasBacklog).toBe(false);
+    cursor.folders.INBOX = { ...wake.newCursor.folders.INBOX!, known: [] };
+    known.push(3);
+
+    expect((await read(true)).deletes.map((c) => c.locator.ref)).toEqual(["100:1"]);
+  });
+
+  it("resumes slow prior-epoch cleanup and returns current mail from the same visit", async () => {
+    const options: HostileOpts = {
+      listPaths: ["INBOX", "News"], sparseUids: [3], populateAllFolders: true,
+      honorUidRanges: true, searchMs: 11_000,
+    };
+    const cursor = pagedCursor(["INBOX", "News"]);
+    cursor.folders.News = {
+      uidValidity: "100", uidNext: 4, highestModseq: "0", known: [], scanResetAfter: "0:0",
+    };
+    cursor.readPriorEpoch = async (_folder, _epoch, after, limit) => ({
+      rows: Array.from({ length: 32 }, (_, i) => i + 1)
+        .filter((uid) => uid > Number(after.split(":")[1])).slice(0, limit)
+        .map((uid) => ({ uidValidity: "99", uid, messageId: "<old@fixture.invalid>", hasCurrentCopy: false })),
+      release() {},
+    });
+    let examined = 0;
+    for (let visit = 0; visit < 8 && cursor.folders.News.scanResetAfter !== undefined; visit++) {
+      const client = hostileClient(options);
+      adapter = new ImapAdapter(cfg, { client, nowMs: client.clock.now });
+      await adapter.connect();
+      const batch = await adapter.changesSince(cursor);
+      if (visit === 0) {
+        expect(batch.creates.some((c) => c.locator.folder === "INBOX")).toBe(true);
+        expect(batch.newCursor.folders.News?.scanResetAfter).toMatch(/^99:/);
+      }
+      examined += batch.resetGone?.length ?? 0;
+      for (const [folder, next] of Object.entries(batch.newCursor.folders)) cursor.folders[folder] = { ...next, known: [] };
+      await adapter.close();
+    }
+    expect(cursor.folders.News.scanResetAfter).toBeUndefined();
+    expect(examined).toBe(32);
+  });
+
+  it("keeps the unanswered prior locator for a later visit while serving new arrivals", async () => {
+    const opts: HostileOpts = { sparseUids: [4], honorUidRanges: true, searchRefusedAt: 2 };
+    const cursor = pagedCursor(["INBOX"]);
+    cursor.folders.INBOX = { uidValidity: "100", uidNext: 4, highestModseq: "0", scanResetAfter: "0:0", known: [] };
+    cursor.readPriorEpoch = async (_folder, _epoch, after) => ({
+      rows: [1, 2, 3].filter((uid) => uid > Number(after.split(":")[1])).map((uid) => ({
+        uidValidity: "99", uid, messageId: "<old@fixture.invalid>", hasCurrentCopy: false,
+      })),
+      release() {},
+    });
+    adapter = new ImapAdapter(cfg, { client: hostileClient(opts) });
+    await adapter.connect();
+    const first = await adapter.changesSince(cursor);
+    expect(first.creates.map((c) => c.locator.ref)).toEqual(["100:4"]);
+    expect(first.resetGone?.map((c) => c.locator.ref)).toEqual(["99:1"]);
+    expect(first.newCursor.folders.INBOX?.scanResetAfter).toBe("99:1");
+    expect(first.incompleteFolders).toEqual(["INBOX"]);
+
+    cursor.folders.INBOX = { ...first.newCursor.folders.INBOX!, known: [] };
+    const second = await adapter.changesSince(cursor);
+    expect(second.resetGone?.map((c) => c.locator.ref)).toEqual(["99:2", "99:3"]);
+    expect(second.newCursor.folders.INBOX?.scanResetAfter).toBeUndefined();
+  });
+
+  it("drains a split arrival page while prior epoch cleanup is still pending", async () => {
+    const client = hostileClient({ sparseUids: [1, 2, 3], honorUidRanges: true });
+    const fetch = client.fetch.bind(client);
+    const flagRanges: string[] = [];
+    client.fetch = ((range: string, query: { flags?: boolean; source?: boolean; envelope?: boolean }, options: object) => {
+      if (typeof range === "string" && query.flags && !query.source && !query.envelope) {
+        if (range !== "2:3") throw new Error("BAD flags outside the arrival range");
+        flagRanges.push(range);
+      }
+      return fetch(range, query, options);
+    }) as typeof client.fetch;
+    const cursor = pagedCursor(["INBOX"]);
+    cursor.folders.INBOX = { uidValidity: "100", uidNext: 2, highestModseq: "0", known: [], scanResetAfter: "0:0" };
+    // The first cleanup page cannot yet be proved gone.
+    const prior = [{ uidValidity: "99", uid: 1, messageId: "<old@fixture.invalid>", hasCurrentCopy: false }];
+    cursor.readPriorEpoch = async () => ({ rows: prior, release() {} });
+    client.search = async () => false;
+    const known = new Set<number>();
+    cursor.knownWindows!.read = async (_folder, _epoch, from, through, _limit, arrivals) => ({
+      rows: [...known].filter((uid) => uid >= from && uid <= through
+        || (arrivals && uid >= arrivals.from && uid <= arrivals.through))
+        .map((uid) => ({ uid, seen: false, messageId: null })),
+      release() {},
+    });
+    adapter = new ImapAdapter(cfg, { client });
+    await adapter.connect();
+    const first = await adapter.changesSince(cursor, { messages: 1, startHistorySweep: true });
+    expect(first.creates).toHaveLength(1);
+    known.add(Number(first.creates[0]!.locator.ref.split(":")[1]));
+    cursor.folders.INBOX = { ...first.newCursor.folders.INBOX!, known: [] };
+    expect(cursor.folders.INBOX.uidNext).toBe(2);
+    expect(cursor.folders.INBOX.scanResetAfter).toBe("0:0");
+    client.search = async () => [];
+    const second = await adapter.changesSince(cursor, { messages: 1, startHistorySweep: true });
+    expect(second.creates.map((change) => Number(change.locator.ref.split(":")[1])))
+      .toEqual([[2, 3].find((uid) => !known.has(uid))]);
+    expect(flagRanges).toEqual(["2:3"]);
+    expect(second.newCursor.folders.INBOX?.uidNext).toBe(4);
+    expect(second.newCursor.folders.INBOX?.scanResetAfter).toBeUndefined();
+  });
+
+  it("reads only the locator window that the provider answered", async () => {
+    const client = hostileClient({ floodUids: 12_000, honorUidRanges: true });
+    adapter = new ImapAdapter(cfg, { client });
+    await adapter.connect();
+    const cursor = emptyCursor();
+    const pages: Array<[string, string, number, number]> = [];
+    cursor.knownWindows = {
+      rows: 3,
+      read: async (folder, epoch, from, through) => {
+        pages.push([folder, epoch, from, through]);
+        return { rows: [{ uid: 2, messageId: null }], release: () => undefined };
+      },
+    };
+    const first = await adapter.changesSince(cursor, { messages: 3 });
+    expect(pages[0]).toEqual(["INBOX", "100", 1, 3]);
+    expect(first.creates.map((change) => change.locator.ref).sort()).toEqual(["100:1", "100:3"]);
+    expect(first.deletes).toEqual([]);
+    expect(first.newCursor.folders.INBOX?.scanNextUid).toBe(4);
+  });
+
+  it("keeps a failed or unexamined range out of deletion evidence across a UIDVALIDITY reset", async () => {
+    const options: HostileOpts = { sparseUids: [1, 9], honorUidRanges: true, epoch: 101n };
+    const client = hostileClient(options);
+    adapter = new ImapAdapter(cfg, { client });
+    await adapter.connect();
+    const cursor = emptyCursor(["INBOX"]);
+    cursor.folders.INBOX = { uidValidity: "100", highestModseq: "0", uidNext: 11, known: [] };
+    let released = 0;
+    const priorReads: string[] = [];
+    cursor.knownWindows = {
+      rows: 3,
+      read: async (_folder, _epoch, from) => ({
+        rows: from === 4 ? [{ uid: 5, messageId: null }] : [],
+        release: () => { released++; },
+      }),
+    };
+    cursor.readPriorEpoch = async (folder) => {
+      priorReads.push(folder);
+      return {
+        rows: [
+          { uidValidity: "100", uid: 5, messageId: "<old@fixture.invalid>", hasCurrentCopy: false },
+          { uidValidity: "100", uid: 6, messageId: null, hasCurrentCopy: false },
+        ],
+        release: () => undefined,
+      };
+    };
+    const read = () => adapter!.changesSince(cursor, { messages: 3 });
+    const advance = (batch: Awaited<ReturnType<typeof read>>) => {
+      cursor.folders.INBOX = { ...batch.newCursor.folders.INBOX!, known: [] };
+    };
+
+    const first = await read();
+    expect(first.deletes).toEqual([]);
+    expect(first.newCursor.folders.INBOX).toMatchObject({ scanNextUid: 4, scanResetAfter: "0:0" });
+    advance(first);
+    options.failedRange = "4:6";
+    const failed = await read();
+    expect(failed.incompleteFolders).toContain("INBOX");
+    expect(failed.newCursor.folders.INBOX).toBeUndefined();
+    expect(failed.deletes).toEqual([]);
+    expect(failed.resetGone).toBeUndefined();
+    expect(released).toBe(1);
+    expect(priorReads).toEqual([]);
+    delete options.failedRange;
+
+    const second = await read();
+    expect(released).toBe(2);
+    expect(second.deletes.map((change) => change.locator.ref)).toEqual(["101:5"]);
+    expect(second.newCursor.folders.INBOX?.scanNextUid).toBe(7);
+    advance(second);
+    const last = await read();
+    expect(last.deletes).toEqual([]);
+    expect(last.newCursor.folders.INBOX?.scanNextUid).toBeUndefined();
+    expect(priorReads).toEqual([]);
+    advance(last);
+    const retired = await read();
+    expect(priorReads).toEqual(["INBOX"]);
+    expect(retired.resetGone?.map((change) => change.locator.ref)).toEqual(["100:5"]);
+    expect(retired.newCursor.folders.INBOX?.scanResetAfter).toBeUndefined();
   });
 
   it("a folder claiming more UIDs than the ceiling STOPS THE PULL, not just the array", async () => {
@@ -683,6 +1149,11 @@ describe("hostile IMAP server — the TIME ceilings (the slow loris)", () => {
     });
     await adapter.connect();
 
+    const partial = await adapter.changesSince(emptyCursor());
+    expect(partial.scanFailure).toBeInstanceOf(ImapBoundExceeded);
+    expect(partial.scanFailure).toMatchObject({ bound: "cycle_deadline", limit: IMAP_CYCLE_DEADLINE_MS });
+    expect(partial.creates.some((c) => c.locator.folder === "INBOX")).toBe(true);
+    expect(partial.incompleteFolders).toHaveLength(1);
     const err = await refusal(() => adapter!.changesSince(emptyCursor()));
     expect(err.bound).toBe("cycle_deadline");
     expect(err.limit).toBe(IMAP_CYCLE_DEADLINE_MS);
@@ -763,7 +1234,7 @@ describe("per-mailbox isolation — what the refusal IS", () => {
     await adapter.connect();
 
     let caught: unknown;
-    try { await adapter.changesSince(emptyCursor()); } catch (err) { caught = err; }
+    try { caught = (await adapter.changesSince(emptyCursor())).scanFailure; } catch (err) { caught = err; }
 
     expect(caught).toBeInstanceOf(ImapBoundExceeded);
     expect(isImapBoundExceeded(caught)).toBe(true);
@@ -869,7 +1340,7 @@ describe("abandoning a read is not ending it — the review's findings", () => {
       await adapter.connect();
 
       const pass = adapter.changesSince(emptyCursor());
-      const settled = pass.then(() => "resolved" as const, (e: unknown) => e);
+      const settled = pass.then((batch) => batch.scanFailure ?? "resolved", (e: unknown) => e);
       // Just short of the ceiling: still waiting, which is what makes the next line meaningful.
       await vi.advanceTimersByTimeAsync(IMAP_READ_DEADLINE_MS - 1_000);
       // Past it.

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { mailboxes, mailboxCredentials } from "@trafficflow/db";
+import { mailboxes, mailboxCredentials, messages } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { ImapBoundExceeded } from "@trafficflow/core/adapters/imap";
@@ -10,13 +10,8 @@ import type { WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
 
-/**
- * the FIRST cycle that ends on one of our ceilings stamps progress (mail 0130).
- *
- * Measured on a large fixture: the first cycle ran six minutes and ended `ImapBoundExceeded`, one
- * failure below `maxSyncFailures`, so nothing was written and the lag rule kept measuring from the
- * mailbox's creation. Driven through the real worker: the failure arm stamps `sync_progress_at`,
- * a failure of another class does not, and the soft block itself still waits for the quarantine.
+/** A failed read does not move the first-import clock. Committed work does,
+ * and the one-pass completion stamp remains separate. The fixture uses an isolated database.
  */
 
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 43));
@@ -66,20 +61,75 @@ async function afterFailedCycles(err: unknown, cycles: number): Promise<typeof m
   return (await db.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]!;
 }
 
-describe("a first cycle that ends on a ceiling stamps progress", () => {
+describe("first import advances its clock on durable progress", () => {
   beforeAll(async () => { DB = await prepareIsolatedDb("trafficflow_worker_firstprogress"); }, 120_000);
   beforeEach(async () => { await truncateAll(DB); }, ISOLATED_DB_RESET_BUDGET_MS);
   afterEach(async () => {
     for (const c of closers.splice(0)) { try { await c(); } catch { /* ignore */ } }
   }, ISOLATED_DB_RESET_BUDGET_MS);
 
-  it("one bounded cycle stamps sync_progress_at, before any quarantine", async () => {
+  it("a read ceiling alone leaves the import clock without a stamp", async () => {
     const row = await afterFailedCycles(new ImapBoundExceeded("enumerate_uids", 500_000, 500_001, "INBOX"), 1);
     expect(row.lastSyncAt, "no cycle completed, so this case is about the first import").toBeNull();
-    expect(row.syncProgressAt, "a first import that read the mailbox stamped nothing").not.toBeNull();
+    expect(row.syncProgressAt, "an aborted read did not advance the import").toBeNull();
     expect(row.syncBlockedReason, "the block is the quarantine's, not one cycle's").toBeNull();
     expect(row.status).toBe("connected");
   }, 30_000);
+
+  it("moves the import clock after committing mail before a body overrun", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const id = await seedMailbox(db);
+    fleet.behave(id, { deliver: [{ from: "fixture@x.example", subject: "kept", messageId: "kept@x" }] });
+    const worker = await startWorker({
+      databaseUrl: DB, keyProvider: KP, pollIntervalMs: 600_000, sentDomain: "trafficflow.test",
+      rosterIntervalMs: 200, lockHeartbeatMs: 150, instanceId: `wkr-overrun-${randomUUID().slice(0, 8)}`,
+      adapterFactory: (...args) => {
+        const adapter = fleet.factory(...args);
+        const read = adapter.changesSince.bind(adapter);
+        adapter.changesSince = async (...readArgs) => ({
+          ...await read(...readArgs), hasBacklog: true,
+          overrun: { folder: "INBOX", breach: new ImapBoundExceeded("body_overrun", 10, 11, "INBOX") },
+        });
+        return adapter;
+      },
+    });
+    closers.push(() => worker.stop());
+    await expect.poll(async () =>
+      (await db.select().from(messages).where(eq(messages.mailboxId, id))).length,
+    { timeout: 10_000 }).toBe(1);
+    await expect.poll(async () =>
+      (await db.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]?.syncProgressAt,
+    { timeout: 2_000 }).toBeInstanceOf(Date);
+    expect((await db.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]?.initialImportCompletedAt).toBeNull();
+  }, 20_000);
+
+  it("finishes the first import only after a skipped folder answers on a later poll", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const id = await seedMailbox(db);
+    fleet.behave(id, { deliver: [{ from: "fixture@x.example", subject: "available", messageId: "available@x" }] });
+    let incomplete = true;
+    const worker = await startWorker({
+      databaseUrl: DB, keyProvider: KP, pollIntervalMs: 100, sentDomain: "trafficflow.test",
+      rosterIntervalMs: 200, lockHeartbeatMs: 150, instanceId: `wkr-retry-${randomUUID().slice(0, 8)}`,
+      adapterFactory: (...args) => {
+        const adapter = fleet.factory(...args);
+        const read = adapter.changesSince.bind(adapter);
+        adapter.changesSince = async (...readArgs) => ({
+          ...await read(...readArgs), ...(incomplete ? { incompleteFolders: ["News"] } : {}),
+        });
+        return adapter;
+      },
+    });
+    closers.push(() => worker.stop());
+    const row = async () => (await db.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]!;
+    await expect.poll(async () => (await row()).syncProgressAt, { timeout: 10_000 }).toBeInstanceOf(Date);
+    expect((await row()).initialImportCompletedAt).toBeNull();
+    expect((await db.select().from(messages).where(eq(messages.mailboxId, id)))).toHaveLength(1);
+    incomplete = false;
+    await expect.poll(async () => (await row()).initialImportCompletedAt, { timeout: 10_000 }).toBeInstanceOf(Date);
+  }, 25_000);
 
   it("a completed cycle WITH a backlog moves the clock; an import that drains at once owes none", async () => {
     // The import's clock search reads past the first day: the else arm of the worker's `!hasBacklog`.

@@ -15,7 +15,7 @@ import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
  */
 
 /** Why an attach was told to stop: its own deadline, or the process going down. */
-export type AttachAbort = "deadline" | "stop";
+export type AttachAbort = "deadline" | "stop" | "unassigned";
 
 /** Thrown at an attach's checkpoint once it has been aborted. */
 export class AttachAbortedError extends Error {
@@ -41,12 +41,15 @@ export class AttachDeadlineError extends Error {
 /** One attach's handle on its own fate. */
 export interface AttachTicket {
   readonly aborted: AttachAbort | null;
+  readonly unassigned: boolean;
   /** Set once the connection this attach dialled was reported lost ({@link AttachPool.noteLost}). */
   readonly lost: { err: unknown } | null;
   /** Throws {@link AttachAbortedError} once aborted, or the error a lost connection recorded. */
   checkpoint(): void;
   /** The connection this attach dialled: what a deadline or a stop force-closes. */
   bind(adapter: MailboxAdapter): void;
+  /** Transfer the adapter to the runtime in the same turn it is published. */
+  handoff(): void;
   /**
    * `step`, or {@link AttachAbortedError} as soon as this attach is aborted. For a step a close
    * may not end: imapflow's `connect()` stays pending when it is closed mid-handshake.
@@ -89,12 +92,13 @@ function shut(adapter: MailboxAdapter): void {
 
 class Ticket implements AttachTicket {
   aborted: AttachAbort | null = null;
+  unassigned = false;
   lost: { err: unknown } | null = null;
   adapter: MailboxAdapter | null = null;
   private rejectAborted!: (err: Error) => void;
   private readonly abortedSignal = new Promise<never>((_, reject) => { this.rejectAborted = reject; });
 
-  constructor() {
+  constructor(private readonly disarmDeadline: () => void) {
     this.abortedSignal.catch(() => { /* observed through `abortable` */ });
   }
 
@@ -105,6 +109,7 @@ class Ticket implements AttachTicket {
   }
 
   checkpoint(): void {
+    if (this.unassigned) throw new AttachAbortedError("unassigned");
     if (this.aborted !== null) throw new AttachAbortedError(this.aborted);
     if (this.lost !== null) throw this.lost.err;
   }
@@ -112,6 +117,12 @@ class Ticket implements AttachTicket {
   bind(adapter: MailboxAdapter): void {
     this.adapter = adapter;
     if (this.aborted !== null) shut(adapter);
+  }
+
+  handoff(): void {
+    this.checkpoint();
+    this.disarmDeadline();
+    this.adapter = null;
   }
 
   abort(why: AttachAbort): void {
@@ -160,16 +171,24 @@ export class AttachPool {
   }
 
   /** Drop queued jobs (all, or those `pred` names). Running ones are never cancelled here. */
-  dropQueued(pred: (mailboxId: string) => boolean = () => true): number {
+  dropQueued(pred: (mailboxId: string, accountId: string) => boolean = () => true): number {
     let n = 0;
     for (let i = this.queued.length - 1; i >= 0; i--) {
       const e = this.queued[i]!;
-      if (!pred(e.job.mailboxId)) continue;
+      if (!pred(e.job.mailboxId, e.job.accountId)) continue;
       this.queued.splice(i, 1);
       e.settle(null);
       n++;
     }
     return n;
+  }
+
+  cancelUnassigned(pred: (mailboxId: string, accountId: string) => boolean): void {
+    this.dropQueued(pred);
+    for (const { job, ticket } of this.running.values()) {
+      // A cancelled dial still owns its host slot until it unwinds or meets its deadline.
+      if (ticket && pred(job.mailboxId, job.accountId)) ticket.unassigned = true;
+    }
   }
 
   state(mailboxId: string): "queued" | "running" | null {
@@ -227,7 +246,7 @@ export class AttachPool {
 
   private start(e: Entry): void {
     const { job } = e;
-    const ticket = new Ticket();
+    const ticket = new Ticket(() => clearTimeout(e.timer));
     e.ticket = ticket;
     e.startedAt = Date.now();
     this.running.set(job.mailboxId, e);
@@ -235,7 +254,7 @@ export class AttachPool {
     e.timer = setTimeout(() => {
       if (ticket.aborted !== null) return;
       ticket.abort("deadline");
-      this.opts.onDeadline({ mailboxId: job.mailboxId, accountId: job.accountId });
+      if (!ticket.unassigned) this.opts.onDeadline({ mailboxId: job.mailboxId, accountId: job.accountId });
     }, this.opts.deadlineMs);
     // A microtask, so `enqueue` never runs attach code inside the caller's synchronous section.
     void Promise.resolve()

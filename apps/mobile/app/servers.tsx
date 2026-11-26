@@ -20,6 +20,7 @@ import {
   stopAndRemoveAsks, stopAndRemoveKept, stopAndRemoveLines, stopAndRemoveVerb, type StopAndRemoveAsk,
 } from "../src/ui/standalone-form";
 import { MAIL_SURFACE, useConnection } from "../src/net/connection";
+import { signOutNoticeText } from "../src/net/pairing";
 import { isPairEnded } from "../src/net/session-death";
 import { gateFor } from "../src/state/gate";
 import type { ServerProfile } from "../src/state/servers";
@@ -108,6 +109,14 @@ function ServersBody({ inPane }: { inPane: boolean }) {
         <ViewHead title={Copy.serversTitle} attention={ended} />
 
         <StatusPanel />
+
+        {conn.signOutNotices.map(({ profileId, origin, deviceLabel, deviceId, canReplace }) => (
+          <Panel key={profileId} style={{ marginTop: mailSize.edge, padding: mailSize.inset }}>
+            <Section>{Copy.serversSignOutPending}</Section>
+            <Txt variant="hint" tone="ink2">{signOutNoticeText(origin, deviceLabel, deviceId, canReplace)}</Txt>
+            <Button label={Copy.serversSignOutDone} onPress={() => void conn.dismissSignOutNotice(profileId).catch(() => undefined)} />
+          </Panel>
+        ))}
 
         {conn.profiles.length > 0 ? (
           <Panel style={{ marginTop: mailSize.edge, paddingBottom: mailSize.inset }}>

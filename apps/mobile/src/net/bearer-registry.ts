@@ -20,6 +20,7 @@ export interface SlotRow {
   accountId: string | null;
   vault: RefreshVault;
   fetchImpl?: FetchLike;
+  signOutFetchImpl?: FetchLike;
   /** The app's release, named to the server on every ask (`PairingEnv.clientRelease`). */
   clientRelease?: string;
 }
@@ -32,6 +33,7 @@ export interface SlotRedeem {
   accountId: string;
   vault: RefreshVault;
   fetchImpl?: FetchLike;
+  signOutFetchImpl?: FetchLike;
   clientRelease?: string;
 }
 

@@ -58,14 +58,14 @@ const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 41));
 let DB = "";
 type Db = ReturnType<typeof makeDb>;
 
-async function seedMailbox(db: Db): Promise<{ accountId: string; mailboxId: string }> {
+async function seedMailbox(db: Db, host = "fake.invalid"): Promise<{ accountId: string; mailboxId: string }> {
   const accountId = randomUUID();
   const [row] = await db.insert(mailboxes)
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`, ...ORGANIZER_CONSENT }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
     mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
-    meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
+    meta: { host, port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };
 }
@@ -108,6 +108,55 @@ describe("attach registers, the cycle drains", () => {
 
   const closers: Array<() => Promise<void>> = [];
   afterEach(async () => { for (const c of closers.splice(0)) { try { await c(); } catch { /* ignore */ } } }, ISOLATED_DB_RESET_BUDGET_MS);
+
+  it("imports and stamps mail while another provider is still dialing", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const slow = await seedMailbox(db, "slow.invalid");
+    const ready = await seedMailbox(db, "ready.invalid");
+    fleet.behave(ready.mailboxId, { deliver: mail(1, "ready") });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    fleet.behave(slow.mailboxId, { gate: held });
+    const startup = startWorker(cfgFor(fleet));
+    try {
+      await waitFor(async () => {
+        const [row] = await db.select({ synced: mailboxes.lastSyncAt }).from(mailboxes).where(eq(mailboxes.id, ready.mailboxId));
+        return row?.synced != null
+          && (await db.select().from(messages).where(eq(messages.mailboxId, ready.mailboxId))).length === 1;
+      }, 8_000, "healthy provider to import while the other provider is dialing");
+    } finally {
+      release();
+      await (await startup).stop();
+    }
+  }, 25_000);
+
+  it("visits only the mailbox that rang between polls", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const roster = await Promise.all(Array.from({ length: 64 }, (_, i) => seedMailbox(db, `host-${i}.invalid`)));
+    const worker = await startWorker(cfgFor(fleet, { pollIntervalMs: 600_000, rosterIntervalMs: 600_000 }));
+    closers.push(() => worker.stop());
+    await waitFor(() => roster.every(({ mailboxId }) => fleet.indicesOf(mailboxId, "sync_end").length > 0),
+      40_000, "the first visits");
+    await waitFor(() => worker.stats().lastCycleAt !== null, 20_000, "the initial rotation to settle");
+    const target = roster[0]!.mailboxId;
+    const visits = fleet.syncs;
+    const completedAt = worker.stats().lastCycleAt!.getTime();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    fleet.behave(target, { syncGate: held });
+    fleet.signal.get(target)!();
+    try {
+      await waitFor(() => fleet.indicesOf(target, "sync_start").length > 1, 5_000, "the first wake");
+      fleet.signal.get(target)!();
+    } finally {
+      release();
+    }
+    await waitFor(() => fleet.indicesOf(target, "sync_end").length >= 3, 8_000, "the second wake");
+    await waitFor(() => (worker.stats().lastCycleAt?.getTime() ?? 0) > completedAt, 20_000, "the scheduler to settle");
+    expect(fleet.syncs - visits).toBe(2);
+  }, 90_000);
 
   it("a big mailbox's backlog does not delay the next mailbox's connect, and rides the cycle", async () => {
     const db = makeDb(DB);

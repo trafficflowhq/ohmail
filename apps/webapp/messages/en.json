@@ -373,6 +373,7 @@
     "kindOther": "Device",
     "mintedName": "ohmail for {kind}",
     "deviceMeta": "{kind} · added {created} · last seen {seen}",
+    "deviceId": "Device ID {id}",
     "remove": "Sign out",
     "removeAsk": "Sign out {name}",
     "removeWhat": "It loses access with its next request. You can pair it again with a new code.",

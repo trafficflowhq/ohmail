@@ -395,12 +395,37 @@ describe("changesSince — a connection that closed mid-pass is not a run of emp
   it("a SELECT the closed connection refuses fails the pass, not reads as a missing folder", async () => {
     const client = Object.assign(makeClient(server()), { usable: true as boolean });
     const lock = client.getMailboxLock.bind(client);
+    const failure = noConnection();
+    let refusedFolder = "";
     client.getMailboxLock = async (path: string) => {
       // The server closes the link once INBOX is read; every later command is refused.
-      if (path !== "INBOX") { client.usable = false; throw noConnection(); }
+      if (path !== "INBOX") {
+        refusedFolder = path;
+        client.usable = false;
+        throw failure;
+      }
       return lock(path);
     };
-    await expect(pass(client, cursorOf({ ...watched(), Sent: folder([]) }))).rejects.toMatchObject({ code: "NoConnection" });
+
+    const cursor = cursorOf({ ...watched(), Sent: folder([]) });
+    const batch = await pass(client, cursor);
+    expect(batch.scanFailure).toBe(failure);
+    expect(refusedFolder).not.toBe("");
+    expect(batch.incompleteFolders).toEqual([refusedFolder]);
+    expect(batch.newCursor.folders[refusedFolder]).toBeUndefined();
+    expect(batch.foldersGone ?? []).toEqual([]);
+    expect(batch.deletes).toEqual([]);
+    expect(refsIn(batch.creates, "INBOX")).toEqual(["100:1", "100:2"]);
+  });
+
+  it("a SELECT the closed connection refuses rejects when there is no completed or later folder work", async () => {
+    const client = Object.assign(makeClient({ INBOX: folder([]) }), { usable: true as boolean });
+    const failure = noConnection();
+    client.getMailboxLock = async () => {
+      client.usable = false;
+      throw failure;
+    };
+    await expect(pass(client, cursorOf({}))).rejects.toBe(failure);
   });
 
   it("a LIST refresh refused for a lost connection fails the pass, not keeps the old inventory", async () => {

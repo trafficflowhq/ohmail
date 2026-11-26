@@ -54,6 +54,43 @@ describe.skipIf(!AVAILABLE)("sync-kick — stamp + kick converges", () => {
     return row?.at ?? null;
   };
 
+  it("pages past unchanged stamps without admitting foreign or disabled rows", async () => {
+    const own = randomUUID();
+    const foreign = randomUUID();
+    const accountsForTest = [own, foreign];
+    const ownership = await sql<{ id: string; shard: number }[]>`
+      select id::text, ((hashtext(id::text) % 2) + 2) % 2 as shard
+      from unnest(${accountsForTest}::uuid[]) id`;
+    const index = ownership.find((r) => r.id === own)!.shard;
+    // Ensure the foreign account lands on the other shard.
+    let other = foreign;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const [hash] = await sql<{ shard: number }[]>`select ((hashtext(${other}::text) % 2) + 2) % 2 as shard`;
+      if (hash?.shard !== index) break;
+      other = randomUUID();
+    }
+    await db.insert(accounts).values([{ id: own, name: "current" }, { id: other, name: "other" }]);
+    const [target] = await db.insert(mailboxes).values({
+      accountId: own, provider: "imap", address: "older@example.test", status: "connected",
+      syncRequestedAt: new Date("2020-01-01T00:00:00Z"),
+    }).returning({ id: mailboxes.id });
+    const noisy = await db.insert(mailboxes).values(Array.from({ length: 195 }, (_, i) => ({
+      accountId: i < 65 ? other : own,
+      provider: "imap" as const, address: `pending-${i}@example.test`,
+      status: i >= 65 && i < 130 ? "disabled" as const : "connected" as const,
+      syncRequestedAt: new Date("2020-01-02T00:00:00Z"),
+    }))).returning({ id: mailboxes.id });
+    const deps = {
+      db: db as unknown as Tx, served: () => [], kick: () => undefined,
+      requestRoster: () => undefined, askedFor: new Map<string, string>(),
+      selection: { shards: 2, shardIndex: index }, unservedCursor: {},
+    };
+    const asked: string[] = [];
+    for (let i = 0; i < 3; i++) asked.push(...(await syncKickPass(deps)).rosterFor);
+    expect(asked.filter((id) => noisy.slice(0, 130).some((r) => r.id === id))).toEqual([]);
+    expect(asked.filter((id) => id === target!.id)).toHaveLength(1);
+  }, 30_000);
+
   it("kicks and clears a stamped mailbox this process serves", async () => {
     const id = await seedMailbox();
     await stampNow(id, new Date());

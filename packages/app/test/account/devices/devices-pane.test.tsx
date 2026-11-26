@@ -120,6 +120,23 @@ describe("what the pane lists", () => {
     ).toBe(false);
   });
 
+  it("identifies and removes the right device when two phones share a name", () => {
+    const other = { ...PHONE, id: "other-phone" };
+    const remove = vi.fn();
+    drawn({
+      ...STATES.rest.model,
+      list: { at: "read", devices: [PHONE, other], webGroup: null },
+      askRemove: remove,
+    });
+    const lines = screen.getAllByRole("group", { name: "Mila's phone" });
+    const descriptionOf = (row: HTMLElement) =>
+      document.getElementById(row.getAttribute("aria-describedby") ?? "")?.textContent;
+    expect(descriptionOf(lines[0]!)).toBe(dev("deviceId", { id: PHONE.id }));
+    expect(descriptionOf(lines[1]!)).toBe(dev("deviceId", { id: other.id }));
+    press(within(lines[1]!).getByRole("button", { name: dev("remove") }));
+    expect(remove.mock.calls).toEqual([[other.id]]);
+  });
+
   it("a device that paired without a name is named by ohmail, in the reader's language", () => {
     drawn(STATES.rest.model);
     expect(line(dev("mintedName", { kind: dev("kindLinux") }))).toBeTruthy();
