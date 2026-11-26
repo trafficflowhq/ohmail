@@ -32,6 +32,38 @@ afterAll(async () => {
 
 type Read = { kind: string; messageIds?: string[]; unread?: boolean };
 
+it.each(["light", "dark"])(
+  "keeps the phone reader scrollport above the Reply and Forward bar in %s",
+  async (scheme) => {
+    const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) =>
+        route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+      );
+      await page.goto(
+        `${ORIGIN}/?open=rd-a&read=1&screen=reading&device=phone&face=paper&invitation&scheme=${scheme}`,
+      );
+      const show = page.getByRole("button", { name: "Show in calendar" }).last();
+      await show.waitFor({ timeout: 5000 });
+      const port = page.locator("[data-reading-scroll]");
+      await expect
+        .poll(async () => {
+          const scroll = (await port.boundingBox())!;
+          const foot = (await page.locator('.oh-sheet[data-kind="reading"] > .oh-sheet-foot').boundingBox())!;
+          return scroll.y + scroll.height - foot.y;
+        })
+        .toBeLessThanOrEqual(1);
+      await port.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+      });
+      await show.tap({ trial: true, timeout: 3000 });
+    } finally {
+      await page.close();
+    }
+  },
+  30_000,
+);
+
 describe("opening a conversation in a real browser", () => {
   it.each([
     { width: 1440, height: 900, device: "desktop", face: "paper" },
@@ -825,12 +857,17 @@ it.each(["no-preference", "reduce"] as const)(
         const animate = Element.prototype.animate;
         Element.prototype.animate = function (...args: Parameters<typeof animate>) {
           const result = animate.apply(this, args);
-          if (this.matches(".fr-main > :is(.fr-list, .fr-reading, .fr-wide)")) {
+          const column = this.closest(".fr-main > :is(.fr-list, .fr-reading, .fr-wide)");
+          if (column && (this === column || this.parentElement === column.firstElementChild)) {
             const effect = result.effect as KeyframeEffect;
             this.dispatchEvent(
               new CustomEvent("column-arrival", {
                 bubbles: true,
-                detail: { frames: effect.getKeyframes(), timing: effect.getTiming() },
+                detail: {
+                  reading: column.classList.contains("fr-reading"),
+                  whole: this === column,
+                  motion: { frames: effect.getKeyframes(), timing: effect.getTiming() },
+                },
               }),
             );
           }
@@ -846,36 +883,48 @@ it.each(["no-preference", "reduce"] as const)(
       const arrivals = () =>
         page.evaluate(
           () =>
-            (window as Window & { arrivals?: { frames: ComputedKeyframe[]; timing: EffectTiming }[] })
-              .arrivals ?? [],
+            (
+              window as Window & {
+                arrivals?: {
+                  reading: boolean;
+                  whole: boolean;
+                  motion: { frames: ComputedKeyframe[]; timing: EffectTiming };
+                }[];
+              }
+            ).arrivals ?? [],
         );
       await page.goto(`${ORIGIN}/?switch&motion=full&n=6`);
       const open = page.getByRole("button", { name: "Q3 plan" });
       await open.waitFor();
-      const boot = reducedMotion === "reduce" ? 0 : 2;
       await page.evaluate(
         () =>
           new Promise<void>((resolve) => {
             requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
           }),
       );
-      await expect.poll(async () => (await arrivals()).length).toBe(boot);
+      if (reducedMotion === "no-preference") {
+        await expect.poll(async () => new Set((await arrivals()).map(({ reading }) => reading)).size).toBe(2);
+      }
+      const boot = await arrivals();
+      if (reducedMotion === "reduce") expect(boot).toEqual([]);
+      expect(boot.some(({ whole }) => whole)).toBe(false);
 
       await open.click();
       await page.getByRole("heading", { name: "Q3 plan" }).waitFor();
-      expect(await arrivals()).toHaveLength(boot);
+      expect(await arrivals()).toEqual(boot);
 
       await page.getByRole("button", { name: "Calendar", exact: true }).click();
       await page.getByRole("heading", { name: "Calendar week" }).waitFor();
-      await expect.poll(async () => (await arrivals()).length).toBe(boot + 1);
+      await expect.poll(async () => (await arrivals()).length).toBe(boot.length + 1);
       await page.getByRole("button", { name: "Mail", exact: true }).click();
       await page.getByRole("heading", { name: "Q3 plan" }).waitFor();
-      await expect.poll(async () => (await arrivals()).length).toBe(boot + 3);
+      await expect.poll(async () => (await arrivals()).length).toBe(boot.length + 3);
 
-      const entries = await arrivals();
-      const [calendar, mail, reader] = entries.slice(boot);
+      const entries = (await arrivals()).slice(boot.length);
+      expect(entries.every(({ whole }) => whole)).toBe(true);
+      const [calendar, mail, reader] = entries.map(({ motion }) => motion);
       expect(mail).toEqual(calendar);
-      if (boot) expect(entries.slice(0, boot)).toEqual([mail, reader]);
+      for (const { reading, motion } of boot) expect(motion).toEqual(reading ? reader : mail);
       expect(reader?.timing.delay).toBe(2 * (mail?.timing.delay ?? 0));
       if (reducedMotion === "reduce") {
         expect(mail?.frames.map((frame) => frame.transform)).toEqual([undefined, undefined]);
@@ -896,7 +945,7 @@ it("anchors the reader menu when opened during Mail entry", async () => {
       const animate = Element.prototype.animate;
       Element.prototype.animate = function (...args: Parameters<typeof animate>) {
         const result = animate.apply(this, args);
-        if (this.matches(".fr-main > .fr-reading")) {
+        if (this.matches(".fr-main > .fr-reading > :first-child > *")) {
           result.pause();
           result.currentTime = 100;
         }
@@ -908,14 +957,17 @@ it("anchors the reader menu when opened during Mail entry", async () => {
     const button = page.getByRole("button", { name: "Resurface", exact: true });
     const reader = page.getByRole("region", { name: "Reading", exact: true });
     const entryPaused = () =>
-      reader.evaluate((node) => node.getAnimations().some((animation) => animation.playState === "paused"));
+      reader.evaluate((node) =>
+        node.getAnimations({ subtree: true }).some((animation) => animation.playState === "paused"),
+      );
     await expect.poll(entryPaused).toBe(true);
     await button.evaluate((node) => {
-      const column = node.closest('[aria-label="Reading"]')!;
+      const animatedPart = node.closest(".fr-reading > :first-child > *")!;
       node.addEventListener(
         "pointerdown",
         (event) => {
-          if (event.isTrusted) node.setAttribute("data-press-transform", getComputedStyle(column).transform);
+          if (event.isTrusted)
+            node.setAttribute("data-press-transform", getComputedStyle(animatedPart).transform);
         },
         { once: true },
       );

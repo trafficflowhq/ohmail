@@ -23,6 +23,7 @@ export type StoreFaultCode =
   | "origin_not_normalized" | "account_id_missing"
   | "pairing_not_recorded" | "pairing_still_held" | "pairing_still_listed" | "no_such_profile"
   | "wipe_queue_full" | "wipe_not_recorded" | "wipe_still_owed"
+  | "sign_out_notice_not_recorded"
   | "wake_queue_full" | "wake_not_recorded" | "wake_still_owed"
   | "sign_out_queue_full" | "sign_out_not_recorded" | "sign_out_still_owed"
   | "index_unreadable" | "purge_refused" | "index_not_removed"
@@ -75,6 +76,9 @@ export interface ServerProfile {
   flavor: string;
   /** The server-verified account this pairing opens — half of the mirror's owner key. */
   accountId: string;
+  /** The name shown in the server's Devices list, when the server provides it. */
+  deviceLabel?: string;
+  deviceId?: string;
   /**
    * `null` has two meanings and the origin tells them apart; both are states, neither an
    * error. On a paired origin: the pairing ended — a refusal cleared it, one scan re-pairs.
@@ -213,14 +217,24 @@ export interface PendingSignOut {
   /** The key the pairing enforced for that origin, or `null` where the trust store verifies it. */
   pin: string | null;
   refreshToken: string;
-  /** A browser-issued family must use the transport that refuses redirects. */
-  browser?: true;
+  /** The removal notice this request can settle. */
+  profileId?: string;
   /** When the sign-out could not be told, epoch milliseconds. */
   owedSince: number;
 }
 
 const SIGN_OUTS_KEY = `${PREFIX}.signouts`;
 const signOutKey = (id: string): string => `${PREFIX}.signout.${id}`;
+const SIGN_OUT_NOTICES_KEY = `${PREFIX}.signout-notices`;
+
+/** Enough to locate or replace a session, with no credential that can open it. */
+export interface SignOutNotice {
+  profileId: string;
+  origin: string;
+  deviceLabel?: string;
+  deviceId?: string;
+  previousSession?: string;
+}
 /** Eight sign-outs nobody heard is a phone that has been offline a long while; past it, none is kept. */
 const MAX_PENDING_SIGN_OUTS = 8;
 
@@ -333,6 +347,8 @@ export class ServerProfileStore {
         origin: p.origin,
         flavor: p.flavor,
         accountId: p.accountId,
+        ...(typeof p.deviceLabel === "string" && { deviceLabel: p.deviceLabel }),
+        ...(typeof p.deviceId === "string" && { deviceId: p.deviceId }),
         refreshToken: typeof p.refreshToken === "string" ? p.refreshToken : null,
         // Absent in every row written before the field, and absent is exactly right: those rows
         // hold no unanswered attempt, so their next rotation mints a fresh id and the server
@@ -384,6 +400,8 @@ export class ServerProfileStore {
    */
   add(input: {
     origin: string; flavor: string; accountId: string; refreshToken: string;
+    deviceLabel?: string;
+    deviceId?: string;
     /** See {@link ServerProfile.pin}. Omitted is `null` — an origin that needs no pin. */
     pin?: string | null;
     /** See {@link ServerProfile.apiBase}. Omitted is `null` — the API is at the origin. */
@@ -403,6 +421,8 @@ export class ServerProfileStore {
         origin: input.origin,
         flavor: input.flavor,
         accountId: input.accountId,
+        ...(input.deviceLabel && { deviceLabel: input.deviceLabel }),
+        ...(input.deviceId && { deviceId: input.deviceId }),
         refreshToken: input.refreshToken,
         // A fresh pairing is a fresh family: whatever attempt the OLD credential left unanswered
         // names a row on a family this token has nothing to do with, and carrying it forward
@@ -764,6 +784,44 @@ export class ServerProfileStore {
     });
   }
 
+  async signOutNotices(): Promise<SignOutNotice[]> {
+    const raw = await this.kv.get(SIGN_OUT_NOTICES_KEY);
+    if (raw === null) return [];
+    const rows: unknown = JSON.parse(raw);
+    if (!Array.isArray(rows)) return [];
+    return rows.filter((row): row is SignOutNotice => row !== null && typeof row === "object"
+      && typeof row.profileId === "string" && typeof row.origin === "string"
+      && (row.deviceLabel === undefined || typeof row.deviceLabel === "string")
+      && (row.deviceId === undefined || typeof row.deviceId === "string")
+      && (row.previousSession === undefined || typeof row.previousSession === "string"));
+  }
+
+  /** A retry in the queue can still resolve its own notice automatically. */
+  async unresolvedSignOutNotices(): Promise<SignOutNotice[]> {
+    const [notices, retries] = await Promise.all([this.signOutNotices(), this.pendingSignOuts()]);
+    return notices.filter((notice) => !retries.some((entry) => entry.profileId === notice.profileId));
+  }
+
+  markSignOutNotice(notice: SignOutNotice): Promise<void> {
+    return this.enqueue(async () => {
+      const rows = await this.signOutNotices();
+      const current = { ...rows.find((row) => row.profileId === notice.profileId), ...notice };
+      await this.kv.set(SIGN_OUT_NOTICES_KEY, JSON.stringify([...rows.filter((row) => row.profileId !== notice.profileId), current]));
+      if (!(await this.signOutNotices()).some((row) => row.profileId === current.profileId
+        && row.origin === current.origin && row.previousSession === current.previousSession && row.deviceId === current.deviceId)) {
+        throw new StoreFault("sign_out_notice_not_recorded", "this phone could not record an unfinished sign-out");
+      }
+    });
+  }
+
+  clearSignOutNotice(profileId: string): Promise<void> {
+    return this.enqueue(async () => {
+      const rows = await this.signOutNotices();
+      if (!rows.some((row) => row.profileId === profileId)) return;
+      await this.kv.set(SIGN_OUT_NOTICES_KEY, JSON.stringify(rows.filter((row) => row.profileId !== profileId)));
+    });
+  }
+
   /* ── the owed SIGN-OUTS (see {@link PendingSignOut}) ──────────────────────────────────── */
 
   private async signOutIds(): Promise<string[]> {
@@ -782,7 +840,8 @@ export class ServerProfileStore {
         || typeof p.owedSince !== "number") return null;
       return {
         id, origin: p.origin, pin: typeof p.pin === "string" ? p.pin : null, refreshToken: p.refreshToken,
-        owedSince: p.owedSince, ...(p.browser === true ? { browser: true as const } : {}),
+        owedSince: p.owedSince,
+        ...(typeof p.profileId === "string" && { profileId: p.profileId }),
       };
     } catch {
       return null;
@@ -800,7 +859,7 @@ export class ServerProfileStore {
    * is written ({@link add}'s order: a name with no value is skipped, a token nothing names is not
    * reachable). A full list refuses and records nothing; so does a token already owed.
    */
-  markPendingSignOut(input: Pick<PendingSignOut, "origin" | "pin" | "refreshToken" | "browser">): Promise<PendingSignOut> {
+  markPendingSignOut(input: Pick<PendingSignOut, "origin" | "pin" | "refreshToken" | "profileId">): Promise<PendingSignOut> {
     return this.enqueue(async () => {
       const ids = await this.signOutIds();
       const held = (await Promise.all(ids.map((id) => this.readSignOut(id))))
@@ -938,6 +997,7 @@ export class ServerProfileStore {
       } catch {
         /* names whose values are gone name nothing */
       }
+      await this.kv.remove(SIGN_OUT_NOTICES_KEY).catch(() => undefined);
       /* AND THE UNFINISHED REMOVAL. This runs when the app CONTAINER is new, which is where the
          engine store lived — so the removal it records has been completed by the uninstall, and a
          record kept past that would refuse the first mailbox of a fresh install for ever. */

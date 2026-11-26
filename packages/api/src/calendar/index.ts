@@ -144,7 +144,9 @@ export const calendarRoutes: Route[] = [
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
-      const { answer: answered, seq } = await retryCalendarWrite(serviceContext(deps, req), params.id!);
+      const body = await readBody<{ resendReply?: unknown } | null>(req);
+      const resendKey = body?.resendReply === true ? writeKeyOf(req) : undefined;
+      const { answer: answered, seq } = await retryCalendarWrite(serviceContext(deps, req), params.id!, resendKey);
       return answer<"POST /calendar/writes/:id/retry">()(writesFor(req, deps, answered), { seq });
     },
   },

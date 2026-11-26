@@ -94,32 +94,39 @@ export interface CalendarNoticeInput {
 export type CalendarNoticeHook = (input: CalendarNoticeInput) => Promise<{ readonly live: boolean }>;
 
 /**
- * A reading still open, in this process only: where its next page starts and what its pages named.
- * Nothing of it is durable. A crash, a restart or a connection that has to wait discards it whole,
- * and the next turn reads again from the token the calendar row keeps, which moves only when a
- * reading ends.
+ * A reading still open. Its next page and bounded recurrence state are checkpointed at the end
+ * of each turn. The calendar's provider token moves only when the reading ends.
  */
 export interface OpenReading {
   /** The connection it is read for: one that waits, or that the roster no longer hands over, gives up the places its readings hold. */
   readonly connectionId: string;
+  owner: string;
+  readonly generation: string;
+  readonly calendarToken: string | null;
+  readonly credentialGeneration: string | null;
   /** The stored token this reading started from, or `null`; a reading is only resumed from the same one. */
   readonly since: string | null;
   /** The `more` cursor of the next page, or `null` before the first. */
   cursor: string | null;
+  /** The last page was checkpointed with its seen marks. Only final reconciliation remains. */
+  end: { readonly token: string | null; readonly unchanged: boolean; readonly refreshMs: number | null } | null;
   mode: "delta" | "whole" | null;
   /** The database's own `now()` when the reading began: a row written after it is never dropped. */
   readonly startedAt: Date;
-  /** Digests of every id a page of this reading named, as an upsert, a `gone` or a `left`. */
-  readonly named: Set<bigint>;
   /** Changed days cancelled by a page before their series was stored, applied at the reading's end. */
   readonly heldCancellations: { readonly uid: string; readonly key: string; readonly time: import("@ohmail/cal-core").EventTime }[];
   /** Microsoft: the window asked for, the days its pages showed, and the series they carried. */
   readonly window: { readonly start: number; readonly end: number } | null;
-  readonly seen: Map<string, Set<string>>;
+  readonly seen: Map<string, Map<string, Set<string | null>>>;
   readonly masters: Map<string, CalEvent>;
-  pages: number;
+  /** Pages accepted so far, including pages that carry records already held. */
+  pagesRead: number;
+  /** A bounded cycle detector for opaque provider cursors. */
+  cycle: { anchor: string | null; span: number; steps: number };
+  seenCount: number;
+  recurrenceChars: number;
   changed: number;
-  /** A `gone` named a day of a series (Microsoft: an id nobody stores, or a changed day's own): the window is read whole again. */
+  /** Graph needs a whole window read to reconcile a removal or an unordered reply. */
   unknownGone: boolean;
   /** Something in this reading could not be compared or kept, so nothing is dropped at its end. */
   noDrop: boolean;
@@ -163,8 +170,8 @@ export interface CalendarSyncMemory {
   readonly unlisted: Map<string, ReadonlySet<string>>;
   /** When a calendar was last forced to read its window whole again (Microsoft's unknown `gone`), epoch ms. */
   readonly forcedAt: Map<string, number>;
-  /** Calendars whose last whole reading would have dropped most of what is stored; the second one drops. */
-  readonly massDrop: Map<string, true>;
+  /** The fingerprint of a calendar's proposed mass deletion, including the reading window. */
+  readonly massDrop: Map<string, string>;
   /** Letters whose Outlook Web App link was looked up, by connection and message id: failed lookups so far, or the most for one settled. */
   readonly exchangeLookups: Map<string, number>;
   /** When each connection last looked at its letters for such links, epoch ms. */

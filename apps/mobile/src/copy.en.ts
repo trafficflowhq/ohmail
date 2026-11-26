@@ -14,6 +14,8 @@ import type { BackupExclusion } from "./engine/backup-exclusion";
 import type { UnsubSaid, UnsubToast } from "./state/unsub-arms";
 import { isPinFailure } from "./net/host-pinning";
 
+export const PAIRING_DEVICE_NAMES = { "mobile-ios": "iPhone", "mobile-android": "Android" };
+
 /** Hoisted for {@link PIN_CHANGED}'s reason: `bootMigratingOf` counts under this sentence. */
 const BOOT_MIGRATING = "Updating the mail store on this phone…";
 
@@ -611,6 +613,16 @@ const TABLE = {
     "Removing it hands the mailbox back, stops ohmail from filing it here, and deletes the mail this phone had copied. The mailbox on your mail server is untouched.",
   /** A take-back that did not fully land says what remains and what will happen next. */
   serversForgetFailed: (reason: string) => reason,
+  serversSignOutPending: "Sign-out needs your attention",
+  serversSignOutDevice: (origin: string, label: string, id: string) =>
+    `On ${origin}, open Settings → Devices and revoke “${label}” with device ID ${id} if it’s still listed.`,
+  serversSignOutById: (origin: string, id: string) =>
+    `On ${origin}, open Settings → Devices and revoke the device with ID ${id} if it’s still listed.`,
+  serversSignOutLegacy: (origin: string) =>
+    `Sign in again on this phone to the same account on ${origin}. If you can’t confirm the old session ended, change your password under Settings → Security to end the other sessions.`,
+  serversSignOutRecovery: (origin: string) =>
+    `From another signed-in device, change your password under Settings → Security on ${origin} to end the other sessions.`,
+  serversSignOutDone: "I checked Devices",
   serversEmpty: "No pairings yet.",
   /**
    * THE FRESH INSTALL WHOSE PURGE WAS REFUSED — a state with no good outcome, said plainly.
@@ -1014,8 +1026,8 @@ const TABLE = {
     + "this phone, remove it there.",
   /** The server was out of reach, and the sign-out is kept for the next time it is not. */
   forgetServerOwed:
-    "The pairing and the mail this phone had copied are gone. The server could not be reached to "
-    + "end the session; this phone tells it the next time it reaches it.",
+    "The pairing and the mail this phone had copied are gone. The server hasn’t confirmed sign-out. "
+    + "This phone will retry. You can also revoke this device from the server’s Devices list.",
   forgetClaimStands: (minutes: number) =>
     "The mailbox and its mail are gone from this phone. Its claim on the mailbox could not be "
     + `given back, so another machine can take the mailbox in about ${minutes} minutes.`,
@@ -1308,6 +1320,7 @@ const TABLE = {
       case "wipe_queue_full": return "this phone already has more unfinished deletions than it can record";
       case "wipe_not_recorded": return "this phone could not record that the copied mail is owed a deletion";
       case "wipe_still_owed": return "this phone still records a deletion owed for that mailbox";
+      case "sign_out_notice_not_recorded": return "this phone could not save the unfinished sign-out notice";
       case "wake_queue_full": return "this phone already has more unfinished wake removals than it can record";
       case "wake_not_recorded": return "this phone could not record that the wake registration is owed a removal";
       case "wake_still_owed": return "this phone still records a wake removal owed for that registration";

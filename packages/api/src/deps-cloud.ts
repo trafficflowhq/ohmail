@@ -194,6 +194,7 @@ export interface AlertsConfig {
   shards?: readonly number[];
   /** Overrides for the arch doc's thresholds. Tests use tiny values; production uses none. */
   thresholds?: Partial<AlertThresholds>;
+  signalSource?: EvaluateOptions["signalSource"];
   /**
    * THE TWO POPULATIONS THE RULES CANNOT READ FROM THIS DATABASE — who is parked, and who is at
    * their storage cap. Both arrive as readers the host composes. The parked reader is the one

@@ -65,6 +65,7 @@ function testEnv(deviceKind?: MobileDeviceKind, clientRelease?: string): { env: 
     env: {
       profiles: new ServerProfileStore(memoryKV()),
       engineDeps: deps,
+      fetchImpl: (url, init) => fetch(url, init as RequestInit),
       ...(deviceKind ? { deviceKind } : {}),
       ...(clientRelease ? { clientRelease } : {}),
     },
@@ -1169,6 +1170,7 @@ describe("the stored profile's lifecycle over the rotation machine", () => {
       const env: PairingEnv = {
         profiles: failing,
         engineDeps: { openExecutor: world.open, deleteDatabase: world.drop, uuid: () => "00000000-0000-4000-8000-000000000000" },
+        approvalFetchImpl: (url, init) => fetch(url, init as RequestInit),
       };
       const outcome = await pairThroughConfirm(env, { origin, token: "tok-1" });
       expect(outcome.kind).toBe("refused");
@@ -1211,6 +1213,7 @@ describe("the stored profile's lifecycle over the rotation machine", () => {
       const env: PairingEnv = {
         profiles: new ServerProfileStore(kv),
         engineDeps: { openExecutor: world.open, deleteDatabase: world.drop, uuid: () => "00000000-0000-4000-8000-000000000000" },
+        approvalFetchImpl: (url, init) => fetch(url, init as RequestInit),
         bearers: new BearerRegistry(),
       };
       const first = await pairThroughConfirm(env, { origin, token: "tok-1" });
@@ -1244,8 +1247,7 @@ describe("the stored profile's lifecycle over the rotation machine", () => {
       if (paired.kind !== "paired") return;
       paired.session.store.close();
 
-      // The stored profile holds only a refresh token; the revocation spends it into an
-      // access token through the manager's own recovery, then signs out.
+      // The live manager uses its held access token for sign-out.
       const profile = (await env.profiles.active())!;
       await revokeProfile(env, profile);
       const logouts = fake.seen.filter((r) => r.url === "/auth/logout");

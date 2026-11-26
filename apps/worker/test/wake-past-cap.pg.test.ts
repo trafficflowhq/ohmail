@@ -160,8 +160,7 @@ describe("the wake cap", () => {
     const l = await seedMailbox(db);
     const u = await seedMailbox(db);
     const names = new Map([[h.mailboxId, "H"], [l.mailboxId, "L"], [u.mailboxId, "U"]]);
-    // TWO lanes: H parked in one, L and U contend for the other. L is woken first, so the pass
-    // admits H and L and U waits its turn behind L's in-cap revisits.
+    // H holds one lane. Queue U while L still holds the other, then keep waking L as it releases.
     const worker = await startWorker(cfgFor(fleet, { cycleLanes: 2 }));
     closers.push(() => worker.stop());
     await waitFor(() => worker.stats().mailboxes === 3, 20_000, "every mailbox attached");
@@ -172,7 +171,13 @@ describe("the wake cap", () => {
     const uStarts = fleet.indicesOf(u.mailboxId, "sync_start").length;
 
     const releaseH = parkSync(fleet, h.mailboxId);
-    releases.push(releaseH);
+    const releaseL = parkSync(fleet, l.mailboxId);
+    releases.push(releaseH, releaseL);
+    fleet.signal.get(h.mailboxId)!();
+    fleet.signal.get(l.mailboxId)!();
+    await waitFor(() => fleet.syncInFlight === 2, 20_000, "H and L hold both lanes");
+    fleet.signal.get(u.mailboxId)!();
+    expect(fleet.indicesOf(u.mailboxId, "sync_start")).toHaveLength(uStarts);
     let ringing = true;
     const ringer = (async () => {
       while (ringing) {
@@ -182,11 +187,11 @@ describe("the wake cap", () => {
       }
     })();
     try {
-      fleet.signal.get(h.mailboxId)!();
-      await waitFor(() => fleet.syncInFlight >= 1, 20_000, "a lane parked inside H's batch");
+      releaseL();
       await waitFor(() => fleet.indicesOf(u.mailboxId, "sync_start").length > uStarts, 10_000,
         `U's turn while H is parked — a woken mailbox past the cap took the lane U was waiting for ` +
         `— trace: ${fleet.describeTrace(names)}`);
+      expect(fleet.syncInFlight).toBeGreaterThanOrEqual(1);
     } finally {
       ringing = false;
       await ringer;

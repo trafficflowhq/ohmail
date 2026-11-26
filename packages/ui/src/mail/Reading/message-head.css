@@ -706,7 +706,6 @@
   }
 
   .oh-messagehead-address {
-    container-type: normal;
     flex: none;
     inline-size: 100%;
     max-width: 100%;

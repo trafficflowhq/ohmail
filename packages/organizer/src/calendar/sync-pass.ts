@@ -1,8 +1,8 @@
 /**
  * THE CALENDAR'S SYNC: one turn of one connection. In order: the account's binding, the two gates
- * (the account's calendar is on, the provider is served here), the sign-in, the writes owed to the
- * provider, the list of calendars, and each due calendar's reading, in pages, each written in its
- * own short transactions so that a first read never holds the person's mail.
+ * (the account's calendar is on, the provider is served here), the sign-in, the calendar listing
+ * and verified provider identity, then queued writes and due reads. Pages settle in short
+ * transactions so that a first read never holds the person's mail.
  *
  * Nothing is dialled and nothing is decrypted before both gates said yes. A provider is reached
  * only through the request port it was made with; the rows a turn writes take their account and
@@ -12,15 +12,16 @@
 import { calendarKey, type ProviderWord } from "@ohmail/cal-providers";
 import { and, eq, ne, or, isNull, sql } from "drizzle-orm";
 import { calCalendars, calConnections } from "@trafficflow/db";
-import { organizerPrincipalAddress, ownOrganizerAddresses, publishCalendarOrganizerChanges } from "@trafficflow/db/calendar";
+import { oauthIdentityAmbiguous, organizerPrincipalAddress, ownOrganizerAddresses, publishCalendarOrganizerChanges } from "@trafficflow/db/calendar";
 import { applyListing, mergeDuplicateCalendars, pruneUnlistedCalendars, storedCalendars, type DuplicateCalendar, type StoredCalendar } from "./calendars.js";
-import { inConnection, passDb, type ConnectionDb, type ConnectionKey } from "./connection.js";
+import { credentialBound, inConnection, passDb, type ConnectionDb, type ConnectionKey } from "./connection.js";
 import { exchangeInvitationPass } from "./exchange-invitations.js";
 import { releaseReadings, remember } from "./memory.js";
 import { holdCalendar, readCalendar, type ReadingContext, type TurnBudget } from "./reading.js";
 import { CalendarKeyRingFault, openPassSignIn, sealedCredentialOf, type PassSignIn } from "./sign-in.js";
 import { calendarEnabledAt, holdCalendarUntil, holdConnectionUntil, setConnectionState } from "./state.js";
 import type { CalendarSyncDeps, CalendarSyncOutcome, DueConnection } from "./types.js";
+import { checkOutlookReplies } from "./write-reply-check.js";
 import {
   FAILING_FROM, LIST_EVERY_MS, OFF_RECHECK_MS, PAGE_LINK_RESET_AFTER, READING_PLACE_WAIT_MS, TURN_MS, TURN_PAGES, WAIT_DAY_MS, WORD_PLAN,
   actsOnConnection, doublingWait, faultWord, turnOverdue, waitFor, type CalendarSyncFault,
@@ -28,6 +29,17 @@ import {
 
 const PROVIDER_WORDS: ReadonlySet<string> = new Set<ProviderWord>(["google", "caldav", "microsoft", "ics"]);
 export const isProviderWord = (word: string): word is ProviderWord => PROVIDER_WORDS.has(word);
+
+/** CalDAV can move a principal between hosts. A path alone is only meaningful on the same origin. */
+function sameCalDavPrincipal(
+  stored: string, found: string, before: readonly string[] | null, discovered: readonly string[],
+): boolean {
+  if (stored === found) return true;
+  if (calendarKey("caldav", stored) !== calendarKey("caldav", found)) return false;
+  const oldOrigin = URL.parse(stored)?.origin;
+  const newOrigin = URL.parse(found)?.origin;
+  return (oldOrigin !== undefined && oldOrigin === newOrigin) || discovered.some((address) => before?.includes(address));
+}
 
 /** One more failure in a row of `id`, and how many that makes. */
 function failed(deps: CalendarSyncDeps, id: string): number {
@@ -67,7 +79,8 @@ async function openMoveDestination(
   if (destination === "gone" || !destination) return null;
   const key = { accountId: source.accountId, id: destination.connectionId };
   const gate = await inConnection(db, key, async ({ tx, held }) => {
-    if (!isProviderWord(held.provider) || held.provider === "ics" || await calendarEnabledAt(tx, key.accountId) === null) return null;
+    if (!isProviderWord(held.provider) || held.provider === "ics" || oauthIdentityAmbiguous(held.provider, held.organizerAddresses) ||
+        await calendarEnabledAt(tx, key.accountId) === null) return null;
     const [calendar] = await tx.select({ id: calCalendars.providerId }).from(calCalendars).where(and(
       eq(calCalendars.accountId, key.accountId), eq(calCalendars.connectionId, key.id), eq(calCalendars.id, calendarId),
       eq(calCalendars.access, "owner"),
@@ -98,7 +111,7 @@ async function markMoveDue(db: ConnectionDb, key: ConnectionKey, calendarId: str
 }
 
 async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSignal): Promise<CalendarSyncOutcome> {
-  const db = passDb(deps.db, c.accountId);
+  const account = passDb(deps.db, c.accountId);
   const key: ConnectionKey = { accountId: c.accountId, id: c.id };
   /** The worker is stopping. A call its stop ended answers `timeout` like a late one: that word is never written. */
   const stopping = (): boolean => deps.halted() || (signal.aborted && !turnOverdue(signal));
@@ -106,7 +119,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
 
   const word = isProviderWord(c.provider) ? c.provider : null;
   const provider = word === null ? null : deps.providers.get(word);
-  const gate = await inConnection(db, key, async ({ tx, held }) => {
+  const gate = await inConnection(account, key, async ({ tx, held }) => {
     const on = await calendarEnabledAt(tx, key.accountId);
     if (on === null || word === null || provider === null) {
       await holdConnectionUntil(tx, key, new Date(deps.clock.now() + OFF_RECHECK_MS));
@@ -115,8 +128,13 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
       await setConnectionState(tx, key, held, { status: held.status, errorCode: "provider_off", synced: false });
       return { kind: "provider_off" as const };
     }
+    const [replyClock] = word === "microsoft" && deps.drainWrites !== undefined
+      ? await tx.select({ startedAt: sql<string>`clock_timestamp()::text` }).from(calConnections)
+        .where(and(eq(calConnections.id, key.id), eq(calConnections.accountId, key.accountId)))
+      : [];
     return {
       kind: "open" as const, held,
+      repliesBefore: replyClock?.startedAt,
       sealed: await sealedCredentialOf(tx, key, word),
       calendars: await storedCalendars(tx, key),
       own: await ownOrganizerAddresses(tx, key.accountId, held.principal),
@@ -128,10 +146,16 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   const w = word!;
   const p = provider!;
 
-  const opened = await openPassSignIn(deps, { db, key }, gate.sealed, gate.held, w, p);
-  if (!opened.ok) return settleConnection(deps, db, key, null, opened.word, null);
+  const opened = await openPassSignIn(deps, { db: account, key }, gate.sealed, gate.held, w, p);
+  if (!opened.ok) return settleConnection(deps, account, key, null, opened.word, null);
   const signIn = opened.signIn;
+  const db = credentialBound(account, key, signIn.stillStored);
+  const interrupted = () => ({ kind: signIn.superseded() ? "superseded" as const : "gone" as const });
 
+  const oauth = w === "google" || w === "microsoft";
+  let principal = gate.held.principal;
+  let identityAmbiguous = oauthIdentityAmbiguous(w, gate.held.organizerAddresses);
+  let owners = gate.own;
   let changed = 0;
   let calendars = gate.calendars;
   let missing: readonly string[] | null = null;
@@ -143,7 +167,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   // A subscription is one calendar whose id never changes, and listing it fetches its whole file: it is
   // listed once, while it has no row, and from then on asked only as often as the file itself wishes.
   const listsAgain = w !== "ics" && deps.clock.now() - listedAt >= LIST_EVERY_MS;
-  if (w === "caldav" && (listsAgain || gate.held.organizerAddresses === null)) {
+  if (w === "caldav" && (listsAgain || gate.held.organizerAddresses === null || principal === null)) {
     const identity = await p.reader.checkSignIn(signIn.connection, signal);
     if (stopping()) return { kind: "halted" };
     if (signIn.superseded()) return { kind: "superseded" };
@@ -154,25 +178,66 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
       const address = organizerPrincipalAddress(value);
       return address && address.length <= 254 && !/[\s<>?,]/.test(address) ? [address] : [];
     }))].sort().slice(0, 32);
+    const found = identity.ok ? identity.value.principal : null;
     const refreshed = await inConnection(db, key, async ({ tx, held }) => {
-      if (!await signIn.stillStored(tx)) return "superseded";
-      if (JSON.stringify(held.organizerAddresses) !== JSON.stringify(addresses)) {
-        await tx.update(calConnections).set({ organizerAddresses: addresses })
+      if (found !== null && held.principal !== null && !sameCalDavPrincipal(held.principal, found, held.organizerAddresses, addresses)) {
+        return "different_account";
+      }
+      const bound = found ?? held.principal;
+      if (held.principal !== bound || JSON.stringify(held.organizerAddresses) !== JSON.stringify(addresses)) {
+        await tx.update(calConnections).set({ principal: bound, organizerAddresses: addresses })
           .where(and(eq(calConnections.accountId, key.accountId), eq(calConnections.id, key.id)));
         await publishCalendarOrganizerChanges(tx, key.accountId, key.id, held.organizerAddresses ?? [], addresses);
       }
-      return "kept";
+      return bound;
     }, { lock: "no key update" });
-    if (refreshed !== "kept") return { kind: refreshed };
+    if (refreshed === "gone") return interrupted();
+    if (refreshed === "different_account") return settleConnection(deps, db, key, signIn, "sign_in_refused", null);
     if (!identity.ok) return settleConnection(deps, db, key, signIn, identity.reason, identity.retryAfterMs);
+    if (found === null && refreshed !== null) return settleConnection(deps, db, key, signIn, "unreadable", null);
+    principal = refreshed;
   }
   if (calendars.length === 0 || listsAgain) {
     const listed = await p.reader.listCalendars(signIn.connection, signal);
     if (stopping()) return { kind: "halted" };
     if (signIn.superseded()) return { kind: "superseded" };
     if (!listed.ok) return settleConnection(deps, db, key, signIn, listed.reason, listed.retryAfterMs);
+    if (oauth && listed.principal !== undefined) {
+      const found = listed.principal;
+      const ambiguous = found === null;
+      if (found !== null && principal !== null && found !== principal) {
+        return settleConnection(deps, db, key, signIn, "sign_in_refused", null);
+      }
+      if (identityAmbiguous !== ambiguous || (found !== null && principal !== found)) {
+        const refreshed = await inConnection(db, key, async ({ tx, held }) => {
+          if (found !== null && held.principal !== null && held.principal !== found) return "different_account";
+          const bound = found ?? held.principal;
+          const marked = oauthIdentityAmbiguous(w, held.organizerAddresses);
+          if (bound !== held.principal || marked !== ambiguous) {
+            await tx.update(calConnections).set({ principal: bound, organizerAddresses: ambiguous ? [] : null })
+              .where(and(eq(calConnections.accountId, key.accountId), eq(calConnections.id, key.id)));
+            if (!ambiguous) {
+              // Even unchanged revisions need their attendee projected for the newly verified identity.
+              await tx.update(calCalendars).set({ syncToken: null, nextPollAt: null, readCheckpoint: null, readOwner: null })
+                .where(and(eq(calCalendars.accountId, key.accountId), eq(calCalendars.connectionId, key.id)));
+            }
+            await publishCalendarOrganizerChanges(tx, key.accountId, key.id,
+              held.principal === null ? [] : [held.principal], bound === null ? [] : [bound], marked !== ambiguous);
+          }
+          return { principal: bound, calendars: await storedCalendars(tx, key), owners: await ownOrganizerAddresses(tx, key.accountId, bound) };
+        }, { lock: "no key update" });
+        if (refreshed === "gone") return interrupted();
+        if (refreshed === "different_account") return settleConnection(deps, db, key, signIn, "sign_in_refused", null);
+        principal = refreshed.principal;
+        identityAmbiguous = ambiguous;
+        calendars = refreshed.calendars;
+        owners = refreshed.owners;
+        releaseReadings(deps.memory, key.id);
+      }
+      if (ambiguous && principal !== null) return settleConnection(deps, db, key, signIn, "unreadable", null);
+    }
     const applied = await applyListing(listingContext, listed.value, calendars, (id) => calendarKey(w, id));
-    if (!applied.ok) return { kind: applied.why };
+    if (!applied.ok) return applied.why === "gone" ? interrupted() : { kind: applied.why };
     remember(deps.memory.listedAt, key.id, deps.clock.now());
     freshList = true;
     changed += applied.changed;
@@ -182,8 +247,9 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
 
   // A due listing refreshes access before the drain checks each queued write.
   let drainNext: Date | null = null;
-  if (deps.drainWrites !== undefined) {
+  if (deps.drainWrites !== undefined && !identityAmbiguous && (w === "ics" || principal !== null)) {
     const drained = await deps.drainWrites({ db, key, provider: p, connection: signIn.connection, signal, moveDestination: (calendarId) => openMoveDestination(deps, db, calendarId, key, signIn) });
+    if (signIn.superseded()) return { kind: "superseded" };
     const asked = drained.nextAttemptAt;
     // A time no clock holds would make this turn's settle throw, every turn: such an answer asks for nothing.
     drainNext = asked !== null && Number.isFinite(asked.getTime()) ? asked : null;
@@ -195,25 +261,27 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
 
   if (missing !== null) {
     const merged = await mergeDuplicateCalendars(listingContext, duplicates);
-    if (!merged.ok) return { kind: merged.why };
+    if (!merged.ok) return merged.why === "gone" ? interrupted() : { kind: merged.why };
     changed += merged.changed;
     const pruned = await pruneUnlistedCalendars(listingContext, missing);
-    if (!pruned.ok) return { kind: pruned.why };
+    if (!pruned.ok) return pruned.why === "gone" ? interrupted() : { kind: pruned.why };
     changed += pruned.changed;
     const again = await inConnection(db, key, ({ tx }) => storedCalendars(tx, key));
-    if (again === "gone") return { kind: "gone" };
+    if (again === "gone") return interrupted();
     calendars = again;
   }
 
   const turn = deps.turn ?? { pages: TURN_PAGES, ms: TURN_MS };
   const budget: TurnBudget = { pagesLeft: turn.pages, deadline: deps.clock.now() + turn.ms };
   const reading: ReadingContext = {
-    deps, db, key, word: w, provider: p, signIn, signal, budget, map: { zones: deps.zones, ownAddresses: gate.own, principal: gate.held.principal },
+    deps, db, key, word: w, provider: p, signIn, signal, budget,
+    map: { zones: deps.zones, ownAddresses: identityAmbiguous ? new Set<string>() : owners, principal },
   };
   let pages = 0;
   let dropped = 0;
   let read = 0;
   let more = false;
+  const completed: string[] = [];
   /** A calendar's reading found no place to be kept: it stays due, and the connection looks again shortly. */
   let crowded = false;
   for (const cal of calendars) {
@@ -226,8 +294,9 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
       more = true;
       break;
     }
-    const r = await readCalendar(reading, cal);
-    if (r.kind === "gone" || r.kind === "halted" || r.kind === "superseded") return { kind: r.kind };
+    const r = await readCalendar({ ...reading, map: { ...reading.map, ownCalendar: cal.access === "owner" } }, cal);
+    if (r.kind === "gone") return interrupted();
+    if (r.kind === "halted" || r.kind === "superseded") return { kind: r.kind };
     pages += r.pages;
     changed += r.changed;
     if (r.kind === "more") {
@@ -239,6 +308,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
       continue;
     }
     if (r.kind === "done") {
+      if (gate.repliesBefore !== undefined) completed.push(cal.id);
       read += 1;
       dropped += r.dropped;
       deps.memory.failures.delete(`calendar:${cal.id}`);
@@ -250,7 +320,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
       const retryHost = w === "caldav" && r.word === "host_changed" && r.continuing === true;
       return settleConnection(deps, db, key, signIn, r.word, r.retryAfterMs, retryHost ? cal.id : null);
     }
-    if (await settleCalendar(deps, db, key, cal, r.word, r.retryAfterMs) === "gone") return { kind: "gone" };
+    if (await settleCalendar(deps, db, key, cal, r.word, r.retryAfterMs) === "gone") return interrupted();
   }
 
   const settled = await inConnection(db, key, async ({ tx, held }) => {
@@ -272,12 +342,22 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     await holdConnectionUntil(tx, key, new Date(at));
     await setConnectionState(tx, key, held, { status: "active", errorCode: null, synced: freshList || read > 0 });
   }, { lock: "no key update" });
-  if (settled === "gone") return { kind: "gone" };
+  if (settled === "gone") return interrupted();
   deps.memory.failures.delete(key.id);
+
+  const replyWait = gate.repliesBefore !== undefined && completed.length > 0 && !identityAmbiguous && principal !== null && !stopping()
+    ? await checkOutlookReplies({ db, key, provider: p, connection: signIn.connection, signal }, reading.map, gate.repliesBefore, completed)
+    : undefined;
+  if (replyWait !== undefined) {
+    await inConnection(db, key, async ({ tx, held }) => {
+      const until = Math.max(held.nextPollAt?.getTime() ?? 0, deps.clock.now() + replyWait);
+      await holdConnectionUntil(tx, key, new Date(until));
+    }, { lock: "no key update" });
+  }
 
   // Invitations that came as an Outlook Web App link are looked up in this connection's own calendar.
   // What it finds or fails at is no part of the turn's outcome.
-  if (!more && p.invitations !== undefined && !stopping()) {
+  if (replyWait === undefined && !more && p.invitations !== undefined && !stopping()) {
     try {
       await exchangeInvitationPass({
         db, key, provider: p, connection: signIn.connection, memory: deps.memory, zones: deps.zones,
@@ -288,7 +368,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     }
   }
 
-  if (!more && deps.notices !== undefined && read > 0) {
+  if (replyWait === undefined && !more && deps.notices !== undefined && read > 0) {
     const live = calendars.filter((cal) => cal.errorCode !== "ended").map((cal) => ({ id: cal.id, providerId: cal.providerId }));
     await deps.notices({ db, key, provider: p, connection: signIn.connection, calendars: live, signal });
   }
@@ -305,14 +385,13 @@ async function settleConnection(
   retryHostFor: string | null = null,
 ): Promise<CalendarSyncOutcome> {
   const fault = faultWord(reason);
-  const fromTrade = signIn?.tradeRefusal()?.reason === fault;
-  let act = WORD_PLAN[fault];
-  if (fromTrade && fault === "sign_in_refused") act = "retry";
+  const registrationRefused = fault === "sign_in_refused" && signIn?.tradeRefusal()?.reason === fault;
+  const timing = registrationRefused ? "unavailable" : fault;
+  let act = WORD_PLAN[timing];
   if (act === "calendar_day" || act === "calendar_retry") act = "connection_day";
   const now = deps.clock.now();
   const outcome = await inConnection(db, key, async ({ tx, held }): Promise<CalendarSyncOutcome> => {
     if (act === "reconnect" || act === "ended") {
-      if (signIn !== null && !(await signIn.stillStored(tx))) return { kind: "superseded" };
       await holdConnectionUntil(tx, key, new Date(now + WAIT_DAY_MS));
       await setConnectionState(tx, key, held, { status: "reconnect", errorCode: fault, synced: false });
       return { kind: "stopped", word: fault };
@@ -325,14 +404,14 @@ async function settleConnection(
     // A first page can succeed every time a refused continuation starts over.
     const retryHost = retryHostFor !== null;
     const failures = retryHost ? failed(deps, `host:${retryHostFor}`) : act === "retry" ? failed(deps, key.id) : FAILING_FROM;
-    const until = now + (retryHost && failures < FAILING_FROM ? doublingWait(failures) : waitFor(fault, failures, retryAfterMs));
+    const until = now + (retryHost && failures < FAILING_FROM ? doublingWait(failures) : waitFor(timing, failures, retryAfterMs));
     await holdConnectionUntil(tx, key, new Date(until));
     await setConnectionState(tx, key, held, {
       status: failures >= FAILING_FROM ? "failing" : held.status, errorCode: fault, synced: false,
     });
     return { kind: "backed_off", word: fault, untilMs: until };
   }, { lock: "no key update" });
-  return outcome === "gone" ? { kind: "gone" } : outcome;
+  return outcome === "gone" ? { kind: signIn?.superseded() ? "superseded" : "gone" } : outcome;
 }
 
 /** A word that acts on one calendar: its copy stays, its word is shown, and it waits. */

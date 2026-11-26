@@ -84,6 +84,16 @@ const fetchedIds = (a: { batchCalls: string[][]; bodyCalls: string[] }): string[
   [...a.batchCalls.flat(), ...a.bodyCalls];
 
 describe("eager recent-window hydration", () => {
+  it("warms forty bodies in one request only when the peer accepts that size", async () => {
+    const messages = Array.from({ length: 40 }, (_, i) => msg({ id: `body-${i}` }));
+    const adapter = { ...adapterOf(messages), bodyPreloadLimit: () => 40 };
+    const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore(), now: () => NOW, eagerBodies: true });
+    await engine.start();
+    await engine.prefetchRecentBodies();
+    expect(adapter.batchCalls.map((batch) => batch.length)).toEqual([40]);
+    expect(new Set(fetchedIds(adapter))).toEqual(new Set(messages.map((m) => m.id)));
+  });
+
   it("after a drain settles, every mirror message's body is hydrated in the background", async () => {
     const messages = ["m1", "m2", "m3", "m4", "m5"].map((id) => msg({ id }));
     const adapter = adapterOf(messages);

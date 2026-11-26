@@ -6,6 +6,11 @@ import { pgTlsOptions } from "@trafficflow/db/cloud";
 /** Fixed application-wide advisory-lock key for the single-active-worker guarantee. */
 export const LEADER_LOCK_KEY = 4207270001n;
 
+// The two-key form cannot collide with any shard's single-key advisory lock.
+// The fleet operator uses the same pair in exclusive mode for a width change.
+const TOPOLOGY_LOCK_CLASS = 420727;
+const TOPOLOGY_LOCK_ID = 1;
+
 /**
  * The SHARD seam. One process serves one shard of accounts and holds that
  * shard's OWN leader lock, so `shards` processes can run side by side without ever
@@ -115,8 +120,9 @@ export interface LeaderLock {
  */
 export async function acquireLeaderLock(
   url: string, key: bigint = LEADER_LOCK_KEY,
-  opts: { signal?: AbortSignal; evict?: LockGhost | null; onEvicted?: () => void } = {},
+  opts: { shards?: number; signal?: AbortSignal; evict?: LockGhost | null; onEvicted?: () => void } = {},
 ): Promise<LeaderLock | null> {
+  if (opts.signal?.aborted) return null;
   // postgres.js supports bigint params at runtime; its published types omit bigint, so cast the
   // interpolated key to keep the 64-bit advisory-lock key exact while satisfying the compiler.
   const k = key as unknown as number;
@@ -162,6 +168,12 @@ export async function acquireLeaderLock(
         .catch(() => []);
       if (ended.length > 0) opts.onEvicted?.();
     }
+    const topology = await sql<{ locked: boolean }[]>`
+      SELECT pg_try_advisory_lock_shared(${TOPOLOGY_LOCK_CLASS}, ${TOPOLOGY_LOCK_ID}) AS locked`;
+    if (topology[0]?.locked !== true) { released = true; await sql.end({ timeout: 5 }); return null; }
+    // Read in a separate statement: its snapshot must follow acquisition of the topology lock.
+    const width = await sql<{ shards: number }[]>`SELECT shards FROM public.worker_topology WHERE singleton`;
+    if (width[0]?.shards !== (opts.shards ?? 1)) { released = true; await sql.end({ timeout: 5 }); return null; }
     const rows = await sql`SELECT pg_try_advisory_lock(${k}) AS locked`;
     if (rows[0]?.locked !== true) { released = true; await sql.end({ timeout: 5 }); return null; }
     const wanted = randomInt(1, 2 ** 31 - 1);
@@ -171,6 +183,7 @@ export async function acquireLeaderLock(
     // A mark another session already carries is not this one's, and a session without one cannot
     // claim the row: it does not lead. The lock goes with the session; the next attempt draws again.
     if (pidRows[0]?.marked !== true) { released = true; await sql.end({ timeout: 5 }); return null; }
+    if (settled || released) { released = true; await sql.end({ timeout: 5 }); return null; }
     mark = wanted;
   } catch (err) {
     released = true;
@@ -194,7 +207,12 @@ export async function acquireLeaderLock(
           EXISTS (
             SELECT 1 FROM pg_locks
             WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted
-              AND ((classid::bigint << 32) + objid::bigint) = ${k}
+              AND objsubid = 1 AND ((classid::bigint << 32) + objid::bigint) = ${k}
+          ) AND EXISTS (
+            SELECT 1 FROM pg_locks
+            WHERE locktype = 'advisory' AND pid = pg_backend_pid() AND granted AND objsubid = 2
+              AND classid::bigint = ${TOPOLOGY_LOCK_CLASS} AND objid::bigint = ${TOPOLOGY_LOCK_ID}
+              AND mode = 'ShareLock'
           ) AS held`;
       const pid = Number(rows[0]?.pid ?? 0);
       if (pid !== backendPid) {

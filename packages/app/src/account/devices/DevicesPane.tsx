@@ -265,12 +265,18 @@ function SignedIn({ model, phone }: { readonly model: DevicesModel; readonly pho
     <SettingsSheet title={title} aside={devices.length}>
       {devices.map((device) => {
         const kind = KIND[device.kind];
+        const description = [
+          phone ? t(kind.word) : null,
+          !device.plainWeb ? t("deviceId", { id: device.id }) : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
         return (
           <SettingLine
             key={device.id}
             label={nameOf(device, t)}
             value={phone ? undefined : t(kind.word)}
-            description={phone ? t(kind.word) : undefined}
+            description={description || undefined}
             icon={kind.sign}
             tag={
               device.current
@@ -317,6 +323,7 @@ function Question({ model }: { readonly model: DevicesModel }) {
   if (device) {
     asked = {
       title: t("removeAsk", { name: nameOf(device, t) }),
+      ...(!device.plainWeb && { line: t("deviceId", { id: device.id }) }),
       confirm: t("remove"),
     };
   } else if (group) {

@@ -13,7 +13,7 @@ import type { Clock } from "../port.js";
 import type { ProviderRefusal } from "../refusals.js";
 import { retryAfterMs, type AdapterDeps, type Authorization, type HttpAnswer, type HttpRequest, type HttpResponse } from "../request/index.js";
 import type { TurnHosts } from "./hosts.js";
-import { readMultistatus, type Multistatus } from "./multistatus.js";
+import { readMultistatus, type CompleteDavAnswer, type Multistatus } from "./multistatus.js";
 
 export interface Refused {
   readonly ok: false;
@@ -125,7 +125,7 @@ export async function allowsMove(session: Session, url: string): Promise<boolean
 }
 
 /** `url` is the address that answered, after the redirects the request port followed. `status` is `null` when no answer arrived. */
-export type Asked = { readonly ok: true; readonly answer: Multistatus; readonly url: string } | (Refused & { readonly status: number | null });
+export type Asked = { readonly ok: true; readonly answer: Multistatus; readonly url: string; readonly retryAfterMs: number | null } | (Refused & { readonly status: number | null });
 
 const NAMES = `xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CS="http://calendarserver.org/ns/" xmlns:A="http://apple.com/ns/ical/"`;
 const HEAD = `<?xml version="1.0" encoding="utf-8"?>`;
@@ -150,13 +150,17 @@ function wordOf(res: HttpResponse, clock: Clock): Refused {
 }
 
 /** `depth`: `null` sends no Depth line (a multiget report is asked without one, RFC 4791 section 7.9). */
-export async function ask(s: Session, method: "PROPFIND" | "REPORT", url: string, depth: "0" | "1" | null, body: string): Promise<Asked> {
+export async function ask(
+  s: Session, method: "PROPFIND" | "REPORT", url: string, depth: "0" | "1" | null, body: string, complete?: CompleteDavAnswer,
+): Promise<Asked> {
   const lines = { accept: "application/xml, text/xml", "content-type": "application/xml; charset=utf-8" };
   const answer = await leave(s, url, { method, headers: depth === null ? lines : { ...lines, depth }, body });
   if (!answer.arrived) return { ...refuse(answer.reason), status: null };
   if (answer.status !== 207) return { ...wordOf(answer, s.deps.clock), status: answer.status };
-  const read = readMultistatus(answer.body);
-  return read.ok ? { ok: true, answer: read.value, url: answer.url } : { ...refuse(read.reason), status: 207 };
+  const read = readMultistatus(answer.body, undefined, complete);
+  return read.ok
+    ? { ok: true, answer: read.value, url: answer.url, retryAfterMs: retryAfterMs(answer, s.deps.clock) }
+    : { ...refuse(read.reason), status: 207 };
 }
 
 /**

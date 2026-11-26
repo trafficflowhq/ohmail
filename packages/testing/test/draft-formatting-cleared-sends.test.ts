@@ -101,15 +101,29 @@ describe("a draft whose formatting was removed", () => {
     expect(w.wire.filter((x) => x.method === "PUT").at(-1)!.body).toMatchObject({ body: "plain now", html: null });
   });
 
-  it("Send delivers the plain text with the signature, no html part, and the row is sent", async () => {
+  it("Send delivers the plain text with a plain signature, no html part, and the row is sent", async () => {
     const w = await world();
     const id = await w.boldDraft();
-    const r = await w.engine.mutate(withSignature(w.send(id, "plain now", null), "Anna", "<p><em>Anna</em></p>"));
+    const r = await w.engine.mutate(withSignature(w.send(id, "plain now", null), "Anna"));
     expect(r.status, r.error?.message).toBe("confirmed");
     expect(w.delivered.map((m) => [m.text, m.html ?? null])).toEqual([["plain now\n\nAnna", null]]);
     expect((await w.row(id)).status).toBe("sent");
     // The save before Send carries the change to plain under the send's own request.
     expect(w.wire.filter((x) => x.method === "PUT").at(-1)!.body).toMatchObject({ body: "plain now\n\nAnna", html: null });
+  });
+
+  it("Send keeps the plain body's words and the formatting of its signature", async () => {
+    const w = await world();
+    const id = await w.boldDraft();
+    const r = await w.engine.mutate(withSignature(w.send(id, "plain now", null), "Anna", "<p><em>Anna</em></p>"));
+    expect(r.status, r.error?.message).toBe("confirmed");
+    expect(w.delivered.map((m) => [m.text, m.html ?? null])).toEqual([
+      ["plain now\nAnna", '<p style="margin:0">plain now</p><p style="margin:0"><em>Anna</em></p>'],
+    ]);
+    expect(await w.row(id)).toMatchObject({ status: "sent", body: "plain now\nAnna" });
+    const saved = w.wire.filter((x) => x.method === "PUT").at(-1)!.body;
+    expect(saved).toMatchObject({ html: "<p>plain now</p><p><em>Anna</em></p>" });
+    expect(saved).not.toHaveProperty("body");
   });
 
   it("a plain row: html: null puts no html key on any draft request", async () => {

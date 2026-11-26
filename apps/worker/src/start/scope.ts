@@ -190,7 +190,6 @@ export interface WorkerScope {
   attachPool: AttachPool;
   wakeAccount: (accountId: string) => void;
   noteWake: (mailboxId: string) => void;
-  lastKickAt: number;   // changes
   wakeSignal: Promise<void>;   // changes
   fireWake: () => void;   // changes
   nudgeCycle: () => void;
@@ -260,7 +259,7 @@ export interface WorkerScope {
   /* ── start/quarantine.ts ── */
   quarantineMailbox: (mailboxId: string, accountId: string, reason: unknown, phase: MailboxErrorPhase, kickAsRead?: string | null) => Promise<void>;
   markRecovered: (mb: { mailboxId: string; accountId: string }, authKickAsRead?: string | null) => Promise<void>;
-  setAsideBreaches: WeakSet<object>;
+  recoverableReadBreaches: WeakSet<object>;
   closedOwed: Map<string, MailboxRuntime>;
   CLOSED_DETACH_REASON: string;
   handleConnectionError: (mailboxId: string, accountId: string, err: unknown, raisedOn?: MailboxAdapter | null) => void;
@@ -270,12 +269,12 @@ export interface WorkerScope {
   attach: (mb: EnabledMailbox, ticket: AttachTicket) => Promise<void>;
 
   /* ── start/roster.ts ── */
-  reconcileRoster: (opts?: { awaitAttaches?: boolean }) => Promise<void>;
+  reconcileRoster: (onInitialAttaches?: (work: Promise<{ fault: unknown | null }>) => void) => Promise<void>;
   requestRoster: () => void;
   yieldToRoster: () => Promise<void>;
 
   /* ── start/cycle.ts ── */
-  cycle: () => Promise<void>;
+  cycle: (poll: boolean, visits: ReadonlySet<string>) => Promise<void>;
 
   /* ── start/cycle-tail.ts ── */
   tailWalk: TailWalk | null;   // changes
@@ -288,7 +287,7 @@ export interface WorkerScope {
   kickThreadBackfill: () => void;
 
   /* ── start/heartbeat.ts ── */
-  beat: () => Promise<void>;
+  beat: (opts?: { required?: boolean }) => Promise<void>;
   unservedBreakdown: () => UnservedBreakdown;
   degradedCauses: () => DegradedCauses;
   counters: () => {
@@ -301,7 +300,7 @@ export interface WorkerScope {
 
   /* ── The start file's end: the lock guard, the timers, the teardown ── */
   cycleQueued: boolean;   // changes
-  kickCycle: () => void;
+  kickCycle: (options?: { poll?: boolean; visit?: Iterable<string> }) => void;
   verifyErrors: number;   // changes
   hbTimer: ReturnType<typeof setInterval> | null;   // changes
   pollTimer: ReturnType<typeof setInterval> | null;   // changes

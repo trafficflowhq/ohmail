@@ -469,7 +469,7 @@ export function DevicesSection({ report }: { report: ToastFn }) {
               <SettingLine
                 key={d.id}
                 label={t("removeAsk", { name: nameOf(d) })}
-                description={t("removeWhat")}
+                description={[t("removeWhat"), d.named !== false && t("deviceId", { id: d.id })].filter(Boolean).join(" · ")}
               >
                     <Button
                       kind="ink"
@@ -486,11 +486,10 @@ export function DevicesSection({ report }: { report: ToastFn }) {
               <SettingLine
                 key={d.id}
                 label={nameOf(d)}
-                description={
-                  d.current
-                    ? t("thisDevice")
-                    : t("deviceMeta", { kind: kindWord(d.kind), created: day(d.createdAt), seen: day(d.lastSeenAt) })
-                }
+                description={[
+                  d.current ? t("thisDevice") : t("deviceMeta", { kind: kindWord(d.kind), created: day(d.createdAt), seen: day(d.lastSeenAt) }),
+                  d.named !== false && t("deviceId", { id: d.id }),
+                ].filter(Boolean).join(" · ")}
               >
                 {/* The current session's removal is the sign-out action. */}
                 {d.current ? null : <Button kind="quiet" size="s" onPress={() => setRemoving(d.id)}>{t("remove")}</Button>}

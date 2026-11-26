@@ -140,6 +140,7 @@ function Conversation({ route, openId, phone, keysHere, from, narrow, room, keyb
     <div
       className="rd-column"
       data-read-column=""
+      data-reader-actions={replyVerbs === null && step === null ? "" : undefined}
       ref={view.columnRoot}
       onWheel={(event) => scrollConversation(event, scroller.current)}
       role={step ? "dialog" : undefined}

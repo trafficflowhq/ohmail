@@ -103,9 +103,8 @@ export function signatureHtml(sig: string): string {
  * plain body gains `\n\n` + the text, and a rich body — when the mutation carries one — gains markup: the server
  * derives the delivered plaintext from the markup, so a rich send appending to `body` alone would show the signature
  * locally and drop it from what recipients read. The text half is never the markup: `sig` goes onto `body` in both
- * branches, because `body` is the `text/plain` part and its reader must see words rather than tags. A mutation with
- * no `html` stays plain in both branches — `html` is what makes a send `multipart/alternative` (`compose.ts`), and a
- * signature must not turn a plain note into a two-part message.
+ * branches, because `body` is the `text/plain` part and its reader must see words rather than tags. A plain body
+ * with a plain signature stays plain. A formatted signature adds an HTML part for the whole letter.
  */
 
 /**

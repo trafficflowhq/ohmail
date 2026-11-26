@@ -18,7 +18,7 @@ import {
 import type { ChangeItem } from "@ohmail/cal-providers";
 import {
   CALENDAR_ADDRESS_MAX_BYTES, CALENDAR_OCCURRENCE_KEY_MAX_BYTES, CALENDAR_PROVIDER_ID_MAX_BYTES,
-  CALENDAR_UID_MAX_BYTES, connectedAttendee, fitsCalendarBytes,
+  CALENDAR_UID_MAX_BYTES, connectedAttendee, fitsCalendarBytes, organizerPrincipalAddress,
 } from "@trafficflow/db/calendar";
 import { storableKey, wholePairs } from "./storable.js";
 
@@ -35,6 +35,7 @@ export interface EventRowValues {
   readonly providerId: string;
   /** The provider's version of the object; `null` where it gave none or one no row holds as it is, which never matches anything. */
   readonly versionTag: string | null;
+  readonly providerModifiedAt: Date | null;
   readonly uid: string;
   readonly recurrenceId: string;
   readonly sequence: number;
@@ -55,7 +56,7 @@ export interface EventRowValues {
   readonly endsAt: Date | null;
   readonly occurrenceAt: Date | null;
   readonly repeatRule: string | null;
-  /** The object's own excluded days; the store unites or replaces them by the provider's kind. */
+  /** The object's own excluded days, kept separate from Google's cancelled occurrence records. */
   readonly excludedDates: readonly StoredTime[];
   readonly addedDates: readonly StoredTime[] | null;
   readonly busy: boolean;
@@ -104,6 +105,7 @@ export interface MapContext {
   /** The account's own addresses in lower case: its mailboxes' and the connection's principal where that is one. */
   readonly ownAddresses: ReadonlySet<string>;
   readonly principal?: string | null;
+  readonly ownCalendar?: boolean;
 }
 
 /** The key a store keeps an occurrence under: the core's one form, `''` for a series or a single event. */
@@ -240,18 +242,27 @@ function rowOf(item: Upsert, ctx: MapContext, original: string | null): MappedRo
   const added = e.added.map((a) => storedTimeOf(a.start));
   const range = derivedRange({ start, end, duration, rules, added, recurrenceId }, ctx.zones);
   if (range === null) return "no_range";
-  const invitees = inviteesOf(e.attendees);
   const attendees = e.attendees.filter((a) => a.email !== null &&
     (a.role === null || a.role === "REQ-PARTICIPANT" || a.role === "OPT-PARTICIPANT"));
   const verified = connectedAttendee(attendees.flatMap((a) => a.email === null ? [] : [a.email]),
     ctx.principal, ctx.ownAddresses);
   const mine = verified === null || (item.selfAttendee !== undefined && item.selfAttendee !== verified)
     ? undefined : attendees.find((a) => a.email?.toLowerCase() === verified);
+  // Graph's response belongs to this calendar's owner. Apply it only to the verified attendee
+  // of the connection on their own calendar.
+  const selfResponse = ctx.ownCalendar && verified !== null && verified === organizerPrincipalAddress(ctx.principal ?? null)
+    ? item.selfResponse : undefined;
+  const myAnswer = mine === undefined ? null : ANSWER[selfResponse ?? mine.partstat ?? "NEEDS-ACTION"] ?? "none";
+  const invitees = inviteesOf(e.attendees).map((person) =>
+    selfResponse !== undefined && myAnswer !== null && person.address.toLowerCase() === verified
+      ? { ...person, answer: myAnswer }
+      : person);
   const row: MappedRow = {
     values: {
       providerId: item.id,
       // Handed back to the provider letter for letter: a version the store cannot hold as it is, is none.
       versionTag: item.version === "" || !storableKey(item.version) ? null : item.version,
+      providerModifiedAt: e.lastModified === null ? null : new Date(e.lastModified.epochMs),
       uid,
       recurrenceId,
       sequence: e.sequence ?? 0,
@@ -278,8 +289,8 @@ function rowOf(item: Upsert, ctx: MapContext, original: string | null): MappedRo
       private: e.classification === "PRIVATE" || e.classification === "CONFIDENTIAL",
       organizer: e.organizer?.email ?? null,
       organizerName: e.organizer?.email == null ? null : e.organizer.name,
-      myAnswer: mine === undefined ? null : ANSWER[mine.partstat ?? "NEEDS-ACTION"] ?? "none",
-      partial: item.audienceIncomplete === true ||
+      myAnswer,
+      partial: item.resourceIncomplete === true || item.audienceIncomplete === true ||
         e.attendees.some((a) => a.email === null || !fitsCalendarBytes(a.email, CALENDAR_ADDRESS_MAX_BYTES)),
       original,
       portableCopy: item.portableCopy === true || (original !== null && portableCalendarText(original)),

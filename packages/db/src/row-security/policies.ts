@@ -3,7 +3,7 @@ import { MAP_2_0, tablesOf } from "../transition/expected-counts.js";
 import { STAFF_ROLE, STAFF_SELECT_GRANTS } from "../staff-grants.js";
 import { HORIZONS, horizonVerbs, type Horizon } from "../horizons.js";
 import {
-  ACCOUNT_READER, API_ROLE, KEY_READER, PLANE_ROLE, STAFF_DOOR_KEY, WORKER_ROLE, type PolicyRole,
+  ACCOUNT_READER, API_ROLE, API_ROLES, KEY_READER, PLANE_ROLE, STAFF_DOOR_KEY, WORKER_ROLE, type PolicyRole,
 } from "./names.js";
 
 /**
@@ -33,7 +33,7 @@ export type TableClass = "account" | "keyed" | "staff" | "operations";
 /** Nothing of one account: grants only, no row security (`auth_throttle` by ruling: its keys name no single key). */
 export const OPERATIONS_TABLES = [
   "alert_drills", "alert_driver_gaps", "alert_pass_runs", "alert_state", "api_faults", "auth_throttle",
-  "oauth_provider_config", "platform_signals", "unsubscribe_drain_state", "worker_heartbeats",
+  "oauth_provider_config", "platform_signals", "unsubscribe_drain_state", "worker_heartbeats", "worker_topology",
 ] as const;
 
 /** The operators' own tables: the API's role reaches them only through the staff door. */
@@ -180,14 +180,16 @@ export interface PolicyRow {
   readonly why: string;
 }
 
-const both: readonly PolicyRole[] = [API_ROLE, WORKER_ROLE];
 const keyArms = (table: string): string => (KEYED_TABLES[table] ?? []).map((arm) => `${arm} = ${KEY_READER}`).join(" OR ");
 const horizonUsing = (x: Horizon): string => (x.onlyUnbound ? `${ACCOUNT_READER} IS NULL AND (${x.using})` : x.using);
 
 /** The policies of one table of class `cls`. `carriesAccount` as {@link tableClass}. */
-export function policiesOfTable(table: string, carriesAccount: boolean = MAP_2_0[table]?.account ?? false): PolicyRow[] {
+export function policiesOfTable(
+  table: string, carriesAccount: boolean = MAP_2_0[table]?.account ?? false, replacement = false,
+): PolicyRow[] {
   const cls = tableClass(table, carriesAccount);
   if (cls === null || cls === "operations") return [];
+  const api = replacement ? API_ROLES : [API_ROLE] as const;
   const out: PolicyRow[] = [];
   const add = (name: string, verb: PolicyVerb, roles: readonly PolicyRole[], using: string | null, check: string | null, why: string): void => {
     out.push({ table, name, verb, roles, using, check, why });
@@ -195,24 +197,24 @@ export function policiesOfTable(table: string, carriesAccount: boolean = MAP_2_0
   const column = accountColumnOf(table, carriesAccount);
   if (column !== null) {
     const own = `${column} = ${ACCOUNT_READER}`;
-    add("lock_account", "ALL", both, own, own, "a row is the named account's alone");
+    add("lock_account", "ALL", [...api, WORKER_ROLE], own, own, "a row is the named account's alone");
   }
   if (cls === "keyed") {
     const arms = keyArms(table);
-    add("lock_key_read", "SELECT", [API_ROLE], arms, null, "a look-up by the key named before the account is known");
+    add("lock_key_read", "SELECT", api, arms, null, "a look-up by the key named before the account is known");
     if ((KEYED_WRITES as readonly string[]).includes(table)) {
-      add("lock_key_insert", "INSERT", [API_ROLE], null, `email = ${KEY_READER}`, "a row under the address the transaction named");
-      add("lock_key_update", "UPDATE", [API_ROLE], arms, "true", "a row read by key, rewritten (the erasure's pseudonym included)");
+      add("lock_key_insert", "INSERT", api, null, `email = ${KEY_READER}`, "a row under the address the transaction named");
+      add("lock_key_update", "UPDATE", api, arms, "true", "a row read by key, rewritten (the erasure's pseudonym included)");
     }
     if ((UNOWNED_TABLES as readonly string[]).includes(table)) {
       const unowned = `account_id IS NULL AND (${arms})`;
-      add("lock_unowned_insert", "INSERT", [API_ROLE], null, unowned, "a row that names no account yet, made by its key");
-      add("lock_unowned_update", "UPDATE", [API_ROLE], unowned, unowned, "a row that names no account yet, spent by its key");
+      add("lock_unowned_insert", "INSERT", api, null, unowned, "a row that names no account yet, made by its key");
+      add("lock_unowned_update", "UPDATE", api, unowned, unowned, "a row that names no account yet, spent by its key");
     }
   }
   if (cls === "staff") {
     const door = `${ACCOUNT_READER} IS NULL AND ${KEY_READER} = '${STAFF_DOOR_KEY}'`;
-    add("lock_staff_door", "ALL", [API_ROLE], door, door, "the operators' rows, only through the named door and with no account bound");
+    add("lock_staff_door", "ALL", api, door, door, "the operators' rows, only through the named door and with no account bound");
   }
   if ((WORKER_WIDE_READ as readonly string[]).includes(table)) {
     add("lock_worker_wide", "SELECT", [WORKER_ROLE], "true", null, "the worker schedules from every row");
@@ -220,7 +222,7 @@ export function policiesOfTable(table: string, carriesAccount: boolean = MAP_2_0
   const roster = PASS_ROSTERS[table as PassRosterTable];
   if (roster !== undefined) {
     const door = `${ACCOUNT_READER} IS NULL AND ${KEY_READER} = '${PASS_DOOR_KEY}'`;
-    add("lock_pass_roster", "SELECT", [API_ROLE], `${door} AND (${roster.using})`, null, "a system pass discovers due work before binding its account");
+    add("lock_pass_roster", "SELECT", api, `${door} AND (${roster.using})`, null, "a system pass discovers due work before binding its account");
   }
   const horizon = HORIZONS.find((x) => x.table === table);
   if (horizon !== undefined) {
@@ -250,8 +252,8 @@ export function policiesOfTable(table: string, carriesAccount: boolean = MAP_2_0
 }
 
 /** Every policy of the lock, on every locked table of a server, in table then name order. */
-export function policyList(): PolicyRow[] {
-  return lockedTables().flatMap((t) => policiesOfTable(t)).sort(byTableThenName);
+export function policyList(replacement = false): PolicyRow[] {
+  return lockedTables().flatMap((t) => policiesOfTable(t, undefined, replacement)).sort(byTableThenName);
 }
 
 /** The rows whose every role is in `present`: a policy for a role that does not exist is not made. */

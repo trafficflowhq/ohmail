@@ -9,6 +9,7 @@ import { createPolicyStatement } from "../src/row-security/apply.js";
 import { LOCK_READERS } from "../src/row-security/names.js";
 import { policyList, lockedTables, policiesOfTable } from "../src/row-security/policies.js";
 import { ROLE_DEADLINES } from "../src/row-security/deadlines.js";
+import { API_REPLACEMENT_ROLE } from "../src/row-security/logins.js";
 import { readLock, type LockReading } from "../src/row-security/check.js";
 import { ACCOUNT_VIEWS, INDEX_READS, readerCondition, viewName, viewStatement, type AccountView } from "../src/row-security/views.js";
 import { switchLock } from "../src/row-security/switch.js";
@@ -185,7 +186,8 @@ for (const major of PG_MAJORS) {
       // Screener learning has its own account-scoped table and must be forced too.
       expect(report.lock).toMatchObject({ state: "locked", tables: lockedTables().length, forced: 102, policies: policyList().length, repaired: [] });
       expect(report.lock!.wrote).toBeGreaterThan(policyList().length);
-      expect(report.lock!.deadlines).toEqual(Object.fromEntries(Object.entries(ROLE_DEADLINES).map(([role, cell]) =>
+      const existingDeadlines = Object.entries(ROLE_DEADLINES).filter(([role]) => role !== API_REPLACEMENT_ROLE);
+      expect(report.lock!.deadlines).toEqual(Object.fromEntries(existingDeadlines.map(([role, cell]) =>
         [role, Object.fromEntries(Object.keys(cell).map((guc) => [guc, true]))])));
       const sql = ground.connectAs("ground", MIGRATOR_ROLE);
       try {

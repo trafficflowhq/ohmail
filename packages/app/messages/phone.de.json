@@ -631,6 +631,7 @@
     "toastMoveQueuedWithRule": "Für {1} vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: {0}.",
     "toastMoveQueuedWithRuleUnknown": "Für den Organizer vorgemerkt — die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang dorthin: {0}.",
     "toastMoved": "Verschoben: {0}.",
+    "toastMovingToTrash": "Wird in den Papierkorb verschoben.",
     "toastQueued": "In „Später antworten“ vorgemerkt",
     "toastQueuedRuleUndone": "Keine Regel angelegt. Die Nachricht wartet weiter auf {0}.",
     "toastQueuedRuleUndoneUnknown": "Keine Regel angelegt. Die Nachricht wartet weiter auf den Organizer.",

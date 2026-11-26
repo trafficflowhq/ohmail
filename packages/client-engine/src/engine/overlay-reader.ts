@@ -2,8 +2,14 @@ import type { MutationEffect } from "../mutations.js";
 import type { StorePageCache } from "../store-pages.js";
 import type { EntityReader, MirrorStore } from "../store.js";
 
+type Entry<T = unknown> = { id: string; entity: T; seq: number };
+
 /** Read-through view: the mirror with the optimistic overlay applied on top. */
 class OverlayReader implements EntityReader {
+  private merged = new Map<string, { stamp: number; rows: Entry[] }>();
+  private mergedRevision = -1;
+  private mergedEffects: readonly (readonly MutationEffect[])[] = [];
+
   constructor(
     private readonly store: MirrorStore,
     private readonly overlays: Map<string, MutationEffect[]>,
@@ -23,12 +29,6 @@ class OverlayReader implements EntityReader {
     return hit;
   }
 
-  /** Only rule effects are ever kept, so every other type keeps the store's own fast path. */
-  private keptTouches(type: string): boolean {
-    for (const d of this.kept.values()) if (d.effects.some((e) => e.type === type)) return true;
-    return false;
-  }
-
   get<T = unknown>(type: string, id: string): T | undefined {
     const o = this.overlayFor(type, id);
     if (o) return o.entity === null ? undefined : (o.entity as T);
@@ -41,27 +41,46 @@ class OverlayReader implements EntityReader {
     return o ? { entity: o.entity } : undefined;
   }
 
-  entries<T = unknown>(type: string): Array<{ id: string; entity: T; seq: number }> {
-    if (this.overlays.size === 0 && !this.keptTouches(type)) return this.store.entries<T>(type);
+  private mergedEntries<T>(type: string): readonly Entry<T>[] | undefined {
+    if (this.overlays.size === 0 && this.kept.size === 0 && this.mergedEffects.length === 0) return undefined;
+    const revision = this.rev();
+    const effects = [...Array.from(this.kept.values(), (d) => d.effects), ...this.overlays.values()];
+    // A durable write can yield after replacing effects but before publishing a new revision.
+    if (revision !== this.mergedRevision || effects.length !== this.mergedEffects.length ||
+        effects.some((group, i) => group !== this.mergedEffects[i])) {
+      this.merged.clear();
+      this.mergedRevision = revision;
+      this.mergedEffects = effects;
+    }
+    const stamp = this.store.stampOf(type);
+    const cached = this.merged.get(type);
+    if (cached?.stamp === stamp) return cached.rows as Entry<T>[];
+    if (!effects.some((group) => group.some((e) => e.type === type))) return undefined;
+
     // An OVERLAID row keeps the STORE's seq, because the seq is a fact about the log and an
     // overlay is a fact about this tab. A row that exists only as an overlay has never been in the
     // log at all and reads 0 — which no windowed prune can mistake for "already here", and the
     // prune reads the store directly anyway.
-    const byId = new Map<string, { entity: T; seq: number }>();
-    for (const e of this.store.entries<T>(type)) byId.set(e.id, { entity: e.entity, seq: e.seq });
-    for (const effects of [...[...this.kept.values()].map((d) => d.effects), ...this.overlays.values()]) {
-      for (const e of effects) {
+    const byId = new Map<string, Entry<T>>();
+    for (const e of this.store.entries<T>(type)) byId.set(e.id, e);
+    for (const group of effects) {
+      for (const e of group) {
         if (e.type !== type) continue;
         if (e.entity === null) byId.delete(e.id);
-        else byId.set(e.id, { entity: e.entity as T, seq: byId.get(e.id)?.seq ?? 0 });
+        else byId.set(e.id, { id: e.id, entity: e.entity as T, seq: byId.get(e.id)?.seq ?? 0 });
       }
     }
-    return [...byId.entries()].map(([id, v]) => ({ id, entity: v.entity, seq: v.seq }));
+    const rows = [...byId.values()];
+    this.merged.set(type, { stamp, rows });
+    return rows;
+  }
+
+  entries<T = unknown>(type: string): Entry<T>[] {
+    return this.mergedEntries<T>(type)?.map((entry) => ({ ...entry })) ?? this.store.entries<T>(type);
   }
 
   list<T = unknown>(type: string): T[] {
-    if (this.overlays.size === 0 && !this.keptTouches(type)) return this.store.list<T>(type);
-    return this.entries<T>(type).map((e) => e.entity);
+    return this.mergedEntries<T>(type)?.map((entry) => entry.entity) ?? this.store.list<T>(type);
   }
 
   version(): number {

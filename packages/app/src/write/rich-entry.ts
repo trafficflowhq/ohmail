@@ -8,7 +8,7 @@
 import { createElement } from "react";
 import { linkHref, useRenderedLinks } from "@ohmail/letter-body/links";
 import { lazyView, LoadFailed } from "../frame/lazy-view.js";
-import { loadLetter, writeEntry } from "./entry.js";
+import { preloadLetter, writeEntry } from "./entry.js";
 import type { WriteEntry } from "./ports.js";
 
 const loadEditor = () =>
@@ -16,9 +16,9 @@ const loadEditor = () =>
     default: richEditor({ href: linkHref, useRendered: useRenderedLinks }),
   }));
 
-/** Complete both writing imports before a browser frame offers Write or Reply. */
+/** Warm the same code-split views an early Write or Reply opens directly. */
 export const prepareWriting = async (): Promise<void> => {
-  await Promise.all([loadLetter(), loadEditor()]);
+  await Promise.all([preloadLetter(), MailRichEditor.preload()]);
 };
 
 export const MailRichEditor = lazyView(loadEditor, {

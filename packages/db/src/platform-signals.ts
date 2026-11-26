@@ -1,7 +1,7 @@
 import { and, sql } from "drizzle-orm";
 import { platformSignals } from "./schema-cloud.js";
 import type { Tx as Db } from "./change-log.js";
-import { SIGNAL_BUCKET_MS } from "./alerts.js";
+import { SIGNAL_BUCKET_MS, type ActiveSignalSource } from "./alerts.js";
 
 /**
  * THE 5xx POLLER — what the hosting platform served, read into this database for the rule. An
@@ -15,7 +15,7 @@ import { SIGNAL_BUCKET_MS } from "./alerts.js";
  */
 
 /** The platforms `platform_signals.provider` admits. A second is an adapter and a review. */
-export type SignalProvider = "vercel";
+export type SignalProvider = "vercel" | "railway";
 
 /** One window's traffic for one project, as counted. */
 /**
@@ -47,6 +47,18 @@ export const SAMPLE_CAUSES = [
 
 export type SampleCause = (typeof SAMPLE_CAUSES)[number];
 
+export interface SignalTrafficCounts {
+  requests: number;
+  errors5xx: number;
+  rateLimited: number;
+  dependencyFailures: number;
+}
+
+export interface SignalTraffic extends SignalTrafficCounts {
+  edgeErrors: number;
+  routes: Record<string, SignalTrafficCounts>;
+}
+
 export interface PlatformSignalRow {
   provider: SignalProvider;
   /** The platform's own project name (`ohmail-api`) — an identifier this repository chooses. */
@@ -54,6 +66,7 @@ export interface PlatformSignalRow {
   windowStart: Date;
   requests: number;
   errors5xx: number;
+  traffic?: SignalTraffic;
   /** A sample: both counts are lower bounds over the newest slice of the window. */
   truncated: boolean;
   /** WHICH cause made it one, or null when it is not a sample. */
@@ -67,6 +80,7 @@ export type PlatformSignalFetch =
   | { failed: string };
 
 export interface PlatformSignalPort {
+  readonly provider?: SignalProvider;
   /**
    * The projects this port polls, in the order it polls them.
    *
@@ -95,6 +109,10 @@ export interface PlatformSignalPort {
 
 /** The env this port reads. Injected rather than read from `process.env` so a test can be honest. */
 export interface PlatformSignalEnv {
+  RAILWAY_TOKEN?: string | undefined;
+  RAILWAY_PROJECT_ID?: string | undefined;
+  RAILWAY_ENVIRONMENT_ID?: string | undefined;
+  RAILWAY_SERVICE_ID?: string | undefined;
   VERCEL_TOKEN?: string | undefined;
   VERCEL_TEAM_ID?: string | undefined;
   /**
@@ -232,6 +250,181 @@ function parseStamp(v: unknown): number | null {
 }
 
 
+/** The active API identity is safe to share with the other alert driver. */
+export function railwaySignalSource(value: string | undefined, since: Date = new Date()): ActiveSignalSource | undefined {
+  const project = trimmed(value);
+  return /^[A-Za-z0-9_-]{1,80}$/.test(project) ? { provider: "railway", project, since } : undefined;
+}
+
+const RAILWAY_GRAPHQL = "https://backboard.railway.com/graphql/v2";
+const RAILWAY_LOG_LIMIT = 500;
+const RAILWAY_DEPLOYMENT_PAGES = 4;
+const RAILWAY_ROUTES = new Set(["/img", "/events", "/search"]);
+const deploymentQuery = `query SignalDeployments($input: DeploymentListInput!, $after: String) {
+  deployments(input: $input, first: 100, after: $after) {
+    edges { node { id createdAt status statusUpdatedAt } } pageInfo { hasNextPage endCursor }
+  }
+}`;
+const deploymentEventsQuery = `query SignalDeploymentEvents($id: String!) {
+  deploymentEvents(id: $id, first: 50) {
+    edges { node { step completedAt payload { skipped error } } } pageInfo { hasNextPage }
+  }
+}`;
+const logsQuery = `query SignalHttpLogs($id: String!, $before: String!, $anchor: String!, $limit: Int!) {
+  httpLogs(deploymentId: $id, beforeDate: $before, anchorDate: $anchor, beforeLimit: $limit) {
+    timestamp requestId method path httpStatus responseDetails
+  }
+}`;
+type DeploymentEventEdge = { node?: { step?: string; completedAt?: string; payload?: { skipped?: boolean; error?: string } } };
+
+function railwaySignals(
+  env: PlatformSignalEnv, doFetch: typeof fetch, timeoutMs: number, wallClockMs: number,
+  nowMs: () => number, deliberate: readonly DeliberateRefusal[],
+): PlatformSignalPort {
+  const projectId = trimmed(env.RAILWAY_PROJECT_ID);
+  const environmentId = trimmed(env.RAILWAY_ENVIRONMENT_ID);
+  const serviceId = trimmed(env.RAILWAY_SERVICE_ID);
+  const token = trimmed(env.RAILWAY_TOKEN);
+  const projects = [serviceId || "active-api"];
+  const configured = [projectId, environmentId, serviceId].every((id) => /^[A-Za-z0-9_-]{1,80}$/.test(id)) && token.length > 0;
+  const count = (): SignalTrafficCounts => ({ requests: 0, errors5xx: 0, rateLimited: 0, dependencyFailures: 0 });
+  return {
+    provider: "railway",
+    projects,
+    async fetch(window, requestOpts) {
+      if (!configured) return { unconfigured: true };
+      const deadline = requestOpts?.deadlineMs ?? nowMs() + wallClockMs;
+      const query = async (query: string, variables: object) => {
+        const remaining = deadline - nowMs();
+        if (remaining <= 0) throw new Error("deadline");
+        const response = await doFetch(RAILWAY_GRAPHQL, {
+          method: "POST", redirect: "error",
+          headers: { "content-type": "application/json", "project-access-token": token },
+          body: JSON.stringify({ query, variables }),
+          signal: AbortSignal.timeout(Math.min(timeoutMs, remaining)),
+        });
+        if (!response.ok) throw new Error("refused");
+        const body = await response.json();
+        if (body?.errors?.length || !body?.data) throw new Error("unreadable");
+        return body.data;
+      };
+      try {
+        const start = window.start.getTime();
+        const end = window.end.getTime();
+        const relevant: { id: string; status: string; created: number; changed: number }[] = [];
+        const ids = new Set<string>();
+        const cursors = new Set<string>();
+        const input = { projectId, environmentId, serviceId, includeDeleted: true };
+        let after: string | null = null;
+        let oldest = Infinity;
+        let inventoryCovered = false;
+        for (let page = 0; page < RAILWAY_DEPLOYMENT_PAGES; page++) {
+          const { deployments } = await query(deploymentQuery, { input, after });
+          const edges = deployments?.edges;
+          const info = deployments?.pageInfo;
+          if (!Array.isArray(edges) || edges.length > 100 || typeof info?.hasNextPage !== "boolean") {
+            return { failed: "railway_deployments_unreadable" };
+          }
+          let beforeWindow = false;
+          for (const edge of edges) {
+            const { id, status, createdAt, statusUpdatedAt } = edge?.node ?? {};
+            const created = parseStamp(createdAt);
+            const changed = parseStamp(statusUpdatedAt);
+            if (typeof id !== "string" || ids.has(id) || typeof status !== "string" ||
+                created === null || changed === null || created > oldest || changed < created) {
+              return { failed: "railway_deployments_unreadable" };
+            }
+            ids.add(id);
+            oldest = created;
+            beforeWindow = status === "REMOVED" && changed <= start;
+            if (created < end && !beforeWindow && ["SUCCESS", "REMOVING", "REMOVED", "CRASHED", "SLEEPING"].includes(status)) {
+              relevant.push({ id, status, created, changed });
+            }
+          }
+          // The history is newest first. A predecessor already removed before the window bounds
+          // older pages. The serving events below still have to cover the whole window.
+          if (!info.hasNextPage || beforeWindow) {
+            inventoryCovered = true;
+            break;
+          }
+          if (edges.length === 0 || typeof info.endCursor !== "string" || !info.endCursor || cursors.has(info.endCursor)) {
+            return { failed: "railway_deployments_unreadable" };
+          }
+          after = info.endCursor;
+          cursors.add(info.endCursor);
+        }
+        if (!inventoryCovered) return { failed: "railway_window_uncovered" };
+        if (relevant.length > 4) return { failed: "railway_window_uncovered" };
+        const serve: { id: string; from: number; until: number }[] = [];
+        for (const deployment of relevant) {
+          const data = await query(deploymentEventsQuery, { id: deployment.id });
+          const events = data.deploymentEvents;
+          const eventEdges = events?.edges as DeploymentEventEdge[] | undefined;
+          if (!Array.isArray(eventEdges) || eventEdges.length > 50 || events.pageInfo?.hasNextPage !== false) {
+            return { failed: "railway_window_uncovered" };
+          }
+          const ready = eventEdges.map((edge) => edge?.node).filter((node) =>
+            node?.step === "HEALTHCHECK" && node.payload?.skipped !== true && !node.payload?.error && parseStamp(node.completedAt) !== null);
+          if (ready.length !== 1) return { failed: "railway_window_uncovered" };
+          const readyAt = parseStamp(ready[0]?.completedAt)!;
+          const from = deployment.status === "SUCCESS" ? Math.max(readyAt, deployment.changed) : readyAt;
+          const until = ["REMOVED", "CRASHED", "SLEEPING"].includes(deployment.status) ? deployment.changed : end;
+          if (from < deployment.created || (until < from && until !== end)) return { failed: "railway_window_uncovered" };
+          if (from < end && until > start) serve.push({ id: deployment.id, from, until });
+        }
+        let covered = start;
+        for (const deployment of serve.sort((a, b) => a.from - b.from)) {
+          if (deployment.from > covered) break;
+          covered = Math.max(covered, deployment.until);
+        }
+        if (covered < end) return { failed: "railway_window_uncovered" };
+        const seen = new Set<string>();
+        const traffic: SignalTraffic = { ...count(), edgeErrors: 0, routes: {} };
+        let sampled: SampleCause | null = null;
+        for (const deployment of serve) {
+          const read = await query(logsQuery, {
+            id: deployment.id, before: window.start.toISOString(), anchor: window.end.toISOString(), limit: RAILWAY_LOG_LIMIT,
+          });
+          const logs = read.httpLogs;
+          if (!Array.isArray(logs) || logs.length > RAILWAY_LOG_LIMIT) return { failed: "railway_logs_unreadable" };
+          if (logs.length === RAILWAY_LOG_LIMIT) sampled = "page_budget";
+          for (const row of logs) {
+            const at = Date.parse(row?.timestamp);
+            const status = row?.httpStatus;
+            if (!Number.isFinite(at) || !Number.isInteger(status) || status < 100 || status > 599) {
+              return { failed: "railway_log_unreadable" };
+            }
+            if (at < start || at >= end) continue;
+            if (typeof row.requestId !== "string" || row.requestId.length === 0 || row.requestId.length > 160) {
+              sampled ??= "unreadable_request_id";
+              continue;
+            }
+            if (seen.has(row.requestId)) continue;
+            seen.add(row.requestId);
+            const isError = status >= 500 && !deliberate.some((d) => d.status === status && row.method === d.method && row.path === d.path);
+            const update = (bucket: SignalTrafficCounts) => {
+              bucket.requests++;
+              if (isError) bucket.errors5xx++;
+              if (status === 429) bucket.rateLimited++;
+              if (status === 424) bucket.dependencyFailures++;
+            };
+            update(traffic);
+            if (isError && typeof row.responseDetails === "string" && row.responseDetails !== "") traffic.edgeErrors++;
+            if (RAILWAY_ROUTES.has(row.path)) update(traffic.routes[row.path] ??= count());
+          }
+        }
+        return { rows: [{
+          provider: "railway", project: serviceId, windowStart: window.start,
+          requests: traffic.requests, errors5xx: traffic.errors5xx, traffic,
+          truncated: sampled !== null, sampleCause: sampled,
+        }] };
+      } catch {
+        return { failed: deadline <= nowMs() ? DEADLINE_UNREAD : "railway_read_failed" };
+      }
+    },
+  };
+}
+
 /**
  * Build the live port.
  *
@@ -255,6 +448,9 @@ export function makePlatformSignalPort(
   // only trigger is "wait forty seconds" is a guard nobody watches fail.
   const nowMs = opts.nowMs ?? (() => Date.now());
   const deliberate = opts.deliberate ?? [];
+  if ([env.RAILWAY_TOKEN, env.RAILWAY_PROJECT_ID, env.RAILWAY_ENVIRONMENT_ID, env.RAILWAY_SERVICE_ID].some((v) => trimmed(v) !== "")) {
+    return railwaySignals(env, doFetch, timeoutMs, wallClockMs, nowMs, deliberate);
+  }
   // A row without its method or path is not one of them: it counts, the direction that keeps an outage visible.
   const onPurpose = (r: Record<string, unknown>, status: number): boolean =>
     deliberate.some((d) => d.status === status && r.requestMethod === d.method && r.requestPath === d.path);
@@ -667,6 +863,7 @@ export async function runPlatformSignalPass(
     .select({ project: platformSignals.project, windowStart: platformSignals.windowStart })
     .from(platformSignals)
     .where(and(
+      sql`${platformSignals.provider} = ${opts.port.provider ?? "vercel"}`,
       sql`${platformSignals.windowStart} >= ${new Date(oldestStart).toISOString()}::timestamptz`,
       sql`(not ${platformSignals.truncated} or ${platformSignals.sampleCause} = ${"page_budget"})`,
     ));
@@ -769,6 +966,7 @@ export async function runPlatformSignalPass(
         windowStart: sql`${row.windowStart.toISOString()}::timestamptz`,
         requests: row.requests,
         errors5xx: row.errors5xx,
+        traffic: row.traffic ?? null,
         truncated: row.truncated,
         sampleCause: row.sampleCause,
         fetchedAt: sql`${now.toISOString()}::timestamptz`,
@@ -781,6 +979,7 @@ export async function runPlatformSignalPass(
         set: {
           requests: row.requests,
           errors5xx: row.errors5xx,
+          traffic: row.traffic ?? null,
           truncated: row.truncated,
           sampleCause: row.sampleCause,
           fetchedAt: sql`${now.toISOString()}::timestamptz`,

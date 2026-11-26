@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { createLogger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import {
-  DEFAULT_ALERT_THRESHOLDS, evaluateAlerts, platformSignals, platformSignalWindow, SIGNAL_PAGE_BUDGET, SIGNAL_SETTLE_MS,
+  DEFAULT_ALERT_THRESHOLDS, evaluateAlerts, makePlatformSignalPort, platformSignals, platformSignalWindow, SIGNAL_PAGE_BUDGET, SIGNAL_SETTLE_MS,
   SIGNAL_WALL_CLOCK_MS,
 } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -307,5 +307,100 @@ describe("startPlatformSignalPoll", () => {
     expect(h.events("platform_signal_pass_failed").map((l) => l.level)).toEqual(["error"]);
     expect(h.pending(), "a refused pass keeps the clock").not.toBeNull();
     poll.stop();
+  });
+});
+
+describe("Railway API ingress windows", () => {
+  it("walks to the overlapping predecessor and leaves older deployment pages unread", async () => {
+    const start = new Date(CLOSE - SIGNAL_POLL_EVERY_MS);
+    const end = new Date(CLOSE);
+    const stamp = (offset: number) => new Date(start.getTime() + offset).toISOString();
+    const edge = (id: string, status: string, created: number, changed: number) => ({
+      node: { id, status, createdAt: stamp(created), statusUpdatedAt: stamp(changed) },
+    });
+    const pages: unknown[] = [];
+    const logs: string[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, options) => {
+      const { query, variables } = JSON.parse(String(options?.body));
+      if (query.includes("SignalDeployments")) {
+        pages.push(variables.after ?? null);
+        const page = variables.after === "first-page";
+        if (pages.length > 2) throw new Error("queried older history");
+        const edges = page
+          ? [edge("previous", "REMOVED", -3 * MIN, 2 * MIN), edge("older", "REMOVED", -5 * MIN, -2 * MIN)]
+          : [edge("candidate", "SUCCESS", -MIN, MIN)];
+        return Response.json({ data: { deployments: { edges,
+          pageInfo: { hasNextPage: true, endCursor: page ? "older-page" : "first-page" },
+        } } });
+      }
+      if (query.includes("SignalDeploymentEvents")) {
+        return Response.json({ data: { deploymentEvents: {
+          edges: [{ node: { step: "HEALTHCHECK", completedAt: stamp(variables.id === "candidate" ? MIN : -2 * MIN), payload: {} } }],
+          pageInfo: { hasNextPage: false },
+        } } });
+      }
+      logs.push(variables.id);
+      return Response.json({ data: { httpLogs: [] } });
+    });
+    const port = makePlatformSignalPort({
+      RAILWAY_TOKEN: TOKEN, RAILWAY_PROJECT_ID: "fixture-project",
+      RAILWAY_ENVIRONMENT_ID: "active-environment", RAILWAY_SERVICE_ID: "active-service",
+    }, { fetchImpl });
+    expect(await port.fetch({ start, end })).toMatchObject({ rows: [{ requests: 0, truncated: false }] });
+    expect(pages).toEqual([null, "first-page"]);
+    expect(logs.sort()).toEqual(["candidate", "previous"]);
+  });
+
+  it("counts overlapping deployment reads once and separates dependency and edge responses", async () => {
+    const start = new Date(CLOSE - SIGNAL_POLL_EVERY_MS);
+    const end = new Date(CLOSE);
+    const rows = [
+      { requestId: "img-dependency", path: "/img", httpStatus: 424 },
+      { requestId: "search-throttle", path: "/search", httpStatus: 429 },
+      { requestId: "edge", path: "/events", httpStatus: 502, responseDetails: "upstream unavailable" },
+      { requestId: "regular", path: "/fixture/account-specific-path", httpStatus: 200 },
+    ].map((row, index) => ({ ...row, timestamp: new Date(start.getTime() + (index < 2 ? 1000 : 90_000)).toISOString(), method: "GET" }));
+    const stamp = (offset: number) => new Date(start.getTime() + offset).toISOString();
+    const activated = new Map([["previous", stamp(-2 * MIN)], ["candidate", stamp(MIN)]]);
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, options) => {
+      const { query, variables } = JSON.parse(String(options?.body));
+      if (query.includes("SignalDeployments")) {
+        expect(variables.input).toMatchObject({ environmentId: "active-environment", serviceId: "active-service" });
+        return Response.json({ data: { deployments: { edges: [
+          { node: { id: "candidate", status: "SUCCESS", createdAt: stamp(-MIN), statusUpdatedAt: stamp(MIN) } },
+          { node: { id: "previous", status: "REMOVED", createdAt: stamp(-3 * MIN), statusUpdatedAt: stamp(2 * MIN) } },
+        ], pageInfo: { hasNextPage: false } } } });
+      }
+      if (query.includes("SignalDeploymentEvents")) return Response.json({ data: { deploymentEvents: {
+        edges: [{ node: { step: "HEALTHCHECK", completedAt: activated.get(variables.id), payload: { skipped: false, error: null } } }],
+        pageInfo: { hasNextPage: false },
+      } } });
+      const logs = variables.id === "previous" ? rows.slice(0, 3) : rows.slice(2);
+      const cutoff = Date.parse(variables.anchor);
+      return Response.json({ data: { httpLogs: logs.filter((row) =>
+        Date.parse(row.timestamp) >= Date.parse(variables.before) && Date.parse(row.timestamp) < cutoff) } });
+    });
+    const port = makePlatformSignalPort({
+      VERCEL_TOKEN: "fixture-old-provider",
+      RAILWAY_TOKEN: TOKEN, RAILWAY_PROJECT_ID: "fixture-project",
+      RAILWAY_ENVIRONMENT_ID: "active-environment", RAILWAY_SERVICE_ID: "active-service",
+    }, { fetchImpl });
+    const result = await port.fetch({ start, end });
+    expect(result).toMatchObject({ rows: [{
+      provider: "railway", project: "active-service", requests: 4, errors5xx: 1, truncated: false,
+      traffic: {
+        dependencyFailures: 1, rateLimited: 1, edgeErrors: 1,
+        routes: {
+          "/img": { requests: 1, errors5xx: 0, dependencyFailures: 1 },
+          "/search": { requests: 1, errors5xx: 0, rateLimited: 1 },
+          "/events": { requests: 1, errors5xx: 1 },
+        },
+      },
+    }] });
+    expect(JSON.stringify(result)).not.toContain("/fixture/account-specific-path");
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+
+    activated.set("previous", stamp(10_000));
+    expect(await port.fetch({ start, end })).toEqual({ failed: "railway_window_uncovered" });
   });
 });

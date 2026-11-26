@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import type { CalendarEventAct, CalendarEventRecord, CalendarWriteAnswer, CalendarWriteMark } from "@ohmail/wire";
 import { applyCalendarActs, CalendarActKeys, eventsWithWrites } from "../src/calendar-acts.js";
+import { HttpAdapter } from "../src/adapters/http-adapter.js";
 import { CALENDAR_OUTBOX_TYPE, CalendarWriteQueue, type CalendarWriteTransport } from "../src/calendar-writes.js";
 import { IndexedDbMirrorStore, MemoryMirrorStore } from "../src/index.js";
 import { MutationRejectedError } from "../src/types.js";
@@ -141,6 +142,16 @@ describe("an answer to one day of a series", () => {
     expect(shown!.answers).toEqual([{ at, answer: null, waiting: null, refusal: "version_stale", refusedWriteId: "w-5" }]);
   });
 
+  it("keeps an unconfirmed answer on its day while it waits and after the checks", () => {
+    const checking = mark(answer, { replyUnconfirmed: true });
+    const stalled = mark(answer, { state: "refused", reason: "answer_unconfirmed" });
+    const [waiting, refused] = [checking, stalled].map((write) =>
+      eventsWithWrites([{ ...series, writes: [write] }], [])[0],
+    );
+    expect(waiting).toMatchObject({ record: { myAnswer: "none" }, answers: [{ at, answer: "accepted", replyUnconfirmed: true }] });
+    expect(refused).toMatchObject({ record: { myAnswer: "none" }, answers: [{ at, answer: "accepted", refusal: "answer_unconfirmed" }] });
+  });
+
   it("keeps a queued edit on its own day while another day's answer waits at the provider", () => {
     const editAt = String(Date.UTC(2026, 10, 18, 9));
     const edit: CalendarEventAct = {
@@ -165,6 +176,20 @@ describe("an answer to one day of a series", () => {
 });
 
 describe("the selector", () => {
+  it("keeps a single event's unconfirmed choice until a later answer replaces it", () => {
+    const event = record("invitation", { myAnswer: "none" });
+    const answer = { kind: "calendar_event_answer" as const, eventId: event.id, base: BASE, scope: { kind: "record" as const }, answer: "accepted" as const };
+    const checking = mark(answer, { replyUnconfirmed: true });
+    const stalled = mark(answer, { state: "refused", reason: "answer_unconfirmed" });
+    expect(eventsWithWrites([{ ...event, writes: [checking] }], [])[0])
+      .toMatchObject({ record: { myAnswer: "accepted" }, waiting: "provider", replyUnconfirmed: true });
+    expect(eventsWithWrites([{ ...event, writes: [stalled] }], [])[0])
+      .toMatchObject({ record: { myAnswer: "accepted" }, refusal: "answer_unconfirmed", refusedWriteId: stalled.id });
+    const changed = mark({ ...answer, answer: "declined" }, { id: "w-2", at: "2026-11-15T10:00:00.000Z" });
+    expect(eventsWithWrites([{ ...event, writes: [stalled, changed] }], [])[0])
+      .toMatchObject({ record: { myAnswer: "declined" }, refusal: null, refusedWriteId: null });
+  });
+
   it("restores an event and exposes the refusal when the provider rejects a queued edit", () => {
     const event = record("shared");
     const write = mark(update(event.id, "Changed title"));
@@ -208,6 +233,23 @@ const echo = (r: CalendarEventRecord, key: string): { answer: CalendarWriteAnswe
   ({ answer: { write: { id: "w-1", key, state: "pending", reason: null }, events: [r] }, seq: 7 });
 
 describe("the queue on a device", () => {
+  it("sends a reply resend with its own press key and preserves a standard retry", async () => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const asked: { key: string | null; body: unknown }[] = [];
+    const adapter = new HttpAdapter({ baseUrl: "https://calendar.example.test", fetch: async (_url, init) => {
+      const key = new Headers(init?.headers).get("idempotency-key");
+      asked.push({ key, body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body });
+      return Response.json({ write: null, events: [] });
+    } });
+    let n = 0;
+    const q = new CalendarWriteQueue(store, adapter, { uuid: () => `retry-${++n}`, now: () => 1 });
+    await q.press({ kind: "calendar_write_retry", writeId: "w-unconfirmed", resendReply: true });
+    await q.press({ kind: "calendar_write_retry", writeId: "w-refused" });
+    await q.flush();
+    expect(asked).toEqual([{ key: "retry-1", body: { resendReply: true } }, { key: "retry-2", body: undefined }]);
+  });
+
   it("makes an act durable before it is sent, and sends it again after a reload under the same key", async () => {
     const factory = new IDBFactory();
     const first = new IndexedDbMirrorStore({ owner: "acct-cal", factory });

@@ -166,7 +166,7 @@ export interface Routes {
   "POST /calendar/proposals": { params: None; body: CalendarProposalAct; answer: { status: SendAnswer["status"] } };
   "POST /calendar/writes": { params: None; body: CalendarEventAct; answer: CalendarWriteAnswer };
   /** A refused write owed again, with the writes refused only because they waited for it. */
-  "POST /calendar/writes/:id/retry": { params: Id; body: never; answer: CalendarWriteAnswer };
+  "POST /calendar/writes/:id/retry": { params: Id; body: { resendReply: true }; answer: CalendarWriteAnswer };
   /** A refused write, or one not tried yet, let go; a new event's takes the event with it. */
   "DELETE /calendar/writes/:id": { params: Id; body: never; answer: CalendarWriteAnswer };
   /** Places for an event's place field. 200 for every well-formed question, its state in the answer. */
@@ -204,7 +204,7 @@ export interface Routes {
   "GET /messages": { params: None; body: never; answer: Page<MessageDTO> | Page<TrashRowDTO> };
   "GET /messages/timeline": {
     params: None; body: never;
-    answer: { total: number; months: TimelineMonth[]; undated: number };
+    answer: { total: number; months: TimelineMonth[]; undated: number; seek?: true };
   };
   "GET /messages/bodies": { params: None; body: never; answer: Page<MessageBodyBatchItem> };
   "GET /messages/:id": { params: Id; body: never; answer: MessageDTO };

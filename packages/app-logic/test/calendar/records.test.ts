@@ -211,6 +211,44 @@ describe("a series as the device holds it", () => {
     ]);
   });
 
+  it("keeps the answer visible when sync first brings in an unanswered copy of that day", () => {
+    const at = mondayAtNine("2026-11-09");
+    const master = event("standup", { myAnswer: "none" });
+    const copy = event("standup-day", {
+      recurrenceId: at,
+      repeat: null,
+      myAnswer: "none",
+      start: { kind: "zoned", value: "20261109T090000", zone: ZURICH },
+      end: { kind: "zoned", value: "20261109T093000", zone: ZURICH },
+    });
+    const occurrences = (answers: EventWithWrites["answers"]) =>
+      occurrencesIn({
+        events: [{ ...held(master), answers }, held(copy)],
+        calendars: [calendar("cal-1")],
+        query: NOVEMBER,
+        zone: ZURICH,
+        zones,
+      }).shown;
+    const shown = occurrences([
+      { at, answer: "accepted", waiting: "provider", refusal: null, refusedWriteId: null },
+    ]);
+    expect(shown.map(({ key, record, writes }) => [key === at, record.myAnswer, writes.waiting])).toEqual([
+      [false, "none", null],
+      [true, "accepted", "provider"],
+      [false, "none", null],
+      [false, "none", null],
+    ]);
+    expect(shown.find(({ key }) => key === at)?.record.id).toBe(copy.id);
+    const refused = occurrences([
+      { at, answer: null, waiting: null, refusal: "version_stale", refusedWriteId: "reply-write" },
+    ]);
+    expect(refused.find(({ key }) => key === at)).toMatchObject({
+      record: { id: copy.id, myAnswer: "none" },
+      writes: { waiting: null, refusal: "version_stale", refusedWriteId: "reply-write" },
+    });
+    expect(refused.filter(({ writes }) => writes.refusedWriteId).map(({ key }) => key)).toEqual([at]);
+  });
+
   it("draws an event that does not repeat once, with no key", () => {
     const single = event("dentist", { uid: "dentist@studio.test", repeat: null, title: "Dentist" });
     expect(daysOf([single])).toEqual([["2026-11-02", "Dentist", false]]);

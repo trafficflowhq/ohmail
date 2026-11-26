@@ -495,6 +495,7 @@ export function connectionSection(
           ? config.adapterFactory(box.imapConfig, ctx)
           : new ImapAdapter(box.imapConfig, {
             onConnectionError: ctx.onConnectionError,
+            onFetchRefused: (status) => noteFetchRefused(undefined, status),
             log: (event, detail) => { scope.log(event, { ...detail, mailboxId: mb.id }); },
           });
         return self;
@@ -714,11 +715,11 @@ export function connectionSection(
        * `responseStatus`; the server's own response text and `[…]` code are never carried — a
        * mailbox over quota must not be able to write its own words into a log line.
        */
-      const noteFetchRefused = (err: unknown): void => {
+      const noteFetchRefused = (err: unknown, status = fetchRefusal(err)): void => {
         scope.log("mailbox_fetch_unavailable", {
           err,
           mailboxId: mb.id,
-          status: fetchRefusal(err),
+          status,
           reason: "the mail server answered this pass's FETCH and refused it, so this mailbox's " +
             "mail could not be read; the connection and the sign-in both stand, the drain keeps " +
             "its login, and the next pass asks again",

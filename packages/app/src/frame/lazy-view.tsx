@@ -33,13 +33,26 @@ export function lazyView<T extends ComponentType<any>>(
     loading?: (props: ComponentProps<T>) => ReactNode;
     failed?: (retry: () => void, props: ComponentProps<T>) => ReactNode;
   } = {},
-): ComponentType<ComponentProps<T>> {
+): ComponentType<ComponentProps<T>> & { preload: () => Promise<void> } {
   const failed = frame.failed ?? ((retry: () => void) => <LoadFailedPane onRetry={retry} />);
+  let ready: T | null = null;
+  let pending: Promise<{ default: T }> | null = null;
+  const loadOnce = (): Promise<{ default: T }> =>
+    (pending ??= load().then(
+      (module) => {
+        ready = module.default;
+        return module;
+      },
+      (cause: unknown) => {
+        pending = null;
+        throw cause;
+      },
+    ));
   const open = (remedy: ChunkLoadRemedy | null): Door<T> => {
     const door: Door<T> = {
       failed: false,
       View: lazy(() =>
-        load().catch(async (cause: unknown) => {
+        loadOnce().catch(async (cause: unknown) => {
           const updated = (await remedy?.replaced(cause)) ?? false;
           door.failed = true;
           // Nobody is waiting on this door (the view closed first), so no render will surface the
@@ -69,6 +82,10 @@ export function lazyView<T extends ComponentType<any>>(
           mounted += delta;
         }}
         render={() => {
+          // A completed preload can open without a Suspense reveal delay. An already-open
+          // door keeps its component identity for the life of the view.
+          const Ready = current === null ? ready : null;
+          if (Ready) return <Ready {...props} />;
           current ??= open(remedy);
           const Door = current.View;
           return (
@@ -80,7 +97,7 @@ export function lazyView<T extends ComponentType<any>>(
       />
     );
   }
-  return LazyView;
+  return Object.assign(LazyView, { preload: () => loadOnce().then(() => undefined) });
 }
 
 type Door<T extends ComponentType<any>> = { failed: boolean; View: LazyExoticComponent<T> };

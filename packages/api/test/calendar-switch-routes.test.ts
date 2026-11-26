@@ -255,4 +255,20 @@ describe("the calendar's write routes", () => {
     const retry = await r.ask("POST", `/calendar/writes/${made.write!.id}/retry`);
     expect(retry.status).toBe(404);
   });
+
+  it("requires a press key for an explicit reply resend and leaves a standard retry alone", async () => {
+    const r = await rig({ calendar: true });
+    const { calendar } = await writable(r);
+    const made = await (await r.ask("POST", "/calendar/writes", create(calendar), { "idempotency-key": "press-route-3" })).json() as CalendarWriteAnswer;
+    const path = `/calendar/writes/${made.write!.id}/retry`;
+    const withoutKey = await r.ask("POST", path, { resendReply: true });
+    expect(withoutKey.status).toBe(400);
+    expect(await withoutKey.json()).toMatchObject({ error: { code: "idempotency_key_required" } });
+    const unrelated = await r.ask("POST", path, { resendReply: true }, { "idempotency-key": "resend-press" });
+    expect(unrelated.status).toBe(409);
+    expect(await unrelated.json()).toMatchObject({ error: { code: "calendar_write_left" } });
+    const ordinary = await r.ask("POST", path);
+    expect(ordinary.status).toBe(200);
+    expect(await ordinary.json()).toMatchObject({ write: made.write });
+  });
 });

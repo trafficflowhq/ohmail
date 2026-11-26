@@ -1,7 +1,7 @@
 import { ImapConnectionClosedError, WriteDeclinedError, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { agreeSweepRun, makeDrizzleRepo, type AgreeSweepCursor } from "@trafficflow/core/adapters/drizzle-repo";
 import type { Tx, LedgerTx } from "@trafficflow/db";
-import { runSyncCycle, type CycleCensus } from "@ohmail/organizer/sync";
+import { runSyncCycle, type CycleCensus, type SyncCycleOutcome } from "@ohmail/organizer/sync";
 /* The memo the cycle's `knownSet` takes, from its OWN subpath and not through the loop's module:
    `one-pipeline.test.ts` holds this file's value import from `@ohmail/organizer/sync` to
    `runSyncCycle` alone, because a second value out of the loop's module would be a second piece of
@@ -249,8 +249,7 @@ export function drainSection(scope: EngineScope, box: MailboxScope, config: Side
            * connection-class failure inside the loop starts its own; the wrapper around `drainPass`
            * still covers failures OUTSIDE the loop — the gate most of all. */
           let cycleServed = false;
-          let hasBacklog: boolean;
-          let owesFiling: boolean;
+          let outcome: SyncCycleOutcome;
           try {
             /**
              * THE CYCLE RUNS IN THE INGEST LANE, and every statement it issues inherits it.
@@ -261,7 +260,7 @@ export function drainSection(scope: EngineScope, box: MailboxScope, config: Side
              * method growing a parameter. Unnamed work is interactive, so the reverse mistake —
              * a window's read counted as ingest — is not reachable from here.
              */
-            const outcome = await inStoreLane("ingest", async () => runSyncCycle({
+            outcome = await inStoreLane("ingest", async () => runSyncCycle({
             ...box.syncDeps,
             census, knownSet,
             /* THE GATED CONNECTION, spread over `syncDeps`'s live getter on purpose. The getter is
@@ -298,7 +297,6 @@ export function drainSection(scope: EngineScope, box: MailboxScope, config: Side
               throw new ImapConnectionClosedError("the connection closed while this cycle ran");
             }
             cycleServed = true;
-            ({ hasBacklog, owesFiling } = outcome);
           } catch (err) {
             /* ── A HAND-OVER IS A STATE CHANGE, NOT A FAILED DRAIN ──────────────────────────
              *
@@ -328,7 +326,8 @@ export function drainSection(scope: EngineScope, box: MailboxScope, config: Side
           }
           cycleMs.push(Date.now() - cycleStart);
           cycles++;
-          if (!hasBacklog) inboundDrained = true;
+          const { hasBacklog, owesFiling, importIncomplete } = outcome;
+          if (!hasBacklog && !importIncomplete) inboundDrained = true;
           if (!hasBacklog && !owesFiling) { drained = true; break; }
           /* THE HAND-BACK'S EDGE, and it has to be HERE, ahead of the yield: on a phone leaving
              the screen with no service the platform pauses timers, so a latch read after the

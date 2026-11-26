@@ -3,7 +3,6 @@ import * as Crypto from "expo-crypto";
 import { Platform } from "react-native";
 import { challengeOf } from "../switch/digest";
 import { APP } from "../variant-native";
-import type { FetchLike } from "./bearer";
 import type { ApprovalBrowserExit, BrowserApprovalDeps } from "./approval";
 
 interface SelfHostApprovalBrowser {
@@ -67,9 +66,3 @@ export function approvalBrowser(selfHosted: boolean): Pick<BrowserApprovalDeps, 
     }),
   };
 }
-
-/** The native Expo transport honors the approval's no-redirect request even with RN fetch configured globally. */
-export const approvalFetch: FetchLike = async (url, init) => {
-  const { fetch } = await import("expo/fetch");
-  return fetch(url, init as Parameters<typeof fetch>[1]);
-};

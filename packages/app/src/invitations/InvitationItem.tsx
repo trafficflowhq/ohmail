@@ -20,7 +20,7 @@ export interface InvitationItemProps {
   readonly onOpen: () => void;
   readonly onClose: () => void;
   readonly onAnswer: (answer: InvitationAnswer) => void;
-  readonly onRetry: (writeId: string) => void;
+  readonly onRetry: (row: InvitationRow) => void;
   readonly onLetGo: (writeId: string) => void;
 }
 
@@ -36,6 +36,7 @@ export function InvitationItem(p: InvitationItemProps) {
   const e = useText("event");
   const locale = useLocale();
   const { row } = p;
+  const uncertain = row.refusal === "answer_unconfirmed";
   const when = whenOf(row.when, row.day, p.today, locale, t);
   const waits = !row.cancelled && row.answer === "none";
   const given = isAnswer(row.answer) ? row.answer : null;
@@ -43,8 +44,13 @@ export function InvitationItem(p: InvitationItemProps) {
     !row.cancelled && !row.viewOnly && p.open ? (
       <AnswerChoices answer={row.answer} onAnswer={p.onAnswer} />
     ) : undefined;
-  const after =
-    row.waiting !== null ? e(`waiting.${row.waiting}`) : row.cancelled ? t("cancelled") : row.organizer;
+  const after = row.replyUnconfirmed
+    ? e("replyUnconfirmed")
+    : row.waiting !== null
+      ? e(`waiting.${row.waiting}`)
+      : row.cancelled
+        ? t("cancelled")
+        : row.organizer;
   return (
     <>
       <AgendaRow
@@ -83,8 +89,9 @@ export function InvitationItem(p: InvitationItemProps) {
               ? []
               : [
                   {
-                    label: e("notSaved"),
-                    text: e(faultKey(row.refusal)),
+                    ...(uncertain
+                      ? { label: e("replyUnconfirmed"), note: e("replyMayNotHaveReachedOrganizer") }
+                      : { label: e("notSaved"), text: e(faultKey(row.refusal)) }),
                     ...(row.refusedWriteId === null ? {} : { children: <Ways {...p} /> }),
                   },
                 ]),
@@ -95,19 +102,22 @@ export function InvitationItem(p: InvitationItemProps) {
   );
 }
 
-/** Send again and Let go, for a write the calendar refused. */
 function Ways({ row, onRetry, onLetGo }: Pick<InvitationItemProps, "row" | "onRetry" | "onLetGo">) {
   const t = useText("invitations");
+  const e = useText("event");
   const id = row.refusedWriteId;
-  if (id === null) return null;
+  const resendReply = row.refusal === "answer_unconfirmed";
+  if (id === null || (resendReply && (row.cancelled || row.viewOnly))) return null;
   return (
     <>
-      <Button kind="two" size="s" onPress={() => onRetry(id)}>
-        {t("sendAgain")}
+      <Button kind="two" size="s" onPress={() => onRetry(row)}>
+        {resendReply ? e("sendReplyAgain") : t("sendAgain")}
       </Button>
-      <Button kind="quiet" size="s" onPress={() => onLetGo(id)}>
-        {t("letGo")}
-      </Button>
+      {!resendReply && (
+        <Button kind="quiet" size="s" onPress={() => onLetGo(id)}>
+          {t("letGo")}
+        </Button>
+      )}
     </>
   );
 }
@@ -116,6 +126,14 @@ export function InvitationRefusal(p: Pick<InvitationItemProps, "row" | "onRetry"
   const t = useText("event");
   const fault = p.row.refusal;
   if (!fault) return null;
+  if (fault === "answer_unconfirmed")
+    return (
+      <div>
+        <p className="cal-invitation-detail">{t("replyUnconfirmed")}</p>
+        <p className="cal-invitation-detail">{t("replyMayNotHaveReachedOrganizer")}</p>
+        <Ways {...p} />
+      </div>
+    );
   return (
     <div>
       <RefusalLine>{t(faultKey(fault))}</RefusalLine>

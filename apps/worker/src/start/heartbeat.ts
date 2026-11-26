@@ -30,7 +30,7 @@ export function heartbeatSection(scope: WorkerScope): void {
      * a beat only renews, and what a renewal finds is final: a row that no longer names this takeover
      * is a lost lock ({@link renew}).
      */
-    async function beat(): Promise<void> {
+    async function beat({ required = false } = {}): Promise<void> {
       if (scope.stopped) return;
       try {
         if (scope.claimed) { await renew(); return; }
@@ -42,6 +42,7 @@ export function heartbeatSection(scope: WorkerScope): void {
         if (landed) scope.claimed = true;
         else scope.handleLockLoss(new LockLostError("the database does not show this instance's session holding the lock", "LOCK_UNCLAIMED"));
       } catch (err) {
+        if (required) throw err;
         scope.log.warn("heartbeat_write_failed", { err });
       }
     }
@@ -224,6 +225,7 @@ export function heartbeatSection(scope: WorkerScope): void {
           // An API arm exists only where this worker drives the API host's internal routes (the
           // secret is shared); there, an API driver that has never run is dark, not a choice.
           apiArmExpected: Boolean(scope.config.apiCron),
+          signalSource: scope.config.signals?.activeSource,
           // The schedule this leader holds, for `api_cron_stale`, with the in-process 5xx poll as one
           // more target. `null` on shards > 0, on the self-hosted organizer and after quiescing:
           // unread, so it clears none of shard 0's rows.

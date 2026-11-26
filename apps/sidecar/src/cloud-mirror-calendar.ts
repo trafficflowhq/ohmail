@@ -30,6 +30,8 @@ import type {
 } from "@ohmail/wire";
 import type { LocalWorld } from "./identity.js";
 
+export const CALENDAR_RETRY_MS = 60_000;
+
 type Tx = any;
 
 interface KindStore<K extends CalendarRecordKind> {

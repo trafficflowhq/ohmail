@@ -136,10 +136,13 @@ describe.skipIf(!PG_UP)("a store from empty and a store moved", () => {
   it("the moved store holds, table by table, the count the map's formula gave of the store before", async () => {
     const after = await fingerprintOf(b);
     for (const table of tablesOf("cloud")) {
-      const rows = MAP_2_0[table]!.rows;
-      if (rows === "same") expect(after.counts[table], table).toBe(before.counts[table]);
+      const { rows, afterWindow } = MAP_2_0[table]!;
+      if (rows === "same" && !afterWindow) expect(after.counts[table], table).toBe(before.counts[table]);
       if (rows === "empty") expect(after.counts[table], table).toBe(0);
     }
+    // The later migration creates topology but cannot infer a roster for this stopped store.
+    expect(before.counts.worker_topology).toBeUndefined();
+    expect(after.counts.worker_topology).toBe(0);
     expect(after.counts.pass_progress).toBe(planted.passRows.length);
     expect(after.counts.account_counters).toBe(planted.countersMoved.length);
     expect(after.counts.auth_throttle).toBe(planted.countersStayed.length);

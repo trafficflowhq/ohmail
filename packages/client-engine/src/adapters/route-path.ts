@@ -13,6 +13,7 @@ export type CallOf<R extends RouteName, B extends RequestOf<R> = RequestOf<R>> =
   & {
     query?: URLSearchParams | string;
     idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number; urgent?: boolean; searchLane?: string; echoLater?: boolean;
+    bodyPreload?: boolean;
   };
 
 /**

@@ -120,7 +120,6 @@ export async function awaitBrowserApproval(
   signal: AbortSignal,
 ): Promise<ApprovalOutcome> {
   const refused = (reason: Refusal): ApprovalOutcome => ({ ok: false, reason });
-  const endpoint = `${origin}/auth/desktop-approval`;
   const startedAt = deps.now();
   let started: Awaited<ReturnType<typeof post>>;
   let verifier: string;
@@ -128,7 +127,7 @@ export async function awaitBrowserApproval(
     const pkce = await deps.pkce();
     if (signal.aborted) return refused(refuse("connectSuperseded"));
     verifier = pkce.verifier;
-    started = await post(deps.fetchImpl, endpoint, {
+    started = await post(deps.fetchImpl, `${origin}/auth/desktop-approval`, {
       challenge: pkce.challenge, kind: deps.kind, label: deps.label,
       ...(deps.calendarOnly ? { scope: "calendar" } : {}),
       ...(selfHosted ? { launchOrigin: origin } : {}),
@@ -183,7 +182,7 @@ export async function awaitBrowserApproval(
       if (deps.now() >= expiresAt) return refused(refuse("signInExpired"));
       // Let a claim that already went out settle so its caller can revoke a late mint after Back.
       const browserReturned = closed === "cancelled";
-      const response = await post(deps.fetchImpl, `${endpoint}/claim`, claim);
+      const response = await post(deps.fetchImpl, `${origin}/auth/desktop-approval/claim`, claim);
       if (response.status !== 202) {
         if (!response.ok) return refused(refusalFor(response.status, response.body?.error?.code));
         const { accessToken, refreshToken } = response.body?.tokens ?? {};

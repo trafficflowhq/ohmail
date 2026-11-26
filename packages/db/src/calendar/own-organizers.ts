@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { CALENDAR_CHANGES_PER_TRANSACTION, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "../change-log.js";
 import { calCalendars, calEvents } from "../schema-mail.js";
 import { readOwnAddresses } from "../own-mail.js";
@@ -26,6 +26,11 @@ export function organizerPrincipalAddress(principal: string | null): string | nu
   return address.includes("@") && !address.includes("/") ? address : null;
 }
 
+/** An empty discovery explicitly failed to identify the OAuth mailbox. Null is undiscovered. */
+export function oauthIdentityAmbiguous(provider: string, addresses: readonly string[] | null | undefined): boolean {
+  return (provider === "google" || provider === "microsoft") && addresses?.length === 0;
+}
+
 /** CalDAV stores a resource's original once, on its master. A changed day shares that exact version. */
 export function calendarOriginalOf() {
   return sql<string | null>`coalesce(${calEvents.original}, case when ${calEvents.recurrenceId} <> '' then (
@@ -40,13 +45,15 @@ export function calendarOriginalOf() {
 /** Publish the changed event ownership and calendar invitation capabilities under the connection lock. */
 export async function publishCalendarOrganizerChanges(
   tx: Tx, accountId: string, connectionId: string, before: readonly string[], after: readonly string[],
+  includeAttendeeCopies = false,
 ) {
   const changed = [...before.filter((address) => !after.includes(address)), ...after.filter((address) => !before.includes(address))];
-  if (!changed.length) return;
+  if (!changed.length && !includeAttendeeCopies) return;
   const events = await tx.select({ id: calEvents.id }).from(calEvents)
     .innerJoin(calCalendars, and(eq(calCalendars.id, calEvents.calendarId), eq(calCalendars.accountId, accountId)))
     .where(and(eq(calEvents.accountId, accountId), eq(calCalendars.connectionId, connectionId),
-      inArray(sql`lower(trim(${calEvents.organizer}))`, changed)));
+      or(inArray(sql`lower(trim(${calEvents.organizer}))`, changed),
+        includeAttendeeCopies ? isNotNull(calEvents.myAnswer) : undefined)));
   const changes: CalendarChange[] = events.map(({ id }) => ({ kind: "calendar_event", id, op: "update" }));
   if ((before.length === 0) !== (after.length === 0)) {
     const calendars = await tx.select({ id: calCalendars.id }).from(calCalendars).where(and(

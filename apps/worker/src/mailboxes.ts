@@ -165,6 +165,7 @@ export interface EnabledMailbox {
    * every healthy mailbox on every pass, or never clear at all.
    */
   syncBlockedReason: string | null;
+  syncBlockedSince?: Date | null;
   /**
    * Mail 0055. The RFC 1870 `SIZE` this mailbox's submission server announced, or NULL when it has
    * never been probed. READ ONLY SO THE WORKER KNOWS WHETHER THERE IS ANYTHING TO LEARN — the
@@ -231,8 +232,12 @@ function validateShard(selection: MailboxSelection): { shards: number; shardInde
  * `((hashtext(account_id::text) % n + n) % n) WHERE status <> 'disabled'` for the deployed `n`, or
  * materialize a `shard` column maintained by the mailbox writer.
  */
+function accountShard(accountId: SQL | AnyPgColumn, shards: number): SQL<number> {
+  return sql<number>`((hashtext(${accountId}::text) % ${shards}) + ${shards}) % ${shards}`;
+}
+
 function shardPredicate(shards: number, shardIndex: number): SQL {
-  return sql`((hashtext(${mailboxes.accountId}::text) % ${shards}) + ${shards}) % ${shards} = ${shardIndex}`;
+  return sql`${accountShard(mailboxes.accountId, shards)} = ${shardIndex}`;
 }
 
 /** THIS shard's slice of `mailboxes`, or `undefined` on an unsharded deployment — the roster's rule, for a pass over rows the roster does not serve. */
@@ -244,7 +249,7 @@ export function shardFilter(selection: MailboxSelection = {}): SQL | undefined {
 /** The same rule over any account id column (`accounts.id`), for a pass that lists accounts itself. */
 export function accountShardFilter(selection: MailboxSelection, accountId: SQL | AnyPgColumn): SQL | undefined {
   const { shards, shardIndex } = validateShard(selection);
-  return shards > 1 ? sql`((hashtext(${accountId}::text) % ${shards}) + ${shards}) % ${shards} = ${shardIndex}` : undefined;
+  return shards > 1 ? sql`${accountShard(accountId, shards)} = ${shardIndex}` : undefined;
 }
 
 /**
@@ -262,6 +267,46 @@ export type ParkedAccountsReader = (
   /** Accounts whose rows this read found `account_closed`: an unanswered plane read keeps them parked. */
   stored?: ReadonlySet<string>,
 ) => Promise<Set<string>>;
+
+const rosterEnabled = ne(mailboxes.status, "disabled");
+
+async function parkedRosterAccounts(
+  rows: readonly { accountId: string; kicked: boolean; storedClosed: boolean }[],
+  now: Date, reader?: ParkedAccountsReader,
+): Promise<Set<string>> {
+  if (!reader || rows.length === 0) return new Set();
+  const ids = [...new Set(rows.map((row) => row.accountId))];
+  const kicked = new Set(rows.filter((row) => row.kicked).map((row) => row.accountId));
+  const stored = new Set(rows.filter((row) => row.storedClosed).map((row) => row.accountId));
+  return reader(ids, now, { accounts: kicked, since: Date.now() }, stored);
+}
+
+/** Counts use the organizer's own partition and parking rules and expose only shard totals. */
+export async function loadRosterCapacity(
+  db: Pick<WorkerDb, "select">, shards: number, cap: number, now: Date = new Date(), reader?: ParkedAccountsReader,
+): Promise<{ occupancy: number[]; maximum: number; eligible: number; verdict: "ok" | "warning" | "overflow" }> {
+  validateShard({ shards });
+  if (shards > 1024) throw new Error("capacity check supports up to 1024 shards");
+  if (!Number.isSafeInteger(cap) || cap < 1) throw new Error("mailbox capacity must be a positive integer");
+  const partition = accountShard(mailboxes.accountId, shards);
+  const rows = await db.select({
+    accountId: mailboxes.accountId,
+    shard: partition,
+    count: sql<number>`count(*)::int`,
+    kicked: sql<boolean>`bool_or(${mailboxes.syncRequestedAt} is not null)`,
+    storedClosed: sql<boolean>`coalesce(bool_or(${mailboxes.syncBlockedReason} = 'account_closed'), false)`,
+  }).from(mailboxes).where(rosterEnabled).groupBy(mailboxes.accountId);
+  const parked = await parkedRosterAccounts(rows, now, reader);
+  const occupancy = Array<number>(shards).fill(0);
+  for (const row of rows) {
+    if (!parked.has(row.accountId)) occupancy[row.shard] = occupancy[row.shard]! + row.count;
+  }
+  const maximum = occupancy.reduce((max, count) => Math.max(max, count), 0);
+  return {
+    occupancy, maximum, eligible: occupancy.reduce((sum, count) => sum + count, 0),
+    verdict: maximum > cap ? "overflow" : maximum >= Math.ceil(cap * 0.8) ? "warning" : "ok",
+  };
+}
 
 /**
  * Every syncable mailbox in the selection: anything not soft-disabled (`status != 'disabled'`) whose
@@ -292,7 +337,7 @@ export async function loadRosterMailboxes(
 ): Promise<{ served: EnabledMailbox[]; parked: EnabledMailbox[] }> {
   const { shards, shardIndex } = validateShard(selection);
 
-  const filters: SQL[] = [ne(mailboxes.status, "disabled")];
+  const filters: SQL[] = [rosterEnabled];
   if (shards > 1) filters.push(shardPredicate(shards, shardIndex));
 
   // Tagged at its origin (`db-fault.ts`): this read is the first statement a new leader's pool sends,
@@ -318,6 +363,7 @@ export async function loadRosterMailboxes(
       organizerParkedAt: mailboxes.organizerParkedAt,
       kickStamp: sql<string | null>`${mailboxes.syncRequestedAt}::text`,
       syncBlockedReason: mailboxes.syncBlockedReason,
+      syncBlockedSince: mailboxes.syncBlockedSince,
       errorCode: mailboxes.errorCode,
       failedAt: mailboxes.failedAt,
       retryAfter: mailboxes.retryAfter,
@@ -328,15 +374,11 @@ export async function loadRosterMailboxes(
     .where(and(...filters))
     .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id)));
 
-  const ids = [...new Set(rows.map((r) => r.accountId))];
-  // THE READ ABOVE HAS RETURNED: a call begun from here on began after every clear it saw, so a
-  // kicked account's refusal is asked again from this instant (mail 0135, see `kickStamp`).
-  const kicked = new Set(rows.filter((r) => r.kickStamp !== null).map((r) => r.accountId));
-  // The plane's last refusal, as the rows store it: a read it did not answer never clears it.
-  const stored = new Set(rows.filter((r) => r.syncBlockedReason === "account_closed").map((r) => r.accountId));
-  const parked = parkedAccounts && ids.length > 0
-    ? await parkedAccounts(ids, now, { accounts: kicked, since: Date.now() }, stored)
-    : new Set<string>();
+  const parked = await parkedRosterAccounts(rows.map((row) => ({
+    accountId: row.accountId,
+    kicked: row.kickStamp !== null,
+    storedClosed: row.syncBlockedReason === "account_closed",
+  })), now, parkedAccounts);
   const shape = (r: (typeof rows)[number]): EnabledMailbox => ({
     accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,
     takeoverAuthorizedAt: r.takeoverAuthorizedAt ?? null,
@@ -357,6 +399,7 @@ export async function loadRosterMailboxes(
     organizerParkedAt: r.organizerParkedAt ?? null,
     kickStamp: r.kickStamp ?? null,
     syncBlockedReason: r.syncBlockedReason ?? null,
+    syncBlockedSince: r.syncBlockedSince ?? null,
     errorCode: r.errorCode ?? null,
     failedAt: r.failedAt ?? null,
     retryAfter: r.retryAfter ?? null,
@@ -1791,9 +1834,10 @@ export async function stampInitialImportComplete(
  * like it. The `sync_lag` rule reads this column only while `last_sync_at` is null.
  */
 export async function stampImportProgress(
-  db: WorkerDb, mailboxId: string, now: Date,
+  db: WorkerDb, mailboxId: string, now: Date, fence?: LeaderFence,
 ): Promise<void> {
-  await db.update(mailboxes)
+  await applyFenced(db, mailboxId, fence, (w) => w.update(mailboxes)
     .set({ syncProgressAt: now })
-    .where(and(eq(mailboxes.id, mailboxId), isNull(mailboxes.initialImportCompletedAt)));
+    .where(and(lifecycleWhere(mailboxId, fence), isNull(mailboxes.initialImportCompletedAt)))
+    .returning({ id: mailboxes.id }));
 }

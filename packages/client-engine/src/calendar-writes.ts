@@ -59,7 +59,7 @@ export interface CalendarWriteTransport {
   /** `POST /calendar/writes` under `key`. Throws `MutationRejectedError` on a refusal. */
   writeCalendar(act: CalendarEventAct, key: string, signal?: AbortSignal): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
   /** `POST /calendar/writes/:id/retry`. */
-  retryCalendarWrite(writeId: string, key: string, signal?: AbortSignal): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
+  retryCalendarWrite(writeId: string, key: string, signal?: AbortSignal, resendReply?: true): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
   /** `DELETE /calendar/writes/:id`. */
   dismissCalendarWrite(writeId: string, key: string, signal?: AbortSignal): Promise<{ readonly answer: CalendarWriteAnswer; readonly seq: number | null }>;
 }
@@ -418,7 +418,7 @@ export class CalendarWriteQueue {
       answered = r.needsReview === false && r.act.kind === "calendar_event_propose" && this.transport.recoverProposal
         ? await this.transport.recoverProposal(r.act, r.key, ctrl.signal)
         : isProposal(r.act) ? await this.mailProposal(r.act, r.key, ctrl.signal)
-        : r.act.kind === "calendar_write_retry" ? await this.transport.retryCalendarWrite(r.act.writeId, r.key, ctrl.signal)
+        : r.act.kind === "calendar_write_retry" ? await this.transport.retryCalendarWrite(r.act.writeId, r.key, ctrl.signal, r.act.resendReply)
         : r.act.kind === "calendar_write_dismiss" ? await this.transport.dismissCalendarWrite(r.act.writeId, r.key, ctrl.signal)
           : await this.transport.writeCalendar(r.act, r.key, ctrl.signal);
     } catch (err) {

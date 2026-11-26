@@ -36,6 +36,7 @@ import {
 } from "../json-answers.js";
 import { MAX_PAGES_PER_CALL, MAX_PAGE_LIMIT } from "../limits.js";
 import type {
+  AnswerDispatch,
   CalendarRef,
   CalendarWriter,
   ChangeItem,
@@ -44,6 +45,7 @@ import type {
   EventDraft,
   SeriesContinuation,
   WriteAnswer,
+  WriteAnswerRequest,
   WriteKey,
   WriteReply,
   WriteTarget,
@@ -90,12 +92,8 @@ type Master = {
   readonly series: SeriesClock;
   readonly pre: MatchTag;
 };
-type Instance = {
-  readonly item: Upsert;
-  readonly raw: Json;
-  readonly isException: boolean;
-  readonly pre: MatchTag;
-};
+type Occurrence = { readonly item: Upsert; readonly raw: Json; readonly isException: boolean };
+type Instance = Occurrence & { readonly pre: MatchTag };
 
 const carriedFields = [
   "subject",
@@ -379,7 +377,8 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     body: Json | null,
     signal: AbortSignal,
     precondition?: Precondition,
-  ): Promise<HttpResponse | Refusal> {
+    beforeDispatch?: () => Promise<void>,
+  ): Promise<HttpResponse | (Refusal & { readonly notDispatched?: true })> {
     const answer = await deps.http.request(url, {
       method,
       headers:
@@ -390,9 +389,12 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       auth: graphAuthorization(token, base),
       validators: null,
       ...(precondition === undefined ? {} : { precondition }),
+      ...(beforeDispatch === undefined ? {} : { beforeDispatch }),
       signal,
     });
-    return answer.arrived ? answer : refused(answer.reason);
+    return answer.arrived
+      ? answer
+      : { ...refused(answer.reason), ...(answer.notDispatched && { notDispatched: true }) };
   }
 
   /** The event as the reader converts it, and Graph's raw record beside it. */
@@ -514,40 +516,52 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
 
   const keyOf = (time: EventTime): string => recurrenceKeyString(recurrenceKeyOf(time, deps.zones));
 
-  function instanceOf(
-    raw: unknown,
-    target: WriteTarget,
-    series: SeriesClock,
-    subset = false,
-    answering: boolean | "applied" = false,
-  ): Instance | Refusal | null {
+  function occurrenceOf(raw: unknown, target: WriteTarget, series: SeriesClock): Occurrence | Refusal | null {
     const record = recordOf(raw, deps.zones, deps.clock.now());
     if (record.kind !== "day" || record.seriesId !== target.id || target.occurrence === null) return null;
     const day = dayOfSeries({ ...record, changed: true }, series, deps.zones, deps.clock.now());
     if (day === null || keyOf(day.seen.originalStart) !== keyOf(target.occurrence)) return null;
     if (day.item === null || typeof day.item === "string") return refused("unreadable");
-    const audience = answering
-      ? record.raw.isOrganizer === false &&
-        (answering === "applied" ||
-          (target.exception
-            ? record.changed &&
-              record.id === target.exception.id &&
-              (day.item.version === target.exception.version ||
-                record.raw.changeKey === target.exception.version)
-            : !record.changed))
-        ? null
-        : refused("version_stale")
-      : subset
-        ? day.item.audienceIncomplete ||
-          !exceptionAudience({ exceptionOccurrences: [record.raw] }, target.audience)
-          ? refused("version_stale")
-          : null
-        : audienceOf(target, day.item, record.raw);
+    return { item: day.item, raw: record.raw, isException: record.changed };
+  }
+
+  function instanceOf(
+    raw: unknown,
+    target: WriteTarget,
+    series: SeriesClock,
+    subset = false,
+  ): Instance | Refusal | null {
+    const day = occurrenceOf(raw, target, series);
+    if (!day || "ok" in day) return day;
+    const audience = subset
+      ? day.item.audienceIncomplete ||
+        !exceptionAudience({ exceptionOccurrences: [day.raw] }, target.audience)
+        ? refused("version_stale")
+        : null
+      : audienceOf(target, day.item, day.raw);
     if (audience !== null) return audience;
-    const pre = preconditionOf(record.raw);
-    return pre === null
-      ? refused("version_unknown")
-      : { item: day.item, raw: record.raw, isException: record.changed, pre };
+    const pre = preconditionOf(day.raw);
+    return pre === null ? refused("version_unknown") : { ...day, pre };
+  }
+
+  function answerableInstanceOf(
+    raw: unknown,
+    target: WriteTarget,
+    series: SeriesClock,
+    alreadySent: boolean,
+  ): Occurrence | Refusal | null {
+    const day = occurrenceOf(raw, target, series);
+    if (!day || "ok" in day) return day;
+    if (day.raw.isOrganizer !== false) return refused("version_stale");
+    if (alreadySent) return day;
+    const reviewed = target.exception;
+    const matches = reviewed
+      ? day.isException &&
+        day.item.id === reviewed.id &&
+        (day.item.version === reviewed.version || day.raw.changeKey === reviewed.version)
+      : !day.isException;
+    // RSVP uses Graph's action endpoint, which takes no conditional tag.
+    return matches ? day : refused("version_stale");
   }
 
   async function uniqueMatch<T extends object>(
@@ -555,6 +569,7 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     first: string,
     match: (raw: unknown) => T | Refusal | null,
     signal: AbortSignal,
+    missing: "version_stale" | "event_gone" = "version_stale",
   ): Promise<T | Refusal> {
     let url = first;
     const seen = new Set<string>();
@@ -575,12 +590,29 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       }
       if (selected !== null) return selected;
       const next = answer["@odata.nextLink"];
-      if (next === undefined || next === null) return refused("version_stale");
+      if (next === undefined || next === null) return refused(missing);
       if (typeof next !== "string" || !insideBase(next, base) || seen.has(next))
         return refused("page_link_refused");
       url = next;
     }
     return refused("page_link_refused");
+  }
+
+  function findInstance<T extends Occurrence>(
+    token: string,
+    id: string,
+    target: WriteTarget,
+    signal: AbortSignal,
+    match: (raw: unknown) => T | Refusal | null,
+    missing?: "version_stale" | "event_gone",
+  ): Promise<T | Refusal> {
+    const at = target.occurrence === null ? NaN : momentOrUtc(target.occurrence, deps.zones);
+    if (!Number.isFinite(at)) return Promise.resolve(refused("version_stale"));
+    const url = new URL(`${eventUrl(id)}/instances`);
+    // Include nearby UTC times for all-day events whose original start is midnight on their own clock.
+    url.searchParams.set("startDateTime", stamp(at - MS_PER_DAY));
+    url.searchParams.set("endDateTime", stamp(at + 2 * MS_PER_DAY));
+    return uniqueMatch(token, url.href, match, signal, missing);
   }
 
   function readInstance(
@@ -589,15 +621,202 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
     target: WriteTarget,
     series: SeriesClock,
     signal: AbortSignal,
-    answering: boolean | "applied" = false,
-  ): Promise<Instance | Refusal> {
-    const at = target.occurrence === null ? NaN : momentOrUtc(target.occurrence, deps.zones);
-    if (!Number.isFinite(at)) return Promise.resolve(refused("version_stale"));
-    const url = new URL(`${eventUrl(id)}/instances`);
-    // Include nearby UTC times for all-day events whose original start is midnight on their own clock.
-    url.searchParams.set("startDateTime", stamp(at - MS_PER_DAY));
-    url.searchParams.set("endDateTime", stamp(at + 2 * MS_PER_DAY));
-    return uniqueMatch(token, url.href, (raw) => instanceOf(raw, target, series, false, answering), signal);
+  ) {
+    return findInstance(token, id, target, signal, (raw) => instanceOf(raw, target, series));
+  }
+
+  const awaitingAnswer = { ok: true, items: [], answerPending: true } as const;
+
+  async function sendAnswer(
+    token: string,
+    id: string,
+    source: string,
+    req: WriteAnswerRequest,
+    signal: AbortSignal,
+  ): Promise<Exclude<AnswerDispatch, { phase: "ready" }> | Refusal> {
+    const uri = segment(id);
+    if (uri === null) return refused("not_found");
+    if (signal.aborted) return refused("timeout");
+    const sending = { phase: "sending", id, source } as const;
+    // Earlier builds could dispatch without a receipt. Reconcile their retries without sending again.
+    if (req.retry && req.dispatch?.phase !== "ready") {
+      await req.rememberDispatch?.(sending);
+      return sending;
+    }
+    let dispatched = false;
+    const remember = req.rememberDispatch;
+    const beforeDispatch =
+      remember &&
+      (async () => {
+        await remember(sending);
+        dispatched = true;
+      });
+    const call = { ACCEPTED: "accept", TENTATIVE: "tentativelyAccept", DECLINED: "decline" }[req.reply];
+    const res = await send(
+      token,
+      "POST",
+      `${eventUrl(uri)}/${call}`,
+      { sendResponse: true },
+      signal,
+      undefined,
+      beforeDispatch,
+    );
+    if ("ok" in res) {
+      if (dispatched && res.notDispatched) await remember?.({ phase: "ready" }, sending);
+      return dispatched && !res.notDispatched ? sending : res;
+    }
+    if (res.status === 202 || res.status === 200) {
+      const accepted = { ...sending, phase: "accepted" } as const;
+      await req.rememberDispatch?.(accepted, sending);
+      return accepted;
+    }
+    if (definitelyRefused(res.status) || res.status === 404 || res.status === 410 || res.status === 429) {
+      await req.rememberDispatch?.({ phase: "ready" }, sending);
+      return refusalOf(res, "event_gone");
+    }
+    return sending;
+  }
+
+  async function confirmAnswer(
+    token: string,
+    target: WriteTarget,
+    dispatch: Exclude<AnswerDispatch, { phase: "ready" }>,
+    master: { readonly series: SeriesClock; readonly item: Upsert } | null,
+    reply: WriteReply,
+    signal: AbortSignal,
+    observe?: true,
+  ): Promise<WriteAnswer> {
+    const id = segment(dispatch.id);
+    if (id === null || dispatch.source !== target.id || (!master && dispatch.id !== target.id))
+      return observe ? refused("unreadable") : awaitingAnswer;
+    const after = await read(token, id, signal);
+    if ("ok" in after) return observe ? after : awaitingAnswer;
+    const missing = after.status === 404 || after.status === 410;
+    if (missing && master && target.occurrence !== null) {
+      const replacement = await confirmReplacementAnswer(
+        token,
+        target,
+        dispatch.id,
+        master,
+        reply,
+        signal,
+        observe,
+      );
+      if (replacement !== null) return replacement;
+    }
+    if (missing && reply === "DECLINED" && dispatch.phase === "accepted" && dispatch.removed) {
+      if (target.occurrence === null) return answered([{ kind: "gone", id: dispatch.id }]);
+      if (master?.item.event.uid) {
+        return answered([
+          { kind: "cancelled_occurrence", uid: master.item.event.uid, originalStart: target.occurrence },
+        ]);
+      }
+    }
+    if (after.status !== 200) return observe ? refusalOf(after, "event_gone") : awaitingAnswer;
+    const item = master
+      ? answerableInstanceOf(jsonOf(after.body), target, master.series, true)
+      : itemOf(after);
+    const found = item && !("ok" in item) ? item.item : null;
+    if (
+      found?.kind !== "upsert" ||
+      found.id !== dispatch.id ||
+      (master && found.event.organizer?.email !== master.item.event.organizer?.email)
+    )
+      return observe ? refused("unreadable") : awaitingAnswer;
+    if (observe && found.selfResponse === undefined) return refused("unreadable");
+    return found.selfResponse === reply ? answered([found]) : awaitingAnswer;
+  }
+
+  /** A replaced Graph instance is the same occurrence only if the exact new copy proves it. */
+  async function confirmReplacementAnswer(
+    token: string,
+    target: WriteTarget,
+    previous: string,
+    master: { readonly series: SeriesClock; readonly item: Upsert },
+    reply: WriteReply,
+    signal: AbortSignal,
+    observe?: true,
+  ): Promise<WriteAnswer | null> {
+    const source = segment(target.id);
+    const organizer = master.item.event.organizer?.email;
+    if (source === null || !organizer) return observe ? refused("unreadable") : awaitingAnswer;
+    const listed = await findInstance(
+      token,
+      source,
+      target,
+      signal,
+      (raw) => {
+        const found = occurrenceOf(raw, target, master.series);
+        if (!found || "ok" in found) return found;
+        if (found.item.id === previous) return null;
+        return found.raw.isOrganizer === false && found.item.event.organizer?.email === organizer
+          ? found
+          : refused("unreadable");
+      },
+      "event_gone",
+    );
+    if ("ok" in listed) return listed.reason === "event_gone" ? null : observe ? listed : awaitingAnswer;
+    const id = segment(listed.item.id);
+    if (id === null) return observe ? refused("unreadable") : awaitingAnswer;
+    const point = await read(token, id, signal);
+    if ("ok" in point) return observe ? point : awaitingAnswer;
+    if (point.status !== 200) return observe ? refusalOf(point, "event_gone") : awaitingAnswer;
+    const exact = answerableInstanceOf(jsonOf(point.body), target, master.series, true);
+    if (
+      !exact ||
+      "ok" in exact ||
+      exact.item.id !== listed.item.id ||
+      exact.item.event.organizer?.email !== organizer ||
+      (observe && exact.item.selfResponse === undefined)
+    )
+      return observe ? refused("unreadable") : awaitingAnswer;
+    return exact.item.selfResponse === reply ? answered([exact.item]) : awaitingAnswer;
+  }
+
+  async function answerInstance(
+    token: string,
+    id: string,
+    raw: Json | undefined,
+    target: WriteTarget,
+    req: WriteAnswerRequest,
+    signal: AbortSignal,
+  ): Promise<WriteAnswer> {
+    if (!raw || raw.isOrganizer !== false) return refused("read_only");
+    // Graph can change the series version without changing the selected occurrence.
+    const master = seriesOfRecord(raw, deps.zones, deps.clock.now());
+    if (typeof master === "string" || master.item.id !== target.id) return refused("version_stale");
+    if (req.dispatch && req.dispatch.phase !== "ready")
+      return confirmAnswer(token, target, req.dispatch, master, req.reply, signal, req.observeReply);
+    const instance = (alreadySent: boolean) =>
+      findInstance(token, id, target, signal, (raw) =>
+        answerableInstanceOf(raw, target, master.series, alreadySent),
+      );
+    if (req.observeReply) {
+      const day = await instance(true);
+      if ("ok" in day) return day;
+      return confirmAnswer(
+        token,
+        target,
+        { phase: "sending", id: day.item.id, source: target.id },
+        master,
+        req.reply,
+        signal,
+        true,
+      );
+    }
+    let day = await instance(false);
+    if ("ok" in day) {
+      if (!req.retry || req.dispatch?.phase === "ready" || day.reason !== "version_stale") return day;
+      day = await instance(true);
+      if ("ok" in day) return day;
+      if (!day.isException || (target.exception && day.item.id !== target.exception.id))
+        return refused("version_stale");
+    }
+    if (day.item.event.organizer?.email !== master.item.event.organizer?.email)
+      return refused("version_stale");
+    if (day.item.selfResponse === req.reply) return answered([day.item]);
+    const sent = await sendAnswer(token, day.item.id, target.id, req, signal);
+    return "ok" in sent ? sent : confirmAnswer(token, target, sent, master, req.reply, signal);
   }
 
   async function readException(
@@ -1483,88 +1702,37 @@ export function makeWriter(deps: MicrosoftDeps): CalendarWriter {
       return refusalOf(res, "event_gone");
     },
 
-    async answer(
-      c,
-      _cal,
-      target,
-      req: { readonly as: string; readonly reply: WriteReply; readonly retry?: true },
-      signal,
-    ) {
+    async answer(c, _cal, target, req, signal) {
+      if (req.observeReply && req.dispatch?.phase === "ready") return refused("unreadable");
       if (target.occurrence !== null && !target.recurringSeries) return refused("repeat_unsupported");
-      const initialId = segment(target.id);
-      if (initialId === null) return refused("not_found");
+      const id = segment(target.id);
+      if (id === null) return refused("not_found");
       const signedIn = await bearerOf(c, signal);
       if (!signedIn.ok) return signedIn;
       const { token } = signedIn;
-      // Graph answers a series or a single instance at its own address.
-      const now = await read(token, initialId, signal);
+      if (target.occurrence === null && req.dispatch && req.dispatch.phase !== "ready")
+        return confirmAnswer(token, target, req.dispatch, null, req.reply, signal, req.observeReply);
+      if (target.occurrence === null && req.observeReply)
+        return confirmAnswer(
+          token,
+          target,
+          { phase: "sending", id: target.id, source: target.id },
+          null,
+          req.reply,
+          signal,
+          true,
+        );
+      const now = await read(token, id, signal);
       if ("ok" in now) return now;
       if (now.status !== 200) return refusalOf(now, "event_gone");
-      const wanted = { ACCEPTED: "accepted", TENTATIVE: "tentativelyAccepted", DECLINED: "declined" }[
-        req.reply
-      ];
-      let held = itemOf(now);
-      let version = target.version;
-      let parseAfter = itemOf;
-      if (target.occurrence !== null) {
-        const raw = held?.raw;
-        if (!raw || raw.isOrganizer !== false) return refused("read_only");
-        // The series is not compared by its version: Exchange moves that on for what no day shows (an exception made
-        // elsewhere, its own bookkeeping). What the answer is about is the day, and the day is held to what was shown:
-        // still a plain day of this series at its first time, or the changed day the person saw (`target.exception`).
-        const master = seriesOfRecord(raw, deps.zones, deps.clock.now());
-        if (typeof master === "string" || master.item.id !== target.id) return refused("version_stale");
-        let day = await readInstance(token, initialId, target, master.series, signal, true);
-        if ("ok" in day) {
-          if (!req.retry || day.reason !== "version_stale") return day;
-          day = await readInstance(token, initialId, target, master.series, signal, "applied");
-          if ("ok" in day) return day;
-          if (
-            !day.isException ||
-            (target.exception && day.item.id !== target.exception.id) ||
-            day.item.event.organizer?.email !== master.item.event.organizer?.email ||
-            !isRecord(day.raw.responseStatus) ||
-            day.raw.responseStatus.response !== wanted
-          )
-            return refused("version_stale");
-          return answered([day.item]);
-        }
-        if (day.item.event.organizer?.email !== master.item.event.organizer?.email)
-          return refused("version_stale");
-        // The day as Graph lists it is the one answered: Graph's answer takes no version, so a second read of it would
-        // hold nothing more, and Graph's single read of a day may carry another tag than its listing.
-        if (req.retry && isRecord(day.raw.responseStatus) && day.raw.responseStatus.response === wanted)
-          return answered([day.item]);
-        parseAfter = (response) => {
-          const after = instanceOf(jsonOf(response.body), target, master.series, false, "applied");
-          return after && !("ok" in after) ? after : null;
-        };
-        held = day;
-        version = day.item.version;
-      }
-      if (held === null || held.item === null || held.item.kind !== "upsert") return refused("unreadable");
-      const id = segment(held.item.id);
-      if (id === null) return refused("not_found");
-      if (held.item.version !== version) {
-        // Another version: done where Graph already says this answer (an earlier attempt landed); else another copy.
-        const said = isRecord(held.raw.responseStatus) ? held.raw.responseStatus.response : null;
-        return said === wanted ? answered([held.item]) : refused("version_stale");
-      }
-      const call = { ACCEPTED: "accept", TENTATIVE: "tentativelyAccept", DECLINED: "decline" }[req.reply];
-      const res = await send(
-        signedIn.token,
-        "POST",
-        `${eventUrl(id)}/${call}`,
-        { sendResponse: true },
-        signal,
-      );
-      if ("ok" in res) return res;
-      if (res.status !== 202 && res.status !== 200) return refusalOf(res, "event_gone");
-      // Read again after the answer: a copy Graph's answer call names no version of, so nothing waiting behind it is re-based onto it.
-      const after = await read(signedIn.token, id, signal);
-      if ("ok" in after || after.status !== 200) return answered([]);
-      const shown = parseAfter(after);
-      return answered(shown === null || shown.item === null ? [] : [shown.item]);
+      const held = itemOf(now);
+      if (target.occurrence !== null) return answerInstance(token, id, held?.raw, target, req, signal);
+      if (!held?.item || held.item.kind !== "upsert") return refused("unreadable");
+      if (held.item.id !== target.id) return refused("version_stale");
+      if (held.item.selfResponse === req.reply) return answered([held.item]);
+      if (held.item.version !== target.version) return refused("version_stale");
+      const sent = await sendAnswer(token, target.id, target.id, req, signal);
+      return "ok" in sent ? sent : confirmAnswer(token, target, sent, null, req.reply, signal);
     },
 
     async endSeries(c, cal, target, req, signal) {

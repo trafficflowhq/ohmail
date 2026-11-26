@@ -224,8 +224,9 @@ export function scriptedReader(word: ProviderWord, script: {
     provider: word,
     calls,
     lists: 0,
-    async checkSignIn(): Promise<Answer<{ principal: string | null; addresses: readonly string[] }>> {
-      return { ok: true, value: { principal: null, addresses: [] } };
+    async checkSignIn(c: Connection): Promise<Answer<{ principal: string | null; addresses: readonly string[] }>> {
+      const principal = word === "caldav" && c.start !== null ? new URL("/principal/", c.start).href : null;
+      return { ok: true, value: { principal, addresses: [] } };
     },
     async listCalendars(c: Connection): Promise<Answer<readonly CalendarInfo[]>> {
       reader.lists += 1;
@@ -324,7 +325,7 @@ export async function childrenOf(w: World, accountId: string): Promise<{ invitee
 export { Secret };
 
 /** A token address of a provider, answered by the test: every form it was sent, as the request port carried it. */
-export function tokenEndpoint(answer: (form: URLSearchParams, url: string) => Promise<{ status: number; body: unknown }>):
+export function tokenEndpoint(answer: (form: URLSearchParams, url: string) => Promise<{ status: number; body: unknown; retryAfter?: string }>):
   HttpPort & { readonly forms: { url: string; form: URLSearchParams; headers: Record<string, string> }[] } {
   const forms: { url: string; form: URLSearchParams; headers: Record<string, string> }[] = [];
   return {
@@ -334,7 +335,7 @@ export function tokenEndpoint(answer: (form: URLSearchParams, url: string) => Pr
       forms.push({ url, form, headers: { ...req.headers } as Record<string, string> });
       const a = await answer(form, url);
       const bytes = new TextEncoder().encode(JSON.stringify(a.body));
-      return { arrived: true, status: a.status, header: () => null, body: bytes, location: null, url, hops: 0 };
+      return { arrived: true, status: a.status, header: (name) => name === "retry-after" ? a.retryAfter ?? null : null, body: bytes, location: null, url, hops: 0 };
     },
   };
 }

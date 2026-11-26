@@ -347,6 +347,10 @@
     }
   },
   "approve": {
+    "phoneTitle": "Auf diesem Telefon anmelden.",
+    "phoneTitleOn": "Auf <name>{computer}</name> anmelden.",
+    "phoneApproved": "Anmeldung bestätigt.",
+    "phoneReturn": "Kehre zur App zurück.",
     "title": "ohmail auf diesem Computer anmelden.",
     "titleOn": "ohmail auf <name>{computer}</name> anmelden.",
     "onlyYours": "Bestätige nur, wenn er dir gehört und du das gestartet hast.",

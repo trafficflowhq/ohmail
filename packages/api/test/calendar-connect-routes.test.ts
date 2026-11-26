@@ -347,7 +347,8 @@ describe("POST /calendar/connections", () => {
     expect(await opened(r, r.s.accountId)).toContain(pw);
     // The check first: a sign-in typed again takes the connection's minute, so a check after one is refused inside it.
     expect((await r.ask("POST", `/calendar/connections/${dav.id}/check`)).status).toBe(202);
-    expect((await r.ask("POST", `/calendar/connections/${dav.id}/sign-in`, { user: userAgain, password: pwAgain })).status).toBe(202);
+    expect((await r.ask("POST", `/calendar/connections/${dav.id}/sign-in`, { user: userAgain, password: pwAgain })).status).toBe(400);
+    expect((await r.ask("POST", `/calendar/connections/${dav.id}/sign-in`, { user, password: pwAgain })).status).toBe(202);
     expect((await r.ask("POST", `/calendar/connections/${sub.id}/sign-in`, { address: `https://feeds.example.test/${pathAgain}/basic.ics` })).status).toBe(202);
     expect((await errorOf(await r.ask("POST", `/calendar/connections/${sub.id}/check`))).slice(0, 2)).toEqual([429, "rate_limited"]);
     // What the account holds is listed by the read, and the read's answer is searched like every other.
@@ -366,8 +367,8 @@ describe("POST /calendar/connections", () => {
     // The control: the same search finds a host, which is the one part of an address that is kept in the clear.
     expect(everywhere).toContain("feeds.example.test");
     const sealed = await opened(r, r.s.accountId);
-    for (const marker of [pwAgain, pathAgain, userAgain]) expect(sealed).toContain(marker);
-    for (const marker of [pw, path, query, user]) expect(sealed).not.toContain(marker);
+    for (const marker of [pwAgain, pathAgain, user]) expect(sealed).toContain(marker);
+    for (const marker of [pw, path, query, userAgain]) expect(sealed).not.toContain(marker);
   });
 
   it("5. google and microsoft are unlisted and refused: with the switch off, with a configured client alone, and while their sign-in is not built", async () => {
@@ -513,6 +514,33 @@ describe("the routes that name a connection or a calendar", () => {
     });
     return { calendar, event };
   }
+
+  it("keeps a CalDAV calendar and its queued edit bound to the original login", async () => {
+    const r = await rig();
+    const connection = await connect(r, caldav("https://dav.studio.example.test/"));
+    const { calendar, event } = await planted(r, r.s.accountId, connection.id);
+    await r.db.update(calConnections).set({ principal: "https://dav.studio.example.test/principals/original/" })
+      .where(eq(calConnections.id, connection.id));
+    await r.db.update(calCalendars).set({ syncToken: "inventory-start" }).where(eq(calCalendars.id, calendar));
+
+    const snapshots = async () => ({
+      connection: await r.db.select().from(calConnections).where(eq(calConnections.id, connection.id)),
+      credential: await credentialsOf(r.db, r.s.accountId),
+      calendar: await r.db.select().from(calCalendars).where(eq(calCalendars.id, calendar)),
+      writes: await r.db.select().from(calWrites).where(eq(calWrites.eventId, event)),
+    });
+    const before = await snapshots();
+    const path = `/calendar/connections/${connection.id}/sign-in`;
+    const refused = await r.ask("POST", path, { user: "other-calendar", password: made("pw") });
+    expect(refused.status).toBe(400);
+    expect(await snapshots()).toEqual(before);
+
+    expect((await r.ask("POST", path, { user: "mila", password: made("pw") })).status).toBe(202);
+    const rotated = await snapshots();
+    expect(rotated.connection[0]?.principal).toBe(before.connection[0]?.principal);
+    expect(rotated.calendar[0]?.syncToken).toBe("inventory-start");
+    expect(rotated.writes).toEqual(before.writes);
+  });
 
   it("lists what the account holds as the feed's records, in the order it was connected, and nothing of another account's", async () => {
     const r = await rig();
@@ -717,10 +745,11 @@ describe("the routes that name a connection or a calendar", () => {
     };
     // Sealed at the connect: the start as it was placed, beside what was typed. At iCloud it is Apple's own.
     expect([(await openedOf(dav.id)).server, (await openedOf(cloud.id)).server]).toEqual([START, APPLE]);
-    // Typed again: what was typed replaces what was typed, and the server is the one the kept sign-in was sealed for.
+    // The original account can replace its password and the sealed server stays the same.
     const pw = made("pw");
-    expect((await r.ask("POST", `/calendar/connections/${dav.id}/sign-in`, { user: "mila-again", password: pw })).status).toBe(202);
-    expect(await openedOf(dav.id)).toEqual({ v: 2, account: r.s.accountId, connection: dav.id, kind: "basic", server: START, user: "mila-again", password: pw });
+    expect((await r.ask("POST", `/calendar/connections/${dav.id}/sign-in`, { user: "mila-again", password: pw })).status).toBe(400);
+    expect((await r.ask("POST", `/calendar/connections/${dav.id}/sign-in`, { user: "mila", password: pw })).status).toBe(202);
+    expect(await openedOf(dav.id)).toEqual({ v: 2, account: r.s.accountId, connection: dav.id, kind: "basic", server: START, user: "mila", password: pw });
 
     /** The connection's row, its sealed sign-in's row and the account's changes: what a refused sign-in leaves as it stood. */
     const standing = async (id: string): Promise<string> => JSON.stringify([
@@ -761,8 +790,8 @@ describe("the routes that name a connection or a calendar", () => {
     const said = [r.answers.join("\n"), r.lines.join("\n")].join("\n");
     expect(typed.filter((t) => said.includes(t))).toEqual([]);
     // The controls: the connection beside it was never touched and takes its sign-in, and so does iCloud's with its row as it was.
-    for (const id of [beside.id, cloud.id]) {
-      expect((await r.ask("POST", `/calendar/connections/${id}/sign-in`, { user: "mila", password: made("pw") })).status).toBe(202);
+    for (const [id, user] of [[beside.id, "mila"], [cloud.id, icloud().user]] as const) {
+      expect((await r.ask("POST", `/calendar/connections/${id}/sign-in`, { user, password: made("pw") })).status).toBe(202);
     }
     expect([(await openedOf(beside.id)).server, (await openedOf(cloud.id)).server]).toEqual(["https://dav.beside.example.test/", APPLE]);
   });
@@ -1012,7 +1041,7 @@ describe("no route sends a kept sign-in to a place a request names", () => {
       }
       // Beside a sign-in typed whole, a place under a name the door does not read moves nothing: the server stays the
       // connection's own, in its row and in the sealed text, which names the server the connect typed.
-      const typed = { user: `mila-${name}`, password: made("pw") };
+      const typed = { user: "mila", password: made("pw") };
       const status = await asked(dav.id, "POST", signIn, { ...typed, [name]: ELSEWHERE }, { kind: "basic", server: CONNECTED, ...typed });
       expect(status, name).toBe(name === "address" ? 400 : 202);
       // A calendar's own fields: a member the door does not know is refused.

@@ -1,6 +1,13 @@
-import { and, desc, eq, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, ne, notInArray, sql } from "drizzle-orm";
 import { mailboxes, type Tx } from "@trafficflow/db";
 import { silentLogger, type Logger } from "@trafficflow/core";
+import { shardFilter, type MailboxSelection } from "./mailboxes.js";
+
+interface UnservedPosition { stamp: string; id: string }
+export interface SyncKickCursor {
+  after?: UnservedPosition;
+  seen?: Set<string>;
+}
 
 /**
  * ENFORCED SYNC — the worker half of `mailboxes.sync_requested_at` (mail 0049). The API stamps it the
@@ -32,6 +39,10 @@ export interface SyncKickDeps {
    */
   requestRoster?: () => void;
   askedFor?: Map<string, string>;
+  selection?: MailboxSelection;
+  unservedCursor?: SyncKickCursor;
+  /** Signals read the newest page. Floor scans keep their own place through older stamps. */
+  freshSignal?: boolean;
   /**
    * A served mailbox whose row carries an unspent lease press: "Organize here"
    * (`takeover_authorized_at`) or "Hand the mailbox back" (`release_requested_at`). The runtime's
@@ -44,7 +55,7 @@ export interface SyncKickDeps {
   log?: Logger;
 }
 
-/** Unserved stamps read per scan, newest first; a new mailbox's stamp is always among them. */
+/** Unserved stamps read per scan, newest first. */
 const SYNC_KICK_UNSERVED_MAX = 64;
 
 export interface SyncKickResult {
@@ -64,7 +75,7 @@ export async function syncKickPass(deps: SyncKickDeps): Promise<SyncKickResult> 
   const log = deps.log ?? silentLogger;
   const served = [...new Set(deps.served())];
   const rosterFor = deps.requestRoster && deps.askedFor
-    ? await askRosterForUnserved(deps.db, served, deps.askedFor, deps.requestRoster)
+    ? await askRosterForUnserved(deps, served, deps.askedFor, deps.requestRoster)
     : [];
   if (served.length === 0) return { kicked: [], cleared: 0, rosterFor };
 
@@ -118,28 +129,58 @@ export async function syncKickPass(deps: SyncKickDeps): Promise<SyncKickResult> 
  * by the scan, and a mailbox served by another shard costs one request per stamp, not one a tick.
  */
 async function askRosterForUnserved(
-  db: Tx, served: readonly string[], askedFor: Map<string, string>, requestRoster: () => void,
+  deps: SyncKickDeps, served: readonly string[], askedFor: Map<string, string>, requestRoster: () => void,
 ): Promise<string[]> {
-  const rows = await db
+  const scan = deps.unservedCursor;
+  const after = deps.freshSignal ? undefined : scan?.after;
+  const seen = scan?.seen ?? new Set<string>();
+  if (scan && !scan.seen) scan.seen = seen;
+  const rows = await deps.db
     .select({ id: mailboxes.id, requestedAtText: sql<string | null>`${mailboxes.syncRequestedAt}::text` })
     .from(mailboxes)
     .where(and(
       isNotNull(mailboxes.syncRequestedAt),
+      ne(mailboxes.status, "disabled"),
+      shardFilter(deps.selection),
+      after === undefined ? undefined
+        : sql`(${mailboxes.syncRequestedAt}, ${mailboxes.id}) < (${after.stamp}::timestamptz, ${after.id}::uuid)`,
       ...(served.length > 0 ? [notInArray(mailboxes.id, [...served])] : []),
     ))
-    .orderBy(desc(mailboxes.syncRequestedAt))
+    .orderBy(desc(mailboxes.syncRequestedAt), desc(mailboxes.id))
     .limit(SYNC_KICK_UNSERVED_MAX);
-  const seen = new Set<string>();
+  const last = rows.at(-1);
+  if (!deps.freshSignal && scan) {
+    if (rows.length === SYNC_KICK_UNSERVED_MAX && last?.requestedAtText) {
+      scan.after = { stamp: last.requestedAtText, id: last.id };
+    } else {
+      delete scan.after;
+    }
+  }
+  for (const id of served) {
+    askedFor.delete(id);
+    seen.delete(id);
+  }
   const asked: string[] = [];
   for (const row of rows) {
     if (!row.requestedAtText) continue;
     seen.add(row.id);
     if (askedFor.get(row.id) === row.requestedAtText) continue;
+    askedFor.delete(row.id);
     askedFor.set(row.id, row.requestedAtText);
     requestRoster();
     asked.push(row.id);
   }
-  for (const id of [...askedFor.keys()]) if (!seen.has(id)) askedFor.delete(id);
+  if (!scan || (!deps.freshSignal && scan.after === undefined)) {
+    for (const id of askedFor.keys()) if (!seen.has(id)) askedFor.delete(id);
+    seen.clear();
+  }
+  // Bound memory while retaining stamps across pages of a full sweep.
+  while (askedFor.size > 4096) {
+    const oldest = askedFor.keys().next().value;
+    if (oldest === undefined) break;
+    askedFor.delete(oldest);
+    seen.delete(oldest);
+  }
   return asked;
 }
 

@@ -58,7 +58,7 @@ import type {
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
-import { removeCalendarChange, storeCalendarSwitch, upsertCalendarChange } from "./cloud-mirror-calendar.js";
+import { CALENDAR_RETRY_MS, removeCalendarChange, storeCalendarSwitch, upsertCalendarChange } from "./cloud-mirror-calendar.js";
 import { forgetHostedDevices, keepHostedDevices, keepHostedDevicesAtStart } from "./cloud-mirror-devices.js";
 import { answeredByCloud, retryAfterMs, type CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
@@ -1219,7 +1219,6 @@ const QUARANTINE_MAX = 500;
 
 /** How long since, never when: the mirror's waits and deadlines read this, not the wall clock. */
 const monotonicNow = (): number => performance.now();
-const CALENDAR_RETRY_MS = 60_000;
 
 /**
  * How many refusals past {@link QUARANTINE_MAX} are counted by key. Measured at the cap: +560 KB

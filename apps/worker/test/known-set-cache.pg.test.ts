@@ -1,14 +1,14 @@
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
-import { eq, sql } from "drizzle-orm";
-import { messages } from "@trafficflow/db";
+import { and, eq, sql } from "drizzle-orm";
+import { changeLog, messageBodies, messageInstances, messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
 import { dbFor, MessageService, type ServiceContext } from "@trafficflow/services";
-import type { ChangeBatch, ImapCursor } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, type ChangeBatch, type ImapCursor } from "@trafficflow/core/adapters/imap";
 import type { KnownLocator, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { runSyncCycle, LeaderFencedError, type SyncDeps, type SyncWriteFence } from "@ohmail/organizer/sync";
-import { KnownSetCache, estimateWireBytes, watchKnownSet } from "@ohmail/organizer/known-set";
+import { KNOWN_COLD_PROJECTION_ROWS, KnownSetBudget, KnownSetCache, estimateWireBytes, watchKnownSet } from "@ohmail/organizer/known-set";
 import { makeHarness, rawClient, emlOf, byMessageId, DB_URL } from "../../../packages/organizer/test/_workerenv.js";
 import { FIXTURE_LEASE } from "../../../packages/organizer/test/_door.js";
 
@@ -98,6 +98,259 @@ describe.skipIf(!AVAILABLE)("known-set memo, on real Postgres", () => {
   beforeAll(async () => { await runMigrations(DB_URL); });
   const closers: Array<() => Promise<void>> = [];
   afterEach(async () => { for (const c of closers.splice(0)) await c(); });
+
+  it("keeps a moved message visible while its destination cannot be read", async () => {
+    const h = await makeHarness();
+    closers.push(() => h.adapter.close());
+    const c = await rawClient(h.cfg);
+    closers.push(async () => { await c.logout(); });
+    const deps: SyncDeps = { repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId,
+      role: "reader", storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
+      trustedAuthservIds: new Set<string>() };
+    const messageId = "partial-move@fixture.invalid";
+    await c.mailboxCreate("Projects");
+    await h.adapter.close();
+    await h.adapter.connect();
+    await c.append("INBOX", emlOf({ from: "fixture@range.example", subject: "kept copy", messageId }));
+    await drain(deps);
+    const [stored] = await h.db.select().from(messages).where(byMessageId(h.mailboxId, messageId));
+    const [inbox] = await h.repo.listKnownLocators(h.mailboxId);
+    expect(stored!.deletedAt).toBeNull();
+    expect(inbox!.folder).toBe("INBOX");
+    const lock = await c.getMailboxLock("INBOX");
+    try { expect(await c.messageMove(String(inbox!.uid), "Projects", { uid: true })).toBeTruthy(); }
+    finally { lock.release(); }
+    const sourceCursor = (await h.repo.getMailboxFolders(h.mailboxId)).find((row) => row.folder === "INBOX")!;
+    const changesSince = h.adapter.changesSince.bind(h.adapter);
+    h.adapter.changesSince = async () => ({
+      creates: [], moves: [], flagChanges: [],
+      deletes: [{ type: "delete", locator: { folder: "INBOX", ref: inbox!.uidValidity + ":" + inbox!.uid } }],
+      newCursor: { folders: { INBOX: sourceCursor } },
+      incompleteFolders: ["Projects"],
+    });
+    expect(await runSyncCycle(deps)).toMatchObject({ importIncomplete: true });
+    const [after] = await h.db.select().from(messages).where(eq(messages.id, stored!.id));
+    expect(after!.deletedAt).toBeNull();
+    expect(await h.repo.listKnownLocators(h.mailboxId)).toEqual([]);
+    h.adapter.changesSince = changesSince;
+    await drain(deps);
+    const [recovered] = await h.db.select().from(messages).where(byMessageId(h.mailboxId, messageId));
+    expect(recovered!.id).toBe(stored!.id);
+    expect(recovered!.deletedAt).toBeNull();
+    expect(recovered!.nativeLocator.folder).toBe("Projects");
+    const [body] = await h.db.select().from(messageBodies).where(eq(messageBodies.messageId, stored!.id));
+    expect(body!.withheldReason).toBeNull();
+    expect(body!.text).not.toBe("");
+    const deletes = await h.db.select().from(changeLog).where(and(
+      eq(changeLog.accountId, h.accountId), eq(changeLog.entityId, stored!.id), eq(changeLog.op, "delete"),
+    ));
+    expect(deletes).toEqual([]);
+  });
+
+  it("keeps a live message that moves between two unread folders during absence checks", async () => {
+    const h = await makeHarness();
+    closers.push(() => h.adapter.close());
+    const c = await rawClient(h.cfg);
+    closers.push(async () => { await c.logout(); });
+    const deps: SyncDeps = { repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId,
+      role: "reader", storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
+      trustedAuthservIds: new Set<string>() };
+    const messageId = "partial-move-between-peers@fixture.invalid";
+    await c.mailboxCreate("Archive");
+    await c.mailboxCreate("Projects");
+    await h.adapter.close();
+    await h.adapter.connect();
+    await c.append("INBOX", emlOf({ from: "fixture@range.example", subject: "kept copy", messageId }));
+    await drain(deps);
+    const [stored] = await h.db.select().from(messages).where(byMessageId(h.mailboxId, messageId));
+    const [inbox] = await h.repo.listKnownLocators(h.mailboxId);
+    const move = async (source: string, dest: string) => {
+      const lock = await c.getMailboxLock(source);
+      try {
+        const hits = await c.search({ header: { "message-id": messageId } }, { uid: true });
+        expect(hits).toHaveLength(1);
+        expect(await c.messageMove(String((hits as number[])[0]), dest, { uid: true })).toBeTruthy();
+      } finally { lock.release(); }
+    };
+    await move("INBOX", "Projects");
+    const sourceCursor = (await h.repo.getMailboxFolders(h.mailboxId)).find((row) => row.folder === "INBOX")!;
+    const changesSince = h.adapter.changesSince.bind(h.adapter);
+    h.adapter.changesSince = async () => ({
+      creates: [], moves: [], flagChanges: [],
+      deletes: [{ type: "delete", locator: { folder: "INBOX", ref: inbox!.uidValidity + ":" + inbox!.uid } }],
+      newCursor: { folders: { INBOX: sourceCursor } },
+      incompleteFolders: ["Archive", "Projects"],
+    });
+    const messageIdsGone = h.adapter.messageIdsGone.bind(h.adapter);
+    let moved = false;
+    h.adapter.messageIdsGone = async (folder, epoch, ids) => {
+      const answer = await messageIdsGone(folder, epoch, ids);
+      if (folder === "Archive") {
+        expect(answer).toMatchObject({ k: "read", gone: new Set(ids) });
+        await move("Projects", "Archive");
+        moved = true;
+      } else {
+        expect(moved).toBe(true);
+        expect(answer).toMatchObject({ k: "read", gone: new Set(ids) });
+      }
+      return answer;
+    };
+    expect(await runSyncCycle(deps)).toMatchObject({ importIncomplete: true });
+    expect(moved).toBe(true);
+    const lock = await c.getMailboxLock("Archive");
+    try { expect(await c.search({ header: { "message-id": messageId } }, { uid: true })).toHaveLength(1); }
+    finally { lock.release(); }
+    const [row] = await h.db.select().from(messages).where(eq(messages.id, stored!.id));
+    const [body] = await h.db.select().from(messageBodies).where(eq(messageBodies.messageId, stored!.id));
+    const deletes = await h.db.select().from(changeLog).where(and(
+      eq(changeLog.accountId, h.accountId), eq(changeLog.entityId, stored!.id), eq(changeLog.op, "delete"),
+    ));
+    expect({ live: row!.deletedAt === null, body: body!.text !== "" && body!.withheldReason === null,
+      deletes: deletes.length }).toEqual({ live: true, body: true, deletes: 0 });
+
+    h.adapter.changesSince = changesSince;
+    h.adapter.messageIdsGone = messageIdsGone;
+    await drain(deps);
+    const recovered = await h.db.select().from(messages).where(byMessageId(h.mailboxId, messageId));
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({ id: stored!.id, deletedAt: null, nativeLocator: { folder: "Archive" } });
+    expect((await h.repo.listKnownLocators(h.mailboxId)).map((locator) => locator.folder)).toEqual(["Archive"]);
+  });
+
+  it.each([[["Projects"]], [["Archive", "Projects"]]])("publishes a confirmed expunge from a healthy folder with %j unread", async (folders) => {
+    const h = await makeHarness();
+    closers.push(() => h.adapter.close());
+    const c = await rawClient(h.cfg);
+    closers.push(async () => { await c.logout(); });
+    const deps: SyncDeps = { repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId,
+      role: "reader", storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
+      trustedAuthservIds: new Set<string>() };
+    const messageId = "expunged-peer@fixture.invalid";
+    for (const folder of folders) await c.mailboxCreate(folder);
+    await h.adapter.close();
+    await h.adapter.connect();
+    await c.append("INBOX", emlOf({ from: "fixture@range.example", subject: "expunge independently", messageId }));
+    await drain(deps);
+    const [stored] = await h.db.select().from(messages).where(byMessageId(h.mailboxId, messageId));
+    const [inbox] = await h.repo.listKnownLocators(h.mailboxId);
+    const lock = await c.getMailboxLock("INBOX");
+    try { expect(await c.messageDelete(String(inbox!.uid), { uid: true })).toBeTruthy(); }
+    finally { lock.release(); }
+    const changesSince = h.adapter.changesSince.bind(h.adapter);
+    h.adapter.changesSince = async (...args) => ({ ...await changesSince(...args), incompleteFolders: folders });
+    const current = async () => (await h.db.select().from(messages).where(eq(messages.id, stored!.id)))[0]!;
+    for (let visit = 0; visit < 3; visit++) {
+      expect(await runSyncCycle(deps)).toMatchObject({ importIncomplete: true });
+      expect(await h.repo.listKnownLocators(h.mailboxId)).toEqual([]);
+    }
+    const beforeRecovery = await current();
+    h.adapter.changesSince = changesSince;
+    await drain(deps);
+    expect((await current()).deletedAt).not.toBeNull();
+    expect(beforeRecovery.deletedAt).not.toBeNull();
+  });
+
+  it("retires a provider-deleted folder in bounded pages", async () => {
+    const h = await makeHarness();
+    closers.push(() => h.adapter.close());
+    const c = await rawClient(h.cfg);
+    closers.push(async () => { await c.logout(); });
+    await c.append("INBOX", emlOf({ from: "fixture@range.example", subject: "kept copy", messageId: "paged-retire@x" }));
+    await drain({ repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId,
+      role: "reader", storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
+      trustedAuthservIds: new Set<string>() });
+    const folder = "Gone";
+    await h.repo.upsertMailboxFolders(h.mailboxId, [{ folder, cursor: {
+      uidValidity: "3", uidNext: 602, highestModseq: "0",
+    } }]);
+    await h.db.execute(sql`
+      insert into message_instances (account_id, mailbox_id, message_id, folder, uidvalidity, uid)
+      select account_id, mailbox_id, message_id, ${folder}, 3, i
+      from message_instances cross join generate_series(1, 601) i
+      where mailbox_id = ${h.mailboxId} and folder = 'INBOX'
+    `);
+    expect(await h.repo.transaction((repo) => repo.retireGoneFolder!(h.accountId, h.mailboxId, folder))).toBe("more");
+    expect((await h.repo.getMailboxFolders(h.mailboxId)).some((row) => row.folder === folder)).toBe(true);
+    expect(await h.repo.transaction((repo) => repo.retireGoneFolder!(h.accountId, h.mailboxId, folder))).toBe("retired");
+    expect((await h.repo.getMailboxFolders(h.mailboxId)).some((row) => row.folder === folder)).toBe(false);
+    expect((await h.repo.listKnownLocators(h.mailboxId)).map((row) => row.folder)).toEqual(["INBOX"]);
+  });
+
+  it("bounds projection reads by folder, epoch and inclusive UID range", async () => {
+    const h = await makeHarness();
+    closers.push(() => h.adapter.close());
+    const c = await rawClient(h.cfg);
+    closers.push(async () => { await c.logout(); });
+    for (let i = 0; i < 4; i++) {
+      await c.append("INBOX", emlOf({ from: "fixture@range.example", subject: `member ${i}`, messageId: `range${i}@x` }));
+    }
+    await drain({ repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId,
+      role: "reader", storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
+      trustedAuthservIds: new Set<string>() });
+    const all = await h.repo.listKnownLocators(h.mailboxId);
+    expect(all).toHaveLength(4);
+    const first = all[0]!;
+    expect(await h.repo.listKnownLocatorsWithin(h.mailboxId, 3)).toBeNull();
+    expect(await h.repo.listKnownLocatorsWithin(h.mailboxId, 4)).toEqual(all);
+    expect(await h.repo.listKnownLocatorRange(h.mailboxId, first.folder, first.uidValidity, first.uid + 1, first.uid + 2, 2))
+      .toEqual(all.slice(1, 3));
+    expect(await h.repo.listKnownLocatorRange(h.mailboxId, first.folder, "0", first.uid, first.uid + 3, 4)).toEqual([]);
+
+    const [letter] = await h.db.select({ id: messages.id }).from(messages).where(eq(messages.mailboxId, h.mailboxId));
+    const previous = first.uidValidity === "1" ? "2" : "1";
+    await h.repo.recordInstance(letter!.id, { folder: first.folder, ref: `${previous}:21` });
+    expect(await h.repo.listPriorKnownLocators(h.mailboxId, first.folder, first.uidValidity, "0:0", 2))
+      .toEqual([expect.objectContaining({ uid: 21, uidValidity: previous, hasCurrentCopy: true })]);
+  });
+
+  it("bounds simultaneous cold locator reads even when the stored history doubles", async () => {
+    const fixtures = await Promise.all(Array.from({ length: 3 }, () => makeHarness()));
+    const size = KNOWN_COLD_PROJECTION_ROWS + 4096;
+    for (const [index, h] of fixtures.entries()) {
+      closers.push(() => h.adapter.close());
+      const c = await rawClient(h.cfg);
+      try {
+        await c.append("INBOX", emlOf({ from: "fixture@range.example", subject: "current letter", messageId: `cold${index}@x` }));
+      } finally { await c.logout(); }
+      await runSyncCycle({
+        repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId,
+        role: "reader", storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
+      });
+    }
+
+    async function verifyHistory(rows: number, fillFrom: number) {
+      for (const h of fixtures) {
+        // The high coordinates model stored history outside the provider's current answered range.
+        await h.db.execute(sql`
+          insert into message_instances (account_id, mailbox_id, message_id, folder, uidvalidity, uid)
+          select mi.account_id, mi.mailbox_id, mi.message_id, mi.folder, mi.uidvalidity, g
+          from (select * from message_instances where mailbox_id = ${h.mailboxId} and is_primary limit 1) mi
+          cross join generate_series(${100_000 + fillFrom}::int, ${100_000 + rows - 1}::int) g
+        `);
+      }
+      const budget = new KnownSetBudget(128 * 1024 * 1024);
+      await Promise.all(fixtures.map(async (h) => {
+        const cache = new KnownSetCache(h.mailboxId, budget);
+        const adapter = new ImapAdapter(h.cfg);
+        await adapter.connect();
+        try {
+          await runSyncCycle({
+            repo: h.repo, adapter, accountId: h.accountId, mailboxId: h.mailboxId,
+            role: "reader", storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE, knownSet: cache,
+          });
+          expect(cache.paged).toBe(true);
+          const [count] = await h.db.select({ count: sql<number>`count(*)::int` }).from(messageInstances)
+            .where(eq(messageInstances.mailboxId, h.mailboxId));
+          expect(count?.count).toBe(rows + 1);
+        } finally { await adapter.close(); cache.drop("test completed"); }
+      }));
+      expect(budget.workingRows).toBe(0);
+      expect(budget.peakWorkingRows).toBeGreaterThan(0);
+      expect(budget.peakWorkingRows).toBeLessThanOrEqual(3 * (KNOWN_COLD_PROJECTION_ROWS + 1));
+    }
+    await verifyHistory(size, 0);
+    await verifyHistory(2 * size, size);
+  }, 60_000);
 
   /**
    * ── 1. THE MEASUREMENT ────────────────────────────────────────────────────────────────────

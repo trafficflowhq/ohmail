@@ -320,6 +320,28 @@
     inset-inline-start: 0;
   }
 
+  /* The phone reader reserves a row for its own actions, including when the bar wraps. */
+  :root[data-device="phone"] [data-reader-actions] > .oh-sheet[data-kind="reading"] {
+    --oh-sheet-foot-room: var(--s2);
+  }
+
+  :root[data-device="phone"] [data-reader-actions] > .oh-sheet[data-kind="reading"] > .oh-sheet-foot {
+    --oh-sheet-foot-own: calc(max(var(--s2), var(--oh-inset-foot)) + var(--oh-sheet-foot-offset, 0px));
+
+    position: relative;
+    inset: auto;
+    flex: none;
+    margin-block-end: var(--oh-sheet-foot-own);
+    margin-inline: var(--oh-sheet-foot-inset);
+  }
+
+  :root[data-face="paper"][data-device="phone"]
+    [data-reader-actions]
+    > .oh-sheet[data-flush-foot]
+    > .oh-sheet-foot {
+    margin-inline-start: 0;
+  }
+
   /* The foot keeps its room at the screen's edge; the way back keeps the column's corner. */
   :root[data-device="phone"] .oh-sheet-foot > .oh-button.oh-jumpback {
     right: calc(var(--s3) - var(--s4));

@@ -14,11 +14,28 @@
 import { useEffect } from "react";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { markStartup, useUiVitals } from "@ohmail/app-logic/session/ui-vitals";
+import { useFrame } from "../../frame/index.js";
+import { NONE } from "../../host/index.js";
+import { prepareWriting } from "../../write/rich-entry.js";
+import { preloadMailSettings } from "../panes.js";
 
 export function useStartupMarks(): void {
   useUiVitals();
   const { pulled, state: mailState } = useMailState();
+  const { host, route } = useFrame();
+  const usable = pulled > 0 || mailState.settled;
+  const demo = host.session.today !== NONE;
   useEffect(() => {
-    if (pulled > 0 || mailState.settled) markStartup("listUsable");
-  }, [pulled, mailState.settled]);
+    if (!usable) return;
+    markStartup("listUsable");
+    if (route.place !== "ohbox") return;
+    // Give the enabled list a paint before preparing any optional views.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        void prepareWriting().catch(() => {});
+        if (!demo) preloadMailSettings();
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [usable, route.place, demo]);
 }

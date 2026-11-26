@@ -138,6 +138,10 @@ const LOCATOR_OBJECT_BYTES = 128;
 const STRING_HEADER_BYTES = 16;
 const BYTES_PER_CHAR = 2;
 const INDEX_SLOT_BYTES = 24;
+// Charge the driver result and the overlapping cursor projections before reading either.
+const WORKING_LOCATOR_ROW_BYTES = 8192;
+export const KNOWN_WORKING_PAGE_ROWS = 512;
+export const KNOWN_COLD_PROJECTION_ROWS = 4096;
 
 export function estimateRetainedBytes(rows: ReadonlyArray<KnownLocator>): number {
   let total = 0;
@@ -170,6 +174,28 @@ export function estimateRetainedBytes(rows: ReadonlyArray<KnownLocator>): number
 export class KnownSetBudget {
   private readonly charged = new Map<KnownSetCache, number>();
   private total = 0;
+  private working = 0;
+  peakWorkingRows = 0;
+  private readonly workingWaiters: Array<() => void> = [];
+
+  async reserveWorking(rows: number): Promise<() => void> {
+    const bytes = rows * WORKING_LOCATOR_ROW_BYTES;
+    const limit = Math.max((KNOWN_COLD_PROJECTION_ROWS + 1 + KNOWN_WORKING_PAGE_ROWS) * WORKING_LOCATOR_ROW_BYTES, this.limitBytes);
+    while (this.working + bytes > limit) {
+      await new Promise<void>((resolve) => { this.workingWaiters.push(resolve); });
+    }
+    this.working += bytes;
+    this.peakWorkingRows = Math.max(this.peakWorkingRows, this.workingRows);
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      this.working -= bytes;
+      for (const wake of this.workingWaiters.splice(0)) wake();
+    };
+  }
+
+  get workingRows(): number { return this.working / WORKING_LOCATOR_ROW_BYTES; }
   /** The admission policy in front of this LRU — see {@link KnownSetDoorkeeper}. */
   readonly doorkeeper = new KnownSetDoorkeeper();
 
@@ -280,7 +306,7 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
      either. It is the away responder's own state about a PERSON; no locator, no flag, no
      `messages` column the memo reads. */
   "markAwayReplyUndeliverable",
-  "isGraduated", "getMailbox", "listScreenerBacklog", "getMailboxFolders", "listKnownLocators",
+  "isGraduated", "getMailbox", "listScreenerBacklog", "getMailboxFolders", "listKnownLocators", "listKnownLocatorsWithin", "listKnownLocatorRange", "listPriorKnownLocators",
   /* `mailboxes.status` and the erasure stamp beside it, locked for the transaction — the ingest's
      own "is this mailbox still here". A read of a table this projection does not join at all. */
   "mailboxStatusForWrite",
@@ -337,6 +363,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   //    a tombstoned row is by definition INSTANCELESS, so no instance row can be moved by it
   "setMailboxSpecialFolders", "fillMailboxSentFolder", "huskBody", "scrubGone", "restoreWithheldBody", "refillGone",
   "clearDeletedOnAdopt", "tombstoneInstanceless",
+  // Read-only identities for the reaper's bounded checks of unread destinations.
+  "listInstanceless",
   // The Junk check: a read of instanceless rows, and the reaper's write on them (`tombstoneGone`).
   "listJunkParked", "tombstoneJunkParkedGone", "tombstoneGone",
   // The Trash check: a read of instanceless rows, and its drop (`folder_state` + the husk).
@@ -421,6 +449,8 @@ export const KNOWN_SET_KEEPS_INSTANCES: ReadonlySet<string> = new Set([
 export class KnownSetCache {
   /** The mailbox this memo belongs to. A read for any other mailbox goes to the database. */
   readonly mailboxId: string;
+  /** This attachment already proved it needs pages. */
+  paged = false;
   /** The process-wide byte budget this memo competes in. */
   private readonly budget: KnownSetBudget;
 
@@ -475,6 +505,8 @@ export class KnownSetCache {
     this.budget = budget;
     this.mailboxId = mailboxId;
   }
+
+  reserveWorking(rows: number): Promise<() => void> { return this.budget.reserveWorking(rows); }
 
   /** Called once at the top of every cycle, so the census below is per cycle. */
   beginCycle(): void {

@@ -105,9 +105,15 @@ DECLARE
   shape    text;
   their_owner   text;
   their_objects text;
+  grant_setting text;
+  runtime text[] := ARRAY['ohmail_api', 'ohmail_worker'];
 BEGIN
+  IF current_setting('ohmail.prepare_api_replacement', true) = 'on'
+      OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ohmail_api_next') THEN
+    runtime := array_append(runtime, 'ohmail_api_next');
+  END IF;
   -- @rows  (deploy/sql/runtime-roles.tsv states the same rows a second time, independently)
-  PERFORM set_config('ohmail.roles_runtime', '{ohmail_api,ohmail_worker}', true);
+  PERFORM set_config('ohmail.roles_runtime', runtime::text, true);
   PERFORM set_config('ohmail.roles_rule', jsonb_build_object(
     'default', to_jsonb(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']),
     'narrowed', (
@@ -122,20 +128,22 @@ BEGIN
               ('ohmail_api',    'staff_audit_events', 'INSERT'),
               ('ohmail_api',    'invites',            'SELECT INSERT UPDATE'),
               ('ohmail_api',    'waitlist',           'SELECT INSERT UPDATE'),
+              ('ohmail_api',    'worker_topology',    'SELECT'),
               ('ohmail_worker', 'staff_users',        ''),
               ('ohmail_worker', 'staff_sessions',     'SELECT UPDATE DELETE'),
               ('ohmail_worker', 'staff_role_grants',  ''),
               ('ohmail_worker', 'staff_audit_log',    ''),
               ('ohmail_worker', 'staff_audit_events', ''),
               ('ohmail_worker', 'invites',            'SELECT UPDATE DELETE'),
-              ('ohmail_worker', 'waitlist',           '')
+              ('ohmail_worker', 'waitlist',           ''),
+              ('ohmail_worker', 'worker_topology',    'SELECT')
             ) AS v(role, tbl, verbs)
            GROUP BY v.role
         ) per_role)
   )::text, true);
   -- Our own roles and the billing plane's: none of them may bypass row security. Only the migrator may.
   PERFORM set_config('ohmail.roles_no_bypass',
-    '{ohmail_api,ohmail_worker,ohmail_admin,plane_runtime,plane_migrator,ohmail_stats,plane_stats}', true);
+    '{ohmail_api,ohmail_api_next,ohmail_worker,ohmail_admin,plane_runtime,plane_migrator,ohmail_stats,plane_stats}', true);
   -- The schemas the product's own objects live in. Never `plane`: the billing plane owns it.
   PERFORM set_config('ohmail.roles_schemas', '{public,admin,drizzle_mail,drizzle_cloud}', true);
   -- The schemas a login may USE. The search extensions' own schema joins them below, where a host
@@ -188,7 +196,19 @@ BEGIN
         ('statement_timeout',                   55000),
         ('idle_in_transaction_session_timeout', 60000)
       ) AS v(setting, ms)), true);
-  PERFORM set_config('ohmail.roles_deadline_roles', '{ohmail_api,ohmail_worker,ohmail_admin}', true);
+  PERFORM set_config('ohmail.roles_deadline_roles', array_append(runtime, 'ohmail_admin')::text, true);
+  -- The alternate API login holds the same rights directly. The membership repair remains strict.
+  IF 'ohmail_api_next' = ANY (runtime) THEN
+    PERFORM set_config('ohmail.roles_rule',
+      jsonb_set(current_setting('ohmail.roles_rule')::jsonb, '{narrowed,ohmail_api_next}',
+        current_setting('ohmail.roles_rule')::jsonb #> '{narrowed,ohmail_api}')::text, true);
+    FOREACH grant_setting IN ARRAY ARRAY['ohmail.roles_views', 'ohmail.roles_view_routines'] LOOP
+      IF current_setting(grant_setting)::jsonb ? 'ohmail_api' THEN
+        PERFORM set_config(grant_setting, (current_setting(grant_setting)::jsonb ||
+          jsonb_build_object('ohmail_api_next', current_setting(grant_setting)::jsonb -> 'ohmail_api'))::text, true);
+      END IF;
+    END LOOP;
+  END IF;
   -- @end rows
 
   IF current_setting('server_version_num')::int < 160000 THEN

@@ -31,10 +31,9 @@ function memoryKV(): SecureKV {
  * answered off the live line; any other presentation of a spent token sweeps the family. `hold()`
  * keeps every refresh ANSWER on the wire after the server has committed the rotation, which is the
  * window a recreate lands in. A swept family refuses its access tokens too. The refresh sign-out
- * door ends the family any of its tokens names, spent or not, and sweeps nothing; an older server
- * (`refreshDoor: false`) has none.
+ * door ends the family any of its tokens names, spent or not, and sweeps nothing.
  */
-function doorModel(opts: { refreshDoor?: boolean } = {}) {
+function doorModel() {
   const wire: Array<{ token?: string; attemptId?: string }> = [];
   let head = "ref-1";
   let minted = 0;
@@ -74,7 +73,6 @@ function doorModel(opts: { refreshDoor?: boolean } = {}) {
       return answer;
     }
     if (url.endsWith("/auth/refresh/logout")) {
-      if (opts.refreshDoor === false) return new Response(null, { status: 404 });
       const presented = (JSON.parse(sent.body ?? "{}") as { refreshToken?: string }).refreshToken ?? "";
       if (presented !== head && !spentBy.has(presented)) {
         return json(401, JSON.stringify({ error: { code: "unauthorized", message: "nothing to sign out" } }));
@@ -343,13 +341,15 @@ describe("one bearer manager per pairing slot, for the process", () => {
     expect(door.isRevoked(), "a sign-out is not a reuse").toBe(false);
   });
 
-  it("an older server with no refresh door: the routed sign-out's recovery retries the owed attempt", async () => {
-    // MUTATION WATCHED: `revokeProfile`'s load passing `refreshAttempt: null` — the logout's
-    // recovery presents the spent head under a fresh name and the door sweeps the family.
+  it("keeps a sign-out pending while the refresh door is unavailable, even after a lost rotation", async () => {
     const { seam, Store } = await freshProcess();
-    const door = doorModel({ refreshDoor: false });
+    const door = doorModel();
     const profiles = new Store(memoryKV());
-    const env = envOver(profiles, door.fetchImpl);
+    let available = false;
+    const env = envOver(profiles, async (url, init) => {
+      if (!available && url.endsWith("/auth/refresh/logout")) return new Response(null, { status: 404 });
+      return door.fetchImpl(url, init);
+    });
     const id = await pairedRow(profiles);
     await profiles.armRefreshAttempt(id, "r-killed-attempt", "ref-1", new Set(["ref-1"]));
     await door.fetchImpl(`${ORIGIN}/auth/refresh`, {
@@ -357,9 +357,14 @@ describe("one bearer manager per pairing slot, for the process", () => {
     });
     const row = (await profiles.list())[0]!;
 
-    expect(await seam.revokeProfile(env, row), "the server was told").toBe(true);
-    expect(door.wire[1], "the logout's recovery repeats the owed attempt").toEqual({ token: "ref-1", attemptId: "r-killed-attempt" });
-    expect(door.isRevoked(), "a retry of an owed attempt is not a reuse").toBe(false);
+    expect(await seam.revokeProfile(env, row)).toBe(false);
+    expect((await profiles.pendingSignOuts()).map((entry) => entry.refreshToken)).toEqual(["ref-1"]);
+    expect(door.isEnded()).toBe(false);
+    available = true;
+    expect(await seam.drainPendingSignOuts(env)).toBe(0);
+    expect(door.wire).toEqual([{ token: "ref-1", attemptId: "r-killed-attempt" }]);
+    expect(door.isEnded()).toBe(true);
+    expect(door.isRevoked()).toBe(false);
   });
 
   it("a launch's wake drain, the first to build the slot's manager, retries the owed attempt", async () => {

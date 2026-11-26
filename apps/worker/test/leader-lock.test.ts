@@ -1,28 +1,50 @@
-import { describe, it, expect, afterAll } from "vitest";
-import { runMigrations } from "@trafficflow/db/admin";
-import { acquireLeaderLock } from "../src/leader-lock.js";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import postgres from "postgres";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, pgTestUrl, throwawayDb,
+} from "@trafficflow/db/testing";
+import { acquireLeaderLock, leaderLockKeyFor } from "../src/leader-lock.js";
 
-const URL = pgTestUrl(import.meta.url);
+pgTestUrl(import.meta.url);
+const database = throwawayDb("worker_leader_lock");
 
 describe("leader lock (session-mode advisory)", () => {
+  beforeAll(async () => {
+    await database.createFromTemplate();
+    const connection = postgres(database.url, { max: 1 });
+    try {
+      await connection`INSERT INTO public.worker_topology (shards) VALUES (1)`;
+    } finally {
+      await connection.end({ timeout: 5 });
+    }
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
+  afterAll(async () => { await database.drop(); }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
+
   const held: Array<{ release: () => Promise<void> }> = [];
-  afterAll(async () => { for (const h of held) await h.release(); });
+  afterEach(async () => { for (const h of held.splice(0)) await h.release(); });
 
   it("permits exactly one holder at a time", async () => {
-    await runMigrations(URL);
-    const a = await acquireLeaderLock(URL);
+    const a = await acquireLeaderLock(database.url);
     expect(a).not.toBeNull();
     held.push(a!);
 
-    const b = await acquireLeaderLock(URL); // second worker: must fail
+    const b = await acquireLeaderLock(database.url); // second worker: must fail
     expect(b).toBeNull();
 
     await a!.release();
     held.pop();
 
-    const c = await acquireLeaderLock(URL); // released → now acquirable
+    const c = await acquireLeaderLock(database.url); // released → now acquirable
     expect(c).not.toBeNull();
     held.push(c!);
+  });
+
+  it("does not admit a different shard width beside an existing leader", async () => {
+    const single = await acquireLeaderLock(database.url, leaderLockKeyFor(0), { shards: 1 });
+    expect(single).not.toBeNull();
+    held.push(single!);
+    const other = await acquireLeaderLock(database.url, leaderLockKeyFor(1), { shards: 2 });
+    if (other) held.push(other);
+    expect(other).toBeNull();
   });
 });

@@ -59,9 +59,11 @@ export interface DavResponse {
 }
 export interface Multistatus {
   readonly responses: readonly DavResponse[];
-  /** The token a sync report answers with (RFC 6578 section 6.4), wherever in the answer it stands. */
+  /** The token a sync report answers with (RFC 6578 section 6.4). */
   readonly syncToken: string | null;
+  readonly badCalendarData?: true;
 }
+export type CompleteDavAnswer = "inventory" | "member-data";
 export type MultistatusRefusal = "unreadable" | "too_large";
 export type ReadMultistatus = { readonly ok: true; readonly value: Multistatus } | { readonly ok: false; readonly reason: MultistatusRefusal };
 
@@ -78,20 +80,8 @@ export const childOf = (e: XmlElement, ns: string, local: string): XmlElement | 
 
 /** The three digits of a status line (`HTTP/1.1 200 OK`), or 0 for anything else. */
 function statusOf(line: string): number {
-  const text = line.trim();
-  const space = text.indexOf(" ");
-  if (!text.startsWith("HTTP/") || space === -1) return 0;
-  let at = space;
-  while (text.charCodeAt(at) === 32) at++;
-  const end = at + 3;
-  if (end > text.length || (end < text.length && text.charCodeAt(end) !== 32)) return 0;
-  let code = 0;
-  for (let i = at; i < end; i++) {
-    const digit = text.charCodeAt(i) - 48;
-    if (digit < 0 || digit > 9) return 0;
-    code = code * 10 + digit;
-  }
-  return code;
+  const status = /^HTTP\/\d+(?:\.\d+)? +([1-5]\d{2})(?: |$)/.exec(line.trim());
+  return status === null ? 0 : Number(status[1]);
 }
 
 /**
@@ -113,6 +103,32 @@ function declaresTypes(text: string): boolean {
   }
 }
 
+/** XML 1.0 characters and references. Markup-free sections can contain literal ampersands. */
+function validXmlCharacters(text: string, calendarData: readonly (readonly [number, number])[]): boolean {
+  let range = 0;
+  for (const invalid of text.matchAll(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/gu)) {
+    if (invalid[0] !== "\0") return false;
+    while (calendarData[range] !== undefined && invalid.index >= calendarData[range]![1]) range += 1;
+    const field = calendarData[range];
+    if (field === undefined || invalid.index < field[0]) return false;
+  }
+  const markers = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|&|\]\]>/g;
+  const reference = /&(?:amp|lt|gt|apos|quot|#(\d+)|#x([\da-fA-F]+));/y;
+  for (const marker of text.matchAll(markers)) {
+    if (marker[0] === "]]>") return false;
+    if (marker[0] !== "&") continue;
+    reference.lastIndex = marker.index;
+    const matched = reference.exec(text);
+    if (matched === null) return false;
+    if (matched[1] === undefined && matched[2] === undefined) continue;
+    const n = matched[1] === undefined ? Number.parseInt(matched[2]!, 16) : Number.parseInt(matched[1], 10);
+    if (n === 9 || n === 10 || n === 13 ||
+      (n >= 32 && n <= 0xd7ff) || (n >= 0xe000 && n <= 0xfffd) || (n >= 0x10000 && n <= 0x10ffff)) continue;
+    return false;
+  }
+  return true;
+}
+
 type Role = "root" | "response" | "href" | "status" | "propstat" | "blockStatus" | "prop" | "property" | "token" | "skip";
 interface Building {
   ns: string;
@@ -122,6 +138,7 @@ interface Building {
   text: string;
 }
 interface Frame {
+  readonly name: string;
   readonly role: Role;
   /** The namespaces this element declares: prefix to name, the default under "". */
   readonly declared: Map<string, string> | null;
@@ -132,15 +149,17 @@ interface Frame {
 interface OpenBlock {
   status: number;
   props: Building[];
+  hasProp: boolean;
 }
 interface OpenResponse {
   hrefs: string[];
   status: number | null;
-  propstats: OpenBlock[];
+  propstats: DavPropstat[];
 }
 /** Where the reading stands. */
 interface Reading {
   syncToken: string | null;
+  incomplete: boolean;
   refused: MultistatusRefusal | null;
   parts: number;
   rootSeen: boolean;
@@ -156,13 +175,22 @@ interface Reading {
 const NO_ATTRIBUTES: ReadonlyMap<string, string> = new Map();
 
 /** The answer's bytes are read as UTF-8, a byte order mark left off; no other encoding is honoured. */
-export function readMultistatus(body: Uint8Array, limits: MultistatusLimits = MULTISTATUS_LIMITS): ReadMultistatus {
-  const text = new TextDecoder("utf-8").decode(body);
+export function readMultistatus(
+  body: Uint8Array, limits: MultistatusLimits = MULTISTATUS_LIMITS, complete?: CompleteDavAnswer,
+): ReadMultistatus {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(body);
+  } catch {
+    return { ok: false, reason: "unreadable" };
+  }
   if (declaresTypes(text)) return { ok: false, reason: "unreadable" };
 
   const frames: Frame[] = [];
   const responses: DavResponse[] = [];
-  const at: Reading = { syncToken: null, refused: null, parts: 0, rootSeen: false, rootClosed: false, justOpened: false, finishing: false, response: null, block: null };
+  const attributeNames = new Set<string>();
+  const badCalendarData: [number, number][] = [];
+  const at: Reading = { syncToken: null, incomplete: false, refused: null, parts: 0, rootSeen: false, rootClosed: false, justOpened: false, finishing: false, response: null, block: null };
 
   const refuse = (reason: MultistatusRefusal): void => {
     at.refused ??= reason;
@@ -174,6 +202,7 @@ export function readMultistatus(body: Uint8Array, limits: MultistatusLimits = MU
     return false;
   };
   const bound = (prefix: string, own: Map<string, string> | null): string | undefined => {
+    if (prefix === "xml") return "http://www.w3.org/XML/1998/namespace";
     const mine = own?.get(prefix);
     if (mine !== undefined) return mine;
     for (let i = frames.length - 1; i >= 0; i--) {
@@ -183,10 +212,46 @@ export function readMultistatus(body: Uint8Array, limits: MultistatusLimits = MU
     return undefined;
   };
 
-  const parser = new Parser(
+  const noteCalendarData = (start: number, end: number): void => {
+    if (complete !== "member-data") return;
+    const field = frames.at(-1)?.node;
+    if (field?.ns === CALDAV && field.local === "calendar-data" && text.slice(start, end).includes("\0"))
+      badCalendarData.push([start, end]);
+  };
+
+  // The tolerant parser ignores unmatched end tags. Check the raw closing token before it can
+  // disappear, so only the inventory reader requires the document's original XML structure.
+  const parser = new class extends Parser {
+    override ontext(start: number, end: number): void {
+      noteCalendarData(start, end);
+      super.ontext(start, end);
+    }
+
+    override oncdata(start: number, end: number, offset: number): void {
+      noteCalendarData(start, end - offset);
+      super.oncdata(start, end, offset);
+    }
+
+    override onclosetag(start: number, end: number): void {
+      if (complete) {
+        const close = text.indexOf(">", end);
+        if (frames.at(-1)?.name !== text.slice(start, end) || text.slice(start - 2, start) !== "</" ||
+          close === -1 || /[^ \t\r\n]/.test(text.slice(end, close))) at.incomplete = true;
+      }
+      super.onclosetag(start, end);
+    }
+  }(
     {
-      onattribute() {
-        if (at.refused === null) count();
+      onopentagname() {
+        attributeNames.clear();
+      },
+      onattribute(name, _value, quote) {
+        if (at.refused !== null || !count() || !complete) return;
+        if (attributeNames.has(name) || (quote !== '"' && quote !== "'") ||
+          !/[ \t\r\n]/.test(text.charAt(parser.startIndex - 1)) || text.slice(parser.startIndex, parser.endIndex).includes("<")) {
+          at.incomplete = true;
+        }
+        attributeNames.add(name);
       },
       onopentag(name, attribs) {
         if (at.refused !== null || !count()) return;
@@ -203,6 +268,14 @@ export function readMultistatus(body: Uint8Array, limits: MultistatusLimits = MU
         const colon = name.indexOf(":");
         const prefix = colon === -1 ? "" : name.slice(0, colon);
         const ns = bound(prefix, declared);
+        if (complete) {
+          for (const qualified of [name, ...(attributes?.keys() ?? [])]) {
+            const colon = qualified.indexOf(":");
+            if (colon === -1) continue;
+            if (colon === 0 || colon === qualified.length - 1 || qualified.indexOf(":", colon + 1) !== -1 ||
+              !bound(qualified.slice(0, colon), declared)) at.incomplete = true;
+          }
+        }
         // A prefix nothing declares names no namespace: the element keeps its written name and matches nothing asked for.
         const local = ns === undefined ? name : name.slice(colon + 1);
         const is = (wanted: string): boolean => ns === DAV && local === wanted;
@@ -225,24 +298,31 @@ export function readMultistatus(body: Uint8Array, limits: MultistatusLimits = MU
           else if (is("status")) role = "status";
           else if (is("propstat")) {
             role = "propstat";
-            at.block = { status: 0, props: [] };
+            at.block = { status: 0, props: [], hasProp: false };
           }
         } else if (parent.role === "propstat") {
-          if (is("prop")) role = "prop";
-          else if (is("status")) role = "blockStatus";
+          if (is("prop")) {
+            role = "prop";
+            if (at.block!.hasProp) at.incomplete = true;
+            at.block!.hasProp = true;
+          } else if (is("status")) role = "blockStatus";
         } else if (parent.role === "prop" || parent.role === "property") {
           role = "property";
           node = { ns: ns ?? "", local, attributes: attributes ?? NO_ATTRIBUTES, children: [], text: "" };
           if (parent.node !== null) parent.node.children.push(node);
           else at.block!.props.push(node);
+        } else if (parent.pieces !== null) {
+          at.incomplete = true;
         }
         const hasText = role === "href" || role === "status" || role === "blockStatus" || role === "property" || role === "token";
-        frames.push({ role, declared, node, pieces: hasText ? [] : null });
+        frames.push({ name, role, declared, node, pieces: hasText ? [] : null });
       },
       ontext(data) {
         if (at.refused !== null) return;
         at.justOpened = false;
-        if (frames.length > 0) frames[frames.length - 1]!.pieces?.push(data);
+        const frame = frames.at(-1);
+        if (frame?.pieces) frame.pieces.push(data);
+        else if (frame?.role !== "skip" && /\S/u.test(data)) at.incomplete = true;
       },
       onclosetag(_name, implied) {
         if (at.refused !== null) return;
@@ -256,25 +336,34 @@ export function readMultistatus(body: Uint8Array, limits: MultistatusLimits = MU
             at.response!.hrefs.push(own.trim());
             break;
           case "status":
+            if (at.response!.status !== null) at.incomplete = true;
             at.response!.status = statusOf(own);
             break;
           case "blockStatus":
+            if (at.block!.status !== 0) at.incomplete = true;
             at.block!.status = statusOf(own);
+            if (at.block!.status === 0) at.incomplete = true;
             break;
           case "propstat":
-            at.response!.propstats.push(at.block!);
+            if (!at.block!.hasProp || at.block!.status === 0) at.incomplete = true;
+            at.response!.propstats.push({ status: at.block!.status, props: at.block!.props });
             at.block = null;
             break;
           case "property":
             frame.node!.text = own;
             break;
           case "token":
+            if (at.syncToken !== null) at.incomplete = true;
             at.syncToken = own.trim();
             break;
           case "response": {
             // Several addresses under one status (RFC 4918 section 14.24) are one response for each.
             const { hrefs, status, propstats } = at.response!;
             at.response = null;
+            if (hrefs.length === 0 || hrefs.some((href) => href === "") ||
+              (status === null ? propstats.length === 0 || hrefs.length !== 1 : status === 0 || propstats.length > 0)) {
+              at.incomplete = true;
+            }
             if (responses.length + hrefs.length > limits.maxResponses) return refuse("too_large");
             for (const href of hrefs) responses.push({ href, status, propstats });
             break;
@@ -290,6 +379,9 @@ export function readMultistatus(body: Uint8Array, limits: MultistatusLimits = MU
         // `<?xml ...?>` and its like are nothing; a declaration (`<!...>`) that came this far is one too many.
         if (at.refused === null && name.startsWith("!")) refuse("unreadable");
       },
+      oncomment(data) {
+        if (complete && (data.includes("--") || data.endsWith("-"))) at.incomplete = true;
+      },
     },
     { xmlMode: true, decodeEntities: true },
   );
@@ -300,6 +392,7 @@ export function readMultistatus(body: Uint8Array, limits: MultistatusLimits = MU
     parser.end();
   }
   if (at.refused !== null) return { ok: false, reason: at.refused };
-  if (!at.rootClosed) return { ok: false, reason: "unreadable" };
-  return { ok: true, value: { responses, syncToken: at.syncToken } };
+  if (!at.rootClosed || (complete && (at.incomplete || !validXmlCharacters(text, badCalendarData))))
+    return { ok: false, reason: "unreadable" };
+  return { ok: true, value: { responses, syncToken: at.syncToken, ...(badCalendarData.length > 0 && { badCalendarData: true }) } };
 }

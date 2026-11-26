@@ -3,7 +3,7 @@ import settingsEn from "@ohmail/app/settings/labels.en.json";
 import settingsDe from "@ohmail/app/settings/labels.de.json";
 import Constants from "expo-constants";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Linking, Platform, View } from "react-native";
 import { buildCommit, buildLabel } from "../src/build-info";
 import { Copy } from "../src/copy";
@@ -24,12 +24,13 @@ import { connectionSaid, firstSyncSaid, readerZone } from "../src/state/live";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { Nav } from "../src/ui/MoreNav";
+import { AccountDevices } from "../src/ui/AccountDevices";
 import { Field } from "../src/ui/Field";
 import { SenderNamePanel } from "../src/ui/SenderNamePanel";
 import { SignaturesPanel } from "../src/ui/SignaturesPanel";
 import { useConnection } from "../src/net/connection";
 import { accessFeedFor, onAccessFeed } from "../src/net/account";
-import { accountDevicesOrigin, accountDevicesPage } from "../src/net/devices";
+import { accountDevicesOrigin } from "../src/net/devices";
 import type { ConnectedSession } from "../src/net/pairing";
 import { storageRowValue } from "../src/ui/storage-notice";
 import { aboutLinks } from "../src/ui/about-links";
@@ -169,37 +170,6 @@ function LanguagePanel() {
   );
 }
 
-function AccountDevices({ session }: { session: ConnectedSession }) {
-  const [failed, setFailed] = useState(false);
-  const pending = useRef<AbortController | null>(null);
-  useEffect(() => () => {
-    pending.current?.abort();
-    pending.current = null;
-  }, [session]);
-
-  const open = async () => {
-    if (pending.current) return;
-    const attempt = new AbortController();
-    pending.current = attempt;
-    setFailed(false);
-    try {
-      const page = await accountDevicesPage(session, attempt.signal);
-      if (attempt.signal.aborted) return;
-      if (page) await Linking.openURL(page);
-      else setFailed(true);
-    } catch {
-      if (!attempt.signal.aborted) setFailed(true);
-    } finally {
-      if (pending.current === attempt) pending.current = null;
-    }
-  };
-  return <>
-    <Nav label={Copy.settingsManageDevices} sub={Copy.settingsDevicesBrowser} icon="phone" chevron onPress={() => void open()} />
-    {failed ? <Txt variant="note" tone="ink2" accessibilityLiveRegion="polite">{Copy.settingsDevicesFailed}</Txt> : null}
-    <Rule />
-  </>;
-}
-
 function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?: string; mailbox?: string }) {
   /* Subscribed: this is the screen the switch is made ON, so it is the screen that must redraw
      under the finger rather than on the next navigation. */
@@ -249,7 +219,7 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
   const panes = {
     general: {
       label: Copy.settingsGeneral,
-      body: <>
+      content: <>
         <LanguagePanel />
         <Panel style={{ paddingBottom: 16 }}>
           <Section>{Copy.settingsAppearance}</Section>
@@ -302,7 +272,7 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
     },
     notifications: {
       label: Copy.settingsNotifications,
-      body: (
+      content: (
         <Panel style={{ paddingVertical: 18, marginBottom: 14 }}>
           <View style={{ paddingHorizontal: 20, gap: 6 }}>
             <Txt variant="settingsLabel">{Copy.wake}</Txt>
@@ -354,7 +324,7 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
     },
     mailboxes: {
       label: Copy.settingsMailboxes,
-      body: <>
+      content: <>
         {/* this phone — first, because it is the only block that says what this phone IS */}
         <ThisPhonePanel mailbox={mailbox} />
         <SenderNamePanel />
@@ -372,7 +342,7 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
     },
     screener: {
       label: Copy.screener,
-      body: <>
+      content: <>
         {/* WHAT THE SCREENER FILED ON ITS OWN, with Put back — beside the other automatic act.
             The phone has no auto-apply switch of its own; the panel reads the same route pair. */}
         {/* FILE IMPERSONATIONS TO SPAM — on by default; the switch every device agrees on. */}
@@ -383,7 +353,7 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
     },
     ai: {
       label: Copy.settingsAi,
-      body: w.autoAct ? (
+      content: w.autoAct ? (
         <AutoActPanel
           on={w.autoAct.on}
           suggestOn={w.autoAct.suggestOn}
@@ -395,14 +365,14 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
     },
     devices: {
       label: Copy.settingsDevices,
-      body: <Panel>
+      content: <Panel>
         {session && accountDevicesOrigin(session) ? <AccountDevices key={session.ownerKey} session={session} /> : null}
         <Nav label={Copy.serversTitle} icon="phone" chevron onPress={openServers} />
       </Panel>,
     },
     folders: {
       label: Copy.settingsFolders,
-      body: w.folders.storable ? (
+      content: w.folders.storable ? (
         <FoldersPanel
           on={w.folders.enabled}
           pending={w.folders.pending}
@@ -410,14 +380,14 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
         />
       ) : null,
     },
-    signatures: { label: Copy.settingsSignatures, body: <SignaturesPanel /> },
+    signatures: { label: Copy.settingsSignatures, content: <SignaturesPanel /> },
     account: {
       label: words.account,
-      body: accountLink ? <Panel>{linkRow(accountLink)}</Panel> : null,
+      content: accountLink ? <Panel>{linkRow(accountLink)}</Panel> : null,
     },
     about: {
       label: Copy.settingsAbout,
-      body: <>
+      content: <>
         <Panel style={{ paddingVertical: 18, marginBottom: 10 }}>
           <View style={{ paddingHorizontal: 20, gap: 6 }}>
             <Txt variant="settingsLabel">{Copy.about}</Txt>
@@ -457,7 +427,7 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
     },
     help: {
       label: Copy.settingsHelp,
-      body: <Panel>
+      content: <Panel>
           {/* HELP & CONTACT: the phone's own composer to support, or the mail app where nothing here can send. */}
           <Nav
             label={Copy.helpRow}
@@ -479,7 +449,7 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
     },
   };
 
-  const selected = Object.entries(panes).find(([id, pane]) => id === section && pane.body !== null)?.[1];
+  const selected = Object.entries(panes).find(([id, pane]) => id === section && pane.content !== null)?.[1];
   const open = (id: string) => {
     if (pick) pick(`settings:${id}`);
     else router.push({ pathname: "/settings", params: { pane: id } });
@@ -496,7 +466,7 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
             {title}{theme.mail ? "." : null}
           </Txt>
         </View>
-        {selected ? selected.body : (
+        {selected ? selected.content : (
           <>
             <Panel>
               <SettingsGroup label={words.groupMail}>
@@ -504,9 +474,9 @@ function SettingsBody({ inPane, section, mailbox }: { inPane: boolean; section?:
                 <Nav label={panes.notifications.label} chevron onPress={() => open("notifications")} />
                 <Nav label={panes.mailboxes.label} icon="ohbox" chevron onPress={() => open("mailboxes")} />
                 <Nav label={panes.screener.label} icon="screener" chevron onPress={() => open("screener")} />
-                {panes.ai.body ? <Nav label={panes.ai.label} icon="spark" chevron onPress={() => open("ai")} /> : null}
+                {panes.ai.content ? <Nav label={panes.ai.label} icon="spark" chevron onPress={() => open("ai")} /> : null}
                 <Nav label={Copy.awayRow} icon="reply" chevron onPress={() => (pick ? pick("away") : router.push("/away"))} />
-                {panes.folders.body ? <Nav label={panes.folders.label} icon="folder" chevron onPress={() => open("folders")} /> : null}
+                {panes.folders.content ? <Nav label={panes.folders.label} icon="folder" chevron onPress={() => open("folders")} /> : null}
                 <Nav label={panes.signatures.label} icon="pen" chevron onPress={() => open("signatures")} />
               </SettingsGroup>
               <SettingsGroup label={words.groupAccount}>

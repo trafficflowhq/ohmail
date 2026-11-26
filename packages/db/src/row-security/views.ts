@@ -1,5 +1,5 @@
 import type { messageSearch, messages } from "../schema-mail.js";
-import { ACCOUNT_READER, READER_SCHEMA, RUNTIME_LOGINS } from "./logins.js";
+import { ACCOUNT_READER, READER_SCHEMA, REQUIRED_RUNTIME_LOGINS, RUNTIME_LOGINS } from "./logins.js";
 
 /**
  * THE ACCOUNT'S VIEWS OF THE ROW LOCK (the search ruling, as the views' text ruling amends it).
@@ -93,9 +93,10 @@ export const VIEW_CHECK_OPTION = "check_option=cascaded";
 const LOGIN_NAME = /^[a-z_][a-z0-9_]*$/;
 
 /** The reader's condition: the role a statement runs as is one of the two runtime logins, by name. */
-export function readerCondition(): string {
-  for (const l of RUNTIME_LOGINS) if (!LOGIN_NAME.test(l)) throw new Error(`a runtime login's name is not a plain identifier: ${l}`);
-  return `current_user in (${RUNTIME_LOGINS.map((l) => `'${l}'`).join(", ")})`;
+export function readerCondition(replacement = false): string {
+  const logins = replacement ? RUNTIME_LOGINS : REQUIRED_RUNTIME_LOGINS;
+  for (const l of logins) if (!LOGIN_NAME.test(l)) throw new Error(`a runtime login's name is not a plain identifier: ${l}`);
+  return `current_user in (${logins.map((l) => `'${l}'`).join(", ")})`;
 }
 
 /** `ohmail.<name>`: how a statement names the view. */
@@ -104,9 +105,9 @@ export function viewName(v: Pick<AccountView, "name">): string {
 }
 
 /** The statement that makes `v`, or (`replace`) makes it again over a view of the same columns. */
-export function viewStatement(v: AccountView, replace = false): string {
+export function viewStatement(v: AccountView, replace = false, replacement = false): string {
   return `create ${replace ? "or replace " : ""}view ${viewName(v)} as select ${v.columns.map((c) => `"${c}"`).join(", ")}`
-    + ` from public."${v.table}" where ${v.key} and ${readerCondition()} with check option`;
+    + ` from public."${v.table}" where ${v.key} and ${readerCondition(replacement)} with check option`;
 }
 
 /**

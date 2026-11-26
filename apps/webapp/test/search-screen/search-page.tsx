@@ -26,6 +26,7 @@ import { fillOver, TextProvider, type Messages } from "@ohmail/app/text";
 import { Sheet } from "@ohmail/ui/mail";
 import de from "../../messages/de.json";
 import en from "../../messages/en.json";
+import { SearchFrame } from "./frame.js";
 import { searchStateOf } from "./search-states-of.js";
 
 const q = new URLSearchParams(location.search);
@@ -315,11 +316,13 @@ function Page() {
     if (d !== null) model.setDate("window" in d ? windowDays(d.window) : d);
   }, [model]);
   return (
-    <SearchAbove model={model} beside={beside} blank={searchBlankOf(model, blankWord)}>
-      <div className="oh-root" style={{ height: "100vh", ...listBounds }}>
-        {device === "phone" ? <SearchList {...PANE} /> : <Sheet kind="list">{<SearchList {...PANE} />}</Sheet>}
-      </div>
-    </SearchAbove>
+    <SearchFrame engine={engine} route={PANE.route} plan={PANE.plan}>
+      <SearchAbove model={model} beside={beside} blank={searchBlankOf(model, blankWord)}>
+        <div className="oh-root" style={{ height: "100vh", ...listBounds }}>
+          {device === "phone" ? <SearchList {...PANE} /> : <Sheet kind="list"><SearchList {...PANE} /></Sheet>}
+        </div>
+      </SearchAbove>
+    </SearchFrame>
   );
 }
 

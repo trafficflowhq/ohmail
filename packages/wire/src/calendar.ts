@@ -423,6 +423,8 @@ export type CalendarWriteFault =
   | "content_refused"
   /** Too old, or tried too often, to be sent late. */
   | "expired"
+  /** A provider action may have sent the reply, but its outcome could not be confirmed. */
+  | "answer_unconfirmed"
   | "move_copy_left"
   | "move_unresolved"
   | "move_destination_unavailable";
@@ -550,7 +552,7 @@ export type CalendarProposalAct = {
  */
 export type CalendarAct =
   | CalendarEventAct
-  | { kind: "calendar_write_retry"; writeId: string }
+  | { kind: "calendar_write_retry"; writeId: string; resendReply?: true }
   | { kind: "calendar_write_dismiss"; writeId: string };
 
 /**
@@ -581,6 +583,8 @@ export interface CalendarWriteMark {
   act: CalendarEventAct | null;
   part: 1 | 2 | null;
   at: ISODateTime;
+  /** This reply has been dispatched and is awaiting the provider's confirmation. */
+  replyUnconfirmed?: true;
 }
 
 /** What a recorded write stands at, as the route answers it. */

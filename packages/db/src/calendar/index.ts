@@ -27,10 +27,10 @@ export {
   type CalWriteOp, type CalWriteState,
 } from "./writes.js";
 export {
-  CALENDAR_WRITE_LIMITS, CALENDAR_WRITE_PAYLOAD_VERSION, CONTINUED_FIELDS, appliedPayloadOf, changedDaysOf, endedDayOf, exceptionBaseOf, isOccurrenceKey, isSeriesRow, isWriteKey,
+  CALENDAR_WRITE_LIMITS, CALENDAR_WRITE_PAYLOAD_VERSION, CONTINUED_FIELDS, appliedPayloadOf, calendarActFingerprint, changedDaysOf, endedDayOf, exceptionBaseOf, isOccurrenceKey, isSeriesRow, isWriteKey,
   isWriteUuid, parseCalendarAct, parseWritePayload, isAttendeeCopy, sharedCopyNeedsProtection, verifiedOrganizer, writeActRefusal, writePayloadOf, writeRowOf,
   type CalendarTransfer, type CalendarTransferProgress, type CalendarWriteActRefusal, type CalendarWriteContinuation, type CalendarWriteException, type CalendarWritePayload, type CalendarWriteRow, type CalendarWriteRowFacts,
   type ContinuedField,
 } from "./write-act.js";
-export { calendarOriginalOf, connectedAttendee, organizerPrincipalAddress, ownOrganizerAddresses, publishCalendarOrganizerChanges } from "./own-organizers.js";
+export { calendarOriginalOf, connectedAttendee, oauthIdentityAmbiguous, organizerPrincipalAddress, ownOrganizerAddresses, publishCalendarOrganizerChanges } from "./own-organizers.js";
 export { changedSeriesAudience, type SeriesCancellation } from "./series-audience.js";

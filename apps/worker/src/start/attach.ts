@@ -167,6 +167,7 @@ export function attachSection(scope: WorkerScope): void {
         });
         dialled.adapter = adapter;
         ticket.bind(adapter);
+        ticket.checkpoint();
         // Said BEFORE the dial, because everything after it can still be slow: a hung provider,
         // a lease gate over four IMAP round-trips, a first `ensureFolders` against a real
         // server. Without this line an attach that never returns looks exactly like a worker
@@ -594,13 +595,7 @@ export function attachSection(scope: WorkerScope): void {
         // cycles, ~six minutes for one mailbox, false `sync_lag` pages every deploy), so restart
         // convergence rides `cycle()` now — every-cycle-until-converged, and no classifier on this path.
         const tWatch = Date.now();
-        // ── THE DOORBELL NOW SAYS WHO RANG IT ──────────────────────────────────────────────────
-        //
-        // `kickCycle()` alone schedules a ROTATION, so a mailbox whose IDLE fired joined the back
-        // of a queue containing every other mailbox on the shard — a sub-second wake channel in
-        // front of a 15.5-minute queue, measured. `noteWake` marks THIS runtime, which is what
-        // lets `cycle()` order the rotation by who is actually waiting; the kick is unchanged and
-        // still the thing that makes a cycle happen at all.
+        // An IDLE signal schedules only this mailbox. The oldest unserved wake controls its order.
         unwatch = await adapter.watch(() => { scope.noteWake(mb.mailboxId); scope.kickCycle(); });
         rt.unwatch = unwatch;
         ticket.checkpoint();
@@ -617,6 +612,7 @@ export function attachSection(scope: WorkerScope): void {
         }
         // JOIN THE ROTATION LAST, then make it heard: the kick queues a cycle, and the nudge wakes one
         // already blocked on its lanes, whose dispatcher admits a never-synced mailbox at the front.
+        ticket.handoff();
         scope.runtimes.set(mb.mailboxId, rt);
         // The quarantine entry is NOT cleared here. It moved with the drain.
         // `quarantine.delete(mb.mailboxId)` was the last line of this function, and its reason was
@@ -642,11 +638,10 @@ export function attachSection(scope: WorkerScope): void {
           connectMs, leaseMs, foldersMs, kickstartMs, watchMs: Date.now() - tWatch,
           attachMs: Date.now() - tAttach,
         });
+        scope.noteWake(mb.mailboxId);
         scope.kickCycle();
-        scope.nudgeCycle();
-        // Beat per attach, so a roster of several real mailboxes reports progress while it is
-        // still working through them rather than only once the last one is up.
-        await scope.beat();
+        // The queued visit and the independent lock pulse publish progress. Neither holds
+        // the provider's attach slot.
         // The recovery write is NOT here. It is on the cycle path. It used to be, and the definition it
         // enforced was "connect + folders + two full sync cycles + IDLE": the heartbeat may count a
         // mailbox mid-drain, but the STATUS COLUMN may only say `connected` about one that has actually
@@ -688,6 +683,7 @@ export function attachSection(scope: WorkerScope): void {
         // A STOP is not the mailbox's fault either: the process is going down, or lost its lock, and
         // the next leader attaches it. No row is written and no backoff is earned.
         const aborted = ticket.aborted ?? (err instanceof AttachAbortedError ? err.why : null);
+        if (ticket.unassigned) return;
         if (aborted === "stop") {
           scope.log.info("mailbox_attach_stopped", {
             mailboxId: mb.mailboxId, accountId: mb.accountId,
