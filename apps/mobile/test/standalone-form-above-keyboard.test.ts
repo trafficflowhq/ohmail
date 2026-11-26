@@ -137,7 +137,6 @@ describe("every screen with a text field avoids the keyboard", () => {
         "standalone.tsx",
       ]),
     );
-    expect(forms.map((f) => f.file)).not.toContain("welcome.tsx");
   });
   it("each scroller on those screens asks for it", () => {
     const missing = forms.flatMap((f) => scrollerTags(f.src).filter((s) => !asks(s)).map((s) => `${f.file}: <${s.name}`));
@@ -156,6 +155,14 @@ describe("every screen with a text field avoids the keyboard", () => {
     const page = read(UI).find((file) => file.file === "OnboardingPage.tsx")!;
     expect(scrollerTags(page.src)).toHaveLength(1);
     expect(scrollerTags(page.src).every(asks)).toBe(true);
+  });
+  it("the welcome server address stays inside the keyboard-safe setup page", () => {
+    const welcome = forms.find((file) => file.file === "welcome.tsx");
+    expect(welcome?.src).toMatch(/<OnboardingPage\b[\s\S]*?<Field\b[\s\S]*?label=\{Copy\.signInServerAddress\}[\s\S]*?<\/OnboardingPage>/);
+    const page = read(UI).find((file) => file.file === "OnboardingPage.tsx")!;
+    const scroll = scrollerTags(page.src);
+    expect(scroll).toHaveLength(1);
+    expect(asks(scroll[0]!)).toBe(true);
   });
   it("the mail drawer and search facets each own a keyboard-aware window", () => {
     const drawer = uiFields.find((file) => file.file === "MailPlacesDrawer.tsx")!;

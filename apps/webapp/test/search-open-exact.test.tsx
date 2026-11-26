@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, renderHook, screen, within } from "@testing-library/react";
+import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -78,8 +79,21 @@ describe("the windowed lists reveal an externally-set cursor", () => {
     const streams = read("../../../packages/app/src/stream/StreamList.tsx");
     expect(streams).toMatch(/model\.items\.findIndex\(\(item\) => item\.id === model\.openId\)/);
     expect(streams).toMatch(/useListWindow\(\{[\s\S]*?cursor: model\.openId === null \? undefined : \{ id: model\.openId, index: slot \}/);
-    const window = read("../../../packages/app-logic/src/lists/list-window.ts");
-    expect(window).toMatch(/el\.scrollTop = offsetOf\(cursorIndex\)/);
-
+    const scroller = document.createElement("div");
+    Object.defineProperty(scroller, "clientHeight", { value: 640 });
+    const scrollerRef = { current: scroller };
+    const { result, rerender, unmount } = renderHook(
+      ({ index }) => useListWindow({ scrollerRef, count: 1_000, cursor: { id: String(index), index } }),
+      { initialProps: { index: 0 } },
+    );
+    try {
+      expect(result.current.end).toBeLessThan(800);
+      rerender({ index: 800 });
+      expect(scroller.scrollTop).toBe(result.current.offsetOf(800));
+      expect(result.current.start).toBeLessThanOrEqual(800);
+      expect(result.current.end).toBeGreaterThan(800);
+    } finally {
+      unmount();
+    }
   });
 });

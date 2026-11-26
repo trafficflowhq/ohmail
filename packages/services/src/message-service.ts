@@ -794,8 +794,7 @@ export class MessageService {
     const key = arrivalKeyOf(ctx.db);
     const d = dialect(ctx.db);
     const undated = undatedIn("messages");
-    // scoped-by: History's usual account and live-row predicates.
-    const filters = [ownedMessages(ctx.accountId)];
+    const filters: SQL[] = [];
     if (rank.month === null) {
       filters.push(undated, sql`${key} = ${d.ts(new Date(0))}`);
     } else {
@@ -807,7 +806,8 @@ export class MessageService {
     }
     if (rank.before) filters.push(afterKeyset(ctx.db, positionOf(rank.before, "before")));
     const [row] = await ctx.db.select({ id: messages.id, key }).from(messages)
-      .where(and(...filters)).orderBy(...msgOrder(ctx.db)).limit(1).offset(rank.offset);
+      .where(and(ownedMessages(ctx.accountId), ...filters))
+      .orderBy(...msgOrder(ctx.db)).limit(1).offset(rank.offset);
     return row;
   }
 

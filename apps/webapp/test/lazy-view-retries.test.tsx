@@ -246,7 +246,9 @@ describe("the editor's door, whose chunk failed once", () => {
   beforeEach(freshModules);
 
   async function mountEditor(): Promise<HTMLElement> {
-    const { MailRichEditor } = await import("@ohmail/app/mail");
+    // The full shell now preloads the editor. Open the editor module directly so these
+    // cases can exercise its cold import after resetting the module graph.
+    const { MailRichEditor } = await import("../../../packages/app/src/write/rich-entry.js");
     const { TextFromIntl } = await import("../app/shell/LocaleContext");
     const { BrowserChunkLoads } = await import("../app/shell/lazy-view");
     const { EMPTY_RICH } = await import("@ohmail/app-logic/writing/rich-text");

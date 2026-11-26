@@ -26,7 +26,7 @@ export function rosterSection(scope: WorkerScope): void {
       // "wedged mid-boot", "never started" and "no mailboxes to serve" are the same absence, which
       // nothing can page on. So the beat happens before anything that can BLOCK, and it is a beat not
       // just a log: a log is visible only to whoever is tailing, while the heartbeat row is what an
-      // EXTERNAL watchdog reads. `beat()` is best-effort, so a failed write cannot stop the boot.
+      // EXTERNAL watchdog reads. The worker must claim that row before attaching any mailbox.
       if (!scope.booted) {
         scope.booted = true;
         scope.log.info("leader_boot_started", {

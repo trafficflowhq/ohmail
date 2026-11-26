@@ -49,7 +49,7 @@ describe("History and Search read the store, never the mirror's window", () => {
     expect(seat).toMatch(/<HistoryAbove model=\{model\}>/);
     expect(seat).not.toMatch(/\bmessages=|\bwindowed=/);
     expect(live).toContain("useStoreTimeline(engine, derived, mirrorRows)");
-    expect(live).toContain("useListWindow({ scrollerRef: own.scroller, count: tl.length, inserted: tl.shifted })");
+    expect(live).toMatch(/useListWindow\(\{\s*scrollerRef: own\.scroller,\s*count: tl\.length,\s*inserted: tl\.shifted,\s*maxScrollHeight: 8_000_000 - 16,\s*\}\)/);
     expect(live).toMatch(STORE_LIST_WINDOW);
   });
 

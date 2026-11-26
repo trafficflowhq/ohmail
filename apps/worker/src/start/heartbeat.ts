@@ -16,7 +16,7 @@ export function heartbeatSection(scope: WorkerScope): void {
      * Stamp this leader's row in `worker_heartbeats` — the durable evidence that makes
      * "no leader lock held for > 2 minutes" answerable by a process that is not this one.
      *
-     * BEST EFFORT, always. A failed beat must never abort a sync cycle: the worst case is a
+     * After the required startup claim, a failed beat never aborts a sync cycle: the worst case is a
      * false "worker down" alert, and the alternative — observability code that can take a
      * working worker offline — is strictly worse than the fault it reports.
      *
@@ -26,8 +26,8 @@ export function heartbeatSection(scope: WorkerScope): void {
      * its next rotation, and from then on the write fence let the one without the lock write and
      * refused the one with it. The claim now writes the row and, holding it, asks the database whether
      * the lock's session (its pid and its mark) holds the lock; on a no the write is taken back. A
-     * claim that fails is tried again by the next beat, which is safe because it asks again. After it,
-     * a beat only renews, and what a renewal finds is final: a row that no longer names this takeover
+     * required claim must succeed before the worker starts serving. After it, a beat only
+     * renews, and what a renewal finds is final: a row that no longer names this takeover
      * is a lost lock ({@link renew}).
      */
     async function beat({ required = false } = {}): Promise<void> {
@@ -42,7 +42,12 @@ export function heartbeatSection(scope: WorkerScope): void {
         if (landed) scope.claimed = true;
         else scope.handleLockLoss(new LockLostError("the database does not show this instance's session holding the lock", "LOCK_UNCLAIMED"));
       } catch (err) {
-        if (required) throw err;
+        if (required) {
+          // The alert timer starts after the first roster pass. Use its database-independent
+          // pager if the startup claim could not use the database.
+          logLastResort(await lastResortFailed(scope.alertLastResort, err, lastResortCtx()));
+          throw err;
+        }
         scope.log.warn("heartbeat_write_failed", { err });
       }
     }
