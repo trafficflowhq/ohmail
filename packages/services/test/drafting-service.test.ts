@@ -144,9 +144,9 @@ describe("the reply composer’s provider request", () => {
       outgoing: "The passphrase is [code]",
     },
     {
-      name: "a password field followed by a username field",
+      name: "a username field after an ambiguous unquoted password",
       line: "Password: required to find Umber! Gull Username: workshop",
-      outgoing: "Password: [code] Username: workshop",
+      outgoing: "Password: [code]",
     },
     {
       name: "a quoted passphrase containing a label",
@@ -182,6 +182,21 @@ describe("the reply composer’s provider request", () => {
       name: "an ordinary password length requirement",
       line: "The password is a minimum of twelve characters. Bring the blue copy to the workshop.",
       outgoing: "The password is a minimum of twelve characters. Bring the blue copy to the workshop.",
+    },
+    {
+      name: "a username-shaped suffix in a password",
+      line: "Password: umber gull Username: sandstone",
+      outgoing: "Password: [code]",
+    },
+    {
+      name: "a password before a semicolon and an instruction",
+      line: "Password: fixture-lantern; Bring the blue copy to the workshop.",
+      outgoing: "Password: [code]; Bring the blue copy to the workshop.",
+    },
+    {
+      name: "a password expiry notice",
+      line: "The password is due to expire tomorrow. Bring the blue copy to the workshop.",
+      outgoing: "The password is due to expire tomorrow. Bring the blue copy to the workshop.",
     },
   ])("shares the right text for $name in both letters", async ({ line, outgoing }) => {
     const { db, A, mbA, ctxA } = await setup();
