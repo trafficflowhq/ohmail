@@ -173,7 +173,9 @@ describe("every address a door's page draws is the web's own", () => {
     };
     /* A stranger at the account step: the way to the sign-in. */
     await mounted(JOIN, "/join", { initialCode: "", publicSignup: true });
-    drawn.push(...addresses());
+    const signupLinks = addresses();
+    expect(signupLinks).toEqual(expect.arrayContaining(["/privacy", "/terms"]));
+    drawn.push(...signupLinks);
     /* No server behind the build: the demo. */
     await mounted(JOIN, "/join", { initialCode: "", publicSignup: true }, false);
     drawn.push(...addresses());
@@ -218,7 +220,7 @@ describe("every address a door's page draws is the web's own", () => {
     expect(drawn.filter((href) => !allowed(href, ACCOUNT_PAGE))).toEqual([]);
     /* Not a census of nothing: every way out the card drew as a link stands here, as the route wrote it. */
     expect([...new Set(drawn)].sort()).toEqual([
-      "/", "/#/first-run", "/#pricing", "/?demo=1", "/login", "/login?next=join", ACCOUNT_PAGE,
+      "/", "/#/first-run", "/#pricing", "/?demo=1", "/login", "/login?next=join", "/privacy", "/terms", ACCOUNT_PAGE,
     ].sort());
   }, 60000);
 });

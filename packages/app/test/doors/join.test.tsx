@@ -272,6 +272,19 @@ describe("the invite code and the account", () => {
     expect(screen.queryByRole("link", { name: "Privacy Policy" })).toBeNull();
   });
 
+  it("account: Continue counts the same password characters as the hint", () => {
+    draw({ at: "account" });
+    type(J.nameLabel, READY.name);
+    type(J.emailLabel, READY.email);
+    const symbol = String.fromCodePoint(0x1f31e);
+    type(J.passwordLabel, symbol.repeat(6));
+    const submit = button(J.continue);
+    expect(submit.disabled).toBe(true);
+
+    type(J.passwordLabel, symbol.repeat(12));
+    expect(submit.disabled).toBe(false);
+  });
+
   it("invite: says which sentence about codes is true here, and Continue hands the code on", () => {
     const { acts } = draw({ at: "invite" }, { invited: true });
     expect(heading()).toBe(J.myInvite.replace("<blank></blank>.", J.inviteLabel));

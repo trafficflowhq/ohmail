@@ -39,36 +39,60 @@ interface Call {
   pattern: string;
 }
 
+const ROUTE = '"(GET|POST|PUT|PATCH|DELETE) (/[^"]*)"';
+const literalRoute = new RegExp(`^\\s*${ROUTE}\\s*[,)]`);
+const calendarChoice = new RegExp(`^\\s*(?:this|params)\\.calendarOnly\\s*\\?\\s*${ROUTE}\\s*:\\s*${ROUTE}\\s*[,;)]`);
+const callOf = (method: string, name: string): Call => ({
+  method,
+  pattern: name.replace(/:[A-Za-z_][A-Za-z0-9_]*/g, "x"),
+});
+
 /**
  * Every `this.call(...)` in the wire client, as a method and a route pattern.
  *
  * A call names its route as the wire does, `"METHOD /pattern"`, in one literal that is the call's
- * first argument, so the read is that literal. Each `:param` becomes the placeholder segment a
- * router would match the call against. A ternary between two routes is two calls, each with its
- * own name.
+ * first argument. The calendar-only adapter can also choose between two names. Read both
+ * branches and check the calendar-only route against the hosted relay separately.
  *
  * `named` is counted beside `sites` and the caller holds the two equal. A parse that quietly
  * skipped a shape it did not recognise is the failure this whole file would be blind to: an
  * earlier version of the read missed exactly the one route this test most needs to see and
  * reported full coverage.
  */
-function clientCalls(): { calls: Call[]; sites: number; named: number } {
+function clientCalls(): { calls: Call[]; calendarOnly: Call[]; sites: number; named: number } {
   const src = fs.readFileSync(ADAPTER, "utf8");
   const marker = "this.call(";
   const calls: Call[] = [];
+  const calendarOnly: Call[] = [];
   let sites = 0;
+  let named = 0;
   for (let at = src.indexOf(marker); at >= 0; at = src.indexOf(marker, at + 1)) {
     sites++;
-    const name = /^\s*"(GET|POST|PUT|PATCH|DELETE) (\/[^"]*)"/.exec(src.slice(at + marker.length));
-    if (!name) continue;
-    calls.push({ method: name[1]!, pattern: name[2]!.replace(/:[A-Za-z_][A-Za-z0-9_]*/g, "x") });
+    const argument = src.slice(at + marker.length);
+    const literal = literalRoute.exec(argument);
+    if (literal) {
+      calls.push(callOf(literal[1]!, literal[2]!));
+      named++;
+      continue;
+    }
+    const currentLine = src.lastIndexOf("\n", at);
+    const previousLine = src.slice(src.lastIndexOf("\n", currentLine - 1) + 1, currentLine).trim();
+    const choice = /^\s*route\s*,/.test(argument) && previousLine.startsWith("const route = ")
+      ? previousLine.slice("const route = ".length)
+      : argument;
+    const routes = calendarChoice.exec(choice);
+    if (routes) {
+      calendarOnly.push(callOf(routes[1]!, routes[2]!));
+      calls.push(callOf(routes[3]!, routes[4]!));
+      named++;
+    }
   }
-  const named = calls.length;
   // Dedup: several mutations address the same route.
   const seen = new Set<string>();
   return {
     sites,
     named,
+    calendarOnly,
     calls: calls.filter((c) => {
       const key = `${c.method} ${c.pattern}`;
       if (seen.has(key)) return false;
@@ -486,7 +510,7 @@ function calendarIsHostedOnly(): { exempt: Set<string>; holds: Record<string, bo
 }
 
 describe("the client's route list against the local engine", () => {
-  const { calls: allCalls, sites, named: namedSites } = clientCalls();
+  const { calls: allCalls, calendarOnly: phoneOnly, sites, named: namedSites } = clientCalls();
   const { exempt: stagingOnly } = stagingIsHostedOnly();
   const { exempt: calendarOnly } = calendarIsHostedOnly();
   const calls = allCalls;
@@ -501,6 +525,13 @@ describe("the client's route list against the local engine", () => {
     expect(parsed.size).toBeGreaterThan(1);
     expect(named).toContain("GET /sync");
     expect(named).toContain("GET /sync/snapshot");
+    expect(phoneOnly.length).toBeGreaterThan(0);
+    for (const { method, pattern } of phoneOnly) {
+      expect(method).toBe("GET");
+      expect(pattern).toMatch(/^\/calendar\//);
+      expect(matchRoute(localRoutes, method, pattern).matched).toBe(false);
+      expect(relayVerdict(method, pattern)).toBe("forward");
+    }
   });
 
   it("the staging exemption is EARNED — all four structural facts still hold", () => {

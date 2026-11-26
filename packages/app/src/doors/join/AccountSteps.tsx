@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Button, Dot, Page, Tag } from "@ohmail/ui/base";
 import { AccountSentence, useWanted, type AccountField } from "../stage/AccountSentence.js";
 import { DoorForm } from "../stage/DoorForm.js";
-import { PASSWORD_MIN, accountReady } from "../stage/fields.js";
+import { PASSWORD_MIN, accountReady, passwordLength } from "../stage/fields.js";
 import { Address, SaidWith } from "../../text/Said.js";
 import { SentenceBlank } from "../../text/SentenceBlank.js";
 import { WayButton } from "../stage/way.js";
@@ -60,7 +60,7 @@ export function InviteStep({ door, join, progress }: StepProps<"invite">): React
 export function AccountStep({ door, state, join, progress }: StepProps<"account">): ReactNode {
   const { fields, pending, busy } = door;
   const { offer } = state;
-  const filled = Math.min([...fields.password].length, PASSWORD_MIN);
+  const filled = Math.min(passwordLength(fields.password), PASSWORD_MIN);
   const remaining = PASSWORD_MIN - filled;
   const lengthHintId = "join-password-length";
   const [withCode, setWithCode] = useState(fields.code.trim() !== "");

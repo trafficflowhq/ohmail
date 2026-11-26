@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
 import { Secret, type HttpPort } from "@ohmail/cal-providers";
 import { makeReader as googleReader } from "@ohmail/cal-providers/google";
 import { makeReader as outlookReader } from "@ohmail/cal-providers/microsoft";
@@ -16,6 +15,7 @@ import {
   capturedLog,
   changesOf,
   depsFor,
+  eq,
   openWorld,
   providersOf,
   recordWrite,
@@ -26,7 +26,7 @@ import {
   single,
   upsert,
   type World,
-} from "../../../packages/organizer/test/_calendar-world.js";
+} from "../packages/organizer/test/_calendar-world.js";
 
 const signal = new AbortController().signal;
 const start = "https://dav.example.test/dav/";

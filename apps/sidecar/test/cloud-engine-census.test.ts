@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { engineUnitFiles } from "../../../test/support/engine-unit.js";
+import { moduleResolver } from "../../../scripts/lib/import-closure.mjs";
 
 /**
  * THE STRUCTURAL CENSUS — Cloud mode cannot reach the organizer.
@@ -51,7 +52,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../../..");
 const r = (p: string): string => resolve(REPO, p);
 
-const CLOUD_ENGINE = resolve(HERE, "../src/cloud-engine.ts");
+const CLOUD_ENGINE = "apps/sidecar/src/cloud-engine.ts";
 
 /** The three modules an organizer is built from. Their exact `/sync`-visible specifiers. */
 const FORBIDDEN_SPECIFIERS = [
@@ -65,148 +66,7 @@ const FORBIDDEN_FILES = new Set([
   r("packages/organizer/src/sync.ts"),
 ]);
 
-/**
- * Workspace specifier → source entry, mirroring `vitest.config.ts`'s alias table so the census
- * resolves exactly what the suite does. A specifier under `@trafficflow/*` or `@ohmail/*` that is
- * not here is an unresolved edge and fails the run — extend this map, do not paper over it.
- */
-const ALIASES: Record<string, string> = {
-  "@trafficflow/core/adapters/imap": r("packages/core/src/adapters/imap.ts"),
-  // The IMAP wire types, split out of the adapter so type-only importers (the junk window's
-  // search shapes among them) stop pulling imapflow into graphs that never dial. A new subpath
-  // export is a new workspace edge, and an unresolved edge means this census's graph was
-  // incomplete — the suite sat red from the slice that added it until this entry.
-  "@trafficflow/core/adapters/imap-types": r("packages/core/src/adapters/imap-types.ts"),
-  "@trafficflow/core/adapters/organizer-lease": r("packages/core/src/adapters/organizer-lease.ts"),
-  // The organizer profile's document and store halves — imported by packages/organizer/src/profile.ts,
-  // which the census reaches through the worker's sync surface.
-  "@trafficflow/core/adapters/organizer-profile": r("packages/core/src/adapters/organizer-profile.ts"),
-  "@trafficflow/core/adapters/organizer-profile-store": r("packages/core/src/adapters/organizer-profile-store.ts"),
-  "@trafficflow/core/adapters/drizzle-repo": r("packages/core/src/adapters/drizzle-repo.ts"),
-  "@trafficflow/core/mail": r("packages/core/src/mail.ts"),
-  // The search ranking rule, dependency-free, imported by the client engine's in-memory search and
-  // by the services' SQL search so both order one answer the same way. Added with the search
-  // ranking work; the census sat red from that slice until this entry.
-  "@trafficflow/core/search-rank": r("packages/core/src/search-rank.ts"),
-  // The SSRF gate and its pin, reached from `packages/services/src/{ssrf-guard,pinned-fetch}.ts`
-  // (which are now adapters over it) and from the worker's wake sender. It is node-only
-  // (`node:http`), which is why it is a subpath and not part of the barrel — and why it has to be
-  // listed here rather than falling through: an unresolved workspace edge means the graph this
-  // census walked was incomplete, and an incomplete graph cannot prove the organizer is
-  // unreachable.
-  "@trafficflow/core/net": r("packages/core/src/net/index.ts"),
-  // The client mirrors' shared drain policy (INSTANT-ARCH §6.7): the staleness threshold, the
-  // dense-page limit and the three freshness states, held once so `cloud-mirror.ts` and the client
-  // engine cannot drift. Reached from `cloud-mirror.ts`, which `cloud-engine.ts` imports, so the
-  // graph walks it — and it must be listed for the reason `net` states above: an unresolved edge
-  // is an incomplete graph, and an incomplete graph cannot prove the organizer is unreachable.
-  // The leaf itself imports NOTHING, so it adds exactly one node and no reachability at all.
-  "@trafficflow/core/drain-policy": r("packages/core/src/drain-policy.ts"),
-  /* The pairing link's grammar — dependency-free source, reached from the probe's paired-desktop
-     arm, which applies `originNeedsPin` rather than writing a second IP test so the desktop and
-     the phone cannot disagree about which addresses are safe to pair with unpinned. */
-  "@trafficflow/core/pair-link": r("packages/core/src/pair-link.ts"),
-  "@trafficflow/core/mailto": r("packages/core/src/mailto.ts"),
-  /* The transport's byte cap and the outbound text ceiling it is spent against — both reached
-     through `packages/services/src/sync-page-byte-budget.ts`, which the snapshot builder imports
-     to bound a page by the bytes the frame codec refuses on rather than by rows alone. Listed for
-     `net`'s reason above: an unresolved edge is an incomplete graph, and an incomplete graph
-     cannot prove the organizer is unreachable. Both leaves are constants, so each adds one node
-     and no reachability whatever. */
-  "@trafficflow/core/transport-frame": r("packages/core/src/transport-frame.ts"),
-  "@trafficflow/core/outbound-text": r("packages/core/src/outbound-text.ts"),
-  /* The order over rules, reached through the client engine's press read-back and consent
-     index. Import-free, so it adds one node and no reachability. */
-  "@trafficflow/core/rule-order": r("packages/core/src/rule-order.ts"),
-  "@trafficflow/core/conversation-fold": r("packages/core/src/conversation-fold.ts"),
-  /* Why a reader's press has nowhere to go, reached through the services' refusal doors. Import-
-     free, so it adds one node and no reachability. */
-  "@trafficflow/core/reader-refusal": r("packages/core/src/reader-refusal.ts"),
-  /* The rest of the export map, so a leaf the graph starts to reach is never an unresolved edge:
-     test/core-leaf-registration.test.ts asks this table for every exported leaf. Unreached today,
-     each adds nothing to the walk. */
-  "@trafficflow/core/adapters/http-host": r("packages/core/src/adapters/http-host.ts"),
-  "@trafficflow/core/organizer-install": r("packages/core/src/organizer-install.ts"),
-  "@trafficflow/core/ics": r("packages/core/src/ics.ts"),
-  "@trafficflow/core/url-escapes": r("packages/core/src/url-escapes.ts"),
-  "@trafficflow/core/image-dimensions": r("packages/core/src/image-dimensions.ts"),
-  "@trafficflow/core/folder-name": r("packages/core/src/folder-name.ts"),
-  "@trafficflow/core/away-scope": r("packages/core/src/away-scope.ts"),
-  "@trafficflow/core/destinations": r("packages/core/src/destinations.ts"),
-  "@trafficflow/core/reply-subject": r("packages/core/src/reply-subject.ts"),
-  "@trafficflow/core/sender-headers": r("packages/core/src/sender-headers.ts"),
-  "@trafficflow/core/suggestion-consent": r("packages/core/src/suggestion-consent.ts"),
-  "@trafficflow/core/screener-acknowledgements": r("packages/core/src/screener-acknowledgements.ts"),
-  "@trafficflow/core/model-name": r("packages/core/src/model-name.ts"),
-  "@trafficflow/core/ai-transports": r("packages/core/src/ai/transports/index.ts"),
-  "@trafficflow/core/ai-provider-env": r("packages/core/src/ai/transports/host.ts"),
-  "@trafficflow/core/diagnostics": r("packages/core/src/diagnostics/index.ts"),
-  "@trafficflow/core": r("packages/core/src/index.ts"),
-  "@trafficflow/services/mail": r("packages/services/src/mail.ts"),
-  "@trafficflow/services": r("packages/services/src/index.ts"),
-  "@trafficflow/api/local": r("packages/api/src/local.ts"),
-  // The relay allowlist and the resolver it uses. Import-free at runtime, which is the
-  // condition for the sidecar reading them at all.
-  "@trafficflow/api/relay-allowlist": r("packages/api/src/relay-allowlist.ts"),
-  "@trafficflow/api/match-path": r("packages/api/src/match-path.ts"),
-  "@trafficflow/api/health-cloud": r("packages/api/src/routes/health-cloud.ts"),
-  "@trafficflow/api": r("packages/api/src/index.ts"),
-  "@ohmail/organizer/sync": r("packages/organizer/src/sync.ts"),
-  "@ohmail/organizer/lease": r("packages/organizer/src/lease.ts"),
-  "@ohmail/organizer/entry": r("packages/organizer/src/entry.ts"),
-  "@ohmail/sidecar": r("apps/sidecar/src/index.ts"),
-  "@ohmail/db-mail": r("packages/db-mail/src/index.ts"),
-  "@ohmail/client-engine": r("packages/client-engine/src/index.ts"),
-  "@ohmail/testing": r("packages/testing/src/index.ts"),
-  /* What a client and a server exchange, as types: reached through the engine's and the services'
-     type imports. It imports no package and exports no value, so it adds nodes and no reachability. */
-  "@ohmail/wire": r("packages/wire/src/index.ts"),
-  "@ohmail/tokens": r("packages/tokens/src/index.ts"),
-  "@ohmail/ui": r("packages/ui/src/index.ts"),
-  "@trafficflow/db/testing": r("packages/db/src/testing.ts"),
-  "@trafficflow/db/admin": r("packages/db/src/admin.ts"),
-  "@trafficflow/db/journal": r("packages/db/src/journal.ts"),
-  "@trafficflow/db/cloud": r("packages/db/src/cloud.ts"),
-  // The calendar's part of the database package: its bounds, a desktop's copy stores by.
-  "@trafficflow/db/calendar": r("packages/db/src/calendar/index.ts"),
-  // The calendar's builders, which the copy's own feed serves the window with, and the time model
-  // they read a row's range by.
-  "@trafficflow/services/calendar": r("packages/services/src/calendar/index.ts"),
-  "@ohmail/cal-core": r("packages/cal-core/src/index.ts"),
-  "@ohmail/cal-core/recur/span": r("packages/cal-core/src/recur/span.ts"),
-  // The calendar's write door reads a repeat's grammar, a zone and a stored time through these.
-  "@ohmail/cal-core/recur/rrule": r("packages/cal-core/src/recur/rrule.ts"),
-  // And, for a press on a day and the days after it, a series' days and a moment's clock time in its zone.
-  "@ohmail/cal-core/ical/event": r("packages/cal-core/src/ical/event.ts"),
-  "@ohmail/cal-core/recur/series": r("packages/cal-core/src/recur/series.ts"),
-  "@ohmail/cal-core/time/arith": r("packages/cal-core/src/time/arith.ts"),
-  "@ohmail/cal-core/stored/event-range": r("packages/cal-core/src/stored/event-range.ts"),
-  "@ohmail/cal-core/stored/time": r("packages/cal-core/src/stored/time.ts"),
-  "@ohmail/cal-core/time/zones": r("packages/cal-core/src/time/zones.ts"),
-  // The write door asks a series' shape of the repeats proven where its calendar is, and reckons a series' end and the
-  // series its days from one on become, as the drain does, through these two doors of the calendar's providers.
-  "@ohmail/cal-providers/repeat-shapes": r("packages/cal-providers/src/repeat-shapes.ts"),
-  "@ohmail/cal-providers/series": r("packages/cal-providers/src/series.ts"),
-  /* The dialect seam, reached from `engine.ts` — which names the store this install actually
-     opened, so `/health` can say `sqlite` or `pglite` instead of null. A new workspace edge is an
-     unresolved edge until it is listed here, and this census failed naming it, which is the
-     table working as designed rather than an obstacle. */
-  "@trafficflow/db/dialect": r("packages/db/src/dialect/index.ts"),
-  /* The device migrator, on its own subpath so the phone's composition root reaches it without
-     the barrel. Listed for the same reason, ahead of the edge reaching this census. */
-  "@trafficflow/db/sqlite-migrate": r("packages/db/src/sqlite-migrate.ts"),
-  "@trafficflow/db/mail-sqlite": r("packages/db/src/schema-mail-sqlite.ts"),
-  /* The ledger-source VOCABULARY — string construction over `node:crypto`, with no table and no
-     connection, which is why the engine may reach this door while `/cloud` and the root barrel
-     stay forbidden to it. Listed on `drain-policy`'s reasoning above: an unresolved edge is an
-     incomplete graph, and an incomplete graph cannot prove the organizer is unreachable.
-     Unlike the `find` table in `vitest.config.ts`, this map is matched by EXACT key
-     (`spec in ALIASES`), so position here is readability alone and none of that file's
-     subpath-before-bare ordering rule applies. */
-  "@trafficflow/db/ledger-source": r("packages/db/src/ledger-source.ts"),
-  "@trafficflow/db/mail": r("packages/db/src/schema-mail.ts"),
-  "@trafficflow/db": r("packages/db/src/index.ts"),
-};
+const resolveSource = moduleResolver(REPO);
 
 /** Every module specifier a file statically imports or re-exports from, comments stripped first. */
 function specifiersOf(source: string): string[] {
@@ -221,23 +81,6 @@ function specifiersOf(source: string): string[] {
   push(/\bimport\s*\(\s*["']([^"']+)["']/g); // dynamic import("X")
   push(/\bimport\s+["']([^"']+)["']/g);      // side-effect import "X"
   return [...out];
-}
-
-/** Resolve a specifier to an absolute source file, `"external"` (npm/node) or `null` (workspace miss). */
-function resolveSpec(spec: string, fromFile: string, unresolvedWorkspace: Set<string>): string | "external" | null {
-  if (spec.startsWith(".")) {
-    const base = dirname(fromFile);
-    const candidates = spec.endsWith(".js")
-      ? [join(base, spec.replace(/\.js$/, ".ts")), join(base, spec.replace(/\.js$/, ".tsx"))]
-      : [join(base, `${spec}.ts`), join(base, `${spec}.tsx`), join(base, spec, "index.ts")];
-    return candidates.find((c) => existsSync(c)) ?? null;
-  }
-  if (spec in ALIASES) return ALIASES[spec]!;
-  if (spec.startsWith("@trafficflow/") || spec.startsWith("@ohmail/")) {
-    unresolvedWorkspace.add(spec);
-    return null;
-  }
-  return "external"; // npm (drizzle-orm, @electric-sql/pglite, …) or node: builtins
 }
 
 interface Crawl {
@@ -263,19 +106,20 @@ function crawl(entry: string): Crawl {
     }
     for (const spec of specifiersOf(source)) {
       if (FORBIDDEN_SPECIFIERS.includes(spec)) forbiddenHits.push({ from: file, spec });
-      const target = resolveSpec(spec, file, unresolvedWorkspace);
-      if (target && target !== "external" && !visited.has(target)) stack.push(target);
+      const target = resolveSource(relative(REPO, file).replaceAll("\\", "/"), spec);
+      if (target) stack.push(r(target));
+      else if (spec.startsWith("@trafficflow/") || spec.startsWith("@ohmail/")) unresolvedWorkspace.add(spec);
     }
   }
   return { visited, forbiddenHits, unresolvedWorkspace };
 }
 
 describe("cloud-engine.ts cannot reach the organizer — the structural safety of Cloud mode", () => {
-  const result = crawl(CLOUD_ENGINE);
+  const result = crawl(r(CLOUD_ENGINE));
 
   it("resolves every workspace edge, so the graph it walked is complete", () => {
     // A silently skipped edge is a silently incomplete graph — the one way this goes falsely green.
-    expect([...result.unresolvedWorkspace].sort(), "extend ALIASES for these").toEqual([]);
+    expect([...result.unresolvedWorkspace].sort(), "a workspace import did not resolve to source").toEqual([]);
   });
 
   it("actually traversed the graph — not a vacuous green", () => {
@@ -292,19 +136,25 @@ describe("cloud-engine.ts cannot reach the organizer — the structural safety o
     // The pre-auth sign-in. Reachable by an install that holds NO hosted session, which is exactly
     // why it has to be inside the graph this census walks rather than beside it.
     expect(result.visited.has(resolve(HERE, "../src/cloud-signin.ts")), "the sign-in surface is not in the Cloud-engine graph").toBe(true);
-    expect(result.visited.has(ALIASES["@trafficflow/services/mail"]!)).toBe(true);
+    expect(result.visited.has(r("packages/services/src/mail.ts"))).toBe(true);
+    expect(result.visited.has(r("packages/core/src/calendar-privacy.ts"))).toBe(true);
     // The calendar's write door reaches the providers through their two pure doors alone (ruling (i)): the walk goes into both, so
     // a forbidden import planted in either is seen, and neither can drop out of the graph unnoticed.
-    expect(result.visited.has(ALIASES["@ohmail/cal-providers/repeat-shapes"]!), "the providers' proof door is not in the Cloud-engine graph").toBe(true);
-    expect(result.visited.has(ALIASES["@ohmail/cal-providers/series"]!), "the providers' series door is not in the Cloud-engine graph").toBe(true);
+    expect(result.visited.has(r("packages/cal-providers/src/repeat-shapes.ts")), "the providers' proof door is not in the Cloud-engine graph").toBe(true);
+    expect(result.visited.has(r("packages/cal-providers/src/series.ts")), "the providers' series door is not in the Cloud-engine graph").toBe(true);
     expect(result.visited.size).toBeGreaterThan(20);
   });
 
   it("reaches NEITHER the IMAP adapter, NOR the worker lease, NOR the worker sync loop", () => {
-    // The census is only as good as its names: a forbidden specifier that no key of ALIASES resolves, or a
-    // forbidden file that does not exist, would leave both readings below empty and green.
+    // Each forbidden import must resolve to a known forbidden file, even when no caller reaches it.
     expect(
-      [...FORBIDDEN_SPECIFIERS.filter((s) => !(s in ALIASES)), ...[...FORBIDDEN_FILES].filter((f) => !existsSync(f))],
+      [
+        ...FORBIDDEN_SPECIFIERS.filter((spec) => {
+          const target = resolveSource(CLOUD_ENGINE, spec);
+          return target === null || !FORBIDDEN_FILES.has(r(target));
+        }),
+        ...[...FORBIDDEN_FILES].filter((file) => !existsSync(file)),
+      ],
       "a forbidden name of this census resolves to nothing",
     ).toEqual([]);
     expect(
