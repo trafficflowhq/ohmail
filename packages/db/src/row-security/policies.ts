@@ -33,7 +33,7 @@ export type TableClass = "account" | "keyed" | "staff" | "operations";
 /** Nothing of one account: grants only, no row security (`auth_throttle` by ruling: its keys name no single key). */
 export const OPERATIONS_TABLES = [
   "alert_drills", "alert_driver_gaps", "alert_pass_runs", "alert_state", "api_faults", "auth_throttle",
-  "oauth_provider_config", "platform_signals", "unsubscribe_drain_state", "worker_heartbeats",
+  "oauth_provider_config", "platform_signals", "unsubscribe_drain_state", "worker_heartbeats", "worker_topology",
 ] as const;
 
 /** The operators' own tables: the API's role reaches them only through the staff door. */

@@ -87,6 +87,26 @@ describe("the attach pool's bound", () => {
   });
 });
 
+it("hands off a published adapter before its attach deadline", async () => {
+  vi.useFakeTimers();
+  const h = harness({ concurrency: 1, deadlineMs: 20 });
+  h.add("published", "first.invalid");
+  h.add("waiting", "second.invalid");
+  await flush();
+  const running = h.running.get("published")!;
+  const adapter = fakeAdapter(true);
+  running.ticket.bind(adapter);
+  running.ticket.handoff();
+  vi.advanceTimersByTime(30);
+  expect(adapter.forced).toBe(0);
+  expect(h.deadlines).toEqual([]);
+  running.finish();
+  await flush();
+  expect(h.started).toEqual(["published", "waiting"]);
+  h.running.get("waiting")!.finish();
+  await flush();
+});
+
 describe("one attach per provider host", () => {
   it("holds a second mailbox of a busy host and admits the jobs behind it", async () => {
     const h = harness({ concurrency: 4 });

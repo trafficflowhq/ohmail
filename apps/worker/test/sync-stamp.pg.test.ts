@@ -275,7 +275,7 @@ describe("the worker actually calls it", () => {
     expect(src.indexOf(BATCHED)).toBeLessThan(src.indexOf("for (const { rt, err } of toQuarantine)"));
   });
 
-  it("stamps initial-import-complete only on a NO-BACKLOG cycle, and best-effort", () => {
+  it("stamps initial-import-complete only after every folder drains, and best-effort", () => {
     // The floor the client reads is written here and only here. It must fire on the cycle that
     // DRAINS the backlog (`!hasBacklog`), never on every successful cycle, or a mailbox 40 messages
     // into a longer import would stamp itself complete. And it must be best-effort, because an
@@ -283,8 +283,8 @@ describe("the worker actually calls it", () => {
     // toward `status='error'`.
     const at = src.indexOf(IMPORT_DONE);
     expect(at, "the worker never calls stampInitialImportComplete").toBeGreaterThan(0);
-    expect(src.slice(at - 300, at), "the stamp is not gated on a drained (`!hasBacklog`) cycle")
-      .toMatch(/if \(!hasBacklog\) \{\s*\n\s*try \{/);
+    expect(src.slice(at - 300, at), "the stamp must wait for both historical work and folder retries")
+      .toMatch(/if \(!hasBacklog && !importIncomplete\) \{\s*\n\s*try \{/);
     expect(src.slice(at, at + 600), "the stamp is not best-effort")
       .toMatch(/catch \(err\)[\s\S]*mailbox_import_complete_stamp_failed/);
   });

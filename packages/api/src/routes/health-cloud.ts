@@ -164,6 +164,8 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["staff_users", "totp_pending_started_at"],
   ["staff_sessions", "last_twofa_at"],
   ["staff_audit_log", "action"],
+  // Bootstrap sign-in and authenticator reset both use this cloud-only generation.
+  ["staff_users", "enrollment_generation"],
   // cloud 0037_refund_obligations — `last_fault` is the table's LAST column, on the rule the two
   // entries above state: only the last column's presence implies every object over it, so the
   // index and all four constraints are covered by this one probe. A statement appended after it
@@ -268,6 +270,7 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["cal_push_channels", "created_at"],
   // The password reset notice claim reads both recipient columns, added in one ALTER TABLE.
   ["auth_throttle", "notice_account_id"],
+  ["worker_topology", "shards"],
 ] as const;
 
 /**
@@ -327,6 +330,7 @@ export const CLOUD_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
   /* Cloud 0047 — the staff audit's append-only guard. A body replaced by a hand-repair would keep
      every name probe green while rows could be edited or deleted. */
   ["staff_audit_events_append_only", "staff_audit_events is append-only"],
+  ["change_worker_topology", "pg_try_advisory_xact_lock(420727, 1)"],
 ] as const;
 
 /**
@@ -405,7 +409,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * A VALIDATE-only one carries none: cloud 0045_attachment_staging_digest_validate flips only
  * `convalidated`, which no class sees. The tag names the newest PROVABLE entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0106_security_notice_recipients";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0108_worker_topology";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

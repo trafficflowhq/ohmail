@@ -1048,19 +1048,27 @@ export class AuthService extends SessionLifecycle {
     }
 
     await this.throttleRefund(db, guessKey, guessPolicy);
-    // A spent link proves nothing by itself. Only the correct password can recover this receipt,
-    // and recovering it never enrolls a factor or issues a session.
+    // A receipt requires the current password and never opens an enrollment session.
     if (replay) {
-      if (user.emailVerifiedAt !== null) return { status: "already_verified" };
-      throw invalidVerification();
+      return this.inTransaction(owner, async (txCtx) => {
+        const tx = asTx(txCtx);
+        await lockUserRow(tx, user.id);
+        if (!await this.passwordStillMatches(tx, user.id, cred!.passwordHash)) throw invalidVerification();
+        const current = await this.loadUser(tx, user.id);
+        if (current.emailVerifiedAt === null) throw invalidVerification();
+        return { status: "already_verified" as const };
+      }, { fence: { accountId: user.accountId, onErased: () => { throw invalidVerification(); } } });
     }
-    await this.rehashIfStale(db, user.id, cred!.passwordHash, password);
-
-    const methods = await this.enrolledMethods(db, user.id);
-    if (methods.length === 0) refuseCrossAccountCredential(ctx, user.accountId);
+    const verifiedHash = await this.rehashIfStale(db, user.id, cred!.passwordHash, password);
 
     return this.inTransaction(owner, async (txCtx) => {
       const tx = asTx(txCtx);
+      await lockUserRow(tx, user.id);
+      if (!await this.passwordStillMatches(tx, user.id, verifiedHash)) {
+        throw credentialRefused("invalid email or password");
+      }
+      const methods = await this.enrolledMethods(tx, user.id);
+      if (methods.length === 0) refuseCrossAccountCredential(ctx, user.accountId);
       // CONSUME INSIDE the transaction that stamps, so the two cannot come apart: a crash
       // between them would otherwise spend the token without recording the proof, and the user
       // would hold a dead link for an account still refused at the gate.
@@ -1267,8 +1275,6 @@ export class AuthService extends SessionLifecycle {
     if (!known) await this.throttleRefund(db, ceilingKey, this.ceilingPolicy());
     const verifiedHash = await this.rehashIfStale(accountDb, user.id, cred.passwordHash, b.password);
 
-    const methods = await this.enrolledMethods(accountDb, user.id);
-
     // RE-ENTRY. Zero enrolled methods ⇒ there is no second factor to
     // challenge. This used to return `{twofa_required, methods: []}` and no endpoint
     // accepts a login token with zero methods, so a user who registered and closed
@@ -1279,25 +1285,16 @@ export class AuthService extends SessionLifecycle {
     // above still governs how many guesses that takes.
     // BOTH ARMS write a row keyed to the user (a session, a login token), so each opens on the
     // account row; one erased under it answers what its credentials answer once it is gone.
-    const fence = { accountId: user.accountId, onErased: refusedSignIn };
-    if (methods.length === 0) {
-      refuseCrossAccountCredential(ctx, user.accountId);
-      return this.inTransaction(owner, (txCtx) => this.establishEnrollment(txCtx, user), { fence });
-    }
-
-    // First factor OK → mint a single-use, short-lived login token carrying the
-    // user's enrolled 2FA methods (never a full session on step one).
-    const rawToken = generateToken();
-    const minted = await this.inTransaction(owner, async (txCtx) => {
+    const minted = await this.inTransaction<LoginResult | null>(owner, async (txCtx) => {
       const tx = asTx(txCtx);
-      // ONLY WHILE THE PASSWORD IT CHECKED IS STILL THE ACCOUNT'S. A password change voids every
-      // first step there is ({@link voidPendingGrants}); one committing between the verify above
-      // and this insert would leave this one, minted with the old password, outliving it. FOR
-      // SHARE: a change in flight holds the row, so this waits for it and reads its new hash.
-      const [still] = await tx.select({ id: credentials.id }).from(credentials)
-        .where(and(eq(credentials.userId, user.id), eq(credentials.passwordHash, verifiedHash)))
-        .limit(1).for("share");
-      if (!still) return false;
+      await lockUserRow(tx, user.id);
+      if (!await this.passwordStillMatches(tx, user.id, verifiedHash)) return null;
+      const methods = await this.enrolledMethods(tx, user.id);
+      if (methods.length === 0) {
+        refuseCrossAccountCredential(ctx, user.accountId);
+        return this.establishEnrollment(txCtx, user);
+      }
+      const rawToken = generateToken();
       await tx.insert(loginTokens).values({
         userId: user.id, accountId: user.accountId,
         tokenHash: hashToken(rawToken),
@@ -1305,8 +1302,8 @@ export class AuthService extends SessionLifecycle {
         purpose: "login",
         expiresAt: new Date(ctx.now().getTime() + this.cfg.loginTokenTtlMs),
       });
-      return true;
-    }, { fence });
+      return { status: "twofa_required", loginToken: rawToken, methods };
+    }, { fence: { accountId: user.accountId, onErased: refusedSignIn } });
     if (!minted) {
       // What this sign-in checked is a wrong password now, and it is answered as one: counted (the
       // refund above is taken back), locked at the threshold, audited, refused in the same words.
@@ -1316,7 +1313,15 @@ export class AuthService extends SessionLifecycle {
       await this.audit(accountDb, user, "login_failed", "password", owner);
       throw credentialRefused("invalid email or password");
     }
-    return { status: "twofa_required", loginToken: rawToken, methods };
+    return minted;
+  }
+
+  /** Read after taking the user lock. A concurrent hash upgrade also has to finish before issuance. */
+  private async passwordStillMatches(tx: Tx, userId: string, verifiedHash: string): Promise<boolean> {
+    const [still] = await tx.select({ id: credentials.id }).from(credentials)
+      .where(and(eq(credentials.userId, userId), eq(credentials.passwordHash, verifiedHash)))
+      .limit(1).for("share");
+    return still !== undefined;
   }
 
   /**
@@ -1328,26 +1333,29 @@ export class AuthService extends SessionLifecycle {
    * `reuseSweeps`, only when there is something to tell ({@link openReuseSweeps}): how the copy a
    * sweep signed out hears why, once it signs in again. Best effort, never a 5xx.
    */
-  async getSession(ctx: ServiceContext): Promise<{ user: SessionUser; scope: SessionScope; reuseSweeps?: ReuseSweep[] }> {
+  async getSession(ctx: ServiceContext): Promise<{
+    user: SessionUser; scope: SessionScope; device?: { id: string; label: string }; reuseSweeps?: ReuseSweep[];
+  }> {
     if (!ctx.userId) throw new ServiceError("unauthorized", 401, "no active session");
     const db = asTx(ctx);
     const user = await this.sessionUser(db, ctx.userId);
     const minted = await this.sessionMinted(db, ctx);
     const scope = minted?.scope ?? "full";
-    if (minted === null || scope !== "full" || !minted.recent) return { user, scope };
+    const current = { user, scope, ...(minted?.device ? { device: minted.device } : {}) };
+    if (minted === null || scope !== "full" || !minted.recent) return current;
     try {
       const open = await this.openReuseSweeps(db, ctx, minted.createdAt);
-      if (open.length === 0) return { user, scope };
+      if (open.length === 0) return current;
       const clients = await this.sweptClients(db, ctx, open.map((s) => SWEPT_SESSION.exec(s.device ?? "")?.[1] ?? null));
       return {
-        user, scope,
+        ...current,
         reuseSweeps: open.map((s, i) => ({ id: s.id, at: s.at.toISOString(), client: clients[i] ?? null })),
       };
     } catch (err) {
       authLog.error("auth_reuse_sweeps_unread", {
         requestId: ctx.requestId, err, reason: "the session read answered without the sweeps it would have listed",
       });
-      return { user, scope };
+      return current;
     }
   }
 
@@ -1382,15 +1390,19 @@ export class AuthService extends SessionLifecycle {
    */
   private async sessionMinted(
     db: Tx, ctx: ServiceContext,
-  ): Promise<{ scope: SessionScope; createdAt: Date; recent: boolean } | null> {
+  ): Promise<{ scope: SessionScope; createdAt: Date; recent: boolean; device?: { id: string; label: string } } | null> {
     if (!ctx.sessionId || !ctx.userId) return null;
     const [row] = await db.select({
       scope: sessions.scope, createdAt: sessions.createdAt,
+      device: { id: devices.id, label: devices.label },
       recent: sql<boolean>`${sessions.createdAt} > now() - make_interval(days => ${REUSE_SWEEP_WINDOW_DAYS})`,
-    }).from(sessions).where(and(eq(sessions.id, ctx.sessionId), eq(sessions.userId, ctx.userId))).limit(1);
+    }).from(sessions).leftJoin(devices, and(
+      eq(devices.id, sessions.deviceId), eq(devices.accountId, ctx.accountId), eq(devices.userId, ctx.userId),
+    ))
+      .where(and(eq(sessions.id, ctx.sessionId), eq(sessions.userId, ctx.userId))).limit(1);
     if (!row) return null;
     const scope = sessionScopeOf(row.scope);
-    return scope === null ? null : { scope, createdAt: row.createdAt, recent: row.recent === true };
+    return scope === null ? null : { scope, createdAt: row.createdAt, recent: row.recent === true, ...(row.device ? { device: row.device } : {}) };
   }
 
   /**
@@ -2010,13 +2022,15 @@ export class AuthService extends SessionLifecycle {
     // the password-only session was still live (or vice versa).
     const enrolled = await this.inTransaction(ctx, async (tctx) => {
       const db = asTx(tctx);
+      await lockUserRow(db, userId);
+      const enrollment = await this.holdCredentialSession(tctx, userId, true);
       const [row] = await db.insert(webauthnCredentials).values({
         userId, accountId: accountOfUser(userId), credentialId: reg.credentialId, publicKey: reg.publicKey,
         counter: reg.counter, transports: reg.transports, label: b.label ?? "",
         deviceType: reg.deviceType, backedUp: reg.backedUp,
       }).returning();
       const twofaEnrolled = await this.twofaEnrolled(db, userId);
-      const session = await this.exchangeEnrollmentSession(tctx, userId, "webauthn", o.client);
+      const session = enrollment ? await this.exchangeEnrollmentSession(tctx, userId, "webauthn", o.client) : undefined;
       return { credentialId: row!.id, twofaEnrolled, ...(session ? { session } : {}) };
     }, { fence: { accountId: ctx.accountId } });
     // A desktop's enrollment exchanged its session for a full one, which made the app's device row.
@@ -2117,6 +2131,8 @@ export class AuthService extends SessionLifecycle {
 
     await this.inTransaction(ctx, async (tctx) => {
       const db = asTx(tctx);
+      await lockUserRow(db, userId);
+      await this.holdCredentialSession(tctx, userId, true);
       const row = (await db.select({ activated: totpSecrets.activated }).from(totpSecrets)
         .where(eq(totpSecrets.userId, userId)).limit(1).for("update"))[0];
       if (row?.activated) {
@@ -2148,6 +2164,8 @@ export class AuthService extends SessionLifecycle {
     // secret row also serializes two concurrent activations of the same secret.
     const activated = await this.inTransaction(ctx, async (tctx) => {
       const db = asTx(tctx);
+      await lockUserRow(db, userId);
+      const enrollment = await this.holdCredentialSession(tctx, userId, true);
       const row = (await db.select().from(totpSecrets)
         .where(eq(totpSecrets.userId, userId)).limit(1).for("update"))[0];
       if (!row) throw noTotpEnrollment();
@@ -2159,7 +2177,7 @@ export class AuthService extends SessionLifecycle {
         .set({ activated: true, lastConsumedStep: BigInt(v.timeStep!), updatedAt: tctx.now() })
         .where(eq(totpSecrets.userId, userId));
       const twofaEnrolled = await this.twofaEnrolled(db, userId);
-      const session = await this.exchangeEnrollmentSession(tctx, userId, "totp", o.client);
+      const session = enrollment ? await this.exchangeEnrollmentSession(tctx, userId, "totp", o.client) : undefined;
       return { twofaEnrolled, ...(session ? { session } : {}) };
     }, { fence: { accountId: ctx.accountId } });
     // As for a passkey: a desktop's enrollment exchange made the app's device row.
@@ -2179,7 +2197,6 @@ export class AuthService extends SessionLifecycle {
   private async promotePendingTotp(
     tctx: ServiceContext, row: typeof totpSecrets.$inferSelect, code: string,
   ): Promise<{ twofaEnrolled: TwofaEnrolled }> {
-    await this.requireStepUp(tctx);
     const db = asTx(tctx);
     const pending = row.pendingSecretEnc;
     const pendingVersion = row.pendingKeyVersion;
@@ -2301,6 +2318,8 @@ export class AuthService extends SessionLifecycle {
     await this.requireStepUp(ctx);
     await this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
+      await lockUserRow(db, userId);
+      await this.holdCredentialSession(txCtx, userId);
       // "Cannot remove the last factor": TOTP may only go if a WebAuthn factor
       // remains (recovery codes are a break-glass fallback, not a standalone factor).
       const remainingWebauthn = (await this.webauthnCreds(db, userId)).length;
@@ -2361,14 +2380,14 @@ export class AuthService extends SessionLifecycle {
     const changed = await this.inTransaction<{ revoked: number; at: Date } | null>(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
       await lockUserRow(tx, user.id);
-      const now = txCtx.now();
-      const swapped = await tx.update(credentials)
-        .set({ passwordHash: nextHash, algo: "scrypt", updatedAt: now })
-        .where(and(eq(credentials.userId, user.id), eq(credentials.passwordHash, cred.passwordHash)))
-        .returning({ id: credentials.id });
-      if (swapped.length === 0) {
+      if (!await this.passwordStillMatches(tx, user.id, cred.passwordHash)) {
         throw new ServiceError("conflict", 409, "the password was changed by another request");
       }
+      await this.holdCredentialSession(txCtx, user.id);
+      const now = txCtx.now();
+      await tx.update(credentials)
+        .set({ passwordHash: nextHash, algo: "scrypt", updatedAt: now })
+        .where(eq(credentials.userId, user.id));
       // The revoke voids the pending grants around its claim and prunes the revoked families' wake
       // registrations ({@link revokeClaimedSessions}).
       const { revoked } = await this.revokeOtherSessions(txCtx, user.id);
@@ -2613,7 +2632,8 @@ export class AuthService extends SessionLifecycle {
     await this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
       // Serializes regeneration per user. See the note above for why it is this row.
-      await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1).for("update");
+      await lockUserRow(db, userId);
+      await this.holdCredentialSession(txCtx, userId);
       // Regenerating invalidates the prior set.
       await db.delete(recoveryCodes).where(eq(recoveryCodes.userId, userId));
       const batchId = randomUUID();
@@ -3110,6 +3130,24 @@ export class AuthService extends SessionLifecycle {
     }
   }
 
+  /** Hold the caller before any credential write, after taking the user lock in the fence. */
+  private async holdCredentialSession(ctx: ServiceContext, userId: string, allowEnrollment = false): Promise<boolean> {
+    if (!ctx.sessionId) throw new ServiceError("unauthorized", 401, "no active session");
+    const db = asTx(ctx);
+    const [session] = await db.select().from(sessions).where(and(
+      eq(sessions.id, ctx.sessionId), eq(sessions.userId, userId), eq(sessions.accountId, ctx.accountId),
+    )).limit(1).for("update");
+    const now = ctx.now().getTime();
+    if (!session || session.revokedAt || session.accessExpiresAt.getTime() <= now) {
+      throw new ServiceError("unauthorized", 401, "no active session");
+    }
+    if (allowEnrollment && session.scope === "enrollment" && (await this.enrolledMethods(db, userId)).length === 0) return true;
+    if (session.scope !== "full" || !session.lastTwofaAt || now - session.lastTwofaAt.getTime() > this.cfg.stepUpWindowMs) {
+      throw new ServiceError("step_up_required", 403, "recent 2FA re-assertion required");
+    }
+    return false;
+  }
+
   // ── Internal: the enrollment mint (the full-session mint and refresh rotation live on the base class) ──
 
   /**
@@ -3172,19 +3210,14 @@ export class AuthService extends SessionLifecycle {
    * family, so a token observed during the password-only window can never replay as a full
    * credential. The revocation predicate is `user_id + scope='enrollment'`, NOT the presented
    * family: revoking only the caller's family left a sibling live and replayable into an
-   * attacker-chosen passkey. Returns `undefined` for an already-full session. The scope is read
-   * from the ROW under `FOR UPDATE`, never from the request: the gate and this privilege decision
-   * must not share a trust path, and the lock makes the retirement true under concurrency.
+   * attacker-chosen passkey. Called only for an enrollment session already locked by
+   * {@link holdCredentialSession} in this transaction.
    */
   private async exchangeEnrollmentSession(
     ctx: ServiceContext, userId: string,
     method: AuthAuditEvent["method"], client: "web" | "macos" = "web",
-  ): Promise<SessionEstablished | undefined> {
-    if (!ctx.sessionId) return undefined;
+  ): Promise<SessionEstablished> {
     const db = asTx(ctx);
-    const s = (await db.select().from(sessions)
-      .where(eq(sessions.id, ctx.sessionId)).limit(1).for("update"))[0];
-    if (!s || s.revokedAt || s.scope !== "enrollment") return undefined;
     const user = await this.loadUser(db, userId);
     await this.revokeEnrollmentSessions(db, userId, ctx.now());
     // The FIRST factor just landed (this is the enrollment→full exchange, reached only from a

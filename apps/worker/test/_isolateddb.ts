@@ -271,6 +271,9 @@ export async function truncateAll(url: string): Promise<void> {
         END IF;
 
         EXECUTE format('TRUNCATE TABLE %s CASCADE', tables);
+        IF to_regclass('public.worker_topology') IS NOT NULL THEN
+          INSERT INTO worker_topology (shards) VALUES (1);
+        END IF;
 
         IF has_ledger THEN
           ALTER TABLE credit_ledger ENABLE TRIGGER credit_ledger_append_only;

@@ -113,8 +113,6 @@ export function queueSection(scope: WorkerScope): void {
     // second. This is the other thing the race waits on. ONE pending promise, re-armed on every fire,
     // rather than a fresh one per turn — the naive form leaves every superseded promise unresolved
     // and holds its `resolve` for the life of the process. It never rejects, so the race cannot either.
-    /** `Date.now()` of the last `kickCycle()`, deduped or not: a pass has been asked for since then. */
-    scope.lastKickAt = 0;
     function armWake(): void { scope.wakeSignal = new Promise<void>((r) => { scope.fireWake = r; }); }
     armWake();
     /** Tell a cycle that is blocked on its lanes that there is something new to look at. */

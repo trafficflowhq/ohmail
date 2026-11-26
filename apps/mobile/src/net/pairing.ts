@@ -9,7 +9,7 @@
  * {@link resolveAccountId} takes the server's word — a door naming no account is refused.
  */
 import {
-  clientHeaders, isSessionRefusal, mirrorDbName, originNeedsPin, pairLink, type OhmailEngine, type ScheduleFilesAnswer,
+  clientHeaders, mirrorDbName, originNeedsPin, pairLink, type OhmailEngine, type ScheduleFilesAnswer,
   type SqlMirrorStore,
 } from "@ohmail/client-engine";
 import {
@@ -38,7 +38,7 @@ import { eraseShellKeeper, fenceCalendarWipe, payShellWipe, type ShellStores } f
 import { oldCopyDoor, type OldCopyDoor } from "../shell/old-copy";
 import { accountRows } from "../state/account-rows";
 import { ServerProfileStore, StoreFault, type PendingSignOut, type ServerProfile } from "../state/servers";
-import { CREDENTIAL_CHECK, type BearerManagerRN, type FetchLike, type RefreshVault, type SessionDeath, type SignOutOutcome } from "./bearer";
+import { CREDENTIAL_CHECK, logoutConfirmed, requestSignOut, type BearerManagerRN, type FetchLike, type RefreshVault, type SessionDeath, type SignOutOutcome } from "./bearer";
 import { bearers as processBearers, type BearerRegistry } from "./bearer-registry";
 import { deathRefusal } from "./session-death";
 import { withinApprovalDeadline } from "./approval-deadline";
@@ -242,15 +242,20 @@ export async function resolveAccountId(
   /** Where the `/sync` family answers. Absent ⇒ the origin, which is right for two of three. */
   apiBase?: string,
   calendarOnly = false,
-): Promise<{ accountId: string; via: "session" | "rows" } | null> {
+): Promise<{ accountId: string; via: "session" | "rows"; deviceLabel?: string; deviceId?: string } | null> {
   /* THE ONE RESOLVER, not a second spelling of its rule — `request-base.ts`. */
   const base = apiBaseOf(origin, apiBase ?? null);
   try {
     const res = await fetchImpl(`${origin}/auth/session`, { headers: authHeaders() });
     if (res.ok) {
-      const body = (await res.json()) as { user?: { accountId?: unknown } };
+      const body = (await res.json()) as { user?: { accountId?: unknown }; device?: { id?: unknown; label?: unknown } };
       const id = body.user?.accountId;
-      if (typeof id === "string" && id !== "") return { accountId: id, via: "session" };
+      const label = body.device?.label;
+      const deviceId = body.device?.id;
+      if (typeof id === "string" && id !== "") return {
+        accountId: id, via: "session", ...(typeof label === "string" && label && { deviceLabel: label }),
+        ...(typeof deviceId === "string" && deviceId && { deviceId }),
+      };
     }
   } catch {
     /* fall through to the rows — a dead route and a dead network read the same here */
@@ -612,6 +617,12 @@ export function pairingFetch(env: Pick<PairingEnv, "fetchImpl" | "clientRelease"
   };
 }
 
+function signOutFetch(env: PairingEnv): FetchLike {
+  // On the phone this is Expo's fetch, the same TLS and redirect transport as browser sign-in.
+  const transport = env.approvalFetchImpl ?? env.fetchImpl;
+  return transport ? pairingFetch({ ...env, fetchImpl: transport }) : async () => { throw new Error("sign-out transport unavailable"); };
+}
+
 /**
  * The BearerManager's persistence, bound to one profile's slot in the keystore — the ONLY caller
  * of the store's three credential writes, each of which lands only over a token its manager held.
@@ -636,10 +647,28 @@ function vaultFor(profiles: ServerProfileStore, row: Pick<ServerProfile, "id" | 
 
 /** Keep a sign-out `row`'s server was not told ({@link drainPendingSignOuts} sends it); `false` when it could not be kept. */
 function oweSignOutTo(
-  profiles: ServerProfileStore, row: Pick<ServerProfile, "origin" | "pin">, refreshToken: string, browser?: true,
+  profiles: ServerProfileStore, row: Pick<ServerProfile, "origin" | "pin"> & { id?: string }, refreshToken: string,
 ): Promise<boolean> {
-  return profiles.markPendingSignOut({ origin: row.origin, pin: row.pin, refreshToken, ...(browser ? { browser } : {}) })
+  return profiles.markPendingSignOut({
+    origin: row.origin, pin: row.pin, refreshToken,
+    ...(row.id && { profileId: row.id }),
+  })
     .then(() => true, () => false);
+}
+
+async function rememberSignOut(env: PairingEnv, row: ServerProfile): Promise<void> {
+  const digest = row.refreshToken ? await env.familyDigest?.(row.refreshToken).catch(() => null) : null;
+  const previousSession = digest && row.refreshToken && calendarCredential(row.refreshToken) ? `cal.${digest}` : digest;
+  await env.profiles.markSignOutNotice({
+    profileId: row.id, origin: row.origin, ...(row.deviceLabel && { deviceLabel: row.deviceLabel }),
+    ...(row.deviceId && { deviceId: row.deviceId }),
+    ...(previousSession && { previousSession }),
+  });
+}
+
+export function signOutNoticeText(origin: string, label: string | undefined, id: string | undefined, canReplace: boolean): string {
+  if (id) return label ? Copy.serversSignOutDevice(origin, label, id) : Copy.serversSignOutById(origin, id);
+  return canReplace ? Copy.serversSignOutLegacy(origin) : Copy.serversSignOutRecovery(origin);
 }
 
 /**
@@ -820,14 +849,15 @@ export async function probePairing(
 
 /**
  * The family a pairing with `origin` names as `previousSession`: the newest sign-out this phone
- * owes it, else the active pairing's at this origin, else the only pairing here; `null` where none
- * or more than one could be meant, or this build cannot make the digest.
+ * owes it, else a saved notice, else the active or only pairing at this origin.
  */
 async function previousFamily(env: PairingEnv, origin: string, owedHere: PendingSignOut[]): Promise<string | null> {
-  if (env.familyDigest === undefined) return null;
   const newestOwed = owedHere.reduce<PendingSignOut | null>((n, e) => (n === null || e.owedSince >= n.owedSince ? e : n), null);
   let token = newestOwed?.refreshToken ?? null;
   if (token === null) {
+    const notices = await env.profiles.signOutNotices().catch(() => []);
+    const saved = notices.reverse().find((row) => row.origin === origin && row.previousSession)?.previousSession;
+    if (saved) return saved;
     try {
       const active = await env.profiles.active();
       const here = (await env.profiles.list()).filter((p) => p.origin === origin && p.refreshToken !== null);
@@ -837,7 +867,7 @@ async function previousFamily(env: PairingEnv, origin: string, owedHere: Pending
       return null;
     }
   }
-  if (token === null) return null;
+  if (token === null || env.familyDigest === undefined) return null;
   const digest = await env.familyDigest(token).catch(() => null);
   return digest === null || !calendarCredential(token) ? digest : "cal." + digest;
 }
@@ -860,25 +890,25 @@ export async function familyReplacedAt(env: PairingEnv, origin: string): Promise
 /**
  * END A PAIR THIS PHONE WAS HANDED AND DOES NOT KEEP — the desktop's `revokeHeldSession` order:
  * `/auth/logout` with its bearer, and on that 401 only `/auth/refresh/logout` with its refresh
- * token, never a renewal. Answers whether the server said the session is over: a 2xx, the refresh
- * door's own refusal, or a server without that door, where the bearer's 401 already said it.
+ * token, never a renewal. A successful reply or the refresh door's own session refusal
+ * confirms the family is over.
  * Never throws.
  */
 export async function endMintedPair(
   fetchImpl: FetchLike, origin: string, pair: { accessToken: string; refreshToken: string },
 ): Promise<boolean> {
   try {
-    const bearer = await fetchImpl(`${origin}/auth/logout`, {
-      method: "POST", headers: { authorization: `Bearer ${pair.accessToken}` },
+    const bearer = await requestSignOut(fetchImpl, origin, "/auth/logout", {
+      headers: { authorization: `Bearer ${pair.accessToken}` },
     });
-    if (bearer.ok) return true;
+    if (!bearer) return false;
+    if (await logoutConfirmed(bearer, false)) return true;
     if (bearer.status !== 401) return false;
-    const door = await fetchImpl(`${origin}/auth/refresh/logout`, {
-      method: "POST",
+    const door = await requestSignOut(fetchImpl, origin, "/auth/refresh/logout", {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ refreshToken: pair.refreshToken }),
     });
-    return door.ok || door.status === 404 || door.status === 405 || isSessionRefusal(door.status, await envelopeCode(door));
+    return door !== null && await logoutConfirmed(door, true);
   } catch {
     return false;
   }
@@ -1016,7 +1046,7 @@ export async function revokeBrowserPair(
     (url, init) => fetchImpl(url, { ...(init as RequestInit), credentials: "omit", redirect: "error", signal }),
     admission.origin, pair,
   )).catch(() => false);
-  if (!closed) await oweSignOutTo(env.profiles, admission, pair.refreshToken, true);
+  if (!closed) await oweSignOutTo(env.profiles, admission, pair.refreshToken);
   return closed;
 }
 
@@ -1042,8 +1072,10 @@ export async function pairApproved(
 
   const abandoned = () => browser !== undefined && (browser.signal.aborted || !browser.current());
   const revoke = async () => {
-    if (browser === undefined) return endMintedPair(fetchImpl, origin, minted);
-    return revokeBrowserPair(env, input.admission, minted, fetchImpl);
+    if (browser !== undefined) return revokeBrowserPair(env, input.admission, minted, fetchImpl);
+    const closed = await endMintedPair(signOutFetch(env), origin, minted);
+    if (!closed) await oweSignOutTo(env.profiles, input.admission, minted.refreshToken);
+    return closed;
   };
   const cancelled = async () => {
     await revoke();
@@ -1127,6 +1159,8 @@ export async function pairApproved(
       origin,
       flavor,
       accountId: identity.accountId,
+      ...(identity.deviceLabel && { deviceLabel: identity.deviceLabel }),
+      ...(identity.deviceId && { deviceId: identity.deviceId }),
       refreshToken: minted.refreshToken,
       // The pin is persisted with the credential, because it has to be re-installed on every
       // launch before the first request — a pin that lived only in this process would pair
@@ -1155,6 +1189,7 @@ export async function pairApproved(
     refreshToken: minted.refreshToken,
     accountId: identity.accountId,
     vault: vaultFor(env.profiles, profile),
+    signOutFetchImpl: signOutFetch(env),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
     ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
   });
@@ -1270,9 +1305,7 @@ export async function signOutProfile(env: PairingEnv, profile: ServerProfile): P
   const bearer = slots.managerFor(profile.id, () => ({
     origin: profile.origin,
     refreshToken: profile.refreshToken,
-    // The attempt a killed rotation left owed: an older server's routed sign-out renews, and its
-    // recovery retries as itself, not as a stranger presenting a spent token that sweeps the family.
-    refreshAttempt: profile.refreshAttempt,
+    refreshAttempt: null,
     accountId: null,
     // A throwaway vault, used only when no manager holds the slot: the profile is being
     // forgotten, so nothing persists into it — the armed attempt included. A sign-out the server
@@ -1281,6 +1314,7 @@ export async function signOutProfile(env: PairingEnv, profile: ServerProfile): P
       save: async () => "no_row", clear: async () => "no_row", armAttempt: async () => "no_row",
       oweSignOut: (t) => oweSignOutTo(env.profiles, profile, t),
     },
+    signOutFetchImpl: signOutFetch(env),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
     ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
   }));
@@ -1288,7 +1322,13 @@ export async function signOutProfile(env: PairingEnv, profile: ServerProfile): P
     // A manager that already died holds nothing to revoke with — the same answer as a cleared row.
     if (bearer.ended()) return "ended";
     // What counts as told is `BearerManagerRN.logout`'s rule.
-    return await bearer.signOut();
+    const active = await env.profiles.active();
+    const conflictingPin = active !== null && active.id !== profile.id && active.origin === profile.origin
+      && active.pin !== profile.pin;
+    const dial = !conflictingPin && (profile.pin === null
+      ? !originNeedsPin(profile.origin)
+      : canPin() && installPin(profile.origin, profile.pin));
+    return await bearer.signOut(dial);
   } catch {
     /* unreachable server — the server-side session ages out; the phone forgot it already */
     return "untold";
@@ -1456,8 +1496,8 @@ async function finishProfileForget(
   // sign-out: the manager keeps the refresh token apart from the profile (the only thing the
   // refresh door's sign-out accepts, never presented for a renewal) and the next connection sends
   // it ({@link drainPendingSignOuts}). That is a second durable home for the secret the forget
-  // removes, for at most thirty days, bought because the alternative was a session left live
-  // until it idled out. The Devices-list remedy stays for a sign-out that could not be kept.
+  // removes. The notice has a separate lifetime and keeps the Devices remedy available if the
+  // retry credential cannot be kept.
   /* NOBODY TO TELL ON THE STANDALONE DOOR, and `revokeProfile` would say the opposite. It answers
      `false` for a credential-less row — right for a pairing whose token a server judged, and a
      false negative here: the session this row names was minted by the engine in this process and
@@ -1465,12 +1505,20 @@ async function finishProfileForget(
      show the Devices-list remedy for a server that does not exist. */
   const localOnly = (row?.origin ?? "") === LOCAL_ENGINE_ORIGIN
     || (ownerKey ?? "").startsWith(`${LOCAL_ENGINE_ORIGIN}::`);
+  if (row !== null && !localOnly && !opts.erased) {
+    try {
+      await rememberSignOut(env, row);
+    } catch (err) {
+      return { kind: "partial", reason: refuse("forgetKeystoreRefused", faultDetail(err)) };
+    }
+  }
   const asOutcome = (v: boolean | SignOutOutcome): SignOutOutcome => (v === true ? "told" : v === false ? "untold" : v);
   const said: SignOutOutcome = localOnly || opts.erased ? "told"
     : opts.revoke ? asOutcome(await opts.revoke().catch(() => false))
     : row !== null ? await signOutProfile(env, row)
     : "told";
   const told = said === "told";
+  if (told) await env.profiles.clearSignOutNotice(profileId).catch(() => undefined);
   const notTold = (): Refusal =>
     said === "owed" ? refuse("forgetServerOwed") : said === "ended" ? refuse("forgetServerEnded") : NOT_TOLD();
   // The slot's manager has presented its logout (or never existed): nobody holds this slot now.
@@ -1621,11 +1669,13 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
       // profile row survives is a forget that died before its logout, and this is the only
       // moment anything can still spend that token — after the removal below there is nothing
       // left to revoke with, for ever. Best-effort: an unreachable server must not hold the
-      // local deletion hostage, and the row ages out.
+      // local deletion hostage. An unconfirmed sign-out is kept separately for retry.
       if (owed.erased) {
         await env.profiles.forgetRows(accountRows(owed.owner)).catch(() => undefined);
-      } else if (stillHere) {
-        await revokeProfile(env, stillHere).catch(() => false);
+      } else if (stillHere && stillHere.origin !== LOCAL_ENGINE_ORIGIN) {
+        await rememberSignOut(env, stillHere);
+        const result = await signOutProfile(env, stillHere);
+        if (result === "told") await env.profiles.clearSignOutNotice(stillHere.id);
       }
       // Idempotent: `remove` on a row that is already gone touches nothing and its read-back
       // passes, so a debt whose credential half landed before the kill costs one no-op.
@@ -1647,9 +1697,6 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
   }
   return stillOwed;
 }
-
-/** How long an owed sign-out is kept: past it the session has idled out at the server anyway. */
-const OWED_SIGN_OUT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** How long, in all, a launch waits on the sign-outs only a launch may send. */
 const LAUNCH_SIGN_OUT_MS = 2_000;
@@ -1688,8 +1735,7 @@ export function drainPendingSignOuts(
 async function drainSignOutsNow(
   env: PairingEnv, opts: { origin?: string; atLaunch?: boolean }, until: number | null,
 ): Promise<number> {
-  const fetchImpl = pairingFetch(env);
-  const approvalFetch = pairingFetch({ ...env, fetchImpl: env.approvalFetchImpl ?? env.fetchImpl });
+  const fetchImpl = signOutFetch(env);
   let owed: PendingSignOut[];
   let live: ServerProfile[];
   try {
@@ -1701,10 +1747,6 @@ async function drainSignOutsNow(
   let left = 0;
   for (const entry of owed) {
     if (opts.origin !== undefined && entry.origin !== opts.origin) { left += 1; continue; }
-    if (Date.now() - entry.owedSince > OWED_SIGN_OUT_MAX_AGE_MS) {
-      await env.profiles.clearPendingSignOut(entry.id).catch(() => undefined);
-      continue;
-    }
     const livePin = live.find((p) => p.origin === entry.origin && p.pin !== null)?.pin ?? null;
     const swapsPin = entry.pin !== null && livePin !== null && livePin !== entry.pin;
     // A launch sends only what swaps a live pairing's key in; any other drain never does.
@@ -1714,15 +1756,18 @@ async function drainSignOutsNow(
       left += 1;
       continue;
     }
-    if (entry.pin !== null && !installPin(entry.origin, entry.pin)) { left += 1; continue; }
-    const settled = (await dialSignOut(entry.browser ? approvalFetch : fetchImpl, entry, dialMs)) === true;
+    if (entry.pin !== null && (!canPin() || !installPin(entry.origin, entry.pin))) { left += 1; continue; }
+    const settled = (await dialSignOut(fetchImpl, entry, dialMs)) === true;
     // The registry holds what it held before this dial: the live pairing's key, or none.
     if (entry.pin !== null && livePin !== entry.pin) {
       if (livePin !== null) installPin(entry.origin, livePin);
       else unpin(entry.origin);
     }
     if (settled) {
-      const cleared = await env.profiles.clearPendingSignOut(entry.id).then(() => true, () => false);
+      const cleared = await (async () => {
+        if (entry.profileId) await env.profiles.clearSignOutNotice(entry.profileId);
+        await env.profiles.clearPendingSignOut(entry.id);
+      })().then(() => true, () => false);
       if (!cleared) left += 1;
     } else {
       left += 1;
@@ -1736,7 +1781,7 @@ const SIGN_OUT_DIAL_MS = 8_000;
 
 /** Whether the refresh door's sign-out for `refreshToken` settles the debt; `null` when nothing answered within `ms`. */
 async function dialSignOut(
-  fetchImpl: FetchLike, { origin, refreshToken, browser }: PendingSignOut, ms: number,
+  fetchImpl: FetchLike, { origin, refreshToken }: PendingSignOut, ms: number,
 ): Promise<boolean | null> {
   const abort = typeof AbortController === "function" ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1745,14 +1790,12 @@ async function dialSignOut(
   });
   // The answer's body is read inside the bound too: a launch may be waiting on it.
   const answered = (async () => {
-    const res = await fetchImpl(`${origin}/auth/refresh/logout`, {
-      method: "POST",
+    const res = await requestSignOut(fetchImpl, origin, "/auth/refresh/logout", {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ refreshToken }),
-      ...(browser ? { credentials: "omit", redirect: "error" } : {}),
       ...(abort ? { signal: abort.signal } : {}),
     });
-    return res.ok || res.status === 404 || res.status === 405 || isSessionRefusal(res.status, await envelopeCode(res));
+    return res !== null && await logoutConfirmed(res, true);
   })().catch(() => null);
   try {
     return await Promise.race([answered, expired]);
@@ -1761,15 +1804,6 @@ async function dialSignOut(
   }
 }
 
-/** The code our error envelope names, or null: a door's own refusal said apart from a page in front of it. */
-async function envelopeCode(res: Response): Promise<string | null> {
-  try {
-    const code = ((await res.json()) as { error?: { code?: unknown } } | null)?.error?.code;
-    return typeof code === "string" ? code : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Pay the owed wake-row deletions — run at launch, beside
@@ -1815,6 +1849,7 @@ export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> 
        * family — paying a "stop waking me" debt would end a good pairing.
        */
       vault: vaultFor(env.profiles, profile),
+      signOutFetchImpl: signOutFetch(env),
       ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
       ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
     }));
@@ -2174,6 +2209,7 @@ export async function openTransport(
     // What an erased answer must name for this session to end as `erased` (`bearer.ts`).
     accountId: profile.accountId,
     vault: vaultFor(env.profiles, profile),
+    signOutFetchImpl: signOutFetch(env),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
     ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
   }));

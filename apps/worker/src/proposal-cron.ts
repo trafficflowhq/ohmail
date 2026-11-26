@@ -188,7 +188,7 @@ function proposalRunId(accountId: string, now: Date): string {
 export async function runProposalCron(
   config: WorkerConfig, log: Logger = silentLogger,
 ): Promise<{ ran: boolean; generated: number }> {
-  const lock = await acquireLeaderLock(config.databaseUrl, leaderLockKeyFor(config.shardIndex ?? 0));
+  const lock = await acquireLeaderLock(config.databaseUrl, leaderLockKeyFor(config.shardIndex ?? 0), { shards: config.shards });
   if (!lock) return { ran: false, generated: 0 };
 
   const owned = makeOwnedDb(config.databaseUrl);

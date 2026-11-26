@@ -122,13 +122,15 @@ BEGIN
               ('ohmail_api',    'staff_audit_events', 'INSERT'),
               ('ohmail_api',    'invites',            'SELECT INSERT UPDATE'),
               ('ohmail_api',    'waitlist',           'SELECT INSERT UPDATE'),
+              ('ohmail_api',    'worker_topology',    'SELECT'),
               ('ohmail_worker', 'staff_users',        ''),
               ('ohmail_worker', 'staff_sessions',     'SELECT UPDATE DELETE'),
               ('ohmail_worker', 'staff_role_grants',  ''),
               ('ohmail_worker', 'staff_audit_log',    ''),
               ('ohmail_worker', 'staff_audit_events', ''),
               ('ohmail_worker', 'invites',            'SELECT UPDATE DELETE'),
-              ('ohmail_worker', 'waitlist',           '')
+              ('ohmail_worker', 'waitlist',           ''),
+              ('ohmail_worker', 'worker_topology',    'SELECT')
             ) AS v(role, tbl, verbs)
            GROUP BY v.role
         ) per_role)

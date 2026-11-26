@@ -158,6 +158,7 @@ export async function runWorkerSupervised(
   let gateCleared = retiredThrough === 0;
   /** The in-flight lock attempt, so stop() can wait for a takeover instead of racing it. */
   let inflight: Promise<void> | null = null;
+  let takingOverWorker: RunningWorker | null = null;
   /** Ends the sessions of the step of first contact in flight (`contact`). */
   let contacting: AbortController | null = null;
   /** A worker that gave its leadership up and is still closing what it held. */
@@ -200,7 +201,7 @@ export async function runWorkerSupervised(
   const health: HealthServer = await startHealthServer({
     port: config.healthPort ?? DEFAULT_HEALTH_PORT,
     snapshot: () => {
-      const stats = worker?.stats();
+      const stats = (worker ?? takingOverWorker)?.stats();
       const now = Date.now();
       const input = healthInput(stats, now);
       const { leader, standby, takingOver, expected, connected } = input;
@@ -272,6 +273,8 @@ export async function runWorkerSupervised(
           ? { active: config.kek.active, count: config.kek.count, fingerprint: config.kek.fingerprint }
           : null,
         shard: { index: shardIndex, shards },
+        topologyGuarded: true,
+        ...(stats ? { attaches: stats.attaches } : {}),
         // `[]` when there is no worker yet — a standby has composed no sinks and run no pass,
         // and an empty list is the honest answer rather than a fabricated healthy one.
         alertSinks: stats?.alertSinks ?? [],
@@ -485,7 +488,7 @@ export async function runWorkerSupervised(
       }
       lock = await asDatabaseFault("first_contact", () => contact(
         (signal) => acquireLeaderLock(config.databaseUrl, lockKey, {
-          signal, evict: lastLock?.ghost() ?? null,
+          shards, signal, evict: lastLock?.ghost() ?? null,
           onEvicted: () => {
             log.warn("lock_ghost_evicted", {
               reason: "the session of this instance's last lock was still open at the server; it was ended there",
@@ -522,7 +525,10 @@ export async function runWorkerSupervised(
     if (state !== "standby") { state = "standby"; standbySince = Date.now(); }
     let started: RunningWorker;
     // releases the lock if it throws
-    const starting = startWorkerWithLock(config, lock, { onLockLost });
+    const starting = startWorkerWithLock(config, lock, {
+      onLockLost,
+      onInitialRoster: (startingWorker) => { if (isLive()) takingOverWorker = startingWorker; },
+    });
     let overdue: ReturnType<typeof setTimeout> | undefined;
     try {
       started = await Promise.race([
@@ -547,6 +553,7 @@ export async function runWorkerSupervised(
       waitForDatabase(err, code);
       return;
     } finally {
+      takingOverWorker = null;
       clearTimeout(overdue);
     }
     // stop() may have been called WHILE we were taking over (a SIGTERM landing during a

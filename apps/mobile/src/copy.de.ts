@@ -451,6 +451,16 @@ export const DE: Deck = {
   serversForgetNoteHere:
     "Entfernen gibt das Postfach zurück, ohmail sortiert es hier nicht weiter ein, und die Mails, die dieses Handy kopiert hatte, werden gelöscht. Das Postfach auf deinem Mailserver bleibt unberührt.",
   serversForgetFailed: (reason: string) => reason,
+  serversSignOutPending: "Die Abmeldung ist noch offen",
+  serversSignOutDevice: (origin: string, label: string, id: string) =>
+    `Öffne auf ${origin} Einstellungen → Geräte und widerrufe „${label}“ mit der Geräte-ID ${id}, falls es dort noch angezeigt wird.`,
+  serversSignOutById: (origin: string, id: string) =>
+    `Öffne auf ${origin} Einstellungen → Geräte und widerrufe das Gerät mit der ID ${id}, falls es dort noch angezeigt wird.`,
+  serversSignOutLegacy: (origin: string) =>
+    `Melde dich auf diesem Handy erneut beim selben Konto auf ${origin} an. Wenn du nicht prüfen kannst, ob die alte Sitzung beendet ist, ändere dein Passwort unter Einstellungen → Sicherheit, um die anderen Sitzungen zu beenden.`,
+  serversSignOutRecovery: (origin: string) =>
+    `Ändere dein Passwort auf einem anderen angemeldeten Gerät unter Einstellungen → Sicherheit auf ${origin}, um die anderen Sitzungen zu beenden.`,
+  serversSignOutDone: "Ich habe die Geräteliste geprüft",
   serversEmpty: "Noch keine Kopplungen.",
   serversInstallUnknown: (detail: string) =>
     "ohmail konnte nicht prüfen, ob dies dieselbe Installation ist, die deine Anmeldungen "
@@ -693,8 +703,9 @@ export const DE: Deck = {
     + "Sitzung dieses Handys schon beendet, es gab also nichts mehr abzumelden. Steht dieses Handy "
     + "noch in seiner Geräteliste, entferne es dort.",
   forgetServerOwed:
-    "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server war nicht "
-    + "erreichbar, um die Sitzung zu beenden; dieses Handy sagt es ihm, sobald es ihn wieder erreicht.",
+    "Die Kopplung und die Mails, die dieses Handy kopiert hatte, sind weg. Der Server hat die Abmeldung "
+    + "noch nicht bestätigt. Dieses Handy versucht es erneut. Du kannst das Gerät auch in der Geräteliste "
+    + "des Servers widerrufen.",
   forgetClaimStands: (minutes: number) =>
     "Das Postfach und seine Mails sind von diesem Handy weg. Sein Anspruch auf das Postfach ließ "
     + `sich nicht zurückgeben, deshalb kann eine andere Maschine das Postfach in etwa ${minutes} `
@@ -917,6 +928,7 @@ export const DE: Deck = {
       case "wipe_queue_full": return "dieses Handy hat bereits mehr unerledigte Löschungen, als es erfassen kann";
       case "wipe_not_recorded": return "dieses Handy konnte nicht erfassen, dass für die kopierten Mails eine Löschung aussteht";
       case "wipe_still_owed": return "dieses Handy führt für dieses Postfach noch eine ausstehende Löschung";
+      case "sign_out_notice_not_recorded": return "dieses Handy konnte den Hinweis zur offenen Abmeldung nicht speichern";
       case "wake_queue_full": return "dieses Handy hat bereits mehr unerledigte Weckruf-Abmeldungen, als es erfassen kann";
       case "wake_not_recorded": return "dieses Handy konnte nicht erfassen, dass für die Weckruf-Registrierung eine Abmeldung aussteht";
       case "wake_still_owed": return "dieses Handy führt für diese Registrierung noch eine ausstehende Abmeldung";

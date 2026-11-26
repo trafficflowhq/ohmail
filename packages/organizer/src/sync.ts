@@ -7,11 +7,11 @@ import {
   type StorageCap,
 } from "@trafficflow/core/mail";
 import {
-  WATCHED_FOLDERS, OHMAIL_FOLDERS, MessageGoneError, SameFolderMoveError, StoreRefusedError, StoreUnansweredError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
+  WATCHED_FOLDERS, OHMAIL_FOLDERS, ImapAdapter, MessageGoneError, SameFolderMoveError, StoreRefusedError, StoreUnansweredError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
   isDestinationMissing, isRefusedCommand, type MoveManyResult,
   epochOf, epochOfRef, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, makeRef, type Epoch,
   type BudgetStop, type NativeLocator, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
-  type FindLettersAnswer, type LetterVerdict,
+  type FindLettersAnswer, type FolderKeys, type LetterVerdict,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
 // The role vocabulary lives in `@trafficflow/db` (mail 0083) because both the worker and the
@@ -30,7 +30,7 @@ import {
   DETERMINISTIC_MESSAGE_FAILURE_CODES, MAX_MESSAGE_RETRIES_PER_CYCLE,
   type MessageFailureCode,
 } from "./dead-letter.js";
-import { KnownSetCache, watchKnownSet } from "./known-set.js";
+import { KNOWN_COLD_PROJECTION_ROWS, KNOWN_WORKING_PAGE_ROWS, KnownSetCache, watchKnownSet } from "./known-set.js";
 import {
   completeFiling, junkAuditCode, physicalDestination, specialFoldersOf,
   SPAM_PILE, TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
@@ -267,6 +267,8 @@ export interface SyncDeps {
    * hosted worker steers it by turn length (`nextTurnMessages`); ABSENT ⇒ the adapter's default.
    */
   batchMessages?: number;
+  /** Only a scheduled reconciliation starts a new historical sweep. */
+  startHistorySweep?: boolean;
   /**
    * WHICH BUILD is running — the second arm of the durable ledger's due predicate.
    *
@@ -421,16 +423,19 @@ export interface CycleCensus {
   locatorRows: number;
   cursorFolders: number;
   observed: number;
+  importProgress?: boolean;
+  /** A folder read lost the transport after the cycle durably recorded its continuation. */
+  scanFailure?: Error;
 }
 
 /** A zeroed {@link CycleCensus} — one per drain, folded into the caller's own log line. */
 export function newCycleCensus(): CycleCensus {
-  return { cursorBuilds: 0, locatorReads: 0, locatorRows: 0, cursorFolders: 0, observed: 0 };
+  return { cursorBuilds: 0, locatorReads: 0, locatorRows: 0, cursorFolders: 0, observed: 0, importProgress: false };
 }
 
 export async function buildCursor(
   repo: WorkerRepo, mailboxId: string, deadLetters?: DeadLetterLedger, census?: CycleCensus,
-  memo?: KnownSetCache, persisted?: Map<string, PersistedFolderCursor>,
+  memo?: KnownSetCache, persisted?: Map<string, PersistedFolderCursor>, boundedColdRead = false,
 ): Promise<ImapCursor> {
   const folderRows = await repo.getMailboxFolders(mailboxId);
   // The rows as stored, for the cycle's cursor write to compare against: an unchanged folder is not rewritten.
@@ -470,15 +475,47 @@ export async function buildCursor(
     }
   }
 
+  let knownWindows: ImapCursor["knownWindows"];
   const knownByFolder = new Map<string, Array<{ uid: number; uidValidity: string; messageId: string | null; seen: boolean | null }>>();
   if (readOwed) {
     epochs.clear();
     /* WARM IS READ BEFORE THE READ, not after it: the read is what makes it warm, so asking
        afterwards answers "yes" every time and the counter says nothing. */
     const servedFromMemory = memo?.warm === true;
-    const known = await repo.listKnownLocators(mailboxId);
+    const within = boundedColdRead && memo && repo.listKnownLocatorsWithin && repo.listKnownLocatorRange
+      ? memo.paged ? null : await repo.listKnownLocatorsWithin(mailboxId, KNOWN_COLD_PROJECTION_ROWS)
+      : undefined;
+    if (within === null && memo && repo.listKnownLocatorRange) {
+      memo.paged = true;
+      knownWindows = {
+        rows: KNOWN_WORKING_PAGE_ROWS,
+        async read(folder, epoch, from, through, limit = KNOWN_WORKING_PAGE_ROWS, arrivals) {
+          const release = await memo.reserveWorking(
+            (from <= through ? limit : 0) + (arrivals ? limit : 0),
+          );
+          try {
+            const rows = from <= through
+              ? await repo.listKnownLocatorRange!(mailboxId, folder, epoch, from, through, limit) : [];
+            if (arrivals) rows.push(...await repo.listKnownLocatorRange!(
+              mailboxId, folder, epoch, arrivals.from, arrivals.through, limit,
+            ));
+            if (census) {
+              census.locatorReads += Number(from <= through) + Number(arrivals !== undefined);
+              census.locatorRows += rows.length;
+            }
+            return { rows, release };
+          } catch (err) {
+            release();
+            throw err;
+          }
+        },
+      };
+    }
+    const known = within === null ? []
+      : within !== undefined && memo ? await memo.list(async () => within, mailboxId)
+        : await repo.listKnownLocators(mailboxId);
     if (census !== undefined) {
-      if (!servedFromMemory) census.locatorReads += 1;
+      if (!servedFromMemory && within !== null) census.locatorReads += 1;
       census.locatorRows += known.length;
     }
     for (const k of known) {
@@ -500,13 +537,15 @@ export async function buildCursor(
       uidValidity: epoch,
       uidNext: row?.uidNext ?? 0,
       highestModseq: row?.highestModseq ?? "0",
+      ...(row?.scanNextUid === undefined ? {} : { scanNextUid: row.scanNextUid }),
+      ...(row?.scanResetAfter === undefined ? {} : { scanResetAfter: row.scanResetAfter }),
       known: knownFor(f, epoch, knownByFolder.get(f) ?? [], derived?.byFolder ?? null, fresh, deadLetters, census),
     };
   }
   // A derivation is remembered only when it was built from a READ — a pass that reused the last
   // one has nothing new to say, and rewriting it would stamp old arrays with a new generation. A
   // read the memo did not keep is not remembered either (`rememberFolders`).
-  if (readOwed) memo?.rememberFolders(fresh, rowEpochs, epochs);
+  if (readOwed && !knownWindows) memo?.rememberFolders(fresh, rowEpochs, epochs);
   /**
    * WHERE THE LAST PASS'S BUDGET RAN OUT (mail 0115) — read out of the rows this function already
    * has, so the resume costs no query. The adapter keeps its own copy for the life of one
@@ -520,6 +559,19 @@ export async function buildCursor(
     .map((e) => ({ folder: e.folder, uidValidity: e.uidValidity, uid: e.uid }));
   return {
     folders,
+    ...(knownWindows === undefined ? {} : { knownWindows }),
+    ...(repo.listPriorKnownLocators ? {
+      async readPriorEpoch(folder: string, epoch: string, after: string, limit: number) {
+        const release = (await memo?.reserveWorking(limit)) ?? (() => undefined);
+        try {
+          const rows = await repo.listPriorKnownLocators!(mailboxId, folder, epoch, after, limit);
+          return { rows, release };
+        } catch (err) {
+          release();
+          throw err;
+        }
+      },
+    } : {}),
     ...(setAside.length > 0 ? { setAside } : {}),
     ...(stopped?.budgetStop === undefined
       ? {}
@@ -537,6 +589,8 @@ function sameStoredCursor(stored: PersistedFolderCursor | undefined, next: Persi
   const n = (v: string | number): string => { try { return BigInt(v).toString(); } catch { return String(v); } };
   return sameEpoch(epochOf(stored.uidValidity), epochOf(next.uidValidity)) && n(stored.uidNext) === n(next.uidNext)
     && n(stored.highestModseq) === n(next.highestModseq)
+    && stored.scanNextUid === next.scanNextUid
+    && stored.scanResetAfter === next.scanResetAfter
     && (next.serverExists === undefined || next.serverExists === stored.serverExists);
 }
 
@@ -1007,7 +1061,13 @@ async function fencedLiveGroup<T>(deps: LiveScope, fn: (repo: WorkerRepo) => Pro
  * rather than a delay. They are separate because ONE also means "the first import is finished":
  * `stampInitialImportComplete` fires on `!hasBacklog`, and a filing queue holding the flag high would read a mid-triage mailbox as permanently partial for a reason that has nothing to do with importing.
  */
-export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
+export interface SyncCycleOutcome {
+  hasBacklog: boolean;
+  owesFiling: boolean;
+  importIncomplete?: true;
+}
+
+export async function runSyncCycle(input: SyncDeps): Promise<SyncCycleOutcome> {
   const at = freshCyclePages();
   try {
     if (input.seenOnly === true) return await seenOnlyCycle(input, at);
@@ -1056,7 +1116,7 @@ export async function runSyncCycle(input: SyncDeps): Promise<{ hasBacklog: boole
 /** {@link SyncDeps.seenOnly}. The memo is watched, not bracketed: no walk reads it here. */
 async function seenOnlyCycle(
   input: SyncDeps, at: CyclePageCursor,
-): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
+): Promise<SyncCycleOutcome> {
   if (input.role !== "reader") throw new Error("a seen-only cycle runs with the reader's entitlement only");
   const cache = input.knownSet;
   try {
@@ -1071,7 +1131,7 @@ async function seenOnlyCycle(
 /** {@link runSyncCycle}'s body, with the known-set memo's cycle bracket around it. */
 async function cycleWithKnownSet(
   input: SyncDeps, at: CyclePageCursor,
-): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
+): Promise<SyncCycleOutcome> {
   const cache = input.knownSet;
   // NO CACHE ⇒ NOT ONE LINE OF THIS RUNS. The loop below is reached with the caller's own repo and
   // reads `listKnownLocators` exactly as it always did.
@@ -1113,7 +1173,7 @@ async function cycleWithKnownSet(
 
 async function syncCycleWithin(
   deps: SyncDeps, at: CyclePageCursor,
-): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
+): Promise<SyncCycleOutcome> {
   const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importHold, storageCap, log } = deps;
   // THE CYCLE'S LOOKUP BUDGET, once: every letter this cycle plans, the retry pass's included, spends
   // the same one, so its senders' name servers can hold the cycle that long and no longer.
@@ -1354,19 +1414,37 @@ async function syncCycleWithin(
   }
 
   const persistedFolders = new Map<string, PersistedFolderCursor>();
-  const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet, persistedFolders);
-  const batch = deps.batchMessages === undefined
-    ? await adapter.changesSince(cursor)
-    : await adapter.changesSince(cursor, { messages: deps.batchMessages });
+  const memo = deps.knownSet;
+  const boundedColdRead = adapter instanceof ImapAdapter && memo !== undefined && !memo.warm
+    && !!repo.listKnownLocatorsWithin && !!repo.listKnownLocatorRange;
+  const releaseProjection = boundedColdRead && !memo.paged ? await memo.reserveWorking(KNOWN_COLD_PROJECTION_ROWS + 1) : undefined;
+  let cursor: ImapCursor;
+  let batch: Awaited<ReturnType<typeof adapter.changesSince>>;
+  try {
+    cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, memo, persistedFolders, boundedColdRead);
+    // The bounded whole-projection probe is consumed before opening smaller pages.
+    if (cursor.knownWindows) releaseProjection?.();
+    batch = deps.batchMessages === undefined && deps.startHistorySweep === undefined
+      ? await adapter.changesSince(cursor)
+      : await adapter.changesSince(cursor, {
+        ...(deps.batchMessages === undefined ? {} : { messages: deps.batchMessages }),
+        ...(deps.startHistorySweep === undefined ? {} : { startHistorySweep: deps.startHistorySweep }),
+      });
+  } finally {
+    releaseProjection?.();
+  }
   // A Sent folder made after the attach, written down before this batch's own copies are ingested.
   // Not after an overrun: the breach retired this connection, and the re-dial asks next cycle.
-  if (!deps.fence?.lost() && batch.overrun === undefined) {
+  if (!deps.fence?.lost() && batch.overrun === undefined && batch.scanFailure === undefined) {
     try {
       await recordAppearedSentFolder(adapter, repo, accountId, mailboxId);
     } catch (err) {
       rethrowRefusal(err);
       log?.warn("sent_folder_record_failed", { mailboxId, accountId, err });
     }
+  }
+  for (const folder of batch.incompleteFolders ?? []) {
+    log?.warn("sync_folder_read_incomplete", { mailboxId, accountId, folderLabel: folderLabel(folder) });
   }
   if (deps.census !== undefined) {
     deps.census.observed += batch.creates.length + batch.moves.length
@@ -1674,12 +1752,10 @@ async function syncCycleWithin(
   // The reaper (mail 0065): a message whose every watched instance is gone leaves the mirror.
   // `forgetInstanceAt` above removes instances and promotes survivors, and until this pass that was
   // the END of the story — the `messages` row stayed live in every view for ever, describing mail the
-  // server no longer holds (`forgetInstanceAt` left "the last known locator on the row FOR THE REAPER
-  // TO FIND", and no reaper existed). This is it: bounded per cycle, it stamps `deleted_at`, husks the
-  // body (the account stops paying for bytes of a gone message), and emits the `change_log` `delete`
-  // clients tombstone on. A cross-batch external move is tombstoned here and RESURRECTED by the adopt
-  // path (`clearDeletedOnAdopt` + the move change) — the client contract's "a LATER create resurrects"
-  // end to end. Junk-parked rows are excluded in the query; optional-guarded so every fake repo works.
+  // server no longer holds. The bounded reaper stamps `deleted_at`, husks the body, and emits
+  // the client delete. A moved letter can still be present in a destination we have yet to read.
+  // Keep its body and let the complete retry match arrivals before reaping. Junk-parked rows
+  // are excluded in the query.
   // Only a removed instance makes a victim, and its candidate read is the whole mailbox: it runs on
   // a new connection, after a reap that took its limit, when this batch removed an instance, when a
   // write that may remove one went through the memo's repo since the last reap, and hourly. Without
@@ -1690,12 +1766,27 @@ async function syncCycleWithin(
     || batch.deletes.length > 0 || proved.size > 0
     || (removals === undefined ? batch.unchanged !== true : removals !== mark.removals)
     || Date.now() - mark.at >= REAP_BELT_MS;
-  if (typeof repo.tombstoneInstanceless === "function" && reapOwed) {
+  const hasScan = (fc: PersistedFolderCursor | undefined): boolean =>
+    (fc?.scanNextUid ?? 0) > 0 || fc?.scanResetAfter !== undefined;
+  const unreadFolders = new Set(batch.incompleteFolders);
+  const scansOpen = [...new Set([...Object.keys(batch.newCursor.folders), ...persistedFolders.keys()])]
+    .some((folder) => !unreadFolders.has(folder) && hasScan(
+      batch.newCursor.folders[folder] ?? persistedFolders.get(folder),
+    ));
+  const scanInterrupted = scansOpen || batch.hasBacklog === true || batch.budgetStop !== undefined
+    || batch.overrun !== undefined || batch.scanFailure !== undefined
+    || !!batch.unanswered?.length || !!batch.oversize?.length;
+  let reapAfterId = mark?.afterId;
+  const reapAfterScan = async (confirmed?: readonly string[]): Promise<void> => {
+    if (typeof repo.tombstoneInstanceless !== "function" || !reapOwed) return;
     const reaped = await fencedLiveGroup(deps, (r) =>
       typeof r.tombstoneInstanceless === "function"
-        ? r.tombstoneInstanceless(accountId, mailboxId, TOMBSTONE_MAX_PER_CYCLE)
+        ? r.tombstoneInstanceless(accountId, mailboxId, TOMBSTONE_MAX_PER_CYCLE, confirmed)
         : Promise.resolve(0));
-    reaperMarks.set(adapter, { drained: reaped < TOMBSTONE_MAX_PER_CYCLE, at: Date.now(), removals });
+    reaperMarks.set(adapter, {
+      drained: confirmed === undefined && reaped < TOMBSTONE_MAX_PER_CYCLE, at: Date.now(), removals,
+      ...(reapAfterId === undefined ? {} : { afterId: reapAfterId }),
+    });
     if (reaped > 0) {
       log?.info("sync_tombstoned_expunged", {
         mailboxId, accountId, reaped,
@@ -1703,8 +1794,7 @@ async function syncCycleWithin(
           "rows are tombstoned so clients stop presenting mail the mailbox no longer holds",
       });
     }
-  }
-
+  };
   // Two-phase, transaction-safe ingest. PLAN performs the reads +
   // optional classifier network call OUTSIDE any transaction; COMMIT persists the
   // entity rows + change_log inside ONE short transaction (tx-scoped repo, no
@@ -1717,6 +1807,9 @@ async function syncCycleWithin(
   const ownAddresses = await ownAddressesFor(deps, readerMode, batch.creates);
   /** After a letter's commit settled: the ledger's progress and the Screener's mark. */
   const noteCommitted = (ch: Change, plan: ChangePlan): void => {
+    if (deps.census && (plan.outcome !== "duplicate" || relearnedUnderNewEpoch(plan))) {
+      deps.census.importProgress = true;
+    }
     // A message STORED: the backstop's run of write-offs ends here, and a hold with it.
     if (plan.outcome === "new") { deadLetters.noteStored(); deadLetters.noteProgressIn(ch.locator.folder); }
     // A message RE-LEARNED, which a renumbered folder's re-read does once per message: progress
@@ -1885,6 +1978,51 @@ async function syncCycleWithin(
     }
   }
 
+  if (scanInterrupted || unreadFolders.size > 0 || deferred.size > 0) {
+    if (reapOwed) oweReap(adapter);
+    // Folder enumeration can be incomplete while an exact Message-ID search still answers.
+    // Keep the body until each unread destination has independently ruled out a moved copy.
+    if (!scanInterrupted && deferred.size === 0 && reapOwed && unreadFolders.size > 0 && unreadFolders.size <= 4
+      && repo.listInstanceless && adapter.messageIdsGone && adapter.folderKeys) {
+      const limit = 32;
+      const rows = await repo.listInstanceless(accountId, mailboxId, limit, reapAfterId);
+      reapAfterId = rows.length === limit ? rows.at(-1)?.id : undefined;
+      let remaining = rows.filter((row): row is { id: string; messageIdHeader: string } => row.messageIdHeader !== null);
+      const fresh = unreadFolders.size > 1 ? { fresh: true } : undefined;
+      const snapshots = new Map<string, FolderKeys>();
+      try {
+        for (const folder of unreadFolders) {
+          if (remaining.length === 0) break;
+          const keys = await adapter.folderKeys(folder, fresh);
+          if (!fresh && keys.k === "absent") continue;
+          if (keys.k !== "keys") { remaining = []; break; }
+          if (fresh) snapshots.set(folder, keys.keys);
+          const answer = await adapter.messageIdsGone(folder, keys.keys.uidValidity, remaining.map((row) => row.messageIdHeader));
+          if (!fresh && answer.k === "absent") continue;
+          remaining = answer.k === "read" && answer.uidValidity === keys.keys.uidValidity
+            ? remaining.filter((row) => answer.gone.has(row.messageIdHeader)) : [];
+        }
+        // An earlier folder can receive a moved copy while a later one is searched.
+        // Stable UIDNEXT in the same epoch keeps each absence valid through the final search.
+        for (const [folder, before] of snapshots) {
+          if (remaining.length === 0) break;
+          const after = await adapter.folderKeys(folder, fresh);
+          if (after.k !== "keys" || after.keys.uidValidity !== before.uidValidity || after.keys.uidNext !== before.uidNext) {
+            remaining = [];
+            break;
+          }
+        }
+      } catch (err) {
+        rethrowRefusal(err);
+        remaining = [];
+      }
+      await reapAfterScan(remaining.map((row) => row.id));
+    }
+  } else {
+    reapAfterId = undefined;
+    await reapAfterScan();
+  }
+
   // AFTER the commit loop, deliberately. The adapter holds a truncated folder's cursor at its
   // previous value, so this writes the ADVANCED cursor only for folders that genuinely drained;
   // advancing mid-loop would put `highestModseq` past mail not committed yet, and a crash there
@@ -1895,24 +2033,35 @@ async function syncCycleWithin(
   const cursorWrites: Array<{ folder: string; cursor: PersistedFolderCursor }> = [];
   for (const [folder, fc] of Object.entries(batch.newCursor.folders)) {
     if (deferred.has(folder)) continue;
+    if (deletesCapped && (fc.scanNextUid !== undefined || persistedFolders.get(folder)?.scanNextUid !== undefined)) continue;
     const next = epochAware(fc, observedEpochs.get(folder));
     if (sameStoredCursor(persistedFolders.get(folder), next)) continue;
     cursorWrites.push({ folder, cursor: next });
   }
   if (cursorWrites.length > 0) {
     await fencedLiveGroup(deps, (r) => r.upsertMailboxFolders(mailboxId, cursorWrites));
+    if (deps.census && cursorWrites.some(({ folder, cursor: next }) => {
+      const before = persistedFolders.get(folder);
+      return (before?.scanNextUid ?? 1) !== (next.scanNextUid ?? 1) || before?.scanResetAfter !== next.scanResetAfter
+        || (before?.uidNext ?? 0) !== next.uidNext;
+    })) deps.census.importProgress = true;
   }
 
   // A FOLDER THE SERVER STATED GONE LEAVES THE FOLDER LIST: its row is what every client draws.
   // AFTER the ingest, so a folder renamed elsewhere has had its letters moved out first; and only
   // on a pass that kept nothing back, or a letter still owed here would be forgotten and brought
   // back. A skipped pass costs nothing: the next one asks the server again.
-  if (goneFolders.size > 0 && deferred.size === 0 && overrun === undefined
+  let retirementOwesMore = false;
+  if (goneFolders.size > 0 && deferred.size === 0 && overrun === undefined && batch.scanFailure === undefined
     && typeof repo.retireGoneFolder === "function") {
     for (const folder of goneFolders) {
       const outcome = await fencedLiveGroup(deps, (r) =>
         typeof r.retireGoneFolder === "function" ? r.retireGoneFolder(accountId, mailboxId, folder) : Promise.resolve(null));
-      if (outcome === "retired") oweReap(adapter);
+      if (outcome === "more") {
+        retirementOwesMore = true;
+        if (deps.census) deps.census.importProgress = true;
+        break;
+      }
       // `repair_owed`: the organizer's repair logs its own progress, and a reader's row waits quietly.
       if (outcome === null || outcome === "absent" || outcome === "repair_owed") continue;
       log?.info("sync_folder_retired", {
@@ -1921,6 +2070,11 @@ async function syncCycleWithin(
           ? "the server stated this folder does not exist, and a command of the user's owns its row"
           : "the server stated this folder does not exist, so it leaves the folder list",
       });
+      if (outcome === "retired") {
+        oweReap(adapter);
+        retirementOwesMore = goneFolders.size > 1;
+        break;
+      }
     }
   }
 
@@ -1939,6 +2093,10 @@ async function syncCycleWithin(
   // cycle ends with the breach and the caller re-dials. The caller reads the ledger
   // (`breachSetAside`) to tell a breach whose message was set aside, which is progress, from a failure.
   if (overrun !== undefined) throw overrun.breach;
+  if (batch.scanFailure !== undefined) {
+    if (deps.census) deps.census.scanFailure = batch.scanFailure;
+    throw batch.scanFailure;
+  }
 
   // AFTER the cursor writes, and skipped entirely when anything is deferred — see
   // `retryFailedMessages` for both reasons.
@@ -2134,7 +2292,8 @@ async function syncCycleWithin(
   }
   if (firstDeferredError !== null) throw firstDeferredError;
   return {
-    hasBacklog: (batch.hasBacklog ?? false) || deletesCapped,
+    hasBacklog: (batch.hasBacklog ?? false) || deletesCapped || retirementOwesMore,
+    ...(batch.incompleteFolders?.length ? { importIncomplete: true as const } : {}),
     owesFiling: owesMore || folderOpsOweMore || junkRescueOwesMore || sweepOwesMore || repairOwesMore,
   };
 }
@@ -2163,7 +2322,7 @@ const ownMailReleaseDone = new Set<string>();
 
 /** Adapter → its last reap: under its limit, when, and the memo's removal count then. Per
     connection, so a new one reaps first. */
-const reaperMarks = new WeakMap<object, { drained: boolean; at: number; removals: number | undefined }>();
+const reaperMarks = new WeakMap<object, { drained: boolean; at: number; removals: number | undefined; afterId?: string }>();
 /** The reaper's belt: a removal no cue reported (another process's, say) waits at most this long. */
 export const REAP_BELT_MS = 60 * 60 * 1000;
 /** A reap is owed on this connection's next pass. */

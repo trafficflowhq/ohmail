@@ -59,7 +59,7 @@ export async function runReconcileCron(
   config: WorkerConfig, log: Logger = silentLogger,
 ): Promise<{ ran: boolean; reason?: string }> {
   const shardIndex = config.shardIndex ?? 0;
-  const lock = await acquireLeaderLock(config.databaseUrl, leaderLockKeyFor(shardIndex));
+  const lock = await acquireLeaderLock(config.databaseUrl, leaderLockKeyFor(shardIndex), { shards: config.shards });
   if (!lock) return { ran: false, reason: "worker-live" };
 
   // THE SYNCHRONOUS TRIPWIRE, armed before anything can write. `lock.lost` resolves (never

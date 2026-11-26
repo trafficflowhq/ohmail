@@ -165,6 +165,7 @@ export interface EnabledMailbox {
    * every healthy mailbox on every pass, or never clear at all.
    */
   syncBlockedReason: string | null;
+  syncBlockedSince?: Date | null;
   /**
    * Mail 0055. The RFC 1870 `SIZE` this mailbox's submission server announced, or NULL when it has
    * never been probed. READ ONLY SO THE WORKER KNOWS WHETHER THERE IS ANYTHING TO LEARN — the
@@ -318,6 +319,7 @@ export async function loadRosterMailboxes(
       organizerParkedAt: mailboxes.organizerParkedAt,
       kickStamp: sql<string | null>`${mailboxes.syncRequestedAt}::text`,
       syncBlockedReason: mailboxes.syncBlockedReason,
+      syncBlockedSince: mailboxes.syncBlockedSince,
       errorCode: mailboxes.errorCode,
       failedAt: mailboxes.failedAt,
       retryAfter: mailboxes.retryAfter,
@@ -357,6 +359,7 @@ export async function loadRosterMailboxes(
     organizerParkedAt: r.organizerParkedAt ?? null,
     kickStamp: r.kickStamp ?? null,
     syncBlockedReason: r.syncBlockedReason ?? null,
+    syncBlockedSince: r.syncBlockedSince ?? null,
     errorCode: r.errorCode ?? null,
     failedAt: r.failedAt ?? null,
     retryAfter: r.retryAfter ?? null,
@@ -1791,9 +1794,10 @@ export async function stampInitialImportComplete(
  * like it. The `sync_lag` rule reads this column only while `last_sync_at` is null.
  */
 export async function stampImportProgress(
-  db: WorkerDb, mailboxId: string, now: Date,
+  db: WorkerDb, mailboxId: string, now: Date, fence?: LeaderFence,
 ): Promise<void> {
-  await db.update(mailboxes)
+  await applyFenced(db, mailboxId, fence, (w) => w.update(mailboxes)
     .set({ syncProgressAt: now })
-    .where(and(eq(mailboxes.id, mailboxId), isNull(mailboxes.initialImportCompletedAt)));
+    .where(and(lifecycleWhere(mailboxId, fence), isNull(mailboxes.initialImportCompletedAt)))
+    .returning({ id: mailboxes.id }));
 }

@@ -39,8 +39,8 @@ const COVERS: Record<PolicyVerb, readonly string[]> = {
 
 describe("the copied roles' script", () => {
   it("is the kit's file and data, byte for byte", () => {
-    expect(sha256(SCRIPT)).toBe("65f3ff8fefe0af7fad192fb3afeca501abfbfcd43d61e9fd0eb07444c851793a");
-    expect(sha256(RULE)).toBe("09681568b05999d97851693b5b5971303122fce67b235759ff6065c2282bb67b");
+    expect(sha256(SCRIPT)).toBe("6f01de0d77e6a126379deea606804751b784ffe47f2a3995812ab58c96bf6933");
+    expect(sha256(RULE)).toBe("8b1433f718c5deb9e9a3bfbeb4fef756599f9c6360c979bffc7e1233cc850d59");
   });
 
   it("carries the four markers its sections are cut by, once each and in order", () => {
@@ -77,6 +77,11 @@ describe("the rule the script writes, against the lock's list", () => {
   it("the worker holds nothing on the staff tables but the sessions it prunes, and nothing on the waitlist", () => {
     for (const t of STAFF_TABLES) expect(granted("ohmail_worker", t).size > 0, t).toBe(t === "staff_sessions");
     expect(granted("ohmail_worker", "waitlist").size).toBe(0);
+  });
+
+  it("lets runtime readers see the topology marker without changing the fleet width", () => {
+    expect([...granted("ohmail_worker", "worker_topology")]).toEqual(["SELECT"]);
+    expect([...granted("ohmail_api", "worker_topology")]).toEqual(["SELECT"]);
   });
 
   it("the deadlines by role are the setup's table, cell for cell", () => {

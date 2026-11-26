@@ -659,6 +659,26 @@ describe("POST /pair/redeem — device-pair, and whose account the answer is abo
     },
   );
 
+  it("reports the current pairing's Devices label to that session", async () => {
+    const { db, deps } = await makeDeps();
+    const owner = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const install = await installs(deps, owner);
+    expect((await install.redeem("mobile-android")).status).toBe(200);
+    const paired = await install.redeem("mobile-android");
+    const { tokens } = await paired.json();
+    const res = await H(req("GET", "/auth/session", { headers: { authorization: `Bearer ${tokens.accessToken}` } }), deps);
+    expect(res.status).toBe(200);
+    const session = await res.json();
+    const listed = await H(req("GET", "/devices", { headers: { authorization: `Bearer ${tokens.accessToken}` } }), deps);
+    expect(listed.status).toBe(200);
+    const { items } = await listed.json() as { items: { id: string; label: string; current: boolean }[] };
+    const sameName = items.filter((device) => device.label === "An install");
+    expect(sameName).toHaveLength(2);
+    expect(sameName[0]!.id).not.toBe(sameName[1]!.id);
+    const current = sameName.find((device) => device.current)!;
+    expect(session.device).toEqual({ id: current.id, label: "An install" });
+  });
+
   it("control: a phone's re-pair names a desktop's, a browser's or another person's family and ends none", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });

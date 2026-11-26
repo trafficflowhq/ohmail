@@ -245,6 +245,8 @@ const CLOUD_TABLES = [
   "billing_events",
   // the ops
   "worker_heartbeats", "alert_state", "billing_reconciliation_runs",
+  // Cloud 0108 records the shard width shared by hosted workers.
+  "worker_topology",
   // THE API'S OWN 5xx RECORD (cloud 0033). CLOUD, and it is the easy call for the reason
   // `platform_signals` is: it counts what a HOSTED DEPLOYMENT's API answered, per route, and a
   // local install is one process serving one person with no operator to page. It also carries no
@@ -4416,7 +4418,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 126 → 127 for `account_closures` (cloud 0104) — an account closed by staff, CLOUD.
     // 127 → 128 for `cal_push_channels` (cloud 0105) — a calendar's notice channels, CLOUD.
     // The mailbox learning data is kept in the mail journal.
-    expect(SIDE.size).toBe(129);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
+    // 129 → 130 for `worker_topology` (cloud 0108), CLOUD.
+    expect(SIDE.size).toBe(130);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
     // 44 → 45 and 27 → 26 for `refresh_tokens` (mail 0060) — the first MOVE in the partition's
     // history rather than an addition, so the total stayed 71 while both halves changed together.
     expect(MAIL_TABLES).toHaveLength(73);   // 62 → 72: the calendar's ten (mail 0205)   // 61 → 62: message_invitations (mail 0204)   // 60 → 61: pass_progress (mail 0203)   // 59 → 60: scheduled_send_files (mail 0179)   // 58 → 59: rule_removals (mail 0178)   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
@@ -4435,7 +4438,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 48 → 49: connect_attempts (cloud 0054)
     // 49 → 50: account_storage_holds (cloud 0055)
     // 50 → 53: mailbox_storage_stats + account_storage_prefs + storage_mail_sent (cloud 0057)
-    expect(CLOUD_TABLES).toHaveLength(56);   // 55 → 56: cal_push_channels (cloud 0105)   // 54 → 55: account_closures (cloud 0104)   // 53 → 54: account_counters (cloud 0101)   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
+    // 56 → 57 for worker_topology (cloud 0108).
+    expect(CLOUD_TABLES).toHaveLength(57);   // 55 → 56: cal_push_channels (cloud 0105)   // 54 → 55: account_closures (cloud 0104)   // 53 → 54: account_counters (cloud 0101)   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
   });
 
   it("NO mail statement names a private object — so mail-first is sound, not assumed", () => {

@@ -30,7 +30,7 @@ export { bubbleUpPass } from "@ohmail/organizer/bubble-up";
 export async function runBubbleUpCron(
   config: WorkerConfig, log: Logger = silentLogger,
 ): Promise<{ ran: boolean; flipped: number }> {
-  const lock = await acquireLeaderLock(config.databaseUrl, leaderLockKeyFor(config.shardIndex ?? 0));
+  const lock = await acquireLeaderLock(config.databaseUrl, leaderLockKeyFor(config.shardIndex ?? 0), { shards: config.shards });
   if (!lock) return { ran: false, flipped: 0 };
 
   const owned = makeOwnedDb(config.databaseUrl);

@@ -541,6 +541,8 @@ export const mailboxFolders = pgTable("mailbox_folders", {
    * one is last pass's epoch or NULL, never the one the server stated at the stop. DECLARED LAST
    * because they arrive by ALTER: a store built by replaying the journal holds them there.
    */
+  scanNextUid: bigint("scan_next_uid", { mode: "bigint" }),
+  scanResetAfter: text("scan_reset_after"),
   budgetStopUid: bigint("budget_stop_uid", { mode: "bigint" }),
   budgetStopUidvalidity: bigint("budget_stop_uidvalidity", { mode: "bigint" }),
   // The mailbox's account (mail 0201).

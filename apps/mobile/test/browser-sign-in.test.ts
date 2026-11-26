@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { BearerRegistry } from "../src/net/bearer-registry";
-import { drainPendingSignOuts, MANAGED_ORIGIN, pairApproved, probePairing, revokeBrowserPair, type PairingEnv } from "../src/net/pairing";
+import { drainPendingSignOuts, MANAGED_ORIGIN, pairApproved, probePairing, revokeBrowserPair, signOutProfile, type PairingEnv } from "../src/net/pairing";
 import { ServerProfileStore } from "../src/state/servers";
 import { listen, pairServer, sqlWorld } from "./helpers/pair-server";
 import { awaitBrowserApproval, browserSignInOrigin, probeBrowserSignIn, type BrowserApprovalDeps } from "../src/net/approval";
@@ -250,7 +250,7 @@ describe("phone browser sign-in", () => {
     const secure = new Map<string, string>();
     const world = sqlWorld();
     const ordinary = vi.fn(async () => { throw new Error("Use the approval transport"); });
-    const strict = vi.fn(async (_url: string, _init?: unknown) => Response.json({ ok: true }));
+    const strict = vi.fn(async (_url: string, _init?: unknown) => new Response(null, { status: 204 }));
     const env: PairingEnv = {
       profiles: new ServerProfileStore({
         get: async (key) => secure.get(key) ?? null,
@@ -270,6 +270,42 @@ describe("phone browser sign-in", () => {
       method: "POST", credentials: "omit", redirect: "error",
     }));
     expect(await env.profiles.pendingSignOuts()).toEqual([]);
+  });
+
+  it("uses the strict phone transport for a regular pairing and retains its retry after a redirect", async () => {
+    const requests: string[] = [];
+    const other = createServer((req, res) => { requests.push(req.url!); res.writeHead(204).end(); });
+    const otherOrigin = await listen(other);
+    const own = createServer((req, res) => {
+      requests.push(req.url!);
+      res.writeHead(307, { location: `${otherOrigin}/elsewhere` }).end();
+    });
+    const local = await listen(own);
+    try {
+      const secure = new Map<string, string>();
+      const profiles = new ServerProfileStore({
+        get: async (key) => secure.get(key) ?? null,
+        set: async (key, value) => { secure.set(key, value); },
+        remove: async (key) => { secure.delete(key); },
+      });
+      const world = sqlWorld();
+      const ordinary = vi.fn((url: string, init?: unknown) => fetch(url.replace(origin, local), { ...(init as RequestInit), redirect: "follow" }));
+      const strict = vi.fn((url: string, init?: unknown) => fetch(url.replace(origin, local), init as RequestInit));
+      const env: PairingEnv = {
+        profiles, fetchImpl: ordinary, approvalFetchImpl: strict, bearers: new BearerRegistry(() => undefined),
+        engineDeps: { openExecutor: world.open, deleteDatabase: world.drop, uuid: () => id },
+      };
+      const profile = await profiles.add({ origin, flavor: "selfhost", accountId: id, refreshToken: tokens.refreshToken });
+      expect(await signOutProfile(env, profile)).toBe("owed");
+      expect(await drainPendingSignOuts(env)).toBe(1);
+      expect(await profiles.pendingSignOuts()).toHaveLength(1);
+      expect(ordinary).not.toHaveBeenCalled();
+      expect(strict).toHaveBeenCalledTimes(2);
+      expect(requests).toEqual(["/auth/refresh/logout", "/auth/refresh/logout"]);
+    } finally {
+      own.close();
+      other.close();
+    }
   });
 
   it.each([
