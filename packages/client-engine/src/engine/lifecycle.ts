@@ -85,6 +85,7 @@ export abstract class EngineLifecycle extends EngineTrash {
         // OhmailEngine.countRestoredBodies}.
         this.countRestoredBodies();
         await this.trimBodyCache();
+        await this.refreshSentReplies();
         this.localReadFinished = true;
         this.notify();
       })
@@ -580,6 +581,7 @@ export abstract class EngineLifecycle extends EngineTrash {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    clearTimeout(this.sentReplyExpiry);
     this.partLane.dropAll();
     this.partReasksDue.clear();
     this.unlistenDisk?.();
@@ -959,6 +961,7 @@ export abstract class EngineLifecycle extends EngineTrash {
       await this.refillWindow();
       // What the calendar's switch owes (`calendar.ts`), before the prune trims what it read.
       await this.settleCalendarSwitch();
+      await this.refreshSentReplies();
       await this.pruneToPolicy();
       // A drain is the one thing that can deliver the REAL Sent row an optimistic copy is standing
       // in for — retire any copy the mirror now holds under the same header (or that has aged out),

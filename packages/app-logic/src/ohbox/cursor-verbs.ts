@@ -20,6 +20,7 @@ import { deleteKeyBindings } from "../press/delete-undo.js";
 import type { Translator } from "../text/translator.js";
 
 export interface CursorVerbParts {
+  readonly pendingReplyCopy: boolean;
   /** The names the key sheet lists them under (the `shortcuts` namespace). */
   readonly t: Translator;
   /** The cursor row's letter; null while the list holds no cursor. */
@@ -46,7 +47,15 @@ export interface RowAsk {
 /** A press inside text a person edits is a character there. */
 const outsideText = (e: KeyboardEvent): boolean => !isTypingTarget(e.target);
 
-export function cursorRowKeys({ t, row, replyAll, deletable, act, ask }: CursorVerbParts): KeyBinding[] {
+export function cursorRowKeys({
+  t,
+  row,
+  replyAll,
+  deletable,
+  pendingReplyCopy,
+  act,
+  ask,
+}: CursorVerbParts): KeyBinding[] {
   /* With no cursor they rest for want of one: the key sheet lists them, and a first press places the cursor. */
   const resting = row === null ? ({ disabled: true, disabledReason: "no_cursor" } as const) : {};
   const verb = (
@@ -67,12 +76,13 @@ export function cursorRowKeys({ t, row, replyAll, deletable, act, ask }: CursorV
   });
   /* A letter already booked is taken out of its booking by its chooser, which a list draws none of: the key rests. */
   const booked = row?.triage?.state === "bubbled_up";
+  const held = pendingReplyCopy ? { run: () => undefined } : {};
   return [
     verb("r", t("reply"), "reply"),
     verb("shift+r", t("replyAll"), replyAll ? "reply_all" : "reply"),
     verb("shift+f", t("forward"), "forward"),
-    verb("a", t("answerLater"), "later"),
-    verb("e", t("park"), "aside"),
+    verb("a", t("answerLater"), "later", held),
+    verb("e", t("park"), "aside", held),
     verb("b", t("resurface"), "resurface", booked ? { disabled: true } : {}),
     verb("m", t("move"), "move:ohbox", {
       run: () => {

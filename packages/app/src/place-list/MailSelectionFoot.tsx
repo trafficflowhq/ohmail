@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { TagDTO } from "@ohmail/wire";
 import { MOVE_TARGETS, type BulkAction } from "@ohmail/app-logic/press/actions";
 import type { ListVerbs } from "@ohmail/app-logic/place-list";
+import { awaitsReplyCopy, useMirror } from "@ohmail/app-logic/reader";
 import { EndDot, Menu, MenuItem } from "@ohmail/ui/base";
 import type { PanelVerb } from "@ohmail/ui/mail";
 import { useFrame } from "../frame/commands.js";
@@ -30,11 +31,16 @@ export function MailSelectionFoot({ verbs, ...props }: MailSelectionProps) {
 
 function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProps & { verbs: ListVerbs }) {
   const t = useText("ohbox");
+  const reader = useText("reader");
   const places = useText("place");
   const { host } = useFrame();
   const [menu, setMenu] = useState<{ kind: "move" | "delete" | "tag"; anchor: HTMLElement } | null>(null);
   const acknowledgements = useScreenerAcknowledgements();
   const { ids } = selection;
+  useMirror();
+  const filingHint = ids.some((id) => awaitsReplyCopy(host.engine.store, id))
+    ? reader("replyCopyWaiting")
+    : undefined;
   const close = () => setMenu(null);
   const run = (action: BulkAction) => {
     close();
@@ -58,7 +64,10 @@ function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProp
     ...(done ? [action("done", t("actionDone"), "check")] : []),
     { ...ask("move", t("actionMove"), "move"), ...(moveToFolder ? { onPress: moveToFolder } : {}) },
     ask("tag", t("actionTag"), "tags"),
-    action("later", t("actionLater"), "later"),
+    {
+      ...action("later", t("actionLater"), "later"),
+      ...(filingHint ? { disabled: true, disabledHint: filingHint } : {}),
+    },
     acknowledgements.has("moveToTrash")
       ? action("delete", t("actionDelete"), "trash")
       : ask("delete", t("actionDelete"), "trash"),
@@ -72,6 +81,11 @@ function MailActions({ selection, verbs, done, moveToFolder }: MailSelectionProp
     .map(({ id }) => id);
   return (
     <PickedFoot selection={selection} verbs={items}>
+      {filingHint ? (
+        <div className="oh-text" role="status" title={filingHint}>
+          {reader("replyCopySending")}
+        </div>
+      ) : null}
       <Menu
         open={menu?.kind === "move"}
         onClose={close}

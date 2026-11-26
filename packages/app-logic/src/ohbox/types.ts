@@ -5,7 +5,7 @@
 import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import type * as React from "react";
 import type { MouseEvent as ReactMouseEvent, MutableRefObject, RefObject } from "react";
-import type { ListSurface, ResurfacedThreadRow, ThreadMark } from "@ohmail/client-engine";
+import type { EntityReader, ListSurface, ResurfacedThreadRow, ThreadMark } from "@ohmail/client-engine";
 import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import type { ThreadReadWiring } from "../reading/reader-seen.js";
 import type { ThreadWalkChannel } from "../reading/thread-walk-channel.js";
@@ -84,6 +84,7 @@ export interface OhboxReplyDone {
  * scroller.
  */
 export interface OhboxListInput {
+  replyStore?: EntityReader;
   replyDone?: OhboxReplyDone | null;
   trashConfirmation?: {
     acknowledged: boolean;
@@ -204,6 +205,7 @@ export interface OhboxListModel {
   picked: ReadonlySet<string>;
   pickedIds: string[];
   pickedRowCount: number;
+  pickedReplyCopyPending: boolean;
   pickPanel: PickPanel | null;
   setPickPanel: (next: PickPanel | null) => void;
   clearPicked: () => void;

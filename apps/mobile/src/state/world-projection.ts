@@ -217,8 +217,8 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
     const tagsNow = kept("tagsRead", [engine, stamp], () => liveTags(raw));
     const tags = kept("tags", [JSON.stringify(tagsNow)], () => tagsNow);
     /* The view, one object per (day, zone, language, flags, facts): the row memos key on it. */
-    const v: WorldView = kept("view", [day, zone, locale, foldersOn, inp.ownAddresses, mailboxes, posture, tags], () => ({
-      now, zone, locale, foldersEnabled: foldersOn, ownAddresses: inp.ownAddresses, mailboxes, screening: posture, tags,
+    const v: WorldView = kept("view", [engine.store, day, zone, locale, foldersOn, inp.ownAddresses, mailboxes, posture, tags], () => ({
+      now, zone, locale, foldersEnabled: foldersOn, replyStore: engine.store, ownAddresses: inp.ownAddresses, mailboxes, screening: posture, tags,
     }));
     /* THE PRESENTED READER, kept across runs: a fresh one per run missed every engine memo keyed on reader identity. */
     /* Each mailbox's first-import stamp, kept while the stamps read the same (the held-claim term). */
@@ -356,10 +356,10 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       /* The reader opens from the UNHIDDEN mirror; with no delete held that is the projection
          already made, handed in so a render is not a partition. While a delete is held the reader
          partitions the raw mirror itself, as it always did. */
-      message: (id) => liveMessage(engine, id, {
+      message: (id, wholeThread) => liveMessage(engine, id, {
         now, zone, locale, foldersEnabled: foldersOn,
         ownAddresses: inp.ownAddresses, mailboxes, screening: posture, tags,
-      }, base === raw ? presented.world : undefined),
+      }, base === raw ? presented.world : undefined, wholeThread),
       /* Over the reader and held row the Ohbox list folds with, so a press and its row agree. */
       rowOpenTarget: (id) => liveRowOpenTarget(pres, id, openHeld) ?? id,
       filesOf: (id) => liveFiles(engine, id),

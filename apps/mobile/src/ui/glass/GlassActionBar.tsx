@@ -28,6 +28,8 @@ export interface BarVerbSpec {
   iconFace?: IconName;
   /** The accessible name where it says more than the label (the read slot's count). */
   a11yLabel?: string;
+  disabled?: boolean;
+  accessibilityHint?: string;
   onPress: () => void;
 }
 
@@ -84,6 +86,9 @@ export function GlassActionBar({
       key={v.id}
       accessibilityRole="button"
       accessibilityLabel={v.a11yLabel ?? v.label}
+      accessibilityHint={v.accessibilityHint}
+      accessibilityState={v.disabled ? { disabled: true } : undefined}
+      disabled={v.disabled}
       onPress={opts?.measure ? undefined : v.onPress}
       onLayout={opts?.measure ? record(v.id) : undefined}
       style={({ pressed }) => ({
@@ -94,6 +99,7 @@ export function GlassActionBar({
         ...(opts?.iconOnly ? { width: ICON_FACE, justifyContent: "center" as const } : { paddingHorizontal: 12 }),
         borderRadius: t.radius.pill,
         backgroundColor: pressed && !opts?.measure ? t.c.tint : "transparent",
+        ...(v.disabled ? { opacity: 0.5 } : {}),
       })}
     >
       {v.icon ? <Icon name={v.icon} size={13} color={t.c.ink2} /> : null}
@@ -223,6 +229,8 @@ export function GlassActionBar({
             key={v.id}
             label={v.label}
             icon={v.icon}
+            disabled={v.disabled}
+            accessibilityHint={v.accessibilityHint}
             onPress={() => {
               setMoreOpen(false);
               v.onPress();

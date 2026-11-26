@@ -2,6 +2,7 @@ import { useKeyboardStays } from "./column-keyboard.js";
 import type { EngineMessage } from "@ohmail/wire";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import {
+  continuedReply,
   markSeenOver,
   useColumnVisit,
   useConversationBodies,
@@ -48,12 +49,13 @@ export function useConversationColumn(
   const { commands, host } = useFrame();
   const press = usePress();
   const { shown, opened, state, offMirrorRow, fromStore } = useShownConversation(openId, route);
+  const shownId = opened?.id ?? openId;
   const { messages, presentedIds } = shown;
   const newestFirst = readThreadOrder(host.session.scope) === "top";
   const ordered = useMemo(() => (newestFirst ? [...messages].reverse() : messages), [messages, newestFirst]);
-  useConversationBodies(opened === null || offMirrorRow !== null || fromStore ? null : openId, messages);
+  useConversationBodies(opened === null || offMirrorRow !== null || fromStore ? null : shownId, messages);
   const storeBody = useStoreLetterBody(fromStore ? opened : null);
-  const visit = useListVisit(openId);
+  const visit = useListVisit(shownId);
   const markSeen = useMemo(() => markSeenOver(press), [press]);
   const column = useColumnVisit(opened, visit?.wiring ?? null, markSeen);
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
@@ -78,14 +80,20 @@ export function useConversationColumn(
     scroller: scroller.current,
     messages: ordered,
     newestFirst,
-    openedId: openId,
+    openedId: shownId,
     channel: column.wiring?.walk,
     onEnter: column.enter,
     names: READER_DOM,
     anchor: !resumed,
     standsDown: () => ordered.some((message) => message.id === replyTarget) || sentJoined(),
   });
-  const verbs = useVerbs(opened, visit, column.owner === "column" ? column.wiring : null, messages.at(-1));
+  const verbs = useVerbs(
+    opened,
+    visit,
+    column.owner === "column" ? column.wiring : null,
+    messages.at(-1),
+    route.wholeThread ? messages : undefined,
+  );
   useReaderKeys(keysHere && opened !== null, { verbs, visit });
   const [person, onPerson, closeCard] = useOpenCard();
   const screeningId = useId();
@@ -196,7 +204,12 @@ function useContentUnderHead(scroller: HTMLElement | null, phone: boolean): bool
  * THE CONVERSATION SHOWN for the address's letter: the mirror's, or the store's where the mirror's window no longer
  * holds it; nothing while the room's own delete window holds it.
  */
-function useShownConversation(openId: string, route: Route) {
+function useShownConversation(addressedId: string, route: Route) {
+  const { host } = useFrame();
+  const raw = host.engine.read();
+  const current = raw.get<EngineMessage>("message", addressedId);
+  const continued = current ? undefined : continuedReply(host.engine.store, addressedId);
+  const openId = continued?.id ?? addressedId;
   /* A letter this tab took away itself is the person's act: never said gone as another app's. */
   const mirrored = useOpenConversation(openId, useOwnGone());
   /* A letter inside the room's own delete window is the person's act, not a letter gone: nothing is drawn. */
@@ -208,7 +221,7 @@ function useShownConversation(openId: string, route: Route) {
   const listed = useOffMirrorLetter(openId);
   const carried = useArchiveHit(openId);
   const offMirrorRow = !heldHere && mirrored.state === "absent" ? listed : null;
-  const absent = mirrored.state === "absent" && !heldHere && offMirrorRow === null;
+  const absent = mirrored.state === "absent" && !heldHere && offMirrorRow === null && continued === undefined;
   const row = useListVisit(openId)?.row;
   const stored = useStoreLetter(openId, absent, row);
   const archive = absent && stored.state !== "missing" ? carried : null;
@@ -217,15 +230,18 @@ function useShownConversation(openId: string, route: Route) {
       ? offMirror(offMirrorRow.message)
       : stored.state === "found"
         ? offMirror(stored.message)
-        : archive !== null
-          ? offMirror(archive)
-          : mirrored;
-  const { host } = useFrame();
+        : continued && mirrored.state === "absent"
+          ? offMirror(continued)
+          : archive !== null
+            ? offMirror(archive)
+            : mirrored;
   const missing =
     absent && (stored.state === "missing" || (stored.state === "unavailable" && archive === null));
   useEffect(() => {
-    if (missing) host.device.address.write(fragmentOf({ ...route, open: null }), "replace");
-  }, [missing, host, route]);
+    if (openId !== addressedId || missing) {
+      host.device.address.write(fragmentOf({ ...route, open: missing ? null : openId }), "replace");
+    }
+  }, [addressedId, missing, host, openId, route]);
   const opened = heldHere ? null : shown.opened;
   const state = heldHere ? "absent" : shown.state;
   return { shown, opened, state, offMirrorRow, fromStore: stored.state === "found" };

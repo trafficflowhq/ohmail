@@ -408,6 +408,7 @@ export {
 } from "./stamp.js";
 
 // Selectors.
+export { awaitsReplyCopy, continuedReply } from "./reply-reader.js";
 export {
   bodyOf,
   isOwnSent,

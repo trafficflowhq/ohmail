@@ -8,6 +8,7 @@ export interface ListMenuItem {
   readonly icon?: IconName;
   /** A note at the right: how many. */
   readonly note?: string;
+  readonly description?: string;
   readonly keyHint?: string;
   readonly disabled?: boolean;
   /** A rule stands above it: a group of its own (a tag's verbs under the pull). */

@@ -27,6 +27,8 @@ export function GlassIconButton({
   role = "button",
   size = 44,
   testID,
+  disabled,
+  accessibilityHint,
 }: {
   icon?: IconName;
   /** A textual mark where no icon exists — the rail's ⋯/More. One of icon | glyph. */
@@ -44,6 +46,8 @@ export function GlassIconButton({
   role?: "button" | "tab";
   size?: number;
   testID?: string;
+  disabled?: boolean;
+  accessibilityHint?: string;
 }) {
   const t = useTheme();
   const badgeSize = badgeAtScale(useWindowDimensions().fontScale);
@@ -53,8 +57,10 @@ export function GlassIconButton({
   return (
     <Tap
       accessibilityRole={a11yRole(role, Platform.OS === "ios" ? "ios" : "android")}
-      accessibilityState={{ selected: role === "tab" && on === true }}
+      accessibilityState={{ selected: role === "tab" && on === true, ...(disabled ? { disabled } : {}) }}
       accessibilityLabel={label}
+      accessibilityHint={accessibilityHint}
+      disabled={disabled}
       onPress={onPress}
       testID={testID}
       style={({ pressed }) => ({
@@ -64,6 +70,7 @@ export function GlassIconButton({
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: paper?.solid ?? (accent ? t.c.accent : on ? t.c.accentSoft : pressed ? t.c.tint : "transparent"),
+        ...(disabled ? { opacity: 0.5 } : {}),
       })}
     >
       {glyph !== undefined ? (

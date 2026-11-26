@@ -88,6 +88,52 @@ function leftInTheJournal(mail: FakeMail): string[] {
 const settled = () => act(async () => new Promise((r) => setTimeout(r, 50)));
 
 describe("the reader in the frame", () => {
+  it.each(["Later", "Park"])("holds %s only on the selected reply waiting for its mailbox copy", (verb) => {
+    const source = letter("source", { threadId: "thread" });
+    const parent = letter("parent", { threadId: "thread" });
+    const reply = {
+      ...letter("reply", { threadId: "thread", subject: "A new reply", local: true }),
+      messageIdHeader: "<mailbox-reply>",
+    };
+    const { mail, address } = mountReader({
+      letters: [source, parent, reply],
+      open: reply.id,
+      rows: { ["view_meta:open-sent-reply:" + reply.id]: { sourceId: parent.id, preview: reply } },
+    });
+    const pane = () => within(screen.getByRole("region", { name: "Open message" }));
+    const button = () => pane().getByRole<HTMLButtonElement>("button", { name: verb });
+    expect(button().disabled).toBe(true);
+    expect(button().title).toBe("Waiting for the mailbox copy.");
+    expect(pane().getByText("Sending…")).toBeTruthy();
+    fireEvent.click(button());
+    fireEvent.keyDown(document.body, { key: verb === "Later" ? "a" : "e" });
+    expect(mail.mutations.filter(({ kind }) => kind === "triage_set")).toEqual([]);
+    act(() => address.visit("#/ohbox/m/parent"));
+    expect(button().disabled).toBe(true);
+    expect(pane().getByText("Sending…")).toBeTruthy();
+    act(() => address.visit("#/ohbox/m/source"));
+    expect(button().disabled).toBe(false);
+    expect(pane().queryByText("Sending…")).toBeNull();
+    act(() => {
+      mail.add(letter("new-message", { local: true }));
+      address.visit("#/ohbox/m/new-message");
+    });
+    expect(button().disabled).toBe(false);
+    expect(pane().queryByText("Sending…")).toBeNull();
+    act(() => {
+      mail.add(
+        letter("copy", {
+          threadId: "thread",
+          subject: reply.subject,
+          messageIdHeader: reply.messageIdHeader,
+        }),
+      );
+      address.visit("#/ohbox/m/copy");
+    });
+    expect(button().disabled).toBe(false);
+    expect(pane().queryByText("Sending…")).toBeNull();
+  });
+
   it("a place that names the reader draws it in the reading column, and the letter opens there", () => {
     mountReader({ letters: [letter("m1")], open: "m1" });
     const column = screen.getByRole("region", { name: "Reading" });

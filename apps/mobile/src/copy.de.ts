@@ -1807,6 +1807,7 @@ export const DE: Deck = {
   sendCancelledInDrafts: "Senden abgebrochen. Die Nachricht liegt in den Entwürfen.",
   sendCancelledNotKept: "Senden abgebrochen. Es wurde nichts gesendet, aber der Text konnte nicht als Entwurf behalten werden.",
   replySending: "Wird gesendet …",
+  replyCopyWaiting: "Die Kopie im Postfach steht noch aus.",
   replySent: "Gesendet",
   replyEarlierWent: "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
   earlierGoing: "Eine frühere Fassung dieser Nachricht wird bereits gesendet. Dein neuerer Text wird nicht als zweite Kopie gesendet.",

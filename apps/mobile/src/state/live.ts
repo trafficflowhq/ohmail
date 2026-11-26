@@ -43,6 +43,8 @@ import {
   MARK_SEEN_CHUNK,
   chunkMarkSeen,
   VIEW_OF_FOLDER,
+  awaitsReplyCopy,
+  continuedReply,
   bodyOf,
   canonicalDestination,
   consentIndex,
@@ -246,6 +248,7 @@ function postureOf(v: WorldView): ScreeningPosture {
 
 /** How the reader names days and times: the wall clock, the reader's zone, their language. */
 export interface WorldView {
+  replyStore?: EntityReader;
   now: Date;
   /** IANA zone. REQUIRED by `messageDisplayTime` — see its header for why there is no default. */
   zone: string;
@@ -558,6 +561,8 @@ export type WorldEarlier = Held & {
 };
 
 export type WorldMail = Omit<Mail, "earlier"> & {
+  /** The selected reply still has only its provisional Sent copy. */
+  pendingReplyCopy?: true;
   /** The rest of the conversation, oldest → newest, each member with its files; a member newer
    *  than this message carries `later`. */
   earlier: WorldEarlier[];
@@ -752,19 +757,21 @@ const NO_BODY: MessageBody = {
  * nothing else. No body text is held: the memo is bounded by the window's rows.
  */
 const listRows = new WeakMap<EngineMessage, {
-  day: string; tags: unknown; mailboxes: unknown; own: unknown; pile: WorldPileState; thread: number; row: WorldMail;
+  day: string; tags: unknown; mailboxes: unknown; own: unknown; pile: WorldPileState; thread: number; pendingReplyCopy: boolean; row: WorldMail;
 }>();
 
 export function toListRow(reader: EntityReader, m: EngineMessage, v: WorldView): WorldMail {
   const day = `${zonedDayNumber(v.now, v.zone)}|${v.zone}|${v.locale ?? "en"}`;
   const pile = pileOf(reader, m);
   const thread = conversationSize(reader, m);
+  const pendingReplyCopy = awaitsReplyCopy(v.replyStore, m.id);
   const hit = listRows.get(m);
   if (hit !== undefined && hit.day === day && hit.tags === v.tags && hit.mailboxes === v.mailboxes
-    && hit.own === v.ownAddresses && hit.pile === pile && hit.thread === thread) return hit.row;
-  const row = mailRow(reader, m, v, NO_BODY);
+    && hit.own === v.ownAddresses && hit.pile === pile && hit.thread === thread
+    && hit.pendingReplyCopy === pendingReplyCopy) return hit.row;
+  const row = mailRow(reader, m, v, NO_BODY, pendingReplyCopy);
   delete (row as { bodyState?: BodyState }).bodyState;
-  listRows.set(m, { day, tags: v.tags, mailboxes: v.mailboxes, own: v.ownAddresses, pile, thread, row });
+  listRows.set(m, { day, tags: v.tags, mailboxes: v.mailboxes, own: v.ownAddresses, pile, thread, pendingReplyCopy, row });
   return row;
 }
 
@@ -813,7 +820,10 @@ function ownMailOf(m: EngineMessage, physical: string, own: readonly string[] | 
   return (own ?? []).some((a) => a.trim().toLowerCase() === from);
 }
 
-function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: MessageBody): WorldMail {
+function mailRow(
+  reader: EntityReader, m: EngineMessage, v: WorldView, body: MessageBody,
+  pendingReplyCopy = awaitsReplyCopy(v.replyStore, m.id),
+): WorldMail {
   const env = replyAllRecipients(m, v.ownAddresses ?? NO_OWN_ADDRESSES);
   const physical = physicalFolderOf(m);
   return {
@@ -826,6 +836,7 @@ function mailRow(reader: EntityReader, m: EngineMessage, v: WorldView, body: Mes
     // screen titled it Ohbox — nine of nine, measured on a device.
     ...(physical === FOLDER_OF_VIEW.screener ? { gateHeld: true as const } : {}),
     id: m.id,
+    ...(pendingReplyCopy ? { pendingReplyCopy: true as const } : {}),
     place: placeOfFolder(m.folder),
     // BOTH LOCATIONS, because the two verbs want different ones: a `move` mutation is measured
     // against the physical folder, and the panel and the routing retarget against the presented
@@ -1592,6 +1603,7 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
     const unread = r.members.some(presentsUnread);
     const newSince = r.resurfaced && r.resurfaced.newSince > 0 ? r.resurfaced.newSince : 0;
     const members = r.members.map((m) => m.id).join("\n");
+    const pendingReplyCopy = r.members.some(({ id }) => awaitsReplyCopy(v.replyStore, id));
     /* The conversation's squares, by the same membership the web row draws. */
     const tid = r.openTarget.threadId;
     const marks = tid ? marksIndex.get(tid) : undefined;
@@ -1604,7 +1616,8 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
     if (hit !== undefined && hit.mail === mail && hit.face === face && hit.subject === subject
       && hit.unread === unread && hit.newSince === newSince && hit.members === members && hit.key === r.key
       && hit.marks === marksKey && (hit.row.additionalPeople ?? 0) === additionalPeople
-      && hit.row.hasAttachments === hasAttachments) return hit.row;
+      && hit.row.hasAttachments === hasAttachments
+      && (hit.row.pendingReplyCopy === true) === pendingReplyCopy) return hit.row;
     const { sentTo: _openTargetFace, ...open } = mail;
     const row: WorldMail = {
       ...open,
@@ -1615,6 +1628,7 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
       unread,
       rowKey: r.key,
       memberIds: r.members.map((m) => m.id),
+      ...(pendingReplyCopy ? { pendingReplyCopy: true as const } : {}),
       ...(additionalPeople ? { additionalPeople } : {}),
       hasAttachments,
       ...(newSince > 0 ? { newSince } : {}),
@@ -2177,6 +2191,7 @@ export function liveMessage(
   engine: OhmailEngine, id: string, v: WorldView,
   /** The projection of the raw mirror under this same view, when the caller already holds it. */
   presented?: PresentedWorld,
+  wholeThread = false,
 ): WorldMail | undefined {
   // The view's own folder flag rides into the projection — a folder-filed message opened from
   // the folder screen is otherwise a History drop (`placeOf` null ⇒ `get` answers undefined)
@@ -2184,8 +2199,9 @@ export function liveMessage(
   // rides in for exactly the same reason and it is the same failure: a row a list showed under
   // the account's window must open under it too, never under this package's default. A caller
   // that holds that projection hands it in: a reader renders often, the partition is the cost.
+  const raw = engine.read();
   const world = presented ?? presentedWorld(
-    engine.read(), v.now, v.foldersEnabled === true, postureOf(v), v.ownAddresses,
+    raw, v.now, v.foldersEnabled === true, postureOf(v), v.ownAddresses,
   );
   /* A HISTORY ROW OPENS FROM THE RAW MIRROR, the same answer the webapp's reader gives it
      (`AppShell`'s `setReaderFor`, not `openMessage`). The projection has no such message — that
@@ -2195,13 +2211,19 @@ export function liveMessage(
   const projected = world.reader.get<EngineMessage>("message", id);
   const retired = projected ? undefined : world.history.find((h) => h.id === id);
   const m = projected ?? (retired ? { ...retired, physicalFolder: retired.folder } : undefined);
-  if (!m) return offMirrorMail(engine, id, v);
-  const pres = projected ? world.reader : engine.read();
-  const row = toMail(pres, m, v);
+  const readerView = { ...v, replyStore: engine.store };
+  if (!m) {
+    const continued = continuedReply(engine.store, id);
+    if (continued && continued.id !== id) return liveMessage(engine, continued.id, readerView, world, wholeThread);
+    return continued ? toMail(raw, continued, readerView) : offMirrorMail(engine, id, readerView);
+  }
+  const pres = projected ? world.reader : raw;
+  const row = toMail(pres, m, readerView);
   // The place the reader arrived through, on the row that carries no other honest one: the
   // message screen titles itself History off this, where `place` would say Ohbox.
   if (retired) row.historyPlace = physicalFolderOf(m);
   const thread = threadOf(pres, id);
+  if (wholeThread && thread.some(({ id }) => awaitsReplyCopy(engine.store, id))) row.pendingReplyCopy = true;
   const openedAt = thread.findIndex((member) => member.id === id);
   row.earlier = thread
     .map((member, at) => ({ member, later: openedAt >= 0 && at > openedAt }))

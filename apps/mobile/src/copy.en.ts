@@ -2499,6 +2499,7 @@ const TABLE = {
   sendCancelledInDrafts: "Send cancelled. The message is in Drafts.",
   sendCancelledNotKept: "Send cancelled. Nothing was sent, but the words could not be kept as a draft.",
   replySending: "Sending…",
+  replyCopyWaiting: "Waiting for the mailbox copy.",
   replySent: "Sent",
   /* WHEN THE SERVER ANSWERED FROM AN EARLIER PRESS. A second press under a resumed send key
      is answered from the first reservation, so what left is the earlier message — never two
