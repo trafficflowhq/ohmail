@@ -245,6 +245,16 @@ function timesOf(raw: Json, zones: ZoneSource, clock?: string): Times | LeftReas
   return { start: start.time, end: endMs === undefined ? null : onClock(endMs, endZone ?? startZone, zones).time, known: start.known };
 }
 
+/** The exact instants Graph used for inclusion in a calendar view. */
+export function recordBounds(raw: Json, zones: ZoneSource): { start: number; end: number } | null {
+  const from = writtenOf(raw.start);
+  const to = writtenOf(raw.end);
+  if (from === null || typeof from === "string" || to === null || typeof to === "string") return null;
+  const start = momentOf(from, zones);
+  const end = momentOf(to, zones);
+  return start === null || end === null || end < start ? null : { start, end };
+}
+
 /* ── people and words ───────────────────────────────────────────────────────────────────────────── */
 
 function personOf(v: unknown): NewPerson | null {
@@ -257,6 +267,14 @@ function personOf(v: unknown): NewPerson | null {
 
 const ANSWERS: Readonly<Record<string, PartStat>> = { accepted: "ACCEPTED", declined: "DECLINED", tentativelyAccepted: "TENTATIVE", organizer: "ACCEPTED" };
 const ROLES: Readonly<Record<string, string>> = { required: "REQ-PARTICIPANT", optional: "OPT-PARTICIPANT", resource: "NON-PARTICIPANT" };
+
+/** The event copy's attendee status, separate from the organizer's attendee list. */
+export function selfResponseOf(raw: Json): PartStat | undefined {
+  if (raw.isOrganizer !== false || !isRecord(raw.responseStatus)) return undefined;
+  const { response } = raw.responseStatus;
+  if (response === "notResponded" || response === "none") return "NEEDS-ACTION";
+  return response === "organizer" ? undefined : wordOf(ANSWERS, response) ?? undefined;
+}
 
 function inviteesOf(v: unknown): NonNullable<NewEvent["attendees"]> {
   if (!Array.isArray(v)) return [];
@@ -335,8 +353,10 @@ function upsertOf(raw: Json, id: string, shape: Shape, nowMs: number): Upsert | 
   // The entity tag is the precondition a change is made against; the change key is what it is made of.
   const version = filled(raw["@odata.etag"]) ?? filled(raw.changeKey) ?? "";
   const event = eventOf({ ...made, properties: [...made.properties, ...more] });
+  const selfResponse = selfResponseOf(raw);
   return {
     kind: "upsert", id, version: version.length > MAX_PROVIDER_ID_CHARS ? "" : version, event, text: null,
+    ...(selfResponse !== undefined && { selfResponse }),
     // A normal Graph read cannot prove that no legacy extended properties exist.
     ...(Array.isArray(raw.singleValueExtendedProperties) && Array.isArray(raw.multiValueExtendedProperties) && portableMicrosoft(raw) && { portableCopy: true as const }), ...(incompleteAudience(raw, event) && { audienceIncomplete: true }),
   };

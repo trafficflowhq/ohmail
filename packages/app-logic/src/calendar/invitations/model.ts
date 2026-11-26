@@ -58,6 +58,7 @@ function rowOf(o: ShownOccurrence, input: InvitationsInput): InvitationRow {
     answer: record.myAnswer ?? "none",
     cancelled: record.status === "cancelled",
     waiting: writes.waiting,
+    ...(writes.replyUnconfirmed && { replyUnconfirmed: true }),
     refusal: writes.refusal,
     refusedWriteId: writes.refusedWriteId,
     viewOnly: viewOnlyOf(calendar, connection),

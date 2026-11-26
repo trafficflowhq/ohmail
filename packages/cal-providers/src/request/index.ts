@@ -61,6 +61,8 @@ export interface HttpRequest {
   readonly validators: { readonly etag: string | null; readonly lastModified: string | null } | null;
   /** Required on object writes. The series cancellation action can also carry the reviewed version. */
   readonly precondition?: Precondition;
+  /** Persist an authenticated write POST after preflight and immediately before its transport starts. */
+  readonly beforeDispatch?: () => Promise<void>;
   readonly signal: AbortSignal;
 }
 
@@ -80,7 +82,12 @@ export interface HttpResponse {
 }
 
 /** A provider's or a network's answer is never a throw: it arrived, or it is a word. */
-export type HttpAnswer = HttpResponse | { readonly arrived: false; readonly reason: ProviderRefusal };
+export type HttpAnswer = HttpResponse | {
+  readonly arrived: false;
+  readonly reason: ProviderRefusal;
+  /** The dispatch hook completed, but the request was stopped before entering the transport. */
+  readonly notDispatched?: true;
+};
 
 export interface HttpPort {
   request(url: string, req: HttpRequest): Promise<HttpAnswer>;

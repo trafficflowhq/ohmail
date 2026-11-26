@@ -9,7 +9,7 @@
  */
 import { MAX_UID_CHARS, MAX_ZONE_NAME_CHARS } from "@ohmail/cal-core";
 import { CURSOR_MAX_CHARS, MAX_CALENDAR_NAME_CHARS, MAX_COLOR_CHARS, MAX_MASTERS_PER_ROUND, MAX_PAGES_PER_CALL, MAX_PAGE_LIMIT, TOKEN_MAX_CHARS } from "../limits.js";
-import { bearerOf, isRecord, jsonOf, MAX_PROVIDER_ID_CHARS, pathSegment, refuse, type Json, type Left, type Refused } from "../json-answers.js";
+import { addressOf, bearerOf, isRecord, jsonOf, MAX_PROVIDER_ID_CHARS, pathSegment, refuse, type Json, type Left, type Refused } from "../json-answers.js";
 import type { Answer, CalendarInfo, CalendarReader, ChangeItem, ChangePage, Connection } from "../port.js";
 import { retryAfterMs, type AdapterDeps, type Authorization } from "../request/index.js";
 import { convertEvent } from "./convert.js";
@@ -25,11 +25,17 @@ const CALENDAR_LIST = `${GOOGLE_CALENDAR_BASE}/users/me/calendarList?maxResults=
 
 /** Google's words for a quota that is spent, which it answers with 403 as often as with 429. */
 const QUOTA_REASONS: ReadonlySet<string> = new Set(["rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded"]);
-const ADDRESS_LIKE = /^[^\s@]+@[^\s@]+$/;
+/** A single, live primary calendar identifies the authenticated Google account. */
+function primaryId(entries: readonly Json[]): string | null {
+  const primary = entries.filter((e) => e.primary === true && e.deleted !== true);
+  return primary.length === 1 ? text(primary[0]!.id, MAX_PROVIDER_ID_CHARS) : null;
+}
 
 type Asked = { readonly ok: true; readonly json: Json } | (Refused & { readonly status: number | null });
 
 const text = (v: unknown, max: number): string | null => (typeof v === "string" && v !== "" && v.length <= max ? v : null);
+const usableToken = (v: unknown, max: number): v is string =>
+  typeof v === "string" && v.length <= max && v.trim() !== "" && !v.includes("\0") && pathSegment(v) !== null;
 
 function quotaSpent(body: Uint8Array): boolean {
   const error = jsonOf(body)?.error;
@@ -105,9 +111,9 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
       const list = await calendarList(c, signal);
       if (!list.ok) return list;
       // The account is named by its primary calendar, whose id is the account's own address: no further permission is asked for a name.
-      const primary = list.entries.find((e) => e.primary === true);
-      const id = primary === undefined ? null : text(primary.id, MAX_PROVIDER_ID_CHARS);
-      return { ok: true, value: { principal: id, addresses: id !== null && ADDRESS_LIKE.test(id) ? [id] : [] } };
+      const id = primaryId(list.entries);
+      const address = addressOf(id);
+      return { ok: true, value: { principal: id, addresses: address === undefined ? [] : [address] } };
     },
 
     async listCalendars(c, signal) {
@@ -128,7 +134,7 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
           zone: text(e.timeZone, MAX_ZONE_NAME_CHARS),
         });
       }
-      return { ok: true, value: calendars };
+      return { ok: true, value: calendars, principal: addressOf(primaryId(list.entries))?.toLowerCase() ?? null };
     },
 
     async readChanges(c, cal, since, page, signal): Promise<Answer<ChangePage>> {
@@ -145,16 +151,20 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
       const url = `${events}?${EVENT_QUERY}${from === "" ? "" : `&syncToken=${from}`}${at === "" ? "" : `&pageToken=${at}`}`;
       const answer = await ask(signedIn.token, url, since !== null || page.cursor !== null, signal);
       if (!answer.ok) return refuse(answer.reason, answer.retryAfterMs);
-      const records = answer.json.items ?? [];
+      const { kind, items: records = [], nextPageToken: next, nextSyncToken: token, error } = answer.json;
+      if ((kind !== undefined && kind !== "calendar#events") || error !== undefined) return refuse("unreadable");
       if (!Array.isArray(records)) return refuse("unreadable");
       if (records.length > MAX_PAGE_LIMIT) return refuse("too_large");
-      // Where the reading goes on is settled before anything more is asked: a page that does not say is not read in part.
-      const next = answer.json.nextPageToken;
-      const token = answer.json.nextSyncToken;
+      // A page authorizes neither changes nor removals without exactly one usable cursor.
+      let cursor: ChangePage["cursor"];
       if (next !== undefined) {
-        if (typeof next !== "string" || next === "" || next.length > CURSOR_MAX_CHARS || pathSegment(next) === null) return refuse("unreadable");
+        if (token !== undefined || !usableToken(next, CURSOR_MAX_CHARS)) return refuse("unreadable");
         if (next === page.cursor) return refuse("page_link_refused");
-      } else if (token !== undefined && (typeof token !== "string" || token === "" || token.length > TOKEN_MAX_CHARS || pathSegment(token) === null)) return refuse("unreadable");
+        cursor = { kind: "more", value: next };
+      } else {
+        if (!usableToken(token, TOKEN_MAX_CHARS)) return refuse("unreadable");
+        cursor = { kind: "end", token: { provider: "google", value: token } };
+      }
 
       const now = deps.clock.now();
       const items: ChangeItem[] = [];
@@ -192,7 +202,7 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
           unchanged: false,
           items,
           left,
-          cursor: typeof next === "string" ? { kind: "more", value: next } : { kind: "end", token: typeof token === "string" ? { provider: "google", value: token } : null },
+          cursor,
           expanded: null,
           refreshMs: null,
         },

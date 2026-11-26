@@ -3,7 +3,7 @@
  * the provider, or that it refused, oldest first. The record itself stays the provider's copy; what
  * a person wants and the provider has not taken rides beside it, and leaves it when it is taken.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { calWrites } from "@trafficflow/db/mail";
 import { asCalendarWriteFault, parseWritePayload } from "@trafficflow/db/calendar";
 import type { CalendarWriteMark } from "@ohmail/wire";
@@ -18,6 +18,7 @@ export async function writeMarksOf(db: Db, accountId: string, eventIds: readonly
     refusal: calWrites.refusal, payload: calWrites.payload, createdAt: calWrites.createdAt,
   }).from(calWrites).where(and(
     eq(calWrites.accountId, accountId), inArray(calWrites.eventId, [...eventIds]), inArray(calWrites.state, ["pending", "refused"]),
+    sql`coalesce(${calWrites.payload}->>'replySuperseded', 'false') <> 'true'`,
   ));
   const ordered = rows.map((r) => ({ r, payload: parseWritePayload(r.payload) })).sort((a, b) =>
     a.r.createdAt.getTime() - b.r.createdAt.getTime()
@@ -26,14 +27,19 @@ export async function writeMarksOf(db: Db, accountId: string, eventIds: readonly
   for (const { r, payload } of ordered) {
     if (r.eventId === null) continue;
     const list = out.get(r.eventId) ?? [];
+    const dispatch = payload?.answerDispatch;
+    const replyUnconfirmed = payload?.act.kind === "calendar_event_answer" &&
+      (r.refusal === "answer_unconfirmed" || payload.resendsReply || payload.acceptedAnswerId !== undefined ||
+        (dispatch !== undefined && dispatch.phase !== "ready"));
     list.push({
       id: r.id,
       key: r.key,
       state: r.state === "refused" ? "refused" : "pending",
-      reason: r.refusal === null ? null : asCalendarWriteFault(r.refusal),
+      reason: r.refusal === null ? null : payload?.resendsReply ? "answer_unconfirmed" : asCalendarWriteFault(r.refusal),
       act: payload?.transfer && payload.act.kind === "calendar_event_move" ? { ...payload.act, copyThenRemove: true } : payload?.act ?? null,
       part: payload?.part?.n ?? null,
       at: r.createdAt.toISOString(),
+      ...(replyUnconfirmed && { replyUnconfirmed: true }),
     });
     out.set(r.eventId, list);
   }

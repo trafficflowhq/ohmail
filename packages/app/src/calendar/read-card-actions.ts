@@ -131,6 +131,7 @@ function useRetry(port: CalendarPort | typeof NONE, event: CalendarEventFace): P
   const sending = useRef(false);
   const [busy, setBusy] = useState(false);
   const writeId = event.retryWriteId;
+  const resendReply = event.replyUnconfirmed === true;
   if (
     port === NONE ||
     !writeId ||
@@ -147,7 +148,7 @@ function useRetry(port: CalendarPort | typeof NONE, event: CalendarEventFace): P
     return undefined;
   return {
     id: "retry",
-    label: t("sendAgain"),
+    label: resendReply ? e("sendReplyAgain") : t("sendAgain"),
     kind: "ink",
     icon: "pull",
     rank: 0,
@@ -156,22 +157,33 @@ function useRetry(port: CalendarPort | typeof NONE, event: CalendarEventFace): P
     onPress: async () => {
       if (
         sending.current ||
-        !port
-          .events()
-          .some(
-            (item) =>
-              item.record.id === event.recordId &&
-              item.refusedWriteId === writeId &&
-              item.refusal !== null &&
-              item.refusal !== "version_stale" &&
-              item.refusal !== "earlier_refused",
-          )
+        !port.events().some((item) => {
+          const occurrence =
+            item.record.id === event.ref.event
+              ? item.answers?.find(
+                  ({ at, refusedWriteId }) => at === event.ref.occurrence && refusedWriteId === writeId,
+                )
+              : undefined;
+          const refusal =
+            occurrence?.refusal ??
+            (item.record.id === event.recordId && item.refusedWriteId === writeId ? item.refusal : null);
+          return (
+            refusal !== null &&
+            refusal !== "version_stale" &&
+            refusal !== "earlier_refused" &&
+            (refusal === "answer_unconfirmed") === resendReply
+          );
+        })
       )
         return;
       sending.current = true;
       setBusy(true);
       try {
-        const heard = await pressAndHear(port, { kind: "calendar_write_retry", writeId });
+        const heard = await pressAndHear(port, {
+          kind: "calendar_write_retry",
+          writeId,
+          ...(resendReply && { resendReply: true as const }),
+        });
         if (heard.say) report(e(heard.say));
       } catch {
         report(e("refusal.unknown"));

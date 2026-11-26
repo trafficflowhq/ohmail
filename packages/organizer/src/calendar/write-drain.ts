@@ -2,8 +2,8 @@
  * THE DRAIN OF THE WRITES OWED TO A PROVIDER: one connection's, inside its turn, on the turn's own
  * bound handle and sign-in, before the reading that would otherwise undo them.
  *
- * In the order they were recorded, strictly: only the oldest owed write of the connection is sent,
- * and while it waits nothing behind it is sent. Each is claimed in a short transaction (one more
+ * Owed writes go in order. An Outlook occurrence awaiting confirmation holds its own occurrence.
+ * A newer answer for the series and unrelated writes can proceed. Each is claimed in a short transaction (one more
  * attempt, a lease), sent with no transaction open, and settled in one transaction with what the
  * provider answered. Every name a provider gets for a new object is made from the row's own id, so
  * a write sent again after a lost answer names the same object, and the provider's own guard makes
@@ -14,15 +14,15 @@
  * for it, at once. Nothing a provider answered is ever thrown: the drain answers when the
  * connection is next due, and never an invalid time.
  */
-import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, notInArray, or, sql, type SQLWrapper } from "drizzle-orm";
 import type { ZoneSource } from "@ohmail/cal-core";
 import {
-  asWriteRefusal, proofPlaceOf, storedObjectFacts, type Clock, type ProofPlace, type ProviderWord, type ProvenRepeats, type SeriesContinuation, type WriteAnswer, type WriteTarget,
+  asWriteRefusal, proofPlaceOf, storedObjectFacts, type AnswerDispatch, type Clock, type ProofPlace, type ProviderWord, type ProvenRepeats, type SeriesContinuation, type WriteAnswer, type WriteTarget,
 } from "@ohmail/cal-providers";
 import type { Logger } from "@trafficflow/core";
 import { calAttendees, calCalendars, calEvents, calWrites, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  appliedPayloadOf, calendarOriginalOf, connectedAttendee, changedDaysOf, endedDayOf, exceptionBaseOf, organizerPrincipalAddress, ownOrganizerAddresses, parseWritePayload, isAttendeeCopy, sharedCopyNeedsProtection, writeRowOf, type CalendarWritePayload, type CalendarTransferProgress,
+  appliedPayloadOf, calendarOriginalOf, connectedAttendee, changedDaysOf, endedDayOf, exceptionBaseOf, oauthIdentityAmbiguous, organizerPrincipalAddress, ownOrganizerAddresses, parseWritePayload, isAttendeeCopy, sharedCopyNeedsProtection, writeRowOf, type CalendarWritePayload, type CalendarTransferProgress,
 } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 import { inConnection } from "./connection.js";
@@ -30,7 +30,7 @@ import { timeOfKey } from "./map.js";
 import { calendarEnabledAt } from "./state.js";
 import type { CalendarWriteDrain, CalendarWriteDrainInput, CalendarWriteWait } from "./types.js";
 import { TURN_MS, WORD_PLAN, type CalendarSyncFault } from "./words.js";
-import { pressShaped, secondPartHolds, secondPartIsThePress, writeCallOf, type StoredEvent, type WriteWord } from "./write-request.js";
+import { REPLY, pressShaped, secondPartHolds, secondPartIsThePress, writeCallOf, type StoredEvent, type WriteWord } from "./write-request.js";
 import { moveRefusal, retryTransfer, transferPersonalEvent } from "./personal-transfer.js";
 import { refuseInTx, settleApplied, settleGivenBack, settleLater, settleRefused, type ClaimedWrite, type SettleContext } from "./write-settle.js";
 
@@ -40,12 +40,13 @@ export const WRITE_LEASE_MS = 120_000;
 export const WRITE_MAX_ATTEMPTS = 8;
 /**
  * A write older than this is never sent late: it is refused, `expired` (but a press's second part whose first is done; and a series'
- * end claimed before is looked at at the provider, nothing sent, and closed as applied where it is found its own).
+ * end or Outlook reply that may have been sent is checked at the provider and closed if confirmed).
  */
 export const WRITE_MAX_AGE_MS = 72 * 3_600_000;
 /** A write that waits for time waits at least this, doubling, and at most the ceiling. */
 export const WRITE_RETRY_FLOOR_MS = 60_000;
 export const WRITE_RETRY_CEILING_MS = 3_600_000;
+const ANSWER_READBACK_MS = 5_000;
 /** An applied row is kept this long for its key, then pruned, at most `WRITE_PRUNE_PER_TURN` a turn. */
 export const WRITE_APPLIED_KEPT_MS = 7 * 24 * 3_600_000;
 export const WRITE_PRUNE_PER_TURN = 200;
@@ -148,7 +149,7 @@ async function drain(deps: WriteDrainDeps, input: CalendarWriteDrainInput): Retu
     }
     if (claim.kind !== "claimed") break;
     const answer = await carryOut(deps, input, word, claim);
-    const ctx: SettleContext = { db: input.db, key: input.key, word, map: { zones: deps.zones, ownAddresses: claim.owners, principal: claim.principal } };
+    const ctx: SettleContext = { db: input.db, key: input.key, word, map: { zones: deps.zones, ownAddresses: claim.owners, principal: claim.principal, ownCalendar: claim.write.calendarAccess === "owner" } };
     const step = await settle(ctx, claim, answer, tally, input.signal.aborted);
     if (step === "stop") break;
     if (typeof step === "number") {
@@ -167,15 +168,21 @@ async function drain(deps: WriteDrainDeps, input: CalendarWriteDrainInput): Retu
   return { nextAttemptAt: dueAt(next, deps.clock.now()), ...(tally.wait === null ? {} : { wait: tally.wait }) };
 }
 
+function observingOutlookReply(op: SQLWrapper, payload: SQLWrapper) {
+  return sql`(${op} = 'answer' and ${payload} #>> '{answerDispatch,phase}' in ('sending', 'accepted')
+    and ${payload} #>> '{answerDispatch,removed}' is distinct from 'true') is true`;
+}
+
 /**
- * The oldest owed write of this connection, claimed: one more attempt and a lease, in one short
+ * The oldest runnable write of this connection, claimed: one more attempt and a lease, in one short
  * transaction that reads the account's switch again. A head too old or tried too often is refused
  * `expired` and the next one is looked at; a head that waits (its time, its lease) holds the queue.
  */
 async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, tally: Tally): Promise<Claim> {
   const { key } = input;
   const done = await inConnection(input.db, input.key, async ({ tx, held }): Promise<Claim> => {
-    if (await calendarEnabledAt(tx, key.accountId) === null) return { kind: "off" };
+    if (oauthIdentityAmbiguous(held.provider, held.organizerAddresses) || await calendarEnabledAt(tx, key.accountId) === null) return { kind: "off" };
+    const provider = input.provider.reader.provider;
     for (let i = 0; i < EXPIRED_PER_CLAIM; i++) {
       const [head] = await tx.select({
         id: calWrites.id, key: calWrites.idempotencyKey, attempts: calWrites.attempts, op: calWrites.op, calendarId: calWrites.calendarId,
@@ -187,16 +194,44 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         spent: sql<boolean>`${calWrites.attempts} >= ${WRITE_MAX_ATTEMPTS}`,
       }).from(calWrites)
         .innerJoin(calCalendars, and(eq(calCalendars.id, calWrites.calendarId), eq(calCalendars.accountId, calWrites.accountId)))
-        .where(and(eq(calWrites.accountId, key.accountId), eq(calCalendars.connectionId, key.id), eq(calWrites.state, "pending")))
+        .where(and(eq(calWrites.accountId, key.accountId), eq(calCalendars.connectionId, key.id), eq(calWrites.state, "pending"),
+          provider === "microsoft" ? sql`not (${observingOutlookReply(calWrites.op, calWrites.payload)} and (
+            ${calWrites.payload} #>> '{act,scope,kind}' = 'occurrence' or exists (
+              select 1 from ${calWrites} as later
+              where later.account_id = ${calWrites.accountId} and later.calendar_id = ${calWrites.calendarId}
+                and later.event_id = ${calWrites.eventId} and later.state = 'pending' and later.op = 'answer'
+                and later.payload #>> '{act,scope,kind}' = 'record'
+                and coalesce(later.payload #>> '{answerDispatch,phase}', 'ready') = 'ready'
+                and coalesce(later.next_attempt_at <= now(), true)
+                and (later.created_at, later.id) > (${calWrites.createdAt}, ${calWrites.id})
+            )
+          ) is true) and not exists (
+            select 1 from ${calWrites} as earlier
+            where earlier.account_id = ${calWrites.accountId} and earlier.calendar_id = ${calWrites.calendarId}
+              and earlier.event_id = ${calWrites.eventId} and earlier.state = 'pending'
+              and (earlier.created_at, earlier.id) < (${calWrites.createdAt}, ${calWrites.id})
+              and (earlier.op = 'answer' and ${calWrites.op} = 'answer' and
+                ${calWrites.payload} #>> '{act,scope,kind}' = 'record') is not true
+              and (
+                (${observingOutlookReply(sql`earlier.op`, sql`earlier.payload`)}
+                  and earlier.payload #>> '{act,scope,kind}' = 'occurrence'
+                  and earlier.payload #>> '{act,scope,at}' = ${calWrites.payload} #>> '{act,scope,at}')
+                or (earlier.id::text = ${calWrites.payload} ->> 'after'
+                  and (earlier.payload #>> '{act,scope,kind}' is distinct from 'occurrence'
+                    or ${calWrites.payload} #>> '{act,scope,kind}' is distinct from 'occurrence'
+                    or earlier.payload #>> '{act,scope,at}' = ${calWrites.payload} #>> '{act,scope,at}'))
+              )
+          )` : undefined))
         .orderBy(asc(calWrites.createdAt), asc(sql`coalesce((${calWrites.payload}->'part'->>'n')::int, 1)`), asc(calWrites.id))
         .limit(1);
       if (head === undefined) return { kind: "none" };
+      let payload = parseWritePayload(head.payload);
+      const reply = sentAnswer(payload);
       if (head.waiting) return { kind: "wait", at: head.nextAttemptAt! };
       // Held by another drain this moment: the queue is someone else's for now, and its order is kept.
       const [locked] = await dialect(tx).skipLocked(tx.select({ id: calWrites.id }).from(calWrites)
         .where(and(eq(calWrites.id, head.id), eq(calWrites.accountId, key.accountId), eq(calWrites.state, "pending"), eq(calWrites.attempts, head.attempts))), { mode: "update" });
       if (locked === undefined) return { kind: "busy" };
-      const payload = parseWritePayload(head.payload);
       // The second part of a press goes only after its first is done: a first refused takes it along (a row recorded otherwise).
       const [first] = payload?.part?.n === 2 && payload.after !== null
         ? await tx.select({ state: calWrites.state, key: calWrites.idempotencyKey, payload: calWrites.payload }).from(calWrites)
@@ -218,22 +253,30 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
       // an end that lands as the turn is cut, then the queue's age).
       const endDay = payload !== null && "scope" in payload.act && payload.act.scope.kind === "following" ? payload.act.scope.at : null;
       const late = !head.spent && head.aged && endDay !== null && head.attempts > 0 && head.eventId !== null;
-      const expired = head.spent || (head.aged && !halfDone && !late);
+      const legacyAttempt = provider === "microsoft" && payload?.act.kind === "calendar_event_answer" &&
+        payload.answerDispatch === undefined && head.attempts > 0;
+      const dispatched = payload?.acceptedAnswerId || reply || legacyAttempt;
+      const expired = head.spent || (head.aged && !halfDone && !late && !dispatched);
       const finalMove = expired && !!payload?.transfer?.progress;
       if ((expired && !finalMove) || payload === null || (first !== undefined && first.state !== "applied")) {
         const changes: CalendarChange[] = [];
-        const word = payload === null ? "content_refused" : expired ? "expired" : "earlier_refused";
+        const word = payload === null ? "content_refused" : expired
+          ? dispatched ? "answer_unconfirmed" : "expired"
+          : "earlier_refused";
         await refuseInTx(tx, key.accountId, write, word, changes);
         await recordCalendarChanges(tx as unknown as LedgerTx, key.accountId, changes);
         if (word === "expired") tally.expired += 1;
         else tally.refused += 1;
         continue;
       }
-      const provider = input.provider.reader.provider;
       const readDeleteGuests = payload.act.kind === "calendar_event_update" ||
         ((payload.act.kind === "calendar_event_delete" || payload.act.kind === "calendar_event_move") && (provider === "google" || provider === "microsoft"));
       const event = head.eventId === null ? undefined : await storedEventOf(tx, key.accountId, head.calendarId, head.eventId, readDeleteGuests);
-      if (event === undefined && head.op !== "create" && !payload.transfer?.progress) {
+      // A series' row can leave the mirror before the final read of its acknowledged decline.
+      const removedMaster = provider === "microsoft" && payload.act.kind === "calendar_event_answer" &&
+        payload.act.answer === "declined" && payload.act.scope.kind === "record" &&
+        reply?.phase === "accepted" && reply.id === reply.source;
+      if (event === undefined && head.op !== "create" && !payload.transfer?.progress && !removedMaster) {
         // Its event is gone from the store: a removal is done; anything else has nothing left to change. And so has a removal of
         // days that a press of the queue gave a series of their own since it was recorded (the days from a day on; one day, where a
         // press ended the series at or before it): they stand in that series, and the removal is not shown done.
@@ -250,6 +293,8 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         }
         continue;
       }
+      // Confirmation follows the read, but a due orphan above must release the queue.
+      if (provider === "microsoft" && reply && !reply.removed) return { kind: "none" };
       // The letting go of the days from a day on, recorded before a press of the queue gave days of this series a series of their own,
       // names days that are no longer this series': it is not sent, and not done as it stands either: refused for its copy, it is
       // made again on what the calendar shows (the fourth recheck's finding of a removal shown done while its days stand). And so
@@ -279,8 +324,16 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         tally.refused += 1;
         continue;
       }
+      const prepared = provider === "microsoft" && payload.act.kind === "calendar_event_answer" &&
+        (payload.acceptedAnswerId !== undefined && event !== undefined || head.attempts === 0 && !payload.answerDispatch);
+      if (prepared) {
+        const { acceptedAnswerId, ...rest } = payload;
+        payload = { ...rest, answerDispatch: acceptedAnswerId && event
+          ? { phase: "accepted", id: acceptedAnswerId, source: event.providerId }
+          : { phase: "ready" } };
+      }
       const [claimedRow] = await tx.update(calWrites).set({
-        attempts: sql`${calWrites.attempts} + 1`, nextAttemptAt: sql`now() + make_interval(secs => ${WRITE_LEASE_MS / 1000})`, updatedAt: sql`now()`,
+        ...(prepared && { payload }), attempts: sql`${calWrites.attempts} + 1`, nextAttemptAt: sql`now() + make_interval(secs => ${WRITE_LEASE_MS / 1000})`, updatedAt: sql`now()`,
       }).where(and(eq(calWrites.id, head.id), eq(calWrites.accountId, key.accountId), eq(calWrites.attempts, head.attempts), eq(calWrites.state, "pending")))
         .returning({ attempts: calWrites.attempts });
       if (claimedRow === undefined) return { kind: "busy" };
@@ -420,7 +473,8 @@ async function storedEventOf(
 ): Promise<StoredEvent | undefined> {
   const query = tx.select({
     providerId: calEvents.providerId, original: calendarOriginalOf(), portableCopy: calEvents.portableCopy, partial: calEvents.partial, uid: calEvents.uid, versionTag: calEvents.versionTag,
-    updatedAt: calEvents.updatedAt, status: calEvents.status, thisAndFuture: calEvents.thisAndFuture,
+    updatedAt: calEvents.updatedAt, startsAt: calEvents.startsAt, endsAt: calEvents.endsAt,
+    status: calEvents.status, thisAndFuture: calEvents.thisAndFuture,
     organizer: calEvents.organizer, myAnswer: calEvents.myAnswer,
     repeatRule: calEvents.repeatRule, recurrenceId: calEvents.recurrenceId, addedDates: calEvents.addedDates, excludedDates: calEvents.excludedDates,
     startKind: calEvents.startKind, startLocal: calEvents.startLocal, startZone: calEvents.startZone,
@@ -465,7 +519,12 @@ async function reviewedExceptionOf(
   return { id: exception.providerId, version: exception.version, occurrence };
 }
 
-/** The writer's call, made with no transaction open; a throw out of a writer is this program's fault and is answered `unknown`. */
+function sentAnswer(payload: CalendarWritePayload | null) {
+  const dispatch = payload?.answerDispatch;
+  return dispatch && dispatch.phase !== "ready" ? dispatch : undefined;
+}
+
+/** The writer's call, made with no transaction open; a throw out of a writer is answered `unknown`. */
 async function carryOut(
   deps: WriteDrainDeps, input: CalendarWriteDrainInput, word: ProviderWord, claim: Extract<Claim, { kind: "claimed" }>,
 ): Promise<Outcome> {
@@ -474,6 +533,20 @@ async function carryOut(
   const writable = claim.write.calendarAccess === "owner" || claim.write.calendarAccess === "writer";
   const progress = claim.payload.transfer?.progress;
   if (writer === null) return claim.finalMove ? moveRefusal("move_unresolved") : progress ? retryTransfer : refused("unsupported");
+  const dispatch = sentAnswer(claim.payload);
+  const reply = claim.payload.act;
+  if (word === "microsoft" && dispatch && reply.kind === "calendar_event_answer") {
+    const occurrence = reply.scope.kind === "occurrence" ? timeOfKey(reply.scope.at) : null;
+    if (reply.scope.kind === "occurrence" && occurrence === null) return refused("content_refused");
+    try {
+      return await writer.answer(input.connection, { id: claim.write.calendarProviderId }, {
+        id: dispatch.source, version: claim.write.baseVersionTag ?? "", text: null, occurrence,
+        ...(occurrence && { recurringSeries: true }),
+      }, { as: claim.event?.ownInvitee ?? "", reply: REPLY[reply.answer], dispatch }, input.signal);
+    } catch {
+      return refused("unknown");
+    }
+  }
   if (!writable && !progress) return refused("read_only");
   const part = claim.payload.part;
   // A press's parts go only as the door records them: no part of a press is sent out of its press (a change of a day and the days
@@ -493,9 +566,11 @@ async function carryOut(
   if (claim.exception === "stale") return refused("version_stale");
   const submitted = claim.payload.act;
   const paired = submitted.kind === "calendar_event_create" ? null : exceptionBaseOf(submitted.base);
+  const reviewedAnswer = word === "microsoft" && submitted.kind === "calendar_event_answer" &&
+    submitted.scope.kind === "occurrence" && claim.payload.resendsReply;
   if ((!claim.exception && (paired || submitted.eventId !== claim.write.eventId)) ||
-    (claim.exception && (!claim.write.eventId || submitted.kind !== "calendar_event_update"))) return refused("content_refused");
-  const act = claim.exception && submitted.kind === "calendar_event_update" && claim.write.eventId
+    (claim.exception && (!claim.write.eventId || (submitted.kind !== "calendar_event_update" && !reviewedAnswer)))) return refused("content_refused");
+  const act = claim.exception && claim.write.eventId && submitted.kind !== "calendar_event_create"
     ? { ...submitted, eventId: claim.write.eventId, base: paired?.[1] ?? claim.event?.updatedAt?.toISOString() ?? submitted.base }
     : submitted;
   const call = writeCallOf({
@@ -575,7 +650,17 @@ async function carryOut(
           ...(exceptionEdit && { masterReceipt: claim.payload.exception?.masterReceipt, rememberMasterReceipt: saveMasterReceipt }),
         } : call.target, call.change, input.signal);
       case "remove": return await writer.remove(input.connection, cal, call.target, input.signal);
-      case "answer": return await writer.answer(input.connection, cal, call.target, { as: call.as, reply: call.reply, ...(claim.write.attempts > 1 && { retry: true }) }, input.signal);
+      case "answer": return await writer.answer(input.connection, cal, call.target, {
+        as: call.as, reply: call.reply, ...(claim.write.attempts > 1 && { retry: true }),
+        ...(word === "microsoft" && {
+          dispatch: claim.payload.answerDispatch,
+          rememberDispatch: (dispatch: AnswerDispatch, sent?: Extract<AnswerDispatch, { id: string }>) =>
+            rememberAnswerDispatch(input, claim.write, dispatch, sent,
+              call.reply === "DECLINED" && claim.event?.uid && claim.event.startsAt
+                ? { uid: claim.event.uid, startsAt: claim.event.startsAt.getTime(), endsAt: claim.event.endsAt?.getTime() ?? null }
+                : undefined),
+        }),
+      }, input.signal);
       case "move": return writer.moveEvent === null ? refused("unsupported") : await writer.moveEvent(input.connection, cal, { id: call.to }, { ...call.target, ...(claim.write.attempts > 1 && { retryMove: true }) }, input.signal);
       case "end": return await writer.endSeries(input.connection, cal, call.target, { then, mayBeDone: claim.mayBeDone, late: claim.late }, input.signal);
       case "continue": return await writer.continueSeries(input.connection, cal, {
@@ -627,6 +712,30 @@ async function carryTransfer(
  * The write's end, as its answer has it. `"next"`: the drain goes on; `"stop"`: it ends for the
  * turn; a number: it ends, and the connection is owed its next turn then.
  */
+async function rememberAnswerDispatch(
+  input: CalendarWriteDrainInput, write: ClaimedWrite, dispatch: AnswerDispatch,
+  sent: Extract<AnswerDispatch, { id: string }> | undefined,
+  answerTarget: CalendarWritePayload["answerTarget"],
+) {
+  const saved = await inConnection(input.db, input.key, async ({ tx }) => {
+    const [row] = await tx.update(calWrites).set({
+      payload: sql`(${calWrites.payload} - 'acceptedAnswerId') || ${JSON.stringify({ answerDispatch: dispatch, answerTarget })}::jsonb`,
+      updatedAt: sql`clock_timestamp()`,
+    }).where(and(eq(calWrites.id, write.id), eq(calWrites.accountId, input.key.accountId),
+      eq(calWrites.calendarId, write.calendarId), eq(calWrites.attempts, write.attempts), eq(calWrites.state, "pending"),
+      sent
+        ? sql`${calWrites.payload}->'answerDispatch' = ${JSON.stringify(sent)}::jsonb`
+        : sql`coalesce(${calWrites.payload} #>> '{answerDispatch,phase}', 'ready') = 'ready' and ${calWrites.payload}->>'acceptedAnswerId' is null`,
+    )).returning({ id: calWrites.id });
+    if (row && write.eventId && dispatch.phase !== sent?.phase) {
+      await recordCalendarChanges(tx as unknown as LedgerTx, input.key.accountId,
+        [{ kind: "calendar_event", id: write.eventId, op: "update" }]);
+    }
+    return row !== undefined;
+  });
+  if (saved !== true) throw new Error("the invitation reply is no longer queued");
+}
+
 async function settle(
   ctx: SettleContext, claim: Extract<Claim, { kind: "claimed" }>, answer: Outcome, tally: Tally, aborted: boolean,
 ): Promise<"next" | "stop" | number> {
@@ -641,12 +750,31 @@ async function settle(
     const due = await settleLater(ctx, w, writeWait(w.attempts, null));
     return due === "gone" ? "stop" : due.getTime();
   }
+  if (answer.ok && answer.answerPending) {
+    const due = await settleLater(ctx, w, w.attempts === 1 ? ANSWER_READBACK_MS : writeWait(w.attempts, null));
+    return due === "gone" ? "stop" : due.getTime();
+  }
   if (answer.ok) {
     const done = await settleApplied(ctx, w, answer.items, claim.event?.providerId ?? null, answer.written === true);
-    if (done === "gone") return "stop";
+    if (typeof done === "string") return "stop";
     tally.applied += 1;
     tally.unkept += done.unkept;
     return "next";
+  }
+  if (ctx.word === "microsoft" && w.op === "answer") {
+    const dispatched = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
+      const [row] = await tx.select({ payload: calWrites.payload }).from(calWrites).where(and(
+        eq(calWrites.accountId, ctx.key.accountId), eq(calWrites.id, w.id), eq(calWrites.attempts, w.attempts),
+        eq(calWrites.state, "pending"),
+      ));
+      return sentAnswer(parseWritePayload(row?.payload)) !== undefined;
+    });
+    if (dispatched === "gone") return "stop";
+    // The worker can lose the result of the request after saving the dispatch.
+    if (dispatched) {
+      const due = await settleLater(ctx, w, ANSWER_READBACK_MS);
+      return due === "gone" ? "stop" : due.getTime();
+    }
   }
   // A series' end too old to send, looked at and not found its own: expired, nothing sent.
   if (claim.late && answer.reason === "version_stale") {
@@ -711,7 +839,8 @@ async function prune(input: CalendarWriteDrainInput): Promise<void> {
     const old = await tx.select({ id: calWrites.id }).from(calWrites)
       .innerJoin(calCalendars, onCalendar)
       .where(and(
-        own, eq(calWrites.state, "applied"), sql`${calWrites.updatedAt} < now() - make_interval(secs => ${WRITE_APPLIED_KEPT_MS / 1000})`,
+        own, or(eq(calWrites.state, "applied"), sql`${calWrites.payload} ->> 'replySuperseded' = 'true'`),
+        sql`${calWrites.updatedAt} < now() - make_interval(secs => ${WRITE_APPLIED_KEPT_MS / 1000})`,
         ...(named.length === 0 ? [] : [notInArray(calWrites.id, named)]),
         sql`not (${calWrites.payload} ->> 'ended' is not null and exists (select 1 from cal_writes o where o.account_id = ${calWrites.accountId} and o.event_id = ${calWrites.eventId} and o.state in ('pending', 'refused') and o.created_at < ${calWrites.updatedAt}))`,
       ))
@@ -719,7 +848,13 @@ async function prune(input: CalendarWriteDrainInput): Promise<void> {
     const unseen = await tx.select({ id: calWrites.id }).from(calWrites)
       .innerJoin(calCalendars, onCalendar)
       .leftJoin(calEvents, and(eq(calEvents.id, calWrites.eventId), eq(calEvents.accountId, calWrites.accountId)))
-      .where(and(own, eq(calWrites.state, "refused"), isNull(calEvents.id)))
+      .where(and(
+        own, eq(calWrites.state, "refused"), isNull(calEvents.id),
+        sql`coalesce(${calWrites.payload} ->> 'replySuperseded', '') <> 'true'`,
+        sql`not (coalesce(${calWrites.payload} #>> '{answerDispatch,phase}', '') = 'accepted'
+          and ${calWrites.payload} #>> '{act,answer}' = 'declined'
+          and ${calWrites.updatedAt} >= now() - make_interval(secs => ${WRITE_APPLIED_KEPT_MS / 1000}))`,
+      ))
       .limit(WRITE_PRUNE_PER_TURN);
     const ids = [...old, ...unseen].map((r) => r.id);
     if (ids.length > 0) await tx.delete(calWrites).where(and(eq(calWrites.accountId, input.key.accountId), inArray(calWrites.id, ids)));

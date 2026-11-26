@@ -152,16 +152,32 @@ export function occurrencesIn(input: OccurrenceInput): SpanOccurrences {
         )
     )
       continue;
-    // An answer to this one day, made on the series' record: the day shows it while it waits, and its wait or refusal.
-    const own = occurrence.source === "rule" ? writes.answers?.find((a) => a.at === key) : undefined;
+    // A sync can bring in the day's own copy before the provider confirms the answer on it.
+    const generated = occurrence.source === "rule";
+    const sameAttendee =
+      series &&
+      occurrence.source === "override" &&
+      !record.thisAndFuture &&
+      record.myAnswer !== null &&
+      record.status !== "cancelled" &&
+      record.hideAttendee === series.hideAttendee &&
+      record.organizer?.address === series.organizer?.address;
+    const answerWrites = generated ? writes : sameAttendee ? byRecord.get(series) : undefined;
+    const own = answerWrites?.answers?.find((a) => a.at === key);
     shown.push({
       occurrence,
       key,
       day: dayIdOfNumber(dayNumber(first)),
-      record: own?.waiting ? { ...record, myAnswer: own.answer } : record,
+      record: own?.answer ? { ...record, myAnswer: own.answer } : record,
       series,
       writes: own
-        ? { ...writes, waiting: own.waiting, refusal: own.refusal, refusedWriteId: own.refusedWriteId }
+        ? {
+            ...writes,
+            waiting: own.waiting,
+            refusal: own.refusal,
+            refusedWriteId: own.refusedWriteId,
+            replyUnconfirmed: own.replyUnconfirmed,
+          }
         : writes,
       calendar,
     });

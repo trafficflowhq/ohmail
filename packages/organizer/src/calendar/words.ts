@@ -50,8 +50,8 @@ export const TURN_MS = 10_000;
  * turn it ends says `timeout`, and its connection waits as after any other.
  */
 export const TURN_HARD_MS = 90_000;
-/** Pages one reading may take: a subscription's hundred thousand objects in Google's pages of 250. */
-export const MAX_READING_PAGES = 400;
+/** Bound the number of pages in one CalDAV reading. */
+export const MAX_CALDAV_READING_PAGES = 400;
 /** Readings kept in memory from one turn to the next. One that is being read is never given up for another. */
 export const MAX_OPEN_READINGS = 8;
 /** A reading that found no place to be kept is asked again after this. */

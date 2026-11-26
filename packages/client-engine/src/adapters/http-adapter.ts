@@ -1005,8 +1005,11 @@ export class HttpAdapter implements EngineAdapter {
     return { answer: { write: null, events: [] }, seq: this.noteSeq(res) };
   }
 
-  async retryCalendarWrite(writeId: string, key: string, signal?: AbortSignal): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
-    const res = await this.call("POST /calendar/writes/:id/retry", { params: { id: writeId }, idempotencyKey: key, ...(signal ? { signal } : {}) });
+  async retryCalendarWrite(writeId: string, key: string, signal?: AbortSignal, resendReply?: true): Promise<{ answer: CalendarWriteAnswer; seq: number | null }> {
+    const res = await this.call("POST /calendar/writes/:id/retry", {
+      params: { id: writeId }, idempotencyKey: key, ...(signal ? { signal } : {}),
+      ...(resendReply === true ? { body: { resendReply } } : {}),
+    });
     if (!res.ok) throw await this.rejectionOf(res);
     return { answer: await this.readAnswer<"POST /calendar/writes/:id/retry">(res), seq: this.noteSeq(res) };
   }

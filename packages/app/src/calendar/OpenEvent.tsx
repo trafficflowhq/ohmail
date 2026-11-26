@@ -173,7 +173,11 @@ function OpenEventCard({
         headActions={readMenu.head}
         {...(edit && !blocked && !reply ? { edit } : {})}
         editor={event.failedCreate ? <FailedCreate port={port} event={event} /> : undefined}
-        foot={event.failedCreate || reply ? null : renderCardFoot(edit, panel, blocked)}
+        foot={
+          event.failedCreate || (reply && !event.replyUnconfirmed)
+            ? null
+            : renderCardFoot(edit, panel, blocked)
+        }
         {...readCardDetails(event, { when, rows, maps, invited, canEdit: current !== null }, t)}
         tags={[...proposal.tags, ...eventTags(event, t), ...overlapTags(event, events ?? [], zone, zones, t)]}
         close={{ label: t("closeEvent"), onPress: () => commands.event(null) }}
@@ -209,6 +213,7 @@ function useReadEventContent({
   known: readonly string[] | null;
   t: Text;
 }) {
+  const e = useText("event");
   const port = host.wires.calendar;
   const { removal, removalQuestion, ...readActions } = useReadCardActions(
     port,
@@ -221,6 +226,7 @@ function useReadEventContent({
   const call = useEventCall(event);
   const { letters, links } = useEventLetters(event);
   const rows = useEventCardRows(event, host, t, links);
+  if (event.replyUnconfirmed) rows.unshift({ label: "", note: e("replyMayNotHaveReachedOrganizer") });
   const proposal = proposalDetails(actions, event, letters, today, current !== null, t);
   if (proposal.row) rows.push(proposal.row);
   if (call) rows.push({ label: call.label, call });

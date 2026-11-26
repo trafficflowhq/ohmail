@@ -7,7 +7,7 @@ import { useEffect, useRef, type KeyboardEvent } from "react";
 import { Button, Empty, RefusalLine } from "@ohmail/ui/base";
 import { SidePanel } from "@ohmail/ui/calendar";
 import { GroupHeading, ListHead } from "@ohmail/ui/mail";
-import { pressAndHear, type CalendarPort } from "@ohmail/app-logic/calendar";
+import { pressAndHear, type CalendarAct, type CalendarPort } from "@ohmail/app-logic/calendar";
 import {
   pressAnswer,
   type AnswerOutcome,
@@ -201,12 +201,37 @@ function useInvitationActions(
     if (next) show(next);
     else commands.event(null);
   };
-  const word = async (act: { kind: "calendar_write_retry" | "calendar_write_dismiss"; writeId: string }) => {
+  const word = async (
+    act: Extract<CalendarAct, { kind: "calendar_write_retry" | "calendar_write_dismiss" }>,
+  ) => {
     const heard = await pressAndHear(port, act);
     if (heard.say !== null) report(e(heard.say));
   };
 
-  const retry = (writeId: string) => void word({ kind: "calendar_write_retry", writeId });
+  const retry = async (row: InvitationRow) => {
+    const writeId = row.refusedWriteId;
+    if (writeId === null) return;
+    if (row.refusal !== "answer_unconfirmed") return word({ kind: "calendar_write_retry", writeId });
+    if (
+      out.current.has(row.recordId) ||
+      !latest.current?.groups.answered.some(
+        (current) =>
+          current.recordId === row.recordId &&
+          current.ref.event === row.ref.event &&
+          current.ref.occurrence === row.ref.occurrence &&
+          !current.viewOnly &&
+          current.refusal === "answer_unconfirmed" &&
+          current.refusedWriteId === writeId,
+      )
+    )
+      return;
+    out.current.add(row.recordId);
+    try {
+      await word({ kind: "calendar_write_retry", writeId, resendReply: true });
+    } finally {
+      out.current.delete(row.recordId);
+    }
+  };
   const letGo = (writeId: string) => void word({ kind: "calendar_write_dismiss", writeId });
   return { answer, retry, letGo };
 }

@@ -7232,6 +7232,9 @@
       "provider": "Waiting"
     },
     "notSaved": "Not saved",
+    "replyUnconfirmed": "Reply unconfirmed",
+    "replyMayNotHaveReachedOrganizer": "Your reply may not have reached the organizer",
+    "sendReplyAgain": "Send reply again",
     "fault": {
       "moveCopyLeft": "The event is still in both calendars",
       "moveUnresolved": "The move could not be confirmed. Check both calendars",
@@ -7243,6 +7246,7 @@
       "notKept": "The calendar would not keep this change as written.",
       "inviteesUnsupported": "This calendar cannot send invitations.",
       "stale": "Changed elsewhere",
+      "answerUnconfirmed": "Could not confirm whether your reply was sent.",
       "versionUnknown": "The calendar's copy could not be read, so nothing was sent.",
       "earlier": "An earlier change to this event was not saved, so this one was not sent.",
       "chained": "Press again once the change before it is done.",

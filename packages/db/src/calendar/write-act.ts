@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { SeriesCancellation } from "./series-audience.js";
 /**
  * A PERSON'S ACT ON AN EVENT, AS THE WRITE QUEUE KEEPS IT: one parser for the route that records it
@@ -12,7 +13,7 @@ import type { SeriesCancellation } from "./series-audience.js";
 import type {
   CalendarChangeScope, CalendarEventAct, CalendarEventFields, CalendarRemoveScope, CalendarTime, CalendarWriteInvitee,
 } from "@ohmail/wire";
-import { CALENDAR_ADDRESS_MAX_BYTES, CALENDAR_OCCURRENCE_KEY_MAX_BYTES, fitsCalendarBytes } from "./bounds.js";
+import { CALENDAR_ADDRESS_MAX_BYTES, CALENDAR_OCCURRENCE_KEY_MAX_BYTES, CALENDAR_UID_MAX_BYTES, fitsCalendarBytes } from "./bounds.js";
 
 /** Every bound of a write, each a first value. */
 export const CALENDAR_WRITE_LIMITS = {
@@ -95,10 +96,23 @@ export interface CalendarWritePayload {
   readonly part: { readonly of: string; readonly n: 1 | 2; readonly from?: CalendarWriteContinuation } | null;
   /** A cancellation may already have landed before its explicit retry reset the attempt counter. */
   readonly cancellationAttempted?: true;
+  /** Receipt format used before the dispatch was recorded before the POST. */
+  readonly acceptedAnswerId?: string;
+  readonly answerDispatch?: CalendarAnswerDispatch;
+  /** One completed provider check saw a different response. */
+  readonly answerSyncChecks?: 1;
+  /** This explicit resend carries forward an earlier unconfirmed reply. */
+  readonly resendsReply?: true;
+  readonly answerTarget?: { readonly uid: string; readonly startsAt: number; readonly endsAt: number | null };
+  readonly dismissedReply?: true;
   readonly exception?: CalendarWriteException;
   readonly seriesCancellation?: SeriesCancellation;
   readonly transfer?: CalendarTransfer;
 }
+
+type CalendarAnswerDispatch =
+  | { readonly phase: "ready" }
+  | { readonly phase: "sending" | "accepted"; readonly id: string; readonly source: string; readonly removed?: true };
 
 type Obj = Record<string, unknown>;
 
@@ -541,21 +555,31 @@ export function writePayloadOf(act: CalendarEventAct, after: string | null, part
   return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after, part, ...(exception && { exception }) };
 }
 
-/**
- * What an applied row keeps in place of its act: nothing of the person's. A write that ended a
- * series before one of its days (a day and the days after it: the first part of a press, or their
- * removal alone) keeps that day, by its key and nothing else: the queue asks it of a later write of
- * the same series whether an end found at the provider may be this row's (the end it made is the
- * series ended at that day), and of a press's second part whether its first ended the series at the
- * day it goes on from. Every other applied row keeps nothing (`{}`).
- */
-export function appliedPayloadOf(act: CalendarEventAct | null): { readonly ended: string } | Record<string, never> {
-  return act !== null && "scope" in act && act.scope.kind === "following" && /^\d{1,16}$/.test(act.scope.at) ? { ended: act.scope.at } : {};
+/** A versioned comparison of a normalized act, independent of the store's key ordering. */
+export function calendarActFingerprint(act: CalendarEventAct): string {
+  const normalized = JSON.stringify(act, (_key, value: unknown) => isObject(value)
+    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]))
+    : value);
+  return `v1:${createHash("sha256").update(normalized).digest("hex")}`;
 }
 
-/** The day an applied row ended its series at ({@link appliedPayloadOf}), by its key; `null` for a row that keeps none, or any other payload. */
+/** Applied rows keep the press identity and, for a series split, its reviewed end. */
+export function appliedPayloadOf(act: CalendarEventAct | null): Readonly<Record<string, string>> {
+  if (act === null) return {};
+  return {
+    fingerprint: calendarActFingerprint(act),
+    ...(act.kind === "calendar_event_answer" && {
+      answerAt: act.scope.kind === "occurrence" ? act.scope.at : "",
+      answer: act.answer,
+    }),
+    ...("scope" in act && act.scope.kind === "following" && /^\d{1,16}$/.test(act.scope.at) && { ended: act.scope.at }),
+  };
+}
+
+/** The day an applied row ended its series at, including receipts written before fingerprints. */
 export function endedDayOf(payload: unknown): string | null {
-  return isObject(payload) && closed(payload, ["ended"]) && typeof payload.ended === "string" && /^\d{1,16}$/.test(payload.ended) ? payload.ended : null;
+  return isObject(payload) && closed(payload, ["ended"], ["fingerprint"]) && typeof payload.ended === "string" &&
+    /^\d{1,16}$/.test(payload.ended) ? payload.ended : null;
 }
 
 function continuationOf(v: unknown): CalendarWriteContinuation | null {
@@ -626,11 +650,41 @@ function transferOf(value: unknown, act: CalendarEventAct): CalendarTransfer | n
   return { fields, source: value.source, progress: { phase: p.phase, id: p.id, version: p.version } };
 }
 
+function answerDispatchOf(value: unknown, act: CalendarEventAct): CalendarAnswerDispatch | null {
+  if (!isObject(value) || act.kind !== "calendar_event_answer") return null;
+  if (value.phase === "ready" && closed(value, ["phase"])) return { phase: "ready" };
+  if (!closed(value, ["phase", "id", "source"], ["removed"]) ||
+    (value.phase !== "sending" && value.phase !== "accepted") ||
+    typeof value.id !== "string" || !value.id || value.id.length > 1024 ||
+    typeof value.source !== "string" || !value.source || value.source.length > 1024) return null;
+  if (Object.hasOwn(value, "removed") &&
+    (value.removed !== true || value.phase !== "accepted" || act.answer !== "declined" || (act.scope.kind === "record" && value.id !== value.source))) return null;
+  return { phase: value.phase, id: value.id, source: value.source, ...(value.removed === true && { removed: true }) };
+}
+
 export function parseWritePayload(v: unknown): CalendarWritePayload | null {
-  if (!isObject(v) || !closed(v, ["v", "act", "after", "part"], ["cancellationAttempted", "exception", "seriesCancellation", "transfer"]) || v.v !== CALENDAR_WRITE_PAYLOAD_VERSION) return null;
+  if (!isObject(v) || !closed(v, ["v", "act", "after", "part"], ["cancellationAttempted", "acceptedAnswerId", "answerDispatch", "answerSyncChecks", "answerTarget", "dismissedReply", "exception", "resendsReply", "seriesCancellation", "transfer"]) || v.v !== CALENDAR_WRITE_PAYLOAD_VERSION) return null;
   const act = parseCalendarAct(v.act);
   if (act === null) return null;
   if (Object.hasOwn(v, "cancellationAttempted") && (v.cancellationAttempted !== true || act.kind !== "calendar_event_delete")) return null;
+  const acceptedAnswerId = v.acceptedAnswerId;
+  if (Object.hasOwn(v, "acceptedAnswerId") &&
+    (act.kind !== "calendar_event_answer" || act.scope.kind !== "occurrence" ||
+      typeof acceptedAnswerId !== "string" || !acceptedAnswerId || acceptedAnswerId.length > 1024)) return null;
+  const answerDispatch = Object.hasOwn(v, "answerDispatch") ? answerDispatchOf(v.answerDispatch, act) : undefined;
+  if (answerDispatch === null || (answerDispatch !== undefined && acceptedAnswerId !== undefined)) return null;
+  if (Object.hasOwn(v, "answerSyncChecks") &&
+    (v.answerSyncChecks !== 1 || !answerDispatch || answerDispatch.phase === "ready")) return null;
+  if (Object.hasOwn(v, "resendsReply") && (v.resendsReply !== true || !answerDispatch)) return null;
+  const answerTarget = v.answerTarget;
+  if (answerTarget !== undefined && (
+    act.kind !== "calendar_event_answer" || act.answer !== "declined" || !isObject(answerTarget) ||
+    !closed(answerTarget, ["uid", "startsAt", "endsAt"]) ||
+    typeof answerTarget.uid !== "string" || !fitsCalendarBytes(answerTarget.uid, CALENDAR_UID_MAX_BYTES) ||
+    typeof answerTarget.startsAt !== "number" || !Number.isSafeInteger(answerTarget.startsAt) ||
+    answerTarget.endsAt !== null && (typeof answerTarget.endsAt !== "number" || !Number.isSafeInteger(answerTarget.endsAt))
+  )) return null;
+  if (Object.hasOwn(v, "dismissedReply") && (v.dismissedReply !== true || act.kind !== "calendar_event_answer")) return null;
   if (v.after !== null && !isWriteUuid(v.after)) return null;
   let part: CalendarWritePayload["part"] = null;
   if (v.part !== null) {
@@ -654,5 +708,10 @@ export function parseWritePayload(v: unknown): CalendarWritePayload | null {
     (act.scope.kind !== "record" && (act.scope.at !== exception.occurrence || exception.masterReceipt !== undefined))
   )) return null;
   return { v: CALENDAR_WRITE_PAYLOAD_VERSION, act, after: v.after, part, ...(exception && { exception }),
-    ...(v.cancellationAttempted === true && { cancellationAttempted: true }), ...(seriesCancellation && { seriesCancellation }), ...(transfer && { transfer }) };
+    ...(v.cancellationAttempted === true && { cancellationAttempted: true }),
+    ...(typeof acceptedAnswerId === "string" && { acceptedAnswerId }), ...(answerDispatch && { answerDispatch }),
+    ...(v.answerSyncChecks === 1 && { answerSyncChecks: 1 }),
+    ...(v.resendsReply === true && { resendsReply: true }),
+    ...(v.dismissedReply === true && { dismissedReply: true }),
+    ...(answerTarget && { answerTarget: answerTarget as NonNullable<CalendarWritePayload["answerTarget"]> }), ...(seriesCancellation && { seriesCancellation }), ...(transfer && { transfer }) };
 }

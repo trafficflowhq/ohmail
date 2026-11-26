@@ -1371,8 +1371,11 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       if (!sendableTag(tag)) return refused("version_unknown");
       const { people, own } = linesOf(held.raw, req.as);
       if (own < 0) return refused(googleSelfAttendee(people) === undefined ? "not_found" : "version_stale");
-      const attendees = people.map((p, i) => (i === own ? { ...p, responseStatus: status } : p));
-      const res = await send(signedIn.token, "PATCH", `${events}/${id}?${NOTIFY}`, { attendees }, signal, {
+      const body = {
+        attendeesOmitted: true,
+        attendees: [{ email: people[own]!.email, responseStatus: status }],
+      };
+      const res = await send(signedIn.token, "PATCH", `${events}/${id}?${NOTIFY}`, body, signal, {
         kind: "unchanged",
         tag,
       });

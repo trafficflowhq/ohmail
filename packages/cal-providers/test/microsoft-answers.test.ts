@@ -136,7 +136,7 @@ describe("Microsoft's repeat as the one rule grammar", () => {
     // Windows' name for the zone becomes the name every calendar knows it by.
     expect({ id: stock!.id, uid: stock!.event.uid, start: stock!.event.start, end: stock!.event.end }).toEqual({ id: "m-1", uid: "uid-m-1", start: zoned(wall(2027, 1, 31, 10), BERLIN), end: zoned(wall(2027, 1, 31, 11), BERLIN) });
     // A day's own identifier differs from its series' at Microsoft: the day is known by the series'.
-    expect(page.expanded).toEqual({ window: WINDOW, seen: [{ uid: "uid-m-1", originalStart: zoned(wall(2027, 2, 28, 10), BERLIN) }] });
+    expect(page.expanded).toEqual({ window: WINDOW, seen: [{ providerId: "d-2027-02-28T09:00:00Z", uid: "uid-m-1", originalStart: zoned(wall(2027, 2, 28, 10), BERLIN) }] });
     const [all] = seriesOf([stock!.event], zones);
     const days = expandSeries(all!, { startMs: Date.UTC(2027, 0, 1), endMs: Date.UTC(2027, 5, 1), viewerZone: BERLIN }, zones);
     expect(days.occurrences.map((o) => (o.start.kind === "zoned" ? [o.start.wall.month, o.start.wall.day, o.start.wall.hour] : null))).toEqual([[1, 31, 10], [2, 28, 10], [3, 31, 10], [4, 30, 10], [5, 31, 10]]);
@@ -150,14 +150,14 @@ describe("Microsoft's repeat as the one rule grammar", () => {
     const [all] = seriesOf(upserts(page.items).map((i) => i.event), zones);
     const days = expandSeries(all!, { startMs: Date.UTC(2026, 10, 16), endMs: Date.UTC(2027, 0, 1), viewerZone: "America/Los_Angeles" }, zones);
     expect(days.occurrences.map((o) => (o.start.kind === "zoned" ? [o.start.wall.month, o.start.wall.day, o.start.wall.hour] : null))).toEqual([[12, 1, 20], [12, 2, 20], [12, 3, 20]]);
-    expect(page.expanded!.seen).toEqual([{ uid: "uid-m-1", originalStart: zoned(wall(2026, 12, 1, 20), "America/Los_Angeles") }]);
+    expect(page.expanded!.seen).toEqual([{ providerId: "d-2026-12-02T04:00:00Z", uid: "uid-m-1", originalStart: zoned(wall(2026, 12, 1, 20), "America/Los_Angeles") }]);
   });
 
   it("tells a series' days on the clock its repeat names, where that is another than the one the event was made on", async () => {
     const made = series({ originalStartTimeZone: "Tokyo Standard Time", recurrence: { pattern: { type: "daily", interval: 1 }, range: { type: "noEnd", startDate: "2027-01-31", recurrenceTimeZone: "W. Europe Standard Time" } } });
     const { page } = await pageOf([day("2027-02-01T09:00:00Z")], { [SERIES]: { json: made } });
     expect(upserts(page.items)[0]!.event.start).toEqual(zoned(wall(2027, 1, 31, 10), BERLIN));
-    expect(page.expanded!.seen).toEqual([{ uid: "uid-m-1", originalStart: zoned(wall(2027, 2, 1, 10), BERLIN) }]);
+    expect(page.expanded!.seen).toEqual([{ providerId: "d-2027-02-01T09:00:00Z", uid: "uid-m-1", originalStart: zoned(wall(2027, 2, 1, 10), BERLIN) }]);
   });
 
   it("keeps a repeat when its last day's start falls in a clock gap", async () => {
@@ -188,7 +188,7 @@ describe("Microsoft's repeat as the one rule grammar", () => {
     const { page } = await pageOf([day("2028-01-01T00:00:00Z"), day("2028-12-31T23:00:00Z"), day("2030-01-01T09:30:00Z")], { [SERIES]: { json: newYear } });
     const event = upserts(page.items)[0]!.event;
     expect({ start: event.start, end: event.end, rules: event.rules.map((r) => r.rule) }).toEqual({ start: plainDate(2027, 1, 1), end: plainDate(2027, 1, 2), rules: [parseRRule("FREQ=YEARLY;UNTIL=20300101;BYMONTH=1;BYMONTHDAY=1")] });
-    expect(page.expanded!.seen).toEqual([{ uid: "uid-m-1", originalStart: plainDate(2028, 1, 1) }, { uid: "uid-m-1", originalStart: plainDate(2029, 1, 1) }]);
+    expect(page.expanded!.seen).toEqual([{ providerId: "d-2028-01-01T00:00:00Z", uid: "uid-m-1", originalStart: plainDate(2028, 1, 1) }, { providerId: "d-2028-12-31T23:00:00Z", uid: "uid-m-1", originalStart: plainDate(2029, 1, 1) }]);
     expect(page.left).toEqual([{ id: "d-2030-01-01T09:30:00Z", reason: "unreadable" }]);
   });
 
@@ -294,7 +294,7 @@ describe("Microsoft: one event's fields", () => {
       ["m-1", "uid-m-1", null, zoned(wall(2027, 1, 31, 10), BERLIN), "Stock count"],
       ["x-1", "uid-m-1", zoned(wall(2027, 2, 28, 10), BERLIN), zoned(wall(2027, 3, 1, 14), BERLIN), "Stock count, moved"],
     ]);
-    expect(page.expanded!.seen).toEqual([{ uid: "uid-m-1", originalStart: zoned(wall(2027, 2, 28, 10), BERLIN) }]);
+    expect(page.expanded!.seen).toEqual([{ providerId: "x-1", uid: "uid-m-1", originalStart: zoned(wall(2027, 2, 28, 10), BERLIN) }]);
   });
 
   it("still names a changed day as one Microsoft showed when the change itself cannot be read: the day is there, and is not to be taken for a cancelled one", async () => {
@@ -303,7 +303,7 @@ describe("Microsoft: one event's fields", () => {
     expect({ ids: upserts(page.items).map((i) => i.id), left: page.left, seen: page.expanded!.seen }).toEqual({
       ids: ["m-1"],
       left: [{ id: "x-1", reason: "unreadable" }],
-      seen: [{ uid: "uid-m-1", originalStart: zoned(wall(2027, 2, 28, 10), BERLIN) }],
+      seen: [{ providerId: "x-1", uid: "uid-m-1", originalStart: zoned(wall(2027, 2, 28, 10), BERLIN) }],
     });
   });
 });
@@ -377,9 +377,9 @@ describe("Microsoft: the links to a next page and to the next reading", () => {
     const third = await reader.readChanges(signedIn(), cal, second.value.cursor.token, { ...firstPage, limit: 9999 }, never);
     expect(third).toMatchObject({ ok: true, value: { mode: "delta", items: [], cursor: { kind: "end", token: { provider: "microsoft" } } } });
     expect(sent.map((s) => [s.method, s.url, s.prefer, s.token])).toEqual([
-      ["GET", FIRST, "odata.maxpagesize=40", "t1"],
-      ["GET", NEXT, "odata.maxpagesize=40", "t1"],
-      ["GET", DELTA, "odata.maxpagesize=250", "t1"],
+      ["GET", FIRST, "odata.maxpagesize=12", "t1"],
+      ["GET", NEXT, "odata.maxpagesize=12", "t1"],
+      ["GET", DELTA, "odata.maxpagesize=12", "t1"],
     ]);
     expect(sent.every((s) => s.tokenGoesTo["graph.microsoft.com"] === true && !s.tokenGoesTo["login.microsoftonline.com"] && !s.tokenGoesTo["graph.evil.example"])).toBe(true);
   });
@@ -519,6 +519,7 @@ describe("Microsoft: the list of calendars", () => {
     });
     expect(await reader.listCalendars(signedIn(), never)).toEqual({
       ok: true,
+      principal: null,
       value: [
         { id: "a", name: "Calendar", color: null, writable: true, byToken: true, zone: null },
         { id: "b", name: "Team", color: "#16a765", writable: false, byToken: true, zone: null },

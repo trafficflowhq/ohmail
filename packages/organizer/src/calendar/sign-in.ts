@@ -21,8 +21,8 @@
  */
 import { createHash } from "node:crypto";
 import {
-  parseCredential, Secret, serializeCredential, textOf, toCredential,
-  type CalendarProvider, type Clock, type Connection, type Credential, type CredentialPlace, type HttpPort, type ProviderRefusal,
+  parseCredential, retryAfterMs, Secret, serializeCredential, textOf, toCredential,
+  type CalendarProvider, type Clock, type Connection, type Credential, type CredentialPlace, type HttpPort, type HttpResponse, type ProviderRefusal,
   type ProviderWord, type StoredCredential,
 } from "@ohmail/cal-providers";
 import { googleBearer } from "@ohmail/cal-providers/google";
@@ -82,8 +82,10 @@ export interface PassSignIn {
   tradeRefusal(): TradeRefusal | null;
   /** The stored sign-in changed under the turn (a reconnect, another worker's seal): it writes nothing more. */
   superseded(): boolean;
-  /** Is the stored credential still the one this turn opened? Asked under the credential row's lock before a stop is written. */
+  /** Is the turn still using the stored generation? Checked under the credential row's share lock. */
   stillStored(tx: Tx): Promise<boolean>;
+  /** Opaque identity of the current encrypted envelope, for resuming a reading. */
+  generation(): string;
 }
 
 export interface SignInDeps {
@@ -98,7 +100,8 @@ export interface SealPlace {
   readonly key: ConnectionKey;
 }
 
-const digestOf = (text: string): string => createHash("sha256").update(text).digest("hex");
+const generationOf = (sealed: { readonly keyVersion: number; readonly secretEnc: string }): string =>
+  createHash("sha256").update(`${sealed.keyVersion}:${sealed.secretEnc}`).digest("hex");
 
 /** The row a turn's sealed text must name to be this connection's: the turn's own key, never anything the row or a provider said. */
 const placeOf = (key: ConnectionKey): CredentialPlace => ({ accountId: key.accountId, connectionId: key.id });
@@ -148,7 +151,7 @@ export async function openPassSignIn(
     throw new CalendarKeyRingFault();
   }
   const stored = parseCredential(text, placeOf(place.key));
-  let opened = digestOf(text);
+  let generation = generationOf(sealed);
   if (stored === null || stored.kind !== CREDENTIAL_KIND[word]) return { ok: false, word: "sign_in_incomplete" };
 
   let refusal: TradeRefusal | null = null;
@@ -202,7 +205,7 @@ export async function openPassSignIn(
         if (access !== null && deps.clock.now() < access.expiresAtMs - RENEW_BEFORE_MS) return { ok: true, token: access.token };
         access = null;
         const traded = await tradeMicrosoftCalendar(resolve, provider.http, lasting, meta, deps.clock, signal);
-        if (!traded.ok) return { ok: false, reason: traded.reason, retryAfterMs: null };
+        if (!traded.ok) return traded;
         if (traded.rotated !== null) {
           const sealedNow = await sealRotated(deps, place, word, lasting, traded.rotated);
           if (sealedNow === "superseded") {
@@ -211,7 +214,7 @@ export async function openPassSignIn(
           }
           if (sealedNow.kind === "sealed") {
             lasting = traded.rotated;
-            opened = sealedNow.digest;
+            generation = sealedNow.generation;
           }
         }
         access = { token: traded.token, expiresAtMs: traded.expiresAtMs };
@@ -225,16 +228,21 @@ export async function openPassSignIn(
       connection: { provider: word, credential, start },
       tradeRefusal: () => refusal,
       superseded: () => superseded,
+      generation: () => generation,
       async stillStored(tx) {
-        const now = await lockedOpened(tx, deps, place.key, word);
-        return now !== null && digestOf(now) === opened;
+        const [current] = await dialect(tx).forUpdate(tx.select({
+          secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion,
+        }).from(calCredentials).where(and(eq(calCredentials.accountId, place.key.accountId), eq(calCredentials.connectionId, place.key.id),
+          eq(calCredentials.kind, CREDENTIAL_KIND[word]))).limit(1), { mode: "share" });
+        if (current === undefined || generationOf(current) !== generation) superseded = true;
+        return !superseded;
       },
     },
   };
 }
 
 /** `fetch` for the mail core's trade, over the provider's own request port and nothing else. */
-export function fetchOver(http: HttpPort, signal: AbortSignal): FetchLike {
+export function fetchOver(http: HttpPort, signal: AbortSignal, received?: (response: HttpResponse) => void): FetchLike {
   return async (url, init) => {
     const headers: { "content-type"?: string; accept?: string } = {};
     for (const [name, value] of Object.entries(init.headers)) {
@@ -245,6 +253,7 @@ export function fetchOver(http: HttpPort, signal: AbortSignal): FetchLike {
     const answer = await http.request(url, { method: "POST", headers, body: init.body, auth: null, validators: null, signal });
     // The trade reads a thrown fetch as "we could not ask": the word only, never an address.
     if (!answer.arrived) throw new Error(answer.reason);
+    received?.(answer);
     const text = textOf(answer.body);
     return {
       ok: answer.status >= 200 && answer.status < 300,
@@ -257,7 +266,7 @@ export function fetchOver(http: HttpPort, signal: AbortSignal): FetchLike {
 
 type Traded =
   | { readonly ok: true; readonly token: string; readonly expiresAtMs: number; readonly rotated: Secret | null }
-  | { readonly ok: false; readonly reason: ProviderRefusal };
+  | ({ readonly ok: false } & TradeRefusal);
 
 /**
  * Microsoft's lasting sign-in traded for a short one, with the calendar's permission and no other:
@@ -268,9 +277,12 @@ export async function tradeMicrosoftCalendar(
   resolve: NonNullable<CalendarOAuth["microsoft"]>, http: HttpPort, lasting: Secret,
   meta: { readonly tenant: string | null; readonly clientKind: MicrosoftClientKind }, clock: Clock, signal: AbortSignal,
 ): Promise<Traded> {
+  const metadata: { throttled?: TradeRefusal } = {};
   try {
     const reg = await resolve(meta.clientKind);
-    if (reg.clientId === "" || (meta.clientKind === "confidential" && reg.clientSecret === "")) return { ok: false, reason: "provider_off" };
+    if (reg.clientId === "" || (meta.clientKind === "confidential" && reg.clientSecret === "")) {
+      return { ok: false, reason: "provider_off", retryAfterMs: null };
+    }
     const result = await refreshAccessToken({
       refreshToken: lasting.reveal(),
       tenant: meta.tenant ?? reg.defaultTenant ?? "common",
@@ -278,17 +290,20 @@ export async function tradeMicrosoftCalendar(
       ...(meta.clientKind === "confidential" ? { clientSecret: reg.clientSecret } : {}),
       clientKind: meta.clientKind,
       scope: MS_GRAPH_CALENDAR_SCOPE,
-      fetch: fetchOver(http, signal),
+      fetch: fetchOver(http, signal, (response) => {
+        if (response.status === 429) metadata.throttled = { reason: "throttled", retryAfterMs: retryAfterMs(response, clock) };
+      }),
     }, () => clock.now());
     return {
       ok: true, token: result.accessToken, expiresAtMs: result.expiresAtMs,
       rotated: result.refreshToken === undefined ? null : new Secret(result.refreshToken),
     };
   } catch (err) {
-    if (err instanceof OAuthReauthRequiredError) return { ok: false, reason: "consent_needed" };
+    if (metadata.throttled !== undefined) return { ok: false, ...metadata.throttled };
+    if (err instanceof OAuthReauthRequiredError) return { ok: false, reason: "consent_needed", retryAfterMs: null };
     // Our own registration refused, or Microsoft's trouble: this deployment's to mend, never the person's sign-in.
-    if (err instanceof OAuthClientRefusedError || err instanceof OAuthProviderUnavailableError) return { ok: false, reason: "unavailable" };
-    if (err instanceof OAuthConfigError) return { ok: false, reason: "provider_off" };
+    if (err instanceof OAuthClientRefusedError || err instanceof OAuthProviderUnavailableError) return { ok: false, reason: "unavailable", retryAfterMs: null };
+    if (err instanceof OAuthConfigError) return { ok: false, reason: "provider_off", retryAfterMs: null };
     throw err;
   }
 }
@@ -301,7 +316,7 @@ export async function tradeMicrosoftCalendar(
  */
 async function sealRotated(
   deps: SignInDeps, place: SealPlace, word: ProviderWord, traded: Secret, rotated: Secret,
-): Promise<"superseded" | { readonly kind: "sealed"; readonly digest: string } | { readonly kind: "kept" }> {
+): Promise<"superseded" | { readonly kind: "sealed"; readonly generation: string } | { readonly kind: "kept" }> {
   const done = await inConnection(place.db, place.key, async ({ tx }) => {
     const now = await lockedOpened(tx, deps, place.key, word);
     const stored = now === null ? null : parseCredential(now, placeOf(place.key));
@@ -312,7 +327,7 @@ async function sealRotated(
     if (await deps.keys.decrypt(envelope.ciphertext, envelope.keyVersion) !== text) throw new CalendarKeyRingFault();
     await tx.update(calCredentials).set({ secretEnc: envelope.ciphertext, keyVersion: envelope.keyVersion, updatedAt: sql`now()` })
       .where(and(eq(calCredentials.accountId, place.key.accountId), eq(calCredentials.connectionId, place.key.id), eq(calCredentials.kind, "oauth")));
-    return { kind: "sealed", digest: digestOf(text) } as const;
+    return { kind: "sealed", generation: generationOf({ secretEnc: envelope.ciphertext, keyVersion: envelope.keyVersion }) } as const;
   });
   return done === "gone" ? "superseded" : done;
 }

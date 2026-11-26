@@ -106,6 +106,7 @@ describe("Microsoft against the double: the calendars and the sign-in", () => {
     const answer = await reader.listCalendars(signedIn(), never);
     expect(answer).toEqual({
       ok: true,
+      principal: ["mila", "lichtgrat.example"].join("@"),
       value: [
         { id: "cal-studio", name: "Calendar", color: null, writable: true, owned: true, byToken: true, zone: null },
         { id: "cal-market", name: "Market", color: null, writable: true, owned: true, byToken: true, zone: null },
@@ -158,7 +159,14 @@ describe("Microsoft against the double: a window read whole", () => {
     expect({ mode: only.mode, unchanged: only.unchanged, left: only.left, refreshMs: only.refreshMs }).toEqual({ mode: "whole", unchanged: false, left: [], refreshMs: null });
     expect(only.expanded).toEqual({
       window: WINDOW,
-      seen: [evening(11, 17), evening(11, 24), evening(12, 1), evening(12, 8), evening(12, 15), evening(12, 22)].map((originalStart) => ({ uid: UID, originalStart })),
+      seen: [
+        ["2026-11-17", evening(11, 17)],
+        ["2026-11-24", evening(11, 24)],
+        ["2026-12-01", evening(12, 1)],
+        ["2026-12-08", evening(12, 8)],
+        ["2026-12-15", evening(12, 15)],
+        ["2026-12-22", evening(12, 22)],
+      ].map(([date, originalStart]) => ({ providerId: `evt-wheel-class.${date}`, uid: UID, originalStart })),
     });
     expect(token.provider).toBe("microsoft");
     expect(token.value.length).toBeLessThanOrEqual(4096);
@@ -242,6 +250,60 @@ describe("Microsoft against the double: a window read whole", () => {
 });
 
 describe("Microsoft against the double: what changed since", () => {
+  it.each(["live", "restarted"] as const)("yields an oversized %s provider page and resumes at the remaining series", async (mode) => {
+    let now = NOW;
+    let lists = 0;
+    let pageSize: string | undefined;
+    const requested: string[] = [];
+    const start = { dateTime: "2026-11-20T10:00:00", timeZone: "UTC" };
+    const end = { dateTime: "2026-11-20T11:00:00", timeZone: "UTC" };
+    const records = Array.from({ length: 250 }, (_, i) => ({
+      id: `day-${i}`, type: "occurrence", seriesMasterId: `master-${i}`, originalStart: "2026-11-20T10:00:00Z",
+    }));
+    const http: HttpPort = {
+      async request(url, req) {
+        now += 400;
+        const id = new URL(url).pathname.split("/").at(-1)!;
+        const body = id === "delta" ? {
+          value: (++lists % 2 === 0) ? records.map(({ id, ...record }) => ({ ...record, id })) : records,
+          "@odata.deltaLink": `${MS_GRAPH_BASE}/me/calendars/cal-studio/calendarView/delta?complete=${lists}`,
+        } : {
+          id, type: "seriesMaster", changeKey: "current", start, end, originalStartTimeZone: "UTC",
+          recurrence: { pattern: { type: "daily", interval: 1 }, range: { type: "noEnd", startDate: "2026-11-20" } },
+        };
+        if (id === "delta") pageSize = req.headers.prefer;
+        else requested.push(id);
+        return { arrived: true, status: 200, header: () => null, body: new TextEncoder().encode(JSON.stringify(body)), location: null, url, hops: 0 };
+      },
+    };
+    let cursor: string | null = null;
+    const masters: string[] = [];
+    const composition = { http, clock: { now: () => now }, zones, graphBase: MS_GRAPH_BASE };
+    const active = makeReader(composition);
+    const scope = {};
+    for (let turn = 0; turn < 30; turn++) {
+      // A new adapter has no process memory of the prior calls.
+      const worker = mode === "live" ? active : makeReader(composition);
+      const before = now;
+      const result: Awaited<ReturnType<CalendarReader["readChanges"]>> = await worker.readChanges(
+        signedIn("fixture"), studio, null, { ...page(250, cursor), scope }, never,
+      );
+      if (!result.ok) throw new Error(result.reason);
+      expect(now - before).toBeLessThan(10_000);
+      expect(Number(pageSize?.split("=")[1])).toBeLessThanOrEqual(12);
+      masters.push(...upserts(result.value.items).map((item) => item.id));
+      cursor = result.value.cursor.kind === "more" ? result.value.cursor.value : null;
+      if (cursor === null) {
+        expect(result.value.cursor).toMatchObject({ kind: "end", token: { provider: "microsoft" } });
+        break;
+      }
+    }
+    expect(cursor).toBeNull();
+    if (mode === "live") expect(lists).toBe(1);
+    expect(requested).toEqual(records.map((record) => record.seriesMasterId));
+    expect(masters).toEqual(requested);
+  });
+
   it("hands nothing when nothing changed, then what was made, changed and removed", async () => {
     const whole = await round(null);
     const quiet = await round(whole.token);

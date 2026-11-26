@@ -14,6 +14,8 @@ import { dialect } from "@trafficflow/db/dialect";
 
 const POOL: unique symbol = Symbol("calendar pool");
 const BOUND: unique symbol = Symbol("calendar connection handle");
+const CREDENTIAL: unique symbol = Symbol("calendar turn credential");
+const READING: unique symbol = Symbol("calendar reading owner");
 
 /** The worker's pool as the calendar's passes are handed it: no query can be written on it. */
 export interface CalendarPool { readonly [POOL]: Tx }
@@ -21,6 +23,8 @@ export interface CalendarPool { readonly [POOL]: Tx }
 /** One account's handle for one turn. Only {@link inConnection} opens a transaction on it. */
 export interface ConnectionDb {
   readonly [BOUND]: Tx;
+  readonly [CREDENTIAL]?: { readonly id: string; readonly current: (tx: Tx) => Promise<boolean> };
+  readonly [READING]?: { readonly id: string; readonly current: (tx: Tx) => Promise<boolean> };
   readonly accountId: string;
 }
 
@@ -71,6 +75,16 @@ export function passDb(pool: CalendarPool, accountId: string): ConnectionDb {
   return { [BOUND]: bindDb(pool[POOL], { account: accountId }), accountId };
 }
 
+/** Keep a provider turn's transactions bound to the credential it started with. */
+export function credentialBound(db: ConnectionDb, key: ConnectionKey, current: (tx: Tx) => Promise<boolean>): ConnectionDb {
+  return { ...db, [CREDENTIAL]: { id: key.id, current } };
+}
+
+/** A later turn may take over a reading. An older turn cannot write under that reading afterward. */
+export function readingBound(db: ConnectionDb, key: ConnectionKey, current: (tx: Tx) => Promise<boolean>): ConnectionDb {
+  return { ...db, [READING]: { id: key.id, current } };
+}
+
 /** A transaction of one turn, with the connection row it holds. */
 export interface ConnectionTx {
   readonly tx: Tx;
@@ -105,6 +119,10 @@ export async function inConnection<T>(
       }).from(calConnections).where(and(eq(calConnections.id, key.id), eq(calConnections.accountId, key.accountId))).limit(1);
       const [row] = opts.lock === "no key update" ? await dialect(tx).forUpdate(read, { mode: "no key update" }) : await read;
       if (row === undefined || !LIVE_STATUSES.has(row.status)) return "gone" as const;
+      const credential = db[CREDENTIAL];
+      if (credential?.id === key.id && !await credential.current(tx)) return "gone" as const;
+      const reading = db[READING];
+      if (reading?.id === key.id && !await reading.current(tx)) return "gone" as const;
       return fn({ tx, held: { ...row, status: row.status as HeldConnection["status"] } });
     });
   } catch (err) {

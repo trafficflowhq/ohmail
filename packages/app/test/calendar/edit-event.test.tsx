@@ -5,11 +5,14 @@ import type { ReactNode } from "react";
 import { MailStateContext, type MailStateBinding } from "@ohmail/app-logic/mail-state";
 import { dayShort, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
 import calendarDe from "../../messages/calendar.de.json" with { type: "json" };
+import eventDe from "../../messages/event.de.json" with { type: "json" };
 import readerInvitationEn from "../../messages/reader-invitation.en.json" with { type: "json" };
 import dayEn from "../../messages/day.en.json" with { type: "json" };
 import calmail from "../../messages/calmail.en.json" with { type: "json" };
+import invitationsDe from "../../messages/invitations.de.json" with { type: "json" };
 import invitationsEn from "../../messages/invitations.en.json" with { type: "json" };
 import { calendar } from "../../src/calendar/entry.js";
+import { CALENDAR_DEVICE_START, CalendarDeviceContext } from "../../src/calsettings/index.js";
 import { gardenGuests, guestOrganizer } from "./guest-fixture.js";
 import { InvitationLetterCard } from "../../src/reader/InvitationLetterCard.js";
 import { fakeMail, mountReader, WORDS as readerWords } from "../reader/support/mail.js";
@@ -3344,7 +3347,11 @@ describe("an invitation already answered", () => {
       ...over,
     });
   /** An answer to the first day alone, as the device's selector hands it: on that day, not on the series. */
-  const dayAnswer = (state: "pending" | "refused") =>
+  const dayAnswer = (
+    state: "pending" | "refused",
+    refusal: "version_stale" | "answer_unconfirmed" = "version_stale",
+    replyUnconfirmed = false,
+  ) =>
     state === "pending"
       ? {
           at: String(at),
@@ -3352,12 +3359,13 @@ describe("an invitation already answered", () => {
           waiting: "provider" as const,
           refusal: null,
           refusedWriteId: null,
+          ...(replyUnconfirmed && { replyUnconfirmed: true as const }),
         }
       : {
           at: String(at),
-          answer: null,
+          answer: refusal === "answer_unconfirmed" ? ("tentative" as const) : null,
           waiting: null,
-          refusal: "version_stale" as const,
+          refusal,
           refusedWriteId: "w-day",
         };
   const openDay = (record: CalendarEventRecord, answer?: ReturnType<typeof dayAnswer>, day = at) => {
@@ -3367,7 +3375,11 @@ describe("an invitation already answered", () => {
       `#/cal/week/2026-11-17/e/firing@${day}`,
     );
     const events = world.port.events;
-    world.port.events = () => events().map((event) => ({ ...event, ...(answer && { answers: [answer] }) }));
+    world.port.events = () =>
+      events().map((event) => ({
+        ...event,
+        ...(event.record.id === record.id && answer && { answers: [answer] }),
+      }));
     act(() => world.put("calendar_event", record.id, record));
     return world;
   };
@@ -3417,6 +3429,88 @@ describe("an invitation already answered", () => {
     const other = within(await screen.findByRole("dialog", { name: "Kiln check" }));
     expect(other.getByText("to answer")).toBeTruthy();
     expect(other.queryByText("Waiting")).toBeNull();
+  });
+
+  it("shows an unconfirmed answer while checking and offers no resend yet", async () => {
+    const world = openDay(daily({ myAnswer: "none" }), dayAnswer("pending", "answer_unconfirmed", true));
+    const press = vi.fn(async () => ({ key: "answer" }));
+    world.port.press = press;
+    const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+    expect(card.getByText("Reply unconfirmed")).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Yes" })).getAttribute("aria-pressed")).toBe("true");
+    expect(card.queryByText("Your reply may not have reached the organizer")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send reply again" })).toBeNull();
+    expect(press).not.toHaveBeenCalled();
+  });
+
+  it("offers to resend an unconfirmed answer from that day's own event panel", async () => {
+    const world = openDay(daily({ myAnswer: "none" }), dayAnswer("refused", "answer_unconfirmed"));
+    const copy = daily({
+      id: "invited-day",
+      repeat: null,
+      recurrenceId: String(at),
+      occurrenceAt: new Date(at).toISOString(),
+      myAnswer: "none",
+    });
+    act(() => world.put("calendar_event", copy.id, copy));
+    const press = vi.fn(async () => ({ key: "answer" }));
+    world.port.press = press;
+    const card = within(await screen.findByRole("dialog", { name: copy.title }));
+    expect(card.getByText("Reply unconfirmed")).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Maybe" })).getAttribute("aria-pressed")).toBe("true");
+    expect(card.getByText("Your reply may not have reached the organizer")).toBeTruthy();
+    const resend = within(screen.getByRole("toolbar", { name: "Event actions" })).getByRole("button", {
+      name: "Send reply again",
+    });
+    expect(press).not.toHaveBeenCalled();
+    fireEvent.click(resend);
+    expect(press).toHaveBeenCalledTimes(1);
+    expect(press).toHaveBeenCalledWith({ kind: "calendar_write_retry", writeId: "w-day", resendReply: true });
+  });
+
+  it("keeps an unconfirmed No visible in the German phone event even when declined events are hidden", async () => {
+    const record = meeting({ organizer, invitees: [guest], myAnswer: "declined" });
+    const world = eventWorld(record);
+    world.put("calendar_connection", "conn-1", connectionRecord({ provider: "microsoft" }));
+    const events = world.port.events;
+    world.port.events = () =>
+      events().map((event) => ({ ...event, refusal: "answer_unconfirmed", refusedWriteId: "w-no" }));
+    const press = vi.fn(async () => ({ key: "answer" }));
+    world.port.press = press;
+    mountReader({
+      letters: [],
+      open: null,
+      lang: "de",
+      size: "phone",
+      host: {
+        engine: Object.assign(fakeMail([]).engine, { store: world.engine.store }),
+        calendar,
+        products: "both",
+        wires: { calendar: world.port },
+        mailboxes: async () => [mailbox(guest.address)],
+        address: fakeAddress("#/cal/week/2026-11-16/e/firing"),
+      },
+      words: { ...readerWords.de, ...calendarWords.de, ...calendarDe, ...eventDe, ...invitationsDe },
+      wrapper: ({ children }) => (
+        <WithMailState>
+          <CalendarDeviceContext.Provider
+            value={{ settings: { ...CALENDAR_DEVICE_START, showDeclined: false }, change: () => false }}
+          >
+            {children}
+          </CalendarDeviceContext.Provider>
+        </WithMailState>
+      ),
+    });
+    const card = within(await screen.findByRole("dialog", { name: record.title }));
+    expect((await card.findByRole("button", { name: "Nein" })).getAttribute("aria-pressed")).toBe("true");
+    expect(card.getByText("Antwort unbestätigt")).toBeTruthy();
+    expect(
+      card.getByText("Deine Antwort ist möglicherweise nicht bei der einladenden Person angekommen"),
+    ).toBeTruthy();
+    expect(press).not.toHaveBeenCalled();
+    fireEvent.click(card.getByRole("button", { name: "Antwort erneut senden" }));
+    expect(press).toHaveBeenCalledTimes(1);
+    expect(press).toHaveBeenCalledWith({ kind: "calendar_write_retry", writeId: "w-no", resendReply: true });
   });
 
   it("takes a refused answer to one day back on that day alone", async () => {
