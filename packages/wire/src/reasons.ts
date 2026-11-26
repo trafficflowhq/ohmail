@@ -47,7 +47,7 @@ export type ServiceErrorCode =
   | "pairing_invalid" | "pairing_mint_limit" | "payload_too_large" | "payment_required"
   | "plans_unavailable"
   | "profile_changed" | "profile_document_unreadable" | "profile_newer" | "rate_limited"
-  | "read_bound_exceeded" | "refresh_expired" | "refresh_missing" | "refresh_revoked" | "session_mismatch"
+  | "read_bound_exceeded" | "recovery_codes_exist" | "refresh_expired" | "refresh_missing" | "refresh_revoked" | "session_mismatch"
   | "remote_content_not_loaded" | "return_not_found" | "return_unconfirmed" | "rule_runs_here"
   | "run_in_flight" | "same_login" | "schedule_files_quota" | "schedule_files_too_far"
   | "schedule_has_files" | "search_direction_unsupported" | "search_superseded" | "search_too_many_folders"

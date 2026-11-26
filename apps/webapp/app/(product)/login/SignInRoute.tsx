@@ -28,10 +28,13 @@ function stateOf(c: SignInCeremony): SignInState {
   return { at: "factor", factor: FACTOR_OF[c.method], offered, busy: c.busy, refusal: c.refusal };
 }
 
-export function SignInRoute(
-  { publicSignup = false, next = null, handoff = null }: { publicSignup?: boolean; next?: Continuation | null; handoff?: string | null },
-) {
-  const c = useSignInDoor({ next, handoff });
+export function SignInRoute({ publicSignup = false, next = null, handoff = null, freshJoinSignIn = false }: {
+  publicSignup?: boolean;
+  next?: Continuation | null;
+  handoff?: string | null;
+  freshJoinSignIn?: boolean;
+}) {
+  const c = useSignInDoor({ next, handoff, freshJoinSignIn });
   const t = useTranslations("gate");
   const pending = usePendingDoor(c.pending);
   const door: SignInDoor = {

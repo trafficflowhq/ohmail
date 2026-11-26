@@ -173,7 +173,7 @@ describe("a signed-in account resuming setup", () => {
     await settle();
     expect(signUpShown(c)).toBe(false);
     expect(c.querySelector("h1")?.textContent).toBe(messages.onboarding.resumeUnreachableTitle);
-    expect(c.querySelector('a[href="/"]')?.textContent).toBe(messages.onboarding.resumeLeave);
+    expect(c.querySelector('a[href="/?setup=later"]')?.textContent).toBe(messages.onboarding.resumeLeave);
     mailboxFault = null;
     const retry = [...c.querySelectorAll("button")].find((b) => b.textContent === messages.onboarding.resumeRetry);
     await act(async () => { retry!.click(); });

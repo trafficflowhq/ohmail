@@ -13,9 +13,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
-import { readPendingSignOut } from "../../pending-sign-out-storage";
+import { cleanupNoticeShown, markCleanupNoticeShown, readPendingSignOut } from "../../pending-sign-out-storage";
 import type { SignOutTrouble } from "../../sign-out-trouble";
 import { finishPendingSignOut, pendingSignOutSettled, type Finish } from "./finish-sign-out";
+
+type Notice = SignOutTrouble | { key: "localCacheUnverified" };
+type FinishWithPress = Finish & { press?: string };
+type DisplayedNotice = { said: Notice; press?: string };
 
 export interface PendingSignOut {
   /**
@@ -32,7 +36,7 @@ export interface PendingSignOut {
   /** Sign out, pressed after it ended unconfirmed: the ladder again, on any jar that names no account. */
   again: () => void;
   /** What did not happen, while it stands; `null` while the ladder runs, once it is done, and when never pending. */
-  said: SignOutTrouble | null;
+  said: Notice | null;
   signingOut: boolean;
 }
 
@@ -42,32 +46,74 @@ export function usePendingSignOut(): PendingSignOut {
      dependencies would re-run those. */
   const tsRef = useRef(ts);
   tsRef.current = ts;
-  const [said, setSaid] = useState<SignOutTrouble | null>(null);
+  const [notice, setNotice] = useState<DisplayedNotice | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const mounted = useRef(true);
+  const pageActive = useRef(true);
+  const shownHere = useRef<string | null>(null);
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    const hide = () => { pageActive.current = false; };
+    const show = () => { pageActive.current = true; };
+    window.addEventListener("pagehide", hide);
+    window.addEventListener("pageshow", show);
+    return () => {
+      mounted.current = false;
+      window.removeEventListener("pagehide", hide);
+      window.removeEventListener("pageshow", show);
+    };
   }, []);
 
+  useEffect(() => {
+    if (!pageActive.current || notice?.press === undefined || readPendingSignOut()?.press !== notice.press) return;
+    const { key } = notice.said;
+    if (key === "signOutUnverified" || key === "signOutBlocked" || key === "localCacheUnverified") {
+      markCleanupNoticeShown(notice.press);
+      shownHere.current = notice.press;
+    }
+  }, [notice]);
+
   /** The finisher, with a sign-out module that cannot be loaded (no network) read as the door unanswered. */
-  const ladder = useCallback((opts: Parameters<typeof finishPendingSignOut>[0]): Promise<Finish> =>
-    finishPendingSignOut(opts).catch((): Finish => ({
+  const ladder = useCallback(async (opts: Parameters<typeof finishPendingSignOut>[0]): Promise<FinishWithPress> => {
+    const press = readPendingSignOut()?.press;
+    const end = await finishPendingSignOut(opts).catch((): Finish => ({
       outcome: "refused", said: { key: "signOutServerRefused", reason: tsRef.current("refusedOffline") },
-    })), []);
-  const say = useCallback((end: Finish): void => {
-    setSaid(end.outcome === "refused" || end.outcome === "stopped" ? end.said : null);
+    }));
+    return { ...end, press: press ?? readPendingSignOut()?.press };
+  }, []);
+  const say = useCallback((end: FinishWithPress, manual = false): void => {
+    if (end.outcome !== "stopped") {
+      setNotice(end.outcome === "refused" && end.said !== null ? { said: end.said } : null);
+      return;
+    }
+    const { press } = end;
+    const show = (trouble: SignOutTrouble | null): DisplayedNotice | null => {
+      if (!pageActive.current || trouble === null) return null;
+      const current = readPendingSignOut();
+      if (press !== undefined) {
+        if (current?.press !== press || readOwnerMarker().kind === "account") return null;
+        if (!manual && shownHere.current !== press && cleanupNoticeShown(press)) return null;
+      }
+      const said = trouble.key === "signOutUnverified" && current?.cachePending === true
+        ? { key: "localCacheUnverified" } as const : trouble;
+      return { said, press };
+    };
+    const initial = show(end.said);
+    setNotice(initial);
     void end.cleanup?.then((updated) => {
-      if (mounted.current) setSaid((current) => current === end.said ? updated : current);
+      if (!mounted.current) return;
+      const next = show(updated);
+      setNotice((current) => current === initial ? next : current);
     });
   }, []);
 
-  const retryCache = useCallback((): void => {
-    if (readPendingSignOut()?.cachePending !== true) return;
+  const retryCache = useCallback((manual = false): void => {
+    const operation = readPendingSignOut();
+    if (operation?.cachePending !== true) return;
     const incomplete = { key: "signOutUnverified" } as const;
     const cleanup = import("../../sign-out").then(({ retryPendingCacheCleanup }) => retryPendingCacheCleanup())
       .then((clean) => clean === false ? incomplete : null, () => incomplete);
-    say({ outcome: "stopped", said: { key: "signOutCleanupPending" }, cleanup });
+    say({ outcome: "stopped", press: operation.press, said: { key: "signOutCleanupPending" }, cleanup }, manual);
   }, [say]);
 
   useEffect(() => {
@@ -94,7 +140,7 @@ export function usePendingSignOut(): PendingSignOut {
      asked again then. A jar another tab signed in to is left alone. */
   const again = useCallback((): void => {
     if (readOwnerMarker().kind === "absent") {
-      retryCache();
+      retryCache(true);
       return;
     }
     setSigningOut(true);
@@ -104,9 +150,9 @@ export function usePendingSignOut(): PendingSignOut {
     }).then((end) => {
       if (!mounted.current) return;
       setSigningOut(false);
-      say(end);
+      say(end, true);
     });
   }, [ladder, retryCache, say]);
 
-  return { finish, settle, again, said, signingOut };
+  return { finish, settle, again, said: notice?.said ?? null, signingOut };
 }
