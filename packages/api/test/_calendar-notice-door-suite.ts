@@ -232,6 +232,20 @@ export function noticeDoorSuite(name: string, open: () => Promise<DoorWorld>): v
       expect(await r.said()).toEqual({ google: { count: 2, applied: 1, expired: 0, refused: 1, dropped: 0 } });
     });
 
+    it("an Outlook mailbox notice pulls its own calendars while shared calendars keep their schedule", async () => {
+      const a = await seed(w, { provider: "microsoft", wholeConnection: true, resourceId: "me/events", calendars: 4 });
+      const b = await seed(w);
+      for (const id of a.calendars.slice(0, 3)) await w.sql("update cal_calendars set access = 'owner' where id = $1", [id]);
+      await w.sql("update cal_calendars set access = 'writer' where id = $1", [a.calendars[3]!]);
+      const r = rig();
+      const before = await stateOf(w, [a, b]);
+      expect(await bytesOf(await r.call(microsoft(batch([{ subscriptionId: a.channel.id, clientState: a.channel.word }]))))).toBe(ALIKE);
+      expect(moved(before, await stateOf(w, [a, b]))).toEqual({
+        [`connection:${a.connectionId}`]: ["next"],
+        ...Object.fromEntries(a.calendars.slice(0, 3).map((id) => [`calendar:${id}`, ["next"]])),
+      });
+    });
+
     it("answers every call with the same bytes, and only the live one moves a row", async () => {
       const a = await seed(w);
       // A second live channel that no call here names rightly: whatever is wrong with a call, its rows have not moved before it.
@@ -368,6 +382,21 @@ export function noticeDoorSuite(name: string, open: () => Promise<DoorWorld>): v
       // A calendar never read has no last reading to wait after: it is due now.
       await r.call(google(ofChannel(never.channel)));
       expect([await dueNow(w, "cal_calendars", never.calendars[0]!), await dueNow(w, "cal_connections", never.connectionId)]).toEqual([true, true]);
+    });
+
+    it("keeps one notice for the next read when an overdue calendar is already reading", async () => {
+      const a = await seed(w, { synced: "now() - interval '10 minutes'", next: "now() - interval '1 second'" });
+      const id = a.calendars[0]!;
+      await w.sql("update cal_calendars set read_owner = $1 where id = $2", [randomUUID(), id]);
+      const r = rig();
+      const before = await stateOf(w, [a]);
+      expect(await bytesOf(await r.call(google(ofChannel(a.channel))))).toBe(ALIKE);
+      const after = await stateOf(w, [a]);
+      expect(moved(before, after)).toEqual({ [`calendar:${id}`]: ["next"] });
+      expect(await w.sql("select next_poll_at > now() and next_poll_at <= now() + interval '30 seconds' as waits from cal_calendars where id = $1", [id]))
+        .toEqual([{ waits: true }]);
+      await r.call(google(ofChannel(a.channel)));
+      expect(moved(after, await stateOf(w, [a]))).toEqual({});
     });
 
     it("a channel that names no calendar pulls its connection's calendars, and no other connection's", async () => {

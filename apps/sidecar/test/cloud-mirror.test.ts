@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  accountSettings, changeLog, drafts, folderState, mailboxFolders, mailboxes, messageBodies,
+  accountSettings, calConnections, changeLog, drafts, folderState, mailboxFolders, mailboxes, messageBodies,
   messageStates, messages, messageTags, outboundSends, rules, tags, threadNotes, threads,
 } from "@trafficflow/db/mail";
 import { dbFor, syncService } from "@trafficflow/services/mail";
@@ -1423,6 +1423,107 @@ describe("a 410 cursor-expiry re-bootstraps from since=0 and SWEEPS phantoms", (
 
     // The cursor was rewritten from the fresh bootstrap and the flag cleared.
     expect(JSON.parse(readFileSync(cursorPath, "utf8"))).toMatchObject({ sync: "cursor-fresh", bootstrapping: false });
+  });
+
+  it("sweeps stale mail when a later calendar snapshot page is unavailable", async () => {
+    const { opened, world, cursorPath } = await standUp();
+    const db = opened.db;
+    const tKeep = randomUUID(); const mKeep = randomUUID();
+    const tPhantom = randomUUID(); const mPhantom = randomUUID();
+
+    // ── Phase 1: an ordinary pull mirrors BOTH messages, plus the phantom's child state and body,
+    //    and advances the cursor past zero (the next drain would be incremental). ──
+    const enabledAt = new Date().toISOString();
+    const seed = syncPage([
+      change("settings", world.accountId, "update", 0, { calendarEnabledAt: enabledAt }),
+      change("thread", tKeep, "create", 1, threadDTO(tKeep)),
+      change("message", mKeep, "create", 2, messageDTO(mKeep, tKeep)),
+      change("thread", tPhantom, "create", 3, threadDTO(tPhantom)),
+      change("message", mPhantom, "create", 4, messageDTO(mPhantom, tPhantom)),
+      change("message_state", stateWireId(), "update", 5, stateDTO(mPhantom)),
+    ], "cursor-seed", false);
+    const seedBodies = [bodyItem(mKeep, "keep"), bodyItem(mPhantom, "phantom")];
+    const seedAuth = fakeAuth([seed], seedBodies);
+    const seedFetch = seedAuth.authedFetch.bind(seedAuth);
+    seedAuth.authedFetch = async (path: string) => {
+      const url = new URL(path, "http://localhost");
+      if (url.pathname === "/sync/snapshot" && url.searchParams.get("phase") === "calendar") {
+        return jsonRes({ ...NO_TAGS, calendarWindow: { daysBack: 365, daysAhead: 365, maxRows: 2000 } });
+      }
+      return seedFetch(path);
+    };
+    await createCloudMirror({ db, world, auth: seedAuth, cursorPath, now: () => new Date() }).pullOnce();
+    expect(JSON.parse(readFileSync(cursorPath, "utf8"))).toMatchObject({ calendarSnapshotFor: enabledAt });
+    const oldConnection = randomUUID();
+    await db.insert(calConnections).values({ id: oldConnection, accountId: world.accountId, provider: "ics" });
+
+    expect(await db.select().from(messages)).toHaveLength(2);
+    expect(await db.select().from(messageStates).where(eq(messageStates.messageId, mPhantom))).toHaveLength(1);
+    expect(await db.select().from(messageBodies).where(eq(messageBodies.messageId, mPhantom))).toHaveLength(1);
+    expect(JSON.parse(readFileSync(cursorPath, "utf8"))).toMatchObject({ sync: "cursor-seed", bootstrapping: false });
+
+    // ── Phase 2: the phantom was deleted on Cloud long ago. The next incremental /sync answers 410;
+    //    the re-pull's since=0 feed carries ONLY the surviving message. ──
+    const bootstrap = syncPage([
+      change("thread", tKeep, "create", 1, threadDTO(tKeep)),
+      change("message", mKeep, "create", 2, messageDTO(mKeep, tKeep)),
+    ], "cursor-fresh", false);
+
+    const auth = fakeAuth410ThenBootstrap(bootstrap);
+    const bootstrapFetch = auth.authedFetch.bind(auth);
+    let calendarPages = 0;
+    auth.authedFetch = async (path: string) => {
+      const url = new URL(path, "http://localhost");
+      if (url.pathname === "/sync/snapshot" && url.searchParams.get("phase") === "calendar") {
+        calendarPages++;
+        if (url.searchParams.has("cursor")) return new Response(null, { status: 503 });
+        return jsonRes({ ...NO_TAGS, calendarWindow: { daysBack: 365, daysAhead: 365, maxRows: 2000 }, nextCursor: "calendar-next" });
+      }
+      return bootstrapFetch(path);
+    };
+    const mirror = createCloudMirror({ db, world, auth, cursorPath, now: () => new Date() });
+    await mirror.pullOnce();
+    expect(calendarPages).toBe(2);
+
+    // THE SWEEP: the phantom message, its thread, state, folder_state and body are ALL gone.
+    expect(await db.select().from(messages).where(eq(messages.id, mPhantom)), "the phantom message was not swept").toHaveLength(0);
+    expect(await db.select().from(threads).where(eq(threads.id, tPhantom)), "the phantom thread was not swept").toHaveLength(0);
+    expect(await db.select().from(messageStates).where(eq(messageStates.messageId, mPhantom))).toHaveLength(0);
+    expect(await db.select().from(folderState).where(eq(folderState.messageId, mPhantom))).toHaveLength(0);
+    expect(await db.select().from(messageBodies).where(eq(messageBodies.messageId, mPhantom))).toHaveLength(0);
+
+    // The survivor and its thread/body are untouched — the sweep removes ONLY what the feed dropped.
+    expect(await db.select().from(messages).where(eq(messages.id, mKeep))).toHaveLength(1);
+    expect(await db.select().from(threads).where(eq(threads.id, tKeep))).toHaveLength(1);
+    expect(await db.select().from(messageBodies).where(eq(messageBodies.messageId, mKeep))).toHaveLength(1);
+
+    // The projection LEARNS the sweep: local delete change_log rows for the phantom message AND thread.
+    const deletes = await db.select().from(changeLog).where(eq(changeLog.op, "delete"));
+    expect(deletes.some((r) => r.entityType === "message" && r.entityId === mPhantom), "no delete row for the swept message").toBe(true);
+    expect(deletes.some((r) => r.entityType === "thread" && r.entityId === tPhantom), "no delete row for the swept thread").toBe(true);
+
+    expect(JSON.parse(readFileSync(cursorPath, "utf8"))).toMatchObject({ sync: "cursor-fresh", bootstrapping: false });
+    expect(await db.select().from(calConnections).where(eq(calConnections.id, oldConnection))).toHaveLength(1);
+    await mirror.stop();
+
+    const reads: (string | null)[] = [];
+    const feeds: (string | null)[] = [];
+    const recovered = fakeAuth([syncPage([], "cursor-after-calendar", false)]);
+    const recoveryFetch = recovered.authedFetch.bind(recovered);
+    recovered.authedFetch = async (path) => {
+      const url = new URL(path, "http://localhost");
+      if (url.pathname === "/sync/snapshot" && url.searchParams.get("phase") === "calendar") {
+        reads.push(url.searchParams.get("cursor"));
+        return jsonRes({ ...NO_TAGS, calendarWindow: { daysBack: 365, daysAhead: 365, maxRows: 2000 } });
+      }
+      if (url.pathname === "/sync") feeds.push(url.searchParams.get("since"));
+      return recoveryFetch(path);
+    };
+    await createCloudMirror({ db, world, auth: recovered, cursorPath, now: () => new Date() }).pullOnce();
+    expect(reads).toEqual(["calendar-next"]);
+    expect(feeds).toEqual(["cursor-fresh"]);
+    expect(await db.select().from(calConnections).where(eq(calConnections.id, oldConnection))).toHaveLength(0);
+    expect(await db.select({ id: messages.id }).from(messages)).toEqual([{ id: mKeep }]);
   });
 });
 

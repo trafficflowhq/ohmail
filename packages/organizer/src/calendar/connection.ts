@@ -8,8 +8,8 @@
  * The reads made before an account is bound are the roster's (`roster.ts`), of `cal_connections`.
  */
 import { and, eq } from "drizzle-orm";
-import { AccountErasedError, MailboxErasedError, bindDb, calConnections, type Tx } from "@trafficflow/db";
-import { CalendarConnectionGone, fencedConnectionWrite } from "@trafficflow/db/calendar";
+import { AccountErasedError, MailboxErasedError, bindDb, calConnections, fencedAccountWrite, type LedgerTx, type Tx } from "@trafficflow/db";
+import { CalendarConnectionGone, fencedConnectionWrite, sweepCalendarConnectionStep } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
 
 const POOL: unique symbol = Symbol("calendar pool");
@@ -73,6 +73,18 @@ export function unboundPool(pool: CalendarPool): Tx {
  */
 export function passDb(pool: CalendarPool, accountId: string): ConnectionDb {
   return { [BOUND]: bindDb(pool[POOL], { account: accountId }), accountId };
+}
+
+/** Finish one committed disconnect step without opening a provider or consulting the calendar switch. */
+export async function sweepDisconnectedCalendar(db: ConnectionDb, key: ConnectionKey) {
+  if (key.accountId !== db.accountId) throw new Error("a calendar disconnect must use its own account");
+  try {
+    return await fencedAccountWrite(db[BOUND], { accountId: key.accountId }, (tx) =>
+      sweepCalendarConnectionStep(tx as unknown as LedgerTx, dialect(tx), { accountId: key.accountId, connectionId: key.id }));
+  } catch (err) {
+    if (err instanceof AccountErasedError) return null;
+    throw err;
+  }
 }
 
 /** Keep a provider turn's transactions bound to the credential it started with. */

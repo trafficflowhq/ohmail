@@ -7,10 +7,9 @@
  * is in a span by the device's own cases (`client-engine`'s `calendar-span.ts`), written once more
  * here in SQL over the derived columns ({@link heldBySpanSql}); a test holds the two to one table.
  * A changed occurrence also carries the same calendar’s series when it is outside the span.
- * Past the window's row ceiling the events farthest from today are left out first: the first page
- * narrows the window to the distance of its last kept event, and the walk keeps that span.
+ * Past the default window's row ceiling the events farthest from its starting time are left out first.
  */
-import { and, asc, desc, eq, exists, gt, gte, isNotNull, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, exists, gt, gte, inArray, isNotNull, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { alias, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { calCalendars, calConnections, calEvents, calSuggestions } from "@trafficflow/db/mail";
 import type { CalendarRecordKind, CalendarWindow } from "@ohmail/wire";
@@ -75,25 +74,22 @@ function distanceFrom(at: SQL, e: RangeColumns): SQL<string> {
     else extract(epoch from (${at} - ${e.endsAt})) end)`;
 }
 
-/**
- * The window, narrowed to its row ceiling: when more events than `maxRows` can touch it, the span
- * around `now` out to the distance of the `maxRows`-th nearest one (zero while it is on, else its
- * nearer end's distance, as the device measures it).
- */
-async function narrowToCeiling(db: Db, accountId: string, span: CalendarSpanMs, now: Date, maxRows: number): Promise<CalendarSpanMs> {
-  const at = sql`${now.toISOString()}::timestamptz`;
+/** Select the nearest rows. A master ranks no later than its first admitted exception. */
+function nearestRows(db: Db, accountId: string, span: CalendarSpanMs, rankAt: number, maxRows: number) {
+  const at = sql`${new Date(rankAt).toISOString()}::timestamptz`;
   const { exception, exceptionInSpan, heldRows } = calendarSpanQueries(db, span);
-  // A series served only for a changed occurrence belongs at that occurrence's distance.
+  const master = alias(calEvents, "held_master");
   // scoped-by: exceptionInSpan matches the enclosing event’s account, calendar and series.
   const nearest = db.select({ distance: sql`min(${distanceFrom(at, exception)})` }).from(exception).where(exceptionInSpan);
   const distance = sql<string>`least(${distanceFrom(at, calEvents)}, (${nearest}))`;
-  const [row] = await db.select({ seconds: distance }).from(calEvents)
+  return db.select({ id: calEvents.id }).from(calEvents)
+    .leftJoin(master, and(
+      eq(master.accountId, calEvents.accountId), eq(master.calendarId, calEvents.calendarId),
+      eq(master.uid, calEvents.uid), eq(master.recurrenceId, ""), isNotNull(master.repeatRule), ne(calEvents.recurrenceId, ""),
+    ))
     .where(and(eq(calEvents.accountId, accountId), heldRows))
-    .orderBy(distance, asc(calEvents.id))
-    .limit(1).offset(maxRows - 1);
-  if (row === undefined) return span;
-  const reach = Math.ceil(Number(row.seconds) * 1000);
-  return { fromMs: Math.max(span.fromMs, now.getTime() - reach), toMs: Math.min(span.toMs, now.getTime() + reach) };
+    .orderBy(distance, sql`coalesce(${master.id}, ${calEvents.id})`, sql`${master.id} is not null`, asc(calEvents.id))
+    .limit(maxRows);
 }
 
 /** Built records of one kind, in the order of `ids`; an id gone by the build is left out. */
@@ -123,7 +119,7 @@ async function leadRecords(db: Db, accountId: string, excludeSuggestions: boolea
 
 /** One page of the calendar's phase; the reader charges it to the page and cuts the events. */
 export async function calendarSnapshotPage(db: Db, accountId: string, q: CalendarSnapshotQuery): Promise<CalendarSnapshotSlice> {
-  const span = q.span ?? await narrowToCeiling(db, accountId, windowSpan(q.now, q.window), q.now, q.window.maxRows);
+  const span = q.span ?? windowSpan(q.now, q.window);
   const after = q.after;
   const { exception, exceptionInSpan, heldRows } = calendarSpanQueries(db, span);
   // scoped-by: exceptionInSpan matches the enclosing event’s account, calendar and series.
@@ -140,7 +136,8 @@ export async function calendarSnapshotPage(db: Db, accountId: string, q: Calenda
   }
   // scoped-by: leads with eq(calEvents.accountId, accountId)
   const rows = await db.select({ id: calEvents.id, startsAt: start }).from(calEvents)
-    .where(and(eq(calEvents.accountId, accountId), heldRows, keyset))
+    .where(and(eq(calEvents.accountId, accountId), heldRows, keyset,
+      q.rankAt === undefined ? undefined : inArray(calEvents.id, nearestRows(db, accountId, span, q.rankAt, q.window.maxRows))))
     .orderBy(asc(start), asc(calEvents.id))
     .limit(q.limit);
   const keysetOf = (r: { id: string; startsAt: Date }): CalendarKeyset => ({ startsAtMs: r.startsAt.getTime(), id: r.id });

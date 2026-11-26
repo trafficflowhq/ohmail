@@ -17,7 +17,7 @@ export const CALENDAR_PASSES = { sync: "calendar_sync", notices: "calendar_notic
 export interface DueConnection extends ConnectionKey {
   /** The stored provider word; a word this build does not serve is `provider_off`, never a dial. */
   readonly provider: string;
-  readonly status: "active" | "failing";
+  readonly status: "active" | "failing" | "removing";
 }
 
 /**
@@ -88,7 +88,7 @@ export interface CalendarNoticeInput {
   readonly key: ConnectionKey;
   readonly provider: CalendarProvider;
   readonly connection: Connection;
-  readonly calendars: readonly { readonly id: string; readonly providerId: string }[];
+  readonly calendars: readonly { readonly id: string; readonly providerId: string; readonly access: string }[];
   readonly signal: AbortSignal;
 }
 export type CalendarNoticeHook = (input: CalendarNoticeInput) => Promise<{ readonly live: boolean }>;
@@ -152,12 +152,16 @@ export interface CalendarSyncDeps {
   readonly log: Logger;
   readonly drainWrites?: CalendarWriteDrain;
   readonly notices?: CalendarNoticeHook;
+  /** Verified coverage by calendar, ending no later than the next renewal is due. */
+  readonly noticeCoverage?: (input: CalendarNoticeInput) => Promise<ReadonlyMap<string, number>>;
   /** Pages and wall time one turn may take before the connection queues again behind the others. */
   readonly turn?: { readonly pages: number; readonly ms: number };
 }
 
 /** The process's memory of the calendar's passes. Bounded; a lost entry costs a reading, never a row. */
 export interface CalendarSyncMemory {
+  /** Short OAuth grants and concurrent refreshes for this worker only. */
+  readonly bearers: import("./sign-in.js").CalendarBearers;
   /** Readings kept from one turn to the next, by calendar row id; at most `MAX_OPEN_READINGS`, and none given up for another. */
   readonly readings: Map<string, OpenReading>;
   /** Calendars whose last reading needed a place and found none: they begin again only when one is free. */

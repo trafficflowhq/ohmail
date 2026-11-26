@@ -188,8 +188,11 @@ function assertWriteShape(deps: GuardDeps, req: HttpRequest, url: string): boole
   if (req.precondition === undefined) throw new TypeError("a calendar write carries no precondition");
   if (req.validators !== null) throw new TypeError("a calendar write carries a reading's validators");
   if (req.precondition.kind === "unchanged" && !sendableTag(req.precondition.tag)) throw new TypeError("a calendar write's version is no entity tag");
-  // Only a notice channel is removed without a version, and only removed: nothing is ever changed or made without one.
   if (req.precondition.kind === "own-channel" && req.method !== "DELETE") throw new TypeError("only the removal of a notice channel goes without a version");
+  if (req.precondition.kind === "own-channel-renewal" && (
+    req.method !== "PATCH" || !/^https:\/\/[^/?#]+\/v1\.0\/subscriptions\/[a-f0-9-]{36}$/.test(url)
+    || !/^\{"expirationDateTime":"[0-9TZ:.-]+"\}$/.test(req.body ?? "")
+  )) throw new TypeError("a notice renewal can only extend a Graph subscription");
   return true;
 }
 
