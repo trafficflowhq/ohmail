@@ -325,6 +325,8 @@ export interface GetSnapshotOptions {
    * does not know.
    */
   calendar?: CalendarFeedPort;
+  /** On a mirror, serve its calendar only once the snapshot for this switch has been copied. */
+  calendarReadFor?: string | null;
   /** The account's named devices as the store this copy mirrors knows them; as {@link GetChangesOptions.devices}. */
   devices?: DeviceNumbersPort;
   /** With `phase: "calendar"`: the span to serve instead of the window around today. */
@@ -1098,7 +1100,10 @@ export class SyncService {
        gate where the calendar's phase would begin or goes on. */
     let enabledAtRead: Promise<Date | null> | undefined;
     const enabledAt = (): Promise<Date | null> => (enabledAtRead ??= port!.enabledAt(db, accountId));
-    const servedCalendar = (): Promise<CalendarFeedPort | null> => servesCalendar(port, opts.types, enabledAt);
+    const servedCalendar = () => servesCalendar(port, opts.types, async () => {
+      const at = await enabledAt();
+      return opts.calendarReadFor === undefined || at?.toISOString() === opts.calendarReadFor ? at : null;
+    });
 
     // THE CALENDAR'S PHASE: a page of it, or the phase alone (`?phase=calendar`, page 1), which is
     // named once like `tailOnly`: the mail's page 1 stays the one `cursor === null` block.

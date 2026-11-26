@@ -2429,7 +2429,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           return json({ error: { code: "validation_failed", message: `${bad} must be an id` } }, 400);
         }
         try {
-          const answer = await read.route.handler(req, ctxFor(core.accountId, core.userId, core.sessionId), read.params);
+          const answer = await read.route.handler(
+            req, ctxFor(core.accountId, core.userId, core.sessionId), read.params, liveMirror.calendarReadFor(),
+          );
           // THE ONE FACT THE MIRROR ADDS ABOUT SOMEWHERE ELSE. `GET /mailboxes` is served from
           // this database, so every number on those rows is a number about the COPY; a strip cannot
           // say how much of the account is here from a list whose halves both come from the same

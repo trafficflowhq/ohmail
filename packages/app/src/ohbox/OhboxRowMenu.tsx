@@ -48,6 +48,7 @@ export function OhboxRowMenu({
       [picked ? "deselect" : "select"]: () => model.togglePick(row.openTarget.id),
       delete: onAsk && canDelete ? ask("delete") : undefined,
     },
+    row.members.map(({ id }) => id),
     true,
   );
   return <MailRowMenu target={{ at, anchor }} onClose={onClose} items={items} />;

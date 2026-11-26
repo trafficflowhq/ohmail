@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import { act, type ReactNode } from "react";
+import { within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import type { WorldMail } from "../src/state/live";
 import { SCREENER_ACKNOWLEDGEMENTS, type ScreenerAcknowledgement } from "@ohmail/app-logic/consent/screener-acknowledgements";
@@ -11,7 +12,7 @@ const world = vi.hoisted(() => ({
     acknowledged: 0,
     remember: vi.fn<(kind: ScreenerAcknowledgement) => void>(),
   },
-  actions: { deleteMessage: vi.fn() },
+  actions: { deleteMessage: vi.fn(), pileToggle: vi.fn() },
 }));
 vi.mock("react-native", () => rnDom);
 vi.mock("react-native-safe-area-context", () => ({
@@ -35,8 +36,9 @@ vi.mock("../src/ui/glass", () => ({
 vi.mock("../src/ui/Sheet", () => ({
   Sheet: ({ open, label, children }: { open: boolean; label: string; children: ReactNode }) =>
     open ? <section aria-label={label}>{children}</section> : null,
-  SheetRow: ({ label, onPress }: { label: string; onPress: () => void }) =>
-    <button onClick={onPress}>{label}</button>,
+  SheetRow: ({ label, onPress, disabled, accessibilityHint }: {
+    label: string; onPress: () => void; disabled?: boolean; accessibilityHint?: string;
+  }) => <button onClick={onPress} disabled={disabled} title={accessibilityHint}>{label}</button>,
 }));
 vi.mock("../src/compose/attach-native", () => ({ nativeAttachPicker: null, nativeImageShrink: null }));
 vi.mock("../src/mail/open-attachment-native", () => ({ shareAttachmentBytes: null }));
@@ -62,6 +64,44 @@ const letter: WorldMail = {
   folder: "INBOX", presentedFolder: "INBOX", mailboxId: "mailbox", pile: null,
   canReplyAll: false, replyAllHead: null, noForward: false, forwardAsk: null, labels: [],
 };
+
+it("holds both filing controls on a selected reply until it has a mailbox copy", () => {
+  const reply = { ...letter, pendingReplyCopy: true as const };
+  const view = mount(<MessageActions m={reply} />);
+  try {
+    act(() => { view.el.querySelector<HTMLElement>(`[data-label="${Copy.actionMore}"]`)!.click(); });
+    const pane = within(view.el);
+    const later = pane.getByRole<HTMLButtonElement>("button", { name: Copy.actionLater });
+    const park = pane.getByRole<HTMLButtonElement>("button", { name: Copy.actionSetAside });
+    expect(later.disabled).toBe(true);
+    expect(park.disabled).toBe(true);
+    expect(later.title).toBe(Copy.replyCopyWaiting);
+    expect(park.title).toBe(Copy.replyCopyWaiting);
+    expect(pane.getByText(Copy.replySending)).toBeTruthy();
+    act(() => { later.click(); park.click(); });
+    expect(world.actions.pileToggle).not.toHaveBeenCalled();
+  } finally {
+    view.unmount();
+  }
+});
+
+it.each([
+  [Copy.actionSetAside, "setAside"],
+  [Copy.actionLater, "replyLater"],
+])("keeps the ordinary filing call from the phone reader for %s", (label, kind) => {
+  world.actions.pileToggle.mockClear();
+  const view = mount(<MessageActions m={letter} />);
+  try {
+    act(() => { view.el.querySelector<HTMLElement>(`[data-label="${Copy.actionMore}"]`)!.click(); });
+    const button = within(view.el).getByRole<HTMLButtonElement>("button", { name: label });
+    expect(button.disabled).toBe(false);
+    act(() => { button.click(); });
+    expect(world.actions.pileToggle.mock.calls).toEqual([["letter", kind]]);
+  } finally {
+    world.actions.pileToggle.mockClear();
+    view.unmount();
+  }
+});
 
 it.each(["ohbox", "reads", "receipts"] as const)("the %s reader floats its actions over the letter", (place) => {
   const view = mount(<MessageActions m={{ ...letter, place }} />);

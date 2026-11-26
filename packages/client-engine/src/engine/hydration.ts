@@ -564,7 +564,6 @@ export abstract class EngineHydration extends EnginePastEnd {
     let cursor: string | undefined;
     let applied = false;
     let draftsIn = false;
-    let calendarRead = false;
     for (;;) {
       let page: SyncSnapshotPage;
       try {
@@ -595,7 +594,6 @@ export abstract class EngineHydration extends EnginePastEnd {
       }
       if (page.calendarWindow !== undefined) {
         this.calendarWindow = page.calendarWindow;
-        calendarRead = true;
       }
       // Before the count and before the apply, so neither the received count nor the store ever
       // sees the bytes. See {@link OhmailEngine.withoutSentDraftText}.
@@ -617,7 +615,7 @@ export abstract class EngineHydration extends EnginePastEnd {
         });
         await this.persistReceived();
         // Whether this first load read the calendar whole, for the switch it brought (`calendar.ts`).
-        await this.noteCalendarRead(calendarRead);
+        await this.noteCalendarRead(page.calendarWindow !== undefined);
       } else {
         this.noteApplied(page.changes);
         await this.store.applyChanges(page.changes); // rows only — the cursor stays "0"

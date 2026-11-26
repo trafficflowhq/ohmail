@@ -1944,7 +1944,7 @@ describe("a sign-out the server did not hear is owed, and sent when it can be", 
     });
     await profiles.markPendingWipe(row.id, mirrorOwnerKey(origin, row.accountId));
     for (let i = 0; i < 8; i += 1) {
-      await profiles.markPendingSignOut({ origin: "https://elsewhere.example", pin: null, refreshToken: `t${i}` });
+      await profiles.markPendingSignOut({ origin: i === 0 ? origin : "https://elsewhere.example", pin: null, refreshToken: `t${i}` });
     }
     env.fetchImpl = async () => { throw new TypeError("offline"); };
     env.familyDigest = digest;
@@ -1968,9 +1968,14 @@ describe("a sign-out the server did not hear is owed, and sent when it can be", 
     } else {
       expect(remedy).toContain("same account");
       expect(remedy).not.toContain("Travel phone");
+      expect(remedy).toContain("Settings → Account");
+      expect(remedy).toContain("Settings → Devices");
+      expect(signOutNoticeText(origin, undefined, undefined, false)).toContain("Settings → Account");
+      expect(signOutNoticeText(origin, undefined, undefined, false)).toContain("Settings → Devices");
     }
     expect(stored).not.toContain(row.refreshToken);
     expect(await familyReplacedAt({ ...env, profiles: restarted }, origin)).toBe(notice!.previousSession);
+    expect(await restarted.pendingSignOuts()).toHaveLength(8);
     expect(await familyReplacedAt({ ...env, profiles: restarted }, "https://different.example")).toBeNull();
   });
 

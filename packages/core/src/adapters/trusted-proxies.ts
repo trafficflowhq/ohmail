@@ -36,10 +36,10 @@ export interface TrustedProxies {
   has(ip: string): boolean;
   /**
    * Is this canonical peer trusted? Resolves the names first on a miss or a stale hit; never
-   * rejects. `forwarding`: the request carries `x-forwarded-for`, so it may be a proxy that has
-   * not been judged yet, and it waits for the next permitted lookup rather than being refused.
+   * rejects. With `refreshOnMiss`, a negative entry can be refreshed within the lookup budget.
+   * A peer that has never been judged waits for the next permitted lookup.
    */
-  trustsPeer(ip: string, forwarding?: boolean): Promise<boolean>;
+  trustsPeer(ip: string, refreshOnMiss?: boolean): Promise<boolean>;
 }
 
 export interface TrustedProxyOptions {
@@ -263,7 +263,7 @@ export function makeTrustedProxies(entries: readonly string[], opts: TrustedProx
   return {
     empty,
     has: (ip) => ip !== "" && (staticHas(ip) || resolved.has(ip)),
-    async trustsPeer(ip, forwarding = false) {
+    async trustsPeer(ip, refreshOnMiss = false) {
       if (ip === "" || empty) return false;
       try {
         if (staticHas(ip)) return true;
@@ -278,14 +278,13 @@ export function makeTrustedProxies(entries: readonly string[], opts: TrustedProx
           else return true;
           return resolved.has(ip);
         }
-        // A miss. A peer a lookup refuted is not asked about again within the TTL unless it now
-        // forwards (a proxy recreated at a reused address); a forwarder never judged waits for
-        // the next permitted lookup; anything else takes the lookup the budget allows, or none.
+        // A configured proxy may have moved to a recently rejected address. A refresh
+        // still shares the same lookup budget as all the other peers.
         const refutedAt = refuted.get(ip);
-        if (refutedAt !== undefined && now() - refutedAt < ttlMs && !forwarding) return false;
+        if (refutedAt !== undefined && now() - refutedAt < ttlMs && !refreshOnMiss) return false;
         if (inflight) await inflight;
         else if (allowed()) await refresh();
-        else if (forwarding && refutedAt === undefined) await nextSlot();
+        else if (refreshOnMiss && refutedAt === undefined) await nextSlot();
         else return false;
         if (resolved.has(ip)) return true;
         if (complete) refute(ip);

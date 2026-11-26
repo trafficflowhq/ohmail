@@ -1,6 +1,6 @@
 {
-  "release": "2.0.8",
-  "tag": "f9cb88ea7797668e11b93a1507f68c1b0eae7589",
+  "release": "2.0.9",
+  "tag": "023522f744b9a2eadfdb931e0a88eed8483d3fef",
   "note": "Every migration file the three journals (mail, Cloud, device store) named at this commit, with the sha256 drizzle records when it applies one. A released migration is immutable: edit it and released-migrations-are-frozen.test.ts reddens. Write a new migration instead. A device store knows an applied entry by its file name alone, so a device-store file is also never renamed or removed, no allowance admits an edit of one, and no new entry sorts below the highest one pinned here. scripts/pin-released-migrations.mjs writes this file.",
   "files": {
     "packages/db-mail/drizzle-sqlite/0001_baseline.sql": "cfb0daa1bf793284760283078d736564bb5fcdca3472a2ef3df03bde2be7d53d",
@@ -361,7 +361,7 @@
     "packages/db/drizzle-cloud/0105_calendar_sign_in.sql": "927ace0703e435a6a65babefc7198829450b6038401b57e19041995905a1b00b",
     "packages/db/drizzle-cloud/0106_security_notice_recipients.sql": "6868a3224192c76c19c1a506ff77cfd02df729023e0073494663fc4610a7287d",
     "packages/db/drizzle-cloud/0107_staff_enrollment_generation.sql": "4ee9cca0e645950adccdce0d3e3f633e8d51c7cc1ca36aa036e17adebed55685",
-    "packages/db/drizzle-cloud/0108_worker_topology.sql": "7ad92402a4e37693acb0e00dcaf3c7277ad2ef02061767c81c94592e2c86c4ab",
+    "packages/db/drizzle-cloud/0108_worker_topology.sql": "f0575d6cb0a1c3a5742f32f9258b913b8119de523886499fc2f796408e73dc94",
     "packages/db/drizzle-cloud/0110_platform_signal_traffic.sql": "c63e57c800739a057b439d7421d6abb21197d7d05b61f75d200bddcf11be3b4f"
   }
 }

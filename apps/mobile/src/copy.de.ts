@@ -457,9 +457,9 @@ export const DE: Deck = {
   serversSignOutById: (origin: string, id: string) =>
     `Öffne auf ${origin} Einstellungen → Geräte und widerrufe das Gerät mit der ID ${id}, falls es dort noch angezeigt wird.`,
   serversSignOutLegacy: (origin: string) =>
-    `Melde dich auf diesem Handy erneut beim selben Account auf ${origin} an. Wenn du nicht prüfen kannst, ob die alte Sitzung beendet ist, ändere dein Passwort unter Einstellungen → Sicherheit, um die anderen Sitzungen zu beenden.`,
+    `Melde dich auf diesem Handy erneut beim selben Account auf ${origin} an. Wenn du nicht prüfen kannst, ob die alte Sitzung beendet ist, ändere dein Passwort in der Web-App unter Einstellungen → Account, um die anderen Sitzungen zu beenden. Wenn der Server auf einem Computer läuft, öffne dort in ohmail Einstellungen → Geräte und entferne die alte Kopplung. Wenn du sie nicht erkennen kannst, entferne dort alle Handy-Kopplungen.`,
   serversSignOutRecovery: (origin: string) =>
-    `Ändere dein Passwort auf einem anderen angemeldeten Gerät unter Einstellungen → Sicherheit auf ${origin}, um die anderen Sitzungen zu beenden.`,
+    `Ändere dein Passwort auf ${origin} in der Web-App unter Einstellungen → Account, um die anderen Sitzungen zu beenden. Wenn der Server auf einem Computer läuft, öffne dort in ohmail Einstellungen → Geräte und entferne die alte Kopplung. Wenn du sie nicht erkennen kannst, entferne dort alle Handy-Kopplungen.`,
   serversSignOutDone: "Ich habe die Geräteliste geprüft",
   serversEmpty: "Noch keine Kopplungen.",
   serversInstallUnknown: (detail: string) =>
@@ -1807,6 +1807,7 @@ export const DE: Deck = {
   sendCancelledInDrafts: "Senden abgebrochen. Die Nachricht liegt in den Entwürfen.",
   sendCancelledNotKept: "Senden abgebrochen. Es wurde nichts gesendet, aber der Text konnte nicht als Entwurf behalten werden.",
   replySending: "Wird gesendet …",
+  replyCopyWaiting: "Die Kopie im Postfach steht noch aus.",
   replySent: "Gesendet",
   replyEarlierWent: "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
   earlierGoing: "Eine frühere Fassung dieser Nachricht wird bereits gesendet. Dein neuerer Text wird nicht als zweite Kopie gesendet.",

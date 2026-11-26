@@ -257,6 +257,7 @@ function BehindMore({
         keyHint={verb.keyHint}
         label={verb.name}
         disabled={verb.disabled}
+        description={verb.disabledHint}
         onPress={() => {
           const at = more.current;
           if (verb.id !== "resurface" && verb.id !== "tag" && verb.id !== "move") close();

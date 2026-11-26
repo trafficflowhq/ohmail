@@ -64,7 +64,11 @@ function PileItem({
           ? { label: tl("row.done"), icon: "check", onPress: () => model.done(row) }
           : undefined
       }
-      actions={m ? { message: m, verbs: model.verbs, screen: contact.screen(m) } : undefined}
+      actions={
+        m
+          ? { message: m, filingIds: row.entry.memberIds, verbs: model.verbs, screen: contact.screen(m) }
+          : undefined
+      }
       menuItems={
         m && model.pile === "resurface"
           ? () => [{ label: tl("row.done"), icon: "check", onPress: () => model.done(row) }]

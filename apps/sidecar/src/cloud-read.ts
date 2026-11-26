@@ -28,7 +28,7 @@ export interface ReadRoute {
   method: string;
   /** e.g. `/messages/:id/body`. `:name` is a single-segment parameter. */
   pattern: string;
-  handler: (req: Request, ctx: ServiceContext, params: Record<string, string>) => Promise<Response>;
+  handler: (req: Request, ctx: ServiceContext, params: Record<string, string>, calendarReadFor?: string | null) => Promise<Response>;
   /**
    * The ACCOUNT answers this route whenever it can be reached and this handler only while it
    * cannot (`cloud-account-first.ts`); the reason is pinned by `cloud-read-account-first.test.ts`.
@@ -140,7 +140,7 @@ export const READ_ROUTES: ReadRoute[] = [
   {
     method: "GET",
     pattern: "/sync/snapshot",
-    handler: async (req, ctx) => {
+    handler: async (req, ctx, _params, calendarReadFor) => {
       const url = new URL(req.url);
       const cursor = url.searchParams.get("cursor");
       const limitRaw = url.searchParams.get("limit");
@@ -150,8 +150,9 @@ export const READ_ROUTES: ReadRoute[] = [
       // And the calendar's phase alone: this copy keeps the hosted account's calendar.
       const asked = url.searchParams.get("phase");
       const phase = asked === "tail" ? "tail" as const : asked === "calendar" ? "calendar" as const : undefined;
-      // The kinds named matter only to the calendar's gate, so only the calendar's are kept.
-      const types = (url.searchParams.get("types") ?? "").split(",").map((t) => t.trim()).filter(isCalendarRecordKind);
+      // The calendar gate needs both its own kinds and the settings record that carries its switch.
+      const types = (url.searchParams.get("types") ?? "").split(",").map((t) => t.trim())
+        .filter((t) => t === "settings" || isCalendarRecordKind(t));
       const span = phase === "calendar" ? namedCalendarSpan(url.searchParams.get("from"), url.searchParams.get("to")) : undefined;
       return answer<"GET /sync/snapshot">()(
         await syncService.getSnapshot(ctx, {
@@ -160,6 +161,7 @@ export const READ_ROUTES: ReadRoute[] = [
           ...(phase ? { phase } : {}),
           ...(types.length > 0 ? { types } : {}),
           calendar: calendarFeed,
+          calendarReadFor,
           // The hosted account's devices, as the mirror last read them (`cloud-mirror-devices.ts`).
           devices: hostedDevices,
           ...(span ? { span } : {}),

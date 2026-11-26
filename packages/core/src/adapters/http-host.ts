@@ -78,7 +78,7 @@ export interface AdapterOptions {
    * nobody's word, said once per address as `proxy_peer_is_client`. Absent, nothing changes.
    */
   proxyPeerHeader?: string;
-  /** One fact about a forwarding header, said once per (kind, peer) and bounded; the caller logs it. */
+  /** Untrusted forwarding is reported once per listener. Other notes are bounded per kind and peer. */
   onForwardingNote?: (note: ForwardingNote) => void;
 }
 
@@ -86,7 +86,7 @@ export interface AdapterOptions {
 export type SocketRefusal = "bound" | "header_timeout";
 
 /**
- * `untrusted_forwarder`: a peer outside the set sent `x-forwarded-for`, which usually means a proxy
+ * `untrusted_forwarder`: a peer outside the set sent forwarding headers, which usually means a proxy
  * nobody named. `no_client_address`: a trusted peer sent no usable client address.
  * `proxy_peer_is_client`: the client a trusted proxy named is its own socket peer, so it believed
  * nobody's header and every visitor arriving that way shares that address; `peer` is that address.
@@ -176,7 +176,6 @@ function hasBody(req: IncomingMessage): boolean {
 function forwardFor(headers: Headers, peer: string, trust: ForwardingTrust): string {
   const inbound = headers.get("x-forwarded-for");
   if (!trust.peerTrusted) {
-    if (inbound !== null && peer !== "") trust.onNote?.({ kind: "untrusted_forwarder", peer });
     if (peer !== "") headers.append("x-forwarded-for", peer);
     else headers.delete("x-forwarded-for");
     return "";
@@ -215,12 +214,20 @@ const WEB_CLIENT_IP = "x-ohmail-client-ip";
  * Build the fetch Request for one inbound message. Exported for the adapter's own tests. `signal`:
  * the client's leave ({@link serve} aborts it when the socket closes before the answer is written).
  */
-export function toWebRequest(
-  req: IncomingMessage,
-  opts: Pick<AdapterOptions, "bodyMaxBytes" | "proxyPeerHeader" | "clientIpSecret" | "clientIpHeader"> & {
-    onTooLarge: () => void; trust?: ForwardingTrust; signal?: AbortSignal;
-  },
-): Request {
+type WebRequestOptions = Pick<AdapterOptions, "bodyMaxBytes" | "proxyPeerHeader" | "clientIpSecret" | "clientIpHeader"> & {
+  onTooLarge: () => void; trust?: ForwardingTrust; signal?: AbortSignal;
+};
+
+function hasForwardingHeaders(req: IncomingMessage): boolean {
+  return Object.keys(req.headers).some((name) =>
+    name === "forwarded" || name === "via" || name === "x-real-ip" || name.startsWith("x-forwarded-"));
+}
+
+export function toWebRequest(req: IncomingMessage, opts: WebRequestOptions): Request {
+  return requestFromNode(req, opts).request;
+}
+
+function requestFromNode(req: IncomingMessage, opts: WebRequestOptions): { request: Request; socketClientIp: string } {
   // The scheme is nominal — this process sits behind the operator's proxy and nothing downstream
   // reads it; the HOST half is real and feeds the cookie-auth decision (every asserted host must
   // be allow-listed, so a forged Host can only ever turn cookies off).
@@ -272,22 +279,31 @@ export function toWebRequest(
   const clientIp = webIp || (directAddress && !directAddress.includes("%") && isIP(directAddress)
     ? canonicalIp(directAddress)
     : "");
+  const socketIp = canonicalIp(req.socket?.remoteAddress ?? "");
+  let socketClientIp = clientIp || socketIp;
+  if (opts.trust && !opts.trust.peerTrusted && socketIp !== "" &&
+      (hasForwardingHeaders(req) || webProof !== undefined)) {
+    opts.trust.onNote?.({ kind: "untrusted_forwarder", peer: socketIp });
+  }
   if (clientIp !== "") {
     headers.set("x-forwarded-for", clientIp);
   } else if (opts.trust) {
-    const client = forwardFor(headers, canonicalIp(req.socket?.remoteAddress ?? ""), opts.trust);
+    const client = forwardFor(headers, socketIp, opts.trust);
     if (proxyPeer !== "" && client === proxyPeer) opts.trust.onNote?.({ kind: "proxy_peer_is_client", peer: client });
+    // A configured client-address header is the authority for this proxy. If it is
+    // missing or invalid, a different forwarding header does not establish identity.
+    if (opts.clientIpHeader === undefined && client !== "") socketClientIp = client;
   } else {
     const peer = req.socket?.remoteAddress ?? "";
     if (peer) headers.append("x-forwarded-for", peer);
   }
-
   const method = req.method ?? "GET";
+  const init = { method, headers, ...(opts.signal ? { signal: opts.signal } : {}) };
   // GET/HEAD are ALWAYS body-less here — undici refuses to construct them with one, and
   // `serve()` has already answered 400 + destroyed the connection for the body-carrying form,
   // so this branch only decides the Request shape for a caller that bypassed serve (a test).
   if (method === "GET" || method === "HEAD" || !hasBody(req)) {
-    return new Request(url, { method, headers, ...(opts.signal ? { signal: opts.signal } : {}) });
+    return { request: new Request(url, init), socketClientIp };
   }
 
   // Point 4's second half: the counting transform behind the declared-length check. It errors
@@ -309,7 +325,7 @@ export function toWebRequest(
 
   // Point 1: the socket's own stream, as a web stream, with the half-duplex marker.
   const body = Readable.toWeb(req.pipe(cap)) as unknown as ReadableStream;
-  return new Request(url, { method, headers, body, duplex: "half", ...(opts.signal ? { signal: opts.signal } : {}) } as RequestInit);
+  return { request: new Request(url, { ...init, body, duplex: "half" } as RequestInit), socketClientIp };
 }
 
 /** Write one fetch Response onto the node response. Exported for the adapter's own tests. */
@@ -345,13 +361,14 @@ export async function writeWebResponse(res: ServerResponse, response: Response):
 }
 
 /**
- * Stand the server up around one `handle(Request) → Response`. The caller owns `listen()` and
+ * Stand the server up around one handler, with the client address established by the socket and
+ * its trusted forwarding configuration. The caller owns `listen()` and
  * shutdown ordering (`apps/server/src/index.ts`: close the listener, then the wake hub, then the
  * pool; `apps/sidecar/src/host-listener.ts`: close the listener before the stdio host and the
  * store).
  */
 export function makeHttpServer(
-  handle: (req: Request) => Promise<Response>,
+  handle: (req: Request, socketClientIp: string) => Promise<Response>,
   opts: AdapterOptions,
 ): Server {
   const note = onceEachPeer(opts.onForwardingNote);
@@ -411,7 +428,14 @@ const NOTED_PEERS_MAX = 256;
 function onceEachPeer(say?: (note: ForwardingNote) => void): ((note: ForwardingNote) => void) | undefined {
   if (!say) return undefined;
   const said = new Set<string>();
+  let warnedUntrusted = false;
   return (note) => {
+    if (note.kind === "untrusted_forwarder") {
+      if (warnedUntrusted) return;
+      warnedUntrusted = true;
+      say(note);
+      return;
+    }
     const key = `${note.kind} ${note.peer}`;
     if (said.has(key) || said.size >= NOTED_PEERS_MAX) return;
     said.add(key);
@@ -422,7 +446,7 @@ function onceEachPeer(say?: (note: ForwardingNote) => void): ((note: ForwardingN
 async function serve(
   req: IncomingMessage,
   res: ServerResponse,
-  handle: (r: Request) => Promise<Response>,
+  handle: (req: Request, socketClientIp: string) => Promise<Response>,
   opts: AdapterOptions,
   note?: (n: ForwardingNote) => void,
 ): Promise<void> {
@@ -460,13 +484,12 @@ async function serve(
   let trust: ForwardingTrust | undefined;
   if (opts.trustedProxies) {
     const peer = canonicalIp(req.socket?.remoteAddress ?? "");
-    const forwarding = req.headers["x-forwarded-for"] !== undefined;
-    trust = { proxies: opts.trustedProxies, peerTrusted: await opts.trustedProxies.trustsPeer(peer, forwarding) };
+    trust = { proxies: opts.trustedProxies, peerTrusted: await opts.trustedProxies.trustsPeer(peer, true) };
     if (note) trust.onNote = note;
   }
 
   let tooLarge = false;
-  const webReq = toWebRequest(req, {
+  const { request: webReq, socketClientIp } = requestFromNode(req, {
     ...(trust ? { trust } : {}),
     ...(opts.proxyPeerHeader !== undefined ? { proxyPeerHeader: opts.proxyPeerHeader } : {}),
     ...(opts.clientIpSecret !== undefined ? { clientIpSecret: opts.clientIpSecret } : {}),
@@ -484,7 +507,7 @@ async function serve(
     },
   });
 
-  const response = await handle(webReq);
+  const response = await handle(webReq, socketClientIp);
   if (tooLarge) {
     await response.body?.cancel().catch(() => { /* released */ });
     return;

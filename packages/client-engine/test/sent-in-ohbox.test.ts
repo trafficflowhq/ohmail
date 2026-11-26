@@ -1,10 +1,12 @@
 import type { EngineMessage, Folder, MutationOutcome } from "@ohmail/wire";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { managedDomain } from "../../../test/support/fixture-credentials.js";
 import {
   MemoryMirrorStore,
+  MutationRejectedError,
   OhmailEngine,
   OPTIMISTIC_SENT_TTL_MS,
+  awaitsReplyCopy,
   consentPartition,
   ohboxView,
   presentationReader,
@@ -538,4 +540,61 @@ describe("a sent copy landing in a folder this client does not know as Sent asks
     expect(aged.retired, "the copy did not age out; the case measures nothing").toBe(true);
     expect(aged.second).toBe(0);
   });
+});
+
+it("releases filing at the Sent-copy retry deadline, even without a mailbox copy", async () => {
+  const source = msg({ id: "source", folder: "INBOX", threadId: "conversation" });
+  const store = await mirrorOf([source]);
+  let now = NOW.getTime();
+  const until = now + 60 * 60_000;
+  let copy: "pending" | "missing" | "failed" = "pending";
+  const adapter: EngineAdapter = {
+    mutate: async () => {
+      if (copy === "failed") throw new MutationRejectedError("Send failed", { code: "send_failed", retryable: false });
+      return {
+        changes: [], seq: null, providerMessageId: "<late-copy>", sentCopy: copy,
+        ...(copy === "pending" ? { sentCopyUntil: new Date(until).toISOString() } : {}),
+      };
+    },
+    sync: async () => ({
+      changes: { creates: [], updates: [], moves: [], deletes: [] },
+      cursor: "cursor", hasMore: false, serverTime: new Date(now).toISOString(),
+    }),
+    fetchBody: async () => null,
+    withdrawSend: async () => ({ outcome: "unsupported" }),
+  };
+  const start = () => new OhmailEngine({ adapter, store, now: () => new Date(now) });
+  const before = start();
+  const after = start();
+  vi.useFakeTimers();
+  try {
+    await before.start();
+    const sent = await before.mutate({ kind: "mail_send", inReplyTo: source.id, body: "Reply." });
+    expect(sent.status).toBe("confirmed");
+    expect(awaitsReplyCopy(store, source.id)).toBe(true);
+    await before.syncOnce();
+    before.dispose();
+    now = until - 1;
+    await after.start();
+    expect(awaitsReplyCopy(store, source.id)).toBe(true);
+    now = until;
+    await vi.advanceTimersByTimeAsync(1);
+    expect(awaitsReplyCopy(store, source.id)).toBe(false);
+    await after.syncOnce();
+    expect(awaitsReplyCopy(store, source.id)).toBe(false);
+    expect(after.read().get<EngineMessage>("message", source.id)?.id).toBe(source.id);
+
+    copy = "missing";
+    expect((await after.mutate({ kind: "mail_send", inReplyTo: source.id, body: "Delivered without a copy." })).status)
+      .toBe("confirmed");
+    expect(awaitsReplyCopy(store, source.id)).toBe(false);
+    copy = "failed";
+    expect((await after.mutate({ kind: "mail_send", inReplyTo: source.id, body: "Delivery refused." })).status)
+      .toBe("rolled_back");
+    expect(awaitsReplyCopy(store, source.id)).toBe(false);
+  } finally {
+    before.dispose();
+    after.dispose();
+    vi.useRealTimers();
+  }
 });

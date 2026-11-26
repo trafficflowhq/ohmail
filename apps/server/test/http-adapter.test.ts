@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { get as httpGet, request as httpRequest, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
 import { once } from "node:events";
 import { makeHttpServer, makeTrustedProxies, systemLookup, type AdapterOptions } from "../src/http.js";
-import { ACCOUNT_HEADER, JSON_BODY_MAX_BYTES } from "@trafficflow/api";
+import { ACCOUNT_HEADER, JSON_BODY_MAX_BYTES, type ApiDeps } from "@trafficflow/api";
 import { handleServerRequest, makeDispatch } from "../src/handler.js";
+import { loadSettings } from "../src/settings.js";
+import { MANAGED_ENV, PLAIN_ENV, PROCESS_DOOR } from "./_envs.js";
 
 /**
  * THE FOUR RULED CORRECTNESS POINTS of the hand-rolled adapter, each on a REAL socket — no
@@ -595,7 +597,92 @@ describe("a cancelled request body ends the connection instead of stalling it", 
   });
 });
 
-describe("managed ingress limits", () => {
+describe("listener ingress limits", () => {
+  it("refreshes a named proxy at a recently rejected socket address", async () => {
+    let now = 120_000;
+    let resolved = "127.0.0.2";
+    let lookups = 0;
+    const proxies = makeTrustedProxies(["proxy"], {
+      now: () => now,
+      lookup: async () => { lookups++; return [resolved]; },
+    });
+    const dispatch = makeDispatch({
+      routes: [], bodyMaxBytes: 1024, closeUndrained: true, logger: { error() {}, warn() {} },
+      buildDeps: () => ({}) as ApiDeps,
+      ingress: loadSettings(MANAGED_ENV, PROCESS_DOOR).network.ingress,
+    });
+    const port = await listen(dispatch, { ...OPTS, trustedProxies: proxies, clientIpHeader: "x-real-ip" });
+    const base = `http://127.0.0.1:${port}`;
+    const read = (ip: string) => fetch(base + "/auth/login", { headers: { "x-real-ip": ip } });
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      await fetch(base + "/health");
+      expect(lookups).toBe(1);
+
+      resolved = "127.0.0.1";
+      await fetch(base + "/health");
+      expect(lookups).toBe(1);
+      now += 6_000;
+      // The next lookup is due even when this request carries no forwarding headers.
+      await fetch(base + "/health");
+      for (let i = 0; i < 60; i++) expect((await read("192.0.2.11")).status).toBe(404);
+      expect((await read("192.0.2.11")).status).toBe(429);
+      expect((await read("192.0.2.12")).status).toBe(404);
+      expect(lookups).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each([
+    ["an untrusted socket sending forwarding headers", MANAGED_ENV, [], "x-real-ip", false],
+    ["Railway forwarding", MANAGED_ENV, ["127.0.0.1"], "x-real-ip", true],
+    ["the named compose proxy", { ...PLAIN_ENV, TF_TRUSTED_PROXIES: "proxy" }, ["proxy"], undefined, true],
+  ] as const)("holds per-client budgets for %s",
+    async (_name, env, trusted, header, forwarded) => {
+      const settings = loadSettings(env, PROCESS_DOOR);
+      const notes: string[] = [];
+      const dispatch = makeDispatch({
+        routes: [], bodyMaxBytes: 1024, closeUndrained: true, logger: { error() {}, warn() {} },
+        buildDeps: () => ({}) as ApiDeps,
+        ingress: settings.network.ingress,
+      });
+      const port = await listen(dispatch, {
+        ...OPTS,
+        trustedProxies: makeTrustedProxies(trusted, { lookup: async () => ["127.0.0.1"] }),
+        ...(header ? { clientIpHeader: header } : {}),
+        onForwardingNote: (note) => notes.push(note.kind),
+      });
+      const read = (path: string, ip?: string) => fetch(`http://127.0.0.1:${port}${path}`, {
+        headers: ip ? { [header ?? "x-forwarded-for"]: ip } : {},
+      });
+      const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+      try {
+        const first = forwarded ? "192.0.2.11" : undefined;
+        for (let i = 0; i < 60; i++) expect((await read("/auth/login", first)).status).toBe(404);
+        expect((await read("/auth/login", first)).status).toBe(429);
+        for (const ip of ["192.0.2.12", "192.0.2.13"]) {
+          expect((await read("/auth/login", ip)).status).toBe(forwarded ? 404 : 429);
+        }
+        expect((await read("/health", first)).headers.get("x-ohmail-ingress-policy")).toBe("default-v1");
+        expect(notes).toEqual(forwarded ? [] : ["untrusted_forwarder"]);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+  it("attests to the built-in policy in the managed listener's health response", async () => {
+    const settings = loadSettings(MANAGED_ENV, PROCESS_DOOR);
+    const dispatch = makeDispatch({
+      routes: [], bodyMaxBytes: 1024, closeUndrained: true, logger: { error() {}, warn() {} },
+      buildDeps: () => ({}) as ApiDeps,
+      ingress: settings.network.ingress,
+    });
+    const port = await listen(dispatch);
+    const response = await fetch(`http://127.0.0.1:${port}/health`, { method: "HEAD" });
+    expect(response.headers.get("x-ohmail-ingress-policy")).toBe("default-v1");
+  });
+
   it.each(["/sync/snapshot", "/calendar/sync/snapshot"])("limits %s on both entry paths before building dependencies", async (path) => {
     let built = 0;
     const dispatch = makeDispatch({

@@ -15,12 +15,14 @@ import { pickVerbs } from "./selection-verbs.js";
 
 export function OhboxSelection({ model, beside }: { model: OhboxListModel; beside: OhboxBeside }) {
   const t = useText("ohbox");
+  const reader = useText("reader");
   const foot = useRef<HTMLDivElement>(null);
   const cancelDelete = useRef<HTMLButtonElement>(null);
   const [more, setMore] = useState(false);
   /* The verbs the bar had no room for (the kit says which, whenever that changes): they stand behind More. */
   const [folded, setFolded] = useState<readonly string[]>([]);
-  const verbs = pickVerbs(model, t, foot);
+  const filingHint = model.pickedReplyCopyPending ? reader("replyCopyWaiting") : undefined;
+  const verbs = pickVerbs(model, t, foot, filingHint ? { disabled: true, disabledHint: filingHint } : {});
   /* The rows picked, as the person picked them: a folded conversation is one. Delete asks over the letters. */
   const count = model.pickedRowCount;
   const letters = model.pickedIds.length;
@@ -30,6 +32,11 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
     /* The foot takes the keyboard where a menu anchored on it closes: the kit gives it back to its anchor, and a shell
        hands it on to the control that opened the menu (More, Move, Tag) rather than losing it to the page. */
     <div className="ob-foot" ref={foot} tabIndex={-1}>
+      {filingHint ? (
+        <div className="oh-text" role="status" title={filingHint}>
+          {reader("replyCopySending")}
+        </div>
+      ) : null}
       <SelectionBar
         label={t("bar.label")}
         announceCount={false}
@@ -59,6 +66,8 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
               key={verb.id}
               icon={verb.icon}
               keyHint={verb.keyHint}
+              disabled={verb.disabled}
+              description={verb.disabledHint}
               onPress={() => {
                 setMore(false);
                 if (foot.current) verb.onPress?.(foot.current);

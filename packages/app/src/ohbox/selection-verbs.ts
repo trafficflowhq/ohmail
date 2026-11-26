@@ -12,6 +12,7 @@ export function pickVerbs(
   model: OhboxListModel,
   t: ReturnType<typeof useText>,
   foot: RefObject<HTMLDivElement | null>,
+  filingHold: Pick<PanelVerb, "disabled" | "disabledHint">,
 ): PanelVerb[] {
   return [
     {
@@ -19,6 +20,7 @@ export function pickVerbs(
       label: t("actionLater"),
       icon: "later",
       keyHint: "a",
+      ...filingHold,
       onPress: () => model.runBulk("later"),
     },
     { id: "read", label: t("actionRead"), icon: "read", keyHint: "⇧U", onPress: model.markPicked },
@@ -34,6 +36,7 @@ export function pickVerbs(
       label: t("actionSetAside"),
       icon: "parked",
       keyHint: "e",
+      ...filingHold,
       onPress: () => model.runBulk("aside"),
     },
     {

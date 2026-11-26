@@ -1,4 +1,4 @@
-import type { EngineMessage } from "@ohmail/wire";
+import type { EngineMessage, MutationOutcome } from "@ohmail/wire";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -7,7 +7,7 @@ import {
 } from "@ohmail/client-engine";
 import { createProjector, type ProjectionInputs, type Projected } from "../src/state/world-projection";
 import { closeRoutingSession, openRoutingSession } from "../src/state/held-routing";
-import { SCREENING_UNSUPPLIED, liveActions, planHeldRouting, type ToastOpts, type WorldActions, type WorldMail } from "../src/state/live";
+import { SCREENING_UNSUPPLIED, liveActions, liveMessage, planHeldRouting, type ToastOpts, type WorldActions, type WorldMail } from "../src/state/live";
 import { paneRouteFor } from "../src/ui/pane-routes";
 import { readFaceOf } from "../src/ui/row-swipe";
 import { derivePosture, type PostureInput } from "../src/ui/posture/derive";
@@ -57,7 +57,7 @@ const consent = (kind: "sender" | "domain" = "sender"): SyncChange => create("ru
 });
 
 /** The provider, renderer-free: one engine, one projector, the inputs the app passes. */
-async function phone(first: SyncChange[], rule = consent()) {
+async function phone(first: SyncChange[], rule = consent(), confirmSend?: Promise<MutationOutcome>) {
   let seq = 1000;
   const pages: SyncChange[][] = [[rule, ...first].map((c) => ({ ...c, seq: seq++ }))];
   const posted: string[] = [];
@@ -81,7 +81,7 @@ async function phone(first: SyncChange[], rule = consent()) {
     }),
     mutate: async (m: { kind: string; messageId?: string; messageIds?: string[]; state?: string; unread?: boolean; folder?: string }) => {
       posted.push(`${m.kind}:${m.messageId ?? (m.messageIds ?? []).join(",")}${m.state ? `:${m.state}` : ""}${m.unread === true ? ":unread" : ""}`);
-      return { ok: true as const, changes: echoOf(m) };
+      return m.kind === "mail_send" && confirmSend ? confirmSend : { ok: true as const, changes: echoOf(m) };
     },
   } as unknown as EngineAdapter;
   const store = new MemoryMirrorStore();
@@ -101,8 +101,79 @@ async function phone(first: SyncChange[], rule = consent()) {
   const offers: ToastOpts[] = [];
   const toast = (_m: unknown, o?: ToastOpts) => { if (o?.undo) offers.push(o); };
   const actions = liveActions({ engine, toast, uuid: () => "00000000-0000-4000-8000-000000000001", zone: "UTC" });
-  return { engine, store, world, actions, posted, offers };
+  const deliver = (m: EngineMessage) => { pages.push([{ ...create("message", m.id, m), seq: seq++ }]); };
+  return { adapter, engine, store, world, actions, posted, offers, deliver };
 }
+
+it("keeps the selected phone reply open across an engine restart and sync", async () => {
+  const parent = rowA1();
+  const header = "<reader-reply-copy>";
+  const p = await phone([create("message", parent.id, parent)], consent(), Promise.resolve({
+    changes: [], seq: null, providerMessageId: header,
+  }));
+  const restarted = new OhmailEngine({ adapter: p.adapter, store: p.store, storePolicy: { mode: "full" } });
+  try {
+    expect((await p.engine.mutate({ kind: "mail_send", inReplyTo: parent.id, body: "New reply" })).status).toBe("confirmed");
+    const pending = p.engine.read().list<EngineMessage>("message").find((m) => m.local === true)!;
+    await p.actions.openMessage(pending.id);
+    expect(p.world().message(pending.id)?.pendingReplyCopy).toBe(true);
+    await p.engine.syncOnce();
+    p.engine.dispose();
+    await restarted.start();
+    const selected = () => liveMessage(restarted, pending.id, { now: new Date(AT), zone: "UTC" });
+    const source = () => liveMessage(restarted, parent.id, { now: new Date(AT), zone: "UTC" });
+    const before = selected();
+    expect(source()).toMatchObject({ id: parent.id, pendingReplyCopy: true });
+    p.deliver(msg("same-thread-copy", AT + 1000, { ...OURS, messageIdHeader: "<other-reply>" }));
+    await restarted.syncOnce();
+    expect(source()?.pendingReplyCopy).toBe(true);
+    const stored = msg("reader-copy", AT + 2000, { ...OURS, messageIdHeader: header });
+    p.deliver(stored);
+    await restarted.syncOnce();
+    expect({
+      whileWaiting: before?.pendingReplyCopy,
+      after: selected()?.id,
+      pendingAfter: selected()?.pendingReplyCopy,
+    }).toEqual({ whileWaiting: true, after: stored.id, pendingAfter: undefined });
+    expect(source()?.id).toBe(parent.id);
+    expect(source()?.pendingReplyCopy).toBeUndefined();
+  } finally {
+    p.engine.dispose();
+    restarted.dispose();
+  }
+});
+
+it("keeps another exact phone hit available when an in-flight reply confirms and syncs", async () => {
+  const header = "<reply-copy>";
+  let confirm!: (outcome: MutationOutcome) => void;
+  const sent = new Promise<MutationOutcome>((resolve) => { confirm = resolve; });
+  const parent = rowA1();
+  const other = msg("exact-hit", AT + 1000);
+  const p = await phone([parent, other].map((m) => create("message", m.id, m)), consent(), sent);
+  try {
+    const sending = p.engine.mutate({ kind: "mail_send", inReplyTo: parent.id, body: "The new reply" });
+    expect(p.world().message(other.id)?.id).toBe(other.id);
+    confirm({ changes: [], seq: null, providerMessageId: header });
+    expect((await sending).status).toBe("confirmed");
+    const pending = p.engine.read().list<EngineMessage>("message").find((m) => m.local === true)!;
+    expect(p.world().message(pending.id)?.pendingReplyCopy).toBe(true);
+    expect(p.world().message(other.id)).toMatchObject({ id: other.id });
+    expect(p.world().message(other.id)?.pendingReplyCopy).toBeUndefined();
+    expect(p.world().message(other.id, true)?.pendingReplyCopy).toBe(true);
+
+    const stored = msg("mailbox-copy", AT + 2000, { ...OURS, messageIdHeader: header });
+    await p.engine.syncOnce();
+    p.deliver(stored);
+    await p.engine.syncOnce();
+    expect(p.engine.read().get("message", pending.id)).toBeUndefined();
+    expect(p.world().message(stored.id)).toMatchObject({ id: stored.id });
+    expect(p.world().message(stored.id)?.pendingReplyCopy).toBeUndefined();
+    expect(p.world().message(other.id)?.pendingReplyCopy).toBeUndefined();
+    expect(p.world().message(other.id)?.id).toBe(other.id);
+  } finally {
+    p.engine.dispose();
+  }
+});
 
 /** The Ohbox row a press on `member`'s conversation is made on: its own id, which is its target. */
 function rowOf(w: Projected, member: string): string | null {
@@ -566,4 +637,43 @@ describe("the row is asked at the press and nowhere else", () => {
     expect(routeParams("app/message/[id].tsx")).toEqual(["id", "member"]);
     expect(routeParams("src/ui/list-detail.tsx")).toEqual(["open"]);
   });
+});
+
+
+it("holds native filing after a reply from a held History page", async () => {
+  const { openOffMirror } = await import("../src/state/live.js");
+  const parent = msg("off-mirror-parent", AT);
+  const seed = msg("mirrored-message", AT, { threadId: "different" });
+  const p = await phone([create("message", seed.id, seed)], consent(), Promise.resolve({
+    changes: [], seq: null, providerMessageId: "<history-reply>",
+  }));
+  try {
+    p.engine.holdStorePage("all", {}, { items: [parent], nextCursor: null }, AT);
+    openOffMirror(parent);
+    expect(p.engine.read().get("message", parent.id)).toBeUndefined();
+    expect(p.engine.verbRead().get<EngineMessage>("message", parent.id)?.id).toBe(parent.id);
+    expect(p.world().message(parent.id)?.id).toBe(parent.id);
+    expect((await p.actions.sendReply(parent.id, "A new reply.", false)).outcome).toBe("sent");
+    expect(p.posted.some((entry) => entry.startsWith("mail_send:"))).toBe(true);
+    const opened = p.world().message(parent.id)!;
+    if (!opened.pendingReplyCopy) await p.actions.pileToggle(opened.id, "setAside");
+    expect({
+      disabled: opened.pendingReplyCopy ?? false,
+      filedOriginal: p.posted.includes("triage_set:off-mirror-parent:set_aside"),
+    }).toEqual({ disabled: true, filedOriginal: false });
+    await p.engine.syncOnce();
+    p.deliver(msg("history-mailbox-copy", AT + 1000, {
+      ...OURS, threadId: "stored-reply-thread", messageIdHeader: "<history-reply>",
+    }));
+    await p.engine.syncOnce();
+    const after = p.world().message(parent.id)!;
+    expect(after.id).toBe(parent.id);
+    expect(after.pendingReplyCopy).toBeUndefined();
+    await p.actions.pileToggle(after.id, "setAside");
+    expect(p.posted.filter((entry) => entry.startsWith("triage_set:"))).toEqual([
+      "triage_set:off-mirror-parent:set_aside",
+    ]);
+  } finally {
+    p.engine.dispose();
+  }
 });

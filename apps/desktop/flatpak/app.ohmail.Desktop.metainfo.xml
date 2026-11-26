@@ -78,6 +78,16 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.9" date="2026-11-26">
+      <description>
+        <ul>
+          <li>Calendars show up on desktop after signing in</li>
+          <li>Park and Later wait for a sent reply’s mailbox copy</li>
+          <li>Phone sign-out recovery and AI draft privacy</li>
+          <li>Mail sync starts after installation and upgrade</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.8" date="2026-11-26">
       <description>
         <ul>
@@ -154,13 +164,6 @@
           <li>Fixed</li>
           <li>Saved drafts keep their formatting when sent</li>
           <li>Compact Screener lists keep the keyboard cursor</li>
-        </ul>
-      </description>
-    </release>
-    <release version="2.0.4" date="2026-11-24">
-      <description>
-        <ul>
-          <li>Check both iCloud sign-in details when connecting a calendar</li>
         </ul>
       </description>
     </release>

@@ -22,6 +22,7 @@ import {
   messageIdKey, type MutationEffect, mutationEffects, replySubject, sentOverlayMessage,
 } from "../mutations.js";
 import { filedOutOfOhbox, rowPinsBackNow } from "../ohbox-rows.js";
+import { nextSentReplyExpiry, reconcileSentReplies, rememberSentReply } from "../reply-reader.js";
 import { heldRuleKey } from "../rule-twins.js";
 import { conversationKeyOf, isOwnSent, isResurfaced, ohboxView, rulesList, sendingMailboxId } from "../selectors.js";
 import type { SendAndDonePlan } from "../send-and-done.js";
@@ -67,6 +68,8 @@ interface DispatchOptions {
 
 export abstract class EngineOptimisticMutations extends EngineAttachments {
   // ── optimistic mutations ─────────────────────────────────────────────────
+
+  protected sentReplyExpiry?: ReturnType<typeof setTimeout>;
 
   /**
    * Whether the server's copy of draft `id` may hold formatting: the overlaid row, the row the
@@ -1865,7 +1868,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
        */
       // Both run, then ONE notify: a frame with the copy in Earlier and its row still held in New is
       // the two-row defect (owner, 2026-09-28).
-      const painted = this.materializeSentOverlay(p.mutation, outcome);
+      const painted = p.mutation.kind === "mail_send" && await this.materializeSentOverlay(p.mutation, outcome);
       const released = this.endHoldAnswered(p.mutation);
       if (painted || released) {
         this.overlayRev++;
@@ -2264,8 +2267,10 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
    * caller can paint immediately and only then — a bare `notify()` on every mutation would wake every subscriber for
    * the seven kinds that never produce one.
    */
-  protected materializeSentOverlay(m: EngineMutation, outcome: MutationOutcome): boolean {
-    if (m.kind !== "mail_send") return false;
+  protected async materializeSentOverlay(
+    m: Extract<EngineMutation, { kind: "mail_send" }>,
+    outcome: MutationOutcome,
+  ): Promise<boolean> {
     // The words that went are not the ones in `m`, and this engine does not hold them: nothing is
     // painted, and the real Sent row arrives on the drain.
     if (outcome.earlierWordsKept === true) return false;
@@ -2275,14 +2280,45 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
     if (!header) return false;
     // One copy per message: a re-press under the key confirms the same delivery again.
     for (const meta of this.optimisticSent.values()) if (meta.header === header) return false;
-    const sent = sentOverlayMessage(this.read(), m, header, { now: this.now, uuid: this.uuid });
+    const sent = sentOverlayMessage(this.verbRead(), m, header, { now: this.now, uuid: this.uuid });
     if (!sent) return false;
     const overlayId = `sent:${sent.id}`;
     const expiresAtMs = this.now().getTime() + OPTIMISTIC_SENT_TTL_MS;
     this.overlays.set(overlayId, [{ type: "message", id: sent.id, entity: sent }]);
     this.optimisticSent.set(overlayId, { header, expiresAtMs });
     this.seedSentAttachments(sent.id, m.attachments ?? [], expiresAtMs, m.forwardOf ?? undefined, m.forwardParts);
+    if (m.inReplyTo !== null) {
+      const deadline = Date.parse(outcome.sentCopyUntil ?? "");
+      const retryUntil = Number.isFinite(deadline) ? deadline : expiresAtMs;
+      if (retryUntil > this.now().getTime()) {
+        await rememberSentReply(this.store, m.inReplyTo, sent, retryUntil).catch(() => undefined);
+        this.armSentReplyExpiry();
+      }
+    }
     return true;
+  }
+
+  /** A reply can stop waiting while the client is offline and no drain is running. */
+  private armSentReplyExpiry(): void {
+    clearTimeout(this.sentReplyExpiry);
+    this.sentReplyExpiry = undefined;
+    if (this.disposed) return;
+    const next = nextSentReplyExpiry(this.store);
+    if (!Number.isFinite(next)) return;
+    const delay = Math.min(2_147_483_647, Math.max(0, next - this.now().getTime()));
+    this.sentReplyExpiry = setTimeout(() => {
+      const stamp = this.store.stampOf("view_meta");
+      void this.refreshSentReplies().then(() => {
+        if (!this.disposed && this.store.stampOf("view_meta") !== stamp) this.notify();
+      });
+    }, delay);
+    if (typeof this.sentReplyExpiry === "object") this.sentReplyExpiry.unref?.();
+  }
+
+  protected async refreshSentReplies(): Promise<void> {
+    if (this.calendarOnly || this.disposed) return;
+    await reconcileSentReplies(this.store, this.now().getTime()).catch(() => undefined);
+    this.armSentReplyExpiry();
   }
 
   /**

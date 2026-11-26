@@ -504,6 +504,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
         } : {}),
         factor: (ask) => <CalendarBrowserFactor {...ask} />,
       },
+      ready: (enabledAt) => engine.calendarReady(enabledAt),
       held: () => engine.calendarHeld(),
       load: NONE,
     });

@@ -67,7 +67,7 @@ function MessageRoute() {
     <>
       {/* Only while in front: `router.back` pops the screen in front, so a delete committing behind an
           open Trash letter closed that letter. Behind, the reader shows its gone state on return. */}
-      <MessageReader id={id ?? ""} selectMember={member === "1"} onClose={() => { if (navigation.isFocused()) router.back(); }} />
+      <MessageReader id={id ?? ""} selectMember={member === "1"} wholeThread={member === "thread"} onClose={() => { if (navigation.isFocused()) router.back(); }} />
       {/* Gate-held and folder mail keep the full-screen reader on the unfolded-landscape Duo
           (`paneRouteFor` answers null there) — the rail's claim still needs a renderer. */}
       <ReaderRailHost />
