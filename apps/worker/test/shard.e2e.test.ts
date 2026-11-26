@@ -103,7 +103,7 @@ describe("shard seam", () => {
       await shardZero`insert into worker_heartbeats (shard_index, instance_id, shards)
         values (0, 'fixture-zero', 2)`;
       await shardZero`delete from worker_topology`;
-      await shardZero.unsafe(migration);
+      await expect(shardZero.unsafe(migration)).rejects.toThrow(/Cannot verify worker topology/);
       expect(await shardZero`select shards from worker_topology`).toHaveLength(0);
 
       await shardOne`select pg_advisory_lock(${leaderLockKeyFor(1)})`;
@@ -125,15 +125,16 @@ describe("shard seam", () => {
     expect(fleets.map((fleet) => [fleet.openFor(one), fleet.openFor(two)])).toEqual([[1, 0], [0, 1]]);
   });
 
-  it("requires the configured width to initialize a verified stopped legacy roster", async () => {
+  it("preserves a stopped legacy roster's width with or without an explicit width", async () => {
     const db = makeDb(DB);
     await seedMailbox(db, randomUUID());
     await db.execute(sql`insert into worker_heartbeats (shard_index, instance_id, shards, leader)
       values (0, 'fixture-zero', 2, false), (1, 'fixture-one', 2, false)`);
     await db.execute(sql`delete from worker_topology`);
-    expect((await db.execute<{ width: number }>(sql`select initialize_worker_topology() as width`))[0]?.width).toBeNull();
     expect((await db.execute<{ width: number }>(sql`select initialize_worker_topology(1) as width`))[0]?.width).toBeNull();
     expect((await db.execute<{ width: number }>(sql`select initialize_worker_topology(2) as width`))[0]?.width).toBe(2);
+    await db.execute(sql`delete from worker_topology`);
+    expect((await db.execute<{ width: number }>(sql`select initialize_worker_topology() as width`))[0]?.width).toBe(2);
   });
 
   it("refuses a database topology change while there is a mailbox to serve", async () => {
