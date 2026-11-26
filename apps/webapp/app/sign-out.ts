@@ -784,5 +784,5 @@ export function confirmedLocalCleanup(outcome: SignOutResult, account: string, f
       && current.account === pending.account && current.family === pending.family;
   };
   const reason = trouble.key === "signOutBlocked" ? "blocked" : "unverified";
-  return holds() ? { reason, holds } as const : null;
+  return holds() ? { reason, holds, press: pending.press } as const : null;
 }

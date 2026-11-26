@@ -14,7 +14,7 @@ import { WayButton, type DoorWay } from "../stage/way.js";
 import { AccountStep, InviteStep, SentStep, VerifyStep } from "./AccountSteps.js";
 import type { JoinDoor } from "./door.js";
 import { CodesStep, FactorStep } from "./FactorSteps.js";
-import { JoinSignIn, Progress } from "./parts.js";
+import { JoinBack, JoinSignIn, Progress } from "./parts.js";
 import { DoneStep, MailboxStep, PlanStep } from "./PlanSteps.js";
 import "./placement.css";
 
@@ -25,15 +25,17 @@ export function JoinPage({ door }: { door: JoinDoor | None }): ReactNode {
   if (door === NONE) return <Unavailable gate={gate} demo={NONE} />;
   const { state } = door;
   const signIn = <JoinSignIn door={door} join={join} />;
+  const leave = <JoinBack door={door} join={join} />;
+  const back = <JoinBack door={door} join={join} signIn />;
   switch (state.at) {
     case "unavailable":
-      return <Unavailable gate={gate} demo={door.demo} signIn={door.signIn} />;
+      return <Unavailable gate={gate} demo={door.demo} signIn={door.signIn} back={leave} />;
     case "resolving":
-      return <Resolving onboarding={onboarding} signIn={signIn} />;
+      return <Resolving onboarding={onboarding} back={back} leave={leave} />;
     case "unreachable":
       /* The first run's sentences are outside the document's first cut: no button stands without its name. */
       if (!onboarding.has("resumeUnreachableTitle"))
-        return <Resolving onboarding={onboarding} signIn={signIn} />;
+        return <Resolving onboarding={onboarding} back={back} leave={leave} />;
       return (
         <Page
           back={signIn}
@@ -57,7 +59,7 @@ export function JoinPage({ door }: { door: JoinDoor | None }): ReactNode {
       const full = state.at === "full";
       return (
         <Page
-          back={full ? signIn : undefined}
+          back={full ? back : leave}
           line={state.said}
           note={!full && state.said === join("expiredOpen") ? join("expiredNote") : undefined}
           acts={
@@ -107,13 +109,16 @@ function Unavailable({
   gate,
   demo,
   signIn,
+  back,
 }: {
   gate: Text;
   demo: DoorWay | None;
   signIn?: DoorWay;
+  back?: ReactNode;
 }): ReactNode {
   return (
     <Page
+      back={back}
       line={gate("body")}
       note={gate("note")}
       acts={
@@ -141,12 +146,20 @@ function Unavailable({
  * The first run's sentences are outside the document's first cut, so until they have arrived the page waits without
  * a word.
  */
-function Resolving({ onboarding, signIn }: { onboarding: Text; signIn: ReactNode }): ReactNode {
+function Resolving({
+  onboarding,
+  back,
+  leave,
+}: {
+  onboarding: Text;
+  back: ReactNode;
+  leave: ReactNode;
+}): ReactNode {
   const said = onboarding.has("resumeCheckingTitle") && onboarding.has("resumeChecking");
   return (
     <div className="way-live" aria-busy="true" aria-live="polite">
       <Page
-        back={said ? signIn : undefined}
+        back={said ? back : leave}
         acts={null}
         material={
           said ? (

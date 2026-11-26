@@ -3,11 +3,13 @@
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Dialog } from "@ohmail/ui/base";
+import { markCleanupNoticeShown } from "../../pending-sign-out-storage";
 import { finishPendingSignOut } from "../login/finish-sign-out";
 import { listenSessionChange } from "../../signed-out-signal";
 
 export interface AccountCleanup {
   reason: "blocked" | "unverified";
+  press: string;
   holds(): boolean;
 }
 
@@ -28,6 +30,7 @@ export function AccountCleanupGate({ cleanup }: { cleanup: AccountCleanup }) {
     window.location.assign("/");
   }, []);
   useEffect(() => {
+    if (cleanup.holds()) markCleanupNoticeShown(cleanup.press);
     const check = () => {
       if (!busy && !cleanup.holds()) leave();
     };
@@ -60,10 +63,10 @@ export function AccountCleanupGate({ cleanup }: { cleanup: AccountCleanup }) {
     <Dialog
       open
       title={own(reason === "blocked" ? "stillHere" : "notConfirmed")}
-      line={t(reason === "blocked" ? "signOutBlocked" : "signOutUnverified")}
+      line={t(reason === "blocked" ? "localCleanupBlocked" : "localCleanupUnverified")}
       onClose={leave}
       confirm={reason === "blocked" ? {
-        label: t(busy ? "signOutBusy" : "signOut"),
+        label: t(busy ? "signOutBusy" : "retryLocalCleanup"),
         disabled: busy,
         onPress: () => void retry(),
       } : undefined}

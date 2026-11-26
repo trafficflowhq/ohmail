@@ -6,7 +6,7 @@ import { PASSWORD_MIN, accountReady, passwordLength } from "../stage/fields.js";
 import { Address, SaidWith } from "../../text/Said.js";
 import { SentenceBlank } from "../../text/SentenceBlank.js";
 import { WayButton } from "../stage/way.js";
-import { refusalOf, SignOutAgain, JoinSignIn, type StepProps } from "./parts.js";
+import { refusalOf, SignOutAgain, JoinBack, type StepProps } from "./parts.js";
 
 const ACCOUNT_FIELDS = ["name", "email", "password"] as const;
 const ACCOUNT_IDS = { name: "join-name", email: "join-email", password: "join-pw" };
@@ -39,7 +39,7 @@ export function InviteStep({ door, join, progress }: StepProps<"invite">): React
   return (
     <DoorForm onSubmit={door.redeem}>
       <Page
-        back={<JoinSignIn door={door} join={join} />}
+        back={<JoinBack door={door} join={join} signIn />}
         aside={progress}
         refusal={refusalOf(pending, door.refusal)}
         acts={
@@ -95,9 +95,9 @@ export function AccountStep({ door, state, join, progress }: StepProps<"account"
           )
         }
         back={
-          door.invited ? (
-            <Button kind="quiet" icon="back" label={join("back")} onPress={door.toInvite} />
-          ) : undefined
+          <JoinBack door={door} join={join}>
+            {door.invited && <Button kind="quiet" icon="back" label={join("back")} onPress={door.toInvite} />}
+          </JoinBack>
         }
         refusal={refusalOf(pending, door.refusal)}
         afterLine={
@@ -201,6 +201,7 @@ export function SentStep({ door, state, join, progress }: StepProps<"sent">): Re
   return (
     <Page
       aside={progress}
+      back={<JoinBack door={door} join={join} />}
       refusal={refusalOf(door.pending, door.refusal)}
       material={
         state.continuing ? (
@@ -228,7 +229,7 @@ export function VerifyStep({ door, state, join, progress }: StepProps<"verify">)
   return (
     <Page
       aside={progress}
-      back={<JoinSignIn door={door} join={join} />}
+      back={<JoinBack door={door} join={join} signIn />}
       line={join("step_verify_lead", { email: door.fields.email.trim() })}
       note={join("verifyWhy")}
       refusal={refusalOf(pending, door.refusal)}

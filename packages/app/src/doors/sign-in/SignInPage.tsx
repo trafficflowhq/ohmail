@@ -11,6 +11,7 @@ import { NONE, type None } from "../../host/contract.js";
 import { useText, type Text } from "../../text/index.js";
 import { useWanted } from "../stage/AccountSentence.js";
 import { DoorLine } from "../stage/DoorLine.js";
+import { SignOutAgain } from "../stage/pending.js";
 import { REASON_SAID } from "../stage/reasons.js";
 import { Said, SaidWith } from "../../text/Said.js";
 import { SentenceBlank } from "../../text/SentenceBlank.js";
@@ -130,11 +131,7 @@ function PasswordStep(p: {
             >
               {busy ? login("working") : login("continue")}
             </Button>
-            {pending.said === null ? null : (
-              <Button kind="two" size="l" disabled={busy || pending.signingOut} onPress={pending.again}>
-                {pending.act}
-              </Button>
-            )}
+            <SignOutAgain pending={pending} busy={busy} />
             {door.note === "managed-open" ? (
               <WayButton way={door.join} kind="quiet" size="l">
                 {login("createAccount")}

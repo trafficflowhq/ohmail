@@ -90,9 +90,10 @@ export interface SignInCeremony {
   restart(): void;
 }
 
-export function useSignInDoor({ next = null, handoff = null }: {
+export function useSignInDoor({ next = null, handoff = null, freshJoinSignIn = false }: {
   next?: Continuation | null;
   handoff?: string | null;
+  freshJoinSignIn?: boolean;
 }): SignInCeremony {
   const router = useRouter();
   const [invalidHandoff, setInvalidHandoff] = useState(false);
@@ -111,7 +112,7 @@ export function useSignInDoor({ next = null, handoff = null }: {
       });
       return;
     }
-    const back = takeApprovalReturn();
+    const back = freshJoinSignIn ? null : takeApprovalReturn();
     if (back !== null) router[how](back);
     else if (next !== null) leaveFor(next);
     else router[how](fallback);
@@ -216,6 +217,8 @@ export function useSignInDoor({ next = null, handoff = null }: {
       void pending.finish(() => cancelled);
       return () => { cancelled = true; };
     }
+    // A live session can still be too old to add a mailbox or create recovery codes.
+    if (freshJoinSignIn) return;
     const ask = async (attempt: number): Promise<void> => {
       // `resolveOwnerOutcome` answers rather than rejects for every network and server
       // reason; the one thing it rethrows is an unarmed build, which `configured` above has
@@ -251,7 +254,7 @@ export function useSignInDoor({ next = null, handoff = null }: {
       abort.abort();
     };
     // `proceed` is left out: it reads `next`, a server prop, which is listed.
-  }, [configured, router, next, handoff]);
+  }, [configured, router, next, handoff, freshJoinSignIn]);
 
   /**
    * A fresh self-host server has nobody to sign in. Self-host builds only (compile-time —
@@ -298,7 +301,7 @@ export function useSignInDoor({ next = null, handoff = null }: {
    * stops the ladder above, because this page is a ceremony from then on.
    */
   useEffect(() => {
-    if (!configured || handoff !== null || !approvalReturnKept()) return;
+    if (!configured || handoff !== null || freshJoinSignIn || !approvalReturnKept()) return;
     const stop = whenSignedInElsewhere(() => {
       const back = takeApprovalReturn();
       if (back === null) return;
@@ -308,7 +311,7 @@ export function useSignInDoor({ next = null, handoff = null }: {
     const previous = cancelBootstrapRef.current;
     cancelBootstrapRef.current = () => { previous?.(); stop(); };
     return stop;
-  }, [configured, router, handoff]);
+  }, [configured, router, handoff, freshJoinSignIn]);
 
   const run = async (fn: () => Promise<void>, tried: FactorTried): Promise<void> => {
     setBusy(true);

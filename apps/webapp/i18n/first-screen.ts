@@ -18,6 +18,7 @@ export const FIRST_SCREEN: Readonly<Record<string, true | readonly string[]>> = 
   account: [
     "signOutUnverified", "signOutBlocked", "signOutServerRefused", "signOutServerRefusedUnverified",
     "signOutCleanupPending", "signOutReplaced", "signOutBusy", "signOut",
+    "localCleanupUnverified", "localCleanupBlocked", "localCacheUnverified", "retryLocalCleanup",
   ],
   // The shell's frame: rail, dock, palette, list chrome, the key table it registers.
   rail: true, palette: true, ribbon: true, shortcuts: true,

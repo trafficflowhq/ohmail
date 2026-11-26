@@ -429,6 +429,29 @@ describe("the wizard generates codes only for the account it started as", () => 
     expect(calls.findIndex((u) => u.includes("/auth/2fa/recovery-codes")))
       .toBeGreaterThan(calls.findIndex((u) => u.includes("/auth/session")));
   });
+
+  it.each([200, 401])("drops a recovery-code response (%s) if another account signs in while it is on the wire", async (status) => {
+    document.cookie = "tf_owner=acct_A; path=/";
+    let release: ((response: Response) => void) | undefined;
+    const request = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes("/auth/session")) return json(asAccount("acct_A", "a@example.invalid"));
+      if (url.includes("/auth/2fa/recovery-codes")) {
+        return new Promise<Response>((resolve) => { release = resolve; });
+      }
+      return json({});
+    });
+    globalThis.fetch = request as unknown as typeof globalThis.fetch;
+    const c = await mountJoin();
+    expect(release).toBeDefined();
+
+    document.cookie = "tf_owner=acct_B; path=/";
+    const reply = status === 200 ? { codes: ["aaaa-bbbb"] } : { error: { code: "unauthorized", message: "session ended" } };
+    await act(async () => { release!(json(reply, status)); });
+    expect(c.textContent).not.toContain("aaaa-bbbb");
+    expect(c.textContent).toMatch(/another account/i);
+    expect(request.mock.calls.filter(([input]) => String(input).includes("/auth/refresh"))).toEqual([]);
+  });
 });
 
 /**

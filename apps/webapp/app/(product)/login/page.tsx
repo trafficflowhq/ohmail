@@ -1,5 +1,5 @@
 import { SignInRoute } from "./SignInRoute";
-import { continuationOf } from "./continuation";
+import { continuationOf, JOIN_ROUTE } from "./continuation";
 import { SETTINGS_HANDOFF, settingsReference } from "../../settings-handoff";
 import { publicSignupEnabled } from "../../signup-mode";
 
@@ -16,5 +16,7 @@ export default async function LoginPage(
   const searchParams = await props.searchParams;
   const handoff = searchParams && Object.hasOwn(searchParams, SETTINGS_HANDOFF)
     ? settingsReference(searchParams[SETTINGS_HANDOFF]) ?? "" : null;
-  return <SignInRoute publicSignup={publicSignupEnabled()} next={continuationOf(searchParams?.next)} handoff={handoff} />;
+  const next = continuationOf(searchParams?.next);
+  return <SignInRoute publicSignup={publicSignupEnabled()} next={next} handoff={handoff}
+    freshJoinSignIn={next === JOIN_ROUTE && searchParams?.fresh === "1"} />;
 }

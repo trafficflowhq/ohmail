@@ -137,6 +137,22 @@ describe.skipIf(!PG_UP)("a recovery code is spent by the session it buys", () =>
   }, 120_000);
   afterAll(async () => { await owned?.close(); await client?.end({ timeout: 5 }); });
 
+  it("two setups with no unused recovery codes can generate only one usable sheet", async () => {
+    const { user } = await personWithCodes(0);
+    const first = await steppedUpCtx(user);
+    const second = await steppedUpCtx(user);
+    const results = await Promise.allSettled([
+      svc.generateRecoveryCodes(first, { ifMissing: true }),
+      svc.generateRecoveryCodes(second, { ifMissing: true }),
+    ]);
+    const made = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    expect(made).toHaveLength(1);
+    expect(results).toContainEqual({ status: "rejected", reason: expect.objectContaining({ code: "recovery_codes_exist" }) });
+    expect(await unusedCodes(user.userId)).toBe(10);
+    expect(await db.select({ hash: recoveryCodes.codeHash }).from(recoveryCodes).where(eq(recoveryCodes.userId, user.userId)))
+      .toEqual(expect.arrayContaining(made[0]!.codes.map((code) => ({ hash: hashToken(code) }))));
+  });
+
   /**
    * CONTROL 1 — the lockout itself, on the LAST-code fixture (CONTROL 3's subject).
    *

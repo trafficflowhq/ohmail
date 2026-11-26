@@ -158,6 +158,8 @@ const text = (el: HTMLElement): string => el.textContent ?? "";
 const alertText = (el: HTMLElement): string | null => el.querySelector('[role="alert"]')?.textContent ?? null;
 const signOutButton = (el: HTMLElement): HTMLButtonElement | null =>
   [...el.querySelectorAll("button")].find((b) => b.textContent === A.signOut) ?? null;
+const retryCleanupButton = (el: HTMLElement): HTMLButtonElement | null =>
+  [...el.querySelectorAll("button")].find((b) => b.textContent === A.retryLocalCleanup) ?? null;
 const markerIs = (value: string): boolean => document.cookie.split("; ").includes(`tf_owner=${value}`);
 
 async function press(button: HTMLButtonElement): Promise<void> {
@@ -513,18 +515,60 @@ it("the manual recovery retry returns to an actionable pending state while its p
   }));
   purgeReply = () => new Response(null, { status: 503 });
   const el = await mountLogin();
-  expect(alertText(el)).toBe(A.signOutUnverified);
+  expect(alertText(el)).toBe(A.localCacheUnverified);
   let release!: (response: Response) => void;
   purgeReply = () => new Promise<Response>((resolve) => { release = resolve; });
-  await press(signOutButton(el)!);
+  await press(retryCleanupButton(el)!);
   await tick(0);
   try {
     expect(count("purge")).toBe(3);
     expect(alertText(el)).toBe("This device was signed out. Browser cleanup is still in progress.");
-    expect(signOutButton(el)?.disabled).toBe(false);
+    expect(retryCleanupButton(el)?.disabled).toBe(false);
   } finally {
     release?.(purgeAccepted());
     await tick(0);
   }
   expect(alertText(el)).toBeNull();
+});
+
+it("shows a cache warning on the sign-out return only, while keeping cleanup owed", async () => {
+  installSessionLocks();
+  sessionScript = [() => json({ scope: "enrollment" }, 200)];
+  const pending = "ohmail.session.pendingSignOut";
+  localStorage.setItem(pending, JSON.stringify({
+    press: "prior-tab", account: "acct_1", family: "fixture-family", revoked: true, cachePending: true,
+  }));
+  purgeReply = () => new Response(null, { status: 503 });
+  const first = await mountLogin();
+  expect(alertText(first)).toBe(A.localCacheUnverified);
+  expect(retryCleanupButton(first)).not.toBeNull();
+  await act(() => roots.pop()!.unmount());
+
+  const later = await mountLogin();
+  expect(alertText(later)).toBeNull();
+  expect(retryCleanupButton(later)).toBeNull();
+  expect(localStorage.getItem(pending)).not.toBeNull();
+  expect(count("purge")).toBeGreaterThan(2);
+});
+
+it("can still show the cache warning after reloading during cleanup", async () => {
+  installSessionLocks();
+  sessionScript = [() => json({ scope: "enrollment" }, 200)];
+  localStorage.setItem("ohmail.session.pendingSignOut", JSON.stringify({
+    press: "prior-tab", account: "acct_1", family: "fixture-family", revoked: true, cachePending: true,
+  }));
+  let release!: (response: Response) => void;
+  purgeReply = () => new Promise<Response>((resolve) => { release = resolve; });
+  const first = await mountLogin();
+  expect(alertText(first)).toBe(A.signOutCleanupPending);
+  await act(async () => { window.dispatchEvent(new PageTransitionEvent("pagehide")); });
+  purgeReply = () => new Response(null, { status: 503 });
+  release(new Response(null, { status: 503 }));
+  await tick(0);
+  expect(alertText(first)).toBeNull();
+  await act(() => roots.pop()!.unmount());
+
+  const later = await mountLogin();
+  expect(alertText(later)).toBe(A.localCacheUnverified);
+  expect(retryCleanupButton(later)).not.toBeNull();
 });

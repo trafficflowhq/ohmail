@@ -2625,7 +2625,7 @@ export class AuthService extends SessionLifecycle {
    * rows. Still only half: {@link recoveryVerify} honours the NEWEST batch only, so a
    * pre-existing surplus pair cannot both be valid either.
    */
-  async generateRecoveryCodes(ctx: ServiceContext): Promise<RecoveryCodesResp> {
+  async generateRecoveryCodes(ctx: ServiceContext, { ifMissing = false }: { ifMissing?: boolean } = {}): Promise<RecoveryCodesResp> {
     const userId = this.requireUser(ctx);
     await this.requireStepUp(ctx);
     const codes: string[] = [];
@@ -2634,6 +2634,9 @@ export class AuthService extends SessionLifecycle {
       // Serializes regeneration per user. See the note above for why it is this row.
       await lockUserRow(db, userId);
       await this.holdCredentialSession(txCtx, userId);
+      if (ifMissing && await this.hasUnusedRecoveryCodes(db, userId)) {
+        throw new ServiceError("recovery_codes_exist", 409, "this account already has unused recovery codes");
+      }
       // Regenerating invalidates the prior set.
       await db.delete(recoveryCodes).where(eq(recoveryCodes.userId, userId));
       const batchId = randomUUID();
@@ -2657,13 +2660,23 @@ export class AuthService extends SessionLifecycle {
    * one batch can share a timestamp, and two batches in one millisecond must still resolve to
    * exactly ONE answer for every caller.
    */
-  private async liveRecoveryBatch(db: Tx, userId: string): Promise<string | null> {
-    const [row] = await db.select({ batchId: recoveryCodes.batchId })
+  private liveRecoveryBatch(db: Tx, userId: string) {
+    return db.select({ batchId: recoveryCodes.batchId })
       .from(recoveryCodes)
       .where(eq(recoveryCodes.userId, userId))
       .orderBy(desc(recoveryCodes.createdAt), desc(recoveryCodes.batchId))
       .limit(1);
-    return row?.batchId ?? null;
+  }
+
+  private async hasUnusedRecoveryCodes(db: Tx, userId: string): Promise<boolean> {
+    const rows = await db.select({ id: recoveryCodes.id }).from(recoveryCodes)
+      .where(and(
+        eq(recoveryCodes.userId, userId),
+        eq(recoveryCodes.batchId, this.liveRecoveryBatch(db, userId)),
+        isNull(recoveryCodes.usedAt),
+      ))
+      .limit(1);
+    return rows.length > 0;
   }
 
   /**
@@ -2675,17 +2688,15 @@ export class AuthService extends SessionLifecycle {
   private async matchRecoveryCode(
     db: Tx, userId: string, code: string,
   ): Promise<{ codeId: string; batchId: string } | null> {
-    const batchId = await this.liveRecoveryBatch(db, userId);
-    if (batchId === null) return null;
-    const [row] = await db.select({ id: recoveryCodes.id }).from(recoveryCodes)
+    const [row] = await db.select({ codeId: recoveryCodes.id, batchId: recoveryCodes.batchId }).from(recoveryCodes)
       .where(and(
         eq(recoveryCodes.userId, userId),
-        eq(recoveryCodes.batchId, batchId),
+        eq(recoveryCodes.batchId, this.liveRecoveryBatch(db, userId)),
         eq(recoveryCodes.codeHash, hashToken(code.trim())),
         isNull(recoveryCodes.usedAt),
       ))
       .limit(1);
-    return row ? { codeId: row.id, batchId } : null;
+    return row ?? null;
   }
 
   /**
@@ -3790,8 +3801,7 @@ export class AuthService extends SessionLifecycle {
       .where(eq(webauthnCredentials.userId, userId)).limit(1)).length > 0;
     const totp = (await db.select({ id: totpSecrets.id }).from(totpSecrets)
       .where(and(eq(totpSecrets.userId, userId), eq(totpSecrets.activated, true))).limit(1)).length > 0;
-    const rc = (await db.select({ id: recoveryCodes.id }).from(recoveryCodes)
-      .where(and(eq(recoveryCodes.userId, userId), isNull(recoveryCodes.usedAt))).limit(1)).length > 0;
+    const rc = await this.hasUnusedRecoveryCodes(db, userId);
     return { webauthn: wa, totp, recoveryCodes: rc };
   }
 
