@@ -127,8 +127,8 @@ async function main(): Promise<void> {
   // WHOSE `x-forwarded-for` NAMES THE CLIENT (`TF_TRUSTED_PROXIES`; the bundled compose names its
   // own proxy). A configured name resolves when a peer first misses the set, and every change of
   // its answer is logged once: that line is where an operator reads the resolved set. An
-  // untrusted peer that sends the header, or a trusted one that names no client, is logged once
-  // per peer, its address only, never the header.
+  // untrusted forwarder is logged once for the listener. A trusted proxy that names no
+  // client is logged once per peer.
   const trustedProxies = makeTrustedProxies(cfg.trustedProxies, {
     lookup: systemLookup,
     onNote: (n) => {
@@ -158,16 +158,17 @@ async function main(): Promise<void> {
     ...(clientIpHeader ? { clientIpHeader } : {}),
     ...(door.door === "external" ? { proxyPeerHeader: PROXY_PEER_HEADER } : {}),
     onForwardingNote: (n) => {
+      if (n.kind === "untrusted_forwarder") {
+        logger.warn("forwarded_header_from_untrusted_peer", { configVar: "TF_TRUSTED_PROXIES" });
+        return;
+      }
       if (n.kind === "proxy_peer_is_client") {
         logger.warn("forwarded_address_collapsed", {
           host: n.peer, configVar: "OHMAIL_TLS_TERMINATOR", effective, reason: COLLAPSED_SENTENCE,
         });
         return;
       }
-      logger.warn(
-        n.kind === "untrusted_forwarder" ? "forwarded_header_from_untrusted_peer" : "trusted_proxy_sent_no_client_address",
-        { host: n.peer, configVar: "TF_TRUSTED_PROXIES" },
-      );
+      logger.warn("trusted_proxy_sent_no_client_address", { host: n.peer, configVar: "TF_TRUSTED_PROXIES" });
     },
   });
 

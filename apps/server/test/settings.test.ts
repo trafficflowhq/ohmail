@@ -55,6 +55,26 @@ describe("the managed client address header", () => {
   });
 });
 
+describe("managed ingress budgets", () => {
+  it("uses the built-in policy on the managed listener without Railway-specific settings", () => {
+    expect(loadSettings(env(MANAGED_ENV), PROCESS_DOOR).network.ingress).toEqual({
+      id: "default-v1", windowSeconds: 60, signIn: 60, ordinary: 600, expensive: 120, health: 180,
+    });
+    expect(loadSettings(env(MANAGED_ENV), functionDoor()).network.ingress).toBeUndefined();
+    expect(loadSettings(env(PLAIN_ENV), PROCESS_DOOR).network.ingress)
+      .toEqual(loadSettings(env(MANAGED_ENV), PROCESS_DOOR).network.ingress);
+  });
+
+  it("uses a staged policy and requires its trusted client-address configuration", () => {
+    const policy = { id: "custom", windowSeconds: 10, signIn: 5, ordinary: 40, expensive: 10, health: 20 };
+    const staged = { TF_API_INGRESS_POLICY: JSON.stringify(policy) };
+    expect(refusal(env(MANAGED_ENV, staged))).toContain("requires TF_CLIENT_IP_HEADER and trusted ingress proxies");
+    expect(loadSettings(env(MANAGED_ENV, staged, {
+      TF_CLIENT_IP_HEADER: "x-real-ip", TF_TRUSTED_PROXIES: "proxy",
+    }), PROCESS_DOOR).network.ingress).toEqual(policy);
+  });
+});
+
 describe("a configuration says which service it is by the name that leads it", () => {
   it("OHMAIL_ORIGIN is a self-hosted server; DATABASE_URL_POOLED is the managed service", () => {
     expect(loadSettings(env(PLAIN_ENV), PROCESS_DOOR).managed).toBe(false);

@@ -34,7 +34,7 @@ export interface Program {
   /** The per-request container for an ALREADY-NORMALIZED request. */
   buildDeps(req: Request): ApiDeps;
   /** `Request` in, `Response` out: the whole pipeline, normalization included. Never throws. */
-  dispatch(req: Request): Promise<Response>;
+  dispatch(req: Request, socketClientIp?: string): Promise<Response>;
   /** Start the program's own clocks (`clocks.ts`), or null where it keeps none. */
   startClocks(seams?: { rows?: readonly ClockRow[]; retryMs?: number; lockKey?: bigint }): ClockHandle | null;
   /** Release what the program holds: kept IMAP connections, the LISTEN, an owned pool. Clocks stop first. */

@@ -301,7 +301,7 @@ describe("serve(): the verdict taken on a real socket", () => {
     expect(sink.map((s) => s.ip)).toEqual(["127.0.0.1", B]);
   });
 
-  it("an untrusted forwarder is said once per peer, with its address and none of the header", async () => {
+  it("reports untrusted forwarding once, with the peer address and none of the header", async () => {
     const notes: ForwardingNote[] = [];
     const sink: { ip: string; xff: string | null }[] = [];
     const port = await listen({ trustedProxies: set("10.9.9.9"), onForwardingNote: (n) => { notes.push(n); } }, sink);
