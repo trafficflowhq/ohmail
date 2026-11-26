@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { and, eq, sql } from "drizzle-orm";
 import { PG_TEST_URL } from "@trafficflow/db/testing";
-import { CALENDAR_CHANGES_PER_TRANSACTION, calCalendars, calConnections, calEvents, calSettings, calWrites, changeLog, mailboxes, type Tx } from "@trafficflow/db";
+import { CALENDAR_CHANGES_PER_TRANSACTION, calAlarms, calCalendars, calConnections, calCredentials, calEvents, calSettings, calWrites, changeLog, mailboxes, type Tx } from "@trafficflow/db";
 import { plainDate, zoned, wall, type ZoneSource } from "@ohmail/cal-core";
 import { Secret, type ChangeItem, type HttpPort, type StoredCredential } from "@ohmail/cal-providers";
 import { makeReader as makeGoogleReader } from "@ohmail/cal-providers/google";
@@ -19,7 +19,7 @@ import { applyChunks, chunksOf, objectGone, objectWrite, plannedMissingObjects, 
 import { removeCalendar } from "../src/calendar/calendars.js";
 import { setConnectionState } from "../src/calendar/state.js";
 import {
-  CalendarTurnOverdue, calendarPool, inConnection, newCalendarSyncMemory, occurrenceKey, parkConnection, passDb, rowsOfObject,
+  CalendarTurnOverdue, calendarPool, inConnection, loadDueConnections, newCalendarSyncMemory, occurrenceKey, parkConnection, passDb, rowsOfObject,
   type CalendarSyncOutcome,
 } from "../src/calendar/index.js";
 import { RETRY_FLOOR_MS, WAIT_DAY_MS } from "../src/calendar/words.js";
@@ -62,6 +62,29 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     await w.db.update(calCalendars).set({ nextPollAt: null }).where(eq(calCalendars.accountId, accountId));
     await w.db.update(calConnections).set({ nextPollAt: null }).where(eq(calConnections.accountId, accountId));
   }
+
+  it("finishes a marked disconnection on worker restart while the calendar is off", async () => {
+    const t = await caldavWorld(new Map([["", [{ items: [upsert("keep.ics", "v1", single("kept", 1))] }]]]));
+    await calendarSyncPass(t.deps, t.due, never);
+    const [event] = await w.db.select({ id: calEvents.id }).from(calEvents).where(eq(calEvents.accountId, t.accountId));
+    await w.db.insert(calAlarms).values({ accountId: t.accountId, eventId: event!.id, minutesBefore: 10, method: "display" });
+    await w.db.transaction(async (tx) => {
+      await tx.delete(calCredentials).where(eq(calCredentials.connectionId, t.due.id));
+      await tx.update(calConnections).set({ status: "removing" }).where(eq(calConnections.id, t.due.id));
+      await tx.update(calSettings).set({ enabledAt: null }).where(eq(calSettings.accountId, t.accountId));
+    });
+    const restarted = { ...t.deps, memory: newCalendarSyncMemory(), providers: providersOf({}) };
+    const due = await loadDueConnections(restarted.db, new Date(), 10, (column) => eq(column, t.accountId));
+    expect(due).toEqual([{ ...t.due, status: "removing" }]);
+    expect((await turnsUntilDone(restarted, due[0]!)).at(-1)).toMatchObject({ kind: "synced", more: false });
+    expect(await eventsOf(w, t.accountId)).toEqual([]);
+    expect(await calendarsOf(w, t.accountId)).toEqual([]);
+    expect(await w.db.select().from(calAlarms).where(eq(calAlarms.accountId, t.accountId))).toEqual([]);
+    expect(await w.db.select().from(calConnections).where(eq(calConnections.accountId, t.accountId))).toEqual([]);
+    expect(await changesOf(w, t.accountId)).toMatchObject({
+      "calendar_event:delete": 1, "calendar:delete": 1, "calendar_connection:delete": 1,
+    });
+  });
 
   it("keeps the authenticated CalDAV organizer addresses of the connection and replaces them on discovery", async () => {
     const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
@@ -412,6 +435,75 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect((await changesOf(w, t.accountId))["calendar_event:delete"]).toBe(10);
     expect((await calendarsOf(w, t.accountId))[0]?.syncToken).toBe("after-reset");
   }, 60_000);
+
+  it("reuses a Google bearer for ordinary polls and checks a resource refusal with a fresh grant", async () => {
+    const t = await seedConnection(w, { provider: "google", credential: google });
+    let clock = Date.now();
+    let exchanges = 0;
+    let refused = false;
+    const http: HttpPort = {
+      async request(url) {
+        const trade = new URL(url).pathname.endsWith("/token");
+        const listing = new URL(url).pathname.endsWith("/calendarList");
+        const body = trade ? { access_token: `temporary-${++exchanges}`, expires_in: 3600 }
+          : listing ? { items: [{ id: "fixture-calendar", primary: true, accessRole: "owner" }] }
+            : { kind: "calendar#events", items: [], nextSyncToken: "continued" };
+        const status = !trade && refused ? 401 : 200;
+        return { arrived: true, status, header: () => null, location: null, url, hops: 0,
+          body: new TextEncoder().encode(JSON.stringify(body)) };
+      },
+    };
+    const reader = makeGoogleReader({ http, zones: ZONES, clock: { now: () => clock } });
+    const deps = { ...depsFor(w, providersOf({ google: { reader, http } }), {
+      oauth: { google: GOOGLE_REGISTRATION, microsoft: null },
+    }), clock: { now: () => clock } };
+    const turn = async () => {
+      await makeDue(t.accountId);
+      return calendarSyncPass(deps, t.due, never);
+    };
+    for (let i = 0; i < 3; i++) {
+      expect(await turn()).toMatchObject({ kind: "synced" });
+      clock += 5 * 60_000;
+    }
+    expect(exchanges).toBe(1);
+    refused = true;
+    expect(await turn()).toMatchObject({ kind: "backed_off" });
+    refused = false;
+    expect(await turn()).toMatchObject({ kind: "synced" });
+    expect(exchanges).toBe(2);
+    clock += 59 * 60_000;
+    expect(await turn()).toMatchObject({ kind: "synced" });
+    expect(exchanges).toBe(3);
+  }, 60_000);
+
+  it("uses verified notice coverage for polling and keeps a wake that arrives during a read", async () => {
+    const t = await seedConnection(w, { provider: "google", credential: google });
+    const empty = [{ items: [] }];
+    const reader = scriptedReader("google", { readings: new Map([["", empty], ["t1", empty]]) });
+    const deps = depsFor(w, providersOf({ google: { reader, http: silentHttp() } }), {
+      oauth: { google: GOOGLE_REGISTRATION, microsoft: null },
+    });
+    await calendarSyncPass(deps, t.due, never);
+    const [calendar] = await w.db.select({ id: calCalendars.id }).from(calCalendars)
+      .where(eq(calCalendars.accountId, t.accountId));
+    const now = Date.now();
+    const covered = now + 40 * 60_000;
+    const withCoverage = { ...deps, clock: { now: () => now }, noticeCoverage: async () => new Map([[calendar!.id, covered]]) };
+    const timeOf = async () => (await w.db.select({ at: calCalendars.nextPollAt }).from(calCalendars)
+      .where(eq(calCalendars.id, calendar!.id)))[0]?.at?.getTime();
+    await makeDue(t.accountId);
+    expect(await calendarSyncPass(withCoverage, t.due, never)).toMatchObject({ kind: "synced" });
+    expect(await timeOf()).toBe(covered);
+    await makeDue(t.accountId);
+    const read = reader.readChanges.bind(reader);
+    const wake = now + 20_000;
+    reader.readChanges = async (...args) => {
+      await w.db.update(calCalendars).set({ nextPollAt: new Date(wake) }).where(eq(calCalendars.id, calendar!.id));
+      return read(...args);
+    };
+    expect(await calendarSyncPass(withCoverage, t.due, never)).toMatchObject({ kind: "synced" });
+    expect(await timeOf()).toBe(wake);
+  });
 
   it("stores newly confirmed Google event types even when the provider version is unchanged", async () => {
     const seeded = await seedConnection(w, { provider: "google", credential: google });

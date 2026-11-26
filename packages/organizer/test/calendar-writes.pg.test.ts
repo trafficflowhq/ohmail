@@ -16,7 +16,7 @@ import { calAttendees, calCalendars, calConnections, calEvents, calSettings, cal
 import { writePayloadOf } from "@trafficflow/db/calendar";
 import { calendarPool, passDb, type ConnectionKey } from "../src/calendar/index.js";
 import { calendarSyncPass } from "../src/calendar/sync-pass.js";
-import type { CalendarWriteDrainInput } from "../src/calendar/types.js";
+import type { CalendarSyncDeps, CalendarWriteDrainInput } from "../src/calendar/types.js";
 import { calendarWriteDrain, WRITE_MAX_ATTEMPTS, WRITE_PRUNE_PER_TURN } from "../src/calendar/write-drain.js";
 import {
   AVAILABLE, Secret, ZONES, capturedLog, connectionOf, depsFor, openWorld, providersOf, recordWrite, scriptedReader, scriptedWriter, seedConnection, single,
@@ -385,7 +385,7 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     expect(await rows(a)).toMatchObject([{ state: "applied", attempts: 1 }]);
   });
 
-  async function quarterlyWorld() {
+  async function quarterlyWorld(noticeCoverage?: CalendarSyncDeps["noticeCoverage"]) {
     const address = "guest@example.test";
     const seeded = await seedConnection(w, {
       provider: "microsoft", principal: address,
@@ -521,6 +521,7 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     const makeDeps = () => depsFor(w, providersOf({ microsoft: { reader: makeReader(graph), writer: makeWriter(graph), http } }), {
       oauth: { google: null, microsoft: async () => ({ clientId: "fixture", clientSecret: "fixture-value", defaultTenant: "common", kind: "confidential" }) },
       drainWrites: calendarWriteDrain({ clock, zones: ZONES, log: capturedLog().log }),
+      ...(noticeCoverage === undefined ? {} : { noticeCoverage }),
     });
     let deps = makeDeps();
     const read = () => w.db.select({
@@ -546,6 +547,32 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     const restart = () => { deps = makeDeps(); };
     return { seeded, response, posts, read, turn, queue, writes, due, restart };
   }
+
+  it("keeps Outlook reply confirmation on the ordinary fallback schedule when a notice is missed", async () => {
+    const { seeded, response, posts, turn, queue, writes } = await quarterlyWorld(async ({ calendars }) =>
+      new Map(calendars.map(({ id }) => [id, Date.now() + 86_400_000])),
+    );
+    const calendarOf = async () => (await w.db.select({ next: calCalendars.nextPollAt, token: calCalendars.syncToken })
+      .from(calCalendars).where(eq(calCalendars.accountId, seeded.accountId)))[0]!;
+    await turn();
+    expect((await calendarOf()).next!.getTime() - Date.now()).toBeGreaterThan(55 * 60_000);
+    await queue("accepted");
+    const postedAt = Date.now();
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+    const calendar = await calendarOf();
+    expect(calendar.token).toEqual(expect.any(String));
+    expect(calendar.next!.getTime() - postedAt).toBeLessThanOrEqual(5 * 60_000 + 5_000);
+    const connection = await connectionOf(w, seeded.accountId, seeded.connectionId);
+    expect(connection.nextPollAt?.getTime()).toBeLessThanOrEqual(calendar.next!.getTime());
+
+    response.current = "accepted";
+    response.revision = 1;
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+  });
 
   it.each([
     ["accepted", "accepted", "accept"],
@@ -1260,17 +1287,22 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
       .from(calCalendars).where(eq(calCalendars.accountId, seeded.accountId));
     await press(seeded.accountId, "unrelated-create-after-series", create(calendar!));
     response.send = async () => 400;
+    const expectedPosts = [
+      "/v1.0/me/events/series/accept", "/v1.0/me/calendars/calendar/events",
+    ];
     for (let poll = 0; poll < 6; poll++) {
       if (poll === 3) restart();
       await turn();
+      if (poll > 0) expect(posts).toEqual(expectedPosts);
     }
     expect((await read()).some(({ providerId }) => providerId === "series")).toBe(false);
-    expect(posts).toEqual(["/v1.0/me/events/series/accept"]);
+    expect(await writes()).toEqual([
+      { state: "pending", reason: null },
+      { state: "refused", reason: "field_unwritable" },
+    ]);
     await due();
     await turn();
-    expect(posts).toEqual([
-      "/v1.0/me/events/series/accept", "/v1.0/me/calendars/calendar/events",
-    ]);
+    expect(posts).toEqual(expectedPosts);
     expect(await writes()).toEqual([{ state: "refused", reason: "field_unwritable" }]);
   });
 

@@ -267,7 +267,7 @@ describe("Microsoft's notice channels", () => {
     status: 201,
     body: {
       id: SUBSCRIPTION,
-      resource: "me/calendars/x/events",
+      resource: "me/events",
       changeType: "created,updated,deleted",
       clientState: null,
       expirationDateTime: "2026-11-19T09:00:00.0000000Z",
@@ -278,7 +278,7 @@ describe("Microsoft's notice channels", () => {
     microsoftNotices({ ...deps(http), graphBase: MS_GRAPH_BASE });
   const MS_ADDRESS = "https://api.notices.example.test/calendar/notices/microsoft";
 
-  it("subscribes to one calendar's events with one address, the word and an end: no resource data, no second address", async () => {
+  it("subscribes to mailbox events with one address, the word and an end", async () => {
     const m = port(HOSTS, () => made());
     const opened = await notices(m.http).open(
       signedIn("microsoft"),
@@ -297,11 +297,20 @@ describe("Microsoft's notice channels", () => {
     expect(m.sent[0]!.body).toEqual({
       changeType: "created,updated,deleted",
       notificationUrl: MS_ADDRESS,
-      resource: "me/calendars/AAMk%2FAGI2%2BT%3D/events",
+      resource: "me/events",
       expirationDateTime: "2026-11-20T07:30:00Z",
       clientState: WORD,
     });
     expect(NOW + MICROSOFT_NOTICE_MAX_MS).toBe(Date.UTC(2026, 10, 20, 7, 30, 0));
+  });
+
+  it("renews the existing mailbox subscription with only an expiration time", async () => {
+    const m = port(HOSTS, () => ({ ...made(), status: 200 }));
+    const renewed = await notices(m.http).renew!(signedIn("microsoft"), SUBSCRIPTION, NOW + 7 * DAY, never);
+    expect(renewed).toEqual({ ok: true, value: Date.UTC(2026, 10, 19, 9, 0, 0) });
+    expect(m.sent.map(({ method, body }) => ({ method, body }))).toEqual([
+      { method: "PATCH", body: { expirationDateTime: "2026-11-20T07:30:00Z" } },
+    ]);
   });
 
   it("answers a word for every refusal and for an answer it cannot read", async () => {

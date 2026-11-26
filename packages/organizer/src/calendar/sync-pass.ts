@@ -14,11 +14,11 @@ import { and, eq, ne, or, isNull, sql } from "drizzle-orm";
 import { calCalendars, calConnections } from "@trafficflow/db";
 import { oauthIdentityAmbiguous, organizerPrincipalAddress, ownOrganizerAddresses, publishCalendarOrganizerChanges } from "@trafficflow/db/calendar";
 import { applyListing, mergeDuplicateCalendars, pruneUnlistedCalendars, storedCalendars, type DuplicateCalendar, type StoredCalendar } from "./calendars.js";
-import { credentialBound, inConnection, passDb, type ConnectionDb, type ConnectionKey } from "./connection.js";
+import { credentialBound, inConnection, passDb, sweepDisconnectedCalendar, type ConnectionDb, type ConnectionKey } from "./connection.js";
 import { exchangeInvitationPass } from "./exchange-invitations.js";
 import { releaseReadings, remember } from "./memory.js";
 import { holdCalendar, readCalendar, type ReadingContext, type TurnBudget } from "./reading.js";
-import { CalendarKeyRingFault, openPassSignIn, sealedCredentialOf, type PassSignIn } from "./sign-in.js";
+import { CalendarKeyRingFault, forgetCalendarBearer, openPassSignIn, sealedCredentialOf, type PassSignIn } from "./sign-in.js";
 import { calendarEnabledAt, holdCalendarUntil, holdConnectionUntil, setConnectionState } from "./state.js";
 import type { CalendarSyncDeps, CalendarSyncOutcome, DueConnection } from "./types.js";
 import { checkOutlookReplies } from "./write-reply-check.js";
@@ -116,6 +116,12 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   /** The worker is stopping. A call its stop ended answers `timeout` like a late one: that word is never written. */
   const stopping = (): boolean => deps.halted() || (signal.aborted && !turnOverdue(signal));
   if (stopping()) return { kind: "halted" };
+  if (c.status === "removing") {
+    forgetCalendarBearer(deps.memory, key);
+    const swept = await sweepDisconnectedCalendar(account, key);
+    if (swept === null) return { kind: "gone" };
+    return { kind: "synced", calendars: 0, pages: 0, changed: 0, dropped: swept.deleted.cal_events ?? 0, more: !swept.done };
+  }
 
   const word = isProviderWord(c.provider) ? c.provider : null;
   const provider = word === null ? null : deps.providers.get(word);
@@ -147,10 +153,15 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   const p = provider!;
 
   const opened = await openPassSignIn(deps, { db: account, key }, gate.sealed, gate.held, w, p);
-  if (!opened.ok) return settleConnection(deps, account, key, null, opened.word, null);
+  if (!opened.ok) {
+    forgetCalendarBearer(deps.memory, key);
+    return settleConnection(deps, account, key, null, opened.word, null);
+  }
   const signIn = opened.signIn;
   const db = credentialBound(account, key, signIn.stillStored);
   const interrupted = () => ({ kind: signIn.superseded() ? "superseded" as const : "gone" as const });
+  const resourceFault = (reason: string): string => reason === "sign_in_refused" && signIn.tradeRefusal() === null
+    && signIn.dropBearer() ? "unavailable" : reason;
 
   const oauth = w === "google" || w === "microsoft";
   let principal = gate.held.principal;
@@ -201,7 +212,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     const listed = await p.reader.listCalendars(signIn.connection, signal);
     if (stopping()) return { kind: "halted" };
     if (signIn.superseded()) return { kind: "superseded" };
-    if (!listed.ok) return settleConnection(deps, db, key, signIn, listed.reason, listed.retryAfterMs);
+    if (!listed.ok) return settleConnection(deps, db, key, signIn, resourceFault(listed.reason), listed.retryAfterMs);
     if (oauth && listed.principal !== undefined) {
       const found = listed.principal;
       const ambiguous = found === null;
@@ -256,7 +267,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     if (stopping()) return { kind: "halted" };
     if (turnOverdue(signal)) return settleConnection(deps, db, key, signIn, "timeout", null);
     // The provider asked a write to wait: nothing more of the connection is asked before that has passed, its readings neither.
-    if (drained.wait !== undefined) return settleConnection(deps, db, key, signIn, drained.wait.word, drained.wait.retryAfterMs);
+    if (drained.wait !== undefined) return settleConnection(deps, db, key, signIn, resourceFault(drained.wait.word), drained.wait.retryAfterMs);
   }
 
   if (missing !== null) {
@@ -273,8 +284,11 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
 
   const turn = deps.turn ?? { pages: TURN_PAGES, ms: TURN_MS };
   const budget: TurnBudget = { pagesLeft: turn.pages, deadline: deps.clock.now() + turn.ms };
+  const noticeInput = { db, key, provider: p, connection: signIn.connection, calendars, signal };
+  const noticeCoverage = await deps.noticeCoverage?.(noticeInput);
   const reading: ReadingContext = {
     deps, db, key, word: w, provider: p, signIn, signal, budget,
+    ...(noticeCoverage === undefined ? {} : { noticeCoverage }),
     map: { zones: deps.zones, ownAddresses: identityAmbiguous ? new Set<string>() : owners, principal },
   };
   let pages = 0;
@@ -318,7 +332,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     if (actsOnConnection(r.word, w)) {
       if (w === "ics" && r.word === "ended") await holdCalendar(db, key, cal, "ended", new Date(deps.clock.now() + WAIT_DAY_MS));
       const retryHost = w === "caldav" && r.word === "host_changed" && r.continuing === true;
-      return settleConnection(deps, db, key, signIn, r.word, r.retryAfterMs, retryHost ? cal.id : null);
+      return settleConnection(deps, db, key, signIn, resourceFault(r.word), r.retryAfterMs, retryHost ? cal.id : null);
     }
     if (await settleCalendar(deps, db, key, cal, r.word, r.retryAfterMs) === "gone") return interrupted();
   }
@@ -369,7 +383,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   }
 
   if (replyWait === undefined && !more && deps.notices !== undefined && read > 0) {
-    const live = calendars.filter((cal) => cal.errorCode !== "ended").map((cal) => ({ id: cal.id, providerId: cal.providerId }));
+    const live = calendars.filter((cal) => cal.errorCode !== "ended");
     await deps.notices({ db, key, provider: p, connection: signIn.connection, calendars: live, signal });
   }
   return { kind: "synced", calendars: read, pages, changed, dropped, more };

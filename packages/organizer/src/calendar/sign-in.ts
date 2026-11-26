@@ -1,8 +1,7 @@
 /**
  * THE SEALED CREDENTIAL, OPENED FOR ONE TURN. The only place a calendar's stored sign-in is
- * decrypted, read and handed to a request: opened after both gates said yes, kept in one object
- * that is unreachable once the turn returns, and never written to a log, an error, an outcome or
- * any column but its own sealed one.
+ * decrypted and handed to a request. It is opened after both gates say yes and kept in the turn.
+ * The bearer cache holds only short-lived access grants under their current sealed generation.
  *
  * A SEALED TEXT IS READ FOR THE ROW IT WAS FOUND ON AND FOR NO OTHER. The text names the account
  * and the connection it was sealed for; found on another connection's row, this account's or
@@ -13,7 +12,7 @@
  * stands in the clear and is never dialled; a row that names another server than the text does is
  * refused in the same way, so one written column moves no password.
  *
- * Google's and Microsoft's lasting sign-ins are traded for a short one once a turn. Microsoft hands
+ * Google's and Microsoft's short sign-ins can be reused for later turns under the same seal. Microsoft hands
  * out a new lasting sign-in with every trade: it is sealed again, in its own transaction, before the
  * short one reaches a reader, and only where the stored one is still the one this turn traded with.
  * A stop the trade answered (the consent ended, the registration is missing) is kept for the rest of
@@ -25,7 +24,7 @@ import {
   type CalendarProvider, type Clock, type Connection, type Credential, type CredentialPlace, type HttpPort, type HttpResponse, type ProviderRefusal,
   type ProviderWord, type StoredCredential,
 } from "@ohmail/cal-providers";
-import { googleBearer } from "@ohmail/cal-providers/google";
+import { renewGoogleAccess } from "@ohmail/cal-providers/google";
 import { MS_GRAPH_CALENDAR_SCOPE } from "@ohmail/cal-providers/microsoft";
 import {
   OAuthClientRefusedError, OAuthConfigError, OAuthProviderUnavailableError, OAuthReauthRequiredError, refreshAccessToken,
@@ -35,7 +34,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { calCredentials, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { inConnection, type ConnectionDb, type ConnectionKey, type HeldConnection } from "./connection.js";
-import type { CalendarOAuth } from "./types.js";
+import { remember } from "./memory.js";
+import type { CalendarOAuth, CalendarSyncMemory } from "./types.js";
 
 /** A short sign-in with less than this left is traded again: a page may take several requests. */
 const RENEW_BEFORE_MS = 120_000;
@@ -86,12 +86,34 @@ export interface PassSignIn {
   stillStored(tx: Tx): Promise<boolean>;
   /** Opaque identity of the current encrypted envelope, for resuming a reading. */
   generation(): string;
+  /** Drop a refused resource bearer. True when the turn had reused a bearer from an earlier exchange. */
+  dropBearer(): boolean;
 }
 
 export interface SignInDeps {
   readonly keys: KeyProvider;
   readonly clock: Clock;
   readonly oauth: CalendarOAuth;
+  readonly memory: CalendarSyncMemory;
+}
+
+interface CachedGrant {
+  readonly token: string;
+  readonly expiresAtMs: number;
+  readonly generation: string;
+}
+
+type RefreshResult = ({ readonly ok: true; readonly grant: CachedGrant; readonly rotated: Secret | null }
+  | { readonly ok: false; readonly superseded?: true } & TradeRefusal);
+
+export interface CalendarBearers {
+  readonly grants: Map<string, CachedGrant>;
+  readonly refreshing: Map<string, Promise<RefreshResult>>;
+}
+
+const bearerKey = (key: ConnectionKey): string => `${key.accountId}:${key.id}`;
+export function forgetCalendarBearer(memory: CalendarSyncMemory, key: ConnectionKey): void {
+  memory.bearers.grants.delete(bearerKey(key));
 }
 
 /** The turn's handle and connection, for the seal's own transaction. */
@@ -107,12 +129,12 @@ const generationOf = (sealed: { readonly keyVersion: number; readonly secretEnc:
 const placeOf = (key: ConnectionKey): CredentialPlace => ({ accountId: key.accountId, connectionId: key.id });
 
 /** The credential row under lock, opened, or `null` when it is gone or opens to nothing. */
-async function lockedOpened(tx: Tx, deps: SignInDeps, key: ConnectionKey, provider: ProviderWord): Promise<string | null> {
+async function lockedOpened(tx: Tx, deps: SignInDeps, key: ConnectionKey, provider: ProviderWord, generation: string): Promise<string | null> {
   const [row] = await dialect(tx).forUpdate(tx.select({ secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion })
     .from(calCredentials)
     .where(and(eq(calCredentials.accountId, key.accountId), eq(calCredentials.connectionId, key.id), eq(calCredentials.kind, CREDENTIAL_KIND[provider])))
     .limit(1), { mode: "update" });
-  if (row === undefined) return null;
+  if (row === undefined || generationOf(row) !== generation) return null;
   try {
     return await deps.keys.decrypt(row.secretEnc, row.keyVersion);
   } catch {
@@ -157,6 +179,18 @@ export async function openPassSignIn(
   let refusal: TradeRefusal | null = null;
   let stop: TradeRefusal | null = null;
   let superseded = false;
+  let used: CachedGrant | undefined;
+  let reused = false;
+  const cache = deps.memory.bearers;
+  const cacheKey = bearerKey(place.key);
+  const stillStored = async (tx: Tx) => {
+    const [current] = await dialect(tx).forUpdate(tx.select({
+      secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion,
+    }).from(calCredentials).where(and(eq(calCredentials.accountId, place.key.accountId), eq(calCredentials.connectionId, place.key.id),
+      eq(calCredentials.kind, CREDENTIAL_KIND[word]))).limit(1), { mode: "share" });
+    if (current === undefined || generationOf(current) !== generation) superseded = true;
+    return !superseded;
+  };
   /** A bearer that keeps a stop for the rest of the turn and remembers the trade's last refusal. */
   const keeping = (inner: Extract<Credential, { kind: "bearer" }>): Credential => ({
     kind: "bearer",
@@ -186,39 +220,59 @@ export async function openPassSignIn(
     start = stored.server;
   } else if (stored.provider !== word) {
     return { ok: false, word: "sign_in_incomplete" };
-  } else if (word === "google") {
-    const client = deps.oauth.google;
-    if (client === null || client.clientId === "" || client.clientSecret === "") return { ok: false, word: "provider_off" };
-    const bearer = googleBearer({ http: provider.http, clock: deps.clock }, {
-      client: { id: client.clientId, secret: new Secret(client.clientSecret) }, refreshToken: stored.refreshToken,
-    }) as Extract<Credential, { kind: "bearer" }>;
-    credential = keeping(bearer);
   } else {
+    const client = deps.oauth.google;
     const resolve = deps.oauth.microsoft;
-    if (resolve === null) return { ok: false, word: "provider_off" };
+    if (word === "google"
+      ? client === null || client.clientId === "" || client.clientSecret === ""
+      : resolve === null) return { ok: false, word: "provider_off" };
     let lasting = stored.refreshToken;
-    let access: { token: string; expiresAtMs: number } | null = null;
     const meta = microsoftMeta(sealed.meta);
+    const refresh = async (signal: AbortSignal): Promise<RefreshResult> => {
+      const traded = word === "google" && client !== null
+        ? await renewGoogleAccess({ http: provider.http, clock: deps.clock }, {
+          client: { id: client.clientId, secret: new Secret(client.clientSecret) }, refreshToken: lasting,
+        }, signal).then((a) => a.ok ? { ok: true as const, ...a.value, rotated: null } : a)
+        : await tradeMicrosoftCalendar(resolve!, provider.http, lasting, meta, deps.clock, signal);
+      if (!traded.ok) return traded;
+      if (traded.rotated !== null) {
+        const sealedNow = await sealRotated(deps, place, word, lasting, traded.rotated, generation);
+        if (sealedNow === "superseded") return { ok: false, superseded: true, reason: "unknown", retryAfterMs: null };
+        if (sealedNow.kind === "sealed") generation = sealedNow.generation;
+      } else if (await inConnection(place.db, place.key, ({ tx }) => stillStored(tx)) !== true) {
+        return { ok: false, superseded: true, reason: "unknown", retryAfterMs: null };
+      }
+      const grant = { token: traded.token, expiresAtMs: traded.expiresAtMs, generation };
+      if (grant.expiresAtMs - RENEW_BEFORE_MS > deps.clock.now()) remember(cache.grants, cacheKey, grant);
+      return { ok: true, grant, rotated: traded.rotated };
+    };
     credential = keeping({
       kind: "bearer",
       async accessToken(signal) {
-        if (access !== null && deps.clock.now() < access.expiresAtMs - RENEW_BEFORE_MS) return { ok: true, token: access.token };
-        access = null;
-        const traded = await tradeMicrosoftCalendar(resolve, provider.http, lasting, meta, deps.clock, signal);
-        if (!traded.ok) return traded;
-        if (traded.rotated !== null) {
-          const sealedNow = await sealRotated(deps, place, word, lasting, traded.rotated);
-          if (sealedNow === "superseded") {
-            superseded = true;
-            return { ok: false, reason: "unknown", retryAfterMs: null };
-          }
-          if (sealedNow.kind === "sealed") {
-            lasting = traded.rotated;
-            generation = sealedNow.generation;
-          }
+        const cached = cache.grants.get(cacheKey);
+        const held = used ?? cached;
+        if (held?.generation === generation && deps.clock.now() < held.expiresAtMs - RENEW_BEFORE_MS) {
+          if (used === undefined) reused = true;
+          used = held;
+          return { ok: true, token: held.token };
         }
-        access = { token: traded.token, expiresAtMs: traded.expiresAtMs };
-        return { ok: true, token: traded.token };
+        if (cached !== undefined && (cached.generation === generation || cached.expiresAtMs <= deps.clock.now())) cache.grants.delete(cacheKey);
+        const refreshing = `${cacheKey}:${generation}`;
+        let pending = cache.refreshing.get(refreshing);
+        if (pending === undefined) {
+          pending = refresh(signal).finally(() => cache.refreshing.delete(refreshing));
+          cache.refreshing.set(refreshing, pending);
+        }
+        const result = await pending;
+        if (!result.ok) {
+          if (result.superseded) superseded = true;
+          return result;
+        }
+        generation = result.grant.generation;
+        lasting = result.rotated ?? lasting;
+        used = result.grant;
+        reused = false;
+        return { ok: true, token: used.token };
       },
     });
   }
@@ -229,13 +283,11 @@ export async function openPassSignIn(
       tradeRefusal: () => refusal,
       superseded: () => superseded,
       generation: () => generation,
-      async stillStored(tx) {
-        const [current] = await dialect(tx).forUpdate(tx.select({
-          secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion,
-        }).from(calCredentials).where(and(eq(calCredentials.accountId, place.key.accountId), eq(calCredentials.connectionId, place.key.id),
-          eq(calCredentials.kind, CREDENTIAL_KIND[word]))).limit(1), { mode: "share" });
-        if (current === undefined || generationOf(current) !== generation) superseded = true;
-        return !superseded;
+      stillStored,
+      dropBearer() {
+        if (cache.grants.get(cacheKey) === used) cache.grants.delete(cacheKey);
+        used = undefined;
+        return reused;
       },
     },
   };
@@ -311,14 +363,13 @@ export async function tradeMicrosoftCalendar(
 /**
  * Microsoft's new lasting sign-in, sealed again in its own transaction: the credential row under
  * lock, opened, and written over only where it still holds the one this turn traded with. A
- * re-wrap of the same token is the same token; a reconnect or another worker's seal is not, and
- * then nothing is written and the turn ends. The new envelope is opened again before it is kept.
+ * reconnect or another worker's seal ends the turn. The new envelope is opened again before it is kept.
  */
 async function sealRotated(
-  deps: SignInDeps, place: SealPlace, word: ProviderWord, traded: Secret, rotated: Secret,
+  deps: SignInDeps, place: SealPlace, word: ProviderWord, traded: Secret, rotated: Secret, generation: string,
 ): Promise<"superseded" | { readonly kind: "sealed"; readonly generation: string } | { readonly kind: "kept" }> {
   const done = await inConnection(place.db, place.key, async ({ tx }) => {
-    const now = await lockedOpened(tx, deps, place.key, word);
+    const now = await lockedOpened(tx, deps, place.key, word, generation);
     const stored = now === null ? null : parseCredential(now, placeOf(place.key));
     if (stored === null || stored.kind !== "oauth" || stored.refreshToken.reveal() !== traded.reveal()) return "superseded" as const;
     const text = serializeCredential({ kind: "oauth", provider: stored.provider, refreshToken: rotated }, placeOf(place.key));

@@ -199,6 +199,8 @@ export interface CalendarNotices {
    */
   readonly names: "caller" | "provider";
   open(c: Connection, cal: CalendarRef, ask: NoticeChannelAsk, signal: AbortSignal): Promise<Answer<NoticeChannel>>;
+  /** Extend a provider-owned subscription under its existing id. */
+  renew?(c: Connection, id: string, untilMs: number, signal: AbortSignal): Promise<Answer<number>>;
   /** End a channel. One the provider no longer knows is ended. */
   close(
     c: Connection,

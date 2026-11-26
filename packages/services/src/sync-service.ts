@@ -405,6 +405,7 @@ interface CalendarSnapshotCursor {
   phase: "calendar";
   event?: CalendarKeyset;
   span?: CalendarSpanMs;
+  rankAt?: number;
 }
 
 type SnapshotCursor = MessageSnapshotCursor | DraftsSnapshotCursor | CalendarSnapshotCursor;
@@ -516,6 +517,7 @@ export class SyncService {
         ...(c.event ? { d: c.event.startsAtMs, i: c.event.id } : {}),
         p: c.phase,
         ...(c.span ? { f: c.span.fromMs, t: c.span.toMs } : {}),
+        ...(c.rankAt === undefined ? {} : { r: c.rankAt }),
       }
       : {
         v: SNAPSHOT_CURSOR_VERSION, s: c.asOfSeq.toString(10), n: c.emitted,
@@ -543,7 +545,7 @@ export class SyncService {
       if (cursor.length > SNAPSHOT_CURSOR_MAX_CHARS) throw new Error("cursor too long");
       const raw: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
       if (typeof raw !== "object" || raw === null) throw new Error("not an object");
-      const { v, s, d, i, n, p, da, di, g, f, t } = raw as Record<string, unknown>;
+      const { v, s, d, i, n, p, da, di, g, f, t, r } = raw as Record<string, unknown>;
       if (v !== SNAPSHOT_CURSOR_VERSION) throw new Error("unknown cursor version");
       if (g !== undefined && (typeof g !== "number" || !Number.isSafeInteger(g) || g < 0)) {
         throw new Error("bad store run");
@@ -561,7 +563,7 @@ export class SyncService {
         throw new Error("bad emitted count");
       }
       if (p !== undefined && p !== "tail" && p !== "drafts" && p !== "calendar") throw new Error("bad phase");
-      if (p === "calendar") return this.decodeCalendarCursor(BigInt(s), generation, n, { d, i, da, di, f, t });
+      if (p === "calendar") return this.decodeCalendarCursor(BigInt(s), generation, n, { d, i, da, di, f, t, r });
       // THE DRAFT KEYSET, both halves or neither: one half alone is a position nothing can
       // resume from, and reading it as absent would silently declare the drafts finished.
       // Same range rules as the message keyset below, for the same reason.
@@ -612,9 +614,9 @@ export class SyncService {
    */
   private decodeCalendarCursor(
     asOfSeq: bigint, generation: number | null, emitted: number,
-    raw: { d: unknown; i: unknown; da: unknown; di: unknown; f: unknown; t: unknown },
+    raw: { d: unknown; i: unknown; da: unknown; di: unknown; f: unknown; t: unknown; r: unknown },
   ): CalendarSnapshotCursor {
-    const { d, i, da, di, f, t } = raw;
+    const { d, i, da, di, f, t, r } = raw;
     const instant = (x: unknown): x is number =>
       typeof x === "number" && Number.isFinite(x) && x <= MAX_EPOCH_MS && x >= MIN_EPOCH_MS;
     if (da !== undefined || di !== undefined) throw new Error("a calendar cursor with a draft keyset");
@@ -625,10 +627,12 @@ export class SyncService {
       throw new Error("bad span");
     }
     if (i !== undefined && f === undefined) throw new Error("an event keyset with no span");
+    if (r !== undefined && (!instant(r) || f === undefined)) throw new Error("bad calendar rank time");
     return {
       asOfSeq, generation, emitted, phase: "calendar",
       ...(i !== undefined ? { event: { startsAtMs: d as number, id: i as string } } : {}),
       ...(f !== undefined ? { span: { fromMs: f as number, toMs: t as number } } : {}),
+      ...(r !== undefined ? { rankAt: r as number } : {}),
     };
   }
 
@@ -1538,8 +1542,14 @@ export class SyncService {
     const seq = Number(asOfSeq);
     const generation = gen === null ? {} : { storeGeneration: gen };
     if (served === null) return { asOfSeq: seq, changes: [], nextCursor: null, window: SNAPSHOT_WINDOW, ...generation };
+    const now = ctx.now();
+    const span = cursor?.span ?? p.span;
+    const rankAt = cursor?.rankAt ?? (span === null ? now.getTime() : undefined);
+    const remaining = rankAt === undefined ? p.limit : served.window.maxRows - (cursor?.emitted ?? 0);
+    if (remaining <= 0) return { asOfSeq: seq, changes: [], nextCursor: null, window: SNAPSHOT_WINDOW, ...generation, calendarWindow: served.window };
     const slice = await served.snapshotPage(ctx.db, ctx.accountId, {
-      now: ctx.now(), window: served.window, span: cursor?.span ?? p.span, after: cursor?.event ?? null, limit: p.limit,
+      now, window: served.window, span, after: cursor?.event ?? null, limit: Math.min(p.limit, remaining),
+      ...(rankAt === undefined ? {} : { rankAt }),
       ...(p.excludeSuggestions ? { excludeSuggestions: true } : {}),
     });
     const budget = new PageByteBudget(PAGE_MAX_ROW_BYTES);
@@ -1570,12 +1580,13 @@ export class SyncService {
       sent += 1;
     }
     // A page the bytes cut resumes after its last event; a full read after the last row it read.
-    const resume = cut ? last : slice.full ? (slice.readTo ?? undefined) : undefined;
+    const resume = rankAt !== undefined && sent >= remaining ? undefined : cut ? last : slice.full ? (slice.readTo ?? undefined) : undefined;
     return {
       asOfSeq: seq, changes,
       nextCursor: resume === undefined ? null : this.encodeSnapshotCursor({
         asOfSeq, generation: gen, emitted: (cursor?.emitted ?? 0) + sent, phase: "calendar",
         event: resume, span: slice.span,
+        ...(rankAt === undefined ? {} : { rankAt }),
       }),
       window: SNAPSHOT_WINDOW, ...generation, calendarWindow: served.window,
     };

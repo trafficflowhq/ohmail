@@ -33,6 +33,7 @@ import { dueAmong } from "./roster.js";
 import type { PassSignIn } from "./sign-in.js";
 import { storableKey } from "./storable.js";
 import type { CalendarSyncDeps, OpenReading } from "./types.js";
+import { pendingDispatchedReply } from "./write-reply-check.js";
 import {
   faultWord, FORCED_REREAD_EVERY_MS, MASS_DROP_FLOOR, MASS_DROP_RETRY_MS, MAX_CALDAV_READING_PAGES, MS_WINDOW_DAYS_AHEAD,
   MS_WINDOW_DAYS_BACK, MS_WINDOW_SLIDE_DAYS, pollAfterRead, turnOverdue, type CalendarSyncFault,
@@ -65,6 +66,7 @@ export interface ReadingContext {
   readonly map: MapContext;
   readonly signal: AbortSignal;
   readonly budget: TurnBudget;
+  readonly noticeCoverage?: ReadonlyMap<string, number>;
 }
 
 export type ReadingResult =
@@ -153,6 +155,7 @@ export async function readCalendar(ctx: ReadingContext, cal: StoredCalendar): Pr
   let fromNullAgain = false;
   let pages = 0;
   let changed = 0;
+  let lastPageMs = 0;
   const named = new Set<string>();
   /** The worker is stopping (a turn whose own time ran out is not: it says so). */
   const stopping = (): boolean => deps.halted() || (ctx.signal.aborted && !turnOverdue(ctx.signal));
@@ -199,7 +202,10 @@ export async function readCalendar(ctx: ReadingContext, cal: StoredCalendar): Pr
       if (await saveProgress(progress, null) === "gone") return { kind: "gone" };
       return { kind: "refused", word: "too_large", retryAfterMs: null, pages, changed };
     }
-    if (ctx.budget.pagesLeft <= 0 || deps.clock.now() >= ctx.budget.deadline) {
+    const msLeft = ctx.budget.deadline - deps.clock.now();
+    // One Outlook page can include many series requests. After two pages, leave room for a
+    // page like the last one before starting another, even when the access grant was reused.
+    if (ctx.budget.pagesLeft <= 0 || msLeft <= 0 || (ms && pages >= 2 && lastPageMs > msLeft)) {
       // Only now is a place needed: a reading that ended inside its turn never asked for one.
       if (!kept) kept = (await placeFree(ctx)) && keepReading(memory, cal.id, reading);
       if (!kept) {
@@ -211,11 +217,13 @@ export async function readCalendar(ctx: ReadingContext, cal: StoredCalendar): Pr
       return { kind: "more", pages, changed };
     }
     const token: ChangeToken | null = reading.since === null ? null : { provider: ctx.word, value: reading.since };
+    const began = deps.clock.now();
     const answer = await ctx.provider.reader.readChanges(
       ctx.signIn.connection, { id: cal.providerId }, token,
       { limit: MAX_PAGE_LIMIT, cursor: reading.cursor, scope: reading, window: window === null ? null : { start: { kind: "instant", epochMs: window.start }, end: { kind: "instant", epochMs: window.end } } },
       ctx.signal,
     );
+    lastPageMs = deps.clock.now() - began;
     ctx.budget.pagesLeft -= 1;
     pages += 1;
     // A call the stop ended answers as a late one does: that is the worker's word, not the provider's, and nothing is written for it.
@@ -520,7 +528,12 @@ async function finishReading(
 
   // A token the store could not hand back letter for letter is none: the calendar is then read whole each round, which is slow and never wrong.
   let keepToken: string | null = page.token !== null && storableKey(page.token) ? page.token : null;
-  let nextAt = deps.clock.now() + pollAfterRead({ provider: ctx.word, refreshMs: page.refreshMs, notices: false, random: deps.random });
+  const now = deps.clock.now();
+  const coveredUntil = keepToken === null ? undefined : ctx.noticeCoverage?.get(cal.id);
+  const covered = coveredUntil !== undefined && coveredUntil > now;
+  const poll = { provider: ctx.word, refreshMs: page.refreshMs, random: deps.random };
+  const fallbackAt = now + pollAfterRead({ ...poll, notices: false });
+  let nextAt = covered ? Math.min(now + pollAfterRead({ ...poll, notices: true }), coveredUntil) : fallbackAt;
   let reconcileGoogle = ctx.word === "google" && whole && !reading.noDrop && !reading.leftOut;
   let confirmingAbsence = false;
 
@@ -554,12 +567,26 @@ async function finishReading(
   // A calendar's first reading says it was read even when it holds nothing: a device learns by it that the calendar is in.
   const wrote = changed + dropped > 0 || reading.changed > 0 || cal.lastSyncedAt === null;
   const cleared = cal.errorCode !== null;
+  const expectedPoll = cal.nextPollAt?.toISOString() ?? null;
   const last = await applyChunk(apply, [], async (tx, changes) => {
+    let pollAt = nextAt;
+    if (ctx.word === "microsoft" && covered && pollAt > fallbackAt) {
+      const [reply] = await tx.select({ id: calWrites.id }).from(calWrites).where(and(
+        eq(calWrites.accountId, ctx.key.accountId), eq(calWrites.calendarId, cal.id),
+        eq(calWrites.op, "answer"), pendingDispatchedReply(),
+      )).limit(1);
+      if (reply !== undefined) pollAt = fallbackAt;
+    }
+    const scheduledPoll = new Date(pollAt).toISOString();
     await tx.update(calCalendars).set({
       syncToken: keepToken,
       readCheckpoint: null,
       readOwner: null,
-      nextPollAt: new Date(nextAt),
+      nextPollAt: sql`case
+        when ${cal.nextPollAt !== null && cal.nextPollAt.getTime() > now}
+          or date_trunc('milliseconds', ${calCalendars.nextPollAt}) is distinct from ${expectedPoll}::timestamptz
+        then least(coalesce(${calCalendars.nextPollAt}, now()), ${scheduledPoll}::timestamptz)
+        else ${scheduledPoll}::timestamptz end`,
       ...(reading.window === null ? {} : { windowStart: dayText(reading.window.start), windowEnd: dayText(reading.window.end - DAY) }),
       ...(wrote || cleared ? { errorCode: null, lastSyncedAt: sql`now()`, updatedAt: sql`now()` } : {}),
     }).where(and(eq(calCalendars.id, cal.id), eq(calCalendars.accountId, ctx.key.accountId), eq(calCalendars.connectionId, ctx.key.id)));

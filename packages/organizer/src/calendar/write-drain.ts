@@ -183,13 +183,21 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
   const done = await inConnection(input.db, input.key, async ({ tx, held }): Promise<Claim> => {
     if (oauthIdentityAmbiguous(held.provider, held.organizerAddresses) || await calendarEnabledAt(tx, key.accountId) === null) return { kind: "off" };
     const provider = input.provider.reader.provider;
+    const waiting = sql<boolean>`coalesce(${calWrites.nextAttemptAt} > now(), false)`;
+    // A reply to a vanished series has no event left to serialize against. Let other writes
+    // go first while its retry is in the future, then give the receipt its usual orphan check.
+    const parkedOrphan = sql`${waiting} and ${observingOutlookReply(calWrites.op, calWrites.payload)} and not exists (
+      select 1 from ${calEvents}
+      where ${calEvents.id} = ${calWrites.eventId} and ${calEvents.accountId} = ${calWrites.accountId}
+        and ${calEvents.calendarId} = ${calWrites.calendarId}
+    )`;
     for (let i = 0; i < EXPIRED_PER_CLAIM; i++) {
       const [head] = await tx.select({
         id: calWrites.id, key: calWrites.idempotencyKey, attempts: calWrites.attempts, op: calWrites.op, calendarId: calWrites.calendarId,
         calendarProviderId: calCalendars.providerId, calendarAccess: calCalendars.access, calendarNativeMove: calCalendars.nativeMove,
         eventId: calWrites.eventId, baseVersionTag: calWrites.baseVersionTag,
         payload: calWrites.payload, nextAttemptAt: calWrites.nextAttemptAt, createdAt: calWrites.createdAt,
-        waiting: sql<boolean>`coalesce(${calWrites.nextAttemptAt} > now(), false)`,
+        waiting,
         aged: sql<boolean>`${calWrites.createdAt} < now() - make_interval(secs => ${WRITE_MAX_AGE_MS / 1000})`,
         spent: sql<boolean>`${calWrites.attempts} >= ${WRITE_MAX_ATTEMPTS}`,
       }).from(calWrites)
@@ -222,7 +230,10 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
                     or earlier.payload #>> '{act,scope,at}' = ${calWrites.payload} #>> '{act,scope,at}'))
               )
           )` : undefined))
-        .orderBy(asc(calWrites.createdAt), asc(sql`coalesce((${calWrites.payload}->'part'->>'n')::int, 1)`), asc(calWrites.id))
+        .orderBy(
+          ...(provider === "microsoft" ? [asc(parkedOrphan)] : []),
+          asc(calWrites.createdAt), asc(sql`coalesce((${calWrites.payload}->'part'->>'n')::int, 1)`), asc(calWrites.id),
+        )
         .limit(1);
       if (head === undefined) return { kind: "none" };
       let payload = parseWritePayload(head.payload);

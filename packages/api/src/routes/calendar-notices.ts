@@ -18,7 +18,7 @@
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { bindDb } from "@trafficflow/db";
-import { calPushChannels, isNoticeChannelId, isNoticeWord, noticeWordDigest } from "@trafficflow/db/cloud";
+import { MICROSOFT_MAILBOX_NOTICE_RESOURCE, calPushChannels, isNoticeChannelId, isNoticeWord, noticeWordDigest } from "@trafficflow/db/cloud";
 import type { Logger } from "@trafficflow/core/mail";
 import { pullForNotice } from "@trafficflow/services/calendar";
 import type { Db } from "@trafficflow/services/mail";
@@ -162,8 +162,10 @@ async function judge(db: Db, provider: Provider, pair: Pair): Promise<Verdict> {
   if (row === undefined || held === null || !same) return "refused";
   if (row.alive !== true) return "expired";
   if (provider === "google" && row.resourceId !== null && row.resourceId !== pair.resource) return "refused";
+  const ownedOnly = provider === "microsoft" && row.calendarId === null;
+  if (ownedOnly && row.resourceId !== MICROSOFT_MAILBOX_NOTICE_RESOURCE) return "refused";
   await pullForNotice(bindDb(db, { account: row.accountId }), {
-    accountId: row.accountId, connectionId: row.connectionId, calendarId: row.calendarId,
+    accountId: row.accountId, connectionId: row.connectionId, calendarId: row.calendarId, ownedOnly,
   });
   return "applied";
 }
