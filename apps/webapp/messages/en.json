@@ -6979,6 +6979,7 @@
     "coming": "Coming up with {name}"
   },
   "calendar": {
+    "loading": "Loading calendar…",
     "connect": "Connect a calendar",
     "repeat": {
       "unavailable": "This calendar cannot repeat events yet.",

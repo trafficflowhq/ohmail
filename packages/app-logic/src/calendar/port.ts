@@ -91,6 +91,8 @@ export interface CalendarPort {
   /** Each event with its waiting writes laid over, as the engine's one selector makes them. */
   events(): readonly EventWithWrites[];
   settings(): Promise<CalendarSettingsWire>;
+  /** Whether the initial calendar and event data is ready for the account's switch. */
+  ready?(enabledAt: string | null | undefined): boolean;
   /** Changes when the account's settings record arrives through sync. */
   settingsVersion?(): number;
   /** Change whether the account sees this suggestion, then reconcile through the mirror. */

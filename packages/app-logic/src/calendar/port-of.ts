@@ -44,6 +44,7 @@ export interface PortParts {
   readonly setup?: CalendarPort["setup"];
   readonly setSuggestionDismissed?: CalendarPort["setSuggestionDismissed"];
   /** The window our server serves and the spans this device read (the engine's public read, once it has one). */
+  readonly ready?: CalendarPort["ready"];
   readonly held: () => { readonly window: CalendarWindow; readonly loaded: readonly HeldSpan[] };
   /** Reads a span before the window (`engine.loadCalendar`), or `none` where this shell cannot ask for one. */
   readonly load: CalendarPort["load"];
@@ -152,6 +153,7 @@ export function calendarPortOf(parts: PortParts) {
       };
     },
     settings: parts.settings,
+    ready: parts.ready,
     settingsVersion: () => parts.engine.store.stampOf("settings"),
     ...(parts.setSuggestionDismissed ? { setSuggestionDismissed: parts.setSuggestionDismissed } : {}),
     setup: parts.setup,
