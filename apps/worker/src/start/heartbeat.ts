@@ -225,6 +225,7 @@ export function heartbeatSection(scope: WorkerScope): void {
           // An API arm exists only where this worker drives the API host's internal routes (the
           // secret is shared); there, an API driver that has never run is dark, not a choice.
           apiArmExpected: Boolean(scope.config.apiCron),
+          signalSource: scope.config.signals?.activeSource,
           // The schedule this leader holds, for `api_cron_stale`, with the in-process 5xx poll as one
           // more target. `null` on shards > 0, on the self-hosted organizer and after quiescing:
           // unread, so it clears none of shard 0's rows.

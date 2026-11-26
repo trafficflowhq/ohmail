@@ -308,6 +308,8 @@ function asBusyRefusal(err: unknown, started: number, what?: Carried): unknown {
 /** What one fresh connection said: it opened and answered in `ms`, or the code it was refused with. */
 export interface FreshConnectReading { ok: boolean; ms: number; code: string | null }
 
+interface ApiAccessFixture { readonly account: string; readonly message: string }
+
 /**
  * CAN THIS INSTANCE OPEN A NEW CONNECTION? `/health`'s probe rides one the pool already holds, so on
  * 2026-10-26 it read healthy on warm instances while the pooler refused every new client. One
@@ -316,21 +318,21 @@ export interface FreshConnectReading { ok: boolean; ms: number; code: string | n
  * `CONNECT_TIMEOUT`, anything else the driver's code.
  */
 export function freshConnectProbe(
-  url: string, opts: { timeoutMs?: number; memoMs?: number } = {},
+  url: string, opts: { timeoutMs?: number; memoMs?: number; apiAccess?: ApiAccessFixture } = {},
 ): () => Promise<FreshConnectReading> {
   const timeoutMs = opts.timeoutMs ?? 3_000;
   const memoMs = opts.memoMs ?? 10_000;
   let kept: { at: number; settled: boolean; reading: Promise<FreshConnectReading> } | null = null;
   return () => {
     if (kept && (!kept.settled || Date.now() - kept.at < memoMs)) return kept.reading;
-    const next = { at: Date.now(), settled: false, reading: freshConnect(url, timeoutMs) };
+    const next = { at: Date.now(), settled: false, reading: freshConnect(url, timeoutMs, opts.apiAccess) };
     void next.reading.then(() => { next.settled = true; });
     kept = next;
     return next.reading;
   };
 }
 
-async function freshConnect(url: string, timeoutMs: number): Promise<FreshConnectReading> {
+async function freshConnect(url: string, timeoutMs: number, apiAccess?: ApiAccessFixture): Promise<FreshConnectReading> {
   const started = Date.now();
   let client: ReturnType<typeof postgres> | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -343,7 +345,18 @@ async function freshConnect(url: string, timeoutMs: number): Promise<FreshConnec
       timer = setTimeout(() => resolve("CONNECT_TIMEOUT"), timeoutMs);
       (timer as { unref?: () => void }).unref?.();
     });
-    const code = await Promise.race([client`select 1`.then(() => null), deadline]);
+    const read = apiAccess
+      ? client.begin("read only", async (tx) => {
+          const { account, message } = apiAccess;
+          await tx.unsafe(BINDER_SQL, [account, ""]);
+          const [result] = await tx<{ visible: boolean }[]>`select
+            exists (select 1 from public.accounts where id = ${account})
+            and exists (select 1 from public.messages where id = ${message} and account_id = ${account})
+            and exists (select 1 from ohmail.messages where id = ${message} and account_id = ${account}) as visible`;
+          return result?.visible === true ? null : "API_ACCESS_UNPROVED";
+        })
+      : client`select 1`.then(() => null);
+    const code = await Promise.race([read, deadline]);
     return { ok: code === null, ms: Date.now() - started, code };
   } catch (err) {
     const code = (err as { code?: unknown } | null)?.code;

@@ -504,6 +504,8 @@ export const platformSignals = pgTable("platform_signals", {
   windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
   requests: integer("requests").notNull().default(0),
   errors5xx: integer("errors_5xx").notNull().default(0),
+  /** Aggregate request classes and registered routes when the source supplies them. */
+  traffic: jsonb("traffic"),
   /**
    * TRUE when the poll hit its page budget before reaching the start of the window, so both
    * counts are LOWER BOUNDS over the window's most-recent slice. The walk runs backwards from the

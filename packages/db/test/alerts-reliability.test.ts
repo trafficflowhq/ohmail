@@ -1816,3 +1816,32 @@ describe("affectedAccounts", () => {
       "a dead worker is one fact about everybody, not a count of nobody").toBeNull();
   });
 });
+
+describe("the serving API's platform signals", () => {
+  it("ages an unmeasured active service into a source alarm even while the old host has complete windows", async () => {
+    const db = await makeTestDb();
+    for (const minutes of [5, 10]) {
+      await db.insert(platformSignals).values({
+        provider: "vercel", project: "previous-api", windowStart: ago(minutes * MIN),
+        requests: 200, errors5xx: 0, truncated: false, fetchedAt: NOW,
+      });
+    }
+    const active = { provider: "railway", project: "serving-api", since: ago(40 * MIN) };
+    const opts = { now: NOW, signalSource: active, thresholds: { api5xxWindowMs: 10 * MIN } };
+    const dark = await evaluateAlerts(db, opts);
+    expect(dark.some((alert) => alert.key === "signal_source_dark:railway:serving-api")).toBe(true);
+    expect(dark.some((alert) => alert.kind === "api_5xx_rate")).toBe(false);
+
+    for (const minutes of [5, 10]) {
+      const reading = {
+        provider: "railway", project: "serving-api", windowStart: ago(minutes * MIN),
+        requests: 200, errors5xx: 20, truncated: false, fetchedAt: NOW,
+      };
+      await db.insert(platformSignals).values(reading);
+      await db.insert(platformSignals).values(reading).onConflictDoNothing();
+    }
+    const measured = await evaluateAlerts(db, opts);
+    expect(measured.find((alert) => alert.key === "api_5xx_rate:railway:serving-api")?.detail).toContain("40 of 400");
+    expect(measured.some((alert) => alert.key === "signal_source_dark:railway:serving-api")).toBe(false);
+  });
+});

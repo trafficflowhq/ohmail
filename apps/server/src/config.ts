@@ -3,7 +3,7 @@ import {
   type KeyProvider, type KekEnvIdentity, type MicrosoftDeviceClient,
 } from "@trafficflow/core";
 import type { AiProviderEnv } from "@trafficflow/core/ai-provider-env";
-import type { MsOAuthBootstrap } from "@trafficflow/db/cloud";
+import { railwaySignalSource, type ActiveSignalSource, type MsOAuthBootstrap } from "@trafficflow/db/cloud";
 import { makeAuthConfig, normalizeRecipient, type AuthConfig } from "@trafficflow/services";
 import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficflow/api";
 import { parseTlsTerminatorList, parseTrustedProxyEntry, splitTrustedProxyList, type TlsTerminatorRefusal } from "./http.js";
@@ -99,6 +99,12 @@ export const SERVER_REQUEST_TIMEOUT_MS = 300_000;
 
 export const DEFAULT_PORT = 8080;
 
+/** The process host supplies this identity to each deployed instance. */
+export function runtimeDeploymentId(env: NodeJS.ProcessEnv): string {
+  const id = env.RAILWAY_DEPLOYMENT_ID?.trim() ?? "";
+  return /^[A-Za-z0-9_-]{1,80}$/.test(id) ? id : "";
+}
+
 /** The SMTP block (`SMTP_URL` + `MAIL_FROM`, read with the mail setting in `settings.ts`). Absent ⇒
  *  mailer null, and the composition works: invites verify through the consumed token, not through mail. */
 export interface SmtpConfig {
@@ -111,6 +117,8 @@ export interface SmtpConfig {
 /** The API alert arm's secret and channels — parsed by {@link loadAlertsEnv}. */
 export interface AlertsEnv {
   secret: string;
+  signalSource?: ActiveSignalSource;
+  shards?: readonly number[];
   webhookUrl: string | null;
   /** `TF_ALERT_EMAIL`: the one operator address the alert mail goes to, over {@link SmtpConfig}. */
   email: string | null;
@@ -425,8 +433,15 @@ export function loadAlertsEnv(env: NodeJS.ProcessEnv, hasMailer: boolean): Alert
   if (email !== null && normalizeRecipient(email) === null) {
     throw new Error("TF_ALERT_EMAIL must be one plain email address — no display name, quotes or list");
   }
+  const signalSource = railwaySignalSource(env.TF_SIGNAL_RAILWAY_SERVICE_ID);
+  const shardCount = trimmed(env, "TF_SHARDS");
+  if (shardCount && (!/^[1-9][0-9]*$/.test(shardCount) || Number(shardCount) > 1024)) {
+    throw new Error("TF_SHARDS must name a supported worker fleet size");
+  }
   return {
     secret,
+    ...(signalSource ? { signalSource } : {}),
+    ...(shardCount ? { shards: Array.from({ length: Number(shardCount) }, (_, shard) => shard) } : {}),
     webhookUrl: trimmed(env, "TF_ALERT_WEBHOOK_URL") || null,
     email,
     telegram: {

@@ -6,10 +6,13 @@
  * still the one home of the lock's names.
  */
 
-/** The two runtime logins: the API's and the worker's. Neither owns anything or may bypass. */
+/** Runtime logins own no objects and may not bypass row security. */
 export const API_ROLE = "ohmail_api";
+export const API_REPLACEMENT_ROLE = "ohmail_api_next";
 export const WORKER_ROLE = "ohmail_worker";
-export const RUNTIME_LOGINS = [API_ROLE, WORKER_ROLE] as const;
+export const API_ROLES = [API_ROLE, API_REPLACEMENT_ROLE] as const;
+export const REQUIRED_RUNTIME_LOGINS = [API_ROLE, WORKER_ROLE] as const;
+export const RUNTIME_LOGINS = [...REQUIRED_RUNTIME_LOGINS, API_REPLACEMENT_ROLE] as const;
 export type RuntimeLogin = (typeof RUNTIME_LOGINS)[number];
 
 /**

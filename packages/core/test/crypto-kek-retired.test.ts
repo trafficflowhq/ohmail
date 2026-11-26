@@ -4,7 +4,7 @@ import {
   keyProviderFromEnv, keyProviderFromEnvOptional, kekEnvIdentity, kekRetiredThroughFromEnv,
 } from "../src/crypto.js";
 import {
-  keyRingVar, versionLabel as v, KEY_RING_PREFIX, KEY_RING_RETIRED,
+  keyRingVar, versionLabel as v, KEY_RING_PREFIX, KEY_RING_ACTIVE, KEY_RING_RETIRED,
 } from "../../../test/support/key-ring-env.js";
 
 /**
@@ -169,5 +169,28 @@ describe("without a declaration the contract is the one it always was", () => {
     expect(keyProviderFromEnv(env).currentKeyVersion()).toBe(2);
     expect(kekEnvIdentity(env)).toEqual({ active: 2, count: 2, fingerprint: ring([1, KEY_ONE], [2, KEY_TWO]) });
     expect(kekRetiredThroughFromEnv(env)).toBe(0);
+  });
+});
+
+describe("staging a wrapping key", () => {
+  it("opens both loaded versions while continuing to write with the selected one", async () => {
+    const staged = {
+      [keyRingVar(1)]: KEY_ONE, [keyRingVar(2)]: KEY_TWO, [KEY_RING_ACTIVE]: "1",
+    };
+    const api = keyProviderFromEnv(staged);
+    const worker = keyProviderFromEnv({ ...staged, [KEY_RING_ACTIVE]: "2" });
+    const before = await api.encrypt("synthetic mailbox credential");
+    expect(before.keyVersion).toBe(1);
+    expect(await worker.decrypt(before.ciphertext, before.keyVersion)).toBe("synthetic mailbox credential");
+    const after = await worker.encrypt("synthetic rotated credential");
+    expect(after.keyVersion).toBe(2);
+    expect(await api.decrypt(after.ciphertext, after.keyVersion)).toBe("synthetic rotated credential");
+    expect(kekEnvIdentity(staged)).toMatchObject({ active: 1, count: 2, loadedThrough: 2 });
+  });
+
+  it("refuses an activation version missing from the serving ring", () => {
+    const stale = { [keyRingVar(1)]: KEY_ONE, [KEY_RING_ACTIVE]: "2" };
+    expect(() => keyProviderFromEnv(stale)).toThrow(KEY_RING_ACTIVE);
+    expect(() => kekEnvIdentity(stale)).toThrow(KEY_RING_ACTIVE);
   });
 });

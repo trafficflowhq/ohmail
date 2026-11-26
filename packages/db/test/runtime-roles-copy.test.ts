@@ -39,8 +39,8 @@ const COVERS: Record<PolicyVerb, readonly string[]> = {
 
 describe("the copied roles' script", () => {
   it("is the kit's file and data, byte for byte", () => {
-    expect(sha256(SCRIPT)).toBe("6f01de0d77e6a126379deea606804751b784ffe47f2a3995812ab58c96bf6933");
-    expect(sha256(RULE)).toBe("8b1433f718c5deb9e9a3bfbeb4fef756599f9c6360c979bffc7e1233cc850d59");
+    expect(sha256(SCRIPT)).toBe("38cfc74fde4b2925c340f8762f453c0698a5a3933852fd69532e91a1dc703f4a");
+    expect(sha256(RULE)).toBe("8c71f42159c6bcfac23cd91cae04879ff2691a4656358b2830a5bfe0191b959c");
   });
 
   it("carries the four markers its sections are cut by, once each and in order", () => {
@@ -55,18 +55,29 @@ describe("the copied roles' script", () => {
 });
 
 describe("the rule the script writes, against the lock's list", () => {
-  it("names the same two logins", () => {
+  it("gives the replacement API login the same direct grants and row policies", () => {
+    const api = "ohmail_api";
+    const replacement = "ohmail_api_next";
+    expect(rows.filter((r) => r[1] === replacement).map(([kind, , subject, value]) => [kind, subject, value])).toEqual(
+      rows.filter((r) => r[1] === api).map(([kind, , subject, value]) => [kind, subject, value]),
+    );
+    for (const policy of policyList(true)) {
+      expect(policy.roles.includes(replacement), policy.name).toBe(policy.roles.includes(api));
+    }
+  });
+
+  it("names the same runtime logins", () => {
     expect(rows.filter((r) => r[0] === "login").map((r) => r[1])).toEqual([...RUNTIME_LOGINS]);
   });
 
-  it("grants exactly the lock's three views, to exactly the two logins, to read, and USAGE on their schema", () => {
+  it("grants exactly the lock's three views, to the runtime logins, to read, and USAGE on their schema", () => {
     const views = rows.filter((r) => r[0] === "view").map((r) => `${r[1]} ${r[2]} ${r[3]}`).sort();
     expect(views).toEqual(RUNTIME_LOGINS.flatMap((l) => ACCOUNT_VIEWS.map((v) => `${l} ${viewName(v)} SELECT`)).sort());
     expect(rows.filter((r) => r[0] === "schema" && r[2] === READER_SCHEMA).map((r) => `${r[1]} ${r[3]}`)).toEqual(RUNTIME_LOGINS.map((l) => `${l} USAGE`));
   });
 
   it("a policy names a login only on a table and verb the rule grants it", () => {
-    for (const p of policyList()) {
+    for (const p of policyList(true)) {
       for (const role of p.roles.filter((r) => (RUNTIME_LOGINS as readonly string[]).includes(r))) {
         const held = granted(role, p.table);
         expect(COVERS[p.verb].some((v) => held.has(v)), `${p.table}.${p.name} names ${role}, which holds ${[...held].join(" ") || "nothing"}`).toBe(true);

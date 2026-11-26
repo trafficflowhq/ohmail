@@ -24,6 +24,7 @@ import { registerSchemaCensus } from "./health-census.js";
  * instead of serving requests that would 500 on a missing table.
  */
 export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
+  ["platform_signals", "traffic"],
   ["worker_heartbeats", "beat_at"], // cloud 0003_observability (legacy 0019)
   // cloud 0004_waitlist_invites (legacy 0020) — TWO markers, not one, because the migration
   // created two independent tables and the funnel breaks differently depending on which is
@@ -409,7 +410,7 @@ export const CLOUD_TIER_MARKERS = SCHEMA_MARKERS;
  * A VALIDATE-only one carries none: cloud 0045_attachment_staging_digest_validate flips only
  * `convalidated`, which no class sees. The tag names the newest PROVABLE entry.
  */
-export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0108_worker_topology";
+export const CLOUD_SCHEMA_MARKER_JOURNAL_TAG = "0110_platform_signal_traffic";
 
 /** The journal entries {@link SCHEMA_MARKERS} was last reconciled against (asserted by a test). */
 export const SCHEMA_MARKER_JOURNAL_TAG =

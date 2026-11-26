@@ -23,6 +23,7 @@
 kind	role	subject	value
 login	ohmail_api	attributes	LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION
 login	ohmail_worker	attributes	LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION
+login	ohmail_api_next	attributes	LOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION
 verbs	ohmail_api	*	SELECT INSERT UPDATE DELETE
 verbs	ohmail_api	staff_users	SELECT INSERT UPDATE
 verbs	ohmail_api	staff_sessions	SELECT INSERT UPDATE
@@ -41,31 +42,51 @@ verbs	ohmail_worker	staff_audit_events	-
 verbs	ohmail_worker	invites	SELECT UPDATE DELETE
 verbs	ohmail_worker	waitlist	-
 verbs	ohmail_worker	worker_topology	SELECT
+verbs	ohmail_api_next	*	SELECT INSERT UPDATE DELETE
+verbs	ohmail_api_next	staff_users	SELECT INSERT UPDATE
+verbs	ohmail_api_next	staff_sessions	SELECT INSERT UPDATE
+verbs	ohmail_api_next	staff_role_grants	SELECT INSERT UPDATE
+verbs	ohmail_api_next	staff_audit_log	INSERT
+verbs	ohmail_api_next	staff_audit_events	INSERT
+verbs	ohmail_api_next	invites	SELECT INSERT UPDATE
+verbs	ohmail_api_next	waitlist	SELECT INSERT UPDATE
+verbs	ohmail_api_next	worker_topology	SELECT
 schema	ohmail_api	public	USAGE
 schema	ohmail_worker	public	USAGE
 schema	ohmail_api	ohmail	USAGE
 schema	ohmail_worker	ohmail	USAGE
+schema	ohmail_api_next	public	USAGE
+schema	ohmail_api_next	ohmail	USAGE
 view	ohmail_api	ohmail.messages	SELECT
 view	ohmail_api	ohmail.message_search	SELECT
 view	ohmail_api	ohmail.message_search_words	SELECT
 view	ohmail_worker	ohmail.messages	SELECT
 view	ohmail_worker	ohmail.message_search	SELECT
 view	ohmail_worker	ohmail.message_search_words	SELECT
+view	ohmail_api_next	ohmail.messages	SELECT
+view	ohmail_api_next	ohmail.message_search	SELECT
+view	ohmail_api_next	ohmail.message_search_words	SELECT
 routine	ohmail_api	ohmail.current_account()	EXECUTE
 routine	ohmail_api	ohmail.current_key()	EXECUTE
 routine	ohmail_worker	ohmail.current_account()	EXECUTE
 routine	ohmail_worker	ohmail.current_key()	EXECUTE
+routine	ohmail_api_next	ohmail.current_account()	EXECUTE
+routine	ohmail_api_next	ohmail.current_key()	EXECUTE
 deadline	ohmail_api	lock_timeout	30000
 deadline	ohmail_api	statement_timeout	55000
 deadline	ohmail_api	idle_in_transaction_session_timeout	60000
 deadline	ohmail_worker	lock_timeout	30000
 deadline	ohmail_worker	statement_timeout	55000
 deadline	ohmail_worker	idle_in_transaction_session_timeout	60000
+deadline	ohmail_api_next	lock_timeout	30000
+deadline	ohmail_api_next	statement_timeout	55000
+deadline	ohmail_api_next	idle_in_transaction_session_timeout	60000
 deadline	ohmail_admin	lock_timeout	30000
 deadline	ohmail_admin	statement_timeout	55000
 deadline	ohmail_admin	idle_in_transaction_session_timeout	60000
 bypass	ohmail_api	row security	never
 bypass	ohmail_worker	row security	never
+bypass	ohmail_api_next	row security	never
 bypass	ohmail_admin	row security	never
 bypass	plane_runtime	row security	never
 bypass	plane_migrator	row security	never
