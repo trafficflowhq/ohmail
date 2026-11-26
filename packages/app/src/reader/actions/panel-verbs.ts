@@ -59,7 +59,7 @@ export function panelVerbs(
     rank,
     behind: done && room === "phone",
     pressed: filed === (id === "later" ? "reply_later" : "set_aside"),
-    ...hints[id],
+    ...(verbs.pendingReplyCopy ? { disabled: true, disabledHint: t("replyCopyWaiting") } : hints[id]),
     onPress: () => act(id),
   });
   return [

@@ -70,7 +70,7 @@ function OhboxBody() {
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. A press
      opens what the engine's row answers for it (`World.rowOpenTarget`), decided here once: the route
      and the pane carry that id, and no fold, unfold or rotation asks the row again. */
-  const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
+  const { open, openRow, close } = useListDetail((id) => `/message/${id}?member=thread`);
   /* Under a pushed reader this screen is hidden: it keeps what it showed (`held-while-hidden.ts`). */
   const focused = useIsFocused();
   const kept = useRef<{ ohbox: World["ohbox"]; doorbell: World["doorbell"] } | null>(null);
@@ -203,9 +203,9 @@ function OhboxBody() {
     <ListDetail
       open={open}
       onClose={close}
-      toRoute={(id) => `/message/${id}`}
+      toRoute={(id) => `/message/${id}?member=thread`}
       list={list}
-      renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} onClose={ctx.onClose} />}
+      renderDetail={(id, ctx) => <MessageReader id={id} inPane={ctx.inPane} wholeThread onClose={ctx.onClose} />}
     />
   );
 }

@@ -18,5 +18,5 @@ export * from "./thread-walk.js";
 export * from "./verbs.js";
 export * from "./visit.js";
 export { useOlderBodyDoor, type OlderBodyDoor } from "./older-body.js";
-export { isForwardedByUs } from "@ohmail/client-engine";
+export { awaitsReplyCopy, continuedReply, isForwardedByUs, pileSubjectIds } from "@ohmail/client-engine";
 export { baseSubject } from "@trafficflow/core/reply-subject";

@@ -176,6 +176,8 @@ export function SheetRow({
   icon,
   on,
   onPress,
+  disabled,
+  accessibilityHint,
 }: {
   label: string;
   /**
@@ -188,10 +190,14 @@ export function SheetRow({
   icon?: IconName;
   on?: boolean;
   onPress: () => void;
+  disabled?: boolean;
+  accessibilityHint?: string;
 }) {
   const t = useTheme();
   const row = {
     onPress,
+    disabled,
+    accessibilityHint,
     accessibilityLabel: detail === undefined ? label : Copy.ariaLabelDetail(label, detail),
     style: ({ pressed }: { pressed: boolean }) => ({
       flexDirection: "row" as const,
@@ -200,16 +206,17 @@ export function SheetRow({
       paddingHorizontal: 16,
       paddingVertical: 13,
       backgroundColor: pressed ? t.c.tint : "transparent",
+      ...(disabled ? { opacity: 0.5 } : {}),
     }),
   };
   // A checkbox row hands native its state with the key; a plain row hands none. Keyed apart, so a
   // row that changes kind is a new view and never keeps the other kind's flag.
   return on === undefined ? (
-    <Tap key="button" {...row} accessibilityRole="button">
+    <Tap key="button" {...row} accessibilityRole="button" accessibilityState={disabled ? { disabled } : undefined}>
       {rowContent(t, label, detail, icon, on)}
     </Tap>
   ) : (
-    <Tap key="checkbox" {...row} accessibilityRole="checkbox" accessibilityState={{ checked: on }}>
+    <Tap key="checkbox" {...row} accessibilityRole="checkbox" accessibilityState={{ checked: on, ...(disabled ? { disabled } : {}) }}>
       {rowContent(t, label, detail, icon, on)}
     </Tap>
   );

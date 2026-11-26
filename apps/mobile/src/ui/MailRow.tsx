@@ -57,7 +57,7 @@ export function MailRow({
    */
   strip,
 }: {
-  m: Mail & { pile?: WorldPileState; presentedFolder?: WorldMail["presentedFolder"]; folder?: WorldMail["folder"] };
+  m: Mail & Pick<WorldMail, "pendingReplyCopy"> & { pile?: WorldPileState; presentedFolder?: WorldMail["presentedFolder"]; folder?: WorldMail["folder"] };
   searchTerm?: string;
   onPress: () => void;
   swipe?: boolean;
@@ -94,6 +94,7 @@ export function MailRow({
      folder is not offered it — an unanswered fact is never a yes. */
   const facts = {
     face,
+    pendingReplyCopy: m.pendingReplyCopy,
     junkOffered:
       m.presentedFolder !== undefined
       && moveTargetsFor({ presentedFolder: m.presentedFolder }).includes("spam"),
@@ -107,7 +108,10 @@ export function MailRow({
     /* A FOLDED ROW IS ITS WHOLE CONVERSATION, as the web's pick of a row is: every verb takes
        `memberIds` (absent on an unfolded row), and the press says one sentence. */
     const members = m.memberIds;
-    if (verb === "later") { void w.actions.pileToggle(m.id, "replyLater", members); return; }
+    if (verb === "later") {
+      if (!m.pendingReplyCopy) void w.actions.pileToggle(m.id, "replyLater", members);
+      return;
+    }
     if (verb === "junk") {
       const row = w.message(m.id);
       if (row) w.actions.move(row, "spam", members);
@@ -150,7 +154,7 @@ export function MailRow({
         onPanResponderTerminationRequest: () => true,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [swipe, m.id, m.memberIds, face],
+    [swipe, m.id, m.memberIds, face, m.pendingReplyCopy],
   );
 
   const receiptPaper = receipt && t.mail === true;
@@ -168,6 +172,7 @@ export function MailRow({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={mailRowSpoken(m)}
+      accessibilityHint={swipe && m.pendingReplyCopy ? Copy.replyCopyWaiting : undefined}
       /* THE ROW'S VERBS, FOR A READER WHO CANNOT SWIPE. A gesture is invisible to a screen
          reader, so they are published as actions on the row itself — VoiceOver's rotor and
          TalkBack's actions menu reach them directly, Junk among them, which no gesture carries.
@@ -312,7 +317,13 @@ export function MailRow({
           overlay would take the tap that opens the message. */}
       <View style={StyleSheetAbsolute} pointerEvents="none">
         <SwipeFace side="leading" label={faceLabel(face)} icon={face === "markUnread" ? "x" : "check"} pan={pan} />
-        <SwipeFace side="trailing" label={Copy.actionLater} icon="clock" pan={pan} />
+        <SwipeFace
+          side="trailing"
+          label={m.pendingReplyCopy ? Copy.replySending : Copy.actionLater}
+          detail={m.pendingReplyCopy ? Copy.replyCopyWaiting : undefined}
+          icon="clock"
+          pan={pan}
+        />
       </View>
       {/* AND THE ROW IS A SURFACE, not a transparent hole. Every list that offers the gesture
           rests its rows on `Panel`'s l1, so the row carries that same token: without it the verb
@@ -498,11 +509,13 @@ const StyleSheetAbsolute = {
 function SwipeFace({
   side,
   label,
+  detail,
   icon,
   pan,
 }: {
   side: "leading" | "trailing";
   label: string;
+  detail?: string;
   icon: "check" | "x" | "clock";
   pan: Animated.ValueXY;
 }) {
@@ -514,6 +527,7 @@ function SwipeFace({
     <Animated.View style={{ flexDirection: "row", alignItems: "center", gap: 6, opacity }}>
       <Icon name={icon} size={14} color={t.c.ink2} />
       <Txt variant="decision" tone="ink2">{label}</Txt>
+      {detail ? <Txt variant="note" tone="ink2">{detail}</Txt> : null}
     </Animated.View>
   );
 }

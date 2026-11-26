@@ -530,7 +530,7 @@ export interface World {
   autoAct: { on: boolean; suggestOn: boolean; pending: boolean; set(on: boolean): Promise<boolean> } | null;
   /** The sent-mail seed as the consent read last said it (`state/seed-offer.ts`). */
   seed: WorldSeed;
-  message(id: string): WorldMail | undefined;
+  message(id: string, wholeThread?: boolean): WorldMail | undefined;
   /**
    * WHAT A PRESS ON AN OHBOX ROW OPENS: the engine's `rowOpenTarget` for the pressed row's message
    * (the message itself where nothing holds it), asked at the press and nowhere else. The route and

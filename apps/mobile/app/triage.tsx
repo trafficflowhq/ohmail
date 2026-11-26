@@ -192,7 +192,7 @@ function TriageMail({ inPane, pile }: { inPane: boolean; pile?: string }) {
                     {Copy.pileEmpty}
                   </Txt>
                 ) : (
-                  p.items.map(({ id, messageId, title, subtitle, preview, resurfaceAt, mailbox }) => {
+                  p.items.map(({ id, messageId, memberIds, title, subtitle, preview, resurfaceAt, mailbox }) => {
                     const content = (
                       <>
                         {t.mail ? <MailAvatar person={{ name: title, address: title }} mailbox={mailbox} /> : null}
@@ -224,7 +224,8 @@ function TriageMail({ inPane, pile }: { inPane: boolean; pile?: string }) {
                     return messageId ? (
                       <TapRow key={id} accessibilityRole="button"
                         accessibilityLabel={mailbox ? [title, subtitle, preview, resurfaceAt, Copy.deliveredTo(mailbox.name)].filter(Boolean).join(". ") : undefined}
-                        style={itemStyle} onPress={() => router.push(`/message/${messageId}`)}>
+                        style={itemStyle}
+                        onPress={() => router.push(`/message/${messageId}${(memberIds?.length ?? 0) > 1 ? "?member=thread" : ""}`)}>
                         {content}
                       </TapRow>
                     ) : (

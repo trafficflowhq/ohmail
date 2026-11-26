@@ -35,6 +35,8 @@ export interface PanelVerb {
   pressed?: boolean;
   dialog?: { readonly id: string; readonly open: boolean };
   disabled?: boolean;
+  /** The reason shown in the pointer hint for a disabled verb. */
+  disabledHint?: string;
   /**
    * It rests and still takes a press, which says why it does nothing (Send over a letter too long to send): drawn as
    * a verb that is off, said as one (`aria-disabled`), its press handed on. `disabled` wins over it.
@@ -198,11 +200,12 @@ function Verb({ verb, apart, keysShown, folded, short }: VerbProps) {
       aria-label={verb.name ?? verb.label}
       aria-keyshortcuts={verb.shortcut}
       title={
-        verb.refused !== undefined && !verb.disabled
+        verb.disabledHint ??
+        (verb.refused !== undefined && !verb.disabled
           ? verb.refused
           : verb.keyHint
             ? `${verb.name ?? verb.label} · ${verb.keyHint}`
-            : (verb.name ?? verb.label)
+            : (verb.name ?? verb.label))
       }
       aria-pressed={verb.pressed}
       aria-haspopup={verb.dialog ? "dialog" : undefined}

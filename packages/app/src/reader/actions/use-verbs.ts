@@ -8,9 +8,11 @@ import type { EngineMessage } from "@ohmail/wire";
 import { useContext, useMemo } from "react";
 import { useMailboxFacts } from "@ohmail/app-logic/mail-state";
 import {
+  awaitsReplyCopy,
   isOwnVerb,
   markSeenOver,
   moveTargetsOf,
+  pileSubjectIds,
   readerZone,
   readIsItsRelease,
   resurfaceHorizonsIn,
@@ -20,6 +22,7 @@ import {
 import {
   ListMeetingContext,
   ListMoveContext,
+  usePresentedMirror,
   type ListVisit,
   type ThreadReadWiring,
 } from "@ohmail/app-logic/reading";
@@ -113,6 +116,7 @@ export interface Verbs {
    * null in none (a letter brought back to the top is in none of them).
    */
   readonly filed: "reply_later" | "set_aside" | "bubbled_up" | null;
+  readonly pendingReplyCopy: boolean;
 }
 
 export function useVerbs(
@@ -120,6 +124,7 @@ export function useVerbs(
   visit: ListVisit | null,
   own: Pick<ThreadReadWiring, "onMarkUnread"> | null,
   latest?: EngineMessage,
+  filingMembers: readonly EngineMessage[] = [],
 ): Verbs {
   /* The seam is taken only where an own verb may run: a list's visit runs every verb on the list's path. */
   const press = usePressWhereOn();
@@ -164,8 +169,10 @@ export function useVerbs(
         ? "markRead"
         : "markUnread";
   const replyTo = latest ?? message;
+  const pendingReplyCopy = usePendingReplyCopy(message?.id, filingMembers, visit !== null);
   const act = (asked: MessageAction): void => {
     if (message === null) return;
+    if (pendingReplyCopy && (asked === "later" || asked === "aside")) return;
     let action = asked;
     if (action === "reply" || action === "reply_all" || action === "forward") {
       const target = (action === "forward" ? message : replyTo) ?? message;
@@ -222,7 +229,26 @@ export function useVerbs(
     replyAll,
     draft: drafter !== null && replyTo !== null ? () => drafter(replyTo.id) : null,
     filed,
+    pendingReplyCopy,
   };
+}
+
+function usePendingReplyCopy(
+  id: string | undefined,
+  members: readonly EngineMessage[],
+  fromList: boolean,
+): boolean {
+  const { host, route } = useFrame();
+  const presented = usePresentedMirror();
+  const waiting = (messageId: string | undefined) => awaitsReplyCopy(host.engine.store, messageId);
+  return (
+    waiting(id) ||
+    members.some((member) => waiting(member.id)) ||
+    (fromList &&
+      presented !== null &&
+      id !== undefined &&
+      pileSubjectIds(presented, id, host.engine.openRowHeld(), route.place === "ohbox").some(waiting))
+  );
 }
 
 function useTagVerbs(

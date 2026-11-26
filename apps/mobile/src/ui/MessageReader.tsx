@@ -69,15 +69,17 @@ const NO_RAIL: RailItem[] = [];
 export const FROM_LINE_SPLIT_DP = 360;
 
 export function MessageReader({
-  id,
+  id: addressedId,
   inPane = false,
   selectMember = false,
+  wholeThread = false,
   runReply,
   onClose,
 }: {
   id: string;
   /** A message explicitly selected to read its full body from a thread. */
   selectMember?: boolean;
+  wholeThread?: boolean;
   runReply?: ReplyRunState;
   /** Mounted beside its list — no back bar of its own; the pane or the rail carries Back. */
   inPane?: boolean;
@@ -90,7 +92,8 @@ export function MessageReader({
   const narrowFrom = useWindowDimensions().width < FROM_LINE_SPLIT_DP;
   // The reader draws the body, so it subscribes to it: a body landing redraws this pane alone.
   useBodyStamp();
-  const m = w.message(id);
+  const m = w.message(addressedId, wholeThread);
+  const id = m?.id ?? addressedId;
   // …and to its files and events: a list or a calendar part landing redraws the tiles and cards.
   useFilesStamp(m ? [m.id, ...m.earlier.map((h) => h.id)] : [id]);
   /* The rail carries Back where it carries the verbs (the closed Duo, the unfolded landscape):
@@ -247,6 +250,9 @@ export function MessageReader({
   lineOf.current = { opened: t.type.readerBody.lineHeight ?? 29, member: t.type.streamBody.lineHeight ?? 25 };
   /* Another screen over this reader (a pushed route, another tab over the pane) hides it: it reads nothing then. */
   const screenShown = useIsFocused();
+  useEffect(() => {
+    if (screenShown && id !== addressedId) router.setParams(inPane ? { open: id } : { id });
+  }, [addressedId, id, inPane, screenShown]);
   const shown = useRef(screenShown);
   shown.current = screenShown;
   /** The anchor on its way to a place: the view shows no place the person chose, so it reads nothing. */
