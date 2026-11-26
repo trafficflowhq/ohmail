@@ -159,15 +159,16 @@ describe("the new letter", () => {
     const body = "Hello,\n\nFriday works.";
     const legacy = '<p style="margin:0">Hello,</p><p style="margin:0"></p><p style="margin:0">Friday works.</p>';
     const generatedRow = { ...letter("saved-generated-letter", "Friday", body), html: legacy, rationale: "Drafted from your text" };
-    for (const linked of [false, true]) {
-      const scope = linked ? "linked-generated-letter" : "marked-generated-letter";
+    for (const provenance of ["marked", "linked", "browser-only"] as const) {
+      const linked = provenance === "linked";
+      const scope = provenance + "-generated-letter";
       writeComposeDraft({
         ...EMPTY_COMPOSE,
         to: "workshop@example.invalid,",
         subject: "Friday",
         body,
         html: legacy,
-        ...(linked ? {} : { aiDraft: true }),
+        ...(provenance === "marked" ? { aiDraft: true } : {}),
       }, scope);
       if (linked) writeComposeRow(generatedRow.id, scope);
       const restored = await mountWriting({ view: true, scope, drafts: linked ? [generatedRow] : [] });

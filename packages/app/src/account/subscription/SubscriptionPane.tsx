@@ -13,7 +13,8 @@ import { TrialProgress } from "./TrialProgress.js";
 
 export interface SubscriptionPaneProps {
   readonly model: SubscriptionModel;
-  readonly connectedCount?: number;
+  /** The mounted mailbox count, or null while it is loading. */
+  readonly connectedCount?: number | null;
   readonly sheet?: PaneSheet;
   readonly addStorage?: {
     press: () => void;
@@ -215,9 +216,11 @@ function StandingSheet({
           label={t("mailboxes")}
           wrapValue
           value={
-            connectedCount === undefined
-              ? own("mailboxesUpTo", { count: mailboxes })
-              : own("mailboxesConnected", { used: connectedCount, count: mailboxes })
+            connectedCount === null
+              ? undefined
+              : connectedCount === undefined
+                ? own("mailboxesUpTo", { count: mailboxes })
+                : own("mailboxesConnected", { used: connectedCount, count: mailboxes })
           }
           description={
             addMailbox === undefined

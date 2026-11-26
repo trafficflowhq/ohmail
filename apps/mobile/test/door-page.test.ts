@@ -212,7 +212,7 @@ describe("the door's page, built", () => {
     }
   }, 180_000);
 
-  it.each(["upgrade", "erasure"] as const)("prepares legacy queues through the local chooser during %s", async (kind) => {
+  it.each(["upgrade", "erasure", "unreadable store"] as const)("prepares legacy queues through the local chooser during %s", async (kind) => {
     const calendarOut = join(out, "calendar");
     const manifest = await buildShell({ app: "ohcal", out: calendarOut });
     const server = createServer((req, res) => {
@@ -255,12 +255,26 @@ describe("the door's page, built", () => {
       await seed(erased, "edit");
       if (kind === "erasure") await seed(other, "other-edit");
       const config = { ...CONFIG, app: "ohcal" as const, organizes: "withheld" as const,
-        ...(kind === "erasure" ? { erasedCalendarScopes: [erased] } : {}) };
+        ...(kind === "erasure" ? { erasedCalendarScopes: [erased] } : {}),
+        ...(kind === "unreadable store" ? {
+          erasedCalendarScopes: null,
+          at: "servers" as const,
+          state: { ...STATE, session: "refused" as const, said: { code: "pairingsUnreadable", args: ["the store is unavailable"] } },
+        } : {}) };
       await page.addInitScript(nativeDouble, { config, ...(kind === "erasure" ? { refuseScope: other } : {}) });
       await page.goto(`${origin}/door.html?epoch=calendar-door`);
       type Seen = { __native: { asked: string[]; imported: { type: string; id: string }[]; ready: unknown[] } };
       await page.waitForFunction(() => (window as unknown as Seen).__native.asked.includes("ready"));
       const { asked, imported, ready } = await page.evaluate(() => (window as unknown as Seen).__native);
+      if (kind === "unreadable store") {
+        await page.getByText(/could not read this phone's stored pairings/i).waitFor();
+        expect(asked).toEqual(["config", "ready"]);
+        expect(ready).toEqual([{ calendarPrepared: "unverified" }]);
+        expect(await page.evaluate(() => Object.values(localStorage).includes("Private draft"))).toBe(true);
+        expect(await page.evaluate(async () => (await indexedDB.databases()).map(({ name }) => name)))
+          .toEqual(["ohmail-mirror:" + erased]);
+        return;
+      }
       if (kind === "erasure") {
         expect(await page.evaluate(async () => (await indexedDB.databases()).map(({ name }) => name)))
           .toEqual(["ohmail-mirror:" + other]);

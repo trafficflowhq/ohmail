@@ -531,10 +531,13 @@ export function useShellCompose({
       restoredRef.current();
       const rowId = saved.aiDraft === undefined ? readComposeRow(scope) : null;
       const row = rowId === null ? undefined : engine.read().get<EngineDraft>("draft", rowId);
-      // An older buffer has provenance only when it still matches a generated row.
       const generated = saved.aiDraft ?? (typeof row?.rationale === "string"
         && row.body === saved.body && row.html === saved.html);
-      setCompose(generated ? { ...saved, aiDraft: true, html: repairLegacyDraftHtml(saved.html, saved.body) } : saved);
+      // A browser-only buffer can predate both the provenance flag and the first autosave.
+      // The repair requires an exact match to the legacy encoding of its plain text.
+      const browserOnly = saved.aiDraft === undefined && rowId === null;
+      const html = generated || browserOnly ? repairLegacyDraftHtml(saved.html, saved.body) : saved.html;
+      setCompose(generated || html !== saved.html ? { ...saved, aiDraft: true, html } : saved);
       setComposeResumed(true);
     }
     if (takeRecoveredComposer(scope)) toast(t("compose.recoveredFromClosedTab"));

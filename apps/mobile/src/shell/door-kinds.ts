@@ -108,8 +108,8 @@ export interface DoorConfig {
   readonly canPin: boolean;
   readonly facts: ShellConfig["facts"];
   readonly state: DoorState;
-  /** Scopes with a durable confirmation of account erasure. */
-  readonly erasedCalendarScopes?: readonly string[];
+  /** Scopes with a durable confirmation of account erasure, or null if the store could not be read. */
+  readonly erasedCalendarScopes?: readonly string[] | null;
 }
 
 /** Where the camera stands over the page, in CSS px of the page's window. */
@@ -144,7 +144,7 @@ export type OnlyHere = "answer" | "newer" | "unsaved" | "unknown" | "none";
 export interface DoorRequests {
   readonly config: { readonly ask: Empty; readonly answer: DoorConfig };
   /** The page drew its first frame. */
-  readonly ready: { readonly ask: { readonly calendarPrepared?: false }; readonly answer: Empty };
+  readonly ready: { readonly ask: { readonly calendarPrepared?: false | "unverified" }; readonly answer: Empty };
   /** The way back out of the door: to the open mailbox, or to one this phone can open again. */
   readonly leave: { readonly ask: Empty; readonly answer: Empty };
   readonly sync: { readonly ask: Empty; readonly answer: Empty };
@@ -253,7 +253,7 @@ const isOpenInput = (v: unknown): boolean =>
 const none = (): boolean => true;
 const FIELDS: { readonly [K in DoorKind]: (m: Record<string, unknown>) => boolean } = {
   config: none,
-  ready: (m) => m.calendarPrepared === undefined || m.calendarPrepared === false,
+  ready: (m) => m.calendarPrepared === undefined || m.calendarPrepared === false || m.calendarPrepared === "unverified",
   leave: none,
   sync: none,
   disconnect: none,

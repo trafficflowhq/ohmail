@@ -32,6 +32,38 @@ afterAll(async () => {
 
 type Read = { kind: string; messageIds?: string[]; unread?: boolean };
 
+it.each(["light", "dark"])(
+  "keeps the phone reader scrollport above the Reply and Forward bar in %s",
+  async (scheme) => {
+    const page = await browser!.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    try {
+      await page.route(`${ORIGIN}/**`, (route) =>
+        route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: html }),
+      );
+      await page.goto(
+        `${ORIGIN}/?open=rd-a&read=1&screen=reading&device=phone&face=paper&invitation&scheme=${scheme}`,
+      );
+      const show = page.getByRole("button", { name: "Show in calendar" }).last();
+      await show.waitFor({ timeout: 5000 });
+      const port = page.locator("[data-reading-scroll]");
+      await expect
+        .poll(async () => {
+          const scroll = (await port.boundingBox())!;
+          const foot = (await page.locator('.oh-sheet[data-kind="reading"] > .oh-sheet-foot').boundingBox())!;
+          return scroll.y + scroll.height - foot.y;
+        })
+        .toBeLessThanOrEqual(1);
+      await port.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+      });
+      await show.tap({ trial: true, timeout: 3000 });
+    } finally {
+      await page.close();
+    }
+  },
+  30_000,
+);
+
 describe("opening a conversation in a real browser", () => {
   it.each([
     { width: 1440, height: 900, device: "desktop", face: "paper" },
