@@ -989,10 +989,9 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
   }, 120_000);
 
   /*
-   * AN IMPORT'S TURN NEVER HOLDS THE OTHER MAILBOXES. A mailbox owing a large backlog takes the
-   * pass's longest turn; while it runs, every kick (a doorbell, a poll tick, the sync-kick scan)
-   * asks for another pass, and each served mailbox visited before that kick goes again on a free
-   * lane instead of waiting out the import. With a ten-minute poll nothing else makes them due.
+   * An import may hold its lane while other mailboxes take their scheduled polls on free lanes.
+   * The control uses a ten-minute poll so repeated doorbells for one mailbox cannot make the
+   * other six due.
    */
   async function dueTurnsWhileImportHolds(owes: boolean): Promise<{ due: number[]; inFlight: number; passMoved: boolean }> {
     const db = makeDb(DB);
@@ -1005,40 +1004,31 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     // A turn past half a 1 ms target runs long, as an import's does.
     if (owes) fleet.behave(h.mailboxId, { deliver: mail(400, "imp"), batchSize: 10, syncDelayMs: 5 });
     const { logger, lines } = passLog();
-    const worker = await warmShard(db, fleet, seeds, { cycleLanes: 3, pollIntervalMs: 600_000, heavyTurnMs: 1, logger });
-    await waitFor(() => fleet.indicesOf(h.mailboxId, "sync_end").length >= 2, 20_000, "the import's second turn");
+    const worker = await warmShard(db, fleet, seeds, {
+      cycleLanes: 3, pollIntervalMs: owes ? 200 : 600_000, heavyTurnMs: 1, logger,
+    });
     const ring = (): void => fleet.signal.get(h.mailboxId)!();
-    if (!owes) {
-      // Nothing owes a backlog, so the shard goes quiet; a doorbell then starts a pass the import leads.
-      let seen = -1;
-      await waitFor(() => { const quiet = seen === lines.length && fleet.syncInFlight === 0; seen = lines.length; return quiet; },
-        20_000, "the shard to go quiet");
-      await new Promise((r) => setTimeout(r, 300));
+    if (owes) {
+      await waitFor(() => lines.some((line) => line.event === "backfill_progress"), 20_000, "the import to owe a backlog");
     }
-    const quietAt = lines.length;
-    // Every turn of a mailbox owing a backlog is its own and leads its pass.
+    const starts = fleet.indicesOf(h.mailboxId, "sync_start").length;
     releases.push(parkSync(fleet, h.mailboxId));
-    if (!owes) ring();
-    await waitFor(() => fleet.syncInFlight === 1, 20_000, `the import parked on its own turn — trace: ${fleet.describeTrace(names)}`);
+    ring();
+    await waitFor(() => fleet.indicesOf(h.mailboxId, "sync_start").length > starts, 20_000,
+      `the import to enter its parked turn — trace: ${fleet.describeTrace(names)}`);
     const passStamp = worker.stats().lastCycleAt?.getTime() ?? null;
-    // The held pass began after the last pass-end line (none while the shard was quiet): each
-    // mailbox's next line after it is its own turn of the held pass.
-    const passEnd = owes ? lines.map((l) => l.event).lastIndexOf("backfill_progress") : quietAt;
-    const visitsOf = (id: string, upTo = lines.length): number =>
-      lines.slice(0, upTo).filter((l) => l.event === "mailbox_visit" && l.mailboxId === id).length;
-    const ownTurn = six.map((s) => visitsOf(s.mailboxId, passEnd) + 1);
-    await waitFor(() => six.every((s, i) => visitsOf(s.mailboxId) >= ownTurn[i]!), 20_000,
-      `every mailbox's own turn of the held pass — trace: ${fleet.describeTrace(names)}`);
-    const dueOf = (id: string): number => lines.filter((l) => l.mailboxId === id && l.due === true).length;
-    for (let n = 1; n <= 3; n++) {
-      await new Promise((r) => setTimeout(r, 5));
-      ring();
-      if (owes) {
-        await waitFor(() => six.every((s) => dueOf(s.mailboxId) >= n), 20_000,
-          `due turn ${n} for each of the six while the import holds the pass — trace: ${fleet.describeTrace(names)}`);
-      } else {
+    const heldAt = lines.length;
+    const dueOf = (id: string): number => lines.slice(heldAt).filter((l) => l.mailboxId === id && l.due === true).length;
+    if (owes) {
+      await waitFor(() => six.every((s) => dueOf(s.mailboxId) >= 3), 20_000,
+        `three due turns for each of the six while the import holds the pass — trace: ${fleet.describeTrace(names)}`);
+      await waitFor(() => fleet.syncInFlight === 1, 20_000, "only the parked import in flight");
+    } else {
+      for (let n = 0; n < 3; n++) {
+        ring();
         await new Promise((r) => setTimeout(r, 300));
       }
+      expect(lines.slice(heldAt).filter((line) => six.some((s) => s.mailboxId === line.mailboxId))).toEqual([]);
     }
     const result = {
       due: six.map((s) => dueOf(s.mailboxId)),
@@ -1049,17 +1039,18 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     return result;
   }
 
-  it("serves every other mailbox on each kick while an import's turn holds the pass", async () => {
+  it("serves every other mailbox when its poll comes due while an import holds the pass", async () => {
     const r = await dueTurnsWhileImportHolds(true);
     expect(r.due.every((n) => n >= 3), `due turns ${r.due}`).toBe(true);
     expect(r.inFlight, "the import's turn returned, so the turns prove nothing").toBe(1);
     expect(r.passMoved, "a pass ended, so the turns rode new passes").toBe(false);
   }, 120_000);
 
-  it("takes no such turn while a turn that owes nothing holds the pass", async () => {
+  it("does not poll other mailboxes early when a doorbell rings during a held pass", async () => {
     const r = await dueTurnsWhileImportHolds(false);
     expect(r.due, "a kick gave due turns beside a turn that owes no backlog").toEqual([0, 0, 0, 0, 0, 0]);
     expect(r.inFlight).toBe(1);
+    expect(r.passMoved).toBe(false);
   }, 120_000);
 
   /*
