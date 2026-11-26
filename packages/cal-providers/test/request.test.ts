@@ -97,6 +97,29 @@ const REFUSED_ON_THE_CLOUD_ONLY: string[] = [
 const HOME = { "nas.local": ["192.168.1.20"], localhost: ["127.0.0.1"] };
 
 describe("an address is decided before a socket opens", () => {
+  it.each([false, true])("records a POST only after preflight and identifies a stop before transport (stop=%s)", async (stop) => {
+    const trace: string[] = [];
+    const abort = new AbortController();
+    const { request, calls } = standIn();
+    const port = guardedRequest({
+      resolver: { resolve: async () => { trace.push("preflight"); return [PUBLIC]; } },
+      request: async (url, opts) => { trace.push("transport"); return request(url, opts); },
+      policy: { kind: "cloud" }, limits: { ...LIMITS, maxRedirects: 0 },
+      hosts: new Set(["feeds.example.test"]), writes: true,
+    });
+    const result = await port.request("https://feeds.example.test/events/item/accept", get({
+      method: "POST", body: "{}", signal: abort.signal,
+      auth: { tlsOnly: true, admits: () => true, credential: { kind: "bearer", token: "fixture" } },
+      beforeDispatch: async () => {
+        trace.push("record");
+        if (stop) abort.abort();
+      },
+    }));
+    expect(trace).toEqual(stop ? ["preflight", "record"] : ["preflight", "record", "transport"]);
+    expect(calls).toHaveLength(stop ? 0 : 1);
+    expect(result).toMatchObject(stop ? { arrived: false, reason: "timeout", notDispatched: true } : { arrived: true });
+  });
+
   it("refuses on a hosted server every address of its own network, of a metadata host and of no network at all", async () => {
     for (const [url, word] of [...REFUSED_EVERYWHERE, ...REFUSED_ON_THE_CLOUD_ONLY.map((u): [string, ProviderRefusal] => [u, "address_not_allowed"])]) {
       const { port, asked, calls } = guard({ kind: "cloud" }, HOME);

@@ -12,6 +12,7 @@ export interface CalendarEventFace extends CalendarEventView {
   readonly people: readonly string[];
   readonly notes: string | null;
   readonly conflict?: boolean;
+  readonly replyUnconfirmed?: boolean;
   readonly retryWriteId?: string;
   readonly failedCreate?: NonNullable<ShownOccurrence["writes"]["refusal"]>;
   readonly invitation?: import("../reader/InvitationLetterCard.js").InvitationLetterProps;
@@ -24,22 +25,24 @@ export interface FaceWords {
   readonly waitingDevice: string;
   readonly waitingProvider: string;
   readonly notSaved: string;
+  readonly replyUnconfirmed: string;
 }
 
-function stateOf(o: ShownOccurrence): CalendarEventView["state"] {
+function stateOf(
+  o: ShownOccurrence,
+  answer: ShownOccurrence["record"]["myAnswer"],
+): CalendarEventView["state"] {
   if (o.record.status === "cancelled") return "off";
   if (o.record.myAnswer === "none") return "to-answer";
-  if (
-    o.record.status === "tentative" ||
-    o.record.myAnswer === "tentative" ||
-    o.record.mailAnswer === "tentative"
-  )
+  if (o.record.status === "tentative" || o.record.myAnswer === "tentative" || answer === "tentative")
     return "maybe";
   return "plain";
 }
 
-function saidOf(o: ShownOccurrence): Pick<CalendarEventFace, "said"> {
-  const answer = o.record.mailAnswer ?? o.record.myAnswer;
+function saidOf(
+  o: ShownOccurrence,
+  answer: ShownOccurrence["record"]["myAnswer"],
+): Pick<CalendarEventFace, "said"> {
   if (answer !== "accepted" && answer !== "tentative" && answer !== "declined") return {};
   return {
     said: {
@@ -87,18 +90,24 @@ export function faceOf(
   const viewOnly = viewOnlyOf(o.calendar, connection);
   const { waiting, refusal, refusedWriteId } = o.writes;
   const conflict = refusal === "version_stale";
+  const replyUnconfirmed = refusal === "answer_unconfirmed";
+  const checkingReply = o.writes.replyUnconfirmed === true;
+  const answer =
+    checkingReply || replyUnconfirmed ? o.record.myAnswer : (o.record.mailAnswer ?? o.record.myAnswer);
   const failedCreate =
     connection?.provider === "caldav" && (!o.record.uid || o.record.uid.startsWith("pending:"))
       ? refusal
       : null;
   const status =
-    refusal !== null
-      ? { text: words.notSaved, failed: true }
-      : waiting === "device"
-        ? { text: words.waitingDevice, failed: false }
-        : waiting === "provider"
-          ? { text: words.waitingProvider, failed: false }
-          : null;
+    replyUnconfirmed || checkingReply
+      ? { text: words.replyUnconfirmed, failed: false }
+      : refusal !== null
+        ? { text: words.notSaved, failed: true }
+        : waiting === "device"
+          ? { text: words.waitingDevice, failed: false }
+          : waiting === "provider"
+            ? { text: words.waitingProvider, failed: false }
+            : null;
   const people = [
     ...(o.record.organizer ? [o.record.organizer.name ?? o.record.organizer.address] : []),
     ...o.record.invitees.map((i) => i.name ?? i.address),
@@ -106,7 +115,7 @@ export function faceOf(
   return {
     ...time,
     title: o.record.title,
-    state: stateOf(o),
+    state: stateOf(o, answer),
     repeats: o.occurrence.source === "override" ? "apart" : o.occurrence.source === "rule" ? "series" : null,
     viewOnly,
     timeEditable:
@@ -116,8 +125,9 @@ export function faceOf(
       (canEditRecord(o.record, connection, own, o.calendar.access, o.series) ||
         (proposals && canProposeRecord(o.record, own))),
     waits: o.record.myAnswer === "none",
-    ...saidOf(o),
+    ...saidOf(o, answer),
     status,
+    ...(replyUnconfirmed && { replyUnconfirmed }),
     ...(failedCreate && { failedCreate }),
     ...(!failedCreate &&
       (conflict

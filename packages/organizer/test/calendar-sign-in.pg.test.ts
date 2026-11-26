@@ -11,10 +11,15 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { Secret, type StoredCredential } from "@ohmail/cal-providers";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { calendarSyncPass } from "../src/calendar/sync-pass.js";
+import { loadDueConnections } from "../src/calendar/roster.js";
+import { RETRY_FLOOR_MS } from "../src/calendar/words.js";
+import { eq } from "drizzle-orm";
+import { calConnections, calEvents, calWrites } from "@trafficflow/db";
+import { calendarWriteDrain } from "../src/calendar/write-drain.js";
 import { CalendarKeyRingFault } from "../src/calendar/sign-in.js";
 import {
-  AVAILABLE, connectionOf, depsFor, eventsOf, openWorld, openedCredential, providersOf, scriptedReader, sealCredential, seedConnection,
-  silentHttp, single, tokenEndpoint, upsert, type World,
+  AVAILABLE, ZONES, capturedLog, connectionOf, depsFor, eventsOf, openWorld, openedCredential, providersOf, recordWrite,
+  scriptedReader, scriptedWriter, sealCredential, seedConnection, silentHttp, single, tokenEndpoint, upsert, type World,
 } from "./_calendar-world.js";
 
 const never = new AbortController().signal;
@@ -179,13 +184,70 @@ describe.skipIf(!AVAILABLE)("the calendar's sealed sign-in", () => {
     const http = tokenEndpoint(async () => ({ status: 401, body: { error: "invalid_client" } }));
     const reader = scriptedReader("google", { readings: ONE_PAGE, bearer: { seen: [] } });
     const deps = depsFor(w, providersOf({ google: { reader, http } }), { oauth: { google: GOOGLE_REGISTRATION, microsoft: null } });
-    const kinds: string[] = [];
-    for (let i = 0; i < 3; i++) kinds.push((await calendarSyncPass(deps, seeded.due, never)).kind);
+    const now = Date.now();
+    const at = { ...deps, clock: { now: () => now } };
+    const first = await calendarSyncPass(at, seeded.due, never);
+    expect(first).toEqual({ kind: "backed_off", word: "sign_in_refused", untilMs: now + RETRY_FLOOR_MS });
+    const kinds: string[] = [first.kind];
+    for (let i = 1; i < 3; i++) kinds.push((await calendarSyncPass(at, seeded.due, never)).kind);
     expect(kinds).toEqual(["backed_off", "backed_off", "backed_off"]);
     expect(await connectionOf(w, seeded.accountId, seeded.connectionId)).toMatchObject({ status: "failing", errorCode: "sign_in_refused" });
     // One trade a turn: the stop is kept for the rest of the turn.
     expect(http.forms.length).toBe(3);
   }, 60_000);
+
+  it("Microsoft: a throttled refresh holds the connection until the provider's retry time", async () => {
+    let now = Date.now();
+    const wait = 20 * 60 * 1000;
+    const t = await msWorld(async () => ({ status: 429, body: {}, retryAfter: "1200" }));
+    const deps = { ...t.deps, clock: { now: () => now } };
+    expect(await calendarSyncPass(deps, t.due, never)).toEqual({ kind: "backed_off", word: "throttled", untilMs: now + wait });
+    const due = () => loadDueConnections(deps.db, new Date(now), 1, (column) => eq(column, t.accountId));
+    now += wait - 1;
+    expect(await due()).toEqual([]);
+    expect(t.http.forms).toHaveLength(1);
+    now += 1;
+    expect(await due()).toEqual([t.due]);
+  });
+
+  it("Microsoft: a throttled refresh from a queued edit holds the write and the connection", async () => {
+    const now = Date.now();
+    const clock = { now: () => now };
+    const wait = 20 * 60 * 1000;
+    let throttled = false;
+    const t = await msWorld(async () => throttled ? { status: 429, body: {}, retryAfter: "1200" } :
+      { status: 200, body: { access_token: "short", expires_in: 3600 } });
+    const principal = ["calendar", "example.test"].join("@");
+    await w.db.update(calConnections).set({ principal }).where(eq(calConnections.id, t.connectionId));
+    const writer = scriptedWriter("microsoft", {
+      async answer(call) {
+        if (call.connection.credential.kind !== "bearer") throw new Error("the writer was not given its OAuth sign-in");
+        const grant = await call.connection.credential.accessToken(never);
+        return grant.ok ? "default" : grant;
+      },
+    });
+    const deps = depsFor(w, providersOf({ microsoft: { reader: t.reader, http: t.http, writer } }), {
+      clock, oauth: t.deps.oauth, drainWrites: calendarWriteDrain({ clock, zones: ZONES, log: capturedLog().log }),
+    });
+    const run = () => calendarSyncPass(deps, t.due, never);
+    expect(await run()).toMatchObject({ kind: "synced" });
+    const [event] = await w.db.select({ id: calEvents.id, updatedAt: calEvents.updatedAt })
+      .from(calEvents).where(eq(calEvents.accountId, t.accountId));
+    if (!event) throw new Error("an edit needs a stored event");
+    const write = await recordWrite(w, {
+      accountId: t.accountId, key: "edit-fixture",
+      act: { kind: "calendar_event_update", eventId: event.id, base: event.updatedAt.toISOString(), scope: { kind: "record" }, change: { title: "New meeting title" } },
+    });
+    throttled = true;
+    expect(await run()).toEqual({ kind: "backed_off", word: "throttled", untilMs: now + wait });
+    expect(writer.calls.map((call) => call.kind)).toEqual(["change"]);
+    expect(t.http.forms).toHaveLength(2);
+    const [stored] = await w.db.select({ state: calWrites.state, next: calWrites.nextAttemptAt }).from(calWrites).where(eq(calWrites.id, write.id));
+    expect(stored?.state).toBe("pending");
+    expect(stored?.next?.getTime()).toBeGreaterThanOrEqual(now + wait);
+    const due = await loadDueConnections(deps.db, new Date(now + wait - 1), 1, (column) => eq(column, t.accountId));
+    expect(due).toEqual([]);
+  });
 
   it("a connection with no sealed sign-in, or one of another kind, waits for the person and asks nobody", async () => {
     const none = await seedConnection(w, { provider: "caldav", credential: null, serverUrl: "https://dav.example.test/dav/" });

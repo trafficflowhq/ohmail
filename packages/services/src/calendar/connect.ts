@@ -344,13 +344,13 @@ export async function sealCredential(
 }
 
 /**
- * THE SERVER A CONNECTION'S KEPT PASSWORD WAS SEALED FOR, read out of the sealed text itself: the
+ * THE SERVER AND USER A CONNECTION'S KEPT PASSWORD WAS SEALED FOR, read out of the sealed text: the
  * text the row at `at` holds, opened and read for that row. `null` where no such text is kept,
  * where no key of this host opens it, or where it is no password's text sealed for this row.
  * NEVER THE ROW'S OWN `server_url`: that column stands in the clear, and whoever can write rows
  * can write another address there. The kept password is read with it and dropped here.
  */
-export async function serverSealedFor(ctx: ServiceContext, keys: KeyProvider, at: CredentialPlace): Promise<string | null> {
+export async function sealedBasicLogin(ctx: ServiceContext, keys: KeyProvider, at: CredentialPlace) {
   const [row] = await ctx.db.select({ secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion }).from(calCredentials)
     .where(and(eq(calCredentials.accountId, at.accountId), eq(calCredentials.connectionId, at.connectionId), eq(calCredentials.kind, "basic")))
     .limit(1);
@@ -363,7 +363,7 @@ export async function serverSealedFor(ctx: ServiceContext, keys: KeyProvider, at
     return null;
   }
   const kept = parseCredential(text, at);
-  return kept?.kind === "basic" ? kept.server : null;
+  return kept?.kind === "basic" ? { ...row, server: kept.server, user: kept.user } : null;
 }
 
 // ── the connect ──────────────────────────────────────────────────────────────────

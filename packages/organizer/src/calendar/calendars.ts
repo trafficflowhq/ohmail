@@ -280,7 +280,7 @@ export async function removeCalendar(
   const rounds = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
     // A second row that must stay keeps its reading and its events.
     if (opts.unlessOwed === true && await staysWhileOwed(tx, ctx.key.accountId, calendarId)) return "stays";
-    await tx.update(calCalendars).set({ syncToken: null, nextPollAt: null })
+    await tx.update(calCalendars).set({ syncToken: null, readCheckpoint: null, readOwner: null, nextPollAt: null })
       .where(and(eq(calCalendars.id, calendarId), eq(calCalendars.accountId, ctx.key.accountId), eq(calCalendars.connectionId, ctx.key.id)));
     const [held] = await tx.select({ n: sql<number>`count(*)::int` }).from(calEvents).where(mine(calEvents));
     return Math.ceil(Number(held?.n ?? 0) / CALENDAR_CHANGES_PER_TRANSACTION) + 1;

@@ -232,6 +232,7 @@ export function useSources(port: CalendarPort | typeof NONE) {
       waitingDevice: words("waiting.device"),
       waitingProvider: words("waiting.provider"),
       notSaved: words("notSaved"),
+      replyUnconfirmed: words("replyUnconfirmed"),
     }),
     [words, mailWords],
   );
@@ -264,7 +265,13 @@ export function useFaces(
       capped: occurrences.capped,
       hiddenBusy: occurrences.hiddenBusy,
       events: occurrences.shown
-        .filter((o) => showDeclined || (o.record.mailAnswer ?? o.record.myAnswer) !== "declined")
+        .filter(
+          (o) =>
+            showDeclined ||
+            o.writes.replyUnconfirmed ||
+            o.writes.refusal === "answer_unconfirmed" ||
+            (o.record.mailAnswer ?? o.record.myAnswer) !== "declined",
+        )
         .map((o): CalendarEventFace =>
           faceOf(
             o,

@@ -155,9 +155,21 @@ function google(
     if (s.ifMatch !== null && s.ifMatch !== held.etag)
       return reply(412, { error: { code: 412, message: "Precondition Failed" } });
     if (s.method === "PATCH") {
+      const patch = stored(s.body!);
+      if (
+        patch.attendeesOmitted === true &&
+        Array.isArray(patch.attendees) &&
+        Array.isArray(held.attendees)
+      ) {
+        const replies = new Map(patch.attendees.map((person) => [person.email, person.responseStatus]));
+        patch.attendees = held.attendees.map((person) =>
+          replies.has(person.email) ? { ...person, responseStatus: replies.get(person.email) } : person,
+        );
+        delete patch.attendeesOmitted;
+      }
       const next = {
         ...held,
-        ...stored(s.body!),
+        ...patch,
         etag: `"${n++}"`,
         sequence: Number(held.sequence ?? 0) + 1,
       };
@@ -1726,12 +1738,75 @@ describe("Google's writer", () => {
     const patch = g.sent.find((s) => s.method === "PATCH")!;
     expect([patch.url, patch.ifMatch]).toEqual([`${BASE}/evt-9?sendUpdates=all`, invited.version]);
     expect(patch.body).toEqual({
-      attendees: [
-        { email: "anna@example.test", organizer: true, responseStatus: "accepted" },
-        { email: "mila@example.test", self: true, responseStatus: "tentative" },
-      ],
+      attendeesOmitted: true,
+      attendees: [{ email: "mila@example.test", responseStatus: "tentative" }],
     });
+    expect(g.records.get(invited.id)?.attendees).toEqual([
+      { email: "anna@example.test", organizer: true, responseStatus: "accepted" },
+      { email: "mila@example.test", self: true, responseStatus: "tentative" },
+    ]);
   });
+
+  it.each(["series", "occurrence"] as const)(
+    "answers an invitation with an incomplete roster on its %s",
+    async (scope) => {
+      const g = google();
+      const host = ["host", "example.test"].join("@");
+      const self = ["invited", "example.test"].join("@");
+      const people = [
+        { email: host, organizer: true, responseStatus: "accepted" },
+        { email: self, self: true, responseStatus: "needsAction" },
+      ];
+      const master = g.plant("restricted-series", {
+        organizer: { email: host },
+        attendees: people,
+        attendeesOmitted: true,
+        recurrence: ["RRULE:FREQ=DAILY"],
+        start: { dateTime: "2026-11-17T09:00:00Z" },
+        end: { dateTime: "2026-11-17T10:00:00Z" },
+      });
+      const instance = {
+        ...g.records.get(master.id)!,
+        id: "restricted-day",
+        etag: '"day-version"',
+        recurrence: undefined,
+        recurringEventId: master.id,
+        originalStartTime: { dateTime: "2026-11-18T09:00:00Z" },
+        start: { dateTime: "2026-11-18T09:00:00Z" },
+        end: { dateTime: "2026-11-18T10:00:00Z" },
+      };
+      g.generated.set(master.id, instance);
+      const reviewed = {
+        ...target(master),
+        recurringSeries: true,
+        occurrence: scope === "occurrence" ? instant(Date.UTC(2026, 10, 18, 9)) : null,
+      };
+      expect(
+        word(
+          await g.writer.answer(
+            connection,
+            { id: "cal-1" },
+            reviewed,
+            { as: self, reply: "TENTATIVE" },
+            never,
+          ),
+        ),
+      ).toBe("ok");
+      const id = scope === "occurrence" ? instance.id : master.id;
+      const patch = g.sent.filter(({ method }) => method === "PATCH");
+      expect(patch).toEqual([
+        expect.objectContaining({
+          url: `${BASE}/${id}?sendUpdates=all`,
+          ifMatch: scope === "occurrence" ? instance.etag : master.version,
+          body: { attendeesOmitted: true, attendees: [{ email: self, responseStatus: "tentative" }] },
+        }),
+      ]);
+      expect(g.records.get(id)?.attendees).toEqual([
+        people[0],
+        { ...people[1], responseStatus: "tentative" },
+      ]);
+    },
+  );
 
   it("answers the named occurrence against its own tag and never patches the master", async () => {
     const g = google();

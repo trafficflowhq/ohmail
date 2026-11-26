@@ -1,4 +1,4 @@
-import { calendarOriginalOf, connectedAttendee, organizerPrincipalAddress, verifiedOrganizer } from "@trafficflow/db/calendar";
+import { calendarOriginalOf, connectedAttendee, oauthIdentityAmbiguous, organizerPrincipalAddress, verifiedOrganizer } from "@trafficflow/db/calendar";
 /**
  * THE CALENDAR'S BUILDERS FOR THE SYNC FEED, one per record kind (`port.ts` hands them to the
  * feed's reader). `BUILDERS` is a mapped type over `CalendarRecordKind`: a kind without its
@@ -182,6 +182,7 @@ export function hideIdentityOf(
   const connected = addressKey(principal);
   const named = connected.includes("@") && !connected.includes("/");
   if (row.access !== "owner" || row.provider === "ics" || row.heldBack || row.partial || row.myAnswer === null ||
+      oauthIdentityAmbiguous(row.provider, row.organizerAddresses) ||
       !organizer || own.has(organizer) || row.organizerAddresses?.includes(organizer) || (named && organizer === connected)) return null;
   const attendee = connectedAttendee(invitees
     .filter(({ role }) => role === "required" || role === "optional")
@@ -220,15 +221,16 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
     .innerJoin(calCalendars, and(eq(calEvents.calendarId, calCalendars.id), eq(calCalendars.accountId, accountId)))
     .innerJoin(calConnections, and(eq(calCalendars.connectionId, calConnections.id), eq(calConnections.accountId, accountId)))
     .where(and(eq(calEvents.accountId, accountId), inArray(calEvents.id, candidates)));
-  const editable = new Set(sources.filter((r) => canEditPersonalSeries(r.provider, r.serverUrl) && personalSeriesOf(r.original)).map((r) => r.id));
+  const editable = new Set(sources.filter((r) =>
+    !r.partial && canEditPersonalSeries(r.provider, r.serverUrl) && personalSeriesOf(r.original)).map((r) => r.id));
   const organized = new Set(sources.filter((r) =>
-    (r.provider === "caldav" || r.provider === "google" || r.provider === "microsoft") &&
+    ((r.provider === "caldav" && !r.partial) || r.provider === "google" || r.provider === "microsoft") &&
     r.organizer?.trim() && r.organizer.trim().toLowerCase() === r.principal?.trim().toLowerCase().replace(/^mailto:/, ""),
   ).map((r) => r.id));
   const mayDeleteCloudSeries = (row: (typeof rows)[number]) =>
     organized.has(row.id) || (row.access === "writer" && row.myAnswer === null);
   const deletion = new Map(sources.flatMap((source) => {
-    if (source.provider !== "caldav") return [];
+    if (source.provider !== "caldav" || source.partial) return [];
     const members = seriesDeleteMembers(source.original, ZONES);
     return members && !storedObjectFacts(source.original, null).excludesByRule
       ? [[source.id, { members, place: proofPlaceOf("caldav", source.serverUrl) }] as const] : [];
@@ -303,6 +305,7 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       (verifiedOrganizer(organizer, own) || connectionAddress === organizer || r.organizerAddresses?.includes(organizer) === true);
     const sharedWithoutOrganizer = r.provider === "caldav" && r.access === "writer" && r.myAnswer === null &&
       !r.partial && !!r.versionTag && text != null && projected === null && !r.repeatRule && !r.recurrenceId;
+    const identityAmbiguous = oauthIdentityAmbiguous(r.provider, r.organizerAddresses);
     const identity = ownOrganizer ? null : hideIdentityOf({ ...r, organizer: projected }, r.principal, own, guests);
     const confirmed = identity && guests.find(({ address }) => addressKey(address) === identity.attendee);
     const removedOccurrences = r.removedOccurrences?.filter((value) => typeof value === "string");
@@ -335,9 +338,10 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       busy: r.busy,
       private: r.private,
       organizer: organizer ? { address: projected!, name: organizer === addressKey(r.organizer) ? r.organizerName : null } : null,
-      ...(ownOrganizer ? { ownOrganizer: true } : projected === "" || (r.provider === "caldav" && r.partial) ? { ownOrganizer: false } : {}),
+      ...(ownOrganizer ? { ownOrganizer: true } : projected === "" || (r.provider === "caldav" && r.partial) ||
+        (identityAmbiguous && !!organizer) ? { ownOrganizer: false } : {}),
       ...(sharedWithoutOrganizer && { sharedWithoutOrganizer: true as const }),
-      myAnswer: r.myAnswer === null ? null : answerOf(confirmed?.answer ?? r.myAnswer),
+      myAnswer: identityAmbiguous || r.myAnswer === null ? null : answerOf(confirmed?.answer ?? r.myAnswer),
       ...((r.myAnswer === null && !organizer && (r.mailAnswer === "accepted" || r.mailAnswer === "tentative" || r.mailAnswer === "declined")) &&
         { mailAnswer: r.mailAnswer }),
       ...(removedOccurrences?.length && { removedOccurrences }),

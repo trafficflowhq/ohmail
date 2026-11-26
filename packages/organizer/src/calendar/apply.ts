@@ -9,9 +9,9 @@
  * a page applied twice, or out of order, writes what once would have and then nothing: the
  * provider's version decides whether an object changed, and an equal one writes nothing.
  */
-import { and, eq, getTableName, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableName, gt, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { eventTimeOf, storedTimeOf, type EventTime, type StoredTime, type ZoneSource } from "@ohmail/cal-core";
-import type { ChangeItem } from "@ohmail/cal-providers";
+import type { Answer, ChangeItem, VerifiedEvent } from "@ohmail/cal-providers";
 import {
   CALENDAR_CHANGES_PER_TRANSACTION, calAlarms, calAttendees, calEvents, calWrites, recordCalendarChanges,
   type CalendarChange, type LedgerTx, type Tx,
@@ -33,30 +33,34 @@ export interface ApplyContext {
   readonly calendar: CalendarOfTurn;
   readonly zones: ZoneSource;
   /**
-   * The provider keeps no calendar text (Google, Microsoft): an object's excluded days are united
-   * with those already stored, which hold the days its cancelled records named. Where the provider
-   * keeps the object's text (CalDAV, a subscription), the object's own list replaces them.
+   * Google and Microsoft store changed days separately from their masters. Where the provider keeps
+   * the object's text (CalDAV, a subscription), a complete object owns its components together.
    */
   readonly unite: boolean;
+  /** A stale exact read cannot confirm an Outlook reply against a newer mirrored answer. */
+  readonly outlook?: "mirror" | "confirmation";
+  /** A whole Google inventory's generation, `null` for a Google delta or write answer. */
+  readonly googleSnapshot?: string | null;
   /**
    * The days this reading's pages showed so far, by UID and occurrence key (Microsoft), or `null`
    * where the provider shows none. A day shown is there: it is never excluded, and it comes back
    * where it was excluded before.
    */
-  readonly shown: ReadonlyMap<string, ReadonlySet<string>> | null;
+  readonly shown: ReadonlyMap<string, Pick<ReadonlySet<string>, "has">> | null;
   readonly halted: () => boolean;
 }
 
 /**
- * One object to write: the rows to write, the occurrences the object has (`keep`), and how many of
- * its stored rows that `keep` does not name go in this transaction. `changes` is the sum.
+ * One object to write: the rows to write, the occurrences it names (`keep`), and how many unnamed
+ * stored rows to finalize. An incomplete object marks unnamed rows partial and retains them.
  */
 export interface ObjectWrite {
   readonly kind: "object";
   readonly providerId: string;
   readonly rows: readonly MappedRow[];
   readonly keep: ReadonlySet<string>;
-  readonly remove: number;
+  readonly missing: number;
+  readonly incomplete?: true;
   readonly changes: number;
 }
 /**
@@ -76,12 +80,17 @@ export interface ObjectGone {
   readonly rows: number;
   readonly withDays: boolean;
   readonly dayLeaves: boolean;
+  /** A whole reading's silence can only remove objects unchanged since it started. */
+  readonly absence?: { readonly startedAt: Date; readonly plan: string };
   readonly changes: number;
 }
 
 /** The work of removing an object of `rows` rows; a row that may take its day out of a series counts for two changes. */
-export function objectGone(providerId: string, rows: number, o: { readonly withDays: boolean; readonly dayLeaves: boolean }): ObjectGone {
-  return { kind: "gone", providerId, rows, withDays: o.withDays, dayLeaves: o.dayLeaves, changes: rows * (o.dayLeaves ? 2 : 1) };
+export function objectGone(providerId: string, rows: number, o: Pick<ObjectGone, "withDays" | "dayLeaves" | "absence">): ObjectGone {
+  return {
+    kind: "gone", providerId, rows, withDays: o.withDays, dayLeaves: o.dayLeaves,
+    ...(o.absence === undefined ? {} : { absence: o.absence }), changes: rows * (o.dayLeaves ? 2 : 1),
+  };
 }
 /** One day of a series cancelled: its key joins the series' excluded days, a changed row of that day goes. */
 export interface DayCancelled {
@@ -143,12 +152,15 @@ export interface StoredRow {
   readonly providerId: string;
   readonly recurrenceId: string;
   readonly versionTag: string | null;
+  readonly providerModifiedAt: Date | null;
   readonly uid: string;
   readonly partial: boolean;
   readonly portableCopy: boolean;
   readonly googleDefaultEvent: boolean;
+  readonly myAnswer: string | null;
   /** Whether the row keeps any excluded day. */
   readonly excludes: boolean;
+  readonly unknownGoogleExclusions: boolean;
 }
 
 /** A stored time's occurrence key, or `null` for one no writer of this product wrote. */
@@ -158,6 +170,35 @@ export function keyOfStored(t: StoredTime, zones: ZoneSource): string | null {
 }
 
 const times = (v: unknown): StoredTime[] => (Array.isArray(v) ? (v as StoredTime[]) : []);
+
+interface GoogleExclusionSources {
+  readonly master: readonly StoredTime[] | null;
+  readonly cancelled: readonly StoredTime[];
+  /** Older merged exclusions stay until a complete Google inventory has classified them. */
+  readonly legacy?: string | null;
+}
+
+const unknownGoogleExclusions = sql<boolean>`
+  case when ${calEvents.googleExclusionSources} is null then ${calEvents.excludedDates} is not null
+  else ${calEvents.googleExclusionSources} ? 'legacy' end`;
+
+type GoogleExclusionRow = { readonly excludedDates: unknown; readonly googleExclusionSources: unknown };
+
+function googleSources(ctx: ApplyContext, row: GoogleExclusionRow | undefined): GoogleExclusionSources {
+  const previous = row?.googleExclusionSources as GoogleExclusionSources | null | undefined;
+  const legacy = previous?.legacy !== undefined || (previous == null && times(row?.excludedDates).length > 0);
+  if (!legacy) return previous ?? { master: null, cancelled: [] };
+  const snapshot = ctx.googleSnapshot ?? previous?.legacy ?? null;
+  // Cancellation evidence from an abandoned inventory cannot classify a later inventory.
+  return previous?.legacy === snapshot ? previous : { master: null, cancelled: [], legacy: snapshot };
+}
+
+function combinedGoogleExclusions(
+  ctx: ApplyContext, sources: GoogleExclusionSources, held: readonly StoredTime[],
+): StoredTime[] {
+  const known = united(sources.master ?? [], sources.cancelled, ctx.zones);
+  return sources.legacy === undefined ? known : united(known, held, ctx.zones);
+}
 
 /** `a` and every member of `b` whose key `a` lacks, in that order; each key once. */
 function united(a: readonly StoredTime[], b: readonly StoredTime[], zones: ZoneSource): StoredTime[] {
@@ -176,14 +217,16 @@ function united(a: readonly StoredTime[], b: readonly StoredTime[], zones: ZoneS
  * Is an object as a page names it already stored as it is? Every stored row carries the
  * provider's same version, which is not empty, and the rows are the same occurrences.
  */
-export function storedAsIs(rows: readonly MappedRow[], stored: readonly Pick<StoredRow, "versionTag" | "recurrenceId" | "partial" | "portableCopy" | "googleDefaultEvent">[]): boolean {
+export function storedAsIs(rows: readonly MappedRow[], stored: readonly Pick<StoredRow, "versionTag" | "providerModifiedAt" | "recurrenceId" | "partial" | "portableCopy" | "googleDefaultEvent" | "myAnswer">[], keepOutlookRevision = false): boolean {
   const version = rows[0]?.values.versionTag ?? null;
   if (version === null || stored.length !== rows.length) return false;
   const byDay = new Map(rows.map(({ values }) => [values.recurrenceId, values]));
   return stored.every((s) => {
     const row = byDay.get(s.recurrenceId);
     return s.versionTag === version && row?.partial === s.partial && row.portableCopy === s.portableCopy &&
-      row.googleDefaultEvent === s.googleDefaultEvent;
+      row.googleDefaultEvent === s.googleDefaultEvent && row.myAnswer === s.myAnswer &&
+      (!keepOutlookRevision || row.providerModifiedAt === null ||
+        (s.providerModifiedAt !== null && s.providerModifiedAt >= row.providerModifiedAt));
   });
 }
 
@@ -192,11 +235,17 @@ export function storedAsIs(rows: readonly MappedRow[], stored: readonly Pick<Sto
  * a changed day's series that may be needed for a separately stored moved occurrence, or lose
  * that day from its excluded ones.
  */
-export function objectWrite(providerId: string, rows: readonly MappedRow[], stored: readonly Pick<StoredRow, "recurrenceId">[], unite: boolean): ObjectWrite {
+export function objectWrite(
+  providerId: string, rows: readonly MappedRow[], stored: readonly Pick<StoredRow, "recurrenceId" | "partial">[],
+  unite: boolean, incomplete = false,
+): ObjectWrite {
   const keep = new Set(rows.map((r) => r.values.recurrenceId));
-  const remove = stored.filter((s) => !keep.has(s.recurrenceId)).length;
+  const missing = stored.filter((s) => !keep.has(s.recurrenceId) && (!incomplete || !s.partial)).length;
   const series = (unite || !keep.has("")) && rows.some((r) => r.values.recurrenceId !== "");
-  return { kind: "object", providerId, rows, keep, remove, changes: rows.length * (series ? 2 : 1) + remove };
+  return {
+    kind: "object", providerId, rows, keep, missing, changes: rows.length * (series ? 2 : 1) + missing,
+    ...(incomplete && { incomplete: true }),
+  };
 }
 
 /** A cancelled day as a work: one change for its series, one for each changed row of that day (one, where none is known yet). */
@@ -210,8 +259,12 @@ export interface PlannedItems {
   readonly unkept: number;
   /** Cancelled days whose series is neither stored nor in these items: the caller holds them or lets them go. */
   readonly held: readonly { readonly uid: string; readonly key: string; readonly time: EventTime }[];
-  /** A `gone` named something nobody stores, or a stored changed day's own id: a removed day only a whole reading confirms. */
-  readonly goneOfDays: boolean;
+  /** A delta removal needs a fresh window. */
+  readonly needsWholeRead: boolean;
+  /** A reply could not be ordered, even if this page was already reading the whole window. */
+  readonly unorderedReply: boolean;
+  readonly removed: readonly string[];
+  readonly removedDays: readonly { readonly id: string; readonly uid: string; readonly key: string }[];
 }
 
 /**
@@ -220,9 +273,23 @@ export interface PlannedItems {
  * series is known. The one planner for a reading's page and for a write's answer, so the store
  * and the provider meet through one mapper and one apply.
  */
-export async function planItems(apply: ApplyContext, items: readonly ChangeItem[], map: MapContext): Promise<PlannedItems | "gone"> {
+type VerifyResponse = (
+  id: string, items: readonly Upsert[], held: StoredRow | undefined,
+) => Promise<Answer<VerifiedEvent>>;
+
+export function planItems(
+  apply: ApplyContext, items: readonly ChangeItem[], map: MapContext,
+): Promise<PlannedItems | "gone">;
+export function planItems(
+  apply: ApplyContext, items: readonly ChangeItem[], map: MapContext,
+  verifyResponse: VerifyResponse | undefined,
+): Promise<PlannedItems | "gone" | Extract<Answer<VerifiedEvent>, { ok: false }>>;
+export async function planItems(
+  apply: ApplyContext, items: readonly ChangeItem[], map: MapContext,
+  verifyResponse?: VerifyResponse,
+): Promise<PlannedItems | "gone" | Extract<Answer<VerifiedEvent>, { ok: false }>> {
   const objects = new Map<string, Upsert[]>();
-  const gone: string[] = [];
+  const gone = new Set<string>();
   const cancels: { uid: string; key: string; time: EventTime }[] = [];
   /** What the items name by a text no row can hold: left out, and said as a count. No stored row can carry such a name. */
   let unkept = 0;
@@ -233,7 +300,7 @@ export async function planItems(apply: ApplyContext, items: readonly ChangeItem[
       objects.set(item.id, list);
     } else if (item.kind === "gone") {
       // Kept in the list all the same: the read of stored rows passes it over, and it is then a removal of something nobody stores.
-      gone.push(item.id);
+      gone.add(item.id);
       if (!storableKey(item.id)) unkept += 1;
     } else {
       // The key carries the zone's name, a stranger's text like the UID, only where the platform does not know the zone. A known
@@ -243,8 +310,6 @@ export async function planItems(apply: ApplyContext, items: readonly ChangeItem[
       else unkept += 1;
     }
   }
-  const mapped = new Map<string, ReturnType<typeof rowsOfObject>>();
-  for (const [id, ups] of objects) mapped.set(id, rowsOfObject(ups, map));
   const stored = await storedRowsOf(apply, [...objects.keys(), ...gone], cancels.map((c) => c.uid));
   if (stored === "gone") return "gone";
   const byProvider = new Map<string, StoredRow[]>();
@@ -252,27 +317,59 @@ export async function planItems(apply: ApplyContext, items: readonly ChangeItem[
 
   const works: Work[] = [];
   const seriesHere = new Set<string>();
-  for (const [id, m] of mapped) {
-    if (!m.ok) {
-      if (m.reason === "unstorable") unkept += 1;
+  let needsWholeRead = false;
+  let unorderedReply = false;
+  for (const [id, items] of objects) {
+    const was = byProvider.get(id) ?? [];
+    const incoming = verifyResponse ? revisionCopies(items) : items;
+    let mapped = rowsOfObject(incoming, map);
+    if (verifyResponse && (gone.has(id) || incoming.length > 1 || (mapped.ok && changedSelfResponse(mapped.rows, was)))) {
+      const checked = await verifyResponse(id, incoming, was[0]);
+      if (!checked.ok) return checked;
+      if (checked.value.kind !== "current") continue;
+      if (checked.value.reread) unorderedReply = true;
+      gone.delete(id);
+      if (checked.value.item === null) continue;
+      mapped = rowsOfObject([checked.value.item], map);
+    }
+    if (!mapped.ok) {
+      if (mapped.reason === "unstorable") unkept += 1;
       continue;
     }
-    for (const r of m.rows) if (r.values.recurrenceId === "") seriesHere.add(r.values.uid);
-    const was = byProvider.get(id) ?? [];
-    if (storedAsIs(m.rows, was)) continue;
-    works.push(objectWrite(id, m.rows, was, apply.unite));
+    for (const r of mapped.rows) if (r.values.recurrenceId === "") seriesHere.add(r.values.uid);
+    const work = objectWrite(id, mapped.rows, was, apply.unite, incoming.some((item) => item.resourceIncomplete));
+    const comparable = work.incomplete ? was.filter((s) => work.keep.has(s.recurrenceId)) : was;
+    const needsGoogleSources = apply.googleSnapshot != null && comparable.some((s) => s.unknownGoogleExclusions);
+    if (work.missing === 0 && !needsGoogleSources && storedAsIs(mapped.rows, comparable, apply.outlook !== undefined)) continue;
+    works.push(work);
+  }
+  const outside = new Set<string>();
+  if (verifyResponse) {
+    for (const id of gone) {
+      if (objects.has(id)) continue;
+      const held = byProvider.get(id)?.find(({ myAnswer }) =>
+        myAnswer === "accepted" || myAnswer === "tentative" || myAnswer === "declined");
+      if (!held) continue;
+      const checked = await verifyResponse(id, [], held);
+      if (!checked.ok) return checked;
+      if (checked.value.kind === "missing") continue;
+      if (checked.value.kind === "outside") outside.add(id);
+      if (checked.value.kind === "reread") needsWholeRead = true;
+      gone.delete(id);
+    }
   }
   // Where a changed day is an object of its own, a series named as gone takes its days' rows with it: how many, for the works' count.
-  const goneSeries = apply.unite ? gone.flatMap((id) => (byProvider.get(id) ?? []).filter((s) => s.recurrenceId === "").map((s) => s.uid)) : [];
+  const goneSeries = apply.unite ? [...gone].flatMap((id) => (byProvider.get(id) ?? []).filter((s) => s.recurrenceId === "").map((s) => s.uid)) : [];
   const ofGoneSeries = await storedRowsOf(apply, [], goneSeries);
   if (ofGoneSeries === "gone") return "gone";
-  let goneOfDays = false;
-  for (const id of gone) {
+  const removedDays: { id: string; uid: string; key: string }[] = [];
+  for (const id of [...gone, ...outside]) {
     const was = byProvider.get(id) ?? [];
+    for (const row of was) if (row.recurrenceId !== "") removedDays.push({ id, uid: row.uid, key: row.recurrenceId });
     const uids = new Set(was.filter((s) => s.recurrenceId === "").map((s) => s.uid));
     const days = ofGoneSeries.filter((s) => uids.has(s.uid) && s.recurrenceId !== "" && s.providerId !== id).length;
     if (was.length > 0) works.push(objectGone(id, was.length + days, { withDays: apply.unite, dayLeaves: apply.unite }));
-    if (was.length === 0 || was.some((s) => s.recurrenceId !== "")) goneOfDays = true;
+    if (was.length === 0 || was.some((s) => s.recurrenceId !== "")) needsWholeRead = true;
   }
   const seriesStored = new Set(stored.filter((s) => s.recurrenceId === "").map((s) => s.uid));
   const held: { uid: string; key: string; time: EventTime }[] = [];
@@ -282,7 +379,24 @@ export async function planItems(apply: ApplyContext, items: readonly ChangeItem[
     if (seriesStored.has(c.uid) || seriesHere.has(c.uid) || rows > 0) works.push(dayCancelled(c, rows));
     else held.push(c);
   }
-  return { works, unkept, held, goneOfDays };
+  return { works, unkept, held, needsWholeRead, unorderedReply, removed: [...gone], removedDays };
+}
+
+/** Repeated representations of one Graph revision are one candidate for that provider ID. */
+function revisionCopies(items: readonly Upsert[]): readonly Upsert[] {
+  const byRevision = new Map<string, Upsert>();
+  for (const item of items) {
+    const key = JSON.stringify([item.version, item.selfResponse]);
+    byRevision.set(key, item);
+  }
+  return [...byRevision.values()];
+}
+
+/** Opaque revisions cannot order a changing self-response across a readback and a streamed page. */
+function changedSelfResponse(rows: readonly MappedRow[], stored: readonly StoredRow[]): boolean {
+  return rows.some(({ values }) => values.status !== "cancelled" && stored.some((row) =>
+    row.uid === values.uid && row.recurrenceId === values.recurrenceId &&
+    row.myAnswer !== null && row.myAnswer !== values.myAnswer));
 }
 
 /**
@@ -317,12 +431,12 @@ function partsOf(w: Work): Work[] {
     const parts: Work[] = [];
     for (let i = 0; i < w.rows.length; i += CALENDAR_CHANGES_PER_TRANSACTION / 2) {
       const rows = w.rows.slice(i, i + CALENDAR_CHANGES_PER_TRANSACTION / 2);
-      parts.push({ kind: "object", providerId: w.providerId, rows, keep: w.keep, remove: 0, changes: rows.length * 2 });
+      parts.push({ ...w, rows, missing: 0, changes: rows.length * 2 });
     }
-    // The stored rows no occurrence of the object names go last, a bound at a time.
-    for (let n = w.remove; n > 0; n -= CALENDAR_CHANGES_PER_TRANSACTION) {
-      const remove = Math.min(n, CALENDAR_CHANGES_PER_TRANSACTION);
-      parts.push({ kind: "object", providerId: w.providerId, rows: [], keep: w.keep, remove, changes: remove });
+    // The stored rows no occurrence of the object names are finalized last, a bound at a time.
+    for (let n = w.missing; n > 0; n -= CALENDAR_CHANGES_PER_TRANSACTION) {
+      const missing = Math.min(n, CALENDAR_CHANGES_PER_TRANSACTION);
+      parts.push({ ...w, rows: [], missing, changes: missing });
     }
     return parts;
   }
@@ -349,7 +463,8 @@ export async function storedRowsOf(
   return inConnection(ctx.db, ctx.key, async ({ tx }) => {
     const pick = {
       id: calEvents.id, providerId: calEvents.providerId, recurrenceId: calEvents.recurrenceId,
-      versionTag: calEvents.versionTag, uid: calEvents.uid, partial: calEvents.partial, portableCopy: calEvents.portableCopy, googleDefaultEvent: calEvents.googleDefaultEvent, excludes: sql<boolean>`${calEvents.excludedDates} is not null`,
+      providerModifiedAt: calEvents.providerModifiedAt,
+      versionTag: calEvents.versionTag, uid: calEvents.uid, myAnswer: calEvents.myAnswer, partial: calEvents.partial, portableCopy: calEvents.portableCopy, googleDefaultEvent: calEvents.googleDefaultEvent, excludes: sql<boolean>`${calEvents.excludedDates} is not null`, unknownGoogleExclusions,
     };
     const mine = and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id));
     const found = new Map<string, StoredRow>();
@@ -524,31 +639,68 @@ async function replaceChildren(tx: Tx, ctx: ApplyContext, eventId: string, row: 
 }
 
 /** The object's stored rows under lock, in this calendar of this account. */
-async function lockedRows(tx: Tx, ctx: ApplyContext, where: ReturnType<typeof and>) {
-  return dialect(tx).forUpdate(tx.select({
+async function lockedRows(tx: Tx, ctx: ApplyContext, where: ReturnType<typeof and>, limit?: number) {
+  const query = tx.select({
     id: calEvents.id, providerId: calEvents.providerId, recurrenceId: calEvents.recurrenceId,
-    versionTag: calEvents.versionTag, uid: calEvents.uid, partial: calEvents.partial, portableCopy: calEvents.portableCopy, googleDefaultEvent: calEvents.googleDefaultEvent, excludedDates: calEvents.excludedDates,
+    providerModifiedAt: calEvents.providerModifiedAt,
+    versionTag: calEvents.versionTag, uid: calEvents.uid, myAnswer: calEvents.myAnswer, partial: calEvents.partial, portableCopy: calEvents.portableCopy, googleDefaultEvent: calEvents.googleDefaultEvent, excludedDates: calEvents.excludedDates,
     startsAt: calEvents.startsAt, endsAt: calEvents.endsAt, repeatRule: calEvents.repeatRule,
-  }).from(calEvents).where(and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id), where)), { mode: "update" });
+    updatedAt: calEvents.updatedAt, seenInReading: calEvents.seenInReading,
+    googleExclusionSources: calEvents.googleExclusionSources, unknownGoogleExclusions,
+  }).from(calEvents).where(and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id), where));
+  return dialect(tx).forUpdate(limit === undefined ? query : query.limit(limit), { mode: "update" });
+}
+
+export class StaleOutlookReply extends Error {
+  constructor(readonly older: boolean) {
+    super();
+  }
 }
 
 async function writeObject(tx: Tx, ctx: ApplyContext, w: ObjectWrite, changes: CalendarChange[]): Promise<void> {
   const stored = await lockedRows(tx, ctx, eq(calEvents.providerId, w.providerId));
-  if (w.rows.length === w.keep.size && storedAsIs(w.rows, stored)) return;
+  const needsGoogleSources = ctx.googleSnapshot != null && stored.some((s) => s.unknownGoogleExclusions);
+  if (!needsGoogleSources && w.rows.length === w.keep.size && storedAsIs(w.rows, stored, ctx.outlook !== undefined)) return;
   const byKey = new Map(stored.map((s) => [s.recurrenceId, s]));
   for (const row of w.rows) {
     const was = byKey.get(row.values.recurrenceId);
-    const excluded = ctx.unite && was !== undefined ? united(row.values.excludedDates, times(was.excludedDates), ctx.zones) : row.values.excludedDates;
+    const modified = row.values.providerModifiedAt;
+    const sameObject = was?.uid === row.values.uid;
+    const heldModified = sameObject ? was.providerModifiedAt : null;
+    if (ctx.outlook && sameObject) {
+      const older = heldModified !== null && modified !== null && heldModified > modified;
+      const newer = heldModified !== null && modified !== null && heldModified < modified;
+      const conflict = ctx.outlook === "confirmation" && was.myAnswer !== null && row.values.myAnswer !== was.myAnswer;
+      if (conflict && (older || (was.myAnswer !== "none" && !newer))) {
+        throw new StaleOutlookReply(older);
+      }
+      if (older) continue;
+      if (modified !== null && (heldModified === null || newer) && storedAsIs([row], [was])) {
+        await tx.update(calEvents).set({ providerModifiedAt: modified })
+          .where(and(eq(calEvents.id, was.id), eq(calEvents.accountId, ctx.key.accountId)));
+        continue;
+      }
+    }
+    const google = ctx.googleSnapshot !== undefined && row.values.recurrenceId === ""
+      ? { ...googleSources(ctx, was), master: row.values.excludedDates }
+      : undefined;
+    const held = times(was?.excludedDates);
+    const excluded = google !== undefined ? combinedGoogleExclusions(ctx, google, held)
+      : ctx.unite && was !== undefined ? united(row.values.excludedDates, held, ctx.zones) : row.values.excludedDates;
+    const columns = {
+      ...columnsOf(row, excluded), ...(google === undefined ? {} : { googleExclusionSources: google }),
+      ...(ctx.outlook && { providerModifiedAt: modified ?? heldModified }),
+    };
     let eventId: string;
     if (was === undefined) {
       const [made] = await tx.insert(calEvents).values({
-        ...columnsOf(row, excluded), accountId: ctx.key.accountId, calendarId: ctx.calendar.id,
+        ...columns, accountId: ctx.key.accountId, calendarId: ctx.calendar.id,
       }).returning({ id: calEvents.id });
       eventId = made!.id;
       changes.push({ kind: "calendar_event", id: eventId, op: "create" });
     } else {
       eventId = was.id;
-      await tx.update(calEvents).set({ ...columnsOf(row, excluded), updatedAt: sql`now()` })
+      await tx.update(calEvents).set({ ...columns, updatedAt: sql`now()` })
         .where(and(eq(calEvents.id, eventId), eq(calEvents.accountId, ctx.key.accountId)));
       changes.push({ kind: "calendar_event", id: eventId, op: "update" });
     }
@@ -556,10 +708,15 @@ async function writeObject(tx: Tx, ctx: ApplyContext, w: ObjectWrite, changes: C
     if (row.values.recurrenceId !== "" && (ctx.unite || !w.keep.has("")))
       await reflectException(tx, ctx, row.values, changes);
   }
-  let budget = w.remove;
+  let budget = w.missing;
   for (const s of stored) {
     if (w.keep.has(s.recurrenceId) || budget <= 0) continue;
-    await removeRow(tx, ctx, s.id, changes);
+    if (w.incomplete) {
+      if (s.partial) continue;
+      await tx.update(calEvents).set({ partial: true, updatedAt: sql`now()` })
+        .where(and(eq(calEvents.id, s.id), eq(calEvents.accountId, ctx.key.accountId)));
+      changes.push({ kind: "calendar_event", id: s.id, op: "update" });
+    } else await removeRow(tx, ctx, s.id, changes);
     budget -= 1;
   }
 }
@@ -568,7 +725,7 @@ async function repoint(tx: Tx, ctx: ApplyContext, w: Repointed, changes: Calenda
   for (const held of await lockedRows(tx, ctx, eq(calEvents.providerId, w.providerId))) {
     if (held.id !== w.eventId) await removeRow(tx, ctx, held.id, changes);
   }
-  await tx.update(calEvents).set({ providerId: w.providerId, uid: w.uid, versionTag: null, updatedAt: sql`now()` })
+  await tx.update(calEvents).set({ providerId: w.providerId, uid: w.uid, versionTag: null, providerModifiedAt: null, updatedAt: sql`now()` })
     .where(and(eq(calEvents.id, w.eventId), eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id)));
   if (!changes.some((c) => c.id === w.eventId)) changes.push({ kind: "calendar_event", id: w.eventId, op: "update" });
 }
@@ -582,10 +739,59 @@ async function seriesRow(tx: Tx, ctx: ApplyContext, uid: string) {
 /** The series' excluded days written, with the one change a transaction records for the row. */
 async function writeExcluded(
   tx: Tx, ctx: ApplyContext, seriesId: string, now: readonly StoredTime[], changes: CalendarChange[],
+  google?: { readonly sources: GoogleExclusionSources; readonly visible: boolean },
 ): Promise<void> {
-  await tx.update(calEvents).set({ excludedDates: now.length > 0 ? [...now] : null, updatedAt: sql`now()` })
+  const visible = google?.visible ?? true;
+  await tx.update(calEvents).set({
+    ...(visible && { excludedDates: now.length > 0 ? [...now] : null, updatedAt: sql`now()` }),
+    ...(google && { googleExclusionSources: google.sources }),
+  })
     .where(and(eq(calEvents.id, seriesId), eq(calEvents.accountId, ctx.key.accountId)));
-  if (!changes.some((c) => c.id === seriesId)) changes.push({ kind: "calendar_event", id: seriesId, op: "update" });
+  if (visible && !changes.some((c) => c.id === seriesId)) changes.push({ kind: "calendar_event", id: seriesId, op: "update" });
+}
+
+/** Save provenance even when the user-facing set of dates has stayed the same. */
+async function writeGoogleExclusions(
+  tx: Tx, ctx: ApplyContext, row: GoogleExclusionRow & { readonly id: string },
+  sources: GoogleExclusionSources, held: readonly StoredTime[], changes: CalendarChange[],
+): Promise<void> {
+  const now = combinedGoogleExclusions(ctx, sources, held);
+  const was = times(row.excludedDates);
+  const keys = new Set(was.map((day) => keyOfStored(day, ctx.zones)));
+  const visible = now.length !== was.length || now.some((day) => !keys.has(keyOfStored(day, ctx.zones)));
+  await writeExcluded(tx, ctx, row.id, now, changes, { sources, visible });
+}
+
+export async function hasUnknownGoogleExclusions(db: ConnectionDb, key: ConnectionKey, calendarId: string): Promise<boolean | "gone"> {
+  return inConnection(db, key, async ({ tx }) => {
+    const [row] = await tx.select({ id: calEvents.id }).from(calEvents).where(and(
+      eq(calEvents.accountId, key.accountId), eq(calEvents.calendarId, calendarId),
+      eq(calEvents.recurrenceId, ""), unknownGoogleExclusions,
+    )).limit(1);
+    return row !== undefined;
+  });
+}
+
+/** Drop historical exclusions only after every page of the inventory has been accepted. */
+export async function settleGoogleExclusions(ctx: ApplyContext, generation: string): Promise<ChunkResult> {
+  let changed = 0;
+  for (;;) {
+    if (ctx.halted()) return { ok: false, why: "halted" };
+    let remaining = false;
+    const done = await applyChunk(ctx, [], async (tx, changes) => {
+      const rows = await lockedRows(tx, ctx, and(eq(calEvents.seenInReading, generation),
+        sql`${calEvents.googleExclusionSources}->>'legacy' = ${generation}`,
+        sql`jsonb_typeof(${calEvents.googleExclusionSources}->'master') = 'array'`), CALENDAR_CHANGES_PER_TRANSACTION);
+      remaining = rows.length === CALENDAR_CHANGES_PER_TRANSACTION;
+      for (const row of rows) {
+        const { master, cancelled } = googleSources(ctx, row);
+        await writeGoogleExclusions(tx, ctx, row, { master, cancelled }, [], changes);
+      }
+    });
+    if (!done.ok) return done;
+    changed += done.changed;
+    if (!remaining) return { ok: true, changed, refused: 0 };
+  }
 }
 
 /** Let the device recover the series of an exception that can be visible outside its range. */
@@ -613,10 +819,17 @@ async function restoreExcluded(
   keys: ReadonlySet<string>, changes: CalendarChange[],
 ): Promise<void> {
   const was = times(series.excludedDates);
-  const now = was.filter((t) => {
+  const retain = (t: StoredTime): boolean => {
     const key = keyOfStored(t, ctx.zones);
     return key === null || !keys.has(key);
-  });
+  };
+  const now = was.filter(retain);
+  if (ctx.googleSnapshot !== undefined) {
+    if (now.length === was.length) return;
+    const sources = googleSources(ctx, series);
+    await writeGoogleExclusions(tx, ctx, series, { ...sources, cancelled: sources.cancelled.filter(retain) }, now, changes);
+    return;
+  }
   if (now.length !== was.length) await writeExcluded(tx, ctx, series.id, now, changes);
 }
 
@@ -625,6 +838,12 @@ async function leaveOut(tx: Tx, ctx: ApplyContext, uid: string, key: string, tim
   const series = await seriesRow(tx, ctx, uid);
   if (series === undefined) return;
   const was = times(series.excludedDates);
+  if (ctx.googleSnapshot !== undefined) {
+    const sources = googleSources(ctx, series);
+    if (sources.cancelled.some((day) => keyOfStored(day, ctx.zones) === key)) return;
+    await writeGoogleExclusions(tx, ctx, series, { ...sources, cancelled: [...sources.cancelled, storedTimeOf(time)] }, was, changes);
+    return;
+  }
   if (was.some((t) => keyOfStored(t, ctx.zones) === key)) return;
   await writeExcluded(tx, ctx, series.id, [...was, storedTimeOf(time)], changes);
 }
@@ -642,6 +861,16 @@ async function removeRow(tx: Tx, ctx: ApplyContext, eventId: string, changes: Ca
  */
 async function removeObject(tx: Tx, ctx: ApplyContext, w: ObjectGone, changes: CalendarChange[]): Promise<void> {
   const own = await lockedRows(tx, ctx, eq(calEvents.providerId, w.providerId));
+  if (w.absence !== undefined) {
+    const { startedAt, plan } = w.absence;
+    if (own.length === 0 || own.some((row) => row.seenInReading !== plan || row.updatedAt >= startedAt)) return;
+    // The write service also locks these event rows before queuing an act.
+    const [waiting] = await tx.select({ id: calWrites.id }).from(calWrites)
+      .innerJoin(calEvents, and(eq(calEvents.accountId, calWrites.accountId), eq(calEvents.id, calWrites.eventId)))
+      .where(and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id),
+        eq(calEvents.providerId, w.providerId), owedWrite())).limit(1);
+    if (waiting !== undefined) return;
+  }
   const series = own.find((s) => s.recurrenceId === "");
   const days = ctx.unite && w.withDays && series !== undefined
     ? (await lockedRows(tx, ctx, and(eq(calEvents.uid, series.uid), ne(calEvents.recurrenceId, "")))).filter((d) => d.providerId !== w.providerId)
@@ -672,36 +901,61 @@ async function excludeDays(tx: Tx, ctx: ApplyContext, w: DaysExcluded, changes: 
   if (now.length !== was.length) await writeExcluded(tx, ctx, series.id, now, changes);
 }
 
-/** What a whole reading may drop: per stored object, whether a row is newer, a write is owed, the window is touched. */
+/** An object selected for removal during a whole reading. */
 export interface DropCandidate {
   readonly providerId: string;
   readonly rows: number;
-  readonly old: boolean;
-  readonly owed: boolean;
-  readonly touches: boolean;
 }
 
-/** Every stored object of the calendar, as a whole reading's end weighs it. */
-export async function dropCandidates(
-  ctx: ApplyContext, startedAt: Date, window: { readonly start: number; readonly end: number } | null,
-): Promise<DropCandidate[] | "gone"> {
+function owedWrite() {
+  return or(eq(calWrites.state, "pending"), and(eq(calWrites.state, "refused"), eq(calWrites.op, "create")));
+}
+
+const calendarEvents = (ctx: ApplyContext) => and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id));
+
+export async function countStoredObjects(ctx: ApplyContext): Promise<number | "gone"> {
+  return inConnection(ctx.db, ctx.key, async ({ tx }) => {
+    const [row] = await tx.select({ count: sql<number>`count(distinct ${calEvents.providerId})::int` })
+      .from(calEvents).where(calendarEvents(ctx));
+    return row!.count;
+  });
+}
+
+interface AbsencePlan {
+  readonly generation: string;
+  readonly plan: string;
+  readonly startedAt: Date;
+  readonly window: { readonly start: number; readonly end: number } | null;
+}
+
+/** Mark each planned group in provider ID order. Only rows missing from the reading get a plan mark. */
+export async function planMissingObjects(ctx: ApplyContext, scope: AbsencePlan, after: string | null): Promise<DropCandidate[] | "gone"> {
   return inConnection(ctx.db, ctx.key, async ({ tx }) => {
     const at = (d: Date): SQL => sql`${d.toISOString()}::timestamptz`;
-    const touches = window === null ? sql<boolean>`true`
-      : sql<boolean>`bool_or(${calEvents.startsAt} < ${at(new Date(window.end))} and (${calEvents.endsAt} is null or ${calEvents.endsAt} > ${at(new Date(window.start))}))`;
-    const mine = and(eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id));
-    const rows = await tx.select({
-      providerId: calEvents.providerId,
-      rows: sql<number>`count(*)::int`,
-      old: sql<boolean>`bool_and(${calEvents.updatedAt} < ${at(startedAt)})`,
-      touches,
-    }).from(calEvents).where(mine).groupBy(calEvents.providerId);
-    // A write a person made that is still owed to the provider: its object stays until the write is through. So does a
-    // new event the provider refused, which no reading names: it goes when the person lets the write go.
-    const owed = await tx.selectDistinct({ providerId: calEvents.providerId }).from(calEvents)
-      .innerJoin(calWrites, and(eq(calWrites.accountId, calEvents.accountId), eq(calWrites.eventId, calEvents.id)))
-      .where(and(mine, or(eq(calWrites.state, "pending"), and(eq(calWrites.state, "refused"), eq(calWrites.op, "create")))));
-    const waiting = new Set(owed.map((r) => r.providerId));
-    return rows.map((r) => ({ providerId: r.providerId, rows: Number(r.rows), old: r.old === true, owed: waiting.has(r.providerId), touches: r.touches === true }));
+    const stillMissing = sql`${calEvents.seenInReading} is distinct from ${scope.generation}::uuid`;
+    const old = sql`${calEvents.updatedAt} < ${at(scope.startedAt)}`;
+    const touches = scope.window === null ? undefined : sql`
+      bool_or(${calEvents.startsAt} < ${at(new Date(scope.window.end))}
+        and (${calEvents.endsAt} is null or ${calEvents.endsAt} > ${at(new Date(scope.window.start))}))`;
+    const rows = await objectBatch(tx, ctx, after)
+      .leftJoin(calWrites, and(eq(calWrites.accountId, ctx.key.accountId), eq(calWrites.eventId, calEvents.id), owedWrite()))
+      .having(and(sql`bool_and(${stillMissing} and ${old})`, touches, sql`count(${calWrites.id}) = 0`));
+    if (rows.length > 0) {
+      await tx.update(calEvents).set({ seenInReading: scope.plan }).where(and(
+        calendarEvents(ctx), inArray(calEvents.providerId, rows.map((row) => row.providerId)), stillMissing, old,
+      ));
+    }
+    return rows;
   });
+}
+
+/** Walk only the marked plan. A newly eligible object cannot join a confirmed deletion set. */
+export async function plannedMissingObjects(ctx: ApplyContext, plan: string, after: string | null): Promise<DropCandidate[] | "gone"> {
+  return inConnection(ctx.db, ctx.key, ({ tx }) => objectBatch(tx, ctx, after, eq(calEvents.seenInReading, plan)));
+}
+
+function objectBatch(tx: Tx, ctx: ApplyContext, after: string | null, where?: SQL) {
+  return tx.select({ providerId: calEvents.providerId, rows: sql<number>`count(*)::int` })
+    .from(calEvents).where(and(calendarEvents(ctx), after === null ? undefined : gt(calEvents.providerId, after), where))
+    .groupBy(calEvents.providerId).orderBy(calEvents.providerId).limit(CALENDAR_CHANGES_PER_TRANSACTION);
 }

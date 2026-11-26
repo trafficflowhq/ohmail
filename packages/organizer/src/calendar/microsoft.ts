@@ -5,7 +5,7 @@
  * reading shows only what changed, so it compares nothing.
  *
  * Careful at the edges: a day is compared only where it lies inside the window shrunk by a day at
- * each end, where its time is exact (a known zone), and where the expansion was not cut short at a
+ * each end, where its instant or calendar date is known, and where the expansion was not cut short at a
  * ceiling. Anything else excludes nothing: a day kept that was cancelled is a smaller fault than a
  * day hidden that was not.
  */
@@ -23,7 +23,7 @@ export interface CancelledDays {
  * showed (`seen`, by key). `window` is the reading's own, epoch milliseconds.
  */
 export function cancelledDays(
-  masters: ReadonlyMap<string, CalEvent>, seen: ReadonlyMap<string, ReadonlySet<string>>,
+  masters: ReadonlyMap<string, CalEvent>, seen: ReadonlyMap<string, Pick<ReadonlySet<string>, "has">>,
   window: { readonly start: number; readonly end: number }, zones: ZoneSource,
 ): CancelledDays[] {
   const inner = { startMs: window.start + MS_PER_DAY, endMs: window.end - MS_PER_DAY, viewerZone: "Etc/UTC" };
@@ -38,10 +38,12 @@ export function cancelledDays(
     const shown = seen.get(uid) ?? new Set<string>();
     const days: EventTime[] = [];
     for (const o of expansion.occurrences) {
-      // A day the rule made, at a moment known exactly, inside the shrunk window; a moved day is the series' own record.
-      if (o.source !== "rule" || o.key.kind !== "instant" || !isExactMoment(o.start, zones)) continue;
-      if (o.key.epochMs < inner.startMs || o.key.epochMs >= inner.endMs) continue;
-      if (shown.has(recurrenceKeyString(o.key))) continue;
+      // Compare all-day events by date in the interior. The edge day on either side is
+      // left alone because the series' local midnight can fall on the adjacent UTC date.
+      if (o.source !== "rule" || o.key.kind === "wall" || (o.key.kind === "instant" && !isExactMoment(o.start, zones))) continue;
+      const key = recurrenceKeyString(o.key);
+      const when = Number(key);
+      if (when < inner.startMs || when >= inner.endMs || shown.has(key)) continue;
       days.push(o.start);
     }
     if (days.length > 0) out.push({ uid, days });

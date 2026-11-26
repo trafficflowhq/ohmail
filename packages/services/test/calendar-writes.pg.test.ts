@@ -2,11 +2,11 @@ import { availabilityOf } from "../src/calendar/availability.js";
 import { randomUUID } from "node:crypto";
 import { dbFor } from "../src/context.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { accounts, calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calWrites, changeLog, invitationCalendarId, mailboxes, messageInvitations } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
-import { CALENDAR_WRITE_LIMITS } from "@trafficflow/db/calendar";
+import { appliedPayloadOf, CALENDAR_WRITE_LIMITS, writePayloadOf } from "@trafficflow/db/calendar";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { CalendarEventAct, CalendarEventFields } from "@ohmail/wire";
 import { BENCH_CALDAV_PLACE, PROVEN_REPEATS, proofPlaceOf } from "@ohmail/cal-providers";
@@ -156,6 +156,30 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     expect(await refusal(recordCalendarWrite(ctx(w.accountId), "press-1", create(w, { title: "Another" }, (act as { eventId: string }).eventId))))
       .toBe("409 idempotency_replay");
     expect((await rowsOf(w.accountId)).length).toBe(1);
+  });
+
+  it("rejects reusing a completed calendar write key when its original act cannot be verified", async () => {
+    const w = await world();
+    const act = update(w, { title: "Kiln check, moved" });
+    const first = (await recordCalendarWrite(ctx(w.accountId), "completed", act)).answer.write!;
+    await db.update(calWrites).set({ state: "applied", payload: {} }).where(eq(calWrites.id, first.id));
+    for (const body of [act, update(w, { title: "Another change" }), { ...act, eventId: randomUUID() }]) {
+      expect(await refusal(recordCalendarWrite(ctx(w.accountId), "completed", body))).toBe("409 idempotency_replay");
+    }
+    expect((await rowsOf(w.accountId)).map(({ id }) => id)).toEqual([first.id]);
+  });
+
+  it("replays only the matching act after a calendar write settles", async () => {
+    const w = await world();
+    const act = update(w, { title: "Kiln check, moved" });
+    const first = (await recordCalendarWrite(ctx(w.accountId), "completed", act)).answer.write!;
+    await db.update(calWrites).set({ state: "applied", payload: appliedPayloadOf(checkedAct(act)) }).where(eq(calWrites.id, first.id));
+    const replay = await recordCalendarWrite(ctx(w.accountId), "completed", act);
+    expect(replay.answer.write).toEqual({ ...first, state: "applied" });
+    for (const body of [update(w, { title: "Another change" }), { ...act, eventId: randomUUID() }]) {
+      expect(await refusal(recordCalendarWrite(ctx(w.accountId), "completed", body))).toBe("409 idempotency_replay");
+    }
+    expect((await rowsOf(w.accountId)).map(({ id }) => id)).toEqual([first.id]);
   });
 
   it("makes one row of two arrivals at once under one key", async () => {
@@ -1163,6 +1187,295 @@ describe.skipIf(!PG_UP)("the calendar's write door", () => {
     // With the one it waited for, both are owed again, the second behind the first.
     expect((await retryCalendarWrite(ctx(w.accountId), head.answer.write!.id)).answer.write).toMatchObject({ state: "pending" });
     expect((await rowsOf(w.accountId)).map((r) => [r.key, r.state])).toEqual([["f1", "pending"], ["f2", "pending"]]);
+  });
+
+  it("marks an Outlook reply awaiting confirmation on the event after dispatch", async () => {
+    const w = await world({ provider: "microsoft", organizer: ORGANIZER, myAnswer: "none" });
+    await db.update(calConnections).set({ principal: ME }).where(eq(calConnections.id, w.connectionId));
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: ME, role: "required", answer: "none" });
+    const act: CalendarEventAct = {
+      kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, answer: "accepted", scope: { kind: "record" },
+    };
+    const c = ctx(w.accountId);
+    const first = (await recordCalendarWrite(c, "first", act)).answer.write!;
+    const marks = async () => (await CALENDAR_BUILDERS.calendar_event(c.db, w.accountId, [w.eventId])).get(w.eventId)?.writes;
+    expect((await marks())?.[0]).not.toHaveProperty("replyUnconfirmed");
+    await db.update(calWrites).set({
+      attempts: 1,
+      payload: { ...writePayloadOf(act, null, null), answerDispatch: { phase: "sending", id: "evt-1", source: "evt-1" } },
+    }).where(eq(calWrites.id, first.id));
+    expect(await marks()).toMatchObject([{ state: "pending", replyUnconfirmed: true }]);
+    await db.update(calWrites).set({ state: "refused", refusal: "answer_unconfirmed" }).where(eq(calWrites.id, first.id));
+    expect(await marks()).toMatchObject([{ state: "refused", replyUnconfirmed: true }]);
+  });
+
+  it("records an explicit Outlook resend for the exact replacement occurrence", async () => {
+    const w = await world({ provider: "microsoft", organizer: ORGANIZER, myAnswer: "none" });
+    await db.update(calConnections).set({ principal: ME }).where(eq(calConnections.id, w.connectionId));
+    await db.update(calEvents).set({ repeatRule: "FREQ=WEEKLY;COUNT=3" }).where(eq(calEvents.id, w.eventId));
+    const at = String(Date.UTC(2026, 10, 25, 9));
+    const act: CalendarEventAct = {
+      kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, answer: "accepted", scope: { kind: "occurrence", at },
+      copy: { calendarId: w.calendarId, attendee: ME },
+    };
+    const c = ctx(w.accountId);
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: ME, role: "required", answer: "none" });
+    const first = (await recordCalendarWrite(c, "first", act)).answer.write!;
+    await db.update(calWrites).set({
+      attempts: 1, state: "refused", refusal: "answer_unconfirmed",
+      payload: {
+        ...writePayloadOf(act, null, null), answerDispatch: { phase: "sending", id: "original-day", source: "evt-1" }, answerSyncChecks: 1,
+      },
+    }).where(eq(calWrites.id, first.id));
+    const [day] = await db.insert(calEvents).values({
+      accountId: w.accountId, calendarId: w.calendarId, providerId: "replacement-day", versionTag: '"day-v2"', uid: "uid-1",
+      recurrenceId: at, occurrenceAt: new Date(Number(at)), title: "Workshop", organizer: ORGANIZER, myAnswer: "none",
+      startKind: "instant", startLocal: "20261125T090000Z", endKind: "instant", endLocal: "20261125T100000Z",
+      startsAt: new Date("2026-11-25T09:00:00Z"), endsAt: new Date("2026-11-25T10:00:00Z"),
+    }).returning({ id: calEvents.id, updatedAt: calEvents.updatedAt });
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: day!.id, address: ME, role: "required", answer: "none" });
+    const resent = await retryCalendarWrite(c, first.id, "explicit");
+    expect(resent.answer.write).toMatchObject({ key: "explicit", state: "pending" });
+    expect((await rowsOf(w.accountId)).find((row) => row.key === "explicit")).toMatchObject({
+      eventId: w.eventId,
+      payload: {
+        act: { eventId: day!.id, base: `${day!.updatedAt.toISOString()}/${w.updatedAt}`, answer: "accepted", scope: { kind: "occurrence", at } },
+        exception: { id: day!.id, providerId: "replacement-day", version: '"day-v2"', occurrence: at },
+        answerDispatch: { phase: "ready" },
+      },
+    });
+  });
+
+  it("records a changed Outlook choice on the current event after the old reply goes unconfirmed", async () => {
+    const w = await world({ provider: "microsoft", organizer: ORGANIZER, myAnswer: "none" });
+    await db.update(calConnections).set({ principal: ME }).where(eq(calConnections.id, w.connectionId));
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: ME, role: "required", answer: "none" });
+    const act: CalendarEventAct = {
+      kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, answer: "accepted", scope: { kind: "record" },
+    };
+    const c = ctx(w.accountId);
+    const first = (await recordCalendarWrite(c, "first", act)).answer.write!;
+    await db.update(calWrites).set({
+      attempts: 1, state: "refused", refusal: "answer_unconfirmed",
+      payload: {
+        ...writePayloadOf(act, null, null), answerDispatch: { phase: "sending", id: "evt-1", source: "evt-1" }, answerSyncChecks: 1,
+      },
+    }).where(eq(calWrites.id, first.id));
+    const next = await recordCalendarWrite(c, "next", { ...act, after: "first", answer: "tentative" });
+    expect(next.answer.write).toMatchObject({ key: "next", state: "pending", reason: null });
+    expect((await rowsOf(w.accountId)).find((row) => row.key === "next")?.payload).toMatchObject({ after: null });
+  });
+
+  it.each([["pending", "record"], ["refused", "occurrence"]] as const)(
+    "reconciles an identical Outlook answer with a fresh key (%s dispatch, %s scope)",
+    async (state, scope) => {
+      const w = await world({ provider: "microsoft", organizer: ORGANIZER, myAnswer: "none" });
+      await db.update(calConnections).set({ principal: ME }).where(eq(calConnections.id, w.connectionId));
+      await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: ME, role: "required", answer: "none" });
+      await db.update(calEvents).set({ repeatRule: "FREQ=WEEKLY;COUNT=3" }).where(eq(calEvents.id, w.eventId));
+      const act: CalendarEventAct = {
+        kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, answer: "accepted",
+        scope: scope === "record" ? { kind: "record" } : { kind: "occurrence", at: String(Date.UTC(2026, 10, 25, 9)) },
+        copy: { calendarId: w.calendarId, attendee: ME },
+      };
+      const first = (await recordCalendarWrite(ctx(w.accountId), "first", act)).answer.write!;
+      const dispatch = { phase: "sending", id: scope === "record" ? "evt-1" : "day-1", source: "evt-1" };
+      await db.update(calWrites).set({
+        state, attempts: 1, refusal: state === "refused" ? "answer_unconfirmed" : null,
+        payload: { ...writePayloadOf(act, null, null), answerDispatch: dispatch },
+      }).where(eq(calWrites.id, first.id));
+      const newBase = new Date(Date.parse(w.updatedAt) + 1000);
+      await db.update(calEvents).set({ updatedAt: newBase }).where(eq(calEvents.id, w.eventId));
+      const again = { ...act, base: newBase.toISOString() };
+      const second = (await recordCalendarWrite(ctx(w.accountId), "second", again)).answer.write!;
+      expect(second).toMatchObject({ id: first.id, key: "second", state: "pending" });
+      const owed = (await rowsOf(w.accountId)).filter((row) => row.state === "pending");
+      expect(owed.map(({ id }) => id)).toEqual([first.id]);
+      expect(owed[0]?.payload).toMatchObject({ answerDispatch: dispatch });
+
+      const otherChoice = { ...act, after: "second", answer: "tentative" as const };
+      expect(await refusal(recordCalendarWrite(ctx(w.accountId), "second", otherChoice))).toBe("409 idempotency_replay");
+      const distinct = (await recordCalendarWrite(ctx(w.accountId), "third", otherChoice)).answer.write!;
+      expect(distinct).toMatchObject({ state: "pending" });
+      expect(distinct.id).not.toBe(first.id);
+      expect((await rowsOf(w.accountId)).find((row) => row.id === distinct.id)?.payload).toMatchObject({ after: first.id });
+
+      await db.update(calWrites).set({ state: "applied", payload: {} }).where(eq(calWrites.id, first.id));
+      expect((await recordCalendarWrite(ctx(w.accountId), "second", again)).answer.write)
+        .toMatchObject({ id: first.id, state: "applied" });
+
+      if (scope === "occurrence") {
+        const whole = (await recordCalendarWrite(ctx(w.accountId), "whole", { ...again, scope: { kind: "record" } })).answer.write!;
+        expect(whole.state).toBe("pending");
+        expect(whole.id).not.toBe(first.id);
+      }
+    },
+  );
+
+  it.each(["recorded", "legacy"] as const)("finds a %s Outlook dispatch behind an unsent choice and keeps its refusal after dismissal", async (kind) => {
+    const w = await world({ provider: "microsoft", organizer: ORGANIZER, myAnswer: "none" });
+    await db.update(calConnections).set({ principal: ME }).where(eq(calConnections.id, w.connectionId));
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: ME, role: "required", answer: "none" });
+    const act: CalendarEventAct = {
+      kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, answer: "accepted", scope: { kind: "record" },
+    };
+    const original = (await recordCalendarWrite(ctx(w.accountId), "original", act)).answer.write!;
+    const refusalWord = kind === "legacy" ? "unavailable" : "answer_unconfirmed";
+    await db.update(calWrites).set({
+      state: "refused", attempts: 8, refusal: refusalWord,
+      createdAt: sql`now() - interval '4 days'`,
+      payload: {
+        ...writePayloadOf(act, null, null),
+        ...(kind === "recorded" && { answerDispatch: { phase: "sending", id: "evt-1", source: "evt-1" } }),
+      },
+    }).where(eq(calWrites.id, original.id));
+    const other = (await recordCalendarWrite(ctx(w.accountId), "unsent", { ...act, after: "original", answer: "tentative" })).answer.write!;
+    expect(other).toMatchObject({ state: "refused", reason: "earlier_refused" });
+    const repeated = (await recordCalendarWrite(ctx(w.accountId), "repeat", act)).answer.write!;
+    expect(repeated).toMatchObject({ id: original.id, state: "pending" });
+    await db.update(calWrites).set({ state: "refused", attempts: 8, refusal: refusalWord }).where(eq(calWrites.id, original.id));
+    await dismissCalendarWrite(ctx(w.accountId), original.id);
+    for (const key of ["original", "repeat"]) {
+      expect((await recordCalendarWrite(ctx(w.accountId), key, act)).answer.write)
+        .toMatchObject({ id: original.id, key, state: "refused", reason: "answer_unconfirmed" });
+    }
+  });
+
+  it("starts a fresh answer after a newer Outlook choice was confirmed", async () => {
+    const w = await world({ provider: "microsoft", organizer: ORGANIZER, myAnswer: "none" });
+    await db.update(calConnections).set({ principal: ME }).where(eq(calConnections.id, w.connectionId));
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: ME, role: "required", answer: "none" });
+    const act: CalendarEventAct = {
+      kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, answer: "accepted", scope: { kind: "record" },
+    };
+    const original = (await recordCalendarWrite(ctx(w.accountId), "original", act)).answer.write!;
+    await db.update(calWrites).set({
+      state: "refused", attempts: 8, refusal: "answer_unconfirmed",
+      createdAt: sql`now() - interval '1 minute'`,
+      payload: { ...writePayloadOf(act, null, null), answerDispatch: { phase: "sending", id: "evt-1", source: "evt-1" } },
+    }).where(eq(calWrites.id, original.id));
+    await dismissCalendarWrite(ctx(w.accountId), original.id);
+    const maybe = { ...act, answer: "tentative" as const };
+    const confirmed = (await recordCalendarWrite(ctx(w.accountId), "maybe", maybe)).answer.write!;
+    await db.update(calWrites).set({ state: "applied", payload: appliedPayloadOf(maybe) }).where(eq(calWrites.id, confirmed.id));
+    await db.update(calEvents).set({ myAnswer: "tentative" }).where(eq(calEvents.id, w.eventId));
+    const fresh = (await recordCalendarWrite(ctx(w.accountId), "new-yes", act)).answer.write!;
+    expect(fresh.state).toBe("pending");
+    expect(fresh.id).not.toBe(original.id);
+    expect((await recordCalendarWrite(ctx(w.accountId), "original", act)).answer.write)
+      .toMatchObject({ id: original.id, state: "refused", reason: "answer_unconfirmed" });
+  });
+
+  it.each(["sending", "accepted", "old write"] as const)("checks an uncertain Outlook reply after Try again (%s)", async (phase) => {
+    const w = await world({ provider: "microsoft" });
+    const act: CalendarEventAct = {
+      kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, scope: { kind: "record" }, answer: "accepted",
+    };
+    const payload = {
+      ...writePayloadOf(act, null, null),
+      ...(phase !== "old write" && { answerDispatch: { phase, id: "evt-1", source: "evt-1" } }),
+    };
+    const [row] = await db.insert(calWrites).values({
+      accountId: w.accountId, calendarId: w.calendarId, eventId: w.eventId, op: "answer", payload,
+      idempotencyKey: "reply", state: "refused", refusal: "answer_unconfirmed", attempts: 8,
+    }).returning({ id: calWrites.id });
+    expect((await retryCalendarWrite(ctx(w.accountId), row!.id)).answer.write).toMatchObject({ state: "pending", reason: null });
+    const [retried] = await db.select({ payload: calWrites.payload, attempts: calWrites.attempts }).from(calWrites).where(eq(calWrites.id, row!.id));
+    expect(retried).toEqual({ payload, attempts: phase === "old write" ? 1 : 0 });
+  });
+
+  it("only queues one fresh Outlook reply for an explicit resend of the current choice", async () => {
+    const w = await world({ provider: "microsoft", organizer: ORGANIZER, myAnswer: "none" });
+    await db.update(calConnections).set({ principal: ME }).where(eq(calConnections.id, w.connectionId));
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: ME, role: "required", answer: "none" });
+    const act: CalendarEventAct = {
+      kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, answer: "accepted", scope: { kind: "record" },
+      copy: { calendarId: w.calendarId, attendee: ME },
+    };
+    const context = ctx(w.accountId);
+    const first = (await recordCalendarWrite(context, "first-reply", act)).answer.write!;
+    const unconfirmed = async (id: string, intent = act) => db.update(calWrites).set({
+      state: "refused", refusal: "answer_unconfirmed", attempts: 1,
+      payload: { ...writePayloadOf(intent, null, null), answerDispatch: { phase: "sending", id: "evt-1", source: "evt-1" } },
+    }).where(eq(calWrites.id, id));
+    await unconfirmed(first.id);
+    const nextBase = new Date(Date.parse(w.updatedAt) + 1000);
+    await db.update(calEvents).set({ updatedAt: nextBase, versionTag: "second-version" }).where(eq(calEvents.id, w.eventId));
+
+    const [a, b] = await Promise.all([
+      retryCalendarWrite(context, first.id, "resend"), retryCalendarWrite(context, first.id, "resend"),
+    ]);
+    const second = a.answer.write!;
+    expect(second).toMatchObject({ key: "resend", state: "pending", reason: null });
+    expect(second.id).not.toBe(first.id);
+    expect(b.answer.write).toEqual(second);
+    expect(await refusal(retryCalendarWrite(context, first.id, "double-press"))).toBe("409 calendar_write_left");
+    expect(await refusal(retryCalendarWrite(ctx((await world()).accountId), first.id, "resend"))).toBe("404 not_found");
+
+    const [queued] = await db.select().from(calWrites).where(eq(calWrites.id, second.id));
+    expect(queued).toMatchObject({ baseVersionTag: "second-version", attempts: 0,
+      payload: { act: { ...act, base: nextBase.toISOString() }, answerDispatch: { phase: "ready" }, resendsReply: true } });
+    expect((await recordCalendarWrite(context, "first-reply", act)).answer.write)
+      .toMatchObject({ id: second.id, key: "first-reply", state: "pending" });
+    // Graph can change the event between queueing the second press and reading its version.
+    // That press did not reach the organizer, but the first one might have.
+    await db.update(calWrites).set({ state: "refused", refusal: "version_stale" }).where(eq(calWrites.id, second.id));
+    const failed = (await retryCalendarWrite(context, first.id, "resend")).answer;
+    expect(failed.write).toMatchObject({ id: second.id, state: "refused", reason: "version_stale" });
+    expect(failed.events[0]?.writes).toMatchObject([{ id: second.id, state: "refused", reason: "answer_unconfirmed", replyUnconfirmed: true }]);
+    expect(await refusal(retryCalendarWrite(context, second.id))).toBe("409 calendar_write_left");
+    const repeated = (await recordCalendarWrite(context, "repeat-choice", { ...act, base: nextBase.toISOString() })).answer.write!;
+    expect(repeated).toMatchObject({ id: second.id, state: "refused", reason: "answer_unconfirmed" });
+    expect((await recordCalendarWrite(context, "repeat-choice", { ...act, base: nextBase.toISOString() })).answer.write).toEqual(repeated);
+    const third = (await retryCalendarWrite(context, second.id, "ask-again")).answer.write!;
+    expect(third.id).not.toBe(second.id);
+    expect((await recordCalendarWrite(context, "first-reply", act)).answer.write)
+      .toMatchObject({ id: third.id, key: "first-reply", state: "pending" });
+    expect((await retryCalendarWrite(context, first.id, "resend")).answer.write)
+      .toMatchObject({ id: second.id, state: "refused", reason: "answer_unconfirmed" });
+    expect(await refusal(retryCalendarWrite(context, first.id, "stale-press"))).toBe("409 calendar_write_left");
+    expect((await rowsOf(w.accountId)).filter(({ key }) => key !== "repeat-choice").map(({ key, state }) => ({ key, state }))).toEqual([
+      { key: "first-reply", state: "applied" }, { key: "resend", state: "applied" }, { key: "ask-again", state: "pending" },
+    ]);
+    await dismissCalendarWrite(context, third.id);
+    await db.delete(calWrites).where(eq(calWrites.id, third.id));
+    expect((await recordCalendarWrite(context, "first-reply", act)).answer.write)
+      .toMatchObject({ id: second.id, key: "first-reply", state: "refused", reason: "answer_unconfirmed" });
+    expect((await recordCalendarWrite(context, "new-choice", { ...act, answer: "tentative", base: nextBase.toISOString(), after: "first-reply" })).answer.write)
+      .toMatchObject({ state: "pending", reason: null });
+  });
+
+  it("replaces an unconfirmed Outlook reply when its event and account are at the queue limits", async () => {
+    const w = await world({ provider: "microsoft", organizer: ORGANIZER, myAnswer: "none" });
+    await db.update(calConnections).set({ principal: ME }).where(eq(calConnections.id, w.connectionId));
+    await db.insert(calAttendees).values({ accountId: w.accountId, eventId: w.eventId, address: ME, role: "required", answer: "none" });
+    const act: CalendarEventAct = {
+      kind: "calendar_event_answer", eventId: w.eventId, base: w.updatedAt, answer: "accepted", scope: { kind: "record" },
+    };
+    const [first] = await db.insert(calWrites).values({
+      accountId: w.accountId, calendarId: w.calendarId, eventId: w.eventId, op: "answer", idempotencyKey: "original",
+      state: "refused", refusal: "answer_unconfirmed", attempts: 1,
+      payload: { ...writePayloadOf(act, null, null), answerDispatch: { phase: "sending", id: "evt-1", source: "evt-1" } },
+    }).returning({ id: calWrites.id });
+    await db.insert(calWrites).values(Array.from({ length: CALENDAR_WRITE_LIMITS.openPerAccount - 1 }, (_, i) => ({
+      accountId: w.accountId, calendarId: w.calendarId, eventId: i < CALENDAR_WRITE_LIMITS.openPerEvent - 1 ? w.eventId : null,
+      op: "update", payload: {}, idempotencyKey: `seed-${i}`, state: "refused",
+    })));
+    const { answer } = await retryCalendarWrite(ctx(w.accountId), first!.id, "resend-at-capacity");
+    expect(answer.write).toMatchObject({ key: "resend-at-capacity", state: "pending" });
+    const open = (await rowsOf(w.accountId)).filter(({ state }) => state !== "applied");
+    expect(open).toHaveLength(CALENDAR_WRITE_LIMITS.openPerAccount);
+    expect(open.filter(({ eventId }) => eventId === w.eventId)).toHaveLength(CALENDAR_WRITE_LIMITS.openPerEvent);
+  });
+
+  it("keeps a superseded Outlook reply closed when an old device asks for a retry", async () => {
+    const w = await world({ provider: "microsoft" });
+    const [old] = await db.insert(calWrites).values({
+      accountId: w.accountId, calendarId: w.calendarId, eventId: w.eventId, op: "answer", idempotencyKey: "old-reply",
+      state: "refused", refusal: "answer_unconfirmed", attempts: 1, payload: { replySuperseded: true },
+    }).returning({ id: calWrites.id });
+    expect(await refusal(retryCalendarWrite(ctx(w.accountId), old!.id))).toBe("409 calendar_write_left");
+    expect((await rowsOf(w.accountId))[0]).toMatchObject({ state: "refused", refusal: "answer_unconfirmed" });
   });
 
   it("puts a refused write and those refused with it back, and lets a refused or untried one go", async () => {

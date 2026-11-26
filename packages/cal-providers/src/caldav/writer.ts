@@ -168,6 +168,19 @@ function sameCalendarContent(wanted: string, found: string): boolean {
   );
 }
 
+/** A read-back tag is safe for queued followers only when it describes the copy we sent. */
+function writtenTag(
+  responseTag: string | null,
+  readBack: Exclude<Fetched, "gone">,
+  text: string,
+): string | null {
+  const observed = strongTag(readBack.tag);
+  if (observed === null) return null;
+  return responseTag === observed || (responseTag === null && sameCalendarContent(text, readBack.text))
+    ? observed
+    : null;
+}
+
 /** The write's key as the UUID a member and its UID are named by. */
 function uuidOf(key: WriteKey): string | null {
   const h = key.hex;
@@ -224,7 +237,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       { id: member, written: new URL(member).pathname, kind: "changed", tag: null },
     ]);
     if (!got.ok) return refused(got.reason, got.retryAfterMs);
-    return got.found({ id: member, written: member, kind: "changed", tag: null }) ?? refused("unreadable");
+    return got.found({ id: member, written: member, kind: "changed", tag: null }) ?? refused("unavailable");
   }
 
   /** What a reading would hand for the member now: each of its events as an upsert under its tag, or its removal. */
@@ -238,13 +251,13 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       version: fetched.tag ?? "",
       event,
       text: fetched.text,
+      ...(read.dropped.length > 0 && { resourceIncomplete: true }),
     }));
   }
 
   /**
-   * Read back after a write the server took; where the read fails, what was written under the tag
-   * the write answered. The write's own copy only where the answer named no tag or the read-back's
-   * own: another tag is someone else's write between ours and our read, never re-based onto.
+   * Read back after a write the server took. Acknowledgement settles the write, but rebasing a
+   * later edit needs proof that the read-back copy came from this write.
    */
   async function afterWrite(
     s: Session,
@@ -256,12 +269,16 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     const back = await readMember(s, collection, member);
     const tag = res.header("etag");
     if (failedRead(back)) {
-      if (text === null) return wrote([{ kind: "gone", id: member }]);
-      return wrote(itemsOf(member, { tag: tag !== null && sendableTag(tag) ? tag : null, text }));
+      if (text === null) return answered([{ kind: "gone", id: member }]);
+      return answered(itemsOf(member, { tag: tag !== null && sendableTag(tag) ? tag : null, text }));
     }
-    return back !== "gone" && (tag === null || tag === back.tag)
-      ? wrote(itemsOf(member, back))
-      : answered(itemsOf(member, back));
+    const items = itemsOf(member, back);
+    return text !== null &&
+      back !== "gone" &&
+      writtenTag(tag, back, text) !== null &&
+      !items.some((item) => item.kind === "upsert" && item.resourceIncomplete)
+      ? wrote(items)
+      : answered(items);
   }
 
   async function rollBack(
@@ -447,15 +464,14 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
     if (!continuationHolds(made, now, change, options.compare))
       return refused(options.sendLegacy && !options.compare ? "unknown" : "version_stale");
     const tag = res.status === 412 ? null : res.header("etag");
-    // A fresh create can omit its ETag. The read-back can supply it only if no content changed.
-    const readBackTag =
-      res.status !== 412 && tag === null && options.compare && sameCalendarContent(text, now.text)
-        ? now.tag
-        : null;
+    const verified = res.status === 412 ? null : writtenTag(tag, now, text);
     const items = itemsOf(member, now);
     return {
-      answer: res.status !== 412 && (tag === null || tag === now.tag) ? wrote(items) : answered(items),
-      rollbackTag: strongTag(tag ?? readBackTag),
+      answer:
+        verified !== null && !items.some((item) => item.kind === "upsert" && item.resourceIncomplete)
+          ? wrote(items)
+          : answered(items),
+      rollbackTag: strongTag(tag) ?? (options.compare ? verified : null),
     };
   }
 

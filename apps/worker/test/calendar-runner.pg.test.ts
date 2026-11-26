@@ -10,7 +10,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer, type Server, type Socket } from "node:net";
 import { and, eq, ne, sql } from "drizzle-orm";
-import { Secret, type StoredCredential } from "@ohmail/cal-providers";
+import { Secret, type HttpPort, type StoredCredential } from "@ohmail/cal-providers";
+import { makeReader as microsoftReader, MS_GRAPH_BASE } from "@ohmail/cal-providers/microsoft";
 import { StaticKeyProvider, silentLogger } from "@trafficflow/core";
 import { calCalendars, calConnections, calWrites } from "@trafficflow/db";
 import { CALENDAR_RING_GAP_MS, CALENDAR_TICK_MS, ROSTER_LIMIT, calendarPool, loadDueConnections } from "@ohmail/organizer/calendar-sync";
@@ -21,7 +22,7 @@ import type { WorkerScope } from "../src/start/scope.js";
 import type { WorkerCalendarConfig } from "../src/config.js";
 import { startCalDavStandIn, type StandIn } from "../../../packages/cal-providers/test/caldav-stand-in.js";
 import {
-  AVAILABLE, capturedLog, depsFor, eventsOf, openWorld, providersOf, recordWrite, scriptedReader, sealCredential, seedConnection, silentHttp, single,
+  AVAILABLE, ZONES, calendarsOf, capturedLog, depsFor, eventsOf, openWorld, providersOf, recordWrite, scriptedReader, sealCredential, seedConnection, silentHttp, single,
   upsert, type World,
 } from "../../../packages/organizer/test/_calendar-world.js";
 
@@ -112,6 +113,83 @@ describe.skipIf(!AVAILABLE)("the calendar's passes in the worker", () => {
       expect(scope.calendar!.load()).toEqual({ running: 0, queued: 0 });
     } finally {
       await silent.close();
+    }
+  }, 60_000);
+
+  it("lets another due calendar run while Outlook resolves a dense page", async () => {
+    const dense = await seedConnection(w, { provider: "microsoft", credential: {
+      kind: "oauth", provider: "microsoft", refreshToken: new Secret(["worker", "fixture"].join("-")),
+    } });
+    const server = "https://dav.example.test/dav/";
+    const healthy = await seedConnection(w, { provider: "caldav", serverUrl: server, credential: {
+      kind: "basic", server, user: "worker-fixture", password: new Secret(["local", "fixture"].join("-")),
+    } });
+    let now = Date.UTC(2026, 10, 25);
+    const masters: string[] = [];
+    const records = Array.from({ length: 250 }, (_, i) => ({
+      id: `day-${i}`, type: "occurrence", seriesMasterId: `master-${i}`, originalStart: "2026-11-20T10:00:00Z",
+    }));
+    const http: HttpPort = {
+      async request(url) {
+        now += 400;
+        const id = new URL(url).pathname.split("/").at(-1)!;
+        let body;
+        if (id === "token") {
+          body = { access_token: "synthetic-calendar-grant", token_type: "Bearer", expires_in: 3600 };
+        } else if (id === "calendars") {
+          body = { value: [{ id: "cal-1", canEdit: true }] };
+        } else if (id === "delta") {
+          body = { value: records, "@odata.deltaLink": `${MS_GRAPH_BASE}/me/calendars/cal-1/calendarView/delta?complete=1` };
+        } else {
+          masters.push(id);
+          body = { id, type: "seriesMaster", changeKey: "fixture-version", originalStartTimeZone: "UTC",
+            start: { dateTime: "2026-11-20T10:00:00", timeZone: "UTC" }, end: { dateTime: "2026-11-20T11:00:00", timeZone: "UTC" },
+            recurrence: { pattern: { type: "daily", interval: 1 }, range: { type: "noEnd", startDate: "2026-11-20" } },
+          };
+        }
+        return { arrived: true, status: 200, header: () => null, body: new TextEncoder().encode(JSON.stringify(body)), location: null, url, hops: 0 };
+      },
+    };
+    const clock = { now: () => now };
+    const providers = providersOf({
+      microsoft: { reader: microsoftReader({ http, clock, zones: ZONES, graphBase: MS_GRAPH_BASE }), http },
+      caldav: { reader: scriptedReader("caldav", { readings: new Map([["", [{ items: [upsert("ready.ics", "v1", single("ready", 20))] }]]]) }), http: silentHttp() },
+    });
+    const deps = depsFor(w, providers, { clock, oauth: {
+      google: null, microsoft: async () => ({ clientId: "calendar-client", clientSecret: ["local", "registration"].join("-"), defaultTenant: "common", kind: "confidential" }),
+    } });
+    let registered = false;
+    let seenWhenHealthyFinished: number | null = null;
+    const requestsPerTurn: number[] = [];
+    const runner = startCalendarRunner({
+      roster: async () => {
+        if (registered) return [];
+        registered = true;
+        return [dense.due, healthy.due];
+      },
+      turn: async (due, signal) => {
+        const before = masters.length;
+        const result = await calendarSyncPass(deps, due, signal);
+        if (due.id === dense.connectionId) requestsPerTurn.push(masters.length - before);
+        if (due.id === healthy.connectionId) seenWhenHealthyFinished = masters.length;
+        return result;
+      },
+      lanes: 1, floorMs: 600_000, gapMs: 0, turnMs: 60_000, now: clock.now, isStopped: () => false, log: silentLogger,
+    });
+    try {
+      runner.ring();
+      await until(() => seenWhenHealthyFinished !== null);
+      expect(seenWhenHealthyFinished).toBeGreaterThan(0);
+      expect(seenWhenHealthyFinished).toBeLessThan(records.length);
+      await until(async () => runner.load().running + runner.load().queued === 0 &&
+        (await calendarsOf(w, dense.accountId)).some((calendar) => calendar.syncToken !== null), 15_000);
+      expect(Math.max(...requestsPerTurn)).toBeLessThanOrEqual(24);
+      expect(masters).toEqual(records.map((record) => record.seriesMasterId));
+      expect((await eventsOf(w, dense.accountId)).length).toBe(records.length);
+      expect((await eventsOf(w, healthy.accountId)).map((event) => event.providerId)).toEqual(["ready.ics"]);
+    } finally {
+      runner.stop();
+      await runner.settled();
     }
   }, 60_000);
 

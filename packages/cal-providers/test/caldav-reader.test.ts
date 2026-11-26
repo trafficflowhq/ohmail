@@ -257,8 +257,9 @@ async function studio(options: StandInOptions = {}, members: readonly string[] =
   return { s, c: signIn(s), cal: { id: here(s, s.paths.collection("work")) } satisfies CalendarRef };
 }
 
-const page = async (c: Connection, cal: CalendarRef, since: ChangeToken | null, limit: number, cursor: string | null, by: CalendarReader = reader): Promise<ChangePage> => {
-  const answer = await by.readChanges(c, cal, since, { limit, cursor, window: null }, signal());
+const page = async (c: Connection, cal: CalendarRef, since: ChangeToken | null, limit: number, cursor: string | null, by: CalendarReader = reader, scope?: object): Promise<ChangePage> => {
+  const request = { limit, cursor, window: null, scope };
+  const answer = await by.readChanges(c, cal, since, request, signal());
   if (!answer.ok) throw new Error(`refused: ${answer.reason}`);
   return answer.value;
 };
@@ -269,17 +270,23 @@ interface Pass {
   readonly token: ChangeToken | null;
 }
 /** Every page of one reading, from `first` on when a test already asked for that one. */
-async function pass(c: Connection, cal: CalendarRef, since: ChangeToken | null, limit = 250, first: ChangePage | null = null, by: CalendarReader = reader): Promise<Pass> {
+async function pass(c: Connection, cal: CalendarRef, since: ChangeToken | null, limit = 250, first: ChangePage | null = null, by: CalendarReader = reader, scope?: object): Promise<Pass> {
   const pages: ChangePage[] = [];
-  let next = first ?? (await page(c, cal, since, limit, null, by));
+  let next = first ?? (await page(c, cal, since, limit, null, by, scope));
   for (let n = 0; n < 60; n++) {
     pages.push(next);
     if (next.cursor.kind === "end") return { pages, items: pages.flatMap((p) => p.items), left: pages.flatMap((p) => p.left), token: next.cursor.token };
-    next = await page(c, cal, since, limit, next.cursor.value, by);
+    next = await page(c, cal, since, limit, next.cursor.value, by, scope);
   }
   throw new Error("the reading did not end");
 }
 const reports = (s: StandIn): (string | null)[] => s.seen.filter((r) => r.method === "REPORT").map((r) => r.asks);
+
+async function rejectContinuation(c: Connection, cal: CalendarRef, first: ChangePage, limit: number): Promise<void> {
+  if (first.cursor.kind !== "more") throw new Error("missing continuation");
+  expect(await reader.readChanges(c, cal, null, { limit, cursor: first.cursor.value, window: null }, signal()))
+    .toEqual({ ok: false, reason: "token_gone", retryAfterMs: null });
+}
 
 describe("the calendars of a home", () => {
   it("reports a timed-out capability probe separately from a successful probe", async () => {
@@ -461,6 +468,29 @@ describe("one calendar, read by the server's token", () => {
     expect((await pass(c2, cal2, null, 1)).pages.map((p) => names(p.items))).toEqual([["+a"], ["+b"], ["+c"], ["+d"], ["+e"]]);
   });
 
+  it.each([false, true])("requests a bounded inventory and reads each listing only once (server cuts: %s)", async (cut) => {
+    const names = Array.from({ length: 10_000 }, (_, n) => `m${String(n).padStart(5, "0")}`);
+    const { s, c, cal } = await studio(cut ? { truncateAt: MAX_PAGE_LIMIT } : {}, names);
+    const by = makeReader({ http: overNetwork(FETCH_BODY_MAX_BYTES), clock: CLOCK, zones: ZONES });
+    const whole = await pass(c, cal, null, MAX_PAGE_LIMIT, null, by, {});
+    expect(whole.items).toHaveLength(names.length);
+    const listings = s.seen.filter((r) => r.asks === "sync-collection");
+    expect.soft(listings).toHaveLength(cut ? 40 : 1);
+    expect.soft(listings.every((r) => r.body.includes(`<D:limit><D:nresults>${MAX_PAGE_LIMIT}</D:nresults></D:limit>`))).toBe(true);
+    expect(s.seen.filter((r) => r.asks === "calendar-multiget")).toHaveLength(40);
+  }, 30_000);
+
+  it("reads an addition behind the cached inventory's cursor in the next delta", async () => {
+    const { s, c, cal } = await studio();
+    const scope = {};
+    const first = await page(c, cal, null, 2, null, reader, scope);
+    s.put("work", "0.ics", event("addition", "Added during reading"));
+    const whole = await pass(c, cal, null, 2, first, reader, scope);
+    expect(names(whole.items)).toEqual(["+a", "+b", "+c", "+d", "+e"]);
+    expect.soft(reports(s).filter((ask) => ask === "sync-collection")).toHaveLength(1);
+    expect(names((await pass(c, cal, whole.token)).items)).toEqual(["+0"]);
+  });
+
   it("begins a server's cut again when the server cuts otherwise the second time: no object of the new cut is passed over", async () => {
     // The server cuts after three changes, oldest first: z, y, x. They sort the other way round.
     const { s, c, cal } = await studio({ truncateAt: 3 }, ["z", "y", "x", "m", "k"]);
@@ -468,7 +498,8 @@ describe("one calendar, read by the server's token", () => {
     expect(names(first.items)).toEqual(["+x", "+y"]);
     // z changes: it is now the newest, and the first three are y, x and m. `m` sorts before what was read.
     s.put("work", "z.ics", event("z@studio.example.test", "Event z, changed"));
-    const whole = await pass(c, cal, null, 2, first);
+    await rejectContinuation(c, cal, first, 2);
+    const whole = await pass(c, cal, null, 2);
     expect(new Set(names(whole.items))).toEqual(new Set(["+k", "+m", "+x", "+y", "+z"]));
     expect(events(whole.items).filter((e) => e.uid === "z@studio.example.test").map((e) => e.summary)).toEqual(["Event z, changed"]);
     expect((await pass(c, cal, whole.token)).items).toEqual([]);
@@ -481,14 +512,34 @@ describe("one calendar, read by the server's token", () => {
     expect((await pass(c, cal, whole.token)).items).toEqual([]);
   });
 
+  it.each([true, false])("invalidates a replayed cut when a previously seen member disappears (still cut: %s)", async (stillCut) => {
+    const { s, c, cal } = await studio({ truncateAt: 2, rewordsTokens: true }, ["a", "q", "z"]);
+    const scope = {};
+    const first = await page(c, cal, null, 1, null, reader, scope);
+    expect(names(first.items)).toEqual(["+a"]);
+    if (first.cursor.kind !== "more") throw new Error("missing continuation");
+
+    s.remove("work", "a.ics");
+    if (stillCut) s.put("work", "0.ics", event("replacement", "Replacement"));
+    s.seen.length = 0;
+    const replay = await reader.readChanges(c, cal, null, { limit: 1, cursor: first.cursor.value, window: null, scope }, signal());
+    expect.soft(replay).toEqual({ ok: false, reason: "token_gone", retryAfterMs: null });
+    expect.soft(reports(s)).toEqual(["sync-collection"]);
+    const restarted = await pass(c, cal, null, 1, null, reader, {});
+    expect(names(restarted.items).sort()).toEqual(stillCut ? ["+0", "+q", "+z", "-a"] : ["+q", "+z"]);
+    expect((await pass(c, cal, restarted.token)).items).toEqual([]);
+  });
+
   it("begins the cut again at such a server once an object it handed out is another: the change is not passed over", async () => {
     const { s, c, cal } = await studio({ truncateAt: 2, rewordsTokens: true }, ["a", "b", "c"]);
     const first = await page(c, cal, null, 1, null);
     expect(names(first.items)).toEqual(["+a"]);
     // All three change, in the order they stood in: the server's cut holds the same two names, and `a` under it is another object.
     for (const name of ["a", "b", "c"]) s.put("work", `${name}.ics`, event(`${name}@studio.example.test`, `Event ${name}, changed`));
-    const whole = await pass(c, cal, null, 1, first);
-    expect(events(whole.items).filter((e) => e.uid === "a@studio.example.test").map((e) => e.summary)).toEqual(["Event a", "Event a, changed"]);
+    await rejectContinuation(c, cal, first, 1);
+    const whole = await pass(c, cal, null, 1);
+    expect(events(first.items).map((e) => e.summary)).toEqual(["Event a"]);
+    expect(events(whole.items).filter((e) => e.uid === "a@studio.example.test").map((e) => e.summary)).toEqual(["Event a, changed"]);
     expect(new Set(names(whole.items))).toEqual(new Set(["+a", "+b", "+c"]));
     expect((await pass(c, cal, whole.token)).items).toEqual([]);
   });
@@ -504,7 +555,8 @@ describe("one calendar, read by the server's token", () => {
     s.remove("work", "q.ics");
     s.put("work", "0.ics", event("0@studio.example.test", "Event 0"), `"one-tag"`);
     s.put("work", "y.ics", event("y@studio.example.test", "Event y"));
-    expect(names((await pass(c, cal, null, 1, first)).items)).toEqual(["+a", "+0", "+z", "+y"]);
+    await rejectContinuation(c, cal, first, 1);
+    expect(names((await pass(c, cal, null, 1)).items)).toEqual(["+0", "+z", "+y"]);
   });
 
   it("refuses to go round in a circle: a server that cuts short and hands back the token it was asked with", async () => {
@@ -573,6 +625,18 @@ describe("one calendar, read by the server's token", () => {
 });
 
 describe("a calendar that keeps no token", () => {
+  it("invalidates the end of a retained inventory when its collection tag changes", async () => {
+    const { s, c, cal } = await studio({}, ["a", "b", "c"], { sync: false });
+    const scope = {};
+    const first = await page(c, cal, null, 2, null, reader, scope);
+    if (first.cursor.kind !== "more") throw new Error("missing continuation");
+    s.put("work", "0.ics", event("addition", "Added during reading"));
+    const request = { limit: 2, cursor: first.cursor.value, window: null, scope };
+    expect(await reader.readChanges(c, cal, null, request, signal()))
+      .toEqual({ ok: false, reason: "token_gone", retryAfterMs: null });
+    expect(names((await pass(c, cal, null, 2, null, reader, {})).items)).toEqual(["+0", "+a", "+b", "+c"]);
+  });
+
   it("is read whole by its members' tags, and not at all while its own tag stands", async () => {
     const { s, c, cal } = await studio({}, ["a", "b", "c"], { sync: false });
     const whole = await pass(c, cal, null, 2);
@@ -634,10 +698,10 @@ describe("what a calendar holds that is not read", () => {
     expect(s.seen.every((r) => r.host === `127.0.0.1:${s.port}`)).toBe(true);
   });
 
-  it("says of an object it asked for and was told nothing of that it could not be read: neither there nor gone", async () => {
-    const { s, c, cal } = await studio({ silentOn: ["b.ics"] });
-    const whole = await pass(c, cal, null);
-    expect([names(whole.items), whole.left]).toEqual([["+a", "+c", "+d", "+e"], [{ id: here(s, "/dav/calendars/mila/work/b.ics"), reason: "unreadable" }]]);
+  it("holds the reading for an object it asked for and was told nothing of", async () => {
+    const { c, cal } = await studio({ silentOn: ["b.ics"] });
+    expect(await reader.readChanges(c, cal, null, { limit: 250, cursor: null, window: null }, signal()))
+      .toEqual({ ok: false, reason: "unavailable", retryAfterMs: null });
   });
 
   it("does not let one heavy object hold a calendar: the request is halved until the object stands alone", async () => {

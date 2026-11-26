@@ -376,6 +376,64 @@ describe("the invitations' panel", () => {
     expect(address.read()).toContain("/e/a");
   });
 
+  it.each([false, true])(
+    "keeps the Outlook choice and offers only explicit resend after checking (phone: %s)",
+    async (phone) => {
+      const m = mirror(() => ({ kind: "taken", write: null }));
+      m.put("calendar_connection", connection.id, { ...connection, provider: "microsoft" });
+      m.put("calendar", studio.id, studio);
+      const invite = invitation("a", "Tech check", "20261118", { myAnswer: "tentative" });
+      m.put("calendar_event", invite.id, invite);
+      const events = m.port.events;
+      let waiting = true;
+      m.port.events = () =>
+        events().map((event) =>
+          waiting
+            ? { ...event, waiting: "provider", replyUnconfirmed: true }
+            : { ...event, refusal: "answer_unconfirmed", refusedWriteId: "reply" },
+        );
+      mount(m, "#/cal/week/2026-11-18/e/a?panel=invitations", [], phone);
+      const content = within(panel());
+      expect(content.getByRole("button", { name: "Maybe" }).getAttribute("aria-pressed")).toBe("true");
+      const checking = content.queryByText(/Reply unconfirmed/);
+      expect(content.queryByText("Your reply may not have reached the organizer")).toBeNull();
+      expect(content.queryByRole("button", { name: "Send reply again" })).toBeNull();
+
+      waiting = false;
+      act(() => m.put("calendar_event", invite.id, invite));
+      expect(content.getByRole("button", { name: "Maybe" }).getAttribute("aria-pressed")).toBe("true");
+      const send = content.getByRole("button", { name: "Send reply again" });
+      expect(content.getByText("Your reply may not have reached the organizer")).toBeTruthy();
+      expect(content.queryByRole("button", { name: "Try again" })).toBeNull();
+      expect(content.queryByRole("button", { name: "Let go" })).toBeNull();
+      expect(m.pressed).toEqual([]);
+
+      fireEvent.click(send);
+      fireEvent.click(send);
+      await settle();
+      expect(m.pressed).toEqual([{ kind: "calendar_write_retry", writeId: "reply", resendReply: true }]);
+      expect(checking).toBeTruthy();
+      act(() => m.put("calendar", studio.id, { ...studio, access: "reader" }));
+      expect(content.queryByRole("button", { name: "Send reply again" })).toBeNull();
+    },
+  );
+
+  it("keeps the standard retry for an ordinary refusal in the Invitations panel", async () => {
+    const m = mirror(() => ({ kind: "taken", write: null }));
+    m.put("calendar", studio.id, studio);
+    m.put("calendar_event", "a", invitation("a", "Tech check", "20261118"));
+    const events = m.port.events;
+    m.port.events = () =>
+      events().map((event) => ({ ...event, refusal: "unreachable", refusedWriteId: "retry" }));
+    mount(m, "#/cal/week/2026-11-18/e/a?panel=invitations");
+    const content = within(panel());
+    expect(content.getByRole("button", { name: "Let go" })).toBeTruthy();
+    expect(content.queryByRole("button", { name: "Send reply again" })).toBeNull();
+    fireEvent.click(content.getByRole("button", { name: "Try again" }));
+    await settle();
+    expect(m.pressed).toEqual([{ kind: "calendar_write_retry", writeId: "retry" }]);
+  });
+
   it("queues one answer for two presses of Yes on the open invitation while the first is owed", async () => {
     const m = mirror(() => null);
     m.put("calendar", studio.id, studio);

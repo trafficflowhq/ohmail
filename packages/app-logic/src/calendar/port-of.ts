@@ -335,8 +335,8 @@ function calendarWriteTransport(
       : {}),
     ...(transport.recoverProposal ? { recoverProposal: transport.recoverProposal.bind(transport) } : {}),
     writeCalendar: (act, key, signal) => keep(key, signal, () => transport.writeCalendar(act, key, signal)),
-    retryCalendarWrite: (id, key, signal) =>
-      keep(key, signal, () => transport.retryCalendarWrite(id, key, signal)),
+    retryCalendarWrite: (id, key, signal, resendReply) =>
+      keep(key, signal, () => transport.retryCalendarWrite(id, key, signal, resendReply)),
     dismissCalendarWrite: (id, key, signal) =>
       keep(key, signal, () => transport.dismissCalendarWrite(id, key, signal)),
   };
