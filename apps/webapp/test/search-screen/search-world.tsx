@@ -23,6 +23,7 @@ import { SearchAbove, SearchList, searchBlankOf, type SearchBeside } from "@ohma
 import { TextProvider, type Messages } from "@ohmail/app/text";
 import de from "../../messages/de.json";
 import en from "../../messages/en.json";
+import { SearchFrame } from "./frame";
 
 export const WORDS: Record<"en" | "de", Messages> = {
   en: { search: en.search, screener: en.screener } as Messages,
@@ -211,9 +212,11 @@ function Search({
   });
   const pane: PaneProps = { route: { ...ROUTE, open }, plan, keysHere: true };
   return (
-    <SearchAbove model={model} beside={side} blank={searchBlankOf(model, (key) => key)}>
-      <SearchList {...pane} />
-    </SearchAbove>
+    <SearchFrame engine={engine} route={pane.route} plan={plan}>
+      <SearchAbove model={model} beside={side} blank={searchBlankOf(model, (key) => key)}>
+        <SearchList {...pane} />
+      </SearchAbove>
+    </SearchFrame>
   );
 }
 

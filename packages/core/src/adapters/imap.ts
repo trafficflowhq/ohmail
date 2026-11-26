@@ -1129,6 +1129,21 @@ export function isRefusedCommand(err: unknown): boolean {
   return status === "NO" || status === "BAD";
 }
 
+/** A tagged refusal to a FETCH that we sent, without any of the server's response text. */
+export function imapFetchRefusal(err: unknown): "NO" | "BAD" | null {
+  for (let hops = 0; err != null && hops < 8; hops++) {
+    const { responseStatus, executedCommand, cause } = err as {
+      responseStatus?: unknown; executedCommand?: unknown; cause?: unknown;
+    };
+    if ((responseStatus === "NO" || responseStatus === "BAD")
+      && typeof executedCommand === "string" && /^\S+ (?:UID )?FETCH\b/i.test(executedCommand)) {
+      return responseStatus;
+    }
+    err = cause;
+  }
+  return null;
+}
+
 /**
  * Did a STATUS by name get the server's own statement that the mailbox does not exist? Two
  * readings, both required: imapflow's `NotFound` (a NO, then a LIST of that exact name that
@@ -4443,6 +4458,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const historicalSweepOpen = asked?.startHistorySweep === undefined
       ? scanOrder.some((folder) => (stored.get(folder)?.scanNextUid ?? 0) > 0)
       : !asked.startHistorySweep;
+    let fetchRefusal: "NO" | "BAD" | null = null;
     const recordIncomplete = (folder: string): void => {
       this.quietReads.delete(folder);
       incompleteFolders.push(folder);
@@ -5083,6 +5099,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           stopAfterReadFailure(err, folder, folderIndex);
           break;
         }
+        fetchRefusal ??= imapFetchRefusal(err);
         recordIncomplete(folder);
       } finally {
         releaseKnown?.();
@@ -5132,6 +5149,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // Cleared when the pass reached the end, so a completed first sync stops leading with a
     // folder that owes nothing.
     this.budgetStop = stoppedAt;
+    if (fetchRefusal && !scanFailure) {
+      try { this.opts.onFetchRefused?.(fetchRefusal); } catch { /* diagnostics do not affect the scan */ }
+    }
     const correlated = correlateMoves(creates, deletes);
     const asDelete = (d: InternalDelete): Change => ({
       type: "delete", locator: { folder: d.folder, ref: makeRef(d.uidValidity, d.uid) },

@@ -404,7 +404,7 @@ export function DoorChooser({
       }
       if (!begun.approvalId) {
         if (begun.notOffered) setApprovalOffered(false);
-        setProblem(begun.problem ?? DOOR_COPY.browserSignInFailed);
+        setProblem(begun.retrySoon ? DOOR_COPY.cloudApproveTryAgain : (begun.problem ?? DOOR_COPY.browserSignInFailed));
         return;
       }
       const ends = Date.now() + begun.expiresIn * 1000;

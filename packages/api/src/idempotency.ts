@@ -76,8 +76,9 @@ export async function lookupIdempotent(
  * about a rule the offline organizer was still running. It takes the WHOLE row, so a caller has
  * no field to shape with and the three owners cannot drift. Bodiless statuses are
  * `jsonResponse`'s: a 204's stored `{}` is the column's NOT NULL requirement and never ships.
+ * A scoped reader can project the body while leaving the response status and sequence here.
  */
-export function storedResponse(found: StoredIdempotent): Response {
+export function storedResponse(found: StoredIdempotent, projectBody?: (body: unknown) => unknown): Response {
   // A PENDING row holds no answer yet: the request that claimed it is still running. A retry is
   // told so and when to come back, never handed the placeholder as though it were the answer.
   if (found.responseStatus === IDEMPOTENCY_PENDING_STATUS) {
@@ -85,7 +86,7 @@ export function storedResponse(found: StoredIdempotent): Response {
       "a request with this idempotency key is still running; retry it shortly",
       undefined, true, { "Retry-After": "2" });
   }
-  return jsonResponse(found.responseJson, {
+  return jsonResponse(projectBody ? projectBody(found.responseJson) : found.responseJson, {
     status: found.responseStatus,
     seq: found.seq ?? undefined,
   });
@@ -96,12 +97,16 @@ export function storedResponse(found: StoredIdempotent): Response {
  * gone and so is the request's hash, which nothing may then compare. 410, the code every erased door
  * answers. Then a different request under the key is 409; the same one replays.
  */
-export function replayOf(found: StoredIdempotent, requestHash: string): Refused | Replayed {
+export function replayOf(
+  found: StoredIdempotent,
+  requestHash: string,
+  projectBody?: (body: unknown) => unknown,
+): Refused | Replayed {
   if (found.erasedAt !== null) {
     return errorResponse("erased", 410, "this request's result has been erased; it cannot be replayed");
   }
   if (found.requestHash !== requestHash) {
     return errorResponse("idempotency_replay", 409, "idempotency key reused with a different request");
   }
-  return storedResponse(found) as Replayed;
+  return storedResponse(found, projectBody) as Replayed;
 }

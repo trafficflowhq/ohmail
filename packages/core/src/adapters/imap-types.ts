@@ -850,6 +850,8 @@ export interface ImapAdapterOpts {
    * prevents.
    */
   onConnectionError?: (err: unknown) => void;
+  /** A partial scan kept its connection but received a tagged refusal to read mail. */
+  onFetchRefused?: (status: "NO" | "BAD") => void;
   /**
    * The clock the adapter's wall-clock ceilings read (`imap-bounds.ts`: {@link
    * IMAP_READ_DEADLINE_MS}, {@link IMAP_CYCLE_DEADLINE_MS}). A test seam: the slow-server

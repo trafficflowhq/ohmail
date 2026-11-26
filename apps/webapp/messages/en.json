@@ -3971,7 +3971,7 @@
     "remove": "Forget the provider and keys",
     "forget": "Forget",
     "removeWhy": "Removes the stored keys from this computer. Mail keeps arriving and keeps being filed.",
-    "note": "Only what a model needs to answer is sent. A suggestion sends the sender, the subject and a short extract. A draft sends the same for the message you reply to, plus the sender and a short extract of up to 20 other messages in its thread and up to 5 matching knowledge-base notes. A draft from your text also sends your typed text. If you choose and confirm Use full conversation for a draft, your configured provider receives the full stored text of the message you’re answering and up to 4,000 characters from those earlier messages."
+    "note": "Only what a model needs to answer is sent. A suggestion sends the sender, the subject and a short extract. A draft sends the same for the message you reply to, plus the sender and a short extract of up to 20 other messages in its thread and up to 5 matching knowledge-base notes. A draft from your text also sends your typed text. If you choose and confirm Use full conversation for a draft, your configured provider receives the full stored text of the message you’re answering and up to 4,000 characters from those earlier messages. Where a message carries a code or a login link, the credential itself is never sent, whichever provider is chosen. Password-reset tokens are also blanked before any AI request."
   },
   "shortcuts": {
     "goPile": "Go to {pile}",
@@ -5049,6 +5049,7 @@
     "linkAddressCopied": "Address copied.",
     "linkAddressNotCopied": "The address was not copied.",
     "browserSignInFailed": "The browser sign-in could not be started.",
+    "cloudApproveTryAgain": "Browser sign-in couldn’t start. Try again in a moment.",
     "cloudNoAccount": "No account yet?",
     "cloudCreateAccount": "Create one in your browser",
     "forgotPassword": "Forgot your password?",
@@ -5326,9 +5327,9 @@
         "ohcal": "The calendars you already have, in one place."
       },
       "ring": "Ring the doorbell",
-      "connect": "Connect a mailbox",
-      "scan": "Scan a code",
-      "servers": "Servers"
+      "scan": "Scan QR",
+      "signIn": "Sign in",
+      "signInSelfHosted": "Sign in self hosted"
     },
     "scan": {
       "camera": "Camera",
@@ -5341,6 +5342,10 @@
       "linkBlank": "paste it",
       "pair": "Pair",
       "notACode": "Not an ohmail code."
+    },
+    "signIn": {
+      "waiting": "Finish signing in in the browser.",
+      "finishing": "Finishing sign-in…"
     },
     "server": {
       "cloud": "ohmail Cloud.",
@@ -5530,6 +5535,7 @@
     }
   },
   "phoneSettings": {
+    "calendarServerUnavailable": "This server does not support calendar sync for ohcal.",
     "calendarLegalTitle": "Legal and support",
     "privacyPolicy": "Privacy policy",
     "support": "Support",
@@ -5670,6 +5676,15 @@
     "baseApiStopped": "That server started answering and then stopped, so ohmail stopped waiting. If you run it, check that its proxy passes requests through to the ohmail API.",
     "baseApiTimeout": "That server did not answer in time, so ohmail stopped waiting. It may be the network between this phone and it, or a route on the server that never replies.",
     "baseApiUnreachable": "ohmail could not reach that server to find its mail API — {0}",
+    "signInExpired": "This sign-in request expired. Start again.",
+    "signInDenied": "The sign-in request was declined.",
+    "signInUnreachable": "Could not reach the server. Check your connection and try again.",
+    "signInNotOffered": "This server does not support signing in from the phone’s browser.",
+    "signInRateLimited": "Too many sign-in attempts. Try again later.",
+    "signInRefused": "Could not finish signing in. Start again.",
+    "signInNoBrowser": "Could not open the sign-in browser.",
+    "signInWrongServer": "The sign-in page must stay on {0}.",
+    "signInCancelled": "The sign-in was cancelled.",
     "baseCleartext": "That is a plain, unencrypted address, and ohmail will not send your mail over one. Give the https address you open ohmail at in a browser.",
     "baseNeedsTheCode": "That is a numeric address on a network, and no certificate authority can vouch for one. ohmail can only trust it through the code your computer shows, so open Settings › Devices there and scan that instead.",
     "baseNotAnAddress": "That does not look like a server address. Give the address you open ohmail at in a browser, for example ohmail.example.com, with nothing after the host.",
@@ -5680,6 +5695,9 @@
     "bootLocalEngineOffOrigin": "ohmail was asked to open the mailbox on this phone and a server at once, so it opened neither.",
     "bootMirrorFailed": "The copy of your mail on this phone could not be opened: {0}",
     "bootNeedsCredential": "A credential and an account id are both required.",
+    "calendarServerUnavailable": "This server does not support calendar sync for ohcal.",
+    "calendarQueuePending": "Sync your calendar edits before forgetting this server.",
+    "calendarQueueUnknown": "The phone could not check for unsynced calendar edits. Try forgetting this server again.",
     "calendarCopyRemains": "The calendar this phone copied could not be removed yet. ohmail will try again the next time it starts.",
     "composeEarlierWent": "This message had already been sent. Your newer text was not sent as a second copy.",
     "composeKept": "Kept in Drafts.",
@@ -5920,7 +5938,7 @@
     "standaloneStarttlsFailed": "Switching the connection to your mail server to encryption failed, so we stopped before sending the password. Try again, or use port 993.",
     "standaloneStarttlsInjected": "Your mail server sent unexpected data while the connection was switching to encryption, so we stopped before sending the password. Something on this network may be interfering. Try another network, or port 993.",
     "standaloneStarttlsTimeout": "Switching the connection to your mail server to encryption did not finish in time, so we stopped before sending the password. Try again, or use port 993.",
-    "storeFault": "{0, select, origin_not_normalized {that server address was not in the form this phone stores} account_id_missing {the server did not name the account this pairing opens} pairing_not_recorded {this phone could not record the pairing before storing it} pairing_still_held {this phone is still holding the pairing} pairing_still_listed {this phone is still listing the pairing} no_such_profile {there is no such pairing on this phone} wipe_queue_full {this phone already has more unfinished deletions than it can record} wipe_not_recorded {this phone could not record that the copied mail is owed a deletion} wipe_still_owed {this phone still records a deletion owed for that mailbox} wake_queue_full {this phone already has more unfinished wake removals than it can record} wake_not_recorded {this phone could not record that the wake registration is owed a removal} wake_still_owed {this phone still records a wake removal owed for that registration} sign_out_queue_full {this phone already has more unfinished sign-outs than it can record} sign_out_not_recorded {this phone could not record that a server is owed a sign-out} sign_out_still_owed {this phone still holds a sign-out it owes a server} index_unreadable {this phone's list of pairings could not be read} purge_refused {the keystore would not give up the earlier installation's pairings} mirror_not_deleted {this phone could not delete the mail it had stored for that account} sync_held_pre_identity {ohmail is still checking which account this server opens} account_mismatch {that server is syncing a different account than the one this pairing names} index_not_removed {the keystore would not remove the list of pairings} engine_removal_not_recorded {this phone could not record that the mailbox on it is being removed} engine_removal_still_recorded {this phone still records an unfinished removal of the mailbox on it} engine_store_not_deleted {this phone could not delete the mail and the stored password of the mailbox on it} engine_key_not_removed {the keystore would not remove the key that opens this mailbox's stored password} engine_store_not_durable {this phone's database would not promise to keep a saved change through a power cut, so the mailbox on it was not opened} engine_store_closed {the mailbox on this phone had already been closed, so nothing was read or saved} store_copy_no_room {this phone has too little free space to keep a copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed} store_copy_failed {this phone could not keep a checked copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed} shell_keeper_not_deleted {this phone could not delete the unsent letters and queued changes it kept for that mailbox} shell_view_not_cleared {this phone could not delete the copy of that mailbox's mail its mail view kept} other {{0}}}",
+    "storeFault": "{0, select, origin_not_normalized {that server address was not in the form this phone stores} account_id_missing {the server did not name the account this pairing opens} pairing_not_recorded {this phone could not record the pairing before storing it} pairing_still_held {this phone is still holding the pairing} pairing_still_listed {this phone is still listing the pairing} no_such_profile {there is no such pairing on this phone} wipe_queue_full {this phone already has more unfinished deletions than it can record} wipe_not_recorded {this phone could not record that the copied mail is owed a deletion} wipe_still_owed {this phone still records a deletion owed for that mailbox} wake_queue_full {this phone already has more unfinished wake removals than it can record} wake_not_recorded {this phone could not record that the wake registration is owed a removal} wake_still_owed {this phone still records a wake removal owed for that registration} sign_out_queue_full {this phone already has more unfinished sign-outs than it can record} sign_out_not_recorded {this phone could not record that a server is owed a sign-out} sign_out_still_owed {this phone still holds a sign-out it owes a server} index_unreadable {this phone's list of pairings could not be read} purge_refused {the keystore would not give up the earlier installation's pairings} mirror_not_deleted {this phone could not delete the mail it had stored for that account} sync_held_pre_identity {ohmail is still checking which account this server opens} account_mismatch {that server is syncing a different account than the one this pairing names} index_not_removed {the keystore would not remove the list of pairings} engine_removal_not_recorded {this phone could not record that the mailbox on it is being removed} engine_removal_still_recorded {this phone still records an unfinished removal of the mailbox on it} engine_store_not_deleted {this phone could not delete the mail and the stored password of the mailbox on it} engine_key_not_removed {the keystore would not remove the key that opens this mailbox's stored password} engine_store_not_durable {this phone's database would not promise to keep a saved change through a power cut, so the mailbox on it was not opened} engine_store_closed {the mailbox on this phone had already been closed, so nothing was read or saved} store_copy_no_room {this phone has too little free space to keep a copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed} store_copy_failed {this phone could not keep a checked copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed} calendar_queue_pending {this phone still holds unsynced calendar edits} shell_keeper_not_deleted {this phone could not delete the unsent letters and queued changes it kept for that mailbox} shell_view_not_cleared {this phone could not delete the copy of that mailbox's mail its mail view kept} other {{0}}}",
     "tagTagged": "Tagged “{0}”.",
     "tagUntagged": "Untagged “{0}”.",
     "toastAside": "Parked",
@@ -5933,6 +5951,7 @@
     "toastMoveQueuedWithRule": "Queued for {1}: the letter and the sender's rule go to {0} on its next pass.",
     "toastMoveQueuedWithRuleUnknown": "Queued for the organizer: the letter and the sender's rule go to {0} on its next pass.",
     "toastMoved": "Moved to {0}.",
+    "toastMovingToTrash": "Moving to Trash.",
     "toastQueued": "Queued in Answer Later",
     "toastQueuedRuleUndone": "No rule was made. The letter still waits on {0}.",
     "toastQueuedRuleUndoneUnknown": "No rule was made. The letter still waits on the organizer.",
@@ -7001,12 +7020,17 @@
       "answerScope": "Answer {title}",
       "delete": "Delete",
       "moveTo": "Move to another calendar",
+      "moveAllTo": "Move all events to {calendar}",
+      "moveWithGuests": "With {guests}",
+      "moveConfirm": "Move",
       "hideCalendar": "Hide this calendar",
       "tellsDelete": "{title} is cancelled",
       "cancellationMessage": "The event has been cancelled",
       "moveRestriction": {
-        "guests": "Events with guests stay in their account’s calendars",
-        "fields": "This event has details that another calendar can’t keep"
+        "account": "Only writable calendars in the same account can receive this event",
+        "provider": "This provider cannot move the event to another calendar",
+        "event": "This event cannot move to another calendar",
+        "saveFirst": "Save your changes before moving the event"
       },
       "moving": "Moving event",
       "sendCancellation": "Send cancellation",
@@ -7036,6 +7060,9 @@
       "undo": "Undo"
     },
     "proposal": {
+      "recovered": "Unsent time proposals",
+      "sendRecovered": "Send proposal",
+      "discardRecovered": "Discard proposal",
       "keepQuestion": "Tell {name} the time stays?",
       "keepConfirm": "Confirm",
       "action": "Propose a new time",

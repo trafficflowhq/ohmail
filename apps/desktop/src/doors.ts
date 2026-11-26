@@ -26,7 +26,6 @@ import { originNeedsPin, parsePairLink, updateAnswerOf, type PairLink } from "@o
 
 import { refusalCopy } from "../../webapp/app/shell/server-refusal";
 import { updateAnswerSentence } from "../../webapp/app/shell/update-answer";
-import { DOOR_COPY } from "./door-copy.js";
 import { BUILD_PLATFORM } from "./platform.js";
 import { hostLabelOf } from "./host-label.js";
 import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
@@ -1944,6 +1943,7 @@ export interface ApprovalBegun {
   status: EngineStatus | null;
   problem: string | null;
   notOffered?: boolean;
+  retrySoon?: boolean;
   /** The engine already holds a live request. Resume polling without reopening its page. */
   resume?: PendingApproval;
   /**
@@ -2036,7 +2036,8 @@ async function beginApproval(address: string, configured: boolean, pending: bool
       const { problem, code } = await refused(res);
       const tryAgain = code === "approval_start_unavailable" || code === "db_busy";
       return {
-        approvalId: null, expiresIn: 0, status: settled, problem: tryAgain ? DOOR_COPY.cloudApproveTryAgain : problem,
+        approvalId: null, expiresIn: 0, status: settled, problem: tryAgain ? null : problem,
+        ...(tryAgain ? { retrySoon: true } : {}),
         ...(code === APPROVAL_NOT_OFFERED ? { notOffered: true } : {}),
       };
     }

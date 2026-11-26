@@ -82,8 +82,8 @@ const firstStop = (el: HTMLElement) =>
 function focusMenuRow(box: HTMLElement, row: HTMLElement | undefined): void {
   if (!row) return;
   row.focus({ preventScroll: true });
-  const pane = box.getBoundingClientRect();
-  const item = row.getBoundingClientRect();
+  const pane = cssRect(box);
+  const item = cssRect(row);
   const scale = pane.height / box.offsetHeight;
   if (!scale) return;
   const top = (item.top - pane.top) / scale - box.clientTop;

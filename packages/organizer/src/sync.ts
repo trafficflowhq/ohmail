@@ -1999,7 +1999,7 @@ async function syncCycleWithin(
           if (fresh) snapshots.set(folder, keys.keys);
           const answer = await adapter.messageIdsGone(folder, keys.keys.uidValidity, remaining.map((row) => row.messageIdHeader));
           if (!fresh && answer.k === "absent") continue;
-          remaining = answer.k === "read" && answer.uidValidity === keys.keys.uidValidity
+          remaining = answer.k === "read" && sameEpoch(epochOf(answer.uidValidity), epochOf(keys.keys.uidValidity))
             ? remaining.filter((row) => answer.gone.has(row.messageIdHeader)) : [];
         }
         // An earlier folder can receive a moved copy while a later one is searched.
@@ -2007,7 +2007,8 @@ async function syncCycleWithin(
         for (const [folder, before] of snapshots) {
           if (remaining.length === 0) break;
           const after = await adapter.folderKeys(folder, fresh);
-          if (after.k !== "keys" || after.keys.uidValidity !== before.uidValidity || after.keys.uidNext !== before.uidNext) {
+          if (after.k !== "keys" || !sameEpoch(epochOf(after.keys.uidValidity), epochOf(before.uidValidity))
+            || after.keys.uidNext !== before.uidNext) {
             remaining = [];
             break;
           }

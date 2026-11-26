@@ -40,15 +40,19 @@ function eml(messageId: string, subject: string, to: string): string {
   ].join("\r\n");
 }
 
-/** Every adapter call the order is about, and the cursor the walk was handed. */
-function recording(adapter: ImapAdapter, calls: string[], cursors: ImapCursor[]): MailboxAdapter {
+/** The call order and the folder cursors the walk was handed. */
+function recording(adapter: ImapAdapter, calls: string[], folders: ImapCursor["folders"][]): MailboxAdapter {
   return new Proxy(adapter, {
     get(target, prop): unknown {
       const v = Reflect.get(target, prop, target) as unknown;
       if (typeof v !== "function") return v;
       const fn = (v as (...a: unknown[]) => unknown).bind(target);
       if (prop === "changesSince") {
-        return (c: ImapCursor) => { calls.push("changesSince"); cursors.push(structuredClone(c)); return fn(c); };
+        return (c: ImapCursor) => {
+          calls.push("changesSince");
+          folders.push(structuredClone(c.folders));
+          return fn(c);
+        };
       }
       if (prop === "moveMany" || prop === "move") return (...a: unknown[]) => { calls.push(String(prop)); return fn(...a); };
       return fn;
@@ -120,8 +124,8 @@ describe("a pending move before the folder walk, on a real server", () => {
     await w.press(row!.id, "ohmail/News");
 
     const calls: string[] = [];
-    const cursors: ImapCursor[] = [];
-    await w.cycle({ adapter: recording(w.adapter, calls, cursors), fileBeforeWalk: true });
+    const folders: ImapCursor["folders"][] = [];
+    await w.cycle({ adapter: recording(w.adapter, calls, folders), fileBeforeWalk: true });
 
     expect(calls[0], `the order was ${calls.join(",")}`).toBe("moveMany");
     expect(calls.indexOf("moveMany")).toBeLessThan(calls.indexOf("changesSince"));
@@ -129,7 +133,7 @@ describe("a pending move before the folder walk, on a real server", () => {
     expect(newUid, "the server holds the letter in News").toBeGreaterThan(0);
     expect(await w.uidIn("INBOX", "pressed@x")).toEqual([]);
     // THE WALK WAS HANDED THE NEW UID AS KNOWN, and the old one no more — so it reported neither.
-    const known = (f: string) => (cursors[0]!.folders[f]?.known ?? []).map((k) => k.uid);
+    const known = (f: string) => (folders[0]![f]?.known ?? []).map((k) => k.uid);
     expect(known("ohmail/News")).toContain(newUid);
     const oldUid = Number((row!.locator as { ref: string }).ref.split(":").pop());
     expect(oldUid).toBeGreaterThan(0);

@@ -301,6 +301,7 @@
     "linkAddressCopied": "Adresse kopiert.",
     "linkAddressNotCopied": "Die Adresse wurde nicht kopiert.",
     "browserSignInFailed": "Die Anmeldung über den Browser ließ sich nicht starten.",
+    "cloudApproveTryAgain": "Die Anmeldung über den Browser ließ sich nicht starten. Versuch es gleich noch einmal.",
     "cloudNoAccount": "Noch kein Account?",
     "cloudCreateAccount": "Im Browser einen erstellen",
     "forgotPassword": "Passwort vergessen?",

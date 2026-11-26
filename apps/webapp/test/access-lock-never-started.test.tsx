@@ -106,7 +106,11 @@ describe("an account that never started its trial", () => {
     await act(async () => { start.click(); });
     for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(minted).toEqual([{ lang: "en" }]);
-    expect(followed).toEqual(["https://plane.example/manage?token=fresh"]);
+    expect(followed).toHaveLength(1);
+    const page = new URL(followed[0]!);
+    expect(page.searchParams.get("timeZone")).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    page.searchParams.delete("timeZone");
+    expect(page.href).toBe("https://plane.example/manage?token=fresh");
   });
 
   it("German", async () => {

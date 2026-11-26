@@ -37,6 +37,7 @@ vi.mock("../src/state/servers-native", () => ({
   nativeServerProfiles: () => ({
     active: async () => fixture.session?.profile ?? null,
     list: async () => fixture.session ? [fixture.session.profile] : [],
+    unresolvedSignOutNotices: async () => [],
   }),
   nativeFamilyDigest: async () => "",
   secureKV: () => null,
@@ -130,10 +131,14 @@ it("removes the mail view on completed sign-out while a mailbox answer is pendin
     fetchImpl: async (url) => {
       switch (new URL(url).pathname) {
         case "/auth/session": return Response.json({ user: { accountId: "own" } });
-        case "/auth/logout": return new Response(null, { status: 204 });
         case "/mailboxes": readStarted = true; return pending;
         default: throw new Error("Unexpected fixture request");
       }
+    },
+    signOutFetchImpl: async (url, init) => {
+      expect(new URL(url).pathname).toBe("/auth/logout");
+      expect(init).toMatchObject({ method: "POST", redirect: "error" });
+      return new Response(null, { status: 204 });
     },
   });
   const profile = {

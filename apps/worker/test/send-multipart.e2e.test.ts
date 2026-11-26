@@ -106,9 +106,7 @@ describe("a generated reply leaves as multipart/alternative (GreenMail SMTP+IMAP
     // found in the raw bytes would also match a boundary declaration or an encoding artefact.
     const parsed = await normalizeMime(source);
     expect(parsed.textBody.trim()).toBe(MODEL_BODY);
-    expect(parsed.htmlBody).toBeTruthy();
-    expect(parsed.htmlBody!).toContain('<p style="margin:0">Hi Alice</p>');
-    expect(parsed.htmlBody!).toContain("<br />");
+    expect(parsed.htmlBody).toBe(`<p style="margin:0">${MODEL_BODY.replaceAll("\n", "<br />")}</p>`);
     // And the markup half is byte-identical to what was stored — the send-time sanitizer pass is
     // a no-op on promoted markup rather than a second, differently-rendered copy.
     expect(parsed.htmlBody!).toBe(stored.html);

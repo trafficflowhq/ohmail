@@ -14,6 +14,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Alert, AppState, Platform } from "react-native";
 import { classifyWindowSyncFailure, unsentDraftsOf, type PullRing } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+import { PAIRING_DEVICE_NAMES } from "../copy.en";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
@@ -79,7 +80,7 @@ import {
   type ShellSession,
 } from "./pairing";
 import { awaitBrowserApproval, browserSignInOrigin, probeBrowserSignIn } from "./approval";
-import { approvalBrowser, approvalFetch } from "./approval-native";
+import { approvalBrowser } from "./approval-native";
 import { resolveApiBase, type BaseVerdict } from "./server-base.js";
 import { TransitionGate } from "./transitions";
 import { buildCommit } from "../build-info";
@@ -208,6 +209,12 @@ export interface Connection {
 export type RingHeard = (ring: PullRing | null) => void;
 
 const ConnectionContext = createContext<Connection | null>(null);
+
+/** Keep approval and sign-out on the native transport that honors a redirect refusal. */
+const approvalFetch: NonNullable<PairingEnv["approvalFetchImpl"]> = async (url, init) => {
+  const { fetch } = await import("expo/fetch");
+  return fetch(url, init as Parameters<typeof fetch>[1]);
+};
 
 export function useConnection(): Connection {
   const c = useContext(ConnectionContext);
@@ -1035,7 +1042,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       const kind = mobileDeviceKind(Platform.OS);
       const approved = await awaitBrowserApproval({
         ...approvalBrowser(selfHosted), fetchImpl,
-        kind, label: kind === "mobile-ios" ? "iPhone" : "Android",
+        kind, label: PAIRING_DEVICE_NAMES[kind],
         calendarOnly: env.calendarOnly,
         previousSession: await familyReplacedAt(env, admission.origin),
       }, { origin: admission.origin, selfHosted }, signal);

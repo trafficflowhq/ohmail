@@ -1644,8 +1644,14 @@ describe("Trash keeps every letter until it is restored", () => {
             .flatMap((c) => within(c).queryAllByRole("button"))
             .find((b) => named(b) === name);
           if (button === undefined) continue;
+          const from = bin.address.read();
           fireEvent.click(button);
           await step(`button ${name} over ${over}`);
+          if (room === "phone" && name === T.title && from.startsWith("#/trash/m/")) {
+            expect(bin.address.read()).toBe("#/trash");
+            act(() => bin.address.visit(from));
+            await settled();
+          }
           /* A press that opened a menu: each of its rows is pressed in turn. */
           for (const item of screen.queryAllByRole("menuitem")) {
             const from = bin.address.read();

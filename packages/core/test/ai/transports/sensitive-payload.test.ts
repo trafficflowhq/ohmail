@@ -165,8 +165,9 @@ describe("a draft from the person's own words, whichever drafter writes it", () 
       for (const body of bodies) {
         expect(inBody(body, DRAFT_OWN_PREFIX), `${name}: the own-words prefix`).toBe(true);
         expect(inBody(body, DRAFT_PREFIX), `${name}: not the reply prefix`).toBe(false);
-        expect(body).toContain(words);
-        expect(body).not.toContain("incoming");
+        const { messages } = JSON.parse(body) as { messages: Array<{ role: string; content: string }> };
+        const inputs = messages.filter(({ role }) => role === "user").map(({ content }) => JSON.parse(content));
+        expect(inputs).toEqual([{ context: { kbEntries: [], threadMessages: [] }, own: { text: words } }]);
       }
     });
 

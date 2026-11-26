@@ -491,12 +491,12 @@ export const mailboxFolders = sqliteTable("mailbox_folders", {
    * one is last pass's epoch or NULL, never the one the server stated at the stop. DECLARED LAST
    * because they arrive by ALTER: a store built by replaying the journal holds them there.
    */
-  scanNextUid: int64("scan_next_uid"),
-  scanResetAfter: text("scan_reset_after"),
   budgetStopUid: int64("budget_stop_uid"),
   budgetStopUidvalidity: int64("budget_stop_uidvalidity"),
   // The mailbox's account (mail 0201). Nullable here: NOT NULL is a table rebuild on this store.
   accountId: text("account_id"),
+  scanNextUid: int64("scan_next_uid"),
+  scanResetAfter: text("scan_reset_after"),
 }, (t) => ({
   uq: unique().on(t.mailboxId, t.folder) }));
 

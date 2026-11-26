@@ -301,6 +301,7 @@
     "linkAddressCopied": "Address copied.",
     "linkAddressNotCopied": "The address was not copied.",
     "browserSignInFailed": "The browser sign-in could not be started.",
+    "cloudApproveTryAgain": "Browser sign-in couldn’t start. Try again in a moment.",
     "cloudNoAccount": "No account yet?",
     "cloudCreateAccount": "Create one in your browser",
     "forgotPassword": "Forgot your password?",

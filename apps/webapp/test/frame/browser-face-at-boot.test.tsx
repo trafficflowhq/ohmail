@@ -10,11 +10,11 @@ import { ConfirmBrowserFaceOwner } from "../../app/(product)/confirm-browser-fac
 import { postSessionChange } from "../../app/signed-out-signal";
 
 const theme = vi.hoisted(() => ({
-  storage: undefined as ComponentProps<typeof import("@ohmail/ui").ThemeProvider>["storage"],
+  storage: undefined as ComponentProps<typeof import("@ohmail/ui/theme").ThemeProvider>["storage"],
 }));
 
-vi.mock("@ohmail/ui", async (load) => {
-  const ui = await load<typeof import("@ohmail/ui")>();
+vi.mock("@ohmail/ui/theme", async (load) => {
+  const ui = await load<typeof import("@ohmail/ui/theme")>();
   return {
     ...ui,
     ThemeProvider(props: ComponentProps<typeof ui.ThemeProvider>) {

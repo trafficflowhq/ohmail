@@ -119,15 +119,17 @@ export function useDraftOffer(messageId: string, forward = false): DraftOffer | 
           disabled={waiting}
           onPress={() => buy()}
         />
-        <Button
-          kind="quiet"
-          size="s"
-          opens="dialog"
-          disabled={drafting || waiting}
-          onPress={() => setSharing(true)}
-        >
-          {t("draft.fullTitle")}
-        </Button>
+        <span className="oh-draft-full-context">
+          <Button
+            kind="quiet"
+            size="s"
+            opens="dialog"
+            disabled={drafting || waiting}
+            onPress={() => setSharing(true)}
+          >
+            {t("draft.fullTitle")}
+          </Button>
+        </span>
         <Dialog
           open={sharing}
           title={t("draft.fullTitle")}

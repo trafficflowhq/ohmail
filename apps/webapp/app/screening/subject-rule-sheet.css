@@ -3,7 +3,7 @@
 }
 
 .subject-rule-card[data-full] .subject-rule-head {
-  padding-inline-end: var(--h-m);
+  padding-inline-end: var(--sm-close-size);
 }
 
 .subject-rule-switch {
