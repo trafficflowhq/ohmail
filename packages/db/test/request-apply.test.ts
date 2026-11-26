@@ -233,6 +233,46 @@ describe("a forwarded delete records where the message came from", () => {
     expect(fs!.trashedFrom, "the origin a restore resolves against").toBe("ohmail/Screener");
   });
 
+  it("preserves the original folder on a second forwarded Trash press after the provider move", async () => {
+    const db = await makeTestDb();
+    const entry = await world(db);
+    const trash = "INBOX.Trash";
+    await db.update(mailboxes).set({ trashFolder: trash }).where(eq(mailboxes.id, entry.mailboxId));
+    const payload = { dedupKey: entry.dedupKey, destination: "trash" };
+    expect((await apply(db, entry.mailboxId, payload)).applied).toBe(true);
+    await db.update(folderState).set({ observedFolder: trash, reconcileStatus: "reconciled" })
+      .where(eq(folderState.messageId, entry.messageId));
+    await db.update(messages).set({ nativeLocator: { folder: trash, ref: "1:5" } })
+      .where(eq(messages.id, entry.messageId));
+    const currentOrigin = async () => (await db.select({ origin: folderState.trashedFrom })
+      .from(folderState).where(eq(folderState.messageId, entry.messageId)))[0]?.origin;
+    expect(await currentOrigin()).toBe("ohmail/Screener");
+
+    const again = await db.transaction((tx) => applyMessageMove(tx as unknown as Tx, {
+      accountId: ACCT, mailboxId: entry.mailboxId, payload, now: new Date("2026-09-07T10:00:05.000Z"),
+    }));
+    expect.soft(again).toMatchObject({ applied: true, lastSeq: null });
+    const [settled] = await db.select().from(folderState).where(eq(folderState.messageId, entry.messageId));
+    expect.soft(settled?.reconcileStatus).toBe("reconciled");
+    expect(await currentOrigin()).toBe("ohmail/Screener");
+  });
+
+  it("acknowledges a forwarded Trash press after the organizer already moved the message", async () => {
+    const db = await makeTestDb();
+    const w = await world(db);
+    const trash = "INBOX.Trash";
+    await db.update(mailboxes).set({ trashFolder: trash }).where(eq(mailboxes.id, w.mailboxId));
+    await db.update(messages).set({
+      deletedAt: new Date("2026-09-07T09:00:00.000Z"), nativeLocator: { folder: trash, ref: "1:5" },
+    }).where(eq(messages.id, w.messageId));
+    await db.insert(folderState).values({
+      messageId: w.messageId, accountId: ACCT, desiredFolder: trash, observedFolder: trash,
+      lastSetBy: "us", reconcileStatus: "reconciled", trashedFrom: "ohmail/Screener",
+    });
+    const r = await apply(db, w.mailboxId, { dedupKey: w.dedupKey, destination: "trash" });
+    expect(r).toMatchObject({ applied: true, lastSeq: null });
+  });
+
   it("a forwarded NON-Trash move CLEARS a previous delete's origin", async () => {
     const db = await makeTestDb();
     const w = await world(db);

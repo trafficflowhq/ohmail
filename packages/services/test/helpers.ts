@@ -36,7 +36,9 @@ export function mutated<M extends RuleMutation | RuleCreation>(r: M | RuleReques
   return r;
 }
 
-export function movedHere(r: MoveResult | MoveRequestResult | AlreadyGoneResult): MoveResult {
+export function movedHere<Seq extends number | null>(
+  r: MoveResult<Seq> | MoveRequestResult | AlreadyGoneResult,
+): MoveResult<Seq> {
   if ("pending" in r) {
     throw new Error(
       "expected a move written on this install, got a request waiting on "
