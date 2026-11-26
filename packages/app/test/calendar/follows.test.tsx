@@ -29,12 +29,13 @@ import yearEn from "../../messages/year.en.json" with { type: "json" };
 import { NO_DOORS } from "../../src/calsettings/accounts/AccountsPane.js";
 import { calendar } from "../../src/calendar/entry.js";
 import { settingsPlace } from "../../src/settings/index.js";
-import { useFrame } from "../../src/frame/commands.js";
+import { useFrame, useRailFoot } from "../../src/frame/commands.js";
+import type { ReactNode } from "react";
 import { Frame } from "../../src/frame/Frame.js";
 import { ProductSwitch } from "../../src/frame/ProductSwitch.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import { NONE } from "../../src/host/index.js";
-import { fakeHost } from "../support/fake-host.js";
+import { fakeHost, SEAM_AT_REST } from "../support/fake-host.js";
 import { fakeAddress, fakeWindow } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 
@@ -133,6 +134,7 @@ function mirror(load: CalendarPort["load"] = "none") {
   /* What the queue says waits for a record, by its id. */
   const waits = new Map<string, "device" | "provider">();
   let version = 0;
+  let ready = true;
   let settings: CalendarSettingsWire = {
     enabledAt: UPDATED,
     secondZone: null,
@@ -149,6 +151,7 @@ function mirror(load: CalendarPort["load"] = "none") {
     };
   };
   const engine = {
+    ...SEAM_AT_REST,
     store: { entries, get: (type: string, id: string) => kinds.get(type)?.get(id) },
     subscribe,
     read: () => ({ version: () => version }),
@@ -186,6 +189,7 @@ function mirror(load: CalendarPort["load"] = "none") {
     },
     held: () => ({ window: { daysBack: 30, daysAhead: 365, maxRows: 5000 }, loaded: [] }),
     load,
+    ready: () => ready,
     version: () => version,
     subscribe,
   };
@@ -197,7 +201,12 @@ function mirror(load: CalendarPort["load"] = "none") {
     version += 1;
     for (const listener of [...heard]) listener();
   };
-  return { engine, port, put, waits, check };
+  const setReady = (value: boolean) => {
+    ready = value;
+    version += 1;
+    for (const listener of [...heard]) listener();
+  };
+  return { engine, port, put, waits, check, setReady };
 }
 
 const sharedSettings = settingsPlace(null, function useBeside() {
@@ -206,6 +215,22 @@ const sharedSettings = settingsPlace(null, function useBeside() {
   return { startAt: null, go: (sub) => commands.go({ place, sub }) };
 });
 
+const foot = {
+  account: {
+    name: "Calendar fixture",
+    address: "fixture@example.test",
+    note: "",
+    title: "",
+    onPress: () => {},
+  },
+  pull: null,
+};
+
+function WithAccountFoot({ children }: { children: ReactNode }) {
+  useRailFoot(foot);
+  return children;
+}
+
 function mount(
   engine: OhmailEngine,
   port: CalendarPort | typeof NONE,
@@ -213,11 +238,13 @@ function mount(
   room: "desktop" | "fold" | "phone" = "desktop",
   withSharedSettings = false,
   mailWaiting = false,
+  withAccountFoot = false,
 ) {
   const made = fakeHost({
     engine,
     service: "managed",
     scope: "acct-1",
+    above: withAccountFoot ? WithAccountFoot : undefined,
     calendar,
     products: "both",
     wires: { calendar: port },
@@ -256,6 +283,29 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("the calendar's body", () => {
+  it("shows loading in the footer and Month until the first calendar read completes", async () => {
+    const { engine, port, put, setReady } = mirror();
+    setReady(false);
+    mount(engine, port, "#/cal/month/2026-11-16", "desktop", false, false, true);
+    expect(await screen.findByRole("button", { name: /Calendar fixture.*Loading calendar/ })).toBeTruthy();
+    expect(screen.getAllByText("Loading calendar…")).toHaveLength(2);
+    expect(screen.queryByText("0 calendars")).toBeNull();
+
+    act(() => {
+      put("calendar_connection", connection.id, connection);
+      put("calendar", studio.id, studio);
+    });
+    expect(screen.getAllByText("Loading calendar…")).toHaveLength(2);
+
+    act(() => {
+      put("calendar_event", "ev-1", event("ev-1", "Kiln check", "20261116"));
+      setReady(true);
+    });
+    expect(screen.getByText("1 calendar")).toBeTruthy();
+    expect(screen.queryByText("Loading calendar…")).toBeNull();
+    expect(screen.getAllByText(/Kiln check/).length).toBeGreaterThan(0);
+  });
+
   it("draws what the mirror holds, and follows every change of it with no press", () => {
     const { engine, port, put } = mirror();
     put("calendar_connection", connection.id, connection);

@@ -116,7 +116,7 @@ services:
       - caddy_config:/config
 
   web:
-    image: ghcr.io/trafficflowhq/ohmail-web:${OHMAIL_IMAGE_TAG:-2.0.8}
+    image: ghcr.io/trafficflowhq/ohmail-web:${OHMAIL_IMAGE_TAG:-2.0.9}
     restart: unless-stopped
     environment:
       # Where the web container's OWN session gate asks "is this cookie a live session?" —
@@ -133,7 +133,7 @@ services:
       start_period: 30s
 
   api:
-    image: ghcr.io/trafficflowhq/ohmail-server:${OHMAIL_IMAGE_TAG:-2.0.8}
+    image: ghcr.io/trafficflowhq/ohmail-server:${OHMAIL_IMAGE_TAG:-2.0.9}
     restart: unless-stopped
     depends_on:
       db:
@@ -234,8 +234,7 @@ services:
       TF_ALERT_HEARTBEAT_URL: ${TF_ALERT_HEARTBEAT_URL:-}
       # WHO MAY TELL THE api WHO THE CLIENT IS: `proxy`, on both doors, and nobody else. The name is
       # resolved inside the api when the proxy first calls, so start order does not matter. Without
-      # it every visitor shares the proxy's address: one wrong-password lockout and one signup limit
-      # for the whole server, and an audit trail that names nobody. Behind your own terminator the
+      # it every visitor shares the proxy's address and its request budgets. Behind your own terminator the
       # proxy settles the visitor's address itself; the api gets the door's two inputs, by the proxy's
       # identical expressions, only to refuse a missing value or a list the proxy would read differently.
       OHMAIL_EXTERNAL_TLS: ${OHMAIL_EXTERNAL_TLS:-}
@@ -272,7 +271,7 @@ services:
       start_period: 30s
 
   organizer:
-    image: ghcr.io/trafficflowhq/ohmail-worker:${OHMAIL_IMAGE_TAG:-2.0.8}
+    image: ghcr.io/trafficflowhq/ohmail-worker:${OHMAIL_IMAGE_TAG:-2.0.9}
     restart: unless-stopped
     depends_on:
       api:

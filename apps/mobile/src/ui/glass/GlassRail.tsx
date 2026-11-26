@@ -27,6 +27,8 @@ export interface RailAction extends RailEntry {
   on?: boolean;
   accent?: boolean;
   role?: "button" | "tab";
+  disabled?: boolean;
+  accessibilityHint?: string;
   onPress?: () => void;
 }
 
@@ -87,6 +89,8 @@ export function GlassRail({
                 badge={a.badge}
                 badgeHot={a.badgeHot}
                 role={a.role}
+                disabled={a.disabled}
+                accessibilityHint={a.accessibilityHint}
                 onPress={a.onPress}
               />
             );
@@ -105,6 +109,8 @@ export function GlassRail({
             label={a.label}
             icon={a.icon}
             on={a.on}
+            disabled={a.disabled}
+            accessibilityHint={a.accessibilityHint}
             onPress={() => {
               setMoreOpen(false);
               a.onPress?.();

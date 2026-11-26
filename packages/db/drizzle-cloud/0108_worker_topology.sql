@@ -29,6 +29,8 @@ BEGIN
     FROM pg_locks
     WHERE locktype = 'advisory' AND granted AND mode = 'ExclusiveLock'
       AND classid = 0 AND objsubid = 1 AND objid::bigint BETWEEN 4207270001 AND 4207280000
+      -- The API clock, migration and first-run setup keys overlap the numeric range.
+      AND objid::bigint NOT IN (4207278001, 4207279001, 4207279101)
       AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
   ), roster AS (
     SELECT h.shards, locked.shard_index
@@ -41,22 +43,30 @@ BEGIN
     CASE WHEN min(shards) = max(shards) THEN min(shards) END
   INTO total, matching, inferred FROM roster;
 
-  IF total = 0 AND NOT EXISTS (SELECT FROM public.worker_heartbeats) THEN
-    occupied := false;
-    IF to_regclass('public.mailboxes') IS NOT NULL THEN
-      EXECUTE 'SELECT EXISTS (SELECT FROM public.mailboxes)' INTO occupied;
+  IF total = 0 THEN
+    -- Heartbeats retain the configured width after a drain, even if only part of
+    -- the roster wrote a heartbeat. Each recorded index must be valid for that width.
+    SELECT count(*), CASE WHEN min(shards) = max(shards)
+      AND bool_and(shards BETWEEN 1 AND 9999 AND shard_index BETWEEN 0 AND shards - 1)
+      THEN min(shards) END
+    INTO total, inferred FROM public.worker_heartbeats;
+    IF total = 0 THEN
+      occupied := false;
+      IF expected_shards IS NOT NULL AND to_regclass('public.mailboxes') IS NOT NULL THEN
+        EXECUTE 'SELECT EXISTS (SELECT FROM public.mailboxes)' INTO occupied;
+      END IF;
+      IF NOT occupied THEN inferred := 1; END IF;
+    ELSIF inferred IS NULL THEN
+      -- Only the migration owner may supply a verified width for a conflicting
+      -- stopped roster. Live workers always use the lock and heartbeat checks.
+      IF expected_shards BETWEEN 1 AND 9999 THEN inferred := expected_shards; END IF;
+    ELSIF expected_shards IS NOT NULL AND total <> inferred THEN
+      RETURN NULL;
     END IF;
-    IF NOT occupied THEN inferred := 1; total := 1; matching := 1; END IF;
+  ELSIF total <> inferred OR matching <> inferred THEN
+    RETURN NULL;
   END IF;
-  IF total = 0 AND expected_shards BETWEEN 1 AND 9999 THEN
-    -- A stopped legacy fleet needs an explicitly verified configuration and a full
-    -- consistent roster in its last heartbeats.
-    SELECT count(*), count(*) FILTER (
-      WHERE shards = expected_shards AND shard_index BETWEEN 0 AND expected_shards - 1
-    ) INTO total, matching FROM public.worker_heartbeats;
-    IF total = expected_shards THEN inferred := expected_shards; END IF;
-  END IF;
-  IF inferred IS NULL OR total <> inferred OR matching <> inferred
+  IF inferred IS NULL
     OR (expected_shards IS NOT NULL AND expected_shards <> inferred) THEN
     RETURN NULL;
   END IF;
@@ -70,7 +80,18 @@ $$;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION initialize_worker_topology(integer) FROM PUBLIC;
 --> statement-breakpoint
-SELECT initialize_worker_topology();
+DO $$
+DECLARE
+  configured text := nullif(current_setting('ohmail.worker_shards', true), '');
+BEGIN
+  IF configured IS NOT NULL AND configured !~ '^[1-9][0-9]{0,3}$' THEN
+    RAISE EXCEPTION 'ohmail.worker_shards must be a verified worker width from 1 to 9999';
+  END IF;
+  IF public.initialize_worker_topology(configured::integer) IS NULL THEN
+    RAISE EXCEPTION 'Cannot verify worker topology. Drain the workers and verify their configured width before setting ohmail.worker_shards for this migration.';
+  END IF;
+END
+$$;
 
 --> statement-breakpoint
 DO $$

@@ -49,6 +49,17 @@ describe("§1 the verbs the row publishes", () => {
       .toBeNull();
   });
 
+  it("announces the pending reply in the actions menu and restores Later for the mailbox copy", () => {
+    const pending = { ...OFFERED, pendingReplyCopy: true } as const;
+    const actions = rowActions(pending);
+    expect(actions.map((a) => a.name)).toEqual(["readSlot", "sending", "junk"]);
+    expect(actions.map((a) => a.label)).toContain(DECKS.en.replySending);
+    expect(rowActionVerb("readSlot", pending)).toBe("read");
+    expect(rowActionVerb("junk", pending)).toBe("junk");
+    expect(rowActionVerb("later", pending)).toBeNull();
+    expect(rowActionVerb("later", OFFERED)).toBe("later");
+  });
+
   it("the read slot wears its three faces, and every label is a word the app ships", () => {
     const label = (f: "done" | "markRead" | "markUnread"): string =>
       rowActions({ face: f, junkOffered: true })[0].label;

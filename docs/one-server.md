@@ -153,6 +153,7 @@ No name an operator has in a file changed. A refusal names the variable and neve
 | `PORT` | 8080 | nothing |
 | `TF_TRUSTED_PROXIES` | none: no peer's `X-Forwarded-For` is believed | its proxy (`proxy` in the bundled compose) |
 | `TF_CLIENT_IP_HEADER` (managed API only) | unset. On Railway use `x-real-ip` with `TF_TRUSTED_PROXIES` and verify after enabling that the edge overwrites a caller-supplied `X-Real-IP`. [Railway request headers](https://docs.railway.com/networking/public-networking/specs-and-limits#technical-specifications) | ignored |
+| `TF_API_INGRESS_POLICY` (managed override) | The process listener reports `default-v1` and applies built-in budgets by socket peer or by client address supplied by a trusted proxy. | The built-in budgets apply. The bundled compose trusts its internal `proxy` service. |
 | `OHMAIL_EXTERNAL_TLS`, `OHMAIL_TLS_TERMINATOR` | the proxy terminates TLS | only behind an outside terminator |
 | `SMTP_URL` or `RESEND_API_KEY`, with `MAIL_FROM`, `MAIL_REPLY_TO` | no mailer | `SMTP_URL` + `MAIL_FROM` |
 | `TF_STORAGE_KIND` and the kind's block (`deploy/selfhost/.env.example` has both kinds) | no object storage | `s3` and the `S3_*` block |

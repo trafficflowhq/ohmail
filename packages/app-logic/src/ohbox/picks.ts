@@ -10,7 +10,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
+import { awaitsReplyCopy, type OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import type { BulkAction } from "../press/actions.js";
 import type { OhboxListInput, OhboxListModel, PickPanel } from "./types.js";
 
@@ -99,6 +99,7 @@ export type PickVerbs = Pick<
   OhboxListModel,
   | "pickedIds"
   | "pickedRowCount"
+  | "pickedReplyCopyPending"
   | "runBulk"
   | "markPicked"
   | "deletePicked"
@@ -125,6 +126,7 @@ export function usePickVerbs(
    */
   const pickedIds = useMemo(() => shown.filter((m) => picked.has(m.id)).map((m) => m.id), [shown, picked]);
   const pickedRowCount = navRows.filter((g) => g.members.some((m) => picked.has(m.id))).length;
+  const pickedReplyCopyPending = pickedIds.some((id) => awaitsReplyCopy(input.replyStore, id));
 
   /**
    * Run a bulk verb and drop the selection.
@@ -136,6 +138,7 @@ export function usePickVerbs(
    */
   const runBulk = useCallback(
     (action: BulkAction) => {
+      if (pickedReplyCopyPending && (action === "later" || action === "aside")) return;
       // The selection's `unread` direction is the same explicit act `u` is, over more rows, so it
       // returns them to New the same way — see `returnToNew`. Only the direction, never the toggle:
       // `read` has nothing to return and `move`/the horizons take the rows out of this list.
@@ -167,6 +170,7 @@ export function usePickVerbs(
       bulk,
       picked,
       pickedIds,
+      pickedReplyCopyPending,
       navRows,
       clearPicked,
       returnToNew,
@@ -220,7 +224,7 @@ export function usePickVerbs(
    * nothing that is drawn: the `picked` class is off for `false` and `undefined` alike.
    */
   const pickState = (on: boolean): boolean | undefined => (picked.size > 0 ? on : undefined);
-  return { pickedIds, pickedRowCount, runBulk, markPicked, ...deletion, pickState };
+  return { pickedIds, pickedRowCount, pickedReplyCopyPending, runBulk, markPicked, ...deletion, pickState };
 }
 
 function usePickedDeletion(

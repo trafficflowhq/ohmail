@@ -134,6 +134,11 @@ export function ActionBar({
   });
   return (
     <div className="rd-stop" data-read-stop={showPanel ? "" : undefined} ref={stop}>
+      {showPanel && verbs.pendingReplyCopy ? (
+        <div className="oh-text" role="status" title={t("replyCopyWaiting")}>
+          {t("replyCopySending")}
+        </div>
+      ) : null}
       {!showPanel ? null : run !== null || reply !== null ? (
         <ReplyPanel run={run} reply={replyItems} more={more} folded={folded} onFold={setFolded} />
       ) : (
@@ -215,12 +220,12 @@ export function LetterActions({
     useOwnGone(),
   );
   const latest = thread.messages.at(-1);
+  const reply = useReplyVerbs(messageId, thread.messages);
   const verbs = useVerbs(message, visit, markUnread ? { onMarkUnread: markUnread } : null, latest);
   const otherId = keysHere && deleteKeyId !== messageId ? deleteKeyId : null;
   const other = otherId === null ? null : (mirror?.get<EngineMessage>("message", otherId) ?? null);
   const otherVisit = useListVisit(otherId);
   const otherVerbs = useVerbs(other, otherVisit, null);
-  const reply = useReplyVerbs(messageId, thread.messages);
   if (message === null || verbs.idle) return null;
   const deleteTarget =
     otherId === null

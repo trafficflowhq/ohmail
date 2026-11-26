@@ -67,6 +67,7 @@ export function PickedFoot({ selection, verbs, children }: SelectionFootProps) {
               key={verb.id}
               icon={verb.icon}
               disabled={verb.disabled}
+              description={verb.disabledHint}
               onPress={() => {
                 setMore(false);
                 if (foot.current) verb.onPress?.(foot.current);

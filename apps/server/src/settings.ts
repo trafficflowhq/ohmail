@@ -39,7 +39,6 @@ import type { RotationProofSettings } from "./db-rotation.js";
  * `docs/one-server.md` lists every setting with what a plain server sets.
  */
 
-/** What the door that starts the program hands in. Every member is required: none has a default. */
 export interface IngressPolicy {
   id: string;
   windowSeconds: number;
@@ -48,6 +47,12 @@ export interface IngressPolicy {
   expensive: number;
   health: number;
 }
+
+// Per client, per minute. Bump the identity when changing these budgets so deployment
+// verification can distinguish the old listener from the new one.
+const DEFAULT_INGRESS_POLICY: Readonly<IngressPolicy> = {
+  id: "default-v1", windowSeconds: 60, signIn: 60, ordinary: 600, expensive: 120, health: 180,
+};
 
 function ingressPolicyOf(raw: string | undefined): IngressPolicy | undefined {
   if (!raw?.trim()) return undefined;
@@ -512,10 +517,11 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
     throw new Error("TF_CLIENT_IP_HEADER must be x-real-ip");
   }
   const trustedProxies = loadTrustedProxies(env);
-  const ingress = managed ? ingressPolicyOf(env.TF_API_INGRESS_POLICY) : undefined;
-  if (ingress && (clientIpHeader !== "x-real-ip" || trustedProxies.length === 0)) {
+  const stagedIngress = managed ? ingressPolicyOf(env.TF_API_INGRESS_POLICY) : undefined;
+  if (stagedIngress && (clientIpHeader !== "x-real-ip" || trustedProxies.length === 0)) {
     throw new Error("TF_API_INGRESS_POLICY requires TF_CLIENT_IP_HEADER and trusted ingress proxies");
   }
+  const ingress = stagedIngress ?? (door.door === "process" ? DEFAULT_INGRESS_POLICY : undefined);
   // Everything below that differs between the two services asks a line of the list, never the lead.
   const chosen = chosenFor(managed);
   const environment = environmentOf(env, door.environmentFallback);

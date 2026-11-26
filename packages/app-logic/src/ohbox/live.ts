@@ -19,6 +19,7 @@ import { useMirrorReplacing } from "../engine/context.js";
  * so `j` and `k` walk a list that stays drawn, show nothing and read nothing. The letter is named in the address,
  * and so drawn over the list, only once its row is entered (Enter, a press).
  */
+import { awaitsReplyCopy } from "@ohmail/client-engine";
 import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { useState, type RefObject } from "react";
 import { useDemoMode, useEngine } from "../engine/context.js";
@@ -121,6 +122,10 @@ function useOhboxKeys(
   const cursorRow = args.plan.columns === 1 && args.route.open === null;
   const readerFocused = useZoneIs("reader");
   const selected = model.selected;
+  const members =
+    cursorRow && selected
+      ? model.navRows.find((row) => row.members.some(({ id }) => id === selected.id))?.members
+      : undefined;
   useKeyBindings(
     replacing
       ? []
@@ -130,6 +135,9 @@ function useOhboxKeys(
             ? cursorRowKeys({
                 t: own.shortcuts,
                 row: selected,
+                pendingReplyCopy: members
+                  ? members.some(({ id }) => awaitsReplyCopy(engine.store, id))
+                  : awaitsReplyCopy(engine.store, selected?.id),
                 replyAll: selected !== null && own.replyAll(selected),
                 deletable:
                   selected !== null && engine.verbRead().get<EngineMessage>("message", selected.id) != null,
@@ -208,6 +216,7 @@ export function useOhboxLive(
   const acknowledgements = useScreenerAcknowledgements();
   const model = useOhboxList({
     demo,
+    replyStore: engine.store,
     trashConfirmation: {
       acknowledged: acknowledgements.has("moveToTrash"),
       remember: () => acknowledgements.remember?.("moveToTrash"),

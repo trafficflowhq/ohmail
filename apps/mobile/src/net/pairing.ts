@@ -848,16 +848,17 @@ export async function probePairing(
 }
 
 /**
- * The family a pairing with `origin` names as `previousSession`: the newest sign-out this phone
- * owes it, else a saved notice, else the active or only pairing at this origin.
+ * Prefer the newest visible sign-out notice. A queued retry has its own way to end its family.
+ * With no visible notice, use the newest retry, then the active or only pairing at this origin.
  */
 async function previousFamily(env: PairingEnv, origin: string, owedHere: PendingSignOut[]): Promise<string | null> {
+  const notices = await env.profiles.signOutNotices().catch(() => []);
+  const saved = notices.reverse().find((row) => row.origin === origin && row.previousSession
+    && !owedHere.some((entry) => entry.profileId === row.profileId))?.previousSession;
+  if (saved) return saved;
   const newestOwed = owedHere.reduce<PendingSignOut | null>((n, e) => (n === null || e.owedSince >= n.owedSince ? e : n), null);
   let token = newestOwed?.refreshToken ?? null;
   if (token === null) {
-    const notices = await env.profiles.signOutNotices().catch(() => []);
-    const saved = notices.reverse().find((row) => row.origin === origin && row.previousSession)?.previousSession;
-    if (saved) return saved;
     try {
       const active = await env.profiles.active();
       const here = (await env.profiles.list()).filter((p) => p.origin === origin && p.refreshToken !== null);
@@ -949,8 +950,8 @@ async function pairWithServer(
 
   /* A SIGN-OUT THIS PHONE STILL OWES THIS ORIGIN goes first, under its own pin (the admission's is
      re-installed just below), and the family this phone held here is named in the redeem
-     (`previousSession`) so the server ends it with the mint: the newest owed sign-out's, else the
-     active pairing's at this origin, else the only one here. Two and neither active names none. */
+     (`previousSession`) so the server ends it with the mint. A visible sign-out notice takes precedence
+     over a retry that can still be delivered on its own. */
   const previousSession = await familyReplacedAt(env, origin);
 
   /**

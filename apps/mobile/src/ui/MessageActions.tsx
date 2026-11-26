@@ -312,6 +312,13 @@ export function MessageActions({
     screeningOffered: m.ownMail !== true,
   };
   const placement = readerVerbPlacement(mode, facts);
+  const filingHold = m.pendingReplyCopy ? { disabled: true, accessibilityHint: Copy.replyCopyWaiting } : undefined;
+  const filingStatus = filingHold ? (
+    <View style={{ alignItems: "center" }} accessibilityLiveRegion="polite">
+      <Txt variant="note">{Copy.replySending}</Txt>
+      <Txt variant="note" tone="ink2">{Copy.replyCopyWaiting}</Txt>
+    </View>
+  ) : null;
 
   /* ── THE COMPACT BAR IS ONE ROW, AND IT MEASURES BEFORE IT SHOWS ────────────────────────────
      A hidden copy of Reply and every capsule reports its width; the wrapper reports the room.
@@ -324,9 +331,9 @@ export function MessageActions({
   const measuredWidths = useRef<Record<string, number>>({});
   const compactRow = mode !== "compact" ? [] : ([
     { id: "later" as const, label: Copy.actionLater, icon: (t.mail ? "hourglass" : "clock") as IconName,
-      on: m.pile === "reply_later", onPress: () => a.pileToggle(m.id, "replyLater") },
+      on: m.pile === "reply_later", onPress: () => a.pileToggle(m.id, "replyLater"), ...filingHold },
     { id: "aside" as const, label: Copy.actionSetAside, icon: "pause" as IconName,
-      on: m.pile === "set_aside", onPress: () => a.pileToggle(m.id, "setAside") },
+      on: m.pile === "set_aside", onPress: () => a.pileToggle(m.id, "setAside"), ...filingHold },
     /* Resurface asks "when?" — except on a message already scheduled, where the press is the
        webapp's horizon-less toggle: it clears the booking rather than re-dating it. */
     { id: "resurface" as const, label: Copy.actionResurface, icon: "up" as IconName,
@@ -396,7 +403,7 @@ export function MessageActions({
         case "read":
           return { id, icon: readFace.icon, label: readFace.label, onPress: readFace.press };
         case "aside":
-          return { id, icon: "pause", label: Copy.actionSetAside, on: pile === "set_aside", onPress: () => a.pileToggle(m.id, "setAside") };
+          return { id, icon: "pause", label: Copy.actionSetAside, on: pile === "set_aside", onPress: () => a.pileToggle(m.id, "setAside"), ...filingHold };
         default:
           // later/resurface/tag/screening/move/delete live behind ⋯ on the rail (`RAIL_MORE`).
           return { id, icon: "more", label: Copy.actionMore, onPress: () => setOpen("more") };
@@ -413,7 +420,7 @@ export function MessageActions({
     publishReaderRail(railReaderGroups(facts).map((g) => g.map(entry)));
     return () => publishReaderRail(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, m.id, pile, unread, unreadKey, facts.canReplyAll, facts.forwardOffered, m.forwardAsk, facts.junkOffered, locale, onBack]);
+  }, [mode, m.id, pile, unread, unreadKey, facts.canReplyAll, facts.forwardOffered, m.forwardAsk, facts.junkOffered, locale, onBack, m.pendingReplyCopy]);
 
   /**
    * THE HOUR THE CHOOSER IS ASKING ABOUT (mail 0110) — the account's stored time, or the
@@ -465,8 +472,8 @@ export function MessageActions({
     switch (id) {
       case "replyAll": return { id, label: Copy.actionReplyAll, onPress: () => openReply(true) };
       case "forward": return { id, label: Copy.actionForward, iconFace: "fwd", onPress: openForward };
-      case "later": return { id, icon: t.mail ? "hourglass" : "clock", label: Copy.actionLater, seg: "defer", onPress: () => a.pileToggle(m.id, "replyLater") };
-      case "aside": return { id, icon: "pause", label: Copy.actionSetAside, seg: "defer", onPress: () => a.pileToggle(m.id, "setAside") };
+      case "later": return { id, icon: t.mail ? "hourglass" : "clock", label: Copy.actionLater, seg: "defer", onPress: () => a.pileToggle(m.id, "replyLater"), ...filingHold };
+      case "aside": return { id, icon: "pause", label: Copy.actionSetAside, seg: "defer", onPress: () => a.pileToggle(m.id, "setAside"), ...filingHold };
       case "resurface": return { id, icon: "up", label: Copy.actionResurface, seg: "defer", onPress: () => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface")) };
       case "tag": return { id, icon: "tag", label: Copy.actionTag, onPress: () => setOpen("tag") };
       case "screening": return { id, icon: "door", label: Copy.actionScreening, seg: "file", onPress: () => setOpen("screening") };
@@ -500,6 +507,7 @@ export function MessageActions({
             zIndex: t.zLayer.tabBar,
           }}
         >
+          {filingStatus}
           <GlassActionBar
             reply={{ label: Copy.actionReply, onPress: () => openReply(false) }}
             verbs={barVerbs}
@@ -508,7 +516,7 @@ export function MessageActions({
             extraMore={barExtraMore}
           />
         </View>
-      ) : mode === "rail" ? null : (
+      ) : mode === "rail" ? filingStatus : (
       /* The compact bar, in the glass material (owner: one look on every device) — the same
          verbs and More it always carried, on ONE row; only the slab became the translucent pill. */
       <View
@@ -561,6 +569,7 @@ export function MessageActions({
           </View>
         ))}
       </View>
+      {filingStatus}
       <GlassPill
         horizontal
         level="l3"
@@ -608,7 +617,7 @@ export function MessageActions({
           {compactRow
             .filter((v) => barFit.standing.includes(v.id))
             .map((v) => (
-              <BarToggle key={v.id} label={v.label} icon={v.icon} on={v.on} onPress={v.onPress} />
+              <BarToggle key={v.id} {...v} />
             ))}
         </View>
         <Tap
@@ -640,6 +649,7 @@ export function MessageActions({
             icon="clock"
             label={Copy.actionLater}
             on={m.pile === "reply_later"}
+            {...filingHold}
             onPress={() => { close(); a.pileToggle(m.id, "replyLater"); }}
           />
         ) : null}
@@ -663,6 +673,7 @@ export function MessageActions({
             icon="pause"
             label={Copy.actionSetAside}
             on={m.pile === "set_aside"}
+            {...filingHold}
             onPress={() => { close(); a.pileToggle(m.id, "setAside"); }}
           />
         ) : null}
@@ -2993,19 +3004,25 @@ function BarToggle({
   icon,
   on,
   onPress,
+  disabled,
+  accessibilityHint,
 }: {
   label: string;
   icon: IconName;
   on: boolean;
   onPress: () => void;
+  disabled?: boolean;
+  accessibilityHint?: string;
 }) {
   const t = useTheme();
   return (
     <Tap
       onPress={onPress}
+      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ selected: on }}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={{ selected: on, ...(disabled ? { disabled } : {}) }}
       style={({ pressed }) => [
         {
           flexDirection: "row",
@@ -3020,7 +3037,7 @@ function BarToggle({
           paddingVertical: 8,
           borderRadius: t.radius.pill,
           backgroundColor: on ? t.c.accentSoft : t.mail ? (icon === "hourglass" ? t.c.tint2 : "transparent") : t.c.panel,
-          opacity: pressed ? 0.86 : 1,
+          opacity: disabled ? 0.5 : pressed ? 0.86 : 1,
         },
         t.mail ? null : t.lift("l0"),
       ]}

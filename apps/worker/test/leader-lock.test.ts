@@ -1,4 +1,3 @@
-import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, pgTestUrl, throwawayDb,
@@ -9,15 +8,7 @@ pgTestUrl(import.meta.url);
 const database = throwawayDb("worker_leader_lock");
 
 describe("leader lock (session-mode advisory)", () => {
-  beforeAll(async () => {
-    await database.createFromTemplate();
-    const connection = postgres(database.url, { max: 1 });
-    try {
-      await connection`INSERT INTO public.worker_topology (shards) VALUES (1)`;
-    } finally {
-      await connection.end({ timeout: 5 });
-    }
-  }, MIGRATED_DB_SETUP_BUDGET_MS);
+  beforeAll(async () => { await database.createFromTemplate(); }, MIGRATED_DB_SETUP_BUDGET_MS);
   afterAll(async () => { await database.drop(); }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
 
   const held: Array<{ release: () => Promise<void> }> = [];

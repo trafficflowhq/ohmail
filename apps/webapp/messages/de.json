@@ -2277,6 +2277,8 @@
   },
   "reader": {
     "actions": { "addToCalendar": "Zum Kalender hinzufügen" },
+    "replyCopySending": "Wird gesendet …",
+    "replyCopyWaiting": "Die Kopie im Postfach steht noch aus.",
     "gone": "Diese Nachricht wurde anderswo verschoben oder gelöscht.",
     "goneTrash": "Im Papierkorb nachsehen",
     "trashAsk": "In den Papierkorb verschieben",
@@ -6977,6 +6979,7 @@
     "coming": "Demnächst mit {name}"
   },
   "calendar": {
+    "loading": "Kalender wird geladen…",
     "connect": "Einen Kalender verbinden",
     "repeat": {
       "unavailable": "In diesem Kalender lassen sich Termine noch nicht wiederholen.",

@@ -2,7 +2,7 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { pickedCount } from "./_finders.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { act, cleanup } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { fakeMail } from "../../../../packages/app/test/reader/support/fake-mail.js";
 import { ohboxListRedrawable } from "../_ohbox-2-list.js";
@@ -143,6 +143,23 @@ afterEach(() => {
 });
 
 const at = (hour: number): string => `2026-08-02T${String(hour).padStart(2, "0")}:00:00.000Z`;
+
+it.each([
+  ["Park", "set_aside"],
+  ["Later", "reply_later"],
+])("files both stored members through the web reader's %s button", async (label, state) => {
+  const source = msg({ id: "original", unread: false, threadId: "T", date: at(10) });
+  const reply = msg({ id: "sent", unread: false, threadId: "T", date: at(11), folder: "Sent" });
+  const mail = fakeMail([source, reply], [], {}, admitting([source.from.address]));
+  const seated = mountSeat(mail.engine, { first: "#/ohbox/m/original", own: [reply.from.address] });
+  host = seated.container;
+  const reader = await screen.findByRole("region", { name: "Open message" });
+  fireEvent.click(within(reader).getByRole("button", { name: label }));
+  await waitFor(() => {
+    expect(mail.mutations.flatMap((m) => m.kind === "triage_set" ? [[m.messageId, m.state]] : []).sort())
+      .toEqual([["original", state], ["sent", state]]);
+  });
+});
 
 describe("Ohbox conversation grouping", () => {
   it("five unread of one thread render ONE row — latest unread leads, thread name, member count", async () => {

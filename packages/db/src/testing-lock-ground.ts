@@ -110,7 +110,7 @@ export async function startLockGround(major: PgMajor, label: string, database: s
       try {
         const script = readFileSync(join(SCRIPTS, "harden-runtime-roles.sql"), "utf8");
         const input = opts?.prepareApiReplacement
-          ? script.replace("-- @shape", "SET LOCAL ohmail.prepare_api_replacement = 'on';\n-- @shape") : script;
+          ? script.replace(/^-- @shape$/m, "SET LOCAL ohmail.prepare_api_replacement = 'on';\n-- @shape") : script;
         await sql.unsafe(input).simple();
       } finally {
         await sql.end({ timeout: 5 });

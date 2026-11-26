@@ -18,13 +18,15 @@ export interface RowActionFacts {
   face: ReadFace;
   /** Whether this row admits the spam target (`moveTargetsFor`), the reader's own rule. */
   junkOffered: boolean;
+  /** Later waits for a selected sent reply's mailbox copy. */
+  pendingReplyCopy?: true;
 }
 
 export interface RowAction {
   /** The name React Native hands back in `onAccessibilityAction`. */
   name: string;
   label: string;
-  verb: RowActionVerb;
+  verb: RowActionVerb | null;
 }
 
 /** The read slot's word, from its face — the sheet's own three labels, not a fourth spelling. */
@@ -45,8 +47,10 @@ export function faceLabel(face: ReadFace): string {
 export function rowActions(f: RowActionFacts): RowAction[] {
   const actions: RowAction[] = [
     { name: "readSlot", label: faceLabel(f.face), verb: "read" },
-    { name: "later", label: Copy.actionLater, verb: "later" },
   ];
+  actions.push(f.pendingReplyCopy
+    ? { name: "sending", label: Copy.replySending, verb: null }
+    : { name: "later", label: Copy.actionLater, verb: "later" });
   if (f.junkOffered) actions.push({ name: "junk", label: moveTargetLabel("spam"), verb: "junk" });
   return actions;
 }

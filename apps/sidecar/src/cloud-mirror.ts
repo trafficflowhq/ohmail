@@ -577,6 +577,8 @@ export interface CloudMirror {
    * was the thing holding the quit up — the stdio host's own in-flight count says nothing about it.
    */
   draining(): boolean;
+  /** The switch instant whose calendar snapshot has finished copying. */
+  calendarReadFor(): string | null;
   /**
    * Is the hosted account reachable right now? True optimistically at construction. A pull that
    * fails flips it false (no answer, a server error, a 429, the hosting platform's own error page, an
@@ -4765,6 +4767,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (monotonicNow() + due < pollDueAt) armPoll(due, true);
     },
     draining: () => inflight !== null,
+    calendarReadFor: () => cursor.calendarSnapshotFor,
     online: () => reachable,
     markConnectivity: (v: boolean) => {
       reachable = v;

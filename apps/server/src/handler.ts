@@ -177,14 +177,14 @@ function ingressClass(path: string): IngressClass {
 }
 
 /** Ingress admission runs before request body buffering and before building request dependencies. */
-function ingressAdmission(policy: IngressPolicy): (req: Request, path: string) => number | null {
+function ingressAdmission(policy: IngressPolicy): (identity: string, path: string) => number | null {
   const windowMs = policy.windowSeconds * 1000;
   const requests = {
     signIn: new Map<string, number>(), ordinary: new Map<string, number>(),
     expensive: new Map<string, number>(), health: new Map<string, number>(),
   };
   let window = -1;
-  return (req, path) => {
+  return (identity, path) => {
     const now = Date.now();
     const current = Math.floor(now / windowMs);
     if (current !== window) {
@@ -193,8 +193,6 @@ function ingressAdmission(policy: IngressPolicy): (req: Request, path: string) =
     }
     const kind = ingressClass(path);
     const budget = requests[kind];
-    // The node adapter sets this from a trusted ingress peer or the socket itself.
-    const identity = clientIp(req);
     const count = budget.get(identity) ?? 0;
     if (count >= policy[kind] || (count === 0 && budget.size >= 4096)) {
       return Math.max(1, Math.ceil(((current + 1) * windowMs - now) / 1000));
@@ -205,18 +203,18 @@ function ingressAdmission(policy: IngressPolicy): (req: Request, path: string) =
 }
 
 /** The dispatch of one program: `Request` in, `Response` out, never a throw. */
-export function makeDispatch(p: Pipeline): (req: Request) => Promise<Response> {
+export function makeDispatch(p: Pipeline): (req: Request, socketClientIp?: string) => Promise<Response> {
   const app = createApp(p.routes);
   const normalize = normalizeOn(p.routes, p.bodyMaxBytes);
   const leftUnread = undrainedOn(p.routes, p.bodyMaxBytes);
   const ingress = p.ingress ? ingressAdmission(p.ingress) : undefined;
-  return async (req) => {
+  return async (req, socketClientIp) => {
     const requestId = randomUUID();
 
     let normalized: Request;
     try {
       const path = ingress || p.rotationProof ? normalizePathname(new URL(req.url).pathname) : undefined;
-      const retry = path === undefined ? null : ingress?.(req, path) ?? null;
+      const retry = path === undefined ? null : ingress?.(socketClientIp ?? clientIp(req), path) ?? null;
       if (retry !== null) {
         const refused = json(429, { error: { code: "rate_limited", message: "request limit reached" } }, requestId);
         refused.headers.set("Retry-After", String(retry));

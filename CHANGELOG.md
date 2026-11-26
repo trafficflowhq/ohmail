@@ -21,6 +21,26 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.9] — 2026-11-26
+
+### Calendars show up on desktop after signing in
+
+The desktop app restores calendars and events from its local copy of your Cloud account. On web and desktop, the calendar and its sidebar show a loading state until the initial calendar data is ready.
+
+### Park and Later wait for a sent reply’s mailbox copy
+
+When you select a reply that is still syncing to your mailbox, ohmail shows “Sending…” and pauses Park and Later until the mailbox copy is available.
+
+### Phone sign-out recovery and AI draft privacy
+
+Pairing again on the same server gives the session named in the phone's sign-out notice priority. The notice points to Account settings on the web and Devices settings on a computer hosting the server.
+
+AI drafts mask ambiguous password values through the end of the line and preserve ordinary expiry notices and clear instructions after a password.
+
+### Mail sync starts after installation and upgrade
+
+The worker can take its place and sync mail after a new installation or an upgrade to a server that records worker topology.
+
 ## [2.0.8] — 2026-11-26
 
 ### AI requests mask punctuated passphrases
@@ -19430,7 +19450,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.8...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.9...HEAD
+[2.0.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.9
 [2.0.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.8
 [2.0.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.7
 [2.0.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.6

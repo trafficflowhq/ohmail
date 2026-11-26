@@ -16,6 +16,7 @@ import { useNewEvent } from "./use-new-event.js";
 import { isView, useNow } from "./where.js";
 import { useRailCalendars } from "./use-rail-calendars.js";
 import { CalendarSwatches } from "./CalendarSwatches.js";
+import { useCalendarLoading } from "./CalendarFirstStep.js";
 
 const PHONE_VIEWS = ["agenda", "day", "week", "month"] as const;
 export function CalendarRail(props: CalendarRailProps) {
@@ -151,6 +152,8 @@ function CalendarRailContents({
   const t = useText("calendar");
   const ts = useText("calsettings");
   const { said, expanded, setExpanded, rows, shown, all, check, menu } = useRailCalendars();
+  const loading = useCalendarLoading();
+  const count = loading ? t("loading") : ts("accounts.calendarCount", { count: all });
   const mini = useRailMiniMonth({ route, commands }, said?.weekNumbers);
   const entry = (place: DockPlace, shortcut?: string) => (
     <RailEntry
@@ -208,7 +211,7 @@ function CalendarRailContents({
           open: expanded,
           onToggle: () => setExpanded(!expanded),
           accounts: rows,
-          note: shown < all ? t("shown", { shown, total: all }) : undefined,
+          note: !loading && shown < all ? t("shown", { shown, total: all }) : undefined,
         }}
         below={entry(places[2]!, "g ,")}
         foot={
@@ -223,8 +226,9 @@ function CalendarRailContents({
               accountFoot?.account
                 ? {
                     ...accountFoot.account,
-                    note: ts("accounts.calendarCount", { count: all }),
-                    title: ts("accounts.calendarCount", { count: all }),
+                    note: count,
+                    title: count,
+                    loading,
                     onPress: places[2]?.onPress,
                   }
                 : undefined

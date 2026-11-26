@@ -3,7 +3,7 @@ import { Fragment, useContext, useState } from "react";
 import type { EngineMessage, TagEntity } from "@ohmail/wire";
 import type { ListVerbs } from "@ohmail/app-logic/place-list";
 import type { MessageAction, MoveTarget } from "@ohmail/app-logic/press/actions";
-import { moveTargetsOf, readIsItsRelease } from "@ohmail/app-logic/reader";
+import { awaitsReplyCopy, moveTargetsOf, readIsItsRelease } from "@ohmail/app-logic/reader";
 import { Dialog, type IconName } from "@ohmail/ui/base";
 import { MovePicker, Row, type RowProps } from "@ohmail/ui/mail";
 import { FrameContext } from "../frame/commands.js";
@@ -43,12 +43,15 @@ type LetterMenuActions = Partial<
 /** A shared order and wording, with only the actions the place handed. */
 export function useMailRowItems(
   actions: LetterMenuActions,
+  selectedIds: readonly string[],
   keys = false,
   extras: readonly ContextItem[] = [],
 ) {
   const t = useText("ohbox");
   const screening = useText("screening");
   const reader = useText("reader");
+  const engine = useContext(FrameContext)?.api.host.engine;
+  const pendingReplyCopy = selectedIds.some((id) => awaitsReplyCopy(engine?.store, id));
   let group = 0;
   const items: ContextItem[] = [];
   for (const [id, word, icon, keyHint, nextGroup] of LETTER_ACTIONS) {
@@ -60,6 +63,14 @@ export function useMailRowItems(
         keyHint: keys ? keyHint : undefined,
         apart: nextGroup !== group,
         ...(typeof action === "function" ? { onPress: action } : action),
+        ...(pendingReplyCopy && (id === "later" || id === "park")
+          ? {
+              disabled: true,
+              description: reader("replyCopyWaiting"),
+              note: reader("replyCopySending"),
+              keyHint: undefined,
+            }
+          : {}),
       });
       group = nextGroup;
     }
@@ -70,6 +81,7 @@ export function useMailRowItems(
 
 interface RowMenuActions {
   message: EngineMessage;
+  filingIds?: readonly string[];
   verbs?: ListVerbs;
   markUnread?: () => void;
   screen?: (anchor: HTMLElement) => void;
@@ -184,6 +196,7 @@ function LetterRowMenu({
           : { onPress: () => setAsk("delete"), keepOpen: true }
         : undefined,
     },
+    actions?.filingIds ?? (message ? [message.id] : []),
     false,
     items,
   );
