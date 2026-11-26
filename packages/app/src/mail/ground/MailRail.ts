@@ -22,7 +22,7 @@ import { confirmedAccountForScope } from "../../host/session.js";
 import { useContext, useMemo } from "react";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import { chordKeys, useKeyBindings, useModGlyph } from "@ohmail/app-logic/keys";
-import { PullContext, type PullBinding } from "@ohmail/app-logic/session/pull-new-mail";
+import { PULL_KEY, PullContext, type PullBinding } from "@ohmail/app-logic/session/pull-new-mail";
 import { useOptionalTheme } from "@ohmail/ui/theme";
 import { useFrame, useRailFoot, type RailFootModel } from "../../frame/index.js";
 import { NONE } from "../../host/index.js";
@@ -88,7 +88,7 @@ export function useMailRailFoot(): RailFootModel {
   useKeyBindings(
     [
       {
-        chord: "p",
+        chord: PULL_KEY,
         group: "app",
         label: keys("pull"),
         disabled: !binding.available || binding.pulling,

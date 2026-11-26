@@ -142,7 +142,8 @@ describe("the workflows of a main that takes pull requests", () => {
 
   it("build and android run on the merge queue's groups and nightly, beside their old triggers", () => {
     expect(triggersOf(build)).toEqual(["push", "pull_request", "merge_group", "workflow_dispatch", "schedule"]);
-    expect(triggersOf(android)).toEqual(["push", "pull_request", "merge_group", "workflow_dispatch", "schedule"]);
+    expect(triggersOf(android)).toEqual(["push", "release", "pull_request", "merge_group", "workflow_dispatch", "schedule"]);
+    expect(android).toMatch(/^  release:\n    types: \[published, edited, released\]$/m);
   });
 
   it("concurrency cancels a pull request's and main's superseded run, never a tag's", () => {

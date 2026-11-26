@@ -19,6 +19,7 @@ import { PLAN_NAMES } from "../../plan-hint";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { QrCode } from "../../shell/QrCode";
 import { WebDoor } from "../door-device";
+import { JOIN_FRESH_SIGN_IN } from "../login/continuation";
 import { usePendingDoor } from "../login/use-pending-door";
 import { webConnectWire } from "../mailbox/connect-wire";
 import { gatedRefusal } from "../mailbox/gated-refusal";
@@ -47,7 +48,7 @@ function stateOf(c: JoinCeremony, offer: AccountOffer): JoinState {
     case "codes":
       return {
         at: "codes",
-        codes: c.codesElsewhere ? "elsewhere" : c.recovery ?? (c.error && !c.busy ? "failed" : "making"),
+        codes: c.recovery ?? (c.codesElsewhere ? "elsewhere" : c.error && !c.busy ? "failed" : "making"),
         copied: c.codesCopied,
         saved: c.codesSaved,
       };
@@ -204,7 +205,7 @@ export function JoinRoute(props: JoinProps) {
     downloadCodes: () => { if (c.recovery !== null) download(t("codesFileHeader"), c.recovery); },
     save: c.setCodesSaved,
     codesDone: () => {
-      if (c.codesElsewhere) { c.setCodesElsewhere(false); void c.bootstrap(); }
+      if (c.codesElsewhere && c.recovery === null) { c.setCodesElsewhere(false); void c.bootstrap(); }
       // Self-host has no plan to choose: the mailbox is the next real question.
       else c.setStep(SELF_HOST_BUILD ? "mailbox" : "plan");
     },
@@ -214,8 +215,8 @@ export function JoinRoute(props: JoinProps) {
     later: { href: "/" },
     open: { href: "/#/first-run" },
     retry: () => { c.setUnreachable(false); c.setResolving(true); void c.bootstrap(); },
-    leave: { href: "/" },
-    signInAgain: { href: "/login?next=join" },
+    leave: { href: LATER },
+    signInAgain: { href: c.fatalAction === "freshSignIn" ? JOIN_FRESH_SIGN_IN : "/login?next=join" },
     waitlist: { href: "/#pricing" },
     demo: { href: "/?demo=1" },
     slots: {

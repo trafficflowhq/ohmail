@@ -23,3 +23,6 @@ export const isNoticeWord = (v: unknown): v is string => typeof v === "string" &
 
 /** What is stored of a word: its SHA-256, as 64 lower-case hex characters. */
 export const noticeWordDigest = (word: string): string => createHash("sha256").update(word, "utf8").digest("hex");
+
+/** Stored resource of a verified Outlook mailbox subscription. Older per-calendar rows omit it. */
+export const MICROSOFT_MAILBOX_NOTICE_RESOURCE = "me/events";

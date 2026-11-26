@@ -22,7 +22,7 @@ import { useInvitations } from "../invitations/index.js";
 import { useLocale, useText } from "../text/index.js";
 import { weekLayout } from "../week/index.js";
 import { CalendarHeadMenu, type HeadMenu } from "./CalendarHeadMenu.js";
-import { invitationsRoute, useCalendarNavigationKeys } from "./CalendarKeys.js";
+import { CALENDAR_KEYS, invitationsRoute, useCalendarNavigationKeys } from "./CalendarKeys.js";
 import { CalendarMiniMonth } from "./CalendarMiniMonth.js";
 import { shifted, type Where, VIEWS, isView } from "./where.js";
 import { useCalendarSwipe } from "./use-calendar-swipe.js";
@@ -210,7 +210,6 @@ function useCalendarHead({
   const views = VIEWS.map((value, index) => ({
     value,
     label: t(`view.${value}`),
-    keyHint: String(index + 1),
     shortcut: String(index + 1),
   }));
   useCalendarNavigationKeys({
@@ -304,11 +303,12 @@ function calendarHeadBar(
               ref: anchors.date,
               onPress: menu === "date" ? close : openDate,
             },
-            before: { label: t("before"), title: `${t("before")} · [`, onPress: () => step(-1) },
-            after: { label: t("after"), title: `${t("after")} · ]`, onPress: () => step(1) },
+            before: { label: t("before"), shortcut: CALENDAR_KEYS.before, onPress: () => step(-1) },
+            after: { label: t("after"), shortcut: CALENDAR_KEYS.after, onPress: () => step(1) },
             today: {
               label: t("today"),
-              keyHint: "t",
+              keyHint: CALENDAR_KEYS.today,
+              shortcut: CALENDAR_KEYS.today,
               onPress: todayNow,
               alwaysOnPhone: route.place === "day" || route.place === "week" || route.place === "month",
             },
@@ -339,11 +339,15 @@ function calendarHeadBar(
           />
         )
       }
-      search={{ label: t("search"), onPress: search }}
+      search={{ label: t("search"), shortcut: CALENDAR_KEYS.search, onPress: search }}
       agenda={
         phone || place === "agenda"
           ? undefined
-          : { label: t("agenda"), on: agendaPanel.visible, onPress: agenda }
+          : {
+              label: t("agenda"),
+              on: agendaPanel.visible,
+              onPress: agenda,
+            }
       }
       bell={
         waiting ? (
@@ -351,8 +355,6 @@ function calendarHeadBar(
             count={String(waiting)}
             ink={phone}
             word={t("toAnswer")}
-            keyHint="g i"
-            keyShown
             label={t("waiting", { count: waiting })}
             expanded={route.words.panel === "invitations"}
             onPress={invitations}

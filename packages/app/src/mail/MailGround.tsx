@@ -61,7 +61,7 @@ export function MailGround({
 }): ReactNode {
   /* The day the host says it is (the demo's frozen day; absent on every real host): every day clock and dated
      sentence below reads it. */
-  const { host, product } = useFrame();
+  const { host } = useFrame();
   const said = host.session.today;
   const today = said === NONE ? null : said;
   return (
@@ -76,7 +76,7 @@ export function MailGround({
                     <WritingMount>
                       <PullMount>
                         <SendWaitsHold />
-                        {product === "mail" ? <MailKeys /> : null}
+                        <MailKeys />
                         <MailNotices />
                         <MailConnection />
                         <MailRail />

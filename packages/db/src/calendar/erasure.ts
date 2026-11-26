@@ -106,11 +106,11 @@ export async function sweepCalendarConnectionStep(
   const { accountId, connectionId } = args;
   const step = stepOf(tx);
   const [held] = await d.forUpdate(
-    tx.select({ id: calConnections.id }).from(calConnections)
+    tx.select({ status: calConnections.status }).from(calConnections)
       .where(and(eq(calConnections.accountId, accountId), eq(calConnections.id, connectionId))).limit(1),
     { mode: "update" },
   );
-  if (held === undefined) return step.finish(true);
+  if (held?.status !== "removing") return step.finish(true);
   return step.finish(await connectionStep(tx, accountId, connectionId, step.drop, step.changes));
 }
 

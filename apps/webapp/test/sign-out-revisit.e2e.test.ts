@@ -718,7 +718,7 @@ describe.skipIf(!ENABLED)("sign out, then come back — a production build over 
     await button.waitFor({ state: "visible", timeout: 60_000 });
     await prepareCache(page, j.accountId, false);
     await button.click();
-    await page.getByText(A.signOutUnverified!, { exact: true }).waitFor({ state: "visible" });
+    await page.getByText(A.localCleanupUnverified!, { exact: true }).waitFor({ state: "visible" });
     expect(doorAnswers()).toEqual([204]);
     expect(cookieClearAnswers()).toEqual([]);
     expect(await familyLive(j.familyId)).toBe(false);

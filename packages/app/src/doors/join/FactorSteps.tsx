@@ -9,7 +9,7 @@ import { DoorFields, DoorForm } from "../stage/DoorForm.js";
 import { Said, SaidWith } from "../../text/Said.js";
 import { SentenceBlank } from "../../text/SentenceBlank.js";
 import type { JoinState } from "./door.js";
-import { refusalOf, SignOutAgain, JoinSignIn, type StepProps } from "./parts.js";
+import { refusalOf, SignOutAgain, JoinBack, type StepProps } from "./parts.js";
 
 /** A base32 key in groups of four, as authenticator apps print it; Copy takes it whole. */
 function grouped(key: string): string {
@@ -32,7 +32,7 @@ export function FactorStep(p: StepProps<"factor">): ReactNode {
   return (
     <Page
       aside={progress}
-      back={<JoinSignIn door={door} join={join} />}
+      back={<JoinBack door={door} join={join} signIn />}
       refusal={refusalOf(pending, door.refusal)}
       columns={2}
       material={
@@ -118,7 +118,7 @@ function AuthenticatorStep(p: StepProps<"factor"> & { authenticator: Authenticat
     <DoorForm onSubmit={door.activate}>
       <Page
         aside={progress}
-        back={<JoinSignIn door={door} join={join} />}
+        back={<JoinBack door={door} join={join} signIn />}
         refusal={refusalOf(pending, null)}
         columns={2}
         material={
@@ -196,7 +196,7 @@ export function CodesStep({ door, state, join, progress }: StepProps<"codes">): 
   const own = (material: ReactNode, acts: ReactNode): ReactNode => (
     <Page
       aside={progress}
-      back={<JoinSignIn door={door} join={join} />}
+      back={<JoinBack door={door} join={join} signIn />}
       refusal={refusalOf(pending, door.refusal)}
       material={material}
       acts={

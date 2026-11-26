@@ -15,7 +15,7 @@ export * from "./schema-cloud.js";
 
 /* A notice channel's id and word, as its opener and the door that takes a notice agree on them. */
 export {
-  NOTICE_CHANNEL_ID_CHARS, NOTICE_WORD_BYTES, NOTICE_WORD_CHARS, isNoticeChannelId, isNoticeWord, noticeWordDigest,
+  MICROSOFT_MAILBOX_NOTICE_RESOURCE, NOTICE_CHANNEL_ID_CHARS, NOTICE_WORD_BYTES, NOTICE_WORD_CHARS, isNoticeChannelId, isNoticeWord, noticeWordDigest,
 } from "./notice-channels.js";
 
 /* The catch-up after a reopening: the worker plants it before its roster pass spends the anchor,

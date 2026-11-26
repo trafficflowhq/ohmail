@@ -77,8 +77,9 @@ describe("the mounted stream's paint at the window edge", () => {
 });
 
 for (const width of [390, WIDTH]) for (const [face, scheme] of [["paper", "light"], ["ohmarchy", "dark"]]) {
-  it.each([["reads", "News"], ["receipts", "Receipts"]])(`%s scrolls under the ${face} action bar at ${width}px`, async (place, name) => {
-    const touch = width === 390;
+  const touch = width === 390;
+  const relation = touch ? "above" : "under";
+  it.each([["reads", "News"], ["receipts", "Receipts"]])(`%s scrolls ${relation} the ${face} action bar at ${width}px`, async (place, name) => {
     const page = await browser.newPage({ viewport: { width, height: 900 }, hasTouch: touch, reducedMotion: "reduce" });
     try {
       await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: html }));
@@ -103,14 +104,22 @@ for (const width of [390, WIDTH]) for (const [face, scheme] of [["paper", "light
       const pill = (await bar.boundingBox())!;
       const barY = Math.ceil(pill.y);
       const panelBottom = bounds.y + bounds.height;
-      expect(port.y + port.height).toBeCloseTo(panelBottom, 0);
+      const portBottom = port.y + port.height;
+      if (touch) {
+        expect(portBottom).toBeLessThanOrEqual(pill.y + 0.5);
+        expect(await greenAcross(page, Math.floor(portBottom - 12))).toBeGreaterThan(300);
+      } else {
+        expect(portBottom).toBeCloseTo(panelBottom, 0);
+        expect(await greenAcross(page, barY - 12)).toBeGreaterThan(300);
+      }
       expect(pill.y + pill.height).toBeLessThan(panelBottom);
-      expect(await greenAcross(page, barY - 12)).toBeGreaterThan(300);
       const pillCenter = Math.floor(pill.x + pill.width / 2);
       expect(await greenAcross(page, barY + 2, pillCenter - 8, 16)).toBe(0);
       expect(await greenAcross(page, barY + 18, pillCenter - 8, 16)).toBe(0);
       const belowPill = Math.floor((pill.y + pill.height + panelBottom) / 2);
-      expect(await greenAcross(page, belowPill), "mail paints below the floating pill").toBeGreaterThan(300);
+      const below = await greenAcross(page, belowPill);
+      if (touch) expect(below, "the phone action bar reserves its own row").toBe(0);
+      else expect(below, "mail paints below the floating pill").toBeGreaterThan(300);
 
       await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; });
       const last = (await scroller.locator(card).last().boundingBox())!;

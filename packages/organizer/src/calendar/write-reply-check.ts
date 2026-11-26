@@ -19,6 +19,13 @@ import { claimed, refuseInTx, settleApplied, type ClaimedWrite, type SettleConte
 
 const REPLIES_PER_SYNC = 8;
 
+export function pendingDispatchedReply() {
+  return and(
+    eq(calWrites.state, "pending"),
+    inArray(sql<string>`${calWrites.payload} #>> '{answerDispatch,phase}'`, ["sending", "accepted"]),
+  );
+}
+
 /** Read a saved Outlook reply after the sync cursor has settled. The receipt never authorizes a POST. */
 export async function checkOutlookReplies(
   input: CalendarWriteDrainInput,
@@ -70,13 +77,7 @@ export async function checkOutlookReplies(
           inArray(calWrites.calendarId, [...completed]),
           sql`${calWrites.updatedAt} < ${startedAt}::timestamptz`,
           or(
-            and(
-              eq(calWrites.state, "pending"),
-              inArray(sql<string>`${calWrites.payload} #>> '{answerDispatch,phase}'`, [
-                "sending",
-                "accepted",
-              ]),
-            ),
+            pendingDispatchedReply(),
             and(
               eq(calWrites.state, "refused"),
               or(

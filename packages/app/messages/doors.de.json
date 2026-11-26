@@ -195,6 +195,8 @@
     "planUnavailable": "Es gibt hier noch keine Account-Seite zum \u00d6ffnen. Nichts ist verloren \u2014 komm sp\u00e4ter zu diesem Schritt zur\u00fcck.",
     "planPending": "Dieser Account ist noch nicht als aktiv sichtbar. Lade die Seite gleich neu \u2014 nichts ist verloren.",
     "stepUpExpired": "Zu deiner Sicherheit braucht das Verbinden eines Postfachs einen zweiten Faktor, den du in den letzten Minuten benutzt hast, und dieses Fenster ist zu. Melde dich neu an, dann geht die Einrichtung beim Postfach-Schritt weiter.",
+    "codesStepUpExpired": "Um Wiederherstellungscodes zu erstellen, musst du vor Kurzem einen zweiten Faktor bestätigt haben. Melde dich erneut an, um mit der Einrichtung fortzufahren.",
+    "leave": "Zurück zu ohmail",
     "appPasswordReady": "Ein App-Passwort anzulegen kann dauern. Braucht es länger als ein paar Minuten, fragen wir vor dem Verbinden noch einmal nach deinem Passkey oder Authenticator-Code, und alles, was du eingetippt hast, bleibt hier.",
     "totpOpenApp": "In einer App öffnen",
     "inviteRequiredAfterAll": "Dieser Server verlangt weiterhin einen Einladungscode. Wenn du einen hast, füg ihn hier ein; sonst schreib an support@ohmail.app, dann klären wir das.",

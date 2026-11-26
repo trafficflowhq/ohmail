@@ -11,6 +11,8 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { ariaShortcut, useModGlyph, useOptionalKeyBindings } from "@ohmail/app-logic/keys";
+import { editorHelp, paragraphChoices } from "../editor/shortcuts.js";
 import { Button, Field, Menu, MenuItem } from "@ohmail/ui/base";
 import type { ComposerMark, ComposerMarksProps, ComposerProps } from "@ohmail/ui/mail";
 import { useText } from "../../text/index.js";
@@ -69,6 +71,7 @@ export interface MarksView {
 
 export function useMarks(handle: EditorHandle | null, editable: boolean, initiallyShown = true): MarksView {
   const t = useText("write");
+  const mod = useModGlyph();
   const marks = handle !== null && handle.marks !== "none" ? handle.marks : null;
   const active = useActive(marks);
   const [shown, setShown] = useState(initiallyShown);
@@ -103,7 +106,6 @@ export function useMarks(handle: EditorHandle | null, editable: boolean, initial
     restore.current?.restore();
     restore.current = null;
   }, [link]);
-  if (marks === null) return { strip: undefined, format: undefined, card: null };
   const label: Record<MarkId, string> = {
     bold: t("marks.bold"),
     italic: t("marks.italic"),
@@ -117,6 +119,8 @@ export function useMarks(handle: EditorHandle | null, editable: boolean, initial
     numbers: t("marks.numbers"),
     quote: t("marks.quote"),
   };
+  useOptionalKeyBindings(marks?.shortcuts ? editorHelp(t, marks.shortcuts) : []);
+  if (marks === null) return { strip: undefined, format: undefined, card: null };
   const offered = new Set(marks.ids);
   const groups = GROUPS.map((group) =>
     group
@@ -126,6 +130,7 @@ export function useMarks(handle: EditorHandle | null, editable: boolean, initial
         label: label[id],
         glyph: GLYPH[id],
         icon: ICON[id],
+        shortcut: marks.shortcuts?.[id]?.map((chord) => ariaShortcut(chord, mod)).join(" ") || undefined,
         ...(id === "link"
           ? { dialogExpanded: link !== null }
           : id === "divider"
@@ -184,12 +189,7 @@ function ParagraphMenu({
 }) {
   const t = useText("write");
   const selected = useSyncExternalStore(subscribe, paragraph.active, () => null);
-  const choices: readonly [ParagraphStyle, string][] = [
-    [0, t("marks.paragraph")],
-    [1, t("marks.heading1")],
-    [2, t("marks.heading2")],
-    [3, t("marks.heading3")],
-  ];
+  const choices = paragraphChoices(t);
   return (
     <Menu open portal anchor={anchor} label={t("marks.paragraphStyle")} onClose={onClose}>
       {choices.map(([style, name]) => (

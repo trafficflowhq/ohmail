@@ -3,6 +3,7 @@
  * reports the words alone (no markup) and offers no marks; Mod+Enter sends, an Escape it does not take leaves. Its
  * placeholder is drawn by the composer around it and said from here.
  */
+import { isSendKey, LEAVE_KEY } from "../keys.js";
 import { useEffect, useRef, type KeyboardEvent } from "react";
 import { letterText } from "@ohmail/ui/mail";
 import type { EditorProps } from "../ports.js";
@@ -33,10 +34,10 @@ export function PlainEditor(props: EditorProps) {
     if (focusAtMount) box.current?.focus({ preventScroll: true });
   }, [focusAtMount]);
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (onSendKey && e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    if (onSendKey && isSendKey(e)) {
       e.preventDefault();
       onSendKey();
-    } else if (onLeaveKey && e.key === "Escape" && !e.nativeEvent.isComposing) {
+    } else if (onLeaveKey && e.key === LEAVE_KEY && !e.nativeEvent.isComposing) {
       e.preventDefault();
       onLeaveKey();
     }

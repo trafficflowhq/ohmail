@@ -193,7 +193,11 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     /** Whom the connection signs in as, as its sign-in check stored it. */
     readonly principal?: string | null;
   } = {}) {
-    const dav = await startCalDavStandIn({ autoSchedule: o.autoSchedule ?? false });
+    const identity = o.principal?.replace(/^mailto:/i, "");
+    const dav = await startCalDavStandIn({
+      autoSchedule: o.autoSchedule ?? false,
+      ...(identity === undefined ? {} : { schedulingAddresses: identity.includes("@") ? [identity] : [] }),
+    });
     servers.push(dav);
     // The account's own calendar, as its server says by naming the sign-in its owner: where a server names no owner, a calendar
     // is taken for one shared with the account, whose events by others its write access lets it change.
@@ -203,7 +207,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     const boxes = o.mailboxes ?? [];
     const t = await seedConnection(w, {
       provider: "caldav", credential: { kind: "basic", user: dav.options.user, password: new Secret(dav.options.password) }, serverUrl,
-      principal: o.principal ?? null, ...(boxes.length === 0 ? {} : { mailboxAddress: boxes[0]! }),
+      ...(boxes.length === 0 ? {} : { mailboxAddress: boxes[0]! }),
     });
     for (const address of boxes.slice(1)) await w.db.insert(mailboxes).values({ accountId: t.accountId, provider: "imap", address, status: "connected" });
     const real = makeCalendarProviders({
@@ -296,7 +300,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
         .orderBy(asc(calWrites.createdAt), asc(sql`coalesce((${calWrites.payload}->'part'->>'n')::int, 1)`), asc(calWrites.idempotencyKey)))
         .map((r) => `${r.key} ${r.state}${r.refusal === null ? "" : ` ${r.refusal}`} attempts=${r.attempts}`),
       /** The writing requests the server received from `from` on: method, member (the press's own, or a new one), preconditions, and the body whole. */
-      sent: (from: number, member: string) => dav.seen.slice(from).filter((s) => !["PROPFIND", "REPORT", "GET"].includes(s.method)).map((s) => ({
+      sent: (from: number, member: string) => dav.seen.slice(from).filter((s) => !["PROPFIND", "REPORT", "GET", "OPTIONS"].includes(s.method)).map((s) => ({
         method: s.method, member: decodeURIComponent(s.path.split("/").pop() ?? "") === member ? member : "a new member",
         ifMatch: s.headers["if-match"] ?? null, ifNoneMatch: s.headers["if-none-match"] ?? null, body: s.body,
       })),
@@ -1235,7 +1239,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     const SERIES_ACTS = ["retitle", "cancel-a-day", "split", "remove", "answer"];
     const ONE_ACTS = ["retitle", "new time", "remove", "answer"];
     /** Whose an event is: someone else's (the account invited to it under a mailbox of its, or not), or the account's own. */
-    type Whose = "theirs, invited" | "theirs, not invited" | "own";
+    type Whose = "theirs, invited" | "theirs, not invited" | "theirs, incomplete" | "own";
     const PRINCIPAL = "mailto:Mila@DAV.example.test";
     interface Case {
       readonly name: string;
@@ -1280,7 +1284,7 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
       },
       // Held before, and still: someone else's where the line names another address; the account's own where it names one of its own.
       {
-        name: "an organizer told by a urn, the account's own line a mailbox's address", whose: "theirs, invited",
+        name: "an organizer told by a urn, the account's own line a mailbox's address", whose: "theirs, incomplete",
         text: series("w2", [
           "ORGANIZER;CN=Anna:urn:uuid:5f6a0c1e-0000-4000-8000-00000000a44a", "ATTENDEE;CN=Anna;PARTSTAT=ACCEPTED:urn:uuid:5f6a0c1e-0000-4000-8000-00000000a44a",
           `ATTENDEE;CN=Mila;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${MILA}`, `ATTENDEE;CN=Giulia;PARTSTAT=ACCEPTED:mailto:${GIULIA}`,
@@ -1770,8 +1774,10 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
             },
           ],
           days: [9, days], members: 2, retries: ["409 calendar_write_left", "409 calendar_write_left"],
-          // An applied row keeps nothing of the person's: a press's end keeps the day it ended the series at, every other row nothing.
-          kept: Object.fromEntries([...before.map((r) => [r.split(" ")[0]!, {}]), ["k", { ended: DEC_14 }], ["k:2", {}]]),
+          // Applied rows keep the retry fingerprint and, for the split, the day the series ended.
+          kept: Object.fromEntries([...before.map((r) => r.split(" ")[0]!), "k", "k:2"].map((key) => [
+            key, { fingerprint: expect.stringMatching(/^v1:[0-9a-f]{64}$/), ...(key === "k" ? { ended: DEC_14 } : {}) },
+          ])),
         };
       }
       expect(seen).toEqual(want);
@@ -3796,7 +3802,12 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
     type Row = { id: string; updatedAt: Date };
     type B = Awaited<ReturnType<typeof bench>>;
     const record = (s: Row, change: Record<string, unknown>) => ({ kind: "calendar_event_update", ...on(s), scope: { kind: "record" }, change });
-    const ACTS: Record<string, { readonly text: string; readonly act: (s: Row, b: B) => unknown | Promise<unknown>; readonly told: boolean }> = {
+    const ACTS: Record<string, {
+      readonly text: string;
+      readonly act: (s: Row, b: B) => unknown | Promise<unknown>;
+      readonly told: boolean;
+      readonly incomplete?: true;
+    }> = {
       // The five ruling (ii) names: written before at a server that tells nobody.
       "an event with an invitee: retitled": { text: ONE, act: (s) => record(s, { title: "Renamed" }), told: true },
       "an event with an invitee: a new time": { text: ONE, act: (s) => record(s, { start: zoned("20261123T140000", ZH), end: zoned("20261123T150000", ZH) }), told: true },
@@ -3816,7 +3827,9 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
         } }),
       },
       // The other spellings of "an event with an invitee", and the one change no invitee hears of.
-      "an event whose invitee is told by a principal's path: retitled": { text: BY_PATH, act: (s) => record(s, { title: "Renamed" }), told: true },
+      "an event whose invitee is told by a principal's path: retitled": {
+        text: BY_PATH, act: (s) => record(s, { title: "Renamed" }), told: true, incomplete: true,
+      },
       "an event with an invitee: its reminders and its title": { text: ONE, act: (s) => record(s, { alarms: [30], title: "Renamed" }), told: true },
       "an event with an invitee: its reminders alone": { text: ONE, act: (s) => record(s, { alarms: [30] }), told: false },
       "an event whose one other line is its organizer's own: retitled": { text: ORGANIZER_ONLY, act: (s) => record(s, { title: "Renamed" }), told: false },
@@ -3835,9 +3848,12 @@ describe.skipIf(!AVAILABLE)("a press on a series, from the door to the server", 
           seen[name] = `door ${door} | ${(await b.writes()).join("; ")} | ${b.sent(from, "talk.ics").map((x) => `${x.method} ${x.member}`).join(", ") || "nothing written"}`;
         }
         const written = (name: string): string => (name === "a new event with an invitee" ? "PUT a new member" : `${name.endsWith("removed") ? "DELETE" : "PUT"} talk.ics`);
-        expect(seen).toEqual(Object.fromEntries(Object.entries(ACTS).map(([name, c]) => [name, autoSchedule || !c.told
-          ? `door pending | k applied | ${written(name)}`
-          : "door pending | k refused invitees_unsupported | nothing written"])));
+        expect(seen).toEqual(Object.fromEntries(Object.entries(ACTS).map(([name, c]) => {
+          if (c.incomplete) return [name, "door 409 calendar_read_only |  | nothing written"];
+          return [name, autoSchedule || !c.told
+            ? `door pending | k applied | ${written(name)}`
+            : "door pending | k refused invitees_unsupported | nothing written"];
+        })));
       }, 120_000);
     }
 

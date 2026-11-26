@@ -1,3 +1,5 @@
+import { useBinding } from "@ohmail/app-logic/keys";
+import { SHEET_CHORD } from "../../keys/availability.js";
 import { useContext } from "react";
 import { Button, Sentence } from "@ohmail/ui/base";
 import { SettingLine, SettingNote, SettingsSheet } from "@ohmail/ui/mail";
@@ -15,6 +17,7 @@ export function AboutPane(props: { readonly model: AboutModel } | { readonly dem
   const t = useText("about");
   const own = useText(ABOUT_NAMESPACE);
   const frame = useContext(FrameContext);
+  const help = useBinding(SHEET_CHORD);
   if ("demo" in props) {
     return (
       <SettingsSheet>
@@ -46,9 +49,15 @@ export function AboutPane(props: { readonly model: AboutModel } | { readonly dem
           label={t("mailboxesLabel")}
           value={mailboxes.kind === "failed" ? undefined : mailboxLine(mailboxes, t)}
         />
-        {frame?.api.plan.device === "desktop" ? (
+        {frame?.api.plan.device === "desktop" && help ? (
           <SettingLine label={t("keyboardLabel")}>
-            <Button kind="quiet" size="s" keyHint="?" onPress={() => frame.api.commands.over("keys")}>
+            <Button
+              kind="quiet"
+              size="s"
+              keyHint={help.chord}
+              shortcut={help.chord}
+              onPress={() => frame.api.commands.over("keys")}
+            >
               {own("showKeyboard")}
             </Button>
           </SettingLine>

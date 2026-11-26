@@ -115,6 +115,7 @@ export function RailEntry(props: RailEntryProps) {
       }
     : undefined;
 
+  const shortcutHint = keyHint && !props.disabled && [keyHint, digit].filter(Boolean).join(" / ");
   const entry = (
     <button
       type="button"
@@ -132,6 +133,7 @@ export function RailEntry(props: RailEntryProps) {
       aria-busy={props.busy ? true : undefined}
       aria-label={props.label}
       aria-keyshortcuts={[props.shortcut, digit].filter(Boolean).join(" ") || undefined}
+      data-shortcut-hint={shortcutHint || undefined}
       title={props.title}
       style={style}
       onClick={onPress}

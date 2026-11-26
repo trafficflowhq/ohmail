@@ -170,6 +170,8 @@ interface RequestOptions {
    * other account's answer. A flag is something a caller asks for by name and a reviewer can grep for.
    */
   ceremony?: boolean;
+  /** The caller has already checked this session and will handle a refusal without renewing it. */
+  noRefresh?: true;
   /**
    * Asked inside the session-cookie lock, the moment before a cookie-writing request leaves; `false`
    * refuses it unsent (`owner_mismatch`). The sign-out door's, from the pending sign-out's finisher: a jar
@@ -754,7 +756,7 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
     // so this is the ordinary state of any tab left open — see `session-refresh.ts`, and note
     // that a stale `tf_csrf` surfaces as 403 `csrf_failed` rather than 401.
     if (!(err instanceof ApiError)) throw err;
-    if (!isRecoverable(err.status, err.code) || !mayRefreshFor(path)) throw err;
+    if (opts.noRefresh || !isRecoverable(err.status, err.code) || !mayRefreshFor(path)) throw err;
     /*
      * Asked BEFORE the refresh, not only after it. `resumeSession()`
      * rotates whatever session the jar currently holds; with the recheck
@@ -1947,6 +1949,41 @@ export const auth = {
    * order rather than client discipline. Calling this before a factor lands 403s.
    */
   recoveryCodes: (expectedOwner?: string | null) => api<{ codes: string[] }>("/auth/2fa/recovery-codes", { expectedOwner, method: "POST", body: {} }),
+
+  recoveryCodesIfMissing: async (account: string, family?: string) => {
+    const owner = readOwnerMarker();
+    const cookieFamily = readSessionFamily();
+    const captured = binding;
+    const legacyMark = cookieFamily === null ? jarMark() : null;
+    const mayProceed = () => {
+      const current = readOwnerMarker();
+      if (binding !== captured || current.kind !== owner.kind || current.kind === "signed-out") return false;
+      return (current.kind !== "account" || current.id === account)
+        && readSessionFamily() === cookieFamily
+        && (cookieFamily === null || family === undefined || cookieFamily === family)
+        && (legacyMark === null || jarMark() === legacyMark);
+    };
+    try {
+      const answer = await api<{ codes: string[] }>("/auth/2fa/recovery-codes", {
+        method: "POST",
+        body: {},
+        noRefresh: true,
+        mayProceed,
+        ...(boundApiOwner() === account ? { expectedOwner: account } : {}),
+        headers: {
+          "X-Ohmail-Recovery-If-Missing": "1",
+          [EXPECTED_ACCOUNT_HEADER]: account,
+          ...(family === undefined ? {} : { [EXPECTED_FAMILY_HEADER]: family }),
+        },
+      });
+      if (!mayProceed()) throw ownerRefusal("mismatch");
+      return answer;
+    } catch (err) {
+      if (!mayProceed()) throw ownerRefusal("mismatch");
+      if (codeOf(err) === "recovery_codes_exist") return null;
+      throw err;
+    }
+  },
 
   /**
    * Remove the authenticator. `DELETE /auth/2fa/totp` shipped with the rest of the 2FA surface and had NO

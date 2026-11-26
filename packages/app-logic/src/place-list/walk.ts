@@ -191,21 +191,14 @@ export function useListWalk(input: ListWalkInput): ListWalk {
   });
 
   const resting = cursor === null ? ({ disabled: true, disabledReason: "no_cursor" } as const) : {};
-  const keys: KeyBinding[] = [
-    { chord: "j", group: "navigate", label: labels.next, disabled: down.disabled, run: down.run },
-    { chord: "k", group: "navigate", label: labels.prev, disabled: up.disabled, run: up.run },
-    {
-      chord: "Enter",
-      group: "message",
-      label: labels.open,
-      ...resting,
-      disabled: cursor === null || (cursor === openId && enter === undefined),
-      when: notOnAButton,
-      run: () => {
-        if (cursor !== null) enterRow(cursor);
-      },
+  const keys = listWalkKeys(labels, down, up, {
+    ...resting,
+    disabled: cursor === null || (cursor === openId && enter === undefined),
+    when: notOnAButton,
+    run: () => {
+      if (cursor !== null) enterRow(cursor);
     },
-  ];
+  });
   return {
     cursor,
     press: enterRow,
@@ -239,6 +232,24 @@ export interface ListZones {
   readonly shortcuts: Translator;
   /** The reading column's focus and scroll target, and the list's own cursor row, as the page finds them. */
   readonly at: { readonly reading: string; readonly openRow: string };
+}
+
+function listWalkKeys(
+  labels: ListWalkInput["labels"],
+  down: Pick<KeyBinding, "run" | "disabled">,
+  up: Pick<KeyBinding, "run" | "disabled">,
+  open: Pick<KeyBinding, "run" | "disabled" | "disabledReason" | "when">,
+): KeyBinding[] {
+  return [
+    { chord: "j", group: "navigate", place: "lists", label: labels.next, ...down },
+    { chord: "k", group: "navigate", place: "lists", label: labels.prev, ...up },
+    { chord: "Enter", group: "message", place: "lists", label: labels.open, ...open },
+  ];
+}
+
+export function listWalkHelp(labels: ListWalkInput["labels"]): KeyBinding[] {
+  const step = { run: () => undefined };
+  return listWalkKeys(labels, step, step, step).map((binding) => ({ ...binding, helpOnly: true }));
 }
 
 /**

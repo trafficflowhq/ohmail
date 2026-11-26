@@ -97,6 +97,8 @@ function PlaceRailEntry({
   /* Its key is said to a screen reader only while something binds it: a key that is not bound is said nowhere. */
   const mod = useModGlyph();
   const bound = useBinding(rail.keyHint ?? "");
+  const keyHint = disabled || rail.keyHint?.includes(" ") ? undefined : rail.keyHint;
+  const shortcut = keyHint && bound ? ariaShortcut(bound.chord, mod) : undefined;
   /* A letter dragged toward the rail lights the entry where its registration takes it (`rail.drop`). The box carries
      the place's id and what it takes: where a dragged row's gesture finds its target. */
   const drop = useRailDropState(rail.drop === undefined ? null : { kind: "pile", action: rail.drop });
@@ -113,10 +115,10 @@ function PlaceRailEntry({
         kind="place"
         drop={drop}
         icon={rail.icon}
-        keyHint={disabled ? undefined : rail.keyHint}
+        keyHint={keyHint}
         keyStands={rail.keyStands}
         digit={digit}
-        shortcut={!disabled && bound ? ariaShortcut(bound.chord, mod) : undefined}
+        shortcut={shortcut}
         count={counted?.count}
         countHot={counted?.hot}
         title={

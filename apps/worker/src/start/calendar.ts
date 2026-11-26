@@ -22,7 +22,7 @@ import {
   TURN_HARD_MS, TURN_MS, doublingWait,
   type CalendarSyncDeps, type CalendarSyncOutcome, type DueConnection,
 } from "@ohmail/organizer/calendar-sync";
-import { calendarNoticesPass } from "../calendar-notices.js";
+import { calendarNoticeCoverage, calendarNoticesPass } from "../calendar-notices.js";
 import { calendarWriteDrain } from "@ohmail/organizer/calendar/write-drain";
 import type { WorkerCalendarConfig } from "../config.js";
 import { accountShardFilter } from "../mailboxes.js";
@@ -180,7 +180,7 @@ export function startCalendarRunner(deps: CalendarRunnerDeps): CalendarRunner {
     for (const c of due) {
       if (off()) return;
       if (held.has(c.id)) continue;
-      if (parked.has(c.accountId)) {
+      if (c.status !== "removing" && parked.has(c.accountId)) {
         await deps.park?.(c, new Date(at + OFF_RECHECK_MS));
         continue;
       }
@@ -264,7 +264,10 @@ export function calendarSection(scope: WorkerScope): void {
     log: scope.log,
     // A person's writes reach their provider in the turn that reads it, before the reading.
     drainWrites: calendarWriteDrain({ clock, zones, log: scope.log }),
-    ...(cfg.noticeOrigin === null ? {} : { notices: (input) => calendarNoticesPass(noticeDeps, input) }),
+    ...(cfg.noticeOrigin === null ? {} : {
+      notices: (input) => calendarNoticesPass(noticeDeps, input),
+      noticeCoverage: (input) => calendarNoticeCoverage(noticeDeps, input),
+    }),
   };
   scope.calendar = startCalendarRunner({
     roster: (now, except) => loadDueConnections(pool, now, ROSTER_LIMIT, (column) => accountShardFilter(scope.selection, column), except),

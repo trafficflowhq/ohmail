@@ -8,7 +8,7 @@
  * The pull records "due" and nothing else: no change record, no `updated_at`, no event, no dial.
  * The worker's own turn is what reads the provider.
  */
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { calCalendars, calConnections } from "@trafficflow/db/mail";
 import { rowsAffected, type Tx } from "@trafficflow/db";
@@ -50,16 +50,21 @@ export async function pullConnectionDue(tx: Tx, scope: ConnectionScope, spacingS
 
 /**
  * One calendar of the connection pulled due, or every one where `calendarId` is null: only a
- * calendar that waits for no word, only forward, and spaced. Answers the rows moved.
+ * calendar that waits for no word, and spaced. An overdue calendar whose read already started
+ * gets a deadline for the next read, shared by notices that arrive during that interval.
  */
 export async function pullCalendarsDue(
-  tx: Tx, scope: ConnectionScope & { readonly calendarId: string | null }, spacingSeconds: number,
+  tx: Tx, scope: ConnectionScope & { readonly calendarId: string | null; readonly ownedOnly?: boolean }, spacingSeconds: number,
 ): Promise<number> {
   const due = dueAt(calCalendars.lastSyncedAt, spacingSeconds);
-  return rowsAffected(await tx.update(calCalendars).set({ nextPollAt: due }).where(and(
+  const reading = isNotNull(calCalendars.readOwner);
+  const wake = sql`case when ${reading} then greatest(${due}, now() + make_interval(secs => ${spacingSeconds})) else ${due} end`;
+  return rowsAffected(await tx.update(calCalendars).set({ nextPollAt: wake }).where(and(
     ...(scope.calendarId === null ? [] : [eq(calCalendars.id, scope.calendarId)]),
+    ...(scope.ownedOnly ? [eq(calCalendars.access, "owner")] : []),
     eq(calCalendars.accountId, scope.accountId), eq(calCalendars.connectionId, scope.connectionId),
-    sql`${calCalendars.errorCode} is null`, sql`${calCalendars.nextPollAt} > ${due}`,
+    sql`${calCalendars.errorCode} is null`,
+    or(sql`${calCalendars.nextPollAt} > ${wake}`, and(reading, sql`coalesce(${calCalendars.nextPollAt}, now()) <= now()`)),
   )));
 }
 
@@ -70,7 +75,7 @@ export async function pullCalendarsDue(
  * the order every calendar write takes its rows in.
  */
 export async function pullForNotice(
-  db: BoundDb, channel: ConnectionScope & { readonly calendarId: string | null },
+  db: BoundDb, channel: ConnectionScope & { readonly calendarId: string | null; readonly ownedOnly?: boolean },
 ): Promise<{ readonly connections: number; readonly calendars: number }> {
   const ctx = { db, accountId: channel.accountId, userId: null, now: () => new Date(), requestId: "" };
   return runInTransaction(ctx, async (txCtx) => {

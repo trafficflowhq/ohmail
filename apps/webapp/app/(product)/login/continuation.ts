@@ -13,6 +13,7 @@ export const MANAGE_ROUTE = "/account/manage";
  * landed in an empty Ohbox with the setup gone.
  */
 export const JOIN_ROUTE = "/join";
+export const JOIN_FRESH_SIGN_IN = "/login?next=join&fresh=1";
 
 export type Continuation = typeof MANAGE_ROUTE | typeof JOIN_ROUTE;
 

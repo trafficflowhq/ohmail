@@ -106,7 +106,8 @@ const withinTheMinute = (column: AnyColumn): SQL =>
  * connection's minute was taken already. Bookkeeping: no record a device holds moves.
  */
 async function calendarsDue(tx: Tx, accountId: string, connectionId: string, when: "now" | "within the minute", calendarId?: string): Promise<void> {
-  await tx.update(calCalendars).set({ nextPollAt: when === "now" ? null : withinTheMinute(calCalendars.nextPollAt) }).where(and(
+  const due = when === "now" ? sql`case when ${calCalendars.readOwner} is null then null else now() end` : withinTheMinute(calCalendars.nextPollAt);
+  await tx.update(calCalendars).set({ nextPollAt: due }).where(and(
     eq(calCalendars.accountId, accountId), eq(calCalendars.connectionId, connectionId),
     or(isNull(calCalendars.errorCode), ne(calCalendars.errorCode, "ended")),
     calendarId === undefined ? undefined : eq(calCalendars.id, calendarId),
@@ -122,9 +123,8 @@ async function calendarsDue(tx: Tx, accountId: string, connectionId: string, whe
  * way finishes the one request it is in and stops where it would write its next page (the worker
  * writes every page through its hold of the connection). Then the store's own
  * bounded step, as often as one request may, until the row is gone: every record's deletion is
- * recorded, children first. `removed: false` says rows are still going; the same request again
- * goes on where this one stopped, AND NOTHING ELSE DOES: no worker pass finishes a connection left
- * at `removing`, so a caller asks again until the answer is `removed: true`.
+ * recorded, children first. `removed: false` says rows are still going. The worker and subsequent
+ * requests use the same fenced sweep until the last row is removed.
  *
  * THE ONE ACT OF THIS DOOR THAT DOES NOT ASK WHETHER THE ACCOUNT'S CALENDAR IS ON. A removal
  * lowers what is kept, and a switch that is off must never keep a person's sealed sign-in in the
@@ -135,8 +135,12 @@ export async function removeCalendarConnection(ctx: ServiceContext, named: strin
   const fence = fenceOf((await connectionSeen(ctx, id)).mailboxId);
   let seq = await withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
-    const row = await lockedConnection(t, ctx.accountId, id, "update");
-    if (row.status === "removing") return null;
+    const row = await lockedConnection(t, ctx.accountId, id, "update").catch((err: unknown) => {
+      // The worker can finish between the account-scoped lookup and this lock.
+      if (err instanceof ServiceError && err.code === "not_found") return null;
+      throw err;
+    });
+    if (row === null || row.status === "removing") return null;
     await t.delete(calCredentials).where(and(eq(calCredentials.accountId, ctx.accountId), eq(calCredentials.connectionId, id)));
     await t.update(calConnections).set({ status: "removing", updatedAt: sql`now()` })
       .where(and(eq(calConnections.id, id), eq(calConnections.accountId, ctx.accountId)));

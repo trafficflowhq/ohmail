@@ -52,6 +52,8 @@ export interface CalendarSnapshotQuery {
   readonly window: CalendarWindow;
   /** A span named by the request, or `null` for the served window around `now`. */
   readonly span: CalendarSpanMs | null;
+  /** Fixed reference time for ranking a bounded default snapshot. */
+  readonly rankAt?: number;
   /** `null` on the first page, which leads with the connections, calendars and suggestions. */
   readonly after: CalendarKeyset | null;
   readonly limit: number;

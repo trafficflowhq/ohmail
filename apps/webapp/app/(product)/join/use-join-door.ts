@@ -157,7 +157,7 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
   /** A refusal that is not retryable in place — it needs a different screen. */
   const [fatal, setFatal] = useState<string | null>(null);
   /** Which way OUT that screen offers. `"signIn"` is the original default; the capacity valve added the other. */
-  const [fatalAction, setFatalAction] = useState<"signIn" | "waitlist">("signIn");
+  const [fatalAction, setFatalAction] = useState<"signIn" | "freshSignIn" | "waitlist">("signIn");
   /** Until the first bootstrap settles a signed-in account's step is unknown, and it must not see the sign-up form. */
   const [resolving, setResolving] = useState(signedIn);
   /** The session or a step read failed with something other than "no session". */
@@ -489,7 +489,7 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
         // whole job is to explain what just happened.
         setFatal(t(needsInvite ? "expired" : "expiredOpen"));
         setFatalAction("signIn");
-      } else if (code === "session_conflict") {
+      } else if (code === "session_conflict" || code === "session_mismatch" || code === "owner_mismatch") {
         /**
          * The window between the ask and the write: `sameAccount()` asks who this browser holds
          * and then makes the request, and a session that changes between those two is not
@@ -502,11 +502,9 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
          */
         setError(t("accountConflict"));
       } else if (code === "step_up_required") {
-        // Reached only when the factor asked for in place did not reopen the window (`connect`
-        // asks once, then a second refusal lands here): a fresh sign-in, whose link resumes
-        // this wizard, rather than the server's raw sentence or another prompt that would loop.
-        setFatal(t("stepUpExpired"));
-        setFatalAction("signIn");
+        // Recovery codes and a refused connect both need a genuinely fresh second factor.
+        setFatal(t(step === "codes" ? "codesStepUpExpired" : "stepUpExpired"));
+        setFatalAction("freshSignIn");
       } else if (code === "signup_capacity") {
         // The capacity valve. This is the ONE refusal the wizard cannot retry its way
         // out of, and the remedy is a different surface: the waitlist, which is exactly what
@@ -708,15 +706,16 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
   };
 
   /**
-   * Every generate deletes the account's set, so the read just before it decides: codes that exist were
-   * made by another wizard in this browser, or by a generate whose answer was lost, and none are made here.
+   * Existing codes may have been made in another tab or by a request whose response was lost.
+   * The server also checks under its lock in case another request generates after this read.
    */
   const fetchCodes = () => void run(async () => {
     const now = await sessionIfSame();
     if (now === null) return;
     if (now.user.twofaEnrolled.recoveryCodes) { setCodesElsewhere(true); return; }
-    const { codes } = await auth.recoveryCodes();
-    setRecovery(codes);
+    const result = await auth.recoveryCodesIfMissing(now.user.accountId, now.familyId);
+    if (result === null) setCodesElsewhere(true);
+    else setRecovery(result.codes);
   });
 
   /**

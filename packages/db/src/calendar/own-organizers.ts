@@ -71,10 +71,12 @@ export function connectedAttendee(
   people: readonly string[],
   principal: string | null | undefined,
   own: ReadonlySet<string>,
+  schedulingAddresses: readonly string[] = [],
 ): string | null {
-  const named = principal?.trim().toLowerCase().replace(/^mailto:/, "") ?? "";
-  const hasAddress = named.includes("@") && !named.includes("/");
+  const named = organizerPrincipalAddress(principal ?? null);
+  const allowed = named !== null ? new Set([named])
+    : schedulingAddresses.length > 0 ? new Set(schedulingAddresses) : own;
   const matching = people.map((address) => address.trim().toLowerCase())
-    .filter((address) => hasAddress ? address === named : own.has(address));
+    .filter((address) => allowed.has(address));
   return matching.length === 1 ? matching[0]! : null;
 }

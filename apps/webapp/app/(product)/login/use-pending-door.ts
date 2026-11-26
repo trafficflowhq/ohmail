@@ -10,16 +10,19 @@ import type { PendingSignOut } from "./pending-sign-out";
  */
 export function usePendingDoor(pending: PendingSignOut): PendingSignOutDoor {
   const ta = useTranslations("account");
+  const key = pending.said?.key;
   const said = pending.said === null
     ? null
     : pending.said.key === "signOutServerRefused"
       ? pending.said.cleanupIncomplete
         ? ta("signOutServerRefusedUnverified", { reason: pending.said.reason })
         : ta(pending.said.key, { reason: pending.said.reason })
-      : ta(pending.said.key);
+      : ta(key === "signOutUnverified" ? "localCleanupUnverified" : key === "signOutBlocked" ? "localCleanupBlocked" : pending.said.key);
   return {
     said,
-    act: pending.signingOut ? ta("signOutBusy") : ta("signOut"),
+    act: key === "signOutUnverified" ? null
+      : pending.signingOut ? ta("signOutBusy")
+        : key === "signOutServerRefused" ? ta("signOut") : ta("retryLocalCleanup"),
     signingOut: pending.signingOut,
     again: pending.again,
   };

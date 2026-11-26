@@ -14,7 +14,7 @@ export function refusalOf(pending: PendingSignOutDoor, refusal: string | null): 
 
 /** Sign out, asked again, where a sign-out this browser asked for ended unconfirmed. */
 export function SignOutAgain({ pending, busy }: { pending: PendingSignOutDoor; busy: boolean }): ReactNode {
-  return pending.said === null ? null : (
+  return pending.said === null || pending.act === null ? null : (
     <Button kind="two" size="l" disabled={busy || pending.signingOut} onPress={pending.again}>
       {pending.act}
     </Button>

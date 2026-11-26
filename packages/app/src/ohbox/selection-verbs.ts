@@ -4,6 +4,7 @@
  * anchors its picker on the bar's foot, read when it is pressed.
  */
 import type { RefObject } from "react";
+import { ariaShortcut, chordKeys } from "@ohmail/app-logic/keys";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import type { PanelVerb } from "@ohmail/ui/mail";
 import type { useText } from "../text/index.js";
@@ -12,6 +13,7 @@ export function pickVerbs(
   model: OhboxListModel,
   t: ReturnType<typeof useText>,
   foot: RefObject<HTMLDivElement | null>,
+  mod: string,
   filingHold: Pick<PanelVerb, "disabled" | "disabledHint">,
 ): PanelVerb[] {
   return [
@@ -19,23 +21,29 @@ export function pickVerbs(
       id: "later",
       label: t("actionLater"),
       icon: "later",
-      keyHint: "a",
+      ...selectionHint(model, t("keySelLater"), mod),
       ...filingHold,
       onPress: () => model.runBulk("later"),
     },
-    { id: "read", label: t("actionRead"), icon: "read", keyHint: "⇧U", onPress: model.markPicked },
+    {
+      id: "read",
+      label: t("actionRead"),
+      icon: "read",
+      ...selectionHint(model, t("keyMarkPicked"), mod),
+      onPress: model.markPicked,
+    },
     {
       id: "unread",
       label: t("pickedMarkUnseen"),
       icon: "unread",
-      keyHint: "u",
+      ...selectionHint(model, t("keySelUnread"), mod),
       onPress: () => model.runBulk("unread"),
     },
     {
       id: "aside",
       label: t("actionSetAside"),
       icon: "parked",
-      keyHint: "e",
+      ...selectionHint(model, t("keySelPark"), mod),
       ...filingHold,
       onPress: () => model.runBulk("aside"),
     },
@@ -43,29 +51,44 @@ export function pickVerbs(
       id: "resurface",
       label: t("actionResurface"),
       icon: "resurface",
-      keyHint: "b",
+      ...selectionHint(model, t("keySelResurface"), mod),
       onPress: () => model.runBulk("resurface"),
     },
     {
       id: "tag",
       label: t("actionTag"),
       icon: "tags",
-      keyHint: "t",
+      ...selectionHint(model, t("keySelTag"), mod),
       onPress: () => model.tagPicked(foot.current),
     },
     {
       id: "move",
       label: t("actionMove"),
       icon: "move",
-      keyHint: "m",
+      ...selectionHint(model, t("keySelMove"), mod),
       onPress: () => model.setPickPanel({ kind: "move" }),
     },
     {
       id: "screen",
       label: t("bar.screen"),
       icon: "screener",
-      keyHint: "s",
+      ...selectionHint(model, t("keySelScreen"), mod),
       onPress: () => model.setPickPanel({ kind: "screen" }),
     },
   ];
+}
+
+/** Each button describes the key for the same operation on the selection. */
+export function selectionHint(
+  model: OhboxListModel,
+  label: string,
+  mod: string,
+): Pick<PanelVerb, "keyHint" | "shortcut"> {
+  const key = model.keys.find((binding) => binding.label === label && !binding.disabled);
+  if (!key) return {};
+  const cap = chordKeys(key.chord, mod).join("");
+  return {
+    keyHint: key.chord.startsWith("shift+") ? cap.toUpperCase() : cap,
+    shortcut: ariaShortcut(key.chord, mod),
+  };
 }

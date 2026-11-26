@@ -9,10 +9,16 @@ import {
   type BindingGroup,
   type BoundKey,
   type DisabledReason,
+  type ShortcutPlace,
 } from "@ohmail/app-logic/keys";
 import type { Text } from "../../text/index.js";
 
-const COLUMNS: readonly (readonly BindingGroup[])[] = [["navigate"], ["message", "screener"], ["app"]];
+type Section = BindingGroup | ShortcutPlace;
+const COLUMNS: readonly (readonly Section[])[] = [
+  ["lists", "navigate", "screener"],
+  ["message", "composer"],
+  ["calendar", "app"],
+];
 
 /** Fold spellings by label. A disabled reason belongs to the whole row only when every spelling gives it. */
 export function foldRows(
@@ -25,7 +31,7 @@ export function foldRows(
     const reason = b.disabled && b.disabledReason ? (reasons[b.disabledReason] ?? "") : "";
     const row = rows.find((r) => r.label === b.label);
     if (row) {
-      row.chords.push(b.chord);
+      if (!row.chords.includes(b.chord)) row.chords.push(b.chord);
       row.live = row.live || b.disabled !== true;
       if (row.reason !== reason) row.reason = "";
     } else rows.push({ label: b.label, chords: [b.chord], live: b.disabled !== true, reason });
@@ -51,9 +57,20 @@ export function sheetColumns(
     trash_unavailable: trash.has("unavailable") ? trash("unavailable") : "",
     layout_same: words.has("layoutSame") ? words("layoutSame") : "",
   };
-  const grouped = groupedBindings([...bindings]);
-  const groupOf = (group: BindingGroup): KeyHelpGroup | null => {
-    const items = grouped.find((g) => g.group === group)?.items ?? [];
+  // Alt chords can collide with AltGr characters on international layouts.
+  const offered = bindings.filter(({ chord }) => !chord.toLowerCase().split(/[ +]/).includes("alt"));
+  const live = groupedBindings(offered.filter((binding) => !binding.helpOnly)).flatMap(({ items }) => items);
+  const actions = new Map<string, { section: Section; keys: BoundKey[] }>();
+  for (const binding of [...live, ...offered.filter((binding) => binding.helpOnly)]) {
+    const row = actions.get(binding.label);
+    if (!row) actions.set(binding.label, { section: binding.place ?? binding.group, keys: [binding] });
+    else {
+      if (binding.place && row.section === "navigate") row.section = binding.place;
+      if (!row.keys.some((key) => key.chord === binding.chord)) row.keys.push(binding);
+    }
+  }
+  const groupOf = (group: Section): KeyHelpGroup | null => {
+    const items = [...actions.values()].flatMap(({ section, keys }) => (section === group ? keys : []));
     const rows = foldRows(items, mod, reasons);
     return rows.length === 0 ? null : { title: words(`group.${group}`), rows };
   };

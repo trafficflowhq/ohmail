@@ -309,6 +309,20 @@ describe("the calendar's phase follows the mail's", () => {
     expect(ofKind(pages, "calendar_event").sort()).toEqual([...near].sort());
     expect(ofKind(pages, "calendar_event")).not.toContain(far[0]);
   });
+
+  it("keeps the same bounded set when events tie across snapshot pages", async () => {
+    const w = await world();
+    const ids = [];
+    for (let i = 0; i < 5; i++) ids.push(await event(w.db, w, { startsAt: NOW, endsAt: day(1) }));
+    const nearby = await event(w.db, w, { startsAt: day(0.2), endsAt: day(0.3) });
+    const calendar = { ...calendarFeed, window: { ...calendarFeed.window, maxRows: 2 } };
+    const options = { ...served, calendar, phase: "calendar" as const, limit: 1 };
+    const expected = [...ids].sort().slice(0, 2);
+    expect(ofKind(await walk(w.ctx, options), "calendar_event")).toEqual(expected);
+    expect(ofKind(await walk(w.ctx, options), "calendar_event")).toEqual(expected);
+    expect(ofKind(await walk(w.ctx, { ...options, span: { fromMs: NOW.getTime(), toMs: day(2).getTime() } }), "calendar_event"))
+      .toEqual([...ids.sort(), nearby]);
+  });
 });
 
 describe("one table of cases, held by the device and by the server's SQL", () => {

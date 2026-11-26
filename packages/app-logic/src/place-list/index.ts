@@ -13,6 +13,7 @@ export {
 } from "./live.js";
 export {
   CURSOR_HINT_MS,
+  listWalkHelp,
   useListWalk,
   useListWalkKeys,
   type ListArrival,

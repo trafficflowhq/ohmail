@@ -10,6 +10,8 @@ import { useCalendarCheck } from "./check.js";
 import type { CalendarViewSettings } from "./view.js";
 import type { ViewId, Where } from "./where.js";
 
+import { useShortcutsMenu } from "../keys/ShortcutsMenuItem.js";
+
 export type HeadMenu = "date" | "more" | "views" | "hours";
 type ButtonRef = RefObject<HTMLButtonElement | null>;
 type Select = (place: CalendarPlaceId) => void;
@@ -20,7 +22,7 @@ interface CalendarHeadMenuProps {
   settings: CalendarViewSettings;
   port: CalendarPort;
   anchors: Readonly<Record<Exclude<HeadMenu, "hours">, ButtonRef>>;
-  views: readonly { value: ViewId; label: string; keyHint: string }[];
+  views: readonly { value: ViewId; label: string }[];
   dated: boolean;
   desktop: boolean;
   toDate: (day: string) => void;
@@ -59,6 +61,7 @@ export function CalendarHeadMenu({
 }: CalendarHeadMenuProps) {
   const t = useText("calendar");
   const ts = useText("calsettings");
+  const shortcuts = useShortcutsMenu(onClose);
   const { place } = where;
   const reading = useCalendarSettings(port, "none");
   const run = (act: () => void) => () => {
@@ -94,7 +97,15 @@ export function CalendarHeadMenu({
     );
 
   return (
-    <Menu key={menu} open label={t(menu)} anchor={anchors[menu]} right onClose={onClose}>
+    <Menu
+      key={menu}
+      open
+      label={t(menu)}
+      anchor={anchors[menu]}
+      right
+      onClose={onClose}
+      onKey={menu === "more" ? shortcuts.onKey : undefined}
+    >
       {menu === "more" ? (
         <MoreItems
           {...{
@@ -115,16 +126,12 @@ export function CalendarHeadMenu({
         />
       ) : null}
       {(!desktop || menu !== "more") &&
-        views.map(({ value, label, keyHint }) => (
-          <MenuItem
-            key={value}
-            checked={value === place}
-            keyHint={keyHint}
-            onPress={run(() => select(value))}
-          >
+        views.map(({ value, label }) => (
+          <MenuItem key={value} checked={value === place} onPress={run(() => select(value))}>
             {label}
           </MenuItem>
         ))}
+      {menu === "more" ? shortcuts.item : null}
     </Menu>
   );
 }
@@ -170,33 +177,33 @@ function MoreItems({
     <>
       {dated ? (
         <>
-          <MenuItem icon="calendar" keyHint="t" onPress={run(today)}>
+          <MenuItem icon="calendar" onPress={run(today)}>
             {t("today")}
           </MenuItem>
-          <MenuItem icon="day" keyHint="g d" onPress={() => onOpen("date")}>
+          <MenuItem icon="day" onPress={() => onOpen("date")}>
             {t("goToDate")}
           </MenuItem>
         </>
       ) : null}
-      <MenuItem icon="search" keyHint="/" onPress={run(search)}>
+      <MenuItem icon="search" onPress={run(search)}>
         {t("search")}
       </MenuItem>
       {!desktop && dated && (
         <>
-          <MenuItem icon="back" keyHint="[" onPress={run(() => step(-1))}>
+          <MenuItem icon="back" onPress={run(() => step(-1))}>
             {t("stepBefore", { unit })}
           </MenuItem>
-          <MenuItem icon="fwd" keyHint="]" onPress={run(() => step(1))}>
+          <MenuItem icon="fwd" onPress={run(() => step(1))}>
             {t("stepAfter", { unit })}
           </MenuItem>
         </>
       )}
       {!desktop && (
         <>
-          <MenuItem icon="invite" keyHint="g i" onPress={run(invitations)}>
+          <MenuItem icon="invite" onPress={run(invitations)}>
             {t("invitations")}
           </MenuItem>
-          <MenuItem icon="agenda" keyHint="g a" onPress={run(agenda)}>
+          <MenuItem icon="agenda" onPress={run(agenda)}>
             {t("agenda")}
           </MenuItem>
         </>
@@ -218,13 +225,13 @@ function MoreItems({
       {check ? (
         <>
           {timed && <MenuRule />}
-          <MenuItem icon="pull" keyHint="p" disabled={check.busy} onPress={run(check.run)}>
+          <MenuItem icon="pull" disabled={check.busy} onPress={run(check.run)}>
             {ts("accounts.checkNow")}
           </MenuItem>
         </>
       ) : null}
       {!desktop && (
-        <MenuItem icon="settings" keyHint="g ," onPress={run(openSettings)}>
+        <MenuItem icon="settings" onPress={run(openSettings)}>
           {t("settings")}
         </MenuItem>
       )}

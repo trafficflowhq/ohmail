@@ -3,17 +3,41 @@
  * editor took (it prevents it) reaches no binding; an open card closes first (the overlay's own Escape).
  */
 import { useContext, useEffect } from "react";
-import { KeymapContext, useOptionalKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys";
+import {
+  ariaShortcut,
+  chordKeys,
+  KeymapContext,
+  useOptionalKeyBindings,
+  type KeyBinding,
+} from "@ohmail/app-logic/keys";
 import { LATER_CHOICES } from "@ohmail/app-logic/write/later";
 import { useText } from "../text/index.js";
 
 type Press = () => void;
 
-/** The card handles these events locally, so the registry supplies only their descriptions. */
-const teach = (chord: string, label: string): KeyBinding => ({
+export const SEND_KEY = "mod+Enter";
+export const LEAVE_KEY = "Escape";
+export const SEND_AND_DONE_KEY = "mod+shift+Enter";
+export const DRAFT_REPLY_KEY = "mod+shift+y";
+
+export function isSendKey(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey">): boolean {
+  const key = SEND_KEY.slice(SEND_KEY.indexOf("+") + 1);
+  return event.key === key && (event.metaKey || event.ctrlKey);
+}
+
+export function writingKey(chord: string, mod: string) {
+  return {
+    shortcut: ariaShortcut(chord, mod),
+    keyHint: chordKeys(chord, mod).join(" "),
+  };
+}
+
+/** Describe a writing shortcut handled by another surface or by the editor itself. */
+export const teachWritingKey = (chord: string, label: string): KeyBinding => ({
   chord,
   label,
   group: "message",
+  place: "composer",
   helpOnly: true,
   run: () => {},
 });
@@ -24,8 +48,9 @@ export function useLetterKeys(keysHere: boolean, mayGo: boolean, send: Press, le
     keysHere
       ? [
           {
-            chord: "mod+Enter",
+            chord: SEND_KEY,
             group: "message",
+            place: "composer",
             label: t("keys.send"),
             run: () => send(),
             disabled: !mayGo,
@@ -33,14 +58,15 @@ export function useLetterKeys(keysHere: boolean, mayGo: boolean, send: Press, le
             inWriting: true,
           },
           {
-            chord: "Escape",
+            chord: LEAVE_KEY,
             group: "message",
+            place: "composer",
             label: t("keys.leave"),
             run: () => leave(),
             inInput: true,
             inWriting: true,
           },
-          ...Object.keys(LATER_CHOICES).map((chord) => teach(chord, t("keys.later"))),
+          ...Object.keys(LATER_CHOICES).map((chord) => teachWritingKey(chord, t("keys.later"))),
         ]
       : [],
   );
@@ -59,12 +85,12 @@ export function useReplyKeys(
   insideRun?: (event: KeyboardEvent) => boolean,
 ): void {
   const t = useText("write");
-  const writing = { group: "message", inInput: true, inWriting: true } as const;
+  const writing = { group: "message", place: "composer", inInput: true, inWriting: true } as const;
   useOptionalKeyBindings(
     keysHere
       ? [
           {
-            chord: "mod+Enter",
+            chord: SEND_KEY,
             label: t("keys.send"),
             run: () => then("send"),
             inModal: insideRun !== undefined,
@@ -75,7 +101,7 @@ export function useReplyKeys(
       : [],
   );
   useOptionalKeyBindings(
-    keysHere ? [{ chord: "Escape", label: t("keys.leave"), run: () => then("leave"), ...writing }] : [],
+    keysHere ? [{ chord: LEAVE_KEY, label: t("keys.leave"), run: () => then("leave"), ...writing }] : [],
     "overlay",
   );
 }

@@ -137,8 +137,8 @@ async function mountLogin(): Promise<HTMLElement> {
 }
 
 const alerts = (el: HTMLElement): string[] => [...el.querySelectorAll('[role="alert"]')].map((a) => a.textContent ?? "");
-const signOutButton = (el: HTMLElement): HTMLButtonElement | null =>
-  [...el.querySelectorAll("button")].find((b) => b.textContent === A.signOut) ?? null;
+const retryCleanupButton = (el: HTMLElement): HTMLButtonElement | null =>
+  [...el.querySelectorAll("button")].find((b) => b.textContent === A.retryLocalCleanup) ?? null;
 
 async function submit(el: HTMLElement): Promise<void> {
   const setValue = (input: HTMLInputElement, value: string): void => {
@@ -155,15 +155,15 @@ async function submit(el: HTMLElement): Promise<void> {
 }
 
 describe("a wipe that does not land ends the ladder, and is said", () => {
-  it("another tab holds the mirror open, the door answered: the pane's sentence after one ask, with Sign out", async () => {
+  it("another tab holds the mirror open: the door answers once and offers to retry browser cleanup", async () => {
     localStorage.setItem(ANCHOR, "1");
     doorScript = [noContent];
     const el = await mountLogin();
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
     expect(count("door"), "asking the door again cannot unblock a tab that holds the mirror open").toBe(1);
-    expect(alerts(el), "a blocked wipe ended in silence").toEqual([A.signOutBlocked]);
-    expect(signOutButton(el)).not.toBeNull();
-    expect(alerts(el)[0]).toContain("Your session is ended, but the mail cached in this browser is still here");
+    expect(alerts(el), "a blocked wipe ended in silence").toEqual([A.localCleanupBlocked]);
+    expect(retryCleanupButton(el)).not.toBeNull();
+    expect(alerts(el)[0]).toContain("This browser still holds cached mail");
     expect(count("session") + count("refresh")).toBe(0);
   });
 
@@ -186,17 +186,19 @@ describe("a wipe that does not land ends the ladder, and is said", () => {
     const el = await mountLogin();
     await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
     expect(count("door")).toBe(1);
-    expect(alerts(el), "an unverifiable wipe ended in silence").toEqual([A.signOutUnverified]);
+    expect(alerts(el), "an unverifiable wipe ended in silence").toEqual([A.localCleanupUnverified]);
+    expect(alerts(el)[0]).toContain("clear this site’s data in your browser settings");
+    expect(retryCleanupButton(el)).toBeNull();
   });
 
-  it("Sign out, pressed once the other tab is closed: asked again, finished, and the sentence goes", async () => {
+  it("Retry browser cleanup, pressed once the other tab is closed, finishes and clears the warning", async () => {
     localStorage.setItem(ANCHOR, "1");
     doorScript = [noContent];
     const el = await mountLogin();
     await tick(1_000);
-    expect(alerts(el)).toEqual([A.signOutBlocked]);
+    expect(alerts(el)).toEqual([A.localCleanupBlocked]);
     held = false;
-    await act(async () => { signOutButton(el)!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await act(async () => { retryCleanupButton(el)!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await tick(1_000);
     expect(count("door"), "the revocation was already confirmed").toBe(1);
     expect(count("clear"), "Sign out did not ask to finish clearing").toBe(1);

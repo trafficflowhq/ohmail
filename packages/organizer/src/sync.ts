@@ -1982,7 +1982,8 @@ async function syncCycleWithin(
     if (reapOwed) oweReap(adapter);
     // Folder enumeration can be incomplete while an exact Message-ID search still answers.
     // Keep the body until each unread destination has independently ruled out a moved copy.
-    if (!scanInterrupted && deferred.size === 0 && reapOwed && unreadFolders.size > 0 && unreadFolders.size <= 4
+    // Allow a proof across the whole built-in folder set, with a fixed cap on additional reads.
+    if (!scanInterrupted && deferred.size === 0 && reapOwed && unreadFolders.size > 0 && unreadFolders.size <= WATCHED_FOLDERS.length
       && repo.listInstanceless && adapter.messageIdsGone && adapter.folderKeys) {
       const limit = 32;
       const rows = await repo.listInstanceless(accountId, mailboxId, limit, reapAfterId);
@@ -1990,11 +1991,17 @@ async function syncCycleWithin(
       let remaining = rows.filter((row): row is { id: string; messageIdHeader: string } => row.messageIdHeader !== null);
       const fresh = unreadFolders.size > 1 ? { fresh: true } : undefined;
       const snapshots = new Map<string, FolderKeys>();
+      let missing: string | undefined;
       try {
         for (const folder of unreadFolders) {
           if (remaining.length === 0) break;
           const keys = await adapter.folderKeys(folder, fresh);
-          if (!fresh && keys.k === "absent") continue;
+          if (keys.k === "absent") {
+            // Two missing folders provide no common point of absence if both can be recreated.
+            if (missing !== undefined) { remaining = []; break; }
+            if (fresh) missing = folder;
+            continue;
+          }
           if (keys.k !== "keys") { remaining = []; break; }
           if (fresh) snapshots.set(folder, keys.keys);
           const answer = await adapter.messageIdsGone(folder, keys.keys.uidValidity, remaining.map((row) => row.messageIdHeader));
@@ -2002,8 +2009,10 @@ async function syncCycleWithin(
           remaining = answer.k === "read" && sameEpoch(epochOf(answer.uidValidity), epochOf(keys.keys.uidValidity))
             ? remaining.filter((row) => answer.gone.has(row.messageIdHeader)) : [];
         }
-        // An earlier folder can receive a moved copy while a later one is searched.
-        // Stable UIDNEXT in the same epoch keeps each absence valid through the final search.
+        // Recheck the missing folder first. The other folders' stable UID ranges must cover
+        // that instant as well as the searches, even if the missing folder was briefly recreated.
+        if (remaining.length > 0 && missing !== undefined
+          && (await adapter.folderKeys(missing, fresh)).k !== "absent") remaining = [];
         for (const [folder, before] of snapshots) {
           if (remaining.length === 0) break;
           const after = await adapter.folderKeys(folder, fresh);

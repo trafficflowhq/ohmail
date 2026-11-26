@@ -22,8 +22,8 @@ export const SELF_HOST_BUILD = process.env.NEXT_PUBLIC_OHMAIL_FLAVOR === "selfho
  * application timeout of its own, so without this a server that ACCEPTS the connection and
  * never answers — a wedged API process behind a live proxy — parks the setup page on
  * "checking" forever, with its retry unreachable. Generous against a cold container, small
- * against a person deciding the page is broken; the middleware's own probe budget is tighter
- * because a slow answer there merely serves the landing.
+ * against a person deciding the page is broken. The middleware's shorter probe can send
+ * the browser to setup, where this check has time to finish and can be retried.
  */
 export const HELLO_TIMEOUT_MS = 5_000;
 
@@ -72,8 +72,7 @@ export interface ServerHello {
 
 /**
  * Ask the server what it is. `null` when this build has no API, when the request fails, or when
- * the answer is not the shape `/hello` promises — the caller's fallback is always "the ordinary
- * screen", so a wrong `null` costs a normal page, never a broken one.
+ * the answer is not the shape `/hello` promises. The setup page can offer a retry.
  */
 export async function serverHello(opts: { signal?: AbortSignal } = {}): Promise<ServerHello | null> {
   if (!apiConfigured()) return null;

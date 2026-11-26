@@ -332,6 +332,25 @@ describe("the invitations' panel", () => {
     expect(address.read()).toContain("/2026-11-19/e/b");
   });
 
+  it("shows the place and organizer and omits a calendar with no name", () => {
+    const m = mirror(() => ({ kind: "taken", write: null }));
+    m.put("calendar", studio.id, { ...studio, name: "" });
+    m.put(
+      "calendar_event",
+      "a",
+      invitation("a", "Tech check", "20261118", {
+        place: "Studio Nord",
+      }),
+    );
+    mount(m, "#/cal/week/2026-11-18/e/a?panel=invitations");
+
+    const details = within(panel());
+    expect(details.getByText("Studio Nord")).toBeTruthy();
+    expect(details.getByText("From", { exact: true })).toBeTruthy();
+    expect(details.getByText("Marco", { exact: true })).toBeTruthy();
+    expect(details.queryByText("Calendar", { exact: true })).toBeNull();
+  });
+
   it("draws a cancel that arrives while its row is open, struck under Changed, with nothing to press", async () => {
     const m = mirror(() => ({ kind: "taken", write: null }));
     m.put("calendar", studio.id, studio);

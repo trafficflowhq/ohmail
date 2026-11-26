@@ -186,7 +186,8 @@ export function hideIdentityOf(
       !organizer || own.has(organizer) || row.organizerAddresses?.includes(organizer) || (named && organizer === connected)) return null;
   const attendee = connectedAttendee(invitees
     .filter(({ role }) => role === "required" || role === "optional")
-    .map(({ address }) => addressKey(address)), principal, own);
+    .map(({ address }) => addressKey(address)), principal, own,
+    row.provider === "caldav" ? row.organizerAddresses ?? [] : []);
   return attendee === null ? null : { attendee, organizer };
 }
 

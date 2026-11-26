@@ -13,6 +13,28 @@ export function JoinSignIn({ door, join }: { door: JoinDoor; join: Text }): Reac
   );
 }
 
+export function JoinBack({
+  door,
+  join,
+  signIn = false,
+  children,
+}: {
+  door: JoinDoor;
+  join: Text;
+  signIn?: boolean;
+  children?: ReactNode;
+}): ReactNode {
+  return (
+    <span className="way-join-row">
+      <WayButton way={door.leave} kind="quiet">
+        {join("leave")}
+      </WayButton>
+      {signIn && <JoinSignIn door={door} join={join} />}
+      {children}
+    </span>
+  );
+}
+
 export { refusalOf, SignOutAgain, type Refusal } from "../stage/pending.js";
 
 /** The account screens share one stage dot. Connecting a mailbox moves to the next stage. */

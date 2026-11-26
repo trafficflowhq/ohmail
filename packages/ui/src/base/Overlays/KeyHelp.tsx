@@ -90,7 +90,7 @@ export function KeyHelp({
                           {i ? <i className="oh-keyhelp-or">·</i> : null}
                           <span className="oh-keyhelp-chord">
                             {chord.map((k) => (
-                              <KeyHint key={k} shown>
+                              <KeyHint key={k} shown quiet>
                                 {k}
                               </KeyHint>
                             ))}

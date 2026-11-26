@@ -19,7 +19,7 @@ import { calPushChannels } from "@trafficflow/db/cloud";
 import { calendarPool, passDb } from "@ohmail/organizer/calendar-sync";
 import type { CalendarNoticeInput } from "@ohmail/organizer/calendar/types";
 import {
-  NOTICE_REFUSED_WAIT_MS, NOTICE_RENEW_BEFORE_MS, NOTICE_REQUESTS_PER_TURN, calendarNoticesPass, type CalendarNoticeDeps,
+  NOTICE_REFUSED_WAIT_MS, NOTICE_RENEW_BEFORE_MS, NOTICE_REQUESTS_PER_TURN, calendarNoticeCoverage, calendarNoticesPass, type CalendarNoticeDeps,
 } from "../src/calendar-notices.js";
 import { NOTICE_LIFE_MS, NOTICE_PROVISIONAL_MS } from "../src/calendar/notice-channels.js";
 import { AVAILABLE, capturedLog, openWorld, seedConnection, silentHttp, type World } from "../../../packages/organizer/test/_calendar-world.js";
@@ -42,6 +42,7 @@ interface Script {
   readonly open?: (asked: Opened, n: number, usual: () => Answer<NoticeChannel>, probe: Probe) => Promise<Answer<NoticeChannel>> | Answer<NoticeChannel>;
   /** Run inside an open, before it answers: what the store holds while the provider is being asked. */
   readonly during?: (asked: Opened, probe: Probe) => Promise<void>;
+  readonly renew?: NonNullable<CalendarNotices["renew"]>;
 }
 
 /** A provider's notice half that keeps what it was asked, in order. */
@@ -52,6 +53,7 @@ function scripted(provider: "google" | "microsoft", probe: Probe, script: Script
   const notices: CalendarNotices = {
     provider,
     names: provider === "google" ? "caller" : "provider",
+    ...(script.renew === undefined ? {} : { renew: script.renew }),
     async open(_c: Connection, cal, ask: NoticeChannelAsk): Promise<Answer<NoticeChannel>> {
       const asked: Opened = { calendar: cal.id, id: ask.id, address: ask.address, word: ask.word(), untilMs: ask.untilMs };
       opened.push(asked);
@@ -79,11 +81,11 @@ describe.skipIf(!AVAILABLE)("the worker's notice channel pass", () => {
   /** A connection with `n` calendars, and one turn of the pass over it. */
   async function rig(provider: "google" | "microsoft", n: number, script: Script = {}, origin: string | null = ORIGIN) {
     const seeded = await seedConnection(w, { provider, credential: null });
-    const calendars: { id: string; providerId: string }[] = [];
+    const calendars: { id: string; providerId: string; access: string }[] = [];
     for (let i = 0; i < n; i++) {
       const providerId = `cal-${i}-${randomUUID()}@group.calendar.example.test`;
       const [row] = await w.db.insert(calCalendars).values({ accountId: seeded.accountId, connectionId: seeded.connectionId, providerId }).returning({ id: calCalendars.id });
-      calendars.push({ id: row!.id, providerId });
+      calendars.push({ id: row!.id, providerId, access: "owner" });
     }
     const clock = { at: Date.now() };
     const rows = (): Promise<ChannelRow[]> => w.db.select({
@@ -112,7 +114,7 @@ describe.skipIf(!AVAILABLE)("the worker's notice channel pass", () => {
         ) t`) as unknown as Array<{ text: string }>;
       return out[0]!.text;
     };
-    return { ...seeded, calendars, clock, double, log, deps, turn, rows, everything };
+    return { ...seeded, calendars, clock, double, log, deps, turn, rows, everything, input };
   }
 
   it("with no address, or a provider that has no notices, asks nothing and writes no row", async () => {
@@ -184,17 +186,55 @@ describe.skipIf(!AVAILABLE)("the worker's notice channel pass", () => {
     const named = [randomUUID(), randomUUID().toUpperCase()];
     const r = await rig("microsoft", 2, {
       during: async (_asked, probe) => { seen.push((await probe.rows()).length); },
-      open: (_asked, n, _usual, probe) => ({ ok: true, value: { id: named[n - 1]!, resourceId: null, expiresAtMs: probe.clock.at + 2 * DAY } }),
+      open: (_asked, _n, _usual, probe) => ({ ok: true, value: { id: named[0]!, resourceId: null, expiresAtMs: probe.clock.at + 2 * DAY } }),
     });
-    expect(await r.turn()).toEqual({ live: false });
-    // No row stood while the first was asked; the first's row stood while the second was.
-    expect(seen).toEqual([0, 1]);
-    expect(r.double.opened.map((o) => o.address)).toEqual([`${ORIGIN}/calendar/notices/microsoft`, `${ORIGIN}/calendar/notices/microsoft`]);
+    expect(await r.turn()).toEqual({ live: true });
+    expect(seen).toEqual([0]);
+    expect(r.double.opened.map((o) => o.address)).toEqual([`${ORIGIN}/calendar/notices/microsoft`]);
     const rows = await r.rows();
     expect(rows.map((row) => [row.channelId, row.calendarId, row.tokenHash, row.resourceId, row.expiresAt.getTime()])).toEqual([
-      [named[0], r.calendars[0]!.id, digest(r.double.opened[0]!.word), null, r.clock.at + 2 * DAY],
+      [named[0], null, digest(r.double.opened[0]!.word), "me/events", r.clock.at + 2 * DAY],
     ]);
-    expect(r.double.events.filter((e) => e.startsWith("close"))).toEqual([`close ${named[1]} -`]);
+    const invalid = await rig("microsoft", 1, {
+      open: (_asked, _n, _usual, probe) => ({ ok: true, value: { id: named[1]!, resourceId: null, expiresAtMs: probe.clock.at + 2 * DAY } }),
+    });
+    expect(await invalid.turn()).toEqual({ live: false });
+    expect(await invalid.rows()).toEqual([]);
+    expect(invalid.double.events.filter((e) => e.startsWith("close"))).toEqual([`close ${named[1]} -`]);
+  });
+
+  it("Microsoft uses one mailbox subscription when several calendars are owned and one is shared", async () => {
+    const renewals: string[] = [];
+    const r = await rig("microsoft", 4, {
+      renew: async (_connection, id, until) => {
+        renewals.push(id);
+        return { ok: true, value: until };
+      },
+    });
+    const calendars = r.calendars.map((calendar, index) => ({ ...calendar, access: index === 3 ? "writer" : "owner" }));
+    await r.turn({ calendars });
+    await r.turn({ calendars });
+    expect(r.double.opened).toHaveLength(1);
+    const initial = await r.rows();
+    expect(initial).toMatchObject([{ calendarId: null, resourceId: "me/events" }]);
+    r.clock.at += 5 * DAY + HOUR;
+    expect(await r.turn({ calendars })).toEqual({ live: true });
+    expect(renewals).toEqual([initial[0]!.channelId]);
+    expect(r.double.opened).toHaveLength(1);
+    expect(await r.rows()).toMatchObject([{ channelId: initial[0]!.channelId, tokenHash: initial[0]!.tokenHash, expiresAt: new Date(r.clock.at + NOTICE_LIFE_MS) }]);
+  });
+
+  it("counts only confirmed and unexpired channels toward polling coverage", async () => {
+    const r = await rig("google", 3);
+    await r.turn();
+    const [live, ended, provisional] = r.calendars;
+    await w.db.update(calPushChannels).set({ expiresAt: new Date(r.clock.at - HOUR) })
+      .where(eq(calPushChannels.calendarId, ended!.id));
+    await w.db.update(calPushChannels).set({ resourceId: null })
+      .where(eq(calPushChannels.calendarId, provisional!.id));
+    expect(await calendarNoticeCoverage(r.deps, r.input())).toEqual(new Map([[live!.id, r.clock.at + 6 * DAY - NOTICE_RENEW_BEFORE_MS]]));
+    r.deps.refused.set(live!.id, r.clock.at + HOUR);
+    expect(await calendarNoticeCoverage(r.deps, r.input())).toEqual(new Map());
   });
 
   it("Microsoft: a row that cannot be written ends the subscription it was for, and the pass says a failure and nothing of it", async () => {
@@ -204,7 +244,7 @@ describe.skipIf(!AVAILABLE)("the worker's notice channel pass", () => {
     // The same id again, for another account's connection: the store refuses the second row.
     const r = await rig("microsoft", 1, { open: () => ({ ok: true, value: { id: taken, resourceId: null, expiresAtMs: Date.now() + 2 * DAY } }) });
     expect(await r.turn()).toEqual({ live: false });
-    expect([await r.rows(), r.double.events]).toEqual([[], [`open ${r.calendars[0]!.providerId}`, `close ${taken} -`]]);
+    expect([await r.rows(), r.double.events]).toEqual([[], ["open me/events", `close ${taken} -`]]);
     const lines = r.log.lines.map((l) => JSON.parse(l) as Record<string, unknown>);
     expect(lines.map((l) => [l.level, l.event, l.kind])).toEqual([["warn", "calendar_notices_failed", "microsoft"]]);
     expect(r.log.lines.join("\n").includes(taken) || r.log.lines.join("\n").includes(r.double.opened[0]!.word)).toBe(false);
@@ -270,19 +310,29 @@ describe.skipIf(!AVAILABLE)("the worker's notice channel pass", () => {
   });
 
   it("Microsoft: the request that ends a subscription which cannot be kept is counted among the eight", async () => {
-    // Every answered id is one the door could not be asked by: each open costs its own request and the one that ends it again.
+    const putLegacyChannels = (r: Awaited<ReturnType<typeof rig>>, count: number) =>
+      w.db.insert(calPushChannels).values(r.calendars.slice(0, count).map((cal) => ({
+        accountId: r.accountId, connectionId: r.connectionId, calendarId: cal.id, provider: "microsoft",
+        channelId: randomUUID(), tokenHash: digest(randomUUID()), expiresAt: new Date(r.clock.at + 2 * DAY),
+      })));
     const bad = await rig("microsoft", NOTICE_REQUESTS_PER_TURN, {
-      open: (_asked, _n, _usual, probe) => ({ ok: true, value: { id: randomUUID().toUpperCase(), resourceId: null, expiresAtMs: probe.clock.at + 2 * DAY } }),
+      open: (_asked, _n, _usual, probe) => ({ ok: true, value: { id: "invalid-channel-id", resourceId: null, expiresAtMs: probe.clock.at + 2 * DAY } }),
     });
+    await putLegacyChannels(bad, NOTICE_REQUESTS_PER_TURN - 2);
     expect(await bad.turn()).toEqual({ live: false });
     expect([bad.double.opened.length, bad.double.events.filter((e) => e.startsWith("close")).length, await bad.rows()])
-      .toEqual([NOTICE_REQUESTS_PER_TURN / 2, NOTICE_REQUESTS_PER_TURN / 2, []]);
-    // Where every subscription is kept, an open is begun only while the request to end it again is still left.
+      .toEqual([1, NOTICE_REQUESTS_PER_TURN - 1, []]);
+    expect(bad.double.events.slice(-2)).toEqual(["open me/events", "close invalid-channel-id -"]);
+    expect(bad.double.events).toHaveLength(NOTICE_REQUESTS_PER_TURN);
+    // With only one request left, opening waits until the next turn can also afford to undo it.
     const good = await rig("microsoft", NOTICE_REQUESTS_PER_TURN + 1);
+    await putLegacyChannels(good, NOTICE_REQUESTS_PER_TURN - 1);
     expect(await good.turn()).toEqual({ live: false });
-    expect([good.double.opened.length, good.double.events.filter((e) => e.startsWith("close")).length]).toEqual([NOTICE_REQUESTS_PER_TURN - 1, 0]);
+    expect([good.double.opened.length, good.double.events.filter((e) => e.startsWith("close")).length]).toEqual([0, NOTICE_REQUESTS_PER_TURN - 1]);
+    expect(await good.rows()).toEqual([]);
     expect(await good.turn()).toEqual({ live: true });
-    expect((await good.rows()).length).toBe(NOTICE_REQUESTS_PER_TURN + 1);
+    expect(good.double.opened).toHaveLength(1);
+    expect(await good.rows()).toMatchObject([{ calendarId: null, resourceId: "me/events" }]);
   });
 
   it("a provider that throws leaves no row behind, and the turn that ran before it is not failed", async () => {

@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import frameDe from "../../messages/frame.de.json" with { type: "json" };
 import de from "../../messages/write.de.json" with { type: "json" };
@@ -926,3 +927,283 @@ it("keeps German send actions reachable when large text and the keyboard reduce 
     await page.close();
   }
 }, 30_000);
+
+async function openKeyboardComposer(page: Page, platform = "Linux x86_64", fixture = html) {
+  await page.addInitScript((name) => {
+    Object.defineProperty(navigator, "platform", { get: () => name });
+    Object.defineProperty(navigator, "userAgent", { get: () => name });
+  }, platform);
+  await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: "text/html", body: fixture }));
+  await page.goto(`${ORIGIN}/?help&state=marks`);
+  await page.getByRole("button", { name: "Send", exact: true }).waitFor({ timeout: 5000 });
+}
+
+const hints = (page: Page) => page.locator("[data-held-shortcuts] kbd:visible");
+const sendHint = (page: Page) =>
+  page.getByRole("button", { name: "Send", exact: true }).getByText(/^(Ctrl|⌘) ?↵$/);
+
+it.each([
+  { platform: "Linux x86_64", mod: "Control" },
+  { platform: "MacIntel", mod: "Meta" },
+])("$mod held alone reveals quiet chips and release or blur clears them", async ({ platform, mod }) => {
+  const page = await browser!.newPage({ reducedMotion: "reduce" });
+  try {
+    await openKeyboardComposer(page, platform);
+    const send = page.getByRole("button", { name: "Send", exact: true });
+    const box = await send.boundingBox();
+    await page.keyboard.down(mod);
+    expect(await hints(page).count()).toBe(0);
+    await expect.poll(() => hints(page).count()).toBeGreaterThan(0);
+    expect(await hints(page).first().getAttribute("aria-hidden")).toBe("true");
+    expect(
+      await hints(page)
+        .first()
+        .evaluate((key) => getComputedStyle(key.parentElement!).animationName),
+    ).toBe("none");
+    expect(await send.boundingBox()).toEqual(box);
+    await page.keyboard.up(mod);
+    await expect.poll(() => hints(page).count()).toBe(0);
+    await page.keyboard.down(mod);
+    await expect.poll(() => hints(page).count()).toBeGreaterThan(0);
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect.poll(() => hints(page).count()).toBe(0);
+    await page.keyboard.up(mod);
+  } finally {
+    await page.close();
+  }
+});
+
+it("a shortcut pressed during the hold never reveals the chips", async () => {
+  const page = await browser!.newPage();
+  try {
+    await openKeyboardComposer(page);
+    const bold = page.getByRole("button", { name: "Bold", exact: true });
+    const pressed = await bold.getAttribute("aria-pressed");
+    await page.evaluate(() => {
+      const layer = document.querySelector(".fr-keyboard-cues")!;
+      new MutationObserver(() => {
+        if (layer.hasAttribute("data-held-shortcuts")) layer.setAttribute("data-reveal-seen", "");
+      }).observe(layer, { attributeFilter: ["data-held-shortcuts"] });
+    });
+    await page.keyboard.down("Control");
+    await page.keyboard.press("b");
+    await expect.poll(() => bold.getAttribute("aria-pressed")).toBe(pressed === "true" ? "false" : "true");
+    await page.waitForTimeout(600);
+    expect(await page.locator("[data-reveal-seen]").count()).toBe(0);
+    expect(await hints(page).count()).toBe(0);
+    await page.keyboard.up("Control");
+  } finally {
+    await page.close();
+  }
+});
+
+it("Send shows its key just while composing", async () => {
+  const page = await browser!.newPage();
+  try {
+    await openKeyboardComposer(page);
+    const send = page.getByRole("button", { name: "Send", exact: true });
+    const discard = page.getByRole("button", { name: "Discard", exact: true });
+    expect(await send.getAttribute("aria-keyshortcuts")).toBe("Control+Enter");
+    expect(await discard.getAttribute("aria-keyshortcuts")).toBeNull();
+    await page.getByRole("textbox", { name: "Subject", exact: true }).focus();
+    expect(await sendHint(page).evaluate((chip) => getComputedStyle(chip).opacity)).toBe("0.6");
+    const focusedBounds = await send.boundingBox();
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    expect(await sendHint(page).evaluate((chip) => getComputedStyle(chip).opacity)).toBe("0");
+    expect(await send.boundingBox()).toEqual(focusedBounds);
+  } finally {
+    await page.close();
+  }
+});
+
+it("a touch-only screen shows neither the focused Send hint nor held chips", async () => {
+  const page = await browser!.newPage({
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 1024, height: 768 },
+  });
+  try {
+    await openKeyboardComposer(page);
+    await page.getByRole("textbox", { name: "Subject", exact: true }).focus();
+    expect(await sendHint(page).isVisible()).toBe(false);
+    await page.keyboard.down("Control");
+    await page.waitForTimeout(600);
+    expect(await hints(page).count()).toBe(0);
+    await page.keyboard.up("Control");
+  } finally {
+    await page.close();
+  }
+});
+
+it("the formatter’s tooltip and the shortcut sheet use the same binding", async () => {
+  const page = await browser!.newPage({ viewport: { width: 800, height: 900 } });
+  page.setDefaultTimeout(4000);
+  try {
+    await openKeyboardComposer(page);
+    const bold = page.getByRole("button", { name: "Bold", exact: true });
+    expect(await bold.getAttribute("aria-keyshortcuts")).toMatch(/Control\+b/i);
+    await bold.hover();
+    const tooltip = page.locator("[data-shortcut-tooltip]");
+    await tooltip.waitFor({ timeout: 2500 });
+    expect(await tooltip.textContent()).toBe("Bold · CtrlB");
+    await page.getByRole("textbox", { name: "Subject", exact: true }).focus();
+    await page.keyboard.press("?");
+    const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    expect(await help.count()).toBe(0);
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await page.keyboard.press("?");
+    await help.waitFor();
+    await help.getByRole("heading", { name: "Composer" }).waitFor();
+    expect(await help.getByText("Bold", { exact: true }).count()).toBe(1);
+    expect(
+      await help.getByText("Undo typing", { exact: true }).locator("..").locator("kbd").allTextContents(),
+    ).toEqual(expect.arrayContaining(["Ctrl", "z"]));
+    expect(
+      await help.getByText("Redo typing", { exact: true }).locator("..").locator("kbd").allTextContents(),
+    ).toEqual(expect.arrayContaining(["Ctrl", "⇧", "z"]));
+    const leave = help.getByText("Keep as draft", { exact: true }).locator("..");
+    expect(await leave.locator("kbd").textContent()).toBe("esc");
+    await page.keyboard.press("Escape");
+    await help.waitFor({ state: "hidden" });
+  } finally {
+    await page.close();
+  }
+});
+
+it.each([
+  { platform: "Linux x86_64", mod: "Control" },
+  { platform: "MacIntel", mod: "Meta" },
+])("keeps editor Alt shortcuts working and out of the sheet with $mod", async ({ platform, mod }) => {
+  const page = await browser!.newPage({ viewport: { width: 1032, height: 900 } });
+  try {
+    await openKeyboardComposer(page, platform);
+    const editor = page.locator(".tiptap");
+    await editor.focus();
+    await page.keyboard.press(`${mod}+Alt+1`);
+    expect(await editor.locator("h1").count()).toBe(1);
+    await page.keyboard.press(`${mod}+Alt+Shift+c`);
+    expect(await editor.locator("pre").count()).toBe(1);
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await page.keyboard.press("?");
+    const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await sheet.getByRole("heading", { name: "Composer" }).waitFor();
+    const caps = await sheet.locator("kbd").allTextContents();
+    expect(caps).not.toContain("Alt");
+    expect(caps).not.toContain("⌥");
+    expect(await sheet.locator(".oh-keyhelp-label").allTextContents()).toEqual(
+      expect.arrayContaining([
+        "Bold",
+        "Italic",
+        "Underline",
+        "Strikethrough",
+        "Inline code",
+        "Bulleted list",
+        "Numbered list",
+        "Quote",
+        "Link",
+        "Undo typing",
+        "Redo typing",
+      ]),
+    );
+  } finally {
+    await page.close();
+  }
+});
+
+it.each([1032, 1440])(
+  "the idle Paper footer draws exactly as it does without the Send hint at %i px",
+  async (width) => {
+    const context = await browser!.newContext({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+    try {
+      const picture = async (fixture: string) => {
+        const page = await context.newPage();
+        await openKeyboardComposer(page, "Linux x86_64", fixture);
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        await page.evaluate(() => document.fonts.ready);
+        return page.getByRole("toolbar", { name: en.write.verbs }).screenshot({ animations: "disabled" });
+      };
+      // With the cue's styles disabled before first paint, the kit uses the normal Paper footer.
+      const original = await picture(html.replaceAll("[data-shortcut-send]", "[data-cue-disabled]"));
+      expect((await picture(html)).equals(original)).toBe(true);
+    } finally {
+      await context.close();
+    }
+  },
+);
+
+it.each([1032, 1440])("Send receives a press on its chip while focus leaves at %i px", async (width) => {
+  const page = await browser!.newPage({ viewport: { width, height: 900 } });
+  try {
+    await openKeyboardComposer(page);
+    await page.getByRole("textbox", { name: "Subject", exact: true }).focus();
+    const send = page.getByRole("button", { name: "Send", exact: true });
+    const before = await send.boundingBox();
+    const key = (await sendHint(page).boundingBox())!;
+    const x = key.x + key.width / 2;
+    const y = key.y + key.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => done())));
+    expect(await send.boundingBox()).toEqual(before);
+    await page.mouse.up();
+    expect(await page.locator("[data-letter-sent]").count()).toBe(1);
+  } finally {
+    await page.close();
+  }
+});
+
+it.each([
+  { width: 390, hasTouch: false },
+  { width: 390, hasTouch: true },
+  { width: 1024, hasTouch: true },
+])("the shortcut sheet stays closed at $width px with touch $hasTouch", async ({ width, hasTouch }) => {
+  const page = await browser!.newPage({ viewport: { width, height: 844 }, hasTouch, isMobile: hasTouch });
+  try {
+    await openKeyboardComposer(page);
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await page.keyboard.press("?");
+    expect(await page.getByRole("dialog", { name: "Keyboard shortcuts" }).count()).toBe(0);
+  } finally {
+    await page.close();
+  }
+});
+
+it.each([
+  { width: 1032, minimum: 1 },
+  { width: 1440, minimum: 3 },
+])(
+  "held formatting keys keep clear of other chips and control labels at $width px",
+  async ({ width, minimum }) => {
+    const page = await browser!.newPage({ viewport: { width, height: 900 }, reducedMotion: "reduce" });
+    try {
+      await openKeyboardComposer(page);
+      await page.keyboard.down("Control");
+      await expect.poll(() => hints(page).count()).toBeGreaterThanOrEqual(minimum);
+      const collision = await hints(page).evaluateAll((chips) => {
+        const labels = [...document.querySelectorAll("button span, button kbd")].flatMap((element) => {
+          if (
+            !element.getClientRects().length ||
+            getComputedStyle(element).opacity === "0" ||
+            ![...element.childNodes].some(
+              (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+            )
+          )
+            return [];
+          const text = document.createRange();
+          text.selectNodeContents(element);
+          return [...text.getClientRects()];
+        });
+        const rects = chips.map((chip) => chip.getBoundingClientRect());
+        const overlaps = (a: DOMRect, b: DOMRect) =>
+          a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+        return rects.some((rect, i) =>
+          [...labels, ...rects.slice(i + 1)].some((other) => overlaps(rect, other)),
+        );
+      });
+      expect(collision).toBe(false);
+      await page.keyboard.up("Control");
+    } finally {
+      await page.close();
+    }
+  },
+);

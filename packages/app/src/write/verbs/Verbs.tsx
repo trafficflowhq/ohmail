@@ -9,9 +9,11 @@
 import { useState } from "react";
 import { Menu, MenuItem } from "@ohmail/ui/base";
 import { ActionPanel, type PanelVerb } from "@ohmail/ui/mail";
-import { chordKeys, useModGlyph } from "@ohmail/app-logic/keys";
+import { useModGlyph } from "@ohmail/app-logic/keys";
 import { SEND_IN_FLIGHT_PHASES, type SendPhase, type SendState } from "@ohmail/app-logic/writing/mail-send";
 import { useText } from "../../text/index.js";
+import { SEND_KEY, writingKey } from "../keys.js";
+import { useShortcutsMenu } from "../../keys/ShortcutsMenuItem.js";
 import "./verb-style.css";
 
 export function Verbs({
@@ -50,9 +52,10 @@ export function Verbs({
   const [menu, setMenu] = useState<{ anchor: HTMLElement; ids: readonly string[] } | null>(null);
   const [folded, setFolded] = useState<readonly string[]>([]);
   const close = () => setMenu(null);
+  const shortcuts = useShortcutsMenu(close);
   const send = sendVerb(t("send"), canSend, going, onSend, resting, said);
   const items: PanelVerb[] = [
-    keysHere ? { ...send, keyHint: chordKeys("mod+Enter", mod).join(" ") } : send,
+    keysHere ? { ...send, ...writingKey(SEND_KEY, mod), shortcutWhileWriting: true } : send,
     {
       id: "later",
       label: t("later.verb"),
@@ -82,7 +85,17 @@ export function Verbs({
         }}
       />
       {menu ? (
-        <Menu open portal anchor={menu.anchor} label={more} onClose={close} anchored up right>
+        <Menu
+          open
+          portal
+          anchor={menu.anchor}
+          label={more}
+          onClose={close}
+          onKey={shortcuts.onKey}
+          anchored
+          up
+          right
+        >
           {items
             .filter(({ id }) => menu.ids.includes(id))
             .map((item) => (
@@ -98,6 +111,7 @@ export function Verbs({
                 {item.name ?? item.label}
               </MenuItem>
             ))}
+          {shortcuts.item}
         </Menu>
       ) : null}
     </div>
