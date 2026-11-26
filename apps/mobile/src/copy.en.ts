@@ -619,9 +619,9 @@ const TABLE = {
   serversSignOutById: (origin: string, id: string) =>
     `On ${origin}, open Settings → Devices and revoke the device with ID ${id} if it’s still listed.`,
   serversSignOutLegacy: (origin: string) =>
-    `Sign in again on this phone to the same account on ${origin}. If you can’t confirm the old session ended, change your password under Settings → Security to end the other sessions.`,
+    `Sign in again on this phone to the same account on ${origin}. If you can’t confirm the old session ended, change your password in Settings → Account on the web to end the other sessions. If a computer hosts this server, open Settings → Devices in ohmail on that computer and remove the old pairing. If you can’t identify it, remove all phone pairings there.`,
   serversSignOutRecovery: (origin: string) =>
-    `From another signed-in device, change your password under Settings → Security on ${origin} to end the other sessions.`,
+    `On ${origin}, change your password in Settings → Account on the web to end the other sessions. If a computer hosts this server, open Settings → Devices in ohmail on that computer and remove the old pairing. If you can’t identify it, remove all phone pairings there.`,
   serversSignOutDone: "I checked Devices",
   serversEmpty: "No pairings yet.",
   /**

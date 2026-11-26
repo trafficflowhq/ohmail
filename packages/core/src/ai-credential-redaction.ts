@@ -302,11 +302,11 @@ const PASSWORD_VERB = /[ \t]+(?:is|ist|lautet)\b/u;
 const PASSWORD_LABEL = new RegExp(String.raw`(?<![^\s>])${PASSWORD_NAME.source}`
   + String.raw`(?:(?:${PASSWORD_VERB.source})?[ \t]*${FIELD_DELIMITER.source}|${PASSWORD_VERB.source})[ \t]*`, "giu");
 const NEXT_PASSWORD_FIELD = new RegExp(String.raw`(?<![ \t])[ \t]+(?=${PASSWORD_NAME.source}(?:${PASSWORD_VERB.source})?[ \t]*${FIELD_DELIMITER.source})`, "iu");
-const NEXT_USERNAME_FIELD = new RegExp(String.raw`(?<![ \t])[ \t]+(?=(?:user[ \t]?name|benutzername)[ \t]*${FIELD_DELIMITER.source}[ \t]*\S+$)`, "iu");
 const QUOTED_PASSWORD = /^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\x60(?:[^\x60\\]|\\.)*\x60|“[^”]*”|‘[^’]*’)/u;
 const PASSWORD_GUIDANCE = /^(?:(?:not|always|usually|nicht|immer)[ \t]+)?(?:required|needed|optional|case[- ]sensitive|recommended|erforderlich|notwendig|empfohlen)\b(?=$|[.!?,;]|[ \t]+(?:to|for|before|after|when|if|and|but|um|für|vor|nach|wenn|und|aber)\b)/iu;
 const PASSWORD_LENGTH_REQUIREMENT = /^(?:a (?:minimum|maximum) of|at least|at most)[ \t]+[\p{L}\p{Nd}]+(?:-[\p{L}\p{Nd}]+)?[ \t]+characters?(?=$|[.!?,;]|[ \t]+(?:long|in length|and|or)\b)/iu;
-const PASSWORD_TOKEN_BEFORE_SENTENCE = /^\S+?(?=[.!?][ \t]+(?:The|This|That|Please|You|We|It)[ \t]+.+[.!?]$)/u;
+const PASSWORD_EXPIRY_NOTICE = /^due to expire[ \t]+to(?:day|morrow|night)(?=$|[.!?;](?:[ \t]|$))/iu;
+const PASSWORD_TOKEN_BEFORE_SENTENCE = /^\S+?(?=[.!?;][ \t]+(?:The|This|That|Please|You|We|It|Bring)[ \t]+.+[.!?]$)/u;
 
 function maskPasswordValues(text: string): { text: string; complete: boolean } {
   let out = "";
@@ -317,7 +317,8 @@ function maskPasswordValues(text: string): { text: string; complete: boolean } {
     const at = label.index + label[0].length;
     const line = text.slice(at).match(/^[^\r\n\u2028\u2029]*/u)![0].trimEnd();
     const delimited = FIELD_DELIMITER.test(label[0]);
-    if (!delimited && (PASSWORD_GUIDANCE.test(line) || PASSWORD_LENGTH_REQUIREMENT.test(line))) continue;
+    if (!delimited && (PASSWORD_GUIDANCE.test(line) || PASSWORD_LENGTH_REQUIREMENT.test(line)
+        || PASSWORD_EXPIRY_NOTICE.test(line))) continue;
     const quoted = /^["'\x60“‘]/u.test(line);
     const quotedValue = quoted ? QUOTED_PASSWORD.exec(line)?.[0] : undefined;
     if ((quoted && quotedValue === undefined) || (!line && at < text.trimEnd().length)) {
@@ -334,12 +335,11 @@ function maskPasswordValues(text: string): { text: string; complete: boolean } {
     // A field-like word can be part of an unquoted passphrase. Only split where masking continues.
     const allowProse = !continuesValue && label.groups?.name?.toLowerCase() !== "passphrase";
     const nextPassword = NEXT_PASSWORD_FIELD.exec(line);
-    const nextUsername = allowProse ? NEXT_USERNAME_FIELD.exec(line) : null;
-    const fieldEnd = Math.min(nextPassword?.index ?? line.length, nextUsername?.index ?? line.length);
+    const fieldEnd = nextPassword?.index ?? line.length;
     const token = allowProse ? PASSWORD_TOKEN_BEFORE_SENTENCE.exec(line.slice(0, fieldEnd))?.[0] : undefined;
     const singleValue = token && (token === "[code]" || looksLikePlainCode(token));
     from = at + (singleValue ? token.length : fieldEnd);
-    if (!singleValue && nextPassword?.index === fieldEnd) continuationAt = from + nextPassword[0].length;
+    if (!singleValue && nextPassword) continuationAt = from + nextPassword[0].length;
   }
   return { text: out + text.slice(from), complete: true };
 }
