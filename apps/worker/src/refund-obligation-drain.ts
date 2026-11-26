@@ -1,5 +1,5 @@
 import {
-  claimRefundObligations, noteRefundObligationFault, settleRefundObligation,
+  claimRefundObligations, dueRefundObligations, noteRefundObligationFault, settleRefundObligation,
   REFUND_OBLIGATION_BATCH, REFUND_OBLIGATION_LEASE_MS,
 } from "@trafficflow/db/cloud";
 import type { SpendPort, Tx } from "@trafficflow/db";
@@ -41,6 +41,7 @@ export async function refundObligationDrainPass(
     now?: () => Date;
     limit?: number;
     leaseMs?: number;
+    forAccount?: (id: string) => Tx;
   },
 ): Promise<RefundObligationDrainResult> {
   const { credits } = deps;
@@ -48,15 +49,23 @@ export async function refundObligationDrainPass(
   const log = deps.log;
   const now = deps.now?.() ?? new Date();
 
-  let claimed: Awaited<ReturnType<typeof claimRefundObligations>>;
+  const limit = deps.limit ?? REFUND_OBLIGATION_BATCH;
+  const leaseMs = deps.leaseMs ?? REFUND_OBLIGATION_LEASE_MS;
+  let claimed: Awaited<ReturnType<typeof claimRefundObligations>> = [];
   try {
-    claimed = await claimRefundObligations(db, now, {
-      limit: deps.limit ?? REFUND_OBLIGATION_BATCH,
-      leaseMs: deps.leaseMs ?? REFUND_OBLIGATION_LEASE_MS,
-    });
+    if (deps.forAccount) {
+      const due = await dueRefundObligations(db, now, limit);
+      for (const candidate of due) {
+        try {
+          claimed.push(...await claimRefundObligations(deps.forAccount(candidate.accountId), now, { limit: 1, leaseMs, candidate }));
+        } catch (err) {
+          log?.warn("refund_obligation_claim_failed", { accountId: candidate.accountId, err });
+        }
+      }
+    } else {
+      claimed = await claimRefundObligations(db, now, { limit, leaseMs });
+    }
   } catch (err) {
-    // A host deployed ahead of cloud 0036 is the ordinary reason. WARN and not ERROR: nothing is
-    // lost — the debts are in the table the moment it exists — and the next cycle reads them.
     log?.warn("refund_obligation_claim_failed", { err });
     return EMPTY;
   }
@@ -64,7 +73,9 @@ export async function refundObligationDrainPass(
 
   const result: RefundObligationDrainResult = { claimed: claimed.length, settled: 0, owed: 0 };
   for (const o of claimed) {
+    let bound = db;
     try {
+      bound = deps.forAccount?.(o.accountId) ?? db;
       // THE RELEASE THE REQUEST OWED, rebuilt from the row: the same action, the same BARE attempt
       // key, the same attempt id the program returned. `refund: true` with the attempt NAMED — a
       // reversal that does not name one falls back to the bare source, which is attempt 1 and may
@@ -74,12 +85,12 @@ export async function refundObligationDrainPass(
         ...(o.meta ? { meta: o.meta } : {}),
       });
       if (receipt === "settled") {
-        await settleRefundObligation(db, o.accountId, o.attempt, deps.now?.() ?? new Date());
+        await settleRefundObligation(bound, o.accountId, o.attempt, deps.now?.() ?? new Date());
         result.settled += 1;
       } else {
         // STILL OWED. The lease is dropped so the next cycle takes it immediately rather than
         // waiting the lease out — a transient outage should cost one cycle, not two minutes.
-        await noteRefundObligationFault(db, o.id, "release_unreachable");
+        await noteRefundObligationFault(bound, o.id, "release_unreachable");
         result.owed += 1;
       }
     } catch (err) {
@@ -91,7 +102,7 @@ export async function refundObligationDrainPass(
         accountId: o.accountId, attempt: o.attempt, tries: o.tries, err,
       });
       try {
-        await noteRefundObligationFault(db, o.id, errorClassOf(err));
+        await noteRefundObligationFault(bound, o.id, errorClassOf(err));
       } catch (noteErr) {
         // The note is diagnostic; the LEASE expiring is what returns the row either way.
         log?.warn("refund_obligation_note_failed", { accountId: o.accountId, err: noteErr });

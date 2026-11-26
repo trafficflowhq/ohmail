@@ -347,6 +347,78 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     expect((await desiredOf(b)).desired).toBe(OHBOX);
   });
 
+  it.each(["named", "offer", "pile"] as const)(
+    "the %s press reaches the sender offered after ten pages of decided senders", async (press) => {
+      const w = await newWorld();
+      await client.begin(async (tx) => {
+        await tx`insert into contacts (account_id, address)
+          select ${w.accountId}, 'known-' || n || '@example.test' from generate_series(1, 10000) n`;
+        await tx`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address)
+          select ${w.accountId}, ${w.mailboxId}, 'known', 'known-' || n, 'Known', 'known-' || n || '@example.test'
+          from generate_series(1, 10000) n`;
+      });
+      const pile = press === "pile" ? "news" : undefined;
+      const address = "stranger@example.test";
+      const id = await seedOhbox(w, { from: address, ...(pile ? { folder: "ohmail/News", lastSetBy: "us" } : {}) });
+      const first = await unscreenedSummary(db as never, w.accountId, NOW, pile);
+      expect(first).toMatchObject({ groups: [], total: 0, complete: false, next: expect.any(String) });
+      const offered = await unscreenedSummary(db as never, w.accountId, NOW, pile, undefined, { after: first.next });
+      expect(offered).toMatchObject({ groups: [{ address, count: 1 }], total: 1 });
+      const opts = { ...(pile ? { pile } : {}) };
+      let result;
+      if (press === "named") {
+        result = await screenUnscreened(ctxOf(w), { ...opts, addresses: [address.toUpperCase()] });
+      } else {
+        const initial = await screenUnscreened(ctxOf(w), opts);
+        expect(initial).toMatchObject({ screened: [], total: 0, next: first.next });
+        result = await screenUnscreened(ctxOf(w), { ...opts, after: initial.next });
+      }
+      expect(result).toEqual({ screened: offered.groups, total: 1 });
+      expect((await desiredOf(id)).desired).toBe(GATE);
+    },
+  );
+
+  it.each([
+    { bound: "letters", page: 600, perSender: 600, second: 400 },
+    { bound: "sender groups", page: 150, perSender: 1, second: 50 },
+  ])("keeps the $bound ceiling across a continued press and offers the remainder", async ({ page, perSender, second }) => {
+    const w = await newWorld();
+    await client.begin(async (tx) => {
+      await tx`insert into contacts (account_id, address)
+        select ${w.accountId}, 'known-' || n || '@example.test' from generate_series(1, 10000) n`;
+      await tx`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address)
+        select ${w.accountId}, ${w.mailboxId}, 'known', 'known-' || n, 'Known', 'known-' || n || '@example.test'
+        from generate_series(1, 10000) n`;
+      await tx`
+        with seeded as (
+          insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, created_at, arrived_at)
+          select ${w.accountId}, ${w.mailboxId}, 'candidate', prefix || n, 'Candidate',
+            prefix || ((n - 1) / ${perSender}::int) || '@example.test',
+            ${ARRIVED.toISOString()}, ${ARRIVED.toISOString()}, ${ARRIVED.toISOString()}
+          from unnest(array['first-', 'stranger-']) prefix, generate_series(1, ${page}::int) n
+          returning id, account_id
+        )
+        insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
+        select id, account_id, 'INBOX', 'INBOX', 'external', 'reconciled', false from seeded`;
+    });
+    const press = () => screenUnscreened(ctxOf(w));
+    const first = await press();
+    expect(first).toMatchObject({ total: page, next: expect.any(String) });
+    const continued = await screenUnscreened(ctxOf(w), { after: first.next });
+    expect(continued.total).toBe(second);
+    expect(continued.next).toBeUndefined();
+
+    const read = await unscreenedSummary(db as never, w.accountId, NOW);
+    expect(read).toMatchObject({ total: 0, next: expect.any(String) });
+    const left = await unscreenedSummary(db as never, w.accountId, NOW, undefined, undefined, { after: read.next });
+    expect(left).toMatchObject({ total: page - second, complete: true });
+    const nextPress = await press();
+    expect(nextPress).toMatchObject({ total: 0, next: expect.any(String) });
+    expect(await screenUnscreened(ctxOf(w), { after: nextPress.next })).toEqual({
+      screened: left.groups, total: left.total,
+    });
+  });
+
   it("the audit row names the group and the count the press measured", async () => {
     const w = await newWorld();
     for (let i = 0; i < 4; i++) await seedOhbox(w, { from: "loud@x.test" });

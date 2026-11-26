@@ -1,5 +1,5 @@
-import { sql } from "drizzle-orm";
-import { accountSyncState } from "./schema-mail.js";
+import { and, asc, gt, isNull, sql, type SQL } from "drizzle-orm";
+import { accounts } from "./schema-mail.js";
 import { authEvents, connectAttempts } from "./schema-cloud.js";
 import type { Tx } from "./change-log.js";
 import { RETENTION_DELETE_BATCH, affected } from "./change-log-retention.js";
@@ -41,21 +41,13 @@ export {
 
 /** Accounts visited per maintenance tick (round-robin by account id, wrapping). */
 export const RETENTION_ACCOUNTS_PER_TICK = 25;
-/**
- * The round-robin window of accounts one tick visits, keyed above the caller's last position and
- * wrapping at the end (the caller passes "" to start over). `account_sync_state` is the roster:
- * an account is only here once it has written a change, which is exactly the population with a
- * log to prune.
- */
+/** The worker can discover active accounts even when all their mailboxes are disabled. */
 export async function retentionAccountsAfter(
-  db: Tx, afterAccountId: string, limit: number = RETENTION_ACCOUNTS_PER_TICK,
+  db: Tx, afterAccountId: string, limit: number = RETENTION_ACCOUNTS_PER_TICK, shard?: SQL,
 ): Promise<string[]> {
-  const rows = await db
-    .select({ id: sql<string>`${accountSyncState.accountId}::text` })
-    .from(accountSyncState)
-    .where(sql`${accountSyncState.accountId}::text > ${afterAccountId}`)
-    .orderBy(sql`${accountSyncState.accountId}::text`)
-    .limit(limit);
+  const rows = await db.select({ id: accounts.id }).from(accounts)
+    .where(and(isNull(accounts.erasedAt), afterAccountId ? gt(accounts.id, afterAccountId) : undefined, shard))
+    .orderBy(asc(accounts.id)).limit(limit);
   return rows.map((r) => r.id);
 }
 

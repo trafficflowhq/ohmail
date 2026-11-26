@@ -3,6 +3,7 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { accounts, refreshTokens, sessions } from "./schema-mail.js";
 import { erasedBearers } from "./schema-cloud.js";
 import type { Tx } from "./change-log.js";
+import { rowsAffected } from "./rows-affected.js";
 
 /**
  * THE TOKENS OF AN ERASED ACCOUNT, KEPT BY HASH (cloud 0043) — written by the erasure, read by
@@ -58,8 +59,7 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
       accountId: sessions.accountId,
       expiresAt: sessions.accessExpiresAt,
     }).from(sessions).where(and(eq(sessions.accountId, accountId), erasureNamesAccess(at))))
-    .onConflictDoNothing()
-    .returning({ tokenHash: erasedBearers.tokenHash });
+    .onConflictDoNothing();
   const refresh = await tx.insert(erasedBearers)
     .select(tx.select({
       tokenHash: refreshTokens.tokenHash,
@@ -68,8 +68,7 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
     }).from(refreshTokens).where(and(
       eq(refreshTokens.accountId, accountId), erasureNamesRefresh(at), isNull(refreshTokens.consumedAt),
     )))
-    .onConflictDoNothing()
-    .returning({ tokenHash: erasedBearers.tokenHash });
+    .onConflictDoNothing();
   const spent = await tx.insert(erasedBearers)
     .select(tx.selectDistinctOn([refreshTokens.familyId], {
       tokenHash: refreshTokens.tokenHash,
@@ -80,9 +79,8 @@ export async function recordErasedBearers(tx: Tx, accountId: string, now: Date):
       // A claim-killed row (`expires_at = consumed_at`) was never spendable after the kill.
       gt(refreshTokens.expiresAt, refreshTokens.consumedAt),
     )).orderBy(refreshTokens.familyId, desc(refreshTokens.consumedAt)))
-    .onConflictDoNothing()
-    .returning({ tokenHash: erasedBearers.tokenHash });
-  return access.length + refresh.length + spent.length;
+    .onConflictDoNothing();
+  return rowsAffected(access) + rowsAffected(refresh) + rowsAffected(spent);
 }
 
 /**

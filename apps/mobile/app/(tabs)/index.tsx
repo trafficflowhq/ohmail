@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AppState, View } from "react-native";
 import { useFocusEffect, useIsFocused, useNavigation } from "expo-router";
+import { OHBOX_UNSCREENED_MESSAGES_MAX } from "@ohmail/client-engine";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
 import {
@@ -227,7 +228,7 @@ function UnscreenedOffer({ offer, screen }: { offer: WorldUnscreened | null; scr
     <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
       <Txt variant="note" tone="ink2" accessibilityRole="text">{Copy.unscreenedLead(offer.total, offer.atLeast === true)}</Txt>
       <Button
-        label={Copy.unscreenedAll(offer.total)}
+        label={Copy.unscreenedAll(Math.min(offer.total, OHBOX_UNSCREENED_MESSAGES_MAX))}
         variant="solid"
         disabled={pressing}
         onPress={press}

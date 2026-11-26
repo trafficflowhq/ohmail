@@ -1,5 +1,5 @@
 diff --git a/cjs/src/connection.js b/cjs/src/connection.js
-index 07f6716702ac888215c86ad6e0071aaf55ae519c..135a85e1530dc1ed88777606ae214e305fed5d04 100644
+index 07f6716702ac888215c86ad6e0071aaf55ae519c..9fdfff13a8127a34ed82cfb7b27ce4590cb2b33d 100644
 --- a/cjs/src/connection.js
 +++ b/cjs/src/connection.js
 @@ -96,6 +96,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -57,7 +57,27 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..135a85e1530dc1ed88777606ae214e30
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -774,8 +793,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -559,15 +578,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+           return terminate()
+       }
+
+-      if (needsTypes) {
+-        initial.reserve && (initial = null)
++      if (needsTypes)
+         return fetchArrayTypes()
+-      }
+
+-      initial && !initial.reserve && execute(initial)
+-      options.shared.retries = retries = 0
++      const first = initial
+       initial = null
+-      return
++      options.shared.retries = retries = 0
++      return first.reserve ? first.reserve(connection) : execute(first)
+     }
+
+     while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
+@@ -774,8 +791,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        where a.typcategory = 'A'
        group by b.oid, b.typarray
        order by b.oid
@@ -68,7 +88,7 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..135a85e1530dc1ed88777606ae214e30
    }
  
    function addArrayType(oid, typarray) {
-@@ -806,7 +825,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -806,7 +823,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        backendParameters.default_transaction_read_only = a.transaction_read_only
        backendParameters.in_hot_standby = b.pg_is_in_recovery ? 'on' : 'off'
      }
@@ -78,10 +98,21 @@ index 07f6716702ac888215c86ad6e0071aaf55ae519c..135a85e1530dc1ed88777606ae214e30
  
    function ErrorResponse(x) {
 diff --git a/cjs/src/index.js b/cjs/src/index.js
-index f09c61c7e998f411560b95c9a8e1ed6a97972c11..7659339232c736607a9404d508a07dcf787dc61b 100644
+index f09c61c7e998f411560b95c9a8e1ed6a97972c11..f6a936eb3b8de1260913688061b3e12907395597 100644
 --- a/cjs/src/index.js
 +++ b/cjs/src/index.js
-@@ -236,6 +236,8 @@ function Postgres(a, b) {
+@@ -206,8 +206,9 @@ function Postgres(a, b) {
+       ? open.shift()
+       : await new Promise((resolve, reject) => {
+         const query = { reserve: resolve, reject }
++        // One owner: a dial's initial request or the shared queue.
+         queries.push(query)
+-        closed.length && connect(closed.shift(), query)
++        closed.length && connect(closed.shift(), queries.shift())
+       })
+
+     move(c, reserved)
+@@ -236,6 +237,8 @@ function Postgres(a, b) {
      const queries = Queue()
      let savepoints = 0
        , connection
@@ -90,7 +121,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..7659339232c736607a9404d508a07dcf
        , prepare = null
  
      try {
-@@ -267,15 +269,15 @@ function Postgres(a, b) {
+@@ -267,15 +270,15 @@ function Postgres(a, b) {
        } catch (e) {
          await (name
            ? sql`rollback to ${ sql(name) }`
@@ -109,7 +140,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..7659339232c736607a9404d508a07dcf
        }
  
        return result
-@@ -290,6 +292,9 @@ function Postgres(a, b) {
+@@ -290,6 +293,9 @@ function Postgres(a, b) {
  
        function handler(q) {
          q.catch(e => uncaughtError || (uncaughtError = e))
@@ -119,7 +150,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..7659339232c736607a9404d508a07dcf
          c.queue === full
            ? queries.push(q)
            : c.execute(q) || move(c, full)
-@@ -299,7 +304,7 @@ function Postgres(a, b) {
+@@ -299,7 +305,7 @@ function Postgres(a, b) {
      function onexecute(c) {
        connection = c
        move(c, reserved)
@@ -129,7 +160,7 @@ index f09c61c7e998f411560b95c9a8e1ed6a97972c11..7659339232c736607a9404d508a07dcf
          : move(c, reserved)
      }
 diff --git a/src/connection.js b/src/connection.js
-index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..4c96dc3747fcb686ba7f641e7e1af37642403cc6 100644
+index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..2b73713d38605cbc03eef4204f10f64d178f3a1b 100644
 --- a/src/connection.js
 +++ b/src/connection.js
 @@ -96,6 +96,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
@@ -187,7 +218,27 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..4c96dc3747fcb686ba7f641e7e1af376
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -774,8 +793,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -559,15 +578,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+           return terminate()
+       }
+
+-      if (needsTypes) {
+-        initial.reserve && (initial = null)
++      if (needsTypes)
+         return fetchArrayTypes()
+-      }
+
+-      initial && !initial.reserve && execute(initial)
+-      options.shared.retries = retries = 0
++      const first = initial
+       initial = null
+-      return
++      options.shared.retries = retries = 0
++      return first.reserve ? first.reserve(connection) : execute(first)
+     }
+
+     while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
+@@ -774,8 +791,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        where a.typcategory = 'A'
        group by b.oid, b.typarray
        order by b.oid
@@ -198,7 +249,7 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..4c96dc3747fcb686ba7f641e7e1af376
    }
  
    function addArrayType(oid, typarray) {
-@@ -806,7 +825,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -806,7 +823,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        backendParameters.default_transaction_read_only = a.transaction_read_only
        backendParameters.in_hot_standby = b.pg_is_in_recovery ? 'on' : 'off'
      }
@@ -208,10 +259,21 @@ index 1b1cccde43b4570d5d071d6ffaab2669b3c2065a..4c96dc3747fcb686ba7f641e7e1af376
  
    function ErrorResponse(x) {
 diff --git a/src/index.js b/src/index.js
-index c7fba3dace20173f4cb13f3f138bb6d213b43683..045b2cf0bb60d2c898ad13a385cec67e94a2253a 100644
+index c7fba3dace20173f4cb13f3f138bb6d213b43683..eec4a81612d0be295ea4bfdb5811a74b5d03de15 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -236,6 +236,8 @@ function Postgres(a, b) {
+@@ -206,8 +206,9 @@ function Postgres(a, b) {
+       ? open.shift()
+       : await new Promise((resolve, reject) => {
+         const query = { reserve: resolve, reject }
++        // One owner: a dial's initial request or the shared queue.
+         queries.push(query)
+-        closed.length && connect(closed.shift(), query)
++        closed.length && connect(closed.shift(), queries.shift())
+       })
+
+     move(c, reserved)
+@@ -236,6 +237,8 @@ function Postgres(a, b) {
      const queries = Queue()
      let savepoints = 0
        , connection
@@ -220,7 +282,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..045b2cf0bb60d2c898ad13a385cec67e
        , prepare = null
  
      try {
-@@ -267,15 +269,15 @@ function Postgres(a, b) {
+@@ -267,15 +270,15 @@ function Postgres(a, b) {
        } catch (e) {
          await (name
            ? sql`rollback to ${ sql(name) }`
@@ -239,7 +301,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..045b2cf0bb60d2c898ad13a385cec67e
        }
  
        return result
-@@ -290,6 +292,9 @@ function Postgres(a, b) {
+@@ -290,6 +293,9 @@ function Postgres(a, b) {
  
        function handler(q) {
          q.catch(e => uncaughtError || (uncaughtError = e))
@@ -249,7 +311,7 @@ index c7fba3dace20173f4cb13f3f138bb6d213b43683..045b2cf0bb60d2c898ad13a385cec67e
          c.queue === full
            ? queries.push(q)
            : c.execute(q) || move(c, full)
-@@ -299,7 +304,7 @@ function Postgres(a, b) {
+@@ -299,7 +305,7 @@ function Postgres(a, b) {
      function onexecute(c) {
        connection = c
        move(c, reserved)

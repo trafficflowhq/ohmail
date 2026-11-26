@@ -1229,7 +1229,7 @@ export const internalRoutes: Route[] = [
       try {
         const outcome = await eraseRequestedAccount(
           doorDb(deps), { port, log, now: deps.now, throttleKeys: throttleKeysFor(deps.keyProvider) }, accountId);
-        return json(200, outcome === "erased" || outcome === "already_erased"
+        return json(200, outcome === "erased" || outcome === "accepted" || outcome === "already_erased"
           ? { outcome } : { skipped: outcome });
       } catch (err) {
         log.error("account_lifecycle_erase_failed", { accountId, err });

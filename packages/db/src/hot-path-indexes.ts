@@ -25,6 +25,32 @@ import {
  */
 export const DEFERRED_INDEX_MIN_ROWS = 1000;
 
+// Background maintenance reads. Compaction walks by the account's sequence key and probes each
+// candidate's entity.
+const MAINTENANCE_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
+  {
+    name: "change_log_account_entity_seq_idx",
+    table: "change_log",
+    ddl: sql`create index concurrently if not exists "change_log_account_entity_seq_idx"
+      on public.change_log using btree ("account_id","entity_type","entity_id","seq")`,
+  },
+  {
+    name: "change_log_account_entity_deleted_idx",
+    table: "change_log",
+    ddl: sql`create index concurrently if not exists "change_log_account_entity_deleted_idx"
+      on public.change_log using btree ("account_id","entity_type","entity_id","seq") where "op" = 'delete'`,
+  },
+  {
+    // The thread repair pages by a short key and probes it for exact-subject matches.
+    name: "threads_account_subject_key_idx",
+    table: "threads",
+    ddl: sql`create index concurrently if not exists "threads_account_subject_key_idx"
+      on public.threads using btree ("account_id",(left("subject", 64)),(md5("subject")),"id")`,
+  },
+];
+
+export const MAINTENANCE_INDEXES = MAINTENANCE_INDEX_SPECS.map((spec) => spec.name);
+
 export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
   {
     name: "audit_log_account_action_idx",
@@ -152,5 +178,14 @@ export async function ensureHotPathIndexes(
     label: "the hot-path index build",
     ...(opts.log ? { log: opts.log } : {}),
     ...(opts.concurrently === false ? { concurrently: false } : {}),
+  });
+}
+
+/** Build the maintenance lookups before the hosted worker walks accumulated history. */
+export async function ensureMaintenanceIndexes(
+  db: SessionExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
+): Promise<void> {
+  await ensureConcurrentIndexes(db, MAINTENANCE_INDEX_SPECS, {
+    ...opts, label: "the maintenance index build",
   });
 }

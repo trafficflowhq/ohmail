@@ -29,11 +29,14 @@ const json = (status: number, body: unknown): Response =>
 
 let calls: string[] = [];
 let pressed = false;
+const continuation = JSON.stringify(["known@example.test", "ffffffff-ffff-ffff-ffff-ffffffffffff"]);
+let afters: Array<string | undefined>;
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   calls = [];
   pressed = false;
+  afters = [];
   globalThis.fetch = ((url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     calls.push(`${method} ${url}`);
@@ -56,6 +59,11 @@ beforeEach(() => {
     }
     if (url === "/api/screener/unscreened") {
       if (method === "POST") {
+        const { after } = JSON.parse(String(init?.body)) as { after?: string };
+        afters.push(after);
+        if (after !== continuation) {
+          return Promise.resolve(json(200, { screened: [], total: 0, next: continuation }));
+        }
         pressed = true;
         return Promise.resolve(json(200, {
           screened: [{ address: "stranger@example.test", count: 1, newestAt: NOW }], total: 1,
@@ -84,7 +92,8 @@ describe("the undecided-sender press drains once after its answer", () => {
     expect(engine.read().get<EngineMessage>("message", "m1")?.folder).toBe("INBOX");
     const before = calls.length;
 
-    await engine.screenUnscreenedSenders();
+    expect(await engine.screenUnscreenedSenders()).toBe(1);
+    expect(afters).toEqual([undefined, continuation]);
     const sinceThePress = () => calls.slice(before);
     await settle(engine, () => engine.read().get<EngineMessage>("message", "m1")?.folder === "ohmail/Screener");
 

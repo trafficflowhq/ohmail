@@ -222,10 +222,10 @@ export function heldSenderKeysSql(d: Dialect, accountId: string, gone: readonly 
 
 /** One set of active senders, for a queue read where RLS prevents a per-sender index seek. */
 export function activeSenderKeysSql(
-  d: Dialect, accountId: string, set: CutlineSet, gone: readonly string[], candidates?: SQL,
+  d: Dialect, accountId: string, set: CutlineSet, gone: readonly string[], candidates?: SQL, messageRows?: SQL,
 ): SQL {
   const sender = candidates ? sql`and lower(mc.from_address) in (${candidates})` : sql``;
-  return sql`select distinct lower(mc.from_address) as sender ${activeSenderRowsSql(d, accountId, set, gone, sender)}`;
+  return sql`select distinct lower(mc.from_address) as sender ${activeSenderRowsSql(d, accountId, set, gone, sender, messageRows)}`;
 }
 
 /** A presented message can make its sender active under the window of its own mailbox. */
@@ -242,7 +242,7 @@ export function activeSenderMessageSql(
 }
 
 function activeSenderRowsSql(
-  d: Dialect, accountId: string, set: CutlineSet, gone: readonly string[], sender: SQL,
+  d: Dialect, accountId: string, set: CutlineSet, gone: readonly string[], sender: SQL, messageRows: SQL = sql`messages`,
 ): SQL {
   const account = d.castUuid(accountId);
   const folders = sql`(${sql.join(CUTLINE_PRESENTED_FOLDERS.map((f) => sql`${f}`), sql`, `)})`;
@@ -254,7 +254,7 @@ function activeSenderRowsSql(
   const window = "one" in split && split.one.baselined && !split.one.allTime
     ? sql` and ${at} >= ${d.ts(split.one.cutoff)}` : sql``;
   const folderAccount = d.name === "pg" ? sql`and fsc.account_id = ${account}` : sql``;
-  return sql`from messages mc
+  return sql`from ${messageRows} mc
       join folder_state fsc on fsc.message_id = mc.id ${folderAccount}
      where mc.account_id = ${account}
        ${sender}${window}${andNotGone(d, sql`mc.mailbox_id`, gone)}
@@ -457,6 +457,7 @@ export function senderHasHeldClaimSql(
 /** All senders with a waiting claim, found through the held-folder index once per page. */
 export function heldClaimKeysSql(
   d: Dialect, accountId: string, cutoff: CutlineSet, screening: readonly string[], gone: readonly string[],
+  messageRows: SQL = sql`messages`,
 ): SQL {
   const account = d.castUuid(accountId);
   const sender = sql`lower(hm.from_address)`;
@@ -466,7 +467,7 @@ export function heldClaimKeysSql(
   return sql`with marked as materialized (
     select account_id, id, mailbox_id, from_address, sender_check, sender_check_by, date,
       arrived_at, created_at, deleted_at, auth_verdict, sender_check_brand, unconfirmed_hold
-    from messages where account_id = ${account} and deleted_at is null and ${marked}
+    from ${messageRows} where account_id = ${account} and deleted_at is null and ${marked}
     ${andNotGone(d, sql`mailbox_id`, gone)}
   )
   select distinct ${sender} as sender ${heldClaimRowsSql(d, accountId, sender, cutoff, screening, [], held, sql`marked`)}`;

@@ -12,6 +12,7 @@ import {
 import { correspondentAtGate } from "./pipeline.js";
 import { ROWS_PER_TURN, turnsEvery, type LoopTurn } from "./loop-turns.js";
 import type { RepoPort } from "./ports.js";
+import { OHBOX_UNSCREENED_MESSAGES_MAX } from "./rule-order.js";
 import { LEGACY_NEWS_FOLDER, NEWS_FOLDER, type Destination, type NormalizedMessage } from "./types.js";
 
 /* OHBOX MAIL FROM SENDERS NOBODY EVER DECIDED ABOUT — the set named ONCE, for its doors. The
@@ -39,8 +40,7 @@ const SCREENER: Destination = "ohmail/Screener";
 
 /** How many sender groups one read shows and one press may act on. */
 export const OHBOX_UNSCREENED_GROUPS_MAX = 200;
-/** Messages one read offers and one press moves. */
-export const OHBOX_UNSCREENED_MESSAGES_MAX = 1000;
+export { OHBOX_UNSCREENED_MESSAGES_MAX };
 /** Rows one page of the walk reads. */
 const BATCH = 200;
 /** Letters one intent upsert carries: a few binds each, well under either store's bind ceiling. */
@@ -49,6 +49,8 @@ const INTENT_SLICE = 200;
 const MAX_PAGES = 25;
 /** Senders one read of the sender index lists, and so the most one candidate page names. */
 const SENDER_PAGE = 1000;
+/** Sender pages one walk may read: a page of senders who are all decided still costs a read. */
+const MAX_SENDER_PAGES = 10;
 /** The id behind every other: a cursor at `(sender, LAST_ID)` stands past all of that sender's mail. */
 const LAST_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 /** Before every sender and every letter: where a walk nobody handed a cursor starts. */
@@ -220,8 +222,12 @@ export async function unscreenedWalk(
   t: Tx, knowledge: UnscreenedKnowledge, accountId: string,
   opts: {
     lock: boolean; scope: UnscreenedScope; stopAt?: number;
+    /** Sender addresses named by a press, already normalized. */
+    senders?: readonly string[];
     /** Pages this walk may read, {@link MAX_PAGES} unless a host says less. */
     maxPages?: number;
+    /** Sender pages this walk may read, {@link MAX_SENDER_PAGES} unless a host says less. */
+    maxSenderPages?: number;
     /** The host's loop turn, awaited once per {@link ROWS_PER_TURN} rows checked. */
     turn?: LoopTurn;
     /**
@@ -306,9 +312,12 @@ export async function unscreenedWalk(
 
   // SENDERS FIRST: a page of the account's senders, then the mail of those nobody decided about.
   let pages = 0;
+  let senderPages = 0;
+  const maxSenderPages = opts.maxSenderPages ?? MAX_SENDER_PAGES;
   for (;;) {
-    if (spent()) return answer(false, stood);
-    const listed = await selectSenders(t, accountId, stood);
+    if (spent() || senderPages >= maxSenderPages) return answer(false, stood);
+    const listed = opts.senders ?? await selectSenders(t, accountId, stood);
+    senderPages++;
     if (opts.turn) await opts.turn();
     const open = listed.filter((s) => !senderIsDecided(s.toLowerCase(), rules, known, ownSet));
     while (open.length > 0) {
@@ -323,7 +332,7 @@ export async function unscreenedWalk(
       if (read.end === null) break;
       stood = read.end;
     }
-    if (listed.length < SENDER_PAGE) return answer(true, null);
+    if (opts.senders !== undefined || listed.length < SENDER_PAGE) return answer(true, null);
     stood = { sender: listed[listed.length - 1]!, id: LAST_ID };
   }
 }
@@ -529,7 +538,7 @@ export function unscreenedGroups(
 /**
  * THE PRESS'S WRITES: desired `ohmail/Screener`, observed untouched (so `reconcile_status`
  * derives `pending` and the reconciler moves it), a change row per letter and one audit row per
- * sender group carrying its inverse. A press moves only the shown groups (`"shown"`), so what it
+ * sender group carrying its inverse. A press moves only as many groups as its budget allows, so what it
  * reports and what it wrote are one measurement; the agree's sweep moves every group (`"all"`).
  * `from` is the folder the letters leave: the Ohbox, or a pile's for its note's press.
  */
@@ -537,13 +546,14 @@ export async function writeScreenerIntents(
   t: Tx, ledger: LedgerTx,
   input: {
     accountId: string; rows: readonly UnscreenedRow[]; now: Date; via: "offer" | "agree" | "gap" | "pile";
-    groups: "shown" | "all"; from?: Destination;
+    groups: "shown" | "all"; maxGroups?: number; from?: Destination;
     /** The host's loop turn, awaited after each statement that writes the rows. */
     turn?: LoopTurn;
   },
 ): Promise<{ screened: UnscreenedSenderGroup[]; total: number }> {
   const from = input.from ?? OHBOX;
-  const screened = unscreenedGroups(input.rows, input.groups === "all" ? Infinity : OHBOX_UNSCREENED_GROUPS_MAX);
+  const limit = Math.min(input.maxGroups ?? OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_GROUPS_MAX);
+  const screened = unscreenedGroups(input.rows, input.groups === "all" ? Infinity : limit);
   const moving = new Set(screened.map((g) => g.address));
   const seen = new Set<string>();
   const rows: UnscreenedRow[] = [];

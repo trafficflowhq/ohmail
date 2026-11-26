@@ -282,6 +282,7 @@ export interface ScreenerWaitingWire {
 export interface UnscreenedResultWire {
   screened: UnscreenedGroupWire[];
   total: number;
+  next?: string;
 }
 
 // ── a decision, as `POST /screener/:id` answers it ──────────────────────────

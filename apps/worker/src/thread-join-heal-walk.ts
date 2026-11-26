@@ -2,8 +2,8 @@ import { THREAD_JOIN_HEAL_MAX_GROUPS, type ThreadJoinHealCursor, type ThreadJoin
 
 /**
  * THE CYCLE TAIL'S THREAD-JOIN HEAL WALK: the six-hour gate and each account's resume point. One heal
- * slice runs under the tail's slice clock and may stop between two groups (`cut`); the account then stays
- * owed, and the gate stays open for the following tail walks until every account of this walk has spent
+ * slice runs under the tail's slice clock and may stop between groups or after a full scan page.
+ * The account then stays owed, and the gate stays open for the following tail walks until every account has spent
  * its group budget, its time budget (`walkMs`, summed over its slices) or reached the end. The time budget
  * is what ends a walk whose slices are each cut after a group or two: without it such an account stayed
  * owed for hundreds of tails. A walk never outlives its period: when the next one starts, an unfinished
@@ -81,16 +81,16 @@ export function makeThreadJoinHealWalk(everyMs: number, walkMs: number): ThreadJ
       e.scanned += r.groupsScanned;
       e.spentMs += Math.max(0, ms);
       e.slices += 1;
-      if (r.cut && r.cursor && e.left > 0 && e.spentMs < walkMs) {
-        e.cursor = r.cursor;
+      const resume = r.capped || r.cut ? r.cursor : null;
+      if (resume && e.left > 0 && e.spentMs < walkMs) {
+        e.cursor = resume;
         return null;
       }
       e.done = true;
       widespread.delete(accountId);
-      // Capped, or cut with its group or time budget spent: the next walk resumes here. Exhausted: from the top.
-      const more = (r.capped || r.cut) && r.cursor !== null;
-      carry(accountId, more ? r.cursor : null);
-      return { scanned: e.scanned, slices: e.slices, ms: e.spentMs, more };
+      // With more to read, the next walk resumes here. An exhausted account starts from the top.
+      carry(accountId, resume);
+      return { scanned: e.scanned, slices: e.slices, ms: e.spentMs, more: resume !== null };
     },
 
     abandon(accountId) {

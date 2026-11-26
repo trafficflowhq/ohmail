@@ -36,7 +36,7 @@ export type { UnscreenedPile, UnscreenedSenderGroup };
 export const UNSCREENED_WALK_BUDGET_MS = 4_000;
 
 /**
- * The same for the two doors nothing goes on from: the first-run count and the press. Inside the
+ * The longer budget for the first-run count and the press. Inside the
  * limit too, and long enough that a slow store (a phone's) still counts and moves the whole set.
  */
 export const UNSCREENED_ONE_CALL_BUDGET_MS = 20_000;
@@ -103,6 +103,31 @@ export interface UnscreenedSummary {
 export interface UnscreenedResult {
   screened: UnscreenedSenderGroup[];
   total: number;
+  /** Where the press can resume when the walk stopped early. */
+  next?: string;
+}
+
+const FULL_PRESS = { letters: OHBOX_UNSCREENED_MESSAGES_MAX, groups: OHBOX_UNSCREENED_GROUPS_MAX };
+
+/** A write cursor carries the remaining allowance once any letters have moved. */
+function pressPageOf(after: unknown): { from: UnscreenedCursor | null; letters: number; groups: number } {
+  if (after === undefined) return { from: null, ...FULL_PRESS };
+  if (typeof after === "string" && after.length <= 2 * UNSCREENED_CURSOR_MAX_CHARS) {
+    const plain = unscreenedCursorOf(after);
+    if (plain !== null) return { from: plain, ...FULL_PRESS };
+    let value: unknown;
+    try { value = JSON.parse(after); } catch { /* Refused below. */ }
+    if (Array.isArray(value) && value.length === 3) {
+      const [cursor, letters, groups] = value as unknown[];
+      const from = typeof cursor === "string" ? unscreenedCursorOf(cursor) : null;
+      if (from !== null &&
+          typeof letters === "number" && Number.isInteger(letters) && letters > 0 && letters <= FULL_PRESS.letters &&
+          typeof groups === "number" && Number.isInteger(groups) && groups > 0 && groups <= FULL_PRESS.groups) {
+        return { from, letters, groups };
+      }
+    }
+  }
+  throw new ServiceError("validation_failed", 400, "after must be the next of an earlier answer");
 }
 
 /** The repo the walk reads the gate's knowledge through, bound to the caller's transaction. */
@@ -160,7 +185,7 @@ export async function unscreenedSummary(
  * pile, it screens that pile's letters from senders nobody let in.
  */
 export async function screenUnscreened(
-  ctx: ServiceContext, opts: { addresses?: readonly string[]; pile?: unknown } = {},
+  ctx: ServiceContext, opts: { addresses?: readonly string[]; pile?: unknown; after?: unknown } = {},
 ): Promise<UnscreenedResult> {
   if (opts.pile !== undefined && !isUnscreenedPile(opts.pile)) {
     throw new ServiceError("validation_failed", 400, "pile must be news or receipts");
@@ -178,25 +203,34 @@ export async function screenUnscreened(
       throw new ServiceError("validation_failed", 400, "addresses must be sender addresses");
     }
   }
-  const named = wanted === undefined ? null : new Set(wanted.map((a) => a.toLowerCase()));
+  const { from, letters, groups } = pressPageOf(opts.after);
+  const named = wanted === undefined ? undefined : [...new Set(wanted.map((a) => a.toLowerCase()))];
 
   // Through the fence: a request valid when it started must not commit rows after an erasure.
   return withAccountTx(ctx, async (t) => {
     const tx = bridgeTx(t);
     const now = ctx.now();
-    const scope = await scopeFor(tx, ctx.accountId, now, pile);
+    const scope = await scopeFor(tx, ctx.accountId, now, pile, from);
     // A person's press is not queued behind the reads; out of time it moves what it reached.
     const walk = await unscreenedWalk(tx, knowledgeOf(tx), ctx.accountId, {
-      lock: true, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope, budgetMs: UNSCREENED_ONE_CALL_BUDGET_MS,
+      lock: true, stopAt: letters, scope, budgetMs: UNSCREENED_ONE_CALL_BUDGET_MS,
+      ...(named === undefined ? {} : { senders: named }),
       ...(ctx.loopTurn ? { turn: ctx.loopTurn } : {}),
     });
-    const rows = walk.rows.filter((r) => named === null || named.has(r.fromAddress.toLowerCase()));
-    if (rows.length === 0) return { screened: [], total: 0 };
-    return writeScreenerIntents(tx, t as unknown as LedgerTx, {
-      accountId: ctx.accountId, rows, now, via: pile === undefined ? "offer" : "pile", groups: "shown",
+    const result = walk.rows.length === 0 ? { screened: [], total: 0 } : await writeScreenerIntents(tx, t as unknown as LedgerTx, {
+      accountId: ctx.accountId, rows: walk.rows, now, via: pile === undefined ? "offer" : "pile",
+      groups: "shown", maxGroups: groups,
       from: unscreenedSourceFolder(scope),
       ...(ctx.loopTurn ? { turn: ctx.loopTurn } : {}),
     });
+    const lettersLeft = letters - result.total;
+    const groupsLeft = groups - result.screened.length;
+    if (walk.next === null || lettersLeft === 0 || groupsLeft === 0) return result;
+    const cursor = unscreenedCursorText(walk.next);
+    const next = lettersLeft === FULL_PRESS.letters && groupsLeft === FULL_PRESS.groups
+      ? cursor
+      : JSON.stringify([cursor, lettersLeft, groupsLeft]);
+    return { ...result, next };
   });
 }
 

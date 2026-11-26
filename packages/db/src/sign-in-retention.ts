@@ -1,4 +1,4 @@
-import { and, asc, inArray, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { devices, pairingTokens, refreshTokens, sessions } from "./schema-mail.js";
 import { invites, loginTokens, oauthAuthCodes, staffSessions } from "./schema-cloud.js";
@@ -6,6 +6,7 @@ import type { Tx } from "./change-log.js";
 import { affected, RETENTION_BATCHES_PER_ACCOUNT, RETENTION_DELETE_BATCH } from "./change-log-retention.js";
 import { pruneWebauthnChallenges } from "./webauthn-challenges.js";
 import { pruneDeviceCeremonies, pruneOAuthCeremonies } from "./oauth-ceremony.js";
+import { readDrainCursor, writeDrainCursor } from "./unsubscribe-drain-cursor.js";
 import { erasureKeepsUntil, erasureStillNamesSession } from "./erased-bearers.js";
 
 /**
@@ -59,6 +60,9 @@ export interface SignInRetentionOptions {
   clock?: () => number;
   /** Counted into as each batch commits, so a caller that catches a failure can say what went. */
   progress?: SignInRetentionResult;
+  forAccount?: (id: string) => Tx;
+  shard?: (account: AnyPgColumn) => SQL | undefined;
+  shardKey?: string;
 }
 
 /** The oldest `n` ids past `cut` that no other transaction holds, as the array an `= any(...)`
@@ -100,6 +104,32 @@ export async function pruneSignInRecords(
     }
   };
 
+  async function drainAccounts(
+    field: "sessions" | "deviceAddresses", roster: (after: string | null) => Promise<string[]>,
+    step: (handle: Tx, n: number, accountId?: string) => Promise<number | { got: number; full: true }>,
+  ): Promise<void> {
+    const forAccount = opts.forAccount;
+    if (!forAccount) {
+      await drain(field, (n) => step(db, n), sessionBatch);
+      return;
+    }
+    if (late()) { result.stoppedBy = "deadline"; return; }
+    const pass = `sign_in_retention:${field}:${opts.shardKey ?? "all"}`;
+    const after = (await readDrainCursor(db, pass))?.messageId ?? null;
+    let ids = await roster(after);
+    if (ids.length === 0 && after !== null) ids = await roster(null);
+    let full = ids.length > maxBatches;
+    for (const id of ids.slice(0, maxBatches)) {
+      if (late()) { result.stoppedBy = "deadline"; return; }
+      const out = await step(forAccount(id), sessionBatch, id);
+      const count = typeof out === "number" ? out : out.got;
+      result[field] += count;
+      full ||= typeof out !== "number" || count >= sessionBatch;
+      await writeDrainCursor(db, pass, { at: now, messageId: id }, now);
+    }
+    if (full && result.stoppedBy === "dry") result.stoppedBy = "batches";
+  }
+
   // Every purpose under one horizon, an unconfirmed desktop approval (no user) included.
   await drain("loginTokens", async (n) => affected(await db.delete(loginTokens)
     .where(oldest(loginTokens.id, loginTokens.expiresAt, sql`${loginTokens}`, cut, n))), batch);
@@ -129,32 +159,46 @@ export async function pruneSignInRecords(
     and(isNull(sessions.revokedAt), sql`${erasureKeepsUntil(sessions.refreshExpiresAt)} <= ${at}`),
   )!;
   const familyLive = sql`exists (select 1 from ${sessions} live where live.family_id = ${sessions.familyId}
-    and live.revoked_at is null and live.refresh_expires_at > ${at})`;
-  await drain("sessions", async (n) => {
-    const [gone, tokens] = await db.transaction(async (tx) => {
+    and live.account_id = ${sessions.accountId} and live.revoked_at is null and live.refresh_expires_at > ${at})`;
+  await drainAccounts("sessions", async (after) => {
+    const ids = await db.selectDistinct({ id: sessions.accountId }).from(sessions).where(and(
+      dead, after ? gt(sessions.accountId, after) : undefined, opts.shard?.(sessions.accountId),
+    )).orderBy(asc(sessions.accountId)).limit(maxBatches + 1);
+    return ids.map((r) => r.id);
+  }, async (bound, n, id) => {
+    const [gone, tokens] = await bound.transaction(async (tx) => {
       await tx.execute(sql`set local lock_timeout = '2s'`);
       const rows = await tx.select({ id: sessions.id }).from(sessions)
-        .where(and(dead, sql`not ${familyLive}`, sql`not ${erasureStillNamesSession(at)}`))
+        .where(and(dead, id ? eq(sessions.accountId, id) : undefined, sql`not ${familyLive}`, sql`not ${erasureStillNamesSession(at)}`))
         .orderBy(asc(sessions.id)).limit(n)
         .for("update", { skipLocked: true });
       const ids = rows.map((r) => r.id);
       if (ids.length === 0) return [0, 0] as const;
       const t = affected(await tx.delete(refreshTokens).where(sql`${refreshTokens.id} = any(array(
-        select ${refreshTokens.id} from ${refreshTokens} where ${inArray(refreshTokens.sessionId, ids)} limit ${tokenBatch}))`));
+        select ${refreshTokens.id} from ${refreshTokens} where ${and(inArray(refreshTokens.sessionId, ids), id ? eq(refreshTokens.accountId, id) : undefined)} limit ${tokenBatch}))`));
       // The key from a token to its session takes no action on delete: one with a token left stays.
-      return [affected(await tx.delete(sessions).where(and(inArray(sessions.id, ids),
+      return [affected(await tx.delete(sessions).where(and(inArray(sessions.id, ids), id ? eq(sessions.accountId, id) : undefined,
         sql`not exists (select 1 from ${refreshTokens} where ${refreshTokens.sessionId} = ${sessions.id})`))), t] as const;
     });
     result.refreshTokens += tokens;
     return tokens >= tokenBatch ? { got: gone, full: true as const } : gone;
-  }, sessionBatch);
+  });
 
-  // The address a device was added from, once no session of its is left; the row and its name
-  // stay. Batched and passed over when held, as above.
-  await drain("deviceAddresses", async (n) => affected(await db.update(devices).set({ ip: "" }).where(sql`${devices.id} = any(array(
-    select ${devices.id} from ${devices} where ${and(ne(devices.ip, ""), lt(devices.lastSeenAt, sql`${cut}::timestamptz`))}
-    and not exists (select 1 from ${sessions} where ${sessions.deviceId} = ${devices.id})
-    order by ${devices.id} limit ${n} for update skip locked))`)), sessionBatch);
+  // Keep the device and its name. Clear the address only when no session of that account names it.
+  const staleDevice = and(ne(devices.ip, ""), lt(devices.lastSeenAt, sql`${cut}::timestamptz`));
+  await drainAccounts("deviceAddresses", async (after) => {
+    const ids = await db.selectDistinct({ id: devices.accountId }).from(devices).where(and(
+      staleDevice, after ? gt(devices.accountId, after) : undefined, opts.shard?.(devices.accountId),
+    )).orderBy(asc(devices.accountId)).limit(maxBatches + 1);
+    return ids.map((r) => r.id);
+  }, async (bound, n, id) => affected(await bound.update(devices).set({ ip: "" }).where(and(
+    id ? eq(devices.accountId, id) : undefined,
+    sql`${devices.id} = any(array(
+      select ${devices.id} from ${devices} where ${and(staleDevice, id ? eq(devices.accountId, id) : undefined)}
+      and not exists (select 1 from ${sessions}
+        where ${sessions.accountId} = ${devices.accountId} and ${sessions.deviceId} = ${devices.id})
+      order by ${devices.id} limit ${n} for update skip locked))`,
+  ))));
 
   // The ceremony tables keep their own hour; here they stop waiting for the next ceremony.
   if (!late()) {

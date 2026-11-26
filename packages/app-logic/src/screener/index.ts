@@ -1,7 +1,11 @@
 /** The door of `screener`: what a decision is, a row of the spam shelf, and the Screener's state with its journal. */
 export type { DecisionDestination, DecisionScope } from "./decision.js";
 export { DECISION_KEY, DECISION_ORDER, DECISION_QUIET, PILE_KEY, PILE_VERB_KEY } from "./decision.js";
-export { autoUnsubscribeConfirms, screeningDegrade } from "@ohmail/client-engine";
+export {
+  autoUnsubscribeConfirms,
+  OHBOX_UNSCREENED_MESSAGES_MAX,
+  screeningDegrade,
+} from "@ohmail/client-engine";
 export { useScreenerModel, type ScreenerModelInput } from "./model.js";
 export { useScreenerLive, type ScreenerLive, type ScreenerLiveInput } from "./live.js";
 export {

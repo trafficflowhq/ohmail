@@ -288,7 +288,7 @@ export {
  * reach it through `RefundObligationPort` for the reason `api_faults` does: the table does not
  * exist in a local install and the drafting path is inside the desktop engine's import closure. */
 export {
-  recordRefundObligation, settleRefundObligation, claimRefundObligations,
+  recordRefundObligation, settleRefundObligation, claimRefundObligations, dueRefundObligations,
   noteRefundObligationFault, pendingRefundObligations, refundObligationsOn,
   REFUND_OBLIGATION_LEASE_MS, REFUND_OBLIGATION_BATCH,
   type ClaimedRefundObligation,
