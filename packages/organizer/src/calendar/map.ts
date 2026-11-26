@@ -104,6 +104,7 @@ export interface MapContext {
   readonly zones: ZoneSource;
   /** The account's own addresses in lower case: its mailboxes' and the connection's principal where that is one. */
   readonly ownAddresses: ReadonlySet<string>;
+  readonly schedulingAddresses?: readonly string[];
   readonly principal?: string | null;
   readonly ownCalendar?: boolean;
 }
@@ -245,7 +246,7 @@ function rowOf(item: Upsert, ctx: MapContext, original: string | null): MappedRo
   const attendees = e.attendees.filter((a) => a.email !== null &&
     (a.role === null || a.role === "REQ-PARTICIPANT" || a.role === "OPT-PARTICIPANT"));
   const verified = connectedAttendee(attendees.flatMap((a) => a.email === null ? [] : [a.email]),
-    ctx.principal, ctx.ownAddresses);
+    ctx.principal, ctx.ownAddresses, ctx.schedulingAddresses);
   const mine = verified === null || (item.selfAttendee !== undefined && item.selfAttendee !== verified)
     ? undefined : attendees.find((a) => a.email?.toLowerCase() === verified);
   // Graph's response belongs to this calendar's owner. Apply it only to the verified attendee

@@ -82,6 +82,8 @@ export interface StandInOptions {
   readonly refusedSignIn?: "status" | "unauthenticated";
   /** Say `calendar-auto-schedule` in the `DAV` line: the server sends invitations itself (RFC 6638). */
   readonly autoSchedule?: boolean;
+  /** Mail addresses that the signed-in principal advertises for scheduling. */
+  readonly schedulingAddresses?: readonly string[];
   readonly scheduleOnOptionsOnly?: boolean;
   readonly optionsStatus?: number;
   readonly optionsDav?: string;
@@ -105,7 +107,7 @@ interface Held extends StandInCalendar {
 export interface StandIn {
   readonly port: number;
   readonly seen: Seen[];
-  readonly options: Required<Omit<StandInOptions, "homeHref" | "principalHref" | "strays" | "listsEscaped" | "silentOn" | "rewordsTokens" | "sendsOn">>;
+  readonly options: Required<Omit<StandInOptions, "homeHref" | "principalHref" | "strays" | "listsEscaped" | "silentOn" | "rewordsTokens" | "sendsOn" | "schedulingAddresses">>;
   /** The paths, as the server itself would write them. */
   readonly paths: { readonly start: string; readonly principal: string; readonly home: string; collection(slug: string): string; member(slug: string, name: string): string };
   addCalendar(slug: string, init?: Partial<Omit<StandInCalendar, "slug">>): StandInCalendar;
@@ -224,6 +226,8 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
   function propfind(path: string, depth: string | null, asked: (name: string) => boolean, port: number): { status: number; body: string } {
     if (path === start) return { status: 207, body: multistatus(response(start, propstat(asked("current-user-principal") ? `<current-user-principal><href>${esc(given.principalHref?.(port) ?? principal)}</href></current-user-principal>` : ""))) };
     if (path === principal) {
+      const addresses = (given.schedulingAddresses ?? ["Mila@Studio.example.test"])
+        .map((address) => `<href>mailto:${esc(address)}</href>`).join("");
       return {
         status: 207,
         body: multistatus(
@@ -231,7 +235,7 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
             principal,
             propstat(
               `${asked("calendar-home-set") ? `<C:calendar-home-set><href>${esc(given.homeHref?.(port) ?? home)}</href></C:calendar-home-set>` : ""}` +
-                `${asked("calendar-user-address-set") ? `<C:calendar-user-address-set><href>mailto:Mila@Studio.example.test</href><href>${esc(principal)}</href></C:calendar-user-address-set>` : ""}`,
+                `${asked("calendar-user-address-set") ? `<C:calendar-user-address-set>${addresses}<href>${esc(principal)}</href></C:calendar-user-address-set>` : ""}`,
             ),
           ),
         ),

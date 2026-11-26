@@ -359,7 +359,8 @@ async function claimNext(deps: WriteDrainDeps, input: CalendarWriteDrainInput, t
         const people = await tx.select({ address: calAttendees.address, role: calAttendees.role }).from(calAttendees)
           .where(and(eq(calAttendees.accountId, key.accountId), eq(calAttendees.eventId, head.eventId!)));
         const attendee = connectedAttendee(people.filter(({ role }) => role === "required" || role === "optional")
-          .map(({ address }) => address), held.principal, attendeeAddresses);
+          .map(({ address }) => address), held.principal, attendeeAddresses,
+          input.provider.reader.provider === "caldav" ? schedulingAddresses : []);
         const copy = payload.act.copy;
         ownInvitee = copy && (copy.calendarId !== head.calendarId || head.calendarAccess !== "owner" ||
           copy.attendee !== attendee) ? null : attendee;

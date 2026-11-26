@@ -165,6 +165,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
 
   const oauth = w === "google" || w === "microsoft";
   let principal = gate.held.principal;
+  let schedulingAddresses = w === "caldav" ? gate.held.organizerAddresses ?? [] : [];
   let identityAmbiguous = oauthIdentityAmbiguous(w, gate.held.organizerAddresses);
   let owners = gate.own;
   let changed = 0;
@@ -207,6 +208,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
     if (!identity.ok) return settleConnection(deps, db, key, signIn, identity.reason, identity.retryAfterMs);
     if (found === null && refreshed !== null) return settleConnection(deps, db, key, signIn, "unreadable", null);
     principal = refreshed;
+    schedulingAddresses = addresses;
   }
   if (calendars.length === 0 || listsAgain) {
     const listed = await p.reader.listCalendars(signIn.connection, signal);
@@ -289,7 +291,7 @@ async function turnOf(deps: CalendarSyncDeps, c: DueConnection, signal: AbortSig
   const reading: ReadingContext = {
     deps, db, key, word: w, provider: p, signIn, signal, budget,
     ...(noticeCoverage === undefined ? {} : { noticeCoverage }),
-    map: { zones: deps.zones, ownAddresses: identityAmbiguous ? new Set<string>() : owners, principal },
+    map: { zones: deps.zones, ownAddresses: identityAmbiguous ? new Set<string>() : owners, principal, schedulingAddresses },
   };
   let pages = 0;
   let dropped = 0;

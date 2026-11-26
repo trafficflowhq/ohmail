@@ -22,6 +22,8 @@ export interface SyncKickCursor {
 export interface SyncKickDeps {
   /** The db/tx handle. */
   db: Tx;
+  /** The worker's account-free roster handle for finding newly stamped mailboxes. */
+  rosterDb?: Pick<Tx, "select">;
   /** The mailbox ids this process currently serves (the worker's live runtime keys). */
   served: () => Iterable<string>;
   /**
@@ -135,7 +137,7 @@ async function askRosterForUnserved(
   const after = deps.freshSignal ? undefined : scan?.after;
   const seen = scan?.seen ?? new Set<string>();
   if (scan && !scan.seen) scan.seen = seen;
-  const rows = await deps.db
+  const rows = await (deps.rosterDb ?? deps.db)
     .select({ id: mailboxes.id, requestedAtText: sql<string | null>`${mailboxes.syncRequestedAt}::text` })
     .from(mailboxes)
     .where(and(

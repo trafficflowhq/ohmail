@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole, carryBinding, onServerPool,
+  assertOrganizerRole, carryBinding, onServerPool, readFlightOf,
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings, messageFailures,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
@@ -1191,9 +1191,11 @@ export class MailboxService {
       const facts = await this.factsFor(ctx, now, rows.map((r) => r.id), db);
       return { rows, facts, counts, now };
     };
-    // A hosted pool binds the account on every standalone read. Bind it once for the roster.
+    // A hosted pool binds the roster once and can send the binding with its first read.
     const roster = onServerPool(ctx.db)
-      ? await asTx(ctx).transaction((tx) => readRoster(bridgeDb(tx)), { accessMode: "read only" })
+      ? await bridgeTx(readFlightOf(ctx.db) ?? ctx.db).transaction(
+        (tx) => readRoster(bridgeDb(tx)), { accessMode: "read only" },
+      )
       : await readRoster(ctx.db);
     if (roster === null) return [];
     const { rows, facts, counts, now } = roster;
@@ -1218,8 +1220,8 @@ export class MailboxService {
    * Every statement joins `mailboxes` on the slice AND the caller's account (index-only on
    * `mailboxes_id_account_uq`), so another account's facts cannot reach a row: account isolation.
    * `now` is the caller's one clock reading, which `filing.asOf` reports: the counts that
-   * compare `next_attempt_at` with it must be taken at that same instant. Awaited one after
-   * another, on the handle the caller passed — the update door's is its transaction.
+   * compare `next_attempt_at` with it must be taken at that same instant. The reads are
+   * independent and use the handle the caller passed, which can send them together on the wire.
    */
   private async factsFor(
     ctx: ServiceContext, now: Date, ids: readonly string[], db: Db = ctx.db,
@@ -1242,17 +1244,16 @@ export class MailboxService {
       const scope = and(eq(mailboxes.accountId, ctx.accountId), inArray(mailboxes.id, part));
 
       // Mail set aside: failures not yet resolved.
-      const aside = await db.select({
+      const aside = db.select({
         mailboxId: messageFailures.mailboxId,
         n: d.castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
       }).from(messageFailures)
         .innerJoin(mailboxes, eq(mailboxes.id, messageFailures.mailboxId))
         .where(and(scope, isNull(messageFailures.resolvedAt)))
         .groupBy(messageFailures.mailboxId);
-      for (const a of aside) entry(a.mailboxId).setAside = a.n;
 
       // The folders, each mailbox's by name: `firstSyncStopFolder` takes the first stop in that order.
-      const folders = await db.select({
+      const folders = db.select({
         mailboxId: mailboxFolders.mailboxId,
         folder: mailboxFolders.folder,
         highestmodseq: mailboxFolders.highestmodseq,
@@ -1263,7 +1264,6 @@ export class MailboxService {
         .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
         .where(scope)
         .orderBy(asc(mailboxFolders.mailboxId), asc(mailboxFolders.folder));
-      for (const { mailboxId, ...f } of folders) entry(mailboxId).folders.push(f);
 
       /**
        * Is sending set up, and which host does ingest believe — off the INCOMING credential's
@@ -1274,11 +1274,10 @@ export class MailboxService {
        * the two could disagree. At most one `imap` row per mailbox (the primary key). The meta
        * alone: never `secret_enc`.
        */
-      const creds = await db.select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
+      const creds = db.select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
         .from(mailboxCredentials)
         .innerJoin(mailboxes, eq(mailboxes.id, mailboxCredentials.mailboxId))
         .where(and(scope, eq(mailboxCredentials.transport, "imap")));
-      for (const c of creds) entry(c.mailboxId).imapMeta = c.meta;
 
       // Our own filings the mail server has not applied yet (see `MailboxDTO.pendingMoves`). A
       // COUNT, never the rows. Joined through `messages` because `folder_state` carries no mailbox
@@ -1307,7 +1306,7 @@ export class MailboxService {
         ))
         .orderBy(desc(folderState.attempts), desc(folderState.nextAttemptAt))
         .limit(1);
-      const filings = await db.select({
+      const filings = db.select({
         mailboxId: mailboxes.id,
         n: d.castInt(sql`count(*) filter (where ${ourOutstandingFiling()})`).mapWith(Number) as unknown as SQL<number>,
         due: d.castInt(sql`count(*) filter (where ${filingDue(now)})`).mapWith(Number) as unknown as SQL<number>,
@@ -1351,7 +1350,11 @@ export class MailboxService {
         // `toDTO` reads as the zeros and nulls the group gave.
         .where(and(scope, eq(messages.accountId, ctx.accountId), ourOutstandingFiling(), outstandingFilingsOf(ctx.accountId)))
         .groupBy(mailboxes.id);
-      for (const { mailboxId, ...p } of filings) entry(mailboxId).pending = p;
+      const [asideRows, folderRows, credentialRows, filingRows] = await Promise.all([aside, folders, creds, filings]);
+      for (const a of asideRows) entry(a.mailboxId).setAside = a.n;
+      for (const { mailboxId, ...f } of folderRows) entry(mailboxId).folders.push(f);
+      for (const c of credentialRows) entry(c.mailboxId).imapMeta = c.meta;
+      for (const { mailboxId, ...p } of filingRows) entry(mailboxId).pending = p;
     }
     return out;
   }
