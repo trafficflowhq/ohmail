@@ -199,6 +199,34 @@ describe("the gate — the form exists exactly while /hello says needsSetup:true
     expect(replace).toHaveBeenCalledWith("/join");
   });
 
+  it("offers Sign in on an established server when the session check stalls", async () => {
+    answers["/api/hello"] = HELLO_SETTLED;
+    const answer = globalThis.fetch;
+    const stalled = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }));
+    globalThis.fetch = (input, init) =>
+      String(input).includes("/api/auth/session") ? stalled(input, init) : answer(input, init);
+
+    vi.useFakeTimers();
+    try {
+      const c = await mountSetup();
+      expect(stalled).toHaveBeenCalledTimes(1);
+      expect(c.textContent).toContain(W.checking.replace(/\.$/, ""));
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+
+      expect(c.textContent).toContain(W.settledTitle.replace(/\.$/, ""));
+      expect([...c.querySelectorAll("button")].some((button) => button.textContent === W.signIn)).toBe(true);
+      expect(stalled.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+      expect(replace).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("an unreachable server renders the retry card, never the form", async () => {
     answers["/api/hello"] = coded(503, "hello_unavailable", "this host could not determine its setup state");
     const c = await mountSetup();
