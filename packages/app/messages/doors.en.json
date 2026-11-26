@@ -347,6 +347,10 @@
     }
   },
   "approve": {
+    "phoneTitle": "Sign in on this phone.",
+    "phoneTitleOn": "Sign in on <name>{computer}</name>.",
+    "phoneApproved": "Sign-in approved.",
+    "phoneReturn": "Return to the app.",
     "title": "Sign in ohmail on this computer.",
     "titleOn": "Sign in ohmail on <name>{computer}</name>.",
     "onlyYours": "Confirm only if it is yours and you started this.",

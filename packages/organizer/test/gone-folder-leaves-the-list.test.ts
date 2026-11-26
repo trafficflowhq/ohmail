@@ -67,7 +67,14 @@ describe("a folder the server stated gone", () => {
   it("leaves the folder list: the row goes, the delta carries the delete, its residue is reaped", async () => {
     const s = await seeded();
     const adapter = adapterOf(goneBatch());
-    await cycle(s.repo, adapter, s);
+    expect((await cycle(s.repo, adapter, s)).hasBacklog).toBe(true);
+    expect(await s.folders(), "one gone folder leaves per pass").toEqual(["Kept", "Projects"]);
+    expect(await s.folderDeletes()).toEqual([s.ids.clients]);
+    expect(await s.residue()).toBe(1);
+
+    (adapter as unknown as { changesSince: () => Promise<ChangeBatch> }).changesSince = async () =>
+      goneBatch({ foldersGone: ["Projects"], newCursor: { folders: {} } });
+    expect((await cycle(s.repo, adapter, s)).hasBacklog).toBe(false);
     expect(await s.folders(), "a folder the server does not have kept its row").toEqual(["Kept"]);
     expect(await s.folderDeletes(), "no folder delete reached the delta").toEqual([s.ids.clients, s.ids.projects].sort());
     expect(await s.residue(), "a dead epoch's copy outlived the folder's own statement").toBe(0);

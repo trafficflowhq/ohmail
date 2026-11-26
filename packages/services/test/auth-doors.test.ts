@@ -307,7 +307,7 @@ describe("rehash on sign-in", () => {
     expect(await attempt(h, "10.10.0.1", "legacy@x.example", PASSWORD)).toBe("ok");
   }, 60_000);
 
-  it("the rehash is a compare-and-set: a hash that moved underneath is never overwritten", async () => {
+  it("a changed password hash is preserved and the earlier credential is refused", async () => {
     const h = await harness();
     const user = await register(h, "moved@x.example");
     const { credentials } = await import("@trafficflow/db/cloud");
@@ -319,7 +319,7 @@ describe("rehash on sign-in", () => {
       await h.db.update(credentials).set({ passwordHash: "displaced-row-password-hash" }).where(eq(credentials.userId, user.userId));
       return ok;
     };
-    expect(await attempt(h, "10.10.0.2", "moved@x.example", PASSWORD)).toBe("ok");
+    expect(await attempt(h, "10.10.0.2", "moved@x.example", PASSWORD)).toBe("credential_refused");
     expect(await credentialOf(h, user.userId)).toBe("displaced-row-password-hash");
   }, 60_000);
 });

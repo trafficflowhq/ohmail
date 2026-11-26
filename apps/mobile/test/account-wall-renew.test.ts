@@ -305,7 +305,7 @@ describe("the tabs wait for the verdict when this pairing has none", () => {
   it("THE SHELL WIRES IT: the gate frame stands after the wall and before the mail", () => {
     const gated = read("src/ui/Gated.tsx");
     const wall = gated.indexOf('if (verdict.to === "wall")');
-    const gate = gated.indexOf("if (!painted) return <AccessGate />;");
+    const gate = gated.indexOf("if (!painted) return <BootShell checkingAccess />;");
     const mail = gated.indexOf("<LifecycleStrip session={session} />");
     expect(wall).toBeGreaterThan(0);
     expect(gate).toBeGreaterThan(wall);

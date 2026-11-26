@@ -3,7 +3,7 @@
  * slot presents a refresh token its twin already spent, and the server answers that by ending the
  * pairing. Read as CODE (comments and strings blanked), never as text: a value import of the class
  * is refused too, because an alias constructs without the spelling. Two doors beside it: the
- * redeem enters a slot only from `pairWithServer`, and the store's three credential writes are
+ * paired session enters a slot only from `pairApproved`, and the store's three credential writes are
  * called only by `vaultFor`, the vault every manager's writes go through.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -107,11 +107,11 @@ describe("the bearer manager is built in one place", () => {
     expect(got.inRegistry, "the registry constructs from a row and from a redeem, so the reading is not vacuous").toBe(2);
   });
 
-  it("a redeem enters a slot only from pairWithServer; the store's credential writes only from vaultFor", () => {
+  it("a paired session enters a slot only from pairApproved; the store's credential writes only from vaultFor", () => {
     const files = tree();
-    const redeem = callsOutside(files, ["adoptRedeem"], "src/net/pairing.ts", "pairWithServer");
-    expect(redeem.outside, "adoptRedeem called outside pairWithServer").toEqual([]);
-    expect(redeem.inside, "pairWithServer adopts its redeem").toBe(1);
+    const redeem = callsOutside(files, ["adoptRedeem"], "src/net/pairing.ts", "pairApproved");
+    expect(redeem.outside, "adoptRedeem called outside pairApproved").toEqual([]);
+    expect(redeem.inside, "pairApproved adopts the session").toBe(1);
     const writes = callsOutside(files, STORE_WRITES, "src/net/pairing.ts", "vaultFor");
     expect(writes.outside, "a credential write outside vaultFor").toEqual([]);
     expect(writes.inside, "vaultFor binds all three").toBe(3);
@@ -121,7 +121,7 @@ describe("the bearer manager is built in one place", () => {
     const rel = "src/net/connection.tsx";
     const real = readFileSync(join(APP, rel), "utf8");
     const plant = (line: string): Array<[string, string]> => [[rel, `${real}\n${line}\n`]];
-    expect(callsOutside(plant("void bearers.adoptRedeem(id, redeem);"), ["adoptRedeem"], "src/net/pairing.ts", "pairWithServer").outside)
+    expect(callsOutside(plant("void bearers.adoptRedeem(id, redeem);"), ["adoptRedeem"], "src/net/pairing.ts", "pairApproved").outside)
       .toHaveLength(1);
     expect(callsOutside(plant("void env.profiles.clearRefreshToken(id, t);"), STORE_WRITES, "src/net/pairing.ts", "vaultFor").outside)
       .toHaveLength(1);

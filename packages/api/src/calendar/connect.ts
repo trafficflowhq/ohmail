@@ -36,9 +36,7 @@ function connectionFor(req: Request, deps: ApiDeps, connection: CalendarConnecti
 }
 
 function replayConnection(req: Request, deps: ApiDeps, stored: Parameters<typeof replayOf>[0], hash: string) {
-  if (!calendarRestricted(req, deps)) return replayOf(stored, hash);
-  const responseJson = connectionFor(req, deps, stored.responseJson as CalendarConnectionRecord);
-  return replayOf({ ...stored, responseJson }, hash);
+  return replayOf(stored, hash, (body) => connectionFor(req, deps, body as CalendarConnectionRecord));
 }
 
 const doorOf = (deps: ApiDeps): CalendarConnectDoor => ({ port: deps.services?.calendarConnect, keys: deps.keyProvider });

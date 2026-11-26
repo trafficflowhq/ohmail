@@ -1544,7 +1544,7 @@ export async function startWorkerWithLock(
 
     log.info("worker_serving", {
       mailboxes: runtimes.size, accounts: scope.dutyAccounts.length,
-      attaches: scope.attachPool.counts(), maxMailboxes, rosterIntervalMs, alertIntervalMs,
+      maxMailboxes, rosterIntervalMs, alertIntervalMs,
       alertSinks: alertSinks.map((s) => s.name),
     });
     if (alertSinks.length === 1) {

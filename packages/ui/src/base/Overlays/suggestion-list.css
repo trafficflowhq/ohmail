@@ -22,7 +22,7 @@
     display: flex;
     flex-direction: column;
     min-width: var(--oh-suggest-min);
-    max-width: var(--oh-suggest-max, 440px);
+    max-width: 440px;
     padding: var(--oh-suggest-pad);
     border-radius: var(--r-sheet);
     background: var(--sheet);

@@ -27,6 +27,7 @@
   background: var(--scrim);
 }
 .senderm {
+  --sm-close-size: 48px;
   position: fixed;
   z-index: var(--z-pal);
   width: min(340px, calc(100vw / var(--ui-zoom, 1) - 20px));
@@ -42,9 +43,8 @@
   gap: 11px;
   padding: 15px 18px 10px;
 }
-/* THE FULL-HEIGHT SHEET'S CLOSE — a zero-height sticky bar, so the 44px control rides the top-right
-   corner while the sheet scrolls under it and adds nothing to the height the clamp measures. The
-   head gives up the corner's width so a long name ellipsizes before it. */
+/* The zero-height sticky bar keeps Close above the scrolling sheet. The extra size
+   keeps the target at least 44px during the sheet's entry animation. */
 .sm-close-bar {
   position: sticky;
   top: 0;
@@ -54,8 +54,8 @@
   justify-content: flex-end;
 }
 .sm-close {
-  width: 44px;
-  height: 44px;
+  width: var(--sm-close-size);
+  height: var(--sm-close-size);
   margin: 4px 4px 0 0;
   display: grid;
   place-items: center;
@@ -70,7 +70,7 @@
   color: var(--ink);
 }
 .senderm.sm-full .sm-head {
-  padding-right: 52px;
+  padding-right: calc(var(--sm-close-size) + var(--s2));
 }
 .sm-who {
   display: flex;

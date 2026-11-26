@@ -363,7 +363,7 @@ function ScopePiles({ audience, piles, saving, onChange }: {
           const disabled = saving || (word === "ohbox" && selected) || (word === "screener" && audience !== "everyone");
           return (
             <Tap key={pile} accessibilityRole="checkbox" accessibilityLabel={labels[word]}
-              accessibilityState={{ checked: selected, disabled }} disabled={disabled}
+              accessibilityState={{ checked: selected, disabled: disabled }} disabled={disabled}
               onPress={() => onChange(selected ? effective.filter((entry) => entry !== pile) : [...effective, pile])}
               style={{ minHeight: 44, justifyContent: "center" }}>
               <Chip variant={selected ? "neutral" : "outline"} {...(selected ? { icon: "check" } : {})}>

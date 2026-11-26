@@ -162,7 +162,15 @@ describe("cron reconciler backstop", () => {
    * must-run case failed as a bare `false`, which is how a red here was carried across three tips
    * with no cause. `worker-live` — another process on this database holds the shard's advisory
    * lock, which is the product working — and `stood-down` are not the same reading. */
-  beforeAll(async () => { await runMigrations(DB_URL); });
+  beforeAll(async () => {
+    await runMigrations(DB_URL);
+    const fixture = postgres(DB_URL, { max: 1, onnotice: () => {} });
+    try {
+      await fixture`INSERT INTO worker_topology (singleton, shards) VALUES (true, 1) ON CONFLICT (singleton) DO NOTHING`;
+    } finally {
+      await fixture.end({ timeout: 5 });
+    }
+  });
   const closers: Array<() => Promise<void>> = [];
   afterEach(async () => { for (const c of closers.splice(0)) await c(); });
 

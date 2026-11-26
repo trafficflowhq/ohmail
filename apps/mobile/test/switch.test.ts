@@ -237,7 +237,13 @@ function memoryKV(): SecureKV {
 function receiverEnv(): PairingEnv {
   const world = sqlWorld();
   const engineDeps: MobileEngineDeps = { openExecutor: world.open, deleteDatabase: world.drop, uuid: () => "00000000-0000-4000-8000-000000000000" };
-  return { profiles: new ServerProfileStore(memoryKV()), engineDeps, deviceKind: "mobile-android", bearers: new BearerRegistry() };
+  return {
+    profiles: new ServerProfileStore(memoryKV()),
+    engineDeps,
+    deviceKind: "mobile-android",
+    bearers: new BearerRegistry(),
+    approvalFetchImpl: (url, init) => fetch(url, init as RequestInit),
+  };
 }
 
 /** Native as the receiving app's: one arrival, and one pending challenge whose verifier it hands over once. */

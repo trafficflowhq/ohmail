@@ -153,10 +153,13 @@ const receiptOf = (key: string, r: Pick<Row, "id" | "state" | "refusal">): Calen
   reason: r.refusal === null ? null : asCalendarWriteFault(r.refusal),
 });
 
-const writeKeyFields = {
-  id: calWrites.id, state: calWrites.state, refusal: calWrites.refusal, payload: calWrites.payload,
-  updatedAt: calWrites.updatedAt, eventId: calWrites.eventId, calendarId: calWrites.calendarId, attempts: calWrites.attempts,
-};
+// SQLite loads the shared routes without a calendar table. Read these fields only for calendar writes.
+function writeKeyFields() {
+  return {
+    id: calWrites.id, state: calWrites.state, refusal: calWrites.refusal, payload: calWrites.payload,
+    updatedAt: calWrites.updatedAt, eventId: calWrites.eventId, calendarId: calWrites.calendarId, attempts: calWrites.attempts,
+  };
+}
 
 function replyCheckOf(payload: unknown): { id: string; fingerprint: string } | null {
   if (payload === null || typeof payload !== "object" || !("replyCheckOf" in payload) ||
@@ -188,11 +191,11 @@ function replyResentAs(payload: unknown): string | null {
 }
 
 async function writeNamedByKey(tx: Tx, accountId: string, key: string) {
-  const [row] = await tx.select(writeKeyFields).from(calWrites)
+  const [row] = await tx.select(writeKeyFields()).from(calWrites)
     .where(and(eq(calWrites.accountId, accountId), eq(calWrites.idempotencyKey, key))).limit(1);
   if (!row) return null;
   const check = replyCheckOf(row.payload);
-  const findReply = (id: string) => tx.select(writeKeyFields).from(calWrites)
+  const findReply = (id: string) => tx.select(writeKeyFields()).from(calWrites)
     .where(and(eq(calWrites.accountId, accountId), eq(calWrites.calendarId, row.calendarId), eq(calWrites.id, id),
       row.eventId === null ? isNull(calWrites.eventId) : eq(calWrites.eventId, row.eventId))).limit(1);
   let current = check ? (await findReply(check.id))[0] : row;
@@ -691,7 +694,7 @@ function outlookReplyMayHaveDispatched(
 }
 
 function outlookReplyRows(tx: Tx, accountId: string, calendarId: string, eventId: string) {
-  return tx.select(writeKeyFields).from(calWrites).where(and(
+  return tx.select(writeKeyFields()).from(calWrites).where(and(
     eq(calWrites.accountId, accountId), eq(calWrites.calendarId, calendarId), eq(calWrites.eventId, eventId),
     eq(calWrites.op, "answer"),
     or(inArray(calWrites.state, ["pending", "refused"]),
@@ -1365,7 +1368,7 @@ async function resendOutlookReply(
   if (!isWriteKey(key)) throw invalid("a reply resend requires a calendar write key");
   const unavailable = () => new ServiceError("calendar_write_left", 409, "this reply is no longer awaiting a resend");
   if (row.provider !== "microsoft" || row.op !== "answer" || row.eventId === null) throw unavailable();
-  const [known] = await tx.select(writeKeyFields).from(calWrites)
+  const [known] = await tx.select(writeKeyFields()).from(calWrites)
     .where(and(eq(calWrites.accountId, accountId), eq(calWrites.idempotencyKey, key))).limit(1);
   if (known) {
     if (replyResentAs(row.payload) !== known.id) {

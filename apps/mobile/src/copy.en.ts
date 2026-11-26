@@ -14,6 +14,8 @@ import type { BackupExclusion } from "./engine/backup-exclusion";
 import type { UnsubSaid, UnsubToast } from "./state/unsub-arms";
 import { isPinFailure } from "./net/host-pinning";
 
+export const PAIRING_DEVICE_NAMES = { "mobile-ios": "iPhone", "mobile-android": "Android" };
+
 /** Hoisted for {@link PIN_CHANGED}'s reason: `bootMigratingOf` counts under this sentence. */
 const BOOT_MIGRATING = "Updating the mail store on this phone…";
 

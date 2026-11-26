@@ -268,13 +268,16 @@ describe.each([
   }, 30_000);
 });
 
-async function swipeUp(page: Page, over: Locator) {
+async function swipeUp(page: Page, over: Locator, above = page.viewportSize()!.height) {
   const box = (await over.boundingBox())!;
+  const top = Math.max(0, box.y);
+  const bottom = Math.min(above, box.y + box.height);
+  expect(bottom).toBeGreaterThan(top);
   const cdp = await page.context().newCDPSession(page);
   try {
     await cdp.send("Input.synthesizeScrollGesture", {
       x: Math.round(box.x + box.width / 2),
-      y: Math.round(box.y + box.height / 2),
+      y: Math.round((top + bottom) / 2),
       yDistance: -2400,
       speed: 5000,
       gestureSourceType: "touch",
@@ -309,7 +312,7 @@ it.each([
           const row = (await last.boundingBox())!;
           return row.y + row.height;
         };
-        if ((await lastRowBottom()) > dockTop) await swipeUp(page, menu);
+        if ((await lastRowBottom()) > dockTop) await swipeUp(page, menu, dockTop);
         await expect.poll(lastRowBottom).toBeLessThanOrEqual(dockTop);
       };
 

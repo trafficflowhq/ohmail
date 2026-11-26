@@ -179,7 +179,7 @@ export const MAP_2_0: Readonly<Record<string, MappedTable>> = {
   webauthn_challenges: t("cloud", true),
   webauthn_credentials: t("cloud", true),
   worker_heartbeats: t("cloud", false),
-  worker_topology: t("cloud", false),
+  worker_topology: { ...t("cloud", false), afterWindow: true }, // cloud migration 0108
   // ── a desktop engine's own ─────────────────────────────────────────────────────────────────────
   local_store_flush: t("desktop", false),
 };

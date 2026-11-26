@@ -482,6 +482,7 @@
 
 .oh-sheet[data-writing-keyboard] {
   --oh-sheet-foot-room: 0px;
+  --write-text-room: none;
 }
 
 .oh-sheet[data-writing-keyboard] .oh-composer-editor {
@@ -494,7 +495,7 @@
 .oh-sheet[data-writing-keyboard] .oh-composer-scroll {
   min-block-size: calc(var(--t-read) * var(--lh-read));
   overflow-anchor: none;
-  max-block-size: var(--write-text-room, none);
+  max-block-size: var(--write-text-room);
 }
 
 .oh-sheet[data-writing-keyboard] .oh-composer-marks {
