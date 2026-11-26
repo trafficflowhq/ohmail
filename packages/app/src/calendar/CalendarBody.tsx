@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { RefusalLine } from "@ohmail/ui/base";
+import { ListLine } from "@ohmail/ui/mail";
 import { readerZones, type CalendarPort } from "@ohmail/app-logic/calendar";
 import { useInvitationAnswer } from "../invitations/EventAnswers.js";
 import { useAgendaPanel } from "./use-agenda-panel.js";
@@ -17,7 +18,12 @@ import { useMonthViewport } from "../month/MonthRunScope.js";
 import type { MonthRun } from "../month/use-month-run.js";
 import { useFaces, useSettings, useSources, useWhere, type Where } from "./where.js";
 import { useSharedCalendarSettings } from "../calsettings/settings-read.js";
-import { CalendarFirstStep, CalendarLanding, useCalendarFirstStep } from "./CalendarFirstStep.js";
+import {
+  CalendarFirstStep,
+  CalendarLanding,
+  useCalendarFirstStep,
+  useCalendarLoading,
+} from "./CalendarFirstStep.js";
 import { useNewEvent, useNewEventKey } from "./use-new-event.js";
 import { NewEvent } from "./NewEvent.js";
 import { OpenEvent } from "./OpenEvent.js";
@@ -36,13 +42,14 @@ export function CalendarBody(pane: PaneProps) {
   const port = host.wires.calendar;
   const sources = useSources(port);
   const empty = useCalendarFirstStep();
+  const loading = useCalendarLoading();
   const disabled = useSharedCalendarSettings()?.said?.enabledAt === null;
   const firstStep = empty || disabled;
-  useCalendarConnectionNotice(sources, !firstStep);
+  useCalendarConnectionNotice(sources, !firstStep && !loading);
   const create = useNewEvent();
   useNewEventKey(
     create,
-    !firstStep && pane.keysHere && pane.route.open === null && pane.route.words.panel !== "new",
+    !firstStep && !loading && pane.keysHere && pane.route.open === null && pane.route.words.panel !== "new",
   );
   if (port === NONE)
     return (
@@ -56,6 +63,12 @@ export function CalendarBody(pane: PaneProps) {
         plan={pane.plan}
         recovery={port.recoveredProposals && <RecoveredProposals port={port} />}
       />
+    );
+  if (loading)
+    return (
+      <CalendarLanding plan={pane.plan}>
+        <ListLine busy>{t("loading")}</ListLine>
+      </CalendarLanding>
     );
   return <CalendarOn port={port} sources={sources} create={create} {...pane} />;
 }

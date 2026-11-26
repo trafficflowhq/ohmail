@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Avatar, Button, mailContextTrigger, type Point } from "../../base/index.js";
+import { Avatar, Button, Spinner, mailContextTrigger, type Point } from "../../base/index.js";
 import type { IconName } from "../../icons/Icon.js";
 import { RailEntry } from "./RailEntry.js";
 import "./rail-foot.css";
@@ -26,6 +26,7 @@ export interface RailFootProps {
     note: string;
     /** The pointer's hint: where a press leads. */
     title: string;
+    loading?: boolean;
     current?: boolean;
     onPress?: () => void;
     onMenu?: (at: Point | Element, opener: HTMLElement) => void;
@@ -71,6 +72,7 @@ export function RailFoot({ notice, pull, account, tools }: RailFootProps) {
               <b className="oh-railfoot-name">{account.name}</b>
               <span className="oh-railfoot-note">{account.note}</span>
             </span>
+            {account.loading && <Spinner />}
           </button>
         ) : null}
         {tools?.length ? (

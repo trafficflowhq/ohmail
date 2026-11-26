@@ -6979,6 +6979,7 @@
     "coming": "Demnächst mit {name}"
   },
   "calendar": {
+    "loading": "Kalender wird geladen…",
     "connect": "Einen Kalender verbinden",
     "repeat": {
       "unavailable": "In diesem Kalender lassen sich Termine noch nicht wiederholen.",

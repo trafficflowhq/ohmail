@@ -12,6 +12,15 @@ import { useText } from "../text/index.js";
 
 const EmptyCalendar = createContext(false);
 
+export function useCalendarLoading(): boolean {
+  const port = useFrame().host.wires.calendar;
+  const enabledAt = useSharedCalendarSettings()?.said?.enabledAt;
+  const snapshot = () => port !== NONE && port.ready?.(enabledAt) === false;
+  return useSyncExternalStore(port === NONE ? still : port.subscribe, snapshot, snapshot);
+}
+
+const still = () => () => undefined;
+
 export function CalendarFirstStepScope({ port, children }: { port: CalendarPort; children: ReactNode }) {
   const { host } = useFrame();
   const setup = useSetupPort();

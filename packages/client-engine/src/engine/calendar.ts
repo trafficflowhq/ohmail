@@ -73,6 +73,13 @@ export abstract class EngineCalendar extends EngineLifecycle {
     return (this.adapter as Partial<CalendarSetupAdapter>).calendarSetupTransport?.() ?? null;
   }
 
+  /** Whether the mirror has finished reading the calendar for the switch the view knows. */
+  calendarReady(enabledAt: string | null | undefined): boolean {
+    const readFor = this.store.getMeta<string | null>(CALENDAR_READ_FOR_META);
+    if (readFor === undefined || readFor !== switchOf(this.store.entries("settings")[0]?.entity)) return false;
+    return enabledAt === undefined ? readFor !== null : readFor === enabledAt;
+  }
+
   /** The served window and the additional spans this mirror has actually read. */
   calendarHeld(): { window: CalendarWindow; loaded: readonly CalendarSpan[] } {
     return { window: this.calendarWindow, loaded: this.calendarLoaded };
@@ -172,8 +179,11 @@ export abstract class EngineCalendar extends EngineLifecycle {
         if (wrote) this.notify();
         return false;
       }
-      // A page that states no calendar span is not the calendar's phase: none is served here.
-      if (page.calendarWindow === undefined) break;
+      // A mirror can know the switch is on before its copy is ready. Leave the read owed.
+      if (page.calendarWindow === undefined) {
+        if (wrote) this.notify();
+        return this.switchHeld() === null;
+      }
       this.calendarWindow = page.calendarWindow;
       if (page.changes.length > 0) {
         this.noteApplied(page.changes);

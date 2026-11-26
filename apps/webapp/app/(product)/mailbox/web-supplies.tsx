@@ -229,6 +229,7 @@ export function useWebHost(
         microsoftApproval: () => readMicrosoftApproval(scope),
         startOAuth: (provider) => startCalendarOAuth(provider, scope, () => readOwner() === scope && sessionMayAsk()),
       } : undefined,
+      ready: (enabledAt) => engine.calendarReady(enabledAt),
       held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),
     });
   }, [engine, scope, confirmed, server.calendar]);

@@ -3,6 +3,7 @@ import { unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { desktopWindowThrough } from "../../../test/support/desktop-window-bridge.js";
 import { createApp } from "@trafficflow/api";
 import {
   fencedAccountWrite, recordCalendarChanges, sweepMailboxData, CALENDAR_RECORD_KINDS, type CalendarChange, type LedgerTx,
@@ -455,7 +456,7 @@ describe("the desktop's door serves its copy's calendar by the switch it copied"
 
   async function door(srv: Awaited<ReturnType<typeof server>>, opts: {
     beforeReplay?: (since: string | null) => Promise<Response | void>;
-    calendarSnapshot?: () => Response | void;
+    calendarSnapshot?: () => Promise<Response | void> | Response | void;
     now?: () => Date;
     prepare?: (dataDir: string) => Promise<void>;
   } = {}) {
@@ -474,7 +475,7 @@ describe("the desktop's door serves its copy's calendar by the switch it copied"
         if (answer) return answer;
       }
       if (url.pathname === "/sync/snapshot" && url.searchParams.get("phase") === "calendar") {
-        const answer = opts.calendarSnapshot?.();
+        const answer = await opts.calendarSnapshot?.();
         if (answer) return answer;
       }
       // The account's feed and its switch, answered by the server's own routes.
@@ -616,6 +617,44 @@ describe("the desktop's door serves its copy's calendar by the switch it copied"
       await d.started;
     }
     expect(asks).toBe(1);
+  });
+
+  it("loads existing Cloud calendars and events in a fresh desktop window", { timeout: 120_000 }, async () => {
+    const srv = await server(1, { logCalendarChanges: false });
+    const calendarAsked = Promise.withResolvers<void>();
+    const finishCalendar = Promise.withResolvers<void>();
+    const d = await door(srv, {
+      beforeReplay: async () => undefined,
+      calendarSnapshot: () => {
+        calendarAsked.resolve();
+        return finishCalendar.promise;
+      },
+    });
+    const engine = desktopWindowThrough(srv.s.accountId, (url, method) =>
+      d.sidecar.handle(new Request(`http://sidecar${url}`, {
+        method,
+        headers: { authorization: `Bearer ${d.sidecar.sessionToken}` },
+      })),
+    );
+    try {
+      await Promise.race([calendarAsked.promise, d.started]);
+      await engine.syncOnce();
+      expect(engine.calendarReady(FIXED_NOW.toISOString())).toBe(false);
+      expect(engine.store.list("calendar_event")).toEqual([]);
+
+      finishCalendar.resolve();
+      await d.started;
+      expect((await d.window()).kinds).toEqual(EVERY_KIND);
+      await engine.syncOnce();
+      expect(engine.store.list("calendar")).toMatchObject([{ name: "Work" }]);
+      expect(engine.store.list("calendar_event")).toMatchObject([{ title: "Meeting 0" }]);
+      expect(engine.calendarReady(FIXED_NOW.toISOString())).toBe(true);
+    } finally {
+      finishCalendar.resolve();
+      await d.started;
+      engine.dispose();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("reads existing Cloud calendars even when the mail replay has no calendar changes", { timeout: 120_000 }, async () => {
