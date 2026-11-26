@@ -127,6 +127,8 @@ export interface PlaceRail {
   readonly whileOpen?: true;
   /** The reason the destination's shortcut and palette offer are unavailable on this host. */
   readonly navigationRefusal?: (host: HostContract) => DisabledReason | undefined;
+  /** Prepare this place when the person points to or focuses its rail entry. */
+  readonly preload?: () => void;
   readonly useCount?: () => { readonly count: string; readonly hot: boolean; readonly title?: string } | null;
   /** A letter dropped here files so (`move:reads`, `later`): the list runs its own verb (`rail-drag.ts`). None: no drop. */
   readonly drop?: import("@ohmail/app-logic/lists/drag-source").PileDropAction;

@@ -63,7 +63,7 @@ interface Call {
  * The world: `ids` arrive in one `/sync` page, every body read is held and recorded, and every
  * `message_body` write the engine makes is counted per id and state.
  */
-async function world(kind: Kind, ids: string[], opts: { batch?: boolean } = {}) {
+async function world(kind: Kind, ids: string[], opts: { batch?: boolean; widePreload?: boolean } = {}) {
   const store = storeOf(kind);
   const calls: Call[] = [];
   let served = false;
@@ -89,6 +89,7 @@ async function world(kind: Kind, ids: string[], opts: { batch?: boolean } = {}) 
       held({ kind: "single", ids: [id], urgent: intent?.urgent === true }, (who) => ({
         text: `${who} ${id}`, html: null, loadedRemoteContent: false,
       })),
+    ...(opts.widePreload ? { bodyPreloadLimit: () => 40 } : {}),
     ...(opts.batch === false ? {} : {
       fetchBodies: (asked: string[], intent?: { urgent?: boolean }) =>
         held({ kind: "batch", ids: [...asked], urgent: intent?.urgent === true }, (who, omit) =>
@@ -137,6 +138,54 @@ async function backgroundBatchOut(w: Awaited<ReturnType<typeof world>>, ids: str
   for (const id of ids) expect(w.record(id)?.state, "the premise: marked loading").toBe("loading");
   return bg;
 }
+
+it.each(["writing its markers", "waiting in the queue"])(
+  "opens only the selected body while a wide preload is %s",
+  async (stage) => {
+    const recent = Array.from({ length: 40 }, (_, i) => `recent-${i}`);
+    const blockers = stage === "waiting in the queue" ? ["block-1", "block-2", "block-3", "block-4"] : [];
+    const w = await world("memory", [...recent, ...blockers], { widePreload: true });
+    const busy = blockers.map((id) => w.engine.hydrateBody(id));
+    await until(() => w.calls.length === blockers.length, "the other reads to occupy the queue");
+    let release = () => {};
+    let marking = false;
+    if (blockers.length === 0) {
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const commitLocal = w.store.commitLocal.bind(w.store);
+      w.store.commitLocal = async (puts, deletes) => {
+        if (puts.filter((p) => p.type === "message_body").length === recent.length) {
+          marking = true;
+          await gate;
+        }
+        return commitLocal(puts, deletes);
+      };
+    }
+    const preload = w.engine.prefetchRecentBodies();
+    const target = recent[0]!;
+    try {
+      await until(() => marking || w.record(target)?.state === "loading", "the preload to register the body");
+      const opened = w.engine.hydrateBody(target, { urgent: true });
+      if (marking) expect(w.calls).toEqual([]);
+      release();
+      await until(() => w.calls.some((c) => c.urgent), "the open's own read");
+      const own = w.calls.find((c) => c.urgent)!;
+      expect(own).toMatchObject({ kind: "single", ids: [target] });
+      own.answer("OPEN");
+      await opened;
+      expect(w.record(target)?.text).toBe(`OPEN ${target}`);
+    } finally {
+      release();
+      for (const c of w.calls) c.answer("BACKGROUND");
+      await until(() => w.calls.some((c) => c.kind === "batch"), "the preload batch to leave");
+      const batch = w.calls.find((c) => c.kind === "batch")!;
+      batch.answer("BACKGROUND");
+      await Promise.all([preload, ...busy]);
+    }
+    expect(w.calls.find((c) => c.kind === "batch")).toMatchObject({ urgent: false });
+    expect(w.calls.find((c) => c.kind === "batch")?.ids).toHaveLength(40);
+    expect(w.readyWrites(target)).toBe(1);
+  },
+);
 
 for (const kind of ["memory", "sql", "idb"] as const) {
   describe(`an open beside a background read already out (${kind} store)`, () => {

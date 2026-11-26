@@ -204,7 +204,7 @@ export interface Routes {
   "GET /messages": { params: None; body: never; answer: Page<MessageDTO> | Page<TrashRowDTO> };
   "GET /messages/timeline": {
     params: None; body: never;
-    answer: { total: number; months: TimelineMonth[]; undated: number };
+    answer: { total: number; months: TimelineMonth[]; undated: number; seek?: true };
   };
   "GET /messages/bodies": { params: None; body: never; answer: Page<MessageBodyBatchItem> };
   "GET /messages/:id": { params: Id; body: never; answer: MessageDTO };

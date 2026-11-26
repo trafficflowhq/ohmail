@@ -52,6 +52,10 @@ export const STALE_RESUME_MS = 5 * 60_000;
  */
 export const BACKLOG_PAGE_LIMIT = 2000;
 
+/** The mail sync response advertises the peer's wider limit for background body reads. */
+export const BODY_PRELOAD_IDS_MAX = 40;
+export const BODY_PRELOAD_LIMIT_HEADER = "x-ohmail-body-preload-limit";
+
 /**
  * Is the mirror behind its own threshold — the stamp comparison, alone. `lastDrainAt` is the last
  * COMPLETED drain's instant, written on the driver's OWN clock (never `serverTime`); the engine

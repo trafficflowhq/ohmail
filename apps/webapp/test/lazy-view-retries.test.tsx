@@ -47,6 +47,7 @@ const letterChunk = vi.hoisted(() => async (importOriginal: () => Promise<unknow
 });
 const editorChunk = vi.hoisted(() => async (importOriginal: () => Promise<unknown>) => {
   chunks.editorLoads += 1;
+  await pendingEditor;
   if (chunks.editorGone) throw Object.assign(new Error("Loading chunk rich-editor failed"), { name: "ChunkLoadError", request: chunks.editorGone });
   if (chunks.editorFails > 0) {
     chunks.editorFails -= 1;
@@ -73,6 +74,7 @@ const CRASH_TITLE = messages.viewError.title;
 
 let roots: Root[] = [];
 let pendingSettings: Promise<void> | undefined;
+let pendingEditor: Promise<void> | undefined;
 
 beforeEach(() => {
   window.location.hash = "";
@@ -116,6 +118,7 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
   pendingSettings = undefined;
+  pendingEditor = undefined;
 });
 
 /** Bounded by the clock, not by ticks: a fresh module graph imports the editor for real. */
@@ -173,9 +176,13 @@ describe("Settings, whose chunk failed once", { timeout: 30_000 }, () => {
   beforeEach(freshModules);
 
   it("the next open of Settings asks for the chunk again and shows Settings", async () => {
-    await shellOnDocument();
-    expect(chunks.editorLoads, "the editor is ready with the Ohbox").toBe(1);
-    expect(chunks.letterLoads, "the writing view is ready with the Ohbox").toBe(1);
+    let finish!: () => void;
+    pendingEditor = new Promise<void>((resolve) => { finish = resolve; });
+    try {
+      await shellOnDocument();
+    } finally {
+      await act(async () => { finish(); pendingEditor = undefined; });
+    }
     chunks.settingsFails = 1;
     await goTo("settings");
     await waitFor(() => chunks.settingsLoads >= 1 && (alertText() !== "" || crashCard()), "the failed open painted nothing");
@@ -230,6 +237,7 @@ describe("Settings, whose chunk failed once", { timeout: 30_000 }, () => {
     expect(crashCard(), "a render throw no longer reached the view's crash card").toBe(true);
     expect(alertText(), "a render throw was offered a reload of code that had loaded").not.toContain(LOAD_FAILED);
   });
+
 });
 
 /* AFTER the shell cases: a root on a `<div>` marks `document` as listened to, and a later root on

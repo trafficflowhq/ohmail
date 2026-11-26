@@ -418,18 +418,20 @@ export function pgDialect(): Dialect {
         if (!(error instanceof RangeError)) throw error;
       }
 
-      // The account policy hides the arrival expression from index conditions. Choose each
-      // month's newest row and count its messages in one pass over the account.
+      // The account policy hides the arrival expression from index conditions. Count the
+      // groups and pick each anchor in one account read, ordering tied arrivals by UUID.
       const read = (zoneName: string) => {
         const timeZone = /^[+-]/.test(zoneName) ? sql`${zoneName}::interval` : sql`${zoneName}::text`;
         return d.exec(db, sql`
-          select distinct on (bucket) ${d.castInt(sql`count(*) over (partition by bucket)`)} as c,
-            instant as d, id, to_char(bucket, 'YYYY-MM') as month
+          select ${d.castInt(sql`count(*)`)} as c, max(instant) as d,
+            (array_agg(id order by instant desc nulls last, id desc))[1] as id,
+            to_char(bucket, 'YYYY-MM') as month
           from (
             select m.id, ${instant} as instant, date_trunc('month', ${instant} at time zone ${timeZone}) as bucket
             from messages m where ${where}
           ) dated
-          order by bucket, instant desc nulls last, id desc`);
+          group by bucket
+          order by bucket`);
       };
       try {
         return await read(normalized);

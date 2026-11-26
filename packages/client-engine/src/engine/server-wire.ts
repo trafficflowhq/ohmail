@@ -4,7 +4,7 @@
 import type { EngineMessage, MessageBodyBatchWire, OhmailView, SyncSnapshotPage } from "@ohmail/wire";
 import type { SearchTier } from "@trafficflow/core/search-rank";
 import type { ReadIntent } from "../adapters/adapter.js";
-import type { StoreKeyset, StoreTimelineFn } from "../store-pages.js";
+import type { StoreKeyset, StoreMonthSeek, StoreTimelineFn } from "../store-pages.js";
 
 /**
  * WHAT `GET /search` ANSWERS, as much of it as this client reads. The route returns `{ items, facets, total }`.
@@ -252,6 +252,7 @@ export type ListOlderFn = (
      * the mirror already renders. Ignored once a cursor exists (the cursor IS the position).
      */
     startBelow?: { date: string | null; id: string };
+    seek?: StoreMonthSeek;
   },
 ) => Promise<ListOlderWire | null>;
 
@@ -299,6 +300,8 @@ export type FetchBodiesFn = (messageIds: string[], opts?: ReadIntent) => Promise
  * background read of the same body and the record still be written once ({@link OhmailEngine.hydrateBody}).
  */
 interface BodyAsk {
+  /** A wide preload stays in the background. A racing read waits for its loading markers. */
+  widePreload: Promise<void> | undefined;
   /** Its read is the person's (sent `{ urgent: true }`): an open's, a thread's on screen, a promoted one. */
   asked: boolean;
   /** Its read left the engine's queue: on the wire, or held where the engine cannot see it. */

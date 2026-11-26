@@ -10,8 +10,9 @@ import { ReplySheet } from "./Reply.js";
 import { WritePartsContext } from "./parts.js";
 import type { WriteEntry, WriteParts } from "./ports.js";
 
-export const loadLetter = () => import("./Letter.js").then(({ Letter }) => ({ default: Letter }));
+const loadLetter = () => import("./Letter.js").then(({ Letter }) => ({ default: Letter }));
 const LetterView = lazyView(loadLetter);
+export const preloadLetter = LetterView.preload;
 
 export function writeEntry(parts: WriteParts): WriteEntry {
   function Letter(pane: PaneProps) {

@@ -101,7 +101,13 @@ function PlaceRailEntry({
      the place's id and what it takes: where a dragged row's gesture finds its target. */
   const drop = useRailDropState(rail.drop === undefined ? null : { kind: "pile", action: rail.drop });
   return (
-    <span className="fr-railtarget" data-rail-id={place.id} data-rail-drop={rail.drop}>
+    <span
+      className="fr-railtarget"
+      data-rail-id={place.id}
+      data-rail-drop={rail.drop}
+      onPointerEnter={disabled ? undefined : rail.preload}
+      onFocus={disabled ? undefined : rail.preload}
+    >
       <MailPlaceButton
         name={label}
         kind="place"

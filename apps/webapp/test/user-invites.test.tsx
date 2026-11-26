@@ -201,8 +201,8 @@ describe("useUserInvites — the negotiated half of the gate (the compiled half 
    */
   it("a demo page issues no /hello at all", async () => {
     answers["GET /api/hello"] = HELLO(true);
-    const { writingReady } = await import("../app/shell/browser-mail");
-    await writingReady;
+    const { prepareWriting } = await import("@ohmail/app/mail");
+    await prepareWriting();
     const { DemoShell } = await import("../app/(product)/demo/DemoShell.js");
     const c = await mountNode(h(DemoShell, {
       serverDemo: true, says: { service: "self", sendCeiling: "strict" },
