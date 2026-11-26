@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { cssRect, cssViewport, uiZoom, type CssRect } from "@ohmail/app-logic/geometry";
 import { KeyHint } from "@ohmail/ui/base";
 import { chordKeys, useModGlyph } from "@ohmail/app-logic/keys";
 import { HeldChips } from "./HeldChips.js";
@@ -28,25 +29,26 @@ function capsOf(control: HTMLElement, mod: string): string {
   );
 }
 
-function bounds(control: HTMLElement, view: Window): DOMRect | null {
-  const { innerWidth, innerHeight } = view;
+function bounds(control: HTMLElement, view: Window): CssRect | null {
+  const viewport = cssViewport(view);
   if (
     control.closest("[hidden], [inert], [aria-hidden='true']") ||
     view.getComputedStyle(control).visibility !== "visible"
   )
     return null;
-  const rect = control.getBoundingClientRect();
+  const rect = cssRect(control);
   if (rect.width === 0 || rect.height === 0) return null;
-  const x = Math.max(0, Math.min(innerWidth - 1, rect.x + rect.width / 2));
-  const y = Math.max(0, Math.min(innerHeight - 1, rect.y + rect.height / 2));
-  // A scrollport or a menu above the control can cover it without changing its own box.
+  // Hit testing takes viewport pixels even though the cue is placed in page CSS pixels.
+  const zoom = uiZoom(control.ownerDocument);
+  const x = Math.max(0, Math.min(viewport.width * zoom - 1, (rect.x + rect.width / 2) * zoom));
+  const y = Math.max(0, Math.min(viewport.height * zoom - 1, (rect.y + rect.height / 2) * zoom));
   const hit = control.ownerDocument.elementFromPoint?.(x, y);
   return hit &&
     control.contains(hit) &&
     rect.bottom > 0 &&
-    rect.top < innerHeight &&
+    rect.top < viewport.height &&
     rect.right > 0 &&
-    rect.left < innerWidth
+    rect.left < viewport.width
     ? rect
     : null;
 }
@@ -69,7 +71,7 @@ function heldChips(host: HTMLDivElement, view: Window, mod: string) {
   return <HeldChips entries={entries} controls={visible} view={view} />;
 }
 
-function Chip({ cap, rect, width, title }: { cap: string; rect: DOMRect; width: number; title?: string }) {
+function Chip({ cap, rect, width, title }: { cap: string; rect: CssRect; width: number; title?: string }) {
   const center = rect.x + rect.width / 2;
   const margin = title === undefined ? 28 : 142;
   const align = center < margin ? "start" : center > width - margin ? "end" : undefined;
@@ -176,7 +178,9 @@ function watchHints(host: HTMLDivElement, view: Window, mod: string, setChips: (
       const { control, title } = tooltip;
       const rect = bounds(control, view);
       const cap = capsOf(control, mod);
-      setChips(rect && cap ? <Chip cap={cap} rect={rect} width={view.innerWidth} title={title} /> : null);
+      setChips(
+        rect && cap ? <Chip cap={cap} rect={rect} width={cssViewport(view).width} title={title} /> : null,
+      );
     } else setChips(null);
   };
   const schedule = () => {

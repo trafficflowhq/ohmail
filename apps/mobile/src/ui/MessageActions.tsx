@@ -3022,7 +3022,7 @@ function BarToggle({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityHint={accessibilityHint}
-      accessibilityState={{ selected: on, ...(disabled ? { disabled } : {}) }}
+      accessibilityState={{ selected: on, disabled: disabled === true }}
       style={({ pressed }) => [
         {
           flexDirection: "row",

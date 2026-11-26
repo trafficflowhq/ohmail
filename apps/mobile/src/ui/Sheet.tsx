@@ -209,14 +209,14 @@ export function SheetRow({
       ...(disabled ? { opacity: 0.5 } : {}),
     }),
   };
-  // A checkbox row hands native its state with the key; a plain row hands none. Keyed apart, so a
-  // row that changes kind is a new view and never keeps the other kind's flag.
+  // The checkbox alone hands native a checked state. Key the two roles apart so a row that
+  // changes kind cannot keep the old role's state.
   return on === undefined ? (
-    <Tap key="button" {...row} accessibilityRole="button" accessibilityState={disabled ? { disabled } : undefined}>
+    <Tap key="button" {...row} accessibilityRole="button" accessibilityState={{ disabled: disabled === true }}>
       {rowContent(t, label, detail, icon, on)}
     </Tap>
   ) : (
-    <Tap key="checkbox" {...row} accessibilityRole="checkbox" accessibilityState={{ checked: on, ...(disabled ? { disabled } : {}) }}>
+    <Tap key="checkbox" {...row} accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled: disabled === true }}>
       {rowContent(t, label, detail, icon, on)}
     </Tap>
   );

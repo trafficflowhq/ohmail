@@ -275,13 +275,21 @@ async function swipeUp(page: Page, over: Locator, above = page.viewportSize()!.h
   expect(bottom).toBeGreaterThan(top);
   const cdp = await page.context().newCDPSession(page);
   try {
-    await cdp.send("Input.synthesizeScrollGesture", {
-      x: Math.round(box.x + box.width / 2),
-      y: Math.round((top + bottom) / 2),
-      yDistance: -2400,
-      speed: 5000,
-      gestureSourceType: "touch",
-    });
+    const x = Math.round(box.x + box.width / 2);
+    const from = Math.round(bottom - 16);
+    const to = Math.round(top + 16);
+    expect(from).toBeGreaterThan(to);
+    // Each swipe stays within the visible pane. A single long synthesized gesture can leave
+    // the viewport and be dropped without the scroll container receiving any movement.
+    const swipes = Math.ceil(3000 / (from - to));
+    for (let swipe = 0; swipe < swipes; swipe++) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: from }] });
+      for (let step = 1; step <= 8; step++) {
+        const y = Math.round(from + ((to - from) * step) / 8);
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y }] });
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    }
   } finally {
     await cdp.detach();
   }

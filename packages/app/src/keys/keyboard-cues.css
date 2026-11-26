@@ -29,7 +29,7 @@
 }
 
 .fr-shortcut-tooltip {
-  max-width: min(260px, calc(100vw - 24px));
+  max-width: min(260px, calc(100vw / var(--ui-zoom, 1) - 24px));
   padding: var(--s1) var(--s2);
   white-space: normal;
   border-radius: var(--r-pill);

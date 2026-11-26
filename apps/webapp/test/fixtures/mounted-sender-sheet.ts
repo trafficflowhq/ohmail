@@ -47,6 +47,7 @@ export async function withMountedSender(check: SenderCheck, options: {
   organizerFilesBacklog?: boolean;
   answer?: Parameters<typeof installScreeningWeb>[1];
   extraSync?: readonly object[];
+  calendarSnapshot?: boolean;
   secondMailbox?: boolean;
 } = {}) {
   const writes: SenderWrite[] = [];
@@ -84,7 +85,8 @@ export async function withMountedSender(check: SenderCheck, options: {
       const secondary = { ...primary, id: "mb_2", address: personalAt("fixture.other", "mailbox.example") };
       return Response.json({ items: options.secondMailbox ? [primary, secondary] : [primary] });
     }
-    if (path === "/api/sync") {
+    const snapshot = path === "/api/sync/snapshot" && options.calendarSnapshot === true;
+    if (path === "/api/sync" || snapshot) {
       if (backlog && backlogFiled && query.get("types") !== "rule") {
         return Response.json({
           changes: { creates: [], moves: [], deletes: [], updates: [{
@@ -99,10 +101,17 @@ export async function withMountedSender(check: SenderCheck, options: {
         type: "message", op: "create", id: row.id, seq: index + rules.length + 1, updatedAt: ISO, entity: row,
       }));
       const extra = query.get("types") === "rule" ? [] : options.extraSync ?? [];
-      return syncScreeningWeb(
-        [...changes, ...extra.map((entry, index) => ({ ...entry, seq: rules.length + rows.length + index + 1 }))],
-        rules.length + rows.length + extra.length,
-      );
+      const asOfSeq = rules.length + rows.length + extra.length;
+      const all = [...changes, ...extra.map((entry, index) => ({ ...entry, seq: rules.length + rows.length + index + 1 }))];
+      if (snapshot) {
+        return Response.json({
+          asOfSeq, nextCursor: null,
+          calendarWindow: { daysBack: 366, daysAhead: 731, maxRows: 10_000 },
+          changes: [...rules.map((entity) => ({ type: "rule", op: "create", id: entity.id, updatedAt: ISO, entity })),
+            ...all].map((entry) => ({ ...entry, seq: asOfSeq })),
+        });
+      }
+      return syncScreeningWeb(all, asOfSeq);
     }
     if (method !== "GET" && /^\/api\/(?:rules|messages|screener)(?:\/|$)/.test(path)) {
       const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;

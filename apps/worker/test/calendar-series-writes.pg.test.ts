@@ -111,12 +111,16 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
     o: {
       readonly autoSchedule?: boolean;
       readonly mailbox?: string;
+      readonly schedulingAddresses?: readonly string[];
       readonly proven?: ProvenRepeats;
       readonly calendar?: Partial<Omit<StandInCalendar, "slug">>;
       readonly clock?: { now(): number };
     } = {},
   ) {
-    const dav = await startCalDavStandIn({ autoSchedule: o.autoSchedule ?? false });
+    const dav = await startCalDavStandIn({
+      autoSchedule: o.autoSchedule ?? false,
+      schedulingAddresses: o.schedulingAddresses,
+    });
     servers.push(dav);
     const calendar = dav.addCalendar("studio", { name: "Studio", owner: dav.paths.principal, ...o.calendar });
     for (const [name, text] of Object.entries(members)) dav.put("studio", name, text, `"${name}-1"`);
@@ -264,7 +268,9 @@ describe.skipIf(!AVAILABLE)("a series written through the worker's turn, at the 
       `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${organizer}`,
       `ATTENDEE:mailto:${guest}`, "",
     ].join("\r\n"));
-    const b = await bench({ "meeting.ics": source }, undefined, { autoSchedule: true, mailbox: organizer });
+    const b = await bench({ "meeting.ics": source }, undefined, {
+      autoSchedule: true, mailbox: organizer, schedulingAddresses: [organizer],
+    });
     const [event] = await b.rows("meeting.ics");
     const [stored] = await w.db.select({ myAnswer: calEvents.myAnswer }).from(calEvents)
       .where(eq(calEvents.id, event!.id));

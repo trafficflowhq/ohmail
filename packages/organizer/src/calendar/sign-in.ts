@@ -50,6 +50,7 @@ export interface SealedCredential {
   readonly secretEnc: string;
   readonly keyVersion: number;
   readonly meta: unknown;
+  readonly updatedAt: string;
 }
 
 /** The host's key ring could not open a sealed value: the host's fault, never the person's. Nothing is written for it. */
@@ -62,7 +63,10 @@ export class CalendarKeyRingFault extends Error {
 
 /** The sealed row of a connection's credential, of the kind its provider keeps. */
 export async function sealedCredentialOf(tx: Tx, key: ConnectionKey, provider: ProviderWord): Promise<SealedCredential | null> {
-  const [row] = await tx.select({ secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion, meta: calCredentials.meta })
+  const [row] = await tx.select({
+    secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion, meta: calCredentials.meta,
+    updatedAt: sql<string>`cast(${calCredentials.updatedAt} as text)`,
+  })
     .from(calCredentials)
     .where(and(eq(calCredentials.accountId, key.accountId), eq(calCredentials.connectionId, key.id), eq(calCredentials.kind, CREDENTIAL_KIND[provider])))
     .limit(1);
@@ -129,12 +133,22 @@ const generationOf = (sealed: { readonly keyVersion: number; readonly secretEnc:
 const placeOf = (key: ConnectionKey): CredentialPlace => ({ accountId: key.accountId, connectionId: key.id });
 
 /** The credential row under lock, opened, or `null` when it is gone or opens to nothing. */
-async function lockedOpened(tx: Tx, deps: SignInDeps, key: ConnectionKey, provider: ProviderWord, generation: string): Promise<string | null> {
-  const [row] = await dialect(tx).forUpdate(tx.select({ secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion })
+async function lockedOpened(
+  tx: Tx, deps: SignInDeps, key: ConnectionKey, provider: ProviderWord, generation: string, original: SealedCredential,
+): Promise<string | null> {
+  const [row] = await dialect(tx).forUpdate(tx.select({
+    secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion,
+    updatedAt: sql<string>`cast(${calCredentials.updatedAt} as text)`,
+  })
     .from(calCredentials)
     .where(and(eq(calCredentials.accountId, key.accountId), eq(calCredentials.connectionId, key.id), eq(calCredentials.kind, CREDENTIAL_KIND[provider])))
     .limit(1), { mode: "update" });
-  if (row === undefined || generationOf(row) !== generation) return null;
+  if (row === undefined) return null;
+  // Key rotation changes the envelope and key version without changing the credential's timestamp.
+  // A replacement sign-in must still stop the turn, even if it has the same refresh token.
+  const rewrapped = generation === generationOf(original) && row.keyVersion !== original.keyVersion
+    && row.updatedAt === original.updatedAt;
+  if (generationOf(row) !== generation && !rewrapped) return null;
   try {
     return await deps.keys.decrypt(row.secretEnc, row.keyVersion);
   } catch {
@@ -236,7 +250,7 @@ export async function openPassSignIn(
         : await tradeMicrosoftCalendar(resolve!, provider.http, lasting, meta, deps.clock, signal);
       if (!traded.ok) return traded;
       if (traded.rotated !== null) {
-        const sealedNow = await sealRotated(deps, place, word, lasting, traded.rotated, generation);
+        const sealedNow = await sealRotated(deps, place, word, lasting, traded.rotated, generation, sealed);
         if (sealedNow === "superseded") return { ok: false, superseded: true, reason: "unknown", retryAfterMs: null };
         if (sealedNow.kind === "sealed") generation = sealedNow.generation;
       } else if (await inConnection(place.db, place.key, ({ tx }) => stillStored(tx)) !== true) {
@@ -366,10 +380,10 @@ export async function tradeMicrosoftCalendar(
  * reconnect or another worker's seal ends the turn. The new envelope is opened again before it is kept.
  */
 async function sealRotated(
-  deps: SignInDeps, place: SealPlace, word: ProviderWord, traded: Secret, rotated: Secret, generation: string,
+  deps: SignInDeps, place: SealPlace, word: ProviderWord, traded: Secret, rotated: Secret, generation: string, original: SealedCredential,
 ): Promise<"superseded" | { readonly kind: "sealed"; readonly generation: string } | { readonly kind: "kept" }> {
   const done = await inConnection(place.db, place.key, async ({ tx }) => {
-    const now = await lockedOpened(tx, deps, place.key, word, generation);
+    const now = await lockedOpened(tx, deps, place.key, word, generation, original);
     const stored = now === null ? null : parseCredential(now, placeOf(place.key));
     if (stored === null || stored.kind !== "oauth" || stored.refreshToken.reveal() !== traded.reveal()) return "superseded" as const;
     const text = serializeCredential({ kind: "oauth", provider: stored.provider, refreshToken: rotated }, placeOf(place.key));
