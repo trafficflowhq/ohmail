@@ -40,6 +40,32 @@ describe("the queue", () => {
     expect(asked.rereads).toBe(1);
   });
 
+  it("shows the kit loader over the list while decisions are being applied", () => {
+    const waiting = { waiting: QUEUE, waitingCount: 3 };
+    const world = mountPlace(modelOf(asked, waiting));
+    const first = within(list()).getAllByRole("option")[0];
+
+    world.again(modelOf(asked, { ...waiting, applying: { done: 1, total: 3 } }));
+    const status = column().getByRole("status");
+    expect(status.textContent).toMatch(/1.*3/);
+    expect(status.querySelector(".oh-spin")).toBeTruthy();
+    expect(status.closest(".sc-tools")).toBeNull();
+    expect(within(list()).getAllByRole("option")[0]).toBe(first);
+
+    world.again(modelOf(asked, waiting));
+    expect(column().queryByRole("status")).toBeNull();
+  });
+
+  it("keeps the German phone Apply button in place while its decisions run", () => {
+    const waiting = { waiting: QUEUE, waitingCount: 3, suggestedCount: 3 };
+    const world = mountPlace(modelOf(asked, waiting), { lang: "de", room: "phone" });
+    const apply = screen.getByRole("button", { name: /3.*anwenden/i });
+
+    world.again(modelOf(asked, { ...waiting, suggestedCount: 0, applying: { done: 1, total: 3 } }));
+    expect(screen.getByRole("button", { name: /3.*anwenden/i })).toBe(apply);
+    expect(apply).toHaveProperty("disabled", true);
+  });
+
   it("asks the queue again once on opening, not on every draw of the model", () => {
     const world = mountPlace(modelOf(asked, { waiting: QUEUE, waitingCount: 3 }));
     world.again(modelOf(asked, { waiting: QUEUE, waitingCount: 3 }));

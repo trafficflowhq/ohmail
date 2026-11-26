@@ -207,10 +207,10 @@ function invitations(state: string | null): readonly Plain[] {
     {
       id: "ev-techcheck",
       cal: "mila",
-      title: "Tech check, main hall",
+      title: state === "title-fit" ? "Ausstellungsrundgang heute" : "Tech check, main hall",
       day: "20261120",
       from: "16:00",
-      to: "16:15",
+      to: state === "title-fit" ? "17:30" : "16:15",
       place: "Makersfest, Hall 2, Zürich",
       by: PETRA,
       answer: answered(true),
@@ -425,6 +425,18 @@ export function worldOf(at: WorldState): World {
         ...OWN[0]!,
         id: "garden-orientation",
         title: "Autumn field work planning and volunteer orientation for the north garden",
+      }),
+    );
+  }
+  if (at.state === "overlap-titles") {
+    events.push(
+      event({
+        ...OWN[0]!,
+        id: "ev-print-review",
+        title: "Print proofs review",
+        day: "20261120",
+        from: "16:00",
+        to: "17:00",
       }),
     );
   }

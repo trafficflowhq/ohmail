@@ -36,6 +36,8 @@ export function InvitationItem(p: InvitationItemProps) {
   const e = useText("event");
   const locale = useLocale();
   const { row } = p;
+  const organizer = row.organizer.trim();
+  const calendarName = p.calendar.name.trim();
   const uncertain = row.refusal === "answer_unconfirmed";
   const when = whenOf(row.when, row.day, p.today, locale, t);
   const waits = !row.cancelled && row.answer === "none";
@@ -73,7 +75,7 @@ export function InvitationItem(p: InvitationItemProps) {
           title={row.title}
           tone={p.calendar.tone}
           when={whenOf(row.when, row.day, p.today, locale, t, true)}
-          {...(row.place ? { where: [{ text: row.place }] } : {})}
+          {...(row.place?.trim() ? { where: [{ text: row.place.trim() }] } : {})}
           tags={[
             ...(row.cancelled ? [{ text: t("cancelled"), hot: true }] : []),
             /* A card set into a list draws no head act: why it cannot be answered stands with its tags. */
@@ -83,8 +85,8 @@ export function InvitationItem(p: InvitationItemProps) {
           ]}
           close={{ label: t("close"), onPress: p.onClose }}
           rows={[
-            { label: t("from"), text: row.organizer },
-            { label: t("calendar"), tone: p.calendar.tone, text: p.calendar.name },
+            ...(organizer ? [{ label: t("from"), text: organizer }] : []),
+            ...(calendarName ? [{ label: t("calendar"), tone: p.calendar.tone, text: calendarName }] : []),
             ...(row.refusal === null
               ? []
               : [

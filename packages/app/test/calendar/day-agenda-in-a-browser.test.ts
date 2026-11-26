@@ -171,3 +171,138 @@ it.each([
     }
   },
 );
+
+it("keeps the open invitation facts within the tablet panel", async () => {
+  const page = await browser.newPage({ viewport: { width: 1032, height: 1100 }, hasTouch: true });
+  try {
+    await openCalRestPage(page, "screen=invitations&viewport&device=fold&open=ev-techcheck");
+    const card = page.locator('.oh-ecard[data-frame="inline"]');
+    await browserExpect(card.getByText("Makersfest, Hall 2, Zürich")).toBeVisible();
+    await browserExpect(card.getByText("Petra Wyss")).toBeVisible();
+    const fit = await card.evaluate((element) => {
+      const place = element.querySelector(".oh-ecard-where")!;
+      const box = element.closest('[role="listitem"]')!.getBoundingClientRect();
+      return {
+        usesFullWidth: Math.abs(element.getBoundingClientRect().width - box.width) < 1,
+        line: getComputedStyle(place).whiteSpace,
+        overflow: getComputedStyle(place).textOverflow,
+      };
+    });
+    expect(fit).toEqual({ usesFullWidth: true, line: "nowrap", overflow: "ellipsis" });
+  } finally {
+    await page.close();
+  }
+});
+
+it("keeps the first characters of a narrow week title and its full spoken name", async () => {
+  const page = await browser.newPage({ viewport: { width: 1032, height: 1100 }, hasTouch: true });
+  try {
+    await openCalRestPage(page, "screen=invitations&viewport&device=fold&open=ev-techcheck");
+    const chip = page.locator('.oh-ev[data-size="block"][data-record="ev-techcheck"]').first();
+    await chip.waitFor();
+    const title = chip.locator(".oh-ev-tt");
+    await chip.evaluate((el) => {
+      el.style.width = "62px";
+    });
+    await browserExpect(title).toHaveText(/^T[^…]*…$/);
+    await chip.evaluate((el) => {
+      el.style.width = "54px";
+    });
+    await browserExpect(title).toHaveText("T");
+    await browserExpect(chip).toHaveAccessibleName(/Tech check, main hall/);
+  } finally {
+    await page.close();
+  }
+});
+
+it("shows the start of a word that cannot fit in a floating event heading", async () => {
+  const page = await browser.newPage({ viewport: { width: 1032, height: 1100 }, hasTouch: true });
+  try {
+    await openCalRestPage(page, "screen=invitations&viewport&device=fold&lang=de&open=ev-techcheck");
+    const event = page.locator(".oh-ecard:not([data-frame])");
+    const heading = event.getByRole("heading");
+    const title = await heading.textContent();
+    await heading.evaluate((el) => {
+      el.style.boxSizing = "content-box";
+      el.style.width = "36px";
+    });
+    await browserExpect(heading).toHaveText(/^T[^…]*…/);
+    await browserExpect(event).toHaveAccessibleName(title!);
+  } finally {
+    await page.close();
+  }
+});
+
+it("keeps the next word on its own line below an oversized word in a tall week block", async () => {
+  const page = await browser.newPage({ viewport: { width: 1032, height: 1100 }, hasTouch: true });
+  try {
+    await openCalRestPage(page, "screen=invitations&viewport&device=fold&state=title-fit&open=ev-techcheck");
+    const chip = page.locator('.oh-ev[data-size="block"][data-record="ev-techcheck"]').first();
+    await chip.waitFor();
+    await chip.evaluate((el) => {
+      el.style.width = "90px";
+    });
+    const title = chip.locator(".oh-ev-tt");
+    await browserExpect(title).toHaveText(/^A[^…]*…\s+heute$/);
+    await browserExpect(chip).toHaveAccessibleName(/Ausstellungsrundgang heute/);
+  } finally {
+    await page.close();
+  }
+});
+
+it("shows the title prefix on a narrow all-day chip", async () => {
+  const page = await browser.newPage({ viewport: { width: 1032, height: 1100 }, hasTouch: true });
+  try {
+    await openCalRestPage(page, "screen=week&viewport&device=fold&state=all");
+    const chip = page.locator('.oh-ev[data-size="pill"][data-record="ev-glaze"]').first();
+    await chip.waitFor();
+    await chip.evaluate((el) => {
+      el.style.width = "64px";
+    });
+    await browserExpect(chip.locator(".oh-ev-tt")).toHaveText(/^G[^…]*…$/);
+    await browserExpect(chip).toHaveAccessibleName(/Glaze order #2291 arrives/);
+  } finally {
+    await page.close();
+  }
+});
+
+it.each(["en", "de"])(
+  "draws the start of each overlapping week title beside Invitations in %s",
+  async (lang) => {
+    const page = await browser.newPage({ viewport: { width: 1032, height: 1100 }, hasTouch: true });
+    try {
+      await openCalRestPage(
+        page,
+        `screen=invitations&viewport&device=fold&state=overlap-titles&lang=${lang}&open=ev-techcheck`,
+      );
+      await page.evaluate(() => document.fonts.ready);
+      for (const [record, initial] of [
+        ["ev-stand-setup", "S"],
+        ["ev-techcheck", "T"],
+        ["ev-print-review", "P"],
+      ]) {
+        const chip = page.locator(`.oh-ev[data-size="block"][data-record="${record}"]`);
+        const title = chip.locator(".oh-ev-tt");
+        await expect
+          .poll(() =>
+            title.evaluate((element) => {
+              const first = document.createRange();
+              first.setStart(element.firstChild!, 0);
+              first.setEnd(element.firstChild!, 1);
+              const glyph = first.getBoundingClientRect();
+              const box = element.getBoundingClientRect();
+              const block = element.closest("button")!.getBoundingClientRect();
+              return {
+                initial: element.textContent?.[0],
+                narrow: block.width > 0 && block.width < 24,
+                fits: glyph.right <= Math.min(box.right, block.right),
+              };
+            }),
+          )
+          .toEqual({ initial, narrow: true, fits: true });
+      }
+    } finally {
+      await page.close();
+    }
+  },
+);
