@@ -10,7 +10,7 @@ import { DEFAULT_SSE, type BuildIdentitySource, type SseConfig } from "@trafficf
 import {
   DEFAULT_PORT, SELF_HOST_SSE, bareAddress, buildIdentityError, buildIdentityOf,
   cookieHostsFor, environmentOf, loadAlertsEnv, loadAllowances, loadKeyRing, loadMsDevice, loadOrigin,
-  loadStorageConfig, loadTlsTerminator, loadTrustedProxies, loadVapidPublicKey, requireEnv, trimmed,
+  loadStorageConfig, loadTlsTerminator, loadTrustedProxies, loadVapidPublicKey, requireEnv, runtimeDeploymentId, trimmed,
   type AlertsEnv, type ExternalDoor, type StorageConfig,
 } from "./config.js";
 import { chosenFor, type Chosen } from "./differences.js";
@@ -21,6 +21,7 @@ import {
   loadStaffDbConfig, publicSignupCap, type AdminHostConfig, type StaffDbConfig,
 } from "./settings/managed.js";
 import { parseServiceAddress, type ServiceAddress } from "./settings/service-address.js";
+import type { RotationProofSettings } from "./db-rotation.js";
 
 /**
  * THE SETTINGS OF THE ONE API PROGRAM: every setting it reads, read once, typed.
@@ -39,6 +40,29 @@ import { parseServiceAddress, type ServiceAddress } from "./settings/service-add
  */
 
 /** What the door that starts the program hands in. Every member is required: none has a default. */
+export interface IngressPolicy {
+  id: string;
+  windowSeconds: number;
+  signIn: number;
+  ordinary: number;
+  expensive: number;
+  health: number;
+}
+
+function ingressPolicyOf(raw: string | undefined): IngressPolicy | undefined {
+  if (!raw?.trim()) return undefined;
+  try {
+    const policy = JSON.parse(raw) as IngressPolicy;
+    const limits = [policy.signIn, policy.ordinary, policy.expensive, policy.health];
+    if (typeof policy.id === "string" && /^[a-z0-9][a-z0-9_-]{0,47}$/.test(policy.id) &&
+        Number.isInteger(policy.windowSeconds) && policy.windowSeconds >= 1 && policy.windowSeconds <= 60 &&
+        limits.every((limit) => Number.isInteger(limit) && limit >= 1 && limit <= 100_000)) return policy;
+  } catch {
+    // The refusal names the setting and never echoes it.
+  }
+  throw new Error("TF_API_INGRESS_POLICY must name a policy and four positive request budgets");
+}
+
 export interface SettingsDoorInput {
   /** A long-running process, or a function a platform starts per request. */
   door: "process" | "function";
@@ -97,6 +121,7 @@ export interface Settings {
     authConfig: AuthConfig;
   };
   database: DatabaseSettings;
+  rotationProof?: RotationProofSettings;
   keyRing: { provider: KeyProvider; identity: KekEnvIdentity | null; error: string | null; retiredThrough: number };
   /** `release` is what `GET /hello` states, null where the door's build stated none; `version` is `/health`'s label. */
   build: { version: string; source: BuildIdentitySource; error: string | null; release: string | null };
@@ -123,6 +148,7 @@ export interface Settings {
     port: number; trustedProxies: readonly string[]; externalDoor: ExternalDoor;
     webClientIpSecret: string | null;
     clientIpHeader: "x-real-ip" | null;
+    ingress?: IngressPolicy;
     probeAllowPrivate: boolean; pushAllowPrivate: boolean;
   };
   push: { vapidPublicKey: string | null };
@@ -485,6 +511,11 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
   if (clientIpHeader !== undefined && clientIpHeader !== "x-real-ip") {
     throw new Error("TF_CLIENT_IP_HEADER must be x-real-ip");
   }
+  const trustedProxies = loadTrustedProxies(env);
+  const ingress = managed ? ingressPolicyOf(env.TF_API_INGRESS_POLICY) : undefined;
+  if (ingress && (clientIpHeader !== "x-real-ip" || trustedProxies.length === 0)) {
+    throw new Error("TF_API_INGRESS_POLICY requires TF_CLIENT_IP_HEADER and trusted ingress proxies");
+  }
   // Everything below that differs between the two services asks a line of the list, never the lead.
   const chosen = chosenFor(managed);
   const environment = environmentOf(env, door.environmentFallback);
@@ -537,6 +568,13 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
   const staffDb = staffed ? loadStaffDbConfig(env) : null;
   const admin = staffed ? loadAdminConfig(env) : null;
   const dials = chosen.privateDials === "operator-switch";
+  const build = { ...loadBuild(env, door, chosen.buildIdentity, environment), release: door.release?.trim() || null };
+  const rotationSecret = managed && door.door === "process" ? trimmed(env, "TF_DB_ROTATION_SECRET") : "";
+  const deployment = rotationSecret.length >= 32 ? runtimeDeploymentId(env) : "";
+  const rotationProof = deployment &&
+    build.error === null && /^[0-9a-f]{40}$/.test(build.version) && database.listenUrl
+    ? { secret: rotationSecret, revision: build.version, deployment, pooled: database.url, session: database.listenUrl }
+    : undefined;
 
   return {
     door: door.door,
@@ -544,9 +582,10 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
     environment,
     origin,
     database,
+    ...(rotationProof ? { rotationProof } : {}),
     keyRing,
     // A blank release is none: `/hello` must never state an empty one.
-    build: { ...loadBuild(env, door, chosen.buildIdentity, environment), release: door.release?.trim() || null },
+    build,
     sse: loadSse(env, door, chosen.events),
     customerMail,
     storage: loadStorageConfig(env, origin.appOrigin ?? DEFAULT_APP_URL),
@@ -563,7 +602,8 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
     msDevice: chosen.deviceCodeDoor ? loadMsDevice(env) : null,
     network: {
       port,
-      trustedProxies: loadTrustedProxies(env),
+      trustedProxies,
+      ...(ingress ? { ingress } : {}),
       webClientIpSecret,
       clientIpHeader: clientIpHeader ?? null,
       externalDoor: loadTlsTerminator(env),

@@ -57,7 +57,7 @@ export interface LockGround {
   /** The staff role's and the runtime roles' scripts as the superuser, the passwords and the plane: the runtime script's notices. */
   makeRoles(database: string): Promise<string[]>;
   /** The runtime roles' script run whole on `database` as `role` (the migrator when none), as a release runs it again: its notices. */
-  runRolesScript(database: string, role?: string): Promise<string[]>;
+  runRolesScript(database: string, role?: string, opts?: { prepareApiReplacement?: boolean }): Promise<string[]>;
   /** A database of its own, cloned from `template` (nobody may be connected to it). */
   clone(template: string, name: string): Promise<string>;
   /** Give `role`, one a case made or renamed, the password this ground draws for its name, so the case may sign in as it. */
@@ -104,11 +104,14 @@ export async function startLockGround(major: PgMajor, label: string, database: s
       await asSuper(db, [`create role ${PLANE_ROLE} login password '${passwordOf(PLANE_ROLE)}'`, ...PLANE_GRANTS]);
       return said;
     },
-    async runRolesScript(db, role = MIGRATOR_ROLE) {
+    async runRolesScript(db, role = MIGRATOR_ROLE, opts) {
       const said: string[] = [];
       const sql = connectAs(db, role, (t) => said.push(t));
       try {
-        await sql.unsafe(readFileSync(join(SCRIPTS, "harden-runtime-roles.sql"), "utf8")).simple();
+        const script = readFileSync(join(SCRIPTS, "harden-runtime-roles.sql"), "utf8");
+        const input = opts?.prepareApiReplacement
+          ? script.replace("-- @shape", "SET LOCAL ohmail.prepare_api_replacement = 'on';\n-- @shape") : script;
+        await sql.unsafe(input).simple();
       } finally {
         await sql.end({ timeout: 5 });
       }

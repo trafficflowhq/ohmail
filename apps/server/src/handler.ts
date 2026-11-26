@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-  createApp, bodyCeilingFor, readBodyWithin, BodyOverCeilingError, isDbBusy, dbBusyResponse,
+  clientIp, createApp, bodyCeilingFor, readBodyWithin, BodyOverCeilingError, isDbBusy, dbBusyResponse,
   API_PREFIX, MalformedPathError, normalizeEscapes, normalizePathname,
   type ApiDeps, type Route,
 } from "@trafficflow/api";
@@ -8,6 +8,8 @@ import { selfHostRoutes } from "@trafficflow/api/self-host";
 import type { Logger } from "@trafficflow/core";
 import { depsFor, runtimeOf, type ServerRuntime } from "./deps.js";
 import { BODY_MAX_BYTES } from "./config.js";
+import type { IngressPolicy } from "./settings.js";
+import { DB_ROTATION_PATH } from "./db-rotation.js";
 
 /**
  * THE dispatch pipeline of the one program — a door hands a fetch Request in, this hands a
@@ -43,6 +45,8 @@ export interface Pipeline {
   closeUndrained: boolean;
   logger: Pick<Logger, "error" | "warn">;
   buildDeps: (req: Request) => ApiDeps;
+  ingress?: IngressPolicy | undefined;
+  rotationProof?: (req: Request) => Promise<Response>;
 }
 
 /**
@@ -65,10 +69,10 @@ export interface Pipeline {
  * for a path this table does not serve, so nothing is read and `app.handle` answers the same
  * 404/405 it always did.
  */
-export function normalizeOn(routes: Route[], bodyMaxBytes: number): (req: Request) => Promise<Request> {
-  return async (req) => {
+export function normalizeOn(routes: Route[], bodyMaxBytes: number): (req: Request, canonicalPath?: string) => Promise<Request> {
+  return async (req, canonicalPath) => {
     const url = new URL(req.url);
-    url.pathname = normalizePathname(url.pathname);
+    url.pathname = canonicalPath ?? normalizePathname(url.pathname);
 
     // HEAD is dispatched as GET below, and `bodyCeilingFor` answers 0 for both — so the ceiling is
     // read on the method as it ARRIVED, which is the method whose body is on the socket.
@@ -161,17 +165,68 @@ export function refusalBeforeRouter(err: unknown, requestId: string): Response |
   return null;
 }
 
+type IngressClass = Exclude<keyof IngressPolicy, "id" | "windowSeconds">;
+
+function ingressClass(path: string): IngressClass {
+  if (path === "/health") return "health";
+  if (path.startsWith("/auth/")) return "signIn";
+  if (path === "/search" || path === "/img" || path === "/events" ||
+      path === "/sync" || path === "/sync/snapshot" || path === "/calendar/sync/snapshot" ||
+      path.startsWith("/attachments/")) return "expensive";
+  return "ordinary";
+}
+
+/** Ingress admission runs before request body buffering and before building request dependencies. */
+function ingressAdmission(policy: IngressPolicy): (req: Request, path: string) => number | null {
+  const windowMs = policy.windowSeconds * 1000;
+  const requests = {
+    signIn: new Map<string, number>(), ordinary: new Map<string, number>(),
+    expensive: new Map<string, number>(), health: new Map<string, number>(),
+  };
+  let window = -1;
+  return (req, path) => {
+    const now = Date.now();
+    const current = Math.floor(now / windowMs);
+    if (current !== window) {
+      window = current;
+      for (const budget of Object.values(requests)) budget.clear();
+    }
+    const kind = ingressClass(path);
+    const budget = requests[kind];
+    // The node adapter sets this from a trusted ingress peer or the socket itself.
+    const identity = clientIp(req);
+    const count = budget.get(identity) ?? 0;
+    if (count >= policy[kind] || (count === 0 && budget.size >= 4096)) {
+      return Math.max(1, Math.ceil(((current + 1) * windowMs - now) / 1000));
+    }
+    budget.set(identity, count + 1);
+    return null;
+  };
+}
+
 /** The dispatch of one program: `Request` in, `Response` out, never a throw. */
 export function makeDispatch(p: Pipeline): (req: Request) => Promise<Response> {
   const app = createApp(p.routes);
   const normalize = normalizeOn(p.routes, p.bodyMaxBytes);
   const leftUnread = undrainedOn(p.routes, p.bodyMaxBytes);
+  const ingress = p.ingress ? ingressAdmission(p.ingress) : undefined;
   return async (req) => {
     const requestId = randomUUID();
 
     let normalized: Request;
     try {
-      normalized = await normalize(req);
+      const path = ingress || p.rotationProof ? normalizePathname(new URL(req.url).pathname) : undefined;
+      const retry = path === undefined ? null : ingress?.(req, path) ?? null;
+      if (retry !== null) {
+        const refused = json(429, { error: { code: "rate_limited", message: "request limit reached" } }, requestId);
+        refused.headers.set("Retry-After", String(retry));
+        return p.closeUndrained && carriesBody(req) ? closing(refused) : refused;
+      }
+      if (path === DB_ROTATION_PATH && p.rotationProof) {
+        const response = await p.rotationProof(req);
+        return p.closeUndrained && carriesBody(req) ? closing(response) : response;
+      }
+      normalized = await normalize(req, path);
     } catch (err) {
       // EVERY pre-router exit closes the connection when the request brought a body, not just the
       // ceiling breach: `normalizeEscapes` throws BEFORE the body is read at all, and the refusal
@@ -204,7 +259,11 @@ export function makeDispatch(p: Pipeline): (req: Request) => Promise<Response> {
     try {
       const deps = p.buildDeps(forRouter);
       deps.requestId = requestId;
-      return await headless(exit(noStore(await app.handle(forRouter, deps), requestId)));
+      const response = noStore(await app.handle(forRouter, deps), requestId);
+      if (p.ingress && new URL(forRouter.url).pathname === "/health") {
+        response.headers.set("X-Ohmail-Ingress-Policy", p.ingress.id);
+      }
+      return await headless(exit(response));
     } catch (err) {
       /**
        * The busy-connection answer, as a backstop for pipelines with no envelope.

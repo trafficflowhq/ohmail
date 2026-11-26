@@ -18,7 +18,7 @@ export { DEFAULT_SSE } from "./deps.js";
 export type { AlertsConfig, AdminConfig } from "./deps-cloud.js";
 
 // Service-context builder + web cookie helpers (slice B).
-export { serviceContext, doorDb } from "./context.js";
+export { serviceContext, doorDb, clientIp } from "./context.js";
 export { sessionCookies, enrollmentCookies, clearSessionCookies, ownerCookieValue, OWNER_COOKIE } from "./cookies.js";
 /* Beside the guard that recomputes it, not beside the cookie set that carries it — see
  * `csrf.ts`. Verifying a CSRF token is work every host's request pipeline does; minting the

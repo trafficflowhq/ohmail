@@ -426,7 +426,15 @@ export function signalsOf(alerts: readonly Alert[]): Alert[] {
    Evaluation — a pure read, four queries
    ════════════════════════════════════════════════════════════════════════════════════════ */
 
+export interface ActiveSignalSource {
+  provider: string;
+  project: string;
+  since: Date;
+}
+
 export interface EvaluateOptions {
+  /** The deployment whose complete request windows page this driver. */
+  signalSource?: ActiveSignalSource | undefined;
   now?: Date;
   thresholds?: Partial<AlertThresholds>;
   /**
@@ -1754,12 +1762,18 @@ export async function evaluateAlertsWithScope(
   // surviving part.
   const signalWindow = await platformSignalWindow(db, now, t.api5xxWindowMs);
   const expectedBuckets = Math.round(t.api5xxWindowMs / SIGNAL_BUCKET_MS);
+  const activeSource = opts.signalSource;
+  const matchesActive = (source: { provider: string; project: string }): boolean =>
+    !activeSource || (activeSource.provider === source.provider && activeSource.project === source.project);
   for (const w of signalWindow) {
-    if (w.completeBuckets < expectedBuckets) continue;
+    if (!matchesActive(w) || w.completeBuckets < expectedBuckets) continue;
     measuredWindows.add(`${w.provider}:${w.project}`);
     if (w.requests <= 0) continue;
     const rate = w.errors5xx / w.requests;
     if (w.errors5xx < t.api5xxMinErrors || rate < t.api5xxMinRate) continue;
+    if (w.provider === "railway" &&
+        w.completeCounts.filter((bucket) => bucket.requests > 0 && bucket.errors > 0 &&
+          bucket.errors / bucket.requests >= t.api5xxMinRate).length < 2) continue;
     alerts.push({
       key: `api_5xx_rate:${w.provider}:${w.project}`,
       kind: "api_5xx_rate",
@@ -2193,11 +2207,18 @@ export async function evaluateAlertsWithScope(
         provider: platformSignals.provider,
         project: platformSignals.project,
         newest: sql<Date>`max(${platformSignals.fetchedAt})`,
+        lastComplete: sql<Date | null>`max(${platformSignals.windowStart}) filter (where not ${platformSignals.truncated})`,
       })
       .from(platformSignals)
       .groupBy(platformSignals.provider, platformSignals.project);
-    for (const s of sources) {
-      const darkSeconds = secondsBetween(now, new Date(s.newest as unknown as string));
+    const expected = activeSource ? sources.filter(matchesActive) : sources;
+    if (activeSource && expected.length === 0) {
+      expected.push({ provider: activeSource.provider, project: activeSource.project, newest: activeSource.since, lastComplete: null });
+    }
+    for (const s of expected) {
+      const lastComplete = s.lastComplete === null ? 0 : new Date(s.lastComplete as unknown as string).getTime() + SIGNAL_BUCKET_MS;
+      const latest = activeSource ? new Date(Math.max(activeSource.since.getTime(), lastComplete)) : new Date(s.newest as unknown as string);
+      const darkSeconds = secondsBetween(now, latest);
       if ((darkSeconds ?? 0) * 1000 <= t.signalSourceDarkMs) continue;
       alerts.push({
         key: `signal_source_dark:${s.provider}:${s.project}`,
@@ -2208,8 +2229,7 @@ export async function evaluateAlertsWithScope(
           `The newest ${s.provider} reading for ${s.project} was fetched ${humanAge(darkSeconds)} ago ` +
           `(threshold ${humanAge(Math.round(t.signalSourceDarkMs / 1000))}), so api_5xx_rate is ` +
           `measuring nothing. If api_cron_stale:platform_signals is also firing, the worker's poll ` +
-          `is failing; otherwise no poll runs with a credential (TF_SIGNAL_VERCEL_TOKEN and ` +
-          `TF_SIGNAL_VERCEL_TEAM_ID on the worker, read by shard 0).`,
+          `is failing. Check the active service identity and the worker's signal credential.`,
         count: 1,
         oldestSeconds: darkSeconds,
         cls: "incident",
@@ -2382,7 +2402,7 @@ export async function evaluateAlertsWithScope(
  * nothing. `journal-split.test.ts` asserts this equals the journal's true maximum, so a migration
  * added without moving this line is a red test.
  */
-export const CLOUD_JOURNAL_HEAD_WHEN = 1791328104216;
+export const CLOUD_JOURNAL_HEAD_WHEN = 1795659601799;
 
 /** One project's summed traffic over the rule's window. */
 export interface PlatformSignalWindow {
@@ -2399,6 +2419,7 @@ export interface PlatformSignalWindow {
    */
   requests: number;
   errors5xx: number;
+  completeCounts: { requests: number; errors: number }[];
   /** True when ANY row in the window was sampled — the panel says so, the rule ignores them. */
   truncated: boolean;
   /**
@@ -2464,6 +2485,9 @@ export async function platformSignalWindow(
       requests: sql<number>`coalesce(sum(${platformSignals.requests}) filter (where not ${platformSignals.truncated}), 0)::int`,
       errors5xx: sql<number>`coalesce(sum(${platformSignals.errors5xx}) filter (where not ${platformSignals.truncated}), 0)::int`,
       truncated: sql<boolean>`bool_or(${platformSignals.truncated})`,
+      completeCounts: sql<PlatformSignalWindow["completeCounts"]>`coalesce(jsonb_agg(jsonb_build_object(
+        'requests', ${platformSignals.requests}, 'errors', ${platformSignals.errors5xx}
+      )) filter (where not ${platformSignals.truncated}), '[]'::jsonb)`,
       completeBuckets: sql<number>`count(*) filter (where not ${platformSignals.truncated})::int`,
       sampledBuckets: sql<number>`count(*) filter (where ${platformSignals.truncated})::int`,
       // WHICH causes made this window's samples. Distinct, because three buckets stopped for the
@@ -2493,6 +2517,7 @@ export async function platformSignalWindow(
     project: r.project,
     requests: Number(r.requests ?? 0),
     errors5xx: Number(r.errors5xx ?? 0),
+    completeCounts: r.completeCounts,
     truncated: r.truncated === true,
     completeBuckets: Number(r.completeBuckets ?? 0),
     sampledBuckets: Number(r.sampledBuckets ?? 0),

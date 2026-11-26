@@ -2,7 +2,7 @@ import type { Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import {
   makePlatformSignalPort, runPlatformSignalPass, SIGNAL_SETTLE_MS, SIGNAL_WINDOW_MS,
-  type DeliberateRefusal, type PlatformSignalEnv,
+  type ActiveSignalSource, type DeliberateRefusal, type PlatformSignalEnv,
 } from "@trafficflow/db/cloud";
 
 /**
@@ -16,6 +16,7 @@ import {
 /** The worker's own credential and the deliberate refusals, as `loadConfig` reads them. */
 export interface PlatformSignalConfig {
   env: PlatformSignalEnv;
+  activeSource?: ActiveSignalSource;
   deliberate: readonly DeliberateRefusal[];
   /** TEST SEAM: the platform transport. */
   fetchImpl?: typeof fetch;
@@ -97,10 +98,13 @@ export const startPlatformSignalPoll = (deps: PlatformSignalPollDeps): PlatformS
   const hasToken = (signals.env.VERCEL_TOKEN ?? "").trim().length > 0;
   const hasTeam = (signals.env.VERCEL_TEAM_ID ?? "").trim().length > 0;
   // Never ok, so api_cron_stale pages; a pass with nothing left to read would otherwise say `written`.
-  const incomplete = hasToken !== hasTeam;
+  const incomplete = port.provider === "railway"
+    ? [signals.env.RAILWAY_TOKEN, signals.env.RAILWAY_PROJECT_ID, signals.env.RAILWAY_ENVIRONMENT_ID, signals.env.RAILWAY_SERVICE_ID]
+      .some((value) => !value?.trim())
+    : hasToken !== hasTeam;
   if (incomplete) {
     log.warn("platform_signal_config_incomplete", {
-      configVar: hasToken ? "TF_SIGNAL_VERCEL_TEAM_ID" : "TF_SIGNAL_VERCEL_TOKEN",
+      configVar: port.provider === "railway" ? "TF_SIGNAL_RAILWAY_*" : hasToken ? "TF_SIGNAL_VERCEL_TEAM_ID" : "TF_SIGNAL_VERCEL_TOKEN",
     });
   }
 

@@ -8,7 +8,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { loadEnabledMailboxes } from "../src/mailboxes.js";
+import { loadEnabledMailboxes, loadRosterCapacity } from "../src/mailboxes.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -58,6 +58,21 @@ describe.skipIf(!AVAILABLE)("the roster query returns a mailbox created after it
 
   const idsOf = async (): Promise<Set<string>> =>
     new Set((await loadEnabledMailboxes(db as never)).map((m) => m.mailboxId));
+
+  it("warns and refuses for the busiest shard using the serving roster's account partition", async () => {
+    const fresh = await seed();
+    await db.insert(mailboxes).values(Array.from({ length: 4 }, (_, index) => ({
+      accountId: fresh.accountId, provider: "imap", address: `partition-${index}-${fresh.accountId}@example.test`,
+      status: "connected",
+    })));
+    const parkOthers = async (accountIds: readonly string[]) => new Set(accountIds.filter((id) => id !== fresh.accountId));
+    const expected = await Promise.all([0, 1].map(async (shardIndex) =>
+      (await loadEnabledMailboxes(db as never, { shards: 2, shardIndex }, new Date(), parkOthers)).length));
+    const warning = await loadRosterCapacity(db as never, 2, 6, new Date(), parkOthers);
+    expect(warning).toMatchObject({ occupancy: expected, maximum: 5, eligible: 5, verdict: "warning" });
+    const overflow = await loadRosterCapacity(db as never, 2, 4, new Date(), parkOthers);
+    expect(overflow).toMatchObject({ occupancy: expected, maximum: 5, eligible: 5, verdict: "overflow" });
+  });
 
   it("is a live read: a row inserted between two calls is in the second", async () => {
     const before = await idsOf();

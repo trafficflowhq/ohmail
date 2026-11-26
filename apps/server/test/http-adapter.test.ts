@@ -2,9 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { get as httpGet, request as httpRequest, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
 import { once } from "node:events";
-import { makeHttpServer, type AdapterOptions } from "../src/http.js";
+import { makeHttpServer, makeTrustedProxies, systemLookup, type AdapterOptions } from "../src/http.js";
 import { ACCOUNT_HEADER, JSON_BODY_MAX_BYTES } from "@trafficflow/api";
-import { handleServerRequest } from "../src/handler.js";
+import { handleServerRequest, makeDispatch } from "../src/handler.js";
 
 /**
  * THE FOUR RULED CORRECTNESS POINTS of the hand-rolled adapter, each on a REAL socket — no
@@ -592,5 +592,49 @@ describe("a cancelled request body ends the connection instead of stalling it", 
     expect(text).toContain("404");
     expect(text.toLowerCase()).not.toContain("connection: close");
     expect(text.split("HTTP/1.1 ").length - 1, "the pipelined request is never answered").toBe(1);
+  });
+});
+
+describe("managed ingress limits", () => {
+  it.each(["/sync/snapshot", "/calendar/sync/snapshot"])("limits %s on both entry paths before building dependencies", async (path) => {
+    let built = 0;
+    const dispatch = makeDispatch({
+      routes: [], bodyMaxBytes: 1024, closeUndrained: true, logger: { error() {}, warn() {} },
+      buildDeps() { built++; throw new Error("fixture reached"); },
+      ingress: { id: "fixture", windowSeconds: 60, signIn: 2, ordinary: 4, expensive: 1, health: 2 },
+    });
+    const read = (pathname: string) => dispatch(new Request(`http://localhost${pathname}`));
+    expect((await read(path)).status).toBe(500);
+    expect((await read("/api" + path)).status).toBe(429);
+    expect((await read(path)).status).toBe(429);
+    expect((await read("/mailboxes")).status).toBe(500);
+    expect(built).toBe(2);
+  });
+  it("shares the budget across API entry paths and rejects before acquiring a database handle", async () => {
+    let acquired = 0;
+    const dispatch = makeDispatch({
+      routes: [], bodyMaxBytes: 1024, closeUndrained: true,
+      logger: { error() {}, warn() {} },
+      buildDeps() { acquired++; throw new Error("fixture handle reached"); },
+      ingress: { id: "fixture-policy", windowSeconds: 60, signIn: 2, ordinary: 2, expensive: 2, health: 2 },
+    });
+    const port = await listen(dispatch, {
+      ...OPTS, trustedProxies: makeTrustedProxies(["127.0.0.1"], { lookup: systemLookup }), clientIpHeader: "x-real-ip",
+    });
+    const read = (path: string, identity = "192.0.2.12") =>
+      fetch(`http://127.0.0.1:${port}${path}`, { headers: { "x-real-ip": identity } });
+    expect((await read("/api/search")).status).toBe(500);
+    expect((await read("/search")).status).toBe(500);
+    const limited = await read("/api/search");
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(acquired).toBe(2);
+
+    expect((await read("/search", "192.0.2.13")).status).toBe(500);
+    expect((await read("/auth/login")).status).toBe(500);
+    expect((await read("/api/auth/login")).status).toBe(500);
+    expect((await read("/auth/login")).status).toBe(429);
+    expect((await read("/health")).status).toBe(500);
+    expect(acquired).toBe(6);
   });
 });

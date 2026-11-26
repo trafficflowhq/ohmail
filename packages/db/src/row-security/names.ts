@@ -10,7 +10,8 @@ import { ACCOUNT_SETTING, KEY_SETTING, READER_SCHEMA, RUNTIME_LOGINS, type Runti
  * `logins.ts`, which imports nothing, and re-exported here.
  */
 export {
-  API_ROLE, WORKER_ROLE, RUNTIME_LOGINS, READER_SCHEMA, ACCOUNT_READER, ACCOUNT_SETTING, KEY_SETTING, type RuntimeLogin,
+  API_ROLE, API_ROLES, WORKER_ROLE, RUNTIME_LOGINS,
+  READER_SCHEMA, ACCOUNT_READER, ACCOUNT_SETTING, KEY_SETTING, type RuntimeLogin,
 } from "./logins.js";
 
 /** The billing plane's runtime role: it reads five objects of `public`. */

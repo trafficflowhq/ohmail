@@ -176,7 +176,7 @@ export {
   planeOpsStateLine, type PlaneOpsState, type PlaneOpsFault,
   type PagerVerdict, type SinkStreakReading, type ApiCronReading,
   type Alert, type AlertKind, type AlertSeverity, type AlertThresholds, type AlertSink,
-  type AlertNotifyContext, type AlertPassOptions, type AlertPassResult, type EvaluateOptions,
+  type AlertNotifyContext, type AlertPassOptions, type AlertPassResult, type EvaluateOptions, type ActiveSignalSource,
   type HeartbeatInput, type HeartbeatRefresh, type HeartbeatLock, type PostJson, type AtCapAccount,
   type StuckSendRow, type AlertDeliveryResult, type DeliveryStreak, type SinkEscalation,
   type AlertSinkOutcome, type SinkOutcome, type DeliveryReport, type SinkStreak,
@@ -189,7 +189,7 @@ export {
 /* What the hosting platform served (cloud 0030): the 5xx poll's port and pass, beside the rows they
  * write. Here so the worker, which may import only core and db, runs it with its own credential. */
 export {
-  makePlatformSignalPort, runPlatformSignalPass, SAMPLE_CAUSES,
+  makePlatformSignalPort, runPlatformSignalPass, railwaySignalSource, SAMPLE_CAUSES,
   VERCEL_REQUEST_LOGS_URL, DEFAULT_SIGNAL_PROJECTS, SSE_DISABLED_REFUSAL,
   SIGNAL_PAGE_BUDGET, SIGNAL_WINDOW_MS, SIGNAL_SETTLE_MS, SIGNAL_WALL_CLOCK_MS, SIGNAL_RETENTION_MS,
   type SignalProvider, type SampleCause, type PlatformSignalPort, type PlatformSignalFetch,

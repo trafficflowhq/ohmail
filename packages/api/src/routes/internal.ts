@@ -480,6 +480,7 @@ async function alertPass(
       sinks: cfg.sinks ?? [],
       shards: cfg.shards,
       thresholds: cfg.thresholds,
+      signalSource: cfg.signalSource,
       // Forwarded as composed, `null` included: `null` is "this host parks nobody" (or caps
       // nobody), absent is "unstated", and the page's wording follows which it was told. A
       // dropped `null` read as no reader, so the at-cap rule said "unread" on a host with no caps.

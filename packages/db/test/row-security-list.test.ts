@@ -22,7 +22,7 @@ import { lockVerdict } from "../src/row-security/check.js";
 import { lockDrift, policyComment, viewComment, type LockFacts, type ReaderFacts, type Right, type ViewFacts } from "../src/row-security/census.js";
 import { ACCOUNT_VIEWS, INDEX_READS, VIEW_CHECK_OPTION, readerCondition, viewName, viewStatement } from "../src/row-security/views.js";
 import { CLOUD_MIGRATIONS_DIR } from "../src/journal-specs.js";
-import { RUNTIME_LOGINS } from "../src/row-security/logins.js";
+import { REQUIRED_RUNTIME_LOGINS, RUNTIME_LOGINS } from "../src/row-security/logins.js";
 import { WORD_INDEX_SPEC } from "../src/search-setup.js";
 import { pgDialect } from "../src/dialect/pg.js";
 import { HORIZONS, intervalOf } from "../src/horizons.js";
@@ -293,14 +293,16 @@ describe("the account's views of the lock", () => {
     }
   });
 
-  it("each view's text names exactly the two runtime logins, by current_user, as literals, once each", () => {
-    expect(readerCondition()).toBe(`current_user in (${RUNTIME_LOGINS.map((l) => `'${l}'`).join(", ")})`);
-    for (const v of ACCOUNT_VIEWS) {
-      const text = viewStatement(v);
-      // The only quoted literals of a view's text are the logins' names, each once.
-      expect([...text.matchAll(/'([^']*)'/g)].map((m) => m[1]), v.name).toEqual([...RUNTIME_LOGINS]);
-      expect(text.split(readerCondition()).length - 1, v.name).toBe(1);
-      expect(text, v.name).not.toMatch(/session_user/);
+  it("each view's text names exactly the provisioned runtime logins, by current_user, as literals, once each", () => {
+    for (const replacement of [false, true]) {
+      const logins = replacement ? RUNTIME_LOGINS : REQUIRED_RUNTIME_LOGINS;
+      expect(readerCondition(replacement)).toBe(`current_user in (${logins.map((l) => `'${l}'`).join(", ")})`);
+      for (const v of ACCOUNT_VIEWS) {
+        const text = viewStatement(v, false, replacement);
+        expect([...text.matchAll(/'([^']*)'/g)].map((m) => m[1]), v.name).toEqual([...logins]);
+        expect(text.split(readerCondition(replacement)).length - 1, v.name).toBe(1);
+        expect(text, v.name).not.toMatch(/session_user/);
+      }
     }
   });
 
@@ -560,7 +562,7 @@ describe("the horizons", () => {
 
 describe("the deadlines by role name", () => {
   it("the API's, the worker's and the staff role's, each the handle table's role defaults", () => {
-    expect(Object.keys(ROLE_DEADLINES).sort()).toEqual([STAFF_ROLE, API_ROLE, WORKER_ROLE].sort());
+    expect(Object.keys(ROLE_DEADLINES).sort()).toEqual([STAFF_ROLE, ...RUNTIME_LOGINS].sort());
     for (const cell of Object.values(ROLE_DEADLINES)) expect(cell).toEqual(ROLE_DEFAULT_TIMEOUTS);
   });
 });

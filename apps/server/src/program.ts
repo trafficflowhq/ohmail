@@ -12,6 +12,7 @@ import {
 } from "./deps.js";
 import { DIFFERENCES, wiringOf, type Chosen } from "./differences.js";
 import { makeDispatch } from "./handler.js";
+import { dbRotationProof } from "./db-rotation.js";
 import type { Settings } from "./settings.js";
 
 /**
@@ -102,6 +103,8 @@ export function buildProgram(settings: Settings, door: DoorInput): Program {
     routes: services.calendar !== undefined ? [...cfg.chosen.routes, ...calendarRoutes, ...calendarNoticeRoutes] : cfg.chosen.routes,
     bodyMaxBytes: door.bodyMaxBytes,
     closeUndrained: door.closeUndrained,
+    ingress: settings.network.ingress,
+    ...(settings.rotationProof ? { rotationProof: dbRotationProof(settings.rotationProof) } : {}),
     logger,
     buildDeps: (req) => depsFor(req, runtime),
   });
