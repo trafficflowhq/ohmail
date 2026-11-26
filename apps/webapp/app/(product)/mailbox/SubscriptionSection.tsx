@@ -32,7 +32,7 @@ export function MountedSubscriptionSection({ onNowhere, sheet }: Props) {
     <SubscriptionPane
       model={storage.changing ? { ...model, opening: true } : model}
       sheet={sheet}
-      connectedCount={mailboxes?.length}
+      connectedCount={mailboxes?.length ?? null}
       addStorage={addon ? {
         press: () => storage.change("storage"),
         busy: storage.changing,

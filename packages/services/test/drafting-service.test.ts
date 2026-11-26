@@ -127,6 +127,85 @@ describe("the reply composer’s provider request", () => {
     }
   });
 
+  it.each([
+    {
+      name: "an unquoted passphrase with sentence-like punctuation",
+      line: "Passphrase: umber. Gull; Cedar! Flint? fern",
+      outgoing: "Passphrase: [code]",
+    },
+    {
+      name: "two credential labels on the same line",
+      line: "Passphrase: umber. Gull: cedar Password: flint! Fern",
+      outgoing: "Passphrase: [code] Password: [code]",
+    },
+    {
+      name: "a passphrase introduced without a colon",
+      line: "The passphrase is umber. Gull! Cedar",
+      outgoing: "The passphrase is [code]",
+    },
+    {
+      name: "a password field followed by a username field",
+      line: "Password: required to find Umber! Gull Username: workshop",
+      outgoing: "Password: [code] Username: workshop",
+    },
+    {
+      name: "a quoted passphrase containing a label",
+      line: 'Passphrase: “umber. Password: gull!” Username: workshop',
+      outgoing: "Passphrase: [code] Username: workshop",
+    },
+    {
+      name: "ordinary password guidance followed by another sentence",
+      line: "A password is required to open Settings. Bring the blue copy to the workshop.",
+      outgoing: "A password is required to open Settings. Bring the blue copy to the workshop.",
+    },
+    {
+      name: "an unquoted passphrase containing a login label",
+      line: "Passphrase: umber gull login: cedar flint",
+      outgoing: "Passphrase: [code]",
+    },
+    {
+      name: "an unquoted passphrase containing a username label",
+      line: "Passphrase: umber gull Username: cedar flint",
+      outgoing: "Passphrase: [code]",
+    },
+    {
+      name: "an unquoted passphrase with a credential label and sentence-like words",
+      line: "Passphrase: umber gull Password: fixture-lantern. The cedar flint.",
+      outgoing: "Passphrase: [code] Password: [code]",
+    },
+    {
+      name: "a colon-delimited password followed by another sentence",
+      line: "Password: fixture-lantern. The blue copy is on the desk.",
+      outgoing: "Password: [code]. The blue copy is on the desk.",
+    },
+    {
+      name: "an ordinary password length requirement",
+      line: "The password is a minimum of twelve characters. Bring the blue copy to the workshop.",
+      outgoing: "The password is a minimum of twelve characters. Bring the blue copy to the workshop.",
+    },
+  ])("shares the right text for $name in both letters", async ({ line, outgoing }) => {
+    const { db, A, mbA, ctxA } = await setup();
+    const [thread] = await db.insert(threads).values({ accountId: A, subject: "Plans" }).returning();
+    const here = { accountId: A, mailboxId: mbA, threadId: thread!.id };
+    const target = await seedMsg(db, here);
+    const prior = await seedMsg(db, { ...here, date: new Date(NOW.getTime() - 1_000) });
+    const intro = "The workshop moved to the west room. ".repeat(8);
+    const close = "Please use the red copy at the meeting.";
+    await db.insert(messageBodies).values([target, prior].map(messageId => ({
+      accountId: A, messageId, text: `${intro}\n\n${line}\n\n${close}`,
+    })));
+
+    const { drafter, requests } = captureDraftRequest(false);
+    await svc.draftFromText(ctxA, { text: "Say I can bring the red copy.", inReplyToMessageId: target }, {
+      drafter, fullConversation: true,
+    });
+
+    const { incoming, context } = JSON.parse(requests[0]!.messages[0].content);
+    const expected = `${intro}\n\n${outgoing}\n\n${close}`;
+    expect.soft(incoming.text, "answered letter").toBe(expected);
+    expect.soft(context.threadMessages[0].text, "earlier letter").toBe(expected);
+  });
+
   it("uses the excerpt for each letter with an unterminated password value", async () => {
     const { db, A, mbA, ctxA } = await setup();
     const [thread] = await db.insert(threads).values({ accountId: A, subject: "Plans" }).returning();

@@ -22,7 +22,7 @@ beforeAll(async () => {
   styles = outputFiles.find((file) => file.path.endsWith(".css"))!.text;
 }, 60_000);
 
-async function open(page: Page, device: "desktop" | "phone", query = "") {
+async function open(page: Page, device: "desktop" | "phone", query = "", scheme?: "light" | "dark") {
   await page.route("**/*", (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/reply.js") return route.fulfill({ contentType: "application/javascript", body: script });
@@ -30,7 +30,7 @@ async function open(page: Page, device: "desktop" | "phone", query = "") {
     return route.fulfill({
       contentType: "text/html",
       body: `<!doctype html><html lang="en" data-face="paper" data-device="${device}"
-        data-touch="${device === "phone" ? 1 : 0}"><head><meta charset="utf-8">
+        data-touch="${device === "phone" ? 1 : 0}"${scheme ? ` data-theme="${scheme}" data-scheme="${scheme}"` : ""}><head><meta charset="utf-8">
         <link rel="stylesheet" href="/reply.css"><style>
         html, body { height: 100% } body { margin: 0 } #root { display: flex; flex-direction: column; height: 100vh }
         </style></head><body><main id="root" class="oh-root"></main><script src="/reply.js"></script></body></html>`,
@@ -125,6 +125,32 @@ describe.each([
 });
 
 describe("composer popovers in the reader", () => {
+  it.each(["light", "dark"] as const)("preserves the phone inline Reply footer in %s", async (scheme) => {
+    const browser = await pw.chromium.launch();
+    try {
+      const page = await browser.newPage({
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        colorScheme: scheme,
+      });
+      await open(page, "phone", "?scope=phone", scheme);
+      const sheet = page.getByRole("region", { name: "Reading", exact: true });
+      await sheet.getByRole("button", { name: "Send", exact: true }).waitFor();
+      const gaps = await sheet.locator(":scope > .oh-sheet-foot").evaluate((foot) => {
+        const sheet = foot.parentElement!.getBoundingClientRect();
+        const bar = foot.getBoundingClientRect();
+        return {
+          bottom: Math.round(sheet.bottom - bar.bottom),
+          right: Math.round(sheet.right - bar.right),
+          marginEnd: getComputedStyle(foot).marginBlockEnd,
+        };
+      });
+      expect(gaps).toEqual({ bottom: 16, right: 0, marginEnd: "16px" });
+    } finally {
+      await browser.close();
+    }
+  }, 30_000);
+
   it("leaves the active To field in sight when suggestions open upward", async () => {
     const browser = await pw.chromium.launch();
     try {
@@ -247,6 +273,38 @@ describe("composer popovers in the reader", () => {
     },
     30_000,
   );
+
+  it("keeps the keyboard-selected recipient visible when Undo arrives", async () => {
+    const browser = await pw.chromium.launch();
+    try {
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
+      await open(page, "phone", "?scope=phone");
+      const to = page.getByRole("combobox", { name: "To" });
+      await to.fill("contact");
+      const list = page.getByRole("listbox", { name: "Address suggestions" });
+      await list.waitFor();
+      await to.press("ArrowUp");
+      const selected = list.getByRole("option", { selected: true });
+      const visible = () => selected.evaluate((row) => {
+        const bounds = row.getBoundingClientRect();
+        const port = row.closest('[role="listbox"]')!.getBoundingClientRect();
+        return bounds.top >= port.top - 1 && bounds.bottom <= port.bottom + 1;
+      });
+      await expect.poll(visible).toBe(true);
+      await page.evaluate(() => window.dispatchEvent(new Event("show-report")));
+      const report = page.getByRole("status").filter({ hasText: "Draft discarded" });
+      await report.waitFor();
+      await expect.poll(async () => {
+        const { y, height } = (await list.boundingBox())!;
+        return y + height - (await report.boundingBox())!.y;
+      }).toBeLessThanOrEqual(1);
+      await expect.poll(visible).toBe(true);
+      await to.press("Enter");
+      expect(await to.inputValue()).toBe("contact-18@example.com");
+    } finally {
+      await browser.close();
+    }
+  }, 30_000);
 
   it("reveals keyboard focus in the sender menu without scrolling the reader", async () => {
     const browser = await pw.chromium.launch();

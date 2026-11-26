@@ -116,7 +116,7 @@ export function DoorScreen({ asked }: { asked: DoorAt | null }) {
     entered: () => (router.canGoBack() ? router.dismissAll() : router.replace("/")),
     back: () => (router.canGoBack() ? router.back() : router.replace("/")),
     ready: (prepared) => {
-      if (APP.app === "ohcal") markCalendarCopiesPrepared(prepared !== false);
+      if (APP.app === "ohcal") markCalendarCopiesPrepared(prepared === undefined);
       setCalendarPreparationFailed(prepared === false);
       setDrawn(true);
     },

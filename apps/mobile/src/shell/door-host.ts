@@ -18,7 +18,7 @@ import {
   MANAGED_ORIGIN, discardAdmission, nextStep, parsePairLink, pendingPairOrigin, stashPairOrigin, type PairLink,
 } from "../net/pairing";
 import { addressProblem, parseServerAddress } from "../net/server-base";
-import { refuse, type Refusal } from "../refusal";
+import { faultDetail, refuse, type Refusal } from "../refusal";
 import { gateFor } from "../state/gate";
 import { refusalField } from "../ui/standalone-form";
 import { BridgeEnd } from "./bridge-end";
@@ -70,7 +70,7 @@ export interface DoorHostDeps {
   /** Out of a door that stands over an open mailbox. */
   readonly back: () => void;
   /** The page drew its first frame. */
-  readonly ready: (calendarPrepared?: false) => void;
+  readonly ready: (calendarPrepared?: DoorRequests["ready"]["ask"]["calendarPrepared"]) => void;
   /** Wakes the open mailbox's page, which holds the mail under the shell. */
   readonly wake: () => void;
   readonly openSettings: (what: "notifications") => Promise<void>;
@@ -215,14 +215,25 @@ export class DoorHost {
   private async config(): Promise<DoorConfig> {
     const conn = this.deps.conn();
     const facts = this.deps.facts();
-    const erasedCalendarScopes = facts.app === "ohcal" ? await conn.erasedCalendarScopes?.() : undefined;
+    let erasedCalendarScopes: DoorConfig["erasedCalendarScopes"];
+    let connection = conn;
+    if (facts.app === "ohcal") {
+      try {
+        erasedCalendarScopes = await conn.erasedCalendarScopes?.();
+      } catch (error) {
+        erasedCalendarScopes = null;
+        if (conn.state.k !== "refused") {
+          connection = { ...conn, state: { k: "refused", reason: refuse("pairingsUnreadable", faultDetail(error)) } };
+        }
+      }
+    }
     return {
       ...facts,
-      ...(erasedCalendarScopes?.length ? { erasedCalendarScopes } : {}),
-      at: doorAtOf(this.deps.asked, conn),
+      ...(erasedCalendarScopes === null || erasedCalendarScopes?.length ? { erasedCalendarScopes } : {}),
+      at: erasedCalendarScopes === null ? "servers" : doorAtOf(this.deps.asked, connection),
       organizes: this.deps.standalone.offered() ? "offered" : "withheld",
       canPin: canPin(),
-      state: doorStateOf(conn, this.after),
+      state: doorStateOf(connection, this.after),
     };
   }
 

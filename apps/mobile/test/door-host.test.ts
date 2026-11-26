@@ -100,7 +100,7 @@ function engine() {
   return { started, door, start };
 }
 
-function world(opts: { asked?: DoorAt | null; offered?: boolean } = {}) {
+function world(opts: { asked?: DoorAt | null; offered?: boolean; app?: DoorConfig["app"] } = {}) {
   const sent: string[] = [];
   const answers = new Map<number, (m: Record<string, unknown>) => void>();
   const events: DoorEvent[] = [];
@@ -160,7 +160,7 @@ function world(opts: { asked?: DoorAt | null; offered?: boolean } = {}) {
     },
     conn: () => conn,
     facts: () => ({
-      app: "ohmail", os: "android", pad: false, language: "en", build: { version: "2.0.0", commit: null },
+      app: opts.app ?? "ohmail", os: "android", pad: false, language: "en", build: { version: "2.0.0", commit: null },
       facts: { posture: { folds: [], hasFold: false }, insets: { top: 0, right: 0, bottom: 0, left: 0 }, keyboard: { height: 0 }, online: true },
     }),
     asked: opts.asked ?? null,
@@ -244,6 +244,17 @@ afterEach(() => {
 });
 
 describe("the door's host: pairing", () => {
+  it("gives the calendar chooser the startup refusal when wipe scopes cannot be read", async () => {
+    const w = world({ app: "ohcal" });
+    w.conn.state = { k: "refused", reason: refuse("pairingsUnreadable", "the store is unavailable") };
+    w.conn.erasedCalendarScopes = async () => { throw new Error("the store is unavailable"); };
+    expect(await w.ask("config", {})).toMatchObject({
+      at: "servers",
+      erasedCalendarScopes: null,
+      state: { session: "refused", said: { code: "pairingsUnreadable", args: ["the store is unavailable"] } },
+    });
+  });
+
   it("the redeem is reachable only by a ticket: taken once, the second pair is refused and redeems nothing", async () => {
     const w = world();
     const offer = await w.ask("hand", { address: "https://192.168.1.20:8443", token: CODE_TYPED });
