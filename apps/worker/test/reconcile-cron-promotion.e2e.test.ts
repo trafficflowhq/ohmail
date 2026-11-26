@@ -1,4 +1,5 @@
 import net from "node:net";
+import postgres from "postgres";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { mailboxes } from "@trafficflow/db";
@@ -136,7 +137,15 @@ function cfgFor(h: Harness, port: number) {
 }
 
 describe("the backstop's becoming: the row follows the claim", () => {
-  beforeAll(async () => { await runMigrations(DB_URL); }, 120_000);
+  beforeAll(async () => {
+    await runMigrations(DB_URL);
+    const fixture = postgres(DB_URL, { max: 1, onnotice: () => {} });
+    try {
+      await fixture`INSERT INTO worker_topology (shards) VALUES (1) ON CONFLICT (singleton) DO NOTHING`;
+    } finally {
+      await fixture.end({ timeout: 5 });
+    }
+  }, 120_000);
   const closers: Array<() => Promise<void>> = [];
   afterEach(async () => { for (const c of closers.splice(0)) await c().catch(() => undefined); });
 

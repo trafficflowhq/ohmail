@@ -11,7 +11,9 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import {
   BENCH_CALDAV_PLACE, PROVEN_REPEATS, proofPlaceOf, type CalendarProvider, type Connection, type ProvenRepeats, type WriteAnswer,
 } from "@ohmail/cal-providers";
+import { makeReader, makeWriter } from "@ohmail/cal-providers/microsoft";
 import { calAttendees, calCalendars, calConnections, calEvents, calSettings, calWrites, mailboxes } from "@trafficflow/db";
+import { writePayloadOf } from "@trafficflow/db/calendar";
 import { calendarPool, passDb, type ConnectionKey } from "../src/calendar/index.js";
 import { calendarSyncPass } from "../src/calendar/sync-pass.js";
 import type { CalendarWriteDrainInput } from "../src/calendar/types.js";
@@ -57,7 +59,7 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
   }
   type Account = Awaited<ReturnType<typeof account>>;
 
-  const create = (a: Account, title = "Glaze firing", eventId: string = randomUUID()) => ({
+  const create = (a: Pick<Account, "calendarId">, title = "Glaze firing", eventId: string = randomUUID()) => ({
     kind: "calendar_event_create", eventId, calendarId: a.calendarId,
     event: {
       title, start: { kind: "instant", value: "20261117T090000Z" }, end: { kind: "instant", value: "20261117T100000Z" },
@@ -383,6 +385,1271 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     expect(await rows(a)).toMatchObject([{ state: "applied", attempts: 1 }]);
   });
 
+  async function quarterlyWorld() {
+    const address = "guest@example.test";
+    const seeded = await seedConnection(w, {
+      provider: "microsoft", principal: address,
+      credential: { kind: "oauth", provider: "microsoft", refreshToken: new Secret("refresh-fixture") },
+    });
+    const start = { dateTime: "2026-10-06T07:30:00", timeZone: "UTC" };
+    const end = { dateTime: "2026-10-06T08:30:00", timeZone: "UTC" };
+    const series = {
+      id: "series", type: "seriesMaster", changeKey: "series-original", iCalUId: "workshop-series",
+      isOrganizer: false, subject: "Workshop planning", start, end,
+      organizer: { emailAddress: { address: "host@example.test" } },
+      attendees: [{ emailAddress: { address }, type: "required", status: { response: "none" } }],
+      responseStatus: { response: "notResponded" },
+      originalStartTimeZone: "W. Europe Standard Time", originalEndTimeZone: "W. Europe Standard Time",
+      recurrence: {
+        pattern: { type: "relativeMonthly", interval: 3, index: "first", daysOfWeek: ["tuesday"] },
+        range: { type: "numbered", numberOfOccurrences: 2, startDate: "2026-10-06", recurrenceTimeZone: "W. Europe Standard Time" },
+      },
+    };
+    const response = {
+      master: "notResponded", masterVersion: "series-original", current: "notResponded", revision: 0,
+      delta: undefined as { response: string; revision: number; copies?: number } | undefined,
+      competing: undefined as { response: string; revision: number } | undefined,
+      modification: "ordered" as "ordered" | "tied" | "absent",
+      pointFailure: false,
+      pointRetryAfter: null as number | null,
+      omitPointResponse: false,
+      masterPointFailure: false,
+      split: false as boolean | number,
+      deltaIncludesDays: true,
+      withholdDaysOnCursor: false,
+      includeLaterInstance: false,
+      omitDeltaResponse: false,
+      tombstone: false,
+      splitTombstone: false,
+      pointOutside: false,
+      replacement: false,
+      instanceReplacement: false,
+      upperCaseReplacementOrganizer: false,
+      replacementPointMatches: true,
+      pointReads: 0,
+      next: undefined as string | undefined, removeMaster: false as false | "delta" | "whole",
+      missing: false, removed: false as false | "delta" | "whole",
+      beforePost: async () => {},
+      beforePoint: async () => {},
+      stopBeforeTransport: false,
+      send: async (): Promise<number | "timeout"> => 202,
+    };
+    const posts: string[] = [];
+    const http: CalendarProvider["http"] = {
+      async request(url, req) {
+        const path = new URL(url).pathname;
+        const master = { ...series, changeKey: response.masterVersion, responseStatus: { response: response.master } };
+        const day = (revision: number, status: string) => ({
+          ...series, id: "first-day", seriesMasterId: series.id, recurrence: null,
+          type: revision ? "exception" : "occurrence", changeKey: `day-${revision}`,
+          originalStart: "2026-10-06T07:30:00Z", responseStatus: { response: status },
+          ...(response.modification !== "absent" && {
+            lastModifiedDateTime: new Date(Date.UTC(2026, 9, 1 + (response.modification === "tied" ? 0 : revision))).toISOString(),
+          }),
+        });
+        const current = day(response.revision, response.current);
+        const replacement = {
+          ...current, id: "replacement-day",
+          ...(response.upperCaseReplacementOrganizer && {
+            organizer: { emailAddress: { address: series.organizer.emailAddress.address.toUpperCase() } },
+          }),
+        };
+        const point = response.pointOutside ? {
+          ...current,
+          start: { dateTime: "2037-10-06T07:30:00", timeZone: "UTC" },
+          end: { dateTime: "2037-10-06T08:30:00", timeZone: "UTC" },
+        } : response.omitPointResponse ? { ...current, responseStatus: undefined } : current;
+        const listed = response.delta ? day(response.delta.revision, response.delta.response) : current;
+        const delta = response.omitDeltaResponse ? { ...listed, responseStatus: undefined } : listed;
+        const later = { ...day(0, response.master), id: "later-day", originalStart: "2027-01-05T08:30:00Z",
+          start: { dateTime: "2027-01-05T08:30:00", timeZone: "UTC" },
+          end: { dateTime: "2027-01-05T09:30:00", timeZone: "UTC" } };
+        const next = new URL(url);
+        if (response.next) next.searchParams.set("cursor", response.next);
+        const second = next.searchParams.has("splitPage");
+        next.searchParams.delete("splitPage");
+        const more = new URL(next);
+        more.searchParams.set("splitPage", "next");
+        const splitAfter = typeof response.split === "number" ? response.split : 1;
+        const newEvent = { ...series, id: "workshop-addition", type: "singleInstance", iCalUId: "addition", recurrence: null };
+        const records = response.removeMaster === "delta" ? [{ id: series.id, "@removed": { reason: "deleted" } }] :
+          response.removeMaster === "whole" ? [] :
+          response.removed === "delta" ? [later, { id: current.id, "@removed": { reason: "deleted" } }] :
+          response.removed === "whole" ? [later] : !response.deltaIncludesDays ||
+          (response.withholdDaysOnCursor && new URL(url).searchParams.has("cursor")) ? [] : [
+            ...Array(response.delta?.copies ?? 1).fill(delta),
+            ...(response.competing ? [day(response.competing.revision, response.competing.response)] : []),
+            ...(response.tombstone ? [{ id: current.id, "@removed": { reason: "deleted" } }] : []),
+            ...(response.replacement ? [replacement] : []),
+            later,
+          ];
+        if (path.endsWith("/calendar/events/first-day")) response.pointReads += 1;
+        const tombstone = { id: current.id, "@removed": { reason: "deleted" } };
+        const trade = path.endsWith("/token");
+        const body = trade ? { access_token: "short-fixture", expires_in: 3600 } :
+          path.endsWith("/series") ? master :
+          path.endsWith("/instances") ? { value: response.includeLaterInstance ? [later] : [response.instanceReplacement ? replacement : current] } :
+          path.endsWith("/replacement-day") ? response.replacementPointMatches ? replacement : {
+            ...replacement, originalStart: "2026-10-07T07:30:00Z",
+          } :
+          path.endsWith("/delta") ? (response.split || response.splitTombstone) && !second
+            ? { value: records.slice(0, splitAfter), "@odata.nextLink": more.href }
+            : { value: response.splitTombstone ? [tombstone] : response.split ? [...records.slice(splitAfter), newEvent] : records, "@odata.deltaLink": next.href }
+            :
+          path.endsWith("/calendars") ? {
+            value: [{ id: "calendar", isDefaultCalendar: true, canEdit: true, owner: { address } }],
+          } : point;
+        const answer = req.method === "POST" && !trade;
+        if (path.endsWith("/me/events/first-day")) await response.beforePoint();
+        if (answer) {
+          await response.beforePost();
+          await req.beforeDispatch?.();
+          if (response.stopBeforeTransport) return { arrived: false, reason: "timeout", notDispatched: true };
+          posts.push(path);
+        }
+        const missing = path.endsWith("/first-day") && response.missing || path.endsWith("/series") && response.removeMaster;
+        const failed = path.endsWith("/first-day") && response.pointFailure || path.endsWith("/series") && response.masterPointFailure;
+        const retryAfter = path.endsWith("/me/events/first-day") ? response.pointRetryAfter : null;
+        const status = answer ? await response.send() : missing ? 404 : retryAfter !== null ? 429 : failed ? 503 : 200;
+        if (status === "timeout") return { arrived: false, reason: "timeout" };
+        return { arrived: true, status, header: (name) => name.toLowerCase() === "retry-after" && retryAfter !== null ? String(retryAfter) : null, location: null,
+          hops: 0, body: new TextEncoder().encode(JSON.stringify(body)), url };
+      },
+    };
+    const clock = { now: () => Date.now() };
+    const graph = { http, graphBase: "https://graph.example.invalid/v1.0", zones: ZONES, clock };
+    const makeDeps = () => depsFor(w, providersOf({ microsoft: { reader: makeReader(graph), writer: makeWriter(graph), http } }), {
+      oauth: { google: null, microsoft: async () => ({ clientId: "fixture", clientSecret: "fixture-value", defaultTenant: "common", kind: "confidential" }) },
+      drainWrites: calendarWriteDrain({ clock, zones: ZONES, log: capturedLog().log }),
+    });
+    let deps = makeDeps();
+    const read = () => w.db.select({
+      id: calEvents.id, providerId: calEvents.providerId, updatedAt: calEvents.updatedAt,
+      answer: calEvents.myAnswer, version: calEvents.versionTag,
+    }).from(calEvents).where(eq(calEvents.accountId, seeded.accountId));
+    const turn = async (kind: "synced" | "either" = "synced") => {
+      await w.db.update(calCalendars).set({ nextPollAt: null }).where(eq(calCalendars.accountId, seeded.accountId));
+      await w.db.update(calConnections).set({ nextPollAt: null }).where(eq(calConnections.id, seeded.connectionId));
+      const outcome = await calendarSyncPass(deps, seeded.due, never);
+      if (kind !== "either") expect(outcome).toMatchObject({ kind });
+      return outcome;
+    };
+    const queue = async (answer: string, whole = false, key = "quarterly-answer", after?: string) => {
+      const master = (await read()).find(({ providerId }) => providerId === series.id)!;
+      return press(seeded.accountId, key, {
+        kind: "calendar_event_answer", eventId: master.id, base: master.updatedAt.toISOString(),
+        scope: whole ? { kind: "record" } : { kind: "occurrence", at: String(Date.UTC(2026, 9, 6, 7, 30)) }, answer,
+      }, after);
+    };
+    const writes = () => w.db.select({ state: calWrites.state, reason: calWrites.refusal }).from(calWrites).where(eq(calWrites.accountId, seeded.accountId)).orderBy(asc(calWrites.createdAt));
+    const due = () => dueNow(seeded);
+    const restart = () => { deps = makeDeps(); };
+    return { seeded, response, posts, read, turn, queue, writes, due, restart };
+  }
+
+  it.each([
+    ["accepted", "accepted", "accept"],
+    ["tentative", "tentativelyAccepted", "tentativelyAccept"],
+    ["declined", "declined", "decline"],
+  ] as const)("keeps an acknowledged quarterly answer (%s) through worker turns and the next reading", async (reply, status, action) => {
+    const { response, posts, read, turn, queue, writes, due } = await quarterlyWorld();
+    await turn();
+    const [master] = await read();
+    expect(master).toMatchObject({ providerId: "series", answer: "none" });
+    await queue(reply);
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    const posted = [`/v1.0/me/events/first-day/${action}`];
+    expect(posts).toEqual(posted);
+    expect(await read()).toEqual([master]);
+    response.pointFailure = true;
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    expect(posts).toEqual(posted);
+    response.pointFailure = false;
+    response.revision = 1;
+    response.current = status;
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect((await read()).find((event) => event.providerId === "first-day")).toMatchObject({ answer: reply, version: "day-1" });
+    response.revision = 2;
+    await turn();
+    expect((await read()).find((event) => event.providerId === "first-day")).toMatchObject({ answer: reply, version: "day-2" });
+    expect((await read()).find((event) => event.providerId === "series")).toMatchObject({ answer: "none" });
+    expect(posts).toEqual(posted);
+  });
+
+  it.each(["timeout", "worker stop"] as const)("sends one answer when a %s interrupts delivery before the status becomes visible", async (condition) => {
+    const { seeded, response, posts, turn, queue, writes, due } = await quarterlyWorld();
+    await turn();
+    const write = await queue("accepted");
+    response.send = async () => {
+      const [row] = await w.db.select({ payload: calWrites.payload }).from(calWrites)
+        .where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, write.id)));
+      expect(row?.payload).toMatchObject({ answerDispatch: { phase: "sending", id: "first-day", source: "series" } });
+      if (condition === "worker stop") throw new Error("worker stopped in the dispatch");
+      return "timeout";
+    };
+    await turn();
+    await due();
+    await turn();
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    await w.db.update(calWrites).set({ attempts: WRITE_MAX_ATTEMPTS }).where(eq(calWrites.id, write.id));
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }]);
+    await w.db.update(calWrites).set({ state: "pending", refusal: null, attempts: 0 }).where(eq(calWrites.id, write.id));
+    response.revision = 1;
+    response.current = "accepted";
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+  });
+
+  it.each(["during request setup", "at the transport handoff"])(
+    "resumes an Outlook reply when the worker stops %s before a POST can leave", async (when) => {
+      const { seeded, response, posts, turn, queue, writes, due, restart } = await quarterlyWorld();
+      await turn();
+      const write = await queue("accepted");
+      if (when === "during request setup") {
+        response.beforePost = async () => { throw new Error("worker stopped during request setup"); };
+      } else {
+        response.stopBeforeTransport = true;
+      }
+      await turn();
+      expect(posts).toEqual([]);
+      expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+      const [pending] = await w.db.select({ payload: calWrites.payload }).from(calWrites)
+        .where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, write.id)));
+      expect(pending?.payload).toMatchObject({ answerDispatch: { phase: "ready" } });
+      restart();
+      response.beforePost = async () => {};
+      response.stopBeforeTransport = false;
+      response.send = async () => {
+        response.current = "accepted";
+        response.revision = 1;
+        return 202;
+      };
+      await due();
+      await turn();
+      expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+      expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+    },
+  );
+
+  it("checks an uncertain Outlook reply on completed syncs and confirms a replacement even after showing the notice", async () => {
+    const { response, posts, read, turn, queue, writes, restart } = await quarterlyWorld();
+    await turn();
+    await queue("accepted");
+    response.send = async () => { throw new Error("worker stopped at transport"); };
+    await turn();
+    restart();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+
+    response.pointFailure = true;
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    response.pointFailure = false;
+    response.omitPointResponse = true;
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    response.omitPointResponse = false;
+    response.master = "accepted";
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    await turn();
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }]);
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+
+    response.missing = true;
+    response.instanceReplacement = true;
+    response.revision = 1;
+    response.current = "accepted";
+    response.replacementPointMatches = false;
+    await turn();
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }]);
+    response.replacementPointMatches = true;
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect((await read()).find(({ providerId }) => providerId === "replacement-day")).toMatchObject({ answer: "accepted" });
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+  });
+
+  it("lets another calendar write through when Outlook removed the replied-to occurrence", async () => {
+    const { seeded, response, posts, queue, read, turn, due, restart } = await quarterlyWorld();
+    await turn();
+    const first = await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+
+    response.missing = true;
+    response.removed = "delta";
+    response.send = async () => 400;
+    const [calendar] = await w.db.select({ calendarId: calCalendars.id })
+      .from(calCalendars).where(eq(calCalendars.accountId, seeded.accountId));
+    const sameDay = await queue("tentative", false, "same-day");
+    const master = (await read()).find(({ id }) => id === first.eventId)!;
+    const anotherDay = await press(seeded.accountId, "another-day", {
+      kind: "calendar_event_answer", eventId: master.id, base: master.updatedAt.toISOString(),
+      scope: { kind: "occurrence", at: String(Date.UTC(2027, 0, 5, 8, 30)) }, answer: "tentative",
+    }, "quarterly-answer");
+    const creation = await press(seeded.accountId, "unrelated-create", create(calendar!));
+    const whole = await queue("tentative", true, "whole-series");
+    const stateOf = async (id: string) => (await w.db.select({ state: calWrites.state, refusal: calWrites.refusal })
+      .from(calWrites).where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, id))))[0];
+
+    restart();
+    response.includeLaterInstance = true;
+    await due();
+    await turn();
+    expect(await stateOf(first.id)).toMatchObject({ state: "pending" });
+    expect(await stateOf(sameDay.id)).toMatchObject({ state: "pending" });
+    expect(await stateOf(whole.id)).toEqual({ state: "refused", refusal: "field_unwritable" });
+    expect(await stateOf(creation.id)).toMatchObject({ state: "refused" });
+    expect(await stateOf(anotherDay.id)).toMatchObject({ state: "refused" });
+    const requests = ["/v1.0/me/events/first-day/accept", "/v1.0/me/events/later-day/tentativelyAccept",
+      "/v1.0/me/calendars/calendar/events", "/v1.0/me/events/series/tentativelyAccept"];
+    expect(posts).toEqual(requests);
+
+    await turn();
+    expect(await stateOf(first.id)).toEqual({ state: "refused", refusal: "answer_unconfirmed" });
+    expect(posts).toEqual(requests);
+  });
+
+  it.each([false, true])("sends an explicit Outlook resend to the verified replacement occurrence (organizer case differs: %s)", async (upperCase) => {
+    const { seeded, response, posts, queue, writes, read, turn, due } = await quarterlyWorld();
+    await turn();
+    const first = await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    await turn();
+    await turn();
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }]);
+    response.missing = true;
+    response.tombstone = true;
+    response.replacement = true;
+    response.instanceReplacement = true;
+    response.upperCaseReplacementOrganizer = upperCase;
+    response.revision = 1;
+    await turn();
+    const rows = await read();
+    const day = rows.find(({ providerId }) => providerId === "replacement-day");
+    expect(day).toMatchObject({ answer: "none" });
+
+    const master = rows.find(({ id }) => id === first.eventId)!;
+    const occurrence = String(Date.UTC(2026, 9, 6, 7, 30));
+    const [calendar] = await w.db.select({ id: calCalendars.id }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId));
+    // The resend service records the reviewed day on the series' queue with both base stamps.
+    await w.db.insert(calWrites).values({
+      accountId: seeded.accountId, calendarId: calendar!.id, eventId: master.id, op: "answer",
+      baseVersionTag: master.version, idempotencyKey: "explicit-replacement-resend",
+      payload: {
+        ...writePayloadOf({
+          kind: "calendar_event_answer", eventId: day!.id, base: `${day!.updatedAt.toISOString()}/${master.updatedAt.toISOString()}`,
+          answer: "accepted", scope: { kind: "occurrence", at: occurrence },
+        }, null, null, { id: day!.id, providerId: "replacement-day", version: day!.version!, occurrence }),
+        answerDispatch: { phase: "ready" }, resendsReply: true,
+      },
+    });
+    response.send = async () => {
+      response.current = "accepted";
+      response.revision = 2;
+      return 202;
+    };
+    await due();
+    await turn();
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept", "/v1.0/me/events/replacement-day/accept"]);
+    expect((await writes()).at(-1)).toEqual({ state: "applied", reason: null });
+    expect((await read()).find(({ providerId }) => providerId === "replacement-day")).toMatchObject({ answer: "accepted" });
+  });
+
+  it("recovers a hard stop before transport through an explicit Outlook resend", async () => {
+    const { response, posts, queue, writes, turn, due, restart, seeded } = await quarterlyWorld();
+    await turn();
+    const first = await queue("accepted");
+    // Persist the exact crash state: the guard has recorded dispatch, but Graph saw zero POSTs.
+    await w.db.update(calWrites).set({
+      attempts: 1,
+      payload: sql`${calWrites.payload} || '{"answerDispatch":{"phase":"sending","id":"first-day","source":"series"}}'::jsonb`,
+    }).where(eq(calWrites.id, first.id));
+    restart();
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    await turn();
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }]);
+    expect(posts).toEqual([]);
+
+    const resent = await queue("accepted", false, "explicit-original-resend");
+    await w.db.update(calWrites).set({
+      payload: sql`${calWrites.payload} || '{"answerDispatch":{"phase":"ready"},"resendsReply":true}'::jsonb`,
+    }).where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, resent.id)));
+    response.send = async () => {
+      response.current = "accepted";
+      response.revision = 2;
+      return 202;
+    };
+    await due();
+    await turn();
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+    expect((await writes()).at(-1)).toEqual({ state: "applied", reason: null });
+  });
+
+  async function failedOutlookResend() {
+    const world = await quarterlyWorld();
+    const { seeded, response, turn, queue, writes } = world;
+    await turn();
+    const first = await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    await turn();
+    await turn();
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }]);
+
+    const resent = await queue("accepted", false, "send-reply-again");
+    await w.db.transaction(async (tx) => {
+      await tx.update(calWrites).set({ state: "applied", refusal: null, payload: { replyResentAs: resent.id } })
+        .where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, first.id)));
+      await tx.update(calWrites).set({ payload: sql`${calWrites.payload} || '{"answerDispatch":{"phase":"ready"},"resendsReply":true}'::jsonb` })
+        .where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, resent.id)));
+    });
+    response.send = async () => 400;
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }, { state: "refused", reason: "field_unwritable" }]);
+    const [failed] = await w.db.select({ payload: calWrites.payload }).from(calWrites)
+      .where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, resent.id)));
+    expect(failed?.payload).toMatchObject({ answerDispatch: { phase: "ready" }, resendsReply: true });
+    return { ...world, resent };
+  }
+
+  it("confirms the original Outlook reply after a requested resend was refused", async () => {
+    const { response, posts, read, turn, writes, restart } = await failedOutlookResend();
+    restart();
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }, { state: "refused", reason: "field_unwritable" }]);
+    response.current = "accepted";
+    response.revision = 1;
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }, { state: "applied", reason: null }]);
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted" });
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept", "/v1.0/me/events/first-day/accept"]);
+  });
+
+  it("clears the notice for an earlier failed Outlook resend when a different choice confirms", async () => {
+    const { seeded, response, posts, turn, queue, writes, resent } = await failedOutlookResend();
+    await queue("tentative", false, "choose-maybe");
+    response.send = async () => {
+      response.current = "tentativelyAccepted";
+      response.revision = 1;
+      return 202;
+    };
+    await turn();
+    expect(await writes()).toEqual([
+      { state: "applied", reason: null }, { state: "refused", reason: "answer_unconfirmed" }, { state: "applied", reason: null },
+    ]);
+    const [archived] = await w.db.select({ payload: calWrites.payload }).from(calWrites)
+      .where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, resent.id)));
+    expect(archived?.payload).toEqual({ fingerprint: expect.any(String), replySuperseded: true });
+    expect(posts).toEqual([
+      "/v1.0/me/events/first-day/accept", "/v1.0/me/events/first-day/accept", "/v1.0/me/events/first-day/tentativelyAccept",
+    ]);
+  });
+
+  it("sends a newer series choice and archives the earlier unconfirmed notice on confirmation", async () => {
+    const { seeded, queue, read, response, posts, turn, writes } = await quarterlyWorld();
+    await turn();
+    await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    await turn();
+    await queue("tentative", true, "newer-answer", "quarterly-answer");
+    response.send = async () => {
+      response.master = "tentativelyAccepted";
+      return 202;
+    };
+    await turn();
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }, { state: "applied", reason: null }]);
+    const [archived] = await w.db.select({ payload: calWrites.payload }).from(calWrites)
+      .where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.idempotencyKey, "quarterly-answer")));
+    expect(archived?.payload).toEqual({ fingerprint: expect.any(String), replySuperseded: true });
+    expect((await read()).find(({ providerId }) => providerId === "series")).toMatchObject({ answer: "tentative" });
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept", "/v1.0/me/events/series/tentativelyAccept"]);
+  });
+
+  it("preserves a newer calendar reading that lands during an exact Outlook reply check", async () => {
+    const { seeded, posts, queue, read, response, turn, writes } = await quarterlyWorld();
+    await turn();
+    await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    response.current = "accepted";
+    response.revision = 1;
+    response.beforePoint = async () => {
+      await w.db.transaction(async (tx) => {
+        await tx.update(calCalendars).set({ nextPollAt: sql`clock_timestamp() + interval '1 minute'` })
+          .where(eq(calCalendars.accountId, seeded.accountId));
+        await tx.update(calEvents).set({ myAnswer: "tentative", versionTag: "day-2" })
+          .where(and(eq(calEvents.accountId, seeded.accountId), eq(calEvents.providerId, "first-day")));
+      });
+    };
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    expect((await read()).find(({ providerId }) => providerId === "first-day"))
+      .toMatchObject({ answer: "tentative", version: "day-2" });
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+  });
+
+  it("keeps the synchronized Outlook cursor when reply verification is throttled and waits before its next poll", async () => {
+    const { seeded, queue, response, turn, writes, posts } = await quarterlyWorld();
+    await turn();
+    await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    response.next = "after-throttled-reply-check";
+    response.pointRetryAfter = 1_800;
+    const started = Date.now();
+    await turn();
+    const [calendar] = await w.db.select({ cursor: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId));
+    const [connection] = await w.db.select({ poll: calConnections.nextPollAt }).from(calConnections)
+      .where(eq(calConnections.id, seeded.connectionId));
+    expect(calendar?.cursor).toContain(response.next);
+    expect(connection?.poll?.getTime()).toBeGreaterThanOrEqual(started + 1_800_000);
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+  });
+
+  it("settles a reply against the exact replacement for the same Outlook occurrence", async () => {
+    const { response, posts, turn, queue, writes, due, read } = await quarterlyWorld();
+    await turn();
+    await queue("accepted");
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    response.missing = true;
+    response.instanceReplacement = true;
+    response.replacement = true;
+    response.current = "accepted";
+    response.revision = 1;
+    response.replacementPointMatches = false;
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    response.replacementPointMatches = true;
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect((await read()).find(({ providerId }) => providerId === "replacement-day")).toMatchObject({ answer: "accepted" });
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+  });
+
+  it("can send a reply after Graph definitely refused the first request", async () => {
+    const { response, posts, turn, queue, writes, due } = await quarterlyWorld();
+    await turn();
+    await queue("accepted");
+    response.send = async () => 429;
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    response.send = async () => {
+      response.revision = 1;
+      response.current = "accepted";
+      return 202;
+    };
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect(posts).toEqual(Array(2).fill("/v1.0/me/events/first-day/accept"));
+  });
+
+  it.each([
+    ["accepted", "accepted", "accept"],
+    ["tentative", "tentativelyAccepted", "tentativelyAccept"],
+    ["declined", "declined", "decline"],
+  ] as const)("keeps a whole-series %s reply pending until the exact master confirms it", async (reply, status, action) => {
+    const { response, posts, read, turn, queue, writes, due } = await quarterlyWorld();
+    await turn();
+    await queue(reply, true);
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    response.masterPointFailure = true;
+    // Use a delta with no occurrences so the isolated failure is the RSVP readback.
+    response.deltaIncludesDays = false;
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    response.masterPointFailure = false;
+    response.master = status;
+    response.masterVersion = "series-answered";
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect(await read()).toMatchObject([{ providerId: "series", answer: reply }]);
+    expect(posts).toEqual([`/v1.0/me/events/series/${action}`]);
+  });
+
+  it.each([1, 2])("keeps the confirmed occurrence answer over %s copies of an older delta and takes a genuine later change", async (copies) => {
+    const { response, posts, read, turn, queue, writes } = await quarterlyWorld();
+    response.modification = "absent";
+    await turn();
+    await queue("accepted");
+    response.send = async () => {
+      response.revision = 2;
+      response.current = "accepted";
+      response.delta = { revision: 1, response: "notResponded", copies };
+      return 202;
+    };
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted" });
+    response.revision = 3;
+    response.current = "tentativelyAccepted";
+    response.delta = undefined;
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative", version: "day-3" });
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+  });
+
+  it("keeps the exact answer when the list omits the response and carries a stale attendee", async () => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    const child = (await read()).find(({ providerId }) => providerId === "first-day")!;
+    response.omitDeltaResponse = true;
+    await turn();
+    expect((await read()).find(({ id }) => id === child.id)).toMatchObject({ answer: "accepted" });
+    const guests = await w.db.select({ answer: calAttendees.answer }).from(calAttendees)
+      .where(and(eq(calAttendees.accountId, seeded.accountId), eq(calAttendees.eventId, child.id)));
+    expect(guests).toContainEqual({ answer: "accepted" });
+  });
+
+  it.each(["delta", "whole"] as const)("keeps a newer %s reply until the point read confirms it", async (mode) => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    const cursor = async () => (await w.db.select({ value: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId)))[0]?.value;
+    if (mode === "whole") await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, seeded.accountId));
+    response.delta = { revision: 3, response: "tentativelyAccepted" };
+    response.next = "later-response";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted", version: "day-2" });
+    expect(await cursor()).toBeNull();
+    response.revision = 3;
+    response.current = "tentativelyAccepted";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative", version: "day-3" });
+    expect(await cursor()).toContain("later-response");
+  });
+
+  it.each(["delta", "whole"] as const)("ignores a stale %s reply even when the Outlook point read also lags", async (mode) => {
+    const { seeded, response, read, turn, restart } = await quarterlyWorld();
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted", version: "day-2" });
+
+    restart();
+    if (mode === "whole") await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, seeded.accountId));
+    const cursor = async () => (await w.db.select({ value: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId)))[0]?.value;
+    response.revision = 1;
+    response.current = "notResponded";
+    response.next = "after-older-reply";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted", version: "day-2" });
+    expect(await cursor()).toContain("after-older-reply");
+
+    response.revision = 3;
+    response.current = "tentativelyAccepted";
+    response.next = "after-newer-reply";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative", version: "day-3" });
+    expect(await cursor()).toContain("after-newer-reply");
+
+    response.modification = "absent";
+    response.revision = 4;
+    response.current = "declined";
+    await turn();
+    response.modification = "ordered";
+    response.revision = 1;
+    response.current = "notResponded";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "declined", version: "day-4" });
+  });
+
+  it.each(["ordered", "tied", "absent"] as const)("keeps an Outlook reply unresolved against a different mirrored answer with %s timestamps", async (modification) => {
+    const { response, posts, queue, read, turn, writes } = await quarterlyWorld();
+    response.modification = modification;
+    await turn();
+    await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    response.revision = 2;
+    response.current = "tentativelyAccepted";
+    // Isolate the older dated reply as the first completed confirmation check.
+    response.pointFailure = modification === "ordered";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative", version: "day-2" });
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+
+    response.revision = 1;
+    response.current = "accepted";
+    response.pointFailure = false;
+    if (modification !== "ordered") response.deltaIncludesDays = false;
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative", version: "day-2" });
+
+    response.revision = 3;
+    response.deltaIncludesDays = true;
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted", version: "day-3" });
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+  });
+
+  it.each(["tied", "absent"] as const)("advances once the point read confirms a competing revision with %s times", async (modification) => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.modification = modification;
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    const cursor = async () => (await w.db.select({ token: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId)))[0]?.token;
+    response.delta = { revision: 2, response: "accepted" };
+    response.competing = { revision: 3, response: "tentativelyAccepted" };
+    response.next = "after-both-revisions";
+    await turn();
+    expect(await cursor()).toBeNull();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted" });
+    response.revision = 3;
+    response.current = "tentativelyAccepted";
+    await turn();
+    expect(await cursor()).toContain("after-both-revisions");
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative" });
+  });
+
+  it("parks an opaque reply until Outlook offers a consistent revision", async () => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.modification = "absent";
+    response.revision = 1;
+    response.current = "accepted";
+    await turn();
+    const cursor = async () => (await w.db.select({ token: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId)))[0]?.token;
+    response.delta = { revision: 2, response: "tentativelyAccepted" };
+    response.competing = { revision: 3, response: "declined" };
+    response.revision = 2;
+    response.current = "tentativelyAccepted";
+    response.next = "after-three-revisions";
+    await turn();
+    expect(await cursor()).toBeNull();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted" });
+    response.revision = 3;
+    response.current = "declined";
+    await turn();
+    expect(await cursor()).toBeNull();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted" });
+    response.delta = response.competing = undefined;
+    await turn();
+    expect(await cursor()).toContain("after-three-revisions");
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "declined" });
+  });
+
+  it.each([
+    ["tied", false], ["tied", true], ["absent", false], ["absent", true],
+  ] as const)("advances past an unchanged exact reply with %s times and reversed page order %s", async (modification, reverse) => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.modification = modification;
+    response.revision = 1;
+    response.current = "accepted";
+    await turn();
+    const cursor = async () => (await w.db.select({ token: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId)))[0]?.token;
+    expect(await cursor()).toEqual(expect.any(String));
+    const candidate = { revision: 2, response: "tentativelyAccepted" };
+    const exact = { revision: 3, response: "declined" };
+    response.delta = reverse ? exact : candidate;
+    response.competing = reverse ? candidate : exact;
+    response.revision = exact.revision;
+    response.current = exact.response;
+    response.next = "after-competing";
+    response.split = 2;
+
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted" });
+    expect((await read()).find(({ providerId }) => providerId === "workshop-addition")).toBeDefined();
+    expect(await cursor()).toBeNull();
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted", version: "day-1" });
+    expect((await read()).find(({ providerId }) => providerId === "workshop-addition")).toBeDefined();
+    expect(await cursor()).toBeNull();
+
+    // A fresh window can now confirm the reply once Outlook stops listing the older revision.
+    response.delta = response.competing = undefined;
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "declined", version: "day-3" });
+    response.split = false;
+    response.revision = 4;
+    response.current = "tentativelyAccepted";
+    await turn();
+    expect(await cursor()).toEqual(expect.any(String));
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative", version: "day-4" });
+  });
+
+  it.each(["ordered", "omitted", "newer-omitted"] as const)("still imports later pages during a persistent %s Outlook reply disagreement", async (kind) => {
+    const { seeded, response, read, turn, restart } = await quarterlyWorld();
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    const cursor = async () => (await w.db.select({ token: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId)))[0]?.token;
+    const original = await cursor();
+
+    response.next = "still-imports-later-pages";
+    response.split = true;
+    if (kind === "ordered") {
+      response.delta = { revision: 3, response: "tentativelyAccepted" };
+    } else if (kind === "newer-omitted") {
+      response.delta = { revision: 3, response: "tentativelyAccepted" };
+      response.revision = 4;
+      response.current = "declined";
+      response.omitPointResponse = true;
+    } else {
+      response.omitDeltaResponse = response.omitPointResponse = true;
+    }
+    const outcomes: string[] = [];
+    for (let poll = 0; poll < 6; poll++) {
+      if (poll === 3) restart();
+      outcomes.push((await turn("either")).kind);
+    }
+    const during = {
+      outcomes, cursorMoved: (await cursor()) !== original, token: await cursor(),
+      addition: (await read()).some(({ providerId }) => providerId === "workshop-addition"),
+      answer: (await read()).find(({ providerId }) => providerId === "first-day")?.answer,
+    };
+    response.delta = undefined;
+    response.omitDeltaResponse = response.omitPointResponse = false;
+    if (kind === "ordered") {
+      response.revision = 3;
+      response.current = "tentativelyAccepted";
+    }
+    await turn();
+    expect((await read()).some(({ providerId }) => providerId === "workshop-addition")).toBe(true);
+    expect(during).toMatchObject({ outcomes: Array(6).fill("synced"), cursorMoved: true, token: null, addition: true, answer: "accepted" });
+  });
+
+  it("lets an unrelated Outlook write through when an uncertain whole-series reply can no longer be read", async () => {
+    const { seeded, response, posts, queue, read, turn, writes, due, restart } = await quarterlyWorld();
+    await turn();
+    const first = await queue("accepted", true);
+    response.send = async () => "timeout";
+    await turn();
+    expect(posts).toEqual(["/v1.0/me/events/series/accept"]);
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    await w.db.update(calWrites).set({ nextAttemptAt: sql`now() + interval '1 hour'` })
+      .where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, first.id)));
+
+    response.removeMaster = "delta";
+    const [calendar] = await w.db.select({ calendarId: calCalendars.id })
+      .from(calCalendars).where(eq(calCalendars.accountId, seeded.accountId));
+    await press(seeded.accountId, "unrelated-create-after-series", create(calendar!));
+    response.send = async () => 400;
+    for (let poll = 0; poll < 6; poll++) {
+      if (poll === 3) restart();
+      await turn();
+    }
+    expect((await read()).some(({ providerId }) => providerId === "series")).toBe(false);
+    expect(posts).toEqual(["/v1.0/me/events/series/accept"]);
+    await due();
+    await turn();
+    expect(posts).toEqual([
+      "/v1.0/me/events/series/accept", "/v1.0/me/calendars/calendar/events",
+    ]);
+    expect(await writes()).toEqual([{ state: "refused", reason: "field_unwritable" }]);
+  });
+
+  it.each(["tied", "absent"] as const)("lets a newer Outlook series choice proceed when the exact old reply stays unordered with %s times", async (modification) => {
+    const { response, posts, queue, read, turn, writes, restart } = await quarterlyWorld();
+    response.modification = modification;
+    await turn();
+    await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    response.revision = 2;
+    response.current = "tentativelyAccepted";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative", version: "day-2" });
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+
+    response.revision = 1;
+    response.current = "accepted";
+    response.deltaIncludesDays = false;
+    response.send = async () => {
+      response.master = "declined";
+      return 202;
+    };
+    const preceding = modification === "absent" ? "middle-occurrence" : "quarterly-answer";
+    if (preceding === "middle-occurrence") await queue("tentative", false, preceding, "quarterly-answer");
+    await queue("declined", true, "queued-series-reply", preceding);
+    await turn();
+    const nextPosts = [...posts];
+    for (let poll = 1; poll < 6; poll++) {
+      if (poll === 3) restart();
+      await turn();
+    }
+    const during = { posts: [...posts], writes: await writes() };
+    response.revision = 2;
+    response.current = "tentativelyAccepted";
+    await turn();
+    await turn();
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept", "/v1.0/me/events/series/decline"]);
+    expect(nextPosts).toEqual(posts);
+    expect(during).toMatchObject({ posts: [
+      "/v1.0/me/events/first-day/accept", "/v1.0/me/events/series/decline",
+    ] });
+    expect(during.writes.at(-1)).toEqual({ state: "applied", reason: null });
+    expect(during.writes.slice(0, -1)).toEqual(Array(preceding === "middle-occurrence" ? 2 : 1)
+      .fill({ state: "refused", reason: "answer_unconfirmed" }));
+  });
+
+  it("sends a newer Outlook series choice while an older series reply awaits confirmation", async () => {
+    const { response, posts, queue, turn, writes } = await quarterlyWorld();
+    await turn();
+    await queue("accepted", true);
+    response.send = async () => "timeout";
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    await queue("declined", true, "new-series-choice", "quarterly-answer");
+    response.send = async () => {
+      response.master = "declined";
+      return 202;
+    };
+    await turn();
+    expect(posts).toEqual(["/v1.0/me/events/series/accept", "/v1.0/me/events/series/decline"]);
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }, { state: "applied", reason: null }]);
+  });
+
+  it.each(["tied", "absent"] as const)("continues past an unlisted Outlook reply with %s timestamps", async (modification) => {
+    const { seeded, response, read, turn, restart } = await quarterlyWorld();
+    response.modification = modification;
+    response.revision = 1;
+    response.current = "accepted";
+    await turn();
+    const cursor = async () => (await w.db.select({ token: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId)))[0]?.token;
+    expect(await cursor()).toEqual(expect.any(String));
+
+    response.delta = { revision: 2, response: "tentativelyAccepted" };
+    response.revision = 3;
+    response.current = "declined";
+    response.next = "after-unlisted-reply";
+    response.split = true;
+    await turn();
+    expect(await cursor()).toBeNull();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted", version: "day-1" });
+    expect((await read()).find(({ providerId }) => providerId === "workshop-addition")).toBeDefined();
+
+    restart();
+    response.delta = undefined;
+    await turn();
+    expect(await cursor()).toContain("after-unlisted-reply");
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "declined", version: "day-3" });
+  });
+
+  it.each([["declined", "decline"], ["accepted", "accept"]] as const)("drains a later Outlook series %s reply when an older exact reply stays stale", async (reply, action) => {
+    const { response, posts, queue, read, turn, writes, restart } = await quarterlyWorld();
+    await turn();
+    await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    response.revision = 2;
+    response.current = "tentativelyAccepted";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative", version: "day-2" });
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+
+    restart();
+    response.revision = 1;
+    response.current = "accepted";
+    response.deltaIncludesDays = false;
+    response.send = async () => {
+      response.master = reply;
+      return 202;
+    };
+    await turn();
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }]);
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+    await queue(reply, true, "queued-series-reply", "quarterly-answer");
+    await turn();
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept", `/v1.0/me/events/series/${action}`]);
+    expect((await writes()).at(-1)).toEqual({ state: "applied", reason: null });
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative", version: "day-2" });
+  });
+
+  it("rechecks an Outlook reply whose receipt was renewed during the exact read", async () => {
+    const { seeded, response, posts, queue, turn, writes } = await quarterlyWorld();
+    await turn();
+    const first = await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    response.current = "accepted";
+    response.revision = 1;
+    response.deltaIncludesDays = false;
+    response.beforePoint = async () => {
+      await w.db.update(calWrites).set({ updatedAt: sql`clock_timestamp()` })
+        .where(and(eq(calWrites.accountId, seeded.accountId), eq(calWrites.id, first.id)));
+    };
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+
+    response.beforePoint = async () => {};
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+  });
+
+  it("refreshes Outlook after parking an older exact copy in a whole window", async () => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.modification = "tied";
+    response.revision = 1;
+    response.current = "accepted";
+    await turn();
+    const clear = () => w.db.update(calCalendars).set({ syncToken: null })
+      .where(eq(calCalendars.accountId, seeded.accountId));
+    const cursor = async () => (await w.db.select({ token: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId)))[0]?.token;
+    const day = async () => (await read()).find(({ providerId }) => providerId === "first-day");
+    await clear();
+
+    response.revision = 2;
+    response.current = "tentativelyAccepted";
+    response.competing = { revision: 3, response: "declined" };
+    response.next = "after-the-whole-window";
+    await turn();
+    expect(await day()).toMatchObject({ version: "day-1", answer: "accepted" });
+    await turn();
+    expect(await day()).toMatchObject({ version: "day-1", answer: "accepted" });
+    expect(await cursor()).toBeNull();
+
+    // A terminal delta starts after the provider already emitted both revisions.
+    // The now-current copy is visible on a fresh whole window, but not in that delta.
+    response.revision = 3;
+    response.current = "declined";
+    response.competing = undefined;
+    response.withholdDaysOnCursor = true;
+    await turn();
+    expect(await day()).toMatchObject({ version: "day-3", answer: "declined" });
+  });
+
+  it("refreshes the whole Outlook window when the exact reply is newer than every listed copy", async () => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, seeded.accountId));
+    response.revision = 3;
+    response.current = "declined";
+    response.delta = { revision: 1, response: "notResponded" };
+    response.next = "after-an-old-list-copy";
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ version: "day-2", answer: "accepted" });
+    const [calendar] = await w.db.select({ token: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId));
+    expect(calendar?.token).toBeNull();
+
+    response.delta = undefined;
+    response.withholdDaysOnCursor = true;
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ version: "day-3", answer: "declined" });
+  });
+
+  it("requires an exact missing response when a live event and its removal share a page", async () => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    response.tombstone = true;
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted" });
+    response.missing = true;
+    await turn();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toBeUndefined();
+    const [series] = await w.db.select({ excluded: calEvents.excludedDates }).from(calEvents)
+      .where(and(eq(calEvents.accountId, seeded.accountId), eq(calEvents.providerId, "series")));
+    expect(series?.excluded ?? []).toHaveLength(1);
+  });
+
+  it("keeps a same-day replacement when the exact read confirms the old occurrence was removed", async () => {
+    const { response, read, turn } = await quarterlyWorld();
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    response.tombstone = true;
+    response.missing = true;
+    response.replacement = true;
+    await turn();
+    const rows = await read();
+    expect(rows.find(({ providerId }) => providerId === "first-day")).toBeUndefined();
+    expect(rows.find(({ providerId }) => providerId === "replacement-day")).toMatchObject({ answer: "accepted" });
+    const master = rows.find(({ providerId }) => providerId === "series")!;
+    const [series] = await w.db.select({ excluded: calEvents.excludedDates }).from(calEvents).where(eq(calEvents.id, master.id));
+    expect(series?.excluded ?? []).toHaveLength(0);
+  });
+
+  it.each(["missing", "outside"] as const)("keeps a confirmed reply over a later stale tombstone and removes it when the exact copy is %s", async (gone) => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    response.splitTombstone = true;
+    await turn();
+    expect(response.pointReads).toBe(1);
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted" });
+    response.missing = gone === "missing";
+    response.pointOutside = gone === "outside";
+    await turn();
+    expect(response.pointReads).toBe(2);
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toBeUndefined();
+    const [series] = await w.db.select({ excluded: calEvents.excludedDates }).from(calEvents)
+      .where(and(eq(calEvents.accountId, seeded.accountId), eq(calEvents.providerId, "series")));
+    expect(series?.excluded ?? []).toHaveLength(1);
+  });
+
+  it("advances past separate stale and newer pages while the exact copy catches up", async () => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.modification = "absent";
+    response.revision = 2;
+    response.current = "accepted";
+    await turn();
+    const cursor = async () => (await w.db.select({ token: calCalendars.syncToken }).from(calCalendars)
+      .where(eq(calCalendars.accountId, seeded.accountId)))[0]?.token;
+    const before = await cursor();
+    response.delta = { revision: 1, response: "notResponded" };
+    response.competing = { revision: 3, response: "tentativelyAccepted" };
+    response.next = "after-newer-page";
+    response.split = true;
+    await turn();
+    expect(await cursor()).toBeNull();
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "accepted" });
+    expect((await read()).find(({ providerId }) => providerId === "workshop-addition")).toBeDefined();
+    response.revision = 3;
+    response.current = "tentativelyAccepted";
+    await turn();
+    expect(await cursor()).not.toBe(before);
+    expect((await read()).find(({ providerId }) => providerId === "first-day")).toMatchObject({ answer: "tentative" });
+    expect((await read()).find(({ providerId }) => providerId === "workshop-addition")).toBeDefined();
+  });
+
+  it("checks a dispatched reply after the original send deadline", async () => {
+    const { response, posts, turn, queue, writes, due } = await quarterlyWorld();
+    await turn();
+    const write = await queue("accepted");
+    response.send = async () => "timeout";
+    await turn();
+    // Check again reset the read attempts, and keeps the original queue date.
+    await w.db.update(calWrites).set({ attempts: 0, createdAt: sql`now() - interval '4 days'` }).where(eq(calWrites.id, write.id));
+    response.revision = 1;
+    response.current = "accepted";
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect(posts).toEqual(["/v1.0/me/events/first-day/accept"]);
+  });
+
+  it.each(["delta", "whole"] as const)("settles the master decline after a %s reading removes the series", async (mode) => {
+    const { seeded, response, posts, read, turn, queue, writes, due } = await quarterlyWorld();
+    await turn();
+    await queue("declined", true);
+    response.send = async () => {
+      response.removeMaster = mode;
+      return 202;
+    };
+    if (mode === "whole") await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, seeded.accountId));
+    await turn();
+    await due();
+    await turn();
+    expect(await read()).toEqual([]);
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect(posts).toEqual(["/v1.0/me/events/series/decline"]);
+  });
+
+  it.each(["delta", "whole"] as const)("settles an acknowledged master decline after exhausting confirmation and later receiving %s evidence", async (mode) => {
+    const { seeded, response, posts, read, turn, queue, writes, due } = await quarterlyWorld();
+    await turn();
+    const write = await queue("declined", true);
+    await turn();
+    await turn();
+    expect(await writes()).toEqual([{ state: "pending", reason: null }]);
+    await w.db.update(calWrites).set({ attempts: WRITE_MAX_ATTEMPTS }).where(eq(calWrites.id, write.id));
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "refused", reason: "answer_unconfirmed" }]);
+    response.removeMaster = mode;
+    const master = (await read()).find(({ providerId }) => providerId === "series")!;
+    await w.db.delete(calAttendees).where(and(eq(calAttendees.accountId, seeded.accountId), eq(calAttendees.eventId, master.id)));
+    await w.db.delete(calEvents).where(and(eq(calEvents.accountId, seeded.accountId), eq(calEvents.id, master.id)));
+    if (mode === "whole") await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, seeded.accountId));
+    await turn();
+    await due();
+    await turn();
+    expect(await read()).toEqual([]);
+    expect(await writes()).toEqual([{ state: "applied", reason: null }]);
+    expect(posts).toEqual(["/v1.0/me/events/series/decline"]);
+  });
+
+  it.each(["delta", "whole"] as const)("settles an acknowledged decline after a %s read loses that day and drains the following answer", async (mode) => {
+    const { seeded, response, posts, read, turn, queue, writes, due } = await quarterlyWorld();
+    await turn();
+    await queue("declined");
+    await queue("tentative", true, "later-answer", "quarterly-answer");
+    if (mode === "whole") await w.db.update(calCalendars).set({ syncToken: null })
+      .where(eq(calCalendars.accountId, seeded.accountId));
+    response.send = async () => {
+      if (posts.length === 1) {
+        response.missing = true;
+        response.removed = mode;
+      } else {
+        response.master = "tentativelyAccepted";
+        response.masterVersion = "series-answered";
+      }
+      return 202;
+    };
+    await turn();
+    if (mode === "whole") {
+      await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, seeded.accountId));
+      await turn();
+    }
+    await due();
+    await turn();
+    expect(await writes()).toEqual([{ state: "applied", reason: null }, { state: "applied", reason: null }]);
+    expect(posts).toEqual(["/v1.0/me/events/first-day/decline", "/v1.0/me/events/series/tentativelyAccept"]);
+    const [series] = await w.db.select({ excluded: calEvents.excludedDates }).from(calEvents).where(eq(calEvents.accountId, seeded.accountId));
+    expect(series?.excluded).toHaveLength(1);
+    expect(series?.excluded?.[0]?.value).toMatch(/^20261006T/);
+    expect(await read()).toMatchObject([{ providerId: "series", answer: "tentative" }]);
+  });
+
+  it("corrects a stored unanswered attendee on the very same Graph revision", async () => {
+    const { seeded, response, read, turn } = await quarterlyWorld();
+    response.revision = 1;
+    response.current = "accepted";
+    await turn();
+    const child = (await read()).find(({ providerId }) => providerId === "first-day")!;
+    await w.db.update(calEvents).set({ myAnswer: "none" }).where(eq(calEvents.id, child.id));
+    await w.db.update(calAttendees).set({ answer: "none" }).where(eq(calAttendees.eventId, child.id));
+    await turn();
+    expect((await read()).find(({ id }) => id === child.id)).toMatchObject({ answer: "accepted", version: "day-1" });
+    const attendees = await w.db.select({ answer: calAttendees.answer }).from(calAttendees)
+      .where(and(eq(calAttendees.accountId, seeded.accountId), eq(calAttendees.eventId, child.id)));
+    expect(attendees).toContainEqual({ answer: "accepted" });
+  });
+
   it("refuses a changed-occurrence decline without calling the provider", async () => {
     const a = await account();
     const attendee = ["guest", "example.test"].join("@");
@@ -486,7 +1753,7 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     expect(await run(a, writer)).toEqual({ nextAttemptAt: null });
     const hex = recorded.id.replaceAll("-", "");
     expect(writer.calls.map((c) => [c.kind, c.key, c.calendar, c.draft?.summary])).toEqual([["create", hex, `cal-${a.accountId.slice(0, 6)}`, "Glaze firing"]]);
-    expect((await rows(a)).map((r) => [r.state, r.payload, r.attempts])).toEqual([["applied", {}, 1]]);
+    expect((await rows(a)).map((r) => [r.state, r.payload, r.attempts])).toEqual([["applied", { fingerprint: expect.stringMatching(/^v1:[0-9a-f]{64}$/) }, 1]]);
     expect((await events(a)).find((e) => e.id === act.eventId)).toEqual({ id: act.eventId, providerId: `made-${hex}`, title: "Glaze firing", versionTag: '"v1"' });
     // Done once: a second drain asks nothing.
     await run(a, writer);

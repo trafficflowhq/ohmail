@@ -135,6 +135,20 @@ it("uses the sender display name locally and applies the broad tier to every req
   expect(classifyUserPayload(input)).not.toHaveProperty("name");
 });
 
+it("keeps password guidance in the classification payload", () => {
+  const snippet = "A password is required to open Settings. Bring the blue copy to the workshop.";
+  expect(classify("Workshop plans", snippet).snippet).toBe(snippet);
+});
+
+it("keeps the sentence after a masked password when classification redacts the preview again", () => {
+  const subject = "Workshop plans";
+  const snippet = "The password is fixture-lantern. The blue copy is on the desk.";
+  const cleaned = redactAiMail({ subject, snippet });
+  const expected = "The password is [code]. The blue copy is on the desk.";
+  expect(cleaned.snippet).toBe(expected);
+  expect(classify(subject, cleaned.snippet).snippet).toBe(expected);
+});
+
 it("leaves an ordinary newsletter byte-identical", () => {
   const subject = "November newsletter • issue 4281";
   const snippet = [

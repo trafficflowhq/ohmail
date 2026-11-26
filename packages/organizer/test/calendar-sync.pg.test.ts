@@ -4,16 +4,18 @@
  * or after a crash. The provider here is a script, so the store's own rules are what is held: what
  * a page writes, what a whole reading drops at its end, and what it spares.
  */
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { and, eq, sql } from "drizzle-orm";
 import { PG_TEST_URL } from "@trafficflow/db/testing";
-import { calCalendars, calConnections, calEvents, calSettings, calWrites, changeLog, mailboxes, type Tx } from "@trafficflow/db";
-import { zoned, wall, type ZoneSource } from "@ohmail/cal-core";
-import { Secret, type ChangeItem, type StoredCredential } from "@ohmail/cal-providers";
+import { CALENDAR_CHANGES_PER_TRANSACTION, calCalendars, calConnections, calEvents, calSettings, calWrites, changeLog, mailboxes, type Tx } from "@trafficflow/db";
+import { plainDate, zoned, wall, type ZoneSource } from "@ohmail/cal-core";
+import { Secret, type ChangeItem, type HttpPort, type StoredCredential } from "@ohmail/cal-providers";
+import { makeReader as makeGoogleReader } from "@ohmail/cal-providers/google";
 import { calendarSyncPass, calendarTurnFailed } from "../src/calendar/sync-pass.js";
 import { CalendarKeyRingFault } from "../src/calendar/sign-in.js";
-import { applyChunks, chunksOf, objectWrite, type Work } from "../src/calendar/apply.js";
+import { applyChunks, chunksOf, objectGone, objectWrite, plannedMissingObjects, planMissingObjects, type Work } from "../src/calendar/apply.js";
 import { removeCalendar } from "../src/calendar/calendars.js";
 import { setConnectionState } from "../src/calendar/state.js";
 import {
@@ -316,6 +318,101 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect((await eventsOf(w, t.accountId)).length).toBe(3);
   }, 60_000);
 
+  it.each([24, CALENDAR_CHANGES_PER_TRANSACTION + 5])("requires matching missing objects in two whole readings of %i events", async (total) => {
+    const readings = new Map([["", eventsInPages("inventory", total, total)]]);
+    const t = await caldavWorld(readings, () => null);
+    await calendarSyncPass(t.deps, t.due, never);
+    const first = readings.get("")![0]!.items.slice(0, 3);
+    const second = readings.get("")![0]!.items.slice(3, 6);
+    for (const items of [first, second]) {
+      readings.set("", [{ items }]);
+      await makeDue(t.accountId);
+      expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced", dropped: 0 });
+      expect((await eventsOf(w, t.accountId)).length).toBe(total);
+      expect((await changesOf(w, t.accountId))["calendar_event:delete"] ?? 0).toBe(0);
+    }
+    readings.set("", [{ items: [...second].reverse() }]);
+    await makeDue(t.accountId);
+    expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced", dropped: total - 3 });
+    expect((await eventsOf(w, t.accountId)).map((e) => e.providerId)).toEqual(["inventory3.ics", "inventory4.ics", "inventory5.ics"]);
+    expect((await changesOf(w, t.accountId))["calendar_event:delete"]).toBe(total - 3);
+  }, 60_000);
+
+  it("spares a missing object queued for writing or updated after the deletion was planned", async () => {
+    const t = await caldavWorld(new Map([["", eventsInPages("race", 4, 4)]]), () => null);
+    await calendarSyncPass(t.deps, t.due, never);
+    const [cal] = await calendarsOf(w, t.accountId);
+    const rows = await w.db.select({ id: calEvents.id }).from(calEvents)
+      .where(eq(calEvents.accountId, t.accountId)).orderBy(calEvents.providerId);
+    const ctx = {
+      db: passDb(calendarPool(w.db), t.accountId), key: { accountId: t.accountId, id: t.connectionId },
+      calendar: { id: cal!.id, providerId: cal!.providerId }, zones: ZONES, unite: false, shown: null, halted: () => false,
+    };
+    const [clock] = await w.db.select({ ms: sql<number>`floor(extract(epoch from clock_timestamp()) * 1000)` })
+      .from(calCalendars).where(eq(calCalendars.id, cal!.id));
+    const startedAt = new Date(Number(clock!.ms));
+    const plan = randomUUID();
+    await w.db.insert(calWrites).values({
+      accountId: t.accountId, calendarId: cal!.id, eventId: rows[3]!.id, op: "update", payload: {}, idempotencyKey: "earlier-press",
+    });
+    const candidates = await planMissingObjects(ctx, { startedAt, plan, generation: randomUUID(), window: null }, null);
+    expect(candidates).toEqual(["race0.ics", "race1.ics", "race2.ics"].map((providerId) => ({ providerId, rows: 1 })));
+    await w.db.insert(calWrites).values({
+      accountId: t.accountId, calendarId: cal!.id, eventId: rows[0]!.id, op: "update", payload: {}, idempotencyKey: "late-press",
+    });
+    await w.db.update(calEvents).set({ updatedAt: startedAt }).where(eq(calEvents.id, rows[1]!.id));
+    await w.db.delete(calWrites).where(and(eq(calWrites.accountId, t.accountId), eq(calWrites.eventId, rows[3]!.id)));
+    const marked = await plannedMissingObjects(ctx, plan, null);
+    if (marked === "gone") throw new Error("calendar disappeared before its reading finished");
+    const absent = { withDays: false, dayLeaves: false, absence: { startedAt, plan } };
+    const planned = marked.map((c) => objectGone(c.providerId, c.rows, absent));
+    expect(await applyChunks(ctx, chunksOf(planned))).toMatchObject({ ok: true, changed: 1 });
+    expect((await eventsOf(w, t.accountId)).map((e) => e.providerId)).toEqual(["race0.ics", "race1.ics", "race3.ics"]);
+    expect((await changesOf(w, t.accountId))["calendar_event:delete"]).toBe(1);
+  }, 60_000);
+
+  it.each([
+    ["an empty object", {}],
+    ["a collection missing both cursors", { items: [] }],
+    ["a collection with both cursors", { items: [], nextPageToken: "next-page", nextSyncToken: "sync-token" }],
+  ])("keeps Google events when a token reset returns %s", async (_label, malformed) => {
+    const t = await seedConnection(w, { provider: "google", credential: google });
+    const items = Array.from({ length: 10 }, (_, n) => ({
+      id: `appointment-${n}`, status: "confirmed", start: { date: "2026-11-19" }, end: { date: "2026-11-20" },
+    }));
+    let whole: object = { kind: "calendar#events", items, nextSyncToken: "before-reset" };
+    const http: HttpPort = {
+      async request(url) {
+        const request = new URL(url);
+        const trade = request.pathname.endsWith("/token");
+        const listing = request.pathname.endsWith("/calendarList");
+        const expired = request.searchParams.get("syncToken") === "before-reset";
+        const body = trade ? { access_token: "short-fixture", expires_in: 3600 }
+          : listing ? { items: [{ id: "fixture-calendar", primary: true, accessRole: "owner" }] } : expired ? {} : whole;
+        return { arrived: true, status: expired ? 410 : 200, header: () => null, location: null, url, hops: 0,
+          body: new TextEncoder().encode(JSON.stringify(body)) };
+      },
+    };
+    const reader = makeGoogleReader({ http, zones: ZONES, clock: { now: () => Date.now() } });
+    const deps = depsFor(w, providersOf({ google: { reader, http } }), { oauth: { google: GOOGLE_REGISTRATION, microsoft: null } });
+    await calendarSyncPass(deps, t.due, never);
+    expect((await eventsOf(w, t.accountId)).length).toBe(10);
+    const [before] = await calendarsOf(w, t.accountId);
+    expect(before?.syncToken).toBe("before-reset");
+    whole = malformed;
+    await makeDue(t.accountId);
+    await calendarSyncPass(deps, t.due, never);
+    expect.soft((await eventsOf(w, t.accountId)).length).toBe(10);
+    expect.soft((await changesOf(w, t.accountId))["calendar_event:delete"] ?? 0).toBe(0);
+    expect((await calendarsOf(w, t.accountId))[0]).toMatchObject({ syncToken: null, errorCode: "unreadable" });
+    whole = { kind: "calendar#events", nextSyncToken: "after-reset" };
+    await makeDue(t.accountId);
+    expect(await calendarSyncPass(deps, t.due, never)).toMatchObject({ kind: "synced", dropped: 10 });
+    expect(await eventsOf(w, t.accountId)).toEqual([]);
+    expect((await changesOf(w, t.accountId))["calendar_event:delete"]).toBe(10);
+    expect((await calendarsOf(w, t.accountId))[0]?.syncToken).toBe("after-reset");
+  }, 60_000);
+
   it("stores newly confirmed Google event types even when the provider version is unchanged", async () => {
     const seeded = await seedConnection(w, { provider: "google", credential: google });
     const ordinary = upsert("ordinary", "same-version", single("ordinary", 17));
@@ -370,6 +467,74 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect((await eventsOf(w, seeded.accountId)).map((e) => e.providerId)).toEqual(["series1", "series1_20261124"]);
     // Each of the series' three changes reached the change log: the cancelled day, the new name, the day that came back.
     expect(await changesOf(w, seeded.accountId)).toMatchObject({ "calendar_event:create": 2, "calendar_event:update": 3 });
+  }, 60_000);
+
+  it("Google restores an excluded day without bringing back a separately cancelled day", async () => {
+    const seeded = await seedConnection(w, { provider: "google", credential: google });
+    const uid = "series-that-can-return";
+    const series = (excluded: readonly string[]) => eventOf([`UID:${uid}`, "DTSTAMP:20261113T120000Z", "DTSTART;TZID=Europe/Zurich:20261117T180000",
+      "DTEND;TZID=Europe/Zurich:20261117T190000", "RRULE:FREQ=WEEKLY;COUNT=6", ...excluded.map((day) => `EXDATE;TZID=Europe/Zurich:${day}`)]);
+    const independentlyCancelled = { kind: "cancelled_occurrence", uid, originalStart: zoned(wall(2026, 12, 1, 18), "Europe/Zurich") } as const;
+    const readings = new Map<string, readonly ScriptedPage[]>([
+      ["", [{ items: [upsert("weekly", "one", series(["20261124T180000", "20261201T180000"]))] }]],
+      ["first", [{ items: [independentlyCancelled] }]],
+      ["cancelled", [{ items: [upsert("weekly", "two", series([]))] }]],
+      ["restored", [{ items: [] }]],
+    ]);
+    const next = new Map<string | null, string>([[null, "first"], ["first", "cancelled"], ["cancelled", "restored"], ["restored", "restored"]]);
+    const reader = scriptedReader("google", { readings, endToken: (since) => next.get(since)! });
+    const deps = () => depsFor(w, providersOf({ google: { reader, http: silentHttp() } }), { oauth: { google: GOOGLE_REGISTRATION, microsoft: null } });
+    const run = async () => {
+      await makeDue(seeded.accountId);
+      expect(await calendarSyncPass(deps(), seeded.due, never)).toMatchObject({ kind: "synced" });
+      return (await eventsOf(w, seeded.accountId))[0]?.excluded;
+    };
+    expect(await run()).toEqual(["20261124T180000", "20261201T180000"]);
+    expect(await run()).toEqual(["20261124T180000", "20261201T180000"]);
+    expect(await run()).toEqual(["20261201T180000"]);
+    expect(await run()).toEqual(["20261201T180000"]);
+  }, 60_000);
+
+  it("Google reconciles a legacy exclusion only after the entire inventory is known", async () => {
+    const seeded = await seedConnection(w, { provider: "google", credential: google });
+    const uid = "old-series";
+    const series = (excluded: readonly string[]) => eventOf([`UID:${uid}`, "DTSTAMP:20261113T120000Z", "DTSTART;TZID=Europe/Zurich:20261117T180000",
+      "DTEND;TZID=Europe/Zurich:20261117T190000", "RRULE:FREQ=WEEKLY;COUNT=6", ...excluded.map((day) => `EXDATE;TZID=Europe/Zurich:${day}`)]);
+    const cancellation = (month: number, day: number): ChangeItem => ({
+      kind: "cancelled_occurrence", uid, originalStart: zoned(wall(2026, month, day, 18), "Europe/Zurich"),
+    });
+    const dates = ["20261124T180000", "20261201T180000"];
+    const readings = new Map<string, readonly ScriptedPage[]>([["", [{ items: [upsert("old-weekly", "same", series([dates[0]!])), cancellation(12, 1)] }]]]);
+    const reader = scriptedReader("google", { readings, endToken: () => "sync" });
+    const run = async (pages: number) => {
+      await makeDue(seeded.accountId);
+      const deps = depsFor(w, providersOf({ google: { reader, http: silentHttp() } }), {
+        oauth: { google: GOOGLE_REGISTRATION, microsoft: null }, turn: { pages, ms: 10_000 },
+      });
+      const result = await calendarSyncPass(deps, seeded.due, never);
+      expect(result).toMatchObject({ kind: "synced" });
+      return { result, excluded: (await eventsOf(w, seeded.accountId))[0]?.excluded };
+    };
+    expect((await run(2)).excluded).toEqual(dates);
+    // This row was written before the two sources were recorded.
+    await w.db.update(calEvents).set({ googleExclusionSources: null }).where(eq(calEvents.accountId, seeded.accountId));
+    const current = upsert("old-weekly", "same", series([]));
+    readings.set("", [
+      { items: [cancellation(11, 24)] },
+      { items: [current] },
+      { items: [], left: [{ id: "unreadable-object", reason: "unreadable" }] },
+    ]);
+    expect(await run(1)).toMatchObject({ result: { more: true }, excluded: dates });
+    expect(reader.calls.at(-1)).toEqual({ since: null, cursor: null });
+    expect(await run(1)).toMatchObject({ result: { more: true }, excluded: dates });
+    expect(await run(1)).toMatchObject({ result: { more: false }, excluded: dates });
+    // The earlier incomplete inventory cannot supply cancellations for this one.
+    readings.set("", [{ items: [cancellation(12, 1)] }, { items: [current] }]);
+    expect(await run(1)).toMatchObject({ result: { more: true }, excluded: dates });
+    expect(await run(1)).toMatchObject({ result: { more: false }, excluded: [dates[1]] });
+    readings.set("sync", [{ items: [] }]);
+    expect((await run(1)).excluded).toEqual([dates[1]]);
+    expect(reader.calls.at(-1)).toEqual({ since: "sync", cursor: null });
   }, 60_000);
 
   it("echoes a finite series unchanged when a separate exception moves past its range", async () => {
@@ -459,6 +624,19 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     };
     return { ...seeded, turn };
   }
+
+  it("infers a missing all-day Outlook date across the clock change and restores it on a later read", async () => {
+    const uid = "all-day-series";
+    const series = eventOf([`UID:${uid}`, "DTSTART;VALUE=DATE:20260328", "DTEND;VALUE=DATE:20260329", "RRULE:FREQ=DAILY;COUNT=3"]);
+    const day = (date: number) => ({ uid, originalStart: plainDate(2026, 3, date) });
+    const readings = new Map<string, readonly ScriptedPage[]>([["", [{
+      items: [upsert("all-day-series", "v1", series)], expanded: { window, seen: [day(28), day(30)] },
+    }]]]);
+    const t = await microsoftWorld(readings);
+    expect(await t.turn()).toEqual([{ id: "all-day-series", excluded: ["20260329"] }]);
+    readings.set("ms1", [{ items: [], expanded: { window, seen: [day(29)] } }]);
+    expect(await t.turn()).toEqual([{ id: "all-day-series", excluded: [] }]);
+  }, 60_000);
 
   it("Google: a series that is removed takes its changed days' rows with it, each with its delete", async () => {
     const t = await googleWorld(new Map<string, readonly ScriptedPage[]>([
@@ -1282,7 +1460,155 @@ describe.skipIf(!AVAILABLE)("the calendar's sync, page by page", () => {
     expect(await turn()).toEqual([{ day: "series", excluded: [] }, { day: "changed", excluded: [] }]);
   }, 60_000);
 
-  it("a reading that never ends is ended: after four hundred pages, or more ids than a reading may name, the calendar says so and waits a day", async () => {
+  it("resumes a long whole reading after a restart and commits its terminal token", async () => {
+    const initial = { items: [
+      upsert("still-there.ics", "old", single("still-there", 1)),
+      upsert("owed.ics", "old", single("owed", 2)),
+      upsert("newer.ics", "old", single("newer", 3)),
+      upsert("missing.ics", "old", single("missing", 4)),
+    ] };
+    const readings = new Map<string, readonly ScriptedPage[]>([["", [initial]]]);
+    const t = await caldavWorld(readings, () => "next");
+    await calendarSyncPass(t.deps, t.due, never);
+    const [cal] = await calendarsOf(w, t.accountId);
+    const [owed] = await w.db.select({ id: calEvents.id }).from(calEvents)
+      .where(and(eq(calEvents.accountId, t.accountId), eq(calEvents.providerId, "owed.ics")));
+    await w.db.update(calEvents).set({ updatedAt: new Date(Date.now() - 60_000) }).where(eq(calEvents.accountId, t.accountId));
+    await w.db.insert(calWrites).values({ accountId: t.accountId, calendarId: cal!.id, eventId: owed!.id,
+      op: "update", payload: {}, idempotencyKey: "while-reading" });
+    await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.id, cal!.id));
+    const pages: ScriptedPage[] = Array.from({ length: 400 }, (_, i) => ({
+      items: i % 12 === 0 ? [upsert(`page-${i}.ics`, "v1", single(`page-${i}`, 1))] : [],
+    }));
+    pages[0] = { items: [initial.items[0]!] };
+    pages[399] = { items: [upsert("tail.ics", "v1", single("tail", 5))] };
+    readings.set("", pages);
+    const deps = { ...t.deps, turn: { pages: 133, ms: 90_000 } };
+    for (let i = 0; i < 3; i++) {
+      await makeDue(t.accountId);
+      expect(await calendarSyncPass(deps, t.due, never)).toMatchObject({ kind: "synced", pages: 133, more: true });
+    }
+    expect((await calendarsOf(w, t.accountId))[0]?.syncToken).toBeNull();
+    await w.db.update(calEvents).set({ updatedAt: new Date() }).where(and(eq(calEvents.accountId, t.accountId), eq(calEvents.providerId, "newer.ics")));
+    const resumed = { ...deps, memory: newCalendarSyncMemory() };
+    await makeDue(t.accountId);
+    expect(await calendarSyncPass(resumed, t.due, never)).toMatchObject({ kind: "synced", pages: 1, more: false, dropped: 1 });
+    expect(t.reader.calls.at(-1)?.cursor).toBe("399");
+    expect((await calendarsOf(w, t.accountId))[0]?.syncToken).toBe("next");
+    const ids = (await eventsOf(w, t.accountId)).map((event) => event.providerId);
+    expect(ids).toEqual(expect.arrayContaining(["still-there.ics", "owed.ics", "newer.ics", "tail.ics"]));
+    expect(ids).not.toContain("missing.ics");
+  }, 120_000);
+
+  it("spares unchanged objects during overlapping whole readings", async () => {
+    const items = eventsInPages("unchanged-", 10, 10)[0]!.items;
+    const t = await caldavWorld(new Map([["", [{ items }]]]));
+    await calendarSyncPass(t.deps, t.due, never);
+    await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, t.accountId));
+    await w.db.update(calEvents).set({ updatedAt: new Date(Date.now() - 60_000) }).where(eq(calEvents.accountId, t.accountId));
+    await makeDue(t.accountId);
+    const earlier = scriptedReader("caldav", { readings: new Map([["", [{ items }, { items: [] }]]]), endToken: () => "earlier" });
+    const later = scriptedReader("caldav", { readings: new Map([["", [{ items }]]]), endToken: () => "later" });
+    const between = Promise.withResolvers<void>();
+    const continueEarlier = Promise.withResolvers<void>();
+    const read = earlier.readChanges.bind(earlier);
+    earlier.readChanges = async (...args) => {
+      if (args[3].cursor !== null) {
+        between.resolve();
+        await continueEarlier.promise;
+      }
+      return read(...args);
+    };
+    const run = (reader: typeof earlier) => calendarSyncPass(
+      depsFor(w, providersOf({ caldav: { reader, http: silentHttp() } })), t.due, never,
+    );
+    const first = run(earlier);
+    try {
+      await Promise.race([between.promise, first.then(() => { throw new Error("the first reading did not reach the second page"); })]);
+      expect(await run(later)).toMatchObject({ kind: "synced", dropped: 0 });
+    } finally {
+      continueEarlier.resolve();
+      await first;
+    }
+    expect((await eventsOf(w, t.accountId)).length).toBe(10);
+    expect((await changesOf(w, t.accountId))["calendar_event:delete"] ?? 0).toBe(0);
+    expect((await calendarsOf(w, t.accountId))[0]?.syncToken).toBe("later");
+  }, 60_000);
+
+  it("does not count names from a page whose continuation was never saved", async () => {
+    const ghost = upsert("removed.ics", "v1", single("removed", 1));
+    const first = upsert("stays.ics", "v1", single("stays", 2));
+    const readings = new Map<string, readonly ScriptedPage[]>([["", [{ items: [ghost, first] }]]]);
+    const t = await caldavWorld(readings);
+    await calendarSyncPass(t.deps, t.due, never);
+    await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, t.accountId));
+    await w.db.update(calEvents).set({ updatedAt: new Date(Date.now() - 60_000) }).where(eq(calEvents.accountId, t.accountId));
+    readings.set("", [{ items: [first] }, { items: [ghost] }, { items: [] }]);
+    await makeDue(t.accountId);
+    expect(await calendarSyncPass({ ...t.deps, turn: { pages: 1, ms: 10_000 } }, t.due, never)).toMatchObject({ kind: "synced", more: true });
+    const read = t.reader.readChanges.bind(t.reader);
+    t.reader.readChanges = (...args) => {
+      if (args[3].cursor === "2") throw new Error("interrupted before saving");
+      return read(...args);
+    };
+    await expect(calendarSyncPass(t.deps, t.due, never)).rejects.toThrow("interrupted before saving");
+    t.reader.readChanges = read;
+    readings.set("", [{ items: [first] }, { items: [] }]);
+    await makeDue(t.accountId);
+    expect(await calendarSyncPass({ ...t.deps, memory: newCalendarSyncMemory() }, t.due, never))
+      .toMatchObject({ kind: "synced", pages: 1, dropped: 1, more: false });
+    expect((await eventsOf(w, t.accountId)).map((event) => event.providerId)).toEqual(["stays.ics"]);
+  }, 60_000);
+
+  it("rejects a repeating pair of continuation links before the reading can remove events", async () => {
+    const t = await caldavWorld(new Map([["", [{ items: [upsert("existing.ics", "v1", single("existing", 1))] }]]]));
+    await calendarSyncPass(t.deps, t.due, never);
+    await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, t.accountId));
+    await w.db.update(calEvents).set({ updatedAt: new Date(Date.now() - 60_000) }).where(eq(calEvents.accountId, t.accountId));
+    let requests = 0;
+    t.reader.readChanges = async (_c, _cal, _since, page) => {
+      requests += 1;
+      return { ok: true as const, value: { mode: "whole", unchanged: false, items: [], left: [], expanded: null, refreshMs: null,
+        cursor: { kind: "more", value: page.cursor === "first" ? "second" : "first" } } };
+    };
+    await makeDue(t.accountId);
+    expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced", more: false });
+    expect(requests).toBeLessThanOrEqual(5);
+    expect((await calendarsOf(w, t.accountId))[0]).toMatchObject({ syncToken: null, errorCode: "page_link_refused" });
+    expect((await eventsOf(w, t.accountId)).map((event) => event.providerId)).toEqual(["existing.ics"]);
+  }, 60_000);
+
+  it.each([150, 100])("bounds a reading that repeatedly names the same event under fresh continuation links (%s pages per turn)", async (pages) => {
+    const present = upsert("repeated.ics", "v1", single("repeated", 1));
+    const untouched = upsert("untouched.ics", "v1", single("untouched", 2));
+    const t = await caldavWorld(new Map([["", [{ items: [present, untouched] }]]]));
+    await calendarSyncPass(t.deps, t.due, never);
+    await w.db.update(calCalendars).set({ syncToken: null }).where(eq(calCalendars.accountId, t.accountId));
+    await w.db.update(calEvents).set({ updatedAt: new Date(Date.now() - 60_000) }).where(eq(calEvents.accountId, t.accountId));
+    let requests = 0;
+    t.reader.readChanges = async (_c, _cal, _since, request) => {
+      requests++;
+      return { ok: true as const, value: {
+        mode: "whole", unchanged: false, items: [present], left: [], expanded: null, refreshMs: null,
+        cursor: { kind: "more", value: String(Number(request.cursor ?? "0") + 1) },
+      } };
+    };
+    const deps = { ...t.deps, turn: { pages, ms: 90_000 } };
+    const results: (boolean | string)[] = [];
+    for (let poll = 0; poll < 6; poll++) {
+      await makeDue(t.accountId);
+      const caller = poll < 2 ? deps : { ...deps, memory: newCalendarSyncMemory() };
+      const outcome = await calendarSyncPass(caller, t.due, never);
+      results.push(outcome.kind === "synced" ? outcome.more : outcome.kind);
+      if (outcome.kind !== "synced" || !outcome.more) break;
+    }
+    expect((await eventsOf(w, t.accountId)).map((event) => event.providerId).sort())
+      .toEqual(["repeated.ics", "untouched.ics"]);
+    expect({ results, requests, error: (await calendarsOf(w, t.accountId))[0]?.errorCode })
+      .toEqual({ results: [...Array(Math.ceil(400 / pages) - 1).fill(true), false], requests: 400, error: "too_large" });
+  }, 120_000);
+
+  it("a reading ends after four hundred empty pages, or more ids than a page may name, and waits a day", async () => {
     const endless = async () => {
       const seeded = await seedConnection(w, { provider: "caldav", credential: caldav, serverUrl: SERVER });
       const reader = scriptedReader("caldav", { readings: new Map() });

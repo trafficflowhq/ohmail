@@ -365,6 +365,27 @@
       "when": 1794732061381,
       "tag": "0106_security_notice_recipients",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795642667000,
+      "tag": "0107_staff_enrollment_generation",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1795642667001,
+      "tag": "0108_worker_topology",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795659601799,
+      "tag": "0110_platform_signal_traffic",
+      "breakpoints": true
     }
   ]
 }

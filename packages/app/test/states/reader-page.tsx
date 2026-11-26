@@ -385,7 +385,7 @@ const reader = readerEntry({
   look: () => undefined,
   sentCopy: "none",
   reply: "none",
-  invitation: "none",
+  invitation: q.has("invitation") ? () => <button type="button">Show in calendar</button> : "none",
 });
 const place: PlaceEntry = {
   id: "ohbox",

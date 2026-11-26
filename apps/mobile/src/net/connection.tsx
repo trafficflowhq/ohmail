@@ -11,9 +11,10 @@
 import { calendarProfileMayRecover } from "../calendar/live-port";
 import { calendarLifecycle } from "../calendar/calendar-native";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AppState, Platform } from "react-native";
+import { Alert, AppState, Platform } from "react-native";
 import { classifyWindowSyncFailure, unsentDraftsOf, type PullRing } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+import { PAIRING_DEVICE_NAMES } from "../copy.en";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
 import { nativeEngineDeps } from "../engine/native";
@@ -39,7 +40,7 @@ import { nativeFamilyDigest, nativeServerProfiles } from "../state/servers-nativ
 import { installPinning } from "./host-pinning";
 import { nativeHostPinning } from "./host-pinning-native";
 import { unifiedPushDistributor } from "./unified-push";
-import type { ServerProfile } from "../state/servers";
+import type { ServerProfile, SignOutNotice } from "../state/servers";
 import type { SignOutOutcome } from "./bearer";
 import { SyncRunner, drainLine } from "./drain";
 import { idleSpacing, keepDraining, type AppLifecycle } from "./drain-cadence";
@@ -57,6 +58,7 @@ import {
   discardAdmission,
   erasePendingCalendarCopies,
   familyReplacedAt,
+  signOutNoticeText,
   forgetProfile,
   handoffMinter,
   listHeldStandalone,
@@ -78,7 +80,7 @@ import {
   type ShellSession,
 } from "./pairing";
 import { awaitBrowserApproval, browserSignInOrigin, probeBrowserSignIn } from "./approval";
-import { approvalBrowser, approvalFetch } from "./approval-native";
+import { approvalBrowser } from "./approval-native";
 import { resolveApiBase, type BaseVerdict } from "./server-base.js";
 import { TransitionGate } from "./transitions";
 import { buildCommit } from "../build-info";
@@ -121,6 +123,8 @@ export interface Connection {
   syncError: RefusalArg | null;
   /** Every pairing on this phone — kept current across pair/forget/switch. */
   profiles: ServerProfile[];
+  signOutNotices: (Pick<SignOutNotice, "profileId" | "origin" | "deviceId" | "deviceLabel"> & { canReplace: boolean })[];
+  dismissSignOutNotice(profileId: string): Promise<void>;
   /** The active profile id (which row the app boots), or null with nothing paired. */
   activeId: string | null;
   /** The picker's /hello probe — negotiation lives in the seam, screens render the answer. */
@@ -205,6 +209,12 @@ export interface Connection {
 export type RingHeard = (ring: PullRing | null) => void;
 
 const ConnectionContext = createContext<Connection | null>(null);
+
+/** Keep approval and sign-out on the native transport that honors a redirect refusal. */
+const approvalFetch: NonNullable<PairingEnv["approvalFetchImpl"]> = async (url, init) => {
+  const { fetch } = await import("expo/fetch");
+  return fetch(url, init as Parameters<typeof fetch>[1]);
+};
 
 export function useConnection(): Connection {
   const c = useContext(ConnectionContext);
@@ -361,6 +371,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
   const [state, setState] = useState<ConnectionState>({ k: "starting" });
   const [profiles, setProfiles] = useState<ServerProfile[]>([]);
+  const [signOutNotices, setSignOutNotices] = useState<Connection["signOutNotices"]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   /* A REFUSAL ARGUMENT, not a sentence — see `drain.ts`. A failed round used to freeze its
@@ -406,6 +417,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
   const refreshProfiles = useCallback(async () => {
     setProfiles(await env.profiles.list());
+    const notices = await env.profiles.unresolvedSignOutNotices().catch(() => []);
+    setSignOutNotices(notices.map(({ profileId, origin, deviceId, deviceLabel, previousSession }) => ({
+      profileId, origin, deviceId, deviceLabel, canReplace: previousSession !== undefined,
+    })));
     setActiveId((await env.profiles.active())?.id ?? null);
     /* EVERY CHANGE OF THE PAIRINGS PASSES HERE, so the switch's provider answers the sibling from today's: this
        app's live pairings by their digests, never an address or an account. */
@@ -916,6 +931,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         //    an origin, two seconds at most; the rest go behind the launch, so a server that does
         //    not answer never holds the mail back.
         await drainPendingSignOuts(env, { atLaunch: true });
+        const unconfirmed = await env.profiles.unresolvedSignOutNotices().catch(() => []);
+        if (unconfirmed.length > 0 && stillCurrent() && Platform.OS !== "web") {
+          Alert.alert(Copy.serversSignOutPending,
+            unconfirmed.map(({ origin, deviceLabel, deviceId, previousSession }) =>
+              signOutNoticeText(origin, deviceLabel, deviceId, previousSession !== undefined)).join("\n\n"));
+        }
         void drainPendingSignOuts(env, { atLaunch: false });
         // 3. AND THE WAKE ROWS THIS PHONE OWES SOMEBODY'S SERVER. Same rule as the mirrors: a
         //    take-back the server refused is written down and retried, because the endpoint it
@@ -1021,7 +1042,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       const kind = mobileDeviceKind(Platform.OS);
       const approved = await awaitBrowserApproval({
         ...approvalBrowser(selfHosted), fetchImpl,
-        kind, label: kind === "mobile-ios" ? "iPhone" : "Android",
+        kind, label: PAIRING_DEVICE_NAMES[kind],
         calendarOnly: env.calendarOnly,
         previousSession: await familyReplacedAt(env, admission.origin),
       }, { origin: admission.origin, selfHosted }, signal);
@@ -1048,6 +1069,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       syncing,
       syncError,
       profiles,
+      signOutNotices,
+      dismissSignOutNotice: async (profileId) => {
+        await env.profiles.clearSignOutNotice(profileId);
+        await refreshProfiles();
+      },
       activeId,
       erasedCalendarScopes: async () => {
         const stores = env.shell;
@@ -1255,7 +1281,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       },
     }),
     [
-      state, syncing, syncError, profiles, activeId, adopt, adoptShell, drain, env, gate, leaveEntered, leaveShell,
+      state, syncing, syncError, profiles, signOutNotices, activeId, adopt, adoptShell, drain, env, gate, leaveEntered, leaveShell,
       finishPair, refreshProfiles, runConnect, runner, signIn, teardown,
     ],
   );

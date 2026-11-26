@@ -4,9 +4,8 @@
  * the one selector a view reads, which says of each event whether it waits and where.
  *
  * Two waits, never blurred: `device` (the act is in this device's queue and has not reached our
- * server) and `provider` (our server holds it and the provider has not taken it). A write the
- * provider refused is not laid over the record: the record shows the provider's copy, and the
- * refusal beside it, with the act kept so the view can offer to send it again.
+ * server) and `provider` (our server holds it and the provider has not taken it). An unconfirmed
+ * reply keeps the chosen answer. Other refusals show the provider's copy with the refusal beside it.
  *
  * Behind an entry of its own: the phone's engine, which keeps no calendar, never reaches it.
  */
@@ -181,7 +180,7 @@ export interface OccurrenceEdit {
 
 /**
  * An answer to one day of a series that has no changed copy of that day yet: it waits, and is refused, on that day
- * alone (`at`, the day's key). `answer` is what the day shows while it waits; null once refused.
+ * alone (`at`, the day's key). `answer` is what the day shows while it waits or stays unconfirmed.
  */
 export interface DayAnswer {
   readonly at: string;
@@ -189,6 +188,7 @@ export interface DayAnswer {
   readonly waiting: "device" | "provider" | null;
   readonly refusal: CalendarWriteFault | null;
   readonly refusedWriteId: string | null;
+  readonly replyUnconfirmed?: true;
 }
 
 /** An answer of one day, named on the series' own record (the day has no record of its own). */
@@ -202,6 +202,12 @@ function dayAnswerOf(
     : null;
 }
 
+function isRecordAnswer(record: CalendarEventRecord, act: CalendarEventAct | null): boolean {
+  return act?.kind === "calendar_event_answer" && act.eventId === record.id &&
+    (!act.copy || sameAttendeeCopy(record, act)) &&
+    (act.scope.kind === "record" || act.scope.at === record.recurrenceId);
+}
+
 /** An event as a view draws it: the record with every waiting write laid over, where it waits, and why one was refused. */
 export interface EventWithWrites {
   readonly record: CalendarEventRecord;
@@ -210,6 +216,7 @@ export interface EventWithWrites {
   readonly refusal: CalendarWriteFault | CalendarReason | null;
   /** The refused write a view can send again or let go; `null` for a refusal of our server's, which left nothing. */
   readonly refusedWriteId: string | null;
+  readonly replyUnconfirmed?: true;
   readonly removals?: readonly CalendarRemoveScope[];
   readonly occurrenceEdits?: readonly OccurrenceEdit[];
   /** Answers to single days of this series, each that day's own: the record's wait and refusal leave them out. */
@@ -218,8 +225,8 @@ export interface EventWithWrites {
 
 /**
  * THE SELECTOR: each event with its writes. The provider's pending writes (the record's marks) are
- * laid over first, then this device's own acts; a refused mark is shown, never laid over. `refused`
- * are this device's acts our server turned away, by event.
+ * laid over first, including an unconfirmed answer, then this device's own acts.
+ * `refused` are this device's acts our server turned away, by event.
  */
 export function eventsWithWrites(
   records: readonly CalendarEventRecord[], device: readonly DeviceAct[],
@@ -241,8 +248,22 @@ export function eventsWithWrites(
   const pending = records.flatMap((r) =>
     r.writes.filter((w) => w.state === "pending" && w.act !== null).map((w) => w.act!),
   );
-  const base = applyCalendarActs(records, pending);
+  const marksByRecord = new Map(records.map((record) => {
+    const fromSeries = exceptionMarks.get(record.id);
+    const marks = fromSeries ? [...record.writes, ...fromSeries].sort((a, b) => a.at.localeCompare(b.at)) : record.writes;
+    const answer = [...marks].reverse().find((w) => isRecordAnswer(record, w.act));
+    return [record.id, { marks, answer }] as const;
+  }));
+  const heldAnswers = records.flatMap((record) => {
+    const answer = marksByRecord.get(record.id)?.answer;
+    return answer?.reason === "answer_unconfirmed" && answer.act ? [answer.act] : [];
+  });
+  const base = applyCalendarActs(records, [...pending, ...heldAnswers]);
   const local = device.map((d) => d.act);
+  const localAnswers = new Set(local.flatMap((act) => {
+    const record = original.get(act.eventId);
+    return record && isRecordAnswer(record, act) ? [record.id] : [];
+  }));
   const onDevice = new Set(
     local.filter((act) => {
       const record = original.get(act.eventId);
@@ -259,23 +280,30 @@ export function eventsWithWrites(
     else hidden.set(act.eventId, [act.scope]);
   }
   return shown.map((record) => {
-    const own = original.get(record.id)?.writes ?? [];
-    const fromSeries = exceptionMarks.get(record.id);
-    const all = fromSeries ? [...own, ...fromSeries].sort((a, b) => a.at.localeCompare(b.at)) : own;
+    const provider = marksByRecord.get(record.id);
+    const all = provider?.marks ?? [];
     const days = new Map<string, DayAnswer>();
     for (const w of all) {
       const act = dayAnswerOf(record, w.act);
       if (act === null) continue;
-      days.set(act.at, w.state === "pending"
-        ? { at: act.at, answer: act.answer, waiting: "provider", refusal: null, refusedWriteId: null }
-        : { at: act.at, answer: null, waiting: null, refusal: w.reason, refusedWriteId: w.id });
+      const waiting = w.state === "pending";
+      days.set(act.at, {
+        at: act.at,
+        answer: waiting || w.reason === "answer_unconfirmed" ? act.answer : null,
+        waiting: waiting ? "provider" : null,
+        refusal: waiting ? null : w.reason,
+        refusedWriteId: waiting ? null : w.id,
+        ...(waiting && w.replyUnconfirmed && { replyUnconfirmed: true }),
+      });
     }
     for (const { act: done } of device) {
       const act = dayAnswerOf(record, done);
       if (act !== null) days.set(act.at, { at: act.at, answer: act.answer, waiting: "device", refusal: null, refusedWriteId: null });
     }
     const marks = days.size === 0 ? all : all.filter((w) => dayAnswerOf(record, w.act) === null);
-    const lastRefused = [...marks].reverse().find((w) => w.state === "refused") ?? null;
+    const answer = localAnswers.has(record.id) ? undefined : provider?.answer;
+    const lastRefused = [...marks].reverse().find((w) => w.state === "refused" &&
+      (w.reason !== "answer_unconfirmed" || w === answer));
     const removals = hidden.get(record.id);
     const occurrenceEdits = edits.get(record.id);
     return {
@@ -283,6 +311,7 @@ export function eventsWithWrites(
       ...(removals && { removals }),
       ...(occurrenceEdits && { occurrenceEdits }),
       ...(days.size > 0 && { answers: [...days.values()] }),
+      ...(answer?.state === "pending" && answer.replyUnconfirmed && { replyUnconfirmed: true }),
       waiting: onDevice.has(record.id) ? "device" : marks.some((w) =>
         w.state === "pending" && (record.recurrenceId || !occurrenceEdit(w.act))) ? "provider" : null,
       refusal: refused.get(record.id) ?? lastRefused?.reason ?? null,

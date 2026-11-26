@@ -39,7 +39,7 @@ export function useSearchList(input: SearchListInput): SearchListModel {
   useSearchFilterLink(input, pressed, narrowing);
   const trimmed = wordsAsked(query, searchBy);
   const resting = query.trim() === "" && !isNarrowed;
-  const mailboxTotal = useMailboxTotal(scope, input.readMailboxTotal);
+  const mailboxTotal = useMailboxTotal(scope, input.readMailboxTotal, resting);
   const overviewPeople = usePeopleOverview(engine, searchBy === "people" ? input.people : undefined);
   const [sort, setSort] = useSearchSort(scope, trimmed === "" && isNarrowed);
   const rows = useResultSlots(input, trimmed, sort, pressed, q);
@@ -143,18 +143,20 @@ export function useSearchList(input: SearchListInput): SearchListModel {
   };
 }
 
-/** One count read per Search seat. Ignore a reply after the scope or its reader changed. */
+/** Read the total when Search can display it, and hold the settled answer while a query is open. */
 function useMailboxTotal(
   scope: SearchListInput["scope"],
   read: SearchListInput["readMailboxTotal"],
+  resting: boolean,
 ): number | null {
   const [answer, setAnswer] = useState<{
     scope: SearchListInput["scope"];
     read: typeof read;
     total: number | null;
   }>();
+  const held = answer?.scope === scope && answer?.read === read ? answer : undefined;
   useEffect(() => {
-    if (!read || scope === false) return;
+    if (!resting || !read || scope === false || held) return;
     let current = true;
     void read().then(
       (total) => {
@@ -165,8 +167,8 @@ function useMailboxTotal(
     return () => {
       current = false;
     };
-  }, [read, scope]);
-  return answer && answer.scope === scope && answer.read === read ? answer.total : null;
+  }, [read, scope, resting, held]);
+  return held?.total ?? null;
 }
 
 function usePeopleOverview(engine: SearchListInput["engine"], readPeople: SearchListInput["people"]) {

@@ -16,7 +16,7 @@ export function rosterSection(scope: WorkerScope): void {
      * mailboxes, detach ones that were disabled/deleted/evicted by the cap, recompute the
      * per-account duty and the capacity counters.
      */
-    async function reconcileRoster(opts: { awaitAttaches?: boolean } = {}): Promise<void> {
+    async function reconcileRoster(onInitialAttaches?: (work: Promise<{ fault: unknown | null }>) => void): Promise<void> {
       if (scope.stopped) return;
 
       // Say something before the first attach, and leave durable evidence. A boot-time outage was once
@@ -106,6 +106,12 @@ export function rosterSection(scope: WorkerScope): void {
       scope.truncated = dropped.length;
       scope.expected = served.length;
       scope.servedIds = served.map((m) => m.mailboxId);
+      const desired = new Map(served.map((m) => [m.mailboxId, m]));
+      const selectionAt = Date.now();
+      scope.attachPool.cancelUnassigned((id, accountId) => {
+        const mb = desired.get(id);
+        return mb?.accountId !== accountId || selectionAt >= authRetryDeadline(mb);
+      });
 
       // …and the first beat says what the duty is, not `0/0`. The boot beat used to fire above this
       // block, before the roster was read, so the first row a watchdog saw was
@@ -116,8 +122,9 @@ export function rosterSection(scope: WorkerScope): void {
       // blocking risk that trade reintroduces is exactly one DB read — against the same database the
       // beat writes to, so a read that hangs would have hung the beat too.
       if (scope.firstBeatPending) {
+        await asDatabaseFault("roster.claimHeartbeat", () => scope.beat({ required: true }));
+        if (scope.stopped) return;
         scope.firstBeatPending = false;
-        await scope.beat();
       }
 
       // ── THE CAP, ON THE ROW AND NOT ONLY IN THE LOG (mail migration 0029) ───────────────
@@ -198,8 +205,6 @@ export function rosterSection(scope: WorkerScope): void {
           });
         }
       }
-      const desired = new Map(served.map((m) => [m.mailboxId, m]));
-
       // Detach anything no longer in the duty: soft-disabled, deleted,
       // or pushed out of the cap. Leaving it attached keeps an IDLE connection open — and keeps
       // syncing a mailbox whose credentials may already have been deleted.
@@ -255,15 +260,9 @@ export function rosterSection(scope: WorkerScope): void {
       for (const id of [...scope.awaitingCreds.keys()]) if (!desired.has(id)) scope.awaitingCreds.delete(id);
       for (const id of [...scope.quarantine.keys()]) if (!desired.has(id)) scope.quarantine.delete(id);
       for (const id of [...scope.leaseBlocked.keys()]) if (!desired.has(id)) scope.leaseBlocked.delete(id);
-      // An attach still waiting for its slot is dropped with its duty; one already running finishes,
-      // and if it adds a mailbox that has left, the next pass detaches it and releases the claim.
       const now = Date.now();
-      scope.attachPool.dropQueued((id) => {
-        const mb = desired.get(id);
-        return mb === undefined || now >= authRetryDeadline(mb);
-      });
 
-      // Schedule what is missing. The pass does not wait for the attaches (except at boot): each one
+      // Schedule what is missing. The pass leaves attaches on their own pool: each one
       // kicks and nudges a cycle as it joins the rotation (`attach-nonblocking.e2e.test.ts`, claim 7),
       // because `attach()` syncs nothing and the poll timer's first tick is a full period away.
       const toSchedule: EnabledMailbox[] = [];
@@ -366,13 +365,9 @@ export function rosterSection(scope: WorkerScope): void {
         const c = scope.attachPool.counts();
         scope.log.info("roster_attach_scheduled", { queued: c.queued, inFlight: c.running });
       }
-      // THE BOOT CONTRACT: startup resolves only once every boot attach has settled, no cycle runs
-      // before it (this pass holds the queue), and a shared fault in one rejects the start.
-      if (opts.awaitAttaches && scheduled.length > 0) {
-        const { fault } = await scope.attachPool.settled(scheduled);
-        if (fault !== null) throw fault;
-        if (scope.stopped) return;
-      }
+      // Capture the initial jobs while they are still in the pool. The caller can await
+      // these outcomes without occupying the serialized queue.
+      if (onInitialAttaches) onInitialAttaches(scope.attachPool.settled(scheduled));
 
       scope.dutyAccounts = accountsOf(served);
       scope.dutyMailboxes = served;
@@ -452,6 +447,7 @@ export function rosterSection(scope: WorkerScope): void {
           // replaced it is the kind of assertion a reviewer has to take on trust.
           if (block && block.reason !== null && nowMs - block.since >= scope.syncBlockGraceMs) {
             const reason = block.reason;
+            if (mb.syncBlockedReason === reason && mb.syncBlockedSince != null) continue;
             // The wall's block rests on a verdict the reopening door can overturn mid-pass: it
             // lands only on a row not kicked since this roster read it (mail 0135).
             const written = await markMailboxSyncBlocked(scope.forAccount(mb.accountId).db, mb.mailboxId, reason, {
@@ -464,9 +460,7 @@ export function rosterSection(scope: WorkerScope): void {
               });
               continue;
             }
-            // Once per transition into the blocked state, not once per pass: the write above is
-            // idempotent and repeats, and a line every 30 s per unserved mailbox is how the log
-            // that is supposed to explain an incident becomes the reason nobody reads it.
+            // A repair of the original timestamp does not log another transition.
             if (mb.syncBlockedReason !== reason) {
               scope.log.warn("mailbox_sync_blocked", {
                 mailboxId: mb.mailboxId, accountId: mb.accountId, syncBlockedReason: reason,

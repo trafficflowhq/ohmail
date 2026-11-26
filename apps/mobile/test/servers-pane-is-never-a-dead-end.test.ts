@@ -185,7 +185,7 @@ const QUIET = { subscribe: () => () => undefined, read: () => ({ version: () => 
 function connection(state: ConnectionState, rows: ServerProfile[], activeId: string | null) {
   const switches: string[] = [];
   scene.conn = {
-    state, profiles: rows, activeId, syncing: false, syncError: null,
+    state, profiles: rows, activeId, syncing: false, syncError: null, signOutNotices: [],
     unsentDraftsHere: () => null,
     forget: async () => ({ ok: true }),
     switchTo: async (id: string) => {

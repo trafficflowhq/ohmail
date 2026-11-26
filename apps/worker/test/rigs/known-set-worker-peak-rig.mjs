@@ -25,6 +25,7 @@ const MAILBOXES = Number(arg("mailboxes", 4));
 const INBOX = Number(arg("inbox", 25));
 /** Roster passes to wait out after the first sync, so the reading spans more than one attach. */
 const PASSES = Number(arg("passes", 3));
+const RESTARTS = Number(arg("restarts", 0));
 const POLL_MS = Number(arg("poll", 1500));
 const SAMPLE_MS = Number(arg("sample", 250));
 const SNAPSHOT = arg("snapshot", "");
@@ -81,7 +82,7 @@ async function seedMailbox(n) {
   }).returning();
   const enc = await KP.encrypt(auth.pass);
   await db.insert(mailboxCredentials).values({
-    mailboxId: row.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row.id, accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: ports.imapHost, port: ports.imapPort, secure: false, user: auth.user },
   });
   const c = new ImapFlow({
@@ -112,6 +113,7 @@ function sample(phase, attached = null) {
     at: Date.now(), phase, rss: m.rss, heapUsed: m.heapUsed, heapTotal: m.heapTotal,
     external: m.external, arrayBuffers: m.arrayBuffers, attached,
     memoBytes: processKnownSetBudget.chargedBytes, warmMemos: processKnownSetBudget.warmCount,
+    liveProjectionRows: processKnownSetBudget.workingRows,
   };
   samples.push(s);
   if (s.rss > peak.rss) peak = s;
@@ -129,10 +131,11 @@ try {
   sample("seeded");
 
   timer = setInterval(() => sample("loop", worker ? worker.stats().mailboxes : null), SAMPLE_MS);
-  worker = await startWorker({
+  const start = () => startWorker({
     databaseUrl: url, keyProvider: KP, pollIntervalMs: POLL_MS, sentDomain: "trafficflow.test",
     logger: VERBOSE ? createLogger({ service: "worker", level: "debug", sink: (l) => console.error(l) }) : undefined,
   });
+  worker = await start();
   sample("worker-started");
 
   /**
@@ -162,6 +165,17 @@ try {
     sample(`pass-${p + 1}`, worker.stats().mailboxes);
   }
 
+  for (let i = 0; i < RESTARTS; i++) {
+    await worker.stop();
+    if (processKnownSetBudget.workingRows !== 0) throw new Error("working locator reservation survived shutdown");
+    worker = await start();
+    while (worker.stats().lastCycleAt === null) {
+      if (Date.now() - started >= BUDGET_MS) throw new Error("cold restart did not finish a rotation");
+      await new Promise((resolve) => setTimeout(resolve, SAMPLE_MS));
+    }
+    sample(`restart-${i + 1}`, worker.stats().mailboxes);
+  }
+
   const [{ n: instances }] = await db.select({ n: dsql`count(*)::int` }).from(messageInstances);
   const peakSample = peak;
   if (SNAPSHOT) {
@@ -174,7 +188,8 @@ try {
     rosterWhole: maxAttached >= MAILBOXES,
     attachedAtEnd: worker.stats().mailboxes, maxAttached, rosterWholeAfterMs: rosterWholeAt,
     accounts: worker.stats().accounts,
-    ingestedMessages: ingested, projectionRows: instances,
+    ingestedMessages: ingested, projectionRows: instances, restarts: RESTARTS,
+    peakLiveProjectionRows: processKnownSetBudget.peakWorkingRows,
     heapPinMib: WORKER_HEAP_MIB,
     peak: {
       phase: peakSample.phase,

@@ -868,5 +868,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "CREATE INDEX \"screener_learning_account_idx\" ON \"screener_learning\" (\"account_id\");",
       "ALTER TABLE \"routing_decisions\" ADD COLUMN \"screener_topic\" text;"
     ]
+  },
+  {
+    "name": "0228_imap_scan_cursor.sql",
+    "statements": [
+      "ALTER TABLE \"mailbox_folders\" ADD COLUMN \"scan_next_uid\" integer;",
+      "ALTER TABLE \"mailbox_folders\" ADD COLUMN \"scan_reset_after\" text;"
+    ]
   }
 ] as const;

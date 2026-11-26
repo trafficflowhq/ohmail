@@ -31,6 +31,8 @@ export type WriteWord = ProviderRefusal | WriteRefusal | "content_refused";
 export interface StoredEvent extends CalendarWriteRowFacts {
   readonly providerId: string;
   readonly uid?: string;
+  readonly startsAt?: Date;
+  readonly endsAt?: Date | null;
   readonly partial?: boolean;
   readonly portableCopy?: boolean;
   readonly original: string | null;
@@ -145,7 +147,7 @@ function targetOf(e: StoredEvent, base: string | null): WriteTarget | null {
   return { id: e.providerId, version: base, text: e.original, occurrence: null };
 }
 
-const REPLY = { accepted: "ACCEPTED", tentative: "TENTATIVE", declined: "DECLINED" } as const;
+export const REPLY = { accepted: "ACCEPTED", tentative: "TENTATIVE", declined: "DECLINED" } as const;
 
 const sameStored = (a: Time, t: EventTime): boolean => {
   const b = storedTimeOf(t);
@@ -273,6 +275,7 @@ export function writeCallOf(o: {
     }
     const { from, source } = o.continuation;
     if (source === null) return { kind: "refuse", reason: "event_gone" };
+    if (caldav && source.partial) return { kind: "refuse", reason: "read_only" };
     if (from.personalSeries && (!o.place?.startsWith("caldav:") || !personalSeriesOf(source.original))) return { kind: "refuse", reason: "version_stale" };
     // A new series goes out under the series' own organizer. An attendee copy cannot be carried on.
     if (isAttendeeCopy(source, o.owners, o.access) || sharedCopyNeedsProtection(source, o.owners, o.access)) return { kind: "refuse", reason: "read_only" };
@@ -291,7 +294,7 @@ export function writeCallOf(o: {
     };
   }
   if (o.event === null) return { kind: "refuse", reason: "event_gone" };
-  if (act.kind === "calendar_event_update" && o.access === "writer" && o.event.partial)
+  if (o.event.partial && (caldav || (act.kind === "calendar_event_update" && o.access === "writer")))
     return { kind: "refuse", reason: "read_only" };
   if (seriesEdit && o.firstAttempt && o.event.updatedAt && o.event.updatedAt.getTime() !== Date.parse(act.base))
     return { kind: "refuse", reason: "version_stale" };

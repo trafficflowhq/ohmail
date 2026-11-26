@@ -40,7 +40,8 @@ function Door({ door, made }: { door: DoorHandle; made: () => DoorDevice }) {
   const route = useSyncExternalStore(door.route.subscribe, door.route.read);
   useEffect(() => {
     // Told once, when the first frame has been drawn: native lifts its cover.
-    const frame = requestAnimationFrame(() => void door.ask("ready", {}).catch(() => {}));
+    const ready = door.config.erasedCalendarScopes === null ? { calendarPrepared: "unverified" as const } : {};
+    const frame = requestAnimationFrame(() => void door.ask("ready", ready).catch(() => {}));
     return () => cancelAnimationFrame(frame);
   }, [door]);
   const Page = pages[route];
@@ -54,7 +55,7 @@ function Door({ door, made }: { door: DoorHandle; made: () => DoorDevice }) {
 
 async function start(bridge: DoorBridge, element: HTMLElement): Promise<void> {
   const config = await bridge.request("config", {});
-  if (__OHMAIL_CALENDAR_DOOR__ && config.app === "ohcal") {
+  if (__OHMAIL_CALENDAR_DOOR__ && config.app === "ohcal" && config.erasedCalendarScopes !== null) {
     try {
       const { isKept } = await import("../../../src/shell/kept-families");
       for (let index = localStorage.length - 1; index >= 0; index--) {

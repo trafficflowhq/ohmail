@@ -21,7 +21,7 @@ import type { CalendarConnectionRecord, CalendarPatchBody, CalendarRecord } from
 import { bridgeDb, bridgeTx, withAccountTx, type ServiceContext } from "../context.js";
 import { ServiceError } from "../errors.js";
 import {
-  connectRefusal, connectionRecord, connectionSeen, hasControlCharacter, parseSignInAsk, placedAddress, sealCredential, serverSealedFor,
+  connectRefusal, connectionRecord, connectionSeen, hasControlCharacter, parseSignInAsk, placedAddress, sealCredential, sealedBasicLogin,
   typedCalDavCredential, type CalendarConnectDoor,
 } from "./connect.js";
 import { CALENDAR_BUILDERS } from "./feed.js";
@@ -194,48 +194,10 @@ export async function checkCalendarConnection(
 // ── sign in again ────────────────────────────────────────────────────────────────
 
 /**
- * THE SERVER A PASSWORD TYPED AGAIN IS SEALED FOR: the one the sign-in it replaces was sealed for,
- * read out of that sealed text, and only while the connection's row names the same one. THE ROW'S
- * OWN `server_url` IS NEVER SEALED: it stands in the clear, whoever can write rows can write
- * another address there, and a password sealed for what was written there would be sent there.
- * Where the kept sign-in does not open for this connection, or was sealed for another server than
- * the row names, nothing is sealed and the door says `sign_in_incomplete`: the person removes the
- * connection and connects again, typing its server. A connection that is being removed has lost
- * its sealed sign-in to the removal: it answers as every act on it does.
- */
-async function serverOfSignInAgain(
-  ctx: ServiceContext, door: CalendarConnectDoor, at: CredentialPlace, rowServer: string | null,
-): Promise<string> {
-  const server = await serverSealedFor(ctx, door.keys, at);
-  if (server !== null && server === rowServer) return server;
-  throw (await connectionSeen(ctx, at.connectionId)).status === "removing" ? stopped() : connectRefusal("sign_in_incomplete");
-}
-
-/**
- * `POST /calendar/connections/:id/sign-in`: the sign-in typed again, sealed in place of the one
- * the connection kept, and the connection active and due. The kind a connection keeps is its
- * provider's; a subscription's new address is read by its shape as at the connect, its host
- * replaces the old one, and where the old address's reading stood is forgotten with it. (A
- * reading of the old address that is under way at this instant writes where it stood when it
- * ends, after this: that turn is covered by the reader, which sends a validator to no address
- * but the one it came from.)
- *
- * DUE AT ONCE ONLY WHERE THE CONNECTION'S MINUTE IS FREE. A sign-in takes the minute a check takes
- * (`takeMinute`), or it would be a check with no limit, and for a subscription one that aims the
- * next request at a new host each time. Inside a minute that is taken, the sign-in is sealed and
- * the connection made active all the same, and its next reading is within the minute, never now.
- *
- * A connection that waits for its person has no turn under way, so the next turn is the new
- * sign-in's. On a connection that is being read at this instant, the turn under way ends with the
- * sign-in it opened: the worker keeps the connection due (it never writes over a time someone
- * asked for during its turn), and the next turn opens the new one. A calendar that turn finished
- * reading keeps the time of its next reading, so there the new sign-in is first used when that
- * calendar is next due.
- *
- * A PASSWORD TYPED AGAIN IS SEALED FOR THE SERVER THE SIGN-IN IT REPLACES WAS SEALED FOR
- * (`serverOfSignInAgain`): a request names no server for a connection that stands, and the row's
- * own is never sealed. Where that server cannot be read, nothing is sealed and the person
- * connects again.
+ * Replace a password for the same sealed CalDAV login, or replace a subscription address. The
+ * sign-in door has no provider transport, so an unverified login spelling cannot replace the
+ * connected account. The worker verifies the CalDAV principal before using the new password.
+ * A replacement takes the same minute as a manual check, and the connection is then due.
  */
 export async function signInCalendarAgain(
   ctx: ServiceContext, door: CalendarConnectDoor, named: string, body: unknown,
@@ -250,9 +212,13 @@ export async function signInCalendarAgain(
   if (kept !== ask.kind) throw invalid("that is not the sign-in this connection keeps");
   const place = ask.kind === "address" ? placedAddress("ics", ask.address.reveal(), door.port.policy) : null;
   const at = { accountId: ctx.accountId, connectionId: id };
+  const login = ask.kind === "basic" ? await sealedBasicLogin(ctx, door.keys, at) : null;
+  if (ask.kind === "basic" && (login === null || login.server !== seen.serverUrl || login.user !== ask.user)) {
+    throw (await connectionSeen(ctx, id)).status === "removing" ? stopped() : connectRefusal("sign_in_incomplete");
+  }
   const credential: StoredCredential = ask.kind === "address"
     ? { kind: "address", url: ask.address }
-    : typedCalDavCredential(await serverOfSignInAgain(ctx, door, at, seen.serverUrl), ask);
+    : typedCalDavCredential(login!.server, ask);
   const sealed = await sealCredential(door.keys, credential, at);
   return withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
@@ -260,6 +226,12 @@ export async function signInCalendarAgain(
     if (row.status === "removing") throw stopped();
     // The row is no longer the one this request read and sealed for: another provider's, or with another server written into it.
     if (row.provider !== seen.provider || row.serverUrl !== seen.serverUrl) throw noConnection();
+    if (login !== null) {
+      const [current] = await t.select({ secretEnc: calCredentials.secretEnc, keyVersion: calCredentials.keyVersion })
+        .from(calCredentials).where(and(eq(calCredentials.accountId, ctx.accountId), eq(calCredentials.connectionId, id),
+          eq(calCredentials.kind, "basic"))).limit(1);
+      if (current?.secretEnc !== login.secretEnc || current.keyVersion !== login.keyVersion) throw connectRefusal("sign_in_incomplete");
+    }
     const due = await takeMinute(t, ctx.accountId, id, ctx.now()) ? "now" : "within the minute";
     const columns = { secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion, meta: null, updatedAt: sql`now()` };
     await t.insert(calCredentials).values({ accountId: ctx.accountId, connectionId: id, kind: credential.kind, ...columns })
@@ -274,7 +246,7 @@ export async function signInCalendarAgain(
       // Where a reading stands (its validators, the hash of its text) is the old address's. Under a new address it is
       // nobody's: forgotten here, with the address and in its transaction, so the calendar is read from the beginning.
       // Bookkeeping: no record a device holds moves.
-      await t.update(calCalendars).set({ syncToken: null })
+      await t.update(calCalendars).set({ syncToken: null, readCheckpoint: null, readOwner: null })
         .where(and(eq(calCalendars.accountId, ctx.accountId), eq(calCalendars.connectionId, id)));
       // A subscription that had ended was the old address's: under a new one its calendar is read again.
       const revived = await t.update(calCalendars).set({ errorCode: null, updatedAt: sql`now()` }).where(and(

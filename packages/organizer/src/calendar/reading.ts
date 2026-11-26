@@ -1,38 +1,40 @@
 /**
  * ONE CALENDAR'S READING, IN PAGES. Each page is asked with no transaction open, measured against
- * what is stored, and written in its own short transactions; the reading's place (the cursor) and
- * what its pages named live in this process only. The calendar's token moves once, in the
- * reading's last transaction, after its last page and its drop, so a crash anywhere before it
- * loses nothing and the next turn reads again from the token that stands: what is equal writes nothing.
+ * what is stored, and written in its own short transactions. Seen objects are marked with the
+ * reading's generation. A continuation is saved between turns and can be picked up after a restart.
+ * The calendar's token moves once, after the last page and its drop.
  *
  * A WHOLE reading (from no token, or a provider that keeps none) drops at its end what no page
  * named, and nothing it named in `left`; never a row written since it began, an object a person's
  * write is still owed to, or (Microsoft) one outside the window it read. A drop of most of what a
  * calendar holds waits for a second whole reading that shows the same.
  */
-import { createHash } from "node:crypto";
-import type { CalEvent, ZoneSource } from "@ohmail/cal-core";
+import { createHash, randomUUID } from "node:crypto";
+import { momentOrUtc, type ZoneSource } from "@ohmail/cal-core";
 import {
-  MAX_MULTISTATUS_RESPONSES, MAX_PAGE_LIMIT, type CalendarProvider, type ChangeItem, type ChangePage, type ChangeToken,
-  type ProviderWord,
+  MAX_MULTISTATUS_RESPONSES, MAX_PAGE_LIMIT, type Answer, type CalendarProvider, type ChangeItem, type ChangePage, type ChangeToken,
+  type ProviderWord, type VerifiedEvent,
 } from "@ohmail/cal-providers";
-import { and, eq, sql } from "drizzle-orm";
-import { calCalendars, calConnections, recordCalendarChanges, type LedgerTx, type Tx } from "@trafficflow/db";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { calCalendars, calEvents, calWrites, recordCalendarChanges, type LedgerTx, type Tx } from "@trafficflow/db";
+import { parseWritePayload } from "@trafficflow/db/calendar";
 import {
-  applyChunk, applyChunks, chunksOf, dayCancelled, dropCandidates, objectGone, planItems, storedRowsOf,
+  applyChunk, applyChunks, chunksOf, countStoredObjects, dayCancelled, objectGone, plannedMissingObjects, planMissingObjects, planItems, storedRowsOf,
+  hasUnknownGoogleExclusions, settleGoogleExclusions,
   type ApplyContext, type ChunkResult, type Work,
 } from "./apply.js";
 import type { StoredCalendar } from "./calendars.js";
 import { inConnection, type ConnectionDb, type ConnectionKey } from "./connection.js";
-import { occurrenceKey, type MapContext } from "./map.js";
+import { occurrenceKey, timeOfKey, type MapContext } from "./map.js";
 import { connectionsKept, hasPlace, keepReading, releaseAllBut, remember } from "./memory.js";
 import { cancelledDays } from "./microsoft.js";
+import { advanceCycle, claimProgress, loadProgress, namesInPage, recurrenceMaster, saveProgress } from "./reading-progress.js";
 import { dueAmong } from "./roster.js";
 import type { PassSignIn } from "./sign-in.js";
 import { storableKey } from "./storable.js";
 import type { CalendarSyncDeps, OpenReading } from "./types.js";
 import {
-  faultWord, FORCED_REREAD_EVERY_MS, MASS_DROP_FLOOR, MASS_DROP_RETRY_MS, MAX_READING_PAGES, MS_WINDOW_DAYS_AHEAD,
+  faultWord, FORCED_REREAD_EVERY_MS, MASS_DROP_FLOOR, MASS_DROP_RETRY_MS, MAX_CALDAV_READING_PAGES, MS_WINDOW_DAYS_AHEAD,
   MS_WINDOW_DAYS_BACK, MS_WINDOW_SLIDE_DAYS, pollAfterRead, turnOverdue, type CalendarSyncFault,
 } from "./words.js";
 
@@ -45,6 +47,7 @@ const MAX_MASTERS_KEPT = 5_000;
  * again or the calendar is read whole. A day kept that was cancelled, never a day hidden that was not.
  */
 const MAX_HELD_CANCELLATIONS = 10_000;
+const MAX_RECURRENCE_CHARS = 8 * 1024 * 1024;
 
 /** What one turn may still spend: pages, and a moment to end by. */
 export interface TurnBudget {
@@ -75,11 +78,6 @@ export type ReadingResult =
   | { readonly kind: "halted" }
   | { readonly kind: "superseded" };
 
-/** An id as the named set keeps it: 64 bits of its digest. A collision can only spare a row, never drop one. */
-export function nameOf(id: string): bigint {
-  return createHash("sha256").update(id).digest().readBigUInt64BE(0);
-}
-
 /** Microsoft's window for a reading begun now: whole UTC days back and ahead of today. */
 export function microsoftWindow(nowMs: number): { start: number; end: number } {
   const today = Math.floor(nowMs / DAY) * DAY;
@@ -91,18 +89,6 @@ const dayText = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
 function dayMs(text: string): number {
   const [y, m, d] = text.split("-").map(Number);
   return Date.UTC(y!, (m ?? 1) - 1, d ?? 1);
-}
-
-/**
- * The database's own clock, read once at a reading's start, to the millisecond below it: a row
- * written in that same millisecond reads as newer and is spared, the safe side.
- */
-async function databaseNow(ctx: ReadingContext): Promise<Date | "gone"> {
-  return inConnection(ctx.db, ctx.key, async ({ tx }) => {
-    const [row] = await tx.select({ ms: sql<number>`floor(extract(epoch from now()) * 1000)` }).from(calConnections)
-      .where(and(eq(calConnections.id, ctx.key.id), eq(calConnections.accountId, ctx.key.accountId))).limit(1);
-    return new Date(Number(row!.ms));
-  });
 }
 
 /**
@@ -119,8 +105,16 @@ export async function readCalendar(ctx: ReadingContext, cal: StoredCalendar): Pr
   const { deps } = ctx;
   const memory = deps.memory;
   const ms = ctx.word === "microsoft";
+  const credentialGeneration = ms || ctx.word === "google"
+    ? ctx.map.principal == null ? null : createHash("sha256").update(ctx.map.principal).digest("hex")
+    : ctx.signIn.generation();
   let since: string | null = cal.syncToken;
   let window: { start: number; end: number } | null = null;
+  if (ctx.word === "google" && since !== null) {
+    const unknown = await hasUnknownGoogleExclusions(ctx.db, ctx.key, cal.id);
+    if (unknown === "gone") return { kind: "gone" };
+    if (unknown) since = null;
+  }
   if (ms) {
     const fresh = microsoftWindow(deps.clock.now());
     const stored = cal.windowStart !== null && cal.windowEnd !== null ? { start: dayMs(cal.windowStart), end: dayMs(cal.windowEnd) + DAY } : null;
@@ -134,33 +128,46 @@ export async function readCalendar(ctx: ReadingContext, cal: StoredCalendar): Pr
   }
 
   let reading = memory.readings.get(cal.id);
-  if (reading !== undefined && reading.since !== since) {
+  if (reading !== undefined && (reading.since !== since || reading.calendarToken !== cal.syncToken ||
+    reading.credentialGeneration !== credentialGeneration)) {
     memory.readings.delete(cal.id);
     reading = undefined;
   }
-  // A kept reading goes on in the window it began with: the day turning under a long first reading is no new reading.
-  if (reading !== undefined) window = reading.window;
   let kept = reading !== undefined;
   // Its last reading was longer than a turn and found no place: asking the same pages again would end the same way.
   if (!kept && memory.crowded.has(cal.id) && !(await placeFree(ctx))) return { kind: "no_place", pages: 0, changed: 0 };
+  const claim = await claimProgress({ db: ctx.db, key: ctx.key, calendarId: cal.id }, cal.syncToken);
+  if (claim === "gone") return { kind: "gone" };
+  const { scope: progress, owner, previous } = claim;
+  ctx = { ...ctx, db: progress.db };
+  if (reading !== undefined) {
+    if (reading.owner === previous) {
+      reading.owner = owner;
+      window = reading.window;
+    } else {
+      memory.readings.delete(cal.id);
+      reading = undefined;
+      kept = false;
+    }
+  }
   let fromNullAgain = false;
   let pages = 0;
   let changed = 0;
+  const named = new Set<string>();
   /** The worker is stopping (a turn whose own time ran out is not: it says so). */
   const stopping = (): boolean => deps.halted() || (ctx.signal.aborted && !turnOverdue(ctx.signal));
 
-  const begin = async (from: string | null): Promise<OpenReading | "gone"> => {
-    const startedAt = await databaseNow(ctx);
-    if (startedAt === "gone") return "gone";
-    const r: OpenReading = {
-      connectionId: ctx.key.id, since: from, cursor: null, mode: null, startedAt, named: new Set(), heldCancellations: [],
-      window, seen: new Map(), masters: new Map(), pages: 0, changed: 0, unknownGone: false, noDrop: false, leftOut: false,
-    };
+  const begin = async (from: string | null, baseToken: string | null): Promise<OpenReading | "gone"> => {
+    const r = await loadProgress(progress, baseToken, from, window, credentialGeneration, owner);
+    if (r === "gone") return r;
     kept = keepReading(memory, cal.id, r);
+    window = r.window;
+    const confirmation = memory.massDrop.get(cal.id);
+    if (confirmation !== undefined && !confirmation.startsWith(confirmationPrefix(window))) memory.massDrop.delete(cal.id);
     return r;
   };
   if (reading === undefined) {
-    const r = await begin(since);
+    const r = await begin(since, cal.syncToken);
     if (r === "gone") return { kind: "gone" };
     reading = r;
   }
@@ -169,13 +176,28 @@ export async function readCalendar(ctx: ReadingContext, cal: StoredCalendar): Pr
   const applyFor = (r: OpenReading): ApplyContext => ({
     db: ctx.db, key: ctx.key, calendar: { id: cal.id, providerId: cal.providerId }, zones: deps.zones,
     unite: ctx.word === "google" || ctx.word === "microsoft", shown: ms ? r.seen : null, halted: deps.halted,
+    ...(ms && { outlook: "mirror" as const }),
+    ...(ctx.word === "google" && { googleSnapshot: r.mode === "whole" ? r.generation : null }),
   });
 
   for (;;) {
     if (stopping()) return { kind: "halted" };
     if (turnOverdue(ctx.signal)) {
       memory.readings.delete(cal.id);
+      if (kept && reading.cursor !== null && await saveProgress(progress, reading, named) === "gone") return { kind: "gone" };
       return { kind: "refused", word: "timeout", retryAfterMs: null, pages, changed };
+    }
+    if (reading.end !== null) {
+      const end = await finishReading(ctx, applyFor(reading), cal, reading, reading.end);
+      memory.readings.delete(cal.id);
+      memory.crowded.delete(cal.id);
+      if (end.kind !== "done") return end;
+      return { kind: "done", pages, changed: changed + end.changed, dropped: end.dropped };
+    }
+    if (ctx.word === "caldav" && reading.pagesRead >= MAX_CALDAV_READING_PAGES) {
+      memory.readings.delete(cal.id);
+      if (await saveProgress(progress, null) === "gone") return { kind: "gone" };
+      return { kind: "refused", word: "too_large", retryAfterMs: null, pages, changed };
     }
     if (ctx.budget.pagesLeft <= 0 || deps.clock.now() >= ctx.budget.deadline) {
       // Only now is a place needed: a reading that ended inside its turn never asked for one.
@@ -185,16 +207,13 @@ export async function readCalendar(ctx: ReadingContext, cal: StoredCalendar): Pr
         return { kind: "no_place", pages, changed };
       }
       memory.crowded.delete(cal.id);
+      if (await saveProgress(progress, reading, named) === "gone") return { kind: "gone" };
       return { kind: "more", pages, changed };
-    }
-    if (reading.pages >= MAX_READING_PAGES) {
-      memory.readings.delete(cal.id);
-      return { kind: "refused", word: "too_large", retryAfterMs: null, pages, changed };
     }
     const token: ChangeToken | null = reading.since === null ? null : { provider: ctx.word, value: reading.since };
     const answer = await ctx.provider.reader.readChanges(
       ctx.signIn.connection, { id: cal.providerId }, token,
-      { limit: MAX_PAGE_LIMIT, cursor: reading.cursor, window: window === null ? null : { start: { kind: "instant", epochMs: window.start }, end: { kind: "instant", epochMs: window.end } } },
+      { limit: MAX_PAGE_LIMIT, cursor: reading.cursor, scope: reading, window: window === null ? null : { start: { kind: "instant", epochMs: window.start }, end: { kind: "instant", epochMs: window.end } } },
       ctx.signal,
     );
     ctx.budget.pagesLeft -= 1;
@@ -210,36 +229,53 @@ export async function readCalendar(ctx: ReadingContext, cal: StoredCalendar): Pr
         since = null;
         // Forgotten on the row first, so that the next turn goes on with this reading instead of asking the dead token again.
         if (await forgetToken(ctx, cal) === "gone") return { kind: "gone" };
+        named.clear();
         if (ms) window = microsoftWindow(deps.clock.now());
-        const r = await begin(null);
+        const r = await begin(null, null);
         if (r === "gone") return { kind: "gone" };
         reading = r;
         continue;
       }
+      const resume = kept && reading.cursor !== null &&
+        (answer.reason === "timeout" || answer.reason === "unavailable" || answer.reason === "throttled");
+      if (await saveProgress(progress, resume ? reading : null, named) === "gone") return { kind: "gone" };
       return { kind: "refused", word: faultWord(answer.reason), retryAfterMs: answer.retryAfterMs, pages, changed, continuing: reading.cursor !== null };
     }
     const page = answer.value;
-    reading.pages += 1;
-    reading.mode = page.mode;
-    if (!note(reading, page, deps.zones)) {
+    const names = namesInPage(page);
+    const cycle = page.cursor.kind === "more" ? advanceCycle(reading, page.cursor.value) : reading.cycle;
+    if (cycle === null || names.length > MAX_MULTISTATUS_RESPONSES) {
       memory.readings.delete(cal.id);
-      return { kind: "refused", word: "too_large", retryAfterMs: null, pages, changed };
+      if (await saveProgress(progress, null) === "gone") return { kind: "gone" };
+      return { kind: "refused", word: cycle === null ? "page_link_refused" : "too_large", retryAfterMs: null, pages, changed };
     }
+    reading.mode = page.mode;
     if (!page.unchanged && page.items.length > 0) {
-      const done = await applyPage(ctx, applyFor(reading), reading, page.items);
+      const done = await applyPage(ctx, applyFor(reading), reading, page);
+      if ("reason" in done) {
+        memory.readings.delete(cal.id);
+        if (kept && reading.cursor !== null &&
+          await saveProgress(progress, reading, named) === "gone") return { kind: "gone" };
+        return { kind: "refused", word: faultWord(done.reason), retryAfterMs: done.retryAfterMs, pages, changed };
+      }
       if (!done.ok) return { kind: done.why };
       reading.changed += done.changed;
       changed += done.changed;
+    } else {
+      note(reading, page, deps.zones);
     }
+    reading.cycle = cycle;
+    reading.pagesRead += 1;
+    if (page.mode === "whole") for (const id of names) named.add(id);
     if (page.cursor.kind === "more") {
       reading.cursor = page.cursor.value;
       continue;
     }
-    const end = await finishReading(ctx, applyFor(reading), cal, reading, page, page.cursor.token);
-    memory.readings.delete(cal.id);
-    memory.crowded.delete(cal.id);
-    if (end.kind !== "done") return end;
-    return { kind: "done", pages, changed: changed + end.changed, dropped: end.dropped };
+    reading.end = {
+      token: page.cursor.token?.value ?? null, unchanged: page.unchanged, refreshMs: page.refreshMs,
+    };
+    if (await saveProgress(progress, reading, named) === "gone") return { kind: "gone" };
+    named.clear();
   }
 }
 
@@ -264,52 +300,160 @@ async function placeFree(ctx: ReadingContext): Promise<boolean> {
  */
 async function forgetToken(ctx: ReadingContext, cal: StoredCalendar): Promise<"gone" | void> {
   const done = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
-    await tx.update(calCalendars).set({ syncToken: null })
+    await tx.update(calCalendars).set({ syncToken: null, readCheckpoint: null })
       .where(and(eq(calCalendars.id, cal.id), eq(calCalendars.accountId, ctx.key.accountId), eq(calCalendars.connectionId, ctx.key.id)));
   });
   return done === "gone" ? "gone" : undefined;
 }
 
-/** What a page named, into the reading's memory. `false`: the reading is past what it may remember. */
-function note(reading: OpenReading, page: ChangePage, zones: ZoneSource): boolean {
-  for (const item of page.items) {
-    if (item.kind === "upsert" || item.kind === "gone") reading.named.add(nameOf(item.id));
-  }
-  for (const left of page.left) reading.named.add(nameOf(left.id));
+/** Bounded recurrence information used only at the end of the reading. */
+function note(reading: OpenReading, page: ChangePage, zones: ZoneSource, removed?: ReadonlySet<string>): void {
   // What was left out may be a day this reading should have shown: from here its silence about a day proves nothing.
   if (page.left.length > 0) reading.leftOut = true;
-  if (reading.named.size > MAX_MULTISTATUS_RESPONSES) return false;
   if (page.expanded !== null) {
     for (const day of page.expanded.seen) {
-      const keys = reading.seen.get(day.uid) ?? new Set<string>();
-      keys.add(occurrenceKey(day.originalStart, zones));
+      const source = day.providerId ?? null;
+      if (source !== null && removed?.has(source)) continue;
+      const previous = reading.seen.get(day.uid);
+      const keys = previous ?? new Map<string, Set<string | null>>();
+      const key = occurrenceKey(day.originalStart, zones);
+      const sources = keys.get(key) ?? new Set<string | null>();
+      if (sources.has(source)) continue;
+      const cost = JSON.stringify(source).length + 1 +
+        (sources.size === 0 ? JSON.stringify(key).length + 5 : 0) +
+        (previous === undefined ? JSON.stringify(day.uid).length + 5 : 0);
+      if (reading.seenCount >= MAX_MULTISTATUS_RESPONSES || reading.recurrenceChars + cost > MAX_RECURRENCE_CHARS) {
+        reading.leftOut = true;
+        break;
+      }
+      reading.recurrenceChars += cost;
+      reading.seenCount += 1;
+      sources.add(source);
+      keys.set(key, sources);
       reading.seen.set(day.uid, keys);
     }
     for (const item of page.items) {
-      if (item.kind !== "upsert" || item.event.recurrenceId !== null || item.event.rules.length === 0 || item.event.uid === null) continue;
+      if (item.kind !== "upsert" || removed?.has(item.id) || item.event.recurrenceId !== null || item.event.rules.length === 0 || item.event.uid === null) continue;
       if (reading.masters.size >= MAX_MASTERS_KEPT && !reading.masters.has(item.event.uid)) {
         reading.noDrop = true;
         continue;
       }
-      reading.masters.set(item.event.uid, item.event as CalEvent);
+      const master = recurrenceMaster(item.event);
+      const previous = reading.masters.get(item.event.uid);
+      const cost = previous === undefined
+        ? JSON.stringify([item.event.uid, master]).length + 1
+        : JSON.stringify(master).length - JSON.stringify(previous).length;
+      if (reading.recurrenceChars + cost > MAX_RECURRENCE_CHARS) {
+        reading.leftOut = true;
+        continue;
+      }
+      reading.recurrenceChars += cost;
+      reading.masters.set(item.event.uid, master);
     }
   }
-  return true;
 }
 
 /** A page's items as works for the store, measured against what is stored; the cancelled days whose series is not stored yet held for the end. */
 async function applyPage(
-  ctx: ReadingContext, apply: ApplyContext, reading: OpenReading, items: readonly ChangeItem[],
-): Promise<ChunkResult> {
-  const plan = await planItems(apply, items, ctx.map);
+  ctx: ReadingContext, apply: ApplyContext, reading: OpenReading, page: ChangePage,
+): Promise<ChunkResult | Extract<Answer<VerifiedEvent>, { ok: false }>> {
+  const { items } = page;
+  const reader = ctx.provider.reader;
+  const cal = { id: apply.calendar.providerId };
+  const plan = await planItems(apply, items, ctx.map, reader.verifySelfResponse
+    ? (id, items, held) => reader.verifySelfResponse!(ctx.signIn.connection, cal, {
+      id, items, window: reading.window,
+      held: held && { version: held.versionTag, answer: ctx.map.ownCalendar ? held.myAnswer : null },
+    }, ctx.signal) : undefined);
   if (plan === "gone") return { ok: false, why: "gone" };
-  // Microsoft names a removed day by the day's own id. One nobody stores was an ordinary day of its series; one
-  // that is stored was a changed day. Either way a day is gone that only the window read whole can confirm.
-  if (ctx.word === "microsoft" && reading.mode === "delta" && plan.goneOfDays) reading.unknownGone = true;
-  for (const c of plan.held) {
-    if (reading.heldCancellations.length < MAX_HELD_CANCELLATIONS) reading.heldCancellations.push(c);
+  if ("reason" in plan) return plan;
+  if (ctx.word === "microsoft") {
+    for (const { id, uid, key } of plan.removedDays) {
+      const keys = reading.seen.get(uid);
+      const sources = keys?.get(key);
+      if (!sources?.delete(id)) continue;
+      if (sources.size === 0) keys?.delete(key);
+    }
   }
-  return written(ctx, apply, plan.works, plan.unkept);
+  const removed = new Set([...plan.removed, ...plan.removedDays.map(({ id }) => id)]);
+  note(reading, page, ctx.deps.zones, removed);
+  if (ctx.word === "microsoft" && (plan.unorderedReply || (reading.mode === "delta" && plan.needsWholeRead))) {
+    reading.unknownGone = true;
+  }
+  for (const c of plan.held) {
+    const cost = JSON.stringify(c).length + 1;
+    if (reading.heldCancellations.length >= MAX_HELD_CANCELLATIONS || reading.recurrenceChars + cost > MAX_RECURRENCE_CHARS) {
+      reading.leftOut = true;
+      break;
+    }
+    reading.recurrenceChars += cost;
+    reading.heldCancellations.push(c);
+  }
+  const done = await written(ctx, apply, plan.works, plan.unkept);
+  if (ctx.word === "google" && done.ok && done.refused > 0) reading.leftOut = true;
+  if (done.ok && ctx.word === "microsoft") {
+    if (plan.removed.length > 0 && await noteRemovedAnswers(apply, [...plan.removed]) === "gone") return { ok: false, why: "gone" };
+  }
+  return done;
+}
+
+const acknowledgedDecline = (apply: ApplyContext) => and(
+  eq(calWrites.accountId, apply.key.accountId), eq(calWrites.calendarId, apply.calendar.id),
+  eq(calWrites.op, "answer"),
+  or(eq(calWrites.state, "pending"), and(eq(calWrites.state, "refused"), eq(calWrites.refusal, "answer_unconfirmed"))),
+  sql`${calWrites.payload} #>> '{answerDispatch,phase}' = 'accepted'`,
+  sql`${calWrites.payload} #>> '{act,answer}' = 'declined'`,
+  sql`${calWrites.payload} #>> '{answerDispatch,removed}' is null`,
+);
+
+const dispatchedId = sql<string>`${calWrites.payload} #>> '{answerDispatch,id}'`;
+
+async function noteRemovedAnswers(apply: ApplyContext, removed: string[]) {
+  return inConnection(apply.db, apply.key, async ({ tx }) => {
+    await tx.update(calWrites).set({
+      payload: sql`jsonb_set(${calWrites.payload}, '{answerDispatch,removed}', 'true'::jsonb)`,
+      nextAttemptAt: sql`case when ${calWrites.state} = 'pending' then now() else ${calWrites.nextAttemptAt} end`,
+    }).where(and(acknowledgedDecline(apply), inArray(dispatchedId, removed)));
+  });
+}
+
+async function noteAbsentAnswers(apply: ApplyContext, reading: OpenReading) {
+  const window = reading.window;
+  if (window === null) return;
+  const lookup = await inConnection(apply.db, apply.key, async ({ tx }) => {
+    const pending = await tx.select({
+      id: dispatchedId, payload: calWrites.payload, uid: calEvents.uid, startsAt: calEvents.startsAt,
+      endsAt: calEvents.endsAt, updatedAt: calEvents.updatedAt,
+    }).from(calWrites).leftJoin(calEvents, and(eq(calEvents.id, calWrites.eventId),
+      eq(calEvents.accountId, calWrites.accountId), eq(calEvents.calendarId, calWrites.calendarId),
+      sql`${calEvents.providerId} = ${calWrites.payload} #>> '{answerDispatch,source}'`))
+      .where(acknowledgedDecline(apply));
+    if (pending.length === 0) return { pending, seen: new Set<string>() };
+    const seen = await tx.select({ providerId: calEvents.providerId }).from(calEvents).where(and(
+      eq(calEvents.accountId, apply.key.accountId), eq(calEvents.calendarId, apply.calendar.id),
+      eq(calEvents.seenInReading, reading.generation), inArray(calEvents.providerId, pending.map(({ id }) => id)),
+    ));
+    return { pending, seen: new Set(seen.map(({ providerId }) => providerId)) };
+  });
+  if (lookup === "gone") return lookup;
+  const missing = lookup.pending.filter(({ id, uid, payload, startsAt, endsAt, updatedAt }) => {
+    if (lookup.seen.has(id)) return false;
+    const write = parseWritePayload(payload);
+    if (write?.act.kind !== "calendar_event_answer") return false;
+    if (write.act.scope.kind === "record") {
+      if (updatedAt && updatedAt >= reading.startedAt) return false;
+      const start = startsAt?.getTime() ?? write.answerTarget?.startsAt;
+      const end = startsAt ? endsAt?.getTime() ?? null : write.answerTarget?.endsAt ?? null;
+      return start !== undefined && start < window.end && (end === null || end > window.start);
+    }
+    const at = write.act.scope.at;
+    const time = timeOfKey(at);
+    const series = uid ?? write.answerTarget?.uid;
+    if (time === null || series === undefined || reading.seen.get(series)?.has(at)) return false;
+    const when = momentOrUtc(time, apply.zones);
+    return when >= window.start && when < window.end;
+  }).map(({ id }) => id);
+  if (missing.length > 0) return noteRemovedAnswers(apply, missing);
 }
 
 /**
@@ -330,7 +474,7 @@ async function written(ctx: ReadingContext, apply: ApplyContext, works: readonly
  * drop, and last the token with the calendar's own row, in the reading's last transaction.
  */
 async function finishReading(
-  ctx: ReadingContext, apply: ApplyContext, cal: StoredCalendar, reading: OpenReading, page: ChangePage, token: ChangeToken | null,
+  ctx: ReadingContext, apply: ApplyContext, cal: StoredCalendar, reading: OpenReading, page: NonNullable<OpenReading["end"]>,
 ): Promise<{ readonly kind: "done"; readonly changed: number; readonly dropped: number } | { readonly kind: "gone" | "halted" }> {
   const { deps } = ctx;
   let changed = 0;
@@ -356,10 +500,11 @@ async function finishReading(
     const seriesOf = new Map(stored.filter((s) => s.recurrenceId === "").map((s) => [s.uid, s]));
     // A day the pages showed is there: where a series keeps it among its excluded days, it comes back.
     for (const [uid, keys] of reading.seen) {
-      if (seriesOf.get(uid)?.excludes === true) works.push({ kind: "shown", uid, keys, changes: 1 });
+      if (seriesOf.get(uid)?.excludes === true) works.push({ kind: "shown", uid, keys: new Set(keys.keys()), changes: 1 });
     }
     // A day the window should show and no page did was cancelled: only on a whole reading, and only on one that left nothing out.
     if (whole && reading.window !== null && !reading.noDrop && !reading.leftOut) {
+      if (await noteAbsentAnswers(apply, reading) === "gone") return { kind: "gone" };
       for (const lost of cancelledDays(reading.masters, reading.seen, reading.window, deps.zones)) {
         const series = seriesOf.get(lost.uid);
         if (series !== undefined) works.push({ kind: "excluded", eventId: series.id, times: lost.days, changes: 1 });
@@ -369,37 +514,36 @@ async function finishReading(
   if (works.length > 0) {
     const done = await written(ctx, apply, works);
     if (!done.ok) return { kind: done.why };
+    if (ctx.word === "google" && done.refused > 0) reading.leftOut = true;
     changed += done.changed;
   }
 
   // A token the store could not hand back letter for letter is none: the calendar is then read whole each round, which is slow and never wrong.
-  let keepToken: string | null = token !== null && storableKey(token.value) ? token.value : null;
+  let keepToken: string | null = page.token !== null && storableKey(page.token) ? page.token : null;
   let nextAt = deps.clock.now() + pollAfterRead({ provider: ctx.word, refreshMs: page.refreshMs, notices: false, random: deps.random });
+  let reconcileGoogle = ctx.word === "google" && whole && !reading.noDrop && !reading.leftOut;
+  let confirmingAbsence = false;
 
   if (whole && !reading.noDrop) {
-    const candidates = await dropCandidates(apply, reading.startedAt, ctx.word === "microsoft" ? reading.window : null);
-    if (candidates === "gone") return { kind: "gone" };
-    const goes = candidates.filter((c) => !reading.named.has(nameOf(c.providerId)) && c.old && !c.owed && c.touches);
-    const massive = candidates.length >= MASS_DROP_FLOOR && goes.length * 2 > candidates.length;
-    if (massive && !deps.memory.massDrop.has(cal.id)) {
-      // Most of the calendar would go at once: not on one reading's word. Read it whole again soon, and drop then.
-      remember(deps.memory.massDrop, cal.id, true);
+    const clean = await removeAbsentObjects(ctx, apply, reading);
+    if (!clean.ok) return { kind: clean.why };
+    if (clean.confirming) {
+      confirmingAbsence = true;
       keepToken = null;
       nextAt = deps.clock.now() + MASS_DROP_RETRY_MS;
-    } else {
-      deps.memory.massDrop.delete(cal.id);
-      // No page named these. A changed day among them takes its day out of its series only where the pages say which
-      // days there are (Microsoft) and left none of them out: silence is no word of the provider's otherwise.
-      const dayLeaves = apply.unite && apply.shown !== null && !reading.leftOut;
-      const gone: Work[] = goes.map((c) => objectGone(c.providerId, c.rows, { withDays: false, dayLeaves }));
-      const done = await written(ctx, apply, gone);
-      if (!done.ok) return { kind: done.why };
-      dropped += done.changed;
+      reconcileGoogle = false;
     }
+    dropped += clean.changed;
+  } else deps.memory.massDrop.delete(cal.id);
+
+  if (reconcileGoogle) {
+    const settled = await settleGoogleExclusions(apply, reading.generation);
+    if (!settled.ok) return { kind: settled.why };
+    changed += settled.changed;
   }
 
-  // Microsoft named a removed day nobody stores: the window is read whole again, at most every quarter of an hour.
-  if (ctx.word === "microsoft" && !whole && reading.unknownGone) {
+  // Recheck an unresolved removal or reply by reading the full window again.
+  if (ctx.word === "microsoft" && reading.unknownGone && !confirmingAbsence) {
     keepToken = null;
     const last = deps.memory.forcedAt.get(cal.id) ?? 0;
     const at = Math.max(deps.clock.now(), last + FORCED_REREAD_EVERY_MS);
@@ -413,6 +557,8 @@ async function finishReading(
   const last = await applyChunk(apply, [], async (tx, changes) => {
     await tx.update(calCalendars).set({
       syncToken: keepToken,
+      readCheckpoint: null,
+      readOwner: null,
       nextPollAt: new Date(nextAt),
       ...(reading.window === null ? {} : { windowStart: dayText(reading.window.start), windowEnd: dayText(reading.window.end - DAY) }),
       ...(wrote || cleared ? { errorCode: null, lastSyncedAt: sql`now()`, updatedAt: sql`now()` } : {}),
@@ -421,6 +567,58 @@ async function finishReading(
   });
   if (!last.ok) return { kind: last.why };
   return { kind: "done", changed, dropped };
+}
+
+async function removeAbsentObjects(
+  ctx: ReadingContext, apply: ApplyContext, reading: OpenReading,
+): Promise<{ readonly ok: true; readonly confirming: boolean; readonly changed: number } | Extract<ChunkResult, { ok: false }>> {
+  const calendarId = apply.calendar.id;
+  const total = await countStoredObjects(apply);
+  if (total === "gone") return { ok: false, why: "gone" };
+  const { generation, startedAt } = reading;
+  const plan = randomUUID();
+  const window = ctx.word === "microsoft" ? reading.window : null;
+  const hash = createHash("sha256");
+  let after: string | null = null;
+  let missing = 0;
+  for (;;) {
+    if (ctx.deps.halted()) return { ok: false, why: "halted" };
+    const batch = await planMissingObjects(apply, { generation, startedAt, window, plan }, after);
+    if (batch === "gone") return { ok: false, why: "gone" };
+    if (batch.length === 0) break;
+    for (const { providerId } of batch) hash.update("\n").update(JSON.stringify(providerId));
+    missing += batch.length;
+    after = batch.at(-1)!.providerId;
+  }
+  const fingerprint = confirmationPrefix(window) + hash.digest("hex");
+  const confirmation = ctx.deps.memory.massDrop;
+  if (total >= MASS_DROP_FLOOR && missing * 2 > total && confirmation.get(calendarId) !== fingerprint) {
+    // Repeat a whole reading before deleting most of a calendar. Both readings must select the same objects.
+    remember(confirmation, calendarId, fingerprint);
+    return { ok: true, confirming: true, changed: 0 };
+  }
+  confirmation.delete(calendarId);
+  if (missing === 0) return { ok: true, confirming: false, changed: 0 };
+  // An absent exception leaves its series only when the complete Microsoft window also omitted its day.
+  const dayLeaves = apply.unite && apply.shown !== null && !reading.leftOut;
+  let changed = 0;
+  after = null;
+  for (;;) {
+    if (ctx.deps.halted()) return { ok: false, why: "halted" };
+    const batch = await plannedMissingObjects(apply, plan, after);
+    if (batch === "gone") return { ok: false, why: "gone" };
+    if (batch.length === 0) break;
+    const gone = batch.map(({ providerId, rows }) => objectGone(providerId, rows, { withDays: false, dayLeaves, absence: { startedAt, plan } }));
+    const done = await written(ctx, apply, gone);
+    if (!done.ok) return done;
+    changed += done.changed;
+    after = batch.at(-1)!.providerId;
+  }
+  return { ok: true, confirming: false, changed };
+}
+
+function confirmationPrefix(window: OpenReading["window"]): string {
+  return `${window?.start ?? ""}:${window?.end ?? ""}:`;
 }
 
 /** A calendar's word and its wait, written with the change a device learns the word by. */
@@ -432,7 +630,7 @@ export async function holdCalendar(
     const moved = word !== cal.errorCode;
     await (tx as Tx).update(calCalendars).set({
       nextPollAt: until,
-      ...(opts.resetToken ? { syncToken: null } : {}),
+      ...(opts.resetToken ? { syncToken: null, readCheckpoint: null, readOwner: null } : {}),
       ...(moved ? { errorCode: word, updatedAt: sql`now()` } : {}),
     }).where(and(eq(calCalendars.id, cal.id), eq(calCalendars.accountId, key.accountId), eq(calCalendars.connectionId, key.id)));
     if (moved) await recordCalendarChanges(tx as unknown as LedgerTx, key.accountId, [{ kind: "calendar", id: cal.id, op: "update" }]);

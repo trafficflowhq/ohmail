@@ -108,12 +108,20 @@ export function SuggestionList<R extends SuggestionRow = SuggestionRow>(props: S
   /* The row the keys are on is in sight. */
   useLayoutEffect(() => {
     const box = list.current;
-    const row = active === null ? null : box?.querySelector<HTMLElement>("[aria-selected='true']");
-    if (!box || !row) return;
-    if (row.offsetTop < box.scrollTop) box.scrollTop = row.offsetTop;
-    else if (row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight)
-      box.scrollTop = row.offsetTop + row.offsetHeight - box.clientHeight;
-  }, [active]);
+    if (!box || active === null) return;
+    const reveal = () => {
+      const row = box.querySelector<HTMLElement>("[aria-selected='true']");
+      if (!row) return;
+      if (row.offsetTop < box.scrollTop) box.scrollTop = row.offsetTop;
+      else if (row.offsetTop + row.offsetHeight > box.scrollTop + box.clientHeight)
+        box.scrollTop = row.offsetTop + row.offsetHeight - box.clientHeight;
+    };
+    reveal();
+    if (typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(reveal);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [active, shown]);
   if (!shown) return null;
 
   let index = 0;

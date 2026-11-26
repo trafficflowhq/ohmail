@@ -447,20 +447,16 @@ describe("logout", () => {
     expect(JSON.parse(wire.seen[3]!.body!)).toEqual({ refreshToken: "refresh-1" });
   });
 
-  it("a server older than the refresh door (404, 405) gets the routed sign-out it always had", async () => {
+  it("keeps sign-out pending when the refresh door is unavailable", async () => {
     for (const old of [404, 405]) {
-      const wire = scripted([
-        () => new Response(null, { status: old }),
-        () => json(401, {}),
-        () => json(200, { tokens: ROTATED }),
-        (s) => {
-          expect(s.headers.authorization).toBe("Bearer access-2"); // the replay is authenticated
-          return new Response(null, { status: 204 });
-        },
-      ]);
-      expect(await manager({ fetch: wire.fetch }).logout(), `door ${old}`).toBe(true);
-      expect(wire.seen.map((s) => s.url.slice(ORIGIN.length)))
-        .toEqual(["/auth/refresh/logout", "/auth/logout", "/auth/refresh", "/auth/logout"]);
+      const wire = scripted([() => new Response(null, { status: old })]);
+      const { vault } = memoryVault();
+      vault.oweSignOut = async (token) => {
+        expect(token).toBe("refresh-1");
+        return true;
+      };
+      expect(await manager({ fetch: wire.fetch, vault }).signOut(), `door ${old}`).toBe("owed");
+      expect(wire.seen.map((s) => s.url.slice(ORIGIN.length))).toEqual(["/auth/refresh/logout"]);
     }
   });
 
@@ -495,6 +491,15 @@ describe("logout", () => {
     expect(await bearer.logout()).toBe(false);
   });
 
+  it("keeps sign-out pending when the access door answers with a gateway page", async () => {
+    const wire = scripted([() => new Response("<html>Gateway</html>", { status: 200 })]);
+    const { vault } = memoryVault();
+    vault.oweSignOut = async () => true;
+    const bearer = manager({ access: "access-1", fetch: wire.fetch, vault });
+    expect(await bearer.signOut()).toBe("owed");
+    expect(wire.seen.map((sent) => sent.url)).toEqual([`${ORIGIN}/auth/logout`]);
+  });
+
   it("the refresh door's own 401 counts as TOLD — the family it would end is already gone", async () => {
     // The outcome being asked for is "this session no longer exists", and the door's 401 is the
     // server saying exactly that. Treating it as a failure would make a forget report a partial
@@ -505,14 +510,8 @@ describe("logout", () => {
     expect(bearer.paired()).toBe(false);
   });
 
-  it("an older server: the dead signal fires ONCE when the routed sign-out's refusal and the logout both end it", async () => {
-    // The routed logout can die INSIDE its own recovery (refresh refused); the logout's final
-    // clear must then be a no-op, not a second funeral.
-    const wire = scripted([
-      () => new Response(null, { status: 404 }), // no refresh door on this server
-      () => json(401, {}), // the unauthenticated logout attempt
-      () => refusal("refresh_revoked"), // the refresh is refused — the session dies here
-    ]);
+  it("fires the dead signal once when the server confirms there is no session left", async () => {
+    const wire = scripted([() => refusal("refresh_revoked")]);
     const bearer = manager({ fetch: wire.fetch });
     let died = 0;
     bearer.onSessionDead(() => died++);

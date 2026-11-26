@@ -3,7 +3,7 @@ import { perRequest } from "./helpers.js";
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
-import { staffUsers, authThrottle } from "@trafficflow/db/cloud";
+import { staffUsers, staffSessions, staffAuditLog, authThrottle } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createApp, apiRoutes, type AdminConfig, type ApiDeps } from "@trafficflow/api";
@@ -129,6 +129,60 @@ describe.skipIf(!PG_UP)("admin staff sign-in against real Postgres", () => {
     });
     return { email, secret };
   }
+
+  it.each(["revocation", "audit"] as const)("keeps the authenticator, session and recovery log when reset %s cannot commit", async (failure) => {
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const { email, secret } = await seedStaff(true);
+    const send = (path: string, body: unknown) => app.handle(post(path, body, freshIp()), depsOn(dbA, now));
+    expect((await send("/admin/staff/session", { email, password: PASSWORD, code: totpNow(secret, now) })).status).toBe(200);
+    const [staff] = await dbA.select().from(staffUsers).where(eq(staffUsers.email, email));
+    if (failure === "revocation") {
+      await dbA.execute(sql`alter table staff_sessions add constraint test_reset_revocation_unavailable
+        check (revoked_at is null) not valid`);
+    } else {
+      await dbA.execute(sql`alter table staff_audit_events add constraint test_reset_audit_unavailable
+        check (action <> 'staff.totp_reset') not valid`);
+    }
+    try {
+      expect((await send("/admin/staff/totp/reset", {
+        confirm: "reset-second-factor", operator: "test operator", note: "test recovery request", email,
+      })).status).toBe(503);
+      const [retained] = await dbA.select().from(staffUsers).where(eq(staffUsers.id, staff!.id));
+      const [session] = await dbA.select().from(staffSessions).where(eq(staffSessions.staffUserId, staff!.id));
+      const legacyAudit = await dbA.select().from(staffAuditLog).where(eq(staffAuditLog.staffUserId, staff!.id));
+      expect({ activated: retained!.totpActivated, revokedAt: session!.revokedAt, legacyAudit: legacyAudit.length })
+        .toEqual({ activated: true, revokedAt: null, legacyAudit: 0 });
+    } finally {
+      if (failure === "revocation") {
+        await dbA.execute(sql`alter table staff_sessions drop constraint test_reset_revocation_unavailable`);
+      } else {
+        await dbA.execute(sql`alter table staff_audit_events drop constraint test_reset_audit_unavailable`);
+      }
+    }
+  }, 30_000);
+
+  it("keeps the previous factor step and session stamp when the step-up audit cannot commit", async () => {
+    const now = new Date("2026-08-05T12:00:00.000Z");
+    const { email, secret } = await seedStaff(true);
+    const signed = await app.handle(post("/admin/staff/session", { email, password: PASSWORD, code: totpNow(secret, now) }, freshIp()), depsOn(dbA, now));
+    expect(signed.status).toBe(200);
+    const { token } = await signed.json() as { token: string };
+    const [staff] = await dbA.select().from(staffUsers).where(eq(staffUsers.email, email));
+    const [session] = await dbA.select().from(staffSessions).where(eq(staffSessions.staffUserId, staff!.id));
+    const later = new Date(now.getTime() + 60_000);
+    await dbA.execute(sql`alter table staff_audit_events add constraint test_stepup_audit_unavailable
+      check (action <> 'staff.stepup') not valid`);
+    try {
+      const result = await app.handle(post("/admin/staff/step-up", { token, code: totpNow(secret, later) }, freshIp()), depsOn(dbA, later));
+      expect(result.status).toBe(503);
+      const [retained] = await dbA.select().from(staffUsers).where(eq(staffUsers.id, staff!.id));
+      const [current] = await dbA.select().from(staffSessions).where(eq(staffSessions.id, session!.id));
+      expect({ step: retained!.totpLastConsumedStep, stamp: current!.lastTwofaAt })
+        .toEqual({ step: staff!.totpLastConsumedStep, stamp: session!.lastTwofaAt });
+    } finally {
+      await dbA.execute(sql`alter table staff_audit_events drop constraint test_stepup_audit_unavailable`);
+    }
+  }, 30_000);
 
   /**
    * Run two requests so they genuinely overlap ACROSS THE READ.

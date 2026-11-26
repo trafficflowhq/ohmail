@@ -2,7 +2,7 @@ import type { Tx } from "@trafficflow/db";
 import { WriteDeclinedError, isImapBoundExceeded } from "@trafficflow/core/adapters/imap";
 import { CYCLE_WAKE_REVISITS, nextTurnMessages } from "../config.js";
 import { LockLostError } from "../leader-lock.js";
-import { newCycleCensus, runSyncCycle, LeaderFencedError, refusalIsRemoval } from "@ohmail/organizer/sync";
+import { newCycleCensus, runSyncCycle, type SyncCycleOutcome, LeaderFencedError, refusalIsRemoval } from "@ohmail/organizer/sync";
 import {
   driveOutstandingRequests, applyMetaRequests, settleOwnOutstandingRequests, shrinkMetaOnRefusal,
 } from "@ohmail/organizer/request-drain";
@@ -11,7 +11,7 @@ import { asDatabaseFault } from "../db-fault.js";
 import { ClassifierFaultError } from "../ai-circuit.js";
 import { sensitiveBackfillPass } from "../sensitive-backfill.js";
 import {
-  markOrganizedThrough, stampMailboxSyncNow, stampInitialImportComplete, stampImportProgress, stampSyncProgress,
+  markOrganizedThrough, stampMailboxSyncNow, stampInitialImportComplete, stampImportProgress,
 } from "../mailboxes.js";
 import { syncProfileMirror } from "@ohmail/organizer/profile";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
@@ -25,7 +25,7 @@ import type { WorkerScope } from "./scope.js";
 /** The worker's start function, one section: the cycle: one visit per served mailbox. */
 export function cycleSection(scope: WorkerScope): void {
     /** One sync pass over the rotation, then the per-account DB passes. Never throws. */
-    async function cycle(): Promise<void> {
+    async function cycle(poll: boolean, visits: ReadonlySet<string>): Promise<void> {
       if (scope.stopped) return;
       /**
        * When this pass began — the batch stamp below the loop backdates to it, because a
@@ -50,13 +50,15 @@ export function cycleSection(scope: WorkerScope): void {
        * Runtimes still owed a bounded batch this pass: first-syncers, then the woken, then those whose
        * turns run long (`longTurns`: their one turn is the pass's longest, so it starts first), then the rest.
        */
-      const pending: MailboxRuntime[] = [...scope.runtimes.values()]
-        .filter((rt) => rt.lastSuccessAt === null)
+      const roster = [...scope.runtimes.values()];
+      const scheduled = roster.filter((rt) => poll || visits.has(rt.mailboxId));
+      const pending: MailboxRuntime[] = roster.filter((rt) => rt.lastSuccessAt === null
+        && (poll || rt.wokenAt !== null || visits.has(rt.mailboxId)))
         .concat(
-          [...scope.runtimes.values()].filter(woken).sort((a, b) => (a.wokenAt ?? 0) - (b.wokenAt ?? 0)),
+          roster.filter(woken).sort((a, b) => (a.wokenAt ?? 0) - (b.wokenAt ?? 0)),
         )
-        .concat([...scope.runtimes.values()].filter((rt) => settled(rt) && rt.longTurns))
-        .concat([...scope.runtimes.values()].filter((rt) => settled(rt) && !rt.longTurns));
+        .concat(scheduled.filter((rt) => settled(rt) && rt.longTurns))
+        .concat(scheduled.filter((rt) => settled(rt) && !rt.longTurns));
       /** Mailbox ids that have had their turn this pass — at most one each. */
       const servedIds = new Set<string>();
       /**
@@ -67,7 +69,7 @@ export function cycleSection(scope: WorkerScope): void {
        */
       function admitNewFirstSyncers(): void {
         for (const rt of scope.runtimes.values()) {
-          if (rt.lastSuccessAt !== null) continue;
+          if (rt.lastSuccessAt !== null || rt.wokenAt === null) continue;
           if (servedIds.has(rt.mailboxId)) continue;
           if (pending.includes(rt)) continue;
           pending.unshift(rt);
@@ -94,6 +96,10 @@ export function cycleSection(scope: WorkerScope): void {
       function admitWoken(): void {
         for (const rt of scope.runtimes.values()) {
           if (rt.wokenAt === null) continue;
+          if (!servedIds.has(rt.mailboxId) && !pending.includes(rt)) {
+            pending.push(rt);
+            continue;
+          }
           // One turn a pass for a mailbox whose turns run long: its wake leads the next pass instead.
           if (rt.longTurns) continue;
           if (!servedIds.has(rt.mailboxId)) continue;
@@ -149,7 +155,7 @@ export function cycleSection(scope: WorkerScope): void {
        *  - the mailbox has had its turn this pass, is in no lane (one turn of a mailbox at a time),
        *    is not already queued, is owed no post-loop action (`owedAfterThePass`), carries no unserved wake (a rung doorbell goes through
        *    `admitWoken` and its bound, unchanged), and its own `pollIntervalMs` has passed since its
-       *    last visit ENDED, or a long turn (`longTurns`) holds the pass and a kick came after that visit. IDLE
+       *    last visit ENDED. IDLE
        *    does not exempt it: the doorbell rings for new INBOX mail only, so flag changes from other
        *    devices and every other folder still arrive by the poll; its own turns are not long (one turn a pass);
        *  - it is admissible now (its account has no lane, and the heavy cap holds), so a heavy
@@ -162,10 +168,7 @@ export function cycleSection(scope: WorkerScope): void {
         if (free <= 0 || queuedWaiting() || !longLaneInFlight()) return;
         const now = Date.now();
         const accounts = new Set<string>();
-        const due = dueCandidates().filter((rt) => now - rt.lastVisitEndedAt! >= scope.config.pollIntervalMs
-          // A long turn holds this pass while another is owed: whoever was visited before that
-          // kick goes again now rather than waiting out the import's turn.
-          || (longInFlight > 0 && rt.lastVisitEndedAt! < scope.lastKickAt));
+        const due = dueCandidates().filter((rt) => now - rt.lastVisitEndedAt! >= scope.config.pollIntervalMs);
         for (const rt of due) {
           if (free <= 0) break;
           if (accounts.has(rt.accountId) || !admissible(rt)) continue;
@@ -197,7 +200,7 @@ export function cycleSection(scope: WorkerScope): void {
       /** Served, unwoken runtimes whose turns are not long, free to take another turn once due, oldest visit first. */
       function dueCandidates(): MailboxRuntime[] {
         return [...scope.runtimes.values()]
-          .filter((rt) => servedIds.has(rt.mailboxId) && !scope.laneBusy.has(rt.mailboxId) && !pending.includes(rt)
+          .filter((rt) => !scope.laneBusy.has(rt.mailboxId) && !pending.includes(rt)
             && rt.wokenAt === null && rt.lastVisitEndedAt !== null && !rt.longTurns && !owedAfterThePass(rt))
           .sort((a, b) => a.lastVisitEndedAt! - b.lastVisitEndedAt!);
       }
@@ -311,7 +314,6 @@ export function cycleSection(scope: WorkerScope): void {
       /** Lanes in flight holding a mailbox that owes a backlog — rule 3. */
       let heavyInFlight = 0;
       /** Lanes in flight holding a mailbox whose turns run long (`longTurns`). */
-      let longInFlight = 0;
       /**
        * The length a mailbox's turn is steered toward: shorter while another mailbox of its account is
        * attached, since one cycle per account keeps that one out of every lane for the whole turn.
@@ -348,7 +350,7 @@ export function cycleSection(scope: WorkerScope): void {
        * pass end can be MINUTES behind the visit that served the wake, an honest scan reported
        * dishonestly late. One UPDATE per woken visit, i.e. per doorbell ring or real arrival, never per rotation.
        */
-      async function visitMailbox(rt: MailboxRuntime, woken = false): Promise<void> {
+      async function visitMailbox(rt: MailboxRuntime, woken: boolean, startHistorySweep: boolean): Promise<void> {
         // A visit that does not reach the evaluation below leaves the gap pass withheld.
         scope.gapClearances.delete(rt.mailboxId);
         try {
@@ -481,7 +483,7 @@ export function cycleSection(scope: WorkerScope): void {
           /* THE MAIL CYCLE'S FAILURE IS HELD, NOT PROPAGATED — for exactly as long as it takes the
            * request channel below to run. See that block for why. */
           let cycleError: unknown = null;
-          let syncOutcome: { hasBacklog: boolean; owesFiling: boolean } | null = null;
+          let syncOutcome: SyncCycleOutcome | null = null;
           const census = newCycleCensus();
           try {
             /* The routing hold, evaluated once per cycle (see `importHold` below); its outcome is
@@ -492,6 +494,7 @@ export function cycleSection(scope: WorkerScope): void {
             ...rt.deps, ...scope.aiFor(rt.mailboxId, rt.accountId), ...(await scope.screeningFor(rt.accountId)),
             census,
             batchMessages: rt.turnMessages,
+            startHistorySweep,
             // Mail 0083. THE ROLE THE GATE JUST ANSWERED, spread over the attach-time deps so a
             // flip applies to THIS pass rather than to the one after the next re-attach. Placed
             // after the spread deliberately: it must win over `rt.deps.role`, which is only ever
@@ -535,6 +538,10 @@ export function cycleSection(scope: WorkerScope): void {
           } catch (err) {
             // Held for the split below — a fence is not a fault.
             cycleError = err;
+            if (census.scanFailure && census.scanFailure === err) {
+              scope.recoverableReadBreaches.add(census.scanFailure);
+              scope.closedOwed.set(rt.mailboxId, rt);
+            }
           }
 
           /* ── A FENCE IS NOT A FAULT, AND IT MUST NOT REACH THE CHANNEL ──────────────────────
@@ -581,7 +588,7 @@ export function cycleSection(scope: WorkerScope): void {
           /* THIS CYCLE TOOK MAIL IN AND EMPTIED THE INBOUND BACKLOG: nothing the server stamped before
              its claim waits unorganized, so a hand-back's window may start there (mail 0169). */
           if (organize && cycleMayStillWrite && cycleError === null && syncOutcome !== null
-            && !syncOutcome.hasBacklog && census.observed > 0 && rt.claimServerAt) {
+            && !syncOutcome.hasBacklog && !syncOutcome.importIncomplete && census.observed > 0 && rt.claimServerAt) {
             try {
               await markOrganizedThrough(scope.forAccount(rt.accountId).db, rt.mailboxId, rt.claimServerAt);
             } catch (err) {
@@ -642,13 +649,31 @@ export function cycleSection(scope: WorkerScope): void {
             }
           }
 
+          if (cycleMayStillWrite && census.importProgress
+            && (cycleError !== null || syncOutcome?.hasBacklog || syncOutcome?.importIncomplete)) {
+            // A backlog alone does not prove progress. The search clock moves on committed
+            // mail or a durable scan checkpoint.
+            try {
+              await asDatabaseFault("cycle.stampImportProgress",
+                () => stampImportProgress(scope.forAccount(rt.accountId).db, rt.mailboxId, new Date(), scope.fence));
+            } catch (err) {
+              scope.noteIfSharedDatabaseFault(err, rt);
+              scope.log.error("mailbox_import_progress_stamp_failed", {
+                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
+                reason: "this mailbox's first import still owes mail but sync_progress_at could not " +
+                  "be written — the next cycle with a backlog re-attempts it, and the mailbox keeps " +
+                  "serving either way",
+              });
+            }
+          }
+
           // The mail cycle's own failure, now that the channel has had its turn. Everything below
           // this line is the bookkeeping of a cycle that COMPLETED and must not run for one that
           // did not.
           if (cycleError !== null) throw cycleError;
           // Non-null on every path that reaches here: `syncOutcome` is assigned unless the cycle
           // threw, and a cycle that threw was rethrown one line up.
-          const { hasBacklog, owesFiling } = syncOutcome as { hasBacklog: boolean; owesFiling: boolean };
+          const { hasBacklog, owesFiling, importIncomplete } = syncOutcome as SyncCycleOutcome;
           rt.failures = 0;
 
           // …and the shard-wide database condition, on the ONLY evidence strong enough to end it:
@@ -755,7 +780,7 @@ export function cycleSection(scope: WorkerScope): void {
           // cycles WITH a backlog before the one that clears it, so the stamp belongs to the first
           // no-backlog cycle. A FAILURE MUST NOT FAIL THE CYCLE — an uncaught throw would miss the
           // exemptions and walk a healthy mailbox toward `error`.
-          if (!hasBacklog) {
+          if (!hasBacklog && !importIncomplete) {
             try {
               await asDatabaseFault("cycle.stampInitialImportComplete",
                 () => stampInitialImportComplete(scope.forAccount(rt.accountId).db, rt.mailboxId, new Date()));
@@ -765,21 +790,6 @@ export function cycleSection(scope: WorkerScope): void {
                 mailboxId: rt.mailboxId, accountId: rt.accountId, err,
                 reason: "this mailbox's first import drained but initial_import_completed_at could " +
                   "not be written — the next no-backlog cycle re-attempts it, and the mailbox keeps " +
-                  "serving either way",
-              });
-            }
-          } else {
-            // A cycle with a backlog: the first import still owes mail, so its clock moves. Search
-            // reads it past the first day (`stampImportProgress`). Best-effort, like the stamp above.
-            try {
-              await asDatabaseFault("cycle.stampImportProgress",
-                () => stampImportProgress(scope.forAccount(rt.accountId).db, rt.mailboxId, new Date()));
-            } catch (err) {
-              scope.noteIfSharedDatabaseFault(err, rt);
-              scope.log.error("mailbox_import_progress_stamp_failed", {
-                mailboxId: rt.mailboxId, accountId: rt.accountId, err,
-                reason: "this mailbox's first import still owes mail but sync_progress_at could not " +
-                  "be written — the next cycle with a backlog re-attempts it, and the mailbox keeps " +
                   "serving either way",
               });
             }
@@ -981,16 +991,15 @@ export function cycleSection(scope: WorkerScope): void {
              retired and the next roster pass re-attaches. NOT counted toward maxSyncFailures. */
           /* A retired adapter rethrows the breach that retired it, so a later cycle over it meets the
              SAME object: already judged, and not a second failure. */
-          const judged = typeof err === "object" && err !== null && scope.setAsideBreaches.has(err);
-          const setAside = judged || breachSetAside(err, rt.deps.deadLetters);
-          if (setAside && typeof err === "object" && err !== null) scope.setAsideBreaches.add(err);
-          if (setAside) {
-            scope.log.info("sync_cycle_set_aside", {
+          const judged = typeof err === "object" && err !== null && scope.recoverableReadBreaches.has(err);
+          const recoverableRead = judged || breachSetAside(err, rt.deps.deadLetters);
+          if (recoverableRead && typeof err === "object" && err !== null) scope.recoverableReadBreaches.add(err);
+          if (recoverableRead) {
+            const event = isImapBoundExceeded(err) && err.bound === "body_overrun"
+              ? "sync_cycle_set_aside" : "sync_cycle_read_retry";
+            scope.log.info(event, {
               mailboxId: rt.mailboxId, accountId: rt.accountId,
-              reason: "the server sent more of one message than it declared, or more for a batch than " +
-                "it declared; that message is set aside, or the mail read before the batch overrun " +
-                "was kept, and the connection retired — NOT counted toward maxSyncFailures and NOT " +
-                "quarantined",
+              reason: "the cycle kept its completed work and will retry the remaining reads on a fresh connection",
             });
           } else {
             rt.failures++;
@@ -1000,24 +1009,8 @@ export function cycleSection(scope: WorkerScope): void {
               ...(isImapBoundExceeded(err) ? { ceiling: err.bound, ceilingLimit: err.limit } : {}),
             });
           }
-          /* A first import that ended on one of OUR ceilings still read the mailbox: stamp the
-             progress the `sync_lag` rule reads while no cycle has completed. Measured on a 25k
-             fixture: the first cycle ran six minutes and ended here, one failure the quarantine
-             arm below never sees. The catch must not rethrow, as the first-success stamp's. */
-          if (rt.lastSuccessAt === null && isImapBoundExceeded(err)) {
-            try {
-              await asDatabaseFault("cycle.stampSyncProgress",
-                () => stampSyncProgress(scope.forAccount(rt.accountId).db, rt.mailboxId, { fence: scope.fence }));
-            } catch (stampErr) {
-              scope.noteIfSharedDatabaseFault(stampErr, rt);
-              scope.log.warn("mailbox_progress_stamp_failed", {
-                mailboxId: rt.mailboxId, accountId: rt.accountId, err: stampErr,
-                reason: "a first import ended on a read ceiling and its progress could not be " +
-                  "written; the lag alert measures from the last stamp it has",
-              });
-            }
-          }
-          if (!setAside && rt.failures >= scope.maxSyncFailures) toQuarantine.push({ rt, err });
+
+          if (!recoverableRead && rt.failures >= scope.maxSyncFailures) toQuarantine.push({ rt, err });
         }
       }
 
@@ -1064,7 +1057,8 @@ export function cycleSection(scope: WorkerScope): void {
           // and the reason a re-admitted runtime cannot be served twice. The single exception is
           // a wake that `admitWoken` has already accounted for and bounded; it is CONSUMED here,
           // so nothing can pass this gate twice on one signal.
-          if (servedIds.has(rt.mailboxId) && !revisitAllowed.delete(rt.mailboxId)) continue;
+          const firstVisit = !servedIds.has(rt.mailboxId);
+          if (!firstVisit && !revisitAllowed.delete(rt.mailboxId)) continue;
           servedIds.add(rt.mailboxId);
           // And then distrust the snapshot, by identity and not by presence. `pending` was planned at
           // the top of this cycle and a roster pass may since have detached this mailbox (disabled,
@@ -1090,7 +1084,6 @@ export function cycleSection(scope: WorkerScope): void {
           }
           rt.wokenAt = null;
           const heavy = rt.owesBacklog;
-          const long = rt.longTurns;
           busyAccounts.add(rt.accountId);
           scope.laneBusy.add(rt.mailboxId);
           const overCap = overCapAdmitted.delete(rt.mailboxId);
@@ -1098,7 +1091,6 @@ export function cycleSection(scope: WorkerScope): void {
           const dueTurn = dueAdmitted.delete(rt.mailboxId);
           if (dueTurn) { dueLanes.add(rt.mailboxId); dueRevisits++; }
           if (heavy) heavyInFlight++;
-          if (long) longInFlight++;
           // The bookkeeping is in a `finally` INSIDE the async body, so it has already run by the
           // time this promise settles — which is what lets the `Promise.race` below trust the
           // maps it re-reads on the next turn.
@@ -1107,7 +1099,7 @@ export function cycleSection(scope: WorkerScope): void {
             scope.visitStarts.set(rt.mailboxId, visitStarted);
             const successBefore = rt.lastSuccessAt;
             try {
-              await visitMailbox(rt, wokenVisit);
+              await visitMailbox(rt, wokenVisit, dueTurn || (firstVisit && poll));
             } finally {
               scope.visitStarts.delete(rt.mailboxId);
               scope.lastTurnEndAt = Date.now();
@@ -1132,7 +1124,6 @@ export function cycleSection(scope: WorkerScope): void {
               overCapLanes.delete(rt.mailboxId);
               dueLanes.delete(rt.mailboxId);
               if (heavy) heavyInFlight--;
-              if (long) longInFlight--;
             }
           })();
           inFlight.set(rt.mailboxId, lane);
@@ -1278,7 +1269,7 @@ export function cycleSection(scope: WorkerScope): void {
           mailboxes: backlogged.length, sample: backlogged.slice(0, 3),
           reason: "adapter reported a truncated batch — re-kicking rather than waiting for the poll interval",
         });
-        scope.kickCycle();
+        scope.kickCycle({ visit: backlogged });
       } else {
         // …and only once the MESSAGE backlog is drained does the THREAD backlog get a slice.
         // A mailbox still streaming its first sync has better uses for the queue, and the mail

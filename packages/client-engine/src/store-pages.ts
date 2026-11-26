@@ -53,6 +53,14 @@ export interface StoreTimeline {
   total: number;
   months: StoreTimelineMonth[];
   undated: number;
+  seek?: true;
+}
+
+/** A rank within a History segment, below the newest key observed when the rail was read. */
+export interface StoreMonthSeek {
+  month: string | null;
+  offset: number;
+  before: StoreKeyset;
 }
 
 export type StoreTimelineFn = () => Promise<StoreTimeline | null>;
@@ -66,6 +74,7 @@ export type StoreTimelineOutcome =
 export interface StorePageOpts {
   before?: StoreKeyset;
   cursor?: string;
+  seek?: StoreMonthSeek;
   limit?: number;
   /** A step of a walk toward a far slot: answered, never cached — it would evict what is on screen. */
   transient?: boolean;
@@ -257,7 +266,7 @@ export class StorePageCache {
 /** The cache key for one page request — JSON, never a joined string. */
 export function storePageKey(view: "all", opts: StorePageOpts, limit: number): string {
   return JSON.stringify([
-    view, opts.before ? [opts.before.date, opts.before.id] : null, opts.cursor ?? null, limit,
+    view, opts.before ? [opts.before.date, opts.before.id] : null, opts.cursor ?? null, limit, opts.seek ?? null,
   ]);
 }
 
@@ -282,7 +291,7 @@ export function storeSearchPageKey(k: StoreSearchKey, cursor: string | null, lim
 /** A timeline as the wire sent it, read defensively; `null` when it is not one. */
 export function readTimelineWire(wire: unknown): StoreTimeline | null {
   if (typeof wire !== "object" || wire === null) return null;
-  const w = wire as { total?: unknown; months?: unknown; undated?: unknown };
+  const w = wire as { total?: unknown; months?: unknown; undated?: unknown; seek?: unknown };
   if (typeof w.total !== "number" || !Array.isArray(w.months)) return null;
   const months: StoreTimelineMonth[] = [];
   for (const m of w.months as unknown[]) {
@@ -292,7 +301,10 @@ export function readTimelineWire(wire: unknown): StoreTimeline | null {
     const date = typeof x.first.date === "string" ? x.first.date : null;
     months.push({ month: x.month, count: x.count, first: { date, id: x.first.id } });
   }
-  return { total: w.total, months, undated: typeof w.undated === "number" ? w.undated : 0 };
+  return {
+    total: w.total, months, undated: typeof w.undated === "number" ? w.undated : 0,
+    ...(w.seek === true ? { seek: true } : {}),
+  };
 }
 
 /**

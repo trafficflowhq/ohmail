@@ -32,7 +32,7 @@ import { DesktopFrame } from "./DesktopFrame.js";
 import { linkSlot } from "./link-in.js";
 import { setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { setComposerScope } from "@ohmail/app-logic/writing/compose";
-import { writingReady } from "../../webapp/app/shell/browser-mail";
+import { prepareWriting } from "../../webapp/app/shell/browser-mail";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
 import { goCompose } from "@ohmail/app-logic/writing/compose-door";
 import { setMailtoSink } from "@ohmail/app-logic/session/open-external";
@@ -111,6 +111,9 @@ import {
 } from "./bridge-fetch.js";
 import { desktopSendSurface, stagesAttachments } from "./desktop-send-surface.js";
 import { forgetErasedWindowScopes, forgetWindowScopes, rememberCloudScope, rememberedCloudDisclosureOwner, rememberedCloudScope } from "./window-sweep.js";
+
+// Start the editor load while the native engine is opening its profile.
+const writingReady = prepareWriting().catch(() => {});
 
 /** How much of a refused address the one-line toast shows. The host is at the front. */
 const ADDRESS_SHOWN = 80;

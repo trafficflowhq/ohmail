@@ -1166,6 +1166,8 @@ export function depsFor(req: Request, rt: Runtime): ApiDeps {
         lastResortSinks: rt.alertLastResortSinks,
         ...(rt.alertHeartbeat ? { heartbeat: rt.alertHeartbeat } : {}),
         environment: cfg.environment,
+        signalSource: cfg.alerts.signalSource,
+        ...(cfg.alerts.shards ? { shards: cfg.alerts.shards } : {}),
         parkedAccounts: rt.alertReaders.parkedAccounts,
         accountsAtCap: rt.alertReaders.accountsAtCap,
         planeOps: rt.alertReaders.planeOps,

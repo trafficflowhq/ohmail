@@ -56,6 +56,7 @@
     "kindOther": "Gerät",
     "mintedName": "ohmail für {kind}",
     "deviceMeta": "{kind} · hinzugefügt {created} · zuletzt gesehen {seen}",
+    "deviceId": "Geräte-ID {id}",
     "remove": "Abmelden",
     "removeAsk": "{name} abmelden",
     "removeWhat": "Mit der nächsten Anfrage verliert es den Zugriff. Mit einem neuen Code lässt es sich jederzeit wieder koppeln.",

@@ -155,7 +155,7 @@ describe("Google's sign-in: the port a reader is handed", () => {
     const seeing: HttpPort = { request: (url, o) => (asked.push(o.auth !== null && o.auth.credential.kind === "bearer" ? o.auth.credential.token : null), http.request(url, o)) };
     const reader = makeReader({ http: seeing, clock: { now: () => NOW }, zones: intlZones() });
     const open = { provider: "google", credential: googleBearer({ http: seeing, clock: { now: () => NOW } }, signIn), start: null } as const;
-    expect(await reader.listCalendars(open, never)).toEqual({ ok: true, value: [] });
+    expect(await reader.listCalendars(open, never)).toEqual({ ok: true, value: [], principal: null });
     expect(asked).toEqual([null, "s1"]);
     const ended = { provider: "google", credential: googleBearer({ http: seeing, clock: { now: () => NOW } }, signIn), start: null } as const;
     expect(await reader.listCalendars(ended, never)).toEqual(refusal("consent_needed"));

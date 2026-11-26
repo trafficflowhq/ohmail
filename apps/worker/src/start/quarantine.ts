@@ -129,7 +129,7 @@ export function quarantineSection(scope: WorkerScope): void {
     /* THE CYCLE'S OWN VERDICT on a breach it ended on, keyed on the error object: the connection
        handler runs later on the queue, and by then another cycle's `beginCycle` may have cleared
        the ledger's record of what the breaching cycle wrote. */
-    const setAsideBreaches = new WeakSet<object>();
+    const recoverableReadBreaches = new WeakSet<object>();
 
     /**
      * CLOSED CONNECTIONS A RUNNING PASS DETACHES BETWEEN TWO TURNS. The queue entry below waits for
@@ -186,10 +186,10 @@ export function quarantineSection(scope: WorkerScope): void {
         }
         /* After the cycle on this queue: a breach whose message the cycle set aside is progress,
            so the mailbox is re-attached by the next roster pass and not quarantined. */
-        const progress = (typeof err === "object" && err !== null && setAsideBreaches.has(err))
+        const progress = (typeof err === "object" && err !== null && recoverableReadBreaches.has(err))
           || breachSetAside(err, rt.deps.deadLetters);
         if (progress) {
-          await scope.detach(rt, "retired after a message was set aside — the next roster pass re-attaches it");
+          await scope.detach(rt, "the cycle checkpointed before the connection retired; the next roster pass re-attaches it");
           return;
         }
         await scope.detach(rt, "the provider connection emitted an error");
@@ -200,7 +200,7 @@ export function quarantineSection(scope: WorkerScope): void {
     }
     scope.quarantineMailbox = quarantineMailbox;
     scope.markRecovered = markRecovered;
-    scope.setAsideBreaches = setAsideBreaches;
+    scope.recoverableReadBreaches = recoverableReadBreaches;
     scope.closedOwed = closedOwed;
     scope.CLOSED_DETACH_REASON = CLOSED_DETACH_REASON;
     scope.handleConnectionError = handleConnectionError;

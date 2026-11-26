@@ -1,4 +1,5 @@
 import { accountOfMessage } from "@trafficflow/db";
+import { BODY_PRELOAD_IDS_MAX } from "@trafficflow/core/drain-policy";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
@@ -22,7 +23,7 @@ import { asServiceRefusal } from "./erasure-fence.js";
 import { foldersEnabled, userFolderById, userFolderExclusion } from "./folders.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { instantRefusal, readInstant } from "./instant.js";
-import { zonedMonth, zonedMonthOf, type ZonedMonth } from "./reader-clock.js";
+import { parseReaderZone, zonedMonth, zonedMonthOf, type ZonedMonth } from "./reader-clock.js";
 import {
   materializeMessage, materializeMessages, materializeMessagesInOrder,
 } from "./dto/materialize.js";
@@ -192,6 +193,13 @@ export interface ListMessagesOptions {
   at?: { date: string | null; id?: string };
 }
 
+interface HistoryRank {
+  month: string | null;
+  offset: number;
+  zone: string | undefined;
+  before?: ListMessagesOptions["before"];
+}
+
 /**
  * One month of the History rail: how many messages, and its newest one — the jump target
  * (`view=all&atDate=<date>&atId=<id>` opens the list ON it).
@@ -307,6 +315,18 @@ function decodeMsgCursor(cursor: string): { key: Date; id: string } {
   return { key: new Date(millis ?? 0), id };
 }
 
+function historyRankCursor(cursor: string): HistoryRank {
+  const parts = cursor.length <= 180 ? cursor.slice("history:".length).split("|") : [];
+  const [month, offset = "", date, id, zone] = parts;
+  if (parts.length !== 5 || !/^\d+$/.test(offset) || (date && !id)) {
+    throw new ServiceError("validation_failed", 400, "Invalid History cursor");
+  }
+  return {
+    month: month || null, offset: Number(offset), zone: parseReaderZone(zone),
+    ...(id ? { before: { date: date || null, id } } : {}),
+  };
+}
+
 /**
  * The arrival key over a table alias, NULL for the undated rows (no date AND no arrival) — the
  * History rail's month BUCKETS, which count the undated tail apart rather than in January 1970.
@@ -410,6 +430,7 @@ export interface GetBodiesOptions {
    * second place for the account scoping to be written.
    */
   ids?: string[];
+  preload?: boolean;
 }
 
 /**
@@ -740,7 +761,11 @@ export class MessageService {
   async listAll(ctx: ServiceContext, opts: ListMessagesOptions): Promise<Page<MessageDTO>> {
     const limit = Math.min(HISTORY_PAGE_MAX, clampLimit(opts.limit));
     const filters: SQL[] = [ownedMessages(ctx.accountId)];
-    if (opts.cursor) filters.push(afterKeyset(ctx.db, decodeMsgCursor(opts.cursor)));
+    if (opts.cursor?.startsWith("history:")) {
+      const start = await this.historyRank(ctx, historyRankCursor(opts.cursor));
+      if (!start) return { items: [], nextCursor: null };
+      filters.push(atOrAfterKeyset(ctx.db, start));
+    } else if (opts.cursor) filters.push(afterKeyset(ctx.db, decodeMsgCursor(opts.cursor)));
     else if (opts.before) filters.push(afterKeyset(ctx.db, await anchoredPosition(ctx, opts.before, "before")));
     else if (opts.at) {
       const at = opts.at;
@@ -762,6 +787,30 @@ export class MessageService {
     return { items, nextCursor };
   }
 
+  private async historyRank(ctx: ServiceContext, rank: HistoryRank): Promise<{ key: Date; id: string } | undefined> {
+    if (!Number.isSafeInteger(rank.offset) || rank.offset < 0) {
+      throw new ServiceError("validation_failed", 400, "offset must be a non-negative whole number");
+    }
+    const key = arrivalKeyOf(ctx.db);
+    const d = dialect(ctx.db);
+    const undated = undatedIn("messages");
+    // scoped-by: History's usual account and live-row predicates.
+    const filters = [ownedMessages(ctx.accountId)];
+    if (rank.month === null) {
+      filters.push(undated, sql`${key} = ${d.ts(new Date(0))}`);
+    } else {
+      if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(rank.month)) {
+        throw new ServiceError("validation_failed", 400, "History seek needs a calendar month");
+      }
+      const window = zonedMonth(Number(rank.month.slice(0, 4)), Number(rank.month.slice(5)), rank.zone ?? "UTC");
+      filters.push(sql`not ${undated}`, sql`${key} >= ${d.ts(window.start)} and ${key} < ${d.ts(window.end)}`);
+    }
+    if (rank.before) filters.push(afterKeyset(ctx.db, positionOf(rank.before, "before")));
+    const [row] = await ctx.db.select({ id: messages.id, key }).from(messages)
+      .where(and(...filters)).orderBy(...msgOrder(ctx.db)).limit(1).offset(rank.offset);
+    return row;
+  }
+
   /**
    * THE HISTORY RAIL — one grouped read: every ARRIVAL month's count and its newest message by the
    * arrival key (the jump: `at` on `view=all`, so `first.date` IS the key), the undated tail, and
@@ -772,7 +821,7 @@ export class MessageService {
   // `undated`: messages with no date AND no arrival — the key's epoch rows, after every month.
   async timeline(
     ctx: ServiceContext, opts: { zone?: string } = {},
-  ): Promise<{ total: number; months: TimelineMonth[]; undated: number }> {
+  ): Promise<{ total: number; months: TimelineMonth[]; undated: number; seek: true }> {
     const d = dialect(ctx.db);
     const zone = opts.zone ?? "UTC";
     const instant = datedKey(d, "m");
@@ -804,7 +853,7 @@ export class MessageService {
       months.splice(0, months.length, ...await this.zonedMonths(ctx, months, zone));
     }
     months.sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
-    return { total: months.reduce((n, m) => n + m.count, 0) + undated, months, undated };
+    return { total: months.reduce((n, m) => n + m.count, 0) + undated, months, undated, seek: true };
   }
 
   /**
@@ -927,7 +976,9 @@ export class MessageService {
    * That absence IS the no-rehydrate guarantee.
    */
   async getBodies(ctx: ServiceContext, opts: GetBodiesOptions): Promise<Page<MessageBodyBatchItem>> {
-    if (opts.ids !== undefined) return this.getBodiesByIds(ctx, opts.ids);
+    if (opts.ids !== undefined) {
+      return this.getBodiesByIds(ctx, opts.ids, opts.preload ? BODY_PRELOAD_IDS_MAX : BODIES_IDS_MAX);
+    }
     const limit = clampPageLimit(opts.limit, BODIES_DEFAULT_LIMIT, BODIES_MAX_LIMIT);
 
     const filters = [eq(messages.accountId, ctx.accountId)];
@@ -996,11 +1047,12 @@ export class MessageService {
   private async getBodiesByIds(
     ctx: ServiceContext,
     ids: string[],
+    maxIds: number,
   ): Promise<Page<MessageBodyBatchItem>> {
     if (ids.length === 0) return { items: [], nextCursor: null };
-    if (ids.length > BODIES_IDS_MAX) {
+    if (ids.length > maxIds) {
       throw new ServiceError(
-        "validation_failed", 400, `at most ${BODIES_IDS_MAX} ids may be requested at once`,
+        "validation_failed", 400, `at most ${maxIds} ids may be requested at once`,
       );
     }
     // A malformed id would reach Postgres and raise 22P02 — a 500 for a plainly bad request. The
@@ -1022,10 +1074,10 @@ export class MessageService {
         .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
         .where(and(eq(messages.accountId, ctx.accountId), inArray(messages.id, ids)))
         .orderBy(asc(messages.id))
-        .limit(BODIES_IDS_MAX),
+        .limit(maxIds),
       take: null,
       // PASS 2 joins the HEADERS, which the keyset mode must not. The budget covers `text` +
-      // `html`; the `headers` bag rides this mode only, is bounded by at most BODIES_IDS_MAX rows,
+      // `html`; the `headers` bag rides this mode only, is bounded by at most `maxIds` rows,
       // and is the input to the derived posture below rather than something that crosses the wire.
       fetch: (tx, underBudget) => tx.select({
         messageId: messages.id,

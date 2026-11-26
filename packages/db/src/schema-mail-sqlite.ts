@@ -495,6 +495,8 @@ export const mailboxFolders = sqliteTable("mailbox_folders", {
   budgetStopUidvalidity: int64("budget_stop_uidvalidity"),
   // The mailbox's account (mail 0201). Nullable here: NOT NULL is a table rebuild on this store.
   accountId: text("account_id"),
+  scanNextUid: int64("scan_next_uid"),
+  scanResetAfter: text("scan_reset_after"),
 }, (t) => ({
   uq: unique().on(t.mailboxId, t.folder) }));
 

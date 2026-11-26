@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { makeDb, alertPassRuns, alertState } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger, type Logger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
@@ -140,6 +140,7 @@ describe("the plane's ops watch on the worker", () => {
   }, 30_000);
 
   it("a shard > 0 never dials /v1/ops, and says its watch is off", async () => {
+    await makeDb(DB).execute(sql`UPDATE worker_topology SET shards = 2 WHERE singleton`);
     const plane = await fakePlane();
     closers.push(plane.close);
     const { logger, lines } = collectingLogger();

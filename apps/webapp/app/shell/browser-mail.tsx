@@ -11,15 +11,15 @@
  * THE READER is the same on the three: the letter's own renderer over the ground's two doors. No look at a file's
  * bytes is handed: a press on a file saves it, until the reader's own part draws the look.
  */
-import { useState, type ReactNode } from "react";
-import { Frame, lazyView } from "@ohmail/app/frame";
+import { type ReactNode } from "react";
+import { Frame } from "@ohmail/app/frame";
 import { OhboxShapeContext } from "@ohmail/app/ohbox";
 import { PdfLookContext } from "@ohmail/app/reader";
 import { usePdfLook } from "@ohmail/app/host/browser";
 import { type FrameSupplies, type HostContract, type HostSession } from "@ohmail/app/host";
 import { browserClipboard, browserLinkOut } from "@ohmail/app/host/browser";
 import {
-  mailReader, NO_STAGE_PARTS, prepareWriting, useMailSupplies, useThemeLook, type MailHostParts, type MailPaneParts,
+  mailReader, NO_STAGE_PARTS, useMailSupplies, useThemeLook, type MailHostParts, type MailPaneParts,
 } from "@ohmail/app/mail";
 import { mailboxesNotices } from "@ohmail/app/mailboxes";
 import { letterBody } from "@ohmail/app/reader/body";
@@ -37,6 +37,7 @@ export type { JunkWire } from "@ohmail/app-logic/screener/junk-window";
 export type { AwayTransport } from "../api-client";
 
 export { NO_STAGE_PARTS, type MailHostParts, type MailPaneParts } from "@ohmail/app/mail";
+export { prepareWriting } from "@ohmail/app/mail";
 
 /** A browser host's reader over the mail ground: one for the page's life. */
 export const BROWSER_READER = mailReader({
@@ -86,28 +87,15 @@ export function useBrowserMail(recover: HostSession["recover"], own: MailHostPar
 }
 
 const bootRows = <BootSkeleton active />;
-let writingPrepared = false;
-
-export const writingReady = prepareWriting().then(() => {
-  writingPrepared = true;
-}).catch(() => undefined);
-
-const ReadyFrame = lazyView(async () => {
-  await prepareWriting();
-  writingPrepared = true;
-  return { default: Frame };
-});
 
 /** The frame over a browser host's contract. */
 export function MailFrame({ host }: { host: HostContract }): ReactNode {
-  // A cold frame keeps its retry boundary for the life of this mount.
-  const [preparedAtMount] = useState(() => writingPrepared);
   return (
     <TextFromIntl>
       <PdfLookContext.Provider value={usePdfLook}>
         <OhboxShapeContext.Provider value={bootRows}>
           <BrowserChunkLoads>
-            {preparedAtMount ? <Frame host={host} /> : <ReadyFrame host={host} />}
+            <Frame host={host} />
           </BrowserChunkLoads>
         </OhboxShapeContext.Provider>
       </PdfLookContext.Provider>

@@ -30,6 +30,7 @@ export interface InvitationRow {
   readonly cancelled: boolean;
   /** Where an answer waits: on this device, or with the calendar. */
   readonly waiting: "device" | "provider" | null;
+  readonly replyUnconfirmed?: true;
   readonly refusal: CalendarWriteFault | CalendarReason | null;
   /** The refused write that can be sent again or let go. */
   readonly refusedWriteId: string | null;

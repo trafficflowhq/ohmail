@@ -47,6 +47,7 @@ export const FAULT_KEYS = {
   earlier_refused: "fault.earlier",
   content_refused: "fault.chained",
   expired: "fault.expired",
+  answer_unconfirmed: "fault.answerUnconfirmed",
   unknown: "fault.unknown",
 } as const satisfies Readonly<Record<CalendarWriteFault, `fault.${string}`>>;
 

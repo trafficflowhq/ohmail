@@ -212,6 +212,8 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
     throw new TypeError("only a calendar move can carry a destination");
   }
   const writing = assertWriteShape(deps, req, first);
+  if (req.beforeDispatch && (!deps.writes || req.auth === null || req.method !== "POST" || deps.limits.maxRedirects !== 0))
+    throw new TypeError("a recorded dispatch requires an authenticated write POST without redirects");
   const refused = (reason: ProviderRefusal): HttpAnswer => ({ arrived: false, reason });
   if (req.signal.aborted) return refused("timeout");
   const body = req.body === null ? null : new TextEncoder().encode(req.body);
@@ -258,6 +260,11 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
         if ("refused" in cleared) return refused(cleared.refused);
         const headers = headersFor(req, body, hop);
         if (headers === null) return refused("sign_in_refused");
+        if (ac.signal.aborted) return refused("timeout");
+        if (req.beforeDispatch !== undefined) {
+          await req.beforeDispatch();
+          if (ac.signal.aborted) return { arrived: false, reason: "timeout", notDispatched: true };
+        }
         // The wait is this call's, not the request's: the call ends at its own bound even with a request that never
         // settles. The product's pinned request settles on every path; the bound does not lean on that.
         const asking = deps.request(url.href, { method: req.method, headers, body: body ?? undefined, pin: cleared.pin, signal: ac.signal });

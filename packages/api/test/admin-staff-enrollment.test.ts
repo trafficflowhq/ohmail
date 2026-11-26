@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { managedAddress } from "../../../test/support/fixture-credentials.js";
 import { createApp, apiRoutes, type AdminConfig, type ApiDeps } from "@trafficflow/api";
-import { staffUsers, staffSessions, staffAuditLog } from "@trafficflow/db/cloud";
+import { staffUsers, staffSessions, staffAuditLog, authThrottle } from "@trafficflow/db/cloud";
 import { scryptHasher, totpNow } from "@trafficflow/services";
 import { eq } from "drizzle-orm";
 import { makeDeps } from "./helpers.js";
@@ -54,6 +54,37 @@ async function enrollToken(deps: ApiDeps): Promise<string> {
 }
 
 describe("a second enrolment never disturbs the authenticator in use", () => {
+  it("shares the password limit between both replacement actions", async () => {
+    const { deps, clock } = await world();
+    const grant = await enrollToken(deps);
+    const began = await body(await H(post("/admin/staff/totp/begin", { enrollToken: grant }), deps));
+    clock.advance(MINUTE);
+    const confirmed = await body(await H(post("/admin/staff/totp/confirm", {
+      enrollToken: grant, code: totpNow(began.secret as string, deps.now()),
+    }), deps));
+    expect(confirmed.status).toBe("signed_in");
+    const sessionToken = confirmed.token as string;
+    const [original] = await deps.db.select().from(staffSessions);
+
+    for (const route of ["begin", "confirm", "begin", "confirm", "begin"]) {
+      const refused = await H(post(`/admin/staff/totp/${route}`, { sessionToken, password: `${PASSWORD}-typo` }), deps);
+      expect(refused.status).toBe(401);
+    }
+    const blocked = await H(post("/admin/staff/totp/begin", { sessionToken, password: PASSWORD }), deps);
+    expect(blocked.status).toBe(429);
+
+    clock.advance(16 * MINUTE);
+    const retry = await H(post("/admin/staff/totp/begin", { sessionToken, password: PASSWORD }), deps);
+    expect(retry.status).toBe(200);
+    const replacement = await body(retry);
+    const done = await H(post("/admin/staff/totp/confirm", {
+      sessionToken, password: PASSWORD, code: totpNow(replacement.secret as string, deps.now()),
+    }), deps);
+    expect((await body(done)).status).toBe("reenrolled");
+    const [current] = await deps.db.select().from(staffSessions);
+    expect(current!.expiresAt).toEqual(original!.expiresAt);
+  });
+
   it("leaves A's codes working when B's begin is abandoned", async () => {
     const { deps, clock } = await world();
 
@@ -136,6 +167,41 @@ const RESET = {
 } as const;
 
 describe("the second-factor recovery an operator runs", () => {
+  it("leaves the sign-in budget intact after a superseded enrollment is refused", async () => {
+    const { deps, clock } = await world();
+    const grant = await enrollToken(deps);
+    const began = await body(await H(post("/admin/staff/totp/begin", { enrollToken: grant }), deps));
+    clock.advance(MINUTE);
+    const confirmed = await H(post("/admin/staff/totp/confirm", {
+      enrollToken: grant, code: totpNow(began.secret as string, deps.now()),
+    }), deps);
+    expect(confirmed.status).toBe(200);
+
+    const expectBudgetUnchanged = async () => {
+      const before = await deps.db.select().from(authThrottle);
+      const response = await H(post("/admin/staff/totp/confirm", { enrollToken: grant }), deps);
+      expect(response.status).toBe(401);
+      expect(await deps.db.select().from(authThrottle)).toEqual(before);
+    };
+    await expectBudgetUnchanged();
+    expect((await H(post("/admin/staff/totp/reset", { ...RESET, email: EMAIL }), deps)).status).toBe(200);
+    await expectBudgetUnchanged();
+    const fresh = await enrollToken(deps);
+    const reopened = await body(await H(post("/admin/staff/totp/begin", { enrollToken: fresh }), deps));
+    clock.advance(MINUTE);
+    const signedIn = await body(await H(post("/admin/staff/totp/confirm", {
+      enrollToken: fresh, code: totpNow(reopened.secret as string, deps.now()),
+    }), deps));
+    expect(signedIn.status).toBe("signed_in");
+  });
+
+  it("issues a different enrollment grant after recovery even in the same second", async () => {
+    const { deps } = await world();
+    const before = await enrollToken(deps);
+    expect((await H(post("/admin/staff/totp/reset", { ...RESET, email: EMAIL }), deps)).status).toBe(200);
+    expect((await enrollToken(deps)) === before).toBe(false);
+  });
+
   it("returns the operator to not-enrolled, revokes their sessions and records the act", async () => {
     const { deps, clock } = await world();
     const a = await body(await H(post("/admin/staff/totp/begin", { enrollToken: await enrollToken(deps) }), deps));

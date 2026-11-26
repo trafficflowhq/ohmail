@@ -541,6 +541,8 @@ export const mailboxFolders = pgTable("mailbox_folders", {
    * one is last pass's epoch or NULL, never the one the server stated at the stop. DECLARED LAST
    * because they arrive by ALTER: a store built by replaying the journal holds them there.
    */
+  scanNextUid: bigint("scan_next_uid", { mode: "bigint" }),
+  scanResetAfter: text("scan_reset_after"),
   budgetStopUid: bigint("budget_stop_uid", { mode: "bigint" }),
   budgetStopUidvalidity: bigint("budget_stop_uidvalidity", { mode: "bigint" }),
   // The mailbox's account (mail 0201).
@@ -2854,6 +2856,7 @@ export const calConnections = pgTable("cal_connections", {
   /** CalDAV: the server's origin and path, never a user part, a query or a fragment. */
   serverUrl: text("server_url"),
   principal: text("principal"),
+  /** Verified CalDAV scheduling addresses. For OAuth, an empty list marks an ambiguous listing. */
   organizerAddresses: jsonb("organizer_addresses").$type<readonly string[]>(),
   /**
    * A subscription: its address's host and nothing else, lower case; the address is sealed. A
@@ -2912,6 +2915,8 @@ export const calCalendars = pgTable("cal_calendars", {
   shown: boolean("shown").notNull().default(true),
   timeZone: text("time_zone"),
   syncToken: text("sync_token"),
+  readCheckpoint: text("read_checkpoint"),
+  readOwner: uuid("read_owner"),
   fetchEtag: text("fetch_etag"),
   /** The two dates the last comparison covered; empty means never fetched. */
   windowStart: date("window_start"),
@@ -2939,6 +2944,8 @@ export const calEvents = pgTable("cal_events", {
   calendarId: uuid("calendar_id").notNull(),
   providerId: text("provider_id").notNull(),
   versionTag: text("version_tag"),
+  /** The last known Outlook modification time for this provider object. */
+  providerModifiedAt: timestamp("provider_modified_at", { withTimezone: true }),
   uid: text("uid").notNull(),
   /** The calendar core's `recurrenceKeyString` of the occurrence this row replaces; `''` for none. */
   recurrenceId: text("recurrence_id").notNull().default(""),
@@ -2968,6 +2975,8 @@ export const calEvents = pgTable("cal_events", {
   /** One grammar for every provider: iCalendar's RRULE values, one per line. */
   repeatRule: text("repeat_rule"),
   excludedDates: jsonb("excluded_dates"),
+  /** Server-side provenance for Google's combined excluded dates. */
+  googleExclusionSources: jsonb("google_exclusion_sources"),
   addedDates: jsonb("added_dates"),
   busy: boolean("busy").notNull().default(true),
   private: boolean("private").notNull().default(false),
@@ -2983,6 +2992,8 @@ export const calEvents = pgTable("cal_events", {
   original: text("original"),
   portableCopy: boolean("portable_copy").notNull().default(false),
   googleDefaultEvent: boolean("google_default_event").notNull().default(false),
+  /** The generation that saw this row, or the separately stamped plan that selected it as absent. */
+  seenInReading: uuid("seen_in_reading"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({

@@ -231,7 +231,7 @@ function HistoryBody({ inPane }: { inPane: boolean }) {
                 const active = selected ? paper : null;
                 return (
                   <Tap key={y.year ?? "undated"} onPress={() => jump(y)} accessibilityRole="button"
-                    accessibilityLabel={y.year ?? Copy.historyUndated} accessibilityState={{ selected }}
+                    accessibilityLabel={y.year ?? Copy.historyUndated} accessibilityState={{ selected: selected }}
                     style={{
                       minHeight: t.mail ? 40 : undefined, justifyContent: "center", alignItems: "center",
                       paddingVertical: 3, paddingHorizontal: 6, borderRadius: t.radius.pill,

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Report } from "@ohmail/ui/base";
@@ -121,7 +121,13 @@ function Reply() {
 function Frame() {
   const [undone, setUndone] = useState(false);
   const scope = scene.get("scope");
-  const report = scene.has("report") && !undone;
+  const [arrived, setArrived] = useState(false);
+  useEffect(() => {
+    const show = () => setArrived(true);
+    window.addEventListener("show-report", show);
+    return () => window.removeEventListener("show-report", show);
+  }, []);
+  const report = (scene.has("report") || arrived) && !undone;
   if (!scope && !scene.has("report")) return <Reply />;
   return (
     <div className="fr-root">

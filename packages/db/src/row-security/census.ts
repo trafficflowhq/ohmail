@@ -6,6 +6,7 @@ import {
   LOCK_MARKER, LOCK_READERS, PLANE_ROLE, POLICY_COMMENT_TAG, POLICY_ROLES, READER_SCHEMA, RUNTIME_LOGINS,
   ACCOUNT_SETTING, KEY_SETTING, type LockReader,
 } from "./names.js";
+import { API_REPLACEMENT_ROLE } from "./logins.js";
 import { policiesFor, policiesOfTable, tableClass, byTableThenName, type PolicyRow, type PolicyVerb } from "./policies.js";
 import { ACCOUNT_VIEWS, VIEW_CHECK_OPTION, viewName, viewStatement, type AccountView } from "./views.js";
 
@@ -369,8 +370,8 @@ export function policyDifferences(p: PolicyFacts, r: PolicyRow): PolicyDifferenc
 }
 
 /** The digest of a listed view: what it is made from (its name, table, columns, conditions and option, the logins among them). */
-export function viewListDigest(v: AccountView): string {
-  return sha256(JSON.stringify(["view", viewStatement(v)]));
+export function viewListDigest(v: AccountView, replacement = false): string {
+  return sha256(JSON.stringify(["view", viewStatement(v, false, replacement)]));
 }
 
 /** The digest of a view's text as the catalog prints it, under the pinned spelling settings. */
@@ -379,8 +380,8 @@ export function viewCatalogDigest(text: string): string {
 }
 
 /** The comment the step writes on a view it made: the tag and the two digests, as on a policy. */
-export function viewComment(v: AccountView, printed: string): string {
-  return `${POLICY_COMMENT_TAG} ${viewListDigest(v)} ${viewCatalogDigest(printed)}`;
+export function viewComment(v: AccountView, printed: string, replacement = false): string {
+  return `${POLICY_COMMENT_TAG} ${viewListDigest(v, replacement)} ${viewCatalogDigest(printed)}`;
 }
 
 /** The columns `v` must answer, `name type` in order, by its table's own columns' types; `null` when the table lacks one. */
@@ -425,7 +426,7 @@ export function viewCodePhrase(c: ViewCode): string {
  * from another version of the list), `text` (its text is not what the step made: a condition
  * gone, another login named, `session_user` in place of `current_user`).
  */
-export function viewDifferences(f: ViewFacts, v: AccountView, schemaOwner: string, facts: Pick<LockFacts, "viewTables">): string[] {
+export function viewDifferences(f: ViewFacts, v: AccountView, schemaOwner: string, facts: Pick<LockFacts, "viewTables" | "roles">): string[] {
   if (f.kind !== "v") return ["kind"];
   const out: string[] = [];
   if (f.owner !== schemaOwner) out.push("owner");
@@ -442,7 +443,7 @@ export function viewDifferences(f: ViewFacts, v: AccountView, schemaOwner: strin
   const recorded = (f.comment ?? "").split(" ");
   if (recorded.length !== 3 || recorded[0] !== POLICY_COMMENT_TAG) out.push("unrecorded");
   else {
-    if (recorded[1] !== viewListDigest(v)) out.push("listed");
+    if (recorded[1] !== viewListDigest(v, API_REPLACEMENT_ROLE in facts.roles)) out.push("listed");
     if (f.text === null || recorded[2] !== viewCatalogDigest(f.text)) out.push("text");
   }
   return out;
@@ -584,7 +585,8 @@ export function codeLines(facts: Pick<LockFacts, "code">): string[] {
 /** The policies the list wants on this catalog: every classed table's, for the roles the server has. */
 export function expectedPolicies(facts: LockFacts): PolicyRow[] {
   const present = new Set(Object.keys(facts.roles));
-  const rows = facts.tables.filter((t) => !isPartitioned(t)).flatMap((t) => policiesOfTable(t.name, t.account));
+  const replacement = present.has(API_REPLACEMENT_ROLE);
+  const rows = facts.tables.filter((t) => !isPartitioned(t)).flatMap((t) => policiesOfTable(t.name, t.account, replacement));
   return policiesFor(rows, present).sort(byTableThenName);
 }
 

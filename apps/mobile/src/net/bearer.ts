@@ -106,14 +106,27 @@ async function erasesAccount(res: Response, accountId: string | null): Promise<b
   }
 }
 
-/** The code our error envelope names, or null: a door's own refusal said apart from a page in front of it. */
-async function envelopeCode(res: Response): Promise<string | null> {
+/** Only the logout protocol can confirm that a family has ended. */
+export async function logoutConfirmed(res: Response, refreshDoor: boolean): Promise<boolean> {
+  if (res.status === 204) return true;
+  // A refusal at the access door can mean only that the access token expired.
+  if (!refreshDoor || res.status !== 401) return false;
   try {
     const code = ((await res.json()) as { error?: { code?: unknown } } | null)?.error?.code;
-    return typeof code === "string" ? code : null;
+    return isSessionRefusal(res.status, typeof code === "string" ? code : null);
   } catch {
-    return null;
+    return false;
   }
+}
+
+/** Start and finish a logout at the selected origin using the redirect-refusing transport. */
+export async function requestSignOut(
+  fetchImpl: FetchLike, origin: string, path: "/auth/logout" | "/auth/refresh/logout", init: RequestInit,
+): Promise<Response | null> {
+  const res = await fetchImpl(`${origin}${path}`, { ...init, method: "POST", credentials: "omit", redirect: "error" });
+  if (res.redirected || res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) return null;
+  if (res.url && new URL(res.url).origin !== new URL(origin).origin) return null;
+  return res;
 }
 
 /**
@@ -190,6 +203,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
   private readonly accountId: string | null;
   private readonly vault: RefreshVault;
   private readonly fetchImpl: FetchLike;
+  private readonly signOutFetchImpl?: FetchLike;
   /** `x-ohmail-client: phone/<release>`, on every ask this manager makes of its own origin. */
   private readonly clientPair: Readonly<Record<string, string>>;
   /** The single flight — one rotation at a time, because a duplicate presentation reads as theft. */
@@ -234,6 +248,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     accountId?: string | null;
     vault: RefreshVault;
     fetchImpl?: FetchLike;
+    signOutFetchImpl?: FetchLike;
     /** The app's release (`app.json`), read by the composition and handed in: no expo import here. */
     clientRelease?: string;
   }) {
@@ -248,6 +263,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     // Bind the global — RN's fetch is a plain function today, but the illegal-invocation trap
     // the desktop manager documents costs nothing to keep closed.
     this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch.bind(globalThis) as FetchLike);
+    this.signOutFetchImpl = opts.signOutFetchImpl ?? opts.fetchImpl;
   }
 
   /** Whether this manager holds a pairing at all — what the connection layer renders on. */
@@ -547,18 +563,18 @@ export class BearerManagerRN implements SessionRenewalDoor {
    * OWED — its refresh token kept through the vault before the credential goes, and sent at the
    * next connection — and `untold` is one this phone could not even keep a note of.
    */
-  async signOut(): Promise<SignOutOutcome> {
+  async signOut(dial = true): Promise<SignOutOutcome> {
     let told = true;
     const held = this.refresh;
     if (this.access !== null || held !== null) {
       told = false;
       try {
-        told = await this.endAtServer();
+        told = dial && await this.endAtServer();
       } catch {
         /* unreachable server — owed below; this device is out now */
       }
     }
-    // The newest token of the family: an older server's routed sign-out may have renewed it.
+    // A rotation already in flight may have supplied a newer token.
     const owing = this.refresh ?? held;
     const owed = !told && owing !== null && await this.vault.oweSignOut(owing).catch(() => false);
     // "refused", not "revoked": a deliberate sign-out is not a family somebody replayed, and the
@@ -567,36 +583,24 @@ export class BearerManagerRN implements SessionRenewalDoor {
     return told ? "told" : owed ? "owed" : "untold";
   }
 
-  /** Did the server say this session is over? A 2xx, or the refresh door's own 401 (nothing left to end). */
+  /** Did the server end the session, or did its refresh door confirm it was already over? */
   private async endAtServer(): Promise<boolean> {
+    const fetchImpl = this.signOutFetchImpl;
+    if (!fetchImpl) return false;
     const refresh = this.refresh;
     if (this.access !== null) {
-      const res = await this.heard(
-        await this.fetchImpl(`${this.origin}/auth/logout`, { method: "POST", headers: this.headers() }),
-      );
+      const answer = await requestSignOut(fetchImpl, this.origin, "/auth/logout", { headers: this.headers() });
+      if (!answer) return false;
+      const res = await this.heard(answer);
       // `heard` ended an erased account's manager: nothing is left to end.
-      if (res.ok || this.refresh === null) return true;
+      if (await logoutConfirmed(res, false) || this.refresh === null) return true;
       if (res.status !== 401) return false;
     }
     if (refresh === null) return false;
-    const door = await this.fetchImpl(`${this.origin}/auth/refresh/logout`, {
-      method: "POST",
+    const door = await requestSignOut(fetchImpl, this.origin, "/auth/refresh/logout", {
       headers: { "content-type": "application/json", ...this.clientPair },
       body: JSON.stringify({ refreshToken: refresh }),
     });
-    if (door.ok) return true;
-    // A server older than the door: the routed sign-out it always had, renewal included.
-    if (door.status === 404 || door.status === 405) return this.routedLogout();
-    return isSessionRefusal(door.status, await envelopeCode(door));
-  }
-
-  /**
-   * The routed sign-out, for a server with no refresh door: through {@link fetch}, so a 401 renews
-   * and the replay lands. A 401 is evidence only once the credential is gone: a refusal clears it
-   * (`rotate` → `die`), a transient failure clears nothing and did not land.
-   */
-  private async routedLogout(): Promise<boolean> {
-    const res = await this.fetch(`${this.origin}/auth/logout`, { method: "POST" });
-    return res.ok || (res.status === 401 && this.refresh === null);
+    return door !== null && await logoutConfirmed(door, true);
   }
 }

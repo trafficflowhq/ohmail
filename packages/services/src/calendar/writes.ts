@@ -16,11 +16,11 @@ import { repeatDeleteScopes } from "@ohmail/cal-providers/repeat-shapes";
  * store's copy has moved on since, the act is recorded REFUSED (`version_stale`), so the conflict
  * reaches every device the way any write does, and nothing is sent.
  */
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { calAlarms, calAttendees, calCalendars, calConnections, calEvents, calWrites, changeLog, messageInvitations, messages } from "@trafficflow/db/mail";
 import { fenceErased, fencedAccountOf, recordCalendarChanges, invitationCalendarId, invitationStanding, readOwnAddresses, sameAddress, storedAuthScreens, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import {
-  CALENDAR_WRITE_LIMITS, CONTINUED_FIELDS, CalendarConnectionGone, asCalendarWriteFault, changedDaysOf, exceptionBaseOf, holdCalendarConnection, isWriteKey, ownOrganizerAddresses,
+  CALENDAR_WRITE_LIMITS, CONTINUED_FIELDS, CalendarConnectionGone, asCalendarWriteFault, calendarActFingerprint, changedDaysOf, exceptionBaseOf, holdCalendarConnection, isWriteKey, isWriteUuid, oauthIdentityAmbiguous, ownOrganizerAddresses,
   calendarOriginalOf, parseCalendarAct, parseWritePayload, isAttendeeCopy, sharedCopyNeedsProtection, verifiedOrganizer, writeActRefusal, writePayloadOf, writeRowOf, type CalendarWriteException, type CalendarWritePayload, type ContinuedField,
 } from "@trafficflow/db/calendar";
 import { dialect } from "@trafficflow/db/dialect";
@@ -153,17 +153,79 @@ const receiptOf = (key: string, r: Pick<Row, "id" | "state" | "refusal">): Calen
   reason: r.refusal === null ? null : asCalendarWriteFault(r.refusal),
 });
 
+// SQLite loads the shared routes without a calendar table. Read these fields only for calendar writes.
+function writeKeyFields() {
+  return {
+    id: calWrites.id, state: calWrites.state, refusal: calWrites.refusal, payload: calWrites.payload,
+    updatedAt: calWrites.updatedAt, eventId: calWrites.eventId, calendarId: calWrites.calendarId, attempts: calWrites.attempts,
+  };
+}
+
+function replyCheckOf(payload: unknown): { id: string; fingerprint: string } | null {
+  if (payload === null || typeof payload !== "object" || !("replyCheckOf" in payload) ||
+    !("fingerprint" in payload) || !isWriteUuid(payload.replyCheckOf) || typeof payload.fingerprint !== "string") return null;
+  return { id: payload.replyCheckOf, fingerprint: payload.fingerprint };
+}
+
+function dismissedReply(payload: unknown): boolean {
+  return payload !== null && typeof payload === "object" && "dismissedReply" in payload && payload.dismissedReply === true;
+}
+
+function supersededReply(payload: unknown): boolean {
+  return payload !== null && typeof payload === "object" && "replySuperseded" in payload && payload.replySuperseded === true;
+}
+
+function replyOutcome<T extends Pick<Row, "state" | "refusal" | "payload">>(row: T): T {
+  return dismissedReply(row.payload) || replyResentAs(row.payload) !== null
+    ? { ...row, state: "refused", refusal: "answer_unconfirmed" } : row;
+}
+
+function fingerprintOf(payload: unknown): string | null {
+  return payload !== null && typeof payload === "object" && "fingerprint" in payload &&
+    typeof payload.fingerprint === "string" && /^v1:[0-9a-f]{64}$/.test(payload.fingerprint) ? payload.fingerprint : null;
+}
+
+function replyResentAs(payload: unknown): string | null {
+  return payload !== null && typeof payload === "object" && "replyResentAs" in payload && isWriteUuid(payload.replyResentAs)
+    ? payload.replyResentAs : null;
+}
+
+async function writeNamedByKey(tx: Tx, accountId: string, key: string) {
+  const [row] = await tx.select(writeKeyFields()).from(calWrites)
+    .where(and(eq(calWrites.accountId, accountId), eq(calWrites.idempotencyKey, key))).limit(1);
+  if (!row) return null;
+  const check = replyCheckOf(row.payload);
+  const findReply = (id: string) => tx.select(writeKeyFields()).from(calWrites)
+    .where(and(eq(calWrites.accountId, accountId), eq(calWrites.calendarId, row.calendarId), eq(calWrites.id, id),
+      row.eventId === null ? isNull(calWrites.eventId) : eq(calWrites.eventId, row.eventId))).limit(1);
+  let current = check ? (await findReply(check.id))[0] : row;
+  if (!current && check) current = { ...row, id: check.id, state: "refused", refusal: "answer_unconfirmed" };
+  const seen = new Set<string>();
+  while (current) {
+    const next = replyResentAs(current.payload);
+    if (next === null || seen.has(next)) break;
+    seen.add(next);
+    const [resent] = await findReply(next);
+    if (!resent) break;
+    current = resent;
+  }
+  return { row: replyOutcome(current ?? row), identity: row, fingerprint: check?.fingerprint ?? fingerprintOf(row.payload) };
+}
+
 /** The row a key already names, or `null`. The same key with another act is refused; the first row stays. */
 async function recorded(tx: Tx, accountId: string, key: string, act: CalendarEventAct): Promise<CalendarWriteReceipt | null> {
-  const [row] = await tx.select({ id: calWrites.id, state: calWrites.state, refusal: calWrites.refusal, payload: calWrites.payload })
-    .from(calWrites).where(and(eq(calWrites.accountId, accountId), eq(calWrites.idempotencyKey, key))).limit(1);
-  if (row === undefined) return null;
-  const was = parseWritePayload(row.payload);
-  // An applied row keeps no act: its key answers what it came to.
-  if (was !== null && JSON.stringify(was.act) !== JSON.stringify(act)) {
+  const named = await writeNamedByKey(tx, accountId, key);
+  if (!named) return null;
+  const { row, identity } = named;
+  const was = parseWritePayload(identity.payload);
+  const fingerprint = named.fingerprint ?? (was && calendarActFingerprint(was.act));
+  if (fingerprint === null) throw new ServiceError("idempotency_replay", 409, "this earlier receipt cannot confirm the calendar act");
+  if (fingerprint !== calendarActFingerprint(act)) {
     throw new ServiceError("idempotency_replay", 409, "this key was used for another calendar act");
   }
-  return receiptOf(key, row);
+  const outcome = row.id !== identity.id && row.state === "refused" && parseWritePayload(row.payload)?.resendsReply
+    ? { ...row, refusal: "answer_unconfirmed" } : row;
+  return receiptOf(key, outcome);
 }
 
 interface HeldCalendar {
@@ -228,17 +290,19 @@ function assertProven(d: DoorShapes, rule: import("@ohmail/cal-core").RRule | nu
   }
 }
 
-async function openCount(tx: Tx, accountId: string, eventId: string | null): Promise<number> {
+async function openCount(tx: Tx, accountId: string, eventId: string | null, replacing?: string): Promise<number> {
   const [row] = await tx.select({ n: sql<number>`count(*)::int` }).from(calWrites).where(and(
     eq(calWrites.accountId, accountId), inArray(calWrites.state, ["pending", "refused"]),
+    sql`${calWrites.payload}->>'replySuperseded' is distinct from 'true'`,
     ...(eventId === null ? [] : [eq(calWrites.eventId, eventId)]),
+    ...(replacing === undefined ? [] : [ne(calWrites.id, replacing)]),
   ));
   return Number(row?.n ?? 0);
 }
 
-async function assertRoom(tx: Tx, accountId: string, eventId: string | null): Promise<void> {
-  if (await openCount(tx, accountId, null) >= L.openPerAccount
-    || (eventId !== null && await openCount(tx, accountId, eventId) >= L.openPerEvent)) {
+async function assertRoom(tx: Tx, accountId: string, eventId: string | null, replacing?: string): Promise<void> {
+  if (await openCount(tx, accountId, null, replacing) >= L.openPerAccount
+    || (eventId !== null && await openCount(tx, accountId, eventId, replacing) >= L.openPerEvent)) {
     throw new ServiceError("calendar_writes_full", 409, "too many calendar writes are waiting");
   }
 }
@@ -278,20 +342,26 @@ const ms = (d: Date): number => d.getTime();
  */
 async function standing(
   tx: Tx, accountId: string, event: { id: string; updatedAt: Date }, act: Extract<CalendarEventAct, { base: string }>,
-  exact = false,
+  exact = false, outlookReply = false,
 ): Promise<{ after: string | null; refusal: CalendarWriteFault | null }> {
-  if (exact) return { after: null, refusal: Date.parse(act.base) === ms(event.updatedAt) ? null : "version_stale" };
-  if (act.kind === "calendar_event_update" && act.personalSeries && Date.parse(act.base) !== ms(event.updatedAt)) return { after: null, refusal: "version_stale" };
-  if (Date.parse(act.base) === ms(event.updatedAt) && act.after === undefined) return { after: null, refusal: null };
+  const current = Date.parse(act.base) === ms(event.updatedAt);
+  if (exact) return { after: null, refusal: current ? null : "version_stale" };
+  if (act.kind === "calendar_event_update" && act.personalSeries && !current) return { after: null, refusal: "version_stale" };
+  if (current && act.after === undefined) return { after: null, refusal: null };
   if (act.after !== undefined) {
-    const [prev] = await tx.select({ id: calWrites.id, state: calWrites.state, updatedAt: calWrites.updatedAt }).from(calWrites)
-      .where(and(eq(calWrites.accountId, accountId), eq(calWrites.idempotencyKey, act.after), eq(calWrites.eventId, event.id))).limit(1);
-    if (prev !== undefined) {
+    const prev = (await writeNamedByKey(tx, accountId, act.after))?.row;
+    if (prev?.eventId === event.id) {
       if (prev.state === "pending") return { after: prev.id, refusal: null };
-      if (prev.state === "refused") return { after: prev.id, refusal: "earlier_refused" };
+      if (prev.state === "refused") {
+        // A fresh answer on the current copy need not wait for an earlier reply whose confirmation failed.
+        if (outlookReply && prev.refusal === "answer_unconfirmed" && current &&
+          (parseWritePayload(prev.payload)?.answerSyncChecks === 1 || supersededReply(prev.payload) ||
+            replyResentAs(prev.payload) !== null)) return { after: null, refusal: null };
+        return { after: prev.id, refusal: "earlier_refused" };
+      }
       if (ms(prev.updatedAt) === ms(event.updatedAt)) return { after: null, refusal: null };
     }
-    if (Date.parse(act.base) === ms(event.updatedAt)) return { after: null, refusal: null };
+    if (current) return { after: null, refusal: null };
   }
   return { after: null, refusal: "version_stale" };
 }
@@ -604,9 +674,103 @@ async function refuseWhileMoving(tx: Tx, accountId: string, eventId: string) {
   if (move) throw new ServiceError("calendar_write_left", 409, "the move is still under way");
 }
 
+type ReplyAct = Extract<CalendarEventAct, { kind: "calendar_event_answer" }>;
+
+function appliedReplyAt(payload: unknown): string | null | undefined {
+  if (payload === null || typeof payload !== "object" || !("answerAt" in payload) || typeof payload.answerAt !== "string" ||
+    !("answer" in payload) || (payload.answer !== "accepted" && payload.answer !== "tentative" && payload.answer !== "declined"))
+    return undefined;
+  return payload.answerAt === "" ? null : payload.answerAt;
+}
+
+function outlookReplyMayHaveDispatched(
+  payload: CalendarWritePayload, row: { readonly attempts: number; readonly refusal: string | null },
+): boolean {
+  const dispatch = payload.answerDispatch;
+  return dispatch
+    ? dispatch.phase !== "ready"
+    : payload.acceptedAnswerId !== undefined || payload.dismissedReply === true || row.refusal === "answer_unconfirmed" ||
+      (row.attempts > 0 && row.refusal !== "earlier_refused");
+}
+
+function outlookReplyRows(tx: Tx, accountId: string, calendarId: string, eventId: string) {
+  return tx.select(writeKeyFields()).from(calWrites).where(and(
+    eq(calWrites.accountId, accountId), eq(calWrites.calendarId, calendarId), eq(calWrites.eventId, eventId),
+    eq(calWrites.op, "answer"),
+    or(inArray(calWrites.state, ["pending", "refused"]),
+      sql`${calWrites.payload}->>'dismissedReply' = 'true'`,
+      sql`${calWrites.payload}->>'answerAt' is not null`),
+  )).orderBy(desc(calWrites.createdAt), desc(calWrites.id));
+}
+
+/** A repeated Outlook choice asks about its existing dispatch. The new key follows that write. */
+async function reconcileOutlookReply(
+  tx: Tx, accountId: string, cal: HeldCalendar, key: string, act: ReplyAct,
+  event: NonNullable<Awaited<ReturnType<typeof holdEventCopy>>>, own: ReadonlySet<string>,
+): Promise<EnqueuedCalendarWrite | null> {
+  if (event.heldBack || event.status === "cancelled" || event.myAnswer === null || !isAttendeeCopy(event, own, cal.access)) return null;
+  const rows = await outlookReplyRows(tx, accountId, cal.id, event.id);
+  const at = act.scope.kind === "occurrence" ? act.scope.at : null;
+  const pending: { row: (typeof rows)[number]; prior: ReplyAct }[] = [];
+  for (const row of rows) {
+    const appliedAt = appliedReplyAt(row.payload);
+    if (appliedAt !== undefined) {
+      // A newer confirmed answer ends the earlier decision for this scope.
+      if (appliedAt === null || appliedAt === at) break;
+      continue;
+    }
+    const payload = parseWritePayload(row.payload);
+    if (payload?.act.kind !== "calendar_event_answer") continue;
+    const prior = payload.act;
+    const dispatch = payload.answerDispatch;
+    const unresolved = outlookReplyMayHaveDispatched(payload, row) || payload.resendsReply === true;
+    const priorAt = prior.scope.kind === "occurrence" ? prior.scope.at : null;
+    if (priorAt !== at) {
+      // A dispatched whole-series reply can supersede an earlier choice for this day.
+      if (at !== null && priorAt === null && unresolved) break;
+      continue;
+    }
+    if (!unresolved) {
+      if (row.state === "pending" && prior.answer === act.answer) pending.push({ row, prior });
+      continue;
+    }
+    if (prior.answer !== act.answer || (dispatch && dispatch.phase !== "ready" && dispatch.source !== event.providerId)) break;
+    pending.unshift({ row, prior });
+    break;
+  }
+  for (const { row, prior } of pending) {
+    if (act.copy || prior.copy) {
+      const addresses = await readOwnAddresses(tx, accountId);
+      const identity = await attendeeIdentityOf(tx, accountId, cal, event, addresses);
+      if (!identity || [act.copy, prior.copy].some((copy) => copy &&
+        (copy.calendarId !== cal.id || copy.attendee !== identity.attendee))) return null;
+    }
+    const made = await insertRow(tx, {
+      accountId, calendarId: cal.id, eventId: event.id, op: "answer", idempotencyKey: key, state: "applied",
+      payload: { replyCheckOf: row.id, fingerprint: calendarActFingerprint(act) },
+    });
+    if (made === null) return { receipt: (await recorded(tx, accountId, key, act))!, eventIds: [], changes: [], wake: null };
+    const archived = dismissedReply(row.payload);
+    const payload = parseWritePayload(row.payload);
+    if (payload?.resendsReply && payload.answerDispatch?.phase === "ready" && (row.state === "refused" || archived)) {
+      return { receipt: { id: row.id, key, state: "refused", reason: "answer_unconfirmed" }, eventIds: [event.id], changes: [], wake: null };
+    }
+    const legacyAttempt = (archived || row.attempts > 0) && !payload?.answerDispatch && !payload?.acceptedAnswerId;
+    const eventIds = row.state === "refused" || archived
+      ? await rearmWrite(tx, accountId, row, legacyAttempt ? 1 : 0, undefined, { rearmFollowers: false, archived })
+      : [event.id];
+    return {
+      receipt: { id: row.id, key, state: "pending", reason: null }, eventIds,
+      changes: eventIds.map((id) => ({ kind: "calendar_event", id, op: "update" })),
+      wake: cal.connectionId,
+    };
+  }
+  return null;
+}
+
 async function recordOnEvent(
   tx: Tx, accountId: string, key: string, act: Exclude<CalendarEventAct, { kind: "calendar_event_create" }>,
-  o: { readonly now: number; readonly proven: ProvenRepeats },
+  o: { readonly now: number; readonly proven: ProvenRepeats; readonly resendOf?: string },
 ): Promise<EnqueuedCalendarWrite> {
   const [seen] = await tx.select({ calendarId: calEvents.calendarId }).from(calEvents)
     .where(and(eq(calEvents.id, act.eventId), eq(calEvents.accountId, accountId))).limit(1);
@@ -624,23 +788,32 @@ async function recordOnEvent(
   if (act.kind === "calendar_event_delete" && act.localOnly)
     return recordLocalRemoval(tx, accountId, cal, key, act, selected);
   assertWritable(cal);
-  if (act.kind === "calendar_event_answer" && writeRowOf(selected) === "day") {
-    throw readOnly("this occurrence cannot be answered separately");
+  if (cal.provider === "caldav" && selected.partial) throw readOnly("this calendar copy is incomplete");
+  const own = await ownOrganizerAddresses(tx, accountId, cal.principal, cal.organizerAddresses);
+  const selectedDay = writeRowOf(selected) === "day";
+  const exceptionAnswer = o.resendOf !== undefined && cal.provider === "microsoft" && selectedDay && act.kind === "calendar_event_answer";
+  if (act.kind === "calendar_event_answer") {
+    if (oauthIdentityAmbiguous(cal.provider, cal.organizerAddresses)) throw readOnly("the calendar's own attendee could not be verified");
+    if (selectedDay && !exceptionAnswer) throw readOnly("this occurrence cannot be answered separately");
+    if (cal.provider === "microsoft" && o.resendOf === undefined) {
+      const check = await reconcileOutlookReply(tx, accountId, cal, key, act, selected, own);
+      if (check) return check;
+    }
   }
   const paired = exceptionBaseOf(act.base);
-  const exceptionEdit = act.kind === "calendar_event_update" && act.audience && writeRowOf(selected) === "day";
-  const own = await ownOrganizerAddresses(tx, accountId, cal.principal, cal.organizerAddresses);
+  const exceptionEdit = act.kind === "calendar_event_update" && act.audience && selectedDay;
   let event = selected;
   let exception: CalendarWriteException | undefined;
-  if (exceptionEdit) {
+  if (exceptionEdit || exceptionAnswer) {
     const unavailable = selected.partial || selected.status === "cancelled" || selected.heldBack;
     const invited = isAttendeeCopy(selected, own, cal.access);
-    if (unavailable || invited) throw readOnly("this occurrence is view only");
+    if (unavailable || (exceptionAnswer ? !invited || selected.myAnswer === null : invited)) throw readOnly("this occurrence is view only");
     if (selected.thisAndFuture || !selected.versionTag || act.after !== undefined ||
       (act.scope.kind !== "record" && act.scope.at !== selected.recurrenceId) ||
       (act.scope.kind !== "occurrence" && paired === null)) throw invalid("this occurrence needs its reviewed series and day");
     const master = await holdEventCopy(tx, accountId, cal.id, and(eq(calEvents.uid, selected.uid), eq(calEvents.recurrenceId, "")));
     if (!master || writeRowOf(master) !== "series" || master.partial || !master.versionTag || master.status === "cancelled" ||
+      (exceptionAnswer && !sameAddress(selected.organizer, master.organizer)) ||
       (cal.provider === "caldav" && (master.providerId !== selected.providerId || master.versionTag !== selected.versionTag))) throw readOnly("this occurrence has no writable series");
     await refuseWhileMoving(tx, accountId, master.id);
     event = master;
@@ -757,11 +930,11 @@ async function recordOnEvent(
   if (reshapes && rule !== null && first !== null && await halfCarriedOut(tx, accountId, event, rule, first)) {
     throw new ServiceError("calendar_write_left", 409, "a change of the days from a day on is half done on this series: it is tried again or let go first");
   }
-  await assertRoom(tx, accountId, event.id);
+  await assertRoom(tx, accountId, event.id, o.resendOf);
   const standingWrite = exception
     ? { after: null, refusal: (Date.parse(paired?.[0] ?? act.base) !== ms(selected.updatedAt) ||
       (paired && Date.parse(paired[1]) !== ms(event.updatedAt))) ? "version_stale" as const : null }
-    : await standing(tx, accountId, event, act, seriesEdit);
+    : await standing(tx, accountId, event, act, seriesEdit, cal.provider === "microsoft" && act.kind === "calendar_event_answer");
   const { after } = standingWrite;
   let refusal = standingWrite.refusal;
   if (series && act.kind === "calendar_event_update" &&
@@ -796,12 +969,21 @@ async function recordOnEvent(
   if ((act.kind === "calendar_event_update" || act.kind === "calendar_event_delete") && act.scope.kind === "following") {
     return recordFollowing(tx, accountId, key, act, event, cal, { after, refusal }, d, seriesEdit, exception);
   }
-  const payload: CalendarWritePayload = { ...writePayloadOf(act, after, null, exception), ...(seriesCancellation && { seriesCancellation }), ...(transfer && { transfer }) };
+  const payload: CalendarWritePayload = {
+    ...writePayloadOf(act, after, null, exception),
+    ...(cal.provider === "microsoft" && act.kind === "calendar_event_answer" && {
+      answerDispatch: { phase: "ready" }, ...(o.resendOf !== undefined && { resendsReply: true }),
+    }),
+    ...(seriesCancellation && { seriesCancellation }), ...(transfer && { transfer }),
+  };
   const made = await insertRow(tx, {
     accountId, calendarId: cal.id, eventId: event.id, op: OP[act.kind], payload, baseVersionTag: event.versionTag,
     idempotencyKey: key, state: refusal === null ? "pending" : "refused", refusal,
   });
-  if (made === null) return { receipt: (await recorded(tx, accountId, key, act))!, eventIds: [], changes: [], wake: null };
+  if (made === null) {
+    if (o.resendOf !== undefined) throw new ServiceError("idempotency_replay", 409, "this key was used for another calendar act");
+    return { receipt: (await recorded(tx, accountId, key, act))!, eventIds: [], changes: [], wake: null };
+  }
   return {
     receipt: { id: made.id, key, state: refusal === null ? "pending" : "refused", reason: refusal },
     eventIds: exception ? [event.id, exception.id] : [event.id],
@@ -1079,6 +1261,7 @@ interface WriteRowHeld {
   readonly eventId: string | null;
   readonly calendarId: string;
   readonly op: string;
+  readonly provider: string;
   readonly state: string;
   readonly refusal: string | null;
   readonly attempts: number;
@@ -1086,17 +1269,20 @@ interface WriteRowHeld {
 }
 
 /** A write of this account under lock, its calendar's connection held first; another account's id is not found. */
-async function heldWrite(tx: Tx, accountId: string, writeId: string): Promise<WriteRowHeld> {
-  const [seen] = await tx.select({ calendarId: calWrites.calendarId }).from(calWrites)
+async function heldWrite(tx: Tx, accountId: string, writeId: string, holdEvent = false): Promise<WriteRowHeld> {
+  const [seen] = await tx.select({ calendarId: calWrites.calendarId, eventId: calWrites.eventId }).from(calWrites)
     .where(and(eq(calWrites.id, writeId), eq(calWrites.accountId, accountId))).limit(1);
   if (seen === undefined) throw notFound();
-  await holdCalendar(tx, accountId, seen.calendarId);
+  const calendar = await holdCalendar(tx, accountId, seen.calendarId);
+  // Recording on an event takes its lock before touching the queue, including a repeat of the same answer.
+  if (holdEvent && seen.eventId !== null) await dialect(tx).forUpdate(tx.select({ id: calEvents.id }).from(calEvents)
+    .where(and(eq(calEvents.id, seen.eventId), eq(calEvents.accountId, accountId), eq(calEvents.calendarId, calendar.id))), { mode: "update" });
   const [row] = await dialect(tx).forUpdate(tx.select({
     id: calWrites.id, key: calWrites.idempotencyKey, eventId: calWrites.eventId, calendarId: calWrites.calendarId, op: calWrites.op,
     state: calWrites.state, refusal: calWrites.refusal, attempts: calWrites.attempts, payload: calWrites.payload,
   }).from(calWrites).where(and(eq(calWrites.id, writeId), eq(calWrites.accountId, accountId))).limit(1), { mode: "update" });
   if (row === undefined) throw notFound();
-  return row;
+  return { ...row, provider: calendar.provider };
 }
 
 /**
@@ -1122,7 +1308,7 @@ async function refusedForItsCopy(tx: Tx, accountId: string, row: Pick<WriteRowHe
  * The open writes that wait for `head`, directly or through another: they were made on what it would
  * write. Of any event: the second part of a press on a day and the days after it is the new series'.
  */
-async function followersOf(tx: Tx, accountId: string, head: WriteRowHeld): Promise<string[]> {
+async function followersOf(tx: Tx, accountId: string, head: Pick<WriteRowHeld, "id">): Promise<string[]> {
   const open = await tx.select({ id: calWrites.id, payload: calWrites.payload }).from(calWrites).where(and(
     eq(calWrites.accountId, accountId), inArray(calWrites.state, ["pending", "refused"]),
   ));
@@ -1141,6 +1327,26 @@ async function followersOf(tx: Tx, accountId: string, head: WriteRowHeld): Promi
   return [...chain];
 }
 
+async function rearmWrite(
+  tx: Tx, accountId: string, row: Pick<WriteRowHeld, "id" | "eventId">,
+  attempts = 0, payload?: CalendarWritePayload, options?: { readonly rearmFollowers: boolean; readonly archived: boolean },
+): Promise<string[]> {
+  const followers = options?.rearmFollowers === false ? [] : await followersOf(tx, accountId, row);
+  const again = { state: "pending", refusal: null, attempts: 0, nextAttemptAt: null, updatedAt: sql`now()` } as const;
+  await tx.update(calWrites).set({ ...again,
+    ...(payload ? { payload } : options?.archived ? { payload: sql`${calWrites.payload} - 'dismissedReply'` } : {}), attempts,
+  })
+    .where(and(eq(calWrites.id, row.id), eq(calWrites.accountId, accountId)));
+  const touched = new Set(row.eventId === null ? [] : [row.eventId]);
+  if (followers.length > 0) {
+    const back = await tx.update(calWrites).set(again).where(and(
+      eq(calWrites.accountId, accountId), inArray(calWrites.id, followers), eq(calWrites.refusal, "earlier_refused"),
+    )).returning({ eventId: calWrites.eventId });
+    for (const r of back) if (r.eventId !== null) touched.add(r.eventId);
+  }
+  return [...touched];
+}
+
 /**
  * The refusals after which an attempt of a write may have landed at the provider unheard: the words that wait for time (the
  * worker's word plan: a provider throttling, down, or never heard back), and `expired` (too old, after an attempt of that kind).
@@ -1154,6 +1360,53 @@ async function waitsOnUndone(tx: Tx, accountId: string, row: Pick<WriteRowHeld, 
   if (after === null) return false;
   const [prev] = await tx.select({ state: calWrites.state }).from(calWrites).where(and(eq(calWrites.id, after), eq(calWrites.accountId, accountId))).limit(1);
   return prev !== undefined && prev.state !== "applied";
+}
+
+async function resendOutlookReply(
+  tx: Tx, accountId: string, row: WriteRowHeld, key: string, now: number,
+): Promise<EnqueuedCalendarWrite> {
+  if (!isWriteKey(key)) throw invalid("a reply resend requires a calendar write key");
+  const unavailable = () => new ServiceError("calendar_write_left", 409, "this reply is no longer awaiting a resend");
+  if (row.provider !== "microsoft" || row.op !== "answer" || row.eventId === null) throw unavailable();
+  const [known] = await tx.select(writeKeyFields()).from(calWrites)
+    .where(and(eq(calWrites.accountId, accountId), eq(calWrites.idempotencyKey, key))).limit(1);
+  if (known) {
+    if (replyResentAs(row.payload) !== known.id) {
+      throw new ServiceError("idempotency_replay", 409, "this key was used for another calendar act");
+    }
+    return { receipt: receiptOf(key, replyOutcome(known)), eventIds: [row.eventId], changes: [], wake: null };
+  }
+  const payload = parseWritePayload(row.payload);
+  const act = payload?.act;
+  if (!payload || row.state !== "refused" || act?.kind !== "calendar_event_answer" ||
+    (act.eventId !== row.eventId && act.eventId !== payload.exception?.id) ||
+    !(payload.resendsReply || row.refusal === "answer_unconfirmed" && outlookReplyMayHaveDispatched(payload, row))) throw unavailable();
+  const event = await holdEventCopy(tx, accountId, row.calendarId, eq(calEvents.id, row.eventId));
+  const dispatch = payload.answerDispatch;
+  if (!event || !event.versionTag || (dispatch && dispatch.phase !== "ready" && dispatch.source !== event.providerId)) throw unavailable();
+
+  const at = act.scope.kind === "occurrence" ? act.scope.at : null;
+  const current = (await outlookReplyRows(tx, accountId, row.calendarId, row.eventId)).find((candidate) => {
+    const appliedAt = appliedReplyAt(candidate.payload);
+    if (appliedAt !== undefined) return at === null || appliedAt === null || appliedAt === at;
+    const other = parseWritePayload(candidate.payload)?.act;
+    return other?.kind === "calendar_event_answer" && (at === null || other.scope.kind === "record" || other.scope.at === at);
+  });
+  if (current?.id !== row.id) throw unavailable();
+
+  // Replay of this press points to its own queue row, even after a later explicit resend.
+  const day = at === null ? null : await holdEventCopy(tx, accountId, row.calendarId,
+    and(eq(calEvents.uid, event.uid), eq(calEvents.recurrenceId, at)));
+  const { after: _after, ...choice } = act;
+  const seriesBase = event.updatedAt.toISOString();
+  const fresh = await recordOnEvent(tx, accountId, key, {
+    ...choice, eventId: day?.id ?? event.id, base: day === null ? seriesBase : `${day.updatedAt.toISOString()}/${seriesBase}`,
+  }, { now, proven: PROVEN_REPEATS, resendOf: row.id });
+  await tx.update(calWrites).set({
+    state: "applied", refusal: null, nextAttemptAt: null, updatedAt: sql`now()`,
+    payload: { fingerprint: calendarActFingerprint(act), replyResentAs: fresh.receipt.id },
+  }).where(and(eq(calWrites.id, row.id), eq(calWrites.accountId, accountId)));
+  return fresh;
 }
 
 /**
@@ -1170,22 +1423,29 @@ async function waitsOnUndone(tx: Tx, accountId: string, row: Pick<WriteRowHeld, 
  * it, or nothing of it was sent), it goes again from its first attempt, and takes no end it finds at
  * the provider for its own.
  */
-export async function retryCalendarWrite(ctx: ServiceContext, writeId: string): Promise<{ answer: CalendarWriteAnswer; seq: bigint | null }> {
+export async function retryCalendarWrite(ctx: ServiceContext, writeId: string, resendKey?: string): Promise<{ answer: CalendarWriteAnswer; seq: bigint | null }> {
   await requireCalendarOn(ctx);
   const done = await withAccountTx(ctx, async (tx) => {
     const t = bridgeTx(tx);
-    const row = await heldWrite(t, ctx.accountId, writeId);
-    if (row.state === "applied") throw new ServiceError("calendar_write_left", 409, "the write is done");
+    const row = await heldWrite(t, ctx.accountId, writeId, resendKey !== undefined);
+    if (resendKey !== undefined) {
+      const fresh = await resendOutlookReply(t, ctx.accountId, row, resendKey, ctx.now().getTime());
+      const seqs = fresh.changes.length > 0 ? await recordCalendarChanges(tx, ctx.accountId, fresh.changes) : [];
+      return { ...fresh, seq: seqs.at(-1) ?? null };
+    }
+    if (row.state === "applied" || supersededReply(row.payload)) throw new ServiceError("calendar_write_left", 409, "the write is done");
     if (row.state !== "refused") return { receipt: receiptOf(row.key, row), eventIds: row.eventId === null ? [] : [row.eventId], seq: null, wake: null };
-    if (parseWritePayload(row.payload)?.transfer)
+    const payload = parseWritePayload(row.payload);
+    if (payload?.resendsReply && payload.answerDispatch?.phase === "ready") {
+      throw new ServiceError("calendar_write_left", 409, "this reply requires an explicit resend");
+    }
+    if (payload?.transfer)
       throw new ServiceError("calendar_write_left", 409, "a refused move is reviewed again on the calendar");
     if (await refusedForItsCopy(t, ctx.accountId, row)) {
       throw new ServiceError("calendar_write_left", 409, "a change made on an older copy is made again as a new act");
     }
     // A write that waits for another goes again only once that one is done: retry the one it waits for (which takes it along).
     if (await waitsOnUndone(t, ctx.accountId, row)) throw new ServiceError("calendar_write_left", 409, "the write it waits for is not done");
-    const followers = await followersOf(t, ctx.accountId, row);
-    const again = { state: "pending", refusal: null, attempts: 0, nextAttemptAt: null, updatedAt: sql`now()` } as const;
     // A series' end that was claimed before may have landed, its answer never heard: it goes again as a later attempt, so that
     // the drain may find that end its own (the second recheck's first finding); but only where an attempt of it may have landed
     // unheard: its refusal is a word that waits for time, or `expired`, or more than one attempt of it was claimed (a row reaches
@@ -1193,28 +1453,21 @@ export async function retryCalendarWrite(ctx: ServiceContext, writeId: string): 
     // attempt, the provider answered it and nothing of it landed: counted as one, the retry would take an end someone else made
     // since for its own, and make their days a second time (the third recheck's fourth finding). Its followers were never claimed
     // (a write is claimed only once the one it waits for is done), and go again from their first.
-    const payload = parseWritePayload(row.payload);
     const act = payload?.act;
     const mayHaveLanded = row.attempts > 0 && (row.attempts > 1 || (row.refusal !== null && MAY_HAVE_LANDED.has(row.refusal)));
     const claimedEnd = row.attempts > 0 && act !== undefined && "scope" in act && act.scope.kind === "following"
       && mayHaveLanded;
     const cancellation = mayHaveLanded && payload?.act.kind === "calendar_event_delete"
-      ? { payload: { ...payload, cancellationAttempted: true } } : {};
-    await t.update(calWrites).set({ ...again, ...cancellation, attempts: claimedEnd ? 1 : 0 })
-      .where(and(eq(calWrites.id, row.id), eq(calWrites.accountId, ctx.accountId)));
-    // Each event whose mark changes is told: the write's own, and its followers' (the second half of a press is the new series').
-    const touched = new Set(row.eventId === null ? [] : [row.eventId]);
-    if (followers.length > 0) {
-      const back = await t.update(calWrites).set(again).where(and(
-        eq(calWrites.accountId, ctx.accountId), inArray(calWrites.id, followers), eq(calWrites.refusal, "earlier_refused"),
-      )).returning({ eventId: calWrites.eventId });
-      for (const r of back) if (r.eventId !== null) touched.add(r.eventId);
-    }
+      ? { ...payload, cancellationAttempted: true as const } : undefined;
+    // A pre-upgrade Outlook reply without a dispatch record may already have reached Graph.
+    const unrecordedAnswer = row.provider === "microsoft" && row.attempts > 0 &&
+      act?.kind === "calendar_event_answer" && !payload?.answerDispatch && !payload?.acceptedAnswerId;
+    const touched = await rearmWrite(t, ctx.accountId, row, claimedEnd || unrecordedAnswer ? 1 : 0, cancellation);
     const [cal] = await t.select({ connectionId: calCalendars.connectionId }).from(calCalendars)
       .where(and(eq(calCalendars.id, row.calendarId), eq(calCalendars.accountId, ctx.accountId))).limit(1);
-    const seqs = touched.size === 0 ? [] : await recordCalendarChanges(tx, ctx.accountId, [...touched].map((id) => ({ kind: "calendar_event" as const, id, op: "update" as const })));
+    const seqs = touched.length === 0 ? [] : await recordCalendarChanges(tx, ctx.accountId, touched.map((id) => ({ kind: "calendar_event" as const, id, op: "update" as const })));
     return {
-      receipt: { id: row.id, key: row.key, state: "pending" as const, reason: null }, eventIds: [...touched], seq: seqs.at(-1) ?? null,
+      receipt: { id: row.id, key: row.key, state: "pending" as const, reason: null }, eventIds: touched, seq: seqs.at(-1) ?? null,
       wake: cal?.connectionId ?? null,
     };
   });
@@ -1259,7 +1512,17 @@ export async function dismissCalendarWrite(ctx: ServiceContext, writeId: string)
       if (m.id === row.id) gone = true;
     }
     if (!gone) {
-      await t.delete(calWrites).where(and(eq(calWrites.accountId, ctx.accountId), inArray(calWrites.id, going)));
+      const payload = parseWritePayload(row.payload);
+      const keepReply = row.provider === "microsoft" && payload?.act.kind === "calendar_event_answer" &&
+        (outlookReplyMayHaveDispatched(payload, row) || payload.resendsReply);
+      if (keepReply) {
+        await t.update(calWrites).set({
+          state: "applied", refusal: null, nextAttemptAt: null, updatedAt: sql`now()`,
+          payload: sql`jsonb_set(${calWrites.payload}, '{dismissedReply}', 'true'::jsonb)`,
+        }).where(and(eq(calWrites.accountId, ctx.accountId), eq(calWrites.id, row.id)));
+      }
+      const removed = keepReply ? followers : going;
+      if (removed.length > 0) await t.delete(calWrites).where(and(eq(calWrites.accountId, ctx.accountId), inArray(calWrites.id, removed)));
       if (row.eventId !== null) changes.push({ kind: "calendar_event", id: row.eventId, op: "update" });
     }
     const seqs = changes.length > 0 ? await recordCalendarChanges(tx, ctx.accountId, changes) : [];

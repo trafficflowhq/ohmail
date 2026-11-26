@@ -10,7 +10,7 @@ import type {
 } from "@ohmail/app-logic/calendar/invitations";
 import { useLocale, useText } from "../text/index.js";
 import { AnswerChoices } from "./AnswerChoices.js";
-import { InvitationRefusal } from "./InvitationItem.js";
+import { InvitationRefusal, type InvitationItemProps } from "./InvitationItem.js";
 import { whenOf } from "./words.js";
 import "./phone-invitation.css";
 
@@ -27,7 +27,7 @@ type PhoneInvitationProps = {
   close(): void;
   calendar: { name: string; tone: CalendarTone } | null;
   answer(value: InvitationAnswer): void;
-  retry(id: string): void;
+  retry: InvitationItemProps["onRetry"];
   letGo(id: string): void;
   onKeys: KeyboardEventHandler<HTMLDivElement>;
 };
@@ -179,7 +179,7 @@ function InvitationContent({
       </div>
       {row.waiting !== null ? (
         <p className="cal-invitation-detail" role="status">
-          {event(`waiting.${row.waiting}`)}
+          {event(row.replyUnconfirmed ? "replyUnconfirmed" : `waiting.${row.waiting}`)}
         </p>
       ) : null}
       {row.viewOnly ? (

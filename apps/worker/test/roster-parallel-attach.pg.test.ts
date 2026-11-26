@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import net from "node:net";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import postgres from "postgres";
 import { mailboxes, mailboxCredentials, messages } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
@@ -369,8 +369,56 @@ describe("roster re-attach is bounded-parallel", () => {
     expect(fleet.indicesOf(Q.mailboxId, "connect_start"), "Q was dialled from a stale row").toEqual([]);
   }, 60_000);
 
+  it("retires an in-flight attach when the mailbox leaves the roster", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const worker = await boot(fleet);
+    const removed = await seedMailbox(db, "held.invalid");
+    const release = parkConnect(fleet, removed.mailboxId);
+    releases.push(release);
+    await waitFor(() => fleet.indicesOf(removed.mailboxId, "connect_start").length === 1, 10_000, "held dial");
+    const other = await seedMailbox(db, "other.invalid");
+    await db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, removed.mailboxId));
+    await waitFor(() => fleet.indicesOf(other.mailboxId, "sync_end").length >= 1, 10_000, "neighbor sync after roster pass");
+    expect(worker.stats().expected).toBe(1);
+    release();
+    await waitFor(() => worker.stats().attaches.running === 0, 10_000, "old attach to unwind");
+    expect(fleet.indicesOf(removed.mailboxId, "watch")).toEqual([]);
+    expect(fleet.indicesOf(removed.mailboxId, "close")).toHaveLength(1);
+    expect(fleet.indicesOf(removed.mailboxId, "sync_start")).toEqual([]);
+    expect((await db.select().from(mailboxes).where(eq(mailboxes.id, removed.mailboxId)))[0]?.retryCount).toBe(0);
+    await db.update(mailboxes).set({ status: "connected" }).where(eq(mailboxes.id, removed.mailboxId));
+    await waitFor(() => fleet.indicesOf(removed.mailboxId, "sync_end").length === 1, 10_000, "new attach after re-enable");
+  }, 60_000);
+
+  it("leaves a stable block untouched and repairs a cleared reason", async () => {
+    const db = makeDb(DB);
+    const first = await seedMailbox(db, "first.invalid");
+    const overflow = await seedMailbox(db, "overflow.invalid");
+    await db.update(mailboxes).set({ createdAt: new Date(0) }).where(eq(mailboxes.id, first.mailboxId));
+    await boot(new FakeAdapterFleet(), { maxMailboxes: 1, syncBlockGraceMs: 0 });
+    const stored = async () => {
+      const [row] = await db.select({
+        reason: mailboxes.syncBlockedReason, since: mailboxes.syncBlockedSince,
+        transaction: sql<string>`xmin::text`,
+      }).from(mailboxes).where(eq(mailboxes.id, overflow.mailboxId));
+      return row!;
+    };
+    await waitFor(async () => (await stored()).reason === "at_capacity", 5_000, "overflow reason");
+    const before = await stored();
+    await sleep(ROSTER_MS * 5);
+    expect((await stored()).transaction).toBe(before.transaction);
+    await db.update(mailboxes).set({ syncBlockedReason: null }).where(eq(mailboxes.id, overflow.mailboxId));
+    await waitFor(async () => (await stored()).reason === "at_capacity", 5_000, "one repair");
+    const after = await stored();
+    expect(after.since).toEqual(before.since);
+    expect(after.transaction).not.toBe(before.transaction);
+    await sleep(ROSTER_MS * 5);
+    expect((await stored()).transaction).toBe(after.transaction);
+  }, 30_000);
+
   // ── boot ─────────────────────────────────────────────────────────────────────────────────────
-  it("attaches at boot in parallel and still waits for every boot attach before serving", async () => {
+  it("serves a healthy provider before the separate boot completion resolves", async () => {
     const db = makeDb(DB);
     const fleet = new FakeAdapterFleet();
     const S = await seedMailbox(db, "slow.fake.invalid");
@@ -379,12 +427,14 @@ describe("roster re-attach is bounded-parallel", () => {
     releases.push(release);
     let started = false;
     const starting = startWorker(cfgFor(fleet)).then((w) => { started = true; closers.push(() => w.stop()); return w; });
-    await waitFor(() => fleet.indicesOf(F.mailboxId, "watch").length === 1, 10_000,
-      () => `F attached while S is parked at boot — trace: ${fleet.describeTrace()}`);
-    await sleep(ROSTER_MS * 2);
-    expect(started, "startup resolved before S's boot attach settled").toBe(false);
-    expect(fleet.indicesOf(F.mailboxId, "sync_start"), "a cycle ran before boot finished").toEqual([]);
-    release();
+    try {
+      await waitFor(() => fleet.indicesOf(F.mailboxId, "sync_end").length > 0, 10_000,
+        () => `F completed a visit while S is still dialing — trace: ${fleet.describeTrace()}`);
+      expect(started, "startup resolved before S's boot attach settled").toBe(false);
+      expect(fleet.indicesOf(S.mailboxId, "connect").length).toBe(0);
+    } finally {
+      release();
+    }
     const worker = await starting;
     expect(worker.stats().mailboxes).toBe(2);
   }, 60_000);

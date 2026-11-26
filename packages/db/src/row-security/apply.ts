@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import {
   LOCK_READERS, POLICY_COMMENT_TAG, POLICY_ROLES, READER_SCHEMA, RUNTIME_LOGINS, readerStatement,
 } from "./names.js";
+import { API_REPLACEMENT_ROLE, REQUIRED_RUNTIME_LOGINS } from "./logins.js";
 import { ROLE_DEADLINES, deadlineText } from "./deadlines.js";
 import { lockedTables, type PolicyRow } from "./policies.js";
 import {
@@ -153,7 +154,7 @@ export async function ensureLock(
     log(`lock: the runtime logins exist (${logins.join(", ")}) and no lock stands here; nothing written (the setup locks with --lock)`);
     return { report: { ...base, state: "not-applied" }, problems: [] };
   }
-  if (logins.length !== RUNTIME_LOGINS.length) {
+  if (!REQUIRED_RUNTIME_LOGINS.every((r) => logins.includes(r))) {
     return { report: { ...base, state: "not-applied" }, problems: [`lock: refused: of the two runtime logins only ${logins.join(", ")} exists`] };
   }
   const check = await runRolesCheck(url, opts.rolesScript ?? RUNTIME_ROLES_SCRIPT);
@@ -251,11 +252,12 @@ async function write(tx: Exec, facts: LockFacts, stood: boolean, log: (m: string
   // rule grants them), made again over themselves where their text, options or record differ, or
   // where the list added columns at its end (`create or replace view` keeps the grants).
   const madeViews: typeof ACCOUNT_VIEWS[number][] = [];
+  const replacement = API_REPLACEMENT_ROLE in facts.roles;
   for (const v of ACCOUNT_VIEWS) {
     const f = facts.schema === null ? undefined : viewOf(facts, v);
     if (f === undefined) {
       if (stood) repaired.push(`view ${viewName(v)} was missing: made`);
-      ddl.push(viewStatement(v));
+      ddl.push(viewStatement(v, false, replacement));
       madeViews.push(v);
       continue;
     }
@@ -265,7 +267,7 @@ async function write(tx: Exec, facts: LockFacts, stood: boolean, log: (m: string
     // the list's, not as a repair.
     const listChanged = differs.includes("listed") && differs.every((d) => d === "listed" || d === "text" || d === "fewer columns");
     if (!listChanged) repaired.push(`view ${viewName(v)} is not as it was made: made again (${differs.join(", ")})`);
-    ddl.push(viewStatement(v, true));
+    ddl.push(viewStatement(v, true, replacement));
     madeViews.push(v);
   }
   // Under forced row security, unless the switch has turned the lock off: then the flags are its.
@@ -334,7 +336,7 @@ async function write(tx: Exec, facts: LockFacts, stood: boolean, log: (m: string
         from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
        where n.nspname = $1 and c.relkind = 'v' and c.relname = any($2::text[])`,
     [READER_SCHEMA, madeViews.map((v) => v.name)]) as unknown as Array<{ name: string; text: string }>;
-    await tx.unsafe(madeViews.map((v) => `comment on view ${viewName(v)} is '${viewComment(v, printed.find((x) => x.name === v.name)!.text)}'`)
+    await tx.unsafe(madeViews.map((v) => `comment on view ${viewName(v)} is '${viewComment(v, printed.find((x) => x.name === v.name)!.text, replacement)}'`)
       .join(";\n")).simple();
   }
   if (repaired.length > 0) for (const r of repaired) log(`lock: repair: ${r}`);

@@ -17,6 +17,7 @@ export const KEY_RING_V1 = keyRingVar(1);
 export const KEY_RING_PREFIX = PREFIX;
 
 /** The variable that declares every version up to N retired from a host, so the ring starts at N + 1. */
+export const KEY_RING_ACTIVE = KEY_RING_PREFIX + "_ACTIVE_VERSION";
 export const KEY_RING_RETIRED = `${PREFIX}_RETIRED`;
 
 /** How the ring loader and the re-wrap name key version `n` in what they print: the letter and the number. */

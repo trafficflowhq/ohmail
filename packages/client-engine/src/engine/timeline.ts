@@ -15,6 +15,7 @@ type OffMirrorBody =
   | { state: "failed"; errorClass: string };
 
 export abstract class EngineTimeline extends EngineArchive {
+  private storePageEpoch = 0;
   // ── the store's timeline: History, paged ─────────────────────────────────
 
   /** Can History read the store — both doors, the pages and the month rail. `false` for the demo. */
@@ -51,7 +52,8 @@ export abstract class EngineTimeline extends EngineArchive {
     const key = storePageKey(view, opts, limit);
     const held = opts.fresh ? undefined : this.storePages.get(key);
     if (held !== undefined) return { state: "ready", items: held.items, nextCursor: held.nextCursor };
-    const flightKey = opts.fresh ? `${key}!` : opts.transient ? `${key}~` : key;
+    const epoch = this.storePageEpoch;
+    const flightKey = `${epoch}:${key}${opts.fresh ? "!" : opts.transient ? "~" : ""}`;
     const inFlight = this.storePageCalls.get(flightKey);
     if (inFlight) return inFlight;
     const call = Promise.resolve()
@@ -59,11 +61,14 @@ export abstract class EngineTimeline extends EngineArchive {
         limit,
         ...(opts.cursor ? { cursor: opts.cursor } : {}),
         ...(!opts.cursor && opts.before ? { startBelow: opts.before } : {}),
+        ...(!opts.cursor && opts.seek ? { seek: opts.seek } : {}),
       }))
       .then((wire): StorePageOutcome => {
         if (wire === null) return { state: "unavailable" };
         const page = { items: Array.isArray(wire.items) ? wire.items : [], nextCursor: wire.nextCursor };
-        if (!opts.transient && !opts.fresh) this.storePages.put(key, page, opts.at, "all");
+        if (epoch === this.storePageEpoch && !opts.transient && !opts.fresh) {
+          this.storePages.put(key, page, opts.at, "all");
+        }
         return { state: "ready", ...page };
       })
       .catch((err: unknown): StorePageOutcome => ({ state: "failed", errorClass: errorClassOf(err) }))
@@ -190,6 +195,7 @@ export abstract class EngineTimeline extends EngineArchive {
 
   /** Drop the cached pages — a History visit starts from the store's present; `list` narrows it. */
   resetStorePages(list?: string): void {
+    if (list === undefined || list === "all") this.storePageEpoch += 1;
     this.storePages.clear(list);
   }
 

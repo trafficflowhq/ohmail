@@ -18,6 +18,10 @@
     white-space: nowrap;
   }
 
+  .oh-draft-full-context {
+    display: contents;
+  }
+
   .oh-draft-control {
     --oh-draft-pad: 0 var(--s3) 0 var(--s2);
     --oh-draft-pad-phone: 0 10px 0 6px;
@@ -124,6 +128,17 @@
 
     .oh-sheet[data-writing-keyboard] .oh-draft-control > :is(.oh-draft-word, .oh-draft-short) {
       display: none;
+    }
+
+    .oh-sheet[data-writing-keyboard] .oh-draft-full-context {
+      display: block;
+      flex: 1 1 0;
+      min-inline-size: 0;
+    }
+
+    .oh-sheet[data-writing-keyboard] .oh-draft-full-context > .oh-button {
+      inline-size: 100%;
+      white-space: normal;
     }
   }
 

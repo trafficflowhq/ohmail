@@ -78,6 +78,19 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.8" date="2026-11-26">
+      <description>
+        <ul>
+          <li>AI requests mask punctuated passphrases</li>
+          <li>Calendar replies and sync recover after interrupted checks</li>
+          <li>Sign-in and device sign-out are more reliable</li>
+          <li>Faster navigation in large mailboxes</li>
+          <li>Phone reader, subscription and draft fixes</li>
+          <li>Hosted alerts measure the serving API</li>
+          <li>First mail import reports when mail is still missing</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.7" date="2026-11-25">
       <description>
         <ul>
@@ -148,19 +161,6 @@
       <description>
         <ul>
           <li>Check both iCloud sign-in details when connecting a calendar</li>
-        </ul>
-      </description>
-    </release>
-    <release version="2.0.3" date="2026-11-24">
-      <description>
-        <ul>
-          <li>Draft replies and get AI suggestions for any mail</li>
-          <li>Google Play offers the Android app on devices without a portrait screen</li>
-          <li>Connecting a calendar shows what is happening</li>
-          <li>The desktop apps for Linux and macOS are built again</li>
-          <li>Letters keep their written line breaks</li>
-          <li>The reader holds your place as pictures load</li>
-          <li>Screener sender details fit better on phones</li>
         </ul>
       </description>
     </release>

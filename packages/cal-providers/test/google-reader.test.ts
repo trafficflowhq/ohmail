@@ -92,7 +92,7 @@ describe("Google: the calendars and the sign-in", () => {
   it("lists the recorded calendar with its name, colour, zone and that it may be written", async () => {
     const { reader, sent } = readerOver({ [CALENDARS]: { json: recorded("calendar-list-writable") } });
     const answer = await reader.listCalendars(signedIn(), never);
-    expect(answer).toEqual({ ok: true, value: [{ id: "cal-1", name: "google-account@bench.example", color: "#9fe1e7", writable: true, owned: true, byToken: true, zone: ZURICH }] });
+    expect(answer).toEqual({ ok: true, principal: null, value: [{ id: "cal-1", name: "google-account@bench.example", color: "#9fe1e7", writable: true, owned: true, byToken: true, zone: ZURICH }] });
     expect(sent).toEqual([{ url: CALENDARS, method: "GET", token: "t1", tokenGoesTo: { "www.googleapis.com": true, "oauth2.googleapis.com": false, "accounts.google.com": false, "evil.example": false } }]);
   });
 
@@ -104,6 +104,7 @@ describe("Google: the calendars and the sign-in", () => {
     const answer = await reader.listCalendars(signedIn(), never);
     expect(answer).toEqual({
       ok: true,
+      principal: null,
       value: [
         { id: "a", name: "Mine", color: null, writable: true, owned: true, byToken: true, zone: null },
         { id: "b", name: "Team", color: "#16a765", writable: false, byToken: true, zone: null },
@@ -247,7 +248,7 @@ describe("Google: what a calendar holds", () => {
   it("keeps a calendar's id inside its one segment of the path", async () => {
     const id = "team/../../users?x=1#y@group.calendar.example";
     const url = `${BASE}/calendars/team%2F..%2F..%2Fusers%3Fx%3D1%23y%40group.calendar.example/events?singleEvents=false&showDeleted=true&maxResults=250`;
-    const { reader, sent } = readerOver({ [url]: { json: { items: [] } } });
+    const { reader, sent } = readerOver({ [url]: { json: { items: [], nextSyncToken: "sync-2" } } });
     expect((await reader.readChanges(signedIn(), { id }, null, firstPage, never)).ok).toBe(true);
     expect(sent.map((s) => s.url)).toEqual([url]);
   });
@@ -255,7 +256,7 @@ describe("Google: what a calendar holds", () => {
   it("works a clock time out in the event's own zone, whatever offset Google wrote the moment with", async () => {
     const abroad = { id: "ny-1", status: "confirmed", iCalUID: "ny-1@bench.example", updated: "2026-11-13T12:00:00.000Z", start: { dateTime: "2026-11-19T15:00:00+01:00", timeZone: "America/New_York" }, end: { dateTime: "2026-11-19T16:00:00+01:00", timeZone: "America/New_York" } };
     const nowhere = { ...abroad, id: "x-1", iCalUID: "x-1@bench.example", start: { dateTime: "2026-11-19T15:00:00+01:00", timeZone: "Mars/Olympus_Mons" }, end: { dateTime: "2026-11-19T14:30:00Z" } };
-    const { reader } = readerOver({ [EVENTS]: { json: { items: [abroad, nowhere] } } });
+    const { reader } = readerOver({ [EVENTS]: { json: { items: [abroad, nowhere], nextSyncToken: "sync-2" } } });
     const answer = await reader.readChanges(signedIn(), { id: "cal-1" }, null, firstPage, never);
     if (!answer.ok) throw new Error(`refused: ${answer.reason}`);
     const [a, b] = upserts(answer.value.items).map((i) => i.event) as [CalEvent, CalEvent];
@@ -285,7 +286,7 @@ describe("Google: what a calendar holds", () => {
         { email: "not an address", responseStatus: "accepted" },
       ],
     };
-    const { reader } = readerOver({ [EVENTS]: { json: { items: [invitation] } } });
+    const { reader } = readerOver({ [EVENTS]: { json: { items: [invitation], nextSyncToken: "sync-2" } } });
     const answer = await reader.readChanges(signedIn(), { id: "cal-1" }, null, firstPage, never);
     if (!answer.ok) throw new Error(`refused: ${answer.reason}`);
     const [item] = upserts(answer.value.items);
@@ -317,7 +318,7 @@ describe("Google: what is gone", () => {
   });
 
   it("reports a cancelled day of a series under the series' own UID, read off the same page where the series stands on it", async () => {
-    const { reader, sent } = readerOver({ [EVENTS]: { json: { items: [master, cancelledDay] } } });
+    const { reader, sent } = readerOver({ [EVENTS]: { json: { items: [master, cancelledDay], nextSyncToken: "sync-2" } } });
     const answer = await reader.readChanges(signedIn(), { id: "cal-1" }, null, firstPage, never);
     if (!answer.ok) throw new Error(`refused: ${answer.reason}`);
     expect(answer.value.items[1]).toEqual({ kind: "cancelled_occurrence", uid: "evt-3@bench.example", originalStart: zoned(wall(2026, 11, 24, 18), ZURICH) });
@@ -362,7 +363,7 @@ describe("Google: what is left out, and said", () => {
       "no record at all",
       good,
     ];
-    const { reader } = readerOver({ [EVENTS]: { json: { items } } });
+    const { reader } = readerOver({ [EVENTS]: { json: { items, nextSyncToken: "sync-2" } } });
     const answer = await reader.readChanges(signedIn(), { id: "cal-1" }, null, firstPage, never);
     if (!answer.ok) throw new Error(`refused: ${answer.reason}`);
     expect(answer.value.left).toEqual([
@@ -385,7 +386,7 @@ describe("Google: what is left out, and said", () => {
     const imported = `_${"imported".repeat(12)}`;
     const atTheCeiling = "c".repeat(1024);
     const items = [{ ...good, id: imported, iCalUID: "u".repeat(1025) }, { ...good, id: atTheCeiling, start: undefined }, good];
-    const { reader } = readerOver({ [EVENTS]: { json: { items } } });
+    const { reader } = readerOver({ [EVENTS]: { json: { items, nextSyncToken: "sync-2" } } });
     const answer = await reader.readChanges(signedIn(), { id: "cal-1" }, null, firstPage, never);
     if (!answer.ok) throw new Error(`refused: ${answer.reason}`);
     expect(answer.value.mode).toBe("whole");
@@ -395,7 +396,7 @@ describe("Google: what is left out, and said", () => {
   it("answers, and does not fail, for an id or a token that is half a character and so can stand in no address", async () => {
     // JSON may carry half of a two-part character; no address can.
     const HALF = "\ud800";
-    const records = { items: [{ ...good, id: `bad-${HALF}` }, { id: "day-1", status: "cancelled", recurringEventId: `series-${HALF}`, originalStartTime: { date: "2026-11-21" } }, good] };
+    const records = { items: [{ ...good, id: `bad-${HALF}` }, { id: "day-1", status: "cancelled", recurringEventId: `series-${HALF}`, originalStartTime: { date: "2026-11-21" } }, good], nextSyncToken: "sync-2" };
     const { reader, sent } = readerOver({ [EVENTS]: { json: records }, [CALENDARS]: { json: { items: [], nextPageToken: HALF } } });
     const answer = await reader.readChanges(signedIn(), { id: "cal-1" }, null, firstPage, never);
     if (!answer.ok) throw new Error(`refused: ${answer.reason}`);
@@ -411,7 +412,7 @@ describe("Google: what is left out, and said", () => {
 
   it("takes only a repeat's own lines from Google's list of them: another line adds nobody and changes nothing", async () => {
     const planted = { ...good, id: "r-1", summary: "Market day", recurrence: ["ATTENDEE:mailto:someone@bench.example", "SUMMARY:another name", "RRULE:FREQ=YEARLY", "EXDATE;VALUE=DATE:20271121"] };
-    const { reader } = readerOver({ [EVENTS]: { json: { items: [planted] } } });
+    const { reader } = readerOver({ [EVENTS]: { json: { items: [planted], nextSyncToken: "sync-2" } } });
     const answer = await reader.readChanges(signedIn(), { id: "cal-1" }, null, firstPage, never);
     if (!answer.ok) throw new Error(`refused: ${answer.reason}`);
     const e = upserts(answer.value.items)[0]!.event;
@@ -460,7 +461,13 @@ describe("Google: the answers that are no page", () => {
     ["busy, with a wait", { status: 503, headers: { "retry-after": "20" }, text: "" }, refusal("unavailable", 20_000)],
     ["a page that is no JSON", { status: 200, text: "<html>Sign in</html>" }, refusal("unreadable")],
     ["a page whose records are no list", { status: 200, json: { items: { 0: {} } } }, refusal("unreadable")],
-    ["more records than were asked for", { status: 200, json: { items: Array.from({ length: 251 }, () => ({})) } }, refusal("too_large")],
+    ["an empty object", { json: {} }, refusal("unreadable")],
+    ["a terminal page with no sync token", { json: { items: [] } }, refusal("unreadable")],
+    ["a page with both tokens", { json: { nextPageToken: "page-2", nextSyncToken: "sync-2" } }, refusal("unreadable")],
+    ["a page with a blank token", { json: { nextSyncToken: " " } }, refusal("unreadable")],
+    ["a page of another collection", { json: { kind: "calendar#calendarList", nextSyncToken: "sync-2" } }, refusal("unreadable")],
+    ["a page whose records are null", { json: { items: null, nextSyncToken: "sync-2" } }, refusal("unreadable")],
+    ["more records than were asked for", { status: 200, json: { nextSyncToken: "sync-2", items: Array.from({ length: 251 }, () => ({})) } }, refusal("too_large")],
     ["a next page with no name", { status: 200, json: { items: [], nextPageToken: "" } }, refusal("unreadable")],
     ["a token that is no text", { status: 200, json: { items: [], nextSyncToken: 7 } }, refusal("unreadable")],
     ["a request that never left", { refused: "timeout" }, refusal("timeout")],

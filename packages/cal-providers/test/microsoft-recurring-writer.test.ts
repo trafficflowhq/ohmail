@@ -1,7 +1,7 @@
 import { instant, intlZones, parseRRule, plainDate, wall, zoned } from "@ohmail/cal-core";
 import { describe, expect, it } from "vitest";
 import { makeWriter } from "../src/microsoft/index.js";
-import type { Connection, EventDraft, SeriesContinuation, WriteTarget } from "../src/port.js";
+import type { AnswerDispatch, Connection, EventDraft, SeriesContinuation, WriteTarget } from "../src/port.js";
 import type { HttpPort } from "../src/request/index.js";
 
 const signal = new AbortController().signal;
@@ -107,6 +107,7 @@ function graph(respond: (method: string, path: string) => object | number | "tim
   const calls: { method: string; path: string; tag: string | null; body: unknown }[] = [];
   const http: HttpPort = {
     async request(url, request) {
+      await request.beforeDispatch?.();
       const path = new URL(url).pathname.replace(/^\/v1\.0/, "");
       const { method } = request;
       calls.push({
@@ -148,6 +149,28 @@ function graph(respond: (method: string, path: string) => object | number | "tim
 }
 
 describe("Microsoft recurring event edits", () => {
+  it("requires the exact master ID before accepting its existing reply", async () => {
+    const fixture = graph(() => ({
+      ...master,
+      id: "different-master",
+      isOrganizer: false,
+      responseStatus: { response: "accepted" },
+    }));
+    expect(
+      await fixture.writer.answer(
+        connection,
+        cal,
+        { ...target, occurrence: null },
+        {
+          as: audience.guests[0]!,
+          reply: "ACCEPTED",
+        },
+        signal,
+      ),
+    ).toMatchObject({ ok: false, reason: "version_stale" });
+    expect(fixture.writes()).toEqual([]);
+  });
+
   it("answers only the selected occurrence of a meeting", async () => {
     const meeting = { ...master, isOrganizer: false };
     const day = { ...occurrence, isOrganizer: false };
@@ -190,6 +213,73 @@ describe("Microsoft recurring event edits", () => {
     expect(result.ok).toBe(true);
     expect(fixture.writes()).toMatchObject([{ method: "POST", path: "/me/events/some-day/accept" }]);
   });
+
+  it.each([
+    ["ACCEPTED", "accepted", "accept", "ACCEPTED"],
+    ["TENTATIVE", "tentativelyAccepted", "tentativelyAccept", "TENTATIVE"],
+    ["DECLINED", "declined", "decline", "DECLINED"],
+  ] as const)(
+    "keeps a quarterly invitation's %s pending until Graph shows the answer",
+    async (reply, response, action, selfResponse) => {
+      const start = { dateTime: "2026-10-06T07:30:00", timeZone: "UTC" };
+      const end = { dateTime: "2026-10-06T08:30:00", timeZone: "UTC" };
+      const meeting = {
+        ...master,
+        isOrganizer: false,
+        changeKey: "master-2",
+        "@odata.etag": 'W/"master-2"',
+        start,
+        end,
+        recurrence: {
+          pattern: { type: "relativeMonthly", interval: 3, index: "first", daysOfWeek: ["tuesday"] },
+          range: { ...range, startDate: "2026-10-06" },
+        },
+      };
+      const day = {
+        ...occurrence,
+        isOrganizer: false,
+        originalStart: "2026-10-06T07:30:00Z",
+        start,
+        end,
+      };
+      let visible = false;
+      const fixture = graph((method, path) => {
+        if (method === "POST") return 202;
+        const currentDay = {
+          ...day,
+          type: visible ? "exception" : "occurrence",
+          responseStatus: { response: visible ? response : "notResponded" },
+        };
+        if (path.endsWith("/instances")) return { value: [currentDay] };
+        return path.endsWith("/master") ? meeting : currentDay;
+      });
+      const write = (acceptedAnswerId?: string) =>
+        fixture.writer.answer(
+          connection,
+          cal,
+          { ...target, occurrence: instant(Date.UTC(2026, 9, 6, 7, 30)) },
+          {
+            as: audience.guests[0]!,
+            reply,
+            ...(acceptedAnswerId && {
+              dispatch: { phase: "accepted", id: acceptedAnswerId, source: target.id },
+            }),
+          },
+          signal,
+        );
+      const pending = { ok: true, items: [], answerPending: true };
+      expect(await write()).toEqual(pending);
+      expect(await write(day.id)).toEqual(pending);
+      visible = true;
+      expect(await write(day.id)).toMatchObject({
+        ok: true,
+        items: [{ id: day.id, selfResponse, event: { recurrenceId: expect.any(Object) } }],
+      });
+      expect(fixture.writes()).toMatchObject([
+        { method: "POST", path: `/me/events/some-day/${action}`, body: { sendResponse: true } },
+      ]);
+    },
+  );
 
   it("still refuses an answer for a day that moved at Microsoft since it was shown", async () => {
     const meeting = { ...master, isOrganizer: false };
@@ -242,6 +332,44 @@ describe("Microsoft recurring event edits", () => {
     expect(await write()).toMatchObject({ ok: false, reason: "timeout" });
     expect(await write(true)).toMatchObject({ ok: true });
     expect(fixture.writes()).toHaveLength(1);
+  });
+
+  it("checks the recorded occurrence after the worker cannot save Graph's acknowledgement", async () => {
+    const day = { ...occurrence, isOrganizer: false };
+    let current = "notResponded";
+    let saved: AnswerDispatch = { phase: "ready" };
+    const fixture = graph((method, path) => {
+      if (method === "POST") return 202;
+      const record = { ...day, responseStatus: { response: current } };
+      if (path.endsWith("/instances")) return { value: [record] };
+      return path.endsWith("/master") ? { ...master, isOrganizer: false } : record;
+    });
+    const req = { as: audience.guests[0]!, reply: "ACCEPTED" as const };
+    const first = fixture.writer.answer(
+      connection,
+      cal,
+      target,
+      {
+        ...req,
+        dispatch: saved,
+        rememberDispatch: async (dispatch) => {
+          if (dispatch.phase === "accepted")
+            throw new Error("worker stopped before saving the acknowledgement");
+          saved = dispatch;
+        },
+      },
+      signal,
+    );
+    await expect(first).rejects.toThrow("worker stopped before saving the acknowledgement");
+    expect(saved).toEqual({ phase: "sending", id: day.id, source: master.id });
+    const check = () =>
+      fixture.writer.answer(connection, cal, target, { ...req, dispatch: saved, retry: true }, signal);
+    expect(await check()).toMatchObject({ ok: true, answerPending: true });
+    current = "accepted";
+    expect(await check()).toMatchObject({ ok: true, items: [{ id: day.id, selfResponse: "ACCEPTED" }] });
+    expect(fixture.writes()).toMatchObject([
+      { path: "/me/events/some-day/accept", body: { sendResponse: true } },
+    ]);
   });
 
   it("refuses to use a Microsoft event with attachments for a portable move", async () => {

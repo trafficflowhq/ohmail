@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { is } from "drizzle-orm";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import { PgTable, getTableConfig } from "drizzle-orm/pg-core";
 import { WRAPPED_SECRET_SITES } from "../src/kek-rewrap.js";
 import * as mailSchema from "../src/schema-mail.js";
 import * as cloudSchema from "../src/schema-cloud.js";
-import { MAP_2_0, SEALED_SITES, accountTablesOf, tablesOf } from "../src/transition/index.js";
+import { MAP_2_0, SEALED_SITES, accountTablesOf, readWindow, tablesOf } from "../src/transition/index.js";
+import { CLOUD_JOURNAL, MAIL_JOURNAL } from "../src/journal-specs.js";
 
 /**
  * THE TRANSITION'S MAP IS THE SCHEMA'S. The transition runs in a desktop's engine, which does not
@@ -47,7 +49,20 @@ describe("the transition's map", () => {
     const empty = tablesOf("server", "window").filter((t) => formula(t) === "empty");
     expect(empty).toEqual(["account_closures", "cal_alarms", "cal_attendees", "cal_calendars", "cal_connections", "cal_credentials",
       "cal_events", "cal_links", "cal_push_channels", "cal_settings", "cal_suggestions", "cal_writes", "message_invitations"]);
-    expect(tablesOf("server").filter(t => !tablesOf("server", "window").includes(t))).toEqual(["screener_learning"]);
+    const journals = { mail: MAIL_JOURNAL, cloud: CLOUD_JOURNAL };
+    const createdLater = new Set<string>();
+    for (const kind of ["mail", "cloud"] as const) {
+      const last = readWindow(kind).at(-1)!.when;
+      const after = readMigrationFiles({ migrationsFolder: journals[kind].dir })
+        .filter((migration) => migration.folderMillis > last);
+      for (const sql of after.flatMap((migration) => migration.sql)) {
+        for (const match of sql.matchAll(/^\s*CREATE TABLE (?:IF NOT EXISTS )?"([^"]+)"/gim)) {
+          createdLater.add(match[1]!);
+        }
+      }
+    }
+    const windowTables = new Set(tablesOf("server", "window"));
+    expect(tablesOf("server").filter((table) => !windowTables.has(table))).toEqual([...createdLater].sort());
     expect(formula("screener_learning")).toBe("empty");
   });
 });

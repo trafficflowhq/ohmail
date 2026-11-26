@@ -103,6 +103,7 @@ export function fakeMail(
   const held = { id: null as string | null, said: [] as string[] };
   const engine = {
     read: () => reader,
+    store: reader,
     storePageRowById: () => undefined,
     verbRead: () => reader,
     /* Nothing of this world waits on the outbox. */

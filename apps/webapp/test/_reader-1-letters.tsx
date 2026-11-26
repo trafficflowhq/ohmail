@@ -49,8 +49,14 @@ export { letter };
 
 /** The reader's words over the frame's and the places', as the reader's own cases compose them. */
 export const LETTER_WORDS: Readonly<Record<"en" | "de", Messages>> = {
-  en: { ...FRAME_WORDS.en, ...sharedEn, ...ohboxEn, ...readerEn, attachmentPreview: allEn.attachmentPreview, screening: allEn.screening, screener: allEn.screener } as Messages,
-  de: { ...FRAME_WORDS.de, ...sharedDe, ...ohboxDe, ...readerDe, attachmentPreview: allDe.attachmentPreview, screening: allDe.screening, screener: allDe.screener } as Messages,
+  en: {
+    ...FRAME_WORDS.en, ...sharedEn, ...ohboxEn, ...readerEn, attachmentPreview: allEn.attachmentPreview,
+    screening: allEn.screening, screener: allEn.screener, event: allEn.event,
+  } as Messages,
+  de: {
+    ...FRAME_WORDS.de, ...sharedDe, ...ohboxDe, ...readerDe, attachmentPreview: allDe.attachmentPreview,
+    screening: allDe.screening, screener: allDe.screener, event: allDe.event,
+  } as Messages,
 };
 
 /** The reader's own catalogue, for a case that reads the seated part's sentence by its key. */

@@ -50,7 +50,7 @@
       "tellsDelete": "{title} ist abgesagt",
       "cancellationMessage": "Der Termin wurde abgesagt",
       "moveRestriction": {
-        "account": "Nur beschreibbare Kalender im selben Konto können den Termin übernehmen",
+        "account": "Nur beschreibbare Kalender im selben Account können den Termin übernehmen",
         "provider": "Dieser Anbieter kann den Termin nicht in einen anderen Kalender verschieben",
         "event": "Dieser Termin kann nicht in einen anderen Kalender verschoben werden",
         "saveFirst": "Speichere deine Änderungen, bevor du den Termin verschiebst"

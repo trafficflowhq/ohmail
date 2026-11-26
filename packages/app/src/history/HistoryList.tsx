@@ -202,7 +202,7 @@ function useMonthScroll(
         )
       : box.querySelector<HTMLElement>(`[role=option][data-index="${target.slot}"]`);
     if (!row) {
-      move(box, windowed.window.offsetOf(target.slot));
+      windowed.window.scrollTo(target.slot);
       return;
     }
     const drift = row.getBoundingClientRect().top - box.getBoundingClientRect().top;
@@ -247,7 +247,7 @@ function useMonthScroll(
     pin.current = { slot: month.start, keyboard };
     if (windowed) {
       windowed.jump(month.start);
-      move(box, windowed.window.offsetOf(month.start));
+      windowed.window.scrollTo(month.start);
     } else {
       const row = box.querySelectorAll<HTMLElement>("[role=option][data-id]")[month.start];
       row?.scrollIntoView({ block: "start" });

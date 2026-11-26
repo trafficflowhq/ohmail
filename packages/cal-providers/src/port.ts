@@ -12,7 +12,7 @@
  * precondition of a change, its `text` the object a change is written back from, a calendar says
  * whether it is `writable`, and a checked sign-in names the `principal`.
  */
-import type { CalEvent, CalendarRefusal, EventTime, Instant, ReadRefusal, RRule } from "@ohmail/cal-core";
+import type { CalEvent, CalendarRefusal, EventTime, Instant, PartStat, ReadRefusal, RRule } from "@ohmail/cal-core";
 import type { ProviderRefusal, WriteRefusal } from "./refusals.js";
 
 /** The provider's word, as a connection is stored with it. */
@@ -79,6 +79,8 @@ export interface PageRequest {
   readonly limit: number;
   /** The `more` cursor of the page before, or `null` for the first. */
   readonly cursor: string | null;
+  /** Optional identity of the current reading. Provider caches tied to it are discarded when the reading ends. */
+  readonly scope?: object;
   /** Microsoft only: the days asked for. A wider window is a new reading from no token. */
   readonly window: { readonly start: Instant; readonly end: Instant } | null;
 }
@@ -91,8 +93,10 @@ export type ChangeItem =
    * `version` and `text`. `text` is that object whole, as the calendar format writes it, for CalDAV
    * and a subscription; `null` for Google and Microsoft, which store no calendar text.
    * `audienceIncomplete` marks a reading with omitted or unrepresentable participants.
+   * `resourceIncomplete` marks an object whose text yielded only some of its calendar components.
+   * `selfResponse` is the calendar owner's response, separate from the guest list.
    */
-  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true; readonly portableCopy?: true; readonly googleDefaultEvent?: true; readonly selfAttendee?: string | null }
+  | { readonly kind: "upsert"; readonly id: string; readonly version: string; readonly event: CalEvent; readonly text: string | null; readonly audienceIncomplete?: true; readonly resourceIncomplete?: true; readonly portableCopy?: true; readonly googleDefaultEvent?: true; readonly selfAttendee?: string | null; readonly selfResponse?: PartStat }
   /** The stored object of this id is no longer there. */
   | { readonly kind: "gone"; readonly id: string }
   /** One day of a series was cancelled, and the provider says so by a record of its own. */
@@ -118,7 +122,7 @@ export interface ChangePage {
    * Microsoft only: the days of the window it was asked for, as identities. An expanded day is
    * never an item and never stored; the caller compares these with what its own expansion gives.
    */
-  readonly expanded: { readonly window: { readonly start: Instant; readonly end: Instant }; readonly seen: readonly { readonly uid: string; readonly originalStart: EventTime }[] } | null;
+  readonly expanded: { readonly window: { readonly start: Instant; readonly end: Instant }; readonly seen: readonly { readonly uid: string; readonly originalStart: EventTime; readonly providerId?: string }[] } | null;
   /** The least time before the next ask, where the answer names one (a subscription's own wish, inside the floor and the ceiling); `null` otherwise. */
   readonly refreshMs: number | null;
 }
@@ -128,11 +132,29 @@ export type Answer<T> =
   /** `retryAfterMs`: how long the provider asked to be left alone, at most a day. `read`: the calendar reader's word, when the refusal is `unreadable` or `too_large` because of the text. */
   | { readonly ok: false; readonly reason: ProviderRefusal; readonly retryAfterMs: number | null; readonly read?: ReadRefusal };
 
+export type VerifiedEvent =
+  | { readonly kind: "missing" }
+  | { readonly kind: "outside" }
+  | { readonly kind: "reread" }
+  | { readonly kind: "current"; readonly item: Extract<ChangeItem, { kind: "upsert" }> | null; readonly reread?: true };
+
+export interface EventVerification {
+  readonly id: string;
+  readonly items: readonly Extract<ChangeItem, { kind: "upsert" }>[];
+  readonly held: { readonly version: string | null; readonly answer: string | null } | undefined;
+  readonly window: { readonly start: number; readonly end: number } | null;
+}
+
 export interface CalendarReader {
+  /** Resolve conflicting snapshots against the current copy. A refusal leaves the reading's token where it was. */
+  verifySelfResponse?(
+    c: Connection, cal: CalendarRef, target: EventVerification, signal: AbortSignal,
+  ): Promise<Answer<VerifiedEvent>>;
   readonly provider: ProviderWord;
   /** Does the sign-in open? `principal` is where the provider says the person's own resources begin (CalDAV), `addresses` the calendar addresses it lists for them. */
   checkSignIn(c: Connection, signal: AbortSignal): Promise<Answer<{ readonly principal: string | null; readonly addresses: readonly string[] }>>;
-  listCalendars(c: Connection, signal: AbortSignal): Promise<Answer<readonly CalendarInfo[]>>;
+  /** OAuth listings report the verified mailbox address, or null if the listing cannot identify it. */
+  listCalendars(c: Connection, signal: AbortSignal): Promise<Answer<readonly CalendarInfo[]> & { readonly principal?: string | null }>;
   /** One page of what changed since `since`, or from the beginning when it is `null`. */
   readChanges(c: Connection, cal: CalendarRef, since: ChangeToken | null, page: PageRequest, signal: AbortSignal): Promise<Answer<ChangePage>>;
 }
@@ -272,16 +294,35 @@ export interface WriteTarget {
 export type WriteAnswer =
   /**
    * `written`: the write's own success: the provider took this very request (its 2xx), and `items`
-   * are the object as that request left it (at CalDAV: the answer's tag absent, or the read-back's
-   * own). Absent where the write was found done (a refused precondition and a compare, an object
-   * already gone or already so): the writes waiting behind it are then never re-based onto `items`,
-   * which may be someone else's newer copy.
+   * are the object as that request left it. CalDAV needs a matching strong tag or a strong
+   * read-back tag on the same content. Without that evidence, followers keep the version they
+   * were recorded on, even when this write succeeded.
    */
-  | { readonly ok: true; readonly items: readonly ChangeItem[]; readonly written?: true }
+  | { readonly ok: true; readonly items: readonly ChangeItem[]; readonly written?: true; readonly answerPending?: never }
+  /** An occurrence answer was accepted. Further attempts only read the selected instance. */
+  | { readonly ok: true; readonly items: readonly []; readonly answerPending: true; readonly written?: never }
   | { readonly ok: false; readonly reason: ProviderRefusal | WriteRefusal; readonly retryAfterMs: number | null };
 
 /** An invitee's own answer, as the calendar format words it. */
 export type WriteReply = "ACCEPTED" | "TENTATIVE" | "DECLINED";
+
+/** A notification may have left once the selected event is recorded in the queue. */
+export type AnswerDispatch =
+  | { readonly phase: "ready" }
+  | { readonly phase: "sending" | "accepted"; readonly id: string; readonly source: string; readonly removed?: true };
+
+export interface WriteAnswerRequest {
+  readonly as: string;
+  readonly reply: WriteReply;
+  readonly retry?: true;
+  readonly dispatch?: AnswerDispatch;
+  /** Report failed provider checks separately from a successfully observed pending answer. */
+  readonly observeReply?: true;
+  /** Commits the dispatch under the current claim before the provider can receive it. */
+  readonly rememberDispatch?: (
+    dispatch: AnswerDispatch, sent?: Extract<AnswerDispatch, { id: string }>,
+  ) => Promise<void>;
+}
 
 /**
  * The series the days of a series become from one of its days on (the second half of a press on a
@@ -319,7 +360,7 @@ export interface CalendarWriter {
   change(c: Connection, cal: CalendarRef, target: WriteTarget, change: EventChange, signal: AbortSignal): Promise<WriteAnswer>;
   remove(c: Connection, cal: CalendarRef, target: WriteTarget, signal: AbortSignal): Promise<WriteAnswer>;
   /** The account's own answer as an invitee (`as`: its address on the event). */
-  answer(c: Connection, cal: CalendarRef, target: WriteTarget, req: { readonly as: string; readonly reply: WriteReply; readonly retry?: true }, signal: AbortSignal): Promise<WriteAnswer>;
+  answer(c: Connection, cal: CalendarRef, target: WriteTarget, req: WriteAnswerRequest, signal: AbortSignal): Promise<WriteAnswer>;
   /**
    * The series `target.id` names ends before its day `target.occurrence` (that day and the days after
    * it go to a series of their own, or are let go): its repeat ends there, and the changed days it

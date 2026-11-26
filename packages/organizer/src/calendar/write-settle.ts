@@ -5,12 +5,12 @@
  * account and the attempt that claimed it, and a close that finds no such row is a fault, never a
  * quiet nothing.
  */
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
 import type { ChangeItem, ProviderWord } from "@ohmail/cal-providers";
 import { calCalendars, calEvents, calWrites, recordCalendarChanges, type CalendarChange, type LedgerTx, type Tx } from "@trafficflow/db";
-import { parseWritePayload } from "@trafficflow/db/calendar";
+import { calendarActFingerprint, parseWritePayload } from "@trafficflow/db/calendar";
 import {
-  ObjectRefused, applyChunk, applyChunks, chunksOf, objectWrite, planItems, type ApplyContext, type Work,
+  ObjectRefused, StaleOutlookReply, applyChunk, applyChunks, chunksOf, objectWrite, planItems, type ApplyContext, type Work,
 } from "./apply.js";
 import { inConnection, type ConnectionDb, type ConnectionKey } from "./connection.js";
 import { rowsOfObject, type MapContext, type Upsert } from "./map.js";
@@ -33,8 +33,10 @@ export interface ClaimedWrite {
   readonly series?: boolean;
   readonly copied?: boolean;
   readonly toCalendarId: string | null;
-  /** What its row keeps once applied, in place of its act (`appliedPayloadOf`): at most the day a series' end ended it at. */
+  /** The press fingerprint and optional series end retained after settlement. */
   readonly kept: Readonly<Record<string, string>>;
+  /** A provider observation can close a pending reply or an unchanged unconfirmed receipt. */
+  readonly observedReply?: { readonly state: "pending" | "refused"; readonly revision: string };
 }
 
 export interface SettleContext {
@@ -45,9 +47,13 @@ export interface SettleContext {
 }
 
 /** The closing statement's guard: this row, this account, the attempt that claimed it, still owed. */
-const claimed = (w: ClaimedWrite, accountId: string) => and(
-  eq(calWrites.id, w.id), eq(calWrites.accountId, accountId), eq(calWrites.attempts, w.attempts), eq(calWrites.state, "pending"),
+export const claimed = (w: ClaimedWrite, accountId: string) => and(
+  eq(calWrites.id, w.id), eq(calWrites.accountId, accountId), eq(calWrites.attempts, w.attempts),
+  eq(calWrites.state, w.observedReply?.state ?? "pending"),
+  w.observedReply && sql`${calWrites}.xmin::text = ${w.observedReply.revision}`,
 );
+
+class ReplyChanged extends Error {}
 
 /** Exactly one row, or a fault of this program (a statement no policy admits changes no row, and says nothing). */
 function one(rows: readonly unknown[], what: string): void {
@@ -59,21 +65,27 @@ function one(rows: readonly unknown[], what: string): void {
  * write. Of any event: the second part of a press on a day and the days after it is the new
  * series', and waits for the first, the old series' end.
  */
-async function followersOf(tx: Tx, accountId: string, _eventId: string | null, headId: string): Promise<string[]> {
+async function followersOf(tx: Tx, accountId: string, w: ClaimedWrite, keepNewAnswer: boolean): Promise<string[]> {
   const open = await tx.select({ id: calWrites.id, payload: calWrites.payload }).from(calWrites)
     .where(and(eq(calWrites.accountId, accountId), eq(calWrites.state, "pending")));
-  const chain = new Set([headId]);
+  const chain = new Set([w.id]);
   for (let grew = true; grew;) {
     grew = false;
     for (const r of open) {
-      const after = parseWritePayload(r.payload)?.after ?? null;
+      const payload = parseWritePayload(r.payload);
+      const after = payload?.after ?? null;
+      if (keepNewAnswer && after === w.id && payload?.act.kind === "calendar_event_answer" &&
+        payload.act.eventId === w.eventId) {
+        const at = payload.act.scope.kind === "occurrence" ? payload.act.scope.at : "";
+        if (payload.act.answer !== w.kept.answer || at !== w.kept.answerAt) continue;
+      }
       if (after !== null && chain.has(after) && !chain.has(r.id)) {
         chain.add(r.id);
         grew = true;
       }
     }
   }
-  chain.delete(headId);
+  chain.delete(w.id);
   return [...chain];
 }
 
@@ -86,10 +98,10 @@ const eventChange = (changes: CalendarChange[], eventId: string | null): void =>
  * transaction: one change for each event whose mark changed, the head's and its followers' (the
  * second half of a press is the new series' record's).
  */
-export async function refuseInTx(tx: Tx, accountId: string, w: ClaimedWrite, word: WriteWord | MoveRefusal | "expired" | "earlier_refused", changes: CalendarChange[]): Promise<void> {
+export async function refuseInTx(tx: Tx, accountId: string, w: ClaimedWrite, word: WriteWord | MoveRefusal | "expired" | "earlier_refused" | "answer_unconfirmed", changes: CalendarChange[]): Promise<void> {
   one(await tx.update(calWrites).set({ state: "refused", refusal: word, nextAttemptAt: null, updatedAt: sql`now()` })
     .where(claimed(w, accountId)).returning({ id: calWrites.id }), "refusal");
-  const followers = await followersOf(tx, accountId, w.eventId, w.id);
+  const followers = await followersOf(tx, accountId, w, word === "answer_unconfirmed" && w.kept.answer !== undefined);
   eventChange(changes, w.eventId);
   if (followers.length > 0) {
     const refused = await tx.update(calWrites).set({ state: "refused", refusal: "earlier_refused", nextAttemptAt: null, updatedAt: sql`now()` })
@@ -123,7 +135,7 @@ export async function settleRefused(ctx: SettleContext, w: ClaimedWrite, word: W
   return done === "gone" ? "gone" : undefined;
 }
 
-/** The write waits: owed again at `waitMs` from now, the attempt kept. */
+/** The write waits until the next attempt. */
 export async function settleLater(ctx: SettleContext, w: ClaimedWrite, waitMs: number): Promise<Date | "gone"> {
   const done = await inConnection(ctx.db, ctx.key, async ({ tx }) => {
     const [row] = await tx.update(calWrites)
@@ -164,10 +176,39 @@ function versionIn(items: readonly ChangeItem[], providerId: string | null): str
   return own === undefined || own.version === "" ? null : own.version;
 }
 
+/** A confirmed newer Outlook choice supersedes old receipts for the same scope. */
+async function archiveOutlookReplies(tx: Tx, accountId: string, w: ClaimedWrite) {
+  const at = w.kept.answerAt;
+  if (w.eventId === null || at === undefined) return;
+  const prior = await tx.select({ id: calWrites.id, payload: calWrites.payload, refusal: calWrites.refusal }).from(calWrites).where(and(
+    eq(calWrites.accountId, accountId), eq(calWrites.calendarId, w.calendarId), eq(calWrites.eventId, w.eventId),
+    eq(calWrites.op, "answer"),
+    sql`(${calWrites.createdAt}, ${calWrites.id}) < (select confirmed.created_at, confirmed.id
+      from ${calWrites} confirmed where confirmed.id = ${w.id} and confirmed.account_id = ${accountId})`,
+    or(at === "" ? eq(calWrites.state, "pending") : undefined,
+    and(inArray(calWrites.state, ["pending", "refused"]), or(eq(calWrites.refusal, "answer_unconfirmed"),
+      sql`${calWrites.payload} #>> '{answerDispatch,phase}' in ('sending', 'accepted')`,
+      sql`${calWrites.payload} ->> 'acceptedAnswerId' is not null`,
+      sql`${calWrites.payload} ->> 'resendsReply' = 'true'`)),
+    sql`${calWrites.payload} ->> 'dismissedReply' = 'true'`),
+  ));
+  for (const row of prior) {
+    const payload = parseWritePayload(row.payload);
+    if (payload?.act.kind !== "calendar_event_answer") continue;
+    const { act } = payload;
+    if (at !== "" && (act.scope.kind !== "occurrence" || act.scope.at !== at)) continue;
+    await tx.update(calWrites).set({
+      state: "refused", refusal: payload.resendsReply ? "answer_unconfirmed" : row.refusal ?? "answer_unconfirmed",
+      payload: { fingerprint: calendarActFingerprint(act), replySuperseded: true },
+      nextAttemptAt: null, updatedAt: sql`now()`,
+    }).where(and(eq(calWrites.accountId, accountId), eq(calWrites.id, row.id),
+      sql`${calWrites.payload} = ${JSON.stringify(row.payload)}::jsonb`));
+  }
+}
+
 /**
  * The provider took the write: its answer goes into the store through the reading's planner, the
- * row is closed as applied with nothing of the act kept (a series' end keeps the day it ended the
- * series at, `kept`), and the event's row is stamped in the same
+ * row is closed with its compact receipt (`kept`), and the event's row is stamped in the same
  * transaction (one `now()` for both, which the door's `after` rule reads). Only where the write's
  * own request made it so (`written`: its 2xx, and at CalDAV its own tag) do the writes that waited
  * on the old version take the new one: a write found done answers a copy that may be someone
@@ -176,10 +217,12 @@ function versionIn(items: readonly ChangeItem[], providerId: string | null): str
  */
 export async function settleApplied(
   ctx: SettleContext, w: ClaimedWrite, items: readonly ChangeItem[], targetProviderId: string | null, written: boolean,
-): Promise<{ readonly changed: number; readonly unkept: number } | "gone"> {
+): Promise<{ readonly changed: number; readonly unkept: number } | "gone" | "stale_reply"> {
   const apply: ApplyContext = {
     db: ctx.db, key: ctx.key, calendar: { id: w.calendarId, providerId: w.calendarProviderId }, zones: ctx.map.zones,
     unite: ctx.word === "google" || ctx.word === "microsoft", shown: null, halted: () => false,
+    ...(ctx.word === "microsoft" && { outlook: w.observedReply ? "confirmation" : "mirror" }),
+    ...(ctx.word === "google" && { googleSnapshot: null }),
   };
   let works: readonly Work[] = [];
   let unkept = 0;
@@ -207,8 +250,11 @@ export async function settleApplied(
   }
   const version = versionIn(items, named);
   const close = async (tx: Tx, changes: CalendarChange[]): Promise<void> => {
-    one(await tx.update(calWrites).set({ state: "applied", refusal: null, payload: w.kept, nextAttemptAt: null, updatedAt: sql`now()` })
-      .where(claimed(w, ctx.key.accountId)).returning({ id: calWrites.id }), "close");
+    const closed = await tx.update(calWrites).set({ state: "applied", refusal: null, payload: w.kept, nextAttemptAt: null, updatedAt: sql`now()` })
+      .where(claimed(w, ctx.key.accountId)).returning({ id: calWrites.id });
+    if (w.observedReply && closed.length === 0) throw new ReplyChanged();
+    one(closed, "close");
+    if (ctx.word === "microsoft" && w.op === "answer") await archiveOutlookReplies(tx, ctx.key.accountId, w);
     if (w.eventId === null) return;
     if (version !== null && written) {
       await tx.update(calWrites).set({ baseVersionTag: version, updatedAt: sql`now()` }).where(and(
@@ -240,10 +286,17 @@ export async function settleApplied(
     if (!done.ok) return "gone";
     return { changed: done.changed, unkept };
   } catch (err) {
+    if (err instanceof StaleOutlookReply) return err.older ? "stale_reply" : "gone";
+    if (err instanceof ReplyChanged) return "gone";
     if (!(err instanceof ObjectRefused)) throw err;
     // The provider holds the write and the store cannot hold its answer: the write is done all the same.
-    const done = await applyChunk(apply, [], close);
-    if (!done.ok) return "gone";
-    return { changed: done.changed, unkept: unkept + 1 };
+    try {
+      const done = await applyChunk(apply, [], close);
+      if (!done.ok) return "gone";
+      return { changed: done.changed, unkept: unkept + 1 };
+    } catch (err) {
+      if (err instanceof ReplyChanged) return "gone";
+      throw err;
+    }
   }
 }

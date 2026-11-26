@@ -273,6 +273,7 @@ export interface WorkerStats {
   accounts: number;
   /** Enabled mailboxes this process is SUPPOSED to serve, after the cap. */
   expected: number;
+  attaches: { queued: number; running: number };
   /** Selected mailboxes detached behind a retry backoff (status='error'). */
   quarantined: number;
   /** Selected mailboxes with no `imap` credential row yet — enabled but unsyncable. */
@@ -375,6 +376,7 @@ export interface WorkerHooks {
    * (`stop()`) and start over as a waiting start.
    */
   onLockLost?: (err: LockLostError) => void;
+  onInitialRoster?: (worker: RunningWorker) => void;
   }
 
 /** A mailbox that connected successfully and is now part of the sync rotation. */
@@ -646,7 +648,7 @@ export interface Quarantine {
  */
 export async function startWorker(config: WorkerConfig, hooks: WorkerHooks = {}): Promise<RunningWorker> {
   const lock: LeaderLock | null = await acquireLeaderLock(
-    config.databaseUrl, leaderLockKeyFor(config.shardIndex ?? 0),
+    config.databaseUrl, leaderLockKeyFor(config.shardIndex ?? 0), { shards: config.shards },
   );
   if (!lock) throw new Error("another worker holds the leader lock; exiting");
   return startWorkerWithLock(config, lock, hooks);
@@ -678,6 +680,7 @@ export async function startWorkerWithLock(
   scope.attachPoolRef = null as AttachPool | null;
   /** The same, for the timers: the startup catch must be able to disarm them (see below). */
   scope.stopTimers = null as (() => void) | null;
+  let running: RunningWorker | undefined;
 
   try {
     // ── EVERY SYNC-LOOP DATABASE CALL NAMES ITS ORIGIN ─────────────────────────────────────
@@ -1341,13 +1344,23 @@ export async function startWorkerWithLock(
     heartbeatSection(scope);
 
     scope.cycleQueued = false;
-    function kickCycle(): void {
-      // Heard by a pass a long turn holds open, which serves the other mailboxes (`admitDue`).
-      scope.lastKickAt = Date.now();
+    let schedulerReady = false;
+    let pollOwed = false;
+    const visitsOwed = new Set<string>();
+    function kickCycle(options?: { poll?: boolean; visit?: Iterable<string> }): void {
+      pollOwed ||= options?.poll === true;
+      for (const id of options?.visit ?? []) visitsOwed.add(id);
       scope.nudgeCycle();
-      if (scope.stopped || scope.cycleQueued) return;
+      if (!schedulerReady || scope.stopped || scope.cycleQueued) return;
       scope.cycleQueued = true;
-      void scope.serialize(async () => { scope.cycleQueued = false; await scope.cycle(); }).catch((err: unknown) => {
+      void scope.serialize(async () => {
+        scope.cycleQueued = false;
+        const poll = pollOwed;
+        const visits = new Set(visitsOwed);
+        pollOwed = false;
+        visitsOwed.clear();
+        await scope.cycle(poll, visits);
+      }).catch((err: unknown) => {
         // A DATABASE FAULT THAT ESCAPED THE ROTATION LOOP IS STILL THE SHARD-WIDE CONDITION.
         //
         // `cycle()` does more than walk mailboxes — its post-loop bookkeeping catches its own,
@@ -1523,13 +1536,11 @@ export async function startWorkerWithLock(
       })();
     }, heartbeatMs);
 
-    // ── Initial roster (inside the queue, so the first timer tick cannot overlap it). The boot pass
-    //    alone waits for its attaches, which run in parallel (see `reconcileRoster`).
-    await scope.serialize(() => scope.reconcileRoster({ awaitAttaches: true }));
-    // Beat again now the roster is known: a leader that takes 60 s to write its first real
-    // heartbeat is a leader the alerter reports as down for the first minute of every
-    // deploy, which is how a real alert becomes noise on day one.
-    await scope.beat();
+    // Claim leadership and read the entire first roster before any cycle. The provider
+    // dials themselves run outside the queue, so each successful attach can get a turn.
+    let initialAttaches: Promise<{ fault: unknown | null }> = Promise.resolve({ fault: null });
+    await scope.serialize(() => scope.reconcileRoster((work) => { initialAttaches = work; }));
+    schedulerReady = true;
 
     log.info("worker_serving", {
       mailboxes: runtimes.size, accounts: scope.dutyAccounts.length,
@@ -1558,7 +1569,7 @@ export async function startWorkerWithLock(
       });
     }
 
-    scope.pollTimer = setInterval(() => { kickCycle(); }, config.pollIntervalMs);
+    scope.pollTimer = setInterval(() => { kickCycle({ poll: true }); }, config.pollIntervalMs);
     // Takeover kick. `setInterval` fires for the FIRST time only after a full period, so without this
     // a standby that just won the lock waits `pollIntervalMs` (60 s) before its first cycle — measured
     // across a real rolling deploy as a 68 s gap between the outgoing instance's last cycle and the
@@ -1614,6 +1625,7 @@ export async function startWorkerWithLock(
     const changeSignals = makeChangeWakeHub(config.databaseUrl, log);
     scope.wakeHub = changeSignals;
     const syncKickAskedFor = new Map<string, string>();
+    const unservedCursor = {};
     const syncKickFloorMs = config.syncKickFloorMs ?? SYNC_KICK_EVERY_MS;
     scope.syncKickBell = startSyncKickBell({
       pass: async (by) => {
@@ -1628,6 +1640,7 @@ export async function startWorkerWithLock(
           kick: (mailboxId) => { scope.noteWake(mailboxId); kickCycle(); },
           // A stamped mailbox nobody here serves yet — a new one — asks for its roster pass now.
           requestRoster: scope.requestRoster, askedFor: syncKickAskedFor,
+          selection: scope.selection, unservedCursor, freshSignal: by === "signal",
           // A served mailbox with an unspent lease press ("Organize here" or "Hand the mailbox
           // back"): the roster refreshes its lease columns, so the cycle this kick asks for gates
           // on the press rather than on the value read before it. Asking only; the fenced gate
@@ -1730,10 +1743,11 @@ export async function startWorkerWithLock(
     }
 
     scope.teardown = null as Promise<void> | null;
-    return {
+    running = {
       stats(): WorkerStats {
         return {
           ...scope.counters(),
+          attaches: scope.attachPool.counts(),
           // NOT in `counters()`, for the same reason `truncated` is not: those fields are also the
           // `worker_heartbeats` payload and that table has no column for either. Both are memory
           // reads, so `/health` still touches no database.
@@ -1808,7 +1822,17 @@ export async function startWorkerWithLock(
         return scope.teardown;
       },
     };
+    // Callers retain their boot completion contract. The scheduler and lock guard
+    // are already running during this wait.
+    hooks.onInitialRoster?.(running);
+    const { fault } = await initialAttaches;
+    if (fault !== null) throw fault;
+    return running;
   } catch (err) {
+    if (running) {
+      await running.stop();
+      throw err;
+    }
     // The lock guard and its pulse now start BEFORE the initial roster pass, so a startup
     // failure after that point leaves an armed timer holding the event loop open and writing
     // to a pool that is about to close. `stopTimers` is set once they exist.

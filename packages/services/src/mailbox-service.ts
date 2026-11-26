@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import {
-  assertOrganizerRole, carryBinding,
+  assertOrganizerRole, carryBinding, onServerPool,
   mailboxes, mailboxCredentials, mailboxFolders, folderState, messages, accountSettings, messageFailures,
   isMailboxDisabledReason, isMailboxSyncBlockReason,
   isOrganizerRole, isOrganizerKind, isOrganizerState,
@@ -17,7 +17,7 @@ import {
 } from "@trafficflow/db";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { agreeRecordPayload } from "@trafficflow/core/adapters/drizzle-repo";
-import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
+import { bridgeDb, bridgeTx, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { ACCOUNT_MAILBOXES_MAX_READ, accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
 import { fenceErasedAccount, fenceErasedMailboxOnly } from "./erasure-fence.js";
@@ -1180,14 +1180,23 @@ export class MailboxService {
        refused by; listed, it read as a disconnected mailbox ohmail still held mail for, beside the
        receipt saying none is left. One still running is listed with `erasure.remaining`, and a
        plain removal's tombstone is listed as always: its copy stays, and the row says so. */
-    const rows = await ctx.db.select().from(mailboxes)
-      .where(and(eq(mailboxes.accountId, ctx.accountId), isNull(mailboxes.erasureDoneAt)))
-      .orderBy(asc(mailboxes.id));
-    const counts = opts.counts ? await this.messageCounts(ctx) : null;
-    if (rows.length === 0) return [];
-    // ONE reading of the clock for the whole answer: the filing facts and every row's `asOf`.
-    const now = ctx.now();
-    const facts = await this.factsFor(ctx, now, rows.map((r) => r.id));
+    const readRoster = async (db: Db) => {
+      const rows = await db.select().from(mailboxes)
+        .where(and(eq(mailboxes.accountId, ctx.accountId), isNull(mailboxes.erasureDoneAt)))
+        .orderBy(asc(mailboxes.id));
+      const counts = opts.counts ? await this.messageCounts(ctx, db) : null;
+      if (rows.length === 0) return null;
+      // ONE reading of the clock for the filing facts and every row's `asOf`.
+      const now = ctx.now();
+      const facts = await this.factsFor(ctx, now, rows.map((r) => r.id), db);
+      return { rows, facts, counts, now };
+    };
+    // A hosted pool binds the account on every standalone read. Bind it once for the roster.
+    const roster = onServerPool(ctx.db)
+      ? await asTx(ctx).transaction((tx) => readRoster(bridgeDb(tx)), { accessMode: "read only" })
+      : await readRoster(ctx.db);
+    if (roster === null) return [];
+    const { rows, facts, counts, now } = roster;
     const out: MailboxDTO[] = [];
     for (const m of rows) {
       /* `?? 0` and not `map.get(id)` bare: a mailbox holding no mail produces NO GROUP ROW, so
@@ -1213,7 +1222,7 @@ export class MailboxService {
    * another, on the handle the caller passed — the update door's is its transaction.
    */
   private async factsFor(
-    ctx: ServiceContext, now: Date, ids: readonly string[],
+    ctx: ServiceContext, now: Date, ids: readonly string[], db: Db = ctx.db,
   ): Promise<Map<string, MailboxFacts>> {
     type Facts = {
       setAside: number; folders: Array<MailboxFacts["folders"][number]>; imapMeta: unknown; pending: FilingFacts | undefined;
@@ -1227,13 +1236,13 @@ export class MailboxService {
       }
       return f;
     };
-    const d = dialect(ctx.db);
+    const d = dialect(db);
     for (let i = 0; i < ids.length; i += ACCOUNT_MAILBOXES_MAX_READ) {
       const part = ids.slice(i, i + ACCOUNT_MAILBOXES_MAX_READ);
       const scope = and(eq(mailboxes.accountId, ctx.accountId), inArray(mailboxes.id, part));
 
       // Mail set aside: failures not yet resolved.
-      const aside = await ctx.db.select({
+      const aside = await db.select({
         mailboxId: messageFailures.mailboxId,
         n: d.castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
       }).from(messageFailures)
@@ -1243,7 +1252,7 @@ export class MailboxService {
       for (const a of aside) entry(a.mailboxId).setAside = a.n;
 
       // The folders, each mailbox's by name: `firstSyncStopFolder` takes the first stop in that order.
-      const folders = await ctx.db.select({
+      const folders = await db.select({
         mailboxId: mailboxFolders.mailboxId,
         folder: mailboxFolders.folder,
         highestmodseq: mailboxFolders.highestmodseq,
@@ -1265,7 +1274,7 @@ export class MailboxService {
        * the two could disagree. At most one `imap` row per mailbox (the primary key). The meta
        * alone: never `secret_enc`.
        */
-      const creds = await ctx.db.select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
+      const creds = await db.select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
         .from(mailboxCredentials)
         .innerJoin(mailboxes, eq(mailboxes.id, mailboxCredentials.mailboxId))
         .where(and(scope, eq(mailboxCredentials.transport, "imap")));
@@ -1298,7 +1307,7 @@ export class MailboxService {
         ))
         .orderBy(desc(folderState.attempts), desc(folderState.nextAttemptAt))
         .limit(1);
-      const filings = await ctx.db.select({
+      const filings = await db.select({
         mailboxId: mailboxes.id,
         n: d.castInt(sql`count(*) filter (where ${ourOutstandingFiling()})`).mapWith(Number) as unknown as SQL<number>,
         due: d.castInt(sql`count(*) filter (where ${filingDue(now)})`).mapWith(Number) as unknown as SQL<number>,
@@ -1347,16 +1356,16 @@ export class MailboxService {
     return out;
   }
 
-  private async messageCounts(ctx: ServiceContext): Promise<Map<string, number>> {
+  private async messageCounts(ctx: ServiceContext, db: Db = ctx.db): Promise<Map<string, number>> {
     // How many messages each mailbox holds, in one grouped statement, counting only what the
     // account OWNS by History's own predicate ({@link ownedMessages}): deleted rows stay out.
     // Invariant #9 lives in the WHERE — the account predicate is in the SAME statement as the
     // `GROUP BY`, and a real-Postgres test reads it off the statement the driver sent. `::int`
     // because `count(*)` is `bigint` and postgres-js hands bigint back as a STRING.
-    const rows = await ctx.db
+    const rows = await db
       .select({
         mailboxId: messages.mailboxId,
-        n: dialect(ctx.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
+        n: dialect(db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
       })
       .from(messages)
       .where(ownedMessages(ctx.accountId))

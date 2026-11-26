@@ -9,6 +9,9 @@
       "provider": "Wartet"
     },
     "notSaved": "Nicht gespeichert",
+    "replyUnconfirmed": "Antwort unbestätigt",
+    "replyMayNotHaveReachedOrganizer": "Deine Antwort ist möglicherweise nicht bei der einladenden Person angekommen",
+    "sendReplyAgain": "Antwort erneut senden",
     "fault": {
       "moveCopyLeft": "Der Termin ist noch in beiden Kalendern",
       "moveUnresolved": "Das Verschieben konnte nicht bestätigt werden. Prüfe beide Kalender",
@@ -20,6 +23,7 @@
       "notKept": "Der Kalender würde diese Änderung nicht so behalten.",
       "inviteesUnsupported": "Dieser Kalender kann keine Einladungen senden.",
       "stale": "Anderswo geändert",
+      "answerUnconfirmed": "Es ist unklar, ob deine Antwort gesendet wurde.",
       "versionUnknown": "Die Fassung des Kalenders war nicht lesbar, darum wurde nichts gesendet.",
       "earlier": "Eine frühere Änderung dieses Termins wurde nicht gespeichert, darum wurde diese nicht gesendet.",
       "chained": "Erneut drücken, sobald die Änderung davor erledigt ist.",

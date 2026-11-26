@@ -1,6 +1,6 @@
 // The desktop's engine: what a refusal is read as, the build's label, and the two disclosures an answer carries.
 
-import { ImapConnectionClosedError } from "@trafficflow/core/adapters/imap";
+import { ImapConnectionClosedError, imapFetchRefusal } from "@trafficflow/core/adapters/imap";
 import { providerAuthservIds } from "@trafficflow/core/mail";
 import {
   MailboxErasedError, type MailboxErrorCode, type MailboxSyncBlockReason, SERVER_UNAVAILABLE_CODES,
@@ -118,28 +118,13 @@ function providerDeclinedForNow(err: unknown): boolean {
  * SIGN-IN is excluded by class: that answer is `signInRefused`, and the two must not merge.
  */
 export function fetchRefusal(err: unknown): "NO" | "BAD" | null {
-  if (credentialsRefused(err)) return null;
-  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
-    const status = (e as { responseStatus?: unknown }).responseStatus;
-    const sent = (e as { executedCommand?: unknown }).executedCommand;
-    if ((status === "NO" || status === "BAD") && typeof sent === "string" && IMAP_FETCH_SENT.test(sent)) {
-      return status;
-    }
-    e = (e as { cause?: unknown }).cause;
-  }
-  return null;
+  return credentialsRefused(err) ? null : imapFetchRefusal(err);
 }
 
 /** {@link fetchRefusal} as the one bit a branch wants. */
 export function fetchRefused(err: unknown): boolean {
   return fetchRefusal(err) !== null;
 }
-
-/**
- * The command THIS PROCESS sent, matched on its verb. imapflow builds `executedCommand` from what
- * we handed it, so it is ours to read; the tag is whatever the driver minted and is skipped.
- */
-const IMAP_FETCH_SENT = /^\S+ (?:UID )?FETCH\b/i;
 
 /**
  * Did this failure come from the connection, or from the work? The bound counts connection-class failures and nothing

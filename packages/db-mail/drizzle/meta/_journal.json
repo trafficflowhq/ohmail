@@ -1464,6 +1464,41 @@
       "when": 1795629171181,
       "tag": "0227_calendar_session_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 209,
+      "version": "7",
+      "when": 1795629171183,
+      "tag": "0228_imap_scan_cursor",
+      "breakpoints": true
+    },
+    {
+      "idx": 210,
+      "version": "7",
+      "when": 1795650970151,
+      "tag": "0229_calendar_read_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 211,
+      "version": "7",
+      "when": 1795652313936,
+      "tag": "0230_calendar_read_owner",
+      "breakpoints": true
+    },
+    {
+      "idx": 212,
+      "version": "7",
+      "when": 1795653137825,
+      "tag": "0231_google_exclusion_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 213,
+      "version": "7",
+      "when": 1795655697446,
+      "tag": "0232_calendar_provider_modified_at",
+      "breakpoints": true
     }
   ]
 }

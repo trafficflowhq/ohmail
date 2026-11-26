@@ -19,7 +19,7 @@ const WRITE_WORDS = [
   "too_many_redirects", "redirect_invalid", "page_link_refused", "timeout", "connection_failed",
   "too_large", "unreadable", "unsupported", "provider_off", "unknown", "version_stale",
   "version_unknown", "event_gone", "read_only", "left_out", "invitees_unsupported",
-  "repeat_unsupported", "field_unwritable", "earlier_refused", "content_refused", "expired", "move_copy_left", "move_unresolved", "move_destination_unavailable",
+  "repeat_unsupported", "field_unwritable", "earlier_refused", "content_refused", "expired", "answer_unconfirmed", "move_copy_left", "move_unresolved", "move_destination_unavailable",
 ] as const satisfies readonly CalendarWriteFault[];
 type _WriteWords = Assert<Complete<CalendarWriteFault, typeof WRITE_WORDS>>;
 

@@ -69,8 +69,8 @@ export class StaticKeyProvider implements KeyProvider {
   private readonly keks: Map<number, Buffer>;
   private readonly current: number;
 
-  /** @param keks version→32-byte KEK. Highest version is the current one. */
-  constructor(keks: Record<number, Buffer>) {
+  /** The highest loaded version writes by default. A staged key can be opened before activation. */
+  constructor(keks: Record<number, Buffer>, activeVersion?: number) {
     this.keks = new Map(Object.entries(keks).map(([v, k]) => [Number(v), k]));
     if (this.keks.size === 0) throw new Error("StaticKeyProvider requires at least one KEK");
     for (const [v, k] of this.keks) {
@@ -79,7 +79,8 @@ export class StaticKeyProvider implements KeyProvider {
     // Checked here as well as in `readKeks`: the env loader is not the only door to a
     // provider, and a hand-built ring must obey the same invariant.
     assertDistinctKekBytes(this.keks);
-    this.current = Math.max(...this.keks.keys());
+    this.current = activeVersion ?? Math.max(...this.keks.keys());
+    if (!this.keks.has(this.current)) throw new Error("active KEK version is not loaded");
   }
 
   /** Convenience: a single-version provider from a 32-byte secret (tests). */
@@ -175,6 +176,7 @@ const RETIRED_RE = /^[1-9][0-9]*$/;
 /** What the environment holds: the loaded versions, and how many of the oldest were retired. */
 interface KekRing {
   keks: Map<number, Buffer>;
+  active: number;
   /** `TF_KEK_RETIRED`, or 0 when nothing is retired. The ring starts at this + 1. */
   retiredThrough: number;
 }
@@ -225,6 +227,7 @@ function rejectReservedName(name: string): never {
  */
 function readKeks(env: NodeJS.ProcessEnv): KekRing {
   const retiredThrough = readRetiredThrough(env);
+  const activeSetting = env.TF_KEK_ACTIVE_VERSION?.trim() ?? "";
   const keks = new Map<number, Buffer>();
   for (const [name, value] of Object.entries(env)) {
     if (!name.startsWith(KEK_ENV_PREFIX)) continue;                // a bare, un-versioned name is unrelated
@@ -251,7 +254,8 @@ function readKeks(env: NodeJS.ProcessEnv): KekRing {
         `version is retired has no key to write under — set ${KEK_ENV_PREFIX}${retiredThrough + 1}`,
       );
     }
-    return { keks, retiredThrough: 0 };
+    if (activeSetting) throw new Error("TF_KEK_ACTIVE_VERSION must name a loaded KEK version");
+    return { keks, active: 0, retiredThrough: 0 };
   }
 
   const versions = [...keks.keys()].sort((a, b) => a - b);
@@ -287,7 +291,11 @@ function readKeks(env: NodeJS.ProcessEnv): KekRing {
   // Here as well as in the provider, so a host that only PUBLISHES its ring identity
   // (kekEnvIdentity never constructs a provider) fails closed on a duplicated ring too.
   assertDistinctKekBytes(keks);
-  return { keks, retiredThrough };
+  const active = activeSetting === "" ? versions.at(-1)! : Number(activeSetting);
+  if ((activeSetting !== "" && !RETIRED_RE.test(activeSetting)) || !keks.has(active)) {
+    throw new Error("TF_KEK_ACTIVE_VERSION must name a loaded KEK version");
+  }
+  return { keks, active, retiredThrough };
 }
 
 /** Non-secret fingerprint of ONE KEK: the first 8 hex of SHA-256(KEK). */
@@ -330,13 +338,11 @@ export function kekRingFingerprint(keks: ReadonlyMap<number, Buffer> | Record<nu
  * host renders the SAME object from the same function.
  */
 export interface KekEnvIdentity {
-  /** The version new secrets are encrypted under (the highest loaded). */
+  /** The version new secrets are encrypted under. */
   active: number;
-  /**
-   * How many versions are loaded: `active` minus the retired ones (`TF_KEK_RETIRED`), since the loaded
-   * run is contiguous. Equal to `active` on a host that has retired nothing.
-   */
   count: number;
+  /** The newest loaded key when it is staged for a later activation. */
+  loadedThrough?: number;
   /** {@link kekRingFingerprint} of EVERY loaded version, not just the active one. */
   fingerprint: string;
 }
@@ -347,11 +353,11 @@ export interface KekEnvIdentity {
  * must fail at boot, not at the first mailbox.
  */
 export function keyProviderFromEnv(env: NodeJS.ProcessEnv = process.env): KeyProvider {
-  const { keks } = readKeks(env);
+  const { keks, active } = readKeks(env);
   if (keks.size === 0) {
     throw new Error("no KEK configured: set TF_KEK_V1 (64 hex chars = a 32-byte AES-256 KEK)");
   }
-  return new StaticKeyProvider(Object.fromEntries(keks));
+  return new StaticKeyProvider(Object.fromEntries(keks), active);
 }
 
 /**
@@ -361,7 +367,8 @@ export function keyProviderFromEnv(env: NodeJS.ProcessEnv = process.env): KeyPro
  * to "no KEK" is how a typo becomes an outage. So does a `TF_KEK_RETIRED` with no key.
  */
 export function keyProviderFromEnvOptional(env: NodeJS.ProcessEnv = process.env): KeyProvider | undefined {
-  return readKeks(env).keks.size === 0 ? undefined : keyProviderFromEnv(env);
+  const { keks, active } = readKeks(env);
+  return keks.size === 0 ? undefined : new StaticKeyProvider(Object.fromEntries(keks), active);
 }
 
 /**
@@ -369,11 +376,13 @@ export function keyProviderFromEnvOptional(env: NodeJS.ProcessEnv = process.env)
  * This is the object BOTH hosts publish verbatim — see {@link KekEnvIdentity}.
  */
 export function kekEnvIdentity(env: NodeJS.ProcessEnv = process.env): KekEnvIdentity | undefined {
-  const { keks } = readKeks(env);
+  const { keks, active } = readKeks(env);
   if (keks.size === 0) return undefined;
+  const highest = Math.max(...keks.keys());
   return {
-    active: Math.max(...keks.keys()),
+    active,
     count: keks.size,
+    ...(highest === active ? {} : { loadedThrough: highest }),
     fingerprint: kekRingFingerprint(keks),
   };
 }

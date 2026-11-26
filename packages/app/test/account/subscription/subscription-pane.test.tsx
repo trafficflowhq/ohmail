@@ -79,7 +79,7 @@ function drawn(
     lang?: "en" | "de";
     addStorage?: () => void;
     addMailbox?: SubscriptionPaneProps["addMailbox"];
-    connectedCount?: number;
+    connectedCount?: number | null;
   } = {},
 ) {
   const storage = { addStorage: addStorage && { press: addStorage, busy: false } };
@@ -228,6 +228,19 @@ describe("where the account stands, from the access answer alone", () => {
     expect(line(settings("storage")).textContent).toContain("235 MB of 5 GB");
     expect(screen.queryByRole("heading", { name: settings("storagePlansHead") })).toBeNull();
     expect(text()).not.toMatch(/[$€£]/);
+  });
+
+  it("waits for mailbox usage when the connected count is loading", () => {
+    const model = TODAY.trial.model;
+    const pending = drawn(model, { connectedCount: null });
+    const mailboxes = line(settings("mailboxes"));
+    expect(mailboxes.textContent).not.toContain(said("mailboxesUpTo", { count: 5 }));
+    expect(mailboxes.textContent).not.toContain(said("mailboxesConnected", { used: 0, count: 5 }));
+    pending.unmount();
+    drawn(model, { connectedCount: 2 });
+    expect(line(settings("mailboxes")).textContent).toContain(
+      said("mailboxesConnected", { used: 2, count: 5 }),
+    );
   });
 
   it("says each standing in its own word", () => {

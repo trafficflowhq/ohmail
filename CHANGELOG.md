@@ -21,6 +21,46 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.8] — 2026-11-26
+
+### AI requests mask punctuated passphrases
+
+The copy sent to your AI provider masks the full value of labeled passphrases, including punctuation and spaces. Ordinary password guidance stays readable in the conversation used to draft a reply.
+
+### Calendar replies and sync recover after interrupted checks
+
+Outlook invitations keep your chosen Yes, Maybe, or No while sync checks whether Outlook received it. If two checks still show a different answer, the event explains that your reply may not have reached the organizer and lets you send it again. Calendar sync never sends that reply again on its own.
+
+A removed Outlook occurrence no longer holds up other calendar changes. You can resend your reply to a verified replacement occurrence. Outlook keeps syncing other events while it rechecks conflicting replies and sends a newer whole-series choice on the next sync.
+
+Long calendar syncs resume between turns and after a restart. CalDAV stops an unfinished reading at 400 pages and keeps appointments already on the calendar. Incomplete Google or CalDAV responses also preserve stored appointments, and a CalDAV edit queued behind another edit still checks for conflicts. Connected Google and Outlook calendars identify their own attendee when you answer an invitation. Changing a CalDAV password keeps the connection tied to the original sign-in.
+
+Google invitation replies update only your response. A date restored to a recurring Google meeting reappears while separately cancelled dates stay excluded.
+
+### Sign-in and device sign-out are more reliable
+
+Password and authenticator changes now check that the authorizing session is still active when the change takes effect. Staff recovery ends existing staff sessions as part of resetting the authenticator.
+
+The phone keeps an offline sign-out pending until the server confirms it. It retries when the connection returns and shows where to remove the device if a retry can’t be saved.
+
+### Faster navigation in large mailboxes
+
+- Reach the oldest messages in History with the scrollbar or month rail.
+- Open distant parts of History without paging through the intervening mail.
+- Open the mailbox while the composer loads, and skip the mailbox-wide count when Search already has a query.
+
+### Phone reader, subscription and draft fixes
+
+On narrow screens, invitation controls remain above Reply and Forward, and the selected recipient stays visible when an Undo notice appears. The Subscription page waits for mailbox usage before showing the count. On ohcal, the calendar chooser explains when stored pairings cannot be read. Older AI drafts restored from the browser keep their blank lines when sent.
+
+### Hosted alerts measure the serving API
+
+Hosted operators can monitor request errors, rate limits and dependency failures from the serving API. Missing measurements raise an alert, and configured ingress budgets reject excess requests before they occupy a database connection.
+
+### First mail import reports when mail is still missing
+
+On desktop and phone, the first import stays incomplete when the mail server cannot return every message. The app updates the status after a later sync reads the remaining mail.
+
 ## [2.0.7] — 2026-11-25
 
 ### Billing remembers the add-on you chose
@@ -19390,7 +19430,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.7...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.8...HEAD
+[2.0.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.8
 [2.0.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.7
 [2.0.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.6
 [2.0.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.5

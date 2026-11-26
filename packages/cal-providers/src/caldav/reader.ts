@@ -7,10 +7,9 @@
  * the calendar core reads from it, a series and its changed days as several items of one address.
  * Nothing is expanded here.
  *
- * A reading in pages asks for the listing again at every page and cuts it after the last address
- * handed out, so the cursor holds two short texts. What a pass ends with is the token of its
- * FIRST listing: an object that changes while the pass runs is then told again by the next round,
- * where a later token would have passed it over.
+ * A reading in pages resumes after the last address handed out. A bounded uncut inventory can
+ * be retained for the reading's lifetime. The pass ends with the token of its first listing:
+ * an object that changes while the pass runs is told again by the next round.
  *
  * The hosts the server names and the discovery used to recover them are cached for ONE TURN, with
  * the `Connection` object the caller made for it. Only those hosts and the typed origin receive
@@ -62,7 +61,7 @@ interface Standing {
   readonly after: string | null;
   /** The token (or tag) of this listing as it was first asked. */
   readonly first: string | null;
-  /** In a listing the server cut short: what it listed of the members handed out so far ({@link toldOf}). `null` in any other. */
+  /** Digest of a cut's delivered prefix, or empty if unprovable. `null` means no cut. */
   readonly told: string | null;
 }
 
@@ -125,27 +124,36 @@ function toldOf(members: readonly Listed[], count: number): string | null {
 type Left = { readonly id: string; readonly reason: LeftReason };
 
 /** One listed member as what a page holds of it. */
-function take(member: Listed, found: FoundMembers, items: ChangeItem[], left: Left[]): void {
+function take(member: Listed, found: FoundMembers, items: ChangeItem[], left: Left[]): Refused | null {
+  if (member.retry !== undefined) return member.retry;
   if (member.kind === "removed") items.push({ kind: "gone", id: member.id });
   else if (member.kind !== "changed") left.push({ id: member.id, reason: "unreadable" });
   else {
     const fetched = found(member);
-    // Asked for and not answered: nothing is known of it, which is neither "there" nor "gone".
-    if (fetched === undefined) left.push({ id: member.id, reason: "unreadable" });
-    else if (fetched === "gone") items.push({ kind: "gone", id: member.id });
-    else {
+    // An incomplete response is replayed from the same cursor after backoff.
+    if (fetched === undefined) return refuse("unavailable");
+    if (fetched === "gone") items.push({ kind: "gone", id: member.id });
+    else if ("ok" in fetched) {
+      if (fetched.reason !== "unreadable") return fetched;
+      left.push({ id: member.id, reason: "unreadable" });
+    } else {
       const read = readCalendar(fetched.text, DEFAULT_LIMITS);
       if (!read.ok) left.push({ id: member.id, reason: read.reason });
       else {
         const version = fetched.tag ?? member.tag ?? "";
-        for (const event of read.calendar.events) items.push({ kind: "upsert", id: member.id, version, event, text: fetched.text });
+        const incomplete = read.dropped.length > 0;
+        for (const event of read.calendar.events) items.push({
+          kind: "upsert", id: member.id, version, event, text: fetched.text,
+          ...(incomplete && { resourceIncomplete: true }),
+        });
         // Read with something left out: what was read is shown, and the object is named as one not to write back.
-        if (read.dropped.length > 0) left.push({ id: member.id, reason: read.dropped[0]!.reason });
+        if (incomplete) left.push({ id: member.id, reason: read.dropped[0]!.reason });
         // An object that holds no event (a task, or nothing any more) is none of a calendar's.
         else if (read.calendar.events.length === 0) items.push({ kind: "gone", id: member.id });
       }
     }
   }
+  return null;
 }
 
 /** Where a server says the signed-in person's calendars are, and whether the sign-in had to turn to TLS alone on the way there. */
@@ -222,6 +230,7 @@ export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSig
 
 export function makeReader(deps: AdapterDeps): CalendarReader {
   const open = (c: Connection, signal: AbortSignal) => caldavSession(deps, c, signal);
+  const inventories = new WeakMap<object, { readonly collection: string; readonly cursor: string; readonly listing: Listing }>();
 
   async function homesOf(c: Connection, signal: AbortSignal) {
     const opened = open(c, signal);
@@ -261,6 +270,11 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
       const began = page.cursor === null ? standingOf(since) : readCursor(page.cursor);
       if (began === null) return refuse("token_gone");
       if (collection === null) return refuse("not_found");
+      const scope = page.scope;
+      const remembered = scope === undefined ? undefined : inventories.get(scope);
+      const cached = remembered?.collection === collection && remembered.cursor === page.cursor ? remembered.listing : undefined;
+      // A failed request will reread the listing before retrying the same part.
+      if (scope !== undefined) inventories.delete(scope);
 
       // The listing: what changed since the token, or everything.
       let way = began.way;
@@ -278,7 +292,8 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
         way = "sync";
       }
       let listing: Listing;
-      if (way === "sync") {
+      if (cached !== undefined) listing = cached;
+      else if (way === "sync") {
         const listed = await listBySync(s, collection, from);
         if (listed.ok) listing = listed.listing;
         else if (listed.status === null || !REFUSES_THE_REPORT.has(listed.status)) return refuse(listed.reason, listed.retryAfterMs);
@@ -296,23 +311,21 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
         listing = listed.listing;
       }
 
-      let after = began.after;
+      const after = began.after;
       let first = began.first;
-      if (listing.cut) {
-        if (listing.token === null || listing.token === "") return refuse("unreadable");
-        if (after !== null && first !== listing.token) {
-          // Asked a second time, the server hands back another token. Where it lists everything handed out so far exactly as it
-          // was handed out, it has only worded the token anew and the cut is read on under that one. Where it does not, it cut
-          // otherwise: what the pages before handed out says nothing of this cut, so it begins again.
-          if (began.told !== null && began.told === toldOf(listing.members, countUpTo(listing.members, after))) first = listing.token;
-          else {
-            after = null;
-            first = null;
-          }
-        }
+      if (listing.cut && !listing.token) return refuse("unreadable");
+      if (after !== null && (listing.cut || began.told !== null)) {
+        const prefix = toldOf(listing.members, countUpTo(listing.members, after));
+        const matches = prefix !== null && prefix === began.told;
+        const sameUnprovableCut = began.told === "" && listing.cut && first === listing.token;
+        // A different cut requires a new whole-reading generation, including its seen set.
+        if (!matches && !sameUnprovableCut) return refuse("token_gone");
+        first = listing.token;
       }
       // What the reading will end with: the token of this listing as it was first asked. A listing by tags that does not carry the collection's own tag ends with the one read before it.
       first ??= way === "tags" ? (listing.token ?? tagBefore) : listing.token;
+      const checkTag = scope !== undefined && way === "tags" && began.after !== null && first !== null;
+      if (checkTag && listing.token !== null && listing.token !== first) return refuse("token_gone");
 
       const limit = pageSize(page.limit);
       const begins = after === null ? 0 : countUpTo(listing.members, after);
@@ -343,7 +356,10 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
             continue;
           }
         }
-        for (const member of batch) take(member, found, items, left);
+        for (const member of batch) {
+          const refused = take(member, found, items, left);
+          if (refused !== null) return refused;
+        }
         done += batch.length;
         // What fitted may fit twice over: the heavy object is behind.
         size *= 2;
@@ -351,10 +367,12 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
 
       let cursor: ChangePage["cursor"];
       if (done < rest.length) {
-        const told = listing.cut ? toldOf(listing.members, begins + done) : null;
+        const told = listing.cut ? (toldOf(listing.members, begins + done) ?? "") : null;
         const more = writeCursor({ way, whole: began.whole, from, after: wanted[done - 1]!.id, first, told });
         if (more === null) return refuse("too_large");
         cursor = { kind: "more", value: more };
+        if (scope !== undefined && !listing.cut && first !== null && first !== "")
+          inventories.set(scope, { collection, cursor: more, listing });
       } else if (listing.cut) {
         // More is to come from the token the server handed back. One that is the token it was asked with would be asked for ever.
         if (listing.token === from) return refuse("page_link_refused");
@@ -362,6 +380,11 @@ export function makeReader(deps: AdapterDeps): CalendarReader {
         if (more === null) return refuse("too_large");
         cursor = { kind: "more", value: more };
       } else {
+        if (checkTag) {
+          const current = await tagOf(s, collection);
+          if (!current.ok) return current;
+          if (current.tag !== first) return refuse("token_gone");
+        }
         // A token longer than a caller keeps is none: the calendar is then read whole each round, which is slow and never wrong.
         const value = first === null || first === "" ? null : `${way === "sync" ? SYNC : TAG}${first}`;
         cursor = { kind: "end", token: value === null || value.length > TOKEN_MAX_CHARS ? null : { provider: "caldav", value } };

@@ -63,6 +63,12 @@ describe.skipIf(!PG_UP)("the API clocks' lock", () => {
 
   it("its key is its own: a worker leading its cycle does not hold the clocks, nor the clocks the cycle", async () => {
     expect(API_CLOCK_LOCK_KEY).not.toBe(LEADER_LOCK_KEY);
+    const fixture = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
+    try {
+      await fixture`INSERT INTO worker_topology (shards) VALUES (1) ON CONFLICT (singleton) DO NOTHING`;
+    } finally {
+      await fixture.end({ timeout: 5 });
+    }
     const clocks = await acquireLeaderLock(PG_TEST_URL, API_CLOCK_LOCK_KEY);
     expect(clocks).not.toBeNull();
     held.push(clocks!);

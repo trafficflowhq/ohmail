@@ -631,6 +631,7 @@
     "toastMoveQueuedWithRule": "Queued for {1}: the letter and the sender's rule go to {0} on its next pass.",
     "toastMoveQueuedWithRuleUnknown": "Queued for the organizer: the letter and the sender's rule go to {0} on its next pass.",
     "toastMoved": "Moved to {0}.",
+    "toastMovingToTrash": "Moving to Trash.",
     "toastQueued": "Queued in Answer Later",
     "toastQueuedRuleUndone": "No rule was made. The letter still waits on {0}.",
     "toastQueuedRuleUndoneUnknown": "No rule was made. The letter still waits on the organizer.",

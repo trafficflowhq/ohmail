@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, exists, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import {
   approvals, changeLog, drafts, messages, messageStates, messageTags, prunedThroughSeq, routingDecisions, seqBounds,
   rules, tags, rulesTheActWrote, isCalendarRecordKind, type EntityType,
@@ -1314,55 +1314,35 @@ export class SyncService {
     // too, so a bug that let the two disagree fails closed rather than leaking into another
     // account's bootstrap.
     const inTail = cursor?.phase === "tail" || tailOnly;
+    // Start from the retained ids. UNION carries a message once even if several records need it.
+    // Drafts also carry their originals so a device can render a kept reply or forward.
     const repliedTo = inTail
-      ? db.select({ id: drafts.inReplyToMessageId }).from(drafts).where(eq(drafts.accountId, accountId))
+      ? db.select({ id: drafts.inReplyToMessageId }).from(drafts)
+        .where(and(eq(drafts.accountId, accountId), isNotNull(drafts.inReplyToMessageId)))
       : undefined;
-    // …and the message a draft forwards, for the same reason: the phone opens a kept
-    // forward only while its mirror holds the original.
     const forwarded = inTail
-      ? db.select({ id: drafts.forwardOfMessageId }).from(drafts).where(eq(drafts.accountId, accountId))
+      ? db.select({ id: drafts.forwardOfMessageId }).from(drafts)
+        .where(and(eq(drafts.accountId, accountId), isNotNull(drafts.forwardOfMessageId)))
       : undefined;
-    const reachableTail = repliedTo !== undefined && forwarded !== undefined
-      ? or(
-        exists(
-          db.select({ x: sql`1` }).from(messageTags).where(and(
-            eq(messageTags.messageId, messages.id),
-            eq(messageTags.accountId, accountId),
-          )),
-        ),
-        exists(
-          db.select({ x: sql`1` }).from(approvals).where(and(
-            eq(approvals.messageId, messages.id),
-            eq(approvals.accountId, accountId),
-            eq(approvals.status, "pending"),
-          )),
-        ),
-        /**
-         * A PARK. `SNAPSHOT_WINDOW` is untouched and a horizon beyond it is admitted for as long
-         * as the message is parked. `none` is the resting state every released message keeps, so
-         * it must not admit, or the tail would re-deliver everything ever parked.
-         */
-        exists(
-          db.select({ x: sql`1` }).from(messageStates).where(and(
-            eq(messageStates.messageId, messages.id),
-            eq(messageStates.accountId, accountId),
-            ne(messageStates.state, "none"),
-          )),
-        ),
-        exists(
-          db.select({ x: sql`1` }).from(routingDecisions).where(and(
-            eq(routingDecisions.messageId, messages.id),
-            eq(routingDecisions.accountId, accountId),
-            eq(routingDecisions.status, "pending_approval"),
-          )),
-        ),
-        /* A MESSAGE A DRAFT ANSWERS. Every draft rides the pages, so its reply target must too:
-           the client pins it, and the change that could bring it sits below the cursor. An
-           uncorrelated IN, read once: `in_reply_to_message_id` has no index to probe per row. */
-        inArray(messages.id, repliedTo),
-        inArray(messages.id, forwarded),
-      )
-      : undefined;
+    const retained = repliedTo && forwarded ? sql`(
+      select ${messageTags.messageId} as id from ${messageTags}
+        where ${messageTags.accountId} = ${accountId}
+      union
+      select ${approvals.messageId} from ${approvals}
+        where ${approvals.accountId} = ${accountId} and ${approvals.status} = 'pending'
+      union
+      select ${messageStates.messageId} from ${messageStates}
+        where ${messageStates.accountId} = ${accountId} and ${messageStates.state} <> 'none'
+      union
+      select ${routingDecisions.messageId} from ${routingDecisions}
+        where ${routingDecisions.accountId} = ${accountId} and ${routingDecisions.status} = 'pending_approval'
+      union
+      select ${messages.id} from ${messages}
+        where ${messages.accountId} = ${accountId} and ${inArray(messages.id, repliedTo)}
+      union
+      select ${messages.id} from ${messages}
+        where ${messages.accountId} = ${accountId} and ${inArray(messages.id, forwarded)}
+    ) as kept` : undefined;
 
     const where = and(
       eq(messages.accountId, accountId),
@@ -1372,7 +1352,6 @@ export class SyncService {
       // a deleted entity already tombstones.
       isNull(messages.deletedAt),
       ...(keyset ? [keyset] : []),
-      ...(reachableTail ? [reachableTail] : []),
     );
 
     /* THE BOUND THIS PAGE'S MESSAGE WALK TAKES. Page 1 of an ordinary cold start takes a
@@ -1385,9 +1364,10 @@ export class SyncService {
       : limit;
 
     // scoped-by: `where` above leads with eq(messages.accountId, accountId)
-    const rows = await db
+    const page = db
       .select({ id: messages.id, key: arrivalKey })
-      .from(messages)
+      .from(messages);
+    const rows = await (retained ? page.innerJoin(retained, sql`kept.id = ${messages.id}`) : page)
       .where(where)
       .orderBy(sql`${arrivalKey} desc`, desc(messages.id))
       .limit(walkLimit);

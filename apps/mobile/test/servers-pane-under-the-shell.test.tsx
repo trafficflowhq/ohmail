@@ -82,7 +82,7 @@ const ENDED = { id: "row-1", origin: "https://mail.example.test", flavor: "selfh
 
 function connection(state: ConnectionState, profiles: object[], activeId: string | null = null) {
   scene.conn = {
-    state, profiles, activeId, syncing: false, syncError: null,
+    state, profiles, activeId, syncing: false, syncError: null, signOutNotices: [],
     unsentDraftsHere: () => 0,
     forget: async () => ({ ok: true }),
     switchTo: async () => ({ ok: false, reason: refuse("pairEnded") }),

@@ -18,6 +18,7 @@ import type { SearchBeside } from "../../../packages/app/src/search/beside";
 import type { OhmailEngine, SearchHit } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { KeymapProvider } from "../../../test/support/keymap-provider";
+import { SearchFrame } from "./search-screen/frame";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
@@ -103,14 +104,13 @@ export function SearchSeat({ engine, initialQuery, onOpen = () => {} }: {
     engine, scope: "acct", query, onQuery: setQuery, onOpen, onExit: "none",
     boxRef, scrollerRef, t: (key) => key, searchBy: "words",
   });
+  const route = { place: "search" as const, sub: null, open: null, stage: null, words: {} };
   return (
-    <SearchAbove model={model} beside={searchBeside} blank={searchBlankOf(model, (key) => key)}>
-      <SearchList
-        route={{ place: "search", sub: null, open: null, stage: null, words: {} }}
-        plan={desktopPlan}
-        keysHere
-      />
-    </SearchAbove>
+    <SearchFrame engine={engine} route={route} plan={desktopPlan}>
+      <SearchAbove model={model} beside={searchBeside} blank={searchBlankOf(model, (key) => key)}>
+        <SearchList route={route} plan={desktopPlan} keysHere />
+      </SearchAbove>
+    </SearchFrame>
   );
 }
 

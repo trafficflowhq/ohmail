@@ -10,7 +10,7 @@ import {
   aiBootFields, aiProviderEnv, AiProviderEnvError, portsOf, transportFor, type AiProvider, type AiProviderEnv,
 } from "@trafficflow/core/ai-provider-env";
 import { transactionPoolerReason, sessionUrlRejection } from "@trafficflow/db";
-import { pgTransportReason } from "@trafficflow/db/cloud";
+import { pgTransportReason, railwaySignalSource } from "@trafficflow/db/cloud";
 import {
   DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, SSE_DISABLED_REFUSAL, type HeartbeatGet, type PostJson,
 } from "@trafficflow/db/cloud";
@@ -1138,9 +1138,17 @@ export const buildIdentityErrorOf = (
 function signalsFrom(env: NodeJS.ProcessEnv): PlatformSignalConfig | undefined {
   const token = env.TF_SIGNAL_VERCEL_TOKEN?.trim() || undefined;
   const team = env.TF_SIGNAL_VERCEL_TEAM_ID?.trim() || undefined;
-  if (!token && !team) return undefined;
+  const railway = {
+    RAILWAY_TOKEN: env.TF_SIGNAL_RAILWAY_TOKEN,
+    RAILWAY_PROJECT_ID: env.TF_SIGNAL_RAILWAY_PROJECT_ID,
+    RAILWAY_ENVIRONMENT_ID: env.TF_SIGNAL_RAILWAY_ENVIRONMENT_ID,
+    RAILWAY_SERVICE_ID: env.TF_SIGNAL_RAILWAY_SERVICE_ID,
+  };
+  if (!token && !team && !Object.values(railway).some((value) => value?.trim())) return undefined;
+  const activeSource = railwaySignalSource(railway.RAILWAY_SERVICE_ID);
   return {
-    env: { VERCEL_TOKEN: token, VERCEL_TEAM_ID: team, VERCEL_SIGNAL_PROJECTS: env.TF_SIGNAL_PROJECTS },
+    env: { VERCEL_TOKEN: token, VERCEL_TEAM_ID: team, VERCEL_SIGNAL_PROJECTS: env.TF_SIGNAL_PROJECTS, ...railway },
+    ...(activeSource ? { activeSource } : {}),
     deliberate: env.TF_SIGNAL_SSE_OFF?.trim() === "1" ? [SSE_DISABLED_REFUSAL] : [],
   };
 }
