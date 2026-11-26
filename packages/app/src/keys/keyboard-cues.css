@@ -1,0 +1,69 @@
+.fr-keyboard-cues {
+  position: fixed;
+  inset: 0;
+  z-index: var(--oh-layer-top);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.fr-keyboard-cues:is([data-held-shortcuts], [data-shortcut-tooltip]) {
+  visibility: visible;
+}
+
+.fr-shortcut-chip {
+  position: absolute;
+  --fr-chip-x: -50%;
+  translate: var(--fr-chip-x) calc(-100% - 3px);
+  white-space: nowrap;
+}
+
+.fr-shortcut-chip[data-below] {
+  translate: var(--fr-chip-x) 3px;
+}
+
+.fr-shortcut-chip[data-align="start"] {
+  --fr-chip-x: 0%;
+}
+.fr-shortcut-chip[data-align="end"] {
+  --fr-chip-x: -100%;
+}
+
+.fr-shortcut-tooltip {
+  max-width: min(260px, calc(100vw - 24px));
+  padding: var(--s1) var(--s2);
+  white-space: normal;
+  border-radius: var(--r-pill);
+  background: var(--sheet);
+  color: var(--ink2);
+  font-size: var(--t-meta);
+}
+
+.fr-held-chip {
+  position: absolute;
+  display: inline-flex;
+  white-space: nowrap;
+}
+
+.fr-held-chip[hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-rm="1"]) .fr-held-chip {
+    animation: fr-shortcut-appear var(--d-fade) var(--e-std) both;
+  }
+  @keyframes fr-shortcut-appear {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+@media (pointer: coarse) and (hover: none) {
+  .fr-shortcut-menuitem {
+    display: none;
+  }
+}

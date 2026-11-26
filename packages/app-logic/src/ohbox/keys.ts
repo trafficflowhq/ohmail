@@ -200,7 +200,7 @@ export function ohboxKeys(parts: KeyParts): KeyBinding[] {
    * absent rather than disabled when nothing is picked, so none of it can be reached by this rule either.
    */
   const noCursor = selected == null ? ({ disabledReason: "no_cursor" } as const) : {};
-  return [
+  const bindings: KeyBinding[] = [
     ...walkKeys({ ...parts, noCursor }),
     ...(picked.size > 0
       ? ([
@@ -275,6 +275,7 @@ export function ohboxKeys(parts: KeyParts): KeyBinding[] {
       : []),
     ...cursorKeys({ ...parts, noCursor }),
   ];
+  return bindings.map((binding) => ({ ...binding, place: "lists" }));
 }
 
 function cursorKeys({

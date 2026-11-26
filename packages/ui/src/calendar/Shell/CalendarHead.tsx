@@ -8,6 +8,8 @@ import "./calendar-head.css";
 interface Way {
   label: string;
   title?: string;
+  shortcut?: string;
+  shortcutHint?: string;
   disabled?: boolean;
   onPress?: MouseEventHandler<HTMLButtonElement>;
   ref?: Ref<HTMLButtonElement>;
@@ -67,6 +69,8 @@ function tool(
         icon={icon}
         label={way.label}
         title={way.title}
+        shortcut={way.shortcut}
+        shortcutHint={way.shortcutHint}
         disabled={way.disabled}
         onPress={way.onPress}
         {...extra}
@@ -125,6 +129,7 @@ export function CalendarHead(p: CalendarHeadProps) {
             type="button"
             className="oh-control oh-calhead-goto"
             aria-label={p.goTo.label}
+            data-shortcut-hint={p.goTo.shortcutHint}
             aria-current={p.todayNumber ? "date" : undefined}
             title={p.goTo.label}
             onClick={p.goTo.onPress}
@@ -168,6 +173,7 @@ export function CalendarHead(p: CalendarHeadProps) {
             kind="two"
             size="s"
             keyHint={p.today.keyHint}
+            shortcut={p.today.shortcut}
             disabled={p.today.disabled}
             onPress={p.today.onPress}
           >

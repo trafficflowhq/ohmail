@@ -414,6 +414,8 @@
       "editAsTextHint": "Als Text bearbeiten: die Formatierung wird entfernt"
     },
     "keys": {
+      "undoTyping": "Eingabe rückgängig machen",
+      "redoTyping": "Eingabe wiederholen",
       "send": "Senden",
       "leave": "Als Entwurf behalten",
       "later": "Später senden"

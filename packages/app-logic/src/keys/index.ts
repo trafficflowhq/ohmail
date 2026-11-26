@@ -1,6 +1,6 @@
 /** The door of `keys`: which keys mean what, the registry that dispatches them, the zones and focus, with no markup. */
 export { SCROLL_KEYS } from "./scroll-keys.js";
-export type { BindingGroup, DisabledReason, KeyBinding } from "./binding.js";
+export type { BindingGroup, DisabledReason, KeyBinding, ShortcutPlace } from "./binding.js";
 export {
   ariaShortcut,
   BINDING_GROUPS,

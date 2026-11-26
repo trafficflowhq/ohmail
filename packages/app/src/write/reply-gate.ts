@@ -3,7 +3,7 @@
  * the draft ceiling; nothing to send); and Send, Send + Done and Discard published to the reading sheet's one panel
  * while the reply stands. Moved out of `Reply.tsx` as they stood.
  */
-import { chordKeys, useModGlyph } from "@ohmail/app-logic/keys";
+import { useModGlyph } from "@ohmail/app-logic/keys";
 import { useEffect, useMemo, useRef } from "react";
 import { inlineForwardKey, SEND_IN_FLIGHT_PHASES } from "@ohmail/app-logic/writing/mail-send";
 import { usePublishVerbs, useWriteBeside, useWriting } from "./above.js";
@@ -12,6 +12,8 @@ import { useText } from "../text/index.js";
 import { useNeedsContent, type NeedsContent } from "./status/needs-content.js";
 import { useOverLimit } from "./status/over-limit.js";
 import { discardVerb, sendAndDoneVerb, sendVerb, sendWaits } from "./verbs/Verbs.js";
+
+import { SEND_AND_DONE_KEY, SEND_KEY, writingKey } from "./keys.js";
 
 const NOTHING = (): void => undefined;
 
@@ -129,7 +131,8 @@ function useReplyPanel(p: {
           ...(sentence === undefined ? {} : { refused: sentence }),
           busy,
         }),
-        keyHint: chordKeys("mod+Enter", mod).join(" "),
+        ...writingKey(SEND_KEY, mod),
+        shortcutWhileWriting: true,
       },
       ...(offersDone
         ? [
@@ -137,7 +140,7 @@ function useReplyPanel(p: {
               ...sendAndDoneVerb(doneWord, mayGo, going, () => presses.current.done(), tooLong, {
                 ...(sentence === undefined ? {} : { refused: sentence }),
               }),
-              keyHint: chordKeys("mod+shift+Enter", mod).join(" "),
+              ...writingKey(SEND_AND_DONE_KEY, mod),
             },
           ]
         : []),

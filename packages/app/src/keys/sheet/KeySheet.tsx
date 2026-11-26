@@ -4,7 +4,7 @@
  * Any key closes it and is taken, but Tab, a bare modifier, the scroll keys, and Enter or Space on its close
  * control. Its own key (`?`) is declared in the registry.
  */
-import { useContext, useState, type KeyboardEvent } from "react";
+import { useContext, useLayoutEffect, useState, type KeyboardEvent } from "react";
 import { KeyHelp } from "@ohmail/ui/base";
 import { KeymapContext, SCROLL_KEYS, useKeyBindings, type BoundKey } from "@ohmail/app-logic/keys";
 import { useFrame, usePaletteOffers } from "../../frame/commands.js";
@@ -12,7 +12,7 @@ import type { OverProps } from "../../frame/contract.js";
 import { useText } from "../../text/index.js";
 import { sheetColumns } from "./rows.js";
 
-const SHEET_CHORD = "?";
+import { SHEET_CHORD, useKeyboardHelpAvailable } from "../availability.js";
 
 const MODIFIER_KEYS: ReadonlySet<string> = new Set([
   "Shift",
@@ -42,24 +42,31 @@ export function KeySheet({ open, onClose }: OverProps) {
   const trash = useText("trash");
   const store = useContext(KeymapContext);
   if (!store) throw new Error("the key sheet stands only under a <KeymapProvider>");
-  const { commands, over } = useFrame();
+  const { commands, over, plan } = useFrame();
+  const available = useKeyboardHelpAvailable(plan.device === "phone");
+  useLayoutEffect(() => {
+    if (open && !available) onClose();
+  }, [open, available, onClose]);
   /* One reading, taken in the render that opens it, before focus moves into the sheet. */
   const [held, setHeld] = useState<{ open: boolean; bindings: readonly BoundKey[] }>({
     open: false,
     bindings: [],
   });
-  if (held.open !== open) setHeld({ open, bindings: open ? store.snapshot() : [] });
+  const shown = open && available;
+  if (held.open !== shown) setHeld({ open: shown, bindings: shown ? store.snapshot() : [] });
 
   useKeyBindings(
-    [
-      {
-        chord: SHEET_CHORD,
-        group: "app",
-        label: t("sheet"),
-        inWriting: true,
-        run: () => commands.over(over === "keys" ? null : "keys"),
-      },
-    ],
+    available
+      ? [
+          {
+            chord: SHEET_CHORD,
+            group: "app",
+            label: t("sheet"),
+            inWriting: true,
+            run: () => commands.over(over === "keys" ? null : "keys"),
+          },
+        ]
+      : [],
     "global",
   );
 
@@ -70,7 +77,8 @@ export function KeySheet({ open, onClose }: OverProps) {
         id: "mail.shortcuts",
         label: t("title"),
         icon: "key",
-        chord: SHEET_CHORD,
+        chord: available ? SHEET_CHORD : undefined,
+        disabled: !available,
         run: () => store.press(SHEET_CHORD),
       },
     ],
@@ -83,15 +91,15 @@ export function KeySheet({ open, onClose }: OverProps) {
     onClose();
     return true;
   };
-  const bindings = held.open === open ? held.bindings : open ? store.snapshot() : [];
+  const bindings = held.open === shown ? held.bindings : shown ? store.snapshot() : [];
   return (
     <KeyHelp
-      open={open}
+      open={shown}
       onClose={onClose}
       title={t("title")}
       close={t("close")}
       initialFocus="close"
-      columns={open ? sheetColumns(bindings, store.mod, t, trash) : []}
+      columns={shown ? sheetColumns(bindings, store.mod, t, trash) : []}
       onKey={onKey}
     />
   );

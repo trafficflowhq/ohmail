@@ -41,7 +41,6 @@ export function ListMenu({
     (mail && groundPull
       ? {
           label: groundPull.result ? ts(groundPull.result.key) : t("list.pull"),
-          keyHint: "p",
           busy: groundPull.pulling,
           onPress:
             mailbox && frame
@@ -59,7 +58,6 @@ export function ListMenu({
           {
             label: pull.label,
             icon: "pull" as const,
-            keyHint: mail ? pull.keyHint : undefined,
             disabled: pull.busy,
             onPress: pull.onPress,
           },
@@ -96,6 +94,7 @@ export function ListMenu({
               icon={item.icon}
               note={item.note}
               keyHint={item.keyHint}
+              shortcut={item.shortcut}
               disabled={item.disabled}
               onPress={() => {
                 setOpen(false);

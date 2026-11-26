@@ -68,6 +68,8 @@ async function boundedDrain(engine: { syncOnce(): Promise<void> }): Promise<"ok"
   }
 }
 
+export const PULL_KEY = "p";
+
 export interface PullBinding {
   available: boolean;
   pulling: boolean;

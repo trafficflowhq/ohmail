@@ -10,6 +10,7 @@ export interface ListMenuItem {
   readonly note?: string;
   readonly description?: string;
   readonly keyHint?: string;
+  readonly shortcut?: string;
   readonly disabled?: boolean;
   /** A rule stands above it: a group of its own (a tag's verbs under the pull). */
   readonly apart?: boolean;

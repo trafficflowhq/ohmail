@@ -135,9 +135,12 @@
     "foot": "Keys apply where they are listed. Any key closes this.",
     "group": {
       "navigate": "Move around",
-      "message": "This message",
+      "message": "Reader",
       "screener": "Screener",
-      "app": "App"
+      "app": "App",
+      "lists": "Lists",
+      "composer": "Composer",
+      "calendar": "Calendar"
     },
     "undo": "Undo last action",
     "nothingToUndo": "Nothing to undo.",

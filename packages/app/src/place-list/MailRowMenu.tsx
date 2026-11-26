@@ -17,23 +17,23 @@ import type { ListMenuItem } from "./ListMenu.js";
 export { MailRowMenu, type MenuTarget } from "../frame/ContextMenu.js";
 
 const LETTER_ACTIONS = [
-  ["open", "row.open", "mail", "↵", 0],
-  ["reply", "actionReply", "reply", "r", 1],
-  ["replyAll", "actionReplyAll", "replyall", undefined, 1],
-  ["forward", "row.forward", "forward", "⇧F", 1],
-  ["later", "actionLater", "later", "a", 2],
-  ["park", "actionSetAside", "parked", "e", 2],
-  ["resurface", "actionResurface", "resurface", "b", 2],
-  ["tag", "actionTag", "tags", "t", 3],
-  ["screen", "action", "screener", "s", 3],
-  ["move", "actionMove", "move", "m", 3],
-  ["done", "actionDone", "check", "⇧I", 4],
-  ["read", "verb.markRead", "read", "u", 4],
-  ["unread", "actionMarkUnread", "unread", "u", 4],
-  ["select", "row.select", "pick", "x", 4],
-  ["deselect", "row.deselect", "pick", "x", 4],
-  ["delete", "actionDelete", "trash", "d", 5],
-] as const satisfies readonly [string, string, IconName, string | undefined, number][];
+  ["open", "row.open", "mail", 0],
+  ["reply", "actionReply", "reply", 1],
+  ["replyAll", "actionReplyAll", "replyall", 1],
+  ["forward", "row.forward", "forward", 1],
+  ["later", "actionLater", "later", 2],
+  ["park", "actionSetAside", "parked", 2],
+  ["resurface", "actionResurface", "resurface", 2],
+  ["tag", "actionTag", "tags", 3],
+  ["screen", "action", "screener", 3],
+  ["move", "actionMove", "move", 3],
+  ["done", "actionDone", "check", 4],
+  ["read", "verb.markRead", "read", 4],
+  ["unread", "actionMarkUnread", "unread", 4],
+  ["select", "row.select", "pick", 4],
+  ["deselect", "row.deselect", "pick", 4],
+  ["delete", "actionDelete", "trash", 5],
+] as const satisfies readonly [string, string, IconName, number][];
 
 type LetterAction = (typeof LETTER_ACTIONS)[number][0];
 type LetterMenuActions = Partial<
@@ -44,7 +44,6 @@ type LetterMenuActions = Partial<
 export function useMailRowItems(
   actions: LetterMenuActions,
   selectedIds: readonly string[],
-  keys = false,
   extras: readonly ContextItem[] = [],
 ) {
   const t = useText("ohbox");
@@ -54,13 +53,12 @@ export function useMailRowItems(
   const pendingReplyCopy = selectedIds.some((id) => awaitsReplyCopy(engine?.store, id));
   let group = 0;
   const items: ContextItem[] = [];
-  for (const [id, word, icon, keyHint, nextGroup] of LETTER_ACTIONS) {
+  for (const [id, word, icon, nextGroup] of LETTER_ACTIONS) {
     const action = actions[id];
     if (action) {
       items.push({
         label: (id === "screen" ? screening : id === "read" ? reader : t)(word),
         icon,
-        keyHint: keys ? keyHint : undefined,
         apart: nextGroup !== group,
         ...(typeof action === "function" ? { onPress: action } : action),
         ...(pendingReplyCopy && (id === "later" || id === "park")
@@ -68,7 +66,6 @@ export function useMailRowItems(
               disabled: true,
               description: reader("replyCopyWaiting"),
               note: reader("replyCopySending"),
-              keyHint: undefined,
             }
           : {}),
       });
@@ -197,7 +194,6 @@ function LetterRowMenu({
         : undefined,
     },
     actions?.filingIds ?? (message ? [message.id] : []),
-    false,
     items,
   );
   if (ask && verbs && message) {

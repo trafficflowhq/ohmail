@@ -42,13 +42,14 @@
     color: var(--ink2);
   }
   .oh-keyhelp-label {
-    flex: none;
+    flex: 1 1 auto;
+    min-width: 0;
     font-weight: var(--w-mid);
-    white-space: nowrap;
+    white-space: normal;
   }
   .oh-keyhelp-keys {
     display: flex;
-    flex: 1 1 0;
+    flex: 0 1 auto;
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;

@@ -31,6 +31,7 @@ import { calendar } from "../../src/calendar/entry.js";
 import { settingsPlace } from "../../src/settings/index.js";
 import { useFrame, useRailFoot } from "../../src/frame/commands.js";
 import type { ReactNode } from "react";
+import { keySheetOver } from "../../src/keys/sheet/index.js";
 import { Frame } from "../../src/frame/Frame.js";
 import { ProductSwitch } from "../../src/frame/ProductSwitch.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
@@ -239,6 +240,7 @@ function mount(
   withSharedSettings = false,
   mailWaiting = false,
   withAccountFoot = false,
+  withKeyboardHelp = false,
 ) {
   const made = fakeHost({
     engine,
@@ -248,6 +250,7 @@ function mount(
     calendar,
     products: "both",
     wires: { calendar: port },
+    overs: withKeyboardHelp ? { keys: keySheetOver } : undefined,
     places: {
       ...(withSharedSettings ? { settings: sharedSettings } : {}),
       ...(mailWaiting
@@ -1335,4 +1338,28 @@ describe("the calendar frame", () => {
       ),
     ).toBe(true);
   });
+});
+
+it("Calendar’s live creation and hour shortcuts are also listed from Mail", () => {
+  const { engine, port, put } = mirror();
+  put("calendar_connection", connection.id, connection);
+  put("calendar", studio.id, studio);
+  const { address } = mount(engine, port, "#/cal/week/2026-11-16", "desktop", false, true, false, true);
+  const help = () => {
+    fireEvent.keyDown(document.body, { key: "?" });
+    return screen.getByRole("dialog", { name: "Keyboard shortcuts" });
+  };
+  const labels = [
+    calendarEn.calendar.create.title,
+    calendarEn.calendar.previousHour,
+    calendarEn.calendar.nextHour,
+  ];
+  const week = help();
+  for (const label of labels) expect(within(week).getByText(label, { exact: true })).toBeTruthy();
+  fireEvent.keyDown(week, { key: "Escape" });
+  fireEvent.keyDown(document.body, { key: "c" });
+  expect(address.read()).toContain("panel=new");
+  act(() => address.visit("#/ohbox"));
+  const mail = help();
+  for (const label of labels) expect(within(mail).getByText(label, { exact: true })).toBeTruthy();
 });

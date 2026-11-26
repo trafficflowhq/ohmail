@@ -16,6 +16,7 @@ export type ParagraphStyle = 0 | 1 | 2 | 3;
 
 export interface EditorMarks {
   readonly ids: readonly MarkId[];
+  readonly shortcuts?: Partial<Record<MarkId, readonly string[]>>;
   /** The marks that hold where the caret is now. */
   active(): ReadonlySet<MarkId>;
   /** Called when `active()` may answer otherwise; the return stops it. */

@@ -16,6 +16,7 @@ export interface DraftControlProps {
   short?: string;
   /** What a press does, with its price, as the pointer's hint: "Draft reply · 15 credits". */
   title: string;
+  shortcut?: string;
   /** Its price beside it, where the foot has room and credits are spent: "15 credits". */
   cost?: string;
   /** Nothing to draft from yet: it stands quiet, takes a press all the same, and the app says why. */
@@ -32,6 +33,7 @@ export function DraftControl({
   word = label,
   short,
   title,
+  shortcut,
   cost,
   idle,
   busy,
@@ -50,6 +52,7 @@ export function DraftControl({
         type="button"
         className="oh-control oh-draft-control"
         aria-label={label}
+        aria-keyshortcuts={shortcut}
         title={title}
         aria-busy={busy || undefined}
         aria-disabled={idle || busy || undefined}

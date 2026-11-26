@@ -49,7 +49,6 @@ export function OhboxRowMenu({
       delete: onAsk && canDelete ? ask("delete") : undefined,
     },
     row.members.map(({ id }) => id),
-    true,
   );
   return <MailRowMenu target={{ at, anchor }} onClose={onClose} items={items} />;
 }

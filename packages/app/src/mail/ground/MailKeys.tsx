@@ -14,12 +14,22 @@
  * is the frame's, from each place's registration; a place's keys are its own seat's. A second binding of any of
  * these would answer one press twice.
  */
+import {
+  DRAFT_REPLY_KEY,
+  LEAVE_KEY,
+  SEND_AND_DONE_KEY,
+  SEND_KEY,
+  teachWritingKey,
+} from "../../write/keys.js";
+import { editorHelp } from "../../write/editor/shortcuts.js";
 import { useEnabledBinding, useKeyBindings, useKeyPress, type KeyBinding } from "@ohmail/app-logic/keys";
+import { listWalkHelp } from "@ohmail/app-logic/place-list";
 import { useOptionalTheme } from "@ohmail/ui/theme";
 import { useFrame, usePaletteOffers, useSignal } from "../../frame/index.js";
 import { canCycleMailLayout } from "../../frame/layout-plan.js";
 import { productOf } from "../../frame/product.js";
 import { NONE } from "../../host/index.js";
+import { letterKeys } from "../../reader/keys.js";
 import { useText } from "../../text/index.js";
 import { useWriting } from "../../write/index.js";
 
@@ -27,9 +37,13 @@ export function MailKeys(): null {
   const { host, commands, route } = useFrame();
   const t = useText("shortcuts");
   const palette = useText("palette");
+  const lists = useText("ohbox");
+  const reader = useText("reader");
+  const writeWords = useText("write");
   const theme = useOptionalTheme();
   const facts = useSignal(host.device.window);
-  const hasLayout = theme?.layoutEnabled === true && productOf(route.place) === "mail";
+  const inMail = productOf(route.place) === "mail";
+  const hasLayout = theme?.layoutEnabled === true && inMail;
   const canCycle = hasLayout && canCycleMailLayout(facts);
   const cycleLayout = {
     id: "mail.layout",
@@ -65,7 +79,7 @@ export function MailKeys(): null {
   } as const;
   usePaletteOffers(
     "mail",
-    route.stage !== null
+    !inMail || route.stage !== null
       ? []
       : [...(write === NONE ? [] : [compose]), resurface, move, ...(canCycle ? [cycleLayout] : [])],
     productOf(route.place) === "mail",
@@ -87,16 +101,23 @@ export function MailKeys(): null {
     keys.push({
       chord: "/",
       group: "navigate",
+      place: "lists",
       label: t("search"),
       run: () => commands.go({ place: "search" }),
     });
   if (write !== NONE) {
-    keys.push({ chord: compose.chord, group: "app", label: t("compose"), run: compose.run });
+    keys.push({ chord: compose.chord, group: "app", place: "lists", label: t("compose"), run: compose.run });
+    keys.push(...editorHelp(writeWords));
+    if (writing.draftReplyChrome.control.offered && replyTo === null)
+      keys.push(teachWritingKey(DRAFT_REPLY_KEY, writeWords("draft.verb")));
+    if (route.place !== "write" && replyTo === null)
+      keys.push(teachWritingKey(LEAVE_KEY, writeWords("keys.leave")));
     // Write owns the live shortcut whenever an editor stands.
     if (route.place !== "write" && replyTo === null)
       keys.push({
-        chord: "mod+Enter",
+        chord: SEND_KEY,
         group: "message",
+        place: "composer",
         label: t("sendReply"),
         disabled: true,
         run: () => {},
@@ -113,13 +134,20 @@ export function MailKeys(): null {
       run: () => {},
     });
   keys.push({
-    chord: "mod+shift+Enter",
+    chord: SEND_AND_DONE_KEY,
     group: "message",
+    place: "composer",
     label: t("sendReplyAndDone"),
     inInput: true,
     disabled: sendAndDone === null,
     run: () => sendAndDone?.(),
   });
-  useKeyBindings(keys, "global");
+  if (!inMail || route.place === "write") {
+    if (host.features.places.ohbox !== NONE)
+      keys.push(...listWalkHelp({ next: lists("keyNext"), prev: lists("keyPrev"), open: lists("keyOpen") }));
+    if (host.features.reader !== NONE)
+      keys.push(...letterKeys(reader, null).map((binding) => ({ ...binding, helpOnly: true })));
+  }
+  useKeyBindings(inMail ? keys : keys.map((binding) => ({ ...binding, helpOnly: true })), "global");
   return null;
 }

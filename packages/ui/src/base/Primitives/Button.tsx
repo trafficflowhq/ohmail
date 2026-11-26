@@ -17,6 +17,8 @@ interface ButtonLook {
   mark?: IconName;
   /** The key that runs it, as it is printed. */
   keyHint?: string;
+  /** Key printed in the hover and hold hints where a sequence has no ARIA spelling. */
+  shortcutHint?: string;
   title?: string;
   /** Show the key whatever the face says. */
   keyShown?: boolean;
@@ -101,6 +103,7 @@ export function Button(props: ButtonProps) {
     "aria-label": label,
     title: props.title ?? label,
     "aria-keyshortcuts": shortcut,
+    "data-shortcut-hint": props.shortcutHint ?? (shortcut ? keyHint : undefined),
   };
   const inside = (
     <>

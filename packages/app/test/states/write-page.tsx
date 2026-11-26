@@ -21,6 +21,7 @@ import type { ImageQualityLevel, PicturesPort, SendSurface } from "@ohmail/app-l
 import type { ScheduleFiles } from "@ohmail/app-logic/write/later";
 import { InlineReply } from "../../src/reader/parts.js";
 import "../../src/reader/column.css";
+import { keySheetOver } from "../../src/keys/sheet/index.js";
 import { Frame } from "../../src/frame/Frame.js";
 import { useRailModel } from "../../src/frame/commands.js";
 import type { PaneProps, RailModel } from "../../src/frame/contract.js";
@@ -303,7 +304,9 @@ function useWritingDouble(): Writing {
     composeWaitNote: null,
     composeCloseRefusal: null,
     composeForwardFiles: forwardFiles(compose),
-    sendCompose: nothing,
+    sendCompose: () => {
+      if (q.has("help")) document.documentElement.setAttribute("data-letter-sent", "");
+    },
     closeCompose: nothing,
     discardKeepsCompose: () => null,
     replyTo: inline ? LETTER : null,
@@ -601,6 +604,7 @@ const { host: webHost } = fakeHost({
   service: "managed",
   scope: "mila",
   places: { write },
+  overs: q.has("help") ? { keys: keySheetOver } : undefined,
   window: fakeWindow({ ...room, ...size, posture: "flat", reducedMotion: true }),
   address: fakeAddress("#/compose"),
   appearance: fakeAppearance(look),
