@@ -8,13 +8,13 @@
  * invented.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { Secret, type StoredCredential } from "@ohmail/cal-providers";
+import { Secret, serializeCredential, type StoredCredential } from "@ohmail/cal-providers";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { calendarSyncPass } from "../src/calendar/sync-pass.js";
 import { loadDueConnections } from "../src/calendar/roster.js";
 import { RETRY_FLOOR_MS } from "../src/calendar/words.js";
-import { eq } from "drizzle-orm";
-import { calConnections, calEvents, calWrites } from "@trafficflow/db";
+import { and, eq } from "drizzle-orm";
+import { calConnections, calCredentials, calEvents, calWrites } from "@trafficflow/db";
 import { calendarWriteDrain } from "../src/calendar/write-drain.js";
 import { CalendarKeyRingFault } from "../src/calendar/sign-in.js";
 import {
@@ -147,10 +147,16 @@ describe.skipIf(!AVAILABLE)("the calendar's sealed sign-in", () => {
   it("Microsoft: a key re-wrap during the trade is the same sign-in, and the rotated one still lands", async () => {
     let t!: Awaited<ReturnType<typeof msWorld>>;
     t = await msWorld(async () => {
-      // The same lasting sign-in, sealed again under the ring's newer key: another envelope, the same token.
-      await sealCredential(w, t.accountId, t.connectionId, microsoft("first"), null, new StaticKeyProvider({ 1: Buffer.alloc(32, 11), 2: Buffer.alloc(32, 12) }));
+      const text = serializeCredential(microsoft("first"), t);
+      if (text === null) throw new Error("the fixture credential could not be sealed");
+      const rewrapped = await w.keys.encrypt(text);
+      // The key rotation only changes the envelope, leaving the credential timestamp intact.
+      await w.db.update(calCredentials).set({ secretEnc: rewrapped.ciphertext, keyVersion: rewrapped.keyVersion })
+        .where(and(eq(calCredentials.accountId, t.accountId), eq(calCredentials.connectionId, t.connectionId)));
       return { status: 200, body: { access_token: "short", expires_in: 3600, refresh_token: ["lasting", "rotated", "fixture"].join("-") } };
     });
+    const oldRing = StaticKeyProvider.fromSecret(Buffer.alloc(32, 11));
+    await sealCredential(w, t.accountId, t.connectionId, microsoft("first"), null, oldRing);
     expect(await calendarSyncPass(t.deps, t.due, never)).toMatchObject({ kind: "synced" });
     expect(JSON.parse((await openedCredential(w, t.accountId, t.connectionId)) ?? "{}").refreshToken).toBe(["lasting", "rotated", "fixture"].join("-"));
   }, 60_000);
@@ -211,12 +217,12 @@ describe.skipIf(!AVAILABLE)("the calendar's sealed sign-in", () => {
   });
 
   it("Microsoft: a throttled refresh from a queued edit holds the write and the connection", async () => {
-    const now = Date.now();
+    let now = Date.now();
     const clock = { now: () => now };
     const wait = 20 * 60 * 1000;
     let throttled = false;
     const t = await msWorld(async () => throttled ? { status: 429, body: {}, retryAfter: "1200" } :
-      { status: 200, body: { access_token: "short", expires_in: 3600 } });
+      { status: 200, body: { access_token: "short", expires_in: 180 } });
     const principal = ["calendar", "example.test"].join("@");
     await w.db.update(calConnections).set({ principal }).where(eq(calConnections.id, t.connectionId));
     const writer = scriptedWriter("microsoft", {
@@ -238,13 +244,19 @@ describe.skipIf(!AVAILABLE)("the calendar's sealed sign-in", () => {
       accountId: t.accountId, key: "edit-fixture",
       act: { kind: "calendar_event_update", eventId: event.id, base: event.updatedAt.toISOString(), scope: { kind: "record" }, change: { title: "New meeting title" } },
     });
+    // The queued edit must be the request that needs a new grant. Keep the listing fresh,
+    // but move the clock inside the short grant's renewal window.
+    now += 61_000;
     throttled = true;
     expect(await run()).toEqual({ kind: "backed_off", word: "throttled", untilMs: now + wait });
     expect(writer.calls.map((call) => call.kind)).toEqual(["change"]);
     expect(t.http.forms).toHaveLength(2);
-    const [stored] = await w.db.select({ state: calWrites.state, next: calWrites.nextAttemptAt }).from(calWrites).where(eq(calWrites.id, write.id));
+    const [stored] = await w.db.select({
+      state: calWrites.state, next: calWrites.nextAttemptAt, updated: calWrites.updatedAt,
+    }).from(calWrites).where(eq(calWrites.id, write.id));
     expect(stored?.state).toBe("pending");
-    expect(stored?.next?.getTime()).toBeGreaterThanOrEqual(now + wait);
+    // The write's lease and retry timestamp use PostgreSQL's clock.
+    expect(stored!.next!.getTime() - stored!.updated.getTime()).toBeGreaterThanOrEqual(wait);
     const due = await loadDueConnections(deps.db, new Date(now + wait - 1), 1, (column) => eq(column, t.accountId));
     expect(due).toEqual([]);
   });

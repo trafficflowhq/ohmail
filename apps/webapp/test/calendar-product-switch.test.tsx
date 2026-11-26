@@ -2,7 +2,7 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CalendarConnectionRecord, CalendarRecord, CalendarSettingsWire } from "@ohmail/wire";
-import { ACCOUNT, ISO, MAILBOX, closeMailPage, inboxPage, mountMailPage, prepareMailPage, scopedSyncResponse, tick } from "./fixtures/mounted-mail-page";
+import { ACCOUNT, ISO, MAILBOX, calendarSnapshot, closeMailPage, inboxPage, mountMailPage, prepareMailPage, scopedSyncResponse, tick } from "./fixtures/mounted-mail-page";
 import { json } from "./account/account-harness";
 
 const calendarSettings: CalendarSettingsWire = {
@@ -29,6 +29,8 @@ const hello = () => json({
   product: "ohmail", flavor: "managed", needsSetup: false,
   features: { staging: false, ai: false, pairing: false, calendar: true },
 });
+
+const calendarSettingsRecord = { id: ACCOUNT, accountId: ACCOUNT, calendarEnabledAt: ISO, updatedAt: ISO };
 
 const products = () => within(screen.getByRole("group", { name: "Mail or Calendar" }));
 
@@ -125,6 +127,9 @@ it("opens the week and returns to the same dated Month for an account with a cal
     "GET /api/hello": hello,
     "GET /api/calendar/settings": () => scopedSyncResponse({ ...calendarSettings, enabledAt: ISO }),
     "GET /api/calendar/connect": () => scopedSyncResponse({ ways: ["caldav"], connections: [connection] }),
+    "GET /api/sync/snapshot": () => calendarSnapshot([
+      ["settings", calendarSettingsRecord], ["calendar_connection", connection], ["calendar", calendar],
+    ]),
     "GET /api/sync": () => scopedSyncResponse({
       changes: {
         creates: [
@@ -174,6 +179,10 @@ it("creates on the signed-in calendar when the preferences request fails", async
   const server = await prepareMailPage({
     "GET /api/hello": hello,
     "GET /api/calendar/settings": () => new Response(null, { status: 503 }),
+    "GET /api/sync/snapshot": () => calendarSnapshot([
+      ["settings", calendarSettingsRecord], ["calendar_connection", connection],
+      ...calendars.map((calendar) => ["calendar", calendar] as const),
+    ]),
     "GET /api/sync": () => scopedSyncResponse({
       changes: {
         creates: [
@@ -300,6 +309,7 @@ it("explains unavailable From mail detection on a self-hosted server with dated 
     "GET /api/messages/plain/body": () => scopedSyncResponse(body(null)),
     "GET /api/messages/structured/body": () =>
       scopedSyncResponse(body(`<p>${dated}</p><script type="application/ld+json">${structured}</script>`)),
+    "GET /api/sync/snapshot": () => calendarSnapshot(records),
     "GET /api/sync": () => scopedSyncResponse({
       changes: {
         creates: records.map(([type, entity], index) =>

@@ -59,9 +59,11 @@ describe("the suggest run's progress bar", () => {
 describe("the apply-all run's progress", () => {
   it("says how far it has got, in words and as a track", () => {
     mount({ applying: { done: 7, total: 40 } });
-    expect(screen.getByText("Applying 7 of 40…").getAttribute("role")).toBe("status");
-    expect(amounts()).toEqual([["7", "40"]]);
-    expect(tracks()[0]?.getAttribute("aria-hidden")).toBe("true");
+    const progress = screen.getByText("Applying 7 of 40…");
+    // Apply now uses a spinner beside the live announcement. Suggestion runs still use a track.
+    const status = screen.getAllByRole("status").find((region) => region.contains(progress));
+    expect(status?.querySelector(".oh-spin")?.getAttribute("aria-hidden")).toBe("true");
+    expect(tracks()).toEqual([]);
   });
 
   it("shows nothing at all when no bulk is running", () => {
@@ -73,18 +75,19 @@ describe("the apply-all run's progress", () => {
   it("the Apply verb carries the run and refuses a second press while it is on", () => {
     const applyAll = vi.fn();
     const suggested = [
-      sender("one", "One", { ai: { dest: "ohbox" } }),
-      sender("two", "Two", { ai: { dest: "reads" } }),
-      sender("three", "Three", { ai: { dest: "reads" } }),
+      sender("one", "One", { ai: { dest: "ohbox", rationale: "" } }),
+      sender("two", "Two", { ai: { dest: "reads", rationale: "" } }),
+      sender("three", "Three", { ai: { dest: "reads", rationale: "" } }),
     ];
     const gate = {
       waiting: suggested, waitingCount: suggested.length, suggestedCount: 3, suggestedDests: ["ohbox", "reads"], applyAll,
     } satisfies Partial<ScreenerState>;
     const world = mount({ ...gate, applying: { done: 7, total: 40 } });
     const progress = screen.getByText("Applying 7 of 40…");
-    expect(progress.getAttribute("role")).toBe("status");
-    expect(screen.queryByRole("button", { name: "Apply 3" })).toBeNull();
-    fireEvent.click(progress);
+    expect(screen.getAllByRole("status").some((status) => status.contains(progress))).toBe(true);
+    const active = screen.getByRole<HTMLButtonElement>("button", { name: "Apply 3" });
+    expect(active.disabled).toBe(true);
+    fireEvent.click(active);
     expect(applyAll).not.toHaveBeenCalled();
 
     world.again(modelOf({ flushes: 0 }, { ...gate, applying: null }));
