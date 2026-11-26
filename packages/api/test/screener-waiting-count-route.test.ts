@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { ScreenerService } from "@trafficflow/services/mail";
 import { createApp, apiRoutes } from "@trafficflow/api";
 import { makeDeps, seedSession, seedMailbox, seedMessage, req, FIXED_NOW } from "./helpers.js";
 
@@ -25,6 +26,21 @@ describe("GET /screener/waiting/count", () => {
     expect(w.status).toBe(200);
     expect(await w.json()).toEqual({ senders: 2 });
     expect(await (await at(home)).json()).toEqual({ senders: 1 });
+  });
+
+  it("counts the filtered senders without reading a hydrated page", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailbox = await seedMailbox(db, { accountId: s.accountId });
+    await seedMessage(db, { accountId: s.accountId, mailboxId: mailbox, folder: "ohmail/Screener", date: RECENT });
+    const read = vi.spyOn(ScreenerService.prototype as unknown as { heldSenderPage(): unknown }, "heldSenderPage");
+    try {
+      const response = await app.handle(req("GET", `/screener/waiting/count?mailboxId=${mailbox}`, { bearer: s.token }), deps);
+      expect(await response.json()).toEqual({ senders: 1 });
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
   });
 
   it("400 for a malformed id, 404 for another account's mailbox", async () => {

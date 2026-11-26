@@ -1289,6 +1289,7 @@ export const accounts = sqliteTable("accounts", {
    * whichever side wins the row lock, zero rows survive.
    */
   erasedAt: integer("erased_at", { mode: "timestamp_ms" }),
+  erasureProgress: text("erasure_progress", { mode: "json" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 });
 

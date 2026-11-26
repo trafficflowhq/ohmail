@@ -656,7 +656,6 @@ export function sqliteDialect(): Dialect {
       return [];
     },
 
-    screenerActivityCandidates: async () => null,
 
     // The instant is milliseconds here.
     monthBucket: (instant: SQL): SQL => sql`strftime('%Y-%m', ${instant} / 1000, 'unixepoch')`,

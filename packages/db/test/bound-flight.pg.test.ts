@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import net from "node:net";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -10,7 +10,7 @@ import {
 } from "../src/bound.js";
 import {
   acquireCeilingHandle, closePooledDbs, DbParameterTypeError, FlightClosedError, isDbAcquireTimeout, makeOwnedDb,
-  makePooledDb, type OwnedDb,
+  makePooledDb, reserveWithin, type OwnedDb,
 } from "../src/client.js";
 import { readFlightOf } from "../src/read-flight.js";
 import { PG_TEST_URL, realPgAvailable, recordPgWire } from "../src/testing.js";
@@ -299,8 +299,8 @@ function poolOfOne(name: string, at?: string, acquireTimeoutMs = 3_000): ReturnT
 }
 
 /**
- * A FLIGHT WAITING FOR A CONNECTION. postgres.js 3.4.9 hands the first statement waiting for one to
- * the connection it dials again after a close, and drops it there when it is a reservation.
+ * A FLIGHT WAITING FOR A CONNECTION. The driver must carry a waiting reservation onto the
+ * replacement connection without submitting it again or moving it ahead of other work.
  */
 describe.skipIf(!PG_UP)("a flight waiting for a connection", () => {
   let one: ReturnType<typeof makePooledDb>;
@@ -321,6 +321,73 @@ describe.skipIf(!PG_UP)("a flight waiting for a connection", () => {
       expect(got === "NEVER" ? got : got[0]?.five).toBe(5);
       expect(await held).toBe("ended");
     } finally {
+      await killer.end({ timeout: 5 });
+    }
+  }, 30_000);
+
+  it.each([["alone", false], ["behind an ordinary statement", true]])(
+    "the driver keeps a reservation waiting %s when the connection it waited for dies, and asks for it once",
+    async (_label, mixed) => {
+      const killer = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
+      const raw = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
+      try {
+        // The only connection is held by a reservation, so later statements wait in the driver's queue.
+        const holder = await raw.reserve();
+        const [{ pid }] = await holder<{ pid: number }[]>`select pg_backend_pid() as pid`;
+        const held = holder`select pg_sleep(2)`.then(() => "ran", () => "ended");
+        await new Promise((r) => setTimeout(r, 100));
+        const before = mixed ? raw<{ n: number }[]>`select 7 as n`.then((r) => r[0]!.n) : Promise.resolve(7);
+        // The tagged statement is lazy. Let it enter the queue before asking for the reservation.
+        await new Promise((r) => setTimeout(r, 0));
+        const reserve = vi.spyOn(raw, "reserve");
+        const reserved = reserveWithin(raw, null, "statement");
+        await new Promise((r) => setTimeout(r, 100));
+        await killer`select pg_terminate_backend(${pid})`;
+        expect(await within(before, 2_500)).toBe(7);
+        const got = await within(reserved, 2_500);
+        expect(got === "NEVER" ? got : "reserved").toBe("reserved");
+        if (got !== "NEVER") {
+          expect((await got`select 5::int as five`)[0]?.five).toBe(5);
+          got.release();
+        }
+        expect(await held).toBe("ended");
+        expect(reserve).toHaveBeenCalledTimes(1);
+      } finally {
+        await raw.end({ timeout: 1 });
+        await killer.end({ timeout: 5 });
+      }
+    }, 30_000);
+
+  it("serves 100 waiters in order through five consecutive redials", async () => {
+    const killer = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
+    const raw = postgres(PG_TEST_URL, { max: 1, fetch_types: false, onnotice: () => {} });
+    try {
+      let holder = await raw.reserve();
+      const reserve = vi.spyOn(raw, "reserve");
+      const answered: number[] = [];
+      const waiting = Array.from({ length: 100 }, (_, i) =>
+        reserveWithin(raw, null, "statement").then((next) => {
+          answered.push(i);
+          return next;
+        }));
+      // A failed assertion can end the driver with requests still queued.
+      for (const waiter of waiting) void waiter.catch(() => {});
+      for (const [i, waiter] of waiting.entries()) {
+        if (i < 5) {
+          const [row] = await holder<{ pid: number }[]>`select pg_backend_pid() as pid`;
+          await killer`select pg_terminate_backend(${row!.pid})`;
+        } else {
+          holder.release();
+        }
+        const next = await within(waiter, 2_500);
+        if (next === "NEVER") throw new Error(`reservation ${i + 1} was lost`);
+        holder = next;
+      }
+      holder.release();
+      expect(answered).toEqual(waiting.map((_, i) => i));
+      expect(reserve).toHaveBeenCalledTimes(100);
+    } finally {
+      await raw.end({ timeout: 1 });
       await killer.end({ timeout: 5 });
     }
   }, 30_000);

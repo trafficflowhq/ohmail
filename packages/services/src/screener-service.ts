@@ -59,6 +59,7 @@ import { requestRefusalReason } from "@trafficflow/core/reader-refusal";
 import {
   moveDestinationWord, planAccountFanOut, writeReaderRequest, writeReaderRequestSet, type AccountFanOut, type FanOutTarget,
 } from "./reader-request.js";
+import type { AccountRelations } from "@trafficflow/db";
 import { bridgeDb, bridgeTx, type Db, type ServiceContext } from "./context.js";
 import { materializeRules } from "./dto/materialize.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
@@ -156,6 +157,7 @@ export interface ScreenerDeps {
    */
   adapter?: AdapterPort;
   learning?: LearningService;
+  accountRelations?: (db: Db) => Promise<AccountRelations>;
   /**
    * Auto-unsubscribe. OPTIONAL, and absent means the feature is simply off: the
    * screen-out still happens, nothing is sent. It is called AFTER the transaction commits
@@ -993,8 +995,16 @@ export class ScreenerReadService {
     if (!mb || mb.status === "disabled") throw new ServiceError("not_found", 404, "mailbox not found");
     const cutline = cutlinesOf(await effectiveScreeningWindows(ctx), ctx.now());
     const gone = await readGoneMailboxIds(asTx(ctx), ctx.accountId);
-    const { total } = await this.heldSenderPage(ctx, { after: null, limit: 1, cutline, withTotal: true, mailboxId, gone });
-    return { senders: total ?? 0 };
+    const held = this.heldSenderKeys(ctx, mailboxId, cutline, gone);
+    const { d, reps } = held;
+    const sets = d.name === "pg" ? cutline : undefined;
+    const withSets = await this.waitingSets(ctx, held, sets, gone);
+    const counts = ctx.db.select({ total: sql`count(*)` }).from(reps).where(and(
+      ...this.waitingFilters(ctx, held, cutline, gone, sets !== undefined),
+      sql`not ${this.decisionInFlightSql(ctx, d, sql`lower(${reps.fromAddress})`)}`,
+    ));
+    const [[total = 0] = []] = await this.readWaiting(ctx, sets, (db) => d.exec(db, sql`${withSets} ${counts}`));
+    return { senders: Number(total) };
   }
 
   /**
@@ -1754,11 +1764,8 @@ export class ScreenerReadService {
       ))
       .orderBy(desc(reps.sortKey), desc(reps.messageId))
       .limit(opts.limit);
-    // Only senders whose held rows did not already answer the cutline need activity
-    // from their other mail. The list and the count use the same set.
-    const needsActivity = (from: SQL) => sql`select lower(from_address) from ${from}
-      where rank = 1 and held_active = 0 and held_arrival = 0`;
-    const read = (db: Db, candidates: SQL = needsActivity(sql`reps`)) => {
+    const sets = await this.waitingSets(ctx, held, cutline, opts.gone);
+    const read = (db: Db) => {
       const page = cutline ? db.select({
         messageId: sql<string>`picked.id`.as("picked_message_id"),
         sortKey: sql<Date>`picked.sort_key`.mapWith(messages.date).as("sort_key"),
@@ -1767,11 +1774,7 @@ export class ScreenerReadService {
         senderHeld: sql<number>`picked.sender_held`.as("sender_held"),
         waitingTotal: sql<number | string | null>`picked.waiting_total`.as("waiting_total"),
       }).from(sql`(
-        with reps as materialized (
-          select * from (${held.rows}) ranked where rank = 1
-        ),
-          active_senders as materialized (${activeSenderKeysSql(d, ctx.accountId, cutline, opts.gone, candidates)}),
-          claimed_senders as materialized (${heldClaimKeysSql(d, ctx.accountId, cutline, SCREENING_AUTH_VERDICTS, opts.gone)})
+        ${sets}
         ${picked}
       ) picked`).as("page") : picked.as("page");
       // scoped-by: `page` holds only ids of the account-scoped `reps` subquery above
@@ -1784,18 +1787,37 @@ export class ScreenerReadService {
         .orderBy(desc(page.sortKey), desc(page.messageId));
     };
 
-    // Binding the candidate set in a separate statement lets Postgres scan activity in parallel.
-    // Both reads use one snapshot. A sender whose mail changes between them cannot slip through.
-    const rows = cutline && onServerPool(ctx.db) && !inTransactionHandle(ctx.db)
-      ? await asTx(ctx).transaction(async (tx) => {
-        const candidates = await d.screenerActivityCandidates(tx, needsActivity(sql`(${held.rows}) activity_reps`));
-        return await read(bridgeDb(tx), candidates ?? undefined);
-      }, { isolationLevel: "repeatable read", accessMode: "read only" })
-      : await read(ctx.db);
+    const rows = await this.readWaiting(ctx, cutline, read);
 
     // `sum` is a bigint on the server and arrives as a string there; no row is an empty queue.
     const total = opts.withTotal ? Number(rows[0]?.waitingTotal ?? 0) : undefined;
     return { rows: rows.map(toScreenerRow), total };
+  }
+
+  private async waitingSets(
+    ctx: ServiceContext, held: ReturnType<ScreenerReadService["heldSenderKeys"]>,
+    cutline: CutlineSet | undefined, gone: readonly string[],
+  ): Promise<SQL> {
+    if (!cutline) return sql``;
+    const { d } = held;
+    const relations = await this.deps.accountRelations?.(ctx.db);
+    const letters = relations?.through === "views" ? sql.raw(relations.messages) : undefined;
+    // Both projections use the same materialized representatives. Activity is needed only
+    // for senders whose held rows did not already answer the cutline.
+    const candidates = sql`select lower(from_address) from reps where held_active = 0 and held_arrival = 0`;
+    return sql`with reps as materialized (select * from (${held.rows}) ranked where rank = 1),
+      active_senders as materialized (${activeSenderKeysSql(d, ctx.accountId, cutline, gone, candidates, letters)}),
+      claimed_senders as materialized (${heldClaimKeysSql(d, ctx.accountId, cutline, SCREENING_AUTH_VERDICTS, gone, letters)})`;
+  }
+
+  private async readWaiting<T>(
+    ctx: ServiceContext, cutline: CutlineSet | undefined, read: (db: Db) => PromiseLike<T>,
+  ): Promise<T> {
+    if (!cutline || !onServerPool(ctx.db) || inTransactionHandle(ctx.db)) return read(ctx.db);
+    return asTx(ctx).transaction(async (tx) => {
+      await tx.execute(sql`set local jit = off`);
+      return read(bridgeDb(tx));
+    }, { isolationLevel: "repeatable read", accessMode: "read only" });
   }
 
   /**

@@ -43,7 +43,7 @@ async function harness(over: Partial<ConstructorParameters<typeof MailService>[0
 }
 
 /** A real user row, so the `login_tokens.user_id` FK is satisfied. */
-async function seedUser(db: Db, email = "gil@example.com"): Promise<{ userId: string; email: string }> {
+async function seedUser(db: Db, email = "gil@example.com"): Promise<{ userId: string; accountId: string; email: string }> {
   const auth = new AuthService(makeTestAuthDeps());
   // Registration runs before any session: its handle is bound to nothing.
   const ctx: ServiceContext = {
@@ -52,7 +52,11 @@ async function seedUser(db: Db, email = "gil@example.com"): Promise<{ userId: st
   const { user } = await auth.register(ctx, {
     email, password: "mail-service-password", displayName: "Gil", inviteCode: "INVITE-OK",
   });
-  return { userId: user.userId, email };
+  return { userId: user.userId, accountId: user.accountId, email };
+}
+
+function verificationContext(h: Harness, accountId: string): ServiceContext {
+  return { ...h.ctx, db: bindDb(h.db, { account: accountId }), accountId, userId: null, requestId: "verification" };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,8 +121,8 @@ describe("MailService — the four beta sends", () => {
     // Deduping this one would strand the user holding a link for a token they never
     // received. The REQUEST has to be made idempotent one level up.
     const h = await harness();
-    const { userId, email } = await seedUser(h.db);
-    await h.svc.issueEmailVerification(h.ctx, { userId, to: email });
+    const { userId, accountId, email } = await seedUser(h.db);
+    await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email });
     expect(h.spy.only("email_verification").idempotencyKey).toBeUndefined();
   });
 
@@ -514,9 +518,9 @@ describe("MailService — failure mode is DROP, and it never throws into a reque
 describe("MailService — email verification (built, not wired)", () => {
   it("mints a hashed, single-use login_tokens row with purpose email_verify", async () => {
     const h = await harness();
-    const { userId, email } = await seedUser(h.db);
+    const { userId, accountId, email } = await seedUser(h.db);
 
-    const res = await h.svc.issueEmailVerification(h.ctx, { userId, to: email });
+    const res = await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email });
     expect(res.status).toBe("sent");
 
     const send = h.spy.only("email_verification");
@@ -536,8 +540,8 @@ describe("MailService — email verification (built, not wired)", () => {
 
   it("consumes exactly once, and refuses a replay", async () => {
     const h = await harness();
-    const { userId, email } = await seedUser(h.db);
-    await h.svc.issueEmailVerification(h.ctx, { userId, to: email });
+    const { userId, accountId, email } = await seedUser(h.db);
+    await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email });
     const raw = new URL(h.spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
 
     expect(await h.svc.consumeEmailVerification(h.ctx, raw)).toEqual({ userId });
@@ -546,8 +550,8 @@ describe("MailService — email verification (built, not wired)", () => {
 
   it("refuses an expired link, an unknown token, and an empty one", async () => {
     const h = await harness();
-    const { userId, email } = await seedUser(h.db);
-    await h.svc.issueEmailVerification(h.ctx, { userId, to: email });
+    const { userId, accountId, email } = await seedUser(h.db);
+    await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email });
     const raw = new URL(h.spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
 
     expect(await h.svc.consumeEmailVerification(h.ctx, "not-a-token")).toBeNull();
@@ -558,8 +562,8 @@ describe("MailService — email verification (built, not wired)", () => {
 
   it("never emails a recovery code — the verification mail carries a link and nothing else", async () => {
     const h = await harness();
-    const { userId, email } = await seedUser(h.db);
-    await h.svc.issueEmailVerification(h.ctx, { userId, to: email });
+    const { userId, accountId, email } = await seedUser(h.db);
+    await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email });
     const { rendered } = h.spy.only("email_verification");
     expect(rendered.text).not.toMatch(/recovery/i);
     expect(rendered.html).not.toMatch(/recovery/i);
@@ -570,9 +574,9 @@ describe("MailService — email verification (built, not wired)", () => {
     // caller could mail a target user's LIVE token to an attacker-chosen inbox, and the
     // attacker could then present it and have the target's address marked verified.
     const h = await harness();
-    const { userId } = await seedUser(h.db, "victim@example.com");
+    const { userId, accountId } = await seedUser(h.db, "victim@example.com");
 
-    const res = await h.svc.issueEmailVerification(h.ctx, { userId, to: "attacker@example.com" });
+    const res = await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: "attacker@example.com" });
     expect(res).toEqual({ status: "skipped", reason: "recipient_mismatch" });
     expect(h.spy.sent).toHaveLength(0);
     // …and NO token was minted, so there is nothing live left behind either.
@@ -582,11 +586,11 @@ describe("MailService — email verification (built, not wired)", () => {
 
   it("refuses an unknown userId, and accepts the user's own address in any casing", async () => {
     const h = await harness();
-    const { userId } = await seedUser(h.db, "gil@example.com");
-    expect(await h.svc.issueEmailVerification(h.ctx, {
+    const { userId, accountId } = await seedUser(h.db, "gil@example.com");
+    expect(await h.svc.issueEmailVerification(verificationContext(h, accountId), {
       userId: "00000000-0000-4000-8000-000000000000", to: "gil@example.com",
     })).toEqual({ status: "skipped", reason: "recipient_mismatch" });
-    expect((await h.svc.issueEmailVerification(h.ctx, { userId, to: "  GIL@Example.COM " })).status)
+    expect((await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: "  GIL@Example.COM " })).status)
       .toBe("sent");
   });
 
@@ -597,8 +601,8 @@ describe("MailService — email verification (built, not wired)", () => {
     // is not re-consumable even when the consuming statement is handed a row the caller
     // observed as live. `mail-verify-concurrency.pg.test.ts` runs the real race.
     const h = await harness();
-    const { userId, email } = await seedUser(h.db);
-    await h.svc.issueEmailVerification(h.ctx, { userId, to: email });
+    const { userId, accountId, email } = await seedUser(h.db);
+    await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email });
     const raw = new URL(h.spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
 
     const first = await h.svc.consumeEmailVerification(h.ctx, raw);
@@ -616,14 +620,14 @@ describe("MailService — email verification (built, not wired)", () => {
 
   it("does not mint a token when the recipient is rate-limited", async () => {
     const h = await harness({ ratePerWindow: 1 });
-    const { userId, email } = await seedUser(h.db);
+    const { userId, accountId, email } = await seedUser(h.db);
     // the budget exhausted here is `unsolicited`, because that is the one verification
     // now spends (see below). The assertion itself is unchanged and is the one that matters: a
     // refused send must mint NOTHING, or a rate-limited caller accumulates live 24-hour
     // credentials in `login_tokens` for links nobody ever received.
     await h.svc.sendWaitlistConfirmation(h.ctx, { to: email, tier: "plus" });
 
-    expect((await h.svc.issueEmailVerification(h.ctx, { userId, to: email })).status).toBe("skipped");
+    expect((await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email })).status).toBe("skipped");
     expect(await h.db.select().from(loginTokens).where(eq(loginTokens.purpose, EMAIL_VERIFY_PURPOSE)))
       .toHaveLength(0);
   });
@@ -638,11 +642,11 @@ describe("MailService — email verification (built, not wired)", () => {
     //
     // Budget of one, spent entirely by the anonymous path, and the invite still goes out.
     const h = await harness({ ratePerWindow: 1 });
-    const { userId, email } = await seedUser(h.db);
+    const { userId, accountId, email } = await seedUser(h.db);
 
-    expect((await h.svc.issueEmailVerification(h.ctx, { userId, to: email })).status).toBe("sent");
+    expect((await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email })).status).toBe("sent");
     // The anonymous budget is now spent — a second verification for the same address is refused.
-    expect((await h.svc.issueEmailVerification(h.ctx, { userId, to: email })).status).toBe("skipped");
+    expect((await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email })).status).toBe("skipped");
 
     // …and the TRANSACTIONAL budget is untouched, so the mail the product owes this person still
     // sends. Reverting the quota to `transactional` makes this line fail.
@@ -663,9 +667,9 @@ describe("MailService — email verification (built, not wired)", () => {
     // Budget of one, spent by the fresh-address mail; the taken-address mail is then refused for
     // the same address, which is what "one shared budget" means observably.
     const h = await harness({ ratePerWindow: 1 });
-    const { userId, email } = await seedUser(h.db);
+    const { userId, accountId, email } = await seedUser(h.db);
 
-    expect((await h.svc.issueEmailVerification(h.ctx, { userId, to: email })).status).toBe("sent");
+    expect((await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email })).status).toBe("sent");
     expect((await h.svc.sendAccountExists(h.ctx, { to: email })).status).toBe("skipped");
 
     // And in the other order, to prove the sharing is symmetric rather than an artefact of which
@@ -673,7 +677,7 @@ describe("MailService — email verification (built, not wired)", () => {
     const h2 = await harness({ ratePerWindow: 1 });
     const second = await seedUser(h2.db);
     expect((await h2.svc.sendAccountExists(h2.ctx, { to: second.email })).status).toBe("sent");
-    expect((await h2.svc.issueEmailVerification(h2.ctx, {
+    expect((await h2.svc.issueEmailVerification(verificationContext(h2, second.accountId), {
       userId: second.userId, to: second.email,
     })).status).toBe("skipped");
     // The refused branch minted nothing, as ever.
@@ -707,8 +711,8 @@ describe("MailService — email verification (built, not wired)", () => {
 describe("mail ↔ login — a mailed verification token is not a login token", () => {
   it("cannot be presented as a first factor to any 2FA endpoint", async () => {
     const h = await harness();
-    const { userId, email } = await seedUser(h.db);
-    await h.svc.issueEmailVerification(h.ctx, { userId, to: email });
+    const { userId, accountId, email } = await seedUser(h.db);
+    await h.svc.issueEmailVerification(verificationContext(h, accountId), { userId, to: email });
     const raw = new URL(h.spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
 
     const auth = new AuthService(makeTestAuthDeps());

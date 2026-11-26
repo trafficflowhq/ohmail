@@ -395,14 +395,6 @@ export function pgDialect(): Dialect {
         Array.isArray(r) ? r : fields.map((f) => (r as Record<string, unknown>)[f.name]));
     },
 
-    screenerActivityCandidates: async (tx, query) => {
-      await d.exec(tx, sql`set local jit = off`);
-      const keys = await d.exec(tx, query);
-      if (keys.length === 0) return sql`select null where false`;
-      const json = sql`cast(${JSON.stringify(keys.map(([key]) => key))} as text)`;
-      return sql`select value from jsonb_array_elements_text(${d.castJsonb(json)})`;
-    },
-
     // Truncated, not formatted: formatting every row costs more than the grouping it serves.
     monthBucket: (instant: SQL): SQL => sql`date_trunc('month', ${instant} at time zone 'UTC')`,
 

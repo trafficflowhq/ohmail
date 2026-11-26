@@ -1820,10 +1820,14 @@ export class HttpAdapter implements EngineAdapter {
     };
   }
 
-  async screenUnscreened(addresses?: readonly string[], pile?: UnscreenedPileWire): Promise<UnscreenedResultWire> {
+  async screenUnscreened(addresses?: readonly string[], pile?: UnscreenedPileWire, after?: string): Promise<UnscreenedResultWire> {
     const res = await this.call("POST /screener/unscreened", {
       // Omitted rather than `null`, for `releaseHeld`'s reason: absent means EVERY group shown.
-      body: { ...(addresses === undefined ? {} : { addresses: [...addresses] }), ...(pile === undefined ? {} : { pile }) },
+      body: {
+        ...(addresses === undefined ? {} : { addresses: [...addresses] }),
+        ...(pile === undefined ? {} : { pile }),
+        ...(after === undefined ? {} : { after }),
+      },
     });
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = await this.readUntrusted<"POST /screener/unscreened">(res);
@@ -1833,6 +1837,7 @@ export class HttpAdapter implements EngineAdapter {
     return {
       screened,
       total: typeof wire.total === "number" && Number.isFinite(wire.total) ? Math.trunc(wire.total) : 0,
+      ...(typeof wire.next === "string" && wire.next !== "" ? { next: wire.next } : {}),
     };
   }
 

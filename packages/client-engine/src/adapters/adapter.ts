@@ -368,7 +368,7 @@ export interface EngineAdapter {
    * what has already moved, and a second press over the same groups screens nothing. Given a
    * `pile`, it screens that pile's letters from senders nobody let in.
    */
-  screenUnscreened?(addresses?: readonly string[], pile?: UnscreenedPileWire): Promise<UnscreenedResultWire>;
+  screenUnscreened?(addresses?: readonly string[], pile?: UnscreenedPileWire, after?: string): Promise<UnscreenedResultWire>;
 
   /**
    * `POST /screener/held-releases/dismiss` — "not now", persisted per ACCOUNT so the offer stays

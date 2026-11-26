@@ -875,5 +875,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"mailbox_folders\" ADD COLUMN \"scan_next_uid\" integer;",
       "ALTER TABLE \"mailbox_folders\" ADD COLUMN \"scan_reset_after\" text;"
     ]
+  },
+  {
+    "name": "0233_account_erasure_progress.sql",
+    "statements": [
+      "ALTER TABLE \"accounts\" ADD COLUMN \"erasure_progress\" TEXT;"
+    ]
   }
 ] as const;

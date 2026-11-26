@@ -4,6 +4,7 @@ import { randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, lte, or, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
+  AccountErasedError, fencedAccountWrite,
   markFenced, accountOfUser, assertBinding, bindDb, onServerPool, rebindTx, isCredentialKey, BINDING_KEY_MAX, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -27,7 +28,10 @@ import {
   erasedBearerAccount,
   KNOWN_CLIENT_RETENTION_MS,
 } from "@trafficflow/db/cloud";
-import { assertPassWalk, bridgeTx, credentialContext, keyedCredentialDb, registrationContext, type Db, type PassRoster, type ServiceContext, type UnboundDb } from "../context.js";
+import {
+  assertPassWalk, bridgeDb, bridgeTx, credentialContext, dbFor, keyedCredentialDb, registrationContext,
+  type Db, type PassRoster, type ServiceContext, type UnboundDb,
+} from "../context.js";
 import { OAuthCodeReplayed, ServiceError } from "../errors.js";
 import { pruneWakeRows } from "../push-service.js";
 import { consumeInvite, inviteError, normalizeInviteCode } from "../invites.js";
@@ -660,7 +664,7 @@ function isUniqueViolation(e: unknown, constraint: string): boolean {
   return name === constraint;
 }
 
-/** SQLSTATE `23503`, on the driver's error or the one the query builder wraps (`cause`). */
+/** Foreign-key refusal, either from the driver or wrapped by the query builder. */
 function isForeignKeyViolation(e: unknown): boolean {
   const err = e as { code?: unknown; cause?: { code?: unknown } } | null;
   return (err?.code ?? err?.cause?.code) === "23503";
@@ -3810,12 +3814,8 @@ export class AuthService extends SessionLifecycle {
     event: AuthAuditEvent["event"], method: AuthAuditEvent["method"] | undefined, ctx: ServiceContext,
     detail?: string,
   ): Promise<void> {
-    /* THE FENCE, AND ONLY ON THE HALF THAT HAS AN ACCOUNT: the sweep deletes every row bearing the
-       account id, and a late row would put the person's IP and device back. The read below runs only
-       OUTSIDE a transaction; a user-less row (the throttle's shape) is written unfenced as always.
-       Inside one it would come after the writer's row locks, the order the erasure deadlocks on, so
-       the transaction must have opened with the fence: its brand stands in for the read (the share
-       lock it took blocks the stamp), and a transaction without it is refused by name. */
+    // An audit inside a transaction must inherit its account fence. A standalone account audit
+    // opens a transaction with the fence first and holds it until the insert commits.
     const fenced = fencedAccountOf(db);
     if (fenced === undefined && inTransactionHandle(db)) {
       throw new Error(`auth audit inside a transaction the fence did not open: ${event}`);
@@ -3824,21 +3824,22 @@ export class AuthService extends SessionLifecycle {
       throw new Error(`auth audit in a transaction fenced for another account: ${event}`);
     }
     if (user != null && fenced === undefined) {
-      const erasedAt = await readAccountErasedAt(db, dialect(db), user.accountId);
-      if (erasedAt != null) return;
+      const { accountId } = user;
+      try {
+        await fencedAccountWrite(bridgeTx(dbFor(bridgeDb(db), accountId)), { accountId }, insert);
+      } catch (err) {
+        // A user can also disappear before the fence is taken, without an account stamp.
+        if (!(err instanceof AccountErasedError) && !isForeignKeyViolation(err)) throw err;
+      }
+    } else {
+      await insert(db);
     }
-    try {
-      await db.insert(authEvents).values({
+
+    async function insert(tx: Tx) {
+      await tx.insert(authEvents).values({
         accountId: user?.accountId ?? null, userId: user?.id ?? null,
-        // `detail` displaces the user agent when the writer has something sharper for this slot
-        // (the reuse row's `family=… session=…`) — see the base hook's doc.
         event, method: method ?? null, ip: ctx.ip ?? null, device: detail ?? ctx.userAgent ?? null,
       });
-    } catch (err) {
-      /* An erasure committed between the stamp read and this insert: only an erasure deletes a user, the
-         key refused a row about nobody, and a stranger's failed sign-in still answers what it answers. */
-      if (user != null && fenced === undefined && isForeignKeyViolation(err)) return;
-      throw err;
     }
   }
 

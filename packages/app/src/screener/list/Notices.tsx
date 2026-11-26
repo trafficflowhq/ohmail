@@ -1,6 +1,6 @@
 /** The Screener notices that need attention on Waiting. */
 import { useEffect, useState } from "react";
-import type { ScreenerView } from "@ohmail/app-logic/screener";
+import { OHBOX_UNSCREENED_MESSAGES_MAX, type ScreenerView } from "@ohmail/app-logic/screener";
 import { NoticeSlot, type NoticeAct, type SlotNotice } from "@ohmail/ui/base";
 import { useFrame } from "../../frame/commands.js";
 import { useScreenerLearningSettings } from "../../settings/screener/useLearningSettings.js";
@@ -134,7 +134,7 @@ export function Notices({ view }: { view: ScreenerView }) {
       title: t(unscreened.atLeast ? "unscreenedLeadAtLeast" : "unscreenedLead", { count: unscreened.total }),
       acts: [
         {
-          label: t("unscreenedAll", { count: unscreened.total }),
+          label: t("unscreenedAll", { count: Math.min(unscreened.total, OHBOX_UNSCREENED_MESSAGES_MAX) }),
           onPress: () => unscreened.screen(),
           busy: unscreened.screening,
         },

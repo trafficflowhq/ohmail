@@ -11,7 +11,7 @@ import {
   makeSupabaseStagingStorage, makeS3StagingStorage,
   // How the organizer stands: its last completed pass (mail 0097), and whether fetching is behind.
   organizerStandingReader,
-  acquireCeilingHandle, SESSION_ACQUIRE_TIMEOUT_MS, makePooledDb, readDbTls, alertHeartbeatFor,
+  accountRows, ACCOUNT_VIEW_RELATIONS, acquireCeilingHandle, SESSION_ACQUIRE_TIMEOUT_MS, makePooledDb, readDbTls, alertHeartbeatFor,
   makeEntitlementsClient, refundObligationsOn, heldStorageLimitOf, freshConnectProbe,
   kekRetiredReferences, retiredVersionInUseFault, retiredVersionUnreadFault,
   adminDbFor, attestStaffDbFault,
@@ -32,7 +32,7 @@ import {
   makePrivacyService, makeUnsubscribeService, nodeOneClickPost,
   nodeRemoteFetch, nodeHostResolver, scryptHasher,
   syncService, makePushService, rulesService, messageService, threadService, triageService,
-  searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
+  searchService, SearchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, draftsService, makeDraftingService, sendService,
   FolderOpsService, scheduleService, keepScheduledFilesSealed,
   workflowsService, proposalsService, redeemInviteGrant,
@@ -622,6 +622,9 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
   // explicit, priced sender set; `list` cannot reach the classifier.
   put(bag, "screener", () => makeScreenerService({
     quoteKeys: keyProvider,
+    ...(chosen.flavor === "managed" ? { accountRelations: (db) => accountRows(db, {
+      log: (line) => parts.logger.info("screener_account_relations", { detail: line }),
+    }) } : {}),
     /* A request a host ends admits a sender's purchase only while there is time to finish the
        model call and the write after it; the window means nothing without the door's number. */
     ...(door.invocationBudgetMs !== null ? { invocationBudgetMs: door.invocationBudgetMs } : {}),
@@ -970,6 +973,8 @@ function kekRetirementFor(rt: Runtime): () => Promise<{ error: string; detail: s
   return check;
 }
 
+const searchThroughViews = new SearchService({ indexFills: true, relations: ACCOUNT_VIEW_RELATIONS });
+
 /** Build the per-request container. `req` is the ALREADY-NORMALIZED request (see `handler.ts`). */
 export function depsFor(req: Request, rt: Runtime): ApiDeps {
   const { cfg, door } = rt;
@@ -994,6 +999,11 @@ export function depsFor(req: Request, rt: Runtime): ApiDeps {
     authConfig: cfg.origin.authConfig,
     keyProvider: cfg.keyRing.provider,
     services: rt.services,
+    ...(chosen.flavor === "managed" ? {
+      searchFor: async () => (await accountRows(requestDb(), {
+        log: (line) => rt.logger.info("search_account_relations", { detail: line }),
+      })).through === "views" ? searchThroughViews : rt.services.search,
+    } : {}),
     sse: cfg.sse,
     // The `/events` push relay: ONE LISTEN for the program, fanned out per account. Built only
     // where streams are held AND a session-capable connection can hold the LISTEN; otherwise the

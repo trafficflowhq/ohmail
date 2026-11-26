@@ -919,6 +919,8 @@ export interface PressContext {
  * PGlite `Db`; a hosted deployment builds one per request around a pooled Postgres `Db`.
  */
 export interface ApiDeps {
+  /** Hosted search selects indexed account views from this request's read pool. */
+  searchFor?: () => Promise<SearchService>;
   /**
    * THE REQUEST'S HANDLE, never the pool's own. Its host mints it bound to nothing, the session's
    * door binds it to the session's account, and a container made over a plain handle does not

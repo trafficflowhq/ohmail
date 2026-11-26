@@ -183,6 +183,7 @@ function DonePage({
   t: Text;
 }): ReactNode {
   const cancelled = state.subscription === "cancelled";
+  const body = t(state.pending ? "pendingBody" : "doneBody");
   return (
     <Page
       refusal={refusalOf([
@@ -194,12 +195,12 @@ function DonePage({
           <DoorLine>
             <Fact>{t("doneSubCancelled")}</Fact>
             <Break />
-            <Heavy>{t("doneBody")}</Heavy>
+            <Heavy>{body}</Heavy>
             <Note>{t("doneNote")}</Note>
           </DoorLine>
         ) : undefined
       }
-      line={cancelled ? undefined : t("doneBody")}
+      line={cancelled ? undefined : body}
       note={cancelled ? undefined : t("doneNote")}
       afterLine={state.retained ? <Note>{state.retained}</Note> : undefined}
       acts={
@@ -208,7 +209,7 @@ function DonePage({
         </Button>
       }
     >
-      <Said text={t("doneTitle")} dot="ink" />
+      <Said text={t(state.pending ? "pendingTitle" : "doneTitle")} dot="ink" />
     </Page>
   );
 }

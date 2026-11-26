@@ -47,6 +47,7 @@ export const searchRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const url = new URL(req.url);
+      const finder = () => deps.searchFor?.() ?? search(deps);
 
       // ── the address arm, ahead of `q` ──────────────────────────────────────────────────
       //
@@ -74,7 +75,7 @@ export const searchRoutes: Route[] = [
         };
         const timing = new SearchTiming();
         const t0 = performance.now();
-        const found = await search(deps).searchByAddress({ ...serviceContext(deps, req), timing }, addrOpts);
+        const found = await (await finder()).searchByAddress({ ...serviceContext(deps, req), timing }, addrOpts);
         timing.add("total", performance.now() - t0);
         timing.note({ part: "address", cut: found.totalExact === false, items: found.items.length });
         return timed(answer<"GET /search">()(found), timing, deps);
@@ -83,7 +84,7 @@ export const searchRoutes: Route[] = [
       if (url.searchParams.get("places") === "1") {
         const timing = new SearchTiming();
         const started = performance.now();
-        const result = await search(deps).places(serviceContext(deps, req));
+        const result = await (await finder()).places(serviceContext(deps, req));
         timing.add("total", performance.now() - started);
         timing.note({ part: "places" });
         return timed(answer<"GET /search">()(result), timing, deps);
@@ -120,7 +121,7 @@ export const searchRoutes: Route[] = [
         ...(cursor ? { cursor } : {}),
       };
       const timing = new SearchTiming();
-      const result = await search(deps).search({ ...serviceContext(deps, req), timing }, opts);
+      const result = await (await finder()).search({ ...serviceContext(deps, req), timing }, opts);
       return timed(answer<"GET /search">()(result), timing, deps);
     },
   },
