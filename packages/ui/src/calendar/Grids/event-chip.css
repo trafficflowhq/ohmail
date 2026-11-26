@@ -91,7 +91,15 @@
     flex: 1;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: var(--oh-ev-lines, 1);
-    overflow-wrap: normal;
+    white-space: pre;
+  }
+  .oh-ev-spoken {
+    position: absolute;
+    overflow: hidden;
+    inline-size: 1px;
+    block-size: 1px;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .oh-ev-p {
     --oh-ev-in: 14px;
@@ -122,15 +130,9 @@
     font-weight: var(--w-bold);
   }
 
-  /* A narrow lane or a short block: the title at the small size, a long word wrapped whole. */
+  /* A narrow lane or a short block: the title at the small size. */
   .oh-ev[data-small] {
     font-size: var(--t-meta);
-  }
-  .oh-ev[data-small] .oh-ev-tt {
-    overflow-wrap: anywhere;
-    -webkit-hyphens: auto;
-    hyphens: auto;
-    text-overflow: ellipsis;
   }
   .oh-ev[data-small] .oh-ev-p {
     --oh-ev-in: 0;
@@ -139,20 +141,12 @@
     width: 11px;
     height: 11px;
   }
-  /* Under 60 px: one line with its ellipsis, never a letter or two a line. */
+  /* Under 60 px: use more of the block for its title. */
   .oh-ev[data-tiny] {
     --oh-ev-pad: 5px 4px 4px 5px;
   }
   .oh-ev[data-tiny] .oh-ev-t {
     --oh-ev-lead: 4px;
-  }
-  .oh-ev[data-size="block"][data-tiny] .oh-ev-tt {
-    display: block;
-    white-space: nowrap;
-    overflow-wrap: normal;
-    -webkit-hyphens: manual;
-    hyphens: manual;
-    text-overflow: ellipsis;
   }
   .oh-ev[data-tiny] .oh-ev-p {
     display: none;
@@ -169,7 +163,6 @@
   .oh-ev[data-size="block"][data-one] .oh-ev-tt {
     display: block;
     white-space: nowrap;
-    text-overflow: ellipsis;
   }
   .oh-ev[data-tight] {
     --oh-ev-pad: 2px 7px 4px;
@@ -180,6 +173,28 @@
   }
   .oh-ev[data-one][data-tiny] {
     --oh-ev-pad: 0 4px 0 5px;
+  }
+
+  /* Side-by-side blocks keep their lanes. At the narrowest widths the title gets the space. */
+  .oh-ev[data-overlap] {
+    --oh-ev-side: 7px;
+    container: event-lane / inline-size;
+    padding-inline: 0;
+  }
+  .oh-ev[data-overlap] :is(.oh-ev-t, .oh-ev-p) {
+    margin-inline: var(--oh-ev-side);
+  }
+  .oh-ev[data-overlap] .oh-ev-tt {
+    min-inline-size: 1ch;
+  }
+  @container event-lane (inline-size < 36px) {
+    .oh-ev[data-overlap] .oh-ev-t {
+      --oh-ev-side: 1px;
+    }
+    .oh-ev[data-overlap] .oh-ev-t > :is(.oh-csq, .oh-ev-ico, .oh-ev-sign, .oh-cal-wait),
+    .oh-ev[data-overlap] .oh-ev-p {
+      display: none;
+    }
   }
 
   /* The series' sign: the repeat glyph after the title; one changed for itself wears it struck. */
@@ -261,7 +276,9 @@
     --oh-ev-pill-edge: inset 0 0 0 var(--oh-hair) var(--oh-cal-mark, var(--line));
     box-shadow: var(--oh-ev-pill-edge);
   }
-  .oh-ev[data-size="pill"] .oh-ev-tt,
+  .oh-ev[data-size="pill"] .oh-ev-tt {
+    flex: 1;
+  }
   .oh-ev[data-size="line"] .oh-ev-tt {
     text-overflow: ellipsis;
   }

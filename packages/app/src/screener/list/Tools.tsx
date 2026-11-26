@@ -20,19 +20,9 @@ import { ListMenu, type ListMenuItem } from "../../place-list/ListMenu.js";
 import { useNoAdvice, useScreener, useScreenerBeside } from "../contract.js";
 import type { ScreenerSuggest } from "../ports.js";
 
-function ScreeningProgress({
-  label,
-  done,
-  total,
-  suggest,
-}: {
-  label: string;
-  done: number;
-  total: number;
-  suggest?: boolean;
-}) {
+function ScreeningProgress({ label, done, total }: { label: string; done: number; total: number }) {
   return (
-    <div className="sc-progress" data-suggest={suggest || undefined}>
+    <div className="sc-progress">
       <span role="status">{label}</span>
       {total > 0 ? (
         <progress className="sc-progress-track" aria-hidden="true" value={done} max={total} />
@@ -231,7 +221,7 @@ function SuggestMenuContent({
             {t("suggest.running")}
           </p>
         ) : (
-          <ScreeningProgress label={t("suggest.progress", c.progress)} {...c.progress} suggest />
+          <ScreeningProgress label={t("suggest.progress", c.progress)} {...c.progress} />
         )
       ) : (
         <>
@@ -294,8 +284,6 @@ export function Tools({
   const listAnchor = useRef<HTMLButtonElement>(null);
   const [suggestionMenu, setSuggestionMenu] = useState({ again: false, fromList: false });
   const { applying } = model;
-  const progress =
-    applying === null ? null : <ScreeningProgress label={t("applying", applying)} {...applying} />;
   const waiting = view.segment === "waiting";
   const count = waiting ? model.waitingCount : (junkCount ?? view.rows.length);
   const counted = waiting
@@ -347,7 +335,11 @@ export function Tools({
       onPress: view.askAllSpam,
       apart: items.length === 0,
     });
-  const apply = waiting && may && model.suggestedCount > 0 && applying === null;
+  const available = waiting && may ? model.suggestedCount : 0;
+  const [lastAvailable, setLastAvailable] = useState(available);
+  // Keep the same button and label while each decision takes a suggestion out of the list.
+  if (applying === null && available !== lastAvailable) setLastAvailable(available);
+  const applyCount = applying === null ? available : lastAvailable;
   const hasFilter = waiting && view.filter.choices.length > 0;
   const heading = t(waiting ? "filterAll" : view.segment === "screened" ? "segScreened" : "segSpam");
   return (
@@ -376,16 +368,19 @@ export function Tools({
               start={start}
             />
           ) : null))}
-      {suggesting ? (
-        <ScreeningProgress label={t("suggest.progress", suggesting)} {...suggesting} suggest />
-      ) : null}
-      {apply ? (
-        <Button kind="two" size="s" keyHint="a" onPress={view.askApplySuggestions}>
-          {t("applyAll", { count: model.suggestedCount })}
+      {suggesting ? <ScreeningProgress label={t("suggest.progress", suggesting)} {...suggesting} /> : null}
+      {waiting && may && applyCount > 0 ? (
+        <Button
+          kind="two"
+          size="s"
+          keyHint="a"
+          disabled={applying !== null}
+          onPress={view.askApplySuggestions}
+        >
+          {t("applyAll", { count: applyCount })}
         </Button>
       ) : null}
       <ListMenu label={t("place.listMenu")} size="s" items={items} mail anchorRef={listAnchor} />
-      {progress}
     </div>
   );
 }

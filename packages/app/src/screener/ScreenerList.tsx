@@ -7,6 +7,7 @@
 import { useSwitchEnded } from "@ohmail/app-logic/session/ui-vitals";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { quarantineShelf, shelfRowMatches } from "@ohmail/app-logic/press/quarantine-shelf";
+import { Spinner } from "@ohmail/ui/base";
 import { GroupHeading, Sheet } from "@ohmail/ui/mail";
 import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
@@ -260,71 +261,84 @@ export function ScreenerList(pane: PaneProps) {
       <Head view={view} go={go} spamCount={spamCount} />
       <Notices view={view} />
       {junkOn && junk.sweep ? <QuarantineMove sweep={junk.sweep} /> : null}
-      <PullScroll className="sc-scroll" scroller={listScroller}>
-        <OnSheet phone={phone} picking={selection.ids.length > 0}>
-          {junkOn ? (
-            <>
-              <Tools
-                view={view}
-                junkCount={spamCount ?? null}
-                extra={
-                  shelfFirst
-                    ? {
-                        label: t(providerOpen ? "hideSpamSearch" : "junkSearchLabel"),
-                        onPress: () => {
-                          if (providerOpen) junk.search.setQuery("");
-                          setProviderOpen(!providerOpen);
-                        },
-                      }
-                    : undefined
-                }
-              />
-              {!shelfFirst || providerOpen ? (
-                <Junk
-                  junk={junk}
-                  view={{
-                    ...junkView,
-                    select: (key) => {
-                      setShelfPicked(false);
-                      junkView.select(key);
-                    },
-                  }}
+      <div className="sc-work">
+        <PullScroll className="sc-scroll" scroller={listScroller}>
+          <OnSheet phone={phone} picking={selection.ids.length > 0}>
+            {junkOn ? (
+              <>
+                <Tools
+                  view={view}
+                  junkCount={spamCount ?? null}
+                  extra={
+                    shelfFirst
+                      ? {
+                          label: t(providerOpen ? "hideSpamSearch" : "junkSearchLabel"),
+                          onPress: () => {
+                            if (providerOpen) junk.search.setQuery("");
+                            setProviderOpen(!providerOpen);
+                          },
+                        }
+                      : undefined
+                  }
                 />
-              ) : null}
-              {view.rows.length > 0 ? (
-                <>
-                  {!shelfFirst ? (
-                    <GroupHeading count={String(view.rows.length)}>{t("quarantineShelf")}</GroupHeading>
-                  ) : null}
-                  <Rows
-                    label={t(shelfFirst ? "segSpam" : "quarantineShelf")}
-                    contact={contact}
-                    selection={selection}
+                {!shelfFirst || providerOpen ? (
+                  <Junk
+                    junk={junk}
                     view={{
-                      ...view,
-                      openId: quarantine ? view.openId : null,
-                      select: (id) => {
-                        setShelfPicked(true);
-                        view.select(id);
+                      ...junkView,
+                      select: (key) => {
+                        setShelfPicked(false);
+                        junkView.select(key);
                       },
                     }}
                   />
-                </>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <Tools view={view} touch={pane.plan.pointer === "coarse"} />
-              <Rows view={view} scroller={listScroller} selection={selection} contact={contact} />
-              <Empty view={view} />
-              {segment === "waiting" ? <Tail /> : null}
-            </>
-          )}
-        </OnSheet>
-      </PullScroll>
+                ) : null}
+                {view.rows.length > 0 ? (
+                  <>
+                    {!shelfFirst ? (
+                      <GroupHeading count={String(view.rows.length)}>{t("quarantineShelf")}</GroupHeading>
+                    ) : null}
+                    <Rows
+                      label={t(shelfFirst ? "segSpam" : "quarantineShelf")}
+                      contact={contact}
+                      selection={selection}
+                      view={{
+                        ...view,
+                        openId: quarantine ? view.openId : null,
+                        select: (id) => {
+                          setShelfPicked(true);
+                          view.select(id);
+                        },
+                      }}
+                    />
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Tools view={view} touch={pane.plan.pointer === "coarse"} />
+                <Rows view={view} scroller={listScroller} selection={selection} contact={contact} />
+                <Empty view={view} />
+                {segment === "waiting" ? <Tail /> : null}
+              </>
+            )}
+          </OnSheet>
+        </PullScroll>
+        <Applying progress={model.applying} />
+      </div>
       {foot}
       {contact.card}
       {asks}
+    </div>
+  );
+}
+
+function Applying({ progress }: { progress: ScreenerState["applying"] }) {
+  const t = useText("screener");
+  return progress === null ? null : (
+    <div className="sc-applying" role="status">
+      <Spinner />
+      <span>{t("applying", progress)}</span>
     </div>
   );
 }

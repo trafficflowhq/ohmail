@@ -14,6 +14,7 @@ import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon } from "../../icons/Icon.js";
 import { CalendarSquare } from "../Grids/CalendarSquare.js";
 import { cx, toneOf, toneStyle, type CalendarTone } from "../tone.js";
+import { useEventTitle } from "../use-event-title.js";
 import "./event-card.css";
 
 interface Way {
@@ -171,7 +172,7 @@ export function EventCard(p: EventCardProps) {
             onChange={(e) => p.titleInput?.onChange(e.currentTarget.value)}
           />
         ) : (
-          <h3 className="oh-text oh-display oh-ecard-title">{p.title}</h3>
+          <EventHeading title={p.title} />
         )}
         {p.when !== undefined && (
           <p className="oh-text oh-ecard-when">
@@ -212,6 +213,17 @@ export function EventCard(p: EventCardProps) {
       {p.notes ? <p className="oh-text oh-ecard-notes">{p.notes}</p> : null}
       {frame === "sheet" && p.foot ? <div className="oh-ecard-foot">{p.foot}</div> : null}
     </div>
+  );
+}
+
+function EventHeading({ title }: { title: string }) {
+  const { ref, wording } = useEventTitle(title);
+  return (
+    <h3 className="oh-text oh-display oh-ecard-title" aria-label={wording === title ? undefined : title}>
+      <span ref={ref} className="oh-ecard-title-words">
+        {wording}
+      </span>
+    </h3>
   );
 }
 
