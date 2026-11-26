@@ -43,7 +43,7 @@
     --oh-ecard-ring: var(--float);
   }
   /* The unfolded phone: a card never crosses the hinge. */
-  :root[data-device="fold"] .oh-ecard {
+  :root[data-device="fold"] .oh-ecard:not([data-frame="inline"]) {
     width: min(var(--oh-ecard-width), calc(50% - 16px));
   }
   .oh-ecard-head {
@@ -145,8 +145,17 @@
     padding-right: var(--s6);
     font-size: var(--t-title);
     line-height: 1.2;
-    overflow-wrap: anywhere;
+    overflow-wrap: normal;
+    hyphens: none;
     text-wrap: balance;
+  }
+  .oh-ecard-title-words {
+    display: block;
+    overflow: hidden;
+    white-space: pre-line;
+  }
+  .oh-ecard-head:has(.oh-ecard-head-actions) > .oh-ecard-title:not(.oh-ecard-title-input) {
+    padding-inline-end: 0;
   }
   .oh-ecard-title-input {
     --oh-ecard-title-line: inset 0 calc(var(--oh-hair) * -1) 0 var(--line);
@@ -365,6 +374,11 @@
   }
   .oh-ecard[data-frame="inline"] > .oh-ecard-head > .oh-ecard-tags:first-of-type {
     margin-top: var(--s2);
+  }
+  .oh-ecard[data-frame="inline"] .oh-ecard-where {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .oh-ecard[data-frame="inline"] > .oh-ecard-rows {
     --oh-ecard-rows-out: var(--s3) 0 0;

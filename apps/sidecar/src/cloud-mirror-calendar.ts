@@ -11,7 +11,7 @@
  * whose parent the copy does not hold is skipped, never a key violation that wedges the page. The
  * account's erasure stamp is read first, as for every row the account owns.
  */
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, type SQLWrapper } from "drizzle-orm";
 import type { Dialect } from "@trafficflow/db/dialect";
 import {
   AccountErasedError, MailboxErasedError, calendarDelta, fenceErased, isCalendarRecordKind, readAccountErasedAt, recordChanges,
@@ -74,25 +74,23 @@ function marksOf(world: LocalWorld, r: CalendarEventRecord) {
 }
 
 /** An event's own children, then the event. */
-async function removeEvents(tx: Tx, world: LocalWorld, ids: readonly string[]): Promise<void> {
-  if (ids.length === 0) return;
-  await tx.delete(calWrites).where(and(eq(calWrites.accountId, world.accountId), inArray(calWrites.eventId, [...ids])));
-  await tx.delete(calAttendees).where(and(eq(calAttendees.accountId, world.accountId), inArray(calAttendees.eventId, [...ids])));
-  await tx.delete(calAlarms).where(and(eq(calAlarms.accountId, world.accountId), inArray(calAlarms.eventId, [...ids])));
+async function removeEvents(tx: Tx, world: LocalWorld, ids: string[] | SQLWrapper): Promise<void> {
+  await tx.delete(calWrites).where(and(eq(calWrites.accountId, world.accountId), inArray(calWrites.eventId, ids)));
+  await tx.delete(calAttendees).where(and(eq(calAttendees.accountId, world.accountId), inArray(calAttendees.eventId, ids)));
+  await tx.delete(calAlarms).where(and(eq(calAlarms.accountId, world.accountId), inArray(calAlarms.eventId, ids)));
   await tx.update(calSuggestions).set({ eventId: null })
-    .where(and(eq(calSuggestions.accountId, world.accountId), inArray(calSuggestions.eventId, [...ids])));
-  await tx.delete(calEvents).where(and(eq(calEvents.accountId, world.accountId), inArray(calEvents.id, [...ids])));
+    .where(and(eq(calSuggestions.accountId, world.accountId), inArray(calSuggestions.eventId, ids)));
+  await tx.delete(calEvents).where(and(eq(calEvents.accountId, world.accountId), inArray(calEvents.id, ids)));
 }
 
 /** A calendar's events and reminders, then the calendar. */
-async function removeCalendars(tx: Tx, world: LocalWorld, ids: readonly string[]): Promise<void> {
-  if (ids.length === 0) return;
-  const events = await tx.select({ id: calEvents.id }).from(calEvents)
-    .where(and(eq(calEvents.accountId, world.accountId), inArray(calEvents.calendarId, [...ids])));
-  await removeEvents(tx, world, events.map((e: { id: string }) => e.id));
-  await tx.delete(calWrites).where(and(eq(calWrites.accountId, world.accountId), inArray(calWrites.calendarId, [...ids])));
-  await tx.delete(calAlarms).where(and(eq(calAlarms.accountId, world.accountId), inArray(calAlarms.calendarId, [...ids])));
-  await tx.delete(calCalendars).where(and(eq(calCalendars.accountId, world.accountId), inArray(calCalendars.id, [...ids])));
+async function removeCalendars(tx: Tx, world: LocalWorld, ids: string[] | SQLWrapper): Promise<void> {
+  const events = tx.select({ id: calEvents.id }).from(calEvents)
+    .where(and(eq(calEvents.accountId, world.accountId), inArray(calEvents.calendarId, ids)));
+  await removeEvents(tx, world, events);
+  await tx.delete(calWrites).where(and(eq(calWrites.accountId, world.accountId), inArray(calWrites.calendarId, ids)));
+  await tx.delete(calAlarms).where(and(eq(calAlarms.accountId, world.accountId), inArray(calAlarms.calendarId, ids)));
+  await tx.delete(calCalendars).where(and(eq(calCalendars.accountId, world.accountId), inArray(calCalendars.id, ids)));
 }
 
 const connection: KindStore<"calendar_connection"> = {
@@ -115,9 +113,9 @@ const connection: KindStore<"calendar_connection"> = {
     return true;
   },
   async remove(tx, world, id) {
-    const calendars = await tx.select({ id: calCalendars.id }).from(calCalendars)
+    const calendars = tx.select({ id: calCalendars.id }).from(calCalendars)
       .where(and(eq(calCalendars.accountId, world.accountId), eq(calCalendars.connectionId, id)));
-    await removeCalendars(tx, world, calendars.map((c: { id: string }) => c.id));
+    await removeCalendars(tx, world, calendars);
     await tx.delete(calConnections).where(and(eq(calConnections.accountId, world.accountId), eq(calConnections.id, id)));
     return true;
   },

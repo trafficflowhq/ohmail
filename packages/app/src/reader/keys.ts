@@ -46,6 +46,7 @@ export function useReaderKeys(on: boolean, now: { verbs: Verbs; visit: ListVisit
 export type PanelMenu = "resurface" | "move" | "more" | "cardDelete" | "screening" | "tag";
 export const REPLY_KEY = "r";
 export const FORWARD_KEY = "shift+f";
+export const CARD_DELETE_KEY = "d";
 
 /** The open letter, its verbs and its panel's menus; null where nothing is open. */
 export interface LetterKeyDoors {
@@ -76,7 +77,7 @@ function trashKeys(t: Text, open: DeleteKeyTarget | null): KeyBinding[] {
 /** A second deliberate letter is its own press, including when focus sits on a menu item. */
 export function isCardDeleteKey(e: KeyboardEvent): boolean {
   return (
-    e.key === "d" &&
+    e.key === CARD_DELETE_KEY &&
     !e.repeat &&
     !e.isComposing &&
     !e.ctrlKey &&
@@ -128,7 +129,7 @@ export function useCardKeys(
             run: () => open.menu("move"),
           },
           {
-            chord: "d",
+            chord: CARD_DELETE_KEY,
             group: "message",
             label: t("key.deleteAsk"),
             when: isCardDeleteKey,
@@ -192,7 +193,7 @@ export function letterKeys(ts: Text, open: LetterKeyDoors | null): KeyBinding[] 
     ...(open?.calendarAction ? [verb("v", open.calendarAction.label, open.calendarAction.onPress)] : []),
     verb("m", ts("key.move"), show("move"), open === null ? {} : { disabled: open.verbs.moves.length === 0 }),
     /* A held key is one press: auto-repeat never walks the ask. */
-    verb("d", ts("key.deleteAsk"), show("cardDelete"), { when: isCardDeleteKey }),
+    verb(CARD_DELETE_KEY, ts("key.deleteAsk"), show("cardDelete"), { when: isCardDeleteKey }),
     ...trashKeys(ts, open),
   ];
 }

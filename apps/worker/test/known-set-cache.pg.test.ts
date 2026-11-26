@@ -147,7 +147,7 @@ describe.skipIf(!AVAILABLE)("known-set memo, on real Postgres", () => {
     expect(deletes).toEqual([]);
   });
 
-  it("keeps a live message that moves between two unread folders during absence checks", async () => {
+  it.each(["existing", "recreated", "temporarily recreated"])("keeps a live message that moves through an %s unread folder during absence checks", async (destination) => {
     const h = await makeHarness();
     closers.push(() => h.adapter.close());
     const c = await rawClient(h.cfg);
@@ -158,6 +158,8 @@ describe.skipIf(!AVAILABLE)("known-set memo, on real Postgres", () => {
     const messageId = "partial-move-between-peers@fixture.invalid";
     await c.mailboxCreate("Archive");
     await c.mailboxCreate("Projects");
+    const temporary = destination === "temporarily recreated";
+    if (temporary) await c.mailboxCreate("Holding");
     await h.adapter.close();
     await h.adapter.connect();
     await c.append("INBOX", emlOf({ from: "fixture@range.example", subject: "kept copy", messageId }));
@@ -173,29 +175,56 @@ describe.skipIf(!AVAILABLE)("known-set memo, on real Postgres", () => {
       } finally { lock.release(); }
     };
     await move("INBOX", "Projects");
+    const missing = temporary ? "Holding" : destination === "recreated" ? "Archive" : null;
+    if (missing !== null) expect(await c.mailboxDelete(missing)).toBeTruthy();
     const sourceCursor = (await h.repo.getMailboxFolders(h.mailboxId)).find((row) => row.folder === "INBOX")!;
     const changesSince = h.adapter.changesSince.bind(h.adapter);
     h.adapter.changesSince = async () => ({
       creates: [], moves: [], flagChanges: [],
       deletes: [{ type: "delete", locator: { folder: "INBOX", ref: inbox!.uidValidity + ":" + inbox!.uid } }],
       newCursor: { folders: { INBOX: sourceCursor } },
-      incompleteFolders: ["Archive", "Projects"],
+      incompleteFolders: temporary ? ["Archive", "Holding", "Projects"] : ["Archive", "Projects"],
     });
     const messageIdsGone = h.adapter.messageIdsGone.bind(h.adapter);
+    const folderKeys = h.adapter.folderKeys.bind(h.adapter);
     let moved = false;
+    let staged = false;
+    let archiveChecks = 0;
+    const finishMove = async () => {
+      await move("Holding", "Archive");
+      expect(await c.mailboxDelete("Holding")).toBeTruthy();
+      moved = true;
+    };
+    h.adapter.folderKeys = async (folder, options) => {
+      const keys = await folderKeys(folder, options);
+      if (missing !== null && folder === missing && !staged) {
+        expect(keys).toEqual({ k: "absent" });
+        await c.mailboxCreate(missing);
+        await move("Projects", missing);
+        staged = true;
+        moved = !temporary;
+      }
+      if (temporary && folder === "Archive" && ++archiveChecks === 2) await finishMove();
+      return keys;
+    };
     h.adapter.messageIdsGone = async (folder, epoch, ids) => {
       const answer = await messageIdsGone(folder, epoch, ids);
+      expect(answer).toMatchObject({ k: "read", gone: new Set(ids) });
       if (folder === "Archive") {
-        expect(answer).toMatchObject({ k: "read", gone: new Set(ids) });
-        await move("Projects", "Archive");
-        moved = true;
+        if (!temporary) {
+          await move("Projects", "Archive");
+          moved = true;
+        }
       } else {
-        expect(moved).toBe(true);
-        expect(answer).toMatchObject({ k: "read", gone: new Set(ids) });
+        expect(moved || staged).toBe(true);
       }
       return answer;
     };
     expect(await runSyncCycle(deps)).toMatchObject({ importIncomplete: true });
+    if (temporary && !moved) {
+      expect(staged).toBe(true);
+      await finishMove();
+    }
     expect(moved).toBe(true);
     const lock = await c.getMailboxLock("Archive");
     try { expect(await c.search({ header: { "message-id": messageId } }, { uid: true })).toHaveLength(1); }
@@ -210,6 +239,7 @@ describe.skipIf(!AVAILABLE)("known-set memo, on real Postgres", () => {
 
     h.adapter.changesSince = changesSince;
     h.adapter.messageIdsGone = messageIdsGone;
+    h.adapter.folderKeys = folderKeys;
     await drain(deps);
     const recovered = await h.db.select().from(messages).where(byMessageId(h.mailboxId, messageId));
     expect(recovered).toHaveLength(1);
@@ -217,7 +247,12 @@ describe.skipIf(!AVAILABLE)("known-set memo, on real Postgres", () => {
     expect((await h.repo.listKnownLocators(h.mailboxId)).map((locator) => locator.folder)).toEqual(["Archive"]);
   });
 
-  it.each([[["Projects"]], [["Archive", "Projects"]]])("publishes a confirmed expunge from a healthy folder with %j unread", async (folders) => {
+  it.each([
+    { folders: ["Projects"] },
+    { folders: ["Archive", "Projects"] },
+    { folders: ["Archive", "Projects", "Travel", "Receipts", "Reference"] },
+    { folders: ["Archive", "Projects"], removed: "Archive" },
+  ])("publishes a confirmed expunge from a healthy folder with $folders unread and $removed removed", async ({ folders, removed }) => {
     const h = await makeHarness();
     closers.push(() => h.adapter.close());
     const c = await rawClient(h.cfg);
@@ -236,6 +271,10 @@ describe.skipIf(!AVAILABLE)("known-set memo, on real Postgres", () => {
     const lock = await c.getMailboxLock("INBOX");
     try { expect(await c.messageDelete(String(inbox!.uid), { uid: true })).toBeTruthy(); }
     finally { lock.release(); }
+    if (removed !== undefined) {
+      expect((await h.repo.getMailboxFolders(h.mailboxId)).some((row) => row.folder === removed)).toBe(true);
+      expect(await c.mailboxDelete(removed)).toBeTruthy();
+    }
     const changesSince = h.adapter.changesSince.bind(h.adapter);
     h.adapter.changesSince = async (...args) => ({ ...await changesSince(...args), incompleteFolders: folders });
     const current = async () => (await h.db.select().from(messages).where(eq(messages.id, stored!.id)))[0]!;
@@ -244,6 +283,10 @@ describe.skipIf(!AVAILABLE)("known-set memo, on real Postgres", () => {
       expect(await h.repo.listKnownLocators(h.mailboxId)).toEqual([]);
     }
     const beforeRecovery = await current();
+    const deletions = await h.db.select().from(changeLog).where(and(
+      eq(changeLog.accountId, h.accountId), eq(changeLog.entityId, stored!.id), eq(changeLog.op, "delete"),
+    ));
+    expect(deletions).toHaveLength(1);
     h.adapter.changesSince = changesSince;
     await drain(deps);
     expect((await current()).deletedAt).not.toBeNull();

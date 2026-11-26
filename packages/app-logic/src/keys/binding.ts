@@ -1,5 +1,6 @@
 /** The overlay section a binding is listed in; the union is closed on purpose (`keymap.tsx#BINDING_GROUPS` has the order). */
 export type BindingGroup = "navigate" | "message" | "screener" | "app";
+export type ShortcutPlace = "lists" | "composer" | "calendar";
 
 /**
  * Why a binding is resting — the ONE answer the dispatcher can act on. A union of one, deliberately
@@ -26,6 +27,8 @@ export interface KeyBinding {
    */
   chord: string;
   group: BindingGroup;
+  /** Where the shortcut is taught when its place differs from its dispatch group. */
+  place?: ShortcutPlace;
   /** What it does, in the user's words. This IS the overlay row. */
   label: string;
   run: (e: KeyboardEvent) => void;

@@ -64,6 +64,47 @@ describe("the event chip", () => {
     expect(screen.queryByText("Winterthur")).toBeNull();
   });
 
+  it("refits a title at the same width when an RSVP changes its font weight", () => {
+    const fakeCanvas = {
+      font: "",
+      measureText: vi.fn(function (this: { font: string }, value: string) {
+        return { width: value.startsWith("Exhibition") ? (this.font.startsWith("400") ? 57 : 58) : 10 };
+      }),
+    };
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const context = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(fakeCanvas as never);
+    const computed = vi.spyOn(window, "getComputedStyle").mockImplementation(
+      (element) =>
+        ({
+          width: "57.5px",
+          fontWeight: element.closest('[data-state="maybe"]') ? "400" : "500",
+          fontSize: "13px",
+          fontFamily: "sans-serif",
+          letterSpacing: "normal",
+        }) as CSSStyleDeclaration,
+    );
+    const props = { size: "block", tone: null, title: "Exhibition", place } as const;
+    try {
+      const { container, rerender } = render(<EventChip {...props} state="maybe" />);
+      const drawn = () => container.querySelector(".oh-ev-tt")?.textContent;
+      expect(drawn()).toBe("Exhibition");
+      rerender(<EventChip {...props} state="plain" />);
+      expect(drawn()).toBe("Exhibitio…");
+      rerender(<EventChip {...props} state="maybe" />);
+      expect(drawn()).toBe("Exhibition");
+    } finally {
+      computed.mockRestore();
+      context.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("puts what the store says in the second line's place", () => {
     render(
       <EventChip

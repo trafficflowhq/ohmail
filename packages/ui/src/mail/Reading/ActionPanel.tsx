@@ -19,6 +19,8 @@ export interface PanelVerb {
   keyHint?: string;
   /** The active binding in aria-keyshortcuts syntax. */
   shortcut?: string;
+  /** The composer shows Send’s hint while the person is writing. */
+  shortcutWhileWriting?: boolean;
   /** `ink`: the one capsule of the view. `soft`: one of several answers of one weight. Left out: a word that acts. */
   kind?: "ink" | "soft";
   /** 0 never folds. Otherwise the highest folds behind More first, of equals the later one. Left out: 9. */
@@ -199,6 +201,8 @@ function Verb({ verb, apart, keysShown, folded, short }: VerbProps) {
       hidden={folded}
       aria-label={verb.name ?? verb.label}
       aria-keyshortcuts={verb.shortcut}
+      data-shortcut-hint={verb.shortcut && !verb.shortcutWhileWriting ? verb.keyHint : undefined}
+      data-shortcut-send={verb.shortcutWhileWriting ? "" : undefined}
       title={
         verb.disabledHint ??
         (verb.refused !== undefined && !verb.disabled

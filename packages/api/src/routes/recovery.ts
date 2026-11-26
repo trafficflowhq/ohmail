@@ -18,7 +18,10 @@ export const recoveryRoutes: Route[] = [
     relay: true,
     cost: "ceremony",
     options: { stepUp: true, enrollmentOk: true },
-    handler: async (req, deps) => json(await auth(deps).generateRecoveryCodes(serviceContext(deps, req)), 200),
+    handler: async (req, deps) => {
+      const ifMissing = req.headers.get("X-Ohmail-Recovery-If-Missing") === "1";
+      return json(await auth(deps).generateRecoveryCodes(serviceContext(deps, req), { ifMissing }), 200);
+    },
   },
   {
     // Public step-two: consumes one single-use code and establishes the session;

@@ -6,6 +6,7 @@ import { LEGACY_COMPOSE_DRAFT_KEY } from "@ohmail/app-logic/writing/compose";
 import { durableRemove, durableSet } from "@ohmail/app-logic/storage/durable";
 
 export const PENDING_SIGN_OUT_KEY = "ohmail.session.pendingSignOut";
+const CLEANUP_NOTICE = "ohmail.session.shownCleanupNotice";
 const RETIRED_COMPOSE_CLEANUP = `${CLEANUP_PREFIX}compose`;
 const ISOLATED_SCOPE_PREFIX = `${CLEANUP_PREFIX}isolated.`;
 const cleanupKey = (owner: string): string => `${CLEANUP_PREFIX}account.${owner}`;
@@ -41,6 +42,18 @@ function readOperation(key: string): PendingSignOut | null {
 
 export function readPendingSignOut(): PendingSignOut | null {
   return readOperation(PENDING_SIGN_OUT_KEY);
+}
+
+export function cleanupNoticeShown(press: string): boolean {
+  try {
+    return localStorage.getItem(CLEANUP_NOTICE) === press;
+  } catch {
+    return false;
+  }
+}
+
+export function markCleanupNoticeShown(press: string): void {
+  durableSet(CLEANUP_NOTICE, press, "session.signOut");
 }
 
 export function retainAccountCleanup(operation: PendingSignOut): void {

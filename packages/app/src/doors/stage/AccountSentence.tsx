@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Text } from "../../text/index.js";
-import { PASSWORD_MIN, type Blanks } from "./fields.js";
+import { PASSWORD_MIN, passwordLength, type Blanks } from "./fields.js";
 import { SaidWith } from "../../text/Said.js";
 import { SentenceBlank } from "../../text/SentenceBlank.js";
 
@@ -11,7 +11,7 @@ export type AccountField = "name" | "email" | "password";
 export function accountWanted(fields: Blanks<AccountField>): AccountField | null {
   if (fields.name.trim() === "") return "name";
   if (fields.email.trim() === "") return "email";
-  return fields.password.length < PASSWORD_MIN ? "password" : null;
+  return passwordLength(fields.password) < PASSWORD_MIN ? "password" : null;
 }
 
 /**

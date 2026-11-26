@@ -289,6 +289,7 @@ export function chordKeys(chord: string, mod: string): string[] {
   const caps: Record<string, string> = {
     mod,
     shift: "⇧",
+    alt: mod === "⌘" ? "⌥" : "Alt",
     Enter: "↵",
     Escape: "esc",
     /* The two keys that file a message to Trash, in the glyphs printed on the keys themselves.
@@ -684,7 +685,7 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
        cursor carries the sentence that says so), and it can move while `disabled` stays true —
        `⇧R` on a 1:1 message is disabled before AND after the cursor arrives, for two different
        reasons. Without it here the layer never re-registers and the sheet keeps the old title. */
-    bindings.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? "", b.helpOnly === true]),
+    bindings.map((b) => [b.chord, b.group, b.place, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? "", b.helpOnly === true]),
   );
 
   useEffect(
@@ -719,7 +720,7 @@ export function useOptionalKeyBindings(
   // The same JSON shape key as `useKeyBindings`, `disabledReason` included, for the same
   // collision argument and the same staleness one.
   const shape = JSON.stringify(
-    now.map((b) => [b.chord, b.group, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? "", b.helpOnly === true]),
+    now.map((b) => [b.chord, b.group, b.place, b.label, b.disabled === true, b.inInput === true, b.disabledReason ?? "", b.helpOnly === true]),
   );
   const register = ctx ? ctx.register : null;
   const reshaped = ctx ? ctx.reshaped : null;
@@ -749,7 +750,7 @@ export function useOptionalKeyBindings(
  * message must stay readable. No provider means no hint, never a guessed one.
  */
 export function useBinding(chord: string): BoundKey | null {
-  return useSelectedBinding((b) => b.chord === chord);
+  return useSelectedBinding((b) => b.chord === chord && !b.helpOnly);
 }
 
 /**
@@ -763,7 +764,7 @@ export function useBinding(chord: string): BoundKey | null {
  * and `groupedBindings` dedups. Null-safe for `useBinding`'s reason.
  */
 export function useEnabledBinding(chord: string): BoundKey | null {
-  return useSelectedBinding((b) => b.chord === chord && !b.disabled);
+  return useSelectedBinding((b) => b.chord === chord && !b.helpOnly && !b.disabled);
 }
 
 /**

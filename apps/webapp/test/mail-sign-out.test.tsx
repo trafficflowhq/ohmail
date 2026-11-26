@@ -244,12 +244,12 @@ describe("the way out, on the new shell", () => {
     await press(en.account.signOut);
     expect(tab.loads, "it left with the mail still in this browser").toEqual([]);
     expect(said(en.accountOwn.stillHere)).toBe(true);
-    expect(said(en.account.signOutBlocked)).toBe(true);
-    expect(screen.getByRole("button", { name: en.account.signOut })).toBeTruthy();
+    expect(said(en.account.localCleanupBlocked)).toBe(true);
+    expect(screen.getByRole("button", { name: en.account.retryLocalCleanup })).toBeTruthy();
     expect(screen.queryByRole("navigation", { name: "Places" })).toBeNull();
 
     held = false;
-    await press(en.account.signOut);
+    await press(en.account.retryLocalCleanup);
     expect(deleted).toContain(MIRROR);
     expect(server.on(LOGOUT), "a retry of local cleanup revoked the session a second time").toHaveLength(1);
     expect(tab.loads).toEqual(["/"]);
@@ -260,8 +260,8 @@ describe("the way out, on the new shell", () => {
     await press(en.account.signOut);
     expect(tab.loads).toEqual([]);
     expect(said(en.accountOwn.notConfirmed)).toBe(true);
-    expect(said(en.account.signOutUnverified)).toBe(true);
-    expect(said(en.account.signOutBlocked)).toBe(false);
+    expect(said(en.account.localCleanupUnverified)).toBe(true);
+    expect(said(en.account.localCleanupBlocked)).toBe(false);
     expect(screen.queryByRole("navigation", { name: "Places" })).toBeNull();
   });
 

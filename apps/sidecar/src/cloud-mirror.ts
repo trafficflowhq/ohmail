@@ -448,6 +448,9 @@ interface CursorState {
    * files, which reads `null`: such a copy reads it once.
    */
   calendarSnapshotFor: string | null;
+  calendarSnapshotProgress: { enabledAt: string; next: string | null } | null;
+  /** The mail bootstrap finished. Its marks still belong to the pending calendar cleanup. */
+  calendarSweepPending: boolean;
 }
 
 /** A hosted mailbox's gap offer: the rules' letters and, from a server that counts them, the strangers'. */
@@ -812,6 +815,15 @@ interface CursorFile {
   quarantineFloor?: unknown;
   /** The switch's instant the calendar was last read whole for; absent when none was. */
   calendarSnapshotFor?: unknown;
+  calendarSnapshotProgress?: unknown;
+  calendarSweepPending?: unknown;
+}
+
+function readCalendarProgress(raw: unknown): CursorState["calendarSnapshotProgress"] {
+  if (raw === null || typeof raw !== "object") return null;
+  const { enabledAt, next } = raw as Record<string, unknown>;
+  return typeof enabledAt === "string" && (next === null || (typeof next === "string" && next.length > 0 && next.length <= 2048))
+    ? { enabledAt, next } : null;
 }
 
 /**
@@ -886,6 +898,8 @@ function readCursor(path: string): CursorState {
       overflow: readOverflow(j.quarantineOverflow, j.quarantineFloor),
       // Older files could mark the calendar loaded after a mail replay alone. Read the calendar once on upgrade.
       calendarSnapshotFor: typeof j.calendarSnapshotFor === "string" && j.calendarSnapshotFor !== "" ? j.calendarSnapshotFor : null,
+      calendarSnapshotProgress: readCalendarProgress(j.calendarSnapshotProgress),
+      calendarSweepPending: j.calendarSweepPending === true,
     };
   } catch {
     // No file at all is a FRESH install, not an upgraded one: there are no rows to re-key, and the
@@ -911,6 +925,8 @@ function readCursor(path: string): CursorState {
       overflow: { keys: new Map(), floor: null },
       // A fresh copy holds no calendar; its bootstrap reads the calendar with the rest.
       calendarSnapshotFor: null,
+      calendarSnapshotProgress: null,
+      calendarSweepPending: false,
     };
   }
 }
@@ -941,6 +957,8 @@ function writeCursor(path: string, state: CursorState): void {
     ...(state.overflow.floor !== null ? { quarantineFloor: state.overflow.floor } : {}),
     // Absent while the copy holds no calendar, so such a file is byte-identical to an older one.
     ...(state.calendarSnapshotFor !== null ? { calendarSnapshotFor: state.calendarSnapshotFor } : {}),
+    ...(state.calendarSnapshotProgress !== null ? { calendarSnapshotProgress: state.calendarSnapshotProgress } : {}),
+    ...(state.calendarSweepPending ? { calendarSweepPending: true } : {}),
   };
   writeFileSync(path, JSON.stringify(onDisk));
 }
@@ -2566,7 +2584,9 @@ async function applyPage(
  * with them. Each swept entity appends a local DELETE change-log row so the projection drops it too,
  * and {@link applyDelete} is reused verbatim so the cascade matches the incremental path.
  */
-async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, now: Date): Promise<number> {
+async function sweepPhantoms(
+  db: LocalDb, world: LocalWorld, gen: BootstrapGen, now: Date, scope: "mail" | "calendar" | "all",
+): Promise<number> {
   return db.transaction(async (tx) => {
     let swept = 0;
     const hold = loopHold();
@@ -2585,60 +2605,63 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       }
     };
 
-    for (const r of await tx.select({ id: routingDecisions.id }).from(routingDecisions).where(eq(routingDecisions.accountId, world.accountId)))
-      if (!gen.routing_decision.has(r.id)) await sweepOne("routing_decision", r.id);
-    for (const r of await tx.select({ id: approvals.id }).from(approvals).where(eq(approvals.accountId, world.accountId)))
-      if (!gen.approval.has(r.id)) await sweepOne("approval", r.id);
-    for (const r of await tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.accountId, world.accountId)))
-      if (!gen.draft.has(r.id)) await sweepOne("draft", r.id);
-    // By ROW id, like every other type: a `message_state`'s /sync id IS its row id (the DTO is
-    // the one with no `id` field, which is what made this read as the messageId).
-    //
-    // SKIPPED ENTIRELY for a generation written under another keying, because its marks name
-    // messageIds and this query names row ids: every live state would read as unmarked and be
-    // deleted — which is the defect this release fixes, arriving through its own repair. Skipping
-    // can only LEAVE a row, and there is almost nothing to leave: the replay re-applies each
-    // state under its hosted id onto the unique `message_id`, so the row is healed in place, and
-    // a state whose message really is a phantom goes with that message's cascade below.
-    if (!gen.keyingStale) {
-      for (const r of await tx.select({ id: messageStates.id }).from(messageStates).where(eq(messageStates.accountId, world.accountId)))
-        if (!gen.message_state.has(r.id)) await sweepOne("message_state", r.id);
+    if (scope !== "calendar") {
+      for (const r of await tx.select({ id: routingDecisions.id }).from(routingDecisions).where(eq(routingDecisions.accountId, world.accountId)))
+        if (!gen.routing_decision.has(r.id)) await sweepOne("routing_decision", r.id);
+      for (const r of await tx.select({ id: approvals.id }).from(approvals).where(eq(approvals.accountId, world.accountId)))
+        if (!gen.approval.has(r.id)) await sweepOne("approval", r.id);
+      for (const r of await tx.select({ id: drafts.id }).from(drafts).where(eq(drafts.accountId, world.accountId)))
+        if (!gen.draft.has(r.id)) await sweepOne("draft", r.id);
+      // By ROW id, like every other type: a `message_state`'s /sync id IS its row id (the DTO is
+      // the one with no `id` field, which is what made this read as the messageId).
+      //
+      // SKIPPED ENTIRELY for a generation written under another keying, because its marks name
+      // messageIds and this query names row ids: every live state would read as unmarked and be
+      // deleted — which is the defect this release fixes, arriving through its own repair. Skipping
+      // can only LEAVE a row, and there is almost nothing to leave: the replay re-applies each
+      // state under its hosted id onto the unique `message_id`, so the row is healed in place, and
+      // a state whose message really is a phantom goes with that message's cascade below.
+      if (!gen.keyingStale) {
+        for (const r of await tx.select({ id: messageStates.id }).from(messageStates).where(eq(messageStates.accountId, world.accountId)))
+          if (!gen.message_state.has(r.id)) await sweepOne("message_state", r.id);
+      }
+      for (const r of await tx.select({ id: rules.id }).from(rules).where(eq(rules.accountId, world.accountId)))
+        if (!gen.rule.has(r.id)) await sweepOne("rule", r.id);
+      for (const r of await tx.select({ id: messages.id }).from(messages).where(eq(messages.accountId, world.accountId)))
+        if (!gen.message.has(r.id)) await sweepOne("message", r.id);
+      for (const r of await tx.select({ id: threads.id }).from(threads).where(eq(threads.accountId, world.accountId)))
+        if (!gen.thread.has(r.id)) await sweepOne("thread", r.id);
+      /* Tags LAST. A tag deleted on Cloud is a tag whose messages survive and stop carrying it, so
+         sweeping one has to happen after the messages it might still be attached to have settled —
+         `applyDelete` clears the assignments with it. */
+      for (const r of await tx.select({ id: tags.id }).from(tags).where(eq(tags.accountId, world.accountId)))
+        if (!gen.tag.has(r.id)) await sweepOne("tag", r.id);
+      /* Folder entities the bootstrap never named — a folder deleted (or the feature disabled)
+         while this mirror was offline. Scoped through the mirrored mailbox list: `mailbox_folders`
+         has no account column, and the mirrored mailboxes ARE this account's. */
+      for (const r of await tx.select({ id: mailboxFolders.id }).from(mailboxFolders)
+        .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+        .where(eq(mailboxes.accountId, world.accountId)))
+        if (!gen.folder.has(r.id)) await sweepOne("folder", r.id);
+      /* An arrangement the bootstrap never named — the document went, or the mailbox is no longer
+         one the account only reads. Keyed by mailbox, the entity's own id. */
+      for (const r of await tx.select({ id: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror)
+        .where(eq(mailboxProfileMirror.accountId, world.accountId)))
+        if (!gen.mailbox_profile.has(r.id)) await sweepOne("mailbox_profile", r.id);
+      await reconcileLocalFoldersFlag(tx, dialect(db), world, now);
     }
-    for (const r of await tx.select({ id: rules.id }).from(rules).where(eq(rules.accountId, world.accountId)))
-      if (!gen.rule.has(r.id)) await sweepOne("rule", r.id);
-    for (const r of await tx.select({ id: messages.id }).from(messages).where(eq(messages.accountId, world.accountId)))
-      if (!gen.message.has(r.id)) await sweepOne("message", r.id);
-    for (const r of await tx.select({ id: threads.id }).from(threads).where(eq(threads.accountId, world.accountId)))
-      if (!gen.thread.has(r.id)) await sweepOne("thread", r.id);
-    /* Tags LAST. A tag deleted on Cloud is a tag whose messages survive and stop carrying it, so
-       sweeping one has to happen after the messages it might still be attached to have settled —
-       `applyDelete` clears the assignments with it. */
-    for (const r of await tx.select({ id: tags.id }).from(tags).where(eq(tags.accountId, world.accountId)))
-      if (!gen.tag.has(r.id)) await sweepOne("tag", r.id);
-    /* Folder entities the bootstrap never named — a folder deleted (or the feature disabled)
-       while this mirror was offline. Scoped through the mirrored mailbox list: `mailbox_folders`
-       has no account column, and the mirrored mailboxes ARE this account's. */
-    for (const r of await tx.select({ id: mailboxFolders.id }).from(mailboxFolders)
-      .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
-      .where(eq(mailboxes.accountId, world.accountId)))
-      if (!gen.folder.has(r.id)) await sweepOne("folder", r.id);
-    /* An arrangement the bootstrap never named — the document went, or the mailbox is no longer
-       one the account only reads. Keyed by mailbox, the entity's own id. */
-    for (const r of await tx.select({ id: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror)
-      .where(eq(mailboxProfileMirror.accountId, world.accountId)))
-      if (!gen.mailbox_profile.has(r.id)) await sweepOne("mailbox_profile", r.id);
-    /* The calendar's records the bootstrap never named: removed upstream while this copy was away,
-       their deletes since compacted. Children first, each its own local deletion. */
-    for (const r of await tx.select({ id: calEvents.id }).from(calEvents).where(eq(calEvents.accountId, world.accountId)))
-      if (!gen.calendar_event.has(r.id)) await sweepOne("calendar_event", r.id);
-    for (const r of await tx.select({ id: calSuggestions.id }).from(calSuggestions).where(eq(calSuggestions.accountId, world.accountId)))
-      if (!gen.calendar_suggestion.has(r.id)) await sweepOne("calendar_suggestion", r.id);
-    for (const r of await tx.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, world.accountId)))
-      if (!gen.calendar.has(r.id)) await sweepOne("calendar", r.id);
-    for (const r of await tx.select({ id: calConnections.id }).from(calConnections).where(eq(calConnections.accountId, world.accountId)))
-      if (!gen.calendar_connection.has(r.id)) await sweepOne("calendar_connection", r.id);
-
-    await reconcileLocalFoldersFlag(tx, dialect(db), world, now);
+    if (scope !== "mail") {
+      /* The calendar's records the bootstrap never named: removed upstream while this copy was away,
+         their deletes since compacted. Children first, each its own local deletion. */
+      for (const r of await tx.select({ id: calEvents.id }).from(calEvents).where(eq(calEvents.accountId, world.accountId)))
+        if (!gen.calendar_event.has(r.id)) await sweepOne("calendar_event", r.id);
+      for (const r of await tx.select({ id: calSuggestions.id }).from(calSuggestions).where(eq(calSuggestions.accountId, world.accountId)))
+        if (!gen.calendar_suggestion.has(r.id)) await sweepOne("calendar_suggestion", r.id);
+      for (const r of await tx.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, world.accountId)))
+        if (!gen.calendar.has(r.id)) await sweepOne("calendar", r.id);
+      for (const r of await tx.select({ id: calConnections.id }).from(calConnections).where(eq(calConnections.accountId, world.accountId)))
+        if (!gen.calendar_connection.has(r.id)) await sweepOne("calendar_connection", r.id);
+    }
     await loopTurn();
     return swept;
   });
@@ -2732,10 +2755,12 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   const now = cfg.now ?? ((): Date => new Date());
   // A failed calendar read stays owed even while a bootstrap is still replaying mail.
   let calendarRetryAt: number | null = null;
+  let calendarPagesLeft = 0;
   const pageLimit = cfg.pageLimit ?? DEFAULT_PAGE_LIMIT;
   const cursor = readCursor(cfg.cursorPath);
   /** The bootstrap generation's on-disk marks, beside the cursor. See {@link BootstrapGen}. */
   const genPath = genPathFor(cfg.cursorPath);
+  let calendarSweep = cursor.calendarSweepPending ? loadBootstrapGen(genPath) : null;
   // A new mirror has read nothing of the account's devices yet (`cloud-mirror-devices.ts`).
   forgetHostedDevices(cfg.world.accountId);
   let stopped = false;
@@ -3400,7 +3425,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         serverTime: now().toISOString(),
       };
       const appliedKeys = new Set<string>();
-      const landed = await landPage(page, null, appliedKeys);
+      const landed = await landPage(page, calendarSweep, appliedKeys);
       reachable = true;
       cfg.log?.("cloud_freshen_applied", {
         count: landed,
@@ -3455,7 +3480,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // corrected upsert, never resumed (see {@link CURSOR_VERSION}).
     let sweep: BootstrapGen | null = null;
     const reKeying = cursor.version < CURSOR_VERSION;
-    if (isBootstrapCursor(cursor.sync) || cursor.bootstrapping || reKeying) {
+    if (isBootstrapCursor(cursor.sync) || cursor.bootstrapping || reKeying ||
+        (cursor.calendarSweepPending && calendarSweep === null)) {
       // The re-key RESUMES on the same terms as any bootstrap: an interrupted replay whose marks
       // survived continues from its committed cursor, and every seq still passes through the
       // corrected upsert exactly once. This is the upgraded-install case measured live — the
@@ -3494,6 +3520,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         // A new generation owes the whole window, whatever an older file said about an earlier one.
         cursor.window = { phase: "pending" };
         cursor.calendarSnapshotFor = null;
+        cursor.calendarSnapshotProgress = null;
+        cursor.calendarSweepPending = false;
+        calendarSweep = null;
         sweep = newBootstrapGen(genPath);
         beginOverflowGeneration(overflow);
       }
@@ -3517,7 +3546,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     // every change the ledger supersedes, because re-upserting a row the freshen just wrote is
     // the measured majority of the desktop replay's serial PGlite work.
     const freshened = sweep === null ? await freshenStaleResume() : null;
-    if (sweep === null && cursor.calendarSnapshotFor === null) await reconcileCalendarCopy(null);
+    if (sweep === null && cursor.calendarSnapshotFor === null) await reconcileCalendarCopy(calendarSweep);
     for (;;) {
       // BETWEEN PAGES, so a quit costs at most the page already in flight. `sweep: null` is the
       // load-bearing half: a bootstrap generation that stopped early has marked only part of the
@@ -3602,6 +3631,9 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         rulesFirstOwed = true;
         cursor.window = { phase: "pending" };
         cursor.calendarSnapshotFor = null;
+        cursor.calendarSnapshotProgress = null;
+        cursor.calendarSweepPending = false;
+        calendarSweep = null;
         windowOwed = true;
         cfg.log?.("cloud_cursor_expired", { reason: "410 from /sync; re-bootstrapping from since=0 with mark-and-sweep" });
         continue;
@@ -3634,7 +3666,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       // The pre-scan, the apply and the marks flush are {@link landPage}'s — the window's pages
       // go through the identical sequence, which is what keeps the two phases one mirror.
-      applied += await landPage(body, sweep);
+      applied += await landPage(body, sweep ?? calendarSweep);
       // AFTER the commit and the flush: a crash before this line re-applies the page next launch,
       // which converges, and the marks are already on disk ahead of the cursor that names them.
       cursor.sync = body.cursor;
@@ -3770,37 +3802,61 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
    * A failed or incomplete snapshot leaves the read owed, including when the mail replay succeeded.
    */
   const reconcileCalendarCopy = async (gen: BootstrapGen | null): Promise<void> => {
-    if (aborted || (calendarRetryAt !== null && monotonicNow() < calendarRetryAt)) return;
+    if (aborted) return;
     const [row] = await cfg.db.select({ at: calSettings.enabledAt }).from(calSettings)
       .where(eq(calSettings.accountId, cfg.world.accountId)).limit(1);
     const on = row?.at ? row.at.toISOString() : null;
-    calendarRetryAt = null;
-    if (on === cursor.calendarSnapshotFor) return;
+    if (cursor.calendarSnapshotProgress !== null && cursor.calendarSnapshotProgress.enabledAt !== on) {
+      cursor.calendarSnapshotProgress = null;
+      calendarRetryAt = null;
+      writeCursor(cfg.cursorPath, cursor);
+    }
+    if (on === cursor.calendarSnapshotFor || calendarPagesLeft === 0
+      || (calendarRetryAt !== null && monotonicNow() < calendarRetryAt)) return;
     const settle = (): void => {
       cursor.calendarSnapshotFor = on;
+      cursor.calendarSnapshotProgress = null;
       writeCursor(cfg.cursorPath, cursor);
     };
     if (on === null) return settle();
     // The settings record named too: the hosted reader serves the calendar only to a request that hears its switch.
     const types = "settings,calendar_connection,calendar,calendar_event,calendar_suggestion";
-    let pageCursor: string | undefined;
+    let pageCursor = cursor.calendarSnapshotProgress?.next ?? undefined;
+    const seen = new Set<string>();
     calendarRetryAt = monotonicNow() + CALENDAR_RETRY_MS;
     try {
-      for (;;) {
+      while (calendarPagesLeft > 0) {
         if (aborted) return;
+        calendarPagesLeft--;
         const q = new URLSearchParams({ phase: "calendar", types, limit: String(pageLimit) });
-        if (pageCursor) q.set("cursor", pageCursor);
+        if (pageCursor) {
+          q.set("cursor", pageCursor);
+          seen.add(pageCursor);
+        }
         const res = await fetchCloud(`/sync/snapshot?${q.toString()}`);
-        // Leave the read owed. A replay with more pages can retry it as well as a later pull.
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (pageCursor && (res.status === 400 || res.status === 410)) {
+            // The snapshot still owes a complete walk before bootstrap can sweep its marks.
+            cursor.calendarSnapshotProgress = { enabledAt: on, next: null };
+            writeCursor(cfg.cursorPath, cursor);
+          }
+          return;
+        }
         const page = (await res.json()) as SnapshotResponse;
         if (page.calendarWindow === undefined || !Array.isArray(page.changes)) return;
+        const next = page.nextCursor;
+        if (next != null && (typeof next !== "string" || next.length === 0 || next.length > 2048 || seen.has(next))) return;
         await landPage({
           changes: { creates: page.changes, updates: [], moves: [], deletes: [] },
           cursor: cursor.sync, hasMore: false, serverTime: now().toISOString(),
         }, gen);
-        if (!page.nextCursor) break;
-        pageCursor = page.nextCursor;
+        if (next == null) {
+          calendarRetryAt = null;
+          return settle();
+        }
+        cursor.calendarSnapshotProgress = { enabledAt: on, next };
+        writeCursor(cfg.cursorPath, cursor);
+        pageCursor = next;
       }
     } catch (err) {
       if (err instanceof CloudAccountErased) throw err;
@@ -3808,7 +3864,6 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       return;
     }
     calendarRetryAt = null;
-    settle();
   };
 
   /**
@@ -4360,6 +4415,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   const runPull = async (): Promise<number> => {
+    calendarPagesLeft = 8;
     /* WHEN THIS PULL BEGAN, for the first-import clock below. A pull walks the whole feed before it
        can stamp anything, so the pull that finds a first import open is where a large mirror's
        first pages land; handing the reporter the moment it reported would leave that pull outside
@@ -4402,7 +4458,10 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       }
       // Sweep BEFORE bodies: a phantom message is gone, so `backfillBodies` never fetches its body.
       if (sweep) {
-        const swept = await sweepPhantoms(cfg.db, cfg.world, sweep, now());
+        const deferCalendar = cursor.calendarSnapshotProgress !== null;
+        const swept = await sweepPhantoms(cfg.db, cfg.world, sweep, now(), deferCalendar ? "mail" : "all");
+        calendarSweep = deferCalendar ? sweep : null;
+        cursor.calendarSweepPending = deferCalendar;
         if (swept > 0) {
           cfg.log?.("cloud_mirror_swept", { count: swept, reason: "bootstrap phantoms removed after a since=0 re-pull" });
           // Rows left the mirror without a tombstone in the feed, which is the same arithmetic
@@ -4422,10 +4481,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
         writeCursor(cfg.cursorPath, cursor);
         // A fill that never had a window to land (a server without one) is done here.
         try { cfg.onFirstWindow?.(); } catch { /* the hook is a hint; the pull goes on */ }
-        // The generation completed and swept: its marks have no further reader. AFTER the cursor
-        // write, so a crash between the two leaves a stale file a fresh generation truncates,
-        // never a finished bootstrap the next launch mistakes for an interrupted one.
-        deleteBootstrapGen(genPath);
+        // A deferred calendar sweep still needs these marks when its snapshot resumes.
+        if (!deferCalendar) deleteBootstrapGen(genPath);
         /* AND NOW THE RETIRED ROWS CAN GO. On an upgraded install the placeholder mailbox was
            still holding every mirrored message when the refresh retired it, so it survived as a
            tombstone; the re-pull above has just moved them onto the account's own mailboxes, and a
@@ -4444,7 +4501,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // AFTER the drain, so a bootstrap has already delivered the tags natively and is skipped by
       // the zero-tags gate rather than by a special case for it.
       await repairStaleTags();
-      await reconcileCalendarCopy(null);
+      await reconcileCalendarCopy(calendarSweep);
+      if (calendarSweep !== null && cursor.calendarSnapshotProgress === null) {
+        await sweepPhantoms(cfg.db, cfg.world, calendarSweep, now(), "calendar");
+        calendarSweep = null;
+        cursor.calendarSweepPending = false;
+        writeCursor(cfg.cursorPath, cursor);
+        deleteBootstrapGen(genPath);
+      }
       await repairStaleFolders(sweep !== null && sweep !== undefined);
       await repairRuleInstants(sweep !== null && sweep !== undefined);
       await repairProfiles();

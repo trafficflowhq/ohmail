@@ -34,7 +34,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { apiConfigured, auth, codeOf, messageOf, pair } from "../../api-client";
 import { serverHello } from "../../hello";
-import { revokedWipeSettled } from "../../revoked-door";
+import { checkAnswered, revokedWipeSettled } from "../../revoked-door";
 
 /**
  * What this page knows about the server, in order of discovery. `checking` is the mount state;
@@ -96,12 +96,10 @@ export function useSetupDoor(): SetupCeremony {
       return;
     }
     let live = false;
-    try {
-      await auth.session();
-      live = true;
-    } catch {
-      /* no session: the settled screen */
-    }
+    await checkAnswered(null, async (signal) => {
+      await auth.session({ signal });
+      live = !signal.aborted;
+    });
     // A revoke this read heard: that account's copy is gone before the page sends anyone on.
     await revokedWipeSettled();
     // Any live session — enrollment or full. `/join`'s bootstrap derives the true step.

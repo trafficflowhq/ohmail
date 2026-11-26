@@ -164,7 +164,6 @@ export function ActionBar({
         behind={behind}
         separate={reply !== null}
         calendarAction={calendarAction}
-        calendarKeyHint={hints.calendar.keyHint}
         confirm={card !== undefined && !trashAcknowledged}
       />
     </div>

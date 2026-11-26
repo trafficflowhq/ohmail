@@ -7,12 +7,19 @@ export interface KeyHintProps {
   shown?: boolean;
   /** Drawn for the eye alone: on a control named by its words, so that the key is never said as part of that name. */
   unsaid?: boolean;
+  /** The compact pill used for shortcut discovery. */
+  quiet?: boolean;
 }
 
 /** The key that runs a verb, on its control. The kit draws the hint; the app's key registry listens. */
-export function KeyHint({ children, shown, unsaid }: KeyHintProps) {
+export function KeyHint({ children, shown, unsaid, quiet }: KeyHintProps) {
   return (
-    <kbd className="oh-key" data-shown={shown ? "" : undefined} aria-hidden={unsaid ? true : undefined}>
+    <kbd
+      className="oh-key"
+      data-shown={shown ? "" : undefined}
+      data-quiet={quiet ? "" : undefined}
+      aria-hidden={unsaid ? true : undefined}
+    >
       {children}
     </kbd>
   );

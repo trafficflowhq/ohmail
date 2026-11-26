@@ -8,7 +8,7 @@ import { Button, Dot, Page, Sentence, Tag } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
 import { Said, SaidTrail, SaidWith } from "../../text/Said.js";
 import { WayButton } from "../stage/way.js";
-import { Progress, refusalOf, SignOutAgain, JoinSignIn, type StepProps } from "./parts.js";
+import { Progress, refusalOf, SignOutAgain, JoinBack, JoinSignIn, type StepProps } from "./parts.js";
 
 export function PlanStep({ door, state, join, progress }: StepProps<"plan">): ReactNode {
   const { pending, busy } = door;
@@ -21,7 +21,7 @@ export function PlanStep({ door, state, join, progress }: StepProps<"plan">): Re
     return (
       <Page
         aside={progress}
-        back={<JoinSignIn door={door} join={join} />}
+        back={<JoinBack door={door} join={join} signIn />}
         refusal={refusalOf(pending, door.refusal)}
         material={waitLine(join("planLoading"))}
         acts={null}
@@ -53,7 +53,7 @@ export function PlanStep({ door, state, join, progress }: StepProps<"plan">): Re
   return (
     <Page
       aside={progress}
-      back={<JoinSignIn door={door} join={join} />}
+      back={<JoinBack door={door} join={join} signIn />}
       refusal={refusalOf(pending, door.refusal)}
       material={material}
       line={[
@@ -93,7 +93,11 @@ export function MailboxStep({ door, join }: StepProps<"mailbox">): ReactNode {
     return (
       <Page
         aside={<Progress door={door} join={join} mailboxPart={choosing ? 1 : 2} />}
-        back={back ? <Button kind="quiet" icon="back" label={t("back")} onPress={back} /> : undefined}
+        back={
+          <JoinBack door={door} join={join}>
+            {back && <Button kind="quiet" icon="back" label={t("back")} onPress={back} />}
+          </JoinBack>
+        }
         columns={choosing ? 2 : 1}
         trail={
           choosing && door.fields.name ? (
@@ -138,7 +142,7 @@ export function DoneStep({ door, state, join, progress }: StepProps<"done">): Re
   return (
     <Page
       aside={progress}
-      back={<JoinSignIn door={door} join={join} />}
+      back={<JoinBack door={door} join={join} signIn />}
       refusal={refusalOf(door.pending, door.refusal)}
       material={
         state.mailbox === null ? undefined : (

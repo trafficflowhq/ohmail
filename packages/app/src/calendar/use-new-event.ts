@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { viewOnlyOf, type CalendarConnectionRecord, type CalendarRecord } from "@ohmail/app-logic/calendar";
-import { useKeyBindings } from "@ohmail/app-logic/keys";
+import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys";
 import { useCalendarDraftSeed, useFrame, type CalendarDraftSeed } from "../frame/commands.js";
 import { fragmentOf } from "../frame/route.js";
 import { isCalendarPlace } from "../frame/product.js";
-import { useText } from "../text/index.js";
+import { useText, type Text } from "../text/index.js";
 import { NONE } from "../host/index.js";
 
 const noChanges = () => () => undefined;
@@ -56,12 +56,11 @@ export function useNewEvent(seed?: CalendarDraftSeed, accountsFallback = false) 
   };
 }
 
+export function newEventKey(t: Text, create: NonNullable<ReturnType<typeof useNewEvent>>): KeyBinding {
+  return { chord: "c", group: "navigate", place: "calendar", label: t("create.title"), run: () => create() };
+}
+
 export function useNewEventKey(create: ReturnType<typeof useNewEvent>, enabled: boolean) {
   const t = useText("calendar");
-  useKeyBindings(
-    create && enabled
-      ? [{ chord: "c", group: "navigate", label: t("create.title"), run: () => create() }]
-      : [],
-    "global",
-  );
+  useKeyBindings(create && enabled ? [newEventKey(t, create)] : [], "global");
 }

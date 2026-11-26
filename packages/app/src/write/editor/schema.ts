@@ -2,6 +2,7 @@ import { Extension } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
+import { LEAVE_KEY } from "../keys.js";
 import { AutolinkPunctuation, CodeMark, LinkMark, MarkBoundaries } from "./marks.js";
 
 /**
@@ -50,7 +51,7 @@ export const EnterAsHardBreak = Extension.create({
  * skipped and the key reaches the shell. An Escape ending a composition stays ProseMirror's.
  */
 export function escapeUnlessTaken(view: EditorView, e: KeyboardEvent): boolean {
-  if (e.key !== "Escape" || e.isComposing || view.composing) return false;
+  if (e.key !== LEAVE_KEY || e.isComposing || view.composing) return false;
   if (view.someProp("handleKeyDown", (f) => f(view, e))) e.preventDefault();
   return true;
 }

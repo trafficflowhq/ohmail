@@ -209,7 +209,7 @@ describe("signal_source_dark — the platform-signals poller stopped writing", (
     const [a] = await keysOf(db, "signal_source_dark", { driver: "api" });
     expect(a?.key).toBe("signal_source_dark:vercel:ohmail-api");
     expect(a?.detail).toContain("api_cron_stale:platform_signals");
-    expect(a?.detail, "the poll and its credential are the worker's").toContain("TF_SIGNAL_VERCEL_TOKEN");
+    expect(a?.detail).toContain("Check the active service identity and the worker's signal credential.");
     await signal(db, 10 * MIN);
     expect(await keysOf(db, "signal_source_dark", { driver: "api" })).toEqual([]);
   });

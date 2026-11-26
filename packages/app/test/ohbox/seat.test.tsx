@@ -181,6 +181,24 @@ async function contextOnTrip() {
 }
 
 describe("the Ohbox row menu on a read conversation with a newer Sent reply", () => {
+  it("does not announce the list’s Later key while the row menu has focus", async () => {
+    const { mail, menu } = await contextOnTrip();
+    const later = menu.getByRole("menuitem", { name: "Later" });
+    later.focus();
+    press("a");
+    await settle();
+    expect(sent(mail)).toEqual([]);
+    expect(later.getAttribute("aria-keyshortcuts")).toBeNull();
+    expect(later.querySelector("kbd")).toBeNull();
+    fireEvent.click(later);
+    await settle();
+    expect(sent(mail)).toEqual([
+      "triage_set trip-sent reply_later",
+      "triage_set trip-latest reply_later",
+      "triage_set trip-first reply_later",
+    ]);
+  });
+
   it("moves only the letter the row opens and Undo puts it back", async () => {
     const { mail, menu } = await contextOnTrip();
     fireEvent.click(menu.getByRole("menuitem", { name: "Move" }));

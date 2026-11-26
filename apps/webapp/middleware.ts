@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveApiOrigin, resolveInternalApiOrigin } from "./app/api-origin";
 import { canonicalRedirect } from "./app/canonical-host";
+import { isDemoRequested } from "./app/demo-mode";
 import { API_BASE, HANDLER_PATHS, REFRESH_SCOPED_PATHS, routedPath, zoneCaseVariantOf, zonePathOf } from "./routes.mjs";
 import { armedZone, resolveLandingZone, zoneRequestHeaders, zoneTarget } from "./landing-zone.mjs";
 import { newNonce, nonceCsp } from "./app/security-headers";
@@ -136,18 +137,16 @@ const LANDING_ZONE = SELF_HOST_BUILD ? null : resolveLandingZone(process.env.LAN
 
 /**
  * How long the FIRST-RUN probe may hold up an anonymous `/`. Shorter than the session gate's
- * budget: the probe is one same-network hop on a self-host box, and a slow answer means "serve
- * the landing", which is never wrong.
+ * budget: the setup page can ask again if this same-network probe runs out of time.
  */
 const NEEDS_SETUP_TIMEOUT_MS = 1_000;
 
 /**
  * Does the self-host server still need its first account? Asked of the server, never guessed:
  * `needsSetup` is a database fact (users == 0) behind `/hello`, `Cache-Control: no-store`.
- * Every failure — timeout, refusal, a body that is not the contract — answers `false`, because
- * the redirect this feeds must only ever fire on a server that SAID it is fresh.
+ * A timed-out, failed, or invalid reply leaves setup status unknown.
  */
-async function serverNeedsSetup(apiOrigin: string): Promise<boolean> {
+async function serverNeedsSetup(apiOrigin: string): Promise<boolean | null> {
   try {
     const res = await fetch(`${apiOrigin}/hello`, {
       headers: { accept: "application/json" },
@@ -155,11 +154,12 @@ async function serverNeedsSetup(apiOrigin: string): Promise<boolean> {
       redirect: "manual",
       signal: AbortSignal.timeout(NEEDS_SETUP_TIMEOUT_MS),
     });
-    if (res.status !== 200) return false;
+    if (res.status !== 200) return null;
     const body = (await res.json()) as { product?: unknown; needsSetup?: unknown };
-    return body?.product === "ohmail" && body?.needsSetup === true;
+    if (body?.product !== "ohmail" || typeof body.needsSetup !== "boolean") return null;
+    return body.needsSetup;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -372,17 +372,16 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   }
 
   const token = cookieFromStore(request.cookies, SESSION_COOKIE);
+  // The resume marker is only read for presence and is never sent as a credential.
+  const marker = cookieFromStore(request.cookies, RESUME_COOKIE) !== null;
+  const signedOutJustNow = /^[a-z]{1,16}$/.test(cookieFromStore(request.cookies, SIGNED_OUT_COOKIE) ?? "");
+  const search = request.nextUrl.searchParams;
 
-  // THE FIRST-RUN DOOR, self-host builds only (SELF_HOST_BUILD is compiled; this branch does
-  // not exist in the managed middleware). "After `docker compose up`, the operator hits the
-  // server once and gets a guided ceremony": an anonymous visit to `/` on a server that still
-  // needs its first account is that moment, and the landing would be the wrong greeting. Only
-  // ANONYMOUS requests ask — a browser holding any cookie has standing the fresh-server state
-  // cannot explain, and the ordinary gate below sorts it out. The probe is one same-network
-  // hop; on failure the landing stands, and once the first account exists `needsSetup` is
-  // false forever and this costs exactly that one probe per anonymous visit.
-  if (SELF_HOST_BUILD && API_ORIGIN !== null && token === null && cookieFromStore(request.cookies, RESUME_COOKIE) === null) {
-    if (await serverNeedsSetup(API_ORIGIN)) {
+  // Explicit demo visits go straight to the demo. Otherwise setup checks again if the server
+  // hasn't answered. A recent session end keeps its sign-in return unless setup is confirmed fresh.
+  if (SELF_HOST_BUILD && API_ORIGIN !== null && token === null && !marker && !isDemoRequested(search)) {
+    const needsSetup = await serverNeedsSetup(API_ORIGIN);
+    if (needsSetup === true || (needsSetup === null && !signedOutJustNow)) {
       const setup = request.nextUrl.clone();
       setup.pathname = "/setup";
       // 307, never 308: the answer is temporary by definition — it flips with the first account.
@@ -397,12 +396,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // tripped cap skips the PROBE, never the session: the gate serves a token-holder the app.
   const throttled = token !== null && overBurst(clientKey(request), Date.now());
 
-  // Presence only, and never sent to the gate as a credential — see `RESUME_COOKIE`. It is
-  // NOT subject to the burst cap: it costs no fetch on the branch it selects.
-  const marker = cookieFromStore(request.cookies, RESUME_COOKIE) !== null;
   // The client's own word for a sign-out the server never confirmed (`owner-cookie.ts`).
   const signOutPending = cookieFromStore(request.cookies, OWNER_COOKIE) === OWNER_SIGNED_OUT;
-  const signedOutJustNow = /^[a-z]{1,16}$/.test(cookieFromStore(request.cookies, SIGNED_OUT_COOKIE) ?? "");
 
   const answer = await resolveFirstPage({
     sessionToken: token,
@@ -410,7 +405,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     resumeMarker: marker,
     signOutPending,
     signedOutJustNow,
-    search: request.nextUrl.searchParams,
+    search,
     apiOrigin: API_ORIGIN,
     env: { NEXT_PUBLIC_DEMO: process.env.NEXT_PUBLIC_DEMO },
     firstPageUnasked: FIRST_PAGE_UNASKED,

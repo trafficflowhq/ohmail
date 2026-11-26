@@ -8,10 +8,16 @@
  */
 import { useCallback, useRef, useState } from "react";
 import { Button, Field, FieldStack, Menu, MenuItem, MenuNote } from "@ohmail/ui/base";
-import { chordKeys, useModGlyph } from "@ohmail/app-logic/keys";
+import { ariaShortcut, chordKeys, useModGlyph } from "@ohmail/app-logic/keys";
 import "./later.css";
 import { localInputValue } from "@ohmail/app-logic/text/format";
-import { LATER_CHOICES, SCHEDULE_KEY, laterPlan, type LaterRefusal } from "@ohmail/app-logic/write/later";
+import {
+  LATER_CHOICES,
+  SCHEDULE_CHORD,
+  SCHEDULE_KEY,
+  laterPlan,
+  type LaterRefusal,
+} from "@ohmail/app-logic/write/later";
 import { useText, type Text } from "../../text/index.js";
 import { useWriteBeside } from "../above.js";
 
@@ -44,6 +50,7 @@ function LaterCard({
 }) {
   const t = useText("write");
   const { later } = useWriteBeside();
+  const customKey = laterChoiceKey("custom");
   const [picking, setPicking] = useState(false);
   const [openedAt] = useState(() => Date.now());
   const [typed, setTyped] = useState(() => later.seed(openedAt));
@@ -110,19 +117,21 @@ function LaterCard({
         </>
       ) : (
         <>
-          {plan.presets.map((p) => (
-            <MenuItem
-              key={p.id}
-              note={later.label(p.at)}
-              keyHint={Object.keys(LATER_CHOICES).find(
-                (key) => LATER_CHOICES[key as keyof typeof LATER_CHOICES] === p.id,
-              )}
-              onPress={() => pick(p.at)}
-            >
-              {t(`later.${p.id}`)}
-            </MenuItem>
-          ))}
-          <MenuItem keyHint="4" onPress={() => setPicking(true)}>
+          {plan.presets.map((p) => {
+            const key = laterChoiceKey(p.id);
+            return (
+              <MenuItem
+                key={p.id}
+                note={later.label(p.at)}
+                keyHint={key}
+                shortcut={key}
+                onPress={() => pick(p.at)}
+              >
+                {t(`later.${p.id}`)}
+              </MenuItem>
+            );
+          })}
+          <MenuItem keyHint={customKey} shortcut={customKey} onPress={() => setPicking(true)}>
             {t("later.pick")}
           </MenuItem>
         </>
@@ -130,6 +139,9 @@ function LaterCard({
     </Menu>
   );
 }
+
+const laterChoiceKey = (choice: string) =>
+  Object.entries(LATER_CHOICES).find(([, value]) => value === choice)?.[0];
 
 function LaterFields({
   typed,
@@ -187,7 +199,8 @@ function LaterFields({
       </FieldStack>
       <div className="write-later-actions">
         <Button
-          keyHint={chordKeys("mod+Enter", mod).join(" ")}
+          keyHint={chordKeys(SCHEDULE_CHORD, mod).join(" ")}
+          shortcut={ariaShortcut(SCHEDULE_CHORD, mod)}
           kind="ink"
           size="s"
           disabled={plan.custom === null}

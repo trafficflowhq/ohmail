@@ -16,8 +16,8 @@ import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.
  * as `shared-db-fault.pg.test.ts` sets it up). Its alert pass then fails at the first read, and the
  * last-resort page goes out once through the webhook transport seam, from memory; the first pass
  * after the outage sends one resolved notice. The heartbeat fires per completed pass only. A pool
- * whose sessions start read-only (what a hosted database at its disk ceiling is put into) refuses
- * every pass at its first write, 25006, and that pages once too.
+ * whose sessions start read-only refuses the required leadership claim with 25006 and pages
+ * before the worker exits.
  */
 
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 7));
@@ -89,16 +89,12 @@ function transport(): PostJson & { posts: Array<{ alerts?: Array<{ key: string }
   return post;
 }
 
-function counting(counts: Map<string, number>, failures: string[] = []): Logger {
+function counting(counts: Map<string, number>): Logger {
   const note = (event: string): void => { counts.set(event, (counts.get(event) ?? 0) + 1); };
   const self: Logger = {
     level: "debug", child: () => self,
     debug: (e) => note(e), info: (e) => note(e), warn: (e) => note(e),
-    error: (e, fields) => {
-      note(e);
-      // The failed pass's code, as the line would carry it.
-      if (e === "alert_pass_failed") failures.push(String((fields?.err as { code?: unknown } | undefined)?.code ?? ""));
-    },
+    error: note,
   };
   return self;
 }
@@ -152,9 +148,8 @@ describe("the worker's alert pass with its database gone", () => {
     for (const l of parked) process.on("uncaughtException", l);
   }, 60_000);
 
-  async function start(opts: { readOnly?: boolean } = {}): Promise<{
+  async function start(outage?: { post: ReturnType<typeof transport>; get: HeartbeatGet }): Promise<{
     proxy: DbProxy; post: ReturnType<typeof transport>; pings: () => number; counts: Map<string, number>;
-    failures: string[];
   }> {
     const proxy = new DbProxy(Number(new URL(DB).port || 5432));
     await proxy.listen();
@@ -163,24 +158,23 @@ describe("the worker's alert pass with its database gone", () => {
     const lock: LeaderLock | null = await acquireLeaderLock(DB, leaderLockKeyFor(SHARD));
     if (!lock) throw new Error("the shard lock was already held in this file's own database");
     closers.push(async () => { await lock.release(); });
-    const post = transport();
+    const post = outage?.post ?? transport();
     let n = 0;
     const get: HeartbeatGet = async () => { n++; return { status: 200 }; };
     const counts = new Map<string, number>();
-    const failures: string[] = [];
     const via = urlVia(DB, proxy.port);
     const cfg: WorkerConfig = {
-      databaseUrl: opts.readOnly ? readOnly(via) : via, keyProvider: KP, pollIntervalMs: 60_000, sentDomain: "trafficflow.test",
+      databaseUrl: outage ? readOnly(via) : via, keyProvider: KP, pollIntervalMs: 60_000, sentDomain: "trafficflow.test",
       adapterFactory: new FakeAdapterFleet().factory, mailboxRetryMs: 60_000, shardIndex: SHARD,
       rosterIntervalMs: 60_000, lockHeartbeatMs: 30_000,
       alertIntervalMs: 400, alertFirstReadMs: 300,
       alertWebhookUrl: "https://hooks.example/alert", alertPost: post,
-      alertHeartbeatUrl: "https://hc.example/ping/worker", alertHeartbeatGet: get,
-      logger: counting(counts, failures),
+      alertHeartbeatUrl: "https://hc.example/ping/worker", alertHeartbeatGet: outage?.get ?? get,
+      logger: counting(counts),
     };
     const worker = await startWorkerWithLock(cfg, lock);
     closers.push(() => worker.stop());
-    return { proxy, post, pings: () => n, counts, failures };
+    return { proxy, post, pings: () => n, counts };
   }
 
   it("a healthy run pings once per completed pass and makes no transport call", async () => {
@@ -211,12 +205,17 @@ describe("the worker's alert pass with its database gone", () => {
     expect(escaped).toEqual([]);
   }, 90_000);
 
-  it("read-only: every pass refuses at its first write; one page from a process that never completed a pass", async () => {
-    const { post, pings, counts, failures } = await start({ readOnly: true });
-    await waitFor(() => (counts.get("alert_pass_failed") ?? 0) >= 8, 20_000, "eight failed passes");
-    expect(failures.slice(0, 8), "each refused as read-only").toEqual(Array(8).fill("25006"));
-    expect(pages(post), "once per window").toBe(1);
-    expect(pings(), "no heartbeat while no pass completes").toBe(0);
+  it("read-only at startup: the required claim refuses and the worker pages once before exiting", async () => {
+    const post = transport();
+    let pings = 0;
+    const get: HeartbeatGet = async () => { pings++; return { status: 200 }; };
+    const failure = await start({ post, get }).catch((err: unknown) => err);
+    expect(failure).toMatchObject({ op: "roster.claimHeartbeat" });
+    let cause = failure;
+    while (cause instanceof Error && cause.cause !== undefined) cause = cause.cause;
+    expect(cause).toMatchObject({ code: "25006" });
+    expect(pages(post)).toBe(1);
+    expect(pings).toBe(0);
     expect(escaped).toEqual([]);
   }, 60_000);
 

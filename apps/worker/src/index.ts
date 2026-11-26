@@ -1631,6 +1631,7 @@ export async function startWorkerWithLock(
       pass: async (by) => {
         const scanned = await syncKickPass({
           db: db as unknown as Tx,
+          rosterDb: binding.roster,
           served: () => runtimes.keys(),
           // The SAME two halves the IDLE callback uses: name the mailbox that is owed a
           // visit, then ask for a cycle. `syncKickPass` already knows which mailbox it is

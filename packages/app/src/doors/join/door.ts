@@ -120,7 +120,7 @@ export interface JoinDoor {
   /** Into ohmail, at the first run. */
   readonly open: DoorWay;
   retry(): void;
-  /** Back to ohmail, from a setup whose step could not be read. */
+  /** Back to ohmail from any step. */
   readonly leave: DoorWay;
   /** The expired setup: sign in, and the setup carries on. */
   readonly signInAgain: DoorWay;

@@ -272,6 +272,19 @@ describe("the invite code and the account", () => {
     expect(screen.queryByRole("link", { name: "Privacy Policy" })).toBeNull();
   });
 
+  it("account: Continue counts the same password characters as the hint", () => {
+    draw({ at: "account" });
+    type(J.nameLabel, READY.name);
+    type(J.emailLabel, READY.email);
+    const symbol = String.fromCodePoint(0x1f31e);
+    type(J.passwordLabel, symbol.repeat(6));
+    const submit = button(J.continue);
+    expect(submit.disabled).toBe(true);
+
+    type(J.passwordLabel, symbol.repeat(12));
+    expect(submit.disabled).toBe(false);
+  });
+
   it("invite: says which sentence about codes is true here, and Continue hands the code on", () => {
     const { acts } = draw({ at: "invite" }, { invited: true });
     expect(heading()).toBe(J.myInvite.replace("<blank></blank>.", J.inviteLabel));
@@ -616,7 +629,7 @@ describe("the pages around the steps", () => {
     expect(link(J.signIn).getAttribute("href")).toBe("/login");
   });
 
-  it("resolving: says where the setup stands is being found; wordless, and with nothing to press, until its words arrive", () => {
+  it("resolving: offers a way back while waiting for the status words to arrive", () => {
     const { view } = draw({ at: "resolving" });
     /* "One moment", and under it what is being read, as the card said them. */
     expect(heading()).toBe(O.resumeCheckingTitle);
@@ -626,10 +639,12 @@ describe("the pages around the steps", () => {
     cleanup();
     const { onboarding: _held, ...cut } = en;
     const later = draw({ at: "resolving" }, {}, cut, "en", true);
-    expect(later.view.container.textContent).toBe("");
+    expect(later.view.container.textContent).toBe(J.leave);
+    expect(link(J.leave).getAttribute("href")).toBe("/");
     cleanup();
     const unreached = draw({ at: "unreachable" }, {}, cut, "en", true);
-    expect(unreached.view.container.textContent).toBe("");
+    expect(unreached.view.container.textContent).toBe(J.leave);
+    expect(link(J.leave).getAttribute("href")).toBe("/");
     expect(screen.queryAllByRole("button")).toEqual([]);
   });
 
@@ -659,7 +674,8 @@ describe("the pages around the steps", () => {
         <JoinPage door={{ ...doorWith({ at: "full", said: J.refusedFull }), waitlist: { press } }} />
       </TextProvider>,
     );
-    expect(screen.getAllByRole("link")).toEqual([link(J.signIn)]);
+    expect(screen.getAllByRole("link")).toEqual([link(J.leave), link(J.signIn)]);
+    expect(link(J.leave).getAttribute("href")).toBe("/");
     expect(link(J.signIn).getAttribute("href")).toBe("/login");
     fireEvent.click(button(J.capacityCta));
     expect(press).toHaveBeenCalledTimes(1);

@@ -44,7 +44,7 @@
       "answerScope": "Auf {title} antworten",
       "delete": "Löschen",
       "moveTo": "In anderen Kalender verschieben",
-      "moveAllTo": "Alle Termine nach {calendar} verschieben",
+      "moveAllTo": "Alle Termine verschieben – {calendar}",
       "moveWithGuests": "Mit {guests}",
       "moveConfirm": "Verschieben",
       "hideCalendar": "Diesen Kalender ausblenden",

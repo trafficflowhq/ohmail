@@ -145,7 +145,7 @@ function ReplyLetter({ reply, keysHere }: { readonly reply: WriteReply; readonly
   /* Send + Done, asked at every render of the letter as the Ohbox shows it: null where it has nothing to finish. */
   useReplyVerbs(reply, gate, () => then("send"));
   /* The drafter writes replies: a forward's note is never drafted into; a host with no draft wire offers none. */
-  const drafted = useDraftOffer(reply.messageId, forward);
+  const drafted = useDraftOffer(reply.messageId, forward, keysHere);
   const label = replyLabel(t, reply.audience);
   useForwardAsksWhom(forward, reply.messageId, sheet, t("to"));
   const notice = drafted?.notice ?? null;

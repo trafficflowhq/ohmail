@@ -27,15 +27,59 @@ Signed installers — a real Apple Developer ID and an Authenticode certificate.
 
 The desktop app restores calendars and events from its local copy of your Cloud account. On web and desktop, the calendar and its sidebar show a loading state until the initial calendar data is ready.
 
+### Calendar sync picks up where it left off
+
+The desktop resumes interrupted calendar downloads, keeps initial copies within their limits, and handles large calendar removals. A requested disconnect finishes even if the client closes. Outlook uses one notification subscription for calendars owned by the signed-in mailbox. Calendars with verified notifications can poll less often.
+
+### CalDAV replies reach the right invitation and mailbox lists refresh faster
+
+CalDAV calendars use the signed-in account's scheduling address when you answer an invitation, so the reply updates the correct attendee even when two of your mailboxes were invited.
+
+The hosted mailbox list sends its independent database reads together, reducing the waits during a refresh.
+
+### Calendar keeps sending updates after a series disappears
+
+An Outlook reply awaiting confirmation for a removed series lets changes to other events go through while the reply waits for its next check.
+
+### Expunged mail clears from the list sooner
+
+When sync confirms a message is gone, it can clear the stale row while other folders still await a full read. This also works when a previously synced folder has been removed.
+
+### Find keyboard shortcuts as you work
+
+Hold Command on Mac or Ctrl on Windows and Linux to see shortcut hints beside the controls. Send shows its shortcut while you write. Press ? or choose Keyboard shortcuts in the More menu to see the grouped list on web and desktop.
+
+### Mailbox setup resumes after a fresh sign-in
+
+When mailbox setup asks you to sign in again, the web app now waits for your second factor before returning to setup. It keeps your existing recovery codes and offers a way back to ohmail throughout setup. A warning about cached mail appears on the first return from an incomplete browser cleanup.
+
 ### Park and Later wait for a sent reply’s mailbox copy
 
 When you select a reply that is still syncing to your mailbox, ohmail shows “Sending…” and pauses Park and Later until the mailbox copy is available.
+
+### Clearer Screener and calendar displays
+
+The Screener shows a centred loading indicator while it applies decisions.
+
+The calendar keeps invitation details readable on tablets. Narrow calendar blocks shorten event titles at word boundaries.
+
+### Self-hosted setup opens while the server starts
+
+A new installation opens the setup page if the server is slow to answer. The page checks again and offers a retry if the server is still starting up.
 
 ### Phone sign-out recovery and AI draft privacy
 
 Pairing again on the same server gives the session named in the phone's sign-out notice priority. The notice points to Account settings on the web and Devices settings on a computer hosting the server.
 
 AI drafts mask ambiguous password values through the end of the line and preserve ordinary expiry notices and clear instructions after a password.
+
+### Signup counts password characters consistently
+
+The Continue button uses the same character count as the password hint, including when the password contains emoji.
+
+### Workers report database outages at startup
+
+If the database refuses the worker's startup heartbeat claim as unavailable or read-only, the worker sends its configured outage alert before exiting.
 
 ### Mail sync starts after installation and upgrade
 

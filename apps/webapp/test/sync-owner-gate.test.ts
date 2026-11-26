@@ -831,6 +831,7 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     mutate: async (): Promise<MutationOutcome> => ({ status: "applied", entities: [] } as unknown as MutationOutcome),
     fetchBody: async () => { reads.push("fetchBody"); return null; },
     fetchBodies: async () => { reads.push("fetchBodies"); return []; },
+    bodyPreloadLimit: () => 40,
     searchServer: async () => { reads.push("searchServer"); return { messages: [], nextCursor: null }; },
     searchPlaces: async () => { reads.push("searchPlaces"); return [{ folder: "Archive/Reports", count: 28 }]; },
     suggestPlaces: async () => { reads.push("suggestPlaces"); return { state: "off", places: [], credit: null }; },
@@ -876,7 +877,7 @@ describe("a CONTRADICTED browser reads nothing either", () => {
    * declared over there, and {@link NOT_A_READ} is the only hand-kept part, each entry with its
    * reason.
    */
-  const READS: readonly string[] = DECLARED.filter((k) => !NOT_A_READ.includes(k));
+  const READS: readonly string[] = DECLARED.filter((k) => k !== "bodyPreloadLimit" && !NOT_A_READ.includes(k));
 
   /**
    * THE CENSUS ITSELF — every declared capability survives `guard`, driven through the real
@@ -886,13 +887,14 @@ describe("a CONTRADICTED browser reads nothing either", () => {
   it("forwards every capability the adapter declares", async () => {
     setOwnerCookie(A);
     const gate = createSyncGate(A);
-    const guarded = gate.guard(capabilities() as never) as unknown as Record<string, unknown>;
+    const guarded = gate.guard(capabilities() as never);
     // The parse is the premise: a regex that matched nothing would make every assertion below
     // vacuous, so the shape of what it read is asserted before it is used.
     expect(DECLARED.length, "the declaration parse found nothing").toBeGreaterThanOrEqual(15);
     expect(DECLARED, "a name no source declares reached the derived set").not.toContain("transport");
-    const missing = DECLARED.filter((k) => typeof guarded[k] !== "function");
+    const missing = DECLARED.filter((k) => typeof (guarded as unknown as Record<string, unknown>)[k] !== "function");
     expect(missing, "the gate drops a capability the engine binds").toEqual([]);
+    expect(guarded.bodyPreloadLimit?.()).toBe(40);
 
     const question = { text: "Library", lang: "en" } as const;
     const answer = {
@@ -911,9 +913,13 @@ describe("a CONTRADICTED browser reads nothing either", () => {
       expect.objectContaining({ method: "POST", body: JSON.stringify(question) }),
     );
 
+    gate.confirm(A);
     setOwnerCookie(B);
     expect(await engine.suggestPlaces(question)).toEqual({ state: "failed", places: [], credit: null });
     expect(request).toHaveBeenCalledTimes(1);
+    expect(guarded.bodyPreloadLimit?.()).toBe(40);
+    await expect(guarded.fetchBodies!(["m_seed"])).rejects.toBeInstanceOf(ForeignSessionError);
+    expect(reads).toEqual([]);
   });
 
   /**

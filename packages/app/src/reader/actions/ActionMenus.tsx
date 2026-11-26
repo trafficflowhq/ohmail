@@ -1,3 +1,4 @@
+import { useBinding } from "@ohmail/app-logic/keys";
 import { useRef, useState } from "react";
 import { useScreenerAcknowledgements } from "@ohmail/app-logic/consent";
 import type { RefObject } from "react";
@@ -6,8 +7,9 @@ import { Dialog, Menu, MenuItem, MenuRule } from "@ohmail/ui/base";
 import { MovePicker } from "@ohmail/ui/mail";
 import type { useResurfaceTime } from "../../frame/room.js";
 import { TagPicker } from "../../tags/TagPicker.js";
+import { useShortcutsMenu } from "../../keys/ShortcutsMenuItem.js";
 import { useText } from "../../text/index.js";
-import { isCardDeleteKey, type PanelMenu } from "../keys.js";
+import { CARD_DELETE_KEY, isCardDeleteKey, type PanelMenu } from "../keys.js";
 import { ResurfaceMenu } from "./ResurfaceMenu.js";
 import type { ActionWords, OpenPanel, Placed } from "./panel-verbs.js";
 import type { Verbs } from "./use-verbs.js";
@@ -71,7 +73,6 @@ interface ActionMenusProps {
   confirm: boolean;
   separate?: boolean;
   calendarAction?: { label: string; onPress: () => void };
-  calendarKeyHint?: string;
 }
 
 export function ActionMenus({
@@ -89,10 +90,11 @@ export function ActionMenus({
   confirm,
   separate = false,
   calendarAction,
-  calendarKeyHint,
 }: ActionMenusProps) {
   const t = useText("reader");
   const tp = useText("place");
+  const deleteKey = useBinding(CARD_DELETE_KEY);
+  const shortcuts = useShortcutsMenu(close);
   const more = menu === "more" || menu === "cardDelete";
   const draft = separate ? null : verbs.draft;
   const beforeRead = behind.filter((verb) => verb.id !== "read");
@@ -148,6 +150,7 @@ export function ActionMenus({
         up
         right
         onKey={(e) => {
+          if (menu === "more" && shortcuts.onKey?.(e)) return true;
           if (menu !== "cardDelete" || !isCardDeleteKey(e.nativeEvent)) return false;
           e.preventDefault();
           confirmTrash();
@@ -163,12 +166,16 @@ export function ActionMenus({
         {draft && (beforeRead.length > 0 || read.length > 0) ? <MenuRule /> : null}
         <DraftReplyItem draft={draft} close={close} words={words} />
         {separate && behind.length > 0 ? <MenuRule /> : null}
-        <MenuItem icon="trash" keyHint="D" onPress={confirm ? () => setMenu("confirmDelete") : trash}>
+        <MenuItem
+          icon="trash"
+          keyHint={menu === "cardDelete" ? deleteKey?.chord.toUpperCase() : undefined}
+          shortcut={menu === "cardDelete" ? deleteKey?.chord : undefined}
+          onPress={confirm ? () => setMenu("confirmDelete") : trash}
+        >
           {words.delete}
         </MenuItem>
-        {calendarAction ? (
-          <CalendarItem action={calendarAction} close={close} keyHint={calendarKeyHint} />
-        ) : null}
+        {calendarAction ? <CalendarItem action={calendarAction} close={close} /> : null}
+        {menu === "more" ? shortcuts.item : null}
       </Menu>
       {confirm ? (
         <Dialog
@@ -188,18 +195,15 @@ export function ActionMenus({
 function CalendarItem({
   action,
   close,
-  keyHint,
 }: {
   action: NonNullable<ActionMenusProps["calendarAction"]>;
   close: () => void;
-  keyHint?: string;
 }) {
   return (
     <>
       <MenuRule />
       <MenuItem
         icon="calendar"
-        keyHint={keyHint}
         onPress={() => {
           close();
           action.onPress();
@@ -254,7 +258,6 @@ function BehindMore({
       {rule ? <MenuRule /> : null}
       <MenuItem
         icon={verb.icon}
-        keyHint={verb.keyHint}
         label={verb.name}
         disabled={verb.disabled}
         description={verb.disabledHint}

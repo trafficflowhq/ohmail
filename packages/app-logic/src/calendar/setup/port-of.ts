@@ -53,10 +53,20 @@ export function calendarSetupPortOf(
         refresh,
       ),
     remove: async (id) => {
+      let accepted = false;
       try {
         while (!(await transport.removeCalendarConnection(id)).removed) {
-          // Each successful response removes another batch.
+          accepted = true;
         }
+      } catch (error) {
+        // The worker can finish a removal before the next request arrives.
+        if (
+          !accepted ||
+          !(error instanceof MutationRejectedError) ||
+          error.status !== 404 ||
+          error.code !== "not_found"
+        )
+          throw error;
       } finally {
         refresh();
       }

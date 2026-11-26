@@ -12,10 +12,35 @@
   min-height: 0;
   height: 100%;
 }
+.sc-work {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .sc-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+}
+.sc-applying {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  z-index: var(--oh-layer-raised);
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  width: max-content;
+  max-width: calc(100% - 2 * var(--s3));
+  padding: var(--s2) var(--s3);
+  transform: translate(-50%, -50%);
+  border-radius: var(--r-pill);
+  background: var(--sheet);
+  box-shadow: var(--float);
+  font-size: var(--t-meta);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 .sc-tools {
   --oh-soft: var(--soft-sheet);
@@ -80,43 +105,15 @@
   align-items: center;
   gap: var(--s2);
   color: var(--ink2);
-  font-size: var(--t-meta);
-  font-variant-numeric: tabular-nums;
-}
-.sc-progress[data-suggest] {
   padding: var(--s1) var(--s3) var(--s2);
   font-size: var(--t-ui);
   font-variant-numeric: normal;
 }
-.sc-progress[data-suggest] .sc-progress-track {
+.sc-progress-track {
   appearance: auto;
   inline-size: 40%;
   block-size: var(--s1);
   accent-color: var(--hot);
-}
-.sc-progress:not([data-suggest]) {
-  flex-basis: 100%;
-}
-.sc-progress:not([data-suggest]) .sc-progress-track {
-  appearance: none;
-  inline-size: 120px;
-  max-inline-size: 40%;
-  block-size: var(--s1);
-  border: 0;
-  border-radius: var(--r-pill);
-  background: var(--line);
-  overflow: hidden;
-}
-.sc-progress:not([data-suggest]) .sc-progress-track::-webkit-progress-bar {
-  background: var(--line);
-}
-.sc-progress:not([data-suggest]) .sc-progress-track::-webkit-progress-value {
-  border-radius: var(--r-pill);
-  background: var(--hot);
-}
-.sc-progress:not([data-suggest]) .sc-progress-track::-moz-progress-bar {
-  border-radius: var(--r-pill);
-  background: var(--hot);
 }
 .sc-held-letters {
   display: flex;

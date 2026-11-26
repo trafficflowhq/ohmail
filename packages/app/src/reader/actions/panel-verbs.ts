@@ -166,7 +166,6 @@ export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean, canA
   const tag = useBinding("t");
   const move = useBinding("m");
   const screening = useBinding("s");
-  const calendar = useBinding("v");
   const read = useBinding(readSlot === "markRead" ? "shift+i" : "u");
   const hint = (binding: typeof reply) =>
     !active || binding === null
@@ -186,7 +185,6 @@ export function usePanelHints(readSlot: Verbs["readSlot"], active: boolean, canA
     move: hint(move),
     screening: hint(screening),
     read: hint(read),
-    calendar: hint(calendar),
   };
 }
 

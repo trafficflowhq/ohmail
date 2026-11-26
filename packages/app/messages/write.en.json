@@ -414,6 +414,8 @@
       "editAsTextHint": "Edit as text: its formatting is removed"
     },
     "keys": {
+      "undoTyping": "Undo typing",
+      "redoTyping": "Redo typing",
       "send": "Send",
       "leave": "Keep as draft",
       "later": "Send later"

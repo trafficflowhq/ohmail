@@ -25,7 +25,7 @@ import { ensureLocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror, CLOUD_SYNC_TYPES } from "../src/cloud-mirror.js";
 import { createCloudSidecar, MIRROR_OWNER_FILE, type CloudSidecar } from "../src/cloud-engine.js";
 import { encodeMirrorRecord } from "../src/cloud-origin.js";
-import { storeCalendarSwitch, wipeCalendarCopy } from "../src/cloud-mirror-calendar.js";
+import { removeCalendarChange, storeCalendarSwitch, wipeCalendarCopy } from "../src/cloud-mirror-calendar.js";
 import type { CloudAuth } from "../src/cloud-auth.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
@@ -162,7 +162,7 @@ const held = (store: MemoryMirrorStore, kind: CalendarRecordKind) =>
     .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 
 /** The desktop's copy of the Cloud account: its own pull against the real route. */
-async function desktopCopy(route: (p: string) => Promise<Response>, mailboxId: string) {
+async function desktopCopy(route: (p: string) => Promise<Response>, mailboxId: string, snapshot?: (path: string) => Promise<Response>) {
   const dataDir = await freshDataDir("ohmail-cal-walk-");
   dirs.push(dataDir);
   const opened = await openLocalDb(dataDir);
@@ -173,6 +173,7 @@ async function desktopCopy(route: (p: string) => Promise<Response>, mailboxId: s
       if (path.startsWith("/mailboxes")) return new Response(JSON.stringify(mailboxList([hostedMailbox(mailboxId, OWN)])), { status: 200 });
       // No first load of the calendar here: the whole log is read from the start.
       if (path.startsWith("/sync/snapshot")) {
+        if (snapshot && new URL(path, "http://localhost").searchParams.get("phase") === "calendar") return snapshot(path);
         return new Response(JSON.stringify({ asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 500 } }), { status: 200 });
       }
       if (path.startsWith("/sync")) return route(path);
@@ -203,6 +204,50 @@ async function desktopCopy(route: (p: string) => Promise<Response>, mailboxId: s
 }
 
 describe("every calendar kind walks from a row to two devices", () => {
+  it("resumes a late snapshot failure, yields on a repeated cursor and restarts a rejected one", async () => {
+    const srv = await server(20, { logCalendarChanges: false });
+    const cursors: (string | null)[] = [];
+    let feedReads = 0;
+    const desk = await desktopCopy((path) => {
+      feedReads++;
+      return srv.route(path);
+    }, srv.mailboxId, async (path) => {
+      const url = new URL(path, "http://localhost");
+      cursors.push(url.searchParams.get("cursor"));
+      if (cursors.length === 15) return new Response(null, { status: 503 });
+      if (cursors.length === 17) return new Response(null, { status: 410 });
+      url.searchParams.set("limit", "1");
+      const page = await srv.route(url.pathname + url.search);
+      if (cursors.length !== 16) return page;
+      return Response.json({ ...await page.json(), nextCursor: cursors.at(-1) });
+    });
+    expect(cursors).toHaveLength(15);
+    expect(cursors[14]).toEqual(expect.any(String));
+    expect((await desk.db.select().from(calEvents))).toHaveLength(14);
+    expect(feedReads).toBeGreaterThanOrEqual(2);
+    await desk.mirror.stop();
+    const resumed = desk.launch();
+    await resumed.pullOnce();
+    expect(cursors).toHaveLength(16);
+    expect(cursors[15]).toBe(cursors[14]);
+    expect((await desk.db.select().from(calEvents))).toHaveLength(14);
+    await resumed.stop();
+    const retried = desk.launch();
+    await retried.pullOnce();
+    expect(cursors).toHaveLength(17);
+    expect(cursors[16]).toBe(cursors[14]);
+    await retried.stop();
+    const restarted = desk.launch();
+    await restarted.pullOnce();
+    expect(cursors[17]).toBeNull();
+    expect(cursors).toHaveLength(25);
+    await restarted.pullOnce();
+    expect(cursors).toHaveLength(33);
+    await restarted.pullOnce();
+    expect((await desk.db.select({ id: calEvents.id }).from(calEvents)).map(({ id }) => id).sort())
+      .toEqual([...srv.ids.events].sort());
+  }, 120_000);
+
   it("a device and the desktop's copy hold the same four records, and nothing the record never carries", async () => {
     const srv = await server();
     const { store } = await drain(srv.route);
@@ -320,6 +365,47 @@ describe("every calendar kind walks from a row to two devices", () => {
     const gone = await desk.db.select({ id: changeLog.entityId }).from(changeLog)
       .where(and(eq(changeLog.entityType, "calendar_event"), eq(changeLog.op, "delete")));
     expect(gone.map((r) => r.id)).toEqual([ghost]);
+  }, 120_000);
+
+  it.each(["calendar", "calendar_connection"] as const)("applies a %s deletion within a fixed bind budget", async (type) => {
+    const srv = await server(12, { marks: true });
+    const desk = await desktopCopy(srv.route, srv.mailboxId);
+    const [eventId] = srv.ids.events;
+    await desk.db.update(calSuggestions).set({ eventId }).where(eq(calSuggestions.id, srv.ids.suggestion));
+    const other = randomUUID();
+    const otherAccount = randomUUID();
+    await desk.db.insert(accounts).values({ id: otherAccount, name: "Other account" });
+    await desk.db.insert(calConnections).values({ id: other, accountId: otherAccount, provider: "ics", label: "Other calendar" });
+    const otherCalendar = randomUUID();
+    await desk.db.insert(calCalendars).values({ id: otherCalendar, accountId: otherAccount, connectionId: other, providerId: "holidays" });
+    const otherEvent = randomUUID();
+    await desk.db.insert(calEvents).values({
+      id: otherEvent, accountId: otherAccount, calendarId: otherCalendar, providerId: "holiday", uid: "holiday",
+      startKind: "instant", startLocal: "20260728T140000Z", startsAt: at(5), endsAt: at(6),
+    });
+    await desk.db.transaction(async (tx) => {
+      const deleteRows = tx.delete.bind(tx);
+      const limited = Object.create(tx) as typeof tx;
+      limited.delete = ((table: Parameters<typeof deleteRows>[0]) => {
+        const query = deleteRows(table);
+        const where = query.where.bind(query);
+        query.where = ((condition: Parameters<typeof where>[0]) => {
+          const statement = where(condition);
+          if (statement.toSQL().params.length > 8) throw new Error("bind budget exceeded");
+          return statement;
+        }) as typeof query.where;
+        return query;
+      }) as typeof tx.delete;
+      expect(await removeCalendarChange(limited, desk.world, {
+        type, op: "delete", id: type === "calendar" ? srv.ids.calendar : srv.ids.connection,
+        seq: 0, updatedAt: FIXED_NOW.toISOString(),
+      })).toBe(true);
+    });
+    expect((await desk.db.select({ id: calEvents.id }).from(calEvents)).map(({ id }) => id)).toEqual([otherEvent]);
+    expect(await desk.db.select().from(calAttendees)).toEqual([]);
+    expect(await desk.db.select().from(calAlarms)).toEqual([]);
+    expect(await desk.db.select().from(calWrites)).toEqual([]);
+    expect((await desk.db.select().from(calSuggestions))[0]?.eventId).toBeNull();
   }, 120_000);
 
   it("signing out takes the whole calendar copy, and the local feed serves none of it again", async () => {

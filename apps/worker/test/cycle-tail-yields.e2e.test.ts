@@ -120,6 +120,7 @@ describe("the cycle tail yields to new mail", () => {
 
   async function warm(
     db: Db, over: Partial<WorkerConfig> = {},
+    beforeStart?: (accountId: string, probe: ReturnType<typeof tailProbe>) => Promise<void>,
   ): Promise<{ worker: RunningWorker; fleet: FakeAdapterFleet; probe: ReturnType<typeof tailProbe>;
       phases: Array<Record<string, unknown>>; healClosed: Array<Record<string, unknown>>;
       a: { accountId: string; mailboxId: string };
@@ -130,10 +131,13 @@ describe("the cycle tail yields to new mail", () => {
     const { log, phases, healClosed } = capturingLogger();
     const a = await seedMailbox(db);
     const b = await seedMailbox(db);
+    await beforeStart?.(a.accountId, probe);
     const worker = await startWorker(cfgFor(fleet, probe, log, over));
     closers.push(() => worker.stop());
     await waitFor(() => worker.stats().mailboxes === 2, 20_000, "both mailboxes attached");
-    await waitFor(() => phases.length >= 1, 20_000, "the first tail walk to finish");
+    if (beforeStart === undefined) {
+      await waitFor(() => phases.length >= 1, 20_000, "the first tail walk to finish");
+    }
     return { worker, fleet, probe, phases, healClosed, a, b };
   }
 
@@ -169,20 +173,20 @@ describe("the cycle tail yields to new mail", () => {
   // time. The next walk does serve it — the observable is live, not merely absent.
   it("resumes a walk at its cursor, so the owed serve does not run twice in one walk", async () => {
     const db = makeDb(DB);
-    const { fleet, probe, phases, a, b } = await warm(db);
-    await db.insert(accounts).values({ id: a.accountId, name: "a" }).onConflictDoNothing();
-    await db.insert(accountSettings).values({ accountId: a.accountId, autoSuggestAt: new Date() })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { autoSuggestAt: new Date() } });
-    const owed = async (): Promise<boolean> =>
-      (await db.select().from(screenerSuggestOwed).where(eq(screenerSuggestOwed.accountId, a.accountId))).length > 0;
-
-    await markScreenerSuggestOwed(db as unknown as Tx, a.accountId);
-    expect(await owed(), "the fixture could not mark the account owed").toBe(true);
-    probe.parkAt((s) => s.section === "rule_retro" && s.index === 0);
-    fleet.signal.get(a.mailboxId)!();
+    const owed = async (accountId: string): Promise<boolean> =>
+      (await db.select().from(screenerSuggestOwed).where(eq(screenerSuggestOwed.accountId, accountId))).length > 0;
+    // Startup attachments can kick a walk independently. Seed the mark and arm the park before they start.
+    const { fleet, probe, phases, a, b } = await warm(db, {}, async (accountId, probe) => {
+      await db.insert(accounts).values({ id: accountId, name: "a" }).onConflictDoNothing();
+      await db.insert(accountSettings).values({ accountId, autoSuggestAt: new Date() })
+        .onConflictDoUpdate({ target: accountSettings.accountId, set: { autoSuggestAt: new Date() } });
+      await markScreenerSuggestOwed(db as unknown as Tx, accountId);
+      expect(await owed(accountId), "the fixture could not mark the account owed").toBe(true);
+      probe.parkAt((s) => s.section === "rule_retro" && s.index === 0);
+    });
     await waitFor(() => probe.parked, 20_000, "the walk to park after the owed serve");
     expect(probe.slices.some((s) => s.section === "screener_suggest_owed"), "the owed serve did not run").toBe(true);
-    expect(await owed(), "the owed serve did not clear its mark").toBe(false);
+    expect(await owed(a.accountId), "the owed serve did not clear its mark").toBe(false);
 
     await new Promise((r) => setTimeout(r, 5));
     await markScreenerSuggestOwed(db as unknown as Tx, a.accountId);
@@ -191,10 +195,10 @@ describe("the cycle tail yields to new mail", () => {
     probe.release();
     await waitFor(() => phases.length > walks, 20_000, "the resumed walk to finish");
     expect(Number(phases[walks]!.turns), "the walk never yielded, so nothing resumed").toBeGreaterThan(1);
-    expect(await owed(), "the resumed walk served the owed account again — it restarted at the top").toBe(true);
+    expect(await owed(a.accountId), "the resumed walk served the owed account again — it restarted at the top").toBe(true);
 
     fleet.signal.get(a.mailboxId)!();
-    await waitFor(async () => !(await owed()), 20_000, "the NEXT walk to serve and clear the mark");
+    await waitFor(async () => !(await owed(a.accountId)), 20_000, "the NEXT walk to serve and clear the mark");
   }, 120_000);
 
   // A poll cycle queued behind a parked slice does not cut the walk: every remaining slice

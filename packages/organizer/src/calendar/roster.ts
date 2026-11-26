@@ -5,9 +5,10 @@
  *
  * A connection is due when it is `active` or `failing` and its `next_poll_at` has passed or was
  * never set. A stopped connection is held by its status, never by an empty time, so NULL means
- * "due now" and nothing else. A calendar-only account is found like any other: no mailbox is read.
+ * "due now" and nothing else. Connections marked for removal are always due for cleanup.
+ * A calendar-only account is found like any other: no mailbox is read.
  */
-import { and, asc, inArray, isNull, lte, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { calConnections } from "@trafficflow/db";
 import { unboundPool, type CalendarPool } from "./connection.js";
 import type { DueConnection } from "./types.js";
@@ -36,7 +37,7 @@ export async function loadDueConnections(
     provider: calConnections.provider, status: calConnections.status,
   }).from(calConnections)
     .where(and(
-      dueAt(now),
+      or(dueAt(now), eq(calConnections.status, "removing")),
       shard(calConnections.accountId),
       except.length === 0 ? undefined : notInArray(calConnections.id, except.slice(0, ROSTER_EXCEPT_MAX)),
     ))

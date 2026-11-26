@@ -11,6 +11,7 @@ import { Doorbell, ListHead } from "@ohmail/ui/mail";
 import type { FrameNotice, LayoutPlan } from "../frame/contract.js";
 import { useNotice } from "../frame/index.js";
 import { useLastMailCheckLabel } from "../place-list/ListMenu.js";
+import { useShortcutsMenu } from "../keys/ShortcutsMenuItem.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText } from "../text/index.js";
 import type { OhboxBeside } from "./beside.js";
@@ -33,6 +34,8 @@ export function OhboxHead({
   const locale = useLocale();
   const all = useText("markAll");
   const [menuOpen, setMenuOpen] = useState(false);
+  const close = () => setMenuOpen(false);
+  const shortcuts = useShortcutsMenu(close);
   const menuButton = useRef<HTMLButtonElement>(null);
   if (displayOnly && menuOpen) setMenuOpen(false);
   /* The engine's unread letters: Mark all read names them as soon as rows stand, as the shipped head did. The hot
@@ -70,7 +73,8 @@ export function OhboxHead({
       />
       <Menu
         open={!displayOnly && menuOpen}
-        onClose={() => setMenuOpen(false)}
+        onClose={close}
+        onKey={shortcuts.onKey}
         anchor={menuButton}
         right
         label={t("list.menu")}
@@ -79,7 +83,6 @@ export function OhboxHead({
         {pull !== NONE ? (
           <MenuItem
             icon="pull"
-            keyHint="p"
             disabled={pull.busy}
             onPress={() => {
               setMenuOpen(false);
@@ -102,6 +105,7 @@ export function OhboxHead({
             {all("label")}
           </MenuItem>
         ) : null}
+        {shortcuts.item}
       </Menu>
     </>
   );

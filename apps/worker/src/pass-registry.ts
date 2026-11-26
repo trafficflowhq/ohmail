@@ -670,6 +670,16 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the worker's leader lock",
   },
 
+  {
+    name: "roster_capacity",
+    module: `${W}/mailboxes.ts`, entry: "loadRosterCapacity",
+    triggers: ["cli"], cli: ["run-roster-capacity.ts"],
+    cadence: "operator-run before changing the shard layout and after activating it",
+    budget: "one roster census, with one heartbeat read when verifying the active layout",
+    owns: "the operator can check mailbox capacity and verify that the active shards serve their expected mailboxes",
+    fence: "one read-only repeatable-read transaction",
+  },
+
   /* ── OPERATOR CLI REPAIRS (idempotent, resumable, safe to kill) ───────────────────────── */
   {
     name: "redacted_restore",

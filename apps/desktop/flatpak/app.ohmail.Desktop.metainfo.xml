@@ -82,8 +82,18 @@
       <description>
         <ul>
           <li>Calendars show up on desktop after signing in</li>
+          <li>Calendar sync picks up where it left off</li>
+          <li>CalDAV replies reach the right invitation and mailbox lists refresh faster</li>
+          <li>Calendar keeps sending updates after a series disappears</li>
+          <li>Expunged mail clears from the list sooner</li>
+          <li>Find keyboard shortcuts as you work</li>
+          <li>Mailbox setup resumes after a fresh sign-in</li>
           <li>Park and Later wait for a sent reply’s mailbox copy</li>
+          <li>Clearer Screener and calendar displays</li>
+          <li>Self-hosted setup opens while the server starts</li>
           <li>Phone sign-out recovery and AI draft privacy</li>
+          <li>Signup counts password characters consistently</li>
+          <li>Workers report database outages at startup</li>
           <li>Mail sync starts after installation and upgrade</li>
         </ul>
       </description>

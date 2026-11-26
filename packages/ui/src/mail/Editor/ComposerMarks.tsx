@@ -8,6 +8,7 @@ export interface ComposerMark {
   label: string;
   /** The pointer's hint, where it says more than the name: the name with its key, "Bold · ⌘B". */
   title?: string;
+  shortcut?: string;
   /** The letter that stands for it, drawn the way the mark draws text. */
   glyph?: { letter: string; as: "bold" | "italic" | "underline" | "strike" };
   icon?: IconName | ComposerIconName;
@@ -46,6 +47,7 @@ export function ComposerMarks({ label, groups }: ComposerMarksProps) {
               type="button"
               className="oh-control oh-composer-mark"
               aria-label={mark.label}
+              aria-keyshortcuts={mark.shortcut}
               title={mark.title ?? mark.label}
               aria-pressed={mark.pressed}
               aria-haspopup={

@@ -9,6 +9,7 @@
  * Nothing above the columns is mounted or unmounted by a place change; only another scope mounts it again, and
  * under a scope the frame refuses none of it mounts.
  */
+import { ShortcutHints } from "../keys/ShortcutHints.js";
 import { useFrameStores } from "./frame-stores.js";
 import {
   useCallback,
@@ -333,6 +334,7 @@ function FrameBody({ host }: { host: FrameHost }) {
         <CalendarWriteReports port={calendarPort} slot={slot} />
       )}
       <FrameRoot drawn={root} attributes={attributes} held={held || staged}>
+        <ShortcutHints enabled={plan.device !== "phone"} />
         <RoomGate on={room} whose={whose}>
           {Above === NONE ? (
             CalendarAbove ? (

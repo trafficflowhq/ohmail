@@ -29,7 +29,7 @@ const PLACES: Partial<FramePlaces> = {
     group: "main",
     icon: "ohbox",
     label: "title",
-    keyHint: "g o",
+    keyHint: "o",
     keyLabel: "goOhbox",
     keyStands: true,
   }),
@@ -112,22 +112,24 @@ describe("the rail's digits", () => {
       document.documentElement.dataset.face = "ohmarchy";
       document.documentElement.dataset.touch = "0";
     });
-    const keys = () =>
-      page.evaluate(() => {
-        const news = [...document.querySelectorAll<HTMLElement>('nav[aria-label="Places"] button')].find(
-          (b) => /News/.test(b.textContent ?? ""),
+    const keys = (place: string) =>
+      page.evaluate((name) => {
+        const entry = [...document.querySelectorAll<HTMLElement>('nav[aria-label="Places"] button')].find(
+          (b) => b.textContent?.includes(name),
         )!;
-        return [...news.querySelectorAll("kbd")]
+        return [...entry.querySelectorAll("kbd")]
           .filter((k) => k.getBoundingClientRect().width > 0)
           .map((k) => k.textContent);
-      });
-    expect(await keys(), "at rest").toEqual(["g r"]);
+      }, place);
+    expect(await keys("Ohbox"), "a single key at rest").toEqual(["o"]);
+    expect(await keys("News"), "a navigation sequence at rest").toEqual([]);
     await page.evaluate(() => {
       [...document.querySelectorAll<HTMLElement>('nav[aria-label="Places"] button')]
         .find((b) => /Ohbox/.test(b.textContent ?? ""))!
         .focus();
     });
-    expect(await keys(), "the keys in the rail").toEqual(["2"]);
+    expect(await keys("Ohbox"), "the single key gives way to the digit in the rail").toEqual(["1"]);
+    expect(await keys("News"), "the keys in the rail").toEqual(["2"]);
     await page.close();
   });
 });

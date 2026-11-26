@@ -16,6 +16,7 @@ const MAX_REMEMBERED = 10_000;
 
 export function newCalendarSyncMemory(): CalendarSyncMemory {
   return {
+    bearers: { grants: new Map(), refreshing: new Map() },
     readings: new Map(), failures: new Map(), listedAt: new Map(), unlisted: new Map(),
     forcedAt: new Map(), massDrop: new Map(), crowded: new Map(), exchangeLookups: new Map(), exchangeScannedAt: new Map(),
   };

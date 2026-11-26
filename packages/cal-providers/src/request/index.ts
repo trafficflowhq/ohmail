@@ -26,7 +26,8 @@ export type HttpMethod = "GET" | "OPTIONS" | "MOVE" | "POST" | "PROPFIND" | "REP
 export type Precondition =
   | { readonly kind: "unchanged"; readonly tag: string }
   | { readonly kind: "new" }
-  | { readonly kind: "own-channel" };
+  | { readonly kind: "own-channel" }
+  | { readonly kind: "own-channel-renewal" };
 
 /** The headers an adapter may name. Every other line of a request is the port's own. */
 export type AdapterHeader = "accept" | "content-type" | "depth" | "prefer" | "destination" | "overwrite";

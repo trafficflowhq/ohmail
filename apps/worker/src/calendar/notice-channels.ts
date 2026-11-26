@@ -8,13 +8,13 @@
  * no address. THE ADDRESS a provider is given is the deployment's own origin and this file's
  * literal path, never anything a row or a provider's answer names.
  *
- * A channel is never extended. Its successor is a new channel with a new id and a new word.
+ * Google opens a successor with a new id and word. Outlook renews its mailbox subscription in place.
  */
 import { randomBytes, randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import type { CalendarNotices, Connection, ProviderRefusal } from "@ohmail/cal-providers";
 import type { Tx } from "@trafficflow/db";
-import { NOTICE_WORD_BYTES, calPushChannels, isNoticeChannelId, noticeWordDigest } from "@trafficflow/db/cloud";
+import { MICROSOFT_MAILBOX_NOTICE_RESOURCE, NOTICE_WORD_BYTES, calPushChannels, isNoticeChannelId, noticeWordDigest } from "@trafficflow/db/cloud";
 import { inConnection, type ConnectionDb, type ConnectionKey } from "@ohmail/organizer/calendar-sync";
 
 /** A channel lives a week at the most; a provider's own maximum cuts it shorter. */
@@ -69,13 +69,14 @@ const ofConnection = (key: ConnectionKey) =>
  * The connection's channels of this provider that still stand, once the ended ones of the
  * connection are removed: the tidy every turn runs.
  */
-export async function standingChannels(db: ConnectionDb, key: ConnectionKey, provider: string): Promise<StandingChannel[] | "gone"> {
+export async function standingChannels(db: ConnectionDb, key: ConnectionKey, provider: string, prune = true): Promise<StandingChannel[] | "gone"> {
   return inConnection(db, key, async ({ tx }) => {
-    await tx.delete(calPushChannels).where(and(ofConnection(key), sql`${calPushChannels.expiresAt} <= now()`));
+    if (prune) await tx.delete(calPushChannels).where(and(ofConnection(key), sql`${calPushChannels.expiresAt} <= now()`));
     const rows = await tx.select({
       channelId: calPushChannels.channelId, calendarId: calPushChannels.calendarId,
       resourceId: calPushChannels.resourceId, expiresAt: calPushChannels.expiresAt,
-    }).from(calPushChannels).where(and(ofConnection(key), eq(calPushChannels.provider, provider)));
+    }).from(calPushChannels).where(and(ofConnection(key), eq(calPushChannels.provider, provider),
+      sql`${calPushChannels.expiresAt} > now()`));
     return rows.map((r) => ({ channelId: r.channelId, calendarId: r.calendarId, resourceId: r.resourceId, expiresAtMs: r.expiresAt.getTime() }));
   });
 }
@@ -96,7 +97,7 @@ async function forget(t: ChannelTurn, channelId: string): Promise<void> {
  * end; a refusal removes the row. Where the provider names the id (Microsoft): the subscription
  * first, then the row; a row that could not be written ends the subscription again.
  */
-export async function openChannel(t: ChannelTurn, calendar: { readonly id: string; readonly providerId: string }): Promise<ChannelOpened> {
+export async function openChannel(t: ChannelTurn, calendar: { readonly id: string | null; readonly providerId: string }): Promise<ChannelOpened> {
   const provider = t.notices.provider;
   const word = randomBytes(NOTICE_WORD_BYTES).toString("base64url");
   const ask = { id: randomUUID(), address: t.address, word: () => word, untilMs: t.now + NOTICE_LIFE_MS };
@@ -138,7 +139,11 @@ export async function openChannel(t: ChannelTurn, calendar: { readonly id: strin
   let stood: unknown;
   try {
     stood = await inConnection(t.db, t.key, async ({ tx }) => {
-      await tx.insert(calPushChannels).values({ ...row, channelId: opened.id, resourceId: opened.resourceId, expiresAt: new Date(opened.expiresAtMs) });
+      await tx.insert(calPushChannels).values({
+        ...row, channelId: opened.id,
+        resourceId: calendar.id === null ? MICROSOFT_MAILBOX_NOTICE_RESOURCE : opened.resourceId,
+        expiresAt: new Date(opened.expiresAtMs),
+      });
     });
   } catch (err) {
     await end();
@@ -149,6 +154,20 @@ export async function openChannel(t: ChannelTurn, calendar: { readonly id: strin
     return "gone";
   }
   return { ok: true };
+}
+
+/** Microsoft renews the same subscription and keeps the word used to authenticate notices. */
+export async function renewChannel(t: ChannelTurn, channel: StandingChannel): Promise<ChannelOpened> {
+  const answer = await t.notices.renew!(t.connection, channel.channelId, t.now + NOTICE_LIFE_MS, t.signal);
+  if (!answer.ok) {
+    if (answer.reason === "not_found") await forget(t, channel.channelId);
+    return { ok: false, reason: answer.reason, retryAfterMs: answer.retryAfterMs, ended: false };
+  }
+  const kept = await inConnection(t.db, t.key, async ({ tx }) => {
+    await tx.update(calPushChannels).set({ expiresAt: new Date(answer.value) })
+      .where(and(ofConnection(t.key), eq(calPushChannels.provider, t.notices.provider), eq(calPushChannels.channelId, channel.channelId)));
+  });
+  return kept === "gone" ? "gone" : { ok: true };
 }
 
 /**

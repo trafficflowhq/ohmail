@@ -9,6 +9,7 @@ import type {
 } from "react";
 import { Icon } from "../../icons/Icon.js";
 import { cx, toneOf, toneStyle, type CalendarTone } from "../tone.js";
+import { useEventTitle } from "../use-event-title.js";
 import { CalendarSquare } from "./CalendarSquare.js";
 import { blockLayout, type BlockPlace } from "./chip-layout.js";
 import "./event-chip.css";
@@ -140,8 +141,21 @@ function shared(p: EventChipProps, style: CSSProperties | undefined) {
   };
 }
 
+function ChipTitle({ title, lines, state }: { title: string; lines: number; state?: EventChipState }) {
+  const { ref, wording } = useEventTitle(title, lines, state);
+  const shortened = wording.replace(/\s+/gu, " ") !== title.replace(/\s+/gu, " ");
+  return (
+    <>
+      <span ref={ref} className="oh-ev-tt" aria-hidden={shortened || undefined}>
+        {wording}
+      </span>
+      {shortened ? <span className="oh-ev-spoken">{title}</span> : null}
+    </>
+  );
+}
+
 function Block(p: EventBlockProps) {
-  const hasSecond = Boolean(p.second || p.was || p.status);
+  const hasSecond = !p.tiny && Boolean(p.second || p.was || p.status);
   const layout = blockLayout(p.place, { dense: p.dense, shortest: p.shortest, hasSecond });
   const handles = p.handles && !p.viewOnly;
   const chip = (
@@ -151,6 +165,7 @@ function Block(p: EventBlockProps) {
       data-one={layout.one ? "" : undefined}
       data-tight={layout.tight ? "" : undefined}
       data-tiny={p.tiny ? "" : undefined}
+      data-overlap={(p.place.columns ?? 1) > 1 && !p.place.lap ? "" : undefined}
       data-lap={p.place.lap ? "" : undefined}
       data-now={p.nowCrosses ? "" : undefined}
       data-fixed={handles || p.timeEdges ? undefined : ""}
@@ -172,7 +187,11 @@ function Block(p: EventBlockProps) {
     >
       <span className="oh-ev-t">
         {lead(p)}
-        <span className="oh-ev-tt">{p.title}</span>
+        <ChipTitle
+          title={p.title}
+          state={p.state}
+          lines={Math.max(1, layout.lines - Number(layout.second))}
+        />
         {tail(p)}
       </span>
       {layout.second ? (
@@ -293,7 +312,7 @@ function Chip(p: EventChipProps) {
     return (
       <button {...shared(p, p.style)}>
         {lead(p)}
-        <span className="oh-ev-tt">{p.title}</span>
+        <ChipTitle title={p.title} state={p.state} lines={1} />
         {tail(p)}
         {dayGrips(p)}
       </button>

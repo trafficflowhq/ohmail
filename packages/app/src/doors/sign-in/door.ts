@@ -53,8 +53,8 @@ export type SignInState =
 export interface PendingSignOutDoor {
   /** The sentence, while it stands; null otherwise. */
   readonly said: string | null;
-  /** The button's words: Sign out, or the words for while it asks. */
-  readonly act: string;
+  /** The button's words, or null if the sentence names a browser setting to use. */
+  readonly act: string | null;
   readonly signingOut: boolean;
   again(): void;
 }
