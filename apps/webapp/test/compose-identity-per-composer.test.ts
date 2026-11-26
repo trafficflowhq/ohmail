@@ -90,10 +90,11 @@ describe("each tab's composer owns its own message-in-progress", () => {
     handOffComposer();
     tab("tab-b");
     expect(readComposeDraft(null).subject).toBe("B's own");
-    expect(window.localStorage.getItem("ohmail.ui.compose.local"), "A's message still waits").not.toBeNull();
+    tab("tab-c");
+    expect(readComposeDraft(null).subject, "A's message still waits").toBe("A's");
   });
 
-  it("a handoff replaces the slot whole: no stale row beside the new text", () => {
+  it("a new handoff keeps the older draft and its row separate from the new text", () => {
     window.localStorage.setItem("ohmail.ui.compose.local", JSON.stringify(message("older")));
     window.localStorage.setItem("ohmail.compose.session.local", "older-session");
     window.localStorage.setItem("ohmail.compose.row.local", "older-row");
@@ -103,8 +104,15 @@ describe("each tab's composer owns its own message-in-progress", () => {
     // B read nothing yet, so it adopted nothing; its own unit is text and a session, no row.
     const sessionB = window.localStorage.getItem(composeSessionKey(null)) ?? composeSessionId(null);
     handOffComposer();
-    expect(window.localStorage.getItem("ohmail.compose.row.local"), "the older row went with the older text").toBeNull();
-    expect(window.localStorage.getItem("ohmail.compose.session.local")).toBe(sessionB);
+    tab("tab-b");
+    expect(readComposeDraft(null).subject).toBe("newer");
+    expect(composeSessionId(null)).toBe(sessionB);
+    expect(readComposeRow(null)).toBeNull();
+
+    tab("tab-c");
+    expect(readComposeDraft(null).subject).toBe("older");
+    expect(composeSessionId(null)).toBe("older-session");
+    expect(readComposeRow(null)).toBe("older-row");
   });
 
   it("a window the host names keeps its message across a restart that fired no pagehide", () => {

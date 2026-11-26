@@ -414,7 +414,8 @@ describe("a refused erase says so, and the next press can erase", () => {
   }, 30_000);
 
   it("an erase that got no answer keeps the client's own sentence, which claims nothing", async () => {
-    await seedThisBrowser();
+    // A lost response now uses the unconfirmed erasure copy and keeps the browser copy.
+    const seeded = await seedThisBrowser();
     rig.erase = () => { throw new TypeError("network down"); };
 
     const c = await eraseThroughThePage();
@@ -422,9 +423,11 @@ describe("a refused erase says so, and the next press can erase", () => {
 
     const said = c.querySelector("[role=alert]")!.textContent!;
     expect(said, "an unanswered request must not claim nothing was deleted").not.toBe(en.account.eraseRefused);
-    expect(said).toContain("We could not reach ohmail");
+    expect(said).toBe(en.account.eraseUnconfirmed);
     expect(addressField(c), "back at the top").not.toBeNull();
+    expect(await mirrorsLeft()).toEqual([`ohmail-mirror:${OWNER}`]);
     expect(rig.purges, "a cache clear after an erase nobody answered").toBe(0);
+    seeded.close();
   }, 30_000);
 
   it("a platform 5xx with no envelope of ours (the function cut mid-erasure) is unconfirmed, never nothing removed", async () => {
