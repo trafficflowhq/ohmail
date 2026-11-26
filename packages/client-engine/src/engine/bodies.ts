@@ -35,6 +35,7 @@ import {
 } from "./ceilings.js";
 import { OHBOX_FOLDER, UNSCREENED_PARTS_MAX, UNSCREENED_REASK_MS, WHY_STAYED_PAGE } from "./mutation-views.js";
 import { BODIES_IDS_MAX, type FetchBodiesFn, messageTime, olderFirst } from "./server-wire.js";
+import { BODY_PRELOAD_IDS_MAX } from "@trafficflow/core/drain-policy";
 import { EngineWindowed } from "./windowed.js";
 
 /**
@@ -437,20 +438,21 @@ export abstract class EngineBodies extends EngineWindowed {
     }
     for (let i = 0; i < race.length; i += BODIES_IDS_MAX) writes.push(this.raceBodies(race.slice(i, i + BODIES_IDS_MAX), true));
 
-    // Split rather than refuse: the server caps an id list at {@link BODIES_IDS_MAX} because a
-    // truncated answer is indistinguishable from "those messages have no body", so a conversation
-    // longer than the cap becomes two requests here and never a 400 the reader would see.
-    for (let i = 0; i < take.length; i += BODIES_IDS_MAX) {
-      const chunk = take.slice(i, i + BODIES_IDS_MAX);
+    // A reader's thread and a peer without the wider preload limit both keep the smaller batch.
+    const batchSize = !opts.rendered && this.adapter.bodyPreloadLimit?.() === BODY_PRELOAD_IDS_MAX
+      ? BODY_PRELOAD_IDS_MAX : BODIES_IDS_MAX;
+    for (let i = 0; i < take.length; i += batchSize) {
+      const chunk = take.slice(i, i + batchSize);
       const chunkIds = chunk.map((c) => c.id);
-      const run = this.markLoadingBatch(chunk)
+      const marked = this.markLoadingBatch(chunk);
+      const run = marked
         .then(() => this.bodySlot(
           urgent || this.bodiesUrged(chunkIds),
           (asked) => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped, asked || opts.rendered),
           chunkIds,
         ))
         .finally(() => this.settleBodies(chunkIds));
-      this.trackBodies(chunkIds, run, urgent || opts.rendered);
+      this.trackBodies(chunkIds, run, urgent || opts.rendered, chunkIds.length > BODIES_IDS_MAX ? marked : undefined);
       writes.push(run);
     }
     return Promise.all(writes).then(() => undefined);
@@ -604,8 +606,8 @@ export abstract class EngineBodies extends EngineWindowed {
    * creation and never revisited, making "urgent opens jump the queue" false in exactly the case the prefetch
    * created. So urgency is re-decided on demand: the entry is pulled out of the queue and started immediately,
    * including exceeding {@link MAX_CONCURRENT_BODIES} by one, which is what "urgent" has always meant here. A no-op
-   * when the id is not waiting (running already, or done). A BATCH entry is promoted whole — its ids travel in one
-   * request, the same shape a thread open has always had.
+   * when the id is not waiting (running already, or done). A narrow batch travels whole, in the
+   * same shape a thread open has always had.
    */
   protected promoteBodyRequest(messageId: string): void {
     const at = this.bodyQueue.findIndex((e) => e.ids.includes(messageId));
@@ -615,11 +617,11 @@ export abstract class EngineBodies extends EngineWindowed {
   }
 
   /** Register a read of `ids` in the single-flight map and in {@link bodyAsks}; `asked`: it is the person's. */
-  protected trackBodies(ids: readonly string[], request: Promise<void>, asked: boolean): void {
+  protected trackBodies(ids: readonly string[], request: Promise<void>, asked: boolean, widePreload?: Promise<void>): void {
     for (const id of ids) {
       this.bodyRequests.set(id, request);
       this.bodyAsks.set(id, {
-        asked, left: false, urged: false, reads: 1, pending: 1, landed: false, failure: null, decided: null,
+        widePreload, asked, left: false, urged: false, reads: 1, pending: 1, landed: false, failure: null, decided: null,
       });
     }
   }
@@ -656,20 +658,21 @@ export abstract class EngineBodies extends EngineWindowed {
    * queue: an urgent ask lets it go now ({@link promoteBodyRequest}); a thread sibling keeps its turn, as it
    * always has. Not left yet (its marker is being written): it leaves as the person's. Already out as a
    * background read: `true`, and the caller sends the person's own read beside it ({@link raceBodies}).
+   * A wide preload always races the person's read and keeps its background priority.
    * The engine cannot tell a read on the wire from one held where it cannot see: the web's resume lane
    * holds background reads behind its cap after a return, so joining one made an open wait for a slot or
    * the lane's three-second bound. Nothing when the read already is the person's, when an answer has
    * landed, or when the body on screen is already whole (a re-read).
    */
   protected hurryBody(id: string, urgent: boolean): boolean {
-    if (this.bodyQueue.some((e) => e.ids.includes(id))) {
+    const a = this.bodyAsks.get(id);
+    if (!a?.widePreload && this.bodyQueue.some((e) => e.ids.includes(id))) {
       if (urgent) this.promoteBodyRequest(id);
       return false;
     }
-    const a = this.bodyAsks.get(id);
     if (a === undefined || a.asked || a.landed) return false;
     if (this.read().get<MessageBodyRecord>("message_body", id)?.state === "ready") return false;
-    if (!a.left) { a.urged = true; return false; }
+    if (!a.left && !a.widePreload) { a.urged = true; return false; }
     a.asked = true;
     return true;
   }
@@ -682,8 +685,10 @@ export abstract class EngineBodies extends EngineWindowed {
    */
   protected raceBodies(ids: string[], batch: boolean): Promise<void> {
     const decided: Array<Promise<void>> = [];
+    const marking: Promise<void>[] = [];
     for (const id of ids) {
       const a = this.bodyAsks.get(id)!;
+      if (a.widePreload !== undefined) marking.push(a.widePreload);
       a.reads += 1;
       a.pending += 1;
       if (a.decided === null) {
@@ -694,9 +699,10 @@ export abstract class EngineBodies extends EngineWindowed {
       decided.push(a.decided.promise);
     }
     const fetchBodies = this.fetchBodiesFn;
-    const read = batch && fetchBodies !== null
+    const readNow = () => batch && fetchBodies !== null
       ? this.bodySlot(true, () => this.fetchBodiesInto(ids, fetchBodies, undefined, true))
       : Promise.all(ids.map((id) => this.bodySlot(true, () => this.fetchBodyInto(id, true)))).then(() => undefined);
+    const read = marking.length === 0 ? readNow() : Promise.all(marking).then(readNow);
     void read.finally(() => this.settleBodies(ids));
     return Promise.all(decided).then(() => undefined);
   }

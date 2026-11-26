@@ -1,5 +1,6 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { devices, sessions } from "@trafficflow/db";
+import { BODY_PRELOAD_IDS_MAX, BODY_PRELOAD_LIMIT_HEADER } from "@trafficflow/core/drain-policy";
 import { namedCalendarSpan, type EntityType } from "@trafficflow/services/mail";
 import type { Assert, Complete, RecordKind } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
@@ -145,7 +146,7 @@ export const syncRoutes: Route[] = [
         && result.changes.creates.length === 0 && result.changes.updates.length === 0
         && result.changes.moves.length === 0 && result.changes.deletes.length === 0;
       if (emptyTail) await stampDeviceSynced(deps);
-      return answer<"GET /sync">()(result);
+      return answer<"GET /sync">()(result, { headers: { [BODY_PRELOAD_LIMIT_HEADER]: String(BODY_PRELOAD_IDS_MAX) } });
     },
   },
   /**
@@ -189,6 +190,7 @@ export const syncRoutes: Route[] = [
         ...(span ? { span } : {}),
       });
       const response = answer<"GET /sync/snapshot">()(result);
+      response.headers.set(BODY_PRELOAD_LIMIT_HEADER, String(BODY_PRELOAD_IDS_MAX));
       // On this door the browser's storage scope identifies a pairing. The snapshot names the
       // account that supplied its rows, from the same authenticated context that read them.
       if (deps.hello?.flavor === "desktop-host" && context.accountId) {

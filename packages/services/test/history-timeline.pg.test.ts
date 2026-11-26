@@ -102,6 +102,30 @@ describe("History pages the whole store (real Postgres)", () => {
   it("refuses a malformed position rather than answering the wrong page", async () => {
     await expect(svc.list(ctx, { view: "all", at: { date: null, id: "nope" } })).rejects.toThrow(/atId/);
     await expect(svc.list(ctx, { view: "all", before: { date: "2024-02-30", id: oldestId } })).rejects.toThrow(/beforeDate/);
+    await expect(svc.list(ctx, { view: "all", cursor: "history:2026-01|-1|||" })).rejects.toThrow(/History cursor/);
+  });
+
+  it("seeks in the reader's month and continues in the same keyset order", async () => {
+    const zone = "America/New_York";
+    const timeline = await svc.timeline(ctx, { zone });
+    const target = timeline.months.find((month) => month.count >= 3)!;
+    const expected = await svc.list(ctx, { view: "all", at: target.first });
+    const sought = await svc.list(ctx, {
+      view: "all", cursor: `history:${target.month}|2|||${zone}`, limit: 2,
+    });
+    expect(sought.items.map((row) => row.id)).toEqual(expected.items.slice(2, 4).map((row) => row.id));
+    const following = await svc.list(ctx, { view: "all", cursor: sought.nextCursor!, limit: 2 });
+    expect(following.items.map((row) => row.id)).toEqual(expected.items.slice(4, 6).map((row) => row.id));
+    expect(await svc.list(ctx, { view: "all", cursor: `history:${target.month}|${target.count}|||${zone}` }))
+      .toEqual({ items: [], nextCursor: null });
+  });
+
+  it("ranks undated rows separately from the months", async () => {
+    const tail = await svc.list(ctx, { view: "all", cursor: "history:|0|||" });
+    const end = await svc.list(ctx, { view: "all", cursor: "history:|1|||" });
+    expect(tail.items).toHaveLength(2);
+    expect(tail.items.every((row) => row.date === null)).toBe(true);
+    expect(end.items.map((row) => row.id)).toEqual([tail.items[1]!.id]);
   });
 
   it("a page never exceeds the History ceiling, whatever the caller asks", async () => {

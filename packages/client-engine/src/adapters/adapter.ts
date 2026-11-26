@@ -227,6 +227,8 @@ export interface EngineAdapter {
    * would render an empty message as though that were the mail.
    */
   fetchBodies?(messageIds: string[], opts?: ReadIntent): Promise<MessageBodyBatchWire[] | null>;
+  /** The last mail sync response's accepted batch size for background body reads. */
+  bodyPreloadLimit?(): number;
 
   /**
    * `GET /search` — the full-corpus archive, or absent when this client has no archive

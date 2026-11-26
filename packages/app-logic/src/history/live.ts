@@ -40,7 +40,13 @@ export function useHistoryLive(args: PlaceLiveArgs, own: HistoryLiveOwn): Histor
     [engine, derived],
   );
   const tl = useStoreTimeline(engine, derived, mirrorRows);
-  const window = useListWindow({ scrollerRef: own.scroller, count: tl.length, inserted: tl.shifted });
+  // Leave room for the list pane's bottom padding in the physical scrollbar.
+  const window = useListWindow({
+    scrollerRef: own.scroller,
+    count: tl.length,
+    inserted: tl.shifted,
+    maxScrollHeight: 8_000_000 - 16,
+  });
   const { want } = tl;
   useEffect(
     () => want(window.visibleStart, window.visibleEnd),

@@ -62,6 +62,73 @@ export const FALLBACK_VIEWPORT_PX = 1200;
 
 /** Rows rendered above and below the viewport, so a scroll reveals mail rather than a gap. */
 const OVERSCAN_ROWS = 8;
+/** Keep the rows near the viewport at their real height, with room to scroll before recentering. */
+const MEASURED_RADIUS = 128;
+
+interface RowPosition {
+  index: number;
+  within: number;
+  bottom?: boolean;
+}
+
+interface MeasuredRange {
+  center: number;
+  target?: RowPosition;
+}
+
+function measuredOffsets(
+  count: number, center: number, mean: number, limit: number, heights: ReadonlyMap<number, number>,
+) {
+  const start = Math.max(0, Math.min(count, center) - MEASURED_RADIUS);
+  const end = Math.min(count, center + MEASURED_RADIUS + 1);
+  const offsets = new Float64Array(end - start + 1);
+  for (let i = start; i < end; i++) {
+    offsets[i - start + 1] = offsets[i - start]! + (heights.get(i) ?? mean);
+  }
+  const bandHeight = offsets[end - start]!;
+  const outside = count - (end - start);
+  const total = Math.min(limit, bandHeight + outside * mean);
+  const outsideRow = outside > 0 ? Math.max(0, (total - bandHeight) / outside) : mean;
+  const head = start * outsideRow;
+  return {
+    start, end,
+    scale: outsideRow / mean,
+    at(index: number): number {
+      if (index === count) return total;
+      if (index < start) return index * outsideRow;
+      if (index >= end) return head + bandHeight + (index - end) * outsideRow;
+      return head + offsets[index - start]!;
+    },
+  };
+}
+
+function measureRows(
+  el: HTMLElement, count: number, heights: Map<number, number>, frozen: Map<number, number>,
+  compact: { start: number; end: number } | null,
+): { moved: boolean; found: boolean } {
+  let moved = false;
+  let found = false;
+  if (compact) {
+    for (const index of heights.keys()) {
+      if (index < compact.start || index >= compact.end) moved = heights.delete(index) || moved;
+    }
+  }
+  for (const node of el.querySelectorAll<HTMLElement>("[data-index]")) {
+    const i = Number(node.dataset.index);
+    if (!Number.isInteger(i) || i < 0 || i >= count) continue;
+    found = true;
+    if (compact && (i < compact.start || i >= compact.end)) continue;
+    const h = node.offsetHeight;
+    if (h <= 0 && !node.hasAttribute("data-folded-row")) continue;
+    const was = heights.get(i);
+    if (was === undefined || Math.abs(was - h) >= 1) {
+      heights.set(i, h);
+      frozen.delete(i);
+      moved = true;
+    }
+  }
+  return { moved, found };
+}
 
 /**
  * A list whose items carry no `data-index` renders whole up to this: the window could price its
@@ -141,6 +208,8 @@ export interface ListWindow {
   origin: number;
   /** Where index `i` starts, in scroller pixels: the origin plus the measured heights above it. */
   offsetOf: (index: number) => number;
+  /** Bring a global slot into the measured range and put it at the top of the viewport. */
+  scrollTo: (index: number) => void;
   /**
    * The slots the viewport shows, plus the overscan — whether or not the list renders whole. A
    * list that fetches its rows asks for these, never for every slot a short list mounts.
@@ -161,6 +230,8 @@ export interface UseListWindowOptions {
   overscan?: number;
   /** A buffered list refreshes after this many slots, while its overscan still covers the viewport. */
   scrollStep?: number;
+  /** Maximum pixel height for an unbounded store list. The active range still draws at actual height. */
+  maxScrollHeight?: number;
   /** A changed list cursor must be mounted even when it jumps past the current slice. */
   cursor?: { readonly id: string; readonly index: number };
   /**
@@ -183,12 +254,17 @@ export function useListWindow({
   estimate = ESTIMATED_ROW_PX,
   overscan = OVERSCAN_ROWS,
   scrollStep = 0,
+  maxScrollHeight,
   cursor,
   inserted = 0,
 }: UseListWindowOptions): ListWindow {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(0);
   const [measured, setMeasured] = useState(0);
+  const bounded = maxScrollHeight !== undefined;
+  const [range, setRange] = useState<MeasuredRange>({ center: 0 });
+  const appliedRange = useRef(range);
+  const target = range === appliedRange.current ? undefined : range.target;
   /** index → the height that index was last drawn at. Never cleared: a row keeps its size. */
   const heights = useRef<Map<number, number>>(new Map());
   /**
@@ -236,11 +312,11 @@ export function useListWindow({
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        if (scrollStep > 0) drawAt.current(el.scrollTop);
+        if (bounded || scrollStep > 0) drawAt.current(el.scrollTop);
         else sample();
       });
     };
-    const resize = scrollStep > 0 && typeof ResizeObserver !== "undefined" ? new ResizeObserver(sample) : null;
+    const resize = (bounded || scrollStep > 0) && typeof ResizeObserver !== "undefined" ? new ResizeObserver(sample) : null;
     resize?.observe(el);
     el.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", sample);
@@ -250,7 +326,7 @@ export function useListWindow({
       el.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", sample);
     };
-  }, [scrollerRef, sample, scrollStep]);
+  }, [scrollerRef, sample, scrollStep, bounded]);
 
   /**
    * THE HEIGHT OF A ROW NOBODY HAS DRAWN AND NOBODY HAS SCROLLED PAST. The mean of the
@@ -273,27 +349,45 @@ export function useListWindow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [samples, measured, estimate]);
 
-  /** `prefix[i]` = where item `i` starts. `prefix[count]` is the list's whole height. */
-  const prefix = useMemo(() => {
+  /** Where a slot starts, omitting the chrome above the list. */
+  const { compact, position } = useMemo(() => {
+    if (maxScrollHeight !== undefined) {
+      const compact = measuredOffsets(count, range.center, mean, Math.max(0, maxScrollHeight - origin), heights.current);
+      return { compact, position: compact.at };
+    }
     const p = new Float64Array(count + 1);
     for (let i = 0; i < count; i += 1) {
       p[i + 1] = p[i]! + (heights.current.get(i) ?? frozen.current.get(i) ?? mean);
     }
-    return p;
+    return { compact: null, position: (index: number): number => p[index] ?? 0 };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [count, mean, samples]);
+  }, [count, maxScrollHeight, mean, origin, range.center, samples]);
 
   const offsetOf = useCallback(
-    (index: number): number => originAt.current + (prefix[Math.max(0, Math.min(count, index))] ?? 0),
-    [prefix, count],
+    (index: number): number => originAt.current + position(Math.max(0, Math.min(count, index))),
+    [position, count],
   );
+
+  const scrollTo = useCallback((i: number): void => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const index = Math.max(0, Math.min(count - 1, i));
+    anchor.current = null;
+    if (compact && Math.abs(index - range.center) > MEASURED_RADIUS / 2) {
+      setRange({ center: index, target: { index, within: 0 } });
+      return;
+    }
+    el.scrollTop = offsetOf(index);
+    setScrollTop(el.scrollTop);
+  }, [compact, count, offsetOf, range.center, scrollerRef]);
 
   const toTop = useCallback(() => {
     const el = scrollerRef.current;
     anchor.current = null;
     if (el && el.scrollTop !== 0) el.scrollTop = 0;
     setScrollTop(0);
-  }, [scrollerRef]);
+    if (bounded) setRange({ center: 0 });
+  }, [bounded, scrollerRef]);
 
   const height = viewport > 0 ? viewport : FALLBACK_VIEWPORT_PX;
   /** The first index whose bottom edge lies below `px`. */
@@ -302,7 +396,7 @@ export function useListWindow({
     let hi = count;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (prefix[mid + 1]! <= px) lo = mid + 1;
+      if (position(mid + 1) <= px) lo = mid + 1;
       else hi = mid;
     }
     return lo;
@@ -310,18 +404,39 @@ export function useListWindow({
 
   const windowed = count > (stamped === false ? FULL_RANGE_MAX_ROWS : MEASURED_FULL_RANGE_MAX_ROWS);
   // Measuring folded tail slots can shorten the list before the browser reports its clamped scroll position.
-  const rowsEnd = prefix[count]!;
-  const lastStart = rowsEnd === prefix[count - 1] ? Math.max(0, rowsEnd - height) : Infinity;
+  const rowsEnd = position(count);
+  const lastStart = rowsEnd === position(count - 1) ? Math.max(0, rowsEnd - height) : Infinity;
   /** The top edge in slot pixels: negative while the chrome above the rows is on screen. */
   const edgeAt = (top: number) => Math.min(top - origin, lastStart);
-  const rel = edgeAt(scrollTop);
+  const rel = target
+    ? Math.min(target.bottom ? Infinity : position(target.index) + target.within, Math.max(0, rowsEnd - height))
+    : edgeAt(scrollTop);
   const visibleStart = Math.max(0, Math.min(count, indexAt(rel) - overscan));
   const visibleEnd = Math.min(count, indexAt(rel + height) + 1 + overscan);
   const start = windowed ? visibleStart : 0;
   const end = windowed ? visibleEnd : count;
-  const padTop = windowed ? (prefix[start] ?? 0) : 0;
+  const padTop = windowed ? position(start) : 0;
 
   useLayoutEffect(() => {
+    if (compact) {
+      drawAt.current = (top) => {
+        const el = scrollerRef.current;
+        if (!el) return;
+        const edge = edgeAt(top);
+        const maxTop = el.scrollHeight - el.clientHeight;
+        const bottom = maxTop > 0 && top > 0 && top >= maxTop - 1;
+        const index = bottom ? Math.max(0, count - 1) : Math.min(indexAt(edge), Math.max(0, count - 1));
+        if (Math.abs(index - range.center) > MEASURED_RADIUS / 2) {
+          const scale = index < compact.start || index >= compact.end ? compact.scale : 1;
+          const within = scale > 0 ? Math.max(0, edge - position(index)) / scale : 0;
+          anchor.current = null;
+          setRange({ center: index, target: { index, within, bottom } });
+        } else {
+          setScrollTop(top);
+        }
+      };
+      return;
+    }
     if (scrollStep <= 0) return;
     const first = indexAt(rel);
     const last = indexAt(rel + height);
@@ -359,10 +474,20 @@ export function useListWindow({
     if (d > 0) {
       const down = (m: Map<number, number>) => new Map([...m].map(([i, h]): [number, number] => [i + d, h]));
       heights.current = down(heights.current);
+      const a = anchor.current;
+      if (bounded) {
+        anchor.current = null;
+        if (a?.inRows) {
+          const index = Math.min(a.index + d, count - 1);
+          const within = el.scrollTop - a.origin - a.offset;
+          setRange({ center: Math.max(0, index), target: { index: Math.max(0, index), within } });
+        }
+        setSamples((n) => n + 1);
+        return;
+      }
       frozen.current = down(frozen.current);
       for (let i = 0; i < d; i += 1) frozen.current.set(i, mean);
       frozenUpTo.current += d;
-      const a = anchor.current;
       if (a?.inRows) {
         el.scrollTop += d * mean;
         anchor.current = { ...a, index: a.index + d, offset: a.offset + d * mean, count };
@@ -373,21 +498,12 @@ export function useListWindow({
       setSamples((n) => n + 1);
       return;
     }
-    let moved = false;
-    let found = false;
-    for (const node of el.querySelectorAll<HTMLElement>("[data-index]")) {
-      const i = Number(node.dataset.index);
-      if (!Number.isInteger(i) || i < 0 || i >= count) continue;
-      found = true;
-      const h = node.offsetHeight;
-      if (h <= 0 && !node.hasAttribute("data-folded-row")) continue;
-      const was = heights.current.get(i);
-      if (was === undefined || Math.abs(was - h) >= 1) {
-        heights.current.set(i, h);
-        frozen.current.delete(i);
-        moved = true;
-      }
+    if (target) {
+      appliedRange.current = range;
+      el.scrollTop = target.bottom ? el.scrollHeight - el.clientHeight : listOrigin(el) + rel;
+      setScrollTop(el.scrollTop);
     }
+    const { moved, found } = measureRows(el, count, heights.current, frozen.current, compact);
     if (moved) settle(() => setSamples((n) => n + 1));
     /* THE FLOOR, decided once and before paint: a list that drew items and stamped none is priced
        at one height, so it goes back to rendering whole below FULL_RANGE_MAX_ROWS. */
@@ -412,10 +528,12 @@ export function useListWindow({
 
     /* FREEZE what this commit reserved above the slice: the same `mean` the prefix priced it at,
        so the sums do not move, and the next mean cannot reach these indices. */
-    for (let i = frozenUpTo.current; i < start; i += 1) {
-      if (!heights.current.has(i) && !frozen.current.has(i)) frozen.current.set(i, mean);
+    if (!bounded) {
+      for (let i = frozenUpTo.current; i < start; i += 1) {
+        if (!heights.current.has(i) && !frozen.current.has(i)) frozen.current.set(i, mean);
+      }
+      if (start > frozenUpTo.current) frozenUpTo.current = start;
     }
-    if (start > frozenUpTo.current) frozenUpTo.current = start;
 
     /* COMPENSATE. Where the DOM has item `i` of the slice: the spacer, then the drawn heights
        before it — measured this commit, so this is the true position, not the render's prefix.
@@ -455,22 +573,22 @@ export function useListWindow({
     lastCursor.current = cursorId;
     const el = scrollerRef.current;
     if (el === null || cursorIndex < 0 || (cursorIndex >= start && cursorIndex < end)) return;
-    el.scrollTop = offsetOf(cursorIndex);
-    setScrollTop(el.scrollTop);
-  }, [cursorId, cursorIndex, start, end, offsetOf, scrollerRef]);
+    scrollTo(cursorIndex);
+  }, [cursorId, cursorIndex, start, end, scrollTo, scrollerRef]);
 
   if (!windowed) {
-    return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, origin, offsetOf, visibleStart, visibleEnd, toTop };
+    return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, origin, offsetOf, scrollTo, visibleStart, visibleEnd, toTop };
   }
 
   return {
     start,
     end,
     padTop,
-    padBottom: Math.max(0, (prefix[count] ?? 0) - (prefix[end] ?? 0)),
+    padBottom: Math.max(0, rowsEnd - position(end)),
     rowHeight: mean,
     origin,
     offsetOf,
+    scrollTo,
     visibleStart,
     visibleEnd,
     toTop,

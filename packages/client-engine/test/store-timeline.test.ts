@@ -43,14 +43,21 @@ function timelineOf(rows: EngineMessage[]): StoreTimeline {
   return { total: rows.length, months, undated: 0 };
 }
 
-async function walkerOver(rows: EngineMessage[], held = false) {
+async function walkerOver(rows: EngineMessage[], held = false, seek = false) {
   const asked: (StoreKeyset | null)[] = [];
+  const ranks: number[] = [];
   const waiting: (() => void)[] = [];
   let open = !held;
   const gate = () => (open ? Promise.resolve() : new Promise<void>((r) => waiting.push(r)));
   const listMessages: ListOlderFn = async (_v, o) => {
     asked.push(o.startBelow ?? null);
     await gate();
+    if (o.seek) {
+      ranks.push(o.seek.offset);
+      const first = rows.findIndex((m) => m.date?.startsWith(o.seek!.month ?? ""));
+      const at = first + o.seek.offset;
+      return { items: rows.slice(at, at + (o.limit ?? HISTORY_PAGE_ROWS)), nextCursor: null };
+    }
     const b = o.startBelow;
     const rest = b ? rows.filter((m) => m.date! < b.date! || (m.date === b.date && m.id < b.id)) : rows;
     return { items: rest.slice(0, o.limit ?? HISTORY_PAGE_ROWS), nextCursor: null };
@@ -58,13 +65,13 @@ async function walkerOver(rows: EngineMessage[], held = false) {
   const adapter = {
     sync: async (): Promise<SyncResponse> => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "0", hasMore: false, serverTime: NOW.toISOString() }),
     mutate: async () => ({ changes: [], seq: null }), fetchBody: async () => null,
-    listMessages, timeline: async () => { await gate(); return timelineOf(rows); },
+    listMessages, timeline: async () => { await gate(); return { ...timelineOf(rows), ...(seek ? { seek: true } : {}) }; },
   } as unknown as EngineAdapter;
   const store = new MemoryMirrorStore();
   await store.load();
   const engine = new OhmailEngine({ adapter, store, now: () => NOW });
   const walker = new StoreTimelineWalker(engine);
-  return { engine, walker, asked, release: () => { open = true; for (const w of waiting.splice(0)) w(); } };
+  return { engine, walker, asked, ranks, release: () => { open = true; for (const w of waiting.splice(0)) w(); } };
 }
 
 const settle = async (n = 10) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
@@ -101,6 +108,28 @@ describe("the timeline walker", () => {
     // One request per 50 rows walked, and none repeated.
     expect(new Set(asked.map((a) => JSON.stringify(a))).size).toBe(asked.length);
     walker.stop();
+  });
+
+  it("seeks within a distant month and continues the same walk by keyset", async () => {
+    const rows = hourly(500);
+    const { walker, ranks, asked } = await walkerOver(rows, false, true);
+    try {
+      walker.start();
+      await settle();
+      walker.want(400, 421);
+      await settle();
+      expect(ranks).toEqual([400]);
+      expect(walker.rowAt(400, [])).toMatchObject({ id: id(400) });
+      expect(asked).toHaveLength(2);
+
+      walker.want(440, 470);
+      await settle();
+      expect(ranks).toEqual([400]);
+      expect(asked.at(-1)).toMatchObject({ id: id(449) });
+      expect(walker.rowAt(469, [])).toMatchObject({ id: id(469) });
+    } finally {
+      walker.stop();
+    }
   });
 
   it("a jump asks the month at its own anchor, one request", async () => {

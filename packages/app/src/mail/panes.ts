@@ -51,6 +51,10 @@ const SettingsReading = lazyView(() =>
   import("../settings/SettingsReading.js").then(({ SettingsReading }) => ({ default: SettingsReading })),
 );
 
+export function preloadMailSettings(): void {
+  void SettingsList.preload().catch(() => {});
+}
+
 /** What a host alone can hand the mail's panes, by pane: `none` where it has nothing of that section to hand. */
 export interface MailPaneParts {
   readonly screener: SettingsPane["Body"] | None;
@@ -203,6 +207,7 @@ const RAIL: PlaceRail = {
   label: "title",
   keyHint: "g ,",
   keyLabel: "goSettings",
+  preload: preloadMailSettings,
 };
 
 const SAVED_MAILBOXES = { ...paneOf("mailboxes", { Body: SavedProfileSettings }), listed: () => true };

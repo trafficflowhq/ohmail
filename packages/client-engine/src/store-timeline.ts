@@ -9,7 +9,7 @@ import type { EngineMessage } from "@ohmail/wire";
 import { errorClassOf, type OhmailEngine, type ServerSearchFacets, type ServerSearchOutcome } from "./engine.js";
 import {
   HISTORY_PAGE_ROWS, segmentAt, storeInstantOf, storeKeyOf, storeSearchList, timelineSegments,
-  type StoreKeyset, type StoreSearchKey, type StoreTimeline, type TimelineSegment,
+  type StoreKeyset, type StoreMonthSeek, type StoreSearchKey, type StoreTimeline, type TimelineSegment,
 } from "./store-pages.js";
 import type { SearchPhaseVerdict, WindowSearchPhases } from "./search-phases.js";
 
@@ -95,6 +95,10 @@ export class PagedWalk<A> {
       inside?: (p: number) => boolean;
       /** The walker's own anchor at or above `p` — History's month starts. */
       extra?: (p: number) => { start: number; anchor: A | null } | null;
+      /** Start directly at a distant slot when the store can resolve its rank. */
+      seek?: (p: number) => A | undefined;
+      /** Retry the wanted slot from an ordinary anchor after a rejected direct seek. */
+      retryAtAnchor?: (anchor: A | null, errorClass: string | undefined) => boolean;
       landed?: (start: number, transient: boolean, answer: Extract<PageAnswer<A>, { state: "ready" }>) => void;
       failed?: (start: number, errorClass: string | null) => void;
       /** The walk met {@link EMPTY_PAGES_FOLLOWED} empty pages in a row and waits for {@link further}. */
@@ -197,6 +201,12 @@ export class PagedWalk<A> {
       // Rows arrived above while this was in the air: it lands lower by as many. (Page one's own
       // null anchor is asked by `start` alone, before a visit can move.)
       const at = start + this.moved - moved;
+      if (out.state === "failed" && this.hooks.retryAtAnchor?.(anchor, out.errorClass)) {
+        const wanted = this.owed[dir] ?? at;
+        this.owed[dir] = null;
+        if (this.freshAt(wanted) === null) this.ask(wanted, dir);
+        return;
+      }
       const furthest = at === this.reached;
       const placed = this.land(at, anchor, transient, out);
       // AN EMPTY PAGE WITH A CURSOR IS NOT AN ANSWER: at the furthest slot the walk asks the page
@@ -366,8 +376,12 @@ export class PagedWalk<A> {
     if (p < 0) return;
     this.owed[dir] = p;
     if (this.inFlight[dir]) return;
-    const a = this.anchorFor(p);
+    let a = this.anchorFor(p);
     if (a === null) return;
+    if (p - a.start >= HISTORY_PAGE_ROWS) {
+      const seek = this.hooks.seek?.(p);
+      if (seek !== undefined) a = { start: p, anchor: seek };
+    }
     const at = this.failedAt.get(JSON.stringify([a.start, a.anchor]));
     if (at !== undefined && this.hooks.clock() - at < STORE_PAGE_RETRY_MS) return;
     // Farther than a page from the anchor: an uncached step that only learns the next anchor.
@@ -412,6 +426,13 @@ const keysetOf = (m: EngineMessage): StoreKeyset => storeKeyOf(m);
  */
 const anchorOf = (m: EngineMessage): StoreKeyset => ({ date: m.date ?? null, id: m.id });
 
+type HistoryAnchor = StoreKeyset | StoreMonthSeek;
+
+function historyPageOf(anchor: HistoryAnchor | null) {
+  if (anchor === null) return {};
+  return "month" in anchor ? { seek: anchor } : { before: anchor };
+}
+
 /** Does `m` sort before position `k` in the store's order — `key desc, id desc` ({@link storeKeyOf}). */
 function newerThan(m: EngineMessage, k: StoreKeyset): boolean {
   const a = storeInstantOf(m);
@@ -438,6 +459,7 @@ class Signal {
 export class StoreTimelineWalker {
   private timeline: StoreTimeline | null = null;
   private segs: TimelineSegment[] = [];
+  private seekRefused = false;
   private failed = false;
   /** The first failure's class this visit — see {@link failureCause}. */
   private cause: string | null = null;
@@ -446,7 +468,7 @@ export class StoreTimelineWalker {
   private epoch = 0;
   private ceiling: ReturnType<typeof setTimeout> | null = null;
   private readonly signal = new Signal();
-  private readonly walk: PagedWalk<StoreKeyset>;
+  private readonly walk: PagedWalk<HistoryAnchor>;
   /** Rows placed above the first one since this walker began — {@link shifted}. */
   private shift = 0;
   /** Slot 0's position when page one was read: where the rows an arrival brings are counted from. */
@@ -459,11 +481,11 @@ export class StoreTimelineWalker {
   private lastWant: [number, number] = [0, 0];
 
   constructor(private readonly engine: OhmailEngine, clock: () => number = Date.now) {
-    this.walk = new PagedWalk<StoreKeyset>(engine, {
-      ask: (a, o) => engine.pageStore("all", { ...(a ? { before: a } : {}), ...(o.transient ? { transient: true } : {}), at: o.at })
-        .then((out): PageAnswer<StoreKeyset> => (out.state === "ready" ? { state: "ready", items: out.items, next: null }
+    this.walk = new PagedWalk<HistoryAnchor>(engine, {
+      ask: (a, o) => engine.pageStore("all", { ...historyPageOf(a), ...(o.transient ? { transient: true } : {}), at: o.at })
+        .then((out): PageAnswer<HistoryAnchor> => (out.state === "ready" ? { state: "ready", items: out.items, next: null }
           : out.state === "failed" ? { state: "failed", errorClass: out.errorClass } : { state: "unavailable" })),
-      peek: (a) => engine.peekStorePage("all", a ? { before: a } : {}),
+      peek: (a) => engine.peekStorePage("all", historyPageOf(a)),
       anchorOf,
     }, {
       clock,
@@ -471,12 +493,17 @@ export class StoreTimelineWalker {
       changed: () => this.signal.bump(),
       inside: (p) => segmentAt(this.segs, p) !== null,
       extra: (p) => {
-        let best: { start: number; anchor: StoreKeyset | null } | null = null;
-        for (const s of this.segs) {
-          if (s.start > p) break;
-          if (best === null || s.start >= best.start) best = { start: s.start, anchor: s.before };
-        }
-        return best;
+        const s = segmentAt(this.segs, p);
+        return s && { start: s.start, anchor: s.before };
+      },
+      seek: (p) => {
+        const s = !this.seekRefused && this.timeline?.seek === true ? segmentAt(this.segs, p) : null;
+        return s ? { month: s.month, offset: p - s.start, before: s.before } : undefined;
+      },
+      retryAtAnchor: (a, errorClass) => {
+        if (a === null || !("month" in a) || errorClass !== "MutationRejectedError 400 validation_failed") return false;
+        this.seekRefused = true;
+        return true;
       },
       landed: (start, transient, answer) => {
         if (transient || start !== 0 || this.pageOne) return;
@@ -507,6 +534,7 @@ export class StoreTimelineWalker {
     const epoch = ++this.epoch;
     this.timeline = null;
     this.segs = [];
+    this.seekRefused = false;
     this.failed = false;
     this.cause = null;
     this.timedOut = false;

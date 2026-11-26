@@ -454,6 +454,15 @@ describe.skipIf(!AVAILABLE)("GET /messages/bodies serves the stored body verbati
     // …and exactly 20 is accepted, so the cap is the boundary rather than an approximation.
     const atCap = Array.from({ length: 20 }, () => randomUUID()).join(",");
     expect((await app.handle(get(`/messages/bodies?ids=${atCap}`, token), depsOn(db))).status).toBe(200);
+
+    const preload = (length: number) => {
+      const ids = Array.from({ length }, () => randomUUID()).join(",");
+      const request = get(`/messages/bodies?ids=${ids}`, token);
+      request.headers.set("x-ohmail-body-preload-limit", "40");
+      return app.handle(request, depsOn(db));
+    };
+    expect((await preload(40)).status).toBe(200);
+    expect((await preload(41)).status).toBe(400);
   });
 
   it("a malformed id is a 400, not a 22P02 turned into a 500", async () => {

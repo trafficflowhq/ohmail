@@ -1,6 +1,8 @@
 import { hasEditedQuotedHistory } from "@trafficflow/core/outbound-text";
+import { BODY_PRELOAD_IDS_MAX, BODY_PRELOAD_LIMIT_HEADER } from "@trafficflow/core/drain-policy";
 import { requireDraftQuoteEcho } from "./draft-quote-echo.js";
 import type { DraftBodyRead } from "./adapter.js";
+import { BODIES_IDS_MAX } from "../engine/server-wire.js";
 import {
   CursorExpiredError,
   FOLDER_OF_VIEW,
@@ -34,7 +36,7 @@ import { classifyRefusal, UPDATE_ANSWER_CODES, type RefusalKind, type UpdateAnsw
 import { sessionEndedResponse } from "../session-gate.js";
 import { sendFingerprint } from "../send-fingerprint.js";
 import { responseBlob } from "../bytes-blob.js";
-import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
+import { readTimelineWire, type StoreMonthSeek, type StoreTimeline } from "../store-pages.js";
 import { waitingRequestsOf } from "../organizer-requests-wire.js";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import type {
@@ -715,7 +717,7 @@ export class HttpAdapter implements EngineAdapter {
    */
   private async request(
     method: string, path: string,
-    init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number; urgent?: boolean; searchLane?: string; echoLater?: boolean } = {},
+    init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number; urgent?: boolean; searchLane?: string; echoLater?: boolean; bodyPreload?: boolean } = {},
   ): Promise<Response> {
     /*
      * THE GATE, AHEAD OF EVERY DOOR AND AHEAD OF EVERY HEADER. A client whose session is
@@ -734,6 +736,7 @@ export class HttpAdapter implements EngineAdapter {
     // The walker and its question, `<lane>.<generation>` (`ServerSearchOpts.lane`): no query text.
     if (init.searchLane !== undefined) headers["x-ohmail-search-lane"] = init.searchLane;
     if (init.echoLater === true) headers["x-ohmail-echo"] = "later";
+    if (init.bodyPreload === true) headers[BODY_PRELOAD_LIMIT_HEADER] = String(BODY_PRELOAD_IDS_MAX);
     if (method !== "GET") {
       const csrf = this.getCookie(this.csrfCookieName);
       if (csrf) headers["x-csrf-token"] = csrf;
@@ -870,6 +873,17 @@ export class HttpAdapter implements EngineAdapter {
 
   // ── sync ─────────────────────────────────────────────────────────────────
 
+  private preloadLimit = BODIES_IDS_MAX;
+
+  bodyPreloadLimit(): number {
+    return this.preloadLimit;
+  }
+
+  private readBodyPreloadLimit(res: Response): void {
+    this.preloadLimit = res.headers.get(BODY_PRELOAD_LIMIT_HEADER) === String(BODY_PRELOAD_IDS_MAX)
+      ? BODY_PRELOAD_IDS_MAX : BODIES_IDS_MAX;
+  }
+
   async sync(params: SyncParams): Promise<SyncResponse> {
     const q = new URLSearchParams({ since: params.since });
     if (params.limit !== undefined) q.set("limit", String(params.limit));
@@ -881,6 +895,7 @@ export class HttpAdapter implements EngineAdapter {
       answered();
       if (res.status === 410) throw new CursorExpiredError();
       if (!res.ok) throw await this.rejectionOf(res);
+      if (!params.calendarOnly) this.readBodyPreloadLimit(res);
       return await this.readAnswer<"GET /sync">(res);
     });
   }
@@ -1147,6 +1162,7 @@ export class HttpAdapter implements EngineAdapter {
       if (params.calendarOnly && (res.status === 404 || res.headers.get("content-type")?.includes("text/html"))) throw this.calendarUnavailable();
       answered();
       if (!res.ok) throw await this.rejectionOf(res);
+      if (!params.calendarOnly) this.readBodyPreloadLimit(res);
       return await this.readAnswer<"GET /sync/snapshot">(res);
     });
     const asOfSeq = Number(wire.asOfSeq);
@@ -1252,9 +1268,18 @@ export class HttpAdapter implements EngineAdapter {
    * an empty thread.
    */
   async fetchBodies(messageIds: string[], opts: ReadIntent = {}): Promise<MessageBodyBatchWire[]> {
+    const wide = messageIds.length > BODIES_IDS_MAX;
+    if (wide && this.preloadLimit === BODIES_IDS_MAX) {
+      // The peer changed after this batch was queued. Use the limit it announced most recently.
+      const first = await this.fetchBodies(messageIds.slice(0, BODIES_IDS_MAX), opts);
+      const rest = await this.fetchBodies(messageIds.slice(BODIES_IDS_MAX), opts);
+      return [...first, ...rest];
+    }
     const ids = messageIds.map((id) => encodeURIComponent(id)).join(",");
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
-      const res = await this.call("GET /messages/bodies", { query: `ids=${ids}`, signal, urgent: opts.urgent === true });
+      const res = await this.call("GET /messages/bodies", {
+        query: `ids=${ids}`, signal, urgent: opts.urgent === true, bodyPreload: wide,
+      });
       if (!res.ok) throw await this.rejectionOf(res, "read");
       const page = await this.readUntrusted<"GET /messages/bodies">(res);
       if (!Array.isArray(page.items)) return [];
@@ -1268,6 +1293,16 @@ export class HttpAdapter implements EngineAdapter {
         out.push({ messageId: row.messageId, ...narrowBody(row) });
       }
       return out;
+    }).catch((err: unknown) => {
+      // The sync that advertised the wider limit and this read can reach different peers.
+      if (
+        wide && err instanceof MutationRejectedError && err.status === 400 && err.code === "validation_failed"
+        && err.message === `at most ${BODIES_IDS_MAX} ids may be requested at once`
+      ) {
+        this.preloadLimit = BODIES_IDS_MAX;
+        return this.fetchBodies(messageIds, opts);
+      }
+      throw err;
     });
   }
 
@@ -1421,6 +1456,7 @@ export class HttpAdapter implements EngineAdapter {
     opts: {
       cursor?: string; limit?: number; folderId?: string;
       startBelow?: { date: string | null; id: string };
+      seek?: StoreMonthSeek;
     } = {},
   ): Promise<ListOlderWire | null> {
     // A FOLDER page (the folders foundation): the entity id is the whole address — the server
@@ -1447,7 +1483,11 @@ export class HttpAdapter implements EngineAdapter {
     if (view === "all") {
       const qa = new URLSearchParams({ view: "all" });
       if (opts.cursor) qa.set("cursor", opts.cursor);
-      else if (opts.startBelow) {
+      else if (opts.seek) {
+        const { month, offset, before } = opts.seek;
+        const rank = [month ?? "", offset, before?.date ?? "", before?.id ?? "", this.readerZone() ?? ""];
+        qa.set("cursor", `history:${rank.join("|")}`);
+      } else if (opts.startBelow) {
         if (opts.startBelow.date !== null) qa.set("beforeDate", opts.startBelow.date);
         qa.set("beforeId", opts.startBelow.id);
       }

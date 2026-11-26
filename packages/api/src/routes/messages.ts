@@ -1,6 +1,7 @@
 // The root barrel — see `packages/db/src/ledger-source.ts`. The local engine mounts these routes,
 // so an edge from here into the hosted half would ship it.
 import { clientIdempotencyKey } from "@trafficflow/db";
+import { BODY_PRELOAD_IDS_MAX, BODY_PRELOAD_LIMIT_HEADER } from "@trafficflow/core/drain-policy";
 import { ServiceError, parseReaderZone } from "@trafficflow/services/mail";
 import type { AnswerOf, RequestOf, UntrustedBody } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
@@ -93,7 +94,9 @@ export const messageRoutes: Route[] = [
       // account's first fifty bodies.
       const idsRaw = url.searchParams.get("ids");
       const ids = idsRaw === null ? undefined : idsRaw.split(",").map((s) => s.trim()).filter((s) => s !== "");
-      const page = await message(deps).getBodies(serviceContext(deps, req), { after, limit, ids });
+      const page = await message(deps).getBodies(serviceContext(deps, req), {
+        after, limit, ids, preload: req.headers.get(BODY_PRELOAD_LIMIT_HEADER) === String(BODY_PRELOAD_IDS_MAX),
+      });
       return answer<"GET /messages/bodies">()({ items: page.items, nextCursor: page.nextCursor });
     },
   },

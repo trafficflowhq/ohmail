@@ -739,6 +739,7 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.fetchBodies
           ? { fetchBodies: gatedRead(adapter.fetchBodies.bind(adapter), "a thread's message bodies") }
           : {}),
+        ...(adapter.bodyPreloadLimit ? { bodyPreloadLimit: adapter.bodyPreloadLimit.bind(adapter) } : {}),
 
         /**
          * THE DRAFT'S OWN TEXT — `GET /drafts/:id`, forwarded, gated, spread, on the three rules

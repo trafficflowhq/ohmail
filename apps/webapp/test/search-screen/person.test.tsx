@@ -481,6 +481,23 @@ describe.each(["desktop", "phone"] as const)("resting Search on %s", (device) =>
     expect(screen.queryByText(caption)).toBeNull();
     expect(screen.queryByRole("heading", { name: /^People/ })).toBeNull();
   });
+
+  it("only reads the mailbox total once the restored query is cleared", async () => {
+    let reads = 0;
+    const caption = `${(4567).toLocaleString("en")} messages`;
+    await search([BEN], {
+      plan, query: "Kiln", searchBy: "people", store: page([BEN]), side: people,
+      readMailboxTotal: async () => { reads += 1; return 4567; },
+    });
+    expect(reads).toBe(0);
+    await type("");
+    expect(screen.getByText(caption)).not.toBeNull();
+    await type("Kiln");
+    expect(screen.queryByText(caption)).toBeNull();
+    await type("");
+    expect(screen.getByText(caption)).not.toBeNull();
+    expect(reads).toBe(1);
+  });
 });
 
 it("keeps the refine controls while a query waits and after both kinds of answer", async () => {
