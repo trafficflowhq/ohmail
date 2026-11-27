@@ -229,6 +229,7 @@ export interface Writing {
   readonly composeSaveRefused: boolean;
   /** The letter came back from the last session. */
   readonly composeResumed: boolean;
+  readonly restoreClosedCompose?: () => void;
   readonly composeWaitNote: string | null;
   readonly composeCloseRefusal: string | null;
   readonly composeHistoryTarget?: { readonly messageId: string; readonly forward: boolean } | null;

@@ -3,8 +3,8 @@
  * subject at the head, the shell's editor as its text, what happened to it over its lines, and its verbs at the foot.
  * Every word, person and file lives in the composition; this view holds the open lines and nothing of the letter.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { Composer, Sheet, type RecipientsProps } from "@ohmail/ui/mail";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Composer, SendStatus, Sheet, type RecipientsProps } from "@ohmail/ui/mail";
 import { COMPOSE_SEND_KEY, sendRefusal } from "@ohmail/app-logic/writing/mail-send";
 import { useFocusFollows } from "@ohmail/app-logic/keys";
 import type { PaneProps } from "../frame/contract.js";
@@ -112,7 +112,7 @@ export function Letter({ keysHere, plan }: PaneProps) {
           forwarded={forwarded.forwarded}
           files={files.files}
           note={letterNote(
-            { wait: w.composeWaitNote, send: forkSaid(w) ? null : lines.foot },
+            { wait: w.composeWaitNote, send: letterSendNote(w, tc, lines.foot) },
             saving,
             long.line ?? empty.line,
             draft?.notice ?? null,
@@ -154,6 +154,17 @@ export function Letter({ keysHere, plan }: PaneProps) {
       />
     </>
   );
+}
+
+function letterSendNote(w: Writing, t: ReturnType<typeof useText>, foot: ReactNode): ReactNode {
+  if (w.restoreClosedCompose) {
+    return (
+      <SendStatus place="foot" acts={[{ label: t("restoreDraft"), onPress: w.restoreClosedCompose }]}>
+        {t("recoveredFromClosedTab")}
+      </SendStatus>
+    );
+  }
+  return forkSaid(w) ? null : foot;
 }
 
 function useComposeSending({ showSend, composeSend }: Writing): boolean {

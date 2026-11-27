@@ -99,9 +99,11 @@ export function createLive(engine: OhmailEngine, key: string): boolean {
  * ended. No sentence rides it, and it never deletes a row a send record names nor the row a send went
  * from (S(2)). A refused delete leaves one more draft, never a lost one.
  */
-export function dropCopy(engine: OhmailEngine, lane: string, row: string, sentRow: string | null, scope: StorageScope): void {
+export function dropCopy(
+  engine: OhmailEngine, lane: string, row: string, sentRow: string | null, scope: StorageScope, ifContentRevision?: string,
+) {
   if (row === sentRow || sendRecordNames(lane, row, null, scope)) return;
-  void engine.mutate({ kind: "draft_discard", draftId: row });
+  return engine.mutate({ kind: "draft_discard", draftId: row, ...(ifContentRevision ? { ifContentRevision } : {}) });
 }
 
 /** At most this many keys are stored per editor: keys only, never words. */

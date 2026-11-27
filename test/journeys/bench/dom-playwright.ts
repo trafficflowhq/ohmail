@@ -75,6 +75,24 @@ export class PlaywrightPerson implements Person {
     await this.page.route("**/*", (route) => route.abort("internetdisconnected"));
   }
 
+  async goOnline(): Promise<void> {
+    await this.page.unroute("**/*");
+    await this.context.setOffline(false);
+  }
+
+  async closeTab(): Promise<void> {
+    const closed = this.page.waitForEvent("close");
+    await this.page.close({ runBeforeUnload: true });
+    await closed;
+  }
+
+  async restartForNewBuild(): Promise<void> {
+    const version = (url: URL) => url.origin === this.origin && url.pathname === "/version";
+    await this.page.route(version, (route) => route.fulfill({ json: { build: "next-fixture-build" } }), { times: 1 });
+    await this.page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await Promise.all([this.page.waitForEvent("domcontentloaded"), this.act("press", "reload-update")]);
+  }
+
   async goOfflineWhileOpeningSettings(): Promise<void> {
     const previous = this.page.url();
     let held = false;
@@ -191,6 +209,7 @@ export class PlaywrightPerson implements Person {
       description: (await attr("aria-description")) ?? "", pressed: await attr("aria-pressed"),
       selected: await attr("aria-selected"), current: await attr("aria-current"),
       expanded: await attr("aria-expanded"), checked: await attr("aria-checked"), disabled: await target.isDisabled(),
+      editable: await target.isEditable().catch(() => false),
     };
   }
 
@@ -323,6 +342,75 @@ export class PlaywrightPerson implements Person {
       Object.fromEntries(Object.keys(localStorage).sort().map((k) => [k, localStorage.getItem(k) ?? ""])));
     const global = new RegExp(marks.source, marks.flags.includes("g") ? marks.flags : `${marks.flags}g`);
     return Object.fromEntries(Object.entries(all).map(([k, v]) => [k, [...new Set(v.match(global) ?? [])].sort()]));
+  }
+
+  async holdMirrorWrites(): Promise<void> {
+    await this.page.evaluate(async () => {
+      const name = (await indexedDB.databases()).find((db) => db.name?.startsWith("ohmail-mirror:"))?.name;
+      if (!name) throw new Error("The browser mirror is missing");
+      await new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open(name);
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          const transaction = db.transaction(["meta", "entities"], "readwrite");
+          transaction.onabort = () => db.close();
+          transaction.oncomplete = () => db.close();
+          const store = transaction.objectStore("meta");
+          const keepOpen = (): void => {
+            const read = store.get("wait-for-the-tab-to-close");
+            read.onsuccess = () => {
+              resolve();
+              keepOpen();
+            };
+            read.onerror = () => reject(read.error);
+          };
+          keepOpen();
+        };
+      });
+    });
+  }
+
+  async storedWriting(words: string, draftSubject?: string): Promise<string[]> {
+    const other = await this.context.newPage();
+    try {
+      await other.goto(`${this.origin}/api/hello`, { waitUntil: "commit" });
+      return await other.evaluate(async ({ needle, subject }) => {
+        const copies = await Promise.all((await indexedDB.databases())
+          .filter(({ name }) => name?.startsWith("ohmail-mirror:"))
+          .map(({ name }) => new Promise<string[]>((resolve, reject) => {
+            const open = indexedDB.open(name!);
+            open.onerror = () => reject(open.error);
+            open.onsuccess = () => {
+              const db = open.result;
+              const read = db.transaction("entities").objectStore("entities").getAll();
+              read.onerror = () => { db.close(); reject(read.error); };
+              read.onsuccess = () => {
+                const labels = read.result.flatMap(({ type, entity }) => {
+                  if (subject !== undefined && type === "draft" && entity?.subject === subject && entity.status === "sent") {
+                    return ["sent-draft"];
+                  }
+                  if (entity == null || !JSON.stringify(entity).includes(needle)) return [];
+                  if (type === "draft" && entity.status === "draft") return ["draft"];
+                  if (type === "outbox_entry" || type === "outbox_abandoned") {
+                    return [`${type}:${entity.mutation?.kind ?? ""}:${entity.lastError?.code ?? ""}`];
+                  }
+                  return [];
+                });
+                db.close();
+                resolve(labels);
+              };
+            };
+          })));
+        const beforeOutbox = Object.keys(localStorage)
+          .filter((key) => key.startsWith("ohmail.send.locks."))
+          .flatMap((key) => JSON.parse(localStorage.getItem(key) ?? "[]"))
+          .some((row) => row?.beforeOutbox?.mutation?.body?.includes(needle));
+        return [...copies.flat(), ...(beforeOutbox ? ["pressed-send"] : [])].sort();
+      }, { needle: words, subject: draftSubject });
+    } finally {
+      await other.close();
+    }
   }
 
   async keep(key: string, value: string): Promise<void> {

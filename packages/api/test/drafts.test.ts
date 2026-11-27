@@ -42,6 +42,42 @@ describe("drafts CRUD + X-Sync-Seq", () => {
     expect((await H(req("GET", `/drafts/${draft.id}`, { bearer: s.token }), deps)).status).toBe(404);
   });
 
+  it("finds the first save's original revision only while the account still holds its draft", async () => {
+    const { db, deps } = await makeDeps();
+    const owner = await seedSession(db, { now: FIXED_NOW });
+    const other = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: owner.accountId });
+    const key = crypto.randomUUID();
+    const byCreate = `/drafts/${key}?by=create-key`;
+    const missing = await H(req("GET", byCreate, { bearer: owner.token }), deps);
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ error: { code: "draft_create_missing" } });
+    const created = await H(req("POST", "/drafts", {
+      bearer: owner.token, headers: { "idempotency-key": key },
+      body: JSON.stringify({ mailboxId, subject: "First words", body: "An unfinished letter." }),
+    }), deps);
+    expect(created.status).toBe(201);
+    const first = await created.json();
+    const path = `/drafts/${first.id}`;
+    const saved = await H(req("PUT", path, {
+      bearer: owner.token, body: JSON.stringify({ body: "A later edit on another device." }),
+    }), deps);
+    expect(saved.status).toBe(200);
+    const later = await saved.json();
+
+    const found = await H(req("GET", byCreate, { bearer: owner.token }), deps);
+    expect(found.status).toBe(200);
+    expect(await found.json()).toMatchObject({
+      id: first.id, createdRevision: first.contentRevision, contentRevision: later.contentRevision,
+    });
+    expect(later.contentRevision).not.toBe(first.contentRevision);
+    expect((await H(req("GET", byCreate, { bearer: other.token }), deps)).status).toBe(404);
+    expect((await H(req("DELETE", path, { bearer: owner.token }), deps)).status).toBe(204);
+    const deleted = await H(req("GET", byCreate, { bearer: owner.token }), deps);
+    expect(deleted.status).toBe(404);
+    expect(await deleted.json()).toMatchObject({ error: { code: "not_found" } });
+  });
+
   it("keeps a newer save when Discard names the reader's earlier revision", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });

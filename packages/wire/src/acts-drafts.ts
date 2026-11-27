@@ -60,6 +60,10 @@ export type SendAct =
        * sending: the debounce means the last two seconds of typing may not have reached the row.
        */
       draftId?: string;
+      /** The first autosave's key when Send was pressed before the composer learned its row. */
+      draftCreateKey?: string;
+      /** When that key was minted, to stay within the server's create deduplication window. */
+      draftCreateAt?: number;
       /**
        * The version of {@link draftId}'s row the editor's words are based on: the send's PUT states
        * it, and a row moved off it refuses the edit and sends nothing. Not part of the fingerprint.

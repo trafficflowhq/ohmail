@@ -1758,6 +1758,7 @@
     "closeNotSaved": "This draft couldn't be saved, so it stayed open here.",
     "closeNotSavedReason": "This draft couldn't be saved: {reason}. It stayed open here.",
     "recoveredFromClosedTab": "A message from a tab that closed unexpectedly is back in Compose.",
+    "restoreDraft": "Restore draft",
     "keyLeave": "Keep as draft",
     "keyCloseConfirm": "Keep writing",
     "keySend": "Send",

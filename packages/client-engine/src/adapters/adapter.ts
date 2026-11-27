@@ -112,6 +112,8 @@ export interface DraftBodyRead {
   html: string | null;
   /** The generated draft's rationale. Absent when the fetch did not report it. */
   rationale?: string | null;
+  /** The version these bytes came from, when given by the server. */
+  contentRevision?: string;
 }
 
 export interface EngineAdapter {
@@ -215,6 +217,8 @@ export interface EngineAdapter {
    * `EngineDraft.body`.
    */
   fetchDraftBody?(draftId: string): Promise<DraftBodyRead | string | null>;
+  /** The first autosave's receipt, null for a vacant key, or undefined when the server cannot attest either. */
+  draftFromCreate?(key: string): Promise<CreatedDraftRow | null | undefined>;
 
   /**
    * Fetch one message's body text, or `null` when this adapter serves no

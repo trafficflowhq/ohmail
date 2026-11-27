@@ -334,7 +334,7 @@ export interface Routes {
 
   // ── drafts and sending ──────────────────────────────────────────────────────
   "POST /drafts": { params: None; body: CreateDraftBody; answer: DraftDTO };
-  "GET /drafts/:id": { params: Id; body: never; answer: DraftDTO };
+  "GET /drafts/:id": { params: Id; body: never; answer: DraftDTO & { createdRevision?: string } };
   "PUT /drafts/:id": { params: Id; body: PatchDraftBody & { ifContentRevision?: string }; answer: DraftDTO };
   "DELETE /drafts/:id": { params: Id; body: never; answer: null };
   "DELETE /drafts/:id/conditional": { params: Id; body: never; answer: null };

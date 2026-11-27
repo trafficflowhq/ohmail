@@ -3,6 +3,7 @@ import {
   requireUuid, parseReaderLocale, parseReaderZone,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
+import { lookupIdempotent } from "../idempotency.js";
 import { answer, answerBuilt } from "../responses.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { SEND_KEY_MAX, sendDepsOf, sendKeyOf } from "../send-deps.js";
@@ -184,8 +185,22 @@ export const draftsRoutes: Route[] = [
     relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
-      const dto = await drafts(deps).get(serviceContext(deps, req), params.id!);
-      return answer<"GET /drafts/:id">()(dto);
+      const ctx = serviceContext(deps, req);
+      if (new URL(req.url).searchParams.get("by") === "create-key") {
+        const key = params.id!;
+        const receipt = key.length <= SEND_KEY_MAX ? await lookupIdempotent(deps.db, ctx.accountId, key, ctx.now()) : null;
+        if (key.length <= SEND_KEY_MAX && receipt === null) {
+          throw new ServiceError("draft_create_missing", 404, "draft create not found");
+        }
+        const created = receipt?.responseJson as { id?: unknown; status?: unknown; contentRevision?: unknown } | null;
+        if (!receipt || receipt.responseStatus !== 201 || receipt.erasedAt || created?.status !== "draft"
+          || typeof created.id !== "string" || typeof created.contentRevision !== "string") {
+          throw new ServiceError("not_found", 404, "draft not found");
+        }
+        const dto = await drafts(deps).get(ctx, created.id);
+        return answer<"GET /drafts/:id">()({ ...dto, createdRevision: created.contentRevision });
+      }
+      return answer<"GET /drafts/:id">()(await drafts(deps).get(ctx, params.id!));
     },
   },
   {

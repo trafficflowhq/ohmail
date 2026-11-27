@@ -753,6 +753,9 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.fetchDraftBody
           ? { fetchDraftBody: gatedRead(adapter.fetchDraftBody.bind(adapter), "a draft's text") }
           : {}),
+        ...(adapter.draftFromCreate
+          ? { draftFromCreate: gatedRead(adapter.draftFromCreate.bind(adapter), "a draft's first save") }
+          : {}),
 
         /**
          * FORWARDED, NOT GATED ON CADENCE, REFUSED WHEN CONTRADICTED — `fetchBody`'s rule, both halves. One request

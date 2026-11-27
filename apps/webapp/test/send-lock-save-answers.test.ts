@@ -15,6 +15,8 @@
  * and no event arrives, which is the red-before.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
+import { createSyncGate } from "@ohmail/app-logic/session/sync-scheduler";
 
 import {
   DURABILITY_LOST_EVENT,
@@ -25,9 +27,12 @@ import {
 import {
   SEND_LOCK_FORMAT,
   claimSendLock,
+  recordForEndedSend,
   releaseSendLock,
+  resumeSendLock,
   sendLocksKey,
   sendRecordNames,
+  writeBeforeOutbox,
   type SendLock,
 } from "@ohmail/app-logic/writing/send-lock";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
@@ -64,6 +69,19 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
+it("a pressed Send can look up the first save while polling is paused", async () => {
+  const adapter = Object.assign(new FixturesAdapter(), {
+    draftFromCreate: vi.fn(async (_key: string) => null),
+  });
+  const gate = createSyncGate(null);
+  const wrapped = gate.guard(adapter);
+  gate.claim(() => false);
+
+  await expect(wrapped.draftFromCreate?.("first-save-key")).resolves.toBeNull();
+  expect(adapter.draftFromCreate.mock.calls).toEqual([["first-save-key"]]);
+  await expect(wrapped.sync({ since: "0" })).rejects.toThrow(/sync aborted/);
+});
+
 describe("the send lock answers for a write the jar refused", () => {
   it("checking which draft a send holds leaves the stored claims untouched", () => {
     const key = sendLocksKey(OWNER);
@@ -74,6 +92,27 @@ describe("the send lock answers for a write the jar refused", () => {
     expect(window.localStorage.getItem(key)).toBe(saved);
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("unavailable"); });
     expect(sendRecordNames("compose", "another", null, OWNER)).toBe(true);
+  });
+
+  it("keeps a pressed letter while another composer starts sending its own", () => {
+    const first = lockOf({ session: "first-message" });
+    claimSendLock(first, NONE_OWED, OWNER);
+    const press = { composer: "first-window", mutation: {
+      kind: "mail_send" as const, draftCreateKey: "first-save", inReplyTo: null, body: "The first letter.",
+    } };
+    writeBeforeOutbox(first.key, press, OWNER);
+    expect(recordForEndedSend(first.key, OWNER)?.beforeOutbox).toEqual(press);
+
+    const second = lockOf({ key: "idem-key-2", fp: "fp-2", session: "second-message" });
+    expect(resumeSendLock(second.lane, {
+      fp: second.fp, subjects: [], session: second.session!, draftId: null,
+    }, second.at, NONE_OWED, OWNER)).toBeNull();
+    expect(recordForEndedSend(first.key, OWNER)?.beforeOutbox).toEqual(press);
+    claimSendLock(second, NONE_OWED, OWNER);
+    expect(recordForEndedSend(first.key, OWNER)?.beforeOutbox).toEqual(press);
+    expect(recordForEndedSend(second.key, OWNER)?.beforeOutbox).toBeUndefined();
+    writeBeforeOutbox(first.key, undefined, OWNER);
+    expect(recordForEndedSend(first.key, OWNER)?.beforeOutbox).toBeUndefined();
   });
 
   /** THE POSITIVE CONTROL: an ordinary jar stores the claim and says nothing. */
