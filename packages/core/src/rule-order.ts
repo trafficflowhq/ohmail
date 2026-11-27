@@ -10,6 +10,9 @@
 /** Explicit placements in one Screener release. The rule's backlog walk handles the remaining eligible mail. */
 export const SCREENER_RELEASE_MOVE_MAX = 500;
 
+/** The most undecided letters one Screener press may move, across all of its pages. */
+export const OHBOX_UNSCREENED_MESSAGES_MAX = 1000;
+
 /** Whether a rule lets the sender through the gate or holds them at it. */
 export type RuleEffect = "allow" | "deny";
 

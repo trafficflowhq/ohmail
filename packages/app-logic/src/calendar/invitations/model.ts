@@ -6,8 +6,9 @@
 import { momentOrUtc, type ZoneSource } from "@ohmail/cal-core";
 import type { CalendarConnectionRecord, CalendarEventRecord } from "@ohmail/wire";
 import { viewOnlyOf } from "../offers.js";
-import { daySpanOf } from "../spans/days.js";
-import type { ShownOccurrence } from "../window.js";
+import { dayOfIso } from "../grid/days.js";
+import { addDays, daySpanOf } from "../spans/days.js";
+import { occurrencesIn, type OccurrenceInput, type ShownOccurrence } from "../window.js";
 import type { InvitationRow } from "./contract.js";
 
 export interface InvitationsInput {
@@ -88,6 +89,27 @@ export function invitationsOf(input: InvitationsInput): InvitationGroups {
     answered: rows.filter((r) => !r.cancelled && ANSWERED.has(r.answer)),
     waiting: toAnswer.length,
   };
+}
+
+/** Group the invitations in the calendar's upcoming mirrored window. */
+export function invitationsInWindow({
+  events,
+  calendars,
+  daysAhead,
+  ...input
+}: Omit<InvitationsInput, "occurrences"> &
+  Pick<OccurrenceInput, "events" | "calendars"> & { daysAhead: number }): InvitationGroups | null {
+  const from = dayOfIso(input.todayKey);
+  const to = from === null ? null : dayOfIso(addDays(input.todayKey, daysAhead));
+  if (from === null || to === null) return null;
+  const occurrences = occurrencesIn({
+    events,
+    calendars,
+    query: { from, to },
+    zone: input.zone,
+    zones: input.zones,
+  }).shown;
+  return invitationsOf({ ...input, occurrences });
 }
 
 /** The count the calendar's rail and its switch say. */

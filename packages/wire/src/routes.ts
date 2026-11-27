@@ -311,8 +311,8 @@ export interface Routes {
   "POST /screener/unscreened": {
     params: None;
     /** Absent `addresses` screens EVERY group shown. */
-    body: { addresses?: string[]; pile?: UnscreenedPileWire };
-    answer: { screened: UnscreenedGroupWire[]; total: number };
+    body: { addresses?: string[]; pile?: UnscreenedPileWire; after?: string };
+    answer: { screened: UnscreenedGroupWire[]; total: number; next?: string };
   };
 
   // ── tags and folders ────────────────────────────────────────────────────────

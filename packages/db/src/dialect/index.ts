@@ -832,9 +832,17 @@ export interface Dialect {
    */
   exec(db: unknown, statement: SQL): Promise<unknown[][]>;
 
-  /** Read candidate sender keys on the Screener page's transaction and return them as a SQL set.
-   * Null when this store reads the candidates as part of the page statement. */
-  screenerActivityCandidates(tx: unknown, query: SQL): Promise<SQL | null>;
+  /** Disable PostgreSQL JIT for the current transaction's Screener reads. */
+  disableLocalJit(db: unknown): Promise<void>;
+
+  /** Read a bounded slice of the server's subject index for thread repair. SQLite groups by subject directly. */
+  threadJoinSeeds(db: unknown, opts: {
+    table: SQL;
+    accountId: string | undefined;
+    cursor: { accountId: string; subject: string; threadId?: string } | null;
+    seedLimit: number;
+    threadLimit: number;
+  }): Promise<unknown[][] | null>;
 
   /**
    * FOLD THE WRITE-AHEAD LOG IN once it has grown past `foldBytes`, and say what that did.

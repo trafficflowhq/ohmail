@@ -11,8 +11,9 @@ import {
   sweepExpiredStagingFor, horizonOf, SIGN_IN_RECORD_RETENTION_MS, AUTH_EVENTS_RETENTION_MS, CONNECT_ATTEMPTS_RETENTION_MS,
   AUDIT_LOG_RETENTION_MS, WEBAUTHN_CHALLENGE_RETENTION_MS, OAUTH_CEREMONY_RETENTION_MS, DEVICE_CEREMONY_RETENTION_MS,
   ERASED_NOTICE_KEEP_YEARS, ERASED_REFRESH_KEEP_DAYS, AUTH_THROTTLE_RETENTION_MS, resyncMailbox,
+  pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS,
 } from "@trafficflow/db/cloud";
-import { ACCOUNT_TABLES, pruneIdempotencyKeys, pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS } from "@trafficflow/db";
+import { ACCOUNT_TABLES, pruneIdempotencyKeys } from "@trafficflow/db";
 import { accountRows, accountRowsAnswered, ACCOUNT_VIEW_RELATIONS, ACCOUNT_VIEWS, viewName, viewStatement } from "@trafficflow/db/cloud";
 import { lockCensus, switchLock, viewComment } from "@trafficflow/db/admin";
 import {

@@ -183,7 +183,7 @@ const READERS = new Set([
   "packages/core/src/message-search.ts",
   "packages/core/src/adapters/drizzle-repo.ts",
   "packages/services/src/search-service.ts",
-  "packages/services/src/account-deletion-service.ts",
+  "packages/db/src/account-deletion-service.ts",
   "packages/db/src/mailbox-erasure.ts",
   "packages/api/src/routes/health-markers.ts",
   "apps/sidecar/src/local-mirror.ts",

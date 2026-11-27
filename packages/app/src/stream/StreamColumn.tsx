@@ -17,6 +17,7 @@ import { estimateCardHeight } from "@ohmail/ui/stream-estimate";
 import { useFrame, useSelectionBar } from "../frame/commands.js";
 import { NONE } from "../host/index.js";
 import { useLocale, useText, useTimeZone } from "../text/index.js";
+import { ListTouch, useGroundPull } from "../touch/index.js";
 import { ReceiptEvents } from "./ReceiptEvents.js";
 import { receiptAmount, useStreamText } from "./words.js";
 
@@ -60,7 +61,8 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
     clip,
     viewport,
   } = state;
-  const { armed, restores, start, end, attach, column, width, padTopPx, padBottomPx, near } = viewport;
+  const { armed, restores, start, end, attach, root, column, width, padTopPx, padBottomPx, near } = viewport;
+  const pull = useGroundPull();
   const open = useStableCallback(model.open);
   const closeAddress = useStableCallback((id: string) => {
     if (model.addressedId === id) commands.open(null);
@@ -69,15 +71,19 @@ function StreamColumnBody({ phone, keysHere, selection }: StreamColumnProps) {
   // On a phone the opening slice can paint early if it is where the visit starts.
   const drawCards = armed || (phone && !restores);
   const shown = drawCards ? model.items.slice(start, end) : [];
-  const panel = streamPanel(state, phone, state.panelVisible);
   return (
     <Sheet
       kind="reading"
       label={t("stream.label")}
       scroller={attach}
+      head={
+        phone ? (
+          <ListTouch scroller={root} pull={pull} off={!showActions} rowSwipe={false} run={false} />
+        ) : undefined
+      }
       manualScrollAnchor={shown.length > 0}
       extendTop={!phone}
-      foot={panel}
+      foot={streamPanel(state, phone, state.panelVisible)}
       jump={
         <StreamBackToTop scroller={model.scroller} keysHere={keysHere} onPress={() => backToTop(model)} />
       }

@@ -70,6 +70,13 @@ const PATHS = {
   filter: "M3 4.6h10M4.8 8h6.4M6.6 11.4h2.8",
   sidebar: "M6.5 3.2v9.6",
   mic: "M4 8.2a4 4 0 0 0 8 0M8 12.2v1.4",
+
+  // Settings signs, from the web icon set on the native 16-point grid.
+  settings: "M2.67 5.33h6m2.66 0h2M2.67 10.67h2m2.66 0h6",
+  bell: "M4.33 11V7.33a3.67 3.67 0 0 1 7.34 0V11M3 11h10m-6.33 2a1.33 1.33 0 0 0 2.66 0",
+  mail: "m2.67 4.67 5.33 4.33 5.33-4.33",
+  disk: "M3.33 4.33a4.67 1.87 0 1 0 9.34 0 4.67 1.87 0 1 0-9.34 0zm0 0v7.34c0 2.5 9.34 2.5 9.34 0V4.33m-9.34 3.67c0 2.5 9.34 2.5 9.34 0",
+  key: "M7.67 8h5.66m-2 0v2",
 } as const;
 
 /** Icons that need a circle the path cannot carry — kept beside the path data. */
@@ -85,12 +92,15 @@ const CIRCLES: Partial<Record<IconName, { cx: number; cy: number; r: number }[]>
   info: [{ cx: 8, cy: 8, r: 5.8 }],
   tag: [{ cx: 5.6, cy: 5.6, r: 0.9 }],
   junk: [{ cx: 8, cy: 8, r: 5.6 }],
+  settings: [{ cx: 10, cy: 5.33, r: 1.33 }, { cx: 6, cy: 10.67, r: 1.33 }],
+  key: [{ cx: 5.33, cy: 8, r: 2.33 }],
 };
 
 /** Icons that need a rounded rect beside their path — the prototype's `<rect>` halves. */
 const RECTS: Partial<Record<IconName, { x: number; y: number; w: number; h: number; rx: number }[]>> = {
   sidebar: [{ x: 2.4, y: 3.2, w: 11.2, h: 9.6, rx: 1.8 }],
   mic: [{ x: 6.2, y: 2.4, w: 3.6, h: 7, rx: 1.8 }],
+  mail: [{ x: 2.33, y: 3.67, w: 11.34, h: 8.66, rx: 1.33 }],
 };
 
 export interface IconProps extends Omit<SvgProps, "color"> {
@@ -136,6 +146,50 @@ export function Icon({ name, size = 15, color, weight = 1.3, ...rest }: IconProp
         strokeLinejoin="round"
         fill="none"
       />
+    </Svg>
+  );
+}
+
+
+/** The compact web mail navigation signs, drawn on the same 24-point grid. */
+const NAVIGATION_PATHS = {
+  ohbox: "M4 13.5 6.2 6h11.6L20 13.5V18a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z M4 13.5h4.5a3.5 3.5 0 0 0 7 0H20",
+  screener: "M7 20V5a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v15 M4 20h16 M13.7 12.2v.6",
+  reads: "M12 6.5C10.3 5.2 8 4.8 4 5v13c4-.2 6.3.2 8 1.5 1.7-1.3 4-1.7 8-1.5V5c-4-.2-6.3.2-8 1.5z M12 6.5v13",
+  receipts: "M6 3.5h12v17l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4-2 1.4z M9 8.5h6 M9 12.5h6",
+  more: "M6 11.8v.4 M12 11.8v.4 M18 11.8v.4",
+  search: "m16 16 4 4",
+  down: "M6 9.5l6 6 6-6",
+  pen: "M5 19l1-4.5L16.8 3.7a2 2 0 0 1 2.9 2.8L8.9 17.4z M14.5 6l3.5 3.5",
+  calendar: "M4 10.5h16 M8.5 3.5v4 M15.5 3.5v4",
+  later: "M7 4h10 M7 20h10 M8 4c0 4 4 5 4 8s-4 4-4 8 M16 4c0 4-4 5-4 8s4 4 4 8",
+  parked: "M10 9v6 M14 9v6",
+  resurface: "M4 19h16 M12 15V5 M7.5 9.5 12 5l4.5 4.5",
+  move: "M4 7a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h7A1.5 1.5 0 0 1 20 9.5V17a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17z M9 13.5h6 M12.8 11.2l2.3 2.3-2.3 2.3",
+  unread: "M14.6 6.5H5.5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-5.2 M4 8.2l8 5.6 3.4-2.4",
+  history: "M4.5 12A7.5 7.5 0 1 0 12 4.5c-2.1 0-4.1.85-5.6 2.3L4.5 8.5 M4.5 4.5v4h4 M12 8v4.2l2.8 1.8",
+  drafts: "M7.5 3.5H14l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5a1.5 1.5 0 0 1 1.5-1.5z M14 3.5V8h4 M9 13h6 M9 16.5h4",
+  trash: "M5 7h14 M9.5 7V4.5h5V7 M7 7l.8 12a1.5 1.5 0 0 0 1.5 1.5h5.4a1.5 1.5 0 0 0 1.5-1.5L17 7",
+  settings: "M4 8h9 M17 8h3 M4 16h3 M11 16h9",
+  pull: "M19.5 12A7.5 7.5 0 1 1 12 4.5c2.1 0 4.1.85 5.6 2.3l1.9 1.7 M19.5 4.5v4h-4",
+  moon: "M19.5 14.2A7.8 7.8 0 0 1 9.8 4.5a7.8 7.8 0 1 0 9.7 9.7z",
+  sun: "M12 3.5v2 M12 18.5v2 M3.5 12h2 M18.5 12h2 M6 6l1.4 1.4 M16.6 16.6 18 18 M18 6l-1.4 1.4 M7.4 16.6 6 18",
+} as const;
+
+export type NavigationIconName = keyof typeof NAVIGATION_PATHS;
+
+export function NavigationIcon({ name, color, size = 20 }: { name: NavigationIconName; color: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+      strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      {name === "search" ? <Circle cx={11} cy={11} r={6.5} /> : null}
+      {name === "settings" ? <><Circle cx={15} cy={8} r={2} /><Circle cx={9} cy={16} r={2} /></> : null}
+      {name === "sun" ? <Circle cx={12} cy={12} r={3.6} /> : null}
+      {name === "unread" ? <Circle cx={19} cy={6} r={2.6} fill={color} stroke="none" /> : null}
+      {name === "parked" ? <Rect x={4.5} y={4.5} width={15} height={15} rx={3} /> : null}
+      {name === "calendar" ? <Rect x={4} y={5.5} width={16} height={14.5} rx={2.5} /> : null}
+      {name === "calendar" ? <Path d="M8.6 15v.4" strokeWidth={2.6} /> : null}
+      <Path d={NAVIGATION_PATHS[name]} strokeWidth={name === "more" ? 2.8 : undefined} />
     </Svg>
   );
 }

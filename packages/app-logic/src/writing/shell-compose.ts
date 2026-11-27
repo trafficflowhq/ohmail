@@ -526,7 +526,7 @@ export function useShellCompose({
   const readyWaiters = useRef<Array<() => void> | null>([]);
   useEffect(() => whenComposerReady(() => {
     const saved = readComposeDraft(scope);
-    if (saved.to || saved.subject || saved.body) {
+    if (saved.to || saved.cc || saved.bcc || saved.subject || saved.body) {
       // The account may not hold it (a tab closed inside the pause, or died): written at this open.
       restoredRef.current();
       const rowId = saved.aiDraft === undefined ? readComposeRow(scope) : null;

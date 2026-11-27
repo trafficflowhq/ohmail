@@ -804,6 +804,7 @@ function emptyWorld(actions: WorldActions, accountFace: FaceName | null = null):
     // Nothing is connected, so there is nothing to search and no index owed: `indexing: false`
     // with zero coverage is "an answer over nothing", never a build that will not come.
     search: {
+      people: [],
       query: () => ({ items: [], similar: [], coverageMessages: 0, indexing: false }),
       address: () => ({ items: [], counts: { any: 0, from: 0, to: 0 }, indexing: false }),
       warm: () => undefined,
@@ -883,7 +884,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The DEVICE half of the face lives in the prefs store (above this provider), and the account
      half is here. Signed in, this layer clears the pin once the account holds the look; it sets
      one only for a press (`face-scope.ts`). */
-  const { facePin, setFacePin, faceMirror, setFaceMirror } = usePrefs();
+  const { facePin, setFacePin, faceOnlyHere, faceMirror, setFaceMirror } = usePrefs();
 
   const session = conn.state.k === "live" ? conn.state.session : null;
   const engine = session?.engine ?? null;
@@ -1041,11 +1042,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * {@link World.mailboxes.known} publishes). Nothing on this phone ever writes a mailbox, so
    * freshest-successful-read-wins is the whole rule — the signatures' exact situation, using
    * the same `freshestRead` wrapper for the same race: two overlapping reads settling out of
-   * issue order. A session swap resets it to `null` below, beside the signatures and the face:
-   * account A's mailbox addresses must never make account B's reader recognisable, which is
-   * why this is state rather than a ref.
+   * issue order. This answer belongs to the session that read it, including the first render
+   * after a switch. No mailbox address or folder from the outgoing account survives that render.
    */
-  const [mailboxes, setMailboxes] = useState<readonly PhoneMailbox[] | null>(null);
+  const [mailboxRead, setMailboxRead] = useState<{ session: ConnectedSession; rows: readonly PhoneMailbox[] } | null>(null);
+  const mailboxes = mailboxRead && mailboxRead.session === session ? mailboxRead.rows : null;
   /**
    * The waiting queue as the server holds it (`GET /screener`), or `null` until a read succeeds
    * this session — and `null` for the whole life of a STANDALONE session, where this phone is the
@@ -1065,9 +1066,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * is also where a fresh session starts — account A's face must never skin account B, the same
    * rule the signatures keep one field up.
    */
-  const [accountFace, setAccountFace] = useState<FaceName | null>(null);
-  /** See {@link World.face.known} — `accountFace: null` is ambiguous until this is true. */
-  const [accountFaceKnown, setAccountFaceKnown] = useState(false);
+  const [accountLook, setAccountLook] = useState<{ session: ConnectedSession; face: FaceName | null } | null>(null);
+  const accountFaceKnown = session !== null && accountLook?.session === session;
   const [facePending, setFacePending] = useState(false);
   /* The act on suggestions, as the account's consent read last said it; `null` = no axis yet. */
   const [screenerConsent, setScreenerConsent] = useState<{ owner: string; stored: number; pending: number } | null>(null);
@@ -1083,6 +1083,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    */
   const pinNow = useRef(facePin);
   pinNow.current = facePin;
+  const deviceOwnsPin = useRef(faceOnlyHere);
+  deviceOwnsPin.current = faceOnlyHere;
   /**
    * THE READER'S OWN ADDRESSES AS THEY STAND RIGHT NOW, readable at send time — the same shape
    * and the same reason as `pinNow` above. The actions facade is identity-stable by design and
@@ -1111,8 +1113,11 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The same lists without the held presses' overlay: a press's read-back reads it. */
   const unroutedNow = useRef<EntityReader | null>(null);
   /** When the mailbox facts were last read — a ref, so an unchanged answer rebuilds no projection. */
-  const mailboxesReadAt = useRef<number | null>(null);
-  const readMailboxesAt = useCallback(() => mailboxesReadAt.current, []);
+  const mailboxesReadAt = useRef<{ session: ConnectedSession; at: number } | null>(null);
+  const readMailboxesAt = useCallback(() => {
+    const read = mailboxesReadAt.current;
+    return read && read.session === session ? read.at : null;
+  }, [session]);
   /** The options that projection was partitioned with, for a screening press's forecast. */
   const presentedOptionsNow = useRef<ConsentOptions | null>(null);
   /** `conn.syncNow` behind a ref so the machine below keeps one identity across renders. */
@@ -1168,9 +1173,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       write: (face) => writeThemeFace(session, face),
       adopt: (face) => {
         if (faceCurrent.current !== faces) return;
-        setAccountFace(face);
-        // Adopting IS knowing: this value came from a successful read or a write's echo.
-        setAccountFaceKnown(true);
+        setAccountLook({ session, face });
       },
       /* The pin is released only on a confirmed write, only while this session still owns the
          machine (a late settle from a session the user has left must not touch the face of the
@@ -1182,6 +1185,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         if (pinNow.current === submitted || pinNow.current === null) setFacePin(null);
       },
       pin: () => pinNow.current,
+      deviceOwnsPin: () => deviceOwnsPin.current === true,
       setPin: (face) => setFacePin(face),
       remember: (face) => {
         if (faceCurrent.current !== faces) return;
@@ -1227,7 +1231,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        CADENCE, because the two questions go stale together: another client claiming a mailbox
        writes the delta this drain just applied. */
     const boxRead = freshestRead<readonly PhoneMailbox[]>((ans) => {
-      if (current.current === m) setMailboxes(ans);
+      if (current.current === m) setMailboxRead({ session, rows: ans });
     });
     /* THE QUEUE READ, beside the mailbox read and on the same identity and cadence: the two go
        stale together, because the drain this fires after is the one that landed the moves the
@@ -1257,7 +1261,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         facts: [
           () => void boxRead(async () => {
             const ans = await readMailboxes(session);
-            if (ans !== null && current.current === m) mailboxesReadAt.current = Date.now();
+            if (ans !== null && current.current === m) mailboxesReadAt.current = { session, at: Date.now() };
             return ans;
           }),
         ],
@@ -1311,8 +1315,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // The mailboxes are the outgoing session's answer, for the signatures' reason exactly:
     // account A's addresses must not make account B's reader recognisable, and its holder must
     // not name a banner over B's mail.
-    setMailboxes(null);
-    mailboxesReadAt.current = null;
+    setMailboxRead((read) => read?.session === session ? read : null);
+    if (mailboxesReadAt.current?.session !== session) mailboxesReadAt.current = null;
     // And the queue, for the mailboxes' reason exactly: account A's waiting senders are not
     // account B's, and a stale set would name senders whose mail this mirror does not hold.
     setScreenerServer(null);
@@ -1322,8 +1326,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        account's state, so the next session starts with none and the device's own pin (which
        outranks it either way) is deliberately left alone — it belongs to the phone, not to
        whoever is signed in on it. */
-    setAccountFace(null);
-    setAccountFaceKnown(false);
+    setAccountLook((look) => look?.session === session ? look : null);
     setFacePending(false);
     // Account A's act consent says nothing about account B's.
     setAutoAct(null);
@@ -1381,7 +1384,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const applyFaceAllDevices = useCallback(
     async (face: FaceName): Promise<boolean> => {
       const f = faceCurrent.current;
-      if (!f) return false;
+      if (!f || current.current !== machine || !accountFaceKnown || session?.standalone || f.pending()) return false;
       setFacePending(true);
       try {
         return await f.applyAll(face);
@@ -1391,18 +1394,17 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         if (faceCurrent.current === f) setFacePending(false);
       }
     },
-    // `machine` is the dependency rather than `faceCurrent`: the two are built together, so this
-    // callback's identity moves exactly when the session's machines are rebuilt.
-    [machine],
+    [machine, accountFaceKnown, session?.standalone],
   );
   /* The kept look goes with the account it belongs to (`faceMirrorStands`). */
   useEffect(() => {
     if (faceMirror !== null && !faceMirrorStands(faceMirror, conn.state)) setFaceMirror(null);
   }, [faceMirror, conn.state, setFaceMirror]);
-  const shownFace = accountFaceShown(accountFace, accountFaceKnown, faceMirror, session?.ownerKey ?? null);
+  const shownFace = accountFaceShown(accountLook?.face ?? null, accountFaceKnown, faceMirror, session?.ownerKey ?? null);
   const chooseFace = useCallback(
     async (face: FaceName): Promise<boolean> => {
       const f = faceCurrent.current;
+      if (current.current !== machine || f?.pending()) return false;
       if (!f) {
         setFacePin(face);
         return true;
@@ -1587,6 +1589,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
            per session by design, so a captured value would reconcile against the queue as it
            stood at construction. The rule itself is `waitingAfterDecide`, beside the shelf it
            describes; nothing here decides who leaves. */
+        screenerOutcomeCurrent: () => current.current === machine,
         forgetWaiting: (decided) => {
           queueReadNow.current?.localWrite();
           setScreenerServer((prev) => waitingAfterDecide(prev, decided));
@@ -1606,7 +1609,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         },
       })
       : null),
-    [engine, showToast, zone, letters],
+    [engine, showToast, zone, letters, machine],
   );
   /** The restores waiting on this session's next reconnect flush (`RestoreDeps.afterFlush`). */
   const flushWaiters = useMemo((): (() => void)[] => [], [engine]);
@@ -2063,7 +2066,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         acknowledged: screenerConsent?.owner === sessionKey ? screenerConsent.stored | screenerConsent.pending : 0,
         remember: rememberScreener,
       },
-      draftReplies: draftConsent?.owner === sessionKey ? draftConsent?.allowed : undefined,
+      draftReplies: !session.standalone && draftConsent?.owner === sessionKey ? draftConsent?.allowed : undefined,
       autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
       signing: { ...sigMore, write: writeSignatureNow },
       seed,

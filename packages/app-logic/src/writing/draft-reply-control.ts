@@ -36,20 +36,23 @@ export interface DraftReplyControl {
    * The offer and the purchase in one press, for a control that states its cost on itself. Pressed again for the
    * same message after a failure it retries that purchase with its key; a press while one runs does nothing. `own` is
    * the person's own text in that reply as the press found it: kept as {@link own} once the draft lands over it.
+   * Returns whether the purchase started, as do {@link fromText} and {@link letter}.
    */
-  press: (messageId: string, own: RichValue, fullConversation?: boolean) => void;
+  press: (messageId: string, own: RichValue, fullConversation?: boolean) => boolean;
   /**
    * A draft made of the person's own words in the reply to this message, in one press, as {@link press} is: one key
    * per press, the same words pressed again after a failure retry that purchase, a press while one runs does nothing.
    * `none` where the host has no door for it: the control does not offer it.
    */
-  fromText: ((messageId: string, text: string, own: RichValue, fullConversation?: boolean) => void) | "none";
+  fromText:
+    ((messageId: string, text: string, own: RichValue, fullConversation?: boolean) => boolean) | "none";
   /**
    * A new letter drafted from the person's own words: the words, the address it goes from and its subject, as
    * {@link fromText} is pressed, kept under {@link NEW_LETTER}. `none` exactly when {@link fromText} is.
    */
   letter:
-    ((words: { text: string; mailboxId: string | null; subject: string }, own: RichValue) => void) | "none";
+    | ((words: { text: string; mailboxId: string | null; subject: string }, own: RichValue) => boolean)
+    | "none";
   /** {@link NEW_LETTER}: the new letter's `messageId` while its draft is out, and its entry of `own`. */
   letterId: string;
   /**

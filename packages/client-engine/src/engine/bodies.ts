@@ -1284,12 +1284,10 @@ export abstract class EngineBodies extends EngineWindowed {
    * after the answer shows the moved mail; never awaited, so the sentence is not held behind it.
    */
   async screenUnscreenedSenders(addresses?: readonly string[]): Promise<number> {
-    const press = this.adapter.screenUnscreened;
-    if (!press) return 0;
-    const out = await press.call(this.adapter, addresses);
-    void this.syncFresh().catch(() => { /* the press landed; the next poll catches up */ });
+    if (!this.adapter.screenUnscreened) return 0;
+    const total = await this.pressUnscreened(addresses);
     await this.refreshUnscreened();
-    return out.total;
+    return total;
   }
 
   /**
@@ -1316,11 +1314,25 @@ export abstract class EngineBodies extends EngineWindowed {
    * screened; one drain after it shows the moved letters, never awaited.
    */
   async screenPileUnscreened(pile: UnscreenedPileWire): Promise<number> {
+    return this.pressUnscreened(undefined, pile);
+  }
+
+  private async pressUnscreened(addresses?: readonly string[], pile?: UnscreenedPileWire): Promise<number> {
     const press = this.adapter.screenUnscreened;
     if (!press) return 0;
-    const out = await press.call(this.adapter, undefined, pile);
-    void this.syncFresh().catch(() => { /* the press landed; the next poll catches up */ });
-    return out.total;
+    let total = 0;
+    let after: string | undefined;
+    try {
+      for (let part = 0; part < UNSCREENED_PARTS_MAX; part++) {
+        const out = await press.call(this.adapter, addresses, pile, after);
+        total += out.total;
+        if (out.next === undefined) break;
+        after = out.next;
+      }
+      return total;
+    } finally {
+      void this.syncFresh().catch(() => { /* the next poll catches up */ });
+    }
   }
 
   /** Can this door read the waiting queue from the store at all? */

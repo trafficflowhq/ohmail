@@ -38,7 +38,9 @@ it.each([
   const title = `${phrase} ${label}`;
   // Studio keeps mailbox attribution in the message head and clears the list row of badges.
   expect(row.queryByTitle(title)).toBeNull();
-  expect(card.getByTitle(title).textContent).toBe(label);
+  const chip = card.getByRole("note", { name: title });
+  expect(chip.title).toBe(title);
+  expect(chip.textContent).toBe(label);
   const hint = (locale === "de" ? de : en).news.item.keyboardOpen;
   const unread = (locale === "de" ? readerDe : readerEn).message.rowUnread;
   expect(screen.getByRole("option", { name: /Issue 12/ }).getAttribute("aria-description"))

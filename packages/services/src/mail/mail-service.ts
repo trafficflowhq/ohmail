@@ -1,6 +1,6 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import type { Logger } from "@trafficflow/core";
-import { accountOfUser, users, type Tx } from "@trafficflow/db";
+import { users, type Tx } from "@trafficflow/db";
 import { authThrottle, loginTokens, type AlertDigest } from "@trafficflow/db/cloud";
 import { dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, runInTransaction, type Db, type ServiceContext } from "../context.js";
@@ -471,29 +471,32 @@ export class MailService {
    * factor. A failed send leaves the token unused (the send is outside the DB transaction by
    * design). `to` MUST be the user's own address: the token is bound to `userId` and `to` arrives
    * independently, so without this check a caller could mail a target's live verification token
-   * to an attacker-supplied inbox. Enforced at issue time against `users.email`.
+   * to an attacker-supplied inbox. The account fence, ownership check and token write share
+   * the transaction. Mail delivery runs after it commits.
    */
   async issueEmailVerification(
-    ctx: MailContext, input: { userId: string; to: string; locale?: MailLocale },
+    ctx: ServiceContext, input: { userId: string; to: string; locale?: MailLocale },
   ): Promise<MailSendResult> {
     // `unsolicited`, not `transactional` — see {@link MailQuota}. An anonymous caller on
     // `POST /auth/register` decides who receives this, so it may not spend the budget the
     // recipient's invite and security notices depend on.
     return this.guarded(ctx, input.to, "unsolicited", async (to) => {
-      const owner = (await asTx(ctx).select({ email: users.email }).from(users)
-        .where(eq(users.id, input.userId)).limit(1))[0];
-      if (!owner || normalizeRecipient(owner.email) !== to) {
-        return { status: "skipped", reason: "recipient_mismatch" };
-      }
-      const raw = generateToken();
-      const expiresAt = new Date(ctx.now().getTime() + this.cfg.emailVerifyTtlMs);
-      await asTx(ctx).insert(loginTokens).values({
-        userId: input.userId, accountId: accountOfUser(input.userId),
-        tokenHash: hashToken(raw),
-        methods: [],
-        purpose: EMAIL_VERIFY_PURPOSE,
-        expiresAt,
-      });
+      const raw = await runInTransaction<string | null | undefined>(ctx, async (txCtx) => {
+        const tx = asTx(txCtx);
+        const [owner] = await tx.select({ email: users.email }).from(users)
+          .where(and(eq(users.id, input.userId), eq(users.accountId, ctx.accountId))).limit(1);
+        if (!owner || normalizeRecipient(owner.email) !== to) return null;
+        const token = generateToken();
+        await tx.insert(loginTokens).values({
+          userId: input.userId, accountId: ctx.accountId,
+          tokenHash: hashToken(token),
+          methods: [],
+          purpose: EMAIL_VERIFY_PURPOSE,
+          expiresAt: new Date(txCtx.now().getTime() + this.cfg.emailVerifyTtlMs),
+        });
+        return token;
+      }, { fence: { accountId: ctx.accountId, onErased: () => undefined } });
+      if (raw == null) return { status: "skipped", reason: raw === undefined ? "account_erased" : "recipient_mismatch" };
       // NO idempotency key. Every re-execution mints a NEW credential, so deduping the
       // mail would leave the user holding a link for a token they never received. The
       // request itself has to be made idempotent one level up, by whoever calls this.

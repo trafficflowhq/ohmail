@@ -5,47 +5,6 @@
 import type { EngineMessage } from "@ohmail/wire";
 import type { RowPerson } from "@ohmail/ui/mail";
 
-/** The first word of a name. A name with no space, or one written "Last, First", stays whole. */
-export function firstNameOf(name: string): string {
-  const n = name.trim();
-  if (n.includes(",") || !/\s/.test(n)) return n;
-  return n.split(/\s+/)[0]!;
-}
-
-export interface RowWho {
-  /** Line one: the voices by first name, or the one voice whole. */
-  who: string;
-  /** The one voice's address; none for several. */
-  address: string | undefined;
-  /** Every voice whole, for the row's name a screen reader hears. */
-  names: string;
-  byline: readonly { letter: EngineMessage; name: string; text: string }[];
-}
-
-/**
- * Who a row speaks for. Two or more voices: their first names, no address. One: the whole name and its address.
- * An own reply leading a read conversation speaks for its recipient (`sentTo`), in the words `to` makes.
- */
-export function whoOf(
-  voices: readonly EngineMessage[],
-  name: (m: EngineMessage) => string,
-  address: (m: EngineMessage) => string | undefined,
-  sentTo: { label: string } | null,
-): RowWho {
-  if (sentTo !== null) return { who: sentTo.label, address: undefined, names: sentTo.label, byline: [] };
-  const byline = voices.map((letter) => {
-    const whole = name(letter);
-    return { letter, name: whole, text: voices.length > 1 ? firstNameOf(whole) : whole };
-  });
-  const one = voices.length === 1 ? voices[0] : undefined;
-  return {
-    who: byline.map(({ text }) => text).join(", "),
-    address: one ? address(one) : undefined,
-    names: byline.map(({ name }) => name).join(", "),
-    byline,
-  };
-}
-
 /**
  * The row's circles: everybody in the conversation, its voices first, the account's own in its place; the lead and one
  * other, and from three the lead and a small circle counting everybody after it ("+2"). `names` is everybody whole for the circles' name, `you`

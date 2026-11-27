@@ -17,7 +17,7 @@ import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { draftEditOf, keptRecipients, keptReplyOf, liveActions, parseRecipients, type LiveWorldActions } from "../src/state/live";
 import { baseAfter, baseFor, keepAct, waitedFor, type DraftBase } from "../src/ui/compose-keep";
 import { copiesToKeep } from "../src/ui/compose-copies";
-import { replyOpen } from "../src/ui/compose-route";
+import { composeDraftPlan, replyOpen } from "../src/ui/compose-route";
 import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 /* @reads: apps/mobile/src/ui/MessageActions.tsx, apps/mobile/src/ui/DraftReader.tsx, apps/mobile/app/compose.tsx */
@@ -57,8 +57,6 @@ describe("which drafts the phone edits", () => {
   });
 
   it.each([
-    ["a Cc on a reply", { inReplyToMessageId: "m-1", cc: [{ name: null, address: "c@fake.test" }] }],
-    ["a Bcc on a forward", { forwardOfMessageId: "m-1", bcc: [{ name: null, address: "b@fake.test" }] }],
     ["formatting", { html: "<p>the <b>body</b></p>" }],
     ["a send on record", { status: "unverified" as const }],
     ["a send running", { status: "sending" as const }],
@@ -72,6 +70,30 @@ describe("which drafts the phone edits", () => {
   it("a new mail with copies opens with them typed, so a save keeps them", () => {
     const edit = draftEditOf(draftRow({ cc: [{ name: "Cy", address: "cy@fake.test" }], bcc: [{ name: null, address: "b@fake.test" }] }));
     expect(edit).toMatchObject({ cc: "Cy <cy@fake.test>", bcc: "b@fake.test" });
+  });
+
+  it("edits a reply with stored To, Cc, Bcc and even an empty subject in its original thread", () => {
+    const draft = draftRow({
+      inReplyToMessageId: "m-1", subject: "", cc: [{ name: null, address: "c@fake.test" }],
+      bcc: [{ name: null, address: "b@fake.test" }],
+    });
+    const edit = draftEditOf(draft);
+    expect(edit).toMatchObject({ replyTo: "m-1", subject: "", cc: "c@fake.test", bcc: "b@fake.test" });
+    const parent = { id: "m-1" };
+    expect(composeDraftPlan(draft.id, null, { id: draft.id, body: draft.body, edit } as never, () => parent as never))
+      .toMatchObject({ kind: "sheet", open: { original: parent, draft: { id: draft.id, replyTo: "m-1" } } });
+  });
+
+  it("reopens a forward with its selected mailbox and its stored To, Cc and Bcc", () => {
+    const edit = draftEditOf(draftRow({
+      mailboxId: "mb-2", forwardOfMessageId: "m-1", subject: "Fwd: Update",
+      to: [{ name: null, address: "a@fake.test" }],
+      cc: [{ name: null, address: "c@fake.test" }],
+      bcc: [{ name: null, address: "b@fake.test" }],
+    }));
+    expect(edit).toMatchObject({
+      mailboxId: "mb-2", forwardOf: "m-1", subject: "Fwd: Update", to: "a@fake.test", cc: "c@fake.test", bcc: "b@fake.test",
+    });
   });
 });
 
@@ -105,6 +127,38 @@ const calls = (fake: ReturnType<typeof mailServer>, method: string, path: string
   fake.seen.filter((r) => r.method === method && r.url === path);
 
 describe("a draft opened here is one row from the first keystroke to the send", () => {
+  it("keeps and sends a plain reply to the external recipients of a self-authored source", async () => {
+    const live = await scene();
+    live.fake.stampDrafts();
+    const own = { name: "Me", address: "me@fake.test" };
+    const to = [{ name: "Peer", address: "peer@fake.test" }];
+    live.fake.addMessage({ ...dto("self", { subject: "Agenda", from: own }), threadId: "thread", to: [own, ...to] });
+    await live.engine.syncOnce();
+    const actions = liveActions({ engine: live.engine, toast: () => undefined, uuid, zone: "UTC", ownAddresses: () => [own.address] });
+    expect(actions.keepEnvelope("reply", "self")).toEqual({ to, cc: [], subject: "Re: Agenda" });
+    expect(await actions.draftKeep({ mode: "reply", messageId: "self", mailboxId: null, to: [],
+      subject: "", body: "Initial words.", files: 0 })).toBe("kept");
+    const row = live.engine.read().list<EngineDraft>("draft").find((d) => d.inReplyToMessageId === "self")!;
+    expect(row).toMatchObject({ to, threadId: "thread" });
+    expect((await actions.sendReply("self", "Final words.", false, null, null, [], false, row.id)).outcome).toBe("sent");
+    expect(live.fake.draft(row.id)).toMatchObject({ to, inReplyToMessageId: "self", threadId: "thread" });
+  }, 30_000);
+
+  it("keeps an edited reply and explicit empty copies on its existing row", async () => {
+    const live = await scene();
+    live.fake.stampDrafts();
+    const to = [{ name: "Guest", address: "guest@fake.test" }];
+    const bcc = [{ name: null, address: "secret@fake.test" }];
+    const reply = { mode: "reply" as const, messageId: "m1", mailboxId: "mb-1", to: [], subject: "unused", body: "First.", files: 0 };
+    const edits = { replyEnvelope: { to, cc: [], bcc }, replySubject: "" };
+    expect(await live.actions.draftKeep({ ...reply, ...edits })).toBe("kept");
+    await live.engine.syncOnce();
+    const row = live.engine.read().list<EngineDraft>("draft").find((d) => d.inReplyToMessageId === "m1")!;
+    expect(row).toMatchObject({ to, cc: [], bcc, subject: "" });
+    expect(await live.actions.draftKeep({ ...reply, ...edits, replyEnvelope: { to, cc: [], bcc: [] },
+      draftId: row.id, revision: row.contentRevision, body: "Second." })).toBe("kept");
+    expect(live.fake.draft(row.id)).toMatchObject({ to, subject: "", cc: [], bcc: [], inReplyToMessageId: "m1", body: "Second." });
+  }, 30_000);
   it("opened, edited and sent: the row is written and sent, and no second row is made", async () => {
     const live = await scene();
     const screen = { to: "Ada <ada@fake.test>", subject: "Invoice 12", body: "the body, finished" };
@@ -142,14 +196,15 @@ describe("a draft opened here is one row from the first keystroke to the send", 
     expect(SHEET).toContain('const seed = draft?.body ?? prefill?.body ?? "";');
     expect(SHEET).toContain("return { body: seed, runs: draft?.html ? runsOf(seed, draft.html) : null };");
     expect(SHEET).toContain("mode: m !== null ? mode : \"new\", messageId: m?.id ?? null,");
-    expect(SHEET).toContain("mailboxId, to: m === null || addressed ? keptRecipients(to) : [], ...(m === null || fresh ? copiesToKeep(copies) : {}),");
+    expect(SHEET).toContain("mailboxId, to: addressed ? keptRecipients(to) : [], ...(addressed ? copiesToKeep(copies) : {}),");
     expect(SHEET).toContain("}, DRAFT_AUTOSAVE_MS);");
     // Files are content too: the close and the unmount count them (`compose-keep.ts`).
     const close = SHEET.slice(SHEET.indexOf("const closeComposer ="), SHEET.indexOf("atUnmount.current = () => {"));
     const unmount = SHEET.slice(SHEET.indexOf("atUnmount.current = () => {"), SHEET.indexOf("const send = async ("));
     for (const exit of [close, unmount]) {
       expect(exit).toContain("const target = latestDraft.current;");
-      expect(exit).toContain("const worth = target !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body, files });");
+      expect(exit).toContain("const worth = target !== null ? saved.current !== onScreen");
+      expect(exit).toContain("worthKeeping({ fresh, subject, body, files }) || hasEnvelopeEdits(letterWords, keptRecipients)");
     }
     // `tooLong` is a flag of the words on screen, not the seed: past the limit nothing is saved.
     expect(SHEET, "the timer must not reset on the route's per-render seed").toContain("}, [bound, draftId, phase, onScreen, tooLong]);");
@@ -164,13 +219,31 @@ describe("a draft opened here is one row from the first keystroke to the send", 
     expect(CARD).toContain("{Copy.draftsRowGone}");
     expect(CARD).not.toContain("Copy.trashRowGone");
     expect(ROUTE).toContain("draft={draft} onClose={leave}");
-    // A forward draft opens as a forward of its original, or says this phone does not hold it.
-    expect(ROUTE).toContain("m={original} mode={original ? \"forward\" : \"new\"} forwardConfirmed={confirmed}");
-    expect(ROUTE).toContain(": plan.kind === \"gone\" ? Copy.draftsRowGone : Copy.draftsForwardOriginalAbsent}");
+    // A draft with a source keeps its reply or forward mode and requires that original.
+    expect(ROUTE).toContain('draft.forwardOf ? "forward" : draft.replyTo ? "reply" : "new"');
+    expect(ROUTE).toContain("m={original} mode={mode} forwardConfirmed={confirmed}");
+    expect(ROUTE).toContain(': plan.kind === "gone" ? Copy.draftsRowGone');
+    expect(ROUTE).toContain(': plan.kind === "replyOriginalAbsent" ? Copy.draftsReplyOriginalAbsent : Copy.draftsForwardOriginalAbsent');
   });
 });
 
 describe("a forward kept as a draft is still a forward", () => {
+  it("preserves the displayed empty subject when saving and sending a reopened forward", async () => {
+    const live = await scene();
+    live.fake.stampDrafts();
+    const to = [{ name: null, address: "peer@fake.test" }];
+    const edited = { mode: "forward" as const, messageId: "m1", mailboxId: "mb-1", to, subject: "", forwardSubject: "", files: 0 };
+    expect(await live.actions.draftKeep({ ...edited, body: "First edit." })).toBe("kept");
+    await live.engine.syncOnce();
+    const row = live.engine.read().list<EngineDraft>("draft").find((d) => d.forwardOfMessageId === "m1")!;
+    const reopened = draftEditOf(row)!;
+    expect(reopened.subject).toBe("");
+    expect(await live.actions.draftKeep({ ...edited, draftId: row.id, body: "Final edit." })).toBe("kept");
+    const envelope = { subject: reopened.subject, forwardParts: undefined };
+    expect((await live.actions.sendForward("m1", to, "Final edit.", null, [], false, false, row.id, envelope)).outcome).toBe("sent");
+    expect(live.fake.draft(row.id)?.subject).toBe("");
+  }, 30_000);
+
   it("kept, closed, reopened and sent: one row, and the send carries the original", async () => {
     const live = await scene();
     expect(await live.actions.draftKeep({
@@ -333,6 +406,43 @@ describe("Reply on a message whose reply is kept", () => {
         subject: "Re: Welcome", forwardOf: null, forwardParts: null, revision: "rev-r-1",
       },
     });
+  }, 30_000);
+
+  it("reopens and sends a reply from its saved connected mailbox without changing the thread", async () => {
+    const live = await scene();
+    live.fake.stampDrafts();
+    live.fake.addMessage({ ...dto("m1", { subject: "Welcome" }), threadId: "thread-1" });
+    await live.engine.syncOnce();
+    const actions = liveActions({
+      engine: live.engine, toast: () => undefined, zone: "UTC",
+      mailboxes: () => [{ id: "mb-2", address: "other@fake.test", status: "connected" }],
+    });
+    expect(await actions.draftKeep({
+      mode: "reply", messageId: "m1", mailboxId: "mb-2", to: [], subject: "", body: "first words", files: 0,
+    })).toBe("kept");
+    await live.engine.syncOnce();
+    const saved = actions.keptReply("m1");
+    expect(saved).toMatchObject({ kind: "resume", draft: { mailboxId: "mb-2", subject: "Re: Welcome" } });
+    if (saved.kind !== "resume") throw new Error("reply did not reopen");
+    const { id, revision } = saved.draft;
+    const result = await actions.sendReply("m1", "changed words", false, null, null, [], false, id, revision, [], undefined, undefined, "mb-2");
+    expect(result.outcome).toBe("sent");
+    expect(repliesTo(live)).toMatchObject([{
+      id, mailboxId: "mb-2", threadId: "thread-1", inReplyToMessageId: "m1",
+      to: [{ address: "sender@fake.test" }], body: "changed words",
+    }]);
+  }, 30_000);
+
+  it("does not silently choose the newest reply draft when its matching drafts use different mailboxes", async () => {
+    const live = await scene();
+    live.fake.addDraft(reply("r-first", { updatedAt: "2026-09-20T10:00:00.000Z" }));
+    live.fake.addDraft(reply("r-other", { mailboxId: "mb-2", updatedAt: "2026-09-21T10:00:00.000Z" }));
+    await live.engine.syncOnce();
+    const actions = liveActions({
+      engine: live.engine, toast: () => undefined, zone: "UTC",
+      mailboxes: () => [{ id: "mb-2", address: "other@fake.test" }],
+    });
+    expect(actions.keptReply("m1")).toEqual({ kind: "aside" });
   }, 30_000);
 
   it("addresses compare without case; of two, the newest is resumed", async () => {

@@ -66,3 +66,19 @@ describe("the frame's key hints on a device with no keys", () => {
     expect(seen.esc).not.toBe("none");
   });
 });
+
+it("keeps a keyboard tooltip narrower than the viewport at large text size", async () => {
+  const page = await browser!.newPage({ viewport: { width: 390, height: 844 } });
+  try {
+    await page.setContent(
+      `<!doctype html><html style="zoom:1.5;--ui-zoom:1.5"><head><style>${sheets}</style></head>
+      <body><span class="fr-shortcut-chip fr-shortcut-tooltip">An available keyboard shortcut</span></body></html>`,
+    );
+    const maxWidth = await page
+      .locator(".fr-shortcut-tooltip")
+      .evaluate((tooltip) => Number.parseFloat(getComputedStyle(tooltip).maxWidth));
+    expect(maxWidth).toBe(236);
+  } finally {
+    await page.close();
+  }
+});

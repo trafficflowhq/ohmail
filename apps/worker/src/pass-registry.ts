@@ -396,6 +396,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "per step: the account row FOR SHARE, the thread-structure advisory lock, the mailbox row FOR UPDATE — the order every erasure holds",
   },
   {
+    name: "account_erasure",
+    module: `${W}/account-erasure-pass.ts`, entry: "accountErasurePass",
+    triggers: ["cycle-tail"],
+    cadence: "every cycle, leader-only, over this shard's accepted account erasures and unconfirmed subscription cancellations, from a saved position",
+    budget: "at most ten accounts and five seconds a tick; one slice of at most 1,000 rows per account, each in its own transaction with a one-second lock wait",
+    owns: "an accepted account deletion finishes removing the account's stored data, and its subscription cancellation is retried until the provider confirms it",
+    fence: "the account row FOR UPDATE for each slice and each billing claim; the user rows FOR UPDATE before users are deleted",
+  },
+  {
     name: "storage_evict",
     module: `${O}/storage-evict.ts`, entry: "storageEvictPass",
     triggers: ["cycle-tail"],

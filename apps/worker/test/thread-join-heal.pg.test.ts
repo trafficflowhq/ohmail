@@ -2,15 +2,18 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { asc, eq } from "drizzle-orm";
-import { runMigrations } from "@trafficflow/db/admin";
+import { asc, eq, sql as dsql } from "drizzle-orm";
+import { ensureMaintenanceIndexes, runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, changeLog, drafts, mailboxes, messages, threadNotes, threads, type Tx } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { MAX_THREAD_PARTICIPANTS } from "@trafficflow/core/mail";
 import { makeDrizzleRepo, recordAppearedSentFolder } from "@trafficflow/core/adapters/drizzle-repo";
-import { threadJoinHealPass, type ThreadJoinHealResult } from "@ohmail/organizer/thread-join-heal";
+import {
+  threadJoinHealPass, THREAD_JOIN_HEAL_MAX_SEEDS, THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP, type ThreadJoinHealResult,
+} from "@ohmail/organizer/thread-join-heal";
 import { makeThreadJoinHealWalk } from "../src/thread-join-heal-walk.js";
 
 /**
@@ -229,7 +232,7 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
     expect(first.groupsScanned).toBe(1);
     expect(first.merged).toBe(0);        // it saw only the refusal group
     expect(first.capped).toBe(true);
-    expect(first.cursor).toEqual({ accountId: s.accountId, subject: "Invoice" });
+    expect(first.cursor).toEqual({ accountId: s.accountId, subject: "Invoice", threadId: [a1, a2].sort()[0] });
 
     const second = await threadJoinHealPass({
       db: db as unknown as Tx, apply: true, accountId: s.accountId, maxGroups: 1, cursor: first.cursor!,
@@ -239,6 +242,75 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
     const remaining = await db.select({ id: threads.id }).from(threads).where(eq(threads.accountId, s.accountId));
     expect(new Set(remaining.map((t) => t.id))).toEqual(new Set([a1, a2, b1]));
   });
+
+  it.each([["distinct beginnings", false], ["one long shared beginning", true]])(
+    "bounds a large thread walk with %s and resumes to each exact group without spilling", async (_label, shared) => {
+      const s = await seedAccount();
+      await ensureMaintenanceIndexes(db as never, { concurrently: false });
+      // Distinct long multibyte subjects, differing at once or only after a common prefix.
+      await sql`
+        insert into threads (account_id, subject, last_message_at, root_message_id_header, participants)
+        select ${s.accountId}::uuid,
+          case when ${shared} then repeat('Überweisung ', 40) || n else n || ' ' || repeat('Überweisung ', 40) end,
+          now(), ${s.accountId} || '-' || n || '@seed.example', '[]'::jsonb
+        from generate_series(1, 60000) n`;
+      await seedThread(s, "Zebra budget", new Date(t0));
+      await seedThread(s, "Zebra budget", new Date(t0 + DAY));
+      const exactSubject = "Überweisung ".repeat(40) + "separate";
+      if (shared) {
+        await seedThread(s, exactSubject, new Date(t0));
+        await seedThread(s, exactSubject, new Date(t0 + DAY));
+      }
+      await sql`analyze threads`;
+      const statements: unknown[] = [];
+      const recording = new Proxy(db, {
+        get(target, prop, receiver) {
+          if (prop !== "execute") return Reflect.get(target, prop, receiver);
+          return (statement: unknown) => { statements.push(statement); return target.execute(statement as never); };
+        },
+      });
+      const first = await threadJoinHealPass({
+        db: recording as unknown as Tx, apply: false, accountId: s.accountId, maxGroups: 50,
+      });
+      const page = statements.find((st) => /with seeds as|having count\(\*\) > 1/
+        .test(new PgDialect().sqlToQuery(st as ReturnType<typeof dsql>).sql));
+      expect(page).toBeDefined();
+      const plan = await db.transaction(async (tx) => {
+        await tx.execute(dsql`set local work_mem = '64kB'`);
+        return tx.execute(dsql`explain (analyze, buffers, format json) ${page as ReturnType<typeof dsql>}`);
+      }) as unknown as Array<{ "QUERY PLAN": Array<{ Plan: Record<string, unknown> }> }>;
+      const root = plan[0]!["QUERY PLAN"][0]!.Plan;
+      const nodes = (node: Record<string, unknown>): Record<string, unknown>[] =>
+        [node, ...((node.Plans as Record<string, unknown>[] | undefined) ?? []).flatMap(nodes)];
+      const all = nodes(root);
+      expect(JSON.stringify(root)).not.toMatch(/"Disk"|external/i);
+      expect(root["Temp Read Blocks"]).toBe(0);
+      expect(root["Temp Written Blocks"]).toBe(0);
+      const scans = all.filter((n) => n["Relation Name"] === "threads");
+      expect(scans.length).toBeGreaterThanOrEqual(2);
+      for (const scan of scans) {
+        expect(scan["Index Name"]).toBe("threads_account_subject_key_idx");
+        expect(Number(scan["Actual Rows"])).toBeLessThanOrEqual(THREAD_JOIN_HEAL_MAX_SEEDS);
+        if (Number(scan["Actual Loops"]) > 1) {
+          expect(Number(scan["Actual Rows"])).toBeLessThanOrEqual(THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP + 1);
+          expect(Number(scan["Actual Loops"])).toBeLessThanOrEqual(THREAD_JOIN_HEAL_MAX_SEEDS);
+        }
+      }
+
+      expect(first.capped).toBe(true);
+      expect(first.cursor?.threadId).toBeDefined();
+      let scanned = first.groupsScanned;
+      let result = first;
+      for (let pass = 1; result.capped && pass <= Math.ceil(60_004 / THREAD_JOIN_HEAL_MAX_SEEDS); pass++) {
+        result = await threadJoinHealPass({
+          db: db as unknown as Tx, apply: false, accountId: s.accountId, maxGroups: 50, cursor: result.cursor!,
+        });
+        scanned += result.groupsScanned;
+      }
+      expect(result.capped).toBe(false);
+      expect(scanned).toBe(shared ? 2 : 1);
+    }, 120_000,
+  );
 
   it("a widespread set handed in is used instead of read; a call fills it for its own account only", async () => {
     const marked = await seedProductionSplit();
@@ -507,7 +579,7 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
     expect(r.failed).toBe(1);
     expect(r.skipped).toBe(0);   // over-bound groups only — a failure is not a refusal
     expect(r.merged).toBe(0);
-    expect(r.cursor).toEqual({ accountId: s.accountId, subject: "Retry me" });
+    expect(r.cursor).toEqual({ accountId: s.accountId, subject: "Retry me", threadId: [a, b].sort()[0] });
 
     // Nothing committed: both threads still stand, and a healthy re-run heals the group.
     const remaining = await db.select({ id: threads.id }).from(threads).where(eq(threads.accountId, s.accountId));
@@ -768,6 +840,19 @@ describe("the thread-join heal walk", () => {
     expect(w.due(EVERY)).toBe(true);
     expect(w.slice("a", ["a", "b"])).toMatchObject({ cursor: at("Mike"), maxGroups: 200 });
     expect(w.slice("b", ["a", "b"])).toMatchObject({ maxGroups: 200 });
+  });
+
+  it("a capped scan with no groups advances within the same walk until the time budget is spent", () => {
+    const w = makeThreadJoinHealWalk(EVERY, WALK);
+    w.due(0);
+    w.slice("a", ["a"]);
+    expect(w.settle("a", result({ capped: true, cursor: at("Alpha") }), 10)).toBeNull();
+    expect(w.due(20)).toBe(true);
+    expect(w.slice("a", ["a"])).toMatchObject({ cursor: at("Alpha"), maxGroups: 200 });
+    expect(w.settle("a", result({ capped: true, cursor: at("Bravo") }), WALK)).toMatchObject({ slices: 2, more: true });
+    expect(w.due(30)).toBe(false);
+    w.due(EVERY);
+    expect(w.slice("a", ["a"])).toMatchObject({ cursor: at("Bravo"), maxGroups: 200 });
   });
 
   it("an abandoned slice closes the account and keeps its last settled cursor", () => {

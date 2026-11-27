@@ -1,17 +1,12 @@
-/**
- * The bottom dock — Material's/Apple's position, the Duo rail's look: one glass pill of round
- * icon buttons for the destinations, and the SEARCH pill beside it (search rides the
- * navigation on every device). Floats over the home-indicator band at
- * `max(10, inset)`, exactly the prototype's `.dock`; every scroller already reserves
- * `space.tabClearance`, and the canvas runs under the glass — that translucency is the point,
- * so there is no fade strip here.
- */
-import { View } from "react-native";
+import { Platform, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme";
 import { mailColors } from "../../theme/mail";
+import { badgeAtScale } from "../../theme/type";
 import { useBottomChromeSlot } from "../bottom-chrome";
-import type { IconName } from "../Icon";
+import { a11yRole } from "../a11y-role";
+import { Tap, Txt } from "../base";
+import { NavigationIcon, type IconName, type NavigationIconName } from "../Icon";
 import { GlassIconButton } from "./GlassIconButton";
 import { GlassPill } from "./GlassPill";
 import { DOCK, MAIL_DOCK } from "./fold";
@@ -24,6 +19,16 @@ export interface DockItem {
   badgeHot?: boolean;
 }
 
+type DockAction = { label: string; onPress: () => void };
+
+const paperTabs: Partial<Record<string, NavigationIconName>> = {
+  index: "ohbox",
+  screener: "screener",
+  reads: "reads",
+  receipts: "receipts",
+  more: "more",
+};
+
 export function GlassDock({
   items,
   activeId,
@@ -35,19 +40,13 @@ export function GlassDock({
   items: readonly DockItem[];
   activeId: string | null;
   onItemPress: (id: string) => void;
-  search: { label: string; onPress: () => void };
-  /** Starting a mail is a verb, not a destination — it rides the trailing pill beside search. */
-  compose?: { label: string; onPress: () => void };
-  /** The dock's own width, every layout — the room `dockFold` folds destinations against. */
+  search: DockAction & { current?: boolean };
+  compose?: DockAction;
   onRoom?: (width: number) => void;
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
   const foot = Math.max(insets.bottom, t.mail ? 16 : 10);
-  const metrics = t.mail ? MAIL_DOCK : DOCK;
-  const searchButton = <GlassIconButton icon="search" label={search.label} size={metrics.btn} onPress={search.onPress} />;
-  /* The dock tells the toast how far up it reaches (`bottom-chrome.ts`): its foot plus its
-     measured height, so the pill clears it by the same rule that clears the reader's bar. */
   const standing = useBottomChromeSlot("dock");
   return (
     <View
@@ -56,43 +55,80 @@ export function GlassDock({
         standing(foot + e.nativeEvent.layout.height);
         onRoom?.(e.nativeEvent.layout.width);
       }}
-      style={{
-        position: "absolute",
-        left: 0,
-        right: 0,
-        bottom: foot,
-        alignItems: "center",
-        zIndex: t.zLayer.tabBar,
-      }}
+      style={{ position: "absolute", left: 0, right: 0, bottom: foot, alignItems: "center", zIndex: t.zLayer.tabBar }}
     >
-      <View style={{ flexDirection: "row", gap: metrics.groupGap, maxWidth: "100%", paddingHorizontal: metrics.sideInset }}>
-        <GlassPill horizontal level="l3" contentStyle={{ gap: metrics.itemGap }}>
-          {items.map((item) => (
-            <GlassIconButton
-              key={item.id}
-              role="tab"
-              icon={t.mail && item.id === "screener" ? "screener" : item.icon}
-              glyph={t.mail && item.id === "more" ? "⋯" : undefined}
-              label={item.label}
-              on={item.id === activeId}
-              inkFill={t.mail && item.id === activeId}
-              size={metrics.btn}
-              badge={item.badge}
-              badgeHot={item.badgeHot}
-              onPress={() => onItemPress(item.id)}
-            />
-          ))}
-        </GlassPill>
-        <GlassPill horizontal level="l3">
-          {!t.mail && compose ? <GlassIconButton icon="pen" label={compose.label} onPress={compose.onPress} /> : null}
-          {searchButton}
-        </GlassPill>
-        {t.mail && compose ? (
-          <GlassPill horizontal level="l3" contentStyle={{ backgroundColor: mailColors(t).solid }}>
-            <GlassIconButton icon="pen" label={compose.label} size={metrics.btn} inkFill onPress={compose.onPress} />
+      {t.mail ? (
+        <View pointerEvents="box-none" style={{
+          width: "100%", maxWidth: 440, flexDirection: "row", alignItems: "center",
+          gap: MAIL_DOCK.groupGap, paddingHorizontal: MAIL_DOCK.sideInset,
+        }}>
+          <View style={[t.lift("l3"), {
+            flex: 1, height: MAIL_DOCK.action, borderRadius: t.radius.pill, backgroundColor: t.c.panel,
+            flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: MAIL_DOCK.groupPad / 2,
+          }]}>
+            {items.map((item) => (
+              <PaperDockButton key={item.id} icon={paperTabs[item.id] ?? "more"} label={item.label} badge={item.badge} hot={item.badgeHot}
+                current={item.id === activeId} tab onPress={() => onItemPress(item.id)} />
+            ))}
+          </View>
+          <PaperDockButton icon="search" label={search.label} current={search.current} onPress={search.onPress} />
+          {compose ? <PaperDockButton icon="pen" label={compose.label} onPress={compose.onPress} /> : null}
+        </View>
+      ) : (
+        <View style={{ flexDirection: "row", gap: DOCK.groupGap, maxWidth: "100%", paddingHorizontal: DOCK.sideInset }}>
+          <GlassPill horizontal level="l3" contentStyle={{ gap: DOCK.itemGap }}>
+            {items.map((item) => (
+              <GlassIconButton key={item.id} role="tab" icon={item.icon} label={item.label}
+                on={item.id === activeId} size={DOCK.btn} badge={item.badge} badgeHot={item.badgeHot}
+                onPress={() => onItemPress(item.id)} />
+            ))}
           </GlassPill>
-        ) : null}
-      </View>
+          <GlassPill horizontal level="l3">
+            {compose ? <GlassIconButton icon="pen" label={compose.label} onPress={compose.onPress} /> : null}
+            <GlassIconButton icon="search" label={search.label} size={DOCK.btn} onPress={search.onPress} />
+          </GlassPill>
+        </View>
+      )}
     </View>
+  );
+}
+
+function PaperDockButton({ icon, label, onPress, tab = false, current = false, badge, hot }: DockAction & {
+  icon: NavigationIconName;
+  tab?: boolean;
+  current?: boolean;
+  badge?: number;
+  hot?: boolean;
+}) {
+  const t = useTheme();
+  const colors = mailColors(t);
+  const { fontScale } = useWindowDimensions();
+  const badgeSize = badgeAtScale(fontScale);
+  const write = icon === "pen";
+  const size = tab ? MAIL_DOCK.btn : MAIL_DOCK.action;
+  const fill = current ? colors["nav-on"] : write ? colors.solid : tab ? "transparent" : colors.sheet;
+  const ink = current ? colors["on-nav-on"] : write ? colors["on-solid"] : colors.ink;
+  return (
+    <Tap accessibilityRole={a11yRole(tab ? "tab" : "button", Platform.OS === "ios" ? "ios" : "android")}
+      accessibilityLabel={label} accessibilityState={{ selected: current }} onPress={onPress}
+      style={[
+        tab ? null : t.lift("l3"),
+        { width: size, height: size, borderRadius: t.radius.pill, backgroundColor: fill,
+          alignItems: "center", justifyContent: "center" },
+      ]}>
+      <NavigationIcon name={icon} size={write ? 22 : 20} color={ink} />
+      {badge !== undefined && badge > 0 ? (
+        <View style={{
+          position: "absolute", top: 1, left: size / 2 + 2,
+          minWidth: Math.max(22, badgeSize.height + 4), paddingHorizontal: 5, height: Math.max(22, badgeSize.height + 4),
+          borderRadius: t.radius.pill, justifyContent: "center", alignItems: "center",
+          backgroundColor: hot ? colors.hot : colors.ground,
+          borderColor: current ? colors["nav-on"] : colors.sheet, borderWidth: 2,
+        }}>
+          <Txt variant="railCount" tabular allowFontScaling={false}
+            style={{ ...badgeSize.text, includeFontPadding: false, color: hot ? colors["on-hot"] : colors.ink }}>{badge}</Txt>
+        </View>
+      ) : null}
+    </Tap>
   );
 }

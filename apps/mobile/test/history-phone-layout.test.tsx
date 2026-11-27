@@ -39,6 +39,7 @@ vi.mock("../src/ui/list-detail", () => ({
   ListDetail: ({ list }: { list: ReactNode }) => list,
   useListDetail: () => ({ open: null, openRow: vi.fn(), close: vi.fn() }),
 }));
+vi.mock("../src/ui/MailPlaceDock", () => ({ MailPlaceDock: ({ children }: { children: ReactNode }) => children }));
 vi.mock("../src/ui/MailList", () => ({ MailList: (props: typeof list) => {
   list = props;
   if (list.scrollTo && history.ready) list.scrollTo.current = history.scrollTo;

@@ -29,6 +29,18 @@ export function scopedSyncResponse(body: unknown): Response {
   return response;
 }
 
+/** A finished snapshot for an enabled calendar, with each supplied row at its high-water mark. */
+export function calendarSnapshot(rows: ReadonlyArray<readonly [string, { id: string }]>) {
+  const asOfSeq = rows.length;
+  return scopedSyncResponse({
+    asOfSeq, nextCursor: null,
+    calendarWindow: { daysBack: 366, daysAhead: 731, maxRows: 10_000 },
+    changes: rows.map(([type, entity]) => ({
+      type, id: entity.id, entity, op: "create", seq: asOfSeq, updatedAt: ISO,
+    })),
+  });
+}
+
 export async function prepareMailPage(routes: Parameters<typeof serve>[0] = {}) {
   const { bindApiOwner, forgetAccess } = await import("../../app/api-client");
   bindApiOwner(null);

@@ -6,7 +6,7 @@ import type { ScreenerSenderDTO } from "@ohmail/wire";
 import { useEffect, useRef, useState } from "react";
 import { BODY_FETCH_TIMEOUT_MS, domainOfAddress, senderKey } from "@ohmail/client-engine";
 import { useEngineOrNull } from "../engine/context.js";
-import { isNothingOrganizes, type OrganizerRefusal } from "../press/organizer-refusal.js";
+import { screenerPressRefused as refused } from "../press/rules-posture.js";
 import type { ScreenerAcknowledgement } from "@trafficflow/core/screener-acknowledgements";
 import { useScreenerAcknowledgements } from "../consent/consent-row.js";
 import { scopeMayMount, type StorageScope } from "../storage/scope.js";
@@ -17,13 +17,7 @@ import type { ConfirmedBulkDecision, ConfirmedSenders, ScreenerState } from "./s
 import { acceptDestOf } from "./filter.js";
 import type { ScreenerAsk, ScreenerShown } from "./view.js";
 
-/**
- * A DECISION THIS INSTALL'S PRESS WOULD MEET REFUSED: the model's own guard, read by every place that offers a
- * decision. A reader that may not decide, or a mailbox nothing organizes yet, unless this install asked to take it over.
- */
-export const refused = (
-  r: ScreenerState["role"] & { pressRefusal?: OrganizerRefusal | null; takeoverAsked?: true },
-) => r.takeoverAsked !== true && (r.mode === "blocked" || isNothingOrganizes(r.pressRefusal));
+export { refused };
 
 type BulkKind = "allSpam" | "applySuggestions" | "picked";
 const bulkAcknowledgement: Record<BulkKind, ScreenerAcknowledgement> = {

@@ -5,7 +5,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, sql } from "drizzle-orm";
 import {
-  folderState, mailboxFolders, mailboxes, messages, messageInstances, accounts, changeLog, OrganizedElsewhereError,
+  applyMessageMove, folderState, mailboxFolders, mailboxes, messages, messageInstances, accounts, changeLog, OrganizedElsewhereError,
 } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import {
@@ -190,6 +190,51 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
     const id = await msg(TRASH);
     await svc().delete(ctxAt(t1), id);
     expect((await fsOf(id)).trashedFrom).toBeNull();
+    expect(await deletedAtOf(id)).toEqual(t1);
+    expect((await svc().restore(ctxAt(t2), id)).restoreTo).toBe("INBOX");
+  });
+
+  it("restores to the original folder after a later Trash press on the same message", async () => {
+    const id = await msg("Projects");
+    await svc().delete(ctxAt(t0), id);
+
+    // The organizer has observed the provider's successful move to Trash.
+    await db.update(messages).set({ nativeLocator: { folder: TRASH, ref: "7:2" } }).where(eq(messages.id, id));
+    await db.update(folderState).set({ observedFolder: TRASH, reconcileStatus: "reconciled" })
+      .where(eq(folderState.messageId, id));
+    await db.insert(messageInstances).values({
+      accountId: ACCOUNT, mailboxId: mb, messageId: id, folder: TRASH, uidvalidity: 7n, uid: 2, isPrimary: true,
+    });
+    const target = async () => (await svc().listTrash(ctxAt(t2), { view: "trash" })).items[0]?.restoreTo;
+    expect(await target()).toBe("Projects");
+
+    const repeat = await svc().delete(ctxAt(t1), id);
+    expect.soft(repeat).toMatchObject({ seq: null });
+    expect.soft(await target()).toBe("Projects");
+    expect.soft(await deletedAtOf(id)).toEqual(t0);
+    expect((await svc().restore(ctxAt(t2), id)).restoreTo).toBe("Projects");
+  });
+
+  it("keeps a forwarded Trash origin after the next press comes from the organizer", async () => {
+    const id = await msg("Projects");
+    const [message] = await db.select({ dedupKey: messages.dedupKey }).from(messages).where(eq(messages.id, id));
+    const forwarded = await db.transaction((tx) => applyMessageMove(tx as unknown as Parameters<typeof applyMessageMove>[0], {
+      accountId: ACCOUNT, mailboxId: mb, payload: { dedupKey: message!.dedupKey, destination: "trash" }, now: t0,
+    }));
+    expect(forwarded.applied).toBe(true);
+
+    await db.update(messages).set({ nativeLocator: { folder: TRASH, ref: "7:2" } }).where(eq(messages.id, id));
+    await db.update(folderState).set({ observedFolder: TRASH, reconcileStatus: "reconciled" })
+      .where(eq(folderState.messageId, id));
+    const target = async () => (await svc().listTrash(ctxAt(t2), { view: "trash" })).items[0]?.restoreTo;
+    expect(await target()).toBe("Projects");
+    expect(await deletedAtOf(id)).toBeNull();
+
+    const again = await svc().delete(ctxAt(t1), id);
+    expect.soft(again).toMatchObject({ seq: null });
+    expect.soft(await target()).toBe("Projects");
+    expect.soft(await deletedAtOf(id)).toBeNull();
+    expect((await svc().restore(ctxAt(t2), id)).restoreTo).toBe("Projects");
   });
 
   it("EVERY non-Trash desired write CLEARS the origin, so a second delete cannot inherit the first's", async () => {
@@ -364,6 +409,7 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
     const id = await msg(TRASH);
     await svc().delete(ctxAt(t1), id);
     expect((await fsOf(id)).trashedFrom).toBeNull();
+    expect(await deletedAtOf(id)).toEqual(t1);
     expect((await svc().restore(ctxAt(t2), id)).restoreTo).toBe("INBOX");
   });
 

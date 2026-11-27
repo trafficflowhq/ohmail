@@ -85,10 +85,12 @@ describe("the keyboard is asked for after the caret", () => {
 describe("the composer is wired to it", () => {
   const src = readFileSync(join(__dirname, "../src/ui/MessageActions.tsx"), "utf8");
   it("its Modal reports every show, and every field it writes in binds the keeper", () => {
-    expect(src).toContain("onRequestClose={closeComposer} onShow={focusKeeper.onShow}>");
-    for (const f of ["toField", "subjectField", "bodyField"]) {
+    expect(src).toContain("onRequestClose={requestClose} onShow={focusKeeper.onShow}>");
+    for (const f of ["toField", "bodyField"]) {
       expect(src).toContain(`ref={${f}}\n`);
       expect(src).toContain(`{...focusKeeper.bind(${f})}`);
     }
+    expect(src).toContain("const subjectFocus = focusKeeper.bind(subjectField);");
+    expect(src).toMatch(/ref=\{subjectField\}\s*\{\.\.\.subjectFocus\}\s*onFocus=\{\(\) => \{\s*subjectFocus\.onFocus\(\);/);
   });
 });

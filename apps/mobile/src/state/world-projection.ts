@@ -8,6 +8,8 @@
  * History's rows are built only when read. Getters read the caches, never a run's locals.
  */
 import { Copy } from "../copy";
+import { restingPeople } from "@ohmail/app-logic/search/people";
+import type { EngineMessage } from "@ohmail/wire";
 import { liveMailboxRows, type PhoneMailbox } from "../net/mailboxes";
 import type { ServerWaitingSender } from "../net/screener";
 import type { ImageRoute } from "../mail/remote-images";
@@ -248,6 +250,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
     const piles = () => kept("piles", [pres, v], () => livePiles(pres, v));
     const folderList = kept("folderList", [engine, stamp, foldersOn], () => (foldersOn ? liveFolders(raw) : []));
     const history = presented.history;
+    const addressBook = () => kept("addressBook", [engine, stamp, inp.ownAddresses], () => liveAddressBook(raw, inp.ownAddresses));
     return {
       live: true,
       worldKey: inp.worldKey,
@@ -329,7 +332,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
         return kept("drafts", [engine, stamp, v, now.getTime(), waiting], () => liveDrafts(raw, { ...v, now }, waiting));
       },
       get addressBook() {
-        return kept("addressBook", [engine, stamp, inp.ownAddresses], () => liveAddressBook(raw, inp.ownAddresses));
+        return addressBook();
       },
       folders: {
         enabled: foldersOn,
@@ -364,7 +367,8 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       rowOpenTarget: (id) => liveRowOpenTarget(pres, id, openHeld) ?? id,
       filesOf: (id) => liveFiles(engine, id),
       eventsOf: (id) => liveEvents(engine, id),
-      search: liveSearch(engine, base, v),
+      search: liveSearch(engine, base, v, () =>
+        kept("searchPeople", [engine, stamp, inp.ownAddresses], () => restingPeople(addressBook(), raw.list<EngineMessage>("message")))),
       store: {
         walker: inp.walker,
         searchWalker: inp.searchWalker,

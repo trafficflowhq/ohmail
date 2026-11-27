@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   pullClaims,
+  pullEnd,
   pullFires,
+  pullMove,
   pullOffset,
+  pullStart,
   swipeDrawn,
   swipeEnd,
   swipeMove,
@@ -133,5 +136,53 @@ describe("a finger at a list's top", () => {
     expect(pullFires(128)).toBe(false);
     expect(pullFires(129)).toBe(true);
     expect(pullFires(150)).toBe(true);
+  });
+
+  it("leaves scrolling alone when the finger starts below the top or the list scrolls first", () => {
+    expect(pullMove(pullStart(100, 300, false), 100, 450, true)).toBeNull();
+    const start = pullStart(100, 300, true);
+    const scrolled = pullMove(start, 100, 305, false);
+    expect(pullMove(scrolled, 100, 450, true)).toBeNull();
+    expect(pullEnd(scrolled, false, false).run).toBe(false);
+  });
+
+  it("holds still through the slop then follows a downward pull with resistance", () => {
+    const start = pullStart(100, 300, true);
+    const diagonal = pullMove(start, 112, 312, true);
+    expect(diagonal).toMatchObject({ claimed: false, offset: 0 });
+    const downward = pullMove(diagonal, 104, 412, true);
+    expect(downward).toMatchObject({ claimed: true });
+    expect(downward?.offset).toBeCloseTo(55);
+    expect(pullMove(downward, 104, 800, true)?.offset).toBe(120);
+  });
+
+  it("gives upward and sideways drags to scrolling and row swipes", () => {
+    const start = pullStart(100, 300, true);
+    for (const [x, y] of [
+      [100, 287],
+      [113, 312],
+      [87, 312],
+    ] as const) {
+      const yielded = pullMove(start, x, y, true);
+      expect(yielded).toBeNull();
+      expect(pullMove(yielded, 100, 450, true)).toBeNull();
+    }
+  });
+
+  it("judges the release at its final position and drops a cancelled pull", () => {
+    const armed = pullMove(pullStart(100, 300, true), 100, 450, true);
+    const retreated = pullMove(armed, 100, 428, true);
+    expect(pullEnd(retreated, false, false)).toEqual({ claimed: true, hold: false, run: false });
+    const reversed = pullMove(armed, 100, 280, true);
+    expect(reversed).toMatchObject({ claimed: true, offset: 0 });
+    expect(pullEnd(reversed, false, false).run).toBe(false);
+    expect(pullEnd(armed, true, false)).toEqual({ claimed: true, hold: false, run: false });
+    expect(pullEnd(null, false, false)).toEqual({ claimed: false, hold: false, run: false });
+  });
+
+  it("keeps the waiting mark for a pending request without starting a second one", () => {
+    const armed = pullMove(pullStart(100, 300, true), 100, 429, true);
+    expect(pullEnd(armed, false, false)).toEqual({ claimed: true, hold: true, run: true });
+    expect(pullEnd(armed, false, true)).toEqual({ claimed: true, hold: true, run: false });
   });
 });

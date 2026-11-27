@@ -88,7 +88,7 @@ const NO_DRAFTER: NotOffered = {
   open: NOTHING,
   cancel: NOTHING,
   confirm: NOTHING,
-  press: NOTHING,
+  press: () => false,
   fromText: "none",
   letter: "none",
   letterId: NEW_LETTER,

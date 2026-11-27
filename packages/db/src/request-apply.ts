@@ -216,7 +216,7 @@ export type ApplyMessageMoveResult =
     from: string;
     /** The resolved PATH, not the symbolic word. */
     to: string;
-    lastSeq: bigint;
+    lastSeq: bigint | null;
   }
   | { applied: false; refusal: MoveRefusal };
 
@@ -227,8 +227,8 @@ export type ApplyMessageMoveResult =
  * AND PRESERVED, never written: an applier setting it would assert a fact it has not performed,
  * and the reconciler would compare desired against a lie and do nothing. Idempotency: the
  * caller's key first, and the write is an upsert on `folder_state.message_id`. `change_log` is
- * not deduplicated — a duplicate `move` row converges. A move to where the message already is
- * still writes: the ack must not depend on a race the reader cannot see.
+ * not deduplicated — a duplicate `move` row converges. A settled repeat to Trash acknowledges the
+ * press without changing the placement or the saved restore folder.
  */
 export async function applyMessageMove(
   tx: Tx, input: ApplyMessageMoveInput,
@@ -246,9 +246,8 @@ export async function applyMessageMove(
      already identifies at most one row — the account column is here anyway because a query that
      is correct only because of a uniqueness constraint elsewhere in the schema stops being
      correct the day that constraint moves, and which account a row belongs to must not depend on
-     an index definition. `deleted_at` is NOT filtered: a tombstoned row is a message this install
-     has been told to forget, and moving it would resurrect an intent the person cancelled — so it
-     resolves, and the `no_such_message` arm below covers it by never matching. */
+     an index definition. A tombstone may be a direct organizer delete whose move to the mailbox's
+     Trash has settled. It can acknowledge that same placement without rewriting it. */
   const [msg] = await tx.select({
     id: messages.id,
     nativeLocator: messages.nativeLocator,
@@ -262,7 +261,7 @@ export async function applyMessageMove(
     ))
     .limit(1);
 
-  if (!msg || msg.deletedAt !== null) return { applied: false, refusal: "no_such_message" };
+  if (!msg) return { applied: false, refusal: "no_such_message" };
 
   /* RESOLVE THE WORD. `trash` is the one member the map cannot answer; everything else is a
      canonical path. A word absent from the map cannot reach here — `validateMovePayload` refused
@@ -272,6 +271,7 @@ export async function applyMessageMove(
   /* `trash` is the ONE word the map answers with null (see it), and the payload was validated
      against that map, so this is the destination-is-Trash question already answered. */
   const toTrash = to === null;
+  if (msg.deletedAt !== null && !toTrash) return { applied: false, refusal: "no_such_message" };
   if (to === null) {
     const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
       .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId))).limit(1);
@@ -279,12 +279,9 @@ export async function applyMessageMove(
     /* NO TRASH, NO GUESS. ohmail never expunges, so there is no fallback that is not a lie about
        where a person's mail went — the same refusal `MessageService.delete` gives at its own door,
        and it is reported rather than thrown so the drain can ack the reader honestly. */
-    if (to === null) return { applied: false, refusal: "no_trash_folder" };
-  }
-
-  // THE STALE PRESS, before any write: a placement decided here after an aged press stands.
-  if (stated !== null && pressIsAged(pressed, now) && await placementDecidedAfter(tx, msg.id, pressed)) {
-    return { applied: false, refusal: "stale_press" };
+    if (to === null) return {
+      applied: false, refusal: msg.deletedAt === null ? "no_trash_folder" : "no_such_message",
+    };
   }
 
   /* WHERE IT IS NOW — the worker's truth, or the message's own locator when no `folder_state` row
@@ -296,6 +293,16 @@ export async function applyMessageMove(
     .where(eq(folderState.messageId, msg.id)).limit(1);
   const loc = (msg.nativeLocator as { folder?: string } | null) ?? null;
   const from = fs?.observedFolder ?? loc?.folder ?? "INBOX";
+
+  const settledTrash = toTrash && fs?.observedFolder === to && fs.desiredFolder === to;
+  if (msg.deletedAt !== null && !settledTrash) return { applied: false, refusal: "no_such_message" };
+
+  // THE STALE PRESS, before any write: a placement decided here after an aged press stands.
+  if (stated !== null && pressIsAged(pressed, now) && await placementDecidedAfter(tx, msg.id, pressed)) {
+    return { applied: false, refusal: "stale_press" };
+  }
+
+  if (settledTrash) return { applied: true, messageId: msg.id, from, to, lastSeq: null };
 
   /* WHERE IT CAME FROM, SO A RESTORE PUTS IT BACK THERE — `MessageService.upsertDesired`'s rule,
      applied here because this is the same write through another door: a move to the mailbox's

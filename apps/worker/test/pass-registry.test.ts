@@ -118,6 +118,7 @@ const IN_WORKER_PASSES: readonly string[] = [
   "junk-sweep.ts::junkSweepPass",
   "kickstart.ts::runKickstart",
   "mailbox-erasure-pass.ts::mailboxErasurePass",
+  "account-erasure-pass.ts::accountErasurePass",
   "news-fold.ts::newsFoldPass",
   "news-repair.ts::legacyNewsRepairPass",
   "ohbox-tidy.ts::ohboxTidyPass",

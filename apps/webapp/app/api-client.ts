@@ -138,7 +138,7 @@ export interface ApiWire {
   retryAfterMs?: number;
 }
 
-/** The one network failure that is not a refusal: we never reached the server. */
+/** A network failure or abort that left the client without a usable HTTP response. */
 export const OFFLINE_CODE = "network_unreachable";
 
 const SUGGESTION_PATH = "/screener/suggest";
@@ -586,7 +586,7 @@ function checkAnswerOwner(
   }
 }
 
-/** No server was reached: the network, an abort. */
+/** The client could not read an answer. The server may have received the request. */
 function offlineError(): ApiError {
   return new ApiError(
     0, OFFLINE_CODE, said("refusedOffline", "We could not reach ohmail. Check your connection and try again."),
@@ -1249,7 +1249,11 @@ async function attempt<T>(
   }
   if (res.status === 204) return undefined as T;
 
-  const text = await res.text();
+  const text = await res.text().catch((err: unknown) => {
+    // Headers alone cannot confirm erasure or tell us what happened to the subscription.
+    if (method === "DELETE" && path === "/account") throw offlineError();
+    throw err;
+  });
   let parsed: unknown = undefined;
   if (text) {
     try {
@@ -2744,7 +2748,9 @@ export interface MailboxErasure {
 
 /** What `DELETE /account` answers. Every field is stated on the confirmation screen. */
 export interface ErasureResult {
-  erased: true;
+  erased: boolean;
+  /** The account is signed out and its stored data is being removed. */
+  accepted?: true;
   /** Absent with `tables` when the deletion was confirmed by a read after its own answer was lost. */
   usersErased?: number;
   /** Rows removed per table — the operator's audit line, not something the UI enumerates. */

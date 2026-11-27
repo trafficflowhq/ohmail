@@ -66,6 +66,8 @@ export interface MobileEngineDeps {
 export interface ConnectAuth {
   headers: () => Record<string, string>;
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
+  /** Which held credential can support a fresh inventory identity check. */
+  credentialGeneration?: () => number | null;
 }
 
 /**
@@ -494,11 +496,18 @@ export async function identityProbe(
   deadline: number,
   accountWithoutSession?: () => Promise<string | null>,
 ): Promise<{ kind: "verified" | "unverified" } | { kind: "mismatch"; serverSays: string }> {
+  const identity = await identityWithinDeadline(fetchImpl, origin, authHeaders, accountId, deadline, accountWithoutSession);
+  return identity.kind === "timedOut" ? { kind: "unverified" } : identity;
+}
+
+async function identityWithinDeadline(
+  ...[fetchImpl, origin, authHeaders, accountId, deadline, accountWithoutSession]: Parameters<typeof identityProbe>
+) {
   // BOUNDED — see {@link IDENTITY_PROBE_DEADLINE_MS}: a probe the server accepts and never
   // answers times out into `unverified` (the timer is cleared when the probe wins).
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<{ kind: "unverified" }>((resolve) => {
-    timer = setTimeout(() => resolve({ kind: "unverified" }), deadline);
+  const timedOut = new Promise<{ kind: "timedOut" }>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: "timedOut" }), deadline);
   });
   return Promise.race([
     verifyAccountId(fetchImpl, origin, authHeaders, accountId, accountWithoutSession).finally(() => clearTimeout(timer)),
@@ -516,7 +525,7 @@ export async function identityProbe(
  * forwarded by hand — an absent forward would silently strip it on the live path only.
  */
 type GuardedMobileAdapter = EngineAdapter
-  & Pick<HttpAdapter, "snapshot" | "listMessages" | "listTrash" | "restoreFromTrash" | "timeline">
+  & Pick<HttpAdapter, "snapshot" | "listMessages" | "listTrash" | "restoreFromTrash" | "timeline" | "searchPlaces">
   & Partial<Pick<HttpAdapter, "calendarSettings" | "writeCalendar" | "retryCalendarWrite" | "dismissCalendarWrite" | "setSuggestionDismissed">>;
 
 function accountGuarded(
@@ -533,6 +542,8 @@ function accountGuarded(
    * has two halves here: the owner stamp stops mirror bleed, and this stops cursor bleed.
    */
   cleared: () => boolean,
+  /** Folder names and counts carry no account IDs, so only a positive identity may expose them. */
+  inventoryCleared: (beforeRead: boolean) => Promise<boolean>,
   /** `GET /hello` read right before a forward that names its parts — see {@link helloForwardParts}. */
   forwardPartsSaid: () => Promise<boolean | null>,
   paired: boolean,
@@ -604,6 +615,11 @@ function accountGuarded(
     fetchBody: (id) => adapter.fetchBody(id),
     fetchBodies: (ids: string[]) => adapter.fetchBodies(ids),
     searchServer: (query, opts) => adapter.searchServer(query, opts),
+    searchPlaces: async () => {
+      if (!(await inventoryCleared(true))) return null;
+      const places = await adapter.searchPlaces();
+      return (await inventoryCleared(false)) ? places : null;
+    },
     // The worker doorbell (`POST /sync/pull`) — forwarded, not gated, on `mutate`'s rule: it
     // moves no mirror and no cursor, and the connection layer already rings it only inside the
     // clearance continuation (`boot-surface.test.ts` pins guard → ring → drain). This forward
@@ -632,7 +648,7 @@ function accountGuarded(
     /* The Ohbox's undecided-sender offer and its press — the web's pair, on `screenerWaiting`'s and
        `mutate`'s rules. Left out of this literal, the engine reads "this door has no offer". */
     unscreened: (pile, after) => adapter.unscreened(pile, after),
-    screenUnscreened: (addresses, pile) => adapter.screenUnscreened(addresses, pile),
+    screenUnscreened: (addresses, pile, after) => adapter.screenUnscreened(addresses, pile, after),
     /* Why a sender's rows stayed — a read of this account's own messages, on `screenerWaiting`'s
        rule. Left out, the engine reads "this door names no reason" and the sheet lists none. */
     whyStayed: (ids) => adapter.whyStayed(ids),
@@ -738,19 +754,20 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
    * shut for the full eight-second deadline on every launch with no route to answer. The
    * per-entity account guard stays armed either way — the rule every door lives under.
    */
-  let identityCleared = local !== undefined;
-  const verifyIdentity = async (): Promise<IdentityVerdict> => {
-    if (local !== undefined) return { kind: "unverified" };
+  let identityStatus: IdentityVerdict["kind"] | "timedOut" | null = local !== undefined ? "verified" : null;
+  let lastInventoryProof: number | undefined;
+  let identityCheck: Promise<IdentityVerdict> | null = null;
+  const verifyIdentity = (): Promise<IdentityVerdict> => {
+    if (local !== undefined) return Promise.resolve({ kind: "unverified" });
     const deadline = config.identityDeadlineMs ?? IDENTITY_PROBE_DEADLINE_MS;
-    const identity = await identityProbe(fetchImpl, origin, authHeaders, accountId, deadline);
-    if (identity.kind === "mismatch") {
-      return {
-        kind: "mismatch",
-        reason: refuse("bootAccountMismatch", identity.serverSays, accountId),
-      };
-    }
-    identityCleared = true;
-    return { kind: identity.kind };
+    return identityCheck ??= identityWithinDeadline(fetchImpl, origin, authHeaders, accountId, deadline)
+      .then((identity): IdentityVerdict => {
+        identityStatus = identity.kind;
+        return identity.kind === "mismatch"
+          ? { kind: "mismatch", reason: refuse("bootAccountMismatch", identity.serverSays, accountId) }
+          : { kind: identity.kind === "timedOut" ? "unverified" : identity.kind };
+      })
+      .finally(() => { identityCheck = null; });
   };
 
   const ownerKey = mirrorOwnerKey(origin, accountId);
@@ -795,7 +812,21 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
         ...(local === undefined ? { scheduleFilesCheck: true } : {}),
       }),
       accountId,
-      () => identityCleared,
+      () => identityStatus === "verified" || identityStatus === "unverified" || identityStatus === "timedOut",
+      async (beforeRead) => {
+        await identityCheck;
+        // The launch may have opened the mirror while an authenticated retry was still on the wire.
+        // Retry once per held credential, only before an inventory request.
+        if (beforeRead && identityStatus === "timedOut") {
+          const generation = config.auth?.credentialGeneration ? config.auth.credentialGeneration() : 0;
+          if (generation !== null && generation !== lastInventoryProof) {
+            lastInventoryProof = generation;
+            void verifyIdentity();
+          }
+          await identityCheck;
+        }
+        return identityStatus === "verified";
+      },
       // The phone's own engine is this same build.
       () => (local !== undefined ? Promise.resolve(true)
         : helloForwardParts(fetchImpl, origin, config.forwardPartsDeadlineMs ?? FORWARD_PARTS_HELLO_MS)),

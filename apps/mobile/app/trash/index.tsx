@@ -21,6 +21,7 @@ import { DetailBar, PaneTop } from "../../src/ui/chrome";
 import { Gated } from "../../src/ui/Gated";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList } from "../../src/ui/MailList";
+import { MailPlaceDock } from "../../src/ui/MailPlaceDock";
 import { MailRow } from "../../src/ui/MailRow";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { TrashReader } from "../../src/ui/TrashReader";
@@ -211,7 +212,7 @@ function TrashBody({ inPane }: { inPane: boolean }) {
       open={open}
       onClose={close}
       toRoute={(mid) => `/trash/${mid}`}
-      list={list}
+      list={theme.mail && open === null ? <MailPlaceDock>{list}</MailPlaceDock> : list}
       renderDetail={(mid, ctx) => (
         <TrashReader id={mid} onClose={ctx.onClose} />
       )}

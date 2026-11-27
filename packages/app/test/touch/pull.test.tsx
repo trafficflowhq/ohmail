@@ -3,7 +3,7 @@ import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NONE } from "../../src/host/index.js";
 import { wideWindow } from "../ohbox/setup.js";
-import { at, msg, pullDown, touchWorld } from "./touch-world.js";
+import { at, msg, pullDown, pulledDistance, touchWorld } from "./touch-world.js";
 
 /*
  * PULL NEW MAIL BY FINGER: the list pulled down at its top presses the list's own pull, the very binding its menu
@@ -27,12 +27,11 @@ describe("a pull at the Ohbox's top", () => {
 
   it("opens a room while the finger is down, and closes it when let go", () => {
     const world = touchWorld(letters());
-    const room = () => document.querySelector<HTMLElement>(".tc-pull")!;
-    expect(room().style.height).toBe("0px");
+    expect(pulledDistance(world.scroller())).toBe(0);
     const letGo = pullDown(row(), 1000, { hold: true, cancel: true });
-    expect(room().style.height, "drawn down at most 120").toBe("120px");
+    expect(pulledDistance(world.scroller()), "drawn down at most 120").toBe(120);
     letGo();
-    expect(room().style.height).toBe("0px");
+    expect(pulledDistance(world.scroller())).toBe(0);
     expect(world.said.pulled).toBe(0);
     pullDown(row(), 150);
     expect(world.said.pulled).toBe(1);
@@ -40,9 +39,8 @@ describe("a pull at the Ohbox's top", () => {
 
   it("closes the room and pulls nothing when a second finger lands during a pull", () => {
     const world = touchWorld(letters());
-    const room = () => document.querySelector<HTMLElement>(".tc-pull")!;
     pullDown(row(), 200, { hold: true });
-    expect(room().style.height).not.toBe("0px");
+    expect(pulledDistance(world.scroller())).toBeGreaterThan(0);
     act(() => {
       const two = new Event("touchstart", { bubbles: true, cancelable: true });
       Object.defineProperty(two, "touches", {
@@ -59,7 +57,7 @@ describe("a pull at the Ohbox's top", () => {
       row().dispatchEvent(end);
     });
     expect(world.said.pulled).toBe(0);
-    expect(room().style.height, "the pull's room left open").toBe("0px");
+    expect(pulledDistance(world.scroller()), "the pull's room left open").toBe(0);
   });
 
   it("does not pull from below the list's top", () => {

@@ -33,10 +33,11 @@ const inner = (width: number, height: number, state: FoldFeature["state"]) =>
 describe("the New mail sheet keeps Send on screen", () => {
   const body = src("../src/ui/MessageActions.tsx");
   const sheet = body.slice(body.indexOf("export function ComposeSheet("));
-  const modal = sheet.slice(sheet.indexOf("onRequestClose={closeComposer}"));
+  const modal = sheet.slice(sheet.indexOf("onRequestClose={requestClose}"));
   const open = modal.indexOf("<ScrollView");
   const footer = modal.indexOf("{discardAsked ? <>");
-  const close = modal.lastIndexOf("</ScrollView>", footer);
+  const pinnedNotes = modal.indexOf("{pinNotes ? notesBlock : null}");
+  const close = modal.lastIndexOf("</ScrollView>", pinnedNotes);
 
   it("the fields scroll inside the panel", () => {
     expect(open, "the composer's panel has no scroller").toBeGreaterThan(-1);
@@ -48,20 +49,22 @@ describe("the New mail sheet keeps Send on screen", () => {
   });
 
   it("the scroller gives way and the panel gives way, so the footer never leaves the window", () => {
-    expect(modal.slice(open, modal.indexOf(">", open))).toContain("style={{ flexGrow: 0, flexShrink: 1 }}");
+    const scrollTag = modal.slice(open).split(/\n\s*>\n/, 1)[0];
+    expect(scrollTag).toContain("style={{ flexGrow: 0, flexShrink: 1 }}");
+    expect(scrollTag).toContain("onContentSizeChange={letterContent}");
     const panel = modal.slice(0, open);
     expect(panel.slice(panel.lastIndexOf("borderTopLeftRadius"))).toContain("flexShrink: 1,");
   });
 
-  it("Send and Cancel stand after the scroller and are the only thing always pinned", () => {
+  it("the sending actions stand together below the letter scroller", () => {
     expect(sheet).toMatch(/const closeButton = [\s\S]*?<Button label=\{Copy\.replyCancel\}[^>]*onPress=\{closeComposer\}/);
     expect(sheet).toMatch(/const sendButton = [\s\S]*?Copy\.replySending : run \? Copy\.replyRunSendNext : doneOnSend \? Copy\.sendAndDone : Copy\.replySend/);
-    expect(modal.slice(footer)).toContain("<>{sendButton}{doneButton}{inline ? null : laterButton}{closeButton}");
+    expect(modal.slice(footer)).toContain("<>{sendButton}{laterButton}{closeButton}{doneButton}");
     expect(modal.slice(footer)).toContain("<>{closeButton}{laterButton}{doneButton}{sendButton}</>");
     expect(footer, "the close and send buttons must stand together past the scroller").toBeGreaterThan(close);
-    const between = modal.slice(close, footer);
+    const between = modal.slice(close, pinnedNotes);
     expect(between, "a sentence pinned outside the bounded block").not.toMatch(/<Txt\b/);
-    expect(between).toContain("{pinNotes ? notesBlock : null}");
+    expect(pinnedNotes).toBeGreaterThan(close);
     expect(modal.slice(open, close)).toContain("{pinNotes ? null : notesBlock}");
   });
 
@@ -79,7 +82,7 @@ describe("the New mail sheet keeps Send on screen", () => {
     expect(sheet).toContain("const pinNotes = notesPinned(notesHeight, pinnedNotesMax(windowHeight));");
     const edge = modal.slice(close, close + 300);
     expect(edge).toContain("height: StyleSheet.hairlineWidth * 2, marginTop: -10, backgroundColor: t.c.hairSoft");
-    expect(sheet).toContain("minHeight: composeBodyMin(later !== null, heightClass),");
+    expect(sheet).toContain("minHeight: composeBodyMin(laterInline, heightClass),");
   });
 });
 

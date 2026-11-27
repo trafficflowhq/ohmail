@@ -74,7 +74,7 @@ describe("the calendar on a contact card", () => {
       expect(creates).toEqual([expect.objectContaining({
         kind: "calendar_event_create", event: expect.objectContaining({ title: "A private appointment", invitees: [] }),
       })]);
-    }, { extraSync, rules: ["INBOX"], answer: calendarWrites(creates) });
+    }, { extraSync, calendarSnapshot: true, rules: ["INBOX"], answer: calendarWrites(creates) });
   });
 
   it("sends an invitation only after Invite and the separate confirmation", async () => {
@@ -101,7 +101,7 @@ describe("the calendar on a contact card", () => {
           { address: sender, name: "Ada", role: "required" },
         ] }),
       })]);
-    }, { extraSync, rules: ["INBOX"], answer: calendarWrites(creates) });
+    }, { extraSync, calendarSnapshot: true, rules: ["INBOX"], answer: calendarWrites(creates) });
   });
 
   it("keeps counts, placement, audit and mail-derived events in the clicked mailbox", async () => {
@@ -122,7 +122,7 @@ describe("the calendar on a contact card", () => {
       expect.soft(audit.getByText("A note from Ada")).toBeTruthy();
       expect.soft(audit.queryByText("From the other mailbox")).toBeNull();
     }, {
-      answer: calendarAnswer, rules: ["INBOX"], secondMailbox: true,
+      answer: calendarAnswer, rules: ["INBOX"], secondMailbox: true, calendarSnapshot: true,
       extraSync: [...extraSync, { type: "calendar_suggestion", entity: otherSuggestion, id: otherSuggestion.id, op: "create", updatedAt: ISO }],
     });
   });
@@ -148,7 +148,7 @@ describe("the calendar on a contact card", () => {
         await tick(500);
         expect(window.location.hash).toMatch(route);
         if (label === "New event") expect(screen.getByRole("button", { name: "Invite Ada" })).toBeTruthy();
-      }, { answer: calendarAnswer, extraSync, rules: ["INBOX"] });
+      }, { answer: calendarAnswer, extraSync, calendarSnapshot: true, rules: ["INBOX"] });
     });
   }
 });

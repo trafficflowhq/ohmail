@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/trafficflowhq/ohmail/releases/latest"><img src="https://img.shields.io/badge/download-v2.0.9-F0EBE3?style=flat&amp;labelColor=12100E" alt="Latest release" /></a>
+  <a href="https://github.com/trafficflowhq/ohmail/releases/latest"><img src="https://img.shields.io/badge/download-v2.0.10-F0EBE3?style=flat&amp;labelColor=12100E" alt="Latest release" /></a>
   <a href="https://github.com/trafficflowhq/ohmail/releases"><img src="https://img.shields.io/github/downloads/trafficflowhq/ohmail/total?style=flat&amp;labelColor=12100E&amp;color=F0EBE3" alt="Total downloads across all releases" /></a>
   <a href="https://github.com/trafficflowhq/ohmail"><img src="https://img.shields.io/github/stars/trafficflowhq/ohmail?style=flat&amp;label=%E2%98%85&amp;labelColor=12100E&amp;color=F0EBE3" alt="GitHub stars" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-F0EBE3?style=flat&amp;labelColor=12100E" alt="License: AGPL-3.0" /></a>

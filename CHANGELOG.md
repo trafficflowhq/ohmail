@@ -21,6 +21,34 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [2.0.10] — 2026-11-27
+
+### Steadier calendar refresh and clearer keyboard hints
+
+Microsoft calendar refresh continues when the server rotates its encryption key. Keyboard hints stay aligned when you enlarge text on the web. Phone controls tell screen readers when they become available again.
+
+### Mailbox erasure and credit refunds resume reliably
+
+The hosted worker can finish removing a mailbox and return credits when an earlier refund attempt could not complete. Search uses the account's search indexes, and the Screener counts waiting senders without loading their messages.
+
+Large account deletions sign you out immediately and continue in the background. Deletion removes signup addresses from the invitation and waitlist records. A verification request or sign-in in flight cannot prevent deletion from finishing. If the payment provider cannot confirm a subscription cancellation, the worker retries it automatically after deletion.
+
+On large mailboxes, a selected sender can be screened directly. A bulk click can move up to 1,000 letters across pages, and the offer updates with what remains. Thread repair works in bounded passes even when long subjects begin alike. After a short database interruption, waiting requests keep their places without asking for duplicate connections.
+
+### Keep unsent drafts and restore mail to its original folder
+
+Closing several browser tabs preserves each tab's unsent draft. Pressing Trash again after a message has moved there keeps its original folder for Restore.
+
+When account deletion is unconfirmed, the page explains how to verify the outcome and still shows any known subscription status.
+
+### Phone mail follows the mobile web layout
+
+On Android and iOS, Ohbox shows the sender and subject together, Search opens with people and message counts, and Settings shows a summary beside each available pane. News and Receipts use the same cards as the web, with a link to read longer messages.
+
+The phone composer keeps the writing tools above the keyboard and leaves the conversation visible while replying. Signatures start folded and their links keep their labels.
+
+Pull down a mail list on the phone or mobile web to check for mail. The list reveals the squares and dot while it waits. With reduced motion, the mark stays still. When several mailboxes are connected, a small chip shows which one received the message.
+
 ## [2.0.9] — 2026-11-26
 
 ### Calendars show up on desktop after signing in
@@ -19494,7 +19522,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.9...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v2.0.10...HEAD
+[2.0.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.10
 [2.0.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.9
 [2.0.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.8
 [2.0.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v2.0.7

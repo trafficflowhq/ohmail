@@ -39,6 +39,8 @@ import { DROP_CONTENT, phoneQuotedTree, sheetText } from "./quoted-tree";
 /** Which band of a letter's widths a frame width falls in: the frame reads the letter again on a crossing. */
 export { letterBand, type LetterBreak } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+import { PHONE_LINK_SCHEME } from "./frame-nav";
+import { MAX_AUTO_LINKS, textLinks } from "./text-links";
 
 /** One blocked remote reference — the web's `BlockedAsset` shape, minted by the same rules. */
 export interface PhoneBlockedAsset {
@@ -88,6 +90,8 @@ export interface PhoneSanitizeOptions {
   loadPixels?: boolean;
   /** Calendar evidence to mark in a visible text node. */
   highlight?: string;
+  /** Turn visible plain addresses and URLs into reader links. */
+  linkText?: boolean;
   /**
    * Leave the quoted history out (the shared detector's range): the document, its blocked list, its
    * parts and its links are then the folded document's own. Off, the output is unchanged.
@@ -102,8 +106,7 @@ export interface PhoneSanitizeOptions {
 /** The frame width a pass resolves at when the caller names none (a phone's narrow pane). */
 export const PHONE_DEFAULT_FRAME_PX = 360;
 
-/** The scheme the document's links carry instead of their targets. */
-export const PHONE_LINK_SCHEME = "ohmail-link:";
+export { PHONE_LINK_SCHEME };
 
 /** The void elements among the allowed tags — serialized self-closed, never with an end tag. */
 const VOID_TAGS = new Set(["area", "br", "col", "hr", "img", "wbr"]);
@@ -159,6 +162,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
   const sheets: string[] = [];
   const cids: string[] = [];
   const links: string[] = [];
+  const linkRef = (href: string) => PHONE_LINK_SCHEME + (links.push(href) - 1);
   const frameWidth = opts.frame?.width ?? PHONE_DEFAULT_FRAME_PX;
   if (html.length > MAIL_MAX_HTML_CHARS) {
     return { html: "", blocked, sheets, cids, links, light: true, paper: null, ink: null, frameWidth, breaks: [], oversize: true };
@@ -336,8 +340,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
         // Only a scheme the gate admits AND a target the app can open leaves a token; `cid:`
         // passes the gate but names a part of this message, so it stays visible-but-inert.
         if (SAFE_HREF.test(href) && !CID_URL.test(href)) {
-          links.push(href);
-          kept.push(["href", `${PHONE_LINK_SCHEME}${links.length - 1}`]);
+          kept.push(["href", linkRef(href)]);
         }
         continue;
       }
@@ -366,8 +369,41 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
    */
   const highlight = opts.highlight;
   let highlighted = false;
+  let autoLinks = 0;
+  const emitText = (text: string, linkText: boolean): void => {
+    const start = highlight && !highlighted ? text.indexOf(highlight) : -1;
+    const end = start + (highlight?.length ?? 0);
+    if (start >= 0) highlighted = true;
+    const emit = (from: number, to: number) => {
+      if (start < 0 || to <= start || end <= from) {
+        out.push(escText(text.slice(from, to)));
+      } else {
+        out.push(escText(text.slice(from, Math.max(from, start))), "<mark>",
+          escText(text.slice(Math.max(from, start), Math.min(end, to))), "</mark>",
+          escText(text.slice(Math.min(end, to), to)));
+      }
+    };
+
+    let cursor = 0;
+    if (linkText && autoLinks < MAX_AUTO_LINKS) {
+      for (const link of textLinks(text)) {
+        emit(cursor, link.start);
+        out.push('<a href="', linkRef(link.href), '">');
+        const label = escText(link.label);
+        if (start >= 0 && start < link.end && end > link.start) out.push("<mark>", label, "</mark>");
+        else out.push(label);
+        out.push("</a>");
+        cursor = link.end;
+        autoLinks += 1;
+        if (autoLinks >= MAX_AUTO_LINKS) break;
+      }
+    }
+    emit(cursor, text.length);
+  };
+
   const walk = (nodes: readonly ChildNode[], skip: ReadonlySet<AnyNode>): void => {
-    const stack: Array<{ nodes: readonly ChildNode[]; at: number; close: string | null }> = [{ nodes, at: 0, close: null }];
+    type Step = { nodes: readonly ChildNode[]; at: number; close: string | null; linkText: boolean };
+    const stack: Step[] = [{ nodes, at: 0, close: null, linkText: opts.linkText === true }];
     while (stack.length > 0) {
       const top = stack[stack.length - 1]!;
       if (top.at === top.nodes.length) {
@@ -378,20 +414,13 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
       const n = top.nodes[top.at++]!;
       if (skip.has(n)) continue;
       if (n instanceof Text) {
-        const at = highlight && !highlighted ? n.data.indexOf(highlight) : -1;
-        if (!highlight || at < 0) {
-          out.push(escText(n.data));
-        } else {
-          const end = at + highlight.length;
-          out.push(escText(n.data.slice(0, at)), "<mark>",
-            escText(n.data.slice(at, end)), "</mark>", escText(n.data.slice(end)));
-          highlighted = true;
-        }
+        emitText(n.data, top.linkText);
         continue;
       }
       if (n instanceof Element) {
         const inner = emitElement(n);
-        if (inner !== null) stack.push({ nodes: inner.children, at: 0, close: inner.close });
+        const linkText = top.linkText && n.tagName !== "a" && n.tagName !== "code" && n.tagName !== "pre";
+        if (inner !== null) stack.push({ nodes: inner.children, at: 0, close: inner.close, linkText });
         continue;
       }
       // Comments, doctypes, CDATA, processing instructions: dropped.

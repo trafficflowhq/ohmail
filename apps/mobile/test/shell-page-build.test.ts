@@ -258,6 +258,7 @@ describe("the built page in a browser", () => {
     refuseFirstNameRead?: boolean;
     refuseName?: string;
     withoutRandomUUID?: boolean;
+    timezoneId?: string;
   };
   type MailCopy = { accountId: string; subject: string };
   type Feeds = { snapshot: MailCopy[]; updates?: MailCopy[] };
@@ -420,7 +421,7 @@ describe("the built page in a browser", () => {
       await new Promise((done) => server.close(done));
     };
     try {
-      const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true });
+      const context = await browser.newContext({ viewport, isMobile: true, hasTouch: true, timezoneId: settings.timezoneId });
       const page = await context.newPage();
       const left: string[] = [];
       page.on("request", (r) => { if (!r.url().startsWith(`${origin}/shell/`)) left.push(r.url()); });
@@ -700,20 +701,25 @@ describe("the built page in a browser", () => {
             ["calendar_event", event], ["calendar_event", earlier],
           ] : []),
         ].map(([type, entity], i) => ({
-          type, entity, id: (entity as { id: string }).id, seq: i + 1, op: "update", updatedAt: timestamp,
+          type, entity, id: (entity as { id: string }).id, seq: i + (enabledAt ? 2 : 1), op: "update", updatedAt: timestamp,
         }));
+        const asOfSeq = rows.at(-1)!.seq;
         if (path === "/calendar/sync/snapshot") {
-          return Response.json({ asOfSeq: rows.length, changes: rows, nextCursor: null });
+          return Response.json({
+            asOfSeq, changes: rows.map((row) => ({ ...row, op: "create", seq: asOfSeq })), nextCursor: null,
+            ...(enabledAt ? { calendarWindow: { daysBack: 366, daysAhead: 731, maxRows: 10_000 } } : {}),
+          });
         }
         if (path === "/calendar/sync") {
-          return Response.json({ changes: { creates: [], updates: rows, deletes: [], moves: [] }, cursor: "NQ", hasMore: false });
+          const cursor = Buffer.from(String(asOfSeq)).toString("base64url");
+          return Response.json({ changes: { creates: [], updates: rows, deletes: [], moves: [] }, cursor, hasMore: false });
         }
         return Response.json({}, { status: 404 });
       },
     } as unknown as ShellSession;
     const http = new HttpDoor({ live: () => ({ session, scope: CONFIG.scope }), ready: () => true });
     const { page, close } = await drawn({ ...CONFIG, app: "ohcal", os: "ios", language: "en" }, [], undefined,
-      undefined, { withoutRandomUUID: true }, undefined, http);
+      undefined, { withoutRandomUUID: true, timezoneId: "UTC" }, undefined, http);
     try {
       await page.getByRole("button", { name: "Connect a calendar", exact: true }).click({ timeout: 4_000 });
       await browserExpect(page.getByRole("button", { name: WAY_WORDS[SIGN_IN_WAY], exact: true })).toBeVisible({ timeout: 4_000 });

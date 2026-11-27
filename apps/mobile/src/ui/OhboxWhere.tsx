@@ -5,6 +5,7 @@
  * (`live.ts#ohboxWhereSaid`). The web's `OhboxWhereLine`, in this app's own primitives.
  */
 import { useEffect, useState } from "react";
+import { clockOf } from "@ohmail/app-logic/text/format";
 import { AppState, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../copy";
@@ -12,12 +13,17 @@ import { useNetworkNow } from "../net/network-door";
 import { useWorld } from "../state/world";
 import { FILED_PILE_ROUTE, checkedAgoSaid, filedPileSaid, ohboxWhereSaid, type FiledSince } from "../state/live";
 import { Tap, Txt } from "./base";
+import { mailSize } from "../theme/mail";
 
 /** The relative "Checked" time moves by the minute. */
 const TICK_MS = 60_000;
 
 /** `inline`: it rides the list head's one line (compact height), after the meta and a separator. */
-export function OhboxWhere({ filed, inline = false }: { filed: FiledSince | null; inline?: boolean }) {
+export function OhboxWhere({ filed, inline = false, mode }: {
+  filed: FiledSince | null;
+  inline?: boolean;
+  mode?: "checked";
+}) {
   const w = useWorld();
   const network = useNetworkNow();
   const [, setTick] = useState(0);
@@ -52,18 +58,27 @@ export function OhboxWhere({ filed, inline = false }: { filed: FiledSince | null
     filed,
   });
   if (said === null) return null;
-  if (said.checked === null && said.piles.length === 0) return null;
-  const checked = said.checked === null ? null : Copy.whereChecked(checkedAgoSaid(said.checked, nowMs));
+  const checked = said.checked === null
+    ? null : Copy.whereChecked(mode === "checked"
+      ? clockOf(said.checked, Intl.DateTimeFormat().resolvedOptions().timeZone)
+      : checkedAgoSaid(said.checked, nowMs));
+  const piles = mode === "checked" ? [] : said.piles;
+  if (checked === null && piles.length === 0) return null;
+  if (mode === "checked") {
+    return <Txt variant="railCount" tone="ink2" style={{
+      paddingHorizontal: mailSize.edge - mailSize.rowInset, paddingTop: mailSize.inset, paddingBottom: mailSize.rowInset,
+    }}>{checked}</Txt>;
+  }
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", marginTop: inline ? 0 : 4 }}>
       {inline ? <Txt variant="meta" tone="ink3">{" · "}</Txt> : null}
       {checked !== null ? <Txt variant="meta" tone="ink3">{checked}</Txt> : null}
-      {said.piles.length > 0 ? (
+      {piles.length > 0 ? (
         <Txt variant="meta" tone="ink3">
           {`${checked !== null ? " · " : ""}${Copy.whereSince(checked === null)} `}
         </Txt>
       ) : null}
-      {said.piles.map((p, i) => {
+      {piles.map((p, i) => {
         const text = Copy.whereTo(p.count, filedPileSaid(p.pile));
         return (
           <View key={p.pile} style={{ flexDirection: "row" }}>

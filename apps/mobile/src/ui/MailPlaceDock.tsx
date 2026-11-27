@@ -1,13 +1,16 @@
 import { useState } from "react";
 import { Platform, useWindowDimensions, View } from "react-native";
-import { router } from "expo-router";
+import { router, useLocalSearchParams, usePathname } from "expo-router";
 import { Copy } from "../copy";
 import { useWorld } from "../state/world";
-import { GlassDock } from "./glass";
+import { GlassDock } from "./glass/GlassDock";
 import { dockFold } from "./glass/fold";
 import { MailPlacesDrawer } from "./MailPlacesDrawer";
+import { morePaneKeyOf } from "./pane-routes";
 import { usePosture } from "./posture";
 import { scaffoldPlan } from "./scaffold/plan";
+
+const tabs = { index: "/", screener: "/screener", reads: "/reads", receipts: "/receipts" } as const;
 
 /** The compact mail dock on a place opened outside the tab navigator. */
 export function MailPlaceDock({ onSearch, children }: {
@@ -17,6 +20,8 @@ export function MailPlaceDock({ onSearch, children }: {
   const posture = usePosture();
   const { width } = useWindowDimensions();
   const world = useWorld();
+  const pathname = usePathname();
+  const { id, pile, pane } = useLocalSearchParams<{ id?: string; pile?: string; pane?: string }>();
   const [drawer, setDrawer] = useState(false);
   if (scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android").nav !== "dock") return children;
 
@@ -27,27 +32,28 @@ export function MailPlaceDock({ onSearch, children }: {
     { id: "receipts", icon: "receipts", label: Copy.receipts, badge: world.receipts.newCount },
     { id: "more", icon: "more", label: Copy.tabMore, badge: 0 },
   ] as const;
-  const { kept, folded } = dockFold(places.map((p) => p.id), width, true);
-  const items = places.filter((p) => kept.includes(p.id)).map((place) => {
-    const badge = place.id === "more" ? places.reduce((sum, p) => sum + (folded.includes(p.id) ? p.badge : 0), 0) : place.badge;
-    return { ...place, badge, label: badge ? Copy.ariaLabelCount(place.label, badge) : place.label };
-  });
+  const { kept } = dockFold(places.map((p) => p.id), width, true);
+  const items = places.filter((p) => kept.includes(p.id)).map((place) => ({
+    ...place, label: place.badge ? Copy.ariaLabelCount(place.label, place.badge) : place.label,
+  }));
+  const searchCurrent = pathname === "/search";
+  const keyedPlace = pathname.startsWith("/tag/") ? "tag" : pathname.startsWith("/folder/") ? "folder" : null;
+  const active = keyedPlace ? (id ? `${keyedPlace}:${id}` : null) : morePaneKeyOf({ pathname, params: { pile, pane } });
   const go = (place: string) => {
-    if (place === "index") router.dismissTo("/");
-    if (place === "screener") router.dismissTo("/screener");
-    if (place === "reads") router.dismissTo("/reads");
-    if (place === "receipts") router.dismissTo("/receipts");
+    const path = tabs[place as keyof typeof tabs];
+    if (path) router.dismissTo(path);
   };
   const compose = () => router.push("/compose");
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }} accessibilityElementsHidden={drawer} importantForAccessibility={drawer ? "no-hide-descendants" : "auto"}>
         {children}
-        <GlassDock items={items} activeId={null} onItemPress={(id) => id === "more" ? setDrawer(true) : go(id)}
-          search={{ label: Copy.search, onPress: onSearch ?? (() => router.push("/search")) }}
-          compose={{ label: Copy.composeNew, onPress: compose }} />
+        <GlassDock items={items} activeId={searchCurrent ? null : "more"}
+          onItemPress={(id) => id === "more" ? setDrawer(true) : go(id)}
+          search={{ label: Copy.search, current: searchCurrent, onPress: onSearch ?? (() => router.push("/search")) }}
+          compose={{ label: Copy.mailWrite, onPress: compose }} />
       </View>
-      <MailPlacesDrawer open={drawer} active={null} onClose={() => setDrawer(false)} onPlace={go} onCompose={compose} />
+      <MailPlacesDrawer open={drawer} active={active} onClose={() => setDrawer(false)} onPlace={go} onCompose={compose} />
     </View>
   );
 }

@@ -83,6 +83,16 @@ describe("the record", () => {
 });
 
 describe("what a relaunch shows", () => {
+  it("keeps an intentionally pinned device look with its scope across a relaunch", async () => {
+    const { kv } = memoryKV();
+    const store = appearanceStore(kv, () => {});
+    store.setFacePin("ohmarchy", true);
+    store.setTheme("dark");
+    const read: StoredAppearance[] = [];
+    await appearanceStore(kv, (next) => read.push(next)).boot();
+    expect(last(read)).toEqual({ themePref: "dark", facePin: "ohmarchy", faceOnlyHere: true });
+  });
+
   it("a stored appearance comes back — the scheme AND the pin", async () => {
     const seen: StoredAppearance[] = [];
     const { kv } = memoryKV(encodeAppearance({ themePref: "dark", facePin: "ohmarchy" }));

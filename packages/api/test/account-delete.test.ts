@@ -4,7 +4,7 @@ import { accounts, mailboxCredentials, mailboxes, messages, users } from "@traff
 import {
   UNMETERED_ACCESS, type EntitlementsPort, type ReleaseOutcome,
 } from "@trafficflow/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { authThrottle, creditRefundObligations } from "@trafficflow/db/cloud";
 import { throttleKeysFor } from "@trafficflow/services";
 import {
@@ -46,6 +46,26 @@ describe("DELETE /account", () => {
     expect(acct).toBeDefined();
     expect(acct!.name).toBe("");
   });
+
+  it("accepts a large erasure, fences the account, and leaves cleanup for the worker", async () => {
+    const { db, deps } = await makeDeps();
+    const owner = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const other = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const mailbox = await seedMailbox(db, { accountId: owner.accountId });
+    const kept = await seedMailbox(db, { accountId: other.accountId });
+    await seedMessage(db, { accountId: other.accountId, mailboxId: kept, folder: "INBOX" });
+    await db.execute(sql`
+      insert into messages (account_id, mailbox_id, body_hash, dedup_key)
+      select ${owner.accountId}::uuid, ${mailbox}::uuid, 'fixture', 'fixture-' || i
+      from generate_series(1, 1_201) i
+    `);
+    const response = await H(req("DELETE", "/account", { bearer: owner.token }), deps);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ erased: false, accepted: true });
+    expect(await db.select({ id: messages.id }).from(messages).where(eq(messages.accountId, owner.accountId))).toHaveLength(1_201);
+    expect((await H(req("GET", "/auth/session", { bearer: owner.token }), deps)).status).toBe(401);
+    expect(await db.select({ id: messages.id }).from(messages).where(eq(messages.accountId, other.accountId))).toHaveLength(1);
+  }, 30_000);
 
   it("is step-up gated — a session without a recent second factor cannot erase", async () => {
     const { db, deps } = await makeDeps();
@@ -186,6 +206,9 @@ describe("DELETE /account", () => {
       expect(res.status).toBe(200);
       expect((await res.json()).subscription).toBe("cancel_failed");
       expect(await db.select().from(users).where(eq(users.accountId, s.accountId))).toHaveLength(0);
+      const [account] = await db.select({ progress: accounts.erasureProgress }).from(accounts)
+        .where(eq(accounts.id, s.accountId));
+      expect(account?.progress).toMatchObject({ complete: true, billing: "cancel_failed", billingRetryAt: expect.any(String) });
     });
 
     it("an UNMETERED host reports `none` and still erases", async () => {

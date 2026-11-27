@@ -92,10 +92,9 @@ describe("send later, where an appointment can be kept and where it cannot", () 
       .toContain("standalone: w.standalone, forward, hasAttachments: attachments.length > 0, filesKept: filesKept?.kept === true,");
     expect(COMPOSER, "the Send later button is not gated on the predicate")
       .toMatch(/const laterButton = laterOffered \?\s*\(\s*<Button\s+label=\{Copy\.sendLater\}/);
-    expect(COMPOSER).toContain("{inline ? null : laterButton}");
+    expect(COMPOSER).toContain("{sendButton}{laterButton}{closeButton}{doneButton}");
     expect(COMPOSER).toContain("{closeButton}{laterButton}{doneButton}{sendButton}");
-    expect(COMPOSER, "the inline menu button is not gated on the predicate")
-      .toMatch(/\{replyMenu && inline && laterOffered \?\s*\(\s*<Button\s+label=\{Copy\.sendLater\}/);
+    expect(COMPOSER).toContain("{laterOffered ? <SheetRow label={Copy.sendLater}");
     expect(COMPOSER.match(/\blabel=\{Copy\.sendLater\}/g)).toHaveLength(2);
   });
 

@@ -124,21 +124,14 @@ export function withBindLimit(client: ReturnType<typeof postgres>): ReturnType<t
  * deadlines are the table's and nowhere else's.
  */
 function openPool(url: string, cell: HandleCell, max: number = cell.max): Sql {
-  const waiting = new Set<() => void>();
   const pool = postgres(url, withPgSocket({
     ...pgTlsOptions(url), max, prepare: cell.prepare,
     ...(cell.idleTimeoutS === null ? {} : { idle_timeout: cell.idleTimeoutS }),
     ...(cell.connectTimeoutS === null ? {} : { connect_timeout: cell.connectTimeoutS }),
     connection: cell.connection, onnotice: onNotice,
-    // Once the driver has handed its first waiting statement to the connection it dials again.
-    onclose: () => { if (waiting.size > 0) queueMicrotask(() => { for (const ask of [...waiting]) ask(); }); },
   }));
-  reservations.set(pool, waiting);
   return pool;
 }
-
-/** Each pool's waiting reservations, each asked again after a close (see {@link reserveWithin}). */
-const reservations = new WeakMap<Sql, Set<() => void>>();
 
 /** What a dressed handle was built from: its pool, its cell and its role. Read by `acquireCeilingHandle`. */
 const dressed = new WeakMap<object, { pool: Sql; cell: HandleCell; role: HandleRole }>();
@@ -1190,36 +1183,27 @@ function withReadFlight(pool: Sql, client: Sql, waitMs: number | null): Sql {
 /**
  * A reserved connection, within `ms` when the handle has a ceiling, or {@link DbAcquireTimeoutError}
  * naming `what` the caller waited to begin; one reserved too late goes straight back. A reservation
- * that waits is asked again after each close of one of its pool's connections: postgres.js 3.4.9
- * hands the first statement waiting for a connection to the one it dials again, and drops it there
- * when it is a reservation, which then never answers. The first answer is kept; any later one goes
- * straight back.
+ * waiting when a connection closes is carried by the driver to its replacement connection.
  */
-function reserveWithin(pool: Sql, ms: number | null, what: Carried): Promise<Reserved> {
+export function reserveWithin(pool: Pick<Sql, "reserve">, ms: number | null, what: Carried): Promise<Reserved> {
   const started = Date.now();
-  const waiting = reservations.get(pool);
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const settles = (): boolean => {
       if (settled) return false;
       settled = true;
-      waiting?.delete(ask);
       if (timer !== undefined) clearTimeout(timer);
       return true;
     };
-    const ask = (): void => {
-      (pool.reserve() as Promise<Reserved>).then(
-        (conn) => { if (settles()) resolve(conn); else conn.release(); },
-        (err: unknown) => { if (settles()) reject(asBusyRefusal(err, started, what)); },
-      );
-    };
+    (pool.reserve() as Promise<Reserved>).then(
+      (conn) => { if (settles()) resolve(conn); else conn.release(); },
+      (err: unknown) => { if (settles()) reject(asBusyRefusal(err, started, what)); },
+    );
     if (ms !== null) {
       timer = setTimeout(() => { if (settles()) reject(new DbAcquireTimeoutError(ms, what)); }, ms);
       (timer as unknown as { unref?: () => void }).unref?.();
     }
-    waiting?.add(ask);
-    ask();
   });
 }
 

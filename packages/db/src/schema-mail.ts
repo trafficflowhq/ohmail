@@ -1448,6 +1448,22 @@ export const learningSignals = pgTable("learning_signals", {
 // change-log seam.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Durable data and billing progress for an erased account. */
+export interface AccountErasureProgress {
+  warnedFor: string | null;
+  drainsRefunds: boolean;
+  billing: "pending" | "none" | "cancelled" | "cancel_failed";
+  billingLease: string | null;
+  billingRetryAt?: string | null;
+  billingAttempts?: number;
+  complete: boolean;
+  finished: string[];
+  deleted: Record<string, number>;
+  redacted: Record<string, number>;
+  stagingTicketsExpired: number;
+  retainedPending: number;
+}
+
 export const accounts = pgTable("accounts", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull().default(""),
@@ -1484,6 +1500,7 @@ export const accounts = pgTable("accounts", {
    * whichever side wins the row lock, zero rows survive.
    */
   erasedAt: timestamp("erased_at", { withTimezone: true }),
+  erasureProgress: jsonb("erasure_progress").$type<AccountErasureProgress>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

@@ -1,4 +1,5 @@
 import { isPileNoteCount, usePileNoteDismissal } from "@ohmail/app-logic/lists/pile-note";
+import { OHBOX_UNSCREENED_MESSAGES_MAX } from "@ohmail/client-engine";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFocusEffect } from "expo-router";
 import { View } from "react-native";
@@ -74,7 +75,7 @@ function AccountPileNote({ pile, storageKey }: { pile: Pile; storageKey: string 
       </Txt>
       <Txt variant="note" tone="ink2">{Copy.pileUnscreenedLine}</Txt>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        <Button label={Copy.unscreenedAll(answer.total)} variant="solid" disabled={pressing} onPress={press} />
+        <Button label={Copy.unscreenedAll(Math.min(answer.total, OHBOX_UNSCREENED_MESSAGES_MAX))} variant="solid" disabled={pressing} onPress={press} />
         <Button label={Copy.pileUnscreenedDismiss} variant="quiet" disabled={pressing} onPress={dismiss} />
       </View>
     </Panel>

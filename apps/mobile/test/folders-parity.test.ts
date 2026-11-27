@@ -302,6 +302,7 @@ describe("the verb surfaces are reachable, honest, and dispatch where the webapp
  */
 describe("the signature block — the webapp composer's strings and rules", () => {
   const actions = read("../src/ui/MessageActions.tsx");
+  const signature = read("../src/ui/ComposeSignature.tsx");
 
   it("the block's strings are the webapp compose catalogue's, word for word", () => {
     expect(Copy.sigLabel).toBe(en.compose.signature);
@@ -312,28 +313,31 @@ describe("the signature block — the webapp composer's strings and rules", () =
     // `effectiveSignature` is called exactly once; the block renders `sigText` and the send
     // arms pass the same value. A second derivation is the torn-mix defect.
     expect(actions.match(/effectiveSignature\(/g)).toHaveLength(1);
-    expect(actions).toMatch(/sendForward\(m!\.id, recipients \?\? \[\], body, sigText, files, andDone, forwardConfirmed, draftId,\s*forwardPlan[^\n]*, baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\), \.\.\.markupArgs\)/);
+    expect(actions).toMatch(/sendForward\(m!\.id, recipients \?\? \[\], body, sigText, files, andDone, forwardConfirmed, draftId,\s*\{ mailboxId: sendFrom, subject, \.\.\.sendCopies, \.\.\.\(forwardPlan[^\n]*\},\s*baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\), \.\.\.markupArgs\)/);
     // The Send-later arm rides the SAME call — one send machine, one signature (mail 0077).
-    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\), \.\.\.markupArgs\)/);
+    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\), \.\.\.replyArgs\)/);
   });
   it("no block from a guess: the map must be server-confirmed, the sender the mutation's own", () => {
-    /* The sending mailbox is the composer's: a reply inherits the parent's, a mail with no parent
-       takes its resolved From, and ALL reach the block through the one `sendFrom` the send uses. */
+    /* The selected From and all send arms share the one sender resolution. */
     expect(actions).toMatch(/w\.signatures === null \|\| sendFrom === null \? null : effectiveSignature\(sig, w\.signatures, sendFrom\)/);
-    expect(actions).toMatch(/const mailboxId = sender !== null \? sender\.keepFrom : draft\?\.mailboxId \?\? m\?\.mailboxId \?\? w\.mailboxes\.sendingId;/);
+    expect(actions).toContain("const { keepFrom: mailboxId, sendFrom, ...sender } = composeFromOf({ ...senderFacts, picked });");
+    expect(actions).toContain("replyFrom === undefined ? markupArgs : [html, sigHtml ?? undefined, replyFrom]");
+    expect(actions).toContain("sendFrom !== m.mailboxId ? sendFrom ?? undefined : undefined;");
   });
   it("a signature never lights Send up — the content rule reads the body and the files, never the block", () => {
     /* The invariant is unchanged; its mechanism moved with the attachments slice: `canSend`
        judges `phoneSendNeedsContent` (empty body AND no attachments, forward exempt), and the
        signature is still not an input — `sig`/`sigText` appear in neither line. */
     expect(actions).toMatch(/const needsContent = phoneSendNeedsContent\(\{ forward, body, attachmentCount: attachments\.length \}\);/);
-    expect(actions).toMatch(/const canSend =\s*phase === "idle" && !needsContent && \(addressed \? recipients !== null && recipients\.length > 0 : true\)\s*&& \(!fresh \|\| sendCopies !== null\);/);
+    expect(actions).toContain("const typedAddressed = addressed || replyPeopleOpen;");
+    expect(actions).toMatch(/const canSend =\s*phase === "idle" && !needsContent && \(!typedAddressed \|\| \(recipients !== null && recipients\.length > 0 && sendCopies !== null\)\);/);
   });
   it("the block is distinct and removable — the strike acts on this one message", () => {
-    // `&& later === null` is the Send-later picker's panel-height yield (mail 0077) — what is
+    // `!laterInline` is the inline Send-later picker's panel-height yield (mail 0077) — what is
     // SHOWN steps aside while a time is chosen; what SHIPS is untouched (`send-later.test.ts`).
-    expect(actions).toMatch(/\{sigText !== null && later === null \? \(/);
-    expect(actions).toMatch(/disabled=\{phase !== "idle"\}\s*accessibilityState=\{\{ disabled: phase !== "idle" \}\}\s*accessibilityRole="button"\s*accessibilityLabel=\{Copy\.sigRemove\}/);
+    expect(actions).toMatch(/\{sigText !== null && !laterInline \? \(/);
+    expect(actions).toMatch(/<ComposeSignature[\s\S]*?disabled=\{phase !== "idle" \|\| discardPending\}/);
+    expect(signature).toMatch(/disabled=\{disabled\}\s*accessibilityState=\{\{ disabled \}\}\s*accessibilityRole="button"\s*accessibilityLabel=\{Copy\.sigRemove\}/);
     expect(actions).toMatch(/setSig\(\{ kind: "removed" \}\)/);
     expect(actions).toMatch(/setSig\(\{ kind: "edited", text \}\)/);
   });
@@ -341,5 +345,6 @@ describe("the signature block — the webapp composer's strings and rules", () =
     // Signatures may run thousands of characters; an unbounded content-measured input grows
     // the panel past the viewport with the keyboard open (codex round 1).
     expect(actions).toMatch(/maxHeight: 144/);
+    expect(signature).toMatch(/maxHeight: 144/);
   });
 });

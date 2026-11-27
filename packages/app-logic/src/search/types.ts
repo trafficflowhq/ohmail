@@ -14,6 +14,7 @@ import type {
 } from "@ohmail/client-engine";
 import type { StorageScope } from "../storage/scope.js";
 import type { Translator } from "../text/translator.js";
+import type { RestingSearchPerson } from "./people.js";
 
 /** Who a person-first question is about, and on which side of the letter. */
 export interface SearchPerson {
@@ -22,12 +23,7 @@ export interface SearchPerson {
   readonly dir: "any" | "from" | "to";
 }
 
-/** A person on the resting screen, with counts from the messages this device holds. */
-export interface RestingSearchPerson {
-  readonly person: AddressBookEntry;
-  readonly from: number;
-  readonly to: number;
-}
+export type { RestingSearchPerson } from "./people.js";
 
 /** A day window, both ends inclusive, as the person picked it (`YYYY-MM-DD`); either end may stand open. */
 export interface SearchDates {

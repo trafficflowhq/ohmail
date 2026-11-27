@@ -246,9 +246,9 @@ export interface MoveIdempotency {
 }
 
 /** A move's result: the DTO plus the `move` change seq to echo as `X-Sync-Seq`. */
-export interface MoveResult {
+export interface MoveResult<Seq extends number | null = number> {
   dto: MessageDTO;
-  seq: number;
+  seq: Seq;
 }
 
 /**
@@ -1604,7 +1604,7 @@ export class MessageService {
   async delete(
     ctx: ServiceContext, id: string,
     opts: { idempotency?: MoveIdempotency | null } = {},
-  ): Promise<MoveResult | MoveRequestResult | AlreadyGoneResult> {
+  ): Promise<MoveResult<number | null> | MoveRequestResult | AlreadyGoneResult> {
     /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
        `null` when this request wrote no desired folder, so the organizer is not woken for work
        that does not exist. */
@@ -1666,40 +1666,30 @@ export class MessageService {
       }
 
       const now = ctx.now();
-      /* WHERE IT CAME FROM — read BEFORE the desired write, because that write is what makes
-         `observed` stop being the answer moments later (the organizer flips it to Trash when
-         the physical move lands). Hoisted out of the branch below so the change row can carry
-         it: a message with no server copy has no folder it rode from, so both stay null.
-
-         `observed === trash` means the message is ALREADY in the Trash path — a delete pressed
-         twice, or mail the organizer had filed there. There is nothing to remember, and
-         remembering Trash as an origin would make a restore put it back where it is. */
-      let observed: string | null = null;
-      if (hasCopy && trash !== null) {
-        observed = await this.observedFolder(tx, id, msg.nativeLocator);
-        filed = msg.mailboxId;
-        await this.upsertDesired(
-          tx, id, observed, trash as Folder, now,
-          observed === trash ? null : observed, decisionInstant(floor, now),
-        );
+      const placement = trash === null ? null : await this.placement(tx, id, msg.nativeLocator);
+      const observed = placement?.observed ?? null;
+      // A forwarded delete records its origin without a tombstone. Either marks a prior delete.
+      // Mail first found in Trash still needs its first tombstone and has no origin to record.
+      const repeated = trash !== null && placement?.observed === trash && placement.desired === trash
+        && (msg.deletedAt !== null || placement.trashedFrom !== null);
+      let seq: number | null = null;
+      if (!repeated) {
+        if (observed !== null && trash !== null) {
+          filed = msg.mailboxId;
+          await this.upsertDesired(
+            tx, id, observed, trash, now, observed === trash ? null : observed, decisionInstant(floor, now),
+          );
+        }
+        await tx.update(messages).set({ deletedAt: now, updatedAt: now })
+          .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
+        const deleted = await recordChange(tx, {
+          accountId: ctx.accountId, entityType: "message", entityId: id, op: "delete",
+          // History only. Restore reads the durable origin from folder_state.
+          meta: observed !== null && trash !== null ? { from: observed, to: trash } : null,
+        });
+        // Deleting is dealing with a resurfaced row, exactly as re-filing is.
+        seq = Number(await this.spendResurface(tx, ctx, [id]) ?? deleted);
       }
-      await tx.update(messages).set({ deletedAt: now, updatedAt: now })
-        .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
-      let seqBig = await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "message", entityId: id, op: "delete",
-        /* HISTORY ONLY, and NOTHING READS IT (mail 0099). The `move` verb beside this one has
-           always recorded `{from, to}`; the delete recorded `null`, so the two verbs' history
-           read differently for no reason. This closes that, and it is deliberately not the
-           restore's operand — `change_log` has a retention horizon (`change-log.ts`), so a
-           restore reading it would work for a week and then silently stop. `folder_state`
-           .trashed_from is the durable answer. `null` for a message with no server copy: there
-           was no move, so there is no from and no to. */
-        meta: observed !== null && trash !== null ? { from: observed, to: trash } : null,
-      });
-      // Deleting is dealing with a resurfaced row, exactly as re-filing is.
-      const spent = await this.spendResurface(tx, ctx, [id]);
-      if (spent !== null) seqBig = spent;
-      const seq = Number(seqBig);
 
       const dto = await materializeMessage(asDb(tx), ctx.accountId, id);
       if (!dto) throw new ServiceError("internal", 500, "message vanished after write");
@@ -1711,7 +1701,7 @@ export class MessageService {
           requestHash: opts.idempotency.requestHash,
           responseStatus: 200,
           responseJson: dto,
-          seq: seq,
+          seq,
           now: ctx.now(),
         });
         if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
@@ -1920,14 +1910,17 @@ export class MessageService {
    */
   private async placement(
     tx: Tx, id: string, nativeLocator: unknown,
-  ): Promise<{ observed: string; desired: string | null }> {
+  ): Promise<{ observed: string; desired: string | null; trashedFrom: string | null }> {
     // scoped-by: every caller passes an id it loaded by (id, accountId) in this transaction
     const [fs] = await tx
-      .select({ observedFolder: folderState.observedFolder, desiredFolder: folderState.desiredFolder })
+      .select({
+        observedFolder: folderState.observedFolder, desiredFolder: folderState.desiredFolder,
+        trashedFrom: folderState.trashedFrom,
+      })
       .from(folderState).where(eq(folderState.messageId, id)).limit(1);
-    if (fs) return { observed: fs.observedFolder, desired: fs.desiredFolder };
+    if (fs) return { observed: fs.observedFolder, desired: fs.desiredFolder, trashedFrom: fs.trashedFrom };
     const loc = (nativeLocator as NativeLocator | null) ?? null;
-    return { observed: loc?.folder ?? "INBOX", desired: null };
+    return { observed: loc?.folder ?? "INBOX", desired: null, trashedFrom: null };
   }
 
   // The `flag_state` intent writer lives in `@trafficflow/db` (`flag-intent.ts`) now — a second

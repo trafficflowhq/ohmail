@@ -288,6 +288,7 @@ export const screenerRoutes: Route[] = [
       return answer<"POST /screener/unscreened">()(await screenUnscreened(ctx, {
         addresses: body.addresses as readonly string[] | undefined,
         ...(body.pile === undefined ? {} : { pile: body.pile }),
+        ...(body.after === undefined ? {} : { after: body.after }),
       }));
     },
   },

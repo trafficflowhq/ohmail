@@ -11,7 +11,7 @@ import { MailAppearance } from "../../src/theme/mail";
 import { useTheme } from "../../src/theme";
 import { router, Tabs } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Platform, View } from "react-native";
+import { Platform, useWindowDimensions, View } from "react-native";
 import { useWorld } from "../../src/state/world";
 import { beginMark, endMark } from "../../src/engine/ui-marks";
 import { Gated } from "../../src/ui/Gated";
@@ -116,6 +116,7 @@ function GlassNav({ state, navigation, onMore, onActive, onNavigate }: NavProps 
   const readerRail = useReaderRail();
   /* THE DOCK FOLDS; NOTHING CLIPS — against its own measured width (a 0 reading keeps the last). */
   const [room, setRoom] = useState<number | null>(null);
+  const { width } = useWindowDimensions();
 
   /**
    * The engine's counts over the mirror, not a third derivation computed here.
@@ -133,7 +134,7 @@ function GlassNav({ state, navigation, onMore, onActive, onNavigate }: NavProps 
     more: 0,
   };
 
-  const fold = dockFold(state.routes.map((r) => r.name).filter((n) => TABS.some((x) => x.name === n)), room, t.mail);
+  const fold = dockFold(state.routes.map((r) => r.name).filter((n) => TABS.some((x) => x.name === n)), t.mail ? width : room, t.mail);
   const foldedKey = fold.folded.join(",");
   const docked = plan.nav !== "bars" && plan.nav !== "rail" && !(plan.railCarriesReaderVerbs && readerRail !== null);
   useEffect(() => {
@@ -151,7 +152,7 @@ function GlassNav({ state, navigation, onMore, onActive, onNavigate }: NavProps 
   const items: DockItem[] = fold.kept.flatMap((name) => {
     const tab = TABS.find((x) => x.name === name);
     if (!tab) return [];
-    const count = name === "more" ? foldedCount : badgeOf[name] ?? 0;
+    const count = name === "more" && !t.mail ? foldedCount : badgeOf[name] ?? 0;
     return [
       {
         id: name,
@@ -183,7 +184,7 @@ function GlassNav({ state, navigation, onMore, onActive, onNavigate }: NavProps 
      (`app/search.tsx`). */
   const search = { label: Copy.search, onPress: () => router.push("/search") };
   /* Starting a mail, in the navigation on every posture — the composer route. */
-  const compose = { label: Copy.composeNew, onPress: () => router.push("/compose") };
+  const compose = { label: t.mail ? Copy.mailWrite : Copy.composeNew, onPress: () => router.push("/compose") };
 
   /* THE TWO-PANE iOS POSTURES (the iPad, the unfolded-portrait Duo): no dock, no rail — the
      destinations live behind the list pane's sidebar toggle as a drawer and the search field

@@ -92,7 +92,12 @@ function worldShelf() {
       return () => { leaving = leaving.filter((h) => h !== hold); };
     },
   };
-  return { deps, set: (s: readonly ServerWaitingSender[] | null) => { cached = s; }, now: () => waitingOnScreen(cached, leaving) };
+  return {
+    deps,
+    set: (s: readonly ServerWaitingSender[] | null) => { cached = s; },
+    switchAccount: (s: readonly ServerWaitingSender[]) => { cached = s; leaving = []; },
+    now: () => waitingOnScreen(cached, leaving),
+  };
 }
 
 const decided = (fake: ReturnType<typeof mailServer>, id: string) =>
@@ -192,6 +197,49 @@ describe("a row the store lists and this phone holds none of the mail of", () =>
       expect(await phone.actions.decide(next, "screened", false, "sender")).toBe(false);
       expect(rows(), "a refused press puts the row back").toEqual(["m-rep", "old4", "old3", "old1"]);
       phone.store.close();
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it.each([false, true])("keeps a delayed decision on its own account, including a relay (%s)", async (relay) => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      fixture(fake);
+      const shelfOf = worldShelf();
+      let activeAccount = "old";
+      // The live provider supplies its current-session check. Change the displayed queue while
+      // the original engine is still carrying the HTTP response for an already accepted press.
+      const relayed: string[] = [];
+      const ownership = {
+        screenerOutcomeCurrent: () => activeAccount === "old",
+        relayedHere: ({ address }: { address: string }) => { relayed.push(address); },
+      };
+      const old = await phoneOn(origin, { ...shelfOf.deps, ...ownership });
+      try {
+        const queue = (await readScreenerWaiting(old.session))!;
+        shelfOf.set(queue);
+        const row = (await shelf(old)).find((r) => r.id === "old2")!;
+        if (relay) fake.queueNextForOrganizer("POST", "/screener/old2");
+        const answer = fake.holdNext("POST", "/screener/old2");
+        const decidedOld = old.actions.decide(row, "ohbox", false, "sender");
+        try {
+          await arrived("the old account sent its decision", () => decided(fake, "old2") === 1);
+          activeAccount = "new";
+          const sameSender = queue.find((sender) => sender.address === row.address)!;
+          shelfOf.switchAccount([{ ...sameSender, messageId: "new-account-same-sender" }]);
+        } finally {
+          answer();
+        }
+        expect(await decidedOld).toBe(!relay);
+        expect(decided(fake, "old2")).toBe(1);
+        expect(shelfOf.now()?.map((sender) => sender.messageId)).toEqual(["new-account-same-sender"]);
+        expect(old.toasts).toEqual([]);
+        expect(relayed).toEqual([]);
+      } finally {
+        old.store.close();
+      }
     } finally {
       fake.server.close();
     }

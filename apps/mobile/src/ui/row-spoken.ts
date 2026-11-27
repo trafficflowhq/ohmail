@@ -92,8 +92,8 @@ export function rowBadgeFacts(m: Mail): PhoneRowBadgeFact[] {
 }
 
 /** The row's whole accessibility label: its name and stamp, then everything it wears. */
-export function mailRowSpoken(m: Mail): string {
-  const head = Copy.mailRowAria(m.sentTo ?? m.from.name, m.subject, m.time, !!m.unread);
+export function mailRowSpoken(m: Mail, name = m.sentTo ?? m.from.name): string {
+  const head = Copy.mailRowAria(name, m.subject, m.time, !!m.unread);
   const delivery = m.mailboxLabel ? `${Copy.deliveredTo(m.mailboxLabel)}.` : "";
   return [head, ...rowBadgeFacts(m).map((f) => `${f.text}.`), delivery].filter(Boolean).join(" ");
 }

@@ -171,7 +171,7 @@ export function DetailBar({ title, right, back, backLabel, backCapsule = false }
         <Tap
           onPress={back ?? (() => router.back())}
           accessibilityRole="button"
-          accessibilityLabel={Copy.back}
+          accessibilityLabel={backLabel ?? Copy.back}
           style={[
             { flexDirection: "row", alignItems: "center", gap: 4, padding: 8 },
             backCapsule ? {

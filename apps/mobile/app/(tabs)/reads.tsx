@@ -1,6 +1,5 @@
 /**
- * Reads — the skim stream. Issues are cards carrying their own text, clamped
- * to about a screenful, and tapping opens the rest in place.
+ * Reads — the skim stream. Issues show a preview and open the full letter.
  * A card turns read once its first lines rest on screen (the web's rule); a
  * fling past reads nothing. The waterline is a marker, not a sort key: when
  * a card turns read its dot fades in place, the "new" count ticks down, and
@@ -13,13 +12,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, View } from "react-native";
 import type { SweepFrame } from "../../src/state/sweep";
 import { useSeenRun } from "../../src/ui/stream-seen";
+import { useStreamPreview } from "../../src/ui/stream-preview";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useTheme } from "../../src/theme";
 import { useFilesStamp, useMessageBody, useWorld, type WorldMail } from "../../src/state/world";
-import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, ViewHead, Waterline, useListInsets } from "../../src/ui/base";
+import { Empty, Panel, Screen, Tail, TapRow, Txt, ViewHead, Waterline, useListInsets } from "../../src/ui/base";
 import { BodyPages } from "../../src/ui/BodyPages";
 import { mailboxStatusOf, withheldNote } from "../../src/ui/body-note";
 import { TopBar } from "../../src/ui/chrome";
@@ -32,9 +32,9 @@ import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
 import { MailListMenu } from "../../src/ui/MailListMenu";
 import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
-import { Icon } from "../../src/ui/Icon";
-import { StreamContentChips, StreamRecipient } from "../../src/ui/StreamMailFacts";
-import { StreamMailMenu } from "../../src/ui/StreamMailMenu";
+import { StreamCardHead, StreamListTools, paperStreamCardStyle } from "../../src/ui/StreamMailFacts";
+import { MailboxChip } from "../../src/ui/MailboxChip";
+import { StreamCardBody } from "../../src/ui/StreamCardBody";
 import { StreamCardVerbs } from "../../src/ui/StreamCardVerbs";
 import { MailAvatar } from "../../src/ui/MailAvatar";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -63,6 +63,7 @@ function ReadsBody() {
   const actions = w.actions;
   // Unknown ≠ empty — the stream shows card silhouettes until this mirror has settled once.
   const surface = listSurface({ settled: w.boot.settled, count: items.length });
+  const onViewableItemsChanged = useStreamPreview(Boolean(t.mail) && surface === "content");
 
   /* A mounted card's frame in scroll-content coordinates, as its cell lays out (`MailList#onRowFrame`). */
   const bounds = useRef(new Map<string, SweepFrame>());
@@ -139,23 +140,26 @@ function ReadsBody() {
         surface={false}
         onRowFrame={onRowFrame}
         onRowGone={onRowGone}
+        onViewableItemsChanged={onViewableItemsChanged}
         {...gestures}
         place={place}
         scrollEventThrottle={64}
         refresh={pull}
         head={
           <ViewHead
-            style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}
+            style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: t.mail ? 10 : 4 }}
             title={Copy.reads}
             attention={newCount > 0}
-            meta={metaWhen(surface, meta) ?? " "}
+            meta={t.mail ? undefined : metaWhen(surface, meta) ?? " "}
             metaBeside
             /* The web app's stream press, both halves: flip the stream's unread AND commit the
                waterline above the newest issue — a fresh-only stream ("2 new", nothing
                unread) still gets its clearing control. */
             leading={t.mail ? <MailCalendarSwitch /> : null}
             right={t.mail ? (
-              <MailListMenu unread={unreadIds.length} fresh={newCount} onMarkAll={markStream} />
+              <StreamListTools settled={surface === "content"} fresh={newCount}>
+                <MailListMenu unread={unreadIds.length} fresh={newCount} onMarkAll={markStream} />
+              </StreamListTools>
             ) : (
               <MarkAllRead unreadCount={unreadIds.length} freshCount={newCount} onPress={markStream} />
             )}
@@ -165,9 +169,7 @@ function ReadsBody() {
               <Txt variant="hint" tone="ink3" style={{ marginTop: 4 }}>{Copy.streamSeenHint}</Txt>
             ) : null}
             {/* Letters here from senders nobody let in, and the press — the web's note. */}
-            <View style={{ marginTop: 12 }}>
-              <PileNote pile="news" />
-            </View>
+            <PileNote pile="news" />
           </ViewHead>
         }
         empty={
@@ -193,19 +195,30 @@ function ReadsBody() {
   );
 }
 
-/** One issue. Clamped until tapped; the fade says there is more, not how much. */
-function StreamCard({
-  m: row,
-  onExpand,
-  onRead,
-  onOpenBeside,
-}: {
+interface StreamCardProps {
   m: WorldMail;
   onExpand: () => void;
   onRead: () => void;
-  /** Two panes: the tap opens the issue in the reading pane instead of unclamping the card. */
   onOpenBeside?: () => void;
-}) {
+}
+
+function StreamCard(props: StreamCardProps) {
+  const { m, onRead } = props;
+  const t = useTheme();
+  if (!t.mail) return <ExpandableStreamCard {...props} />;
+  return (
+    <Panel level="l1" radius={t.radius.card} style={paperStreamCardStyle}>
+      <StreamCardHead m={m} onRead={onRead} />
+      <View style={{ paddingTop: 16 }}>
+        <StreamCardBody m={m} onRead={onRead}>
+          {m.subject ? <Txt variant="streamTitle" textBreakStrategy="balanced">{m.subject}</Txt> : null}
+        </StreamCardBody>
+      </View>
+    </Panel>
+  );
+}
+
+function ExpandableStreamCard({ m: row, onExpand, onOpenBeside }: StreamCardProps) {
   /* THE CARD DRAWS THE ISSUE'S TEXT, so it reads the body itself: the list's rows carry none. */
   const body = useMessageBody(row.id);
   const m = body === null ? row : { ...row, ...body };
@@ -248,7 +261,7 @@ function StreamCard({
           });
         }}
         accessibilityRole="button"
-        accessibilityLabel={Copy.readsCardAria(m.subject, open)}
+        accessibilityLabel={[Copy.readsCardAria(m.subject, open), m.mailboxLabel && Copy.deliveredTo(m.mailboxLabel)].filter(Boolean).join(" ")}
         style={{ borderRadius: t.radius.card }}
       >
         <View style={{ padding: 20, paddingTop: 24 }}>
@@ -257,9 +270,9 @@ function StreamCard({
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt variant="rowSender" numberOfLines={1}>{m.from.name}</Txt>
               <Txt variant="caption" tone="ink2" numberOfLines={1}>{m.from.address}</Txt>
-              {t.mail ? <StreamRecipient toYou={m.toYou} /> : null}
             </View>
-            <Txt variant="caption" tone="ink2" tabular style={t.mail ? { marginRight: 23 } : undefined}>{m.time}</Txt>
+            {m.mailboxLabel ? <MailboxChip label={m.mailboxLabel} withinRow /> : null}
+            <Txt variant="caption" tone="ink2" tabular>{m.time}</Txt>
           </View>
 
           <Txt variant="cardTitle" tone={m.unread ? "ink" : "ink2"} style={{ marginTop: 16 }}>
@@ -267,7 +280,6 @@ function StreamCard({
           </Txt>
 
           <View style={{ marginTop: 10, gap: 8 }}>
-            {t.mail ? <StreamContentChips images={m.imagesBlocked} tracker={m.trackerNote} /> : null}
             {bodyNote ? (
               <Txt variant="caption" tone="ink3" style={{ marginBottom: 8 }}>
                 {bodyNote}
@@ -281,15 +293,10 @@ function StreamCard({
           <View style={{ alignItems: "center", gap: 6, marginTop: 14 }}>
             <View style={{ backgroundColor: t.c.tint2, borderRadius: t.radius.pill, paddingHorizontal: 16, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 7 }}>
               <Txt variant="button">{open ? Copy.readsCollapse : Copy.readsReadInFull}</Txt>
-              {t.mail && !open ? <Icon name="diagonal" size={13} color={t.c.ink} /> : null}
             </View>
-            {/* Which of your addresses this arrived at — set only above one mailbox, so a
-                single-mailbox account's cards are exactly the cards they were. */}
-            {m.mailboxLabel ? <Badge tone="place">{Copy.deliveredTo(m.mailboxLabel)}</Badge> : null}
           </View>
         </View>
       </TapRow>
-      {t.mail ? <StreamMailMenu onRead={onRead} /> : null}
       {open ? (
         <View style={{ paddingHorizontal: 18, paddingBottom: 14, marginTop: -14 }}>
           <AttachmentTiles m={{ id: m.id, attachments: w.filesOf(m.id) }} />

@@ -16,11 +16,14 @@ import {
  * (`conversationJoinVerdict` in packages/core), performed exactly as `ThreadService.merge` performs the
  * user's own: rows reassigned onto the survivor, the emptied thread deleted, the change log told. The
  * SURVIVOR is the OLDEST thread (stable across runs). Deleting the absorbed `root_message_id_header` can
- * let a rare later out-of-order arrival re-split, re-merged next run. Keyset over (account_id, subject);
+ * let a rare later out-of-order arrival re-split, re-merged next run. Keyset over account and subject;
  * data locks first, the `recordChanges` seq lock LAST (`ThreadResolution.changes`' deadlock-free order). */
 
 /** Duplicate-subject groups examined per invocation — the run's hard budget. */
 export const THREAD_JOIN_HEAL_MAX_GROUPS = 200;
+
+/** Index entries read per server pass, including subjects that have no split. */
+export const THREAD_JOIN_HEAL_MAX_SEEDS = 2_000;
 
 /** Threads examined per group. Beyond this the group is logged and left alone — a subject
  * shared by dozens of threads is a newsletter or a ticket queue, not one split conversation. */
@@ -43,7 +46,7 @@ export const THREAD_JOIN_HEAL_MAX_MESSAGES_PER_THREAD = 500;
 export const THREAD_JOIN_WITNESS_SPREAD_MAX = 200;
 
 /** Where one invocation stopped — hand it back in to continue instead of rescanning. */
-export interface ThreadJoinHealCursor { accountId: string; subject: string }
+export interface ThreadJoinHealCursor { accountId: string; subject: string; threadId?: string }
 
 export interface ThreadJoinHealDeps {
   db: Tx;
@@ -107,7 +110,7 @@ export interface ThreadJoinHealResult {
    * account is worth reading.
    */
   refusedUncorroborated: number;
-  /** True ⇒ the group budget ran out before the candidate set did; resume from `cursor`. */
+  /** True ⇒ the group or scan budget ran out; resume from `cursor`. */
   capped: boolean;
   /** True ⇒ the caller's clock (`until`) stopped the walk with groups left; resume from `cursor`. */
   cut: boolean;
@@ -120,7 +123,58 @@ interface ThreadFacts extends ConversationJoinFacts {
 }
 
 /** One duplicate-name group of the page: its size, and its thread ids when within the bound. */
-interface Group { account_id: string; subject: string; n: number; ids: string[] }
+interface Group { account_id: string; subject: string; n: number; ids: string[]; threadId?: string }
+
+function decodeThreadSeeds(rows: unknown[][]): { groups: Group[]; end: ThreadJoinHealCursor | null } {
+  const groups: Array<{ position: number; group: Group }> = [];
+  let end: ThreadJoinHealCursor | null = null;
+  for (const [account, subject, id, position, threadIds] of rows) {
+    const at = { accountId: String(account), subject: String(subject), threadId: String(id) };
+    const ids = (threadIds as string[]).map(String);
+    if (ids.length > 1 && ids[0] === at.threadId) {
+      groups.push({ position: Number(position), group: { account_id: at.accountId, subject: at.subject, threadId: at.threadId, n: ids.length, ids } });
+    }
+    if (Number(position) === THREAD_JOIN_HEAL_MAX_SEEDS) end = at;
+  }
+  return { groups: groups.sort((a, b) => a.position - b.position).map(({ group }) => group), end };
+}
+
+async function deviceThreadGroups(
+  db: Tx, accountId: string | undefined, cursor: ThreadJoinHealCursor | null, limit: number,
+): Promise<Group[]> {
+  const d = dialect(db);
+  const own = accountId === undefined ? sql`true` : sql`account_id = ${accountId}`;
+  const after = cursor === null ? sql`true`
+    : sql`(account_id, subject) > (${d.castUuid(cursor.accountId)}, ${cursor.subject})`;
+  const rows = await d.exec(db, sql`
+    select g.account_id, g.subject, g.n, t.id
+    from (
+      select account_id, subject, count(*) as n
+      from ${threads}
+      where ${own} and ${after}
+      group by account_id, subject
+      having count(*) > 1
+      order by account_id, subject
+      limit ${limit}
+    ) g
+    left join ${threads} t on t.account_id = g.account_id and t.subject = g.subject
+      and g.n <= ${THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP}
+      and ${accountId === undefined ? sql`true` : sql`t.account_id = ${accountId}`}
+    order by g.account_id, g.subject, t.id
+  `);
+  const groups: Group[] = [];
+  for (const [account, name, size, id] of rows) {
+    const accountId = String(account);
+    const subject = String(name);
+    let group = groups[groups.length - 1];
+    if (!group || group.account_id !== accountId || group.subject !== subject) {
+      group = { account_id: accountId, subject, n: Number(size), ids: [] };
+      groups.push(group);
+    }
+    if (id !== null && id !== undefined) group.ids.push(String(id));
+  }
+  return groups;
+}
 
 export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<ThreadJoinHealResult> {
   const { db, apply } = deps;
@@ -140,64 +194,26 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
 
   walk: while (result.groupsScanned < maxGroups) {
     if (outOfTime()) break;
-    // ── The pre-filter: accounts holding two or more threads under one stored name. ─────────
-    // Stored names are written through `baseSubject` at create and were normalized fleet-wide
-    // by the thread-name heal, so same-conversation splits share their stored name; a thread
-    // the user renamed falls out of its group here, which is the rename OPTING OUT of the
-    // heal's attention — never a forced merge, and never a forged one (the verdict re-derives
-    // from messages regardless).
-    // Annotated, and the cursor read into locals FIRST: the raw `execute` result otherwise
-    // participates in its own type inference through `cursor` (TS7022), and postgres-js hands
-    // back an array-like RowList rather than a plain array.
-    const cursorAccountId: string | null = cursor?.accountId ?? null;
-    const cursorSubject: string | null = cursor?.subject ?? null;
+    // Only threads sharing their stored subject enter the repair. The verdict still derives
+    // the conversation from messages, and a thread renamed by the user leaves its old group.
     const d = dialect(db);
-    /* THROUGH THE SEAM'S `exec`, whose rows are POSITIONAL. `db.execute` is not a spelling
-       difference — it is a METHOD the device store's handle does not have at all, so a surviving
-       call there is a TypeError naming neither the store nor the statement. This one was proven
-       live: the pass died with `db.execute is not a function` on a phone bundle whose dialect
-       census was green, because the census counted the construct's TEXT and not the mechanism. */
-    // The page's groups AND, within the bound, their thread ids, in one read: a group over the
-    // bound joins no thread and comes back as one row with a null id.
     const limit = Math.min(50, maxGroups - result.groupsScanned);
-    const executed = await d.exec(db, sql`
-      select g.account_id, g.subject, g.n, t.id
-      from (
-        select account_id, subject, count(*) as n
-        from ${threads}
-        where ${deps.accountId ? sql`account_id = ${deps.accountId}` : sql`true`}
-          and ${cursorAccountId !== null
-            ? sql`(account_id, subject) > (${d.castUuid(cursorAccountId)}, ${cursorSubject})`
-            : sql`true`}
-        group by account_id, subject
-        having count(*) > 1
-        order by account_id, subject
-        limit ${limit}
-      ) g
-      left join ${threads} t on t.account_id = g.account_id and t.subject = g.subject
-        and g.n <= ${THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP}
-        and ${deps.accountId ? sql`t.account_id = ${deps.accountId}` : sql`true`}
-      order by g.account_id, g.subject, t.id
-    `);
-    // Positional, in the order the statement selected them — the narrower shape both drivers can
-    // produce honestly, which is what removes the array-or-`{rows}` split this used to carry.
-    const groups: Group[] = [];
-    for (const r of executed) {
-      const accountId = String(r[0]);
-      const subject = String(r[1]);
-      let g = groups[groups.length - 1];
-      if (!g || g.account_id !== accountId || g.subject !== subject) {
-        g = { account_id: accountId, subject, n: Number(r[2]), ids: [] };
-        groups.push(g);
-      }
-      if (r[3] !== null && r[3] !== undefined) g.ids.push(String(r[3]));
-    }
-    if (groups.length === 0) break;
+    const seeds = await d.threadJoinSeeds(db, {
+      table: sql`${threads}`, accountId: deps.accountId, cursor,
+      seedLimit: THREAD_JOIN_HEAL_MAX_SEEDS, threadLimit: THREAD_JOIN_HEAL_MAX_THREADS_PER_GROUP + 1,
+    });
+    const page = seeds === null
+      ? { groups: await deviceThreadGroups(db, deps.accountId, cursor, limit), end: null }
+      : decodeThreadSeeds(seeds);
+    const groups = seeds === null ? page.groups : page.groups.slice(0, maxGroups - result.groupsScanned);
 
     for (const group of groups) {
       if (outOfTime()) break walk;
       // Set before the group is examined, so a cut resumes right after it.
-      cursor = { accountId: group.account_id, subject: group.subject };
+      cursor = {
+        accountId: group.account_id, subject: group.subject,
+        ...(group.threadId === undefined ? {} : { threadId: group.threadId }),
+      };
       result.cursor = cursor;
       result.groupsScanned += 1;
 
@@ -502,11 +518,18 @@ export async function threadJoinHealPass(deps: ThreadJoinHealDeps): Promise<Thre
 
       if (result.groupsScanned >= maxGroups) break;
     }
-    if (groups.length < limit) break; // a short page was the last
+    if (seeds !== null) {
+      if (page.end !== null && result.groupsScanned < maxGroups) {
+        result.cursor = page.end;
+        result.capped = true;
+      }
+      break;
+    }
+    if (groups.length < limit) break;
   }
 
   // Only meaningful when the budget, not the candidate set, ended the walk.
-  result.capped = result.groupsScanned >= maxGroups;
+  result.capped ||= result.groupsScanned >= maxGroups;
   log.info(apply ? "thread_join_heal_complete" : "thread_join_heal_dry_complete", {
     ...(deps.accountId ? { accountId: deps.accountId } : {}),
     scanned: result.groupsScanned, merged: result.merged, moved: result.messagesMoved,

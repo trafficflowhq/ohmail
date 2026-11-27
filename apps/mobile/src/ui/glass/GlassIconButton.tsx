@@ -57,7 +57,7 @@ export function GlassIconButton({
   return (
     <Tap
       accessibilityRole={a11yRole(role, Platform.OS === "ios" ? "ios" : "android")}
-      accessibilityState={{ selected: role === "tab" && on === true, ...(disabled ? { disabled } : {}) }}
+      accessibilityState={{ selected: role === "tab" && on === true, disabled: disabled === true }}
       accessibilityLabel={label}
       accessibilityHint={accessibilityHint}
       disabled={disabled}

@@ -1,4 +1,4 @@
-import { type Tx, accounts, pruneIdempotencyKeys, pruneSendFingerprints } from "@trafficflow/db";
+import { type Tx, accounts, pruneIdempotencyKeys, outboundSendFingerprints } from "@trafficflow/db";
 import {
   owedSuggestAccounts, clearScreenerSuggestOwed, pruneErasedBearers, pruneErasedNotices, pruneAuthThrottle,
   sweepExpiredStagingFor, reconcileStagingOrphansFor, StagingListingUnsupportedError, accountRows,
@@ -19,7 +19,7 @@ import { gapCatchupPass, NO_FOLDER_READ } from "@ohmail/organizer/gap-catchup";
 import { gateReleasePass } from "../gate-release.js";
 import { senderCheckRetirement } from "@ohmail/organizer/sender-check-backfill";
 import { listAddressBackfillPass } from "@ohmail/organizer/list-address-backfill";
-import { retentionPrunePass, signInRetentionPass } from "../retention-prune.js";
+import { pruneWorkerSendFingerprints, retentionPrunePass, signInRetentionPass } from "../retention-prune.js";
 import { ohboxTidyPass } from "../ohbox-tidy.js";
 import { screenerAutoActPass, screenerActConsentFrom } from "@ohmail/organizer/screener-auto-act";
 import { screenerImpersonationPass } from "@ohmail/organizer/screener-impersonation";
@@ -27,6 +27,8 @@ import { retireActAdmissionsPass } from "@ohmail/organizer/act-admission-retire"
 import { CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass } from "@ohmail/organizer/screener-correspondent-retro";
 import { screenerAutoSuggestPass } from "@ohmail/organizer/screener-auto-suggest";
 import { refundObligationDrainPass } from "../refund-obligation-drain.js";
+import { throttleKeysFor } from "@trafficflow/db/auth-throttle-keys";
+import { accountErasurePass } from "../account-erasure-pass.js";
 import { mailboxErasurePass } from "../mailbox-erasure-pass.js";
 import {
   searchIndexOwedAccounts, SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchIndexBackfillPass,
@@ -45,6 +47,8 @@ import type { TailWalk, WorkerScope } from "./scope.js";
 
 /** The worker's start function, one section: the cycle's tail: the maintenance sections, walked in slices between cycles. */
 export function cycleTailSection(scope: WorkerScope): void {
+    const maintenanceShardKey = `${scope.selection.shards ?? 1}:${scope.selection.shardIndex ?? 0}`;
+    const maintenanceAccount = (id: string): Tx => scope.forAccount(id).db as unknown as Tx;
     const { stagingStorage } = scope;
     // ── THE CYCLE TAIL: the per-account passes, walked AFTER the rotation as their own queue entry ──
     //
@@ -859,8 +863,21 @@ export function cycleTailSection(scope: WorkerScope): void {
         // what committed and the next cycle resumes from the stamp — never a cycle abort.
         shard: true,
         run: async () => {
+          await scope.runTailStage("cycle.accountErasure", "mixed", async () => {
+            const port = scope.spend;
+            await accountErasurePass(scope.roster as unknown as Tx, scope.log, {
+              now: () => new Date(), forAccount: maintenanceAccount, shardKey: maintenanceShardKey,
+              shard: accountShardFilter(scope.selection, accounts.id),
+              release: port ? (id) => port.releaseAccount(id) : undefined,
+              throttleKeys: throttleKeysFor(scope.keyProvider),
+              noteFault: scope.tailFaultNote("cycle.accountErasure"),
+            });
+          }, (err) => { scope.log.error("account_erasure_pass_failed", { err }); });
           await scope.runTailStage("cycle.mailboxErasurePass", "database", async () => {
-            const erased = await mailboxErasurePass(scope.roster as unknown as Tx, { now: () => new Date(), shard: shardFilter(scope.selection) });
+            const erased = await mailboxErasurePass(scope.roster as unknown as Tx, {
+              now: () => new Date(), shard: shardFilter(scope.selection),
+              forAccount: maintenanceAccount, repairKey: maintenanceShardKey,
+            });
             if (erased.steps > 0) {
               scope.log.info("mailbox_erasure_pass", {
                 mailboxes: erased.mailboxes, steps: erased.steps, finished: erased.finished,
@@ -918,7 +935,7 @@ export function cycleTailSection(scope: WorkerScope): void {
           // performance property rather than a correctness one. NEVER THROWS by contract — the
           // pass states why where it is implemented.
           await refundObligationDrainPass(scope.roster as unknown as Tx, {
-            ...(scope.spend ? { credits: scope.spend } : {}), log: scope.log,
+            ...(scope.spend ? { credits: scope.spend } : {}), log: scope.log, forAccount: maintenanceAccount,
           });
           // ── SPENT SEND-CONTENT CLAIMS ──────────────────────────────────────────────────
           //
@@ -929,7 +946,10 @@ export function cycleTailSection(scope: WorkerScope): void {
           // install runs the same send path and has no maintenance pass at all, so an expiry that
           // depended on pruning would be unbounded on every desktop.
           await scope.runTailStage("cycle.pruneSendFingerprints", "database", async () => {
-            const fps = await pruneSendFingerprints(scope.roster as unknown as Tx, new Date());
+            const fps = await pruneWorkerSendFingerprints(scope.roster as unknown as Tx, new Date(), {
+              forAccount: maintenanceAccount, shardKey: maintenanceShardKey,
+              shard: accountShardFilter(scope.selection, outboundSendFingerprints.accountId),
+            });
             if (fps > 0) scope.log.info("send_fingerprints_pruned", { pruned: fps });
           }, (err) => { scope.log.error("send_fingerprint_prune_failed", { err }); });
           // Expired staged attachment bytes: the object, then the row. A hosted send puts attachment
@@ -1024,10 +1044,16 @@ export function cycleTailSection(scope: WorkerScope): void {
           // prunes. Same slot as its neighbours (the worker is the single elected writer, and a
           // failure is a logged warning, never a cycle abort — the pass states that itself). The
           // horizons live in ONE place, `@trafficflow/db/cloud`'s `retention.ts`.
-          await retentionPrunePass(scope.roster as unknown as Tx, new Date(), scope.log);
+          await retentionPrunePass(scope.roster as unknown as Tx, new Date(), scope.log, {
+            forAccount: maintenanceAccount, shard: accountShardFilter(scope.selection, accounts.id),
+            shardKey: maintenanceShardKey,
+          });
           // Sign-in records, sessions and the ceremony tables, 30 days past their end; its own
           // deadline, never a throw (`retention-prune.ts`).
-          await signInRetentionPass(scope.roster as unknown as Tx, new Date(), scope.log);
+          await signInRetentionPass(scope.roster as unknown as Tx, new Date(), scope.log, {
+            forAccount: maintenanceAccount, shard: (column) => accountShardFilter(scope.selection, column),
+            shardKey: maintenanceShardKey,
+          });
         },
       },
     };

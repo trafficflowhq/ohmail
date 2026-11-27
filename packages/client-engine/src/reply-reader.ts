@@ -21,9 +21,18 @@ interface ReplyCopies {
 }
 
 const copyIndexes = new WeakMap<EntityReader, ReplyCopies>();
+const replyIndexes = new WeakMap<EntityReader, {
+  readonly stamp: number;
+  readonly rows: ReadonlyArray<{ id: string; entity: SentReply }>;
+}>();
 
 function replyRows(store: EntityReader) {
-  return store.entries<SentReply>("view_meta").filter(({ id }) => id.startsWith(PREFIX));
+  const stamp = store.stampOf("view_meta");
+  const cached = replyIndexes.get(store);
+  if (cached?.stamp === stamp) return cached.rows;
+  const rows = store.entries<SentReply>("view_meta").filter(({ id }) => id.startsWith(PREFIX));
+  replyIndexes.set(store, { stamp, rows });
+  return rows;
 }
 
 function messageKey(message: EngineMessage): string | undefined {

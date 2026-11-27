@@ -1,22 +1,20 @@
 /**
- * The destinations below the mail places — the More screen's rows, as a component TWO hosts
- * mount: the More tab (compact) and the big-screen drawer behind the list pane's sidebar
- * toggle (prototype v5: "the destinations live behind the sidebar toggle as a drawer over
- * the list pane"). One list, so the two cannot drift: piles, folders, History, Scheduled,
- * the honest search sentence, Settings and the pairing door. `onNavigate` lets the drawer
- * close itself before the push; the More screen passes nothing.
+ * Piles and utility destinations used by the More tab and the mail drawers.
+ * The compact drawer follows the mobile web order and opens the same native routes.
  */
 import { View } from "react-native";
 import { router, type Href } from "expo-router";
+import { design } from "@ohmail/tokens/design";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
+import { mailColors } from "../theme/mail";
 import { useWorld } from "../state/world";
 import type { PileKind } from "../state/model";
 import { tagHueOf } from "../theme/palette";
 import { Rule, Section, TagDot, TapRow, Txt } from "./base";
 import { DrawerGroup } from "./DrawerGroup";
 import { FoldersGroup } from "./FoldersGroup";
-import { Icon, type IconName } from "./Icon";
+import { Icon, NavigationIcon, type IconName, type NavigationIconName } from "./Icon";
 import { morePaneKeyOf, type MoreHref } from "./pane-routes";
 
 export function MoreNav({ onNavigate, foot = true, selected, onPick, drawer = false }: {
@@ -30,33 +28,40 @@ export function MoreNav({ onNavigate, foot = true, selected, onPick, drawer = fa
 }) {
   const w = useWorld();
   const t = useTheme();
-  const pileCountOf = (kind: string) => w.piles.find((p) => p.kind === kind)?.items.length ?? 0;
+  const pileCountOf = (kind: PileKind) => drawer && !w.boot.settled
+    ? undefined : w.piles.find((p) => p.kind === kind)?.items.length ?? 0;
   const pile = (kind: PileKind): Href => ({ pathname: "/triage", params: { pile: kind } });
   const { go, at } = moreRows(onNavigate, selected, onPick);
 
-  return (
-    <>
-      {drawer ? null : <Section style={{ paddingTop: 16 }}>{Copy.triage}</Section>}
-      <Nav label={Copy.replyLater} icon={drawer ? "hourglass" : undefined} count={pileCountOf("replyLater")} selected={at(pile("replyLater"))} onPress={() => go(pile("replyLater"))} />
-      <Nav label={Copy.setAside} icon={drawer ? "pause" : undefined} count={pileCountOf("setAside")} selected={at(pile("setAside"))} onPress={() => go(pile("setAside"))} />
-      <Nav label={Copy.resurface} icon={drawer ? "up" : undefined} count={pileCountOf("resurface")} selected={at(pile("resurface"))} onPress={() => go(pile("resurface"))} />
+  const search = <Nav label={Copy.search} drawer={drawer} drawerIcon="search"
+    selected={at("/search")} onPress={() => go("/search")} chevron={!drawer} />;
 
-      {/* TAGS — the web rail's group, above Folders as there: each tag with the count of its
-          mail, opening the tag's list. Present while the account has a tag; tags are made
-          from a message's Tag sheet, so a heading over nothing would teach nothing. The count
-          is silent while unsettled, the piles' reason. */}
-      {w.tags.length > 0 ? (
-        <DrawerGroup active={drawer} label={Copy.tagsTitle} collapsed>
+  return (
+    <View style={drawer ? { gap: 12 } : undefined}>
+      {drawer ? null : <Section style={{ paddingTop: 16 }}>{Copy.triage}</Section>}
+      <View style={drawer ? { gap: 2 } : undefined}>
+        <Nav label={Copy.replyLater} drawer={drawer} drawerIcon="later" count={pileCountOf("replyLater")} selected={at(pile("replyLater"))} onPress={() => go(pile("replyLater"))} />
+        <Nav label={Copy.setAside} drawer={drawer} drawerIcon="parked" count={pileCountOf("setAside")} selected={at(pile("setAside"))} onPress={() => go(pile("setAside"))} />
+        <Nav label={Copy.resurface} drawer={drawer} drawerIcon="resurface" count={pileCountOf("resurface")} selected={at(pile("resurface"))} onPress={() => go(pile("resurface"))} />
+      </View>
+
+      {/* The compact rail always offers Tags. Counts wait for the mirror. */}
+      {drawer || w.tags.length > 0 ? (
+        <DrawerGroup active={drawer} label={Copy.tagsTitle} collapsed selected={selected?.startsWith("tag:")}>
           {w.tags.map((tag) => (
             <Nav
               key={tag.id}
               label={tag.name}
+              drawer={drawer}
               dot={t.c.tag[tagHueOf(tag.hue)].ink}
               count={w.boot.settled ? w.tagged.count(tag.id) : undefined}
               selected={at(`/tag/${encodeURIComponent(tag.id)}`)}
               onPress={() => go(`/tag/${encodeURIComponent(tag.id)}`)}
             />
           ))}
+          {drawer && w.tags.length === 0 ? (
+            <Txt variant="caption" tone="ink2" style={{ paddingLeft: 42 }}>{Copy.tagNone}</Txt>
+          ) : null}
         </DrawerGroup>
       ) : null}
 
@@ -86,63 +91,55 @@ export function MoreNav({ onNavigate, foot = true, selected, onPick, drawer = fa
         />
       ) : null}
 
-      <Rule inset={20} />
+      {drawer ? null : <Rule inset={20} />}
+      <View style={drawer ? { gap: 2 } : undefined}>
 
-      {/* HISTORY — where the browser's rail puts it: first of the utility rows, above
-          Drafts and Trash and below the piles/folders. NO COUNT, deliberately: History is
-          all read by construction (an unread message makes its sender active, so it queues
-          in the Screener instead), so a number here would claim attention nothing in it
-          wants. Shown unconditionally, unlike Scheduled below — this is a PLACE the mailbox
-          always has, and hiding it on zero would be the phone asserting an empty History
-          from a mirror that may simply not have synced. */}
-      <Nav label={Copy.history} sub={Copy.historyNavSub} selected={at("/history")} onPress={() => go("/history")} chevron />
+        {drawer
+          ? <Nav label={Copy.history} drawer drawerIcon="history" selected={at("/history")} onPress={() => go("/history")} />
+          : <Nav label={Copy.history} sub={Copy.historyNavSub} selected={at("/history")} onPress={() => go("/history")} chevron />}
+        {drawer ? search : null}
 
-      {/* DRAFTS — the browser rail's own order puts it directly under History
-          and above Trash. Present while the account HOLDS one, and also while the mirror has
-          never settled, exactly as Scheduled below: a row hidden on zero would assert "nothing
-          half-written" from a database that has simply not synced (unknown ≠ empty,
-          `state/surface.ts`). It is not a permanent row on zero, because this app does not write
-          drafts and a standing "Drafts 0" would teach a phone-only reader nothing — the moment
-          a send here cannot be confirmed the row carries it, which is the state this destination
-          exists for. The count is silent while unsettled for the piles' reason. */}
-      {!w.boot.settled || w.drafts.length > 0 || (drawer && w.scheduled.length > 0) ? (
-        <Nav
-          label={Copy.draftsTitle}
-          count={w.boot.settled ? w.drafts.length + (drawer ? w.scheduled.length : 0) : undefined}
-          selected={at("/drafts")}
-          onPress={() => go("/drafts")}
-        />
-      ) : null}
+        {/* Scheduled mail sits with Drafts on the compact rail. */}
+        {drawer || !w.boot.settled || w.drafts.length > 0 ? (
+          <Nav
+            label={Copy.draftsTitle}
+            drawer={drawer} drawerIcon="drafts"
+            count={w.boot.settled ? (w.drafts.length + (drawer ? w.scheduled.length : 0)) || undefined : undefined}
+            selected={at("/drafts")}
+            onPress={() => go("/drafts")}
+          />
+        ) : null}
 
-      {/* SCHEDULED (Send later, mail 0077) — its own destination, in the rail's idiom.
-          Present while the account HOLDS an appointment, and also while the mirror has
-          never settled: a row hidden on zero would otherwise assert "nothing scheduled"
-          from a database that has simply not synced yet (unknown ≠ empty,
-          `state/surface.ts`). Once a drain has completed and the answer is genuinely none,
-          the row goes — the composer's own "Send later" is where the feature is
-          discovered, and a permanent "Scheduled 0" teaches nothing. The count is silent
-          while unsettled for the same reason the piles' badges are. */}
-      {drawer ? null : !w.boot.settled || w.scheduled.length > 0 ? (
-        <Nav
-          label={Copy.scheduled}
-          count={w.boot.settled ? w.scheduled.length : undefined}
-          selected={at("/scheduled")}
-          onPress={() => go("/scheduled")}
-        />
-      ) : null}
+        {/* SCHEDULED (Send later, mail 0077) — its own destination, in the rail's idiom.
+            Present while the account HOLDS an appointment, and also while the mirror has
+            never settled: a row hidden on zero would otherwise assert "nothing scheduled"
+            from a database that has simply not synced yet (unknown ≠ empty,
+            `state/surface.ts`). Once a drain has completed and the answer is genuinely none,
+            the row goes — the composer's own "Send later" is where the feature is
+            discovered, and a permanent "Scheduled 0" teaches nothing. The count is silent
+            while unsettled for the same reason the piles' badges are. */}
+        {drawer ? null : !w.boot.settled || w.scheduled.length > 0 ? (
+          <Nav
+            label={Copy.scheduled}
+            count={w.boot.settled ? w.scheduled.length : undefined}
+            selected={at("/scheduled")}
+            onPress={() => go("/scheduled")}
+          />
+        ) : null}
 
-      {/* TRASH — the browser rail's utility-row order (History above Trash), closing the
-          recovery gap the delete confirm names: the mail went to the provider's Trash, and
-          this is where it can be put back from. Gated on the engine's capability PAIR
-          (list + restore, one predicate) — the webapp disables its palette row on the same
-          answer, and a row opening "not available here" teaches nothing on a phone. NO COUNT,
-          like History: a number here would claim attention deleted mail does not want. */}
-      {w.trash.available ? <Nav label={Copy.trashTitle} selected={at("/trash")} onPress={() => go("/trash")} chevron /> : null}
+        {/* The compact rail keeps Trash in place when the server cannot restore mail. */}
+        {w.trash.available || drawer ? (
+          <Nav label={Copy.trashTitle} drawer={drawer} drawerIcon="trash" selected={at("/trash")}
+            disabled={!w.trash.available} onPress={() => go("/trash")} chevron={!drawer} />
+        ) : null}
 
-      {/* Search over the synced mirror — a destination like the rail's. */}
-      <Nav label={Copy.search} selected={at("/search")} onPress={() => go("/search")} chevron />
-      {foot ? <MoreNavFoot onNavigate={onNavigate} selected={selected} onPick={onPick} /> : null}
-    </>
+        {drawer ? (
+          <Nav label={Copy.settings} drawer drawerIcon="settings"
+            selected={at("/settings") || selected?.startsWith("settings:")} onPress={() => go("/settings")} />
+        ) : search}
+      </View>
+      {foot && !drawer ? <MoreNavFoot onNavigate={onNavigate} selected={selected} onPick={onPick} /> : null}
+    </View>
   );
 }
 
@@ -167,6 +164,7 @@ function moreRows(onNavigate?: () => void, selected?: string | null, onPick?: (k
   return {
     go: (path: Href) => {
       onNavigate?.();
+      if (onNavigate && selected != null && morePaneKeyOf(path as MoreHref) === selected) return;
       const key = onPick ? morePaneKeyOf(path as MoreHref) : null;
       if (onPick && key !== null) onPick(key);
       else router.push(path);
@@ -178,6 +176,9 @@ function moreRows(onNavigate?: () => void, selected?: string | null, onPick?: (k
 export function Nav({
   label,
   icon,
+  drawer = false,
+  drawerIcon,
+  disabled,
   sub,
   dot,
   count,
@@ -187,6 +188,9 @@ export function Nav({
 }: {
   label: string;
   icon?: IconName;
+  drawer?: boolean;
+  drawerIcon?: NavigationIconName;
+  disabled?: boolean;
   /** The rail's own second line, where the browser carries one (`rail.historyTitle`). */
   sub?: string;
   /** A tag's ink — the rail's dot before its name. */
@@ -198,31 +202,49 @@ export function Nav({
   onPress: () => void;
 }) {
   const t = useTheme();
+  const badge = drawer && !count ? undefined : count;
+  const activeTag = drawer && selected && dot !== undefined ? mailColors(t) : null;
+  const selectedDot = drawer && selected && dot === undefined ? (
+    <View style={{ width: 6, height: 6, borderRadius: t.radius.pill, backgroundColor: t.c.ink }} />
+  ) : null;
   return (
     <TapRow
       onPress={onPress}
+      disabled={disabled}
       selected={t.mail ? undefined : selected}
-      accessibilityState={{ selected: selected === true }}
+      accessibilityState={{ selected: selected === true, disabled }}
       accessibilityRole="link"
       accessibilityLabel={
-        sub !== undefined
-          ? Copy.ariaLabelDetail(label, sub)
-          : count === undefined ? label : Copy.ariaLabelCount(label, count)
+        disabled ? Copy.ariaLabelDetail(label, Copy.trashUnavailable)
+          : sub !== undefined ? Copy.ariaLabelDetail(label, sub)
+          : badge === undefined ? label : Copy.ariaLabelCount(label, badge)
       }
       style={{
         marginHorizontal: t.mail ? 0 : 8,
         paddingHorizontal: 12,
-        paddingVertical: 12,
-        minHeight: 46,
+        paddingVertical: drawer ? 2 : 12,
+        minHeight: drawer ? Number.parseFloat(design.faces.paper.phone["h-m"]) : 46,
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
+        borderRadius: drawer ? t.radius.pill : t.radius.row,
+        ...(activeTag ? { backgroundColor: activeTag["nav-on"] } : {}),
       }}
     >
+      {drawer && drawerIcon ? <NavigationIcon name={drawerIcon} color={t.c.ink} /> : null}
       {icon ? <Icon name={icon} size={16} color={t.c.ink} /> : null}
-      {dot !== undefined ? <TagDot ink={dot} /> : null}
+      {dot !== undefined ? drawer ? (
+        <View style={{ width: 20, alignItems: "center" }}>
+          <View style={{ width: 8, height: 8, borderRadius: t.radius.pill, backgroundColor: activeTag?.["on-nav-on"] ?? dot }} />
+        </View>
+      ) : <TagDot ink={dot} /> : null}
       <View style={{ flexShrink: 1 }}>
-        <Txt variant={t.mail ? "rowSender" : "navLabel"}>{label}</Txt>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <Txt variant={drawer && !selected ? dot === undefined ? "railLabel" : "body" : t.mail ? "rowSender" : "navLabel"}
+            numberOfLines={drawer ? 1 : undefined}
+            style={drawer ? { flexShrink: 1, color: activeTag?.["on-nav-on"] ?? t.c.ink } : undefined}>{label}</Txt>
+          {selectedDot}
+        </View>
         {sub ? (
           <Txt variant="caption" tone="ink3" numberOfLines={2} style={{ marginTop: 2 }}>
             {sub}
@@ -230,9 +252,10 @@ export function Nav({
         ) : null}
       </View>
       <View style={{ flex: 1 }} />
-      {count !== undefined ? (
-        <Txt variant="caption" tone="ink3" tabular>
-          {count}
+      {badge !== undefined ? (
+        <Txt variant={drawer ? "railCount" : "caption"} tone={drawer ? selected ? "ink" : "ink2" : "ink3"} tabular
+          style={activeTag ? { color: activeTag["on-nav-on"] } : undefined}>
+          {badge}
         </Txt>
       ) : null}
       {chevron ? <Icon name="chev" size={13} color={t.c.ink3} /> : null}

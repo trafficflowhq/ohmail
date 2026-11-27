@@ -33,7 +33,13 @@ vi.mock("react-native", async () => {
 });
 vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
 /** The frame's last props: the document handed over, its height, and the native reading's handler, so a test can answer as the WebView would. */
-type FrameProps = { source?: { html?: string }; style?: { height?: number }; onScroll?: (e: unknown) => void; onLoadEnd?: () => void };
+type FrameProps = {
+  source?: { html?: string };
+  style?: { height?: number };
+  onScroll?: (e: unknown) => void;
+  onLoadEnd?: () => void;
+  onShouldStartLoadWithRequest?: (e: { url: string }) => boolean;
+};
 const webview = vi.hoisted(() => ({ props: null as FrameProps | null, views: 0, view: 0 }));
 vi.mock("react-native-webview", () => ({
   WebView: (props: FrameProps) => {
@@ -49,7 +55,6 @@ vi.mock("../src/net/connection", () => ({
   useConnection: () => ({ state: live.engine ? { k: "live", session: { engine: live.engine } } : { k: "none" } }),
 }));
 vi.mock("../src/mail/frame-ceiling-native", () => ({ phoneFrameCeiling: () => 512 * 1024 * 1024 }));
-vi.mock("../src/mail/frame-nav", () => ({ frameNavDecision: () => ({ kind: "none" }), openConfirmedLink: () => undefined }));
 const look = vi.hoisted(() => ({ scheme: "light" as "light" | "dark", face: "paper" as "paper" | "ohmarchy" }));
 vi.mock("../src/theme", () => ({
   useTheme: () => ({
@@ -135,6 +140,44 @@ const pressShowImages = (el: HTMLElement): void => {
 const repeats = (): number => door.gets.length - new Set(door.gets).size;
 
 describe("the frame's pictures stay under one budget per message", () => {
+  it("a feed preview keeps formatting, blocks network image loads and caps the document height", async () => {
+    const loadInlineImages = vi.fn();
+    live.actions = { loadInlineImages };
+    const embedded = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+    const html = '<p><strong>Registration</strong> <a href="https://example.test/registration">Register</a></p>'
+      + '<img src="cid:figure@example.test" alt="Workshop figure">'
+      + '<img src="cid:another@example.test" alt="Another figure">'
+      + `<img src="${good(1)}" width="300" height="220" alt="Workshop banner">`;
+    const onClipped = vi.fn();
+    mounted = mount(h(MailBodyFrame, {
+      m: {
+        id: "newsletter", subject: "Workshops", html, body: "Registration", loadedRemoteContent: true,
+        inlineImages: new Map([["figure@example.test", embedded]]),
+      },
+      preview: { maxHeight: 160, onClipped, fallback: h("span", null, "Registration") },
+    }));
+    await settle();
+    const frame = mounted.el.querySelector("[data-webview]")!;
+    expect(frame?.getAttribute("data-html")).toContain("<strong>Registration</strong>");
+    expect(frame?.getAttribute("data-html")).toContain(embedded);
+    const link = frame.getAttribute("data-html")?.match(/href="(ohmail-link:[^"]+)"/)?.[1];
+    expect(link).toBeDefined();
+    act(() => { expect(webview.props?.onShouldStartLoadWithRequest?.({ url: link! })).toBe(false); });
+    expect(frame.getAttribute("data-html")).not.toContain(good(1));
+    expect(loadInlineImages).not.toHaveBeenCalled();
+    expect(door.gets).toEqual([]);
+    expect(door.posts).toBe(0);
+    const report = (height: number) => ({
+      nativeEvent: { contentSize: { height, width: 400 }, layoutMeasurement: { height: 1, width: 400 } },
+    });
+    act(() => webview.props?.onScroll?.(report(82)));
+    expect(frame.getAttribute("data-height")).toBe("82");
+    expect(onClipped).toHaveBeenLastCalledWith(false);
+    act(() => webview.props?.onScroll?.(report(510)));
+    expect(frame.getAttribute("data-height")).toBe("160");
+    expect(onClipped).toHaveBeenLastCalledWith(true);
+  });
+
   it("a press over 30 pictures: at most the part ceiling fetched, one consent, no url asked twice", async () => {
     for (let i = 1; i <= 5; i++) door.failing.add(bad(i));
     mounted = mount(h(MailBodyFrame, { m: { id: "m-1", html: newsletter(25, 5), body: "", loadedRemoteContent: false } as never, onShowAsText: () => undefined }));

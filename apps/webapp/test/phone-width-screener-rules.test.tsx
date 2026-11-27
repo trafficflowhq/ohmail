@@ -102,16 +102,29 @@ describe("R13-07 — at phone width the subject gets the row, and the chip says 
       expect(geometry.clipped).toBe(true);
       expect(geometry.style).toEqual(["hidden", "ellipsis", "nowrap"]);
       await row(page).click();
-      expect(await page.getByText(/Delivered to casey-with-a-deliberately-long-mailbox-label@example.invalid/).count())
-        .toBeGreaterThan(0);
+      const detailChip = page.getByRole("note", { name: "Delivered to casey-with-a-deliberately-long-mailbox-label@example.invalid" });
+      await detailChip.waitFor();
+      expect(await detailChip.evaluate((node) => {
+        const { backgroundColor, borderRadius, textOverflow } = getComputedStyle(node);
+        return {
+          filled: backgroundColor !== "rgba(0, 0, 0, 0)",
+          rounded: parseFloat(borderRadius) > 0,
+          clipped: node.scrollWidth > node.clientWidth,
+          textOverflow,
+        };
+      })).toEqual({ filled: true, rounded: true, clipped: true, textOverflow: "ellipsis" });
+      const chipBox = await detailChip.boundingBox();
+      const letterBox = await page.getByRole("feed").getByRole("article").first().boundingBox();
+      expect(letterBox!.y - (chipBox!.y + chipBox!.height)).toBeGreaterThanOrEqual(8);
     });
   }, 30_000);
 
   it("control: wide, the chip keeps the full label", async () => {
     await visit(1440, false, async (page) => {
       await row(page).click();
-      expect(await page.getByText(/Delivered to casey-with-a-deliberately-long-mailbox-label@example.invalid/).count())
-        .toBeGreaterThan(0);
+      const detailChip = page.getByRole("note", { name: "Delivered to casey-with-a-deliberately-long-mailbox-label@example.invalid" });
+      await detailChip.waitFor();
+      expect(await detailChip.textContent()).toBe("Delivered to casey-with-a-deliberately-long-mailbox-label@example.invalid");
     });
   }, 30_000);
 

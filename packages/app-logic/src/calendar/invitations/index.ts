@@ -2,6 +2,7 @@
 export type { InvitationRow, ListedRef } from "./contract.js";
 export {
   invitationCountOf,
+  invitationsInWindow,
   invitationsOf,
   invitedByOthers,
   type InvitationGroups,

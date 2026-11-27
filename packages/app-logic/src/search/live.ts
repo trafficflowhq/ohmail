@@ -15,16 +15,15 @@
  * The question asked starts the search mark (`beginSearch`), which the device's first paint ends.
  */
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import type { AddressBookEntry, SearchHit } from "@ohmail/client-engine";
+import { addressBook, type AddressBookEntry, type EntityReader, type SearchHit } from "@ohmail/client-engine";
 import type { EngineMessage } from "@ohmail/wire";
 import { useConsent } from "../consent/consent-row.js";
 import { usePartition } from "../consent/partition.js";
-import { useDemoMode, useEngine } from "../engine/context.js";
+import { atStamp, useDemoMode, useDerivedVersion, useEngine } from "../engine/context.js";
 import { useZoneNav } from "../keys/zone-nav.js";
 import { junkFolderSaid } from "../lists/folders.js";
 import type { PlaceLiveArgs } from "../lists/place-live.js";
 import { useMailState } from "../mail-state/mail-state-binding.js";
-import { usePeople } from "./people.js";
 import { useStableCallback } from "../press/stable-callback.js";
 import { usePresented } from "../reading/presented-mirror.js";
 import { useDayClock } from "../session/day-clock.js";
@@ -33,6 +32,26 @@ import type { Translator } from "../text/translator.js";
 import { useSearchOpen } from "./live-open.js";
 import { useSearchList } from "./search-list.js";
 import type { SearchListInput, SearchListModel } from "./types.js";
+
+/** This closure holds only the address-book inputs and the book it builds lazily. */
+function peopleFrom(
+  presented: EntityReader,
+  ownAddresses: readonly string[],
+): () => readonly AddressBookEntry[] {
+  let book: readonly AddressBookEntry[] | undefined;
+  return () => (book ??= addressBook(presented, { exclude: ownAddresses }));
+}
+
+function usePeople(
+  presented: EntityReader,
+  ownAddresses: readonly string[],
+): () => readonly AddressBookEntry[] {
+  const version = useDerivedVersion();
+  return useMemo(
+    () => atStamp(version, peopleFrom(presented, ownAddresses)),
+    [presented, version, ownAddresses],
+  );
+}
 
 /** What only Search's seat can read: the words, the field and the scroller, the host's answers. */
 export interface SearchLiveOwn {

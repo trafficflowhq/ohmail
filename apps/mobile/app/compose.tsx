@@ -9,7 +9,7 @@
  */
 import { MailAppearance } from "../src/theme/mail";
 import { useRef, useState } from "react";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useNavigation } from "expo-router";
 import { Copy } from "../src/copy";
 import { useWorld } from "../src/state/world";
 import { Button, Empty, Screen } from "../src/ui/base";
@@ -19,7 +19,7 @@ import { ComposeSheet, forwardAskSentence } from "../src/ui/MessageActions";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { mailtoPrefill } from "../src/ui/mailto";
-import { composeDraftPlan, type ComposeDraftOpen } from "../src/ui/compose-route";
+import { composeBackLabel, composeDraftPlan, type ComposeDraftOpen } from "../src/ui/compose-route";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
 export default function ComposeScreen() {
@@ -39,6 +39,9 @@ export default function ComposeScreen() {
 
 function ComposeBody() {
   const w = useWorld();
+  const navigation = useNavigation();
+  const stack = navigation.getState();
+  const backLabel = composeBackLabel(stack?.routes[stack.index - 1]);
   /** A kept forward of a `no_forward` original: the ask the reader asks, answered once here. */
   const [confirmed, setConfirmed] = useState(false);
   /** The row the sheet opened on, held: the open is decided once (`compose-route.ts`). */
@@ -69,14 +72,16 @@ function ComposeBody() {
           <Empty
             title={Copy.draftsTitle}
             hint={plan.kind === "notEditable" ? Copy.draftsEditNote
-              : plan.kind === "gone" ? Copy.draftsRowGone : Copy.draftsForwardOriginalAbsent}
+              : plan.kind === "gone" ? Copy.draftsRowGone
+                : plan.kind === "replyOriginalAbsent" ? Copy.draftsReplyOriginalAbsent : Copy.draftsForwardOriginalAbsent}
           />
         </Screen>
       );
     }
     held.current = plan.open;
     const { draft, original } = plan.open;
-    if (original?.forwardAsk && !confirmed) {
+    const mode = draft.forwardOf ? "forward" : draft.replyTo ? "reply" : "new";
+    if (mode === "forward" && original?.forwardAsk && !confirmed) {
       return (
         <Screen>
           <DetailBar title={Copy.draftsTitle} />
@@ -87,8 +92,8 @@ function ComposeBody() {
     }
     return (
       <ComposeSheet
-        m={original} mode={original ? "forward" : "new"} forwardConfirmed={confirmed}
-        draft={draft} onClose={leave}
+        m={original} mode={mode} forwardConfirmed={confirmed}
+        draft={draft} onClose={leave} backLabel={backLabel}
       />
     );
   }
@@ -98,5 +103,5 @@ function ComposeBody() {
   /* `?diag=`: Settings › Help & contact's block, already in the mailto's body. */
   const prefill = mailtoPrefill(mailto);
   const helpBlock = prefill && typeof diag === "string" && diag !== "" ? { diag } : {};
-  return <ComposeSheet m={null} mode="new" onClose={leave} prefill={prefill} {...helpBlock} />;
+  return <ComposeSheet m={null} mode="new" onClose={leave} backLabel={backLabel} prefill={prefill} {...helpBlock} />;
 }

@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
+import { cssRect, cssViewport, uiZoom, type CssRect } from "@ohmail/app-logic/geometry";
 import { KeyHint } from "@ohmail/ui/base";
 
 const EDGE = 3;
@@ -7,42 +8,45 @@ const EDGE_PAD = 3;
 
 export interface ChipAnchor {
   control: HTMLElement;
-  rect: DOMRect;
+  rect: CssRect;
 }
 
 export interface HeldChip extends ChipAnchor {
   cap: string;
 }
 
-function labelRects(control: HTMLElement, view: Window): DOMRect[] {
+function labelRects(control: HTMLElement, view: Window): CssRect[] {
   const page = control.ownerDocument;
+  const zoom = uiZoom(page);
   const words = page.createTreeWalker(control, NodeFilter.SHOW_TEXT);
   const range = page.createRange();
-  const rects = [...control.querySelectorAll("svg")].map((icon) => icon.getBoundingClientRect());
+  const rects = [...control.querySelectorAll("svg")].map(cssRect);
   for (let word = words.nextNode(); word; word = words.nextNode()) {
     const parent = word.parentElement;
     if (!word.textContent?.trim() || !parent) continue;
     const style = view.getComputedStyle(parent);
     if (style.visibility !== "visible" || style.opacity === "0") continue;
     range.selectNodeContents(word);
-    rects.push(...range.getClientRects());
+    for (const rect of range.getClientRects())
+      rects.push(new DOMRect(rect.x / zoom, rect.y / zoom, rect.width / zoom, rect.height / zoom));
   }
   return rects;
 }
 
-function intersects(a: DOMRect, b: DOMRect): boolean {
+function intersects(a: CssRect, b: CssRect): boolean {
   return a.left < b.right + GAP && a.right > b.left - GAP && a.top < b.bottom + GAP && a.bottom > b.top - GAP;
 }
 
 function position(
-  chip: DOMRect,
+  chip: CssRect,
   entry: HeldChip,
-  labels: readonly DOMRect[],
+  labels: readonly CssRect[],
   placed: DOMRect[],
   view: Window,
 ) {
   const { control, rect } = entry;
   const { width, height } = chip;
+  const viewport = cssViewport(view);
   const rtl = view.getComputedStyle(control).direction === "rtl";
   const trailing = new DOMRect(
     rtl ? rect.left + GAP : rect.right - width - GAP,
@@ -52,7 +56,7 @@ function position(
   );
   const center = Math.max(
     EDGE,
-    Math.min(view.innerWidth - width - EDGE, rect.left + (rect.width - width) / 2),
+    Math.min(viewport.width - width - EDGE, rect.left + (rect.width - width) / 2),
   );
   // Dense icon rows can use their edge padding if the space outside them is occupied.
   const edges = [
@@ -62,10 +66,7 @@ function position(
     rect.bottom - EDGE_PAD,
   ];
   const inWindow = (r: DOMRect) =>
-    r.left >= EDGE &&
-    r.right <= view.innerWidth - EDGE &&
-    r.top >= EDGE &&
-    r.bottom <= view.innerHeight - EDGE;
+    r.left >= EDGE && r.right <= viewport.width - EDGE && r.top >= EDGE && r.bottom <= viewport.height - EDGE;
   const clear = (r: DOMRect) =>
     !labels.some((label) => intersects(r, label)) && !placed.some((key) => intersects(r, key));
 
@@ -91,13 +92,13 @@ export function HeldChips({
   useLayoutEffect(() => {
     const layer = nodes.current[0]?.parentElement;
     if (!layer) return;
-    const area = layer.getBoundingClientRect();
+    const area = cssRect(layer);
     const scaleX = layer.clientWidth ? area.width / layer.clientWidth : 1;
     const scaleY = layer.clientHeight ? area.height / layer.clientHeight : 1;
     const sizes = entries.map((_, index) => {
       const node = nodes.current[index]!;
       node.hidden = false;
-      return node.getBoundingClientRect();
+      return cssRect(node);
     });
     const labels = controls.flatMap(({ control, rect }) =>
       control.matches("input, textarea") ? [rect] : labelRects(control, view),

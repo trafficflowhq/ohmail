@@ -138,6 +138,6 @@ describe("the accessible names are required, not optional", () => {
   });
   it("the dock's items are tabs with a selected state", () => {
     const src = read("src/ui/glass/GlassIconButton.tsx");
-    expect(src).toContain('accessibilityState={{ selected: role === "tab" && on === true }}');
+    expect(src).toContain('accessibilityState={{ selected: role === "tab" && on === true, disabled: disabled === true }}');
   });
 });

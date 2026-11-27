@@ -33,6 +33,7 @@ export interface ListGroup<T> {
   /** Rendered as a `Section` label above the rows; absent, no header is drawn. */
   title?: string;
   count?: number;
+  hot?: boolean;
   rows: readonly T[];
   /** A caption under the title — a heading that needs a sentence to be honest (Search's SIMILAR
    *  tier says what "similar" means there). Drawn only where there is a title. */
@@ -47,6 +48,7 @@ export interface PlannedSection<T> {
   key: string;
   title: string | null;
   count: number | null;
+  hot?: boolean;
   note: string | null;
   data: readonly T[];
   padTop: number;
@@ -66,6 +68,7 @@ export function planSections<T>(groups: readonly ListGroup<T>[]): PlannedSection
     if (title !== null) titled = true;
     out.push({
       key: g.key, title, count: g.count ?? null, note: title === null ? null : g.note ?? null,
+      ...(g.hot !== undefined ? { hot: g.hot } : {}),
       data: g.rows, padTop: g.padTop ?? 0, first, [SECTION]: true,
     });
   }

@@ -498,6 +498,24 @@ export async function clearErasedSettingsHashes(db: Tx, scope?: SQL): Promise<nu
   return cleared;
 }
 
+/** Repair one finished erasure. Use the account that owns the mailbox and its audit rows. */
+export async function repairFinishedMailboxErasure(
+  db: Tx, accountId: string, mailboxId: string,
+): Promise<{ signaturesCleared: number; settingsHashesCleared: number }> {
+  return db.transaction(async (tx) => {
+    const bound = tx as unknown as Tx;
+    const where = and(
+      eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNotNull(mailboxes.erasureDoneAt),
+    );
+    const [row] = await bound.select({ id: mailboxes.id }).from(mailboxes).where(where).limit(1);
+    if (!row) return { signaturesCleared: 0, settingsHashesCleared: 0 };
+    return {
+      signaturesCleared: await clearErasedSignatures(bound, where),
+      settingsHashesCleared: (await forgetSettingsHashes(bound, accountId, mailboxId)) > 0 ? 1 : 0,
+    };
+  });
+}
+
 /** Messages an owed erasure has left, for the list's `erasure.remaining`. */
 export async function erasureRemaining(db: Tx, accountId: string, mailboxId: string): Promise<number> {
   const [m] = await db.select({ c: countOf() }).from(messages)

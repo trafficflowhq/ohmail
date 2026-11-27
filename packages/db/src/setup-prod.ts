@@ -9,7 +9,7 @@ import {
   classifyDrift, driftAdmitted, driftSentence, gitProvenanceReader,
   type MigrationDrift, type ProvenanceReader,
 } from "./migration-provenance.js";
-import { runMigrations, openMigrationSession, JOURNALS, type MigrateOptions } from "./migrate.js";
+import { runMigrations, openMigrationSession, setMigrationDdlLockTimeout, JOURNALS, type MigrateOptions } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
 import {
   ensureSearchExtensions, ensureWithheldProvenanceIndex, ensureWordIndex, retireOldSearch, TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC,
@@ -17,7 +17,7 @@ import {
   type OldSearchRetirement,
 } from "./search-setup.js";
 import {
-  ensureHotPathIndexes, HOT_PATH_INDEXES, HOT_PATH_INDEX_SPECS, DEFERRED_HOT_PATH_INDEXES,
+  ensureHotPathIndexes, ensureMaintenanceIndexes, MAINTENANCE_INDEXES, HOT_PATH_INDEXES, HOT_PATH_INDEX_SPECS, DEFERRED_HOT_PATH_INDEXES,
 } from "./hot-path-indexes.js";
 import { dropInvalidLeftovers } from "./concurrent-index.js";
 import { ensureLock, type LockReport } from "./row-security/apply.js";
@@ -65,6 +65,7 @@ export const TRIGRAM_INDEXES = [
  */
 export const SETUP_OWN_INDEXES: readonly string[] = [...new Set([
   ...[...PREMIGRATION_PREBUILD_SPECS, ...RETIRED_PREBUILD_SPECS, ...TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC, ...HOT_PATH_INDEX_SPECS].map((s) => s.name),
+  ...MAINTENANCE_INDEXES,
   ...OLD_SEARCH_INDEXES,
   "folder_state_screener_held_floor_idx",
 ])];
@@ -208,6 +209,7 @@ export interface ProdSetupReport {
 /** Options for {@link setupProdDatabase}. */
 export interface ProdSetupOptions {
   log?: (msg: string) => void;
+  ddlLockTimeoutMs?: number;
   /** Hostname {@link assertExpectedHost} pins the URL to. Omitted by tests and throwaway dbs. */
   expectedHost?: string;
   /**
@@ -544,17 +546,10 @@ export async function setupProdDatabase(
   let before: AppliedWhens;
   let hostRoles: string[];
   try {
-    // Neutralize the role's server-side defaults before any work on this session. Once
-    // `ROLE_DEFAULT_TIMEOUTS` is applied below, EVERY future connection under this role starts
-    // with a 55 s statement ceiling, a 30 s lock-wait ceiling and a 60 s idle-in-transaction
-    // ceiling. `ensureWithheldProvenanceIndex` a few lines down runs a `CREATE INDEX
-    // CONCURRENTLY` over the schema's largest table — exactly the multi-minute statement a
-    // request-scoped default is sized to kill, and under real contention the wait to even START
-    // could exceed 30 s (the first version reset only two of the three and left `lock_timeout`
-    // inherited). This session and the provisioning session below must run under NO ceiling on
-    // any of the three, forever, not only on the run that first sets the default.
+    // Concurrent index builders manage their own lock settings. Short provisioning DDL uses
+    // a bounded lock wait so it cannot hold up new readers behind an outstanding reader.
     await pre.unsafe(`set statement_timeout = 0`);
-    await pre.unsafe(`set lock_timeout = 0`);
+    await setMigrationDdlLockTimeout(pre, opts.ddlLockTimeoutMs);
     await pre.unsafe(`set idle_in_transaction_session_timeout = 0`);
     // IDENTITY FIRST, then mutate. The report used to name the server it had reached only
     // AFTER migrating it, which is the wrong order for a command that runs DDL: an operator
@@ -621,7 +616,10 @@ export async function setupProdDatabase(
       journals.map((j) => `${j.spec.name} ${before.get(j.spec.name)?.size ?? 0}/${j.entries.length}`).join(", ") +
       " already applied)",
   );
-  await runMigrations(url, { log: (m) => log(m), ...(opts.transition ? { transition: opts.transition } : {}) });
+  await runMigrations(url, {
+    log, ...(opts.transition ? { transition: opts.transition } : {}),
+    ...(opts.ddlLockTimeoutMs === undefined ? {} : { ddlLockTimeoutMs: opts.ddlLockTimeoutMs }),
+  });
 
   // Same shape as `pre`: the trigram and hot-path builds take the migration lock on this session.
   const clientSession = await openMigrationSession(url, { log });
@@ -632,12 +630,14 @@ export async function setupProdDatabase(
     // indexes, and the role default this function itself installs (below) must not be able to
     // kill its own provisioning pass.
     await client.unsafe(`set statement_timeout = 0`);
-    await client.unsafe(`set lock_timeout = 0`);
+    await setMigrationDdlLockTimeout(client, opts.ddlLockTimeoutMs);
     await client.unsafe(`set idle_in_transaction_session_timeout = 0`);
     log("ensuring search extensions (pg_trgm + trigram GIN indexes)");
     await ensureSearchExtensions(db);
+    await setMigrationDdlLockTimeout(client, opts.ddlLockTimeoutMs);
     log("ensuring the account-keyed word index");
     await ensureWordIndex(db, { log: (m) => log(m) });
+    await setMigrationDdlLockTimeout(client, opts.ddlLockTimeoutMs);
     log("retiring the old search where nothing is found by it alone");
     const oldSearch = await retireOldSearch(db, { log: (m) => log(m) });
 
@@ -646,6 +646,8 @@ export async function setupProdDatabase(
     // the concurrent build is still outside a transaction.
     log("ensuring hot-path indexes (audit_log lookup, message eviction order)");
     await ensureHotPathIndexes(db, { log: (m) => log(m) });
+    await ensureMaintenanceIndexes(db, { log });
+    await setMigrationDdlLockTimeout(client, opts.ddlLockTimeoutMs);
 
     // The role-level server deadlines, applied and verified FAIL-CLOSED. Client-side startup
     // parameters are measured inert through a transaction-mode pooler, so what reaches a pooled
@@ -838,7 +840,8 @@ export async function setupProdDatabase(
     // never typed here. `indisvalid` as well as existence: a failed CONCURRENTLY build leaves an
     // index `pg_indexes` lists quite happily and the planner refuses to use, which is the one
     // state that would otherwise report OK.
-    const wantedIdx = [...HOT_PATH_INDEXES, ...DEFERRED_HOT_PATH_INDEXES.map((d) => d.name)];
+    const requiredHotIndexes = [...HOT_PATH_INDEXES, ...MAINTENANCE_INDEXES];
+    const wantedIdx = [...requiredHotIndexes, ...DEFERRED_HOT_PATH_INDEXES.map((d) => d.name)];
     const hotIdx = await rows<{ indexname: string }>(
       db,
       sql`select c.relname as indexname
@@ -936,7 +939,7 @@ export async function setupProdDatabase(
     }
     if (!report.trigramIndexes.includes(WORD_INDEX_SPEC.name)) problems.push(`search word index missing: ${WORD_INDEX_SPEC.name}`);
     if (oldSearch.trigger === "bounded") problems.push("message_bodies_body_tsv_tg still runs message_bodies_body_tsv_bounded (every new body stores a vector)");
-    for (const want of HOT_PATH_INDEXES) {
+    for (const want of requiredHotIndexes) {
       if (!report.hotPathIndexes.includes(want)) {
         problems.push(`hot-path index missing or INVALID: ${want}`);
       }

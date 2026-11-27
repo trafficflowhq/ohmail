@@ -87,7 +87,7 @@ export function GlassActionBar({
       accessibilityRole="button"
       accessibilityLabel={v.a11yLabel ?? v.label}
       accessibilityHint={v.accessibilityHint}
-      accessibilityState={v.disabled ? { disabled: true } : undefined}
+      accessibilityState={{ disabled: v.disabled === true }}
       disabled={v.disabled}
       onPress={opts?.measure ? undefined : v.onPress}
       onLayout={opts?.measure ? record(v.id) : undefined}

@@ -12,18 +12,11 @@ import {
   type SearchListModel,
   type SearchPerson,
 } from "@ohmail/app-logic/search";
+import { DATE_WINDOWS, datesOf, dateWindowOf, type DateWindow } from "@ohmail/app-logic/search/dates";
 import { Button, Field, Menu, MenuItem, MenuRule, Seg } from "@ohmail/ui/base";
 import { NONE } from "../host/index.js";
 import { useLocale, useText } from "../text/index.js";
 import type { SearchBeside } from "./beside.js";
-
-/** The windows a date filter offers, by the days they reach back from today. */
-export const DATE_WINDOWS = [
-  ["week", 7],
-  ["month", 31],
-  ["year", 366],
-] as const;
-export type DateWindow = (typeof DATE_WINDOWS)[number][0];
 
 /** Each window's name in the catalogue. */
 const DATE_WORDS: Readonly<Record<DateWindow, string>> = {
@@ -31,26 +24,6 @@ const DATE_WORDS: Readonly<Record<DateWindow, string>> = {
   month: "dateMonth",
   year: "dateYear",
 };
-
-const iso = (d: Date): string =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-/** A window as the days it spans, ending today in this window's zone. */
-export function datesOf(window: DateWindow, today: Date): SearchDates {
-  const days = DATE_WINDOWS.find(([w]) => w === window)![1];
-  const from = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
-  return { from: iso(from), to: iso(today) };
-}
-
-/** Which window a set of days is, where it is one. */
-function windowOf(date: SearchDates | null, today: Date): DateWindow | null {
-  if (date === null) return null;
-  for (const [w] of DATE_WINDOWS) {
-    const d = datesOf(w, today);
-    if (d.from === date.from && d.to === date.to) return w;
-  }
-  return null;
-}
 
 /** At most this many people stand in a From or To menu. */
 const MENU_PEOPLE = 6;
@@ -88,7 +61,7 @@ export function SearchPersonRow({ model, beside }: { model: SearchListModel; bes
 export function SearchRefine({ model, today }: { model: SearchListModel; today: Date }) {
   const t = useText("search");
   const locale = useLocale();
-  const window = windowOf(model.date, today);
+  const window = dateWindowOf(model.date?.from ?? null, model.date?.to ?? null, today);
   const from = model.date?.from ? shortCivilDateStamp(model.date.from, locale) : null;
   const to = model.date?.to ? shortCivilDateStamp(model.date.to, locale) : null;
   const span =

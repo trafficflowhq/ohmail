@@ -90,6 +90,18 @@ export async function settleRefundObligation(
     ));
 }
 
+/** The oldest due obligations across the roster, including debts retained after account erasure. */
+export function dueRefundObligations(db: Tx, now: Date, limit: number) {
+  return db.select({ id: creditRefundObligations.id, accountId: creditRefundObligations.accountId })
+    .from(creditRefundObligations).where(refundDue(now))
+    .orderBy(asc(creditRefundObligations.owedAt), asc(creditRefundObligations.id)).limit(limit);
+}
+
+function refundDue(now: Date) {
+  return and(isNull(creditRefundObligations.settledAt),
+    or(isNull(creditRefundObligations.claimedUntil), lt(creditRefundObligations.claimedUntil, now)));
+}
+
 /**
  * CLAIM UP TO `limit` PENDING DEBTS — one statement, so two drains cannot dial for one row.
  *
@@ -104,20 +116,16 @@ export async function settleRefundObligation(
  */
 export async function claimRefundObligations(
   tx: Tx, now: Date = new Date(),
-  opts: { limit?: number; leaseMs?: number } = {},
+  opts: { limit?: number; leaseMs?: number; candidate?: { id: string; accountId: string } } = {},
 ): Promise<ClaimedRefundObligation[]> {
   const limit = opts.limit ?? REFUND_OBLIGATION_BATCH;
   const until = new Date(now.getTime() + (opts.leaseMs ?? REFUND_OBLIGATION_LEASE_MS));
   // No `erased_at` filter, deliberately: a debt an erasure kept is still owed.
   const due = tx.select({ id: creditRefundObligations.id })
     .from(creditRefundObligations)
-    .where(and(
-      isNull(creditRefundObligations.settledAt),
-      or(
-        isNull(creditRefundObligations.claimedUntil),
-        lt(creditRefundObligations.claimedUntil, now),
-      ),
-    ))
+    .where(and(refundDue(now), opts.candidate
+      ? and(eq(creditRefundObligations.id, opts.candidate.id), eq(creditRefundObligations.accountId, opts.candidate.accountId))
+      : undefined))
     .orderBy(asc(creditRefundObligations.owedAt), asc(creditRefundObligations.id))
     .limit(limit)
     .for("update", { skipLocked: true });
