@@ -24,7 +24,7 @@ import {
   clearComposeDraft, clearKnownComposeCopies, clearSavedComposeCopies, clearEndedComposeCopies, composeBufferMatchesRevision,
   composeDraftKey, composeSessionId, holdsSig, markComposeRowHolds, parseRecipients, readComposeCreates, readComposeDraft,
   readComposeRow, readComposeRowHolds, readComposeSession, sameRecipientList, storedComposeDraft, whenComposerReady,
-  signatureOf, writeComposeCreates, writeComposeRow,
+  signatureOf, worthSaving, writeComposeCreates, writeComposeRow,
 } from "./compose.js";
 import {
   STORED_CREATES, copyGoes, createLive, dropCopy, landedOf, landingOf, type CreateClaim,
@@ -43,19 +43,7 @@ function afterComposerReady(body: () => (() => void) | void, scope: StorageScope
   };
 }
 
-/**
- * Is there anything here worth a row? The same fields {@link writeComposeDraft} tests, for the
- * same reasons — see the header.
- */
-export function worthSaving(f: ComposeFields): boolean {
-  return (
-    f.to.trim() !== "" ||
-    (f.cc ?? "").trim() !== "" ||
-    (f.bcc ?? "").trim() !== "" ||
-    f.subject.trim() !== "" ||
-    f.body.trim() !== ""
-  );
-}
+export { worthSaving } from "./compose.js";
 
 /**
  * WHICH SENTENCE THE COMPOSE SURFACE OWES THE READER ABOUT SAVING — the promise, or the refusal.
