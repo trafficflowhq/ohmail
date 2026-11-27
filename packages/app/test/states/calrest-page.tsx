@@ -128,7 +128,7 @@ function addressOf(): string {
   if (screen === "calsettings") return "#/cal/calendars";
   if (screen === "calsetup") return setupAddress();
   if (screen === "day" || screen === "week" || screen === "month")
-    return `#/cal/${screen}/2026-11-10${open ? `/e/${open}` : ""}`;
+    return `#/cal/${screen}/${q.get("day") ?? "2026-11-10"}${open ? `/e/${open}` : ""}`;
   const view = q.get("over") === "day" ? "day" : q.get("over") === "month" ? "month" : "week";
   if (open) return `#/cal/${view}/${DAY_OF[open] ?? "2026-11-10"}/e/${open}?panel=invitations`;
   return `#/cal/${view}/2026-11-10?panel=invitations`;

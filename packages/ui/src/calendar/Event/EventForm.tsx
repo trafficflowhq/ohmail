@@ -18,6 +18,7 @@ export type EventFormItem =
       disabled?: boolean;
       hidden?: boolean;
       expanded?: boolean;
+      popup?: "dialog";
       onPress?: MouseEventHandler<HTMLButtonElement>;
     }
   /** A proposal you take by pressing it: an invitee the typed line named. It opens no menu. */
@@ -176,6 +177,7 @@ function item(it: EventFormItem, key: number): ReactNode {
           key={key}
           kind={it.state}
           label={it.label}
+          popup={it.popup}
           expanded={it.expanded}
           disabled={it.disabled}
           onPress={it.onPress}

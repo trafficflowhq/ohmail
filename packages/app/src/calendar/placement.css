@@ -87,8 +87,9 @@
   cursor: grabbing;
 }
 .cal-body [data-cal-drop-active] {
-  outline: var(--slot-line) solid var(--ink2);
-  outline-offset: calc(var(--slot-line) * -1);
+  outline: var(--oh-focus) solid var(--ink);
+  outline-offset: calc(var(--oh-focus) * -1);
+  background: var(--hover);
 }
 
 .cal-event-panel {
@@ -135,6 +136,23 @@
   position: absolute;
   z-index: var(--cal-range-z);
   display: grid;
+  pointer-events: none;
+}
+
+.cal-drag-when {
+  position: absolute;
+  z-index: var(--oh-layer-popover);
+  box-sizing: border-box;
+  max-inline-size: 50%;
+  margin-block: var(--s2);
+  padding: var(--s1) var(--s2);
+  border-radius: var(--r-row);
+  background: var(--sheet);
+  box-shadow: var(--lift);
+  color: var(--ink);
+  font-size: var(--t-meta);
+  font-weight: var(--w-bold);
+  font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
 

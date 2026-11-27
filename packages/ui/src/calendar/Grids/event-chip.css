@@ -475,6 +475,7 @@
     background: var(--oh-ev-under);
   }
   .oh-ev[data-drag="copy"][data-size="line"] {
+    background: var(--oh-cal-tint, var(--sheet));
     border: var(--oh-hair) dashed var(--oh-cal-mark, var(--ink));
   }
   .oh-ev[data-drag="copy"] .oh-ev-p {

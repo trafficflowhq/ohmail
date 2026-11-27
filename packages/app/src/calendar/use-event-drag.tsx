@@ -2,24 +2,19 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import {
-  addDays,
-  clockOf,
-  dayLong,
-  daySpanOf,
-  isoOfDay,
-  wallSpanOf,
-  type ZoneSource,
-} from "@ohmail/app-logic/calendar";
+import { clockOf, daySpanOf, eventTimeOf, wallSpanOf, type ZoneSource } from "@ohmail/app-logic/calendar";
 import { EventChip } from "@ohmail/ui/calendar";
+import { cssPoint, cssRect } from "@ohmail/ui/viewport";
 import type { CalendarEventFace } from "./faces.js";
-import { canStartTimeChange, resizedDays, resizeTimedRange, type EventChange } from "./event-time-change.js";
+import { changedTimes, resizeTimedRange, type EventChange } from "./event-time-change.js";
+import { calendarInterval } from "./event-words.js";
 import type { EventActions } from "./use-event-actions.js";
 import type { DayEdge, TimedSegment } from "./view.js";
-import { dayDelta, dayTarget, DROP, listenDrag, scrollDrag } from "./calendar-drag-target.js";
+import { dayDelta, dayTarget, DROP, listenDrag, rangeBoxes, scrollDrag } from "./calendar-drag-target.js";
 import { slotOnDay } from "./use-slot-draft.js";
 import { useLocale, useText } from "../text/index.js";
 
@@ -27,57 +22,54 @@ const DAY_MINUTES = 24 * 60;
 const DRAG_DISTANCE = 4;
 const HOLD_MS = 420;
 
-interface Ghost {
-  day: string;
-  face: CalendarEventFace;
-  minute: number;
-  length: number;
+type DaySpan = NonNullable<ReturnType<typeof daySpanOf>>;
+type DropKind = "month" | "time" | "all-day";
+type TimeSlot = { day: string; from: number; to: number };
+
+interface DestinationPreview {
+  span: DaySpan;
+  slot: TimeSlot | null;
+  when: string;
 }
 
-interface RangeGhost {
-  first: string;
-  last: string;
+interface Destination {
+  change: EventChange | null;
+  preview: DestinationPreview | null;
+}
+
+interface DragPreview extends DestinationPreview {
   face: CalendarEventFace;
-  month: boolean;
-  boxes: { left: number; top: number; width: number; height: number }[];
+  kind: DropKind;
+  boxes: ReturnType<typeof rangeBoxes>;
+  label: CSSProperties;
 }
 
 interface DragCallbacks {
-  moveTime: (delta: number, days: number) => DragTime | null;
-  timedSpan: ReturnType<typeof daySpanOf>;
+  span: DaySpan | null;
   stepWeek?: (direction: -1 | 1) => void;
-  canResizeTime: (minutes: number) => boolean;
-  preview: (ghost: Ghost | null) => void;
-  range: (preview: RangeGhost | null) => void;
+  destination: (days: number, delta: number | null) => Destination | null;
+  preview: (copy: DragPreview | null) => void;
   done: () => void;
   absorbClick: () => void;
-  commit: (days: number, minutes: number) => void;
+  commit: (change: EventChange) => void;
 }
 
-type DragTime = { minute: number; minutes: number; length: number; day?: string };
+function dropKind(source: HTMLElement | null): DropKind | null {
+  const kind = source?.dataset.calDropKind;
+  return kind === "time" || kind === "month" || kind === "all-day" ? kind : null;
+}
 
-/** A drop moves the grabbed segment by this many days. The start can be a different segment. */
-function dragDestination(
-  down: PointerEvent,
-  point: PointerEvent,
-  start: DOMRect,
-  sourceDay: string,
-  target: HTMLElement,
-  face: CalendarEventFace,
-  moveTime: DragCallbacks["moveTime"],
-) {
-  const dropDay = target.dataset.calDropDay;
-  if (!dropDay) return null;
-  const days = dayDelta(sourceDay, dropDay);
-  const day = addDays(face.ref.day, days);
-  if (target.dataset.calDropKind !== "time") return { day, days, time: null };
+function verticalDelta(down: PointerEvent, point: PointerEvent, start: DOMRect, target: HTMLElement) {
   const end = target.getBoundingClientRect();
-  if (!start.height || !end.height) return null;
-  const time = moveTime(
-    ((point.clientY - end.top) / end.height - (down.clientY - start.top) / start.height) * DAY_MINUTES,
-    days,
+  return ((point.clientY - end.top) / end.height - (down.clientY - start.top) / start.height) * DAY_MINUTES;
+}
+
+function originalChips(view: HTMLElement, chip: HTMLButtonElement, face: CalendarEventFace) {
+  const record = chip.dataset.record;
+  if (!record || face.ref.occurrence !== null) return [chip];
+  return [...view.querySelectorAll<HTMLElement>(".oh-ev[data-record]")].filter(
+    (part) => part.dataset.record === record,
   );
-  return time && { day, days, time };
 }
 
 function trackDrag(
@@ -85,66 +77,71 @@ function trackDrag(
   down: PointerEvent,
   face: CalendarEventFace,
   edge: DayEdge | undefined,
-  { preview, range, absorbClick, done, commit, moveTime, timedSpan, stepWeek, canResizeTime }: DragCallbacks,
+  { preview, absorbClick, done, commit, destination, span, stepWeek }: DragCallbacks,
 ) {
   const view = chip.closest<HTMLElement>(".cal-body-view");
   if (!view) return null;
   const source = chip.closest<HTMLElement>(DROP) ?? dayTarget(view, down);
-  const kind = source?.dataset.calDropKind;
-  const monthResize = edge && kind === "month" && timedSpan && !timedSpan.allDay;
+  const kind = dropKind(source);
+  if (!source || !kind) return null;
   const sourceDay =
-    edge && timedSpan && (timedSpan.allDay || monthResize)
-      ? edge === "start"
-        ? timedSpan.first
-        : timedSpan.last
-      : source?.dataset.calDropDay;
-  if (!source || !sourceDay) return null;
-  const timedResize = edge !== undefined && kind === "time";
+    edge && span && kind !== "time" ? (edge === "start" ? span.first : span.last) : source.dataset.calDropDay;
+  if (!sourceDay) return null;
   const start = source.getBoundingClientRect();
-  const sourceBox = chip.getBoundingClientRect();
-  const origin = (kind === "month" ? chip.parentElement : view)?.getBoundingClientRect();
-  const rowOffset = sourceBox.top - (origin?.top ?? sourceBox.top);
+  const sourceBox = cssRect(chip);
+  const origin = kind === "month" ? chip.parentElement : view;
+  const rowOffset = sourceBox.top - (origin ? cssRect(origin).top : sourceBox.top);
   const doc = chip.ownerDocument;
+  const lifted = originalChips(view, chip, face);
   const touch = down.pointerType === "touch";
-  const holdToMove = touch && !timedResize;
+  const holdToMove = touch && !(edge && kind === "time");
   let held = false;
   let aborted = false;
   let target: HTMLElement | null = null;
+  let drop: Destination | null = null;
   const activate = () => {
     held = true;
     chip.setPointerCapture?.(down.pointerId);
-    chip.dataset.drag = "lifted";
+    for (const original of lifted) original.dataset.drag = "lifted";
     view.dataset.calRangeHeld = "";
   };
   const timer = holdToMove ? setTimeout(activate, HOLD_MS) : null;
 
-  const cleanup = () => {
+  const clear = () => {
     if (timer !== null) clearTimeout(timer);
-    delete chip.dataset.drag;
-    delete view.dataset.calRangeHeld;
     scroller?.stop();
-    preview(null);
-    range(null);
     if (target) delete target.dataset.calDropActive;
+    target = null;
+    drop = null;
+    for (const original of lifted) delete original.dataset.drag;
+    delete view.dataset.calRangeHeld;
+    preview(null);
+  };
+  const cleanup = () => {
+    clear();
     detach();
     done();
   };
-  const destinationAt = (point: PointerEvent, target: HTMLElement) =>
-    dragDestination(down, point, start, sourceDay, target, face, moveTime);
 
   const draw = (point: PointerEvent) => {
     if (target) delete target.dataset.calDropActive;
     target = dayTarget(view, point, kind);
-    const drop = target && destinationAt(point, target);
-    const days = drop && daysAt(face, edge, drop.days, monthResize ? timedSpan : null, canResizeTime);
-    if (target && kind !== "time" && !monthResize && !days) target.dataset.calDropActive = "";
-    range(target && days ? rangePreview(view, face, target, days, rowOffset, sourceBox.height) : null);
-    preview(ghostAt(face, drop, timedResize ? canResizeTime : undefined));
+    const day = target?.dataset.calDropDay;
+    const delta = target && kind === "time" ? verticalDelta(down, point, start, target) : null;
+    drop =
+      day && (delta === null || Number.isFinite(delta)) ? destination(dayDelta(sourceDay, day), delta) : null;
+    const copy = drop?.preview;
+    if (!copy) {
+      preview(null);
+      return;
+    }
+    if (target && kind === "month") target.dataset.calDropActive = "";
+    preview(previewAt(view, point, kind, face, copy, rowOffset, sourceBox.height));
   };
 
   const scroller =
     kind === "time" || kind === "month"
-      ? scrollDrag(view, kind, draw, timedResize ? stepWeek : undefined)
+      ? scrollDrag(view, kind, draw, edge && kind === "time" ? stepWeek : undefined)
       : null;
   const move = (point: PointerEvent) => {
     if (point.pointerId !== down.pointerId || aborted) return;
@@ -165,12 +162,11 @@ function trackDrag(
   };
   const end = (point: PointerEvent) => {
     if (point.pointerId !== down.pointerId) return;
-    const destination = held && !aborted && !point.altKey ? dayTarget(view, point, kind) : null;
+    // Use the last tracked change, including targets the action must refuse.
+    const change = held && !aborted && !point.altKey && dayTarget(view, point, kind) ? drop?.change : null;
     cleanup();
     if (held) absorbClick();
-    if (!destination || (!edge && !chip.isConnected)) return;
-    const drop = destinationAt(point, destination);
-    if (drop) commit(drop.days, monthResize ? drop.days * DAY_MINUTES : (drop.time?.minutes ?? 0));
+    if (change && (edge || chip.isConnected)) commit(change);
   };
   const keepTouch = (point: TouchEvent) => {
     if (held && !aborted && point.cancelable) point.preventDefault();
@@ -180,12 +176,7 @@ function trackDrag(
   };
   const abort = () => {
     aborted = true;
-    scroller?.stop();
-    delete chip.dataset.drag;
-    preview(null);
-    range(null);
-    if (target) delete target.dataset.calDropActive;
-    target = null;
+    clear();
   };
   const escape = (event: KeyboardEvent) => {
     if (event.key !== "Escape" || !held || aborted) return;
@@ -198,32 +189,67 @@ function trackDrag(
   return cleanup;
 }
 
-function ghostAt(
+function previewAt(
+  view: HTMLElement,
+  point: PointerEvent,
+  kind: DropKind,
   face: CalendarEventFace,
-  drop: ReturnType<typeof dragDestination>,
-  canResizeTime?: (minutes: number) => boolean,
-): Ghost | null {
-  const time = drop?.time;
-  if (!time || (time.minutes && canResizeTime && !canResizeTime(time.minutes))) return null;
-  return { day: time.day ?? drop.day, face, minute: time.minute, length: time.length };
+  { span, slot, when }: DestinationPreview,
+  rowOffset: number,
+  height: number,
+): DragPreview {
+  return {
+    span,
+    slot,
+    when,
+    face,
+    kind,
+    boxes: kind === "time" ? [] : rangeBoxes(view, kind, span, rowOffset, height),
+    label: labelPosition(view, point),
+  };
 }
 
-function daysAt(
+function eventDestination(
   face: CalendarEventFace,
-  edge: DayEdge | undefined,
-  days: number,
-  monthSpan: ReturnType<typeof daySpanOf>,
-  canResizeTime: (minutes: number) => boolean,
+  change: EventChange | null,
+  zone: string,
+  zones: ZoneSource,
 ) {
-  if (face.start.kind === "date" && face.end.kind === "date") {
-    return edge
-      ? resizedDays(face.start, face.end, edge, days)
-      : { first: addDays(isoOfDay(face.start), days), last: addDays(isoOfDay(face.end), days - 1) };
-  }
-  if (!monthSpan || (days && !canResizeTime(days * DAY_MINUTES))) return null;
-  const first = edge === "start" ? addDays(monthSpan.first, days) : monthSpan.first;
-  const last = edge === "end" ? addDays(monthSpan.last, days) : monthSpan.last;
-  return first <= last ? { first, last } : null;
+  if (!change) return face;
+  const times = changedTimes(change, face, zone, zones);
+  const start = times?.start && eventTimeOf(times.start);
+  const end = times?.end && eventTimeOf(times.end);
+  return start && end ? { ...face, start, end } : null;
+}
+
+function timedSlot(event: CalendarEventFace, span: DaySpan, zone: string, zones: ZoneSource) {
+  const wall = wallSpanOf(event, zone, zones);
+  if (!wall || span.startMinute === null) return null;
+  return { day: span.first, from: span.startMinute, to: span.startMinute + wall.to - wall.from };
+}
+
+function describeDestination(
+  event: CalendarEventFace | null,
+  zone: string,
+  zones: ZoneSource,
+  timed: boolean,
+  when: (event: CalendarEventFace) => string,
+): DestinationPreview | null {
+  const span = event && daySpanOf(event, zone, zones);
+  if (!event || !span) return null;
+  const slot = timed ? timedSlot(event, span, zone, zones) : null;
+  return timed && !slot ? null : { span, slot, when: when(event) };
+}
+
+function changeAt(
+  edge: DayEdge | undefined,
+  timed: DayEdge | undefined,
+  days: number,
+  minutes: number,
+): EventChange | null {
+  if (timed) return minutes ? { kind: "resize-time", edge: timed, minutes } : null;
+  if (edge) return days ? { kind: "resize", edge, days } : null;
+  return days || minutes ? { kind: "time", days, minutes } : null;
 }
 
 export function useEventDrag(
@@ -231,19 +257,19 @@ export function useEventDrag(
   page: string,
   zone: string,
   zones: ZoneSource,
+  today: string,
   stepWeek?: (direction: -1 | 1) => void,
 ) {
   const t = useText("calendar");
   const locale = useLocale();
-  const [range, showRange] = useState<RangeGhost | null>(null);
-  const [ghost, showGhost] = useState<Ghost | null>(null);
+  const [ghost, showGhost] = useState<DragPreview | null>(null);
   const stop = useRef<(() => void) | null>(null);
   const suppress = useRef<HTMLButtonElement | null>(null);
   const latest = useRef(actions);
   latest.current = actions;
   const step = useRef(stepWeek);
   step.current = stepWeek;
-  useLayoutEffect(() => () => stop.current?.(), [page]);
+  useLayoutEffect(() => () => stop.current?.(), [page, zone]);
 
   function drag(
     face: CalendarEventFace,
@@ -257,23 +283,29 @@ export function useEventDrag(
     const chip = press.currentTarget;
     const edge = (press.target as HTMLElement).closest<HTMLElement>("[data-cal-resize]")?.dataset.calResize;
     const resize: DayEdge | undefined = edge === "start" || edge === "end" ? edge : undefined;
-    const timedSpan = daySpanOf(face, zone, zones);
-    const timed = resize && timedSpan && !timedSpan.allDay;
-    const timeRange = timed && segment && wallSpanOf(face, zone, zones);
+    const span = daySpanOf(face, zone, zones);
+    const timedResize = resize && span && !span.allDay ? resize : undefined;
+    const timeRange = timedResize && segment && wallSpanOf(face, zone, zones);
     stop.current = trackDrag(chip, press.nativeEvent, face, resize, {
-      timedSpan,
+      span,
       stepWeek: stepWeek && ((direction) => step.current?.(direction)),
-      canResizeTime: (minutes) =>
-        !!resize && canStartTimeChange(face, { kind: "resize-time", edge: resize, minutes }, zone, zones),
-      moveTime: (delta, days) =>
-        timed && segment && timeRange
-          ? resizeTimedRange(timedSpan.first, timeRange, resize, segment, delta, days)
-          : actions.moveTime(face, delta, true),
-      preview: (next) =>
-        showGhost((was) =>
-          was?.day === next?.day && was?.minute === next?.minute && was?.length === next?.length ? was : next,
-        ),
-      range: showRange,
+      destination: (days, delta) => {
+        const shift =
+          delta === null
+            ? null
+            : timedResize && span && segment && timeRange
+              ? resizeTimedRange(span.first, timeRange, timedResize, segment, delta, days)
+              : actions.moveTime(face, delta, true);
+        if (delta !== null && !shift) return null;
+        const minutes = shift?.minutes ?? (timedResize ? days * DAY_MINUTES : 0);
+        const change = changeAt(resize, timedResize, days, minutes);
+        const event = eventDestination(face, change, zone, zones);
+        const preview = describeDestination(event, zone, zones, delta !== null, (event) =>
+          calendarInterval(event, zone, zones, today, locale, t),
+        );
+        return { change, preview };
+      },
+      preview: showGhost,
       done: () => {
         stop.current = null;
       },
@@ -283,12 +315,7 @@ export function useEventDrag(
           if (suppress.current === chip) suppress.current = null;
         }, 0);
       },
-      commit: (days, minutes) => {
-        const change: EventChange = timed
-          ? { kind: "resize-time", edge: resize, minutes }
-          : resize
-            ? { kind: "resize", edge: resize, days }
-            : { kind: "time", days, minutes };
+      commit: (change) => {
         if (local) local(change);
         else latest.current.start(face, change, chip, expected);
       },
@@ -297,26 +324,28 @@ export function useEventDrag(
 
   return {
     drag,
-    rangePreview: range?.boxes.map((box) => (
-      <div key={box.top} className="cal-day-range-preview" style={box}>
-        <EventChip
-          {...(range.month ? ({ size: "line", run: true } as const) : ({ size: "pill" } as const))}
-          drag="copy"
-          title={t("actions.resizePreview", {
-            first: dayLong(range.first, locale, range.first.slice(0, 4)),
-            last: dayLong(range.last, locale, range.first.slice(0, 4)),
-            title: range.face.title,
-          })}
-          tone={range.face.tone}
-        />
-      </div>
-    )),
-    preview: ghost
+    rangePreview: ghost && (
+      <>
+        {ghost.boxes.map((box) => (
+          <div key={box.top} className="cal-day-range-preview" style={box}>
+            <EventChip
+              {...(ghost.kind === "month"
+                ? { size: "line" as const, run: ghost.span.allDay || ghost.span.first !== ghost.span.last }
+                : { size: "pill" as const })}
+              drag="copy"
+              title={ghost.face.title}
+              tone={ghost.face.tone}
+            />
+          </div>
+        ))}
+        <div role="status" className="cal-drag-when" style={ghost.label}>
+          {ghost.when}
+        </div>
+      </>
+    ),
+    preview: ghost?.slot
       ? (day: string, hourHeight: number) => {
-          const part = slotOnDay(
-            { day: ghost.day, from: ghost.minute, to: ghost.minute + ghost.length },
-            day,
-          );
+          const part = ghost.slot && slotOnDay(ghost.slot, day);
           return (
             part && (
               <EventChip
@@ -343,40 +372,12 @@ export function useEventDrag(
   };
 }
 
-function rangePreview(
-  view: HTMLElement,
-  face: CalendarEventFace,
-  target: HTMLElement,
-  days: { first: string; last: string },
-  rowOffset: number,
-  height: number,
-): RangeGhost {
-  const kind = target.dataset.calDropKind;
-  const month = kind === "month";
-  const origin = view.getBoundingClientRect();
-  const viewport = (month ? view.querySelector(".oh-mo-weeks") : view)?.getBoundingClientRect() ?? origin;
-  const rows = new Map<number, { left: number; right: number }>();
-  for (const cell of view.querySelectorAll<HTMLElement>(DROP)) {
-    const day = cell.dataset.calDropDay;
-    if (!day || day < days.first || day > days.last || cell.dataset.calDropKind !== kind) continue;
-    const rect = cell.getBoundingClientRect();
-    if (!rect.width || rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
-    const top = month ? (cell.parentElement?.getBoundingClientRect().top ?? rect.top) : origin.top;
-    const row = rows.get(top);
-    rows.set(top, {
-      left: Math.min(row?.left ?? rect.left, rect.left),
-      right: Math.max(row?.right ?? rect.right, rect.right),
-    });
-  }
+function labelPosition(view: HTMLElement, point: PointerEvent): CSSProperties {
+  const box = cssRect(view);
+  const { x, y } = cssPoint(point);
+  // Keep the date and time in the view even in a narrow column or at the scroll edge.
   return {
-    ...days,
-    face,
-    month,
-    boxes: [...rows].map(([top, { left, right }]) => ({
-      left: left - origin.left,
-      top: top - origin.top + rowOffset,
-      width: right - left,
-      height,
-    })),
+    ...(x - box.left < box.width / 2 ? { left: x - box.left } : { right: box.right - x }),
+    ...(y - box.top < box.height / 2 ? { top: y - box.top } : { bottom: box.bottom - y }),
   };
 }

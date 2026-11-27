@@ -26,7 +26,6 @@
       "resizeTimeStart": "Beginn verschieben",
       "resizeTimeEnd": "Ende verschieben",
       "resizeStart": "Ersten Tag ändern",
-      "resizePreview": "{first} – {last} · {title}",
       "resizeEnd": "Letzten Tag ändern",
       "deleteEvent": "Termin löschen",
       "cancelMeeting": "Besprechung absagen",

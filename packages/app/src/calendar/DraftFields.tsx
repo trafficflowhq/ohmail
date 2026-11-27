@@ -44,6 +44,7 @@ function whenRow(
   const end = {
     kind: "slot" as const,
     label: t("create.endDate"),
+    popup: "dialog" as const,
     value: dayShort(endDay, locale, today.slice(0, 4)),
     expanded: menu?.kind === "end",
     hidden: false,
@@ -56,6 +57,7 @@ function whenRow(
       {
         kind: "slot",
         label: t("create.date"),
+        popup: "dialog",
         value: dayShort(draft.day, locale, today.slice(0, 4)),
         expanded: menu?.kind === "date",
         onPress: (event) => open({ kind: "date", anchor: event.currentTarget }),
