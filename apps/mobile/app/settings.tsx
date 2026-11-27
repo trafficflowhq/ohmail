@@ -521,7 +521,7 @@ function SettingsBody({ inPane, section, mailbox, returnTo }: {
         <SettingsEntry label={panes.about.label} icon="info"
           summary={version ? { value: version } : null} onPress={() => open("about")} />
         <SettingsEntry label={panes.help.label} icon="send"
-          summary={{ detail: `${catalog.help.write} · ${catalog.help.diag}` }} onPress={() => open("help")} />
+          summary={{ detail: Copy.settingsHelpSummary }} onPress={() => open("help")} />
       </SettingsGroup>
     </>
   );

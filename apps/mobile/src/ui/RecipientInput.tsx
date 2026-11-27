@@ -146,7 +146,7 @@ export function RecipientInput({
                   {recipient ? <MailAvatar person={{ name, address }} size={mailSize.avatarBadge} />
                     : <Icon name="info" size={14} color={t.c.ink2} />}
                   <Txt variant="button" numberOfLines={1} style={{ flexShrink: 1 }}
-                    accessibilityLabel={recipient ? (name === address ? address : `${name}, ${address}`) : Copy.composeRecipientRefused(name)}>
+                    accessibilityLabel={recipient ? (name === address ? address : Copy.ariaLabelDetail(name, address)) : Copy.composeRecipientRefused(name)}>
                     {name}
                   </Txt>
                   {editable ? <Tap accessibilityRole="button" accessibilityLabel={Copy.composeRemoveRecipient(name)}

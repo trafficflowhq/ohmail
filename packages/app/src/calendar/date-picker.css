@@ -13,6 +13,7 @@
   background: var(--sheet);
   box-shadow: var(--float);
   color: var(--ink);
+  font-family: var(--f-text);
   font-size: var(--t-meta);
   animation: calendar-date-picker-in var(--d-pop) var(--e-pop);
 }

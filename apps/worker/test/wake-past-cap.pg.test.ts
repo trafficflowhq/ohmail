@@ -129,15 +129,18 @@ describe("the wake cap", () => {
     await waitFor(() => fleet.syncInFlight === 1, 20_000, "a lane parked inside H's batch");
     const passStamp = worker.stats().lastCycleAt?.getTime() ?? null;
 
-    // The burst: one letter per ring, each waited for before the next. Two MORE than the cap, so
-    // the claim cannot be met by the four in-cap revisits plus L's own turn.
+    // Ring once per letter, after L's previous visit has ended. The visit log follows storage,
+    // so wait for both in the same per-letter window before ringing again.
+    // Two more than the cap rules out four in-cap revisits plus L's own turn.
+    const completedVisits = () => visits.filter((visit) => visit.mailboxId === l.mailboxId).length;
     const rounds = CYCLE_WAKE_REVISITS + 2;
     const deliver: Array<{ from: string; subject: string; messageId: string }> = [];
     for (let i = 0; i < rounds; i++) {
       deliver.push({ from: "burst@x.example", subject: `burst ${i}`, messageId: `cap-${i}@x` });
       fleet.behave(l.mailboxId, { deliver: [...deliver] });
+      const beforeWake = completedVisits();
       fleet.signal.get(l.mailboxId)!();
-      await waitFor(() => landed(db, l.mailboxId, `cap-${i}@x`), 10_000,
+      await waitFor(async () => completedVisits() > beforeWake && await landed(db, l.mailboxId, `cap-${i}@x`), 10_000,
         `letter ${i + 1} of ${rounds} while H is parked — past the cap a woken mailbox waited for the ` +
         `pass to end — trace: ${fleet.describeTrace(names)}`);
     }

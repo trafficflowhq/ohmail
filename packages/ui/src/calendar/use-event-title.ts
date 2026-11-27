@@ -56,7 +56,7 @@ function fitTitle(title: string, lines: number, width: number, measure: (text: s
 /** Fit timed blocks to their line limit. Card headings can wrap as far as their words fit. */
 export function useEventTitle(title: string, lines = Infinity, state?: string) {
   const ref = useRef<HTMLSpanElement>(null);
-  const [wording, setWording] = useState(title);
+  const [fitted, setFitted] = useState<{ title: string; wording: string }>();
   useLayoutEffect(() => {
     const element = ref.current;
     const view = element?.ownerDocument.defaultView;
@@ -70,7 +70,7 @@ export function useEventTitle(title: string, lines = Infinity, state?: string) {
       const measure = titleMeasure;
       measure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
       measure.letterSpacing = style.letterSpacing === "normal" ? "0px" : style.letterSpacing;
-      setWording(fitTitle(title, lines, width, (text) => measure.measureText(text).width));
+      setFitted({ title, wording: fitTitle(title, lines, width, (text) => measure.measureText(text).width) });
     };
     fit();
     const observer = new ResizeObserver(fit);
@@ -82,5 +82,5 @@ export function useEventTitle(title: string, lines = Infinity, state?: string) {
       fonts?.removeEventListener("loadingdone", fit);
     };
   }, [title, lines, state]);
-  return { ref, wording };
+  return { ref, wording: fitted?.title === title ? fitted.wording : title };
 }

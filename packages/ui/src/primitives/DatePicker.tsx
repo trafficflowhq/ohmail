@@ -193,12 +193,16 @@ export function DatePicker({
     };
     place();
     window.addEventListener("resize", place);
-    return () => window.removeEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
   }, [anchor, view.y, view.m]);
 
   /**
-   * Focus follows the cursor — into the grid once the card is placed (a hidden element cannot take focus, and the
-   * card is hidden until its first placement), then onto the new cell after every move. BUT ONLY WHILE THE GRID HAS
+   * Focus follows the cursor — into the grid once the card is placed, then onto the new cell after every move.
+   * The card stays inert during measurement. After opening, follow the cursor ONLY WHILE THE GRID HAS
    * FOCUS. A press on a month arrow moves the cursor too, and this effect would then yank focus off the arrow and
    * into the new month's grid — so the arrow could be used exactly once from the keyboard and every further step
    * needed a Shift+Tab back. The same applies to a re-place on resize, which changes `pos` and would otherwise pull
@@ -273,9 +277,10 @@ export function DatePicker({
     }
   };
 
+  // Measure without painting or accepting focus. Visibility can still be transitioning as focus enters.
   const style: CSSProperties = pos
     ? { top: pos.top, left: pos.left }
-    : { top: 0, left: 0, visibility: "hidden" };
+    : { top: 0, left: 0, opacity: 0 };
 
   return (
     <div
@@ -284,6 +289,7 @@ export function DatePicker({
       role="dialog"
       aria-label={labels.dialog}
       data-side={pos?.side}
+      inert={!pos}
       style={style}
       onKeyDown={onKeyDown}
     >

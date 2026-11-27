@@ -50,7 +50,7 @@ export function useCalendarCanvas(
     preview: dragged,
     suppressClick,
     rangePreview,
-  } = useEventDrag(actions, where.place, zone, zones, stepWeek);
+  } = useEventDrag(actions, where.place, zone, zones, where.today, stepWeek);
   const canvasClick = canvasClickHandler(
     !actions.proposal.draft && route.open !== null,
     () => commands.event(null),

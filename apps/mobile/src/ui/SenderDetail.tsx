@@ -443,7 +443,7 @@ function DecisionTrigger({ children, heading = false, label, expanded, onPress }
   const t = useTheme();
   return (
     <Tap accessibilityRole="button" accessibilityLabel={label} accessibilityHint={children}
-      accessibilityState={{ expanded }} onPress={onPress} hitSlop={6}
+      accessibilityState={{ expanded: expanded === true }} onPress={onPress} hitSlop={6}
       style={({ pressed }) => ({
         flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: mailSize.rowInset,
         borderRadius: t.radius.focus, backgroundColor: pressed ? t.c.tint2 : t.c.hairSoft,

@@ -249,7 +249,11 @@ export function senderScreening(
   placeOf?: ReadonlyMap<string, Folder | null>,
   /** The rules a press plans over (`pressRules`); absent, the local rows. */
   over?: readonly RuleDTO[],
-  options?: { readonly mailbox: "seed" },
+  options?: {
+    readonly mailbox?: "seed";
+    /** The letters explicitly named by a Move that leaves the Screener alone. */
+    readonly messages?: readonly EngineMessage[];
+  },
 ): SenderScreening | null {
   const seed = reader.get<EngineMessage>("message", messageId);
   if (!seed) return null;
@@ -257,11 +261,10 @@ export function senderScreening(
   const key = senderKey(subjectAddress);
   const domain = domainOf(subjectAddress);
 
-  // ONE pass over the mirror for both scopes. Two `.filter()` calls would walk every message in
-  // the account twice on a click, and the sheet reads this on every render.
+  // One pass for both scopes. The sheet reads the mirror, and a letter Move supplies its selection.
   const mine: EngineMessage[] = [];
   const theirs: EngineMessage[] = [];
-  for (const m of reader.list<EngineMessage>("message")) {
+  for (const m of options?.messages ?? reader.list<EngineMessage>("message")) {
     if (m.accountId !== seed.accountId || (options?.mailbox === "seed" && m.mailboxId !== seed.mailboxId)) continue;
     const k = senderKey(m.from.address);
     if (k === key) mine.push(m);

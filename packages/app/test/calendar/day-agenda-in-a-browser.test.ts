@@ -1,6 +1,7 @@
 import { chromium, expect as browserExpect, type Browser, type Page } from "@playwright/test";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { gardenGuests } from "./guest-fixture.js";
+import { calendarEditAndDragCases } from "./edit-and-drag-in-a-browser.cases.js";
 import { openCalRestPage } from "../states/calrest-page-open.js";
 
 let browser: Browser;
@@ -306,3 +307,5 @@ it.each(["en", "de"])(
     }
   },
 );
+
+calendarEditAndDragCases(() => browser);

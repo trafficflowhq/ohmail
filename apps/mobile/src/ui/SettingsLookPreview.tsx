@@ -1,6 +1,8 @@
+import appearanceDe from "@ohmail/app/settings/appearance.de.json";
+import appearanceEn from "@ohmail/app/settings/appearance.en.json";
 import { design } from "@ohmail/tokens/design";
 import { View } from "react-native";
-import { Copy } from "../copy";
+import { useLocale } from "../i18n/LocaleProvider";
 import { useTheme, type FaceName } from "../theme";
 import { avatarColors, mailSize } from "../theme/mail";
 import { useMailFonts } from "../theme/mail-fonts";
@@ -8,14 +10,9 @@ import { Txt } from "./base";
 
 const size = (value: string) => Number.parseFloat(value);
 
-/** The two example messages in the web's appearance tiles. */
-const messages = [
-  { who: "Anna Berger", time: "09:12" },
-  { who: "Tom Keller", time: "08:47" },
-] as const;
-
 export function SettingsLookPreview({ face }: { face: FaceName }) {
   const theme = useTheme();
+  const { picture } = (useLocale() === "de" ? appearanceDe : appearanceEn).settingsGeneral;
   const fonts = useMailFonts();
   const c = design.faces[face][theme.scheme];
   const paper = face === "paper";
@@ -23,6 +20,10 @@ export function SettingsLookPreview({ face }: { face: FaceName }) {
   const title = fonts ? { fontFamily: paper ? "PaperDisplay" : "PaperMono500", fontWeight: undefined } : undefined;
   const round = size(c["av-r"]);
   const marker = size(c["dot-size"]) * size(c["t-title"]);
+  const messages = [
+    { who: picture.first, time: picture.firstTime },
+    { who: picture.second, time: picture.secondTime },
+  ];
   return (
     <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{
       height: 156, backgroundColor: c.ground, borderRadius: size(c["r-row"]),
@@ -35,7 +36,7 @@ export function SettingsLookPreview({ face }: { face: FaceName }) {
       }}>
         <View style={{ flexDirection: "row", alignItems: "baseline", gap: 2,
           paddingLeft: size(c.s1) + size(c.gutter), marginBottom: size(c.s2) }}>
-          <Txt variant={paper ? "cardTitle" : "bodyMedium"} style={[{ color: c.ink }, title]}>{Copy.ohbox}</Txt>
+          <Txt variant={paper ? "cardTitle" : "bodyMedium"} style={[{ color: c.ink }, title]}>{picture.title}</Txt>
           <View style={{ width: marker, height: marker, borderRadius: size(c["dot-r"]), backgroundColor: c.hot }} />
         </View>
         {messages.map(({ who, time }, i) => {
