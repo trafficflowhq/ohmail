@@ -132,6 +132,12 @@
       "repeatUnavailable": "This repeating event can't be changed here",
       "repeatReadOnly": "This calendar is view only",
       "readOnlyCalendar": "View only",
+      "access": "Access",
+      "readOnlyReason": {
+        "permission": "Your calendar provider grants viewing access only.",
+        "subscription": "This calendar is a subscription.",
+        "busy": "This calendar only shares busy times."
+      },
       "changeSeries": "Change {title}",
       "changedScope": "{repeat} · This and following replaces this event’s separate changes. All events keeps its other changes",
       "changedFirstScope": "{repeat} · Both series choices keep this event’s other changes",

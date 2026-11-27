@@ -387,6 +387,20 @@ describe("the calendars of a home", () => {
     ]);
   });
 
+  it("checks an owned calendar's direct grant and keeps read shares and subscriptions read only", async () => {
+    const s = await startCalDavStandIn();
+    servers.push(s);
+    const owner = "/dav/principals/another/";
+    s.addCalendar("personal", { owner: s.paths.principal, homePrivileges: ["read"], privileges: ["all"] });
+    s.addCalendar("shared-editor", { owner, homePrivileges: ["read"], privileges: ["read", "write", "bind", "unbind"] });
+    s.addCalendar("shared-reader", { owner, privileges: ["read"] });
+    s.addCalendar("subscribed", { kind: "subscribed", owner: s.paths.principal, privileges: null });
+    const answer = await reader.listCalendars(signIn(s), signal());
+    expect(answer.ok && answer.value.map((c) => [c.name, c.writable])).toEqual([
+      ["personal", true], ["shared-editor", true], ["shared-reader", false], ["subscribed", false],
+    ]);
+  });
+
   it.each([500, 401, 429])("keeps listing calendars when a share's access probe returns %i", async (accessProbeStatus) => {
     const s = await startCalDavStandIn();
     servers.push(s);

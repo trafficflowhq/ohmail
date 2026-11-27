@@ -27,7 +27,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import { formatRRule, parseRRule } from "@ohmail/cal-core/recur/rrule";
 import { intlZones } from "@ohmail/cal-core/time/zones";
 import { draftRepeatSupported, PROVEN_REPEATS, proofPlaceOf, seriesEditShape, seriesProven, type ProofPlace, type ProvenRepeats } from "@ohmail/cal-providers/repeat-shapes";
-import { carriedExclusions, clockOf, continuedSeries, endedRule, isDayOf, movedRule, offItsClock, personalSeriesOf, confirmedDeleteAudience, storedObjectFacts } from "@ohmail/cal-providers/series";
+import { carriedExclusions, clockOf, continuedSeries, endedRule, isDayOf, movedRule, offItsClock, personalSeriesOf, confirmedDeleteAudience, storedObjectFacts, unscheduledSeriesOf } from "@ohmail/cal-providers/series";
 import type {
   CalendarEventAct, CalendarEventFields, CalendarEventRecord, CalendarTime, CalendarWriteAnswer, CalendarWriteFault,
   CalendarWriteReceipt, InvitationAnswer,
@@ -847,7 +847,9 @@ async function recordOnEvent(
     if (act.copy.calendarId !== cal.id || identity?.attendee !== act.copy.attendee || master?.attendee !== act.copy.attendee)
       throw readOnly("this invitation is no longer the reviewed attendee copy");
   }
-  const why = writeActRefusal(event, act, days, own, cal.access, exception !== undefined);
+  const unscheduled = seriesEdit && cal.provider === "caldav" && cal.access === "writer" &&
+    unscheduledSeriesOf(event.original, ZONES);
+  const why = writeActRefusal(event, act, days, own, cal.access, exception !== undefined, unscheduled);
   if (why !== null) throw why.word === "read_only" ? readOnly(why.why) : invalid(why.why);
   if (act.kind === "calendar_event_update" && cal.access === "writer") {
     if (event.partial || !event.versionTag) throw readOnly("this shared copy is incomplete");
@@ -873,9 +875,10 @@ async function recordOnEvent(
   if (writeRowOf(event) === "series") {
     if (rule === null || first === null) throw invalid("the repeat is not one this calendar's server was proven to keep");
     const cloud = d.place === "google" || d.place === "microsoft";
-    const checkingStoredCloudSeries = cloud && (act.kind === "calendar_event_answer" || (act.kind === "calendar_event_move" && act.audience !== undefined));
+    const checkingStoredSeries = (cloud && act.kind === "calendar_event_answer") ||
+      (act.kind === "calendar_event_move" && act.audience !== undefined && (cloud || (cal.provider === "caldav" && !act.copyThenRemove)));
     const reviewedDelete = act.kind === "calendar_event_delete" && act.audience !== undefined;
-    if (!reviewedDelete) assertProven(d, rule, first, seriesEdit || checkingStoredCloudSeries);
+    if (!reviewedDelete) assertProven(d, rule, first, seriesEdit || checkingStoredSeries);
   }
   if (act.kind === "calendar_event_update" && act.scope.kind === "record") {
     const c = act.change;

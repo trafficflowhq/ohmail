@@ -114,7 +114,7 @@ export async function calendarExport(db: Db, accountId: string): Promise<Calenda
       principal: c.provider === "ics" ? null : c.principal,
       mailbox: c.mailboxId === null ? null : addresses.get(c.mailboxId) ?? null,
       calendars: calendars.filter((k) => k.connectionId === c.id).map((k) => ({
-        name: k.name, color: k.color, access: k.access, shown: k.shown,
+        name: k.name, color: k.color, access: k.access === "subscribed" ? "reader" : k.access, shown: k.shown,
         timeZone: k.access === "busy" && k.timeZone !== null ? zoneForAvailability(k.timeZone, k.availabilityKey) : k.timeZone,
         newEvents: s?.newEventsCalendarId === k.id,
         defaultAlerts: alerts.filter((a) => a.calendarId === k.id).map((a) => ({ minutesBefore: a.minutesBefore, method: a.method })),

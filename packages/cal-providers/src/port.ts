@@ -58,6 +58,8 @@ export interface CalendarInfo {
   readonly color: string | null;
   readonly writable: boolean;
   readonly owned?: true;
+  /** A subscribed collection listed inside a CalDAV account. */
+  readonly subscribed?: true;
   /** A failed capability probe reports null. An absent flag means the calendar lacks the capability. */
   readonly nativeMove?: true | null;
   /** Whether CalDAV schedules invitations. A failed probe reports null. */

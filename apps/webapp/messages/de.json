@@ -7123,6 +7123,12 @@
       "repeatUnavailable": "Dieser Serientermin kann hier nicht geändert werden",
       "repeatReadOnly": "Dieser Kalender ist schreibgeschützt",
       "readOnlyCalendar": "Nur ansehen",
+      "access": "Zugriff",
+      "readOnlyReason": {
+        "permission": "Dein Kalenderanbieter erlaubt nur das Ansehen.",
+        "subscription": "Dieser Kalender ist abonniert.",
+        "busy": "Dieser Kalender zeigt nur belegte Zeiten."
+      },
       "changeSeries": "{title} ändern",
       "changedScope": "{repeat} · Dieser und folgende ersetzt die Änderungen an diesem Termin. Alle Termine behält seine übrigen Änderungen bei",
       "changedFirstScope": "{repeat} · Beide Optionen für die Serie behalten die übrigen Änderungen an diesem Termin bei",

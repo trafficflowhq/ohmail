@@ -68,7 +68,7 @@ const shown = (text: string | null): string | null => (text === null ? null : st
 function rowOf(info: CalendarInfo) {
   return {
     name: shown(info.name) ?? "", color: shown(info.color),
-    access: info.writable ? (info.owned ? "owner" : "writer") : "reader",
+    access: info.subscribed ? "subscribed" : info.writable ? (info.owned ? "owner" : "writer") : "reader",
     nativeMove: info.nativeMove === null ? undefined : info.nativeMove === true,
     autoSchedule: info.autoSchedule === null ? undefined : info.autoSchedule === true,
     timeZone: shown(info.zone),
