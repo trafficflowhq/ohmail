@@ -50,7 +50,19 @@ export function planMoveToPlace(
      row itself, which a reading column can hold past its page. */
   const base = withRows(cx.engine.verbRead(), cx.surfaceById);
   const read = seed ? withRow(base, seed) : base;
-  const sender = senderScreening(read, seedId, undefined, undefined, planOver(cx, read));
+  const selectedRows = () =>
+    [...only]
+      .map((id) => read.get<EngineMessage>("message", id))
+      .filter((msg): msg is EngineMessage => msg != null);
+  const selected = gate === "leave" ? selectedRows() : undefined;
+  const sender = senderScreening(
+    read,
+    seedId,
+    undefined,
+    undefined,
+    planOver(cx, read),
+    selected && { messages: selected },
+  );
   if (!sender) return null;
   /* SENDER SCOPE AND NO RETRO: the press is about these messages, not a domain, and nobody asked the server to walk
      the backlog. OUR OWN LETTER TEACHES NOTHING: a rule about our own address is refused at the door and decides
@@ -69,9 +81,8 @@ export function planMoveToPlace(
   const decided = !own && planned.mutations.some((x) => x.kind === "screener_decide");
   const named: PressMove[] = decided
     ? []
-    : [...only]
-        .map((id) => read.get<EngineMessage>("message", id))
-        .filter((msg): msg is EngineMessage => msg != null && wanted != null && msg.folder !== wanted)
+    : (selected ?? selectedRows())
+        .filter((msg) => wanted != null && msg.folder !== wanted)
         .map((msg) => ({ kind: "move", messageId: msg.id, folder: wanted! }));
   const mutations = planned.mutations.filter((x) => kept.has(x));
   /* The decide re-files the mail it holds itself, so its own count is the plan's to state; otherwise it is what
