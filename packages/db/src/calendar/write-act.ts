@@ -500,7 +500,7 @@ export interface CalendarWriteActRefusal {
  */
 export function writeActRefusal(
   row: CalendarWriteRowFacts, act: Exclude<CalendarEventAct, { kind: "calendar_event_create" }>, changedDays: number, own: ReadonlySet<string>,
-  access: string, reviewedException = false,
+  access: string, reviewedException = false, unscheduledSeries = false,
 ): CalendarWriteActRefusal | null {
   const readOnly = (why: string): CalendarWriteActRefusal => ({ word: "read_only", why });
   const shape = (why: string): CalendarWriteActRefusal => ({ word: "repeat_unsupported", why });
@@ -510,10 +510,14 @@ export function writeActRefusal(
   } else if (act.kind === "calendar_event_answer") return readOnly("the account is not invited to this event");
   const kind = writeRowOf(row);
   if (sharedCopyNeedsProtection(row, own, access)) {
-    if (act.kind === "calendar_event_update" &&
-      (row.organizer === "" || kind !== "single" || reviewedException || act.scope.kind !== "record" ||
-        Object.keys(act.change).some((key) => !["title", "start", "end", "place", "notes"].includes(key)))) {
-      return readOnly("this shared copy only takes changes to its own event details");
+    if (act.kind === "calendar_event_update") {
+      const reviewedSeries = kind === "series" && unscheduledSeries &&
+        act.audience?.organizer === null && act.audience.guests.length === 0;
+      const single = kind === "single" && !reviewedException && act.scope.kind === "record";
+      if (row.organizer === "" || (!single && !reviewedSeries) ||
+          Object.keys(act.change).some((key) => !["title", "start", "end", "place", "notes"].includes(key))) {
+        return readOnly("this shared copy only takes changes to its own event details");
+      }
     }
     if (act.kind === "calendar_event_move" && row.organizer !== null)
       return readOnly("this shared copy cannot be moved to another calendar");

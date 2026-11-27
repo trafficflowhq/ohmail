@@ -89,8 +89,15 @@ export function canEditRecord(
     access === "writer" &&
     !verifiedEventOrganizer(record, own) &&
     (record.repeat || record.recurrenceId !== "")
-  )
-    return false;
+  ) {
+    const members = (record.repeat ? record : series)?.deleteMembers;
+    if (
+      connection?.provider !== "caldav" ||
+      !members?.length ||
+      members.some(({ organizer, guests }) => organizer !== null || guests.length > 0)
+    )
+      return false;
+  }
   if (record.recurrenceId === "")
     return writableRecord(record, own, access) && editableSeries(record, connection);
   return (

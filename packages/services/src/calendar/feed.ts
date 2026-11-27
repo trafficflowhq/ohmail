@@ -141,6 +141,7 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
     name: r.name,
     color: r.localColor ?? r.color,
     access: accessOf(r.access),
+    ...(r.access === "subscribed" && { subscribed: true as const }),
     ...(r.nativeMove && { nativeMove: true as const }),
     ...(r.autoSchedule && r.organizerAddresses?.length && { autoSchedule: true as const }),
     shown: r.shown,

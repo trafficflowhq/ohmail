@@ -921,8 +921,39 @@ it.each(["google", "microsoft", "caldav", "ics"] as const)(
     const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
     expect(card.getByText("View only")).toBeTruthy();
     expect(card.getByText("This calendar is view only")).toBeTruthy();
+    expect(
+      card.getByText(
+        provider === "ics"
+          ? "This calendar is a subscription."
+          : "Your calendar provider grants viewing access only.",
+      ),
+    ).toBeTruthy();
     expect(card.queryByRole("button", { name: "Edit" })).toBeNull();
     expect(press).not.toHaveBeenCalled();
+  },
+);
+
+it("explains why a subscribed collection inside a CalDAV account is view only", async () => {
+  const world = eventWorld(meeting());
+  world.put("calendar_connection", "conn-1", connectionRecord({ serverHost: "caldav.icloud.com" }));
+  world.put("calendar", "cal-1", { ...calendarRecord({ access: "reader" }), subscribed: true });
+  mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE);
+  const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+  expect(card.queryByRole("button", { name: "Edit" })).toBeNull();
+  expect(card.getByText("This calendar is a subscription.")).toBeTruthy();
+  expect(card.queryByText("Your calendar provider grants viewing access only.")).toBeNull();
+});
+
+it.each(["google", "microsoft"] as const)(
+  "keeps a failing %s calendar locked for editing",
+  async (provider) => {
+    const world = eventWorld(meeting());
+    world.put("calendar_connection", "conn-1", connectionRecord({ provider, status: "failing" }));
+    world.put("calendar", "cal-1", calendarRecord({ access: "writer" }));
+    mountFrame("#/cal/week/2026-11-16/e/firing", world, NONE);
+    const card = within(await screen.findByRole("dialog", { name: "Kiln check" }));
+    expect(card.getByText("View only")).toBeTruthy();
+    expect(card.queryByRole("button", { name: "Edit" })).toBeNull();
   },
 );
 
@@ -1437,6 +1468,41 @@ it("edits and reschedules a shared CalDAV event with guests and no organizer", a
         start: { ...record.start, value: "20261116T091500" },
         end: { ...record.end, value: "20261116T101500" },
       },
+    }),
+  );
+});
+
+it("opens the editor for a guestless annual all-day event on a write-shared CalDAV calendar", async () => {
+  const at = String(Date.UTC(2026, 11, 26));
+  const record = meeting({
+    start: { kind: "date", value: "20261226" },
+    end: { kind: "date", value: "20261227" },
+    startsAt: "2026-12-26T00:00:00Z",
+    endsAt: "2026-12-27T00:00:00Z",
+    repeat: { rules: ["FREQ=YEARLY"], added: [], excluded: [] },
+    deleteMembers: [{ at: null, range: false, organizer: null, guests: [] }],
+  });
+  const world = eventWorld(record);
+  world.put("calendar_connection", "conn-1", connectionRecord({ serverHost: "caldav.icloud.com" }));
+  world.put("calendar", "cal-1", calendarRecord({ access: "writer" }));
+  const press = vi.fn(async () => ({ key: "change" }));
+  world.port.press = press;
+  mountFrame(`#/cal/week/2026-12-26/e/firing@${at}`, world, NONE, { words: calmail });
+  const card = within(await screen.findByRole("dialog", { name: record.title }));
+  fireEvent.click(card.getByRole("button", { name: "Edit" }));
+  const editor = within(await screen.findByRole("dialog", { name: "Edit event" }));
+  fireEvent.change(editor.getByRole("textbox", { name: "Event title" }), {
+    target: { value: "Annual review" },
+  });
+  fireEvent.click(editor.getByRole("button", { name: "Save" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: /All events/ }));
+  await act(async () => {});
+  expect(press).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: "calendar_event_update",
+      scope: { kind: "record" },
+      change: { title: "Annual review" },
+      audience: { organizer: null, guests: [] },
     }),
   );
 });

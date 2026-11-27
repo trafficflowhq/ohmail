@@ -84,6 +84,15 @@ it("recovers a confirmed send under the original proposal key after the event ch
   expect(w.box.sent).toHaveLength(1);
 });
 
+it("does not send proposals from a CalDAV subscription", async () => {
+  const w = await world();
+  await w.db.update(calConnections).set({ provider: "caldav" }).where(eq(calConnections.accountId, w.accountId));
+  await w.db.update(calCalendars).set({ access: "subscribed" }).where(eq(calCalendars.id, w.event.calendarId));
+  await expect(w.send({ ...w.base, kind: "calendar_event_propose", ...times }, "proposal-on-subscription"))
+    .rejects.toMatchObject({ code: "invitation_not_answerable", message: "This event cannot take a proposal." });
+  expect(w.openSendAdapter).not.toHaveBeenCalled();
+});
+
 it("Keep sends a decline to the matching attendee alone and preserves the event", async () => {
   const w = await world({ owned: true });
   const letter = { method: "COUNTER", uid, organizer: ME, attendees: [ORGANIZER], sequence: 4, proposal: times } as const;
