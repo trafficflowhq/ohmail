@@ -42,6 +42,8 @@ export interface FaceScopeDeps {
   clearPin(submitted: FaceName): void;
   /** This device's pin as it stands now. */
   pin(): FaceName | null;
+  /** A pin deliberately kept on this device even when the account has its own look. */
+  deviceOwnsPin?(): boolean;
   /** Pin a press: it shows at once, and stays if the account cannot take it. */
   setPin(face: FaceName): void;
   /** Keep an adopted answer for the next launch; called only where the account follows. */
@@ -65,6 +67,8 @@ export interface FaceScope {
    * and leaves both the adopted value and the pin exactly as they were.
    */
   applyAll(face: FaceName): Promise<boolean>;
+  /** Whether an account write already owns the scope. */
+  pending(): boolean;
   /**
    * The Look control. Pins the press at once; where the account follows, writes it there too
    * ({@link applyAll}), or, before the account's look was read, on the first read. A refused
@@ -104,6 +108,7 @@ export function faceScope(deps: FaceScopeDeps): FaceScope {
     const pin = deps.pin();
     const press = owed;
     owed = null;
+    if (deps.deviceOwnsPin?.()) return;
     if (press !== null && pin === press && press !== answer) {
       void write(press);
       return;
@@ -129,14 +134,13 @@ export function faceScope(deps: FaceScopeDeps): FaceScope {
       };
     },
     async applyAll(face) {
+      if (unsettled > 0) return false;
       epoch += 1;
       unsettled += 1;
       try {
         const stored = await deps.write(face);
-        /* THE ECHO, THEN THE PIN. Adopt what the account now holds (which may differ from what
-           was asked — a server may store something else, and that is the value this device must
-           show), then release the pin so the account governs here — but only the pin this press
-           was made under. Both only on success. */
+        if (stored !== face) return false;
+        // A matching echo confirms the account has the requested look. Until then the pin stands.
         adopt(stored);
         deps.clearPin(face);
         kept = null;
@@ -155,7 +159,9 @@ export function faceScope(deps: FaceScopeDeps): FaceScope {
         unsettled -= 1;
       }
     },
+    pending: () => unsettled > 0,
     async choose(face) {
+      if (unsettled > 0) return false;
       deps.setPin(face);
       if (!deps.follows) return true;
       if (!known) {

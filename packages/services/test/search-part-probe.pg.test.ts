@@ -6,6 +6,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes, accountPass, writePassProgress } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
+import type { AccountRelations } from "@trafficflow/db";
 import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes, ensureWordIndex } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { SearchService } from "@trafficflow/services";
@@ -186,12 +187,13 @@ const readOf = (n: Node): number => (Number(n["Actual Rows"]) + Number(n["Rows R
 
 /** The page's answer, every statement it sent, and its page statement's plan under the session it set. */
 /** `without`: indexes dropped for the plan only, in its own transaction, rolled back. */
-async function pageOf(q: string, opts: { on?: typeof base; filters?: Record<string, unknown>; without?: string[] } = {}): Promise<{ ids: string[]; sent: string[]; nodes: Node[] }> {
+async function pageOf(q: string, opts: { on?: typeof base; filters?: Record<string, unknown>; without?: string[]; relations?: AccountRelations } = {}): Promise<{ ids: string[]; sent: string[]; nodes: Node[] }> {
   const on = opts.on ?? base;
   const handle = wrap(on);
   seen.length = 0;
   const c: ServiceContext = { ...ctx, db: handle as never, accountId: W };
-  const r = await new SearchService().search(c, { q, parts: "page", ...(opts.filters ? { filters: opts.filters } : {}) });
+  const serviceOptions = { indexFills: true, ...(opts.relations ? { relations: opts.relations } : {}) };
+  const r = await new SearchService(serviceOptions).search(c, { q, parts: "page", ...(opts.filters ? { filters: opts.filters } : {}) });
   const sent = seen.map(textOf);
   const session = seen.filter((st) => textOf(st).includes("set_config"));
   const page = seen.find((st) => textOf(st).includes("fused"));
@@ -247,6 +249,29 @@ describe("a recency arm reads its account's words off the keyed index (real Post
     for (const n of heaps) {
       expect(String(n["Filter"] ?? ""), "a document read asked its vectors one by one").not.toContain("@@");
       expect(readOf(n), "a document read read another account's letters").toBeLessThanOrEqual(own);
+    }
+  }, 60_000);
+
+  it("reads the indexed word candidates and message walks through the supplied account relations", async () => {
+    const namespace = "search_fixture_" + W.replaceAll("-", "").slice(0, 12);
+    const relations: AccountRelations = {
+      through: "views", messages: namespace + ".messages",
+      messageSearch: namespace + ".message_search", messageSearchWords: namespace + ".message_search_words",
+    };
+    await base.execute(sql.raw(`create schema ${namespace}`));
+    try {
+      await base.execute(sql.raw(`create view ${relations.messages} as select * from public.messages where account_id = '${W}'`));
+      await base.execute(sql.raw(`create view ${relations.messageSearch} as select * from public.message_search where account_id = '${W}'`));
+      await base.execute(sql.raw(`create view ${relations.messageSearchWords} as select * from public.message_search where account_id = '${W}'`));
+      const ordinary = await pageOf("ribbon");
+      const usingViews = await pageOf("ribbon", { relations });
+      expect(usingViews.ids).toEqual(ordinary.ids);
+      const page = usingViews.sent.find((query) => query.includes("fused"))!;
+      expect(page).toContain(relations.messageSearchWords);
+      expect(page).toContain(relations.messages);
+      expect(usingViews.nodes.some((n) => n["Index Name"] === "message_search_words_idx" && String(n["Index Cond"]).includes("@@"))).toBe(true);
+    } finally {
+      await base.execute(sql.raw(`drop schema ${namespace} cascade`));
     }
   }, 60_000);
 

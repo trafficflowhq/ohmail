@@ -354,6 +354,41 @@ describe("a message the person cancelled is never sent, and never sent twice", (
     live.fake.server.close();
   });
 
+  it.each(["sender", "copies"] as const)("keeps a queued forward separate after reopening with changed %s", async (change) => {
+    const live = await scene();
+    try {
+      live.fake.setHello({ forwardParts: true });
+      live.fake.addMessage({ ...dto("other-mailbox"), mailboxId: "mb-2" });
+      await live.engine.syncOnce();
+      live.tunnel(true);
+      const to = [{ name: null, address: "peer@fake.test" }];
+      const cc = [{ name: null, address: "copy@fake.test" }];
+      const bcc = [{ name: null, address: "blind@fake.test" }];
+      const firstEnvelope = { mailboxId: "mb-1", cc, bcc, forwardParts: [] };
+      const nextEnvelope = change === "sender"
+        ? { ...firstEnvelope, mailboxId: "mb-2" }
+        : { ...firstEnvelope, cc: [], bcc: [] };
+      const forward = (envelope: typeof firstEnvelope) =>
+        live.actions.sendForward("m-1", to, "Same note.", null, [], false, false, null, envelope);
+      const first = await forward(firstEnvelope);
+      expect(first.outcome).toBe("queued");
+      expect(await pressCancel(live, first.key ?? null, "close")).toBe("keepSend");
+      const next = await forward(nextEnvelope);
+      expect(next.outcome).toBe("queued");
+      expect(next.key).not.toBe(first.key);
+      live.tunnel(false);
+      await flushQueued(live.engine, live.actions.releaseConfirmed);
+      expect(new Set(live.fake.deliveries())).toEqual(new Set([first.key, next.key]));
+      expect(live.fake.draftRows().filter((draft) => draft.status === "sent")).toEqual(expect.arrayContaining([
+        expect.objectContaining({ mailboxId: firstEnvelope.mailboxId, to, cc, bcc }),
+        expect.objectContaining({ mailboxId: nextEnvelope.mailboxId, to, cc: nextEnvelope.cc, bcc: nextEnvelope.bcc }),
+      ]));
+    } finally {
+      live.store.close();
+      live.fake.server.close();
+    }
+  }, 30_000);
+
   it("CONTROL 7R — a forward left waiting outlives a relaunch: the same one again joins it, one to Bob is its own", async () => {
     const live = await scene();
     live.tunnel(true);
@@ -662,6 +697,56 @@ describe("a message the person cancelled is never sent, and never sent twice", (
 });
 
 describe("the intent, and the decisions the composer takes", () => {
+  it("distinguishes a reply from a different selected mailbox from the pending reply", async () => {
+    const live = await scene();
+    try {
+      live.tunnel(true);
+      const first = await live.actions.sendReply("m-1", "I can join.", false);
+      expect(first.outcome).toBe("queued");
+      live.actions.leaveSend(first.key!);
+      const fromDifferentMailbox = await live.actions.sendReply(
+        "m-1", "I can join.", false, null, null, [], false, null, null, [], undefined, undefined, "mb-2",
+      );
+      expect(fromDifferentMailbox.outcome).toBe("queued");
+      expect(fromDifferentMailbox.key).not.toBe(first.key);
+      expect(live.engine.pendingMutations().map(({ mutation }) => mutation))
+        .toMatchObject([{ inReplyTo: "m-1", mailboxId: "mb-1" }, { inReplyTo: "m-1", mailboxId: "mb-2" }]);
+    } finally {
+      live.store.close();
+      live.fake.server.close();
+    }
+  }, 60_000);
+
+  it("separates edited reply audiences and subjects from the default and from explicitly cleared copies", async () => {
+    const live = await scene();
+    try {
+      live.tunnel(true);
+      const to = [{ name: null, address: "other@fake.test" }];
+      const cc = [{ name: null, address: "copy@fake.test" }];
+      const bcc = [{ name: null, address: "private@fake.test" }];
+      const send = (copies: typeof cc, blind: typeof bcc, subject: string) => live.actions.sendReply(
+        "m-1", "I can join.", false, null, null, [], false, null, null, [], undefined, undefined, undefined,
+        { replyEnvelope: { to, cc: copies, bcc: blind }, replySubject: subject } as never,
+      );
+      const edited = await send(cc, bcc, "");
+      expect(edited.outcome).toBe("queued");
+      live.actions.leaveSend(edited.key!);
+      const cleared = await send([], [], "");
+      expect(cleared.outcome).toBe("queued");
+      expect(cleared.key).not.toBe(edited.key);
+      live.actions.leaveSend(cleared.key!);
+      const canonical = await live.actions.sendReply("m-1", "I can join.", false);
+      expect(canonical.key).not.toBe(cleared.key);
+      expect(canonical.key).not.toBe(edited.key);
+      const pending = live.engine.pendingMutations();
+      expect(pending.find((r) => r.key === edited.key)?.mutation).toMatchObject({ inReplyTo: "m-1", to, cc, bcc, subject: "" });
+      expect(pending.find((r) => r.key === cleared.key)?.mutation).toMatchObject({ inReplyTo: "m-1", to, cc: [], bcc: [], subject: "" });
+    } finally {
+      live.store.close();
+      live.fake.server.close();
+    }
+  }, 60_000);
+
   it("one intent per message and per verb — a reply and a forward of one message are not the same send", () => {
     expect(sendIntentOf({ kind: "mail_send", inReplyTo: "m-1", body: "x" } as never)).toBe("reply:m-1");
     expect(sendIntentOf({ kind: "mail_send", inReplyTo: null, forwardOf: "m-1", body: "x" } as never)).toBe("fwd:m-1");
@@ -687,6 +772,11 @@ describe("the intent, and the decisions the composer takes", () => {
     expect(sendWireDiffers(fwd, { ...fwd, forwardParts: ["a"] } as EngineMutation)).toBe(true);
     expect(sendWireDiffers(fwd, { ...fwd, forwardParts: undefined } as EngineMutation)).toBe(true);
     expect(sendWireDiffers(fwd, { ...fwd, forwardParts: ["b", "a"] } as EngineMutation)).toBe(false);
+  });
+
+  it("reuses an older queued forward when both of its copy lists are empty", () => {
+    const waiting = { kind: "mail_send", inReplyTo: null, forwardOf: "m-1", body: "Here.", mailboxId: "mb-1" } as const;
+    expect(sendWireDiffers(waiting, { ...waiting, cc: [], bcc: [] })).toBe(false);
   });
 
   it("a close keeps a queued send, only Cancel send withdraws it, and every other close is just a close", () => {
@@ -740,11 +830,13 @@ describe("the intent, and the decisions the composer takes", () => {
     expect(COMPOSER).toContain('from "./send-cancel"');
     // The frame forwards native Back. The backdrop, full-screen Back, Cancel, and the
     // held sheet's Close all use the same decision about whether to leave the send queued.
-    expect(COMPOSER).toMatch(/<ComposerFrame\b[^>]*onRequestClose=\{closeComposer\}/);
+    expect(COMPOSER).toContain("const requestClose = menuKind === null ? closeComposer : closeMenu;");
+    expect(COMPOSER).toMatch(/<ComposerFrame\b[^>]*onRequestClose=\{requestClose\}/);
     expect(COMPOSER.slice(COMPOSER.indexOf("function ComposerFrame(")))
       .toMatch(/<Modal\b[^>]*onRequestClose=\{onRequestClose\}/);
     expect(COMPOSER).toMatch(/<SheetBackdrop label=\{Copy\.replyCancel\} onPress=\{closeComposer\}/);
-    expect(COMPOSER).toMatch(/<Tap\s+onPress=\{closeComposer\}\s+accessibilityRole="button"\s+accessibilityLabel=\{Copy\.back\}/);
+    expect(COMPOSER).toContain("backLabel = Copy.back");
+    expect(COMPOSER).toMatch(/<Tap\s+onPress=\{closeComposer\}\s+accessibilityRole="button"\s+accessibilityLabel=\{backLabel\}/);
     expect(COMPOSER).toMatch(/<Button label=\{Copy\.replyCancel\}[^>]*onPress=\{closeComposer\}/);
     expect(COMPOSER).toMatch(/<Button label=\{Copy\.replyUnverifiedClose\}[^>]*onPress=\{closeComposer\}/);
     expect(COMPOSER.match(/onPress=\{closeComposer\}/g) ?? [], "a close that does not withdraw").toHaveLength(4);

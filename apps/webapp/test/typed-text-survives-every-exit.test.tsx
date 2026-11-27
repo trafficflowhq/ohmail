@@ -19,7 +19,7 @@ import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import {
-  COMPOSER_KEY, EMPTY_COMPOSE, composeSessionId, resetComposerForTest, writeComposeDraft,
+  COMPOSER_KEY, EMPTY_COMPOSE, composeSessionId, readComposeDraft, resetComposerForTest, writeComposeDraft,
   writeComposeRow,
 } from "@ohmail/app-logic/writing/compose";
 import { typeInto as typeIntoEditor } from "./fixtures/rich-editor-driver";
@@ -429,18 +429,42 @@ describe("a tab that closes inside the autosave window", () => {
     expect(drafts(), "the debounce did not hold — this case measures nothing").toHaveLength(0);
 
     await closeTab(first);
-    const slot = JSON.parse(window.localStorage.getItem(`ohmail.ui.compose.${OWNER}`) ?? "{}") as { subject?: string };
-    expect(slot.subject, "the closing tab's last keystroke is not in the local unit").toBe("Friday");
+    const key = `ohmail.ui.compose.${OWNER}:handoff:${window.sessionStorage.getItem(COMPOSER_KEY)}`;
+    const [, , raw] = JSON.parse(window.localStorage.getItem(key) ?? "[]") as (string | null)[];
+    const saved = JSON.parse(raw ?? "{}") as { subject?: string };
+    expect(saved.subject, "the closing tab's last keystroke is not in the local unit").toBe("Friday");
     expect(drafts(), "the closed page reached the account after all").toHaveLength(0);
 
     newTab();
-    await mountShell({ hash: "#/history" });
+    const reopened = await mountShell({ hash: "#/history" });
     await waitFor(
       () => subjects().includes("Friday"), "the next open writing the message to the account",
       AUTOSAVE_DELAY_MS + 3000,
     );
     expect(drafts()[0]!.draftId, "a create, for a message the account never held").toBeNull();
-  });
+    await closeTab(reopened);
+    window.localStorage.clear();
+
+    // A draft can also have a recipient and no subject or body yet.
+    newTab();
+    const bccOnly = await mountShell({ hash: "#/compose" });
+    const toggle = [...container.querySelectorAll<HTMLButtonElement>(`${LETTER} button`)]
+      .find((button) => button.textContent?.trim() === "Cc Bcc");
+    await act(async () => { toggle!.click(); });
+    const bcc = container.querySelector<HTMLInputElement>(`${LETTER} [role="combobox"][aria-label="Bcc"]`);
+    const recipient = "recipient" + "@example.invalid";
+    await typeInto(bcc, recipient);
+    await act(async () => {
+      bcc!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(readComposeDraft(storageOwner()).bcc).toContain(recipient);
+    await closeTab(bccOnly);
+
+    newTab();
+    await mountShell({ hash: "#/compose" });
+    await waitFor(() => drafts().some((draft) => draft.bcc?.some((entry) => entry.address === recipient)),
+      "the recovered Bcc recipient on the draft", AUTOSAVE_DELAY_MS + 3000);
+  }, 60_000);
 
   it("CONTROL: an empty composer closing writes nothing at the next open", async () => {
     newTab();

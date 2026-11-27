@@ -70,6 +70,7 @@ vi.mock("../src/ui/reader-rail", () => ({ useReaderRail: () => null }));
 vi.mock("../src/ui/MailRow", () => ({
   MailRow: (p: { m: { id: string }; onPress: () => void }) => createElement("button", { "data-row": p.m.id, onClick: p.onPress }),
 }));
+vi.mock("../src/ui/MailPlaceDock", () => ({ MailPlaceDock: ({ children }: { children: ReactNode }) => children }));
 vi.mock("../src/ui/MailList", () => ({
   MailList: (p: { groups: { rows: WorldTrashRow[] }[]; renderRow: (r: WorldTrashRow) => ReactNode }) =>
     createElement("div", null, p.groups.flatMap((g) => g.rows).map((r) => createElement("div", { key: r.mail.id }, p.renderRow(r)))),

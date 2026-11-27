@@ -185,62 +185,114 @@ export function composerId(): string {
 }
 
 /**
- * THE ACCOUNT'S HANDOFF SLOT — the three keys as they were spelled before composers. A tab that
- * closes moves its message here as ONE unit, and a composer holding nothing adopts it on its first
- * read, so close-and-reopen restores as it did and a browser upgraded mid-message keeps it. A unit,
- * never key by key: one tab's text beside another's row would autosave over somebody else's draft.
+ * Each closed composer leaves one record per account for the next empty composer. The record
+ * carries the text and its identity together, so a refused close-time write leaves the original
+ * keys intact. The old account-wide slot can still be read after an upgrade.
  */
-const unitPrefixes = (): readonly string[] => [COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX];
-const UNIT_STORES = ["compose.draft", "compose.session", "compose.row"] as const;
+const unitPrefixes = (): readonly string[] => [COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_DRAFT_PREFIX];
+const UNIT_STORES = ["compose.session", "compose.row", "compose.draft"] as const;
+const unitKeys = (suffix: string): string[] => unitPrefixes().map((prefix) => prefix + suffix);
+const handoffPrefix = (owner: string): string => `${COMPOSE_DRAFT_PREFIX}${owner}:handoff:`;
+const handoffs = localStorageDoor("compose.draft");
 const adoptedOwners = new Set<string>();
 let handoffArmed = false;
 
-function moveUnit(from: readonly string[], to: readonly string[]): void {
-  for (let i = 0; i < from.length; i += 1) {
-    const v = window.localStorage.getItem(from[i]!);
-    if (v === null) durableRemove(to[i]!, UNIT_STORES[i]!);
-    else durableSet(to[i]!, v, UNIT_STORES[i]!);
-    durableRemove(from[i]!, UNIT_STORES[i]!);
-  }
+function readUnit(keys: readonly string[]): (string | null)[] {
+  return keys.map((key) => window.localStorage.getItem(key));
 }
 
-/** Does this unit hold a message — its text or its row? A session alone names none: a page mints one to render. */
-function holdsMessage(unit: readonly string[]): boolean {
-  return window.localStorage.getItem(unit[0]!) !== null || window.localStorage.getItem(unit[2]!) !== null;
+/** A session alone names no draft: opening the composer mints one. */
+function holdsMessage(unit: readonly (string | null)[]): boolean {
+  return unit[1] !== null || unit[2] !== null;
+}
+
+function storeUnitPart(key: string, value: string | null, index: number): boolean {
+  const store = UNIT_STORES[index]!;
+  return (value === null ? durableRemove(key, store) : durableSet(key, value, store)) === "stored";
+}
+
+/** Write the identity before the text, and put back any parts we changed on a refusal. */
+function acceptUnit(to: readonly string[], unit: readonly (string | null)[], consume: () => boolean): boolean {
+  const previous = readUnit(to);
+  const written: number[] = [];
+  for (let i = 0; i < to.length; i += 1) {
+    if (unit[i] === previous[i]) continue;
+    if (!storeUnitPart(to[i]!, unit[i]!, i)) {
+      for (const index of written.reverse()) storeUnitPart(to[index]!, previous[index]!, index);
+      return false;
+    }
+    written.push(i);
+  }
+  if (consume()) return true;
+  for (const index of written.reverse()) storeUnitPart(to[index]!, previous[index]!, index);
+  return false;
+}
+
+function moveUnit(from: readonly string[], to: readonly string[], unit = readUnit(from)): boolean {
+  return acceptUnit(to, unit, () => {
+    from.forEach((key, index) => storeUnitPart(key, null, index));
+    return true;
+  });
+}
+
+function adoptClosedComposer(owner: string, own: readonly string[]): boolean {
+  const prefix = handoffPrefix(owner);
+  const mine = prefix + composerId();
+  const keys = [mine, ...Object.keys(window.localStorage).filter((key) => key !== mine && key.startsWith(prefix))];
+  for (const key of keys) {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) continue;
+    let unit: unknown;
+    try { unit = JSON.parse(raw); } catch { continue; }
+    if (!Array.isArray(unit) || unit.length !== UNIT_STORES.length
+      || !unit.every((value) => value === null || typeof value === "string") || !holdsMessage(unit)) continue;
+    return acceptUnit(own, unit, () => handoffs.get(key) === raw && handoffs.remove(key) === "stored");
+  }
+  const legacy = unitKeys(owner);
+  const unit = readUnit(legacy);
+  return holdsMessage(unit) && moveUnit(legacy, own, unit);
 }
 
 function adoptHandoff(owner: StorageScope): void {
   const o = scopeSuffix(owner);
-  // Not while this page may still turn out to be a duplicate: the slot would land in the original's keys.
+  // Wait for the page's identity before taking anything from another composer.
   const locks = claimSettled ? null : composerLocks();
   if (locks !== null) {
     void claimComposer(locks);
     return;
   }
-  if (adoptedOwners.has(o)) return;
+  if (adoptedOwners.has(o) || recoveries.has(o)) return;
   adoptedOwners.add(o);
   armHandoff();
   try {
-    const own = unitPrefixes().map((p) => `${p}${o}.${composerId()}`);
-    if (holdsMessage(own)) return;
-    const slot = unitPrefixes().map((p) => `${p}${o}`);
-    if (slot.some((k) => window.localStorage.getItem(k) !== null)) moveUnit(slot, own);
-  } catch { /* a refused jar holds nothing to adopt */ }
+    const own = unitKeys(`${o}.${composerId()}`);
+    if (!holdsMessage(readUnit(own))) adoptClosedComposer(o, own);
+  } catch { /* the browser can refuse storage reads */ }
 }
 
 /** A closing tab leaves its message for the next composer; a page kept for back/forward does not. */
 export function handOffComposer(): void {
   try {
-    const suffix = `.${composerId()}`;
+    const id = composerId();
+    const suffix = `.${id}`;
     const owners = new Set<string>();
-    for (const k of Object.keys(window.localStorage)) {
-      const p = unitPrefixes().find((x) => k.startsWith(x));
-      if (p !== undefined && k.endsWith(suffix)) owners.add(k.slice(p.length, -suffix.length));
+    for (const key of Object.keys(window.localStorage)) {
+      const prefix = unitPrefixes().find((part) => key.startsWith(part));
+      if (prefix !== undefined && key.endsWith(suffix)) owners.add(key.slice(prefix.length, -suffix.length));
     }
-    for (const o of owners) {
-      moveUnit(unitPrefixes().map((p) => `${p}${o}${suffix}`), unitPrefixes().map((p) => `${p}${o}`));
+    for (const owner of owners) {
+      const keys = unitKeys(owner + suffix);
+      const unit = readUnit(keys);
+      if (!holdsMessage(unit)) continue;
+      const raw = JSON.stringify(unit);
+      const slot = handoffPrefix(owner) + id;
+      const previous = window.localStorage.getItem(slot);
+      // If an earlier handoff is still waiting, keep both versions.
+      const key = previous === null || previous === raw ? slot : `${slot}:${crypto.randomUUID()}`;
+      if (previous !== raw && handoffs.set(key, raw) !== "stored") continue;
+      keys.forEach((part, index) => storeUnitPart(part, null, index));
     }
-  } catch { /* nothing to hand over from a refused jar */ }
+  } catch { /* the browser can refuse storage reads */ }
 }
 
 function armHandoff(): void {
@@ -358,15 +410,17 @@ function recoverOrphan(locks: ComposerLocks, owner: string): Promise<boolean> {
       if (late) return false;
       const live = new Set([...(q.held ?? []), ...(q.pending ?? [])].map((l) => l.name ?? ""));
       const mine = composerId();
-      const own = unitPrefixes().map((p) => `${p}${owner}.${mine}`);
-      if (holdsMessage(own)) return false;
+      const own = unitKeys(`${owner}.${mine}`);
+      adoptedOwners.add(owner);
+      armHandoff();
+      if (holdsMessage(readUnit(own))) return false;
+      if (adoptClosedComposer(owner, own)) return false;
       const base = `${COMPOSE_DRAFT_PREFIX}${owner}.`;
       for (const k of Object.keys(window.localStorage)) {
         const id = k.startsWith(base) ? k.slice(base.length) : "";
         if (!/^[A-Za-z0-9_-]{1,64}$/.test(id) || id === mine || live.has(composerLockName(id))) continue;
         if (!writtenUnderLock(window.localStorage.getItem(k))) continue;
-        moveUnit(unitPrefixes().map((p) => `${p}${owner}.${id}`), own);
-        return true;
+        return moveUnit(unitKeys(`${owner}.${id}`), own);
       }
     } catch { /* a refused jar or manager: nothing is recovered */ }
     return false;
@@ -397,7 +451,12 @@ export function whenComposerReady(ready: () => void, owner: StorageScope): () =>
     recoveries.set(o, r);
   }
   let live = true;
-  void r.then(() => { if (live) ready(); });
+  void r.then(() => {
+    if (live) {
+      if (!adoptedOwners.has(o)) recoveries.delete(o);
+      ready();
+    }
+  });
   return () => { live = false; };
 }
 

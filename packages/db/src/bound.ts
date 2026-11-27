@@ -314,6 +314,13 @@ function bindHandle(db: object, to: BindTo, doorKey?: string): object {
   return viewOf(root, mint(account, key));
 }
 
+/** Name or clear an exact lookup key while keeping the transaction's account. */
+export async function setAccountLookupKey(tx: object, accountId: string, key: string | null): Promise<void> {
+  if (bindingOf(tx) === undefined) return;
+  assertBinding(tx, accountId);
+  await rebindTx(tx, { key });
+}
+
 /**
  * NAME A TRANSACTION AGAIN, inside it. The key may be named any number of times; the account once,
  * in a transaction that began bound to nothing, and never changed or taken back. Only the outermost

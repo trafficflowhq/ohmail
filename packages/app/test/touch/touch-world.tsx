@@ -21,6 +21,11 @@ import { FRAME_WORDS } from "../support/frame-words.js";
 
 export { at, msg } from "../ohbox/ohbox-world.js";
 
+/** Vertical displacement of the list content, in px, while its scroller stays in place. */
+export function pulledDistance(scroller: HTMLElement): number {
+  return Number.parseFloat(scroller.style.getPropertyValue("--pull-offset").split(" ")[1] ?? "0");
+}
+
 export interface TouchSaid extends Said {
   acted: Array<[MessageAction, string]>;
   opened: string[];

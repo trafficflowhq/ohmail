@@ -6,7 +6,7 @@ import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import type { AccessLifecycle, AccessTrial, AccessVerdict, ReleaseOutcome } from "@trafficflow/db";
 import { bridgeTx, assertPassWalk, passContext, type Db, type PassContext, type PassRoster, type UnboundDb } from "./context.js";
 import { silentLogger, type Logger } from "@trafficflow/core";
-import { deleteAccount } from "./account-deletion-service.js";
+import { acceptAccountErasure, accountErasureNeedsBackground, releaseAcceptedErasure, deleteAccount } from "./account-deletion-service.js";
 import type { MailContext } from "./mail/index.js";
 
 /**
@@ -426,7 +426,7 @@ export async function runAccountLifecyclePass(
 
 /** What the erasure door did for one account — a closed set, answered on the route. */
 export type EraseOneOutcome =
-  | "erased" | "already_erased" | "not_due" | "unanswered" | "reactivated" | "unwarned";
+  | "erased" | "accepted" | "already_erased" | "not_due" | "unanswered" | "reactivated" | "unwarned";
 
 /**
  * THE ERASURE DOOR, one account per call: the program is asked AGAIN, past every cache, and only
@@ -466,10 +466,10 @@ async function eraseDueAccount(
 ): Promise<EraseOneOutcome> {
   const { db, accountId, now } = ctx;
   const log = deps.log ?? silentLogger;
-  const [row] = await db.select({ erasedAt: accounts.erasedAt }).from(accounts)
+  const [row] = await db.select({ erasedAt: accounts.erasedAt, progress: accounts.erasureProgress }).from(accounts)
     .where(eq(accounts.id, accountId)).limit(1);
   if (!row) return "not_due";
-  if (row.erasedAt !== null) return "already_erased";
+  if (row.erasedAt !== null) return row.progress && !row.progress.complete ? "accepted" : "already_erased";
   const answer = await deps.port.accessOrFault(accountId);
   if (answer === "fault") {
     log.warn("account_erasure_skipped_unanswered", {
@@ -514,9 +514,19 @@ async function eraseDueAccount(
     });
     return "unwarned";
   }
-  const outcome = await deps.port.releaseAccount(accountId);
+  if (await accountErasureNeedsBackground(ctx)) {
+    const status = await acceptAccountErasure(ctx, { drainsRefunds: true, warnedFor: anchor });
+    try {
+      await releaseAcceptedErasure(ctx, (id) => deps.port.releaseAccount(id));
+    } catch (err) {
+      log.warn("account_erasure_release_record_failed", { accountId, err });
+    }
+    if (status === "accepted") log.info("account_lifecycle_erasure_accepted", { accountId });
+    return status;
+  }
+  const outcome = await deps.port.releaseAccount(accountId).catch(() => "cancel_failed" as const);
   // This pass runs only against an entitlements program, so a refund drain runs beside it.
-  await deleteAccount(ctx, { throttleKeys: deps.throttleKeys, drainsRefunds: true, warnedFor: anchor });
+  await deleteAccount(ctx, { throttleKeys: deps.throttleKeys, drainsRefunds: true, warnedFor: anchor, billingOutcome: outcome });
   log.info("account_lifecycle_erased", {
     accountId, subscription: outcome,
     reason: "the retention period ended a day ago or more; the account's data is " +

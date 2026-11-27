@@ -1,43 +1,9 @@
 import { useState } from "react";
 import { Menu } from "@ohmail/ui/base";
+import { COMPOSE_EMOJI } from "@ohmail/app-logic/write/emoji";
 import { useText } from "../../text/index.js";
 import "./emoji.css";
 import type { EditorHandle } from "../ports.js";
-
-const EMOJI = [
-  ["🙂", "smile"],
-  ["😀", "grin"],
-  ["😄", "happy"],
-  ["😊", "blush"],
-  ["😉", "wink"],
-  ["😅", "sweat_smile"],
-  ["😂", "joy"],
-  ["🤔", "thinking"],
-  ["😎", "sunglasses"],
-  ["🥳", "party"],
-  ["😍", "heart_eyes"],
-  ["🙏", "pray"],
-  ["👍", "thumbsup"],
-  ["👏", "clap"],
-  ["🙌", "raised_hands"],
-  ["💪", "muscle"],
-  ["👋", "wave"],
-  ["👀", "eyes"],
-  ["🎉", "tada"],
-  ["❤️", "heart"],
-  ["✨", "sparkles"],
-  ["🔥", "fire"],
-  ["✅", "check"],
-  ["⭐", "star"],
-  ["☕", "coffee"],
-  ["🍕", "pizza"],
-  ["📎", "paperclip"],
-  ["📅", "calendar"],
-  ["📌", "pin"],
-  ["💡", "bulb"],
-  ["🚀", "rocket"],
-  ["🌱", "seedling"],
-] as const;
 
 /** Both editors insert through their existing caret and undo path. */
 export function useEmoji(handle: EditorHandle | null, locked: boolean) {
@@ -57,7 +23,7 @@ export function useEmoji(handle: EditorHandle | null, locked: boolean) {
     menu: open ? (
       <Menu open portal label={label} title={label} anchor={anchor} onClose={close} up>
         <div className="write-emoji-grid" role="group" aria-label={label}>
-          {EMOJI.map(([emoji, name]) => (
+          {COMPOSE_EMOJI.map(([emoji, name]) => (
             <button
               className="write-emoji-button"
               type="button"

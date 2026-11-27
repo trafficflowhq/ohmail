@@ -368,19 +368,16 @@ describe("the two scopes: device pin beats account, account beats nothing", () =
   });
 
   it("the world layer's `known` is set by ADOPTION alone — the pane's gate has one source", () => {
-    /* The structural half of the rule above: `known` may not be set anywhere but in the face
-       scope's `adopt` callback, because adoption is the only path a trustworthy value takes (the
-       17 ordering cases in face-scope.test.ts are what make that true). A `setAccountFaceKnown`
-       anywhere else — on a read being ISSUED, on a session going live — would re-open the
-       conflation this gate exists to close. */
+    /* The adopted value and the session that heard it are one record. Issuing a read or going
+       live cannot make the pane's account preference known. */
     const world = readFileSync(here("../src/state/world.tsx"), "utf8");
-    const sets = [...world.matchAll(/setAccountFaceKnown\((true|false)\)/g)].map((m) => m[1]);
-    expect(sets, "one true (in adopt) and one false (the session reset), and no other").toEqual([
-      "true",
-      "false",
+    expect(world).toContain("const accountFaceKnown = session !== null && accountLook?.session === session");
+    const setters = [...world.matchAll(/setAccountLook\(([^;]+)\);/g)].map((match) => match[1]);
+    expect(setters, "one adoption and one session reset").toEqual([
+      "{ session, face }",
+      "(look) => look?.session === session ? look : null",
     ]);
-    // …and the true one really sits in the adopt callback, beside the value it qualifies.
-    expect(world).toMatch(/setAccountFace\(face\);[\s\S]{0,200}setAccountFaceKnown\(true\)/);
+    expect(world).toMatch(/adopt: \(face\) => \{\s*if \(faceCurrent\.current !== faces\) return;\s*setAccountLook/);
   });
 
   it("teach is the face's own switch — 1 loud, 0 calm", () => {

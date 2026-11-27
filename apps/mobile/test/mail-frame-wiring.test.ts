@@ -17,6 +17,7 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 const FRAME = read("../src/ui/MailBodyFrame.tsx");
 const READER = read("../src/ui/MessageReader.tsx");
 const LAYOUT = read("../app/_layout.tsx");
+const LINK_SHEET = read("../src/ui/MailLinks.tsx");
 const DOC = read("../src/mail/mail-document.ts");
 const TREE = read("../src/mail/frame-tree.ts");
 const BUDGET = read("../src/mail/frame-budget.ts");
@@ -47,13 +48,14 @@ describe("the WebView is the web iframe's posture, or stricter", () => {
   });
   it("a link opens only from the confirm sheet", () => {
     // CODE lines only — the header docblock names the library's opener while describing it.
-    const code = FRAME.split("\n").filter((l) => {
+    expect(FRAME).toContain("<MailLinkSheet url={linkAsk}");
+    const code = (FRAME + LINK_SHEET).split("\n").filter((l) => {
       const s = l.trimStart();
       return !s.startsWith("*") && !s.startsWith("//") && !s.startsWith("/*");
     });
     const opens = code.filter((l) => l.includes("Linking.openURL")).length;
     expect(opens).toBe(1);
-    expect(FRAME).toContain("Copy.mailOpenLinkTitle");
+    expect(LINK_SHEET).toContain("Copy.mailOpenLinkTitle");
   });
 });
 

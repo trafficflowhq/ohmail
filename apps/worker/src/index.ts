@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
-  pruneIdempotencyKeys, pruneSendFingerprints, noticeSinkFor, setNoticeSink, accounts, accountSettings, mailboxCredentials, mailboxes,
+  pruneIdempotencyKeys, noticeSinkFor, setNoticeSink, accounts, accountSettings, mailboxCredentials, mailboxes,
   messages, folderState, junkSweepCandidateWhere, closeStoodDownAppointments,
   RELEASED_ORGANIZER_SEND_SENTENCE, capabilitiesColumn, exportPendingMovesOnStandDown,
   UNMETERED, isMetered, AccountErasedError, readManagedModelConsent, type EntitlementsComposition,

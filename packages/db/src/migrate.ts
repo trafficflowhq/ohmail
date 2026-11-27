@@ -211,6 +211,18 @@ export class PartialMigrationError extends Error {
 /** The handle a pass runs on: the guarded session's drizzle. */
 type MigrationDb = ReturnType<typeof drizzle>;
 
+/** Bound metadata DDL independently of waiting for another migration to finish. */
+export const MIGRATION_DDL_LOCK_TIMEOUT_MS = 2_000;
+
+export async function setMigrationDdlLockTimeout(
+  sql: Pick<Sql, "unsafe">, timeoutMs = MIGRATION_DDL_LOCK_TIMEOUT_MS,
+): Promise<void> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) {
+    throw new RangeError("migration DDL lock timeout must be a positive integer in milliseconds");
+  }
+  await sql.unsafe(`set lock_timeout = ${timeoutMs}`);
+}
+
 /**
  * Take the migration's advisory lock on one {@link openMigrationSession}, run `body` under it,
  * release, end the session. Every road into a journal goes through here, so none of them can run
@@ -220,6 +232,7 @@ async function underMigrationLock(
   url: string,
   log: (msg: string) => void,
   body: (db: MigrationDb, session: MigrationSession) => Promise<void>,
+  ddlLockTimeoutMs?: number,
 ): Promise<void> {
   const session = await openMigrationSession(url, { log });
   const sql = session.sql;
@@ -262,10 +275,8 @@ async function underMigrationLock(
           `${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    // Reset BEFORE any DDL: the journal's statements take heavy table locks and must not be
-    // abortable by the acquisition timeout.
-    await sql`set lock_timeout = 0`;
     try {
+      await setMigrationDdlLockTimeout(sql, ddlLockTimeoutMs);
       await body(drizzle(sql), session);
     } finally {
       // A lost session has no lock to release, and asking would throw over the error on its way up.
@@ -334,7 +345,11 @@ async function passOver(
       // `REISSUED_ORIGINALS` in baseline.ts for the one case and the whole argument.
       await adoptReissuedOriginals(db, spec, log);
     } catch (err) {
-      const cause = session.lost() ?? err;
+      let cause = session.lost() ?? err;
+      if ((cause as { code?: unknown } | null)?.code === "55P03"
+        || (cause as { cause?: { code?: unknown } } | null)?.cause?.code === "55P03") {
+        cause = new Error(`the ${spec.name} journal is still pending after a table lock timed out; retry after the table is available`, { cause });
+      }
       if (done.length > 0) throw new PartialMigrationError(spec.name, done, cause);
       throw cause;
     }
@@ -419,12 +434,13 @@ export async function runMigrations(
       }
       log("SEALED_VALUES_OK");
     }
-  });
+  }, opts.ddlLockTimeoutMs);
 }
 
 /** What {@link runMigrations} takes. */
 export interface MigrateOptions {
   log?: (msg: string) => void;
+  ddlLockTimeoutMs?: number;
   /**
    * What a store at 1.0.11's heads needs to become a 2.0 store: which kind of store it is, and an
    * opener for its sealed values. A managed command can also require proof on a later invocation.

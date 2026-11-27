@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import Animated, { FadeIn, FadeOut, SlideInLeft, SlideInRight, SlideOutLeft, SlideOutRight } from "react-native-reanimated";
 import { useTheme } from "../../theme";
+import { design } from "@ohmail/tokens/design";
 import { Copy } from "../../copy";
 
 export function GlassSidebar({
@@ -56,7 +57,7 @@ export function GlassSidebar({
             left: side === "left" ? 0 : undefined,
             right: side === "right" ? 0 : undefined,
             width: compactPlaces ? "80%" : "82%",
-            maxWidth: compactPlaces ? 300 : 268,
+            maxWidth: compactPlaces ? Number.parseFloat(design.faces.paper.phone["rail-drawer"]) : 268,
             backgroundColor: t.c.panel,
             borderTopRightRadius: side === "left" ? radius : 0,
             borderBottomRightRadius: side === "left" ? radius : 0,

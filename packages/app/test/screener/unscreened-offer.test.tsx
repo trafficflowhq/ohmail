@@ -21,4 +21,24 @@ it("offers undecided mail only when the model names it and waits for the press",
   expect(move).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: /^Screen 12/ }));
   expect(move).toHaveBeenCalledTimes(1);
+  cleanup();
+
+  for (const [total, perPress] of [
+    [1200, 1000],
+    [200, 200],
+  ] as const) {
+    mountPlace(
+      modelOf(asked, {
+        unscreened: { total, atLeast: false, groups: [], screening: false, screen: move },
+      }),
+    );
+    expect(
+      screen.getByText(
+        new RegExp(`${total.toLocaleString("en")} messages from senders you have not decided about`),
+      ),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: `Screen ${perPress}` }));
+    cleanup();
+  }
+  expect(move).toHaveBeenCalledTimes(3);
 });

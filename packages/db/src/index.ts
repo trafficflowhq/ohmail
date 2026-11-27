@@ -318,14 +318,11 @@ export {
   idempotencyExpiry, IDEMPOTENCY_TTL_MS, IDEMPOTENCY_PENDING_STATUS, IDEMPOTENCY_PENDING_BODY,
   type IdempotencyClaimInput,
 } from "./idempotency.js";
-export {
-  pruneSendFingerprints, SEND_FINGERPRINT_RETENTION_MS,
-} from "./send-fingerprints.js";
 // Erasing ohmail's copy of ONE mailbox, in bounded steps — the request's stamp and the worker
 // pass's step, one module so the table walk has one spelling. Mail schema and change log only.
 export {
   ERASE_BATCH, stampMailboxErasure, sweepMailboxStep, sweepMailboxData, eraseOwedMailbox,
-  erasureRemaining, clearErasedSignatures, clearErasedSettingsHashes,
+  erasureRemaining, clearErasedSignatures, clearErasedSettingsHashes, repairFinishedMailboxErasure,
   type MailboxErasureStamp, type MailboxSweepStep, type MailboxSweepResult, type OwedErasureRun,
 } from "./mailbox-erasure.js";
 export { rowsAffected } from "./rows-affected.js";

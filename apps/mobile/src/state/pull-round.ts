@@ -1,3 +1,4 @@
+import { PULL_HOLD_CAP_MS } from "@ohmail/app-logic/touch";
 /**
  * WHAT A PULL DOES — the gesture's decision, apart from the hook so the suite can drive it. With
  * no network on the phone (the door's reading, never a failed request) the pull says so and asks
@@ -31,7 +32,7 @@ export function pullRound(
 }
 
 /** The longest a pull's spinner turns: a round still running then goes on unseen and lands its mail when it lands. */
-export const PULL_SPIN_CAP_MS = 15_000;
+export const PULL_SPIN_CAP_MS = PULL_HOLD_CAP_MS;
 
 /** The round, or the cap, whichever comes first: the spinner never turns forever on a round that hangs. */
 export function spinUntil(round: Promise<void>, capMs: number = PULL_SPIN_CAP_MS): Promise<void> {

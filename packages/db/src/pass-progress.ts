@@ -46,6 +46,8 @@ export const PASS_NAMES = [
   "html_words_backfill",
   /** Per mailbox: every letter stored before 0204 that carries an invitation has its row. */
   "invitation_backfill",
+  /** Per account: one page of hosted change-log compaction. */
+  "retention_prune",
 ] as const;
 
 export type PassName = (typeof PASS_NAMES)[number];

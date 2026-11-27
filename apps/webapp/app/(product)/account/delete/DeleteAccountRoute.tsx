@@ -25,6 +25,7 @@ function stateOf(c: DeleteAccountCeremony, say: (err: unknown) => string): Delet
     return {
       at: "done",
       retained: c.result.retained,
+      pending: c.result.accepted === true,
       subscription: c.cancelledEarlier ? "cancelled" : c.result.subscription,
       unclean: c.eraseMirrorBlocked,
     };

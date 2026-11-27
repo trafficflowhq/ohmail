@@ -252,6 +252,7 @@ const SAME_AS_WEBAPP: Record<string, string> = {
   sigLabel: "compose.signature",
   sigRemove: "compose.signatureRemove",
   sigAria: "compose.signatureAria",
+  sigEditAsText: "compose.signatureEditAsText",
   /* Tags, the Screener's segments, and the banner a reader sees. */
   tagPlaceholder: "tag.pickerPlaceholder",
   tagNone: "tag.pickerNone",

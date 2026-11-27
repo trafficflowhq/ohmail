@@ -15,6 +15,7 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { feedPartition } from "../../../../test/support/engine-fixtures.js";
 import { SEEN_QUIET_MS } from "@ohmail/app-logic/reading/seen-batch";
 import { SYNC_BOOTSTRAPPING, SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
+import { pullDown } from "../touch/touch-world.js";
 import { hitAt, issue, mountStreamFrame, receipt } from "./registered-world.js";
 
 /** Geometry belongs to the full pile, even when the browser has mounted only one window. */
@@ -209,6 +210,24 @@ describe.each([
   { route: "reads", region: "News stream", letter: issue },
   { route: "receipts", region: "Receipts stream", letter: receipt },
 ])("$region's first phone frame", ({ route, region, letter }) => {
+  it("pulls new mail from the stream's own scroller", async () => {
+    const onPull = vi.fn();
+    seat({ at: `#/${route}`, phone: true, letters: [letter("first", 10)], onPull });
+    const scroller = screen
+      .getByRole("region", { name: region })
+      .querySelector<HTMLElement>(".oh-sheet-scroll")!;
+    const card = scroller.querySelector("[data-stream-window-item]")!;
+    scroller.scrollTop = 90;
+    pullDown(card, 150);
+    expect(onPull).not.toHaveBeenCalled();
+    scroller.scrollTop = 0;
+    const release = pullDown(card, 150, { hold: true });
+    expect(onPull).not.toHaveBeenCalled();
+    release();
+    expect(onPull).toHaveBeenCalledTimes(1);
+    await settle();
+  });
+
   it.each(["cold open", "saved position", "addressed card"])(
     "keeps the opening cards in place on a %s",
     (entry) => {

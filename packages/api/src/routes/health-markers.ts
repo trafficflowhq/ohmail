@@ -38,6 +38,8 @@ export type SchemaMarker = readonly [table: string, column: string];
  */
 export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["accounts", "id"],
+  // A fenced account can resume cleanup after a worker restart.
+  ["accounts", "erasure_progress"],
   ["users", "id"],
   ["sessions", "scope"],          // mail 0017_enrollment
   ["mailboxes", "id"],
@@ -1359,7 +1361,7 @@ export const MAIL_EXPECTED_MARKERS =
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
 // mail 0220_caldav_host_retry resets poll times without changing the schema.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0232_calendar_provider_modified_at";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0233_account_erasure_progress";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

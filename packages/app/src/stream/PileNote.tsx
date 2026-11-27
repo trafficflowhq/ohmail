@@ -1,4 +1,5 @@
 import type { PileNoteOffer } from "@ohmail/app-logic/lists/pile-note";
+import { OHBOX_UNSCREENED_MESSAGES_MAX } from "@ohmail/app-logic/screener";
 import { Notice } from "@ohmail/ui/base";
 import { useText } from "../text/index.js";
 
@@ -15,7 +16,11 @@ export function PileNote({ offer, pileLabel }: { offer: PileNoteOffer; pileLabel
         })}
         line={t("pileUnscreenedLine")}
         acts={[
-          { label: t("unscreenedAll", { count: offer.count }), busy: offer.screening, onPress: offer.screen },
+          {
+            label: t("unscreenedAll", { count: Math.min(offer.count, OHBOX_UNSCREENED_MESSAGES_MAX) }),
+            busy: offer.screening,
+            onPress: offer.screen,
+          },
           { label: t("pileUnscreenedDismiss"), disabled: offer.screening, onPress: offer.dismiss },
         ]}
       />

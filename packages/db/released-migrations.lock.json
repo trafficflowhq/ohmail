@@ -1,6 +1,6 @@
 {
-  "release": "2.0.9",
-  "tag": "388fd6681fb65f8eaafae9529b08d7226a8ef47b",
+  "release": "2.0.10",
+  "tag": "79f266d64b6b5be49a8d9efd2fa5f82e5a40b408",
   "note": "Every migration file the three journals (mail, Cloud, device store) named at this commit, with the sha256 drizzle records when it applies one. A released migration is immutable: edit it and released-migrations-are-frozen.test.ts reddens. Write a new migration instead. A device store knows an applied entry by its file name alone, so a device-store file is also never renamed or removed, no allowance admits an edit of one, and no new entry sorts below the highest one pinned here. scripts/pin-released-migrations.mjs writes this file.",
   "files": {
     "packages/db-mail/drizzle-sqlite/0001_baseline.sql": "cfb0daa1bf793284760283078d736564bb5fcdca3472a2ef3df03bde2be7d53d",
@@ -94,6 +94,7 @@
     "packages/db-mail/drizzle-sqlite/0221_screener_acknowledgements.sql": "28eefd7dd6a8ebd01471cbea6a9788bf7b0986780fab2beab4ade80544929eb2",
     "packages/db-mail/drizzle-sqlite/0222_screener_learning.sql": "9d9ec4431c296c068d0bfd33cee780c107667513b283f6a9463cdf5a88e3e2bd",
     "packages/db-mail/drizzle-sqlite/0228_imap_scan_cursor.sql": "2b350409879a8d0e51a66a2fad50e95c3551a6f3a2f4c93b0403596f5b923920",
+    "packages/db-mail/drizzle-sqlite/0233_account_erasure_progress.sql": "883b1ffb9e3d6613a1b34517b4d82efcf34c9e84f75c0ee559051886deb75c04",
     "packages/db-mail/drizzle/0000_wealthy_miek.sql": "bb077fcc074af0d0cff0f564e654fba4cf5c5823fac91a3e84a05e7a67de6932",
     "packages/db-mail/drizzle/0001_cute_black_queen.sql": "e9cbae26db1b5c960430befefecdd68aa67aa8241ebb1ca81191baf60efe7793",
     "packages/db-mail/drizzle/0002_wet_thunderball.sql": "59f23f14da224f7981bfc674e3ff6cc627197ef1de4a669a96f752572b270092",
@@ -308,6 +309,7 @@
     "packages/db-mail/drizzle/0230_calendar_read_owner.sql": "099c15d3973b3eb0d7bc912fd7ac3b4eaf749bd2f189e52bb9c018714530d4c0",
     "packages/db-mail/drizzle/0231_google_exclusion_sources.sql": "c01ccdc56e4c796b3047a92410935349ce8b05e52584710b68426ee510e8a8a5",
     "packages/db-mail/drizzle/0232_calendar_provider_modified_at.sql": "2083a09ff4e7941bae877cf18d8c4c87a2bbd7d13a5ee6ba5b2178e73c49e545",
+    "packages/db-mail/drizzle/0233_account_erasure_progress.sql": "bc1193ddeb3354f2a817494fea9c2709d23eea56334fc8d4fff1f0483f1ac006",
     "packages/db/drizzle-cloud/0000_auth_ceremony.sql": "9ae287196e7c98bf9f65636ff5170870e0909031de2554b6c83102b2dcc9bbff",
     "packages/db/drizzle-cloud/0001_push_subscriptions.sql": "c0b8c6d0eea109d92ac77933166c45a63f91e9770fcbbe9c8ef4cd2d3b9a2fdb",
     "packages/db/drizzle-cloud/0003_observability.sql": "6089221de92c7452b69a0178cf74ba43838575fd07760263ec1cc70d1e0dda5b",

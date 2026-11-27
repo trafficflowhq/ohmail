@@ -404,6 +404,26 @@ describe("the outcomes, in the pane's own sentences", () => {
     expect(stepUps(), "every press asks the factor").toBe(2);
   });
 
+  it.each([200, 503])("keeps cancellation and verification guidance if the deletion response is interrupted after headers (%s)", async (status) => {
+    rig.erase = () => refusedWith("cancelled");
+    const page = await mountPage();
+    await pressDelete(page);
+    await verify(page);
+    await waitFor(() => pageAlert(page) !== null, "the first refusal");
+    expect(pageAlert(page)).toBe(A.eraseRefusedSubCancelled);
+
+    rig.erase = () => {
+      const reply = json(status === 200 ? RECEIPT : { error: { code: "erasure_unconfirmed", message: "unconfirmed" } }, status);
+      vi.spyOn(reply, "text").mockRejectedValueOnce(new TypeError("connection interrupted after headers"));
+      return reply;
+    };
+    await click(pressOf(page, W.begin)!);
+    await waitFor(() => codeField(page) !== null, "the next factor");
+    await verify(page);
+    await waitFor(() => pageAlert(page) !== null, "the interrupted answer");
+    expect(pageAlert(page)).toBe(A.eraseUnconfirmedSubCancelled);
+  });
+
   it("the subscription that could not be cancelled is said as a warning beside the receipt", async () => {
     rig.erase = () => { clearReadableCookies(); return json({ ...RECEIPT, subscription: "cancel_failed" }); };
     const c = await mountPage();
@@ -424,7 +444,7 @@ describe("the delete page says the account erasure outcome", () => {
     ["a platform 5xx with no envelope", () => new Response("<html>504</html>", {
       status: 504, headers: { "content-type": "text/html" },
     }), A.eraseUnconfirmed],
-    ["no answer at all", () => { throw new TypeError("network down"); }, en.session.refusedOffline],
+    ["no answer at all", () => { throw new TypeError("network down"); }, A.eraseUnconfirmed],
   ];
   for (const [what, answer, sentence] of answers) {
     it(what, async () => {

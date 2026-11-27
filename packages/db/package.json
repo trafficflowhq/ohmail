@@ -22,6 +22,18 @@
       "node": "./dist/cloud.js",
       "default": "./src/cloud.ts"
     },
+    "./account-erasure": {
+      "types": "./src/account-deletion-service.ts",
+      "ohmail-source": "./src/account-deletion-service.ts",
+      "node": "./dist/account-deletion-service.js",
+      "default": "./src/account-deletion-service.ts"
+    },
+    "./auth-throttle-keys": {
+      "types": "./src/auth-throttle-keys.ts",
+      "ohmail-source": "./src/auth-throttle-keys.ts",
+      "node": "./dist/auth-throttle-keys.js",
+      "default": "./src/auth-throttle-keys.ts"
+    },
     "./calendar": {
       "types": "./src/calendar/index.ts",
       "ohmail-source": "./src/calendar/index.ts",

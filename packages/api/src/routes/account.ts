@@ -1,4 +1,6 @@
-import { deleteAccount, erasureOutcome, throttleKeysFor } from "@trafficflow/services";
+import {
+  acceptAccountErasure, accountErasureNeedsBackground, deleteAccount, erasureOutcome, releaseAcceptedErasure, throttleKeysFor,
+} from "@trafficflow/services";
 import { manageAddonOf, planHintOf, storageEmptyingNow, storageFactsOf, type ReleaseOutcome, type Tx } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
    and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
@@ -110,10 +112,33 @@ export const accountRoutes: Route[] = [
        * host answers `none`, which is the truth there.
        */
       let subscription: ReleaseOutcome = "none";
-      // `null` is a host that meters nothing, whose honest answer is `"none"` — there is no
-      // subscription to stop. It is not the same as a port that could not be reached, which
-      // answers `"cancel_failed"` below.
       const port = entitlementsPort(deps);
+      const erasureReply = (erased: boolean, result: Awaited<ReturnType<typeof deleteAccount>> | null = null) =>
+        sessionEnded(json({
+          erased,
+          ...(erased ? (result === null ? {} : erasureCounts(result)) : { accepted: true }),
+          retained: port ? RETAINED_METERED : RETAINED_UNMETERED,
+          subscription,
+        }, erased ? 200 : 202, cookieSurface(deps) ? clearSessionCookies() : []));
+
+      if (await accountErasureNeedsBackground(ctx)) {
+        let outcome: "accepted" | "erased";
+        try {
+          outcome = await acceptAccountErasure(ctx, { drainsRefunds: port !== null });
+        } catch (err) {
+          const status = isDbBusy(err) ? "not_erased" : await erasureOutcome(ctx);
+          if (status === "not_erased" || status === "unknown") throw erasureFailed(err, subscription, status);
+          outcome = status;
+        }
+        try {
+          subscription = await releaseAcceptedErasure(ctx, port ? (id) => port.releaseAccount(id) : undefined);
+        } catch (err) {
+          if (port) subscription = "cancel_failed";
+          deps.logger?.warn("account_erasure_release_record_failed", { err });
+        }
+        return erasureReply(outcome === "erased");
+      }
+
       if (port) {
         try {
           subscription = await port.releaseAccount(ctx.accountId);
@@ -128,27 +153,17 @@ export const accountRoutes: Route[] = [
       try {
         result = await deleteAccount(ctx, {
           throttleKeys: throttleKeysFor(deps.keyProvider), drainsRefunds: port !== null,
+          ...(port ? { billingOutcome: subscription } : {}),
         });
       } catch (err) {
         // "Not deleted" only once a read made after the failure finds no stamp: an answer lost after
         // the commit went out is a failure here and not a fact. A transaction the pool never began
         // is not asked. A committed erasure answers its receipt, without the counts it took along.
         const outcome = isDbBusy(err) ? "not_erased" : await erasureOutcome(ctx);
-        if (outcome !== "erased") throw erasureFailed(err, subscription, outcome);
+        if (outcome === "not_erased" || outcome === "unknown") throw erasureFailed(err, subscription, outcome);
+        return erasureReply(outcome === "erased");
       }
-      return sessionEnded(json(
-        {
-          erased: true,
-          ...(result === null ? {} : erasureCounts(result)),
-          // Said plainly rather than buried: the operator's own audit trail and the
-          // customer's confirmation mail both read from this. A host with no billing program
-          // keeps no billing records, so it names what it does keep.
-          retained: port ? RETAINED_METERED : RETAINED_UNMETERED,
-          subscription,
-        },
-        200,
-        cookieSurface(deps) ? clearSessionCookies() : [],
-      ));
+      return erasureReply(true, result);
     },
   },
 

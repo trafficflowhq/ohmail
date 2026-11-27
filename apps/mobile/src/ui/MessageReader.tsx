@@ -15,13 +15,15 @@ import { JUNK_REFILL_BOUND_MS, type WorldAttachment, type WorldEarlier, type Wor
 import { invitationNote, junkLeaving, mailboxStatusOf, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
 import {
-  ActivityIndicator, Animated, AppState, Easing, Linking, ScrollView, StyleSheet, useWindowDimensions, View,
+  ActivityIndicator, Animated, AppState, Easing, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, useWindowDimensions, View,
   type NativeScrollEvent, type NativeSyntheticEvent,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { mailSize } from "../theme/mail";
 import { MailAvatar } from "./MailAvatar";
+import { MailboxChip } from "./MailboxChip";
 import { useBodyStamp, useFilesStamp, useWorld, useWorldToast } from "../state/world";
 import { openConfirmedLink } from "../mail/frame-nav";
 import { beginMark, endMark } from "../engine/ui-marks";
@@ -35,10 +37,10 @@ import { MailFoundEvents, useMailFoundEvents } from "./MailFoundEvents";
 import { EventCards } from "./EventCard";
 import { MailBodyFrame } from "./MailBodyFrame";
 import { FadeOut } from "./FadeOut";
-import { replyOpen } from "./compose-route";
+import { replyOpen, type InlineComposeOpen } from "./compose-route";
 import { ComposeSheet, MessageActions, useReaderVerbMode } from "./MessageActions";
+import { keyboardLift, useKeyboardHeight } from "./keyboard-lift";
 import { SurfaceBoundary } from "./ErrorBoundary";
-import type { ReplyOpen } from "./compose-route";
 import { EmptiedLetter } from "./EmptiedLetter";
 import { AttachmentPreview, type PreviewFile } from "./AttachmentPreview";
 import { hasPaneScroll, panePlaceOf, paneScrollOf, recordPanePlace, recordPaneScroll } from "./pane-memory";
@@ -89,7 +91,8 @@ export function MessageReader({
   const t = useTheme();
   const w = useWorld();
   /* Below 360 dp the address takes its own line under the name (`FROM_LINE_SPLIT_DP`). */
-  const narrowFrom = useWindowDimensions().width < FROM_LINE_SPLIT_DP;
+  const window = useWindowDimensions();
+  const narrowFrom = window.width < FROM_LINE_SPLIT_DP;
   // The reader draws the body, so it subscribes to it: a body landing redraws this pane alone.
   useBodyStamp();
   const m = w.message(addressedId, wholeThread);
@@ -104,11 +107,15 @@ export function MessageReader({
   const phoneSheet = t.mail === true && !bare && verbMode === "compact";
   const found = useMailFoundEvents(m, phoneSheet);
   const eventWords = found?.rows.find((row) => row.sourceWords)?.sourceWords ?? undefined;
-  const [reply, setReply] = useState<{ reader: string; world: string; message: WorldMail; open: ReplyOpen } | null>(
+  const [reply, setReply] = useState<{ reader: string; world: string; message: WorldMail; open: InlineComposeOpen } | null>(
     () => runReply && m ? { reader: id, world: w.worldKey, message: m, open: replyOpen(w.actions.keptReply(m.id), "reply") } : null,
   );
   const inline = reply?.reader === id && reply.world === w.worldKey ? reply : null;
-  const revealed = useRef<typeof inline>(null);
+  const replyKeyboardHeight = useKeyboardHeight(inline !== null);
+  const { bottom: bottomInset } = useSafeAreaInsets();
+  const replyKeyboardLift = keyboardLift(Platform.OS, replyKeyboardHeight, bottomInset);
+  const replyDockMax = replyKeyboardHeight === 0 ? "76%"
+    : window.height - (Platform.OS === "android" ? replyKeyboardLift : replyKeyboardHeight) < 360 ? "85%" : "78%";
   const closeReply = () => setReply(null);
   const [detailsFor, setDetailsFor] = useState<string | null>(null);
   /** "Show as text" — this reading's own choice, per message; a new open renders rich again. */
@@ -197,7 +204,8 @@ export function MessageReader({
   const arrivedRef = useRef(false);
   arrivedRef.current = m ? readerGroups(m).below.some((h) => knewRef.current?.has(h.id) === false) : false;
   const padRef = useRef(0);
-  padRef.current = useListInsets().paddingBottom;
+  const normalFoot = useListInsets().paddingBottom;
+  padRef.current = inline === null ? normalFoot : mailSize.inset;
   /* A REPLY THAT ARRIVES INTO THE OPEN READER is asked its text, as the open asked every member it
      found: a snippet is never ready, and the rule could not read it however long it was on screen. */
   const hydrateHeld = w.actions.hydrateHeld;
@@ -596,7 +604,7 @@ export function MessageReader({
         )}
         <View style={{ flex: 1 }} />
         {inOhbox && markUnreadOffered({ read: h.seen, own: h.mine === true })
-          ? <MoreDots onPress={() => setMenuFor(h.id)} /> : null}
+          ? <MoreDots onPress={() => setMenuFor(h.id)} expanded={menuFor === h.id} /> : null}
         <Txt variant="caption" tone="ink3" tabular style={{ flexShrink: 0 }}>
           {h.time}
         </Txt>
@@ -666,14 +674,20 @@ export function MessageReader({
       )}
       {/* `.msg{padding:20px 20px 40px}` in the ≤900px block — the message needs
           air above the from-line, or the back bar reads as part of the mail. */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" enabled={inline !== null && Platform.OS === "ios"}>
+      <View style={{ flex: 1, paddingBottom: replyKeyboardLift }}>
       <View style={{ flex: 1, flexDirection: "row" }}>
       {/* The rail follows the letters in time order. */}
       {phoneSheet ? null : rail}
       <Scroller
         key={scrollKey}
         scrollRef={scrollRef}
-        avoidKeyboard={t.mail}
-        contentStyle={phoneSheet ? { paddingLeft: 0, paddingRight: 0 } : { paddingHorizontal: 0 }}
+        avoidKeyboard={inline === null && t.mail}
+        keyboardShouldPersistTaps="handled"
+        contentStyle={[
+          phoneSheet ? { paddingLeft: 0, paddingRight: 0 } : { paddingHorizontal: 0 },
+          inline ? { paddingBottom: mailSize.inset } : null,
+        ]}
         contentOffset={startAt}
         onScroll={onScroll}
         onScrollBeginDrag={() => { handOver(); seen.pin(null); markHold.drop(); }}
@@ -741,9 +755,9 @@ export function MessageReader({
             {/* Mark unread has one home: where the bar's read slot offers it, the head has no ⋯. */}
             {!phoneSheet && inOhbox && markUnreadOffered({ read: !m.unread, own: m.ownMail === true })
               && (verbMode === "rail" || !readSlotMarksUnread(m))
-              ? <MoreDots onPress={() => setMenuFor(m.id)} /> : null}
+              ? <MoreDots onPress={() => setMenuFor(m.id)} expanded={menuFor === m.id} /> : null}
             {phoneSheet && (m.recipients || m.html || (inOhbox && !m.unread && !m.ownMail))
-              ? <MoreDots onPress={() => setMenuFor(m.id)} /> : null}
+              ? <MoreDots onPress={() => setMenuFor(m.id)} expanded={menuFor === m.id} /> : null}
             <Txt variant="caption" tone="ink2" tabular style={{ flexShrink: 0 }}>
               {m.time}
             </Txt>
@@ -822,13 +836,7 @@ export function MessageReader({
             ) : null}
             {m.trackerNote ? <Chip icon="shield">{m.trackerNote}</Chip> : null}
             {m.amount ? <Chip>{m.amount}</Chip> : null}
-            {/* The delivery mailbox, in the reader's own chip grammar. A DELIVERY claim off
-                `mailboxId`, never a To/Cc read — this screen shows no recipients at all. */}
-            {m.mailboxLabel ? (
-              <Chip icon="route" style={{ maxWidth: "100%" }}>
-                {Copy.deliveredTo(m.mailboxLabel)}
-              </Chip>
-            ) : null}
+            {m.mailboxLabel ? <MailboxChip label={m.mailboxLabel} showDelivery /> : null}
             {/* The tags it carries — the row's capsules, the web reader's tag chips. */}
             {m.tags
               ? m.tags.map((tag) => (
@@ -934,36 +942,29 @@ export function MessageReader({
             </View>
           ) : null}
 
-          {inline ? (
-            <View style={{ marginTop: 12 }} onLayout={() => {
-              if (revealed.current === inline) return;
-              revealed.current = inline;
-              requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: !t.reduceMotion }));
-            }}>
-              <SurfaceBoundary surface="composer" frame="inline" onClose={closeReply}>
-                <ComposeSheet
-                  m={inline.message} mode={inline.open.compose} draft={inline.open.draft}
-                  replyAside={inline.open.aside} onClose={closeReply} inline doneOnSend={runReply !== undefined} run={runReply}
-                  inlineHeading={
-                    <View style={{ gap: 4, paddingHorizontal: mailSize.edge }}>
-                      <Txt variant="body">
-                        {inline.open.compose === "replyAll" && inline.message.replyAllHead
-                          ? Copy.replyToAll(inline.message.replyAllHead.to)
-                          : Copy.replyTo(inline.message.from.name)}
-                      </Txt>
-                      <Txt variant="rowSubject" numberOfLines={2}>{inline.message.subject}</Txt>
-                    </View>
-                  }
-                />
-              </SurfaceBoundary>
-            </View>
-          ) : null}
         </View>
       </Scroller>
       </View>
+      {inline ? (
+        <View style={{
+          maxHeight: replyDockMax, flexShrink: 1, paddingTop: mailSize.inset, backgroundColor: t.c.canvas,
+        }}>
+          <SurfaceBoundary surface="composer" frame="inline" onClose={closeReply}>
+            <ComposeSheet
+              m={inline.message} mode={inline.open.compose} onClose={closeReply} inline
+              {...(inline.open.compose === "forward" ? { forwardConfirmed: inline.open.confirmed }
+                : { draft: inline.open.draft, replyAside: inline.open.aside, offerDraftReply: inline.open.offerDraftReply })}
+              keyboardHeight={replyKeyboardHeight} doneOnSend={runReply !== undefined} run={runReply}
+              messageActions={{ message: m, record, onDeleted: onClose }}
+            />
+          </SurfaceBoundary>
+        </View>
+      ) : null}
+      </View>
+      </KeyboardAvoidingView>
       {/* A message's ⋯: Mark unread, for a read message that is not the account's own. It stays
           unread for the rest of this visit. */}
-      <Sheet open={menuFor !== null} onClose={() => setMenuFor(null)} label={Copy.readerMessageActions}>
+      <Sheet open={menuFor !== null} onClose={() => setMenuFor(null)} label={Copy.readerMessageActions} phoneMenu={phoneSheet}>
         {phoneSheet && menuFor === m.id && m.recipients ? (
           <SheetRow icon="person" label={Copy.readerRecipientDetails} onPress={() => {
             setMenuFor(null);
@@ -1306,9 +1307,10 @@ function ReaderRail({ items, here, over, onJump, marks, horizontal }: {
 }
 
 /** A message's ⋯, beside its stamp. */
-function MoreDots({ onPress }: { onPress: () => void }) {
+function MoreDots({ expanded, onPress }: { expanded: boolean; onPress: () => void }) {
   return (
-    <Tap accessibilityRole="button" accessibilityLabel={Copy.readerMessageActions} onPress={onPress} style={{ paddingHorizontal: 4 }}>
+    <Tap accessibilityRole="button" accessibilityLabel={Copy.readerMessageActions} accessibilityState={{ expanded }}
+      onPress={onPress} style={{ paddingHorizontal: 4 }}>
       <Txt variant="caption" tone="ink3">⋯</Txt>
     </Tap>
   );

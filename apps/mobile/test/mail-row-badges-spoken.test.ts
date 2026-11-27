@@ -250,7 +250,8 @@ describe("the census over the badges the row renders", () => {
     walk(sf);
     expect(call, "the row's accessibilityLabel is not a call").toBeDefined();
     expect(call?.expression.getText(sf)).toBe("mailRowSpoken");
-    expect(call?.arguments.map((a) => a.getText(sf))).toEqual(["m"]);
+    // The Paper Ohbox row passes its full group byline. All badge facts still come from the row.
+    expect(call?.arguments.map((a) => a.getText(sf))).toEqual(["m", "byline?.spokenName"]);
   });
 });
 

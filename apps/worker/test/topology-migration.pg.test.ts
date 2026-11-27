@@ -5,6 +5,7 @@ import postgres from "postgres";
 import { afterAll, describe, expect, it } from "vitest";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { CLOUD_JOURNAL, MAIL_JOURNAL, readJournalOf, runMigrations } from "@trafficflow/db/admin";
+import { brandDialect } from "@trafficflow/db/dialect";
 import { journalDrift, realPgAvailable, throwawayDb } from "@trafficflow/db/testing";
 import { journalThrough } from "../../../packages/db/src/testing-journal.js";
 import { FakeAdapterFleet } from "../../../packages/organizer/test/_fakeadapter.js";
@@ -44,7 +45,8 @@ describe.skipIf(!available)("worker topology on the migration path", () => {
           const head = readJournalOf(journal).find((entry) => entry.tag === tag)!;
           const cut = journalThrough(journal, head.when);
           try {
-            await migrate(drizzle(client), { migrationsFolder: cut.spec.dir, migrationsSchema: cut.spec.migrationsSchema });
+            const db = brandDialect(drizzle(client), "pg");
+            await migrate(db, { migrationsFolder: cut.spec.dir, migrationsSchema: cut.spec.migrationsSchema });
           } finally {
             cut.dispose();
           }

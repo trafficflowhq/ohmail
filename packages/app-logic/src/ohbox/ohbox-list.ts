@@ -6,7 +6,8 @@
 import { useMemo } from "react";
 import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import { useUnreadTurn } from "../reading/reader-seen.js";
-import { groupSenders, groupVoices, useGroupPeople, useOhboxGroups } from "./groups.js";
+import { useGroupPeople, useOhboxGroups } from "./groups.js";
+import { groupSenders, groupVoices } from "./people.js";
 import { useHold } from "./hold.js";
 import { ohboxKeys } from "./keys.js";
 import { useAfterVerbLanding } from "./landing.js";

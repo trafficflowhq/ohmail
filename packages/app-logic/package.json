@@ -802,6 +802,12 @@
       "node": "./dist/ohbox/ohbox-list.js",
       "default": "./src/ohbox/ohbox-list.ts"
     },
+    "./ohbox/people": {
+      "types": "./src/ohbox/people.ts",
+      "ohmail-source": "./src/ohbox/people.ts",
+      "node": "./dist/ohbox/people.js",
+      "default": "./src/ohbox/people.ts"
+    },
     "./phone": {
       "types": "./src/phone/index.ts",
       "ohmail-source": "./src/phone/index.ts",
@@ -1048,6 +1054,12 @@
       "node": "./dist/reader/letter-seams.js",
       "default": "./src/reader/letter-seams.ts"
     },
+    "./reader/mailbox-label": {
+      "types": "./src/reader/mailbox-label.ts",
+      "ohmail-source": "./src/reader/mailbox-label.ts",
+      "node": "./dist/reader/mailbox-label.js",
+      "default": "./src/reader/mailbox-label.ts"
+    },
     "./reader/remote-images": {
       "types": "./src/reader/remote-images.ts",
       "ohmail-source": "./src/reader/remote-images.ts",
@@ -1246,11 +1258,35 @@
       "node": "./dist/search/index.js",
       "default": "./src/search/index.ts"
     },
+    "./search/dates": {
+      "types": "./src/search/dates.ts",
+      "ohmail-source": "./src/search/dates.ts",
+      "node": "./dist/search/dates.js",
+      "default": "./src/search/dates.ts"
+    },
     "./search/open-target": {
       "types": "./src/search/open-target.ts",
       "ohmail-source": "./src/search/open-target.ts",
       "node": "./dist/search/open-target.js",
       "default": "./src/search/open-target.ts"
+    },
+    "./search/people": {
+      "types": "./src/search/people.ts",
+      "ohmail-source": "./src/search/people.ts",
+      "node": "./dist/search/people.js",
+      "default": "./src/search/people.ts"
+    },
+    "./search/place-inventory": {
+      "types": "./src/search/place-inventory.ts",
+      "ohmail-source": "./src/search/place-inventory.ts",
+      "node": "./dist/search/place-inventory.js",
+      "default": "./src/search/place-inventory.ts"
+    },
+    "./search/supplies": {
+      "types": "./src/search/supplies.ts",
+      "ohmail-source": "./src/search/supplies.ts",
+      "node": "./dist/search/supplies.js",
+      "default": "./src/search/supplies.ts"
     },
     "./session": {
       "types": "./src/session/index.ts",
@@ -1503,6 +1539,12 @@
       "ohmail-source": "./src/write/dropped-files.ts",
       "node": "./dist/write/dropped-files.js",
       "default": "./src/write/dropped-files.ts"
+    },
+    "./write/emoji": {
+      "types": "./src/write/emoji.ts",
+      "ohmail-source": "./src/write/emoji.ts",
+      "node": "./dist/write/emoji.js",
+      "default": "./src/write/emoji.ts"
     },
     "./write/files": {
       "types": "./src/write/files.ts",

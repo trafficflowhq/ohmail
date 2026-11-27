@@ -56,6 +56,30 @@ const wire = (fake: ReturnType<typeof mailServer>, method: string, path: string)
 const peer = [{ name: null, address: "peer@fake.test" }];
 
 describe("the phone can start a mail, not only answer one", () => {
+  it.each(["new", "reply", "forward"] as const)("sends one formatted signature with the %s body", async (mode) => {
+    const live = await scene((f) => f.addMessage(dto("m1")));
+    try {
+      const box = sendingMailboxId(live.engine.read());
+      const url = "https://example.test/contact";
+      const text = `Example team\nContact us (${url})`;
+      const html = `<p>Example team<br><a href="${url}">Contact us</a></p>`;
+      const words = "Our meeting time.";
+      const richBody = mode === "reply" ? "<p><strong>Our meeting time.</strong></p>" : undefined;
+      const send = mode === "new"
+        ? live.actions.sendNew(box, peer, "Hello", words, text, null, [], null, undefined, null, [], richBody, html)
+        : mode === "reply"
+          ? live.actions.sendReply("m1", words, false, text, null, [], false, null, null, [], richBody, html)
+          : live.actions.sendForward("m1", peer, words, text, [], false, false, null, {}, null, [], richBody, html);
+      expect((await send).outcome).toBe("sent");
+      const draft = JSON.parse(wire(live.fake, "POST", "/drafts")[0]!.body);
+      expect(draft.html).toBe((richBody ?? `<p>${words}</p>`) + html);
+      expect(draft.body).toBeUndefined();
+    } finally {
+      live.store.close();
+      live.fake.server.close();
+    }
+  });
+
   it("carries the typed envelope, the typed subject and the named mailbox — no parent", async () => {
     const live = await scene((f) => f.addMessage(dto("m1", { subject: "Welcome" })));
     const box = sendingMailboxId(live.engine.read());
@@ -205,7 +229,7 @@ describe("a new mail chooses the address it leaves from", () => {
     expect((await live.actions.sendNew(from.sendFrom, peer, "Hi", "Body", sig)).outcome).toBe("sent");
     const body = JSON.parse(wire(live.fake, "POST", "/drafts")[0]!.body) as { mailboxId: string; body: string };
     expect(body.mailboxId).toBe("mb-2");
-    expect(body.body).toContain("Second desk");
+    expect(body.body).toBe("Body\n\nSecond desk");
     expect(body.body).not.toContain("First desk");
     live.store.close();
     live.fake.server.close();
@@ -223,7 +247,7 @@ describe("a new mail chooses the address it leaves from", () => {
       mode: "new", messageId: null, mailboxId: from.keepFrom, to: peer, subject: "Later", body: "Words", files: 0,
       row: (r) => { kept = r.draftId; },
     })).toBe("kept");
-    expect((JSON.parse(wire(live.fake, "POST", "/drafts")[0]!.body) as { mailboxId: string }).mailboxId).toBe("mb-2");
+    expect(JSON.parse(wire(live.fake, "POST", "/drafts")[0]!.body)).toMatchObject({ mailboxId: "mb-2", body: "Words" });
     await live.engine.syncOnce();
     const draft = live.engine.read().get("draft", kept!) as { mailboxId: string } | undefined;
     expect(draft?.mailboxId).toBe("mb-2");
@@ -251,11 +275,11 @@ describe("the composer and the three navigation entries, in the structure idiom"
     expect(sheet).toContain('const fresh = mode === "new";');
     // THE CARET GOES TO THE FIELD THE MESSAGE IS MISSING. Measured on a device: the body's
     // unconditional autoFocus won, so a new mail opened with the cursor in the body under
-    // "Write your reply…" and the To field empty above it. Both halves are pinned, because
-    // either one alone is the defect: To takes focus only on a fresh mail, and the body
-    // yields it only there.
-    expect(sheet).toContain("autoFocus={fresh}");
-    expect(sheet).toContain("autoFocus={!fresh}");
+    // "Write your reply…" and the To field empty above it. To takes focus for a new mail
+    // or forward, and the reply body takes it when its recipient is already known.
+    expect(sheet).toContain("const addressed = fresh || forward;");
+    expect(sheet).toContain("autoFocus={fresh || forward}");
+    expect(sheet).toContain("autoFocus={!addressed && !offerDraftReply}");
     // And the writing area asks for a message, not a reply, when there is nothing to answer.
     expect(sheet).toMatch(/const bodyPlaceholder = fresh\s*\?\s*\(phoneLetter \? Copy\.composePaperPlaceholder : Copy\.composeBodyPlaceholder\)/);
     expect(sheet).toContain("Copy.composeSubject");
@@ -265,7 +289,8 @@ describe("the composer and the three navigation entries, in the structure idiom"
   it("every navigation entry opens the one route — dock, rail, the iOS pane foot", () => {
     expect(nav).toContain('router.push("/compose")');
     expect(nav).toContain("compose={compose}");
-    expect(dock).toContain("compose?: { label: string; onPress: () => void }");
+    expect(dock).toContain("compose?: DockAction;");
+    expect(dock).toContain('icon="pen" label={compose.label} onPress={compose.onPress}');
     /* The rail moved to the ROOT so it stands on the pushed screens too; its own fixed entry
        carries the same route, and the tab-bar slot yields the rail postures to it. */
     expect(rail).toContain('id: "__compose"');

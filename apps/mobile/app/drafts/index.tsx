@@ -61,23 +61,25 @@ function DraftsBody({ inPane }: { inPane: boolean }) {
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
       {inPane ? <PaneTop /> : theme.mail ? <TopBar /> : <DetailBar />}
-      <Scroller bounded refresh={pull}>
-        {theme.mail ? <ViewHead title={Copy.draftsTitle} leading={inPane ? undefined : <MailCalendarSwitch />} /> : (
-        <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
-          <Txt variant="h1">{Copy.draftsTitle}</Txt>
-          {/* A sentence, not a bare figure — and the held count is the fact this screen
-              exists for, so the head carries it where a person scans first. */}
-          <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-            {w.boot.settled
-              ? Copy.draftsMeta(
-                rows.length + scheduled.length,
-                rows.filter((r) => r.state === "held" || r.state === "interrupted").length,
-                rows.filter((r) => r.state === "waiting").length,
-              )
-              : " "}
-          </Txt>
-        </View>)}
-
+      <Scroller bounded refresh={pull} head={
+        <>
+          {theme.mail ? <ViewHead title={Copy.draftsTitle} leading={inPane ? undefined : <MailCalendarSwitch />} /> : (
+          <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
+            <Txt variant="h1">{Copy.draftsTitle}</Txt>
+            {/* A sentence, not a bare figure — and the held count is the fact this screen
+                exists for, so the head carries it where a person scans first. */}
+            <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
+              {w.boot.settled
+                ? Copy.draftsMeta(
+                  rows.length + scheduled.length,
+                  rows.filter((r) => r.state === "held" || r.state === "interrupted").length,
+                  rows.filter((r) => r.state === "waiting").length,
+                )
+                : " "}
+            </Txt>
+          </View>)}
+        </>
+      }>
         <Panel style={{ paddingBottom: 10, ...(theme.mail ? { shadowOpacity: 0, elevation: 0 } : {}) }}>
           {surface === "skeleton" ? (
             <View style={{ paddingHorizontal: 6, paddingTop: 8 }}>

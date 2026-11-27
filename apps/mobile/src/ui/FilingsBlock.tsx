@@ -18,11 +18,12 @@ import { filingsGroupSaid, filingsPressSaid, filingsWait, filingsWaiting } from 
  * web's `MailboxFilings` rule) — never from This phone's cards, which an account switch leaves on the
  * phone's own engine. A block pressed in this visit stays to say what the press did.
  */
-export function FilingsBlocks() {
+export function FilingsBlocks({ mailboxId }: { mailboxId?: string }) {
   const w = useWorld();
   const [pressed, setPressed] = useState<ReadonlySet<string>>(() => new Set());
   const onPressed = useCallback((id: string) => setPressed((p) => (p.has(id) ? p : new Set(p).add(id))), []);
-  const rows = w.mailboxes.rows.filter((m) => filingsWait(m) || (pressed.has(m.id) && m.status !== "disabled"));
+  const rows = w.mailboxes.rows.filter((m) => (!mailboxId || m.id === mailboxId) &&
+    (filingsWait(m) || (pressed.has(m.id) && m.status !== "disabled")));
   if (rows.length === 0) return null;
   return (
     <Panel style={{ paddingVertical: 14, paddingHorizontal: 20, marginBottom: 14, gap: 10 }}>

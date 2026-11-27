@@ -1,3 +1,4 @@
+import screenerLabels from "@ohmail/app/screener-labels.en.json";
 import { DRAFT_REPLY_COST_CREDITS } from "@ohmail/app-logic/writing/draft-reply";
 /**
  * Every string the chrome says, in one place — the phone's copy deck, in English. Blanc's rule
@@ -305,6 +306,15 @@ const TABLE = {
    */
   phoneThisPhone: "This phone",
   settingsAppearance: "Appearance",
+  settingsTheme: "Theme",
+  settingsMessages: "Messages",
+  settingsLookScope: "Apply look to",
+  settingsLookAllDevices: "All devices",
+  settingsLookThisDevice: "This device",
+  settingsLookFollowsOmarchy: "follows Omarchy",
+  settingsMailboxServer: "Your server",
+  settingsMailboxSynced: (when: string) => `Synced ${when}`,
+  settingsMailboxMessages: (count: number, formatted: string) => count === 1 ? "1 message" : `${formatted} messages`,
   settingsAi: "AI",
   settingsDevices: "Devices",
   settingsManageDevices: "Manage account devices",
@@ -318,6 +328,20 @@ const TABLE = {
   settingsAccount: "Account",
   settingsAbout: "About ohmail",
   settingsHelp: "Help & contact",
+  settingsMenuConnected: "Connected",
+  settingsMenuConnecting: "Connecting",
+  settingsMenuFull: "Full",
+  settingsMenuMailboxCount: (count: string, limit: string) => `${count} of ${limit}`,
+  settingsMenuScreenerDecided: "All decided",
+  settingsMenuScreenerWaiting: (count: string) => `${count} waiting`,
+  settingsMenuScreenerScreened: (count: string) => `${count} screened out`,
+  settingsMenuScreenerSpam: (count: string) => `${count} in Spam`,
+  settingsMenuCredits: (remaining: string) => `${remaining} credits left`,
+  settingsMenuCreditsMonth: (remaining: string, total: string) => `${remaining} of ${total} this month`,
+  settingsMenuCreditsTrial: (remaining: string, total: string) => `${remaining} of ${total} left`,
+  settingsMenuAwayEveryone: "Everyone",
+  settingsMenuAwayScreened: "People I’ve let in",
+  settingsMenuNone: "None",
   phoneStateOrganizing: "Organizing",
   phoneStateStopping: "Stopping",
   /* THE STOP THE MAIL SERVER HAS NOT HONOURED, which is neither of the two above. The person
@@ -1145,6 +1169,7 @@ const TABLE = {
   decideAria: (done: string, suggested: boolean) => `${done}${suggested ? ", suggested" : ""}`,
   decideReadAria: (done: string) => `${done}, and mark read`,
   ohboxTail: (shown: number) => `All ${shown} accepted message${shown === 1 ? "" : "s"} shown.`,
+  ohboxOlderMail: "Older mail",
   ohboxEmptyTitle: "Nothing here yet.",
   ohboxEmptyHint: "Mail from senders you said Yes to lands here as it syncs.",
   /* THE SAME EMPTY SCREEN OVER A MAILBOX THAT IS NOT EMPTY — the hint above says mail "lands here
@@ -1212,13 +1237,20 @@ const TABLE = {
    */
   destScreenOut: "Screen out",
   aiSuggests: (dest: string, confidence: number) => `${dest} · ${confidence.toFixed(2)}`,
+  screenerDestinationLabel: screenerLabels.screener.rowMoreAria,
+  screenerDestinationPrompt: screenerLabels.screener.place.nowhere,
+  screenerGoesTo: screenerLabels.screener.place.goes.split(" <slot>")[0]!.replace("{who} ", ""),
+  screenerScopeLabel: screenerLabels.screener.barScopeAria,
+  screenerScopeTitle: screenerLabels.screener.place.ruleFor,
+  screenerScopeSender: screenerLabels.screener.place.scopeSender,
+  screenerScopeDomain: screenerLabels.screener.place.scopeDomain,
   scopeSender: "this sender",
   scopeDomain: "whole domain",
-  decideRule: (target: string) =>
-    `Becomes a rule — future mail from ${target} files automatically. The ✓ half also marks this mail read.`,
+  decideRule: (target: string, paper = false) =>
+    `Becomes a rule — future mail from ${target} files automatically.${paper ? " The place menu also offers filing as read." : " The ✓ half also marks this mail read."}`,
   /** The same line where a screen-out files a list's claims alone (mail 0150): it writes no rule. */
-  decideRuleListClaim: (target: string) =>
-    `Ohbox, News and Receipts become a rule — future mail from ${target} files automatically. Screen out and Spam write no rule here. The ✓ half also marks this mail read.`,
+  decideRuleListClaim: (target: string, paper = false) =>
+    `Ohbox, News and Receipts become a rule — future mail from ${target} files automatically. Screen out and Spam write no rule here.${paper ? " The place menu also offers filing as read." : " The ✓ half also marks this mail read."}`,
   /**
    * WHAT SCREEN OUT AND SPAM SEND, BEFORE EITHER IS PRESSED (`unsubscribeClaim`): the sender-level
    * condition for waiting mail, a fact where a held letter offers one-click. `domain`: `@domain`.
@@ -1541,15 +1573,28 @@ const TABLE = {
      empty state offers (the web's own empty-state fix, mirrored). */
   searchFacetFrom: "From",
   searchFacetPlace: "Place",
+  searchPlaceScreened: "Screened",
+  searchPlaceSent: "Sent",
+  searchNobody: "Nobody",
   searchFacetAttachment: "Has attachment",
   searchFacetUnread: "Unread",
   searchTo: "To",
   searchAll: "All",
+  searchFewer: "Fewer",
+  searchPeople: "People",
+  searchPeopleFrom: (count: number) => `${count.toLocaleString("en")} from`,
+  searchPeopleTo: (count: number) => `${count.toLocaleString("en")} to`,
+  searchPeopleBoth: (from: number, to: number) => `${from.toLocaleString("en")} from · ${to.toLocaleString("en")} to`,
+  searchMailboxTotal: (count: number) => count === 1 ? "1 message" : `${count.toLocaleString("en")} messages`,
+  searchResults: "Results",
+  searchSortedBy: (order: string) => `Sorted by ${order}`,
   searchNameOrAddress: "Name or address",
   searchSince: "Since",
   searchUntil: "Until",
   searchApply: "Apply",
   searchDateWord: "Date",
+  searchDateFrom: (from: string) => `Since ${from}`,
+  searchDateThrough: (to: string) => `Until ${to}`,
   searchDateWeek: "This week",
   searchDateMonth: "This month",
   searchDateYear: "This year",
@@ -1580,6 +1625,8 @@ const TABLE = {
   draftAiYourText: "Your text",
   draftAiGenerated: "Draft",
   draftAiNeedWords: "Write a few words first.",
+  draftAiReply: "Draft reply",
+  draftAiReplyPriced: `Draft reply · ${DRAFT_REPLY_COST_CREDITS} credits`,
   draftAiConfirm: `Use ${DRAFT_REPLY_COST_CREDITS} credits`,
   draftAiOffer: `This writes a draft using ${DRAFT_REPLY_COST_CREDITS} credits. You can edit it before sending.`,
   draftAiFullTitle: "Use full conversation",
@@ -1592,6 +1639,8 @@ const TABLE = {
   composeFormatSelect: "Select text to format it.",
   composeEmoji: "Emoji",
   composeFileTools: "Attach",
+  composeRemoveRecipient: (name: string) => `Remove ${name}`,
+  composeRecipientRefused: (name: string) => `Not an address: ${name}`,
   replyRunSendNext: "Done → next",
   replyRunStart: "Reply Run",
   replyRunProgress: (step: number, total: number) => `${step} of ${total}`,
@@ -1604,19 +1653,42 @@ const TABLE = {
   readerCcLine: (names: string) => `cc ${names}`,
   mailCalendarInstall: "ohcal is the calendar app for the same account.",
   mailCalendarStore: "Open store",
+  mailCalendarWaiting: "Invitations are waiting",
   mailWrite: "Write",
+  drawerPullMail: "Pull new mail",
   searchSinceDate: "Since · YYYY-MM-DD",
   searchUntilDate: "Until · YYYY-MM-DD",
   screenSuggestions: "Suggestions",
+  screenChoose: "Choose",
+  screenChoosePlace: "Choose a place",
+  screenPlusUnsubscribe: "+ unsubscribe",
+  screenChooseUnsubSpam: "Spam and unsubscribe",
+  screenChooseUnsubScreened: "Screen out and unsubscribe",
+  screenChooseUnsubContinue: "Continue",
+  screenChooseUnsubFinal: "Once sent, it cannot be undone.",
+  screenChooseUnsubService: "The request goes from ohmail’s servers, never from your phone, so your address and reading times stay out of their logs.",
+  screenChooseUnsubComputer: "The request goes from your computer, so the sender sees its network address.",
+  screenChooseUnsubSender: (place: string, sender: string, certain: boolean) => certain
+    ? `${place}. ${sender} is still waiting. Later mail from them follows this rule. Confirming also sends them a one-click unsubscribe request for the waiting mail.`
+    : `${place}. ${sender} is still waiting. Later mail from them follows this rule. Confirming also asks to unsubscribe you if their waiting mail offers one-click unsubscribe.`,
+  screenChooseUnsubDomain: (place: string, domain: string, senders: number, certain: boolean) => {
+    const waiting = senders === 1 ? `1 sender at ${domain} is still waiting` : `${senders} senders at ${domain} are still waiting`;
+    return certain
+      ? `${place}. ${waiting}. Later mail follows the rule for the whole domain. Confirming sends one-click unsubscribe requests to the waiting senders who offer them.`
+      : `${place}. ${waiting}. Later mail follows the rule for the whole domain. Confirming also asks to unsubscribe you if the waiting senders offer one-click unsubscribe.`;
+  },
+  screenPlaceSuggested: (confidence: string) => `suggested ${confidence}`,
+  screenOutAndUnsubscribe: "Screen out and unsubscribe",
+  spamAndUnsubscribe: "Spam and unsubscribe",
   searchCustomDate: "Custom range",
   screenApplySuggestions: (n: number) => `Apply ${n} ${n === 1 ? "suggestion" : "suggestions"}`,
   screenBulkUnsubscribe: (n: number) => `Later mail goes too, with ${n} unsubscribe ${n === 1 ? "request" : "requests"} and no undo.`,
   searchPlaceholder: "Search",
   searchClear: "Clear search",
-  searchResultsLine: (n: number) => `Results. ${n}`,
   scheduledCount: (n: number) => `Scheduled. ${n}`,
   draftListCount: (n: number) => `Drafts. ${n}`,
-  streamToYouDetails: "to you · details",
+  streamYouAt: (address: string) => `you (${address})`,
+  streamFreshCount: (count: string) => `${count} new`,
   screenApplyShort: (n: number) => `Apply ${n}`,
   screenHeldShort: (n: number) => `${n} held`,
   searchResultsHead: (n: number) => (n === 1 ? "1 result" : `${n} results`),
@@ -2485,6 +2557,7 @@ const TABLE = {
   organizerStillWaitingUnknown: "Still waiting for the organizer.",
   /** The reply / forward composer (`reply.*`). */
   replyRecipientLabel: "To",
+  replyChangeRecipients: "Change recipients",
   replyTo: (name: string) => `Reply to ${name}`,
   replyToAll: (names: string) => `Reply to ${names}`,
   replyCcLine: (names: string) => `Cc ${names}`,
@@ -2698,9 +2771,9 @@ const TABLE = {
    */
   sendLater: "Send later",
   sendLaterWhat: "When should this message be sent?",
-  sendLaterTonight: (when: string) => `This evening (${when})`,
-  sendLaterTomorrow: (when: string) => `Tomorrow morning (${when})`,
-  sendLaterMonday: (when: string) => `Monday morning (${when})`,
+  sendLaterTonight: (when?: string) => when ? `This evening (${when})` : "This evening",
+  sendLaterTomorrow: (when?: string) => when ? `Tomorrow morning (${when})` : "Tomorrow morning",
+  sendLaterMonday: (when?: string) => when ? `Monday morning (${when})` : "Monday morning",
   sendLaterPick: "Pick a date and time",
   sendLaterClose: "Back",
   /**
@@ -2947,6 +3020,8 @@ const TABLE = {
    */
   draftsForwardOriginalAbsent:
     "The message this draft forwards isn't on this phone. Edit and send it from ohmail on the web or the desktop.",
+  draftsReplyOriginalAbsent:
+    "The message this draft answers isn't on this phone. Edit and send it from ohmail on the web or the desktop.",
   /** The Drafts card's verb: the composer opens bound to this row. */
   draftsEdit: "Edit",
   /** The card over a draft that left Drafts — sent, discarded or drained away while it was open. */
@@ -2968,6 +3043,8 @@ const TABLE = {
   sigLabel: "Signature",
   sigRemove: "Remove signature",
   sigAria: "Signature",
+  sigEditAsText: "Edit as text",
+  sigDoneEditing: "Done",
   /** The tag picker (`tag.*`). */
   tagPlaceholder: "Tag this message…",
   tagNone: "No tags yet.",

@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { exactAsked, positiveText, showSimilar, substringOpen, type SearchTier } from "@trafficflow/core/search-rank";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
-import { messageSearch, messages, passDone, poolKeyOf, readFlightOf } from "@trafficflow/db";
+import { messageSearch, messages, passDone, poolKeyOf, readFlightOf, type AccountRelations } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
 import { boolLiteral, dialect, orSidesOf, pgOnly, queryOperandsOf, partSidesOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
@@ -535,6 +535,7 @@ interface Branch {
   readonly doc?: true;
   /** This account's documents in the index `raw` reads: the word index's key, else the account. */
   readonly keyRead?: SQL;
+  readonly wordIndex?: boolean;
   /** `raw` asks several words, each in head or text: no one index's term, never read alone under the key. */
   readonly letter?: true;
   /** The part arm's branch over the head, whose letters the head arm reads and dates too ({@link SEARCH_SET_HEAD_WALK_FACTOR}). */
@@ -700,17 +701,30 @@ export class SearchService {
    * there states no index progress rather than a percentage that never moves. `localStore` for the
    * desktop's own store, whose exact-tier arms are each read within a bound ({@link localRead}).
    */
-  constructor(private readonly opts: { readonly indexFills: boolean; readonly localStore?: boolean } = { indexFills: true }) {}
+  constructor(private readonly opts: {
+    readonly indexFills: boolean;
+    readonly localStore?: boolean;
+    readonly relations?: AccountRelations;
+  } = { indexFills: true }) {
+    this.letters = sql.raw(opts.relations?.messages ?? "messages");
+    this.documents = sql.raw(opts.relations?.messageSearch ?? "message_search");
+    this.words = sql.raw(opts.relations?.messageSearchWords ?? "message_search");
+    // Index-driven arms choose the account's views on hosted stores. Hydration stays by table key.
+    this.from = sql`
+      from ${this.letters} m
+      left join ${this.documents} s on s.message_id = m.id
+      left join message_bodies b on b.message_id = m.id
+      left join folder_state fs on fs.message_id = m.id`;
+  }
 
-  /**
-   * The FROM every arm shares. The joins are 1:1 (each is unique per message), so no fan-out; a
-   * predicate on `s` makes its join inner, and `b` is only joined by a branch that reads it.
-   */
-  private readonly from = sql`
-    from messages m
-    left join message_search s on s.message_id = m.id
-    left join message_bodies b on b.message_id = m.id
-    left join folder_state fs on fs.message_id = m.id`;
+  private readonly letters: SQL;
+  private readonly documents: SQL;
+  private readonly words: SQL;
+  private readonly from: SQL;
+
+  private candidateDocuments(branch: Branch): SQL {
+    return branch.wordIndex ? this.words : this.documents;
+  }
 
   /** desiredFolder → native locator folder → INBOX (mirrors materializeMessage). */
   private readonly folderExpr = sql`coalesce(fs.desired_folder, m.native_locator->>'folder', 'INBOX')`;
@@ -732,7 +746,7 @@ export class SearchService {
       select folder, sum(n) as total
       from (
         select ${this.folderExpr} as folder, count(*) as n
-        from messages m
+        from ${this.letters} m
         left join folder_state fs on fs.message_id = m.id
         where ${this.whereSql(d, ctx.accountId, {})}
         group by ${this.folderExpr}
@@ -820,7 +834,7 @@ export class SearchService {
       documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred, doc: true, keyRead } : b;
     // A word branch's own documents on the account-keyed word index, where the server has it.
     const wordRead = d.name === "pg" && documents && store.words && this.opts.localStore !== true ? d.search.wordKey(ctx.accountId) ?? account : account;
-    const ownWords = (b: SearchArm): Branch => own(b, wordRead);
+    const ownWords = (b: SearchArm): Branch => ({ ...own(b, wordRead), wordIndex: wordRead !== account });
     if (tier === "similar") {
       // A guess never holds a word the reader excluded, anywhere in the letter.
       const held = (b: SearchArm, none: SQL | undefined): SearchArm => (none ? { pred: sql`(${b.pred} and ${none})`, rank: b.rank } : b);
@@ -854,7 +868,7 @@ export class SearchService {
     // text index answers whole (`alone`), and a group of several operands also as its letter, held.
     const keep = typed.excluded;
     const late = keep !== undefined && d.name === "pg" && documents && !local;
-    const exclude = late ? typed.excludedTerms?.map((t) => sql`select s.message_id as id from message_search s where ${wordRead} and ${t}`) : undefined;
+    const exclude = late ? typed.excludedTerms?.map((t) => sql`select s.message_id as id from ${wordRead === account ? this.documents : this.words} s where ${wordRead} and ${t}`) : undefined;
     const held = (b: Branch): Branch => (keep === undefined ? b : late ? { ...b, after: keep, ...(exclude ? { exclude } : {}) }
       : { ...b, pred: sql`(${b.pred} and ${keep})`, ...(b.raw ? { raw: sql`(${b.raw} and ${keep})` } : {}) });
     // A held branch takes no keyed set: the set's read asks no exclusion.
@@ -952,7 +966,7 @@ export class SearchService {
       if (stream === undefined || b.raw === undefined || b.keyRead === undefined) return indexed(b);
       const doc = sql`select ${rankOf(b)} as rank, ${keeps(b)} as kept from message_search s where s.message_id = w.id and ${b.pred}`;
       const walked = sql`(select v from bp) and ((select count(*) from bw) >= ${cut} or not ${stream.cut})`;
-      return sql`(with bl as materialized (select ${SearchService.fewMatches([sql`${b.keyRead} and ${b.raw}`], FOLDER_INDEX_CUTS * k)} as v),
+      return sql`(with bl as materialized (select ${this.fewMatches([b], FOLDER_INDEX_CUTS * k)} as v),
         bp as materialized (select count(*) >= ${Math.ceil(cut / SEARCH_EXCLUSION_WALK_FACTOR)} as v
           from (select id from ${stream.rows} where not (select v from bl) limit ${k}) w where exists (${doc} limit 1 offset 0)),
         bw as materialized (select w.id as id, w.date as date, h.rank as rank, h.kept from (select id, date from ${stream.rows} where (select v from bp)) w
@@ -1004,7 +1018,7 @@ export class SearchService {
     const rank = arm.ranked ? arm.branches[0]!.rank : sql`0`;
     // The document's own predicate by itself (`offset 0`), so its index serves it: with the account
     // beside it the planner reads the account's documents and filters each one's vector.
-    const docs = sql`select s.message_id as id, s.account_id as account, ${rank} as rank from message_search s
+    const docs = sql`select s.message_id as id, s.account_id as account, ${rank} as rank from ${this.documents} s
       where ${raw} offset 0`;
     const dated = sql`select m.date as date from messages m left join folder_state fs on fs.message_id = m.id
       where m.id = d.id and ${where} offset 0`;
@@ -1030,7 +1044,7 @@ export class SearchService {
       sql`(${sql.join(a.branches.map((b) => sql`(${b.raw ?? b.pred})`), sql` or `)}) as ${sql.raw("f" + String(i))}`,
       sql`${a.ranked ? a.branches[0]!.rank : sql`0`} as ${sql.raw("r" + String(i))}`,
     ] : []);
-    const newest = sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+    const newest = sql`select m.id as id, m.date as date from ${this.letters} m left join folder_state fs on fs.message_id = m.id
       where ${where} order by m.date desc nulls last, m.id desc limit ${SEARCH_PART_WALK_FACTOR * k}`;
     return sql`select w.id as id, w.date as date, h.* from (${newest}) w
       cross join lateral (select ${sql.join(cols, sql`, `)} from message_search s where s.message_id = w.id offset 0) h`;
@@ -1048,7 +1062,7 @@ export class SearchService {
     // again, a walk would read its whole bound before its first row.
     const skipped = (skip: number): SQL => (skip > 0 ? sql` offset ${skip}` : sql``);
     const newestOf = (n: number, skip = 0): SQL => (stream === undefined
-      ? sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+      ? sql`select m.id as id, m.date as date from ${this.letters} m left join folder_state fs on fs.message_id = m.id
       where ${where} order by m.date desc nulls last, m.id desc limit ${n}${skipped(skip)}`
       : sql`select id, date from ${stream.rows} limit ${n}${skipped(skip)}`);
     const inOrder = stream === undefined ? sql` order by w.date desc nulls last, w.id desc` : sql``;
@@ -1072,8 +1086,7 @@ export class SearchService {
     const hit = hitOf(branches.map(docOf));
     // The probe: the newest K asked first; a part too sparse there to fill the walk skips it, as do words with few
     // matches under a folder (`pl`, asked once), read off their index.
-    const counted = stream === undefined ? undefined : SearchService.fewMatches(branches.map((b) => (b.keyRead === undefined || b.raw === undefined
-      ? undefined : sql`${b.keyRead} and ${b.raw}`)), FOLDER_INDEX_CUTS * k);
+    const counted = stream === undefined ? undefined : this.fewMatches(branches, FOLDER_INDEX_CUTS * k);
     const few = counted === undefined ? undefined : sql`(select v from pl)`;
     const probed = sql`(select count(*) from (${newestOf(k)}) w where ${hit}) >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)}`;
     const dense = few === undefined ? probed : sql`not ${few} and ${probed}`;
@@ -1116,7 +1129,7 @@ export class SearchService {
     const first = key !== undefined && docOnly && branches.every((b) => b.keyRead !== undefined && b.letter === undefined) && !filteredWheres.has(where)
       ? this.firstRead(k, shared ? sql`pz` : sql`(select ${hitOf(branches.map((b) => (b.after === undefined ? (b.pos ?? docOf(b)) : docOf(b))), false)} as h
           from (${newestOf(SEARCH_FIRST_LETTERS)}) w) n`,
-        branches.map((b) => sql`select s.message_id as id from message_search s where ${b.keyRead!} and ${b.raw!}`), spare)
+        branches.map((b) => sql`select s.message_id as id from ${this.candidateDocuments(b)} s where ${b.keyRead!} and ${b.raw!}`), spare)
       : null;
     // Thin, or few under a folder: no walk, and the index reads answer.
     const skip = first === null ? few : first.thin;
@@ -1171,13 +1184,13 @@ export class SearchService {
       ...units.map((u) => sql`, ${col("pc", u)} as (select count(*) as n from ${u.set} where ${held})`),
       sql`, pq as materialized (select ${sql.join(units.map((u) => sql`count(*) filter (where (o.id in (select id from ${u.set})) is true)
           as ${col("q", u)}`), sql`, `)}
-        from (select m.id as id from messages m where ${where} order by m.date asc nulls first, m.id asc limit ${oldest}) o)`,
-      ...(late.length === 0 ? [] : [sql`, pe as materialized (select m.id as id from messages m where ${where} order by m.date desc nulls last, m.id desc limit ${bound})`]),
+        from (select m.id as id from ${this.letters} m where ${where} order by m.date asc nulls first, m.id asc limit ${oldest}) o)`,
+      ...(late.length === 0 ? [] : [sql`, pe as materialized (select m.id as id from ${this.letters} m where ${where} order by m.date desc nulls last, m.id desc limit ${bound})`]),
       sql`, pk as materialized (select ${sql.join(units.map((u) => sql`count(*) filter (where ${asked(u)}) as ${col("k", u)}`), sql`, `)}
         from ${late.length === 0 ? sql`pw` : sql`pe`} e)`,
       sql`, pj as materialized (select ${sql.join(units.map((u) => sql`count(*) filter (where (e.id in (select id from ${u.set})) is true)
           as ${col("j", u)}`), sql`, `)}
-        from (select m.id as id from messages m where ${where} order by m.date desc nulls last, m.id desc
+        from (select m.id as id from ${this.letters} m where ${where} order by m.date desc nulls last, m.id desc
           limit ${SEARCH_SET_NEXT_CUTS * k} offset ${bound}) e)`];
     const deep = late.map(({ b, i }) => (first === null ? sql`, ${pr(i)} as (select m.id as id, m.date as date ${this.from}
         where ${SearchService.docWhere(where, b)} and ${b.pred} and ${index} order by (m.date is null), m.date desc, m.id desc limit ${bound})`
@@ -1256,9 +1269,11 @@ export class SearchService {
    * Every one of `reads` (a document predicate under its index's key) has at most `cap` matches, each counted off
    * its index up to one more: a scalar. False where one has no key, as a branch over the older columns.
    */
-  private static fewMatches(reads: readonly (SQL | undefined)[], cap: number): SQL {
-    if (reads.length === 0 || reads.some((r) => r === undefined)) return sql`false`;
-    return sql`(${sql.join(reads.map((r) => sql`(select count(*) from (select 1 from message_search s where ${r!} limit ${cap + 1}) c) <= ${cap}`), sql` and `)})`;
+  private fewMatches(branches: readonly Branch[], cap: number): SQL {
+    if (branches.length === 0 || branches.some((b) => b.keyRead === undefined || b.raw === undefined)) return sql`false`;
+    return sql`(${sql.join(branches.map((b) => sql`(select count(*) from (
+      select 1 from ${this.candidateDocuments(b)} s where ${b.keyRead!} and ${b.raw!} limit ${cap + 1}
+    ) c) <= ${cap}`), sql` and `)})`;
   }
 
   /**
@@ -1298,7 +1313,7 @@ export class SearchService {
   private keyedRead(where: SQL, branches: readonly Branch[], k: number, key: SQL, newestOf: (n: number) => SQL, hit: SQL, matched: SQL): SQL {
     const minHits = Math.ceil((3 * k) / (2 * SEARCH_WALK_NEED_CUTS));
     const reach = SEARCH_WALK_NEED_CUTS * k;
-    const history = sql`select m.id as id, m.date as date from messages m where ${where} order by m.date desc nulls last, m.id desc`;
+    const history = sql`select m.id as id, m.date as date from ${this.letters} m where ${where} order by m.date desc nulls last, m.id desc`;
     const pw = sql`pw as (select w.id as id, w.date as date from (${history}
           limit (select case when h >= ${minHits} then (${3 * k * k} + 2 * h - 1) / (2 * h) else 0 end from pp)) w
         where ${hit} order by w.date desc nulls last, w.id desc limit ${k})`;
@@ -1308,7 +1323,7 @@ export class SearchService {
       union all
       select id, date, 0 as rank from (${matched}) pm where (select count(*) from pw) < ${k})`;
     }
-    const terms = branches.flatMap((b) => b.set!.map((t) => sql`select s.message_id as id from message_search s where ${key} and ${t}`));
+    const terms = branches.flatMap((b) => b.set!.map((t) => sql`select s.message_id as id from ${this.words} s where ${key} and ${t}`));
     const first = this.firstRead(k, sql`pz`, terms);
     // Thin: `pp` asks nothing, so `pw` walks nothing, `pf` is skipped and the set answers.
     const set = terms.map((_, i) => sql`select id from ${first.term(i)} where (select v from pr)`);
@@ -1363,7 +1378,7 @@ export class SearchService {
    */
   private setRead(where: SQL, from: SQL, size: SQL, n: number, k: number, probe: SetProbe, small?: SQL): SQL {
     const few = n;
-    const rel = folderWheres.has(where) ? sql`messages m left join folder_state fs on fs.message_id = m.id` : sql`messages m`;
+    const rel = folderWheres.has(where) ? sql`${this.letters} m left join folder_state fs on fs.message_id = m.id` : sql`${this.letters} m`;
     const member = (id: SQL): SQL => sql`(${id} in (select id from ${from})) is true`;
     const { reach, newestOf, oldestOf } = probe;
     // History newest or oldest first, within `limit` letters past `skip`, each asked whether it is a member.
@@ -1456,7 +1471,7 @@ export class SearchService {
   ): SQL {
     // Under a folder the walks read the tier's walk of it, in its order ({@link folderStream}).
     const newestOf = (n: SQL | number): SQL => (stream === undefined
-      ? sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+      ? sql`select m.id as id, m.date as date from ${this.letters} m left join folder_state fs on fs.message_id = m.id
       where ${where} order by m.date desc nulls last, m.id desc limit ${n}`
       : sql`select id, date from ${stream.rows} limit ${n}`);
     // Each walked message's document asked by itself (`offset 0`), so the walk streams in its order
@@ -1486,7 +1501,7 @@ export class SearchService {
       const deep = sql`${h} >= ${Math.ceil(k / SEARCH_TYPO_WALK_FACTOR)} and ${holds}`;
       const far = sql`select w.id as id, w.date as date from (select id, date from ${all} f limit ${SEARCH_TYPO_WALK_FACTOR * k}) w
         cross join lateral ${doc} where ${walkPred} and ${deep} limit ${k}`;
-      return sql`(with tg as materialized (select s.message_id as id from message_search s where ${guesses ?? b.pred}),
+      return sql`(with tg as materialized (select s.message_id as id from ${this.documents} s where ${guesses ?? b.pred}),
         tp as (select count(*) as h from ${asked(k)}), tw as (${far})
       select u.id, u.date, ${rank} as rank from (
         select id, date from tw where (select count(*) from tw) >= ${k}
@@ -1522,7 +1537,7 @@ export class SearchService {
         from (${newestOf(k)}) w left join lateral ${doc} on true cross join lateral (select ${candidate} as c) z),
       tf as materialized (select count(*) filter (where z.h) as h, count(*) filter (where z.c) as c
         from (select h, c from tz limit ${SEARCH_FIRST_LETTERS}) z),
-      tg as materialized (select s.message_id as id from message_search s where ${guesses ?? b.pred}),
+      tg as materialized (select s.message_id as id from ${this.documents} s where ${guesses ?? b.pred}),
       t0 as materialized (select id from tg where ${thin} limit ${page + 1}),
       ta as materialized (select ${thin} and (select count(*) from t0) <= ${page} as v),
       tp as (select count(*) as h from tz z where not ${few} and z.h), tw as (${walked}),
@@ -1553,10 +1568,10 @@ export class SearchService {
     const past = sql.raw(pre + "fx");
     const most = FOLDER_HISTORY_CUTS * k;
     const order = sql`m.date desc nulls last, m.id desc`;
-    const history = sql`select m.id as id, m.date as date from messages m where ${parts.rest} order by ${order}`;
+    const history = sql`select m.id as id, m.date as date from ${this.letters} m where ${parts.rest} order by ${order}`;
     return {
       named: sql`${rows} as materialized (select w.id as id, w.date as date, w.n as n from (select m.id as id, m.date as date,
-          row_number() over (order by ${order}) as n from messages m where ${parts.rest} order by ${order} limit ${most}) w where ${parts.of(sql`w.id`)}),
+          row_number() over (order by ${order}) as n from ${this.letters} m where ${parts.rest} order by ${order} limit ${most}) w where ${parts.of(sql`w.id`)}),
         ${cut} as materialized (select exists (select 1 from (${history} limit 1 offset ${most}) x) as v),
         ${past} as materialized (select w.id as id, w.date as date from (${history} offset ${most}) w where ${parts.of(sql`w.id`)})`,
       at: { rows, cut: sql`(select v from ${cut})`, past },
@@ -1676,7 +1691,7 @@ export class SearchService {
     const e = this.fusedArms(d, where, this.arms(ctx, d, q, "exact", built), "exact", limit);
     const none = sql`${empty} and not (${e.cutRow})`;
     const s = this.fusedArms(d, where, this.arms(ctx, d, q, "similar", built), "similar", limit, { prefix: "s", gate: none });
-    const marker = sql`select m.id as id, m.date as date, 0 as score, 2 as t from messages m left join folder_state fs on fs.message_id = m.id
+    const marker = sql`select m.id as id, m.date as date, 0 as score, 2 as t from ${this.letters} m left join folder_state fs on fs.message_id = m.id
       where ${where} and ${empty} and (${e.cutRow}) order by m.date desc nulls last, m.id desc limit 1`;
     const score = d.castInt(sql`sum(${sql.raw(String(RRF_SCALE))} / (${sql.raw(String(RRF_K))} + r))`);
     const rows = await materializePage(db as Db, ctx.accountId, {
@@ -1818,7 +1833,7 @@ export class SearchService {
       : sql`exists (select 1 from messages m left join message_search s on s.message_id = m.id
           left join message_bodies b on b.message_id = m.id where m.id = w.id and (${sql.join(branches.map((b) => b.pred), sql` or `)}) limit 1 offset 0)`;
     // The History index either way. A filter is asked of the letters walked, whatever it keeps.
-    const newest = sql`select m.id as id, m.date as date from messages m where ${from}
+    const newest = sql`select m.id as id, m.date as date from ${this.letters} m where ${from}
           order by m.date desc nulls last, m.id desc limit ${NEWEST_WALK}`;
     const walked = filteredWheres.has(where)
       ? sql`select n.id as id, n.date as date from (${newest}) n join messages m on m.id = n.id left join folder_state fs on fs.message_id = m.id where ${at}`
@@ -2021,7 +2036,7 @@ export class SearchService {
   private docsOf(where: SQL, b: Branch, n: number, gate?: SQL): SQL {
     const g = gate === undefined ? sql`` : sql` and ${gate}`;
     return b.raw !== undefined && b.keyRead !== undefined
-      ? sql`select s.message_id as id from message_search s where ${b.keyRead} and ${b.raw}${g} limit ${n}`
+      ? sql`select s.message_id as id from ${this.candidateDocuments(b)} s where ${b.keyRead} and ${b.raw}${g} limit ${n}`
       : sql`select m.id as id ${this.from} where ${where} and ${b.pred}${g} limit ${n}`;
   }
 
@@ -2176,7 +2191,7 @@ export class SearchService {
     const base = this.whereSql(d, accountId, dates);
     const any = (x: SearchFilters): boolean => Object.values(x).some((v) => v !== undefined);
     const present = PERSON_FILTERS.filter((k) => rest[k] !== undefined);
-    const read = (pred: SQL): SQL => sql`select m.id as id from messages m where ${pred} limit ${PERSON_FEW + 1}`;
+    const read = (pred: SQL): SQL => sql`select m.id as id from ${this.letters} m where ${pred} limit ${PERSON_FEW + 1}`;
     const from = (a: string): SQL => read(sql`m.account_id = ${accountId} and lower(m.from_address) = lower(${a})`);
     const to = (a: string): SQL => read(d.search.recipient({ accountId, address: a }));
     const count = (ids: SQL): SQL => sql`(select count(*) from (${ids}) c)`;
@@ -2227,13 +2242,13 @@ export class SearchService {
     const upTo = (v: number, k: number): SQL => (p.limitGates ? sql`(case when ${pick} = ${sql.raw(String(v))} then ${k} else 0 end)` : sql`${k}`);
     // The k-th letter of the mailbox's walk under `base`, gated by the pick or not.
     const nth = (base: SQL, k: number, gated: boolean): SQL =>
-      sql`select m.id as id, m.date as date from messages m where ${base}${gated ? gate(0) : sql``} order by ${order} limit 1 offset ${k}`;
+      sql`select m.id as id, m.date as date from ${this.letters} m where ${base}${gated ? gate(0) : sql``} order by ${order} limit 1 offset ${k}`;
     // Past the walk's bound: is there a letter it did not ask? Counts are exact only where there is none.
     const beyond = p.asked === null ? sql`0` : sql`(case when exists (${nth(p.base, FILTERED_SCAN, true)}) then 1 else 0 end)`;
     if (p.asked === null) {
       return {
         with: null, pick, tail: null, last: () => null, beyond,
-        rows: sql`select m.id as id, m.date as date, 0 as pick from messages m where ${at} order by ${order} limit ${n}`,
+        rows: sql`select m.id as id, m.date as date, 0 as pick from ${this.letters} m where ${at} order by ${order} limit ${n}`,
       };
     }
     const tail = nth(at, FILTERED_SCAN - 1, true);
@@ -2241,7 +2256,7 @@ export class SearchService {
     // Each walked letter is asked the filters once, in the row the walk reads. Asked again by its id it
     // cost a second read of the letter, three index pages and its heap page: 82,571 buffers for a page
     // of 20,000 letters walked to keep 40.
-    const letters = (cond: SQL): SQL => sql`select m.id as id, m.date as date, (${p.asked}) as hit from messages m
+    const letters = (cond: SQL): SQL => sql`select m.id as id, m.date as date, (${p.asked}) as hit from ${this.letters} m
         where ${cond}${gate(0)} order by ${order} limit ${FILTERED_SCAN}`;
     // After a dated cursor the walk starts at it: the dated letters by an index condition, then the undated, which
     // lie after every dated one, merged in History's order. Under the keyset alone, a filter, every letter before
@@ -2260,7 +2275,7 @@ export class SearchService {
     const whole = p.persons.map((_, i) => sql`when ${count(i)} <= ${PERSON_FEW} then ${sql.raw(String(i + 1))}`);
     const counts = p.persons.map((x, i) => sql`${sql.raw(`n${i}`)} as (select ${x.count} as n)`);
     const fw = sql.join([...counts, sql`fw as (select case ${sql.join(whole, sql` `)} else 0 end as pick)`], sql`, `);
-    const reads = p.persons.map((x, i) => sql`select id, date from (select m.id as id, m.date as date from messages m
+    const reads = p.persons.map((x, i) => sql`select id, date from (select m.id as id, m.date as date from ${this.letters} m
       where ${at} and ${x.own}${x.rest === null ? sql`` : sql` and ${x.rest}`}${gate(i + 1)}
       order by ${own} limit ${upTo(i + 1, n)}) ${sql.raw(`o${i}`)}`);
     // Ordered and cut once more, so no store flattens the union into the page's join.

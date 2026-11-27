@@ -284,11 +284,15 @@ export {
   type ChangeLogPruneResult,
 } from "./retention.js";
 
+export {
+  expiredFingerprintAccounts, pruneSendFingerprints, SEND_FINGERPRINT_PRUNE_BATCH, SEND_FINGERPRINT_RETENTION_MS,
+} from "./send-fingerprints.js";
+
 /* A spend that bought nothing, as a durable obligation (cloud 0036). CLOUD-ONLY, and the writers
  * reach it through `RefundObligationPort` for the reason `api_faults` does: the table does not
  * exist in a local install and the drafting path is inside the desktop engine's import closure. */
 export {
-  recordRefundObligation, settleRefundObligation, claimRefundObligations,
+  recordRefundObligation, settleRefundObligation, claimRefundObligations, dueRefundObligations,
   noteRefundObligationFault, pendingRefundObligations, refundObligationsOn,
   REFUND_OBLIGATION_LEASE_MS, REFUND_OBLIGATION_BATCH,
   type ClaimedRefundObligation,

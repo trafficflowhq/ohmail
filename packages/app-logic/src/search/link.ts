@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { filterOf, folderKeyOf, NONE_PRESSED, type Pressed } from "./facets.js";
+import { filterOf, NONE_PRESSED, type Pressed } from "./facets.js";
+import { folderKeyOf } from "./place-inventory.js";
 import { dayBounds, type SearchNarrowing } from "./question.js";
 import type { Translator } from "../text/translator.js";
 import type { SearchListInput } from "./types.js";

@@ -1,3 +1,4 @@
+import screenerLabels from "@ohmail/app/screener-labels.de.json";
 import { DRAFT_REPLY_COST_CREDITS } from "@ohmail/app-logic/writing/draft-reply";
 /**
  * Der Kopie-Satz des Handys auf Deutsch — the phone's copy deck, in German. `Deck` is derived
@@ -215,6 +216,15 @@ export const DE: Deck = {
   /* Die fünf Zustandslabels sind die des Desktops, Byte für Byte. */
   phoneThisPhone: "Dieses Handy",
   settingsAppearance: "Darstellung",
+  settingsTheme: "Erscheinungsbild",
+  settingsMessages: "Nachrichten",
+  settingsLookScope: "Aussehen anwenden auf",
+  settingsLookAllDevices: "Alle Geräte",
+  settingsLookThisDevice: "Dieses Gerät",
+  settingsLookFollowsOmarchy: "richtet sich nach Omarchy",
+  settingsMailboxServer: "Dein Server",
+  settingsMailboxSynced: (when: string) => `Synchronisiert ${when}`,
+  settingsMailboxMessages: (count: number, formatted: string) => count === 1 ? "1 Nachricht" : `${formatted} Nachrichten`,
   settingsAi: "KI",
   settingsDevices: "Geräte",
   settingsManageDevices: "Geräte des Accounts verwalten",
@@ -228,6 +238,20 @@ export const DE: Deck = {
   settingsAccount: "Dein Account",
   settingsAbout: "Über ohmail",
   settingsHelp: "Hilfe & Kontakt",
+  settingsMenuConnected: "Verbunden",
+  settingsMenuConnecting: "Verbindet",
+  settingsMenuFull: "Voll",
+  settingsMenuMailboxCount: (count: string, limit: string) => `${count} von ${limit}`,
+  settingsMenuScreenerDecided: "Alle entschieden",
+  settingsMenuScreenerWaiting: (count: string) => `${count} warten`,
+  settingsMenuScreenerScreened: (count: string) => `${count} aussortiert`,
+  settingsMenuScreenerSpam: (count: string) => `${count} im Spam`,
+  settingsMenuCredits: (remaining: string) => `Noch ${remaining} Credits`,
+  settingsMenuCreditsMonth: (remaining: string, total: string) => `Noch ${remaining} von ${total} diesen Monat`,
+  settingsMenuCreditsTrial: (remaining: string, total: string) => `Noch ${remaining} von ${total}`,
+  settingsMenuAwayEveryone: "Alle",
+  settingsMenuAwayScreened: "Zugelassene Personen",
+  settingsMenuNone: "Keine",
   phoneStateOrganizing: "Organisiert",
   phoneStateStopping: "Wird beendet",
   phoneStateStopPending: "Stopp ausstehend",
@@ -806,6 +830,7 @@ export const DE: Deck = {
     shown === 1
       ? "Die eine angenommene Nachricht wird gezeigt."
       : `Alle ${shown} angenommenen Nachrichten werden gezeigt.`,
+  ohboxOlderMail: "Ältere Mails",
   ohboxEmptyTitle: "Hier ist noch nichts.",
   ohboxEmptyHint: "Mails von Absendern, zu denen du Ja gesagt hast, landen hier, sobald sie synchronisiert sind.",
   ohboxEmptyNothingReadable:
@@ -858,12 +883,19 @@ export const DE: Deck = {
   segSpam: "Spam",
   destScreenOut: "Aussortieren",
   aiSuggests: (dest: string, confidence: number) => `${dest} · ${confidence.toFixed(2)}`,
+  screenerDestinationLabel: screenerLabels.screener.rowMoreAria,
+  screenerDestinationPrompt: screenerLabels.screener.place.nowhere,
+  screenerGoesTo: screenerLabels.screener.place.goes.split(" <slot>")[0]!.replace("{who} ", ""),
+  screenerScopeLabel: screenerLabels.screener.barScopeAria,
+  screenerScopeTitle: screenerLabels.screener.place.ruleFor,
+  screenerScopeSender: screenerLabels.screener.place.scopeSender,
+  screenerScopeDomain: screenerLabels.screener.place.scopeDomain,
   scopeSender: "dieser Absender",
   scopeDomain: "ganze Domain",
-  decideRule: (target: string) =>
-    `Wird zur Regel: Künftige Mails von ${target} werden automatisch einsortiert. Die ✓-Hälfte markiert diese Mails außerdem als gelesen.`,
-  decideRuleListClaim: (target: string) =>
-    `Ohbox, News und Belege werden zur Regel: Künftige Mails von ${target} werden automatisch einsortiert. Aussortieren und Spam schreiben hier keine Regel. Die ✓-Hälfte markiert diese Mails außerdem als gelesen.`,
+  decideRule: (target: string, paper = false) =>
+    `Wird zur Regel: Künftige Mails von ${target} werden automatisch einsortiert.${paper ? " Im Ortsmenü kannst du auch als gelesen ablegen." : " Die ✓-Hälfte markiert diese Mails außerdem als gelesen."}`,
+  decideRuleListClaim: (target: string, paper = false) =>
+    `Ohbox, News und Belege werden zur Regel: Künftige Mails von ${target} werden automatisch einsortiert. Aussortieren und Spam schreiben hier keine Regel.${paper ? " Im Ortsmenü kannst du auch als gelesen ablegen." : " Die ✓-Hälfte markiert diese Mails außerdem als gelesen."}`,
   decideUnsub: (claim: UnsubSaid, target: string, domain: boolean) =>
     domain
       ? claim === "sends"
@@ -1095,15 +1127,28 @@ export const DE: Deck = {
   /* SUCHE — der `search`-Namespace des Web-Katalogs, wo die Fläche dieselbe ist. */
   searchFacetFrom: "Von",
   searchFacetPlace: "Ort",
+  searchPlaceScreened: "Aussortiert",
+  searchPlaceSent: "Gesendet",
+  searchNobody: "Niemand",
   searchFacetAttachment: "Mit Anhang",
   searchFacetUnread: "Ungelesen",
   searchTo: "An",
   searchAll: "Alle",
+  searchFewer: "Weniger",
+  searchPeople: "Personen",
+  searchPeopleFrom: (count: number) => `${count.toLocaleString("de")} von`,
+  searchPeopleTo: (count: number) => `${count.toLocaleString("de")} an`,
+  searchPeopleBoth: (from: number, to: number) => `${from.toLocaleString("de")} von · ${to.toLocaleString("de")} an`,
+  searchMailboxTotal: (count: number) => count === 1 ? "1 Nachricht" : `${count.toLocaleString("de")} Nachrichten`,
+  searchResults: "Treffer",
+  searchSortedBy: (order: string) => `Sortiert nach ${order}`,
   searchNameOrAddress: "Name oder Adresse",
   searchSince: "Seit",
   searchUntil: "Bis",
   searchApply: "Anwenden",
   searchDateWord: "Datum",
+  searchDateFrom: (from: string) => `Seit ${from}`,
+  searchDateThrough: (to: string) => `Bis ${to}`,
   searchDateWeek: "Diese Woche",
   searchDateMonth: "Diesen Monat",
   searchDateYear: "Dieses Jahr",
@@ -1134,6 +1179,8 @@ export const DE: Deck = {
   draftAiYourText: "Dein Text",
   draftAiGenerated: "Erstellter Entwurf",
   draftAiNeedWords: "Schreib zuerst ein paar Wörter.",
+  draftAiReply: "Antwort entwerfen",
+  draftAiReplyPriced: `Antwort entwerfen · ${DRAFT_REPLY_COST_CREDITS} Guthabenpunkte`,
   draftAiConfirm: `${DRAFT_REPLY_COST_CREDITS} Credits verwenden`,
   draftAiOffer: `Der Entwurf kostet ${DRAFT_REPLY_COST_CREDITS} Credits. Du kannst ihn vor dem Senden bearbeiten.`,
   draftAiFullTitle: "Ganze Unterhaltung verwenden",
@@ -1146,6 +1193,8 @@ export const DE: Deck = {
   composeFormatSelect: "Wähle den Text aus, den du formatieren möchtest.",
   composeEmoji: "Emojis",
   composeFileTools: "Anhängen",
+  composeRemoveRecipient: (name: string) => `${name} entfernen`,
+  composeRecipientRefused: (name: string) => `Keine Adresse: ${name}`,
   replyRunSendNext: "Erledigt → weiter",
   replyRunStart: "Antwortrunde",
   replyRunProgress: (step: number, total: number) => `${step} von ${total}`,
@@ -1158,19 +1207,42 @@ export const DE: Deck = {
   readerCcLine: (names: string) => `Kopie an ${names}`,
   mailCalendarInstall: "ohcal ist die Kalender-App für denselben Account.",
   mailCalendarStore: "Store öffnen",
+  mailCalendarWaiting: "Einladungen warten",
   mailWrite: "Schreiben",
+  drawerPullMail: "Neue Mails abrufen",
   searchSinceDate: "Seit · JJJJ-MM-TT",
   searchUntilDate: "Bis · JJJJ-MM-TT",
   screenSuggestions: "Vorschläge",
+  screenChoose: "Wählen",
+  screenChoosePlace: "Ort wählen",
+  screenPlusUnsubscribe: "+ abmelden",
+  screenChooseUnsubSpam: "Spam und abmelden",
+  screenChooseUnsubScreened: "Aussortieren und abmelden",
+  screenChooseUnsubContinue: "Weiter",
+  screenChooseUnsubFinal: "Einmal gesendet, lässt sich das nicht rückgängig machen.",
+  screenChooseUnsubService: "Die Anfrage geht von den Servern von ohmail aus, nie von deinem Telefon, so bleiben deine Adresse und deine Lesezeiten aus ihren Protokollen.",
+  screenChooseUnsubComputer: "Die Anfrage geht von deinem Computer aus, so sieht der Absender seine Netzwerkadresse.",
+  screenChooseUnsubSender: (place: string, sender: string, certain: boolean) => certain
+    ? `${place}. Spätere Mails von ${sender} werden nach dieser Regel einsortiert. Beim Bestätigen schickt ohmail in deinem Namen eine Ein-Klick-Abmeldung für die wartenden Mails.`
+    : `${place}. Spätere Mails von ${sender} werden nach dieser Regel einsortiert. Bieten die wartenden Mails eine Ein-Klick-Abmeldung an, schickt ohmail beim Bestätigen eine Abmeldeanfrage in deinem Namen.`,
+  screenChooseUnsubDomain: (place: string, domain: string, senders: number, certain: boolean) => {
+    const waiting = senders === 1 ? `1 Absender bei ${domain} wartet noch` : `${senders} Absender bei ${domain} warten noch`;
+    return certain
+      ? `${place}. ${waiting}. Spätere Mails werden nach der Regel für die gesamte Domain einsortiert. Beim Bestätigen schickt ohmail in deinem Namen Ein-Klick-Abmeldungen an die wartenden Absender, die diese anbieten.`
+      : `${place}. ${waiting}. Spätere Mails werden nach der Regel für die gesamte Domain einsortiert. Bieten die wartenden Absender Ein-Klick-Abmeldung an, schickt ohmail beim Bestätigen Abmeldeanfragen in deinem Namen.`;
+  },
+  screenPlaceSuggested: (confidence: string) => `vorgeschlagen ${confidence}`,
+  screenOutAndUnsubscribe: "Aussortieren und abmelden",
+  spamAndUnsubscribe: "Spam und abmelden",
   searchCustomDate: "Eigener Zeitraum",
   screenApplySuggestions: (n: number) => `${n} ${n === 1 ? "Vorschlag" : "Vorschläge"} übernehmen`,
   screenBulkUnsubscribe: (n: number) => `Spätere Mails gehen auch dorthin. ${n === 1 ? "Eine Abmeldeanfrage wird gesendet" : `${n} Abmeldeanfragen werden gesendet`} und lässt sich nicht rückgängig machen.`,
   searchPlaceholder: "Suchen",
   searchClear: "Suche leeren",
-  searchResultsLine: (n: number) => `Treffer. ${n}`,
   scheduledCount: (n: number) => `Geplant. ${n}`,
   draftListCount: (n: number) => `Entwürfe. ${n}`,
-  streamToYouDetails: "an dich · Details",
+  streamYouAt: (address: string) => `dich (${address})`,
+  streamFreshCount: (count: string) => `${count} neu`,
   screenApplyShort: (n: number) => `Anwenden ${n}`,
   screenHeldShort: (n: number) => `${n} zurückgehalten`,
   searchResultsHead: (n: number) => (n === 1 ? "Ein Treffer" : `${n} Treffer`),
@@ -1795,6 +1867,7 @@ export const DE: Deck = {
   organizerStillWaitingUnknown: "Warte weiterhin auf den Organizer.",
 
   replyRecipientLabel: "An",
+  replyChangeRecipients: "Empfänger ändern",
   replyTo: (name: string) => `Antwort an ${name}`,
   replyToAll: (names: string) => `Antwort an ${names}`,
   replyCcLine: (names: string) => `Kopie an ${names}`,
@@ -1962,9 +2035,9 @@ export const DE: Deck = {
 
   sendLater: "Später senden",
   sendLaterWhat: "Wann soll diese Nachricht gesendet werden?",
-  sendLaterTonight: (when: string) => `Heute Abend (${when})`,
-  sendLaterTomorrow: (when: string) => `Morgen früh (${when})`,
-  sendLaterMonday: (when: string) => `Montagmorgen (${when})`,
+  sendLaterTonight: (when?: string) => when ? `Heute Abend (${when})` : "Heute Abend",
+  sendLaterTomorrow: (when?: string) => when ? `Morgen früh (${when})` : "Morgen früh",
+  sendLaterMonday: (when?: string) => when ? `Montagmorgen (${when})` : "Montagmorgen",
   sendLaterPick: "Datum und Uhrzeit wählen",
   sendLaterClose: "Zurück",
   sendLaterPast: "Diese Zeit ist vorbei. Wähle eine Zeit in der Zukunft.",
@@ -2106,6 +2179,8 @@ export const DE: Deck = {
   draftsEditNoteHere: "Dieser Entwurf lässt sich auf diesem Handy nicht bearbeiten. Verwerfen kannst du ihn hier.",
   draftsForwardOriginalAbsent:
     "Die Nachricht, die dieser Entwurf weiterleitet, ist nicht auf diesem Handy. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
+  draftsReplyOriginalAbsent:
+    "Die Nachricht, die dieser Entwurf beantwortet, ist nicht auf diesem Handy. Bearbeiten und senden kannst du ihn in ohmail im Web oder auf dem Desktop.",
   draftsEdit: "Bearbeiten",
   draftsRowGone: "Dieser Entwurf ist nicht mehr in den Entwürfen.",
   draftsTextHeading: "Nachricht",
@@ -2114,6 +2189,8 @@ export const DE: Deck = {
   sigLabel: "Signatur",
   sigRemove: "Signatur entfernen",
   sigAria: "Signatur",
+  sigEditAsText: "Als Text bearbeiten",
+  sigDoneEditing: "Fertig",
 
   tagPlaceholder: "Diese Nachricht taggen …",
   tagNone: "Noch keine Tags.",

@@ -33,11 +33,13 @@ export interface ListTouchProps {
   readonly scroller: RefObject<HTMLElement | null>;
   /** No swipe starts while this holds (a selection stands). Read at the claim. */
   readonly off?: boolean;
+  /** A stream has previews with sideways scrolling instead of row swipe actions. */
+  readonly rowSwipe?: boolean;
   /** The list's pull, or none: then the layer has no pull and no room for one. */
   readonly pull: ListPull | None;
   /** The end of the run below the rows, the glass's inset (the Ohbox's); a list that ends on its own sheet says no. */
   readonly run?: boolean;
-  readonly children: ReactNode;
+  readonly children?: ReactNode;
 }
 
 /** A row's swipe, for the kit's row: undefined where no finger swipes (a mouse, or no list's layer above). */

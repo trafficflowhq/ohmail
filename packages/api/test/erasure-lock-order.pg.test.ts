@@ -588,36 +588,34 @@ describe.skipIf(!PG_UP)("DELETE /account parked before DELETE users, against a w
 });
 
 /**
- * WRITERS OUTSIDE THE FENCE, against the erasure parked inside step 7 past every credential delete
- * (a third connection holds an invitation bound to the user's address, which the redaction updates).
- * Each lands a row keyed to the user with no transaction of its own, so no account row stops it. Its
- * row used to land there and `DELETE users` refused (23503) after the subscription release, a 500.
- * Step 7 now holds the user rows FOR UPDATE: the writer's key check waits on them, and is refused
- * once the users are gone.
+ * A third connection holds the invitation row, parking erasure before it deletes the user.
+ * A verification resend waits at the account fence. A pairing token waits on its user foreign
+ * key and is refused when the user is gone.
  */
 const mailing = (spy: SpyMailer) => makeAuthService(makeTestAuthDeps({}, new MailService({
   mailer: spy, config: { appUrl: "https://ohmail.app", siteUrl: "https://ohmail.app", supportEmail: "support@ohmail.app" },
   throttleKeys: throttleKeysFor(makeTestAuthDeps().keyProvider),
 })));
 
-const OUTSIDE: Array<[string, ParkWriter, string]> = [
+const STEP_SEVEN_WRITERS: Array<[string, ParkWriter, string, string]> = [
   // Its answer is `{ ok: true }` either way, by design: what it did is whether a link was mailed.
   ["the verification resend (a link keyed to the user)", async (h, p) => {
     const spy = new SpyMailer();
     await mailing(spy).resendVerification(asUser(h, p));
     return spy.sent.length === 0 ? "mailed nothing" : "mailed a link";
-  }, "mailed nothing"],
-  ["a pairing token minted without a session (keyed to its creator)", (h, p) =>
-    mintPairingToken(ctxOn(h, { userId: p.userId, accountId: p.accountId }), { grant: "device-pair", label: "fix026 phone" }), "23503"],
+  }, "mailed nothing", "accounts FOR SHARE"],
+  ["a pairing token minted without a session (keyed to its creator)", (h, p) => {
+    return mintPairingToken(ctxOn(h, { userId: p.userId, accountId: p.accountId }), { grant: "device-pair", label: "fix026 phone" });
+  }, "23503", "users FOR KEY SHARE"],
 ];
 
 describe.skipIf(!PG_UP)("DELETE /account parked inside step 7, against a writer outside the fence", () => {
-  for (const [label, writer, refused] of OUTSIDE) {
+  for (const [label, writer, refused, waited] of STEP_SEVEN_WRITERS) {
     it(label, async () => {
       const r = await parked(label, none, writer, "invites");
       expect({ route: r.route, erased: r.erased, erasureEnded: r.erasureEnded, writer: r.writer, waited: r.writerWaitedOn },
         `reading: ${JSON.stringify(r)}`).toEqual({
-        route: "200 erased cancelled", erased: true, erasureEnded: [], writer: refused, waited: "users FOR KEY SHARE",
+        route: "200 erased cancelled", erased: true, erasureEnded: [], writer: refused, waited,
       });
     }, 60_000);
   }

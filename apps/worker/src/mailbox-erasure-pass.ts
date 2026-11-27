@@ -1,5 +1,5 @@
-import { and, asc, eq, isNotNull, isNull, type SQL } from "drizzle-orm";
-import { clearErasedSettingsHashes, clearErasedSignatures, eraseOwedMailbox, mailboxes, type Tx } from "@trafficflow/db";
+import { and, asc, eq, gt, isNotNull, isNull, notExists, type SQL } from "drizzle-orm";
+import { accounts, eraseOwedMailbox, mailboxes, readDrainCursor, repairFinishedMailboxErasure, writeDrainCursor, type Tx } from "@trafficflow/db";
 import { mailboxStorageStats } from "@trafficflow/db/cloud";
 import { dialect } from "@trafficflow/db/dialect";
 
@@ -35,11 +35,19 @@ interface MailboxErasurePassResult {
 
 export async function mailboxErasurePass(
   db: Tx,
-  opts: { now: () => Date; shard?: SQL | undefined; clock?: () => number },
+  opts: {
+    now: () => Date;
+    shard?: SQL | undefined;
+    clock?: () => number;
+    forAccount?: (id: string) => Tx;
+    repairKey?: string;
+  },
 ): Promise<MailboxErasurePassResult> {
   const clock = opts.clock ?? Date.now;
   const started = clock();
-  const where = [isNotNull(mailboxes.erasedAt), isNull(mailboxes.erasureDoneAt)];
+  const accountErased = db.select({ id: accounts.id }).from(accounts)
+    .where(and(eq(accounts.id, mailboxes.accountId), isNotNull(accounts.erasedAt)));
+  const where = [isNotNull(mailboxes.erasedAt), isNull(mailboxes.erasureDoneAt), notExists(accountErased)];
   if (opts.shard) where.push(opts.shard);
   const owed = await db.select({ id: mailboxes.id, accountId: mailboxes.accountId })
     .from(mailboxes).where(and(...where))
@@ -49,13 +57,13 @@ export async function mailboxErasurePass(
 
   const out: MailboxErasurePassResult = {
     mailboxes: 0, steps: 0, finished: 0, messagesErased: 0,
-    signaturesCleared: await clearErasedSignatures(db, opts.shard),
-    settingsHashesCleared: await clearErasedSettingsHashes(db, opts.shard),
+    signaturesCleared: 0, settingsHashesCleared: 0,
   };
   const spent = (): boolean => clock() - started >= MAILBOX_ERASURE_PASS_BUDGET_MS;
   for (const r of queue) {
     if (out.steps >= MAILBOX_ERASURE_STEPS_PER_PASS || spent()) break;
-    const run = await eraseOwedMailbox(db, dialect(db), {
+    const bound = opts.forAccount?.(r.accountId) ?? db;
+    const run = await eraseOwedMailbox(bound, dialect(bound), {
       accountId: r.accountId, mailboxId: r.id, now: opts.now,
       maxSteps: MAILBOX_ERASURE_STEPS_PER_PASS - out.steps, until: spent,
     });
@@ -66,9 +74,29 @@ export async function mailboxErasurePass(
       out.finished += 1;
       // The storage estimate's snapshot of it goes with it (cloud 0057); a crash before this line
       // leaves a row the next snapshot of the account deletes, and no reader joins an erased mailbox.
-      await db.delete(mailboxStorageStats)
+      await bound.delete(mailboxStorageStats)
         .where(and(eq(mailboxStorageStats.accountId, r.accountId), eq(mailboxStorageStats.mailboxId, r.id)));
     }
+  }
+  if (spent()) return out;
+  // The roster can see finished tombstones. Only the account handle can see their audit evidence.
+  const repairPass = opts.repairKey === undefined ? null : `mailbox_erasure_repair:${opts.repairKey}`;
+  const after = repairPass === null ? null : (await readDrainCursor(db, repairPass))?.messageId ?? null;
+  const finished = await db.select({ id: mailboxes.id, accountId: mailboxes.accountId })
+    .from(mailboxes).where(and(isNotNull(mailboxes.erasureDoneAt), opts.shard, after ? gt(mailboxes.id, after) : undefined))
+    .orderBy(asc(mailboxes.id)).limit(OWED_READ);
+  for (const r of finished) {
+    if (spent()) return out;
+    const repaired = await repairFinishedMailboxErasure(opts.forAccount?.(r.accountId) ?? db, r.accountId, r.id);
+    out.signaturesCleared += repaired.signaturesCleared;
+    out.settingsHashesCleared += repaired.settingsHashesCleared;
+    if (repairPass !== null) {
+      const now = opts.now();
+      await writeDrainCursor(db, repairPass, { at: now, messageId: r.id }, now);
+    }
+  }
+  if (repairPass !== null && after !== null && finished.length < OWED_READ) {
+    await writeDrainCursor(db, repairPass, null, opts.now());
   }
   return out;
 }

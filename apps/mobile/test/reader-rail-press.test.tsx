@@ -29,6 +29,9 @@ const native = vi.hoisted(() => ({
   asked: [] as number[],
   /** A scroll asked is not reached while set: the view stays where it stands. */
   stuck: false,
+  keyboardHeight: 0,
+  bottomInset: 0,
+  onKeyboardHide: null as (() => void) | null,
 }));
 
 vi.mock("react-native", async () => {
@@ -37,6 +40,14 @@ vi.mock("react-native", async () => {
   const View = (props: any) => React.createElement("div", { "data-rn": "View", "data-test": props.testID, ref: keep(props) }, props.children);
   return {
     View,
+    KeyboardAvoidingView: View,
+    Keyboard: {
+      metrics: () => native.keyboardHeight ? { height: native.keyboardHeight } : undefined,
+      addListener: (name: string, fn: () => void) => {
+        if (name === "keyboardDidHide") native.onKeyboardHide = fn;
+        return { remove: () => { if (native.onKeyboardHide === fn) native.onKeyboardHide = null; } };
+      },
+    },
     Text: (props: any) => React.createElement("span", null, props.children),
     ScrollView: (props: any) => React.createElement("div", { "data-rn": "RailScroll", ref: keep(props) }, props.children),
     Animated: {
@@ -54,7 +65,7 @@ vi.mock("react-native", async () => {
   };
 });
 
-vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, left: 0, right: 0, bottom: 0 }) }));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, left: 0, right: 0, bottom: native.bottomInset }) }));
 vi.mock("../src/ui/base", async () => {
   const React = await import("react");
   const keep = (props: any) => (el: any) => { if (el) el.__props = props; };
@@ -162,13 +173,26 @@ vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
 const verbs = vi.hoisted(() => ({
   mode: "compact" as "compact" | "bar" | "rail",
   targets: null as { forward: string; reply: string | null } | null,
+  forwardInline: null as (() => void) | null,
+  filingScope: undefined as boolean | undefined,
+  inlineFilingScope: undefined as boolean | undefined,
 }));
 vi.mock("../src/ui/MessageActions", () => ({
-  MessageActions: ({ m, replyTo }: { m: { id: string }; replyTo?: { id: string } | null }) => {
+  MessageActions: ({ m, replyTo, onInlineReply, exactFiling }: {
+    exactFiling?: boolean;
+    m: { id: string }; replyTo?: { id: string } | null;
+    onInlineReply?: (m: { id: string }, open: { compose: "forward"; confirmed: boolean }) => void;
+  }) => {
+    verbs.filingScope = exactFiling;
     verbs.targets = { forward: m.id, reply: replyTo === undefined ? m.id : replyTo?.id ?? null };
+    verbs.forwardInline = onInlineReply ? () => onInlineReply(m, { compose: "forward", confirmed: true }) : null;
     return null;
   },
-  ComposeSheet: ({ inlineHeading }: { inlineHeading?: ReactNode }) => h("div", { "data-compose": "" }, inlineHeading),
+  ComposeSheet: ({ m, mode, forwardConfirmed, messageActions }: { messageActions?: { exactFiling?: boolean }; m: { subject: string; from: { name: string } }; mode: string; forwardConfirmed?: boolean }) => {
+    verbs.inlineFilingScope = messageActions?.exactFiling;
+    return h("div", { "data-compose": "", "data-from": m.from.name, "data-subject": m.subject, "data-mode": mode,
+      "data-forward-confirmed": forwardConfirmed ? "yes" : "no" });
+  },
   useReaderVerbMode: () => verbs.mode,
 }));
 vi.mock("../src/ui/posture", () => ({ usePosture: () => ({}) }));
@@ -242,6 +266,9 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "Date"] });
   native.offset = 0; native.content = 0; native.view = 640; native.events = []; native.asked = []; native.stuck = false;
+  native.keyboardHeight = 0;
+  native.bottomInset = 0;
+  native.onKeyboardHide = null;
   verbs.mode = "compact";
   world.paper = false;
   verbs.targets = null;
@@ -259,13 +286,35 @@ afterEach(() => {
   root = null;
   vi.useRealTimers();
 });
-const mountReader = (id: string, selectMember = false, runReply?: React.ComponentProps<typeof MessageReader>["runReply"]) => {
+const mountReader = (id: string, selectMember = false, runReply?: React.ComponentProps<typeof MessageReader>["runReply"], wholeThread = false) => {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = client.createRoot(host);
-  act(() => root!.render(h(MessageReader, { id, selectMember, runReply })));
+  act(() => root!.render(h(MessageReader, { id, selectMember, runReply, wholeThread })));
   return host;
 };
+
+it.each(["Search", "Ohbox"])("keeps conversation filing in the reader and inline menu from %s", (place) => {
+  world.paper = true;
+  world.mail = mailOf("opened", [memberOf("earlier", "Lena")]);
+  mountReader("opened", false, undefined, place === "Ohbox");
+  expect.soft(verbs.filingScope).not.toBe(true);
+  act(() => verbs.forwardInline!());
+  expect(verbs.inlineFilingScope).not.toBe(true);
+});
+
+it("shows known delivery below the reader title and before the letter", () => {
+  world.paper = true;
+  const label = "Customer enquiries";
+  world.mail = { ...mailOf("opened", []), mailboxLabel: label };
+  const reader = mountReader("opened");
+  const chip = all(reader).find((node) => node.__props?.accessibilityLabel === Copy.deliveredTo(label))!;
+  expect(chip?.textContent).toBe(Copy.deliveredTo(label));
+  const subject = [...reader.querySelectorAll("span")].find((node) => node.textContent === "Q3 plan")!;
+  const body = reader.querySelector('[data-text="body of opened"]')!;
+  expect(subject.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(chip.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
 
 describe("the reader's reply and forward targets", () => {
   beforeEach(() => {
@@ -300,14 +349,55 @@ describe("the reader's reply and forward targets", () => {
   });
 });
 
-it("names the reply audience and subject at the inline reply in the reader", () => {
+it("passes the reply's audience and subject from the reader to its composer", () => {
   world.paper = true;
   world.mail = mailOf("opened", []);
   const el = mountReader("opened", false, { at: "opened", step: 1, total: 1, skip: () => undefined, exit: () => undefined });
   const editor = el.querySelector("[data-compose]");
   expect(editor).not.toBeNull();
-  expect(editor!.textContent).toContain(Copy.replyTo("Ben"));
-  expect(editor!.textContent).toContain("Q3 plan");
+  expect(editor!.getAttribute("data-from")).toBe("Ben");
+  expect(editor!.getAttribute("data-subject")).toBe("Q3 plan");
+});
+
+it("keeps the thread's scrolling surface above the docked reply", () => {
+  world.paper = true;
+  world.mail = mailOf("opened", [memberOf("older", "Alex")]);
+  const el = mountReader("opened", false, { at: "opened", step: 1, total: 1, skip: () => undefined, exit: () => undefined });
+  const editor = el.querySelector("[data-compose]")!;
+  const history = el.querySelector('[data-rn="ScrollView"]')!;
+  expect(history.textContent).toContain("Alex");
+  expect(history.contains(editor)).toBe(false);
+  expect(history.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("keeps the conversation above a confirmed inline forward of the viewed message", () => {
+  world.paper = true;
+  world.mail = mailOf("opened", [memberOf("older", "Alex")]);
+  const el = mountReader("opened");
+  act(() => verbs.forwardInline!());
+  const editor = el.querySelector('[data-mode="forward"]')!;
+  const history = el.querySelector('[data-rn="ScrollView"]')!;
+  expect(editor.getAttribute("data-forward-confirmed")).toBe("yes");
+  expect(editor.getAttribute("data-from")).toBe("Ben");
+  expect(history.textContent).toContain("Alex");
+  expect(history.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it.each(["reply", "forward"] as const)("docks the %s above Android's keyboard and its navigation bar", (mode) => {
+  world.paper = true;
+  world.mail = mailOf("opened", []);
+  // The stock IME covers the last 331 dp of this window. React Native reports
+  // 283 dp of typing surface and the three-button navigation inset is 48 dp.
+  native.keyboardHeight = 283;
+  native.bottomInset = 48;
+  const run = { at: "opened", step: 1, total: 1, skip: () => undefined, exit: () => undefined };
+  const el = mountReader("opened", false, mode === "reply" ? run : undefined);
+  if (mode === "forward") act(() => verbs.forwardInline!());
+  const composer = el.querySelector<El>(`[data-mode="${mode}"]`)!;
+  const dockRoom = composer.parentElement?.parentElement as El;
+  expect(dockRoom.__props?.style?.paddingBottom).toBe(331);
+  act(() => native.onKeyboardHide!());
+  expect(dockRoom.__props?.style?.paddingBottom).toBe(0);
 });
 
 type Slop = { top: number; bottom: number; left: number; right: number };

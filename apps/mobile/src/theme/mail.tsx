@@ -7,18 +7,27 @@ import { nativePaperType, paperMailType } from "./type";
 import { useMailFonts } from "./mail-fonts";
 
 const paper = design.faces.paper.light;
+const phone = design.faces.paper.phone;
 export const calendarMark = "#2953FF";
 const px = (value: string) => Number.parseFloat(value);
 export const mailSize = {
   avatar: px(paper.av),
   avatarBadge: px(paper["av-xs"]),
   edge: px(paper.s4),
+  rowSquareSlots: px(paper["sq-slots"]),
+  rowSquareGap: px(paper["sq-gap"]),
+  rowSquareMore: px(paper["sq-more"]),
   inset: px(paper.s2),
   rowInset: px(paper.s1),
+  menuRowHeight: px(design.faces.paper.phone["h-l"]),
+  menuRowInset: px(design.faces.paper.phone.s3),
   sheetRadius: px(paper["r-sheet"]),
+  group: px(paper.group),
   bar: px(paper["h-xl"]),
   back: px(paper["sheet-back-height"]),
   action: px(paper["h-m"]),
+  touchAction: px(design.faces.paper.touch["h-m"]),
+  headingSheetGap: (px(phone.head) - px(phone["h-m"]) - px(phone.s3) + px(phone.s1)) / 2,
   dot: 12,
   row: px(paper.row) + px(paper.s4),
 };

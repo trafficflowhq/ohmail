@@ -17,32 +17,26 @@
  * read slot's two words) and the message menu's (`tm("menuForward")`, `tm("menuReplyAll")`); the
  * Web contact menu supplies Screening. The chooser's rows are `t("resurface.now")` and its time field `t("resurface.time")`. The regexes lift
  * exactly those keys out of the source and name each one as today's bar and the phone's deck name it
- * (`verb.<x>` is `action<X>`, `resurface.<x>` is `resurface<X>`, `menu<X>` is `action<X>`; the two
- * the reader's catalogue renamed are in {@link RENAMED}), so a verb ADDED to the web panel turns this
+ * (`verb.<x>` is `action<X>`, `resurface.<x>` is `resurface<X>`, `menu<X>` is `action<X>`,
+ * with exceptions in {@link RENAMED}), so a verb ADDED to the web panel turns this
  * suite red on the phone that lacks it: the settings-parity idiom: the web file is the source of
- * truth and this file has no list of verbs of its own to go stale. The AI drafter has left the panel
- * for Write's reply sheet (`packages/app/src/write/draft/Draft.tsx`, `t("draft.verb")`), where the
- * documented gap's web side is read.
+ * truth and this file has no list of verbs of its own to go stale. Write's reply sheet supplies
+ * Draft reply (`packages/app/src/write/draft/Draft.tsx`, `t("draft.verb")`).
  *
  * WHAT PARITY MEANS HERE, checked per derived key:
  *   1. the phone's copy deck (`src/copy.ts`) HAS the verb;
- *   2. its wording EQUALS the webapp catalogue's (`messages/en.json`) — same names, not
- *      near-misses (the phone ships one locale, English, mirroring the canonical deck; a
- *      second locale arrives with a phone i18n mechanism, which does not exist yet);
+ *   2. its English wording matches the web catalogue (`messages/en.json`);
  *   3. the message screen's action surface actually REFERENCES it — reachable, not just
- *      defined. (Placement is the phone's own idiom — bar + sheets — and is not asserted.)
+ *      defined. The mounted tests check placement.
  *
- * THE ONE DOCUMENTED GAP rides {@link GAPS} with its evidence, and the guard holds the gap
- * honest from both sides: the webapp must still carry the verb (else the entry is stale) and
- * the phone must NOT render a control for it (a button wired to nothing is worse than an
- * absent one — `app/message/[id].tsx`'s own rule).
+ * The mounted phone draft-reply and reader menu tests also check the offer's capability gate.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { within } from "@testing-library/react";
 import { computeAccessibleName } from "dom-accessibility-api";
-import { Copy } from "../src/copy";
+import { Copy, DECKS } from "../src/copy";
 import { MOVE_TARGETS } from "../src/state/live";
 
 const at = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -61,10 +55,11 @@ let screening: string | undefined;
 const replySheet = read("../../../packages/app/src/write/draft/Draft.tsx");
 const en = JSON.parse(read("../../webapp/messages/en.json")) as Record<string, Record<string, unknown>>;
 
-/** The two keys the reader's catalogue renamed from today's bar, by the name today's bar and the phone's deck give them. */
+/** Catalogue keys whose phone names differ from the derived name. */
 const RENAMED: Record<string, string> = {
   "reader:verb.aside": "actionSetAside",
   "reader:resurface.cancel": "moveCancel",
+  "write:draft.verb": "draftAiReply",
 };
 const cap = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
@@ -102,36 +97,23 @@ function webappVerbKeys(): Set<string> {
 }
 
 /** The web string a derived key resolves to. */
-function webappLabel(key: string): string | undefined {
+function webappLabel(key: string, catalogue = en): string | undefined {
   if (key === "SCREENING") return screening;
   const path = webappVerbs().get(key);
   if (path === undefined) return undefined;
   const [ns, dotted] = path.split(":") as [string, string];
-  let at: unknown = en[ns];
+  let at: unknown = catalogue[ns];
   for (const part of dotted.split(".")) at = (at as Record<string, unknown> | undefined)?.[part];
   return typeof at === "string" ? at : undefined;
 }
 
-/** The phone's name for a derived key — identity within ohbox; the two foreign namespaces map. */
+/** Map the web reader and menu verbs to the labels used by phone controls. */
 function mobileKey(key: string): string {
   if (key === "SCREENING") return "actionScreening";
   if (key === "FORWARD") return "actionForward";
+  if (key === "actionDraftReply") return "draftAiReply";
   return key;
 }
-
-/**
- * VERBS THE PHONE DOES NOT CARRY, each with the evidence for why — the reachable set ships,
- * the unreachable one is a recorded gap, never a dead button.
- */
-const GAPS: Record<string, string> = {
-  // The AI drafter is a shell machine, not an engine verb: the offer/price/confirm ceremony is
-  // apps/webapp/app/shell/draft-reply.ts (openOffer → POST /messages/:id/draft with the AI
-  // consent state from consent-state.ts), the route is called by the shell's own fetch — there
-  // is no EngineMutation for it, and the phone's network access is confined to the engine seam
-  // (test/privacy.test.ts). Porting the drafter means porting the consent + credits surface;
-  // until then the verb is absent rather than fake.
-  actionDraftReply: "apps/webapp/app/shell/draft-reply.ts — shell fetch + AI consent ceremony, no engine mutation",
-};
 
 /* ── the phone's action surface ───────────────────────────────────────────────────────────── */
 
@@ -191,10 +173,20 @@ describe("the message screen carries the webapp's verbs", () => {
     expect(keys.has("actionMove")).toBe(true);
     expect(keys.has("SCREENING")).toBe(true);
     expect(keys.has("FORWARD")).toBe(true);
+    expect(keys.has("draftAiReply")).toBe(true);
+  });
+
+  it("the documented gaps are still honest on both sides", () => {
+    // The reader and the writing offer now share a reachable Draft reply control in both languages.
+    const de = JSON.parse(read("../../webapp/messages/de.json")) as typeof en;
+    for (const [locale, catalogue] of [["en", en], ["de", de]] as const) {
+      expect(webappLabel("actionDraftReply", catalogue)).toBe(DECKS[locale].draftAiReply);
+      expect(webappLabel("draftAiReply", catalogue)).toBe(DECKS[locale].draftAiReply);
+    }
+    expect(controlLabels.has("draftAiReply")).toBe(true);
   });
 
   for (const key of [...webappVerbKeys(), "SCREENING"].sort()) {
-    if (GAPS[key]) continue;
     const mk = mobileKey(key);
     it(`${key} — named identically and reachable on the phone (Copy.${mk})`, () => {
       const label = (Copy as Record<string, unknown>)[mk];
@@ -209,16 +201,6 @@ describe("the message screen carries the webapp's verbs", () => {
       ).toBe(true);
     });
   }
-
-  it("the documented gaps are still honest on both sides", () => {
-    const keys = webappVerbKeys();
-    for (const key of Object.keys(GAPS)) {
-      // The webapp still carries the verb — otherwise this entry is stale and must go.
-      expect(keys.has(key), `${key} left the webapp bar; drop it from GAPS`).toBe(true);
-      // And the phone renders no control for it — an absent verb, never a dead one.
-      expect(mobileSources.includes(mobileKey(key))).toBe(false);
-    }
-  });
 });
 
 describe("the move destinations are the webapp's", () => {

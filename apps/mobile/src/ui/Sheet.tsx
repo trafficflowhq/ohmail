@@ -1,27 +1,31 @@
 /**
- * THE BOTTOM SHEET AND ITS ROWS — the phone's one disclosure idiom, shared by every surface
- * that needs a menu (`MessageActions.tsx`, `FoldersGroup.tsx`). A popover has nowhere honest
- * to anchor on a phone, so the panel rises where the thumb is and the backdrop dismisses it.
- * EVERY SHEET CARRIES A WAY OUT ON THE PANEL: the backdrop is the modal panel's sibling, so
- * assistive technology never sees it, and a sheet of verbs alone read as six buttons and no
- * exit on the Duo. A CancelRow or a dismissing row of the sheet's own is the invariant
- * (`test/sheet-has-a-cancel.test.ts`).
+ * Shared disclosures. Task sheets carry a dismissing row. Paper menus use the compact
+ * phone web panel and a named backdrop within the accessible overlay.
  */
-import type { ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import {
-  KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View, type ViewStyle,
+  BackHandler, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View, type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { mailSize } from "../theme/mail";
-import { useKeyboardLift } from "./keyboard-lift";
+import { useKeyboardHeight, useKeyboardLift } from "./keyboard-lift";
 import { useReaderCover } from "./reader-cover";
 import { creaseAcross, separatingVerticalHinge, usePosture } from "./posture";
 import { detailPaneRect, scaffoldPlan } from "./scaffold/plan";
-import { sheetPanelBounds, sheetRoom } from "./sheet-bounds";
-import { Tap, Txt } from "./base";
-import { Icon, type IconName } from "./Icon";
+import { phoneMenuBounds, sheetPanelBounds, sheetRoom, type SheetAnchor } from "./sheet-bounds";
+import { Button, Tap, Txt } from "./base";
+import { HeadingEnd } from "./HeadingEnd";
+import { Icon, NavigationIcon, type IconName, type NavigationIconName } from "./Icon";
+
+const { menuRowHeight, menuRowInset } = mailSize;
+const InPhoneMenu = createContext(false);
+
+type SheetConfirmation = {
+  note: string;
+  action: { label: string; onPress: () => void };
+};
 
 /**
  * WHERE A SHEET'S PANEL MAY STAND, per posture: a menu never straddles the hinge or the panes
@@ -74,13 +78,24 @@ export function useModalKey(): string {
 export function Sheet({
   open,
   onClose,
+  onDismiss,
   label,
   avoidKeyboard,
   cancel,
   children,
+  phoneMenu,
+  title,
+  aside,
+  anchor,
+  anchorAlign,
+  anchorSide,
+  inlineAnchor,
+  confirmation,
 }: {
   open: boolean;
   onClose: () => void;
+  /** Keep the native modal mounted until UIKit completes dismissal. */
+  onDismiss?: () => void;
   label: string;
   avoidKeyboard?: boolean;
   /**
@@ -89,6 +104,34 @@ export function Sheet({
    * row, so a sheet with nothing to press cannot be written. `sheet-has-a-cancel.test.ts`
    * refuses an `"own"` whose children carry no such row.
    */
+  cancel?: "own";
+  children: ReactNode;
+  phoneMenu?: boolean | "card";
+  title?: string;
+  aside?: string;
+  anchor?: SheetAnchor;
+  anchorAlign?: "start" | "end";
+  anchorSide?: "above" | "below";
+  /** The caller already owns the window's overlay host. Place this after its content. */
+  inlineAnchor?: boolean;
+  /** A safety question after a phone menu selection, on that same accessible overlay. */
+  confirmation?: SheetConfirmation;
+}) {
+  if (phoneMenu) return open || onDismiss ? (
+    <PhoneMenu open={open} label={label} onClose={onClose} onDismiss={onDismiss} title={title} aside={aside} anchor={anchor}
+      align={anchorAlign} side={anchorSide} inline={inlineAnchor} card={phoneMenu === "card"} confirmation={confirmation}>
+      {children}
+    </PhoneMenu>
+  ) : null;
+  return <TaskSheet {...{ open, onClose, onDismiss, label, avoidKeyboard, cancel, children }} />;
+}
+
+function TaskSheet({ open, onClose, onDismiss, label, avoidKeyboard, cancel, children }: {
+  open: boolean;
+  onClose: () => void;
+  onDismiss?: () => void;
+  label: string;
+  avoidKeyboard?: boolean;
   cancel?: "own";
   children: ReactNode;
 }) {
@@ -100,7 +143,7 @@ export function Sheet({
   const modalKey = useModalKey();
   /* A shown sheet stands over the reader: nothing under it is read (`reader-cover.ts`). */
   useReaderCover(open);
-  if (!open) return null;
+  if (!open && !onDismiss) return null;
   const body = (
     <>
       <SheetBackdrop label={Copy.moveCancel} onPress={onClose} />
@@ -133,7 +176,8 @@ export function Sheet({
     </>
   );
   return (
-    <Modal key={modalKey} transparent statusBarTranslucent navigationBarTranslucent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={onClose}>
+    <Modal key={modalKey} transparent statusBarTranslucent navigationBarTranslucent
+      animationType={t.reduceMotion ? "none" : "slide"} visible={open} onRequestClose={onClose} onDismiss={onDismiss}>
       {avoidKeyboard ? (
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -144,6 +188,102 @@ export function Sheet({
       ) : (
         <View style={{ flex: 1, justifyContent: "flex-end" }}>{body}</View>
       )}
+    </Modal>
+  );
+}
+
+function PhoneMenu({ open, label, onClose, onDismiss, title, aside, anchor, align = "start", side = "below", inline, card, confirmation, children }: {
+  open: boolean;
+  label: string;
+  onClose: () => void;
+  onDismiss?: () => void;
+  title?: string;
+  aside?: string;
+  anchor?: SheetAnchor;
+  align?: "start" | "end";
+  side?: "above" | "below";
+  inline?: boolean;
+  card: boolean;
+  confirmation?: SheetConfirmation;
+  children: ReactNode;
+}) {
+  const t = useTheme();
+  const window = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const posture = usePosture();
+  const keyboardHeight = useKeyboardHeight();
+  const modalKey = useModalKey();
+  const [contentHeight, setContentHeight] = useState(menuRowHeight);
+  const padding = card ? menuRowInset : mailSize.inset;
+  const hinge = separatingVerticalHinge(posture.fold, posture.hinge) ?? creaseAcross(posture.fold, posture.hinge);
+  const bounds = phoneMenuBounds(window, insets, keyboardHeight, hinge, { anchor, align, side, contentHeight });
+  useReaderCover(open);
+  useEffect(() => {
+    if (!inline || !open) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => { onClose(); return true; });
+    return () => subscription.remove();
+  }, [inline, onClose, open]);
+  const edge = mailSize.edge;
+  const room: ViewStyle | undefined = confirmation ? {
+    alignItems: "center", justifyContent: "center",
+    paddingHorizontal: Math.max(edge, insets.left, insets.right),
+    paddingVertical: Math.max(edge, insets.top, insets.bottom),
+    ...(keyboardHeight > 0 ? { paddingBottom: keyboardHeight + edge } : {}),
+    ...(hinge === null ? {} : hinge.h < hinge.w
+      ? { paddingTop: hinge.y + hinge.h + edge }
+      : { paddingLeft: hinge.x + hinge.w + edge }),
+  } : undefined;
+  const body = (
+    <View accessibilityViewIsModal onAccessibilityEscape={onClose}
+      style={[StyleSheet.absoluteFill, { zIndex: t.zLayer.sheet }, room]}>
+      <SheetBackdrop label={Copy.moveCancel} onPress={onClose} />
+      <View accessibilityLabel={label} accessibilityRole={confirmation ? "alert" : "menu"} onAccessibilityEscape={onClose} style={[
+        { backgroundColor: t.c.float, borderRadius: t.radius.panel },
+        t.lift("l3"),
+        confirmation ? { width: "100%", maxWidth: 480, padding: edge * 2, flexShrink: 1 } : [
+          { position: "absolute", padding },
+          bounds,
+        ],
+      ]}>
+        {confirmation ? (
+          <>
+            <Txt variant="h2" accessibilityRole="header">
+              <HeadingEnd variant="h2" hot>{label}</HeadingEnd>
+            </Txt>
+            <Txt variant="body" tone="ink2" style={{ marginTop: mailSize.inset }}>{confirmation.note}</Txt>
+            <ScrollView style={{ flexGrow: 0, flexShrink: 1, marginTop: edge }} bounces={false}>
+              {children}
+            </ScrollView>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: mailSize.inset, marginTop: edge + mailSize.inset }}>
+              <Button label={confirmation.action.label} variant="solid" onPress={confirmation.action.onPress}
+                style={{ minHeight: menuRowHeight, paddingHorizontal: edge + mailSize.inset }} />
+              <Button label={Copy.moveCancel} variant="quiet" onPress={onClose} style={{ minHeight: menuRowHeight }} />
+            </View>
+          </>
+        ) : (
+          <InPhoneMenu.Provider value>
+            <ScrollView style={{ flexGrow: 0, flexShrink: 1 }} bounces={false} keyboardShouldPersistTaps="handled" nestedScrollEnabled
+              onContentSizeChange={(_, height) => setContentHeight(height + 2 * padding)}>
+              {title ? (
+                <View style={{
+                  flexDirection: "row", justifyContent: "space-between", paddingTop: mailSize.inset,
+                  paddingHorizontal: menuRowInset, paddingBottom: mailSize.rowInset,
+                }}>
+                  <Txt variant="railCount" tone="ink2">{title}</Txt>
+                  {aside ? <Txt variant="meta" tone="ink2">{aside}</Txt> : null}
+                </View>
+              ) : null}
+              {children}
+            </ScrollView>
+          </InPhoneMenu.Provider>
+        )}
+      </View>
+    </View>
+  );
+  return inline ? open ? body : null : (
+    <Modal key={modalKey} transparent statusBarTranslucent navigationBarTranslucent
+      animationType={t.reduceMotion ? "none" : "fade"} visible={open} onRequestClose={onClose} onDismiss={onDismiss}>
+      {body}
     </Modal>
   );
 }
@@ -159,6 +299,7 @@ export function SheetBackdrop({ label, onPress }: { label: string; onPress: () =
   return (
     <Pressable
       style={[StyleSheet.absoluteFill, { backgroundColor: t.c.scrim }]}
+      accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
     />
@@ -174,10 +315,11 @@ export function SheetRow({
   label,
   detail,
   icon,
+  navigationIcon,
   on,
-  onPress,
   disabled,
   accessibilityHint,
+  onPress,
 }: {
   label: string;
   /**
@@ -188,12 +330,16 @@ export function SheetRow({
    */
   detail?: string;
   icon?: IconName;
+  navigationIcon?: NavigationIconName;
   on?: boolean;
-  onPress: () => void;
   disabled?: boolean;
   accessibilityHint?: string;
+  onPress: () => void;
 }) {
   const t = useTheme();
+  const phoneMenu = useContext(InPhoneMenu);
+  const sign = navigationIcon ? <NavigationIcon name={navigationIcon} size={18} color={t.c.ink} />
+    : icon ? <Icon name={icon} size={phoneMenu ? 18 : 14} color={phoneMenu ? t.c.ink : t.c.ink2} /> : null;
   const row = {
     onPress,
     disabled,
@@ -203,45 +349,51 @@ export function SheetRow({
       flexDirection: "row" as const,
       alignItems: "center" as const,
       gap: 10,
-      paddingHorizontal: 16,
-      paddingVertical: 13,
+      paddingHorizontal: phoneMenu ? menuRowInset : 16,
+      paddingVertical: phoneMenu ? mailSize.rowInset : 13,
+      minHeight: phoneMenu ? menuRowHeight : undefined,
+      borderRadius: phoneMenu ? t.radius.row : undefined,
       backgroundColor: pressed ? t.c.tint : "transparent",
       ...(disabled ? { opacity: 0.5 } : {}),
     }),
   };
-  // A checkbox row hands native its state with the key; a plain row hands none. Keyed apart, so a
-  // row that changes kind is a new view and never keeps the other kind's flag.
+  // The checkbox alone hands native a checked state. Key the two roles apart so a row that
+  // changes kind cannot keep the old role's state.
   return on === undefined ? (
-    <Tap key="button" {...row} accessibilityRole="button" accessibilityState={disabled ? { disabled } : undefined}>
-      {rowContent(t, label, detail, icon, on)}
+    <Tap key="button" {...row} accessibilityRole="button" accessibilityState={{ disabled: disabled === true }}>
+      {rowContent(t, label, detail, sign, on, phoneMenu)}
     </Tap>
   ) : (
-    <Tap key="checkbox" {...row} accessibilityRole="checkbox" accessibilityState={{ checked: on, ...(disabled ? { disabled } : {}) }}>
-      {rowContent(t, label, detail, icon, on)}
+    <Tap key="checkbox" {...row} accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled: disabled === true }}>
+      {rowContent(t, label, detail, sign, on, phoneMenu)}
     </Tap>
   );
 }
 
 function rowContent(
-  t: ReturnType<typeof useTheme>, label: string, detail: string | undefined, icon: IconName | undefined,
-  on: boolean | undefined,
+  t: ReturnType<typeof useTheme>, label: string, detail: string | undefined, sign: ReactNode,
+  on: boolean | undefined, phoneMenu: boolean,
 ) {
   return (
     <>
-      {on !== undefined && !icon ? (
+      {on !== undefined && !sign && !phoneMenu ? (
         <View style={{ width: 14 }}>{on ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}</View>
       ) : null}
-      {icon ? <Icon name={icon} size={14} color={t.c.ink2} /> : null}
-      <Txt variant="button" style={{ flexShrink: 1 }}>
-        {label}
-      </Txt>
+      {sign}
+      {phoneMenu && on ? (
+        <View style={{ flexDirection: "row", alignItems: "baseline", flexShrink: 1, gap: mailSize.rowInset }}>
+          <Txt variant="button" style={{ flexShrink: 1 }}>{label}</Txt>
+          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: t.c.ink }} />
+        </View>
+      ) : <Txt variant={phoneMenu ? "bodyMedium" : "button"} style={{ flexShrink: 1 }}>{label}</Txt>}
       <View style={{ flex: 1 }} />
       {detail === undefined ? null : (
-        <Txt variant="note" tone="ink2">
+        <Txt variant={phoneMenu ? "meta" : "note"} tone="ink2" numberOfLines={phoneMenu ? 1 : undefined}
+          style={phoneMenu ? { maxWidth: "50%" } : undefined}>
           {detail}
         </Txt>
       )}
-      {on && icon ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}
+      {on && sign && !phoneMenu ? <Icon name="check" size={14} color={t.c.accentInk} /> : null}
     </>
   );
 }

@@ -177,9 +177,9 @@ describe("both primitives read the one hook", () => {
     expect(body, "no inset of its own").not.toMatch(/paddingBottom|paddingHorizontal|tabClearance|deckCompact/);
   });
 
-  it("MailList hands the hook's result as its whole content style", () => {
+  it("MailList keeps the hook's shared insets for filled and content-sized sheets", () => {
     expect(mailList).toContain("const insets = useListInsets(true, t.mail === true && surface && rowLayout === undefined);");
-    expect(mailList).toContain("contentContainerStyle={insets}");
+    expect(mailList).toContain("contentContainerStyle={fitSurface ? { ...insets, minHeight: undefined } : insets}");
     expect(mailList, "no inset of its own").not.toMatch(/tabClearance|deckCompact|insets\.bottom/);
     // The surface it paints sits inside the same gutter and ends above the same clearance.
     expect(mailList).toContain("left: insets.paddingLeft");

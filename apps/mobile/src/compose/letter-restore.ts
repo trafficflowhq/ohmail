@@ -5,21 +5,24 @@
  * goes once), bound to the row the server holds it in, dropped when its sent copy is there, and
  * otherwise kept as a draft with the caution to check Sent first. One sentence per launch.
  */
+import { Parser } from "htmlparser2";
+import { withSignature } from "@ohmail/app-logic/writing/signature";
 import { refuse, type Refusal } from "../refusal";
 import type { KeptRow } from "./letter-keeper";
-import { keptFit, rowHoldsLetter, wordsOf, type Letter, type LetterAddress, type LetterDoor, type LetterMark } from "./letter-store";
+import { hasEnvelopeEdits, keptFit, rowHoldsLetter, savedWordsMatch, wordsOf, type Letter, type LetterAddress, type LetterDoor, type LetterMark, type ReplyEdits } from "./letter-store";
 
 /** A queued or in-flight mutation, as the engine holds it. */
 export interface OutboxRow { key: string; mutation: { kind: string } & Record<string, unknown> }
 
 /** A draft row the mirror holds. */
 export interface MirrorDraft {
-  id: string; status?: unknown; subject?: unknown; body?: unknown; html?: unknown; to?: unknown; cc?: unknown; bcc?: unknown;
+  id: string; mailboxId?: unknown; status?: unknown; subject?: unknown; body?: unknown; html?: unknown; to?: unknown; cc?: unknown; bcc?: unknown;
   inReplyToMessageId?: unknown; forwardOfMessageId?: unknown; updatedAt?: unknown; contentRevision?: unknown;
+  forwardParts?: unknown;
 }
 
 /** What a restore hands the draft keep (`LiveWorldActions.draftKeep`). */
-export interface LetterKeep {
+export interface LetterKeep extends ReplyEdits {
   mode: Letter["mode"];
   messageId: string | null;
   mailboxId: string | null;
@@ -27,6 +30,7 @@ export interface LetterKeep {
   cc?: LetterAddress[];
   bcc?: LetterAddress[];
   subject: string;
+  forwardSubject?: string;
   body: string;
   html?: string | null;
   files: number;
@@ -77,14 +81,42 @@ export interface LetterRestore {
 /** How far this phone's clock may stand from the server's when a row's time is read against a mark. */
 const CLOCK_SLACK_MS = 10 * 60 * 1000;
 
-const subjectOf = (l: Letter): string => l.envelope?.subject ?? l.subject.trim();
+const subjectOf = (l: Letter): string => l.replySubjectEdited || (l.mode === "forward" && (l.subject !== "" || l.draftId !== null))
+  ? l.subject.trim() : l.envelope?.subject ?? l.subject.trim();
 
-/** The body a press of this letter carried: its words, or its words with the mark's signature sealed on. */
-const sameBody = (l: Letter, mark: LetterMark, body: unknown): boolean => {
+/** The draft service restyles its markup and derives the plain alternative from it. */
+function markupParts(html: string): string {
+  const parts: (string | [string, [string, string][]])[] = [];
+  let text = "";
+  const flush = () => {
+    if (text !== "") { parts.push(text); text = ""; }
+  };
+  const parser = new Parser({
+    ontext: (part) => { text += part; },
+    onopentag: (name, attrs) => {
+      flush();
+      parts.push([name, Object.entries(attrs).filter(([key]) => key !== "style").sort(([a], [b]) => a.localeCompare(b))]);
+    },
+    onclosetag: (name) => {
+      flush();
+      parts.push(["/" + name, []]);
+    },
+  });
+  parser.end(html);
+  flush();
+  return JSON.stringify(parts);
+}
+
+function sameContent(l: Letter, mark: LetterMark, body: unknown, html: unknown, stored = false): boolean {
   if (typeof body !== "string") return false;
-  const text = l.body.trim();
-  return body.trim() === text || (typeof mark.sig === "string" && body.trim() === `${text}\n\n${mark.sig}`.trim());
-};
+  if (mark.sig === undefined && mark.sigHtml === undefined) {
+    return (l.html ? typeof html === "string" && html.startsWith(l.html) : !html) && body.trim() === l.body.trim();
+  }
+  const sent = withSignature({ body: l.mode === "forward" ? l.body : l.body.trim(), html: l.html }, mark.sig ?? null, mark.sigHtml);
+  if (!stored) return (html || null) === (sent.html || null) && body === sent.body;
+  if (sent.html) return typeof html === "string" && markupParts(html) === markupParts(sent.html);
+  return !html && body.trim() === sent.body.trim();
+}
 
 const addressesOf = (v: unknown): string | null => (Array.isArray(v)
   ? JSON.stringify(v.map((a) => String((a as { address?: unknown } | null)?.address ?? "").trim().toLowerCase()).sort())
@@ -92,8 +124,7 @@ const addressesOf = (v: unknown): string | null => (Array.isArray(v)
 
 /** Who the letter goes to, as a row of it holds them; `null` when a reply's envelope was never known. */
 function recipientsOf(l: Letter, parse: (typed: string) => LetterAddress[]): [LetterAddress[], LetterAddress[], LetterAddress[]] | null {
-  if (l.mode === "new") return [parse(l.to), parse(l.cc), parse(l.bcc)];
-  if (l.mode === "forward") return [parse(l.to), [], []];
+  if (l.mode === "new" || l.mode === "forward" || l.replyRecipientsEdited) return [parse(l.to), parse(l.cc), parse(l.bcc)];
   return l.envelope ? [l.envelope.to, l.envelope.cc, []] : null;
 }
 
@@ -102,15 +133,43 @@ const sameRecipients = (l: Letter, parse: (typed: string) => LetterAddress[], to
   return want !== null && [to, cc, bcc].every((v, i) => addressesOf(v) === addressesOf(want[i]));
 };
 
+function namedEnvelope(l: Letter, mark: LetterMark): boolean {
+  return l.mode === "forward" || l.fromEdited === true || mark.mailboxId !== undefined;
+}
+
+function sameEnvelopeOptions(l: Letter, mark: LetterMark, mailboxId: unknown, parts: unknown): boolean {
+  const sender = mark.mailboxId ?? (namedEnvelope(l, mark) ? l.mailboxId : null);
+  if (sender !== null && sender !== mailboxId) return false;
+  if (l.mode !== "forward") return true;
+  const selected = mark.forwardParts === undefined ? l.forwardKept : mark.forwardParts;
+  if (selected == null) return parts == null;
+  return Array.isArray(parts) && parts.every((part) => typeof part === "string")
+    && JSON.stringify([...new Set(parts)].sort()) === JSON.stringify([...new Set(selected)].sort());
+}
+
+function sameParent(l: Letter, reply: unknown, forward: unknown): boolean {
+  const replyingTo = reply ?? null;
+  const forwarding = forward ?? null;
+  if (l.mode === "new") return replyingTo === null && forwarding === null;
+  if (l.messageId === null) return false;
+  if (l.mode === "forward") return replyingTo === null && forwarding === l.messageId;
+  return replyingTo === l.messageId && forwarding === null;
+}
+
+const targetOf = (l: Letter, mark: LetterMark): string | null =>
+  mark.draftId === undefined ? l.draftId : mark.draftId;
+
 /** A mirror row holding this letter, written after its mark: the same parent, recipients, subject and body. */
 function sameRow(l: Letter, mark: LetterMark, r: MirrorDraft, parse: (typed: string) => LetterAddress[]): boolean {
+  const target = targetOf(l, mark);
+  if (target !== null && r.id !== target) return false;
+  if (mark.draftId === null && r.id === l.draftId) return false;
   const at = typeof r.updatedAt === "string" ? Date.parse(r.updatedAt) : NaN;
   if (!(at >= Date.parse(mark.at) - CLOCK_SLACK_MS)) return false;
-  const parent = r.inReplyToMessageId ?? r.forwardOfMessageId ?? null;
-  if (parent !== (l.mode === "new" ? null : l.messageId)) return false;
+  if (!sameParent(l, r.inReplyToMessageId, r.forwardOfMessageId)) return false;
   return typeof r.subject === "string" && r.subject.trim() === subjectOf(l)
-    && (l.html ? typeof r.html === "string" && r.html.startsWith(l.html) : !r.html)
-    && sameRecipients(l, parse, r.to, r.cc, r.bcc) && sameBody(l, mark, r.body);
+    && sameEnvelopeOptions(l, mark, r.mailboxId, r.forwardParts)
+    && sameRecipients(l, parse, r.to, r.cc, r.bcc) && sameContent(l, mark, r.body, r.html, true);
 }
 
 /** The outbox row this letter's mark names: its key, else its intent, else its words. */
@@ -118,21 +177,23 @@ function heldBy(l: Letter, mark: "keep" | "send", rows: readonly OutboxRow[], pa
   const marked = l[mark]!;
   if (marked.key !== null) return rows.find((r) => r.key === marked.key);
   const kind = mark === "send" ? "mail_send" : "draft_save";
-  return rows.find((r) => {
-    const m = r.mutation;
+  const target = targetOf(l, marked);
+  const candidates = rows.filter(({ mutation: m }) => {
     if (m.kind !== kind) return false;
-    if (l.draftId !== null && m.draftId === l.draftId) return true;
-    const parent = (mark === "send"
-      ? (l.mode === "forward" ? m.forwardOf : m.inReplyTo)
-      : (l.mode === "forward" ? m.forwardOfMessageId : m.inReplyToMessageId)) ?? null;
-    if (parent !== (l.mode === "new" ? null : l.messageId)) return false;
+    if ((m.draftId ?? null) !== target) return false;
+    const reply = mark === "send" ? m.inReplyTo : m.inReplyToMessageId;
+    const forward = mark === "send" ? m.forwardOf : m.forwardOfMessageId;
+    if (!sameParent(l, reply, forward)) return false;
     // A reply's envelope may be left to the engine: its parent names it.
-    const stated = l.mode === "new" || m.to !== undefined;
-    return (l.html ? typeof m.html === "string" && m.html.startsWith(l.html) : !m.html)
-      && sameBody(l, marked, m.body)
-      && (l.mode !== "new" || (typeof m.subject === "string" && m.subject.trim() === subjectOf(l)))
-      && (!stated || sameRecipients(l, parse, m.to, m.cc, m.bcc));
+    const addressed = l.mode === "new" || l.mode === "forward";
+    const statedAudience = addressed || l.replyRecipientsEdited || m.to !== undefined;
+    const statedSubject = addressed || l.replySubjectEdited || (l.envelope !== null && m.subject !== undefined);
+    return sameContent(l, marked, m.body, m.html)
+      && sameEnvelopeOptions(l, marked, m.mailboxId, m.forwardParts)
+      && (!statedSubject || (typeof m.subject === "string" && m.subject.trim() === subjectOf(l)))
+      && (!statedAudience || sameRecipients(l, parse, m.to, m.cc, m.bcc));
   });
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
@@ -149,9 +210,14 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
   /** The row holds the words this phone last saved or queued to it. */
   const holdsSaved = (l: Letter, r: MirrorDraft): boolean => {
     if (l.savedAs === null) return false;
-    const [to, subject, body, cc, bcc, html] = JSON.parse(l.savedAs) as string[];
-    const saved = { ...l, to: to ?? "", subject: subject ?? "", body: body ?? "", cc: cc ?? "", bcc: bcc ?? "" };
+    const [to, subject, body, cc, bcc, html, mailboxId, replyRecipientsEdited, replySubjectEdited] =
+      JSON.parse(l.savedAs) as [string, string, string, string, string, (string | null)?, (string | null)?, boolean?, boolean?];
+    const saved = {
+      ...l, to: to ?? "", subject: subject ?? "", body: body ?? "", cc: cc ?? "", bcc: bcc ?? "",
+      replyRecipientsEdited: replyRecipientsEdited === true, replySubjectEdited: replySubjectEdited === true,
+    };
     return typeof r.subject === "string" && r.subject.trim() === subjectOf(saved)
+      && (mailboxId == null || r.mailboxId === undefined || r.mailboxId === mailboxId)
       && (r.html || null) === (html || null) && typeof r.body === "string" && r.body.trim() === saved.body.trim() && sameRecipients(saved, d.parse, r.to, r.cc, r.bcc);
   };
   /** A save of the letter's row this phone queued or sent unanswered: its answer moves the version the letter states. */
@@ -174,14 +240,20 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
     const asNew = letter.mode !== "new" && !parentHere;
     let row: KeptRow | null = null;
     const typedTo = d.parse(letter.to);
+    const typedEnvelope = { to: typedTo, cc: d.parse(letter.cc), bcc: d.parse(letter.bcc) };
+    const editedReply = letter.replyRecipientsEdited ? typedEnvelope : undefined;
     const answer = await d.keep({
       mode: asNew ? "new" : letter.mode,
       messageId: asNew ? null : letter.messageId,
       mailboxId: letter.mailboxId,
-      to: asNew && letter.mode !== "forward" ? letter.envelope?.to ?? typedTo : typedTo,
-      ...(letter.mode === "new" ? { cc: d.parse(letter.cc), bcc: d.parse(letter.bcc) }
+      to: asNew && letter.mode !== "forward" ? editedReply?.to ?? letter.envelope?.to ?? typedTo : typedTo,
+      ...(letter.mode === "new" || letter.mode === "forward" || (asNew && editedReply) ? { cc: typedEnvelope.cc, bcc: typedEnvelope.bcc }
         : asNew && letter.envelope ? { cc: letter.envelope.cc } : {}),
       subject: asNew ? subjectOf(letter) : letter.subject,
+      ...(!asNew && editedReply ? { replyEnvelope: editedReply } : {}),
+      ...(!asNew && letter.replySubjectEdited ? { replySubject: subjectOf(letter) } : {}),
+      ...(!asNew && letter.mode === "forward" && (letter.subject !== "" || letter.draftId !== null || letter.envelope !== null)
+        ? { forwardSubject: subjectOf(letter) } : {}),
       body: letter.body,
       ...(letter.html === undefined ? {} : { html: letter.html }),
       files: letter.files.length,
@@ -218,15 +290,15 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
         return;
       }
       await afterSync();
-      const mine = (r: MirrorDraft): boolean => (l.draftId !== null && r.id === l.draftId) || sameRow(l, send, r, d.parse);
-      const rows = d.drafts();
-      if (rows.some((r) => r.status === "sent" && mine(r))) {
+      const rows = d.drafts().filter((r) => (r.status === "sent" || r.status === "unverified" || r.status === "sending")
+        && sameRow(l, send, r, d.parse));
+      const match = namedEnvelope(l, send) && rows.length !== 1 ? undefined : rows.find((r) => r.status === "sent") ?? rows[0];
+      if (match?.status === "sent") {
         d.door.drop(l.id);
         return;
       }
       // The server holds the send in its row: that row is the letter, as the Drafts card shows it.
-      const held = rows.find((r) => (r.status === "unverified" || r.status === "sending") && mine(r));
-      if (held !== undefined) { bind(l, held.id); return; }
+      if (match !== undefined) { bind(l, match.id); return; }
       if (waits(l)) { later.push(l.id); return; }
       if (await keep({ ...l, send: null })) {
         if (send.key === null) out.unclear += 1;
@@ -242,12 +314,14 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
         return;
       }
       await afterSync();
-      const twin = d.drafts().find((r) => r.status !== "sent" && sameRow(l, marked, r, d.parse));
+      const twins = d.drafts().filter((r) => r.status !== "sent" && sameRow(l, marked, r, d.parse));
+      const twin = namedEnvelope(l, marked) && twins.length !== 1 ? undefined : twins[0];
       if (twin !== undefined) { bind(l, twin.id); return; }
       if (await keep({ ...l, keep: null })) out.kept += 1;
       return;
     }
-    const worth = l.draftId !== null || l.body.trim() !== "" || (l.mode === "new" && l.subject.trim() !== "") || l.files.length > 0;
+    const worth = l.draftId !== null || l.body.trim() !== "" || (l.mode === "new" && l.subject.trim() !== "")
+      || l.files.length > 0 || hasEnvelopeEdits(l, d.parse);
     if (!worth) { d.door.drop(l.id); return; }
     const kept = keptRow(l);
     if (kept !== undefined && kept.row === null) { later.push(l.id); return; }
@@ -255,12 +329,12 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
       // Its words went to that draft and the flush said so: the letter follows them, silently.
       const own = l.draftId === kept.row;
       const at: Letter = { ...l, draftId: kept.row, revision: own ? l.revision ?? null : kept.revision ?? null };
-      if (at.savedAs === wordsOf(at)) { if (!own) bind(at, kept.row, at.revision); return; }
+      if (savedWordsMatch(at)) { if (!own) bind(at, kept.row, at.revision); return; }
       const before = out.changed;
       if (await keep(at) && out.changed > before) out.kept += 1;
       return;
     }
-    if (l.draftId !== null && l.savedAs === wordsOf(l)) return;
+    if (l.draftId !== null && savedWordsMatch(l)) return;
     if (waits(l)) { later.push(l.id); return; }
     if (await keep(l)) out.kept += 1;
   };
@@ -307,7 +381,7 @@ export function settleLetters(
       // The engine kept this letter's refused waiting save as a new draft: the letter, its files with it, follows.
       if (into?.row && l.draftId === into.from && l.send === null) {
         const next = { ...l, draftId: into.row, revision: into.revision ?? null, ...(l.keep?.key === key ? { savedAs: wordsOf(l), keep: null } : {}) };
-        if (rowHoldsLetter(next) && next.savedAs === wordsOf(next)) door.drop(l.id);
+        if (rowHoldsLetter(next) && savedWordsMatch(next)) door.drop(l.id);
         else door.put({ ...next, updatedAt: now().toISOString() });
         continue;
       }

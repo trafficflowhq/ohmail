@@ -10,9 +10,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AppState, View } from "react-native";
-import { useFocusEffect, useIsFocused, useNavigation } from "expo-router";
+import { router, useFocusEffect, useIsFocused, useNavigation } from "expo-router";
+import { OHBOX_UNSCREENED_MESSAGES_MAX } from "@ohmail/client-engine";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
+import { mailSize } from "../../src/theme/mail";
 import {
   onOrganizerState, organizerStateVersion, readingAtConnectSaid, sayReadingAtConnect,
 } from "../../src/engine/organizer-session";
@@ -24,7 +26,7 @@ import {
   firstSyncReadingSaid, ohboxVisitStep, type FiledSince, type OhboxVisitEvent, type OhboxVisitState,
 } from "../../src/state/live";
 import { OhboxWhere } from "../../src/ui/OhboxWhere";
-import { Button, Empty, Panel, Screen, Tail, Txt, ViewHead } from "../../src/ui/base";
+import { Button, Empty, Panel, Screen, Tail, Tap, Txt, ViewHead } from "../../src/ui/base";
 import { Doorbell, StateKnock, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList, type ListGroup } from "../../src/ui/MailList";
@@ -39,6 +41,7 @@ import { unscreenedOffered } from "../../src/state/seed-offer";
 import { FilingStrip } from "../../src/ui/FilingStrip";
 import { MailListMenu } from "../../src/ui/MailListMenu";
 import { MailCalendarSwitch } from "../../src/ui/MailCalendarSwitch";
+import { Icon } from "../../src/ui/Icon";
 import { FullMailboxNotice } from "../../src/ui/FullMailboxNotice";
 import { LateStrip } from "../../src/ui/LateStrip";
 import { SkeletonList } from "../../src/ui/Skeleton";
@@ -112,9 +115,9 @@ function OhboxBody() {
   const surface = listSurface({ settled: w.boot.settled, count: total });
 
   const groups: ListGroup<WorldMail>[] = [
-    { key: "resurfaced", title: Copy.groupResurfaced, rows: resurfaced, count: resurfaced.length },
-    { key: "fresh", title: Copy.groupNew, rows: fresh, count: fresh.length },
-    { key: "seen", title: Copy.groupSeen, rows: seen, count: seen.length },
+    { key: "resurfaced", title: Copy.groupResurfaced, rows: resurfaced, count: resurfaced.length, hot: resurfaced.some((m) => m.unread) },
+    { key: "fresh", title: Copy.groupNew, rows: fresh, count: fresh.length, hot: fresh.some((m) => m.unread) },
+    { key: "seen", title: Copy.groupSeen, rows: seen, count: seen.length, hot: seen.some((m) => m.unread) },
   ];
 
   const list = (
@@ -129,7 +132,7 @@ function OhboxBody() {
           const at = thread !== null && m === threadRow ? stripOf(thread, threadLive) : null;
           const strip = at === null ? null
             : { items: at.items, here: at.here, onPress: (id: string) => { if (!pressThreadPlace(id)) press(); } };
-          return <MailRow m={m} onPress={press} strip={strip} swipe />;
+          return <MailRow m={m} onPress={press} strip={strip} swipe ohbox />;
         }}
         rowInset={6}
         refresh={pull}
@@ -194,7 +197,25 @@ function OhboxBody() {
             />
           ) : null
         }
-        foot={surface === "content" ? <Tail>{Copy.ohboxTail(total)}</Tail> : null}
+        foot={surface === "content" ? (
+          t.mail ? (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: mailSize.rowInset, padding: mailSize.edge }}>
+              <Txt tone="ink2">{Copy.ohboxOlderMail} ·</Txt>
+              <Tap
+                accessibilityRole="button"
+                accessibilityLabel={Copy.history}
+                onPress={() => router.push("/history")}
+                style={{
+                  flexDirection: "row", alignItems: "center", gap: mailSize.rowInset,
+                  backgroundColor: t.c.tint2, borderRadius: t.radius.keycap, paddingHorizontal: mailSize.rowInset,
+                }}
+              >
+                <Txt variant="button">{Copy.history}</Txt>
+                <Icon name="down" size={mailSize.inset + mailSize.rowInset} color={t.c.ink2} />
+              </Tap>
+            </View>
+          ) : <Tail>{Copy.ohboxTail(total)}</Tail>
+        ) : null}
       />
     </Screen>
   );
@@ -227,7 +248,7 @@ function UnscreenedOffer({ offer, screen }: { offer: WorldUnscreened | null; scr
     <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
       <Txt variant="note" tone="ink2" accessibilityRole="text">{Copy.unscreenedLead(offer.total, offer.atLeast === true)}</Txt>
       <Button
-        label={Copy.unscreenedAll(offer.total)}
+        label={Copy.unscreenedAll(Math.min(offer.total, OHBOX_UNSCREENED_MESSAGES_MAX))}
         variant="solid"
         disabled={pressing}
         onPress={press}
@@ -285,19 +306,19 @@ function ViewHeadOhbox({
   return (
     <ViewHead
       style={{ paddingTop: 8, paddingBottom: 14 }}
+      aboveSheet
       title={Copy.ohbox}
       leading={calendar}
       attention={unread > 0}
       /* Silenced over a skeleton (`metaWhen`): "0 unread of 0" about an unread mirror
          would be an invented count. The line keeps its slot so nothing shifts. */
       meta={theme.mail ? undefined : meta ?? " "}
-      /* When mail was last checked and where it went — `OhboxWhere`. */
-      inline={(oneLine) => <OhboxWhere filed={filed} inline={oneLine} />}
+      inline={theme.mail ? undefined : (oneLine) => <OhboxWhere filed={filed} inline={oneLine} />}
       /* Renders nothing over a cleared list — the component's own rule. */
       right={theme.mail ? (
         <View style={{ marginLeft: "auto", flexDirection: "row", alignItems: "center" }}>
           {bell}
-          <MailListMenu unread={unread} onMarkAll={onMarkAll} />
+          <MailListMenu unread={unread} onMarkAll={onMarkAll} anchored={false} />
         </View>
       ) : <MarkAllRead unreadCount={unread} onPress={onMarkAll} />}
     />

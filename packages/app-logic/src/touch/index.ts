@@ -17,7 +17,21 @@ export {
   type SwipeSides,
   type SwipeTrack,
 } from "./row-swipe-track.js";
-export { PULL_FIRE, PULL_MAX, PULL_RATE, PULL_SLOP, pullClaims, pullFires, pullOffset } from "./pull-down.js";
+export {
+  PULL_FIRE,
+  PULL_HOLD,
+  PULL_HOLD_CAP_MS,
+  PULL_MAX,
+  PULL_RATE,
+  PULL_SLOP,
+  pullClaims,
+  pullEnd,
+  pullFires,
+  pullMove,
+  pullOffset,
+  pullStart,
+  type PullTrack,
+} from "./pull-down.js";
 export {
   BOOK_SIDE_MIN,
   FOLD_KEEP,

@@ -39,6 +39,8 @@ export const affected = (res: unknown): number => {
   return Number(r.count ?? r.rowCount ?? r.affectedRows ?? 0);
 };
 
+export interface ChangeLogPruneOptions { batch?: number; maxBatches?: number }
+
 /** One tick's work for one account, for the pass's log line. */
 export interface ChangeLogPruneResult {
   /** The floor after this tick (0 = nothing prunable yet). */
@@ -84,23 +86,14 @@ export async function changeLogHorizon(db: Tx, accountId: string, now: Date): Pr
  */
 export async function pruneChangeLogForAccount(
   db: Tx, accountId: string, now: Date,
-  opts: { batch?: number; maxBatches?: number } = {},
+  opts: ChangeLogPruneOptions = {},
 ): Promise<ChangeLogPruneResult> {
   const d = dialect(db);
   const batch = opts.batch ?? RETENTION_DELETE_BATCH;
   const maxBatches = opts.maxBatches ?? RETENTION_BATCHES_PER_ACCOUNT;
   const horizon = await changeLogHorizon(db, accountId, now);
 
-  // Correlated on the counter row, so an account without one (no change ever written) updates nothing.
-  await db.update(accountSyncState).set({
-    prunedThroughSeq: sql`${d.greatest(accountSyncState.prunedThroughSeq, sql`coalesce((
-      select max(${changeLog.seq}) from ${changeLog}
-       where ${changeLog.accountId} = ${accountSyncState.accountId}
-         and ${changeLog.createdAt} < ${d.ts(horizon)}
-    ), 0)`)}`,
-  }).where(eq(accountSyncState.accountId, accountId));
-
-  const floor = await prunedThroughSeq(db, accountId);
+  const floor = await raisePruneFloor(db, accountId, horizon);
   if (floor === 0n) return { prunedThroughSeq: 0n, deleted: 0 };
 
   // COMPACTION below the floor. Keep each entity's first row while it lives, every user-wins
@@ -134,6 +127,20 @@ export async function pruneChangeLogForAccount(
     if (n < batch) break;
   }
   return { prunedThroughSeq: floor, deleted };
+}
+
+async function raisePruneFloor(db: Tx, accountId: string, horizon: Date): Promise<bigint> {
+  const d = dialect(db);
+  // Correlated on the counter row, so an account without one (no change ever written) updates nothing.
+  await db.update(accountSyncState).set({
+    prunedThroughSeq: sql`${d.greatest(accountSyncState.prunedThroughSeq, sql`coalesce((
+      select max(${changeLog.seq}) from ${changeLog}
+       where ${changeLog.accountId} = ${accountSyncState.accountId}
+         and ${changeLog.createdAt} < ${d.ts(horizon)}
+    ), 0)`)}`,
+  }).where(eq(accountSyncState.accountId, accountId));
+
+  return prunedThroughSeq(db, accountId);
 }
 
 /** One bounded batch of the audit_log fixed-age prune; the caller loops while it returns full. */

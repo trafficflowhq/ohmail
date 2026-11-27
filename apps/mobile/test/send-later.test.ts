@@ -629,17 +629,18 @@ describe("the composer's affordance and the Scheduled screen — the shapes that
   });
 
   it("the panel yields height to the picker rather than growing past the viewport", () => {
-    // The signature block's own ceiling exists because an unbounded control here buries Send
+    // The signature block's own ceiling exists because an unbounded inline control here buries Send
     // under the keyboard. The picker is a taller control than the block; while it is open the
     // writing area keeps its first line and the block steps aside, and a single Back restores
     // both. What SHIPS is untouched — the assertion below is the one that matters.
-    expect(actions).toContain("minHeight: composeBodyMin(later !== null, heightClass),");
+    expect(actions).toContain("const laterInline = later !== null && !phonePill;");
+    expect(actions).toContain("minHeight: composeBodyMin(laterInline, heightClass),");
     expect(composeBodyMin(true, "medium"), "the picker open leaves the writing area one line").toBe(44);
-    expect(actions).toMatch(/\{sigText !== null && later === null \? \(/);
+    expect(actions).toMatch(/\{sigText !== null && !laterInline \? \(/);
     // `sigText` is derived ABOVE the picker state and handed to `send` regardless of it, so a
     // signature hidden while a time is chosen is still sealed into the scheduled message.
     expect(actions).toMatch(/const sigText =\s*w\.signatures === null \|\| sendFrom === null \? null : effectiveSignature\(/);
-    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\), \.\.\.markupArgs\)/);
+    expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId,\s+baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\), \.\.\.replyArgs\)/);
   });
 
   it("the Scheduled screen never claims emptiness over an unsettled mirror", () => {
@@ -657,7 +658,7 @@ describe("the composer's affordance and the Scheduled screen — the shapes that
     // request is still out, minting a second Idempotency-Key.
     expect(actions).toMatch(/if \(phase !== "idle"\) \{\s*setLater\(null\);\s*return;\s*\}/);
     // …and any dispatch closes the panel, so no stale picker stands over a message in flight.
-    expect(actions).toMatch(/const send = async \(sendAt: string \| null = null, andDone = false\) => \{[\s\S]{0,400}?setLater\(null\);\s*setPhase\("sending"\);/);
+    expect(actions).toMatch(/const send = async \(sendAt: string \| null = null, andDone = false, asNew = false\) => \{\s*if \(keeping\.current \|\| discarding\.current \|\| !canSend\) return;[\s\S]{0,550}?setLater\(null\);\s*setPhase\("sending"\);/);
   });
 
   it("a background-confirmed appointment is announced as one, not as a delivery", () => {

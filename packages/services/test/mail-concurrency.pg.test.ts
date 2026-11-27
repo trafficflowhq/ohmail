@@ -4,13 +4,12 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
-import { accounts, users } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
-import { loginTokens } from "@trafficflow/db/cloud";
+import { accounts, bindDb, users } from "@trafficflow/db";
+import { loginTokens, makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  MailService, SpyMailer, EMAIL_VERIFY_PURPOSE, makeTestAuthDeps, throttleKeysFor, type MailContext,
+  MailService, SpyMailer, EMAIL_VERIFY_PURPOSE, makeTestAuthDeps, throttleKeysFor, type MailContext, type ServiceContext,
 } from "@trafficflow/services";
 
 const KEYS = throttleKeysFor(makeTestAuthDeps().keyProvider);
@@ -45,6 +44,7 @@ const PG_UP = await realPgAvailable();
 
 let client: ReturnType<typeof postgres>;
 let db: ReturnType<typeof drizzle<typeof schema>>;
+let issuer: OwnedDb;
 
 const CONFIG = {
   appUrl: "https://app.ohmail.app",
@@ -53,15 +53,19 @@ const CONFIG = {
 };
 
 const ctx = (): MailContext => ({ db: db as unknown as MailContext["db"], now: () => new Date() });
+const issuerCtx = (accountId: string, userId: string): ServiceContext => ({
+  db: bindDb(issuer.db, { account: accountId }) as unknown as ServiceContext["db"],
+  accountId, userId, now: () => new Date(), requestId: "verification",
+});
 
 /** A real user row, so the `login_tokens.user_id` FK is satisfied. */
-async function seedUser(): Promise<{ userId: string; email: string }> {
+async function seedUser(): Promise<{ userId: string; accountId: string; email: string }> {
   const email = `s11-${randomUUID()}@example.com`;
   const [acct] = await db.insert(accounts).values({ name: "mail concurrency" }).returning();
   const [user] = await db.insert(users).values({
     accountId: acct!.id, email, displayName: "Mail",
   }).returning();
-  return { userId: user!.id, email };
+  return { userId: user!.id, accountId: acct!.id, email };
 }
 
 describe.skipIf(!PG_UP)("on real Postgres — the claims PGlite cannot check", () => {
@@ -71,15 +75,16 @@ describe.skipIf(!PG_UP)("on real Postgres — the claims PGlite cannot check", (
     // exactly the blind spot this file exists to remove.
     client = postgres(PG_TEST_URL, { max: 10 });
     db = brandDialect(drizzle(client, { schema }), "pg");
+    issuer = makeOwnedDb(PG_TEST_URL);
   }, 60_000);
-  afterAll(async () => { await client?.end({ timeout: 5 }); });
+  afterAll(async () => { await Promise.all([client?.end({ timeout: 5 }), issuer?.close()]); });
 
   it("a verification link presented 12 times AT ONCE is consumed exactly once", async () => {
     const spy = new SpyMailer();
     const svc = new MailService({ mailer: spy, config: CONFIG, throttleKeys: KEYS });
-    const { userId, email } = await seedUser();
+    const { userId, accountId, email } = await seedUser();
 
-    expect((await svc.issueEmailVerification(ctx(), { userId, to: email })).status).toBe("sent");
+    expect((await svc.issueEmailVerification(issuerCtx(accountId, userId), { userId, to: email })).status).toBe("sent");
     const raw = new URL(spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
 
     const results = await Promise.all(
@@ -97,8 +102,8 @@ describe.skipIf(!PG_UP)("on real Postgres — the claims PGlite cannot check", (
   it("an expired or wrong-purpose token loses the race too, not just the second caller", async () => {
     const spy = new SpyMailer();
     const svc = new MailService({ mailer: spy, config: CONFIG, throttleKeys: KEYS });
-    const { userId, email } = await seedUser();
-    await svc.issueEmailVerification(ctx(), { userId, to: email });
+    const { userId, accountId, email } = await seedUser();
+    await svc.issueEmailVerification(issuerCtx(accountId, userId), { userId, to: email });
     const raw = new URL(spy.only("email_verification").data.verifyUrl).searchParams.get("token")!;
 
     // Flip the purpose: the very same hash is now a `login` token, and the mail path

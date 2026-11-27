@@ -13,7 +13,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount, rnDom } from "./_rendered-dom";
 import { qhFixtures, qhFolds, qhNorm, qhTypedAnswers } from "../../../packages/client-engine/test/quoted-history-fixtures";
 
-vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
+vi.mock("react-native", async () => ({
+  ...(await import("./_rendered-dom")).rnDom,
+  Linking: { openURL: openedLink.open },
+}));
 /** The html detector made to throw, as a hostile part might make it. */
 const detector = vi.hoisted(() => ({ throws: false }));
 vi.mock("@ohmail/client-engine", async (importOriginal) => {
@@ -33,10 +36,20 @@ vi.mock("../src/ui/base", async () => {
 vi.mock("../src/theme", () => ({
   useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), radius: { pill: 999 }, type: new Proxy({}, { get: () => ({}) }) }),
 }));
+const openedLink = vi.hoisted(() => ({ compose: vi.fn(), open: vi.fn(async () => undefined) }));
+vi.mock("expo-router", () => ({ router: { push: openedLink.compose } }));
+vi.mock("../src/state/world", () => ({ useWorldToast: () => ({ say: vi.fn() }) }));
+vi.mock("../src/ui/Sheet", () => ({
+  Sheet: ({ open, children }: { open: boolean; children: React.ReactNode }) => open ? children : null,
+  SheetRow: ({ label, onPress }: { label: string; onPress: () => void }) => h("button", { onClick: onPress }, label),
+}));
 
 const { BodyPages } = await import("../src/ui/BodyPages");
 const { HistoryFold } = await import("../src/ui/HistoryFold");
 const { sanitizeMailHtmlPhone } = await import("../src/mail/sanitize");
+const { frameNavDecision } = await import("../src/mail/frame-nav");
+const { buildPhoneMailDocument } = await import("../src/mail/mail-document");
+const { MailLinkSheet } = await import("../src/ui/MailLinks");
 const { htmlHistoryVerdict } = await import("../src/mail/quoted-tree");
 const { EN } = await import("../src/copy.en");
 const { DE } = await import("../src/copy.de");
@@ -44,7 +57,12 @@ const { DE } = await import("../src/copy.de");
 const FIXTURES = qhFixtures();
 const strip = (s: string): string => qhNorm(s.replace(/^[\s>]+/gm, ""));
 let mounted: { el: HTMLElement; unmount(): void } | null = null;
-afterEach(() => { mounted?.unmount(); mounted = null; });
+afterEach(() => {
+  mounted?.unmount();
+  mounted = null;
+  openedLink.compose.mockClear();
+  openedLink.open.mockClear();
+});
 
 function body(text: string, variant: "streamBody" | "readerBody", ends: string[] = [], html: string | null = null, subject?: string) {
   mounted = mount(
@@ -62,6 +80,70 @@ function body(text: string, variant: "streamBody" | "readerBody", ends: string[]
 const row = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>('[data-role="button"]');
 const shown = (el: HTMLElement): string => strip(el.textContent ?? "");
 const press = (b: HTMLElement): void => { act(() => { b.click(); }); };
+
+it("makes body addresses and URLs into underlined links and asks before opening a website", async () => {
+  const url = "https://example.test/contact?veryLongTrackingCode=12345678901234567890";
+  const el = body(`Contact desk@example.test or see (${url}). Keep custom:notes and javascript:blocked as text.`, "readerBody");
+  const links = [...el.querySelectorAll<HTMLElement>('[data-role="link"]')];
+  expect(links.map((link) => link.textContent)).toEqual(["desk@example.test", url]);
+  expect(links.every((link) => JSON.parse(link.getAttribute("data-style")!).textDecorationLine === "underline")).toBe(true);
+  expect(el.textContent).toContain("custom:notes");
+  expect(el.textContent).toContain("javascript:blocked");
+  press(links[0]!);
+  expect(openedLink.compose).toHaveBeenCalledWith({ pathname: "/compose", params: { mailto: "mailto:desk@example.test" } });
+  press(links[1]!);
+  expect(openedLink.open).not.toHaveBeenCalled();
+  expect(el.textContent).toContain(EN.mailOpenLinkTitle);
+  await act(async () => el.querySelector("button")!.click());
+  expect(openedLink.open).toHaveBeenCalledWith(url);
+});
+
+it.each([
+  ["https://example.test/guide_(overview)", "(", ")."],
+  ["https://example.test/[guide]", "[", "]."],
+])("keeps the destination's own punctuation in %s", async (url, before, after) => {
+  const el = body(`See ${before}${url}${after}`, "readerBody");
+  const link = el.querySelector<HTMLElement>('[data-role="link"]');
+  expect(link?.textContent).toBe(url);
+  press(link!);
+  await act(async () => el.querySelector("button")!.click());
+  expect(openedLink.open).toHaveBeenLastCalledWith(url);
+});
+
+it("shows the actual host separately when long user information fills the URL", async () => {
+  const hostname = "contact." + "details.".repeat(5) + "example.test";
+  const url = `https://${"account".repeat(50)}@${hostname}/guide`;
+  mounted = mount(h(MailLinkSheet, { url, onClose: vi.fn() }));
+  expect([...mounted.el.querySelectorAll('[data-rn="Text"]')].some((part) => part.textContent === hostname)).toBe(true);
+  expect(openedLink.open).not.toHaveBeenCalled();
+  await act(async () => mounted!.el.querySelector("button")!.click());
+  expect(openedLink.open).toHaveBeenCalledWith(url);
+});
+
+it("keeps a formatted link's label and confirms only its admitted destination", () => {
+  const url = "https://example.test/contact";
+  const part = sanitizeMailHtmlPhone(`<p><a href="${url}">Contact the team</a> <a href="javascript:blocked">Other words</a></p>`);
+  const document = new DOMParser().parseFromString(buildPhoneMailDocument(part.html, {
+    bg: "#fff", ink: "#111", ink2: "#555", accent: "#923d17", fontScale: 1,
+  }), "text/html");
+  const anchors = [...document.querySelectorAll("a[href]")];
+  expect(anchors.map((anchor) => anchor.textContent)).toEqual(["Contact the team"]);
+  expect(document.querySelector("style")?.textContent).toMatch(/a\[href\]\{text-decoration:underline\s*!important\}/);
+  expect(frameNavDecision(anchors[0]!.getAttribute("href")!, part.links)).toEqual({ kind: "confirm", url });
+  expect(document.body.textContent).toContain("Other words");
+});
+
+it("links an address in the formatted reader without altering authored links or code", () => {
+  const written = "https://example.test/guide";
+  const part = sanitizeMailHtmlPhone(`<p>Write to desk@example.test</p>
+    <p><a href="${written}">Visit ${written}</a></p>
+    <p><code>https://example.test/template</code></p>`, { linkText: true });
+  const body = new DOMParser().parseFromString(part.html, "text/html").body;
+  expect([...body.querySelectorAll("a[href]")].map((anchor) => anchor.textContent))
+    .toEqual(["desk@example.test", "Visit " + written]);
+  expect(part.links).toEqual(["mailto:desk@example.test", written]);
+  expect(body.querySelector("code")?.textContent).toBe("https://example.test/template");
+});
 
 describe("a member and the opened message fold the text part, over the corpus", () => {
   for (const variant of ["streamBody", "readerBody"] as const) {
@@ -172,7 +254,7 @@ describe("a body with an html part folds its text only where that html folds", (
     const html = '<html><body><div style="max-width:600px;margin:0 auto"><h1>Example Weekly</h1><p>This week: how teams answer mail faster.</p>'
       + "<p>From: Support Desk &lt;desk@example.com&gt;<br>Sent: Monday, October 19, 2026 9:00 AM<br>To: A Customer &lt;c@example.org&gt;<br>"
       + "Subject: Your ticket is solved</p><p>A reply card like this one is what our builder draws.</p></div></body></html>";
-    const folded = sanitizeMailHtmlPhone(html, { fold: true });
+    const folded = sanitizeMailHtmlPhone(html, { fold: true, linkText: true });
     expect(folded.history).toBeNull();
     expect(folded.html).toContain("A reply card like this one");
   });
@@ -252,10 +334,10 @@ describe("the html part: the frame's document is cut before it is drawn", () => 
     expect(folded.blocked).toEqual([]);
     expect(folded.cids).toEqual([]);
     expect(folded.links).toEqual([]);
-    const whole = sanitizeMailHtmlPhone(html, {});
+    const whole = sanitizeMailHtmlPhone(html, { linkText: true });
     expect(whole.blocked.map((b) => b.url)).toEqual(["https://img.example.com/p.png"]);
     expect(whole.cids).toEqual(["logo@example.com"]);
-    expect(whole.links).toEqual(["https://example.com/old"]);
+    expect(whole.links).toEqual(["mailto:a@example.com", "https://example.com/old"]);
   });
 
   it("folded, the paper is read off the reply drawn: a sheet or wrapper in the quoted history is not its page", () => {

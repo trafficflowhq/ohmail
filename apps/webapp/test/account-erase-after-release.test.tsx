@@ -148,6 +148,26 @@ const text = (c: HTMLElement): string => c.textContent ?? "";
 
 describe("a failed erase names what the release did", () => {
   for (const locale of ["en", "de"] as const) {
+    it(`${locale}: explains how to verify an unconfirmed deletion`, async () => {
+      rig.answers = [{ kind: "fail", status: 503, code: "erasure_unconfirmed", subscription: "none" }];
+      const container = await mount(locale);
+      await press(container, locale);
+      const message = text(container);
+      if (locale === "en") {
+        expect(message).toContain("We could not confirm whether your account was deleted.");
+        expect(message).not.toContain("if it asks you to sign in, the deletion went through");
+        expect(message).toMatch(/sign in with (the|your) account/i);
+        expect(message).toMatch(/contact support/i);
+      } else {
+        expect(message).toContain("Wir konnten nicht bestätigen, ob dein Account gelöscht wurde.");
+        expect(message).not.toContain("Fragt sie nach einer Anmeldung, wurde der Account gelöscht");
+        expect(message).toMatch(/dich mit .*account anzumelden/i);
+        expect(message).toContain("Support");
+      }
+    });
+  }
+
+  for (const locale of ["en", "de"] as const) {
     const m = locale === "en" ? en : de;
     it(`${locale}: a 503 after the subscription was cancelled says so, and the retry's receipt keeps it`, async () => {
       rig.answers = [
@@ -224,6 +244,21 @@ describe("a failed erase names what the release did", () => {
       }
     });
   }
+
+  it("keeps the known cancellation and explains how to verify if the erase response is lost", async () => {
+    rig.answers = [
+      { kind: "fail", status: 503, code: "erasure_contended", subscription: "cancelled" },
+      { kind: "fail", status: 0, code: "network_unreachable", coded: false },
+    ];
+    const page = await mount("en");
+    await press(page);
+    expect(text(page)).toContain("Your subscription was cancelled");
+    await press(page);
+    const message = text(page);
+    expect.soft(message).toContain("We could not confirm whether your account was deleted.");
+    expect.soft(message).toContain("Your subscription was cancelled");
+    expect.soft(message).toMatch(/contact support/i);
+  });
 
   it("a platform 5xx after a first press that cancelled says unconfirmed and keeps the cancel", async () => {
     rig.answers = [

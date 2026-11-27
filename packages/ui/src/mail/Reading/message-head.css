@@ -626,9 +626,7 @@
   }
 }
 
-/* On a phone a News card's head gives the sender its line, as the reader's head does: the name on one line and the
-   address on one; the time ends the recipients' line, as the unfolded phone draws it, and the mailbox it came to
-   stands under them. Beside a long time and the mailbox the sender kept a few letters' width and broke per letter. */
+/* On a phone a News card gives the sender its own lines and keeps delivery with the time and shield. */
 @container stream-card (inline-size < 600px) {
   [data-stream-phone-list] [data-stream-window]:not([data-receipts]) .oh-messagehead-tools {
     display: contents;
@@ -664,14 +662,14 @@
   /* A mailbox address needs the whole recipients line. The shield and date share the next line. */
   [data-stream-phone-list]
     [data-stream-window]:not([data-receipts])
-    .oh-messagehead:is([data-noted], :has(.oh-messagehead-person[data-own]))
+    .oh-messagehead:is([data-noted], :has(.oh-messagehead-person[data-own], > .oh-messagehead-delivery))
     > .oh-messagehead-to {
     max-width: 100%;
   }
 
   [data-stream-phone-list]
     [data-stream-window]:not([data-receipts])
-    .oh-messagehead:is([data-noted], :has(.oh-messagehead-person[data-own]))
+    .oh-messagehead:is([data-noted], :has(.oh-messagehead-person[data-own], > .oh-messagehead-delivery))
     .oh-messagehead-stamp {
     grid-row: 3;
     align-self: center;
@@ -681,6 +679,29 @@
     grid-column: 2;
     grid-row: 3;
     justify-self: start;
+  }
+
+  [data-stream-phone-list]
+    [data-stream-window]:not([data-receipts])
+    .oh-messagehead
+    > .oh-messagehead-delivery {
+    grid-column: 2;
+    grid-row: 3;
+    min-inline-size: 0;
+  }
+
+  [data-stream-phone-list]
+    [data-stream-window]:not([data-receipts])
+    .oh-messagehead:has(> .oh-messagehead-delivery)
+    .oh-messagehead-stamp {
+    grid-column: 3;
+  }
+
+  [data-stream-phone-list]
+    [data-stream-window]:not([data-receipts])
+    .oh-messagehead[data-noted]
+    > .oh-messagehead-delivery {
+    margin-inline-start: var(--oh-messagehead-beside-shield);
   }
 
   [data-stream-phone-list]
@@ -731,8 +752,8 @@
   }
 }
 
-.oh-messagehead-delivery .oh-badge {
-  display: block;
+:where(.oh-messagehead-delivery) .oh-badge {
+  display: inline-block;
   max-inline-size: 100%;
   overflow: hidden;
   text-overflow: ellipsis;

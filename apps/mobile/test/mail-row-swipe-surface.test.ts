@@ -86,6 +86,13 @@ describe("a swiped row is a clipped, opaque surface", () => {
     const receipts = source(RECEIPTS);
     expect(receipts, "Receipts renders its cards through the virtualized list").toMatch(/<MailList[\s>]/);
     expect(receipts, "Receipt cards carry the swipe surface themselves").toMatch(/surface=\{false\}/);
-    expect(receipts, "Each receipt uses the same swipe row, in its card presentation").toMatch(/<MailRow[^\n]*\bswipe receipt\s+receiptDetail=\{t\.mail \? <ReceiptEvents m=\{m\} \/> : null\}\s*\/>/s);
+    expect(receipts, "The Paper card and other face both open from the receipt row").toMatch(
+      /t\.mail \? <ReceiptPreview m=\{m\} onRead=\{read\} \/> : <MailRow m=\{m\} onPress=\{read\} swipe receipt \/>/,
+    );
+    const card = receipts.slice(receipts.indexOf("function ReceiptPreview("));
+    expect(card, "Paper's receipt card uses the same swipe row").toMatch(/<MailRow\s+m=\{m\}\s+onPress=\{onRead\}\s+swipe\s+receipt\s/);
+    expect(card, "The Paper card carries its calendar affordances inside the swipe surface").toMatch(
+      /receiptDetail=\{\s*<>\s*<EventCards[^\n]*\/>\s*<MailFoundEvents found=\{found\} \/>/,
+    );
   });
 });

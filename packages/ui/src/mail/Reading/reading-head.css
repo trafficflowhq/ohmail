@@ -184,18 +184,11 @@
   }
 
   .oh-readinghead-mailbox {
+    min-inline-size: 0;
+    max-inline-size: 100%;
     color: var(--ink2);
     font-size: var(--t-meta);
     font-weight: var(--w-mid);
-  }
-
-  .oh-readinghead-mailbox::before {
-    content: "·";
-    margin-right: var(--s2);
-  }
-
-  .oh-readinghead-mailbox:first-child::before {
-    content: none;
   }
 
   /* Wider than a phone the line is one line: the names give way first, then the mailbox. */

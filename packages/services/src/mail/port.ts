@@ -49,6 +49,8 @@ export type SkipReason =
   | "mailer_disabled"
   /** The recipient address did not survive normalisation. */
   | "invalid_recipient"
+  /** The account was marked for erasure before a verification token could be issued. */
+  | "account_erased"
   /**
    * The credential being mailed is bound to a user whose address is not this recipient
    * (`issueEmailVerification`). Never a normal outcome: it means a caller tried to send

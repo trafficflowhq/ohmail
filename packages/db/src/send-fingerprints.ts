@@ -1,7 +1,8 @@
-import { and, lt, sql } from "drizzle-orm";
-/* The mail half directly — see the note in `change-log.ts`. This is a mail table. */
+import { and, asc, eq, gt, lt, sql, type SQL } from "drizzle-orm";
+/* Hosted maintenance for the send claim tables. The send path itself uses the mail schema. */
 import { outboundSendFingerprints, outboundSends } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
+import { rowsAffected } from "./rows-affected.js";
 
 /**
  * How long a content claim is kept on disk — hygiene, NOT the duplicate window. The window a
@@ -25,14 +26,36 @@ export const SEND_FINGERPRINT_RETENTION_MS = 24 * 60 * 60 * 1000;
  * waits on it and no send's answer changes because it did or did not run. A claim whose send is held
  * (`unverified`, nobody has answered for it) is kept whatever its age: Send again proves its message by it.
  */
-export async function pruneSendFingerprints(tx: Tx, now: Date): Promise<number> {
-  const gone = await tx
-    .delete(outboundSendFingerprints)
+export const SEND_FINGERPRINT_PRUNE_BATCH = 500;
+
+export async function expiredFingerprintAccounts(
+  db: Tx, now: Date, before: string | null, limit: number, shard?: SQL,
+): Promise<string[]> {
+  const rows = await db.selectDistinct({ id: outboundSendFingerprints.accountId }).from(outboundSendFingerprints)
     .where(and(
       lt(outboundSendFingerprints.createdAt, new Date(now.getTime() - SEND_FINGERPRINT_RETENTION_MS)),
-      sql`not exists (select 1 from ${outboundSends} where ${outboundSends.id} = ${outboundSendFingerprints.sendId}
-        and ${outboundSends.status} = 'unverified' and ${outboundSends.resolvedBy} is null)`,
-    ))
-    .returning({ id: outboundSendFingerprints.id });
-  return gone.length;
+      before ? gt(outboundSendFingerprints.accountId, before) : undefined, shard,
+    )).orderBy(asc(outboundSendFingerprints.accountId)).limit(limit);
+  return rows.map((r) => r.id);
+}
+
+export async function pruneSendFingerprints(
+  tx: Tx, now: Date, opts: { accountId?: string; batch?: number } = {},
+): Promise<number> {
+  const { accountId, batch = SEND_FINGERPRINT_PRUNE_BATCH } = opts;
+  const eligible = and(
+    accountId === undefined ? undefined : eq(outboundSendFingerprints.accountId, accountId),
+    lt(outboundSendFingerprints.createdAt, new Date(now.getTime() - SEND_FINGERPRINT_RETENTION_MS)),
+    sql`not exists (select 1 from ${outboundSends} where ${outboundSends.id} = ${outboundSendFingerprints.sendId}
+      and ${outboundSends.accountId} = ${outboundSendFingerprints.accountId}
+      and ${outboundSends.status} = 'unverified' and ${outboundSends.resolvedBy} is null)`,
+  );
+  const ids = tx.select({ id: outboundSendFingerprints.id }).from(outboundSendFingerprints)
+    .where(eligible).orderBy(asc(outboundSendFingerprints.createdAt), asc(outboundSendFingerprints.id)).limit(batch)
+    .for("update", { skipLocked: true });
+  return rowsAffected(await tx.execute(sql`
+    with due as materialized (${ids})
+    delete from ${outboundSendFingerprints} using due
+    where ${outboundSendFingerprints.id} = due.id and ${eligible}
+  `));
 }

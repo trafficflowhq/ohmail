@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { sessions, devices } from "@trafficflow/db";
+import { bindDb, sessions, devices } from "@trafficflow/db";
 import { loginTokens, authEvents } from "@trafficflow/db/cloud";
 import { DESKTOP_LINK_PURPOSE, hashToken } from "@trafficflow/services";
 import { makeDeps, seedSession, seedSessionFor, req, setCookieMap, FIXED_NOW } from "./helpers.js";
@@ -250,7 +250,10 @@ describe("a code works ONCE, briefly, and only as the thing it was minted as", (
     // value is lifted out of the mail. That is what makes this the strong form of the test: the
     // caller below holds the exact secret and still gets nothing, because the claim's query
     // filters on `purpose`. Presenting a value nobody has would prove only that hashing works.
-    await mail.issueEmailVerification({ db, now: () => FIXED_NOW }, {
+    await mail.issueEmailVerification({
+      db: bindDb(db, { account: s.accountId }), accountId: s.accountId, userId: s.userId,
+      now: () => FIXED_NOW, requestId: "verification",
+    }, {
       userId: s.userId, to: `mila+${s.accountId}@lichtgrat.example`,
     });
     const mailed = await db.select().from(loginTokens)

@@ -6,7 +6,7 @@ import type { CalendarAccess, CalendarEventAct, CalendarEventRecord, MessageInvi
 import { GOOGLE } from "../../../packages/core/test/fixtures/invite-shapes";
 import { calendarOf, connection, event } from "../../../packages/app-logic/test/calendar/invitations/fixtures";
 import { json } from "./account/account-harness";
-import { ACCOUNT, ISO, MAILBOX, act, closeMailPage, mountMailPage, prepareMailPage, scopedSyncResponse, tick } from "./fixtures/mounted-mail-page";
+import { ACCOUNT, ISO, MAILBOX, act, calendarSnapshot, closeMailPage, mountMailPage, prepareMailPage, scopedSyncResponse, tick } from "./fixtures/mounted-mail-page";
 
 const organiser = "ada" + "@example.test";
 const asks = {
@@ -73,6 +73,7 @@ async function reader({ invitation = asks, native = false, nativeSequence, nativ
       enabledAt: ISO, unconfigured: !connected, newEventsCalendarId: connected ? studio.id : null, secondZone: null, weekNumbers: false,
       dayFromMinute: null, dayToMinute: null,
     }),
+    "GET /api/sync/snapshot": () => calendarSnapshot(rows),
     "GET /api/sync": () => scopedSyncResponse({
       changes: { creates: rows.map(([type, entity], index) => ({ type, entity, id: entity.id, seq: index + 1, op: "create", updatedAt: ISO })),
         updates: [], moves: [], deletes: [] }, cursor: "calendar-letter", hasMore: false, serverTime: ISO,

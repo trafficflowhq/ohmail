@@ -397,11 +397,12 @@ describe("the world layer actually hands the answer over", () => {
   it("the READING screen's view carries the same two facts as the lists'", () => {
     // A row the list showed under the account's window must open under it too; and reply-all
     // resolved against an empty own-address set leaves the reader in their own audience.
-    const at = projection.indexOf("message: (id) => liveMessage(");
+    const at = projection.indexOf("message: (id, wholeThread) => liveMessage(");
     expect(at).toBeGreaterThan(-1);
     const call = projection.slice(at, at + 260);
     expect(call).toContain("ownAddresses: inp.ownAddresses");
-    expect(call).toContain("screening");
+    expect(call).toContain("screening: posture");
+    expect(call).toContain("}, base === raw ? presented.world : undefined, wholeThread),");
   });
 
   it("a session swap forgets the previous account's answer", () => {

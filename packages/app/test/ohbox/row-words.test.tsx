@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { firstNameOf } from "../../src/ohbox/row-words.js";
+import { firstNameOf } from "@ohmail/app-logic/ohbox/people";
 import { at, msg, ohbox } from "./ohbox-world.js";
 import { wideWindow } from "./setup.js";
 

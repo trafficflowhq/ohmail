@@ -36,6 +36,7 @@ export type DeleteAccountState =
     }
   | {
       readonly at: "done";
+      readonly pending?: boolean;
       /** The server’s description of the records the erase leaves. */
       readonly retained?: string;
       /** What the erase did to the subscription. */

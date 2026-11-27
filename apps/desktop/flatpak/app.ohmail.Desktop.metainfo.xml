@@ -78,6 +78,16 @@
   </screenshots>
 
   <releases>
+    <release version="2.0.10" date="2026-11-27">
+      <description>
+        <ul>
+          <li>Steadier calendar refresh and clearer keyboard hints</li>
+          <li>Mailbox erasure and credit refunds resume reliably</li>
+          <li>Keep unsent drafts and restore mail to its original folder</li>
+          <li>Phone mail follows the mobile web layout</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.0.9" date="2026-11-26">
       <description>
         <ul>
@@ -153,27 +163,6 @@
           <li>Sync details in desktop Mailboxes settings</li>
           <li>Move to Trash asks once per account</li>
           <li>Faster returns to News and Receipts</li>
-        </ul>
-      </description>
-    </release>
-    <release version="2.0.5" date="2026-11-25">
-      <description>
-        <ul>
-          <li>Day shows the Agenda when there is room</li>
-          <li>Calendar drags cross days</li>
-          <li>Open mail actions with right-click or the menu key</li>
-          <li>Mailboxes wait for a new sign-in after a day of rejections</li>
-          <li>Newsletter artwork loads with tracker blocking on</li>
-          <li>Calendar notices follow each account’s check schedule</li>
-          <li>Quieter connection notices</li>
-          <li>More room for the sender in message headers</li>
-          <li>The reader heading becomes compact as you scroll</li>
-          <li>The reader keeps your place with larger text</li>
-          <li>Choose how a calendar event repeats</li>
-          <li>The Screener learns from your choices</li>
-          <li>Fixed</li>
-          <li>Saved drafts keep their formatting when sent</li>
-          <li>Compact Screener lists keep the keyboard cursor</li>
         </ul>
       </description>
     </release>

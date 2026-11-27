@@ -18,6 +18,11 @@ export const KEPT_FILES_MAX_BYTES = 12 * 1024 * 1024;
 
 export interface LetterAddress { name: string | null; address: string }
 
+export interface ReplyEdits {
+  replyEnvelope?: { to: LetterAddress[]; cc: LetterAddress[]; bcc: LetterAddress[] };
+  replySubject?: string;
+}
+
 export interface LetterFile { fileId: string; filename: string; contentType: string; sizeBytes: number }
 
 /** A keep or a send pressed for this letter, written before its mutation; `key` once known. */
@@ -26,6 +31,12 @@ export interface LetterMark {
   key: string | null;
   /** A send's signature, sealed onto the body it carried. */
   sig?: string | null;
+  sigHtml?: string;
+  mailboxId?: string;
+  /** The target the press named. Null is an explicit create. */
+  draftId?: string | null;
+  /** The source attachment selection at Send, including a confirmed send of all parts. */
+  forwardParts?: string[] | null;
 }
 
 export interface Letter {
@@ -34,6 +45,10 @@ export interface Letter {
   mode: "reply" | "replyAll" | "forward" | "new";
   messageId: string | null;
   mailboxId: string | null;
+  /** A From choice can be the only edit on a letter. */
+  fromEdited?: boolean;
+  replyRecipientsEdited?: boolean;
+  replySubjectEdited?: boolean;
   /** As typed. */
   to: string;
   cc: string;
@@ -93,8 +108,25 @@ export function rowHoldsLetter(l: Pick<Letter, "files" | "forwardKept">): boolea
 }
 
 /** The words a draft row holds, compared to tell an edit from what was saved. */
-export function wordsOf(l: Pick<Letter, "to" | "cc" | "bcc" | "subject" | "body" | "html">): string {
-  return JSON.stringify([l.to, l.subject, l.body, l.cc, l.bcc, ...(l.html ? [l.html] : [])]);
+export function wordsOf(l: Pick<Letter, "to" | "cc" | "bcc" | "subject" | "body" | "html" | "mailboxId"
+  | "replyRecipientsEdited" | "replySubjectEdited">): string {
+  const words = [l.to, l.subject, l.body, l.cc, l.bcc];
+  if (l.replyRecipientsEdited || l.replySubjectEdited) {
+    return JSON.stringify([...words, l.html || null, l.mailboxId, !!l.replyRecipientsEdited, !!l.replySubjectEdited]);
+  }
+  if (l.mailboxId !== null) return JSON.stringify([...words, l.html || null, l.mailboxId]);
+  return JSON.stringify(l.html ? [...words, l.html] : words);
+}
+
+/** Older snapshots predate sender choices; compare them using their original shape. */
+export function savedWordsMatch(l: Letter): boolean {
+  return l.savedAs === wordsOf(l) || l.savedAs === wordsOf({ ...l, mailboxId: null });
+}
+
+export function hasEnvelopeEdits(l: Pick<Letter, "mode" | "to" | "cc" | "bcc" | "fromEdited"
+  | "replyRecipientsEdited" | "replySubjectEdited">, parse: (value: string) => readonly unknown[]): boolean {
+  return l.fromEdited === true || l.replyRecipientsEdited === true || l.replySubjectEdited === true
+    || (l.mode === "forward" && [l.to, l.cc, l.bcc].some((value) => parse(value).length > 0));
 }
 
 export function letterDoor(journal: LetterJournal): LetterDoor {

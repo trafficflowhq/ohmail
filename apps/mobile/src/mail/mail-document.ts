@@ -47,9 +47,10 @@ export function buildPhoneMailDocument(bodyHtml: string, t: MailDocumentTheme): 
   // !important: a sender's own `body{zoom}` comes later in the cascade.
   const wash = ["color-mix(in", "srgb,", t.accent, "20%,transparent)"].join(" ");
   const mark = t.highlights ? `mark{background:${wash};color:inherit}` : "";
+  const links = "a[href]{text-decoration:underline!important}";
   const fit = (zoom > 0 ? `body{zoom:${zoom} !important}` : "") + mark;
   const dark = t.invert ? `body{background:${t.invert.paper};filter:${FLIP}}:root{background:${t.invert.canvas}}img,video,picture,[style*="url(" i]{filter:${FLIP}}` : "";
-  return `<!doctype html><html><head><meta charset="utf-8"/><meta http-equiv="Content-Security-Policy" content="${CSP}"/><meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1"/><style>:root{color-scheme:light}:root,:root>body{height:auto !important}body{margin:0;padding:14px 16px 20px;background:${t.bg};color:${t.ink};font:400 ${px(16.5)}/1.78 -apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;overflow-wrap:break-word;word-break:break-word}a{color:${t.accent}}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}td,th{word-break:normal}blockquote{margin:0 0 0 2px;padding-left:14px;border-left:2px solid ${t.ink2}}pre{white-space:pre-wrap}${fit}${dark}</style></head><body>${bodyHtml}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"/><meta http-equiv="Content-Security-Policy" content="${CSP}"/><meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1"/><style>:root{color-scheme:light}:root,:root>body{height:auto !important}body{margin:0;padding:14px 16px 20px;background:${t.bg};color:${t.ink};font:400 ${px(16.5)}/1.78 -apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;overflow-wrap:break-word;word-break:break-word}a{color:${t.accent}}img{max-width:100%;height:auto}table{max-width:100%;border-collapse:collapse}td,th{word-break:normal}blockquote{margin:0 0 0 2px;padding-left:14px;border-left:2px solid ${t.ink2}}pre{white-space:pre-wrap}${fit}${dark}${links}</style></head><body>${bodyHtml}</body></html>`;
 }
 
 /** The zoom a document built here is drawn at (1 as written), read from its own head, never the letter's body. */

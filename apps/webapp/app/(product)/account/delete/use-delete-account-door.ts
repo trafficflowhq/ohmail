@@ -15,7 +15,7 @@ import { useTranslations } from "next-intl";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { markAccountErased } from "@ohmail/app-logic/session/account-erased";
 import { pendApiOwner } from "../../../api-client";
-import { account, ApiError, apiConfigured, auth, type ErasureResult } from "../../../api-client";
+import { account, ApiError, OFFLINE_CODE, apiConfigured, auth, type ErasureResult } from "../../../api-client";
 // The ONE correct way out — revokes server-side and wipes the local mirror. The sign-out guard
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
 import { forgetThisBrowser } from "../../../sign-out";
@@ -181,21 +181,26 @@ export function useDeleteAccountDoor(): DeleteAccountCeremony {
       }
       // Back to the top, the typed address kept. A refusal the SERVER answered rolled its one
       // transaction back and is said in our words, never its "internal error", naming what the
-      // release had already done. An outcome nobody confirmed (the server said so, or a 5xx with no
-      // envelope of ours: the function cut mid-erasure) says exactly that, with the release's known
-      // outcome. A request that never got an answer keeps the client's own sentence.
+      // release had already done. A lost response, an uncoded 5xx, or an explicit unconfirmed
+      // outcome leaves the deletion uncertain. Keep what the page already knows about the release.
       const released = releaseOf(err);
       const cancelled = released === "cancelled" || cancelledEarlier;
       if (released === "cancelled") setCancelledEarlier(true);
       const unconfirmed = err instanceof ApiError
-        && (err.code === "erasure_unconfirmed" || (err.status >= 500 && !err.wire.coded));
+        && (err.code === "erasure_unconfirmed" || err.code === OFFLINE_CODE || (err.status >= 500 && !err.wire.coded));
       setStage("facts");
-      setError(why === "sign-in" ? td("stepUpExpired")
-        : !(err instanceof ApiError && err.status >= 400) ? sentence(err)
-          : unconfirmed ? (cancelled ? t("eraseUnconfirmedSubCancelled")
-            : released === "cancel_failed" ? t("eraseUnconfirmedSubFailed") : t("eraseUnconfirmed"))
-            : cancelled ? t("eraseRefusedSubCancelled")
-              : released === "cancel_failed" ? t("eraseRefusedSubFailed") : t("eraseRefused"));
+      if (why === "sign-in") {
+        setError(td("stepUpExpired"));
+        return;
+      }
+      if (unconfirmed) {
+        setError(cancelled ? t("eraseUnconfirmedSubCancelled")
+          : released === "cancel_failed" ? t("eraseUnconfirmedSubFailed") : t("eraseUnconfirmed"));
+        return;
+      }
+      setError(!(err instanceof ApiError && err.status >= 400) ? sentence(err)
+          : cancelled ? t("eraseRefusedSubCancelled")
+            : released === "cancel_failed" ? t("eraseRefusedSubFailed") : t("eraseRefused"));
     }
   }, [sentence, t, td, cancelledEarlier, settleAgain]);
 

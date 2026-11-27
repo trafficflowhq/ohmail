@@ -7,12 +7,14 @@
  */
 import { useMemo, useState } from "react";
 import type { ServerSearchFilters } from "@ohmail/client-engine";
+import { dayBounds } from "./dates.js";
 import { storeFiltersOf, type Pressed } from "./facets.js";
 import { parseOperators, withoutOperator } from "./operators.js";
+import type { SearchBy } from "./supplies.js";
 import type { SearchDates, SearchListModel, SearchPerson } from "./types.js";
 
-/** Whether the host's server takes the question's filters (its hello said so), or words and facets only. */
-export type SearchBy = "people" | "words";
+export { dayBounds } from "./dates.js";
+export type { SearchBy } from "./supplies.js";
 
 /** What the person set beside the words. */
 export interface SearchNarrowing {
@@ -22,25 +24,6 @@ export interface SearchNarrowing {
 }
 
 export const NO_NARROWING: SearchNarrowing = { person: null, unread: false, date: null };
-
-/** `YYYY-MM-DD` as this window's midnight, or null for a day that is not one. */
-function localDay(day: string): Date | null {
-  if (day.length !== 10 || day[4] !== "-" || day[7] !== "-") return null;
-  const y = Number(day.slice(0, 4));
-  const m = Number(day.slice(5, 7));
-  const d = Number(day.slice(8, 10));
-  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return null;
-  const at = new Date(y, m - 1, d, 0, 0, 0, 0);
-  return at.getFullYear() === y && at.getMonth() === m - 1 && at.getDate() === d ? at : null;
-}
-
-/** The first millisecond of a day and the last, as instants. */
-export function dayBounds(day: string): { first: string; last: string } | null {
-  const at = localDay(day);
-  if (at === null) return null;
-  const next = new Date(at.getFullYear(), at.getMonth(), at.getDate() + 1, 0, 0, 0, 0);
-  return { first: at.toISOString(), last: new Date(next.getTime() - 1).toISOString() };
-}
 
 export function filtersOf(n: SearchNarrowing, searchBy: SearchBy): ServerSearchFilters {
   if (searchBy !== "people") return {};

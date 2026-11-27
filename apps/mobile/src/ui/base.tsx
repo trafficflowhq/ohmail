@@ -6,17 +6,15 @@
  *   Section (`.grouplabel`) · Badge (`.badge`) · TagChip (`.tagchip`) · TagDot (`.tdot`) · Chip (`.chip`) ·
  *   Button (`.btn`) · Tail (`.tail-row`) · Waterline (`.waterline`)
  */
-import { useCallback, useState, type ReactElement, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import {
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
   type LayoutChangeEvent,
   type PressableProps,
-  type RefreshControlProps,
   type StyleProp,
   type TextProps,
   type TextStyle,
@@ -27,6 +25,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { listInsets, type ListInsets } from "./list-insets";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import { KeyboardRoom } from "./keyboard-room";
+import { PullScroll } from "./PullScroll";
+import type { PullToSync as PullRefresh } from "../state/pull";
+export type { PullToSync as PullRefresh } from "../state/pull";
 import { useAppWindow, usePosture } from "./posture";
 import { listNavClearance, scaffoldPlan, screenFillsWindow, screenHingeClearance, screenRailClearance, screenSideInsets } from "./scaffold/plan";
 import { useInPane, useListFoot } from "./pane-chrome";
@@ -36,6 +37,7 @@ import { useTheme, type Theme } from "../theme";
 import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
 import { Icon, type IconName } from "./Icon";
 import { mailColors, mailSize } from "../theme/mail";
+import { HeadingEnd } from "./HeadingEnd";
 
 /* ------------------------------------------------------------------- text */
 
@@ -190,32 +192,23 @@ export function Panel({
   return <View style={[panelSurface(t, level, radius), style]} onLayout={onLayout}>{children}</View>;
 }
 
-export interface PullRefresh {
-  result?: string;
-  refreshing: boolean;
-  onRefresh: () => void;
-}
+const FORM_MEASURE = { width: "100%", maxWidth: 640, alignSelf: "center" } satisfies ViewStyle;
 
-/**
- * The standard pull gesture, themed once so every refreshing list speaks the same voice: the
- * spinner in the theme's accent on both platforms (iOS — `tintColor` on UIRefreshControl; Android —
- * `colors`/`progressBackgroundColor` on SwipeRefreshLayout). Screens hand
- * in `usePullToSync()`, whose spinner settles when the sync round actually completes
- * (`state/pull.ts`). Read by `Scroller` and `MailList`.
- */
-export function pullRefreshControl(
-  t: Theme,
-  refresh: PullRefresh | undefined,
-): ReactElement<RefreshControlProps> | undefined {
-  return refresh ? (
-    <RefreshControl
-      refreshing={refresh.refreshing}
-      onRefresh={refresh.onRefresh}
-      tintColor={t.c.accentInk}
-      colors={[t.c.accentInk]}
-      progressBackgroundColor={t.c.float}
-    />
-  ) : undefined;
+/** Put the place heading above the list with the same side insets as its scrolling sheet. */
+export function ListWithHeading({ head, insets, bounded, children }: {
+  head: ReactNode;
+  insets: ListInsets;
+  bounded?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={[{ paddingLeft: insets.paddingLeft, paddingRight: insets.paddingRight }, bounded ? FORM_MEASURE : null]}>
+        {head}
+      </View>
+      {children}
+    </View>
+  );
 }
 
 /**
@@ -226,6 +219,7 @@ export function pullRefreshControl(
 export function Scroller({
   children,
   contentStyle,
+  head,
   refresh,
   bounded,
   avoidKeyboard = false,
@@ -235,6 +229,7 @@ export function Scroller({
   /** The scroll view itself, for a screen that scrolls it to a place (the reader's rail). */
   scrollRef?: React.Ref<ScrollView>;
   contentStyle?: StyleProp<ViewStyle>;
+  head?: ReactNode;
   refresh?: PullRefresh;
   /**
    * The flow screens' wide-window bound (settings, onboarding, connect): the content column
@@ -249,17 +244,17 @@ export function Scroller({
    */
   avoidKeyboard?: boolean;
 }) {
-  const t = useTheme();
   const insets = useListInsets();
+  const Scroll = refresh ? PullScroll : ScrollView;
   const scroller = (
-    <ScrollView
+    <Scroll
       {...rest}
       ref={scrollRef}
-      refreshControl={pullRefreshControl(t, refresh)}
+      {...(refresh ? { refresh } : null)}
       style={{ flex: 1 }}
       contentContainerStyle={[
         insets,
-        bounded ? { width: "100%", maxWidth: 640, alignSelf: "center" } : null,
+        bounded ? FORM_MEASURE : null,
         contentStyle,
       ]}
       showsVerticalScrollIndicator={false}
@@ -267,10 +262,10 @@ export function Scroller({
       automaticallyAdjustKeyboardInsets={avoidKeyboard || rest.automaticallyAdjustKeyboardInsets}
     >
       {children}
-    </ScrollView>
+    </Scroll>
   );
-  if (!avoidKeyboard || Platform.OS !== "android") return scroller;
-  return <KeyboardRoom>{scroller}</KeyboardRoom>;
+  const scroll = avoidKeyboard && Platform.OS === "android" ? <KeyboardRoom>{scroller}</KeyboardRoom> : scroller;
+  return head == null ? scroll : <ListWithHeading head={head} insets={insets} bounded={bounded}>{scroll}</ListWithHeading>;
 }
 
 /* ------------------------------------------------------------------ chrome */
@@ -292,6 +287,7 @@ export function ViewHead({
   badge,
   leading,
   style,
+  aboveSheet = false,
   children,
 }: {
   title: string;
@@ -305,10 +301,15 @@ export function ViewHead({
   badge?: ReactNode;
   leading?: ReactNode;
   style?: StyleProp<ViewStyle>;
+  /** This phone heading sits directly above a mail sheet. */
+  aboveSheet?: boolean;
   children?: ReactNode;
 }) {
   const t = useTheme();
-  const oneLine = usePosture().heightClass === "compact";
+  const posture = usePosture();
+  const oneLine = posture.heightClass === "compact";
+  const phoneHeading = t.mail && posture.sizeClass === "compact" && !oneLine;
+  const columnGap = phoneHeading ? mailSize.inset : 10;
   const beside = oneLine || metaBeside || t.mail === true;
   const metaLine = meta === undefined ? null : (
     <Txt variant="meta" tone="ink3" tabular style={beside ? undefined : { marginTop: 4 }}>
@@ -320,11 +321,12 @@ export function ViewHead({
       { paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12 },
       style,
       t.mail ? { paddingHorizontal: mailSize.edge, minHeight: mailSize.bar } : null,
+      aboveSheet && phoneHeading ? { paddingBottom: mailSize.headingSheetGap } : null,
     ]}>
-      <View style={{ flexDirection: "row", alignItems: oneLine ? "baseline" : "center", flexWrap: oneLine ? "nowrap" : "wrap", columnGap: 10 }}>
+      <View style={{ flexDirection: "row", alignItems: oneLine ? "baseline" : "center", flexWrap: oneLine ? "nowrap" : "wrap", columnGap }}>
         {leading}
         <Txt variant="h1" accessibilityRole="header" accessibilityLabel={title} style={{ flexShrink: 1 }}>
-          {title}{t.mail ? <Txt variant="h1" style={{ color: attention ? t.c.accent : t.c.ink }}>.</Txt> : null}
+          <HeadingEnd variant="h1" hot={attention}>{title}</HeadingEnd>
         </Txt>
         {oneLine ? (
           <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", flexGrow: 1, flexShrink: 1 }}>
@@ -642,7 +644,7 @@ export function Waterline({ label, meta }: { label: string; meta: string }) {
     >
       <View style={rule} />
       <Txt variant="caption" tone="ink2" style={{ fontWeight: t.type.sectionLabel.fontWeight }}>
-        {label}
+        <HeadingEnd variant="caption">{label}</HeadingEnd>
       </Txt>
       <Txt variant="caption" tone="ink3">
         {meta}
@@ -653,7 +655,7 @@ export function Waterline({ label, meta }: { label: string; meta: string }) {
 }
 
 /** A hairline divider inside a panel. */
-export function Rule({ inset = 0 }: { inset?: number }) {
+export function Rule({ inset = 0, style }: { inset?: number; style?: ViewStyle }) {
   const t = useTheme();
   return (
     <View
@@ -661,6 +663,7 @@ export function Rule({ inset = 0 }: { inset?: number }) {
         height: StyleSheet.hairlineWidth * 2,
         backgroundColor: t.c.hairSoft,
         marginHorizontal: inset,
+        ...style,
       }}
     />
   );
@@ -684,7 +687,7 @@ export function Empty({ title, hint, action }: {
   return (
     <View style={{ alignItems: "center", paddingHorizontal: 32, paddingVertical: quiet ? 32 : 56, gap: 8 }}>
       <Txt variant={quiet ? "h2" : "cardTitle"} tone={quiet ? "ink2" : "ink"} style={{ textAlign: "center" }}>
-        {title}{quiet ? <Txt variant="h2" tone="ink">.</Txt> : null}
+        <HeadingEnd variant="h2" show={quiet}>{title}</HeadingEnd>
       </Txt>
       {hint !== undefined ? (
         <Txt variant="note" tone="ink3" style={{ textAlign: "center", maxWidth: 300 }}>{hint}</Txt>
