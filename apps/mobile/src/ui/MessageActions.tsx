@@ -2341,16 +2341,27 @@ export function ComposeSheet({
       </Txt>,
     );
   }
-  const mailTool = (label: string, onPress: () => void, icon: IconName, expanded?: boolean) => phonePill ? (
-    <Tap accessibilityRole="button" accessibilityLabel={label} disabled={phase !== "idle"} onPress={onPress}
-      accessibilityState={expanded === undefined ? undefined : { expanded }}
-      style={{ width: 38, height: mailSize.action, alignItems: "center", justifyContent: "center", borderRadius: t.radius.pill,
-        backgroundColor: icon === "clip" || expanded === true ? t.c.tint2 : "transparent" }}>
-      <Icon name={icon} size={16} color={t.c.ink2} />
-    </Tap>
-  ) : (
-    <Button label={label} icon={icon === "clip" ? icon : undefined} variant="quiet" disabled={phase !== "idle"} onPress={onPress} />
-  );
+  const mailTool = (label: string, onPress: () => void, icon: IconName, expanded?: boolean) => {
+    const disabled = phase !== "idle";
+    if (!phonePill) {
+      return <Button label={label} icon={icon === "clip" ? icon : undefined} variant="quiet" disabled={disabled} onPress={onPress} />;
+    }
+    const style = {
+      width: 38, height: mailSize.action, alignItems: "center", justifyContent: "center",
+      borderRadius: t.radius.pill, backgroundColor: icon === "clip" || expanded === true ? t.c.tint2 : "transparent",
+    } as const;
+    const glyph = <Icon name={icon} size={16} color={t.c.ink2} />;
+    return expanded === undefined ? (
+      <Tap accessibilityRole="button" accessibilityLabel={label} disabled={disabled} onPress={onPress} style={style}>
+        {glyph}
+      </Tap>
+    ) : (
+      <Tap accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ expanded: expanded === true }}
+        disabled={disabled} onPress={onPress} style={style}>
+        {glyph}
+      </Tap>
+    );
+  };
   const notesBlock = noteItems.length === 0 ? null : (
     <View style={{ gap: 10 }} onLayout={(e) => setNotesHeight(Math.round(e.nativeEvent.layout.height))}>
       {noteItems}
@@ -2411,7 +2422,7 @@ export function ComposeSheet({
         const address = displayAddress(c.address);
         const name = w.mailboxes.all.find((mailbox) => mailbox.id === c.id)?.displayName?.trim();
         return (
-          <Tap key={c.id} accessibilityRole="radio" accessibilityState={{ checked }} accessibilityLabel={address}
+          <Tap key={c.id} accessibilityRole="radio" accessibilityState={{ checked: checked === true }} accessibilityLabel={address}
             onPress={() => { if (!checked) setPicked(c.id); setFromOpen(false); }}
             style={({ pressed }) => ({
               flexDirection: "row", alignItems: "center", gap: 4, minHeight: phonePill ? mailSize.menuRowHeight : mailSize.action,

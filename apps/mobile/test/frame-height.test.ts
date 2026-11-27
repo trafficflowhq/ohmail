@@ -452,10 +452,12 @@ describe("the frame is wired to that height, with JavaScript still off", () => {
   it("its height is the learned one; the settle is armed only by a seed-size reading", () => {
     expect(FRAME).toContain("const sized = frameHeightFor(frameHeight, frameId, layoutWidth, rememberedFrameHeight(frameId));");
     expect(FRAME).toContain("if (frameHeight !== null) rememberFrameHeight(frameHeight);");
-    expect(FRAME).toContain("update((s) => nextFrameHeight(s, reported, view, at, widths));");
+    expect(FRAME).toContain("update((s) => nextFrameHeight(s, reported, preview ? FRAME_SEED_DP : view, at, widths));");
     expect(FRAME).toContain("const reported = e.nativeEvent.contentSize.height;");
     expect(FRAME).toContain("const view = e.nativeEvent.layoutMeasurement.height;");
-    expect(FRAME).toContain("const { frame: height, spacer } = frameLayout(sized);");
+    expect(FRAME).toContain("const layout = frameLayout(sized);");
+    expect(FRAME).toContain("const height = maxHeight === undefined ? layout.frame : Math.min(maxHeight, measured ?? 1);");
+    expect(FRAME).toContain("const spacer = preview ? 0 : layout.spacer;");
     expect(FRAME).toContain("{spacer > 0 ? <View style={{ height: spacer }} /> : null}");
     // The settle key is null until a seed-size reading: no timer runs from mount or from a width change.
     expect(FRAME).toContain("const settleKey = sized.measured === null ? null : `${sized.key}@${sized.width}:${sized.measured}`;");

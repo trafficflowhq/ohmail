@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { KeymapContext, useKeyBindings, useKeymapStore } from "@ohmail/app-logic/keys";
 import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -10,6 +11,7 @@ import {
   type AboutModel,
 } from "../../../src/settings/about/index.js";
 import { FrameContext, type FrameInner } from "../../../src/frame/commands.js";
+import { SHEET_CHORD } from "../../../src/keys/availability.js";
 import { drawn, said } from "./words.js";
 
 afterEach(cleanup);
@@ -47,15 +49,31 @@ describe("where the policies are linked", () => {
   });
 });
 
+function AboutWithShortcut({ frame }: { frame: FrameInner }) {
+  const keys = useKeymapStore();
+  return (
+    <KeymapContext.Provider value={keys}>
+      <FrameContext.Provider value={frame}>
+        <KeyboardHelpBinding />
+        <AboutPane model={states.synced.model} />
+      </FrameContext.Provider>
+    </KeymapContext.Provider>
+  );
+}
+
+function KeyboardHelpBinding() {
+  useKeyBindings(
+    [{ chord: SHEET_CHORD, group: "app", label: "Keyboard shortcuts", run: () => {} }],
+    "global",
+  );
+  return null;
+}
+
 describe("the About pane", () => {
   it("opens the frame's keyboard sheet from About", () => {
     const over = vi.fn();
     const frame = { api: { commands: { over }, plan: { device: "desktop" } } } as unknown as FrameInner;
-    drawn(
-      <FrameContext.Provider value={frame}>
-        <AboutPane model={states.synced.model} />
-      </FrameContext.Provider>,
-    );
+    drawn(<AboutWithShortcut frame={frame} />);
     fireEvent.click(screen.getByRole("button", { name: said("en", "settingsAbout", "showKeyboard") }));
     expect(over.mock.calls).toEqual([["keys"]]);
   });

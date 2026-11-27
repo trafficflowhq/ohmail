@@ -1890,6 +1890,7 @@ const TABLE = {
   helpRow: "Help & contact",
   helpRowSub: "support@ohmail.app · a person answers by mail",
   helpSubject: "Help with ohmail",
+  settingsHelpSummary: "Write to us · Diagnostics",
   helpDiag: "Diagnostics",
   helpDiagWhat:
     "This block holds the app version and build, the platform, your account id, which kind of mailbox "
