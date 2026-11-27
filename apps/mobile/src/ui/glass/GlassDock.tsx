@@ -1,11 +1,14 @@
-import { Platform, View, useWindowDimensions } from "react-native";
+import { Platform, Pressable, View, useWindowDimensions } from "react-native";
+import { GestureDetector, useManualGesture } from "react-native-gesture-handler";
+import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme";
 import { mailColors } from "../../theme/mail";
+import { hitSlopFor } from "../../theme/tokens";
 import { badgeAtScale } from "../../theme/type";
 import { useBottomChromeSlot } from "../bottom-chrome";
 import { a11yRole } from "../a11y-role";
-import { Tap, Txt } from "../base";
+import { Txt } from "../base";
 import { NavigationIcon, type IconName, type NavigationIconName } from "../Icon";
 import { GlassIconButton } from "./GlassIconButton";
 import { GlassPill } from "./GlassPill";
@@ -93,6 +96,8 @@ export function GlassDock({
   );
 }
 
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 function PaperDockButton({ icon, label, onPress, tab = false, current = false, badge, hot }: DockAction & {
   icon: NavigationIconName;
   tab?: boolean;
@@ -108,27 +113,41 @@ function PaperDockButton({ icon, label, onPress, tab = false, current = false, b
   const size = tab ? MAIL_DOCK.btn : MAIL_DOCK.action;
   const fill = current ? colors["nav-on"] : write ? colors.solid : tab ? "transparent" : colors.sheet;
   const ink = current ? colors["on-nav-on"] : write ? colors["on-solid"] : colors.ink;
+  // Paint the touch on the UI thread. Pressable still owns navigation and accessibility.
+  const pressed = useSharedValue(false);
+  const gesture = useManualGesture({
+    enabled: !write,
+    cancelsTouchesInView: false,
+    onTouchesDown: () => { "worklet"; pressed.value = true; },
+    onTouchesUp: () => { "worklet"; pressed.value = false; },
+    onTouchesCancel: () => { "worklet"; pressed.value = false; },
+  });
+  const feedback = useAnimatedStyle(() => ({ opacity: pressed.value ? 0.7 : 1 }));
   return (
-    <Tap accessibilityRole={a11yRole(tab ? "tab" : "button", Platform.OS === "ios" ? "ios" : "android")}
-      accessibilityLabel={label} accessibilityState={{ selected: current }} onPress={onPress}
-      style={[
-        tab ? null : t.lift("l3"),
-        { width: size, height: size, borderRadius: t.radius.pill, backgroundColor: fill,
-          alignItems: "center", justifyContent: "center" },
-      ]}>
-      <NavigationIcon name={icon} size={write ? 22 : 20} color={ink} />
-      {badge !== undefined && badge > 0 ? (
-        <View style={{
-          position: "absolute", top: 1, left: size / 2 + 2,
-          minWidth: Math.max(22, badgeSize.height + 4), paddingHorizontal: 5, height: Math.max(22, badgeSize.height + 4),
-          borderRadius: t.radius.pill, justifyContent: "center", alignItems: "center",
-          backgroundColor: hot ? colors.hot : colors.ground,
-          borderColor: current ? colors["nav-on"] : colors.sheet, borderWidth: 2,
-        }}>
-          <Txt variant="railCount" tabular allowFontScaling={false}
-            style={{ ...badgeSize.text, includeFontPadding: false, color: hot ? colors["on-hot"] : colors.ink }}>{badge}</Txt>
-        </View>
-      ) : null}
-    </Tap>
+    <GestureDetector gesture={gesture}>
+      <AnimatedPressable accessibilityRole={a11yRole(tab ? "tab" : "button", Platform.OS === "ios" ? "ios" : "android")}
+        accessibilityLabel={label} accessibilityState={{ selected: current }} onPress={onPress}
+        hitSlop={hitSlopFor(size)}
+        style={[
+          tab ? null : t.lift("l3"),
+          { width: size, height: size, borderRadius: t.radius.pill, backgroundColor: fill,
+            alignItems: "center", justifyContent: "center" },
+          feedback,
+        ]}>
+        <NavigationIcon name={icon} size={write ? 22 : 20} color={ink} />
+        {badge !== undefined && badge > 0 ? (
+          <View style={{
+            position: "absolute", top: 1, left: size / 2 + 2,
+            minWidth: Math.max(22, badgeSize.height + 4), paddingHorizontal: 5, height: Math.max(22, badgeSize.height + 4),
+            borderRadius: t.radius.pill, justifyContent: "center", alignItems: "center",
+            backgroundColor: hot ? colors.hot : colors.ground,
+            borderColor: current ? colors["nav-on"] : colors.sheet, borderWidth: 2,
+          }}>
+            <Txt variant="railCount" tabular allowFontScaling={false}
+              style={{ ...badgeSize.text, includeFontPadding: false, color: hot ? colors["on-hot"] : colors.ink }}>{badge}</Txt>
+          </View>
+        ) : null}
+      </AnimatedPressable>
+    </GestureDetector>
   );
 }

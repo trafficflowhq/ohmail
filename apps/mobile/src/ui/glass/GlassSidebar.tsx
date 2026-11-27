@@ -6,7 +6,7 @@
  * prototype's `.drawer`: min(268, 82%) wide, scrim behind, slid in on the spring curve.
  */
 import type { ReactNode } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Platform, Pressable, StyleSheet, View } from "react-native";
 import Animated, { FadeIn, FadeOut, SlideInLeft, SlideInRight, SlideOutLeft, SlideOutRight } from "react-native-reanimated";
 import { useTheme } from "../../theme";
 import { design } from "@ohmail/tokens/design";
@@ -32,12 +32,13 @@ export function GlassSidebar({
   const t = useTheme();
   if (!open) return null;
   const ms = t.ms("drawer");
+  const animateEntry = !compactPlaces || Platform.OS !== "android";
   const radius = compactPlaces ? t.radius.panel : t.radius.overlay;
   const slideIn = side === "left" ? SlideInLeft.duration(ms) : SlideInRight.duration(ms);
   const slideOut = side === "left" ? SlideOutLeft.duration(ms) : SlideOutRight.duration(ms);
   return (
     <View style={[StyleSheet.absoluteFill, { zIndex: t.zLayer.sheet }]} pointerEvents="box-none">
-      <Animated.View entering={FadeIn.duration(ms)} exiting={FadeOut.duration(ms)} style={StyleSheet.absoluteFill}>
+      <Animated.View entering={animateEntry ? FadeIn.duration(ms) : undefined} exiting={FadeOut.duration(ms)} style={StyleSheet.absoluteFill}>
         <Pressable
           accessibilityLabel={Copy.moveCancel}
           onPress={onClose}
@@ -45,7 +46,7 @@ export function GlassSidebar({
         />
       </Animated.View>
       <Animated.View
-        entering={slideIn}
+        entering={animateEntry ? slideIn : undefined}
         exiting={slideOut}
         accessibilityViewIsModal
         accessibilityLabel={label}

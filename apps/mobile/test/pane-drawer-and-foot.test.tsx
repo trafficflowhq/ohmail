@@ -4,7 +4,7 @@
  * outside the rows that scroll (on the mini in landscape they sat below the fold), and the list ends
  * in a fade above the Search and New mail pills instead of a flat cut, its last row clear of it.
  */
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { derivePosture } from "../src/ui/posture/derive";
 import { mount } from "./_rendered-dom";
@@ -16,6 +16,15 @@ vi.mock("react-native", async () => ({
 }));
 const live = vi.hoisted(() => ({ posture: null as unknown, win: { width: 0, height: 0 } }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 24, bottom: 0, left: 0, right: 0 }) }));
+vi.mock("react-native-gesture-handler", () => ({
+  GestureDetector: ({ children }: { children: ReactNode }) => children,
+  useManualGesture: () => ({}),
+}));
+vi.mock("react-native-reanimated", () => ({
+  default: { createAnimatedComponent: (component: unknown) => component },
+  useAnimatedStyle: (read: () => unknown) => read(),
+  useSharedValue: <T,>(value: T) => ({ value }),
+}));
 vi.mock("expo-router", () => ({
   router: { push: () => undefined, navigate: () => undefined, setParams: () => undefined },
   useLocalSearchParams: () => ({}),

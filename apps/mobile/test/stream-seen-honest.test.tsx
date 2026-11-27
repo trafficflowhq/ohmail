@@ -55,6 +55,7 @@ vi.mock("react-native", async () => {
     View: host("View"), Text: host("Text"), ScrollView, Pressable: host("Pressable"), SectionList,
     AppState: { addEventListener: () => ({ remove: () => undefined }), currentState: "active" },
     Platform: { OS: "android", select: (o: any) => o.android ?? o.default },
+    useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
     StyleSheet: { absoluteFill: {}, create: (s: any) => s, hairlineWidth: 1 },
   };
 });

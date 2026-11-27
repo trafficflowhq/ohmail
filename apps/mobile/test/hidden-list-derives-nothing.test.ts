@@ -27,9 +27,12 @@ describe("a hidden list keeps what it showed", () => {
 
   it("the Ohbox screen takes its lists through it, keyed on its focus", () => {
     expect(SCREEN).toContain("const focused = useIsFocused();");
-    expect(SCREEN).toContain("heldWhileHidden(focused, kept.current, () => ({ ohbox: w.ohbox, doorbell: w.doorbell }))");
+    const read = `() => ({
+    worldKey: w.worldKey, ohbox: w.ohbox, doorbell: w.doorbell,
+  })`;
+    expect(SCREEN).toContain(`heldWhileHidden(focused, kept.current?.worldKey === w.worldKey ? kept.current : null, ${read})`);
     // Every other read of the two lists goes through what the rule answered.
-    const rest = SCREEN.replace("() => ({ ohbox: w.ohbox, doorbell: w.doorbell })", "");
+    const rest = SCREEN.replace(read, "");
     expect(rest.match(/\bw\.(ohbox|doorbell)\b/g) ?? [], "a list read around the rule").toEqual([]);
   });
 });

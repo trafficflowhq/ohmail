@@ -10,7 +10,7 @@
 import { MailAppearance } from "../../src/theme/mail";
 import { useTheme } from "../../src/theme";
 import { router, Tabs } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { Platform, useWindowDimensions, View } from "react-native";
 import { useWorld } from "../../src/state/world";
 import { beginMark, endMark } from "../../src/engine/ui-marks";
@@ -23,6 +23,7 @@ import { GlassDock, type DockItem } from "../../src/ui/glass";
 import { dockFold, nextRoom } from "../../src/ui/glass/fold";
 import { publishFolded } from "../../src/ui/nav-fold";
 import { usePosture } from "../../src/ui/posture";
+import { usePushMailPlace, type PlaceNavigation } from "../../src/ui/place-navigation";
 import { useReaderRail } from "../../src/ui/reader-rail";
 import { scaffoldPlan } from "../../src/ui/scaffold/plan";
 import { Copy } from "../../src/copy";
@@ -35,7 +36,7 @@ import { useLocale } from "../../src/i18n/LocaleProvider";
  * its types would couple the build to a hoisting accident.
  */
 interface NavProps {
-  state: { index: number; routes: { key: string; name: string }[] };
+  state: { index: number; routes: { key: string; name: string; params?: object }[] };
   navigation: {
     emit: (event: {
       type: "tabPress";
@@ -43,6 +44,9 @@ interface NavProps {
       canPreventDefault: true;
     }) => { defaultPrevented: boolean };
     navigate: (name: string) => void;
+    preload: (name: string) => void;
+    getState: () => NavProps["state"];
+    getParent: () => PlaceNavigation | undefined;
   };
 }
 
@@ -84,19 +88,23 @@ function MailTabs() {
   const [drawer, setDrawer] = useState(false);
   const [active, setActive] = useState<string | null>("index");
   const move = useRef<(place: string) => void>(() => undefined);
-  const close = useCallback(() => setDrawer(false), []);
+  const drawerOpen = useRef(false);
+  const close = useCallback(() => {
+    drawerOpen.current = false;
+    setDrawer(false);
+  }, []);
+  const open = useCallback((place: string | null) => {
+    drawerOpen.current = true;
+    setActive(place);
+    setDrawer(true);
+  }, []);
+  const onActive = useCallback((place: string | null) => {
+    if (drawerOpen.current) setActive(place);
+  }, []);
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }} accessibilityElementsHidden={drawer} importantForAccessibility={drawer ? "no-hide-descendants" : "auto"}>
-        <Tabs
-          screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: "transparent" } }}
-          tabBar={(props) => <GlassNav {...props} onMore={t.mail ? () => setDrawer(true) : undefined}
-            onActive={setActive} onNavigate={move} />}
-        >
-          {TABS.map((tab) => (
-            <Tabs.Screen key={tab.name} name={tab.name} options={{ title: tab.label }} />
-          ))}
-        </Tabs>
+        <MailTabNavigator onMore={t.mail ? open : undefined} onActive={onActive} onNavigate={move} />
       </View>
       <MailPlacesDrawer open={drawer} active={active} onClose={close}
         onPlace={(place) => move.current(place)} onCompose={() => router.push("/compose")} />
@@ -104,19 +112,49 @@ function MailTabs() {
   );
 }
 
+const MailTabNavigator = memo(function MailTabNavigator({ onMore, onActive, onNavigate }: {
+  onMore?: (place: string | null) => void;
+  onActive: (place: string | null) => void;
+  onNavigate: RefObject<(place: string) => void>;
+}) {
+  useLocale();
+  return (
+    <Tabs
+      screenOptions={{ headerShown: false, freezeOnBlur: true, sceneStyle: { backgroundColor: "transparent" } }}
+      tabBar={(props) => <GlassNav {...props} onMore={onMore}
+        onActive={onActive} onNavigate={onNavigate} />}
+    >
+      {TABS.map((tab) => (
+        <Tabs.Screen key={tab.name} name={tab.name} options={{ title: tab.label }} />
+      ))}
+    </Tabs>
+  );
+});
+
 function GlassNav({ state, navigation, onMore, onActive, onNavigate }: NavProps & {
-  onMore?: () => void;
-  onActive: (active: string | null) => void;
+  onMore?: (active: string | null) => void;
+  onActive?: (active: string | null) => void;
   onNavigate: { current: (place: string) => void };
 }) {
   const w = useWorld();
   const t = useTheme();
+  const pushPlace = usePushMailPlace();
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
   const readerRail = useReaderRail();
   /* THE DOCK FOLDS; NOTHING CLIPS — against its own measured width (a 0 reading keeps the last). */
   const [room, setRoom] = useState<number | null>(null);
   const { width } = useWindowDimensions();
+
+  // Prepare the Screener after the mirror settles so its first visit can use the waiting list.
+  useEffect(() => {
+    if (!t.mail || !w.boot.settled) return;
+    const idle = requestIdleCallback(() => {
+      const screener = navigation.getState().routes.find(({ name }) => name === "screener");
+      if (screener && screener.params === undefined) navigation.preload("screener");
+    });
+    return () => cancelIdleCallback(idle);
+  }, [navigation, t.mail, w.boot.settled]);
 
   /**
    * The engine's counts over the mirror, not a third derivation computed here.
@@ -146,7 +184,7 @@ function GlassNav({ state, navigation, onMore, onActive, onNavigate }: NavProps 
   useEffect(() => {
     if (activeId !== null) endMark("switch", activeId);
   }, [activeId]);
-  useEffect(() => onActive(activeId), [activeId, onActive]);
+  useEffect(() => onActive?.(activeId), [activeId, onActive]);
   /* More carries what folded: `on` while the active route is one of them, a quiet count of their new mail. */
   const foldedCount = fold.folded.reduce((n, id) => n + (badgeOf[id] ?? 0), 0);
   const items: DockItem[] = fold.kept.flatMap((name) => {
@@ -166,7 +204,7 @@ function GlassNav({ state, navigation, onMore, onActive, onNavigate }: NavProps 
   const shownActive = activeId !== null && fold.folded.includes(activeId) ? "more" : activeId;
   const press = (id: string) => {
     if (id === "more" && onMore) {
-      onMore();
+      onMore(activeId);
       return;
     }
     const route = state.routes.find((r) => r.name === id);
@@ -182,7 +220,7 @@ function GlassNav({ state, navigation, onMore, onActive, onNavigate }: NavProps 
 
   /* Search, in the navigation on every posture — the pill opens the mirror-search screen
      (`app/search.tsx`). */
-  const search = { label: Copy.search, onPress: () => router.push("/search") };
+  const search = { label: Copy.search, onPress: () => pushPlace("/search", navigation.getParent()) };
   /* Starting a mail, in the navigation on every posture — the composer route. */
   const compose = { label: t.mail ? Copy.mailWrite : Copy.composeNew, onPress: () => router.push("/compose") };
 

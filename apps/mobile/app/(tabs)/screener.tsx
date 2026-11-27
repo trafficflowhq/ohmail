@@ -14,14 +14,14 @@ import { DECISION_ORDER, DECISION_QUIET } from "@ohmail/app-logic/screener/decis
 import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { View } from "react-native";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useTheme } from "../../src/theme";
 import { destDone, destLabel, domainOf, screenerSegParam, type Destination, type ScreenerSeg } from "../../src/state/model";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { relayMarkFor, type RelayMark } from "../../src/state/relay";
-import { useEngineQueuesAsk, useWorld, type ScreenerRow, type World, type WorldScreener } from "../../src/state/world";
+import { useWorld, type ScreenerRow, type World, type WorldScreener } from "../../src/state/world";
 import { Badge, Button, Empty, Panel, Screen, Tail, Tap, TapRow, Txt, ViewHead } from "../../src/ui/base";
 import { HeadingEnd } from "../../src/ui/HeadingEnd";
 import { Icon } from "../../src/ui/Icon";
@@ -114,8 +114,6 @@ function ScreenerBody() {
   /* The live session the impersonation line reads through; none, no line. */
   const conn = useConnection();
   const session = conn.state.k === "live" ? conn.state.session : null;
-  // The waiting queue's first page is the engine's; it is asked when this screen is shown.
-  useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
   /* The shelf can arrive as a param: the pushed sender route migrates here when the window
      gains a second pane, naming the shelf its selection belongs to. */
