@@ -34,7 +34,7 @@ function unlessMalformed<T>(parse: () => T | undefined): T | undefined {
  * IS the bound — and a malformed one is a 400 rather than a 409: answering "this draft changed"
  * to a caller whose token was never a revision would name the wrong fault.
  */
-function readContentRevision(raw: unknown): string | undefined {
+export function readContentRevision(raw: unknown): string | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "string" || !/^[0-9a-f]{64}$/.test(raw)) {
     throw new ServiceError(
@@ -306,7 +306,7 @@ export const draftsRoutes: Route[] = [
     handler: async (req, deps, params) => {
       const body = await readBody<UntrustedBody<RequestOf<"POST /drafts/:id/schedule">>>(req);
       const { draft, seq } = await schedules(deps).schedule(
-        serviceContext(deps, req), params.id!, body.sendAt,
+        serviceContext(deps, req), params.id!, body.sendAt, undefined, readContentRevision(body.ifContentRevision),
       );
       return answer<"POST /drafts/:id/schedule">()(draft, { status: 200, seq });
     },

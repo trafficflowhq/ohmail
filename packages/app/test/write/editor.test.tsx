@@ -133,11 +133,44 @@ const type = (m: Mounted, text: string): void =>
   });
 
 describe("the rich editor", () => {
+  it("edits directly from the collapsed quote and resets without changing untouched output", async () => {
+    const history = {
+      load: async () => ["Earlier message"],
+      show: "Show quoted history",
+      hide: "Hide quoted history",
+      edit: "Edit",
+      restore: "Reset",
+      unavailable: "Quoted history unavailable",
+    };
+    const draft = { text: "My reply", html: "" };
+    const m = mount(rich, draft, history);
+    expect(screen.queryByText("Earlier message")).toBeNull();
+    fireEvent.click(mark(history.edit));
+    expect(surface().contains(await screen.findByText("Earlier message"))).toBe(true);
+    expect(m.said).toEqual([]);
+    type(m, "A shorter quote. ");
+    const changed = m.said.at(-1)!;
+    expect(changed.html).toContain('data-quoted-history="edited"');
+    expect(changed.html).toContain("A shorter quote.");
+
+    cleanup();
+    const reopened = mount(rich, changed, history);
+    fireEvent.click(mark(history.edit));
+    expect(await screen.findByText(/A shorter quote/)).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(mark(history.restore));
+    });
+    expect(reopened.said.at(-1)).toEqual(draft);
+    fireEvent.keyDown(surface(), { key: "z", ctrlKey: true });
+    expect(reopened.said.at(-1)).toEqual(changed);
+  });
+
   it("opens quoted history without changing the draft, keeps edits when reopened, and restores with undo", async () => {
     const history = {
       load: async () => ["Earlier message"],
       show: "Show quoted history",
       hide: "Hide quoted history",
+      edit: "Edit",
       restore: "Restore original",
       unavailable: "Quoted history unavailable",
     };
@@ -146,6 +179,9 @@ describe("the rich editor", () => {
     fireEvent.click(mark(history.show));
     const original = await screen.findByText("Earlier message");
     expect(surface().contains(original)).toBe(true);
+    expect(original.closest('[contenteditable="false"]')).toBeTruthy();
+    fireEvent.click(mark(history.edit));
+    expect(original.closest('[contenteditable="false"]')).toBeNull();
     expect(m.said).toEqual([]);
     const editor = (surface() as HTMLElement & { editor: TiptapEditor }).editor;
     const start = editor.view.posAtDOM(original, 0);
@@ -161,6 +197,7 @@ describe("the rich editor", () => {
     const reopened = mount(rich, edited, history);
     fireEvent.click(mark(history.show));
     expect(surface().contains(await screen.findByText("Edited message"))).toBe(true);
+    fireEvent.click(mark(history.edit));
     await act(async () => {
       fireEvent.click(mark(history.restore));
     });
@@ -174,6 +211,7 @@ describe("the rich editor", () => {
       load: async () => ["Original"],
       show: "Show history",
       hide: "Hide history",
+      edit: "Edit",
       restore: "Restore original",
       unavailable: "Unavailable",
     };
@@ -219,11 +257,12 @@ describe("the rich editor", () => {
       load: async () => ["Original"],
       show: "Show history",
       hide: "Hide history",
+      edit: "Edit",
       restore: "Restore original",
       unavailable: "Unavailable",
     };
     mount(rich, { text: "Note", html: "" }, history);
-    fireEvent.click(mark(history.show));
+    fireEvent.click(mark(history.edit));
     const restore = await screen.findByRole("button", { name: history.restore });
     const body = surface().parentElement!.parentElement!;
     expect(body.nextElementSibling?.contains(restore)).toBe(true);

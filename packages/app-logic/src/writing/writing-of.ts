@@ -153,6 +153,7 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
     composeWaitNote: compose.composeWaitNote,
     composeCloseRefusal: compose.composeCloseRefusal,
     composeForwardFiles: compose.composeForwardFiles,
+    composeForwardSelection: compose.composeForwardSelection,
     composeHistoryTarget: compose.compose.forwardOf
       ? { messageId: compose.compose.forwardOf, forward: true }
       : (() => {
@@ -188,6 +189,7 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
     sendReplyAndDone: (messageId: string) => sendAndDoneFor(compose, ctx.presented, messageId),
     openReply: compose.openReply,
     openForward: compose.openForward,
+    forwardSelection: compose.forwardSelection,
     confirmForward: compose.confirmForward,
     forwardAsk: compose.forwardAsk,
     closeReply: compose.closeReply,

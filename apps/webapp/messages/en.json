@@ -7524,8 +7524,17 @@
     "history": {
       "show": "Show quoted history",
       "hide": "Hide quoted history",
-      "restore": "Restore original",
+      "edit": "Edit",
+      "restore": "Reset",
       "unavailable": "Quoted history unavailable"
+    },
+    "forwardSelection": {
+      "subject": "{count} messages",
+      "sensitive": "Forward sensitive messages individually.",
+      "count": "Select at most {count} messages to forward.",
+      "loading": "Reading the original messages…",
+      "unavailable": "Some original messages couldn't be read. Retry or remove them to send.",
+      "retry": "Retry"
     },
     "held": {
       "sendAgain": "Send again",

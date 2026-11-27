@@ -950,6 +950,9 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.fetchAllAttachments
           ? { fetchAllAttachments: gatedRead(adapter.fetchAllAttachments.bind(adapter), "every attachment") }
           : {}),
+        ...(adapter.fetchForwardSource
+          ? { fetchForwardSource: gatedRead(adapter.fetchForwardSource.bind(adapter), "an original message") }
+          : {}),
         /* Whether a forward's Remove is offered: forwarded, bound and spread on the same rule, or the
            live web never offers it while the bare-adapter suites stay green. */
         ...(adapter.forwardPartsAnnounced

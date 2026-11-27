@@ -3,6 +3,7 @@ import { Menu, MenuItem } from "@ohmail/ui/base";
 import { SelectionBar, type PanelVerb } from "@ohmail/ui/mail";
 import { useSelectionBar } from "../frame/commands.js";
 import { useText } from "../text/index.js";
+import { useForwardSelection } from "./use-forward-selection.js";
 import type { RowSelection } from "./use-row-selection.js";
 import "./place-list.css";
 
@@ -31,13 +32,15 @@ export function SelectionStatus({ count }: { count: number }) {
   );
 }
 
-export function PickedFoot({ selection, verbs, children }: SelectionFootProps) {
+export function PickedFoot({ selection, verbs: otherVerbs, children }: SelectionFootProps) {
   const t = useText("ohbox");
   const { pickedRows, clear } = selection;
   const [more, setMore] = useState(false);
   const [folded, setFolded] = useState<readonly string[]>([]);
   const foot = useRef<HTMLDivElement>(null);
   const count = pickedRows.length;
+  const forward = useForwardSelection(selection.ids, clear);
+  const verbs = forward ? [forward, ...otherVerbs] : otherVerbs;
   useSelectionBar(true);
   return (
     <div ref={foot} className="pl-selection-foot" tabIndex={-1}>

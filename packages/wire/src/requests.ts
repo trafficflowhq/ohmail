@@ -8,6 +8,7 @@
 import type { EmailAddress, Folder, ISODateTime } from "./base.js";
 import type { TriageState } from "./mail.js";
 import type { RuleKeyAddress } from "./organizing.js";
+import type { DraftForwardSource } from "./drafts.js";
 
 // ── messages ────────────────────────────────────────────────────────────────
 
@@ -228,6 +229,8 @@ export interface CreateDraftBody {
    * absent leaves the row's list, `null` clears it; a patch that moves the forward clears it too.
    */
   forwardParts?: string[] | null;
+  /** Omitted on update leaves the existing originals. An empty list removes them. */
+  forwardSources?: DraftForwardSource[];
   subject?: string;
   /**
    * The text/plain body.

@@ -402,4 +402,5 @@ export interface EngineAdapter {
    * failing the download, so a 200 here does NOT promise every file is present.
    */
   fetchAllAttachments?(messageId: string): Promise<Blob>;
+  fetchForwardSource?(messageId: string, maxBytes: number): Promise<Blob>;
 }

@@ -5,6 +5,8 @@ import { and, eq, ne, sql } from "drizzle-orm";
 import { assertOrganizerRole, drafts, mailboxes, recordChange, scheduledSendFiles, type Tx } from "@trafficflow/db";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
+import { draftForwardSourceTuples } from "@trafficflow/core/outbound-text";
+import { requireDraftContentRevision } from "./draft-revision.js";
 import { instantRefusal, readInstant } from "./instant.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftMutation } from "./drafts-service.js";
@@ -13,6 +15,7 @@ import {
   type ScheduledFile, type ScheduledFilesKeeping, type SealedFileRow,
 } from "./scheduled-send-files.js";
 import { fenceErasedScope } from "./erasure-fence.js";
+import { forwardAttachmentsUnavailable, requireDraftForwardAttachments } from "./forward-draft-sources.js";
 import {
   dedupeStagedIds, effectiveAttachmentCap, sendSurfaceFor, type StagedAttachmentSource,
 } from "./send-service.js";
@@ -31,7 +34,7 @@ const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 export const SCHEDULE_MAX_AHEAD_MS = 365 * 24 * 60 * 60 * 1000;
 
 /** The draft-state refusals every schedule makes, in their order. */
-function refuseUnschedulable(d: typeof drafts.$inferSelect): void {
+function refuseUnschedulable(d: typeof drafts.$inferSelect, ifContentRevision: string | undefined): void {
   // A row PAST the appointment lifecycle cannot be (re-)scheduled: `sending`/`sent`/
   // `unverified` are the ordinary send-path refusals, and a 'draft' row still carrying
   // `send_at` is the worker's CLAIM WINDOW — the send is happening right now, and minting a
@@ -42,6 +45,7 @@ function refuseUnschedulable(d: typeof drafts.$inferSelect): void {
   if (d.status !== "draft" && d.status !== "scheduled") {
     throw new ServiceError("conflict", 409, `draft cannot be scheduled from status '${d.status}'`);
   }
+  requireDraftContentRevision(d, ifContentRevision);
   // A FORWARD IS NOT AN APPOINTMENT: the pass sends with no reader clock and cannot
   // stream the original's attachments, so the appointment would leave without what it forwards.
   if (d.forwardOfMessageId !== null) {
@@ -129,11 +133,12 @@ export class ScheduleService {
       surfaceMaxTotalBytes?: number | null;
       keeping?: ScheduledFilesKeeping;
     },
+    ifContentRevision?: string,
   ): Promise<DraftMutation> {
     const sendAt = this.validSendAt(sendAtRaw, ctx.now());
     const keeping = withFiles?.keeping ?? SCHEDULED_FILES_PLAIN;
     if (withFiles !== undefined && keeping.atRest === "sealed") {
-      return this.scheduleSealed(ctx, draftId, sendAt, withFiles, keeping);
+      return this.scheduleSealed(ctx, draftId, sendAt, withFiles, keeping, ifContentRevision);
     }
     if ((withFiles?.staged?.ids.length ?? 0) > 0) {
       // A store that keeps plain rows has no staging: refused, never scheduled without the files.
@@ -165,7 +170,7 @@ export class ScheduleService {
         throw new ServiceError("conflict", 409, "the sender changed while scheduling; schedule it again");
       }
 
-      refuseUnschedulable(d);
+      refuseUnschedulable(d, ifContentRevision);
       const [mb] = await tx.select({ status: mailboxes.status, smtpMaxSizeBytes: mailboxes.smtpMaxSizeBytes })
         .from(mailboxes).where(eq(mailboxes.id, d.mailboxId)).limit(1);
       refuseDisabled(mb);
@@ -189,6 +194,7 @@ export class ScheduleService {
           "this scheduled message carries files; cancel the schedule and schedule it again with them",
         );
       }
+      requireDraftForwardAttachments(d.forwardSources, files);
       // The send's own cap, at the press rather than at send time: the person is still looking.
       const total = files.reduce((n, f) => n + f.content.byteLength, 0);
       if (files.length > 0) {
@@ -243,6 +249,7 @@ export class ScheduleService {
       surfaceMaxTotalBytes?: number | null;
     },
     keeping: Extract<ScheduledFilesKeeping, { atRest: "sealed" }>,
+    ifContentRevision: string | undefined,
   ): Promise<DraftMutation> {
     const d0 = dialect(ctx.db);
     const inline = withFiles.files ?? [];
@@ -273,17 +280,23 @@ export class ScheduleService {
       .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
     if (!target) throw new ServiceError("not_found", 404, "draft not found");
     await fenceErasedScope(pre, d0, { accountId: ctx.accountId, mailboxId: target.mailboxId });
-    refuseUnschedulable(target);
+    refuseUnschedulable(target, ifContentRevision);
     const [mb0] = await pre.select({ status: mailboxes.status, smtpMaxSizeBytes: mailboxes.smtpMaxSizeBytes })
       .from(mailboxes).where(eq(mailboxes.id, target.mailboxId)).limit(1);
     refuseDisabled(mb0);
     await assertOrganizerRole(pre, d0, ctx.accountId, target.mailboxId);
+    const sourceSnapshot = JSON.stringify(draftForwardSourceTuples(target.forwardSources ?? []));
+    const originals = target.forwardSources?.length ?? 0;
+    if (count < originals) throw forwardAttachmentsUnavailable();
     let declared = inline.reduce((n, f) => n + f.content.byteLength, 0);
     if (stagedIds.length > 0) {
       const source = withFiles.staged!.source;
       const facts = new Map((await source.declare(ctx.accountId, stagedIds)).map((f) => [f.id, f]));
-      for (const id of stagedIds) {
+      for (const [index, id] of stagedIds.entries()) {
         const f = facts.get(id);
+        if (inline.length + index < originals && (!f || f.expiresAt.getTime() <= ctx.now().getTime())) {
+          throw forwardAttachmentsUnavailable();
+        }
         if (!f) throw new ServiceError("not_found", 404, "an uploaded attachment was not found");
         if (f.expiresAt.getTime() <= ctx.now().getTime()) {
           throw new ServiceError("conflict", 409, "an uploaded attachment has expired. Attach the file again and schedule it again.");
@@ -303,7 +316,12 @@ export class ScheduleService {
       total += f.content.byteLength;
     }
     for (const id of stagedIds) {
-      const [f] = await withFiles.staged!.source.fetch(ctx.accountId, [id], ctx.now());
+      const original = fileNo < originals;
+      const [f] = await withFiles.staged!.source.fetch(ctx.accountId, [id], ctx.now()).catch((error: unknown) => {
+        if (original && error instanceof ServiceError) throw forwardAttachmentsUnavailable();
+        throw error;
+      });
+      if (!f && original) throw forwardAttachmentsUnavailable();
       if (!f) throw new ServiceError("not_found", 404, "an uploaded attachment was not found");
       const content = Buffer.from(f.content.buffer, f.content.byteOffset, f.content.byteLength);
       rows.push(...await sealedFileRows(
@@ -324,7 +342,11 @@ export class ScheduleService {
       if (d.mailboxId !== target.mailboxId) {
         throw new ServiceError("conflict", 409, "the sender changed while scheduling; schedule it again");
       }
-      refuseUnschedulable(d);
+      refuseUnschedulable(d, ifContentRevision);
+      // A removed original must not become an ordinary attachment while these files are prepared.
+      const sources = d.forwardSources ?? [];
+      if (JSON.stringify(draftForwardSourceTuples(sources)) !== sourceSnapshot) throw forwardAttachmentsUnavailable();
+      requireDraftForwardAttachments(sources, rows.filter(({ seq }) => seq === 0));
       const [mb] = await tx.select({ status: mailboxes.status, smtpMaxSizeBytes: mailboxes.smtpMaxSizeBytes })
         .from(mailboxes).where(eq(mailboxes.id, d.mailboxId)).limit(1);
       refuseDisabled(mb);

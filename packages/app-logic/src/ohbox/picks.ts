@@ -10,7 +10,12 @@ import {
   type MutableRefObject,
   type SetStateAction,
 } from "react";
-import { awaitsReplyCopy, type OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
+import {
+  awaitsReplyCopy,
+  isOwnSent,
+  messageIdKey,
+  type OhboxRow as OhboxRowGroup,
+} from "@ohmail/client-engine";
 import type { BulkAction } from "../press/actions.js";
 import type { OhboxListInput, OhboxListModel, PickPanel } from "./types.js";
 
@@ -108,6 +113,50 @@ export type PickVerbs = Pick<
   | "pickState"
 >;
 
+function landedSentPick(
+  previous: EngineMessage | undefined,
+  shown: readonly EngineMessage[],
+): string | undefined {
+  if (!previous?.local || !previous.messageIdHeader) return;
+  const header = messageIdKey(previous.messageIdHeader);
+  if (!header) return;
+  return shown.find(
+    (message) =>
+      !message.local &&
+      message.accountId === previous.accountId &&
+      message.mailboxId === previous.mailboxId &&
+      isOwnSent(message) &&
+      message.messageIdHeader &&
+      messageIdKey(message.messageIdHeader) === header,
+  )?.id;
+}
+
+function usePrunePicks(shown: EngineMessage[], picked: Set<string>, setPicked: PickSet["setPicked"]) {
+  // A picked provisional Sent copy passes its pick to the matching mailbox copy. Other
+  // vanished messages leave the selection.
+  const previousShown = useRef(shown);
+  useEffect(() => {
+    const before = previousShown.current;
+    previousShown.current = shown;
+    setPicked((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set(shown.map((m) => m.id));
+      if ([...prev].every((id) => live.has(id))) return prev;
+      const next = new Set<string>();
+      for (const id of prev) {
+        const current = live.has(id)
+          ? id
+          : landedSentPick(
+              before.find((m) => m.id === id),
+              shown,
+            );
+        if (current !== undefined) next.add(current);
+      }
+      return next;
+    });
+  }, [shown, picked, setPicked]);
+}
+
 export function usePickVerbs(
   input: OhboxListInput,
   { picked, setPicked, setPickPanel, clearPicked }: PickSet,
@@ -191,18 +240,7 @@ export function usePickVerbs(
    */
   const markPicked = useCallback(() => runBulk("read"), [runBulk]);
 
-  // Ids that vanished from the list (moved, filed, deleted) leave with it — a count that
-  // outlives its rows is a count that acts on nothing. Keyed on the picks too: a hold fired on a
-  // row that left meanwhile picks after the list's last change.
-  useEffect(() => {
-    setPicked((prev) => {
-      if (prev.size === 0) return prev;
-      // `shown`: what the list draws is what a pick may stand on.
-      const live = new Set(shown.map((m) => m.id));
-      const next = new Set([...prev].filter((id) => live.has(id)));
-      return next.size === prev.size ? prev : next;
-    });
-  }, [shown, picked, setPicked]);
+  usePrunePicks(shown, picked, setPicked);
 
   /**
    * DELETE THE SELECTION — one press, one window, one toast, one Undo for the whole set. It goes through

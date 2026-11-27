@@ -11,7 +11,8 @@ import {
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
-import type { CreateDraftBody, DraftDTO, EmailAddress, PatchDraftBody, SendResolution } from "@ohmail/wire";
+import type { CreateDraftBody, DraftDTO, DraftForwardSource, EmailAddress, PatchDraftBody, SendResolution } from "@ohmail/wire";
+import { readDraftForwardSources } from "./forward-draft-sources.js";
 import { draftContentRevision } from "./draft-revision.js";
 import { DRAFT_HTML_CAP_BYTES, htmlByteLength, serializeDraftBody } from "./outbound-html.js";
 
@@ -202,16 +203,35 @@ export class DraftsService {
     const forwardOf = body.forwardOfMessageId ?? null;
     this.refuseReplyAndForward(body.inReplyToMessageId ?? null, forwardOf);
     const forwardParts = body.forwardParts == null ? null : readForwardParts(body.forwardParts, forwardOf)!.sort();
+    const forwardSources = readDraftForwardSources(body.forwardSources) ?? null;
+    this.refuseThreadedSources(body.inReplyToMessageId ?? null, forwardOf, forwardSources);
     return {
       mailboxId, threadId: body.threadId ?? null, inReplyToMessageId: body.inReplyToMessageId ?? null,
-      forwardOfMessageId: forwardOf, forwardParts, subject, body: text, html, to, cc, bcc,
+      forwardOfMessageId: forwardOf, forwardParts, forwardSources, subject, body: text, html, to, cc, bcc,
       rationale: body.rationale ?? null,
     };
   }
 
+  private refuseThreadedSources(reply: string | null, forward: string | null, sources: DraftForwardSource[] | null): void {
+    if (sources?.length && (reply || forward)) {
+      throw new ServiceError("validation_failed", 400, "Message attachments need a new message.");
+    }
+  }
+
+  private async requireOwnedSources(tx: Tx, ctx: ServiceContext, sources: readonly DraftForwardSource[]): Promise<void> {
+    if (!sources.length) return;
+    const rows = await tx.select({ noForward: messages.noForward }).from(messages).where(and(
+      eq(messages.accountId, ctx.accountId), isNull(messages.deletedAt), inArray(messages.id, sources.map(({ id }) => id)),
+    ));
+    if (rows.length !== sources.length) throw new ServiceError("not_found", 404, "forwarded message not found");
+    if (rows.some(({ noForward }) => noForward)) {
+      throw new ServiceError("forbidden", 403, "Sensitive messages must be forwarded individually.");
+    }
+  }
+
   /** `create`'s ownership reads, inside the write and before the row exists: thread, reply and forward targets. */
   private async requireOwnedTargets(
-    tx: Tx, ctx: ServiceContext, v: { threadId: string | null; inReplyToMessageId: string | null; forwardOfMessageId: string | null },
+    tx: Tx, ctx: ServiceContext, v: Awaited<ReturnType<DraftsService["draftValues"]>>,
   ): Promise<void> {
     // Same order and same ownership rule as `update`: the reply-target thread is read
     // (key-share) BEFORE the draft row exists, and another account's thread id is a 404.
@@ -228,6 +248,7 @@ export class DraftsService {
     }
     await this.requireOwnedReplyTarget(tx, ctx, v.inReplyToMessageId);
     await this.requireOwnedReplyTarget(tx, ctx, v.forwardOfMessageId, "forwarded message not found");
+    if (v.forwardSources) await this.requireOwnedSources(tx, ctx, v.forwardSources);
   }
 
   async create(
@@ -370,6 +391,8 @@ export class DraftsService {
     this.refuseReplyAndForward(patch.inReplyToMessageId ?? null, patch.forwardOfMessageId ?? null);
     const keptPatch = patch.forwardParts === undefined ? undefined
       : patch.forwardParts === null ? null : forwardPartsList(patch.forwardParts).sort();
+    const sources = readDraftForwardSources(patch.forwardSources);
+    if (sources !== undefined) set.forwardSources = sources;
 
     const seq = await asTx(ctx).transaction(async (tx) => {
       // A reply target moves FIRST, before the draft row is written: the FK check on the new
@@ -399,6 +422,7 @@ export class DraftsService {
       const [locked] = await dialect(ctx.db).forUpdate(tx.select({
         id: drafts.id, inReplyToMessageId: drafts.inReplyToMessageId,
         forwardOfMessageId: drafts.forwardOfMessageId, forwardParts: drafts.forwardParts,
+        forwardSources: drafts.forwardSources,
         sendAt: drafts.sendAt, mailboxId: drafts.mailboxId, status: drafts.status, sendKey: drafts.sendKey,
         subject: drafts.subject, body: drafts.body, html: drafts.html, to: drafts.to, cc: drafts.cc, bcc: drafts.bcc,
       }).from(drafts)
@@ -446,6 +470,11 @@ export class DraftsService {
         const reply = patch.inReplyToMessageId !== undefined ? patch.inReplyToMessageId ?? null : locked.inReplyToMessageId;
         const forward = patch.forwardOfMessageId !== undefined ? patch.forwardOfMessageId ?? null : locked.forwardOfMessageId;
         this.refuseReplyAndForward(reply, forward);
+        this.refuseThreadedSources(reply, forward, sources ?? locked.forwardSources);
+        if (sources !== undefined) {
+          const before = new Map(locked.forwardSources?.map(({ id, sha256 }) => [id, sha256]));
+          await this.requireOwnedSources(tx, ctx, sources.filter(({ id, sha256 }) => before.get(id) !== sha256));
+        }
         if (forward !== null && locked.sendAt !== null) {
           throw new ServiceError(
             "forward_not_schedulable", 409,

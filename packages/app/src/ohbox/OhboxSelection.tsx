@@ -9,6 +9,7 @@ import { useModGlyph } from "@ohmail/app-logic/keys";
 import type { OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { EndDot, Menu, MenuItem } from "@ohmail/ui/base";
 import { SelectionBar } from "@ohmail/ui/mail";
+import { useForwardSelection } from "../place-list/use-forward-selection.js";
 import { useText } from "../text/index.js";
 import type { OhboxBeside } from "./beside.js";
 import { OhboxMoveAsk } from "./OhboxMoveAsk.js";
@@ -25,7 +26,13 @@ export function OhboxSelection({ model, beside }: { model: OhboxListModel; besid
   const [folded, setFolded] = useState<readonly string[]>([]);
   const filingHint = model.pickedReplyCopyPending ? reader("replyCopyWaiting") : undefined;
   const filingHold = filingHint ? { disabled: true, disabledHint: filingHint } : {};
-  const verbs = pickVerbs(model, t, foot, mod, filingHold);
+  const others = pickVerbs(model, t, foot, mod, filingHold);
+  const forward = useForwardSelection(model.pickedIds, model.clearPicked, () =>
+    [...model.groupedResurfaced, ...model.groupedNew, ...model.groupedPrev]
+      .filter(({ members }) => members.length > 1 && members.every(({ id }) => model.picked.has(id)))
+      .map(({ face }) => face.id),
+  );
+  const verbs = forward ? [forward, ...others] : others;
   /* The rows picked, as the person picked them: a folded conversation is one. Delete asks over the letters. */
   const count = model.pickedRowCount;
   const letters = model.pickedIds.length;

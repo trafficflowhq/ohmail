@@ -341,11 +341,11 @@ export interface Routes {
   /** A draft written from the person's own words, stored and never sent; 202 with the stored row's id. */
   "POST /drafts/from-text": { params: None; body: DraftFromTextBody; answer: DraftWrittenAnswer };
   "POST /drafts/:id/resolve": { params: Id; body: { outcome: SendResolution; ifUpdatedAt?: string }; answer: DraftDTO };
-  "POST /drafts/:id/schedule": { params: Id; body: { sendAt: ISODateTime }; answer: DraftDTO };
+  "POST /drafts/:id/schedule": { params: Id; body: { sendAt: ISODateTime; ifContentRevision?: string }; answer: DraftDTO };
   "DELETE /drafts/:id/schedule": { params: Id; body: never; answer: DraftDTO };
   "POST /drafts/:id/schedule-with-files": {
     params: Id;
-    body: { sendAt: ISODateTime; attachments?: SendAttachmentWire[]; stagedAttachmentIds?: string[] };
+    body: { sendAt: ISODateTime; ifContentRevision?: string; attachments?: SendAttachmentWire[]; stagedAttachmentIds?: string[] };
     answer: DraftDTO;
   };
   "POST /drafts/:id/send": { params: Id; body: SendRequestBody; answer: SendAnswer };

@@ -14,6 +14,7 @@ import type { SignedOutMeta } from "./schema-mail.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
 import type { ScreenerLearningState } from "./screener-learning-state.js";
 import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
+import type { DraftForwardSource } from "@ohmail/wire";
 
 /**
  * A 64-bit counter that stays a `bigint` in TypeScript and a native integer in the store.
@@ -1852,6 +1853,7 @@ export const drafts = sqliteTable("drafts", {
   forwardParts: text("forward_parts", { mode: "json" }).$type<string[]>(),
   // Mail 0179, appended last — see `schema-mail.ts`.
   sendFiles: integer("send_files").notNull().default(0),
+  forwardSources: text("forward_sources", { mode: "json" }).$type<DraftForwardSource[]>(),
 }, (t) => ({
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),
   uqWfDedup: unique("drafts_workflow_dedup_key_unique").on(t.workflowDedupKey),   // per-step idempotency

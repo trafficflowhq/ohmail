@@ -22,12 +22,20 @@ export const QUOTED_HISTORY_ATTRIBUTE = "data-quoted-history";
 export const hasEditedQuotedHistory = (html: unknown): boolean =>
   typeof html === "string" && html.includes(`<blockquote ${QUOTED_HISTORY_ATTRIBUTE}="edited">`);
 
+type DraftForwardSource = { id: string; filename: string; sender: string; subject: string; sha256?: string };
+
+/** Object key order is not stable across databases. The attachment order is. */
+export function draftForwardSourceTuples(sources: readonly DraftForwardSource[]): string[][] {
+  return sources.map(({ id, filename, sender, subject, sha256 }) => [id, filename, sender, subject, sha256 ?? ""]);
+}
+
 /** The authored fields covered by a draft revision, in their stable order. */
 export function draftRevisionInput(row: {
   mailboxId: string;
   inReplyToMessageId: string | null;
   forwardOfMessageId?: string | null;
   forwardParts?: readonly string[] | null;
+  forwardSources?: readonly DraftForwardSource[] | null;
   subject: string;
   body: string;
   html: string | null;
@@ -45,6 +53,7 @@ export function draftRevisionInput(row: {
     // Omitting fields when unset preserves the revision of drafts with no forward.
     ...(row.forwardOfMessageId ? [["forwardOf", row.forwardOfMessageId]] : []),
     ...(row.forwardOfMessageId && row.forwardParts ? [["forwardParts", [...new Set(row.forwardParts)].sort()]] : []),
+    ...(row.forwardSources?.length ? [["forwardSources", draftForwardSourceTuples(row.forwardSources)]] : []),
   ]);
 }
 

@@ -57,6 +57,23 @@ describe("the calls, as they leave", () => {
     expect(body.text).toBe("hello");
   });
 
+  it("takes only binary originals for a message attachment", async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce(Response.json({ text: "The old server's body", html: null }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([0, 128, 255]), {
+        headers: { "Content-Type": "application/octet-stream" },
+      }));
+    const adapter = new HttpAdapter({
+      baseUrl: "http://wire.test",
+      getCookie: () => null,
+      fetch: request,
+    });
+    await expect(adapter.fetchForwardSource("m 1", 40)).rejects.toThrow("Message source unavailable");
+    const source = await adapter.fetchForwardSource("m 1", 40);
+    expect(new Uint8Array(await source.arrayBuffer())).toEqual(new Uint8Array([0, 128, 255]));
+    expect(request.mock.calls[0]?.[0]).toBe("http://wire.test/messages/m%201/live-body?format=eml&maxBytes=40");
+  });
+
   it("does not send a letter read or glance with a missing message id", async () => {
     const { adapter, asked } = recording({ id: "m1", updatedAt: "2026-01-01T00:00:00.000Z" });
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});

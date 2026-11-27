@@ -29,7 +29,8 @@ export function HistoryEditorContent({
   readonly historyVisible: RefObject<boolean>;
 }) {
   useVisibleCaret(editor);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [mode, setMode] = useState<"collapsed" | "preview" | "edit">("collapsed");
+  const historyOpen = mode !== "collapsed";
   const [historyPending, setHistoryPending] = useState(false);
   const [historyFailed, setHistoryFailed] = useState(false);
 
@@ -63,11 +64,11 @@ export function HistoryEditorContent({
     }
   }
 
-  async function toggleHistory() {
+  async function openHistory(edit: boolean) {
     if (!editor) return;
-    if (historyOpen) {
+    if (historyOpen && !edit) {
       historyVisible.current = false;
-      setHistoryOpen(false);
+      setMode("collapsed");
       editor.view.dispatch(editor.state.tr);
       return;
     }
@@ -77,8 +78,15 @@ export function HistoryEditorContent({
       if (owner.current !== started || node === null || editor.isDestroyed || !editor.isEditable) return;
       appendHistory(editor, node);
     }
-    historyVisible.current = true;
-    setHistoryOpen(true);
+    historyVisible.current = edit;
+    setMode(edit ? "edit" : "preview");
+    if (!edit) return;
+    const { state, view } = editor;
+    const history = historyIn(state.doc);
+    if (history) {
+      view.dispatch(state.tr.setSelection(Selection.near(state.doc.resolve(history.pos + 1))));
+      editor.commands.focus(null, { scrollIntoView: false });
+    }
   }
 
   async function restoreHistory() {
@@ -107,20 +115,18 @@ export function HistoryEditorContent({
               label={historyOpen ? quotedHistory.hide : quotedHistory.show}
               expanded={historyOpen}
               disabled={!editable || historyPending}
-              onPress={() => void toggleHistory()}
+              onPress={() => void openHistory(false)}
             >
               …
             </Button>
-            {historyOpen && (
-              <Button
-                kind="quiet"
-                size="s"
-                disabled={!editable || historyPending}
-                onPress={() => void restoreHistory()}
-              >
-                {quotedHistory.restore}
-              </Button>
-            )}
+            <Button
+              kind="quiet"
+              size="s"
+              disabled={!editable || historyPending}
+              onPress={mode === "edit" ? () => void restoreHistory() : () => void openHistory(true)}
+            >
+              {mode === "edit" ? quotedHistory.restore : quotedHistory.edit}
+            </Button>
             {historyFailed && <span role="status">{quotedHistory.unavailable}</span>}
           </div>
         </AfterComposerText>

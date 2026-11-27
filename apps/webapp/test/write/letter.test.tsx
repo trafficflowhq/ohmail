@@ -876,7 +876,7 @@ describe("draft from your text, on a new letter", () => {
       return hydrate(ids, options);
     };
     await act(async () => w.now().openDraft(first));
-    fireEvent.click(await screen.findByRole("button", { name: W.history.show }));
+    fireEvent.click(await screen.findByRole("button", { name: W.history.edit }));
     fireEvent.click(await screen.findByRole("button", { name: W.history.restore }));
     await act(async () => w.now().openDraft(second));
     await act(async () => { finish(); await pending; });

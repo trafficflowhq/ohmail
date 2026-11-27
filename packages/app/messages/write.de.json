@@ -319,8 +319,17 @@
     "history": {
       "show": "Zitierte Nachrichten anzeigen",
       "hide": "Zitierte Nachrichten ausblenden",
-      "restore": "Original wiederherstellen",
+      "edit": "Bearbeiten",
+      "restore": "Zurücksetzen",
       "unavailable": "Zitierte Nachrichten sind nicht verfügbar"
+    },
+    "forwardSelection": {
+      "subject": "{count} Nachrichten",
+      "sensitive": "Leite vertrauliche Nachrichten einzeln weiter.",
+      "count": "Wähle höchstens {count} Nachrichten zum Weiterleiten aus.",
+      "loading": "Originalnachrichten werden gelesen…",
+      "unavailable": "Einige Originalnachrichten konnten nicht gelesen werden. Versuche es erneut oder entferne sie vor dem Senden.",
+      "retry": "Erneut versuchen"
     },
     "held": {
       "sendAgain": "Noch einmal senden",

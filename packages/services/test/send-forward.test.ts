@@ -6,6 +6,7 @@ import { FORWARD_MAX_RAW_BYTES, dbFor, forwardedDate, draftsService, sendService
 import type { ServiceContext, AttachmentAdapter, OpenAdapter } from "@trafficflow/services/mail";
 import { htmlToPlainText, normalizeMime, prepareHtmlForStorage, STORED_HTML_CAP_BYTES, textFromHtml } from "@trafficflow/core/mail";
 import type { SendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core/mail";
+import { SEND_MAX_ATTACHMENT_PARTS } from "@trafficflow/core/attachment-limits";
 import { MessageGoneError, RawMessageTooLargeError, outboundToMail } from "@trafficflow/core/adapters/imap";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { FIXED_NOW, makeDeps, seedMailbox, seedMessage, seedSession, seedBody } from "../../api/test/helpers.js";
@@ -106,6 +107,30 @@ async function world(opts: {
 }
 
 describe("forward is assembled server-side", () => {
+  it("holds a saved multi-forward when a second session sends without the saved originals", async () => {
+    const w = await world();
+    const raw = Buffer.from("Subject: The original\r\n\r\nSaved mail.\r\n");
+    const file = { filename: "The original.eml", contentType: "message/rfc822", content: raw };
+    const forwardSources = [{ id: w.originalId, filename: file.filename, sender: "Workshop", subject: "The original",
+      sha256: createHash("sha256").update(raw).digest("hex") }];
+    await expect(draftsService.update(w.ctx, w.draftId, {
+      forwardSources: Array(SEND_MAX_ATTACHMENT_PARTS + 1).fill(forwardSources[0]),
+    })).rejects.toMatchObject({ httpStatus: 400, message: `Select at most ${SEND_MAX_ATTACHMENT_PARTS} messages to forward.` });
+    await draftsService.update(w.ctx, w.draftId, { forwardSources });
+    expect((await draftsService.get(w.ctx, w.draftId)).forwardSources).toEqual(forwardSources);
+    const send = sendSpy();
+    await expect(sendService.send(w.ctx, w.draftId, "saved-forward-missing", send))
+      .rejects.toMatchObject({ httpStatus: 409 });
+    await expect(sendService.send(w.ctx, w.draftId, "saved-forward-wrong", send, {
+      attachments: [{ ...file, content: Buffer.from("A different original.") }],
+    })).rejects.toMatchObject({ httpStatus: 409 });
+    expect(send.delivered).toHaveLength(0);
+    expect((await draftsService.get(w.ctx, w.draftId)).status).toBe("draft");
+    await expect(sendService.send(w.ctx, w.draftId, "saved-forward-complete", send, { attachments: [file] }))
+      .resolves.toMatchObject({ status: "sent" });
+    expect(send.delivered[0]?.attachments).toEqual([file]);
+  });
+
   it("REFUSES a no_forward original — the sensitive body never leaves through a quote", async () => {
     const w = await world({ noForward: true });
     const send = sendSpy();

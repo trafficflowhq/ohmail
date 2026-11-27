@@ -23,6 +23,7 @@ import {
   draftBodyKnown,
   forwardPress,
   forwardSubject,
+  MutationRejectedError,
   isProtectedMessage,
   pressVerdict,
   replySubject,
@@ -37,7 +38,9 @@ import {
   type SendAndDonePlan,
   type TriagePileEntry,
 } from "@ohmail/client-engine";
+import { SEND_MAX_ATTACHMENT_PARTS } from "@trafficflow/core/attachment-limits";
 import { repairLegacyDraftHtml } from "@trafficflow/core/outbound-text";
+import { letterCap, type SendSurface } from "../write/file-rules.js";
 import type { ToastFn } from "../press/report.js";
 import {
   clearComposeDraft,
@@ -85,6 +88,7 @@ import type { ConsentState } from "../consent/consent-state.js";
 import { NEW_LETTER, useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply.js";
 import { dropCopy, handleOf, landedOf, twins } from "./draft-creates.js";
 import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "./reply-autosave.js";
+import { forwardSourceOf, forwardSourcesOf, loadForwardSources, selectedMessages, selectionSubject, withForwardFiles } from "./forward-selection.js";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send.js";
 import { attachmentBytes, useForwardFiles, type ForwardFilesPlan } from "./forward-files.js";
 import {
@@ -244,6 +248,7 @@ export interface ShellComposeInput {
   /** What that text reader answers beside the catalogue's sentences: a time to come, a size, the reader's clock. */
   words: ComposerWords;
   toast: ToastFn;
+  attachmentLimit?: { surface: SendSurface; size: (bytes: number) => string };
   /** The host's draft wire, or `none`: then no drafted reply is offered here and nothing is asked. */
   draftReplyWire: DraftReplyWire | "none";
   /** Only `view`, and only so the autosave knows whether the compose form is on screen. */
@@ -308,7 +313,7 @@ export interface ShellComposeInput {
 export type ShellCompose = ReturnType<typeof useShellCompose>;
 
 export function useShellCompose({
-  engine, reader, t, words, toast, draftReplyWire, route, isComposeVisible, go, draftsAvailable = true, showLetter, openWithReply, consent, facts, mailboxes,
+  engine, reader, t, words, toast, attachmentLimit, draftReplyWire, route, isComposeVisible, go, draftsAvailable = true, showLetter, openWithReply, consent, facts, mailboxes,
   drafts, ownAddresses, fallbackMailboxId, replyTo, setReplyTo, fr, setFr, setFrDone, setFrValues,
   mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport: dispatchFiling, toastWithUndo, mayHandOffFor, scope,
 }: ShellComposeInput) {
@@ -2350,6 +2355,64 @@ export function useShellCompose({
       return false;
     });
   });
+  const forwardingSelection = useRef(false);
+  const forwardSelection = useStableCallback(async (picked: readonly EngineMessage[], conversations: readonly string[] = []): Promise<boolean> => {
+    const messages = selectedMessages(engine.verbRead(), picked, conversations);
+    const first = messages[0];
+    if (!first || forwardingSelection.current) return false;
+    if (messages.some((message) => message.local === true)) {
+      toast(t("reader.replyCopyWaiting"));
+      return false;
+    }
+    if (messages.length === 1) {
+      openForward(first.id, first);
+      return true;
+    }
+    if (messages.some((message) => forwardPress(message).ask !== null)) {
+      toast(t("write.forwardSelection.sensitive"));
+      return false;
+    }
+    const count = messages.length;
+    if (count > SEND_MAX_ATTACHMENT_PARTS) {
+      toast(t("write.forwardSelection.count", { count: SEND_MAX_ATTACHMENT_PARTS }));
+      return false;
+    }
+    const seed = {
+      ...EMPTY_COMPOSE,
+      subject: selectionSubject(messages, () => t("write.forwardSelection.subject", { count })),
+      forwardSources: forwardSourcesOf(messages, () => t("compose.noSubject")),
+    };
+    const cap = letterCap(resolveComposeFrom(fromOptions, null, "").maxMessageBytes, attachmentLimit?.surface ?? "strict").bytes;
+    const frame = draftFrame.current;
+    const view = routeViewRef.current;
+    const epoch = autosave.epochNow();
+    const stillHere = () => draftFrame.current === frame && routeViewRef.current === view && autosave.epochNow() === epoch;
+    forwardingSelection.current = true;
+    try {
+      const attachments = await loadForwardSources(
+        seed.forwardSources, cap, (id, maxBytes) => engine.fetchForwardSource(id, maxBytes), stillHere,
+      );
+      if (attachments === null) return false;
+      const fields = { ...seed, ...withForwardFiles(seed.forwardSources, attachments) };
+      if (!(await mayReplace(fields)) || !stillHere()) return false;
+      replaceComposer(fields);
+      go("compose");
+      return true;
+    } catch (err) {
+      if (!stillHere()) return false;
+      if (err instanceof MutationRejectedError && err.status === 403) {
+        toast(t("write.forwardSelection.sensitive"));
+      } else if (err instanceof MutationRejectedError && err.status === 413) {
+        toast(t("write.files.refused", { size: attachmentLimit?.size(cap) ?? `${cap} B` }));
+      } else {
+        toast(t("write.files.unreadable"));
+      }
+      return false;
+    } finally {
+      forwardingSelection.current = false;
+    }
+  });
+
   /** Write starts a new letter after the current letter's words have somewhere to stay. */
   const composeNew = useStableCallback(() => {
     const start = (): void => {
@@ -2371,20 +2434,16 @@ export function useShellCompose({
     return () => setComposeDoor(null);
   }, [composeNew]);
   /**
-   * THE BLOCK STATE FOLLOWS THE ROW. While autosave holds a row, the compose
-   * form's signature state mirrors into the editor meta under `draft:<rowId>` — the handle a
-   * reload cannot lose — so reopening the same row from Drafts (before or after a reload)
-   * restores a struck or edited block. `following` stores nothing: absence IS the resting
-   * state, and the meta dies with the row (`settle`, discard, cancel).
+   * The signature state follows the autosaved row through this device's editor metadata.
    */
   useEffect(() => {
-    if (!autosave.draftId) return;
-    const sig = compose.sig;
+    if (!autosave.draftId || !composerReady) return;
+    const { sig } = compose;
     writeReplyMeta(
       `draft:${autosave.draftId}`,
-      sig && sig.kind !== "following" ? { sig } : {}, scope,
+      { ...(sig && sig.kind !== "following" ? { sig } : {}), forwardSources: readReplyMeta(`draft:${autosave.draftId}`, scope).forwardSources }, scope,
     );
-  }, [autosave.draftId, compose.sig]);
+  }, [autosave.draftId, compose.sig, composerReady, scope]);
 
   /**
    * The drafts list, and the two things a row can do. `draftsList` lists what the user can
@@ -2535,8 +2594,12 @@ export function useShellCompose({
       // `formatRecipientChips`, never a bare join: the seeded string must end in a separator
       // or the LAST stored recipient reopens as raw text in the input — no ×, typing appends
       // to the address — while the others are chips.
+      // Use the live signature on this editor's own row and device metadata on any other row.
+      const meta = d.status !== "draft" ? {} : autosave.draftId === d.id ? compose : readReplyMeta(`draft:${d.id}`, scope);
+      const forwardSources = d.forwardSources ?? meta.forwardSources;
       const seeded: ComposeFields = {
-        ...(files.length > 0 ? { attachments: files } : {}),
+        ...(forwardSources !== undefined ? withForwardFiles(forwardSources, files) : files.length > 0 ? { attachments: files } : {}),
+        ...(meta.sig && meta.sig.kind !== "following" ? { sig: meta.sig } : {}),
         to: formatRecipientChips(d.to),
         cc: formatRecipientChips(d.cc),
         bcc: formatRecipientChips(d.bcc),
@@ -2555,27 +2618,6 @@ export function useShellCompose({
         // The files it keeps, as the row holds them (another device's choice included).
         forwardParts: d.forwardOfMessageId ? d.forwardParts ?? null : null,
 
-        // The signature block's state survives exactly as far as this device knows it (review
-        // rounds 1–3). The `drafts` row stores prose and no block state, so a draft reopened
-        // from ANOTHER device re-offers the block in its resting `following` state — visibly,
-        // strikeable again, never silently inside the prose. On THIS device the state lives in
-        // the editor meta under the ROW's id (`draft:<id>`, see `ReplyEditorMeta`) — the one
-        // handle that survives a reload and names the same message; rounds 2–3 killed both
-        // weaker keys (the in-memory autosave id, empty after reload; a content key, since
-        // local and server-derived text legitimately differ). The meta lane leads; the
-        // in-memory state is the fallback for the row autosave still holds, because storage can
-        // refuse (a private window) and a same-session reopen must not resurrect a struck block.
-        ...((): Partial<ComposeFields> => {
-          if (d.status !== "draft") return {};
-          // LIVE STATE IS AUTHORITATIVE for the row the composer still holds:
-          // storage can hold an OLDER value than what is on screen right now if a later write
-          // was refused (quota exhaustion is the measured case), and `??` would prefer that
-          // stale stored value over the newer in-memory edit. Only for a row autosave does NOT
-          // hold — a different device's draft, or a stranded row this session never opened —
-          // does the stored meta speak at all.
-          const sig = autosave.draftId === d.id ? compose.sig : readReplyMeta(`draft:${d.id}`, scope).sig;
-          return sig && sig.kind !== "following" ? { sig } : {};
-        })(),
       };
       /**
        * IS THIS ROW A MESSAGE WE ARE STILL WAITING TO LEARN THE FATE OF?: Asked FIRST — before the form is touched —
@@ -3066,14 +3108,56 @@ export function useShellCompose({
   const onComposeFields = useStableCallback((input: ComposeFields) => {
     // The composer's own edit of a recipient line: typed text, unlike a door's prefill.
     const prev = composeRef.current;
-    const next = input.recipientsTyped !== true && (input.to !== prev.to
+    let next = input.recipientsTyped !== true && (input.to !== prev.to
       || (input.cc ?? "") !== (prev.cc ?? "") || (input.bcc ?? "") !== (prev.bcc ?? ""))
       ? { ...input, recipientsTyped: true as const } : input;
+    if (input.forwardSources?.length && input.attachments !== prev.attachments) {
+      const removed = new Set(prev.attachments?.filter((file) => !input.attachments?.includes(file))
+        .map((file) => forwardSourceOf(file)?.id));
+      const forwardSources = input.forwardSources.filter(({ id }) => !removed.has(id));
+      if (forwardSources.length !== input.forwardSources.length) next = { ...next, forwardSources };
+    }
     setCompose(next);
     writeComposeDraft(next, scope);
     // The close's refusal was about the text as it stood; an edit makes it a stale sentence.
     setComposeCloseRefusal(null);
   });
+  const forwardSources = compose.forwardSources;
+  const pendingSources = useMemo(() => {
+    const attached = new Set(compose.attachments?.map((file) => forwardSourceOf(file)?.id));
+    return forwardSources?.filter(({ id }) => !attached.has(id)) ?? [];
+  }, [forwardSources, compose.attachments]);
+  const [sourceFailure, setSourceFailure] = useState<{ pending: typeof pendingSources; allowance: number; size: boolean } | null>(null);
+  const forwardCap = letterCap(composeFrom.maxMessageBytes, attachmentLimit?.surface ?? "strict").bytes;
+  const forwardBytes = forwardSources?.length ? attachmentBytes(compose.attachments ?? []) : 0;
+  const allowance = forwardCap - forwardBytes;
+  const sourceError = sourceFailure?.pending === pendingSources && sourceFailure.allowance === allowance ? sourceFailure : null;
+  // Re-read through the same account and bounded source endpoint as the first forward.
+  // The saved references keep Send blocked until every remaining original has its bytes.
+  useEffect(() => {
+    if (!composeVisible() || sendCarriesThis || !pendingSources.length || sourceError) return;
+    const frame = draftFrame.current;
+    let active = true;
+    const stillHere = () => active && draftFrame.current === frame && composeRef.current.forwardSources === forwardSources;
+    void loadForwardSources(pendingSources, allowance, (id, maxBytes) => engine.fetchForwardSource(id, maxBytes), stillHere)
+      .then((files) => {
+        if (!files || !stillHere()) return;
+        const current = composeRef.current;
+        onComposeFields({ ...current, ...withForwardFiles(forwardSources ?? [], [...(current.attachments ?? []), ...files]) });
+      })
+      .catch((err: unknown) => {
+        if (stillHere()) setSourceFailure({ pending: pendingSources, allowance, size: err instanceof MutationRejectedError && err.status === 413 });
+      });
+    return () => { active = false; };
+  }, [engine, route.view, composeVisible, sendCarriesThis, pendingSources, sourceError, forwardSources, allowance, onComposeFields]);
+  const removePendingSource = useStableCallback((id: string) => {
+    const current = composeRef.current;
+    onComposeFields({ ...current, forwardSources: current.forwardSources?.filter((source) => source.id !== id) });
+  });
+  const originalNotes = sourceError?.size || allowance < 0
+    ? t("write.forwarded.totalTooLarge", { limit: attachmentLimit?.size(forwardCap) ?? `${forwardCap} B` })
+    : sourceError ? t("write.forwardSelection.unavailable")
+      : pendingSources.length ? t("write.forwardSelection.loading") : null;
   /**
    * A SECOND PRESS AFTER `unverified` IS A FRESH SEND, AND IT HAS TO BUILD A FRESH ROW. The warning's contract
    * ("check your Sent folder before retrying") predates autosave, and autosave silently broke it for Compose: the
@@ -3093,6 +3177,7 @@ export function useShellCompose({
    * rebuilt.
    */
   const sendCompose = useStableCallback((sendAt?: string) => {
+    if (pendingSources.length || allowance < 0) return;
     if (draftReply?.preview !== undefined && draftReply.messageId === NEW_LETTER) return;
     /**
      * THE SIGNATURE, DERIVED EXACTLY AS THE BLOCK RENDERS IT — the form's own state, the server-confirmed map, and
@@ -3543,6 +3628,7 @@ export function useShellCompose({
     onReplySubject,
     openDraft,
     openForward,
+    forwardSelection,
     openReply,
     plan,
     pressSendAndDone,
@@ -3566,6 +3652,10 @@ export function useShellCompose({
     composeSaveRefused: autosave.saveRefused,
     composeForwardFiles: composeForward === null ? null
       : { plan: composeForward, onRemove: removeComposePart, said: composeForwardSaid },
+    composeForwardSelection: originalNotes === null ? null : {
+      pending: pendingSources, note: originalNotes, remove: removePendingSource,
+      retry: sourceError && !sourceError.size ? () => setSourceFailure(null) : undefined,
+    },
     replyForwardFiles,
     sendReply,
     setReplyAttachments,

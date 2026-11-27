@@ -16,6 +16,7 @@ import {
   SCHEDULED_SEND_EXPIRED_SENTENCE, SCHEDULED_FILES_OVERDUE_MS, SCHEDULED_FILES_MAX_AGE_MS,
 } from "../src/index.js";
 import type { ScheduledFilesKeeping, ServiceContext, StagedAttachmentSource } from "../src/index.js";
+import { seedMessage } from "./helpers.js";
 
 /**
  * SEND LATER (mail 0077) — the schedule verbs and the pass, one interleaving at a time.
@@ -1187,6 +1188,18 @@ describe("a server keeps a scheduled letter's files sealed", () => {
   const opener = (k: Sealed) => ({ open: k.sealer.open.bind(k.sealer), tidy: true });
   const to = [{ name: null, address: "you@example.com" }];
 
+  async function saveForward(world: Awaited<ReturnType<typeof setup>>) {
+    const originals = await Promise.all(["Workshop plans", "Materials list"].map(async (subject) => {
+      const id = await seedMessage(world.db, world.A, world.mb, { subject });
+      const content = Buffer.from(`Subject: ${subject}\r\n\r\nThe original message.\r\n`);
+      const filename = `${subject}.eml`;
+      return { source: { id, filename, sender: "Workshop", subject, sha256: sha(content) },
+        file: { filename, contentType: "message/rfc822", content } };
+    }));
+    await draftsSvc.update(world.ctx, world.draftId, { forwardSources: originals.map(({ source }) => source) });
+    return originals.map(({ file }) => file);
+  }
+
   /** A staging source over a map, counting downloads; clearing the map is the 24-hour copy expiring. */
   function staging(files: Array<{ id: string; filename: string; contentType: string; content: Buffer }>) {
     const store = new Map(files.map((f) => [f.id, f]));
@@ -1209,6 +1222,56 @@ describe("a server keeps a scheduled letter's files sealed", () => {
     };
     return { source, store, state };
   }
+
+  it.each(["missing", "mistaken", "changed while scheduling"])("refuses %s originals before making an appointment", async (kind) => {
+    const world = await setup();
+    const { db, ctx, draftId } = world;
+    const [first, second] = await saveForward(world);
+    const fake = fakeAdapter();
+    const keeping = sealed();
+    const up = staging([{ id: "first", ...first! }, { id: "second", ...second! }]);
+    if (kind === "changed while scheduling") {
+      const fetch = up.source.fetch.bind(up.source);
+      up.source.fetch = async (...args) => {
+        if (up.state.fetched === 0) {
+          const { forwardSources } = await draftsSvc.get(ctx, draftId);
+          await draftsSvc.update(ctx, draftId, { forwardSources: [...forwardSources!].reverse() });
+        }
+        return fetch(...args);
+      };
+    }
+    const input = kind === "missing" ? undefined : kind === "mistaken"
+      ? { keeping, files: [first!, { ...second!, content: first!.content }] }
+      : { keeping, staged: { ids: ["first", "second"], source: up.source } };
+    const result = await schedules.schedule(ctx, draftId, iso(AT), input).catch((error: unknown) => error);
+    expect.soft(result).toMatchObject({ code: "forward_original_unavailable", httpStatus: 409 });
+    expect.soft(await draftsSvc.get(ctx, draftId)).toMatchObject({ status: "draft", sendAt: null });
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
+      .toMatchObject({ claimed: 0, failed: 0 });
+    expect(fake.state.delivered).toHaveLength(0);
+  });
+
+  it("delivers the saved originals once, in order, after their upload tickets are gone", async () => {
+    const world = await setup();
+    const { db, ctx, draftId } = world;
+    const files = await saveForward(world);
+    const up = staging([{ id: "first", ...files[0]! }, { id: "second", ...files[1]! }]);
+    const keeping = sealed();
+    const { draft } = await schedules.schedule(ctx, draftId, iso(AT), {
+      keeping, staged: { ids: ["first", "second"], source: up.source },
+    });
+    expect(draft).toMatchObject({ status: "scheduled", sendFiles: files.length });
+    up.store.clear();
+    const fake = fakeAdapter();
+    const pass = { openSendAdapter: fake.factory, files: opener(keeping) };
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { ...pass, now: () => NOW }))
+      .toMatchObject({ claimed: 0 });
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { ...pass, now: due }))
+      .toMatchObject({ claimed: 1, sent: 1, failed: 0 });
+    expect(await runScheduledSendPass(bindDb(db, { account: null }), { ...pass, now: due }))
+      .toMatchObject({ claimed: 0 });
+    expect(fake.state.delivered.map(({ attachments }) => attachments)).toEqual([files]);
+  });
 
   /** The first statement matching `match` fails with `fault`, as a busy pool or a dropped connection fails it. */
   function failOnce(db: unknown, match: RegExp, fault: Error): void {
