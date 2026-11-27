@@ -13,11 +13,30 @@ import { Columns } from "../../../../packages/app/src/frame/Columns.js";
 import { layoutPlan } from "../../../../packages/app/src/frame/layout-plan.js";
 import { useFromLine } from "../../../../packages/app/src/write/head/From.js";
 import { WriteAbove } from "../../../../packages/app/src/write/above.js";
+import { richEditor } from "../../../../packages/app/src/write/editor/index.js";
 import type { WriteBeside, Writing } from "../../../../packages/app/src/write/ports.js";
 import { Later } from "../../../../packages/app/src/write/verbs/Later.js";
 import { Verbs } from "../../../../packages/app/src/write/verbs/Verbs.js";
 
 const scene = new URLSearchParams(location.search);
+const Editor = richEditor({ href: () => null, useRendered: () => {} });
+
+function MessageEditor() {
+  const [value, setValue] = useState({ text: "", html: "" });
+  return (
+    <Composer label="New message" head={null} foot={{ label: "Writing tools" }}>
+      <Editor
+        label="Message"
+        placeholder="Write a message"
+        editable
+        focusAtMount={false}
+        value={value}
+        onChange={setValue}
+        onHandle={() => {}}
+      />
+    </Composer>
+  );
+}
 
 const senders = Array.from({ length: 40 }, (_, index) => ({
   id: String(index + 1),
@@ -180,7 +199,7 @@ createRoot(document.getElementById("root")!).render(
   <TextProvider locale="en" messages={{ ...frame, ...write }} timeZone="UTC">
     <portalRenderer.Provider value={createPortal}>
       <WriteAbove writing={{} as Writing} beside={{ later } as WriteBeside}>
-        <Frame />
+        {scene.has("write") ? <MessageEditor /> : <Frame />}
       </WriteAbove>
     </portalRenderer.Provider>
   </TextProvider>,

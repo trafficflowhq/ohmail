@@ -57,6 +57,59 @@ async function pickOverSend(page: Page, last: Locator) {
   await page.mouse.click(point.x, point.y);
 }
 
+it.each([
+  { engine: pw.chromium, surface: "Chromium", width: 390 },
+  ...(process.env.COMPOSER_WEBKIT === "1"
+    ? [{ engine: pw.webkit, surface: "WebKit", width: 320 }]
+    : []),
+])("keeps earlier lines still while editing at the end in $surface", async ({ engine, width }) => {
+  const browser = await engine.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width, height: 550 } });
+    await open(page, "desktop", "?write");
+    const editor = page.getByRole("textbox", { name: "Message", exact: true });
+    await editor.click();
+    const letter =
+      "The morning train crossed the valley before sunrise and stopped beside the river where the road turns north " +
+      "past the old station and follows the water into the village.";
+    await page.keyboard.insertText(letter);
+    await page.evaluate(() => document.fonts.ready.then(() => {}));
+    const earlierLines = () =>
+      editor.locator("p").evaluate((paragraph) => {
+        const text = paragraph.firstChild!;
+        const range = document.createRange();
+        const bounds = paragraph.getBoundingClientRect();
+        const lines: number[] = [];
+        let previousTop: number | undefined;
+        for (let index = 0; index < 120; index++) {
+          range.setStart(text, index);
+          range.setEnd(text, index + 1);
+          const top = range.getBoundingClientRect().top;
+          if (top !== previousTop) lines.push(index);
+          previousTop = top;
+        }
+        return { width: bounds.width, lines };
+      });
+    const before = await earlierLines();
+    expect(before.lines.length).toBeGreaterThan(2);
+    await page.keyboard.insertText(" afternoon");
+    expect(await editor.textContent()).toBe(letter + " afternoon");
+    expect(await earlierLines()).toEqual(before);
+    await page.keyboard.press("Backspace");
+    expect(await editor.textContent()).toBe(letter + " afternoo");
+    expect(await earlierLines()).toEqual(before);
+    await editor.evaluate((element) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "n near the river.");
+      element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+    });
+    expect(await editor.textContent()).toBe(letter + " afternoon near the river.");
+    expect(await earlierLines()).toEqual(before);
+  } finally {
+    await browser.close();
+  }
+}, 30_000);
+
 describe.each([
   { surface: "web", engine: pw.chromium, width: 1440, height: 900, phone: false },
   ...(process.env.COMPOSER_WEBKIT === "1"
