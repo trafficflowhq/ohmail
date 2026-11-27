@@ -6,6 +6,7 @@ import { MailStateContext, type MailStateBinding } from "@ohmail/app-logic/mail-
 import { dayShort, type CalendarEventRecord, type CalendarPort } from "@ohmail/app-logic/calendar";
 import calendarDe from "../../messages/calendar.de.json" with { type: "json" };
 import eventDe from "../../messages/event.de.json" with { type: "json" };
+import eventEn from "../../messages/event.en.json" with { type: "json" };
 import readerInvitationEn from "../../messages/reader-invitation.en.json" with { type: "json" };
 import dayEn from "../../messages/day.en.json" with { type: "json" };
 import calmail from "../../messages/calmail.en.json" with { type: "json" };
@@ -1732,6 +1733,64 @@ it.each([
         },
       }),
     );
+  },
+);
+
+it.each(["single", "repeating", "cancelled"] as const)(
+  "preserves feedback when a %s drag reaches a skipped hour",
+  async (kind) => {
+    vi.setSystemTime(new Date("2026-03-29T09:00:00Z"));
+    const world = eventWorld(
+      meeting({
+        start: { kind: "zoned", value: "20260329T013000", zone: ZURICH },
+        end: { kind: "zoned", value: "20260329T033000", zone: ZURICH },
+        startsAt: "2026-03-29T00:30:00.000Z",
+        endsAt: "2026-03-29T01:30:00.000Z",
+        repeat: kind === "repeating" ? { rules: ["FREQ=DAILY;COUNT=4"], added: [], excluded: [] } : null,
+      }),
+    );
+    const press = vi.fn(async () => ({ key: "move" }));
+    world.port.press = press;
+    mountFrame("#/cal/week/2026-03-29", world, NONE, { words: calmail });
+    const column = screen.getByRole("group", { name: /Sunday, March 29/ });
+    const chip = within(column).getByRole("button", { name: /Kiln check/ });
+    vi.spyOn(column, "getBoundingClientRect").mockReturnValue(DOMRect.fromRect({ width: 140, height: 1440 }));
+    const originalHit = Object.getOwnPropertyDescriptor(document, "elementFromPoint");
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => column });
+    const pointer = (type: string, y: number) =>
+      fireEvent(
+        chip,
+        Object.assign(new MouseEvent(type, { bubbles: true, clientX: 100, clientY: y }), {
+          pointerId: 1,
+          pointerType: "mouse",
+        }),
+      );
+    try {
+      pointer("pointerdown", 90);
+      pointer("pointermove", 105);
+      expect(standingReports().join(" ")).toMatch(/01:45/);
+      pointer("pointermove", 150);
+      expect(standingReports().join(" ")).not.toMatch(/01:45|02:30/);
+
+      if (kind === "cancelled") fireEvent.keyDown(chip, { key: "Escape" });
+      pointer("pointerup", 150);
+      expect(press).not.toHaveBeenCalled();
+      if (kind === "repeating") {
+        const prompt = within(screen.getByRole("dialog", { name: /Move to/ }));
+        fireEvent.click(prompt.getByRole("menuitem", { name: "This event" }));
+      }
+
+      const message = eventEn.event.refusal.invalid.replace(/\.$/, "");
+      if (kind === "cancelled") {
+        expect(standingReports().join(" ")).not.toContain(message);
+      } else {
+        await vi.waitFor(() => expect(standingReports().join(" ")).toContain(message));
+      }
+      expect(press).not.toHaveBeenCalled();
+    } finally {
+      if (originalHit) Object.defineProperty(document, "elementFromPoint", originalHit);
+      else Reflect.deleteProperty(document, "elementFromPoint");
+    }
   },
 );
 

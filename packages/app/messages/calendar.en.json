@@ -26,7 +26,6 @@
       "resizeTimeStart": "Resize start",
       "resizeTimeEnd": "Resize end",
       "resizeStart": "Change first day",
-      "resizePreview": "{first} – {last} · {title}",
       "resizeEnd": "Change last day",
       "deleteEvent": "Delete event",
       "cancelMeeting": "Cancel meeting",

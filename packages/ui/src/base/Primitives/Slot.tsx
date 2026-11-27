@@ -8,7 +8,8 @@ export interface SlotProps {
   kind?: "fill" | "done" | "none";
   /** Names it where the word alone does not. */
   label?: string;
-  /** Whether its menu stands open. */
+  popup?: "menu" | "dialog";
+  /** Whether its popup stands open. */
   expanded?: boolean;
   /** It stands on a row of a list. */
   listed?: boolean;
@@ -25,6 +26,7 @@ export function Slot({
   children,
   kind,
   label,
+  popup = "menu",
   expanded,
   listed,
   describedBy,
@@ -41,7 +43,7 @@ export function Slot({
       data-listed={listed ? "" : undefined}
       aria-label={label}
       title={label}
-      aria-haspopup="menu"
+      aria-haspopup={popup}
       aria-expanded={expanded ?? false}
       aria-describedby={describedBy}
       disabled={disabled}
