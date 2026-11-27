@@ -1815,7 +1815,7 @@ export class ScreenerReadService {
   ): Promise<T> {
     if (!cutline || !onServerPool(ctx.db) || inTransactionHandle(ctx.db)) return read(ctx.db);
     return asTx(ctx).transaction(async (tx) => {
-      await tx.execute(sql`set local jit = off`);
+      await dialect(ctx.db).disableLocalJit(tx);
       return read(bridgeDb(tx));
     }, { isolationLevel: "repeatable read", accessMode: "read only" });
   }

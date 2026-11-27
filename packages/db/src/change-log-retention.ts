@@ -1,8 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { accountSyncState, auditLog, changeLog, devices, sessions } from "./schema-mail.js";
 import { prunedThroughSeq, type Tx } from "./change-log.js";
-import { accountPass, readPassProgress, writePassProgress } from "./pass-progress.js";
-import { readAccountErasedAt } from "./erasure-fence.js";
 import { dialect } from "./dialect/index.js";
 
 /**
@@ -40,6 +38,8 @@ export const affected = (res: unknown): number => {
   const r = res as { count?: number; rowCount?: number; affectedRows?: number };
   return Number(r.count ?? r.rowCount ?? r.affectedRows ?? 0);
 };
+
+export interface ChangeLogPruneOptions { batch?: number; maxBatches?: number }
 
 /** One tick's work for one account, for the pass's log line. */
 export interface ChangeLogPruneResult {
@@ -86,12 +86,11 @@ export async function changeLogHorizon(db: Tx, accountId: string, now: Date): Pr
  */
 export async function pruneChangeLogForAccount(
   db: Tx, accountId: string, now: Date,
-  opts: { batch?: number; maxBatches?: number; hosted?: boolean } = {},
+  opts: ChangeLogPruneOptions = {},
 ): Promise<ChangeLogPruneResult> {
   const d = dialect(db);
   const batch = opts.batch ?? RETENTION_DELETE_BATCH;
   const maxBatches = opts.maxBatches ?? RETENTION_BATCHES_PER_ACCOUNT;
-  if (opts.hosted) return pruneHostedChangeLog(db, accountId, now, batch, maxBatches);
   const horizon = await changeLogHorizon(db, accountId, now);
 
   const floor = await raisePruneFloor(db, accountId, horizon);
@@ -142,115 +141,6 @@ async function raisePruneFloor(db: Tx, accountId: string, horizon: Date): Promis
   }).where(eq(accountSyncState.accountId, accountId));
 
   return prunedThroughSeq(db, accountId);
-}
-
-/**
- * Walk a finite lap, even while the account is writing new changes. Age is tested only
- * after the index has produced one sequence page. The next lap revisits rows above the floor.
- */
-async function discoverHostedFloor(
-  tx: Tx, accountId: string, horizon: Date, floor: bigint, newest: bigint, position: string,
-): Promise<{ floor: bigint; position: string }> {
-  const saved = /^(\d+):(\d+)$/.exec(position);
-  const ceiling = saved ? BigInt(saved[1]!) : newest;
-  const after = saved && BigInt(saved[2]!) > floor ? BigInt(saved[2]!) : floor;
-  if (after >= ceiling) return { floor, position: "" };
-  const [row] = await tx.execute(sql`
-    with floor_page as materialized (
-      select seq, created_at from change_log
-      where account_id = ${accountId} and seq > ${after.toString()}::bigint and seq <= ${ceiling.toString()}::bigint
-      order by seq limit ${RETENTION_DELETE_BATCH}
-    )
-    select max(seq)::text as last, count(*)::int as visited,
-      (max(seq) filter (where created_at < ${dialect(tx).ts(horizon)}))::text as eligible
-    from floor_page
-  `) as unknown as Array<{ last: string | null; visited: number; eligible: string | null }>;
-  if (row!.eligible !== null) {
-    floor = BigInt(row!.eligible);
-    await tx.update(accountSyncState).set({ prunedThroughSeq: floor }).where(eq(accountSyncState.accountId, accountId));
-  }
-  return { floor, position: row!.visited < RETENTION_DELETE_BATCH || row!.last === ceiling.toString()
-    ? "" : `${ceiling}:${row!.last}` };
-}
-
-/**
- * A hosted page visits at most `batch` sequence positions. First process live facts and
- * deletions' other rows, then remove the tombstones that justified those deletions. Each page
- * commits its cursor with its deletes. If the floor moves during a lap, finish that lap before
- * starting the next so a busy account cannot repeatedly restart at the head.
- */
-async function pruneHostedChangeLog(
-  db: Tx, accountId: string, now: Date, batch: number, maxBatches: number,
-): Promise<ChangeLogPruneResult> {
-  const horizon = await changeLogHorizon(db, accountId, now);
-  const key = accountPass("retention_prune", accountId);
-  let deleted = 0;
-  let prunedThroughSeq = 0n;
-  for (let i = 0; i < maxBatches; i++) {
-    const page = await db.transaction(async (raw) => {
-      const tx = raw as unknown as Tx;
-      if (await readAccountErasedAt(tx, dialect(tx), accountId) != null) {
-        return { floor: 0n, gone: 0, done: true };
-      }
-      // Serializes pages and floor changes on this account with writers and other compactors.
-      const [state] = await tx.select({ floor: accountSyncState.prunedThroughSeq, newest: accountSyncState.nextSeq }).from(accountSyncState)
-        .where(eq(accountSyncState.accountId, accountId)).for("update");
-      if (!state) return { floor: 0n, gone: 0, done: true };
-      const cursor = (await readPassProgress(tx, key)).cursor ?? "";
-      const [mark = "", position = ""] = cursor.split(";");
-      const discovery = i === 0 ? await discoverHostedFloor(tx, accountId, horizon, state.floor, state.newest, position)
-        : { floor: state.floor, position };
-      const { floor } = discovery;
-      const persist = async (compaction: string) => {
-        const next = discovery.position ? `${compaction};${discovery.position}` : compaction;
-        if (next !== cursor) await writePassProgress(tx, key, { cursor: next || null });
-      };
-      const saved = /^(\d+):(rows|tombstones|done):(\d+)$/.exec(mark);
-      const complete = saved?.[2] === "done";
-      const prior = saved ? BigInt(saved[1]!) : 0n;
-      if (floor === 0n || (complete && prior === floor)) {
-        await persist(mark);
-        return { floor, gone: 0, done: true };
-      }
-      const resume = saved !== null && !complete && prior <= floor;
-      const ceiling = resume ? prior : floor;
-      const phase = resume ? saved[2] : "rows";
-      const after = resume ? saved[3]! : "0";
-      const [result] = await tx.execute(sql`
-        with candidates as materialized (
-          select seq, entity_type, entity_id, op, meta
-          from change_log where account_id = ${accountId} and seq > ${after}::bigint and seq <= ${ceiling.toString()}::bigint
-          order by seq limit ${batch}
-        ), removed as (
-          delete from change_log victim using candidates c
-          where victim.account_id = ${accountId} and victim.seq = c.seq
-            and c.seq < (select max(seq) from change_log where account_id = ${accountId})
-            and not (c.op = 'move' and c.meta->>'to' = 'INBOX')
-            and ${phase === "tombstones" ? sql`c.op = 'delete'` : sql`c.op <> 'delete' and (
-              exists (select 1 from change_log earlier
-                where earlier.account_id = ${accountId} and earlier.entity_type = c.entity_type
-                  and earlier.entity_id = c.entity_id and earlier.seq < c.seq)
-              or exists (select 1 from change_log tombstone
-                where tombstone.account_id = ${accountId} and tombstone.entity_type = c.entity_type
-                  and tombstone.entity_id = c.entity_id and tombstone.op = 'delete'
-                  and tombstone.seq <= ${ceiling.toString()}::bigint)
-            )`}
-          returning 1
-        )
-        select (select count(*)::int from candidates) as visited,
-          (select max(seq)::text from candidates) as last, (select count(*)::int from removed) as gone
-      `) as unknown as Array<{ visited: number; last: string | null; gone: number }>;
-      const atEnd = result!.visited < batch;
-      const next = !atEnd ? `${ceiling}:${phase}:${result!.last}`
-        : phase === "rows" ? `${ceiling}:tombstones:0` : `${ceiling}:done:0`;
-      await persist(next);
-      return { floor, gone: result!.gone, done: atEnd && phase === "tombstones" };
-    });
-    prunedThroughSeq = page.floor;
-    deleted += page.gone;
-    if (page.done) break;
-  }
-  return { prunedThroughSeq, deleted };
 }
 
 /** One bounded batch of the audit_log fixed-age prune; the caller loops while it returns full. */

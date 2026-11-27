@@ -395,6 +395,41 @@ export function pgDialect(): Dialect {
         Array.isArray(r) ? r : fields.map((f) => (r as Record<string, unknown>)[f.name]));
     },
 
+    disableLocalJit: async (db) => {
+      await d.exec(db, sql`set local jit = off`);
+    },
+
+    // Probe the full subject for each index seed. Only the first thread can nominate its group,
+    // even if the other threads are outside this slice.
+    threadJoinSeeds: (db, { table, accountId, cursor, seedLimit, threadLimit }) => {
+      const own = accountId === undefined ? sql`true` : sql`account_id = ${accountId}`;
+      const after = cursor === null ? sql`true` : sql`
+        (account_id, left(subject, 64), md5(subject), id) >
+        (${cursor.accountId}::uuid, left(${cursor.subject}, 64), md5(${cursor.subject}),
+          ${cursor.threadId ?? "ffffffff-ffff-ffff-ffff-ffffffffffff"}::uuid)`;
+      return d.exec(db, sql`
+        with seeds as (
+          select account_id, subject, id, left(subject, 64) as prefix, md5(subject) as digest,
+            row_number() over (order by account_id, left(subject, 64), md5(subject), id) as position
+          from ${table}
+          where ${own} and ${after}
+          order by account_id, left(subject, 64), md5(subject), id
+          limit ${seedLimit}
+        )
+        select s.account_id, s.subject, s.id, s.position, g.ids
+        from seeds s
+        cross join lateral (
+          select array(select t.id from ${table} t
+            where t.account_id = s.account_id and left(t.subject, 64) = s.prefix
+              and md5(t.subject) = s.digest and t.subject = s.subject
+            order by t.id
+            limit ${threadLimit}) as ids
+          offset 0
+        ) g
+        where (cardinality(g.ids) > 1 and g.ids[1] = s.id) or s.position = ${seedLimit}
+      `);
+    },
+
     // Truncated, not formatted: formatting every row costs more than the grouping it serves.
     monthBucket: (instant: SQL): SQL => sql`date_trunc('month', ${instant} at time zone 'UTC')`,
 

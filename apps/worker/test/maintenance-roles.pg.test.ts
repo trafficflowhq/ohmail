@@ -4,12 +4,12 @@ import { eq, inArray, sql, type SQL } from "drizzle-orm";
 import postgres from "postgres";
 import {
   accounts, accountSyncState, auditLog, bindDb, changeLog, devices, erasureRemaining, mailboxes, messageBodies, messages,
-  outboundSendFingerprints, outboundSends, pairingTokens, PROFILE_FOUND_AUDIT_ACTION, pruneSendFingerprints, readDrainCursor, refreshTokens, sessions, stampMailboxErasure, users, type Tx,
+  outboundSendFingerprints, outboundSends, pairingTokens, PROFILE_FOUND_AUDIT_ACTION, readDrainCursor, refreshTokens, sessions, stampMailboxErasure, users, type Tx,
 } from "@trafficflow/db";
 import { createPolicyStatement, ensureMaintenanceIndexes } from "@trafficflow/db/admin";
 import {
   API_ROLE, authEvents, claimRefundObligations, invites, LOCK_READERS, loginTokens, makeOwnedDb, pendingRefundObligations, policyList, readerStatement, READER_SCHEMA, waitlist,
-  pruneChangeLogForAccount, pruneSignInRecords, recordRefundObligation, serverTables, WORKER_ROLE, type OwnedDb,
+  pruneChangeLogForAccount, pruneSendFingerprints, pruneSignInRecords, recordRefundObligation, serverTables, WORKER_ROLE, type OwnedDb,
 } from "@trafficflow/db/cloud";
 import { realPgAvailable, ruleVerbs, throwawayDb } from "@trafficflow/db/testing";
 import { MAILBOX_ERASURE_PASS_BUDGET_MS, mailboxErasurePass } from "../src/mailbox-erasure-pass.js";
